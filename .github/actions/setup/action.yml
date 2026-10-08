@@ -1,0 +1,80 @@
+# Copyright 2026 The Kuicksilver Authors
+# SPDX-License-Identifier: Apache-2.0
+# Shared job setup for .github/workflows/build.yml: Temurin 21 (the build JDK), Gradle with its cache, the OpenSSL reuse
+# property, and on request the pinned NDK, the pinned Xcode, the Kotlin/Native toolchain and the OpenSSL build cache.
+name: kuicksilver setup
+description: JDK 21, Gradle, and the pinned NDK / Xcode / Kotlin/Native / OpenSSL cache a job asks for
+inputs:
+  ndk:
+    description: install the NDK pinned in gradle/toolchains.toml and export ANDROID_NDK_ROOT and LLVM_* (llvm-objcopy, llvm-nm, ...)
+    default: 'false'
+  xcode:
+    description: select the Xcode pinned in gradle/toolchains.toml (macOS)
+    default: 'false'
+  konan:
+    description: restore ~/.konan and provision the Kotlin/Native toolchain (tools/ci/konan-bootstrap.sh) for these konan targets
+    default: ''
+  openssl-cache:
+    description: name of the OpenSSL build cache (tools/openssl/build.sh's own cache directory and the source tarball); empty = none
+    default: ''
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+      with:
+        distribution: temurin
+        java-version: '21'
+    - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+      with:
+        cache-read-only: ${{ github.ref != 'refs/heads/main' }}
+    - name: Gradle properties for CI
+      shell: bash
+      run: |
+        # OpenSSL builds downloaded from another job (or restored from the cache) are reused, never rebuilt (kuicksilver-native/openssl.gradle.kts)
+        mkdir -p "${GRADLE_USER_HOME:-$HOME/.gradle}"
+        printf 'kuicksilver.openssl.prebuilt=true\norg.gradle.java.installations.auto-download=false\n' >> "${GRADLE_USER_HOME:-$HOME/.gradle}/gradle.properties"
+    - name: Pinned Xcode
+      if: inputs.xcode == 'true'
+      shell: bash
+      run: |
+        v=$(sed -n 's/^xcode = "\(.*\)".*/\1/p' gradle/toolchains.toml)
+        app=$(ls -d "/Applications/Xcode_$v.app" /Applications/Xcode_"$v".*.app 2>/dev/null | head -1 || true)
+        [ -n "$app" ] || { echo "::error::Xcode $v (gradle/toolchains.toml) is not on this runner image; installed: $(ls -d /Applications/Xcode_* | tr '\n' ' ')"; exit 1; }
+        sudo xcode-select -s "$app/Contents/Developer"; xcodebuild -version
+    - name: Pinned NDK
+      if: inputs.ndk == 'true'
+      shell: bash
+      run: |
+        pin=$(sed -n 's/^ndk = "\(.*\)".*/\1/p' gradle/toolchains.toml)
+        sdk="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"; sm="$sdk/cmdline-tools/latest/bin/sdkmanager"
+        [ -x "$sm" ] || { echo "::error::no sdkmanager under ANDROID_HOME=$sdk"; exit 1; }
+        [ -d "$sdk/ndk/$pin" ] || yes | "$sm" --install "ndk;$pin" >/dev/null
+        ndk="$sdk/ndk/$pin"; rev=$(sed -n 's/^Pkg.Revision *= *//p' "$ndk/source.properties")
+        [ "$rev" = "$pin" ] || { echo "::error::NDK at $ndk is $rev, pinned $pin"; exit 1; }
+        bin=$(ls -d "$ndk"/toolchains/llvm/prebuilt/*/bin)
+        { echo "ANDROID_NDK_ROOT=$ndk"; echo "ANDROID_NDK_HOME=$ndk"
+          for t in nm objcopy objdump readelf; do echo "LLVM_$(echo "$t" | tr '[:lower:]' '[:upper:]')=$bin/llvm-$t"; done; } >> "$GITHUB_ENV"
+        echo "NDK $rev at $ndk"
+    - name: Kotlin/Native toolchain cache
+      if: inputs.konan != ''
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ~/.konan
+        key: konan-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('gradle/libs.versions.toml') }}-${{ inputs.konan }}
+    - name: Kotlin/Native toolchain
+      if: inputs.konan != ''
+      shell: bash
+      env:
+        KONAN_TARGETS: ${{ inputs.konan }}
+      run: |
+        # shellcheck disable=SC2086
+        bash tools/ci/konan-bootstrap.sh $KONAN_TARGETS
+    - name: OpenSSL build cache
+      if: inputs.openssl-cache != ''
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: |
+          build/openssl-work/cache
+          build/openssl-work/src/*.tar.gz
+          build/openssl-work/src/*.tar.gz.asc
+        key: openssl-${{ inputs.openssl-cache }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('gradle/openssl.toml', 'gradle/toolchains.toml', 'tools/openssl/**') }}

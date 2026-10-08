@@ -1,211 +1,436 @@
 # Copyright 2026 The Kuicksilver Authors
 # SPDX-License-Identifier: Apache-2.0
-# Draft: the matrix tools/ci/local-matrix.sh runs on the owner's macOS host today; this file is the same
-# sequence of jobs for GitHub Actions and is exercised there once the repository is public.
+# CI matrix. The same steps as tools/ci/local-matrix.sh, which runs them on the owner's macOS host: both take the
+# module and interop case lists from tools/ci/matrix.sh, and step names match so a red step maps to a local one.
+# Written to pass on fresh GitHub-hosted runners; to be confirmed by the first run after the repository goes public.
+#
+#   lint ──────────────────────────────────────────────── pins, SPDX, script syntax
+#   openssl-docker (linux-x64, linux-arm64, mingw-x64) ─┬─ linux (x64, arm64): manylinux C tests, .so, JVM suites, system OpenSSL
+#                                                        ├─ linux-native: -kn OpenSSL, test.kexe x64 + arm64 (QEMU), mingw test.exe ── windows
+#                                                        ├─ apple (macOS arm64): ABI dumps, ASan C tests, JVM + macosArm64 suites, repro
+#                                                        └─ interop-images ── interop (weekly / dispatch): JVM and native image × 6 peers
+#   android (API 24, 35): AAR (arm64-v8a, x86_64, armeabi-v7a), size and 16 KiB gates, emulator tests
+#   linux ── jdk-compat (JDK 17 API, tests on 17 / 25)
 name: build
-on: [push, pull_request, workflow_dispatch]
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: '17 3 * * 1'   # weekly: the whole matrix plus the QUIC Interop Runner
+  workflow_dispatch:
+    inputs:
+      interop:
+        description: also run the QUIC Interop Runner matrix (hours)
+        type: boolean
+        default: false
+permissions: {}
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+defaults:
+  run:
+    shell: bash
 env:
-  GRADLE_OPTS: -Dorg.gradle.workers.max=2
+  G: ./gradlew --stacktrace
+
 jobs:
-  check:
-    runs-on: ubuntu-latest
+  lint:
+    runs-on: ubuntu-24.04
+    permissions: { contents: read }
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '21'
-      - run: ./gradlew checkSpdxHeaders checkLayerDependencies checkKotlinAbi checkQuicArchitecture
-  openssl:
-    strategy:
-      matrix:
-        include:
-          - { os: macos-latest, target: macos-arm64 }
-          - { os: macos-latest, target: ios-arm64 }
-          - { os: macos-latest, target: ios-sim-arm64 }
-          - { os: macos-latest, target: android-arm64 }
-          - { os: macos-latest, target: android-x86_64 }
-          - { os: macos-latest, target: android-arm }
-          - { os: ubuntu-latest, target: linux-x64 }
-          - { os: ubuntu-24.04-arm, target: linux-arm64 }
-          - { os: ubuntu-latest, target: mingw-x64 }
-          - { os: ubuntu-latest, target: linux-x64-kn }
-          - { os: ubuntu-24.04-arm, target: linux-arm64-kn }
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/cache@v4
-        with:
-          path: build/openssl-work/cache
-          key: openssl-${{ matrix.target }}-${{ hashFiles('gradle/openssl.toml', 'tools/openssl/configure-flags.txt', 'tools/openssl/build.sh') }}
-      - run: bash tools/openssl/fetch.sh
-      - run: bash tools/openssl/build.sh ${{ matrix.target }}
-        if: ${{ !startsWith(matrix.target, 'linux') && matrix.target != 'mingw-x64' }}
-      - run: bash tools/openssl/build-docker.sh ${{ matrix.target }}
-        if: ${{ startsWith(matrix.target, 'linux-x64') || startsWith(matrix.target, 'linux-arm64') || matrix.target == 'mingw-x64' }}
-      - run: bash tools/check/keylog-disabled.sh build/openssl/${{ matrix.target }}/include
-      - name: reproducibility (second build must be byte-identical)
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - name: 'lint: action/image pins'
+        run: bash tools/check/pins.sh .
+      - name: 'lint: SPDX headers'
+        run: bash tools/check/spdx.sh .
+      - name: 'lint: shell syntax'
         run: |
-          mkdir -p build/openssl-work-repro && cp -R build/openssl-work/src build/openssl-work-repro/
-          KSL_OPENSSL_OUT=$PWD/build/openssl-repro KSL_OPENSSL_WORK=$PWD/build/openssl-work-repro bash tools/openssl/build.sh ${{ matrix.target }}
-          cmp build/openssl/${{ matrix.target }}/lib/libcrypto.a build/openssl-repro/${{ matrix.target }}/lib/libcrypto.a
-          cmp build/openssl/${{ matrix.target }}/lib/libssl.a build/openssl-repro/${{ matrix.target }}/lib/libssl.a
-        if: ${{ matrix.target == 'macos-arm64' }}
-      - uses: actions/upload-artifact@v4
-        with:
-          name: openssl-${{ matrix.target }}
-          path: build/openssl/${{ matrix.target }}
-  c-tests:
-    needs: openssl
+          rc=0; while IFS= read -r f; do bash -n "$f" || rc=1; done < <(git ls-files '*.sh'); exit $rc
+      - name: 'lint: shellcheck (errors)'
+        run: git ls-files '*.sh' | xargs shellcheck -S error
+
+  openssl-docker:
+    # The container-built OpenSSL targets, shared with the other jobs as artifacts (they reuse them through
+    # kuicksilver.openssl.prebuilt=true, set by .github/actions/setup). The -kn targets are built on the host with the
+    # Kotlin/Native clang (tools/openssl/build.sh) by the jobs that need them, never here.
     strategy:
+      fail-fast: false
       matrix:
         include:
-          - { os: macos-latest, target: macos-arm64 }
-          - { os: ubuntu-latest, target: linux-x64 }
-          - { os: ubuntu-24.04-arm, target: linux-arm64 }
+          - { target: linux-x64, os: ubuntu-24.04 }
+          - { target: linux-arm64, os: ubuntu-24.04-arm }
+          - { target: mingw-x64, os: ubuntu-24.04 }
     runs-on: ${{ matrix.os }}
+    permissions: { contents: read }
+    timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            build/openssl-work/cache
+            build/openssl-work/src/*.tar.gz
+            build/openssl-work/src/*.tar.gz.asc
+          key: openssl-docker-${{ matrix.target }}-${{ runner.arch }}-${{ hashFiles('gradle/openssl.toml', 'tools/openssl/**') }}
+      - name: 'openssl: fetch and verify'
+        run: bash tools/openssl/fetch.sh
+      - name: 'openssl: build ${{ matrix.target }}'
+        run: bash tools/openssl/build-docker.sh ${{ matrix.target }}
+      - name: 'openssl: no-sslkeylog (${{ matrix.target }})'
+        run: bash tools/check/keylog-disabled.sh build/openssl/${{ matrix.target }}/include
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: openssl-${{ matrix.target }}
           path: build/openssl/${{ matrix.target }}
-      - run: bash tools/c-test.sh ${{ matrix.target }}
-  jvm:
-    needs: openssl
+          if-no-files-found: error
+          retention-days: 7
+
+  linux:
+    # Linux JVM path end to end in the manylinux2014 images (glibc 2.17 floor): C tests, libksl.so, its exports and glibc floor,
+    # then every module's JVM suite on the host JVM against that .so (tools/ci/docker-jvm.sh). arm64 runs on an arm64 runner
+    # (native first, qemu-user only as a fallback — it lacks io_uring and parts of the UDP socket options).
+    needs: openssl-docker
     strategy:
+      fail-fast: false
       matrix:
         include:
-          - { os: macos-latest, target: macos-arm64, classifier: osx-aarch_64 }
-          - { os: ubuntu-latest, target: linux-x64, classifier: linux-x86_64 }
-          - { os: ubuntu-24.04-arm, target: linux-arm64, classifier: linux-aarch_64 }
+          - { arch: x64, os: ubuntu-24.04, target: linux-x64, classifier: linux-x86_64, platform: linux/amd64 }
+          - { arch: arm64, os: ubuntu-24.04-arm, target: linux-arm64, classifier: linux-aarch_64, platform: linux/arm64 }
     runs-on: ${{ matrix.os }}
+    permissions: { contents: read }
+    timeout-minutes: 120
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - uses: ./.github/actions/setup
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          distribution: temurin
-          java-version: '21'
-      - uses: actions/download-artifact@v4
+          name: 'openssl-${{ matrix.target }}'
+          path: 'build/openssl/${{ matrix.target }}'
+      - name: LLVM binutils for the checks
+        run: sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends llvm
+      - name: 'docker: image ${{ matrix.target }}'
+        run: bash tools/openssl/build-docker.sh --image ${{ matrix.target }}
+      - name: 'docker: c-tests ${{ matrix.target }}'
+        run: bash tools/ci/docker-run.sh ${{ matrix.platform }} kuicksilver-openssl-${{ matrix.target }} "CC=/opt/rh/devtoolset-10/root/usr/bin/gcc SAN= bash tools/c-test.sh ${{ matrix.target }}"
+      - name: 'docker: jvm ${{ matrix.target }} (.so + tests)'
+        run: bash tools/ci/docker-jvm.sh ${{ matrix.classifier }}
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: openssl-${{ matrix.target }}
-          path: build/openssl/${{ matrix.target }}
-      - run: ./gradlew :kuicksilver-native:jvmTest :kuicksilver-tls:jvmTest :kuicksilver-ktor-network:jvmTest :kuicksilver-quic:jvmTest :kuicksilver-testing:jvmTest :kuicksilver-interop:jvmTest
-      - name: fuzz regression corpus
-        run: ./gradlew :kuicksilver-quic:jvmTest --tests 'io.kuicksilver.quic.fuzz.*'
-      - name: simulator Monte-Carlo
-        run: ./gradlew :kuicksilver-testing:jvmTest -Pkuicksilver.sim.runs=200 --tests io.kuicksilver.testing.MonteCarloTest
-      - name: allocation gate
-        run: ./gradlew :kuicksilver-bench:jvmTest
-      - run: bash tools/check/exports.sh kuicksilver-native/build/jni/${{ matrix.classifier }}/libksl_3_*.* ${{ startsWith(matrix.os, 'macos') && 'macos' || 'linux' }}
-      - run: bash tools/check/glibc-floor.sh kuicksilver-native/build/jni/${{ matrix.classifier }}/libksl_3_linux_*.so 2.17
-        if: ${{ startsWith(matrix.os, 'ubuntu') }}
-      - name: JDK 24+ restricted native access must stay allowed by the application, never by the library
-        run: ./gradlew :kuicksilver-native:jvmTest -Dkuicksilver.test.jvmargs=--illegal-native-access=deny
-        if: ${{ false }}   # enabled when the runner image ships JDK 24
+          name: jni-${{ matrix.classifier }}
+          path: kuicksilver-native/build/jni
+          if-no-files-found: error
+          retention-days: 7
+      - name: 'docker: system OpenSSL mode'
+        if: matrix.arch == 'x64'
+        run: bash tools/ci/system-openssl.sh
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: failure()
+        with:
+          name: 'reports-linux-${{ matrix.arch }}'
+          path: '**/build/reports/tests/'
+          retention-days: 7
+
+  linux-native:
+    # Kotlin/Native for Linux and Windows: the -kn OpenSSL builds with the konan clang and sysroots, the prefixed archives, the
+    # test executables; test.kexe x64 runs in the manylinux image, arm64 under QEMU in Ubuntu 24.04 (the K/N arm64 sysroot
+    # needs glibc 2.25 > manylinux2014), and the mingw test.exe goes to the windows job.
+    needs: openssl-docker
+    runs-on: ubuntu-24.04
+    permissions: { contents: read }
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - uses: ./.github/actions/setup
+        with: { ndk: 'true', konan: 'linux_x64 linux_arm64 mingw_x64', openssl-cache: linux-native }
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with: { name: openssl-mingw-x64, path: build/openssl/mingw-x64 }
+      - name: 'native: link linux/mingw tests'
+        run: |
+          . tools/ci/matrix.sh
+          # shellcheck disable=SC2046,SC2086   # the lists split into Gradle task paths on purpose
+          $G $(ksl_tasks linkDebugTestLinuxX64 $KSL_LINK_MODULES) $(ksl_tasks linkDebugTestLinuxArm64 $KSL_LINK_MODULES) $(ksl_tasks linkDebugTestMingwX64 $KSL_LINK_MODULES)
+      - name: 'native: glibc floors'
+        run: bash tools/check/glibc-floor.sh kuicksilver-native/build/bin/linuxX64/debugTest/test.kexe 2.19 && bash tools/check/glibc-floor.sh kuicksilver-native/build/bin/linuxArm64/debugTest/test.kexe 2.25
+      - name: 'native: prefix whitelist (linux/mingw)'
+        run: for t in linux-x64-kn linux-arm64-kn mingw-x64; do bash tools/prefix/check-no-unprefixed.sh build/openssl-prefixed/$t/lib || exit 1; done
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+        with: { platforms: arm64 }
+      - name: 'docker: image linux-x64'
+        run: bash tools/openssl/build-docker.sh --image linux-x64
+      - name: 'docker: native test.kexe linux-x64'
+        run: bash tools/ci/docker-run.sh linux/amd64 kuicksilver-openssl-linux-x64 "kuicksilver-native/build/bin/linuxX64/debugTest/test.kexe"
+      - name: 'docker: native test.kexe linux-arm64'
+        run: . tools/ci/matrix.sh && bash tools/ci/docker-run.sh linux/arm64 "$KSL_UBUNTU_IMAGE" "kuicksilver-native/build/bin/linuxArm64/debugTest/test.kexe"
+      - name: 'docker: quic test.kexe linux-x64'
+        run: bash tools/ci/docker-run.sh linux/amd64 kuicksilver-openssl-linux-x64 "kuicksilver-quic/build/bin/linuxX64/debugTest/test.kexe"
+      - name: 'docker: quic test.kexe linux-arm64'
+        run: . tools/ci/matrix.sh && bash tools/ci/docker-run.sh linux/arm64 "$KSL_UBUNTU_IMAGE" "kuicksilver-quic/build/bin/linuxArm64/debugTest/test.kexe"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: mingw-test-exe
+          path: |
+            kuicksilver-native/build/bin/mingwX64/debugTest/test.exe
+            kuicksilver-quic/build/bin/mingwX64/debugTest/test.exe
+          if-no-files-found: error
+          retention-days: 7
+
+  windows:
+    # Only runs the mingwX64 test executables cross-linked by linux-native (mingwX64 is Tier 3, built off Windows).
+    needs: linux-native
+    runs-on: windows-2025
+    permissions: { contents: read }
+    timeout-minutes: 30
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with: { name: mingw-test-exe, path: exe }
+      - name: 'native: mingwX64 test.exe'
+        shell: pwsh
+        run: |
+          $failed = 0
+          foreach ($m in 'kuicksilver-native', 'kuicksilver-quic') {
+            Write-Host "== $m"
+            & "exe/$m/build/bin/mingwX64/debugTest/test.exe"
+            if ($LASTEXITCODE -ne 0) { $failed++ }
+          }
+          exit $failed
+
+  apple:
+    # macOS arm64: everything that needs Xcode or the host JVM on a Mac, in the order of tools/ci/local-matrix.sh. checkKotlinAbi
+    # runs here because the klib dumps of every target need the Apple, Android (NDK) and Kotlin/Native toolchains together;
+    # the only Docker-built input, mingw-x64 OpenSSL, comes from openssl-docker.
+    needs: openssl-docker
+    runs-on: macos-26
+    permissions: { contents: read }
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - uses: ./.github/actions/setup
+        with: { ndk: 'true', xcode: 'true', konan: 'linux_x64 linux_arm64 mingw_x64', openssl-cache: apple }
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with: { name: openssl-mingw-x64, path: build/openssl/mingw-x64 }
+      - name: 'check: spdx, layers, abi'
+        run: |
+          . tools/ci/matrix.sh
+          # shellcheck disable=SC2086   # the list splits into Gradle task paths on purpose
+          $G $KSL_CHECKS
+      - name: 'quic/http3: architecture checks'
+        run: |
+          . tools/ci/matrix.sh
+          # shellcheck disable=SC2086   # the list splits into Gradle task paths on purpose
+          $G $KSL_ARCH_CHECKS
+      - name: 'openssl: no-sslkeylog (macos-arm64)'
+        run: bash tools/check/keylog-disabled.sh build/openssl/macos-arm64/include
+      - name: 'c-tests: macos-arm64 (ASan/UBSan)'
+        run: bash tools/c-test.sh macos-arm64
+      - name: 'jvm: all module tests'
+        run: |
+          . tools/ci/matrix.sh
+          # shellcheck disable=SC2086   # the list splits into Gradle task paths on purpose
+          $G $KSL_JVM_TESTS
+      - name: 'sample: realtime-telemetry'
+        run: cd samples/realtime-telemetry && ../../gradlew --stacktrace jvmTest
+      - name: 'fuzz: regression corpus'
+        run: . tools/ci/matrix.sh && $G "${KSL_FUZZ_ARGS[@]}"
+      - name: 'sim: Monte-Carlo (KSL_SIM_RUNS=200)'
+        run: . tools/ci/matrix.sh && $G "${KSL_SIM_ARGS[@]}"
+      - name: 'bench: allocation gate'
+        run: $G :kuicksilver-bench:jvmTest
+      - name: 'jvm: exports whitelist (dylib)'
+        run: |
+          # shellcheck disable=SC2012   # library names are fixed ASCII
+          bash tools/check/exports.sh "$(ls kuicksilver-native/build/jni/osx-aarch_64/libksl_*_osx_aarch_64.dylib | tail -1)" macos
+      - name: 'native: macosArm64 tests'
+        run: |
+          . tools/ci/matrix.sh
+          # shellcheck disable=SC2086   # the list splits into Gradle task paths on purpose
+          $G $KSL_MACOS_TESTS
+      - name: 'native: prefix whitelist (apple)'
+        run: for t in macos-arm64 ios-arm64 ios-sim-arm64; do bash tools/prefix/check-no-unprefixed.sh build/openssl-prefixed/$t/lib || exit 1; done
+      - name: 'native: link ios-sim tests'
+        run: |
+          . tools/ci/matrix.sh
+          # shellcheck disable=SC2046,SC2086   # the lists split into Gradle task paths on purpose
+          $G $(ksl_tasks linkDebugTestIosSimulatorArm64 $KSL_LINK_MODULES)
+      - name: 'repro: double build (macos-arm64)'
+        run: bash tools/check/double-build.sh macos-arm64
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: failure()
+        with: { name: reports-apple, path: '**/build/reports/', retention-days: 7 }
+
   android:
-    needs: openssl
-    runs-on: ubuntu-latest
+    # AAR with libksl.so for arm64-v8a, x86_64 and armeabi-v7a (pinned NDK), the size and 16 KiB page gates, then the device tests on the
+    # x86_64 emulator at minSdk 24 and at compileSdk 35 (KVM on the Linux runner; Apple-silicon runners cannot nest it).
     strategy:
-      matrix: { api: [24, 35] }
+      fail-fast: false
+      matrix:
+        api: [24, 35]
+    runs-on: ubuntu-24.04
+    permissions: { contents: read }
+    timeout-minutes: 120
+    env:
+      AAR: kuicksilver-native/build/outputs/aar/kuicksilver-native.aar
+      SIZE_LIMIT: '3000000'
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '21'
-      - uses: actions/download-artifact@v4
-        with:
-          name: openssl-android-arm64
-          path: build/openssl/android-arm64
-      - uses: actions/download-artifact@v4
-        with:
-          name: openssl-android-x86_64
-          path: build/openssl/android-x86_64
-      - uses: actions/download-artifact@v4
-        with:
-          name: openssl-android-arm
-          path: build/openssl/android-arm
-      - run: ./gradlew :kuicksilver-native:bundleAndroidMainAar
-      - run: bash tools/check/size.sh kuicksilver-native/build/outputs/aar/kuicksilver-native.aar && bash tools/check/page-align.sh kuicksilver-native/build/outputs/aar/kuicksilver-native.aar
-      - uses: reactivecircus/android-emulator-runner@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - uses: ./.github/actions/setup
+        with: { ndk: 'true', openssl-cache: android }
+      - name: 'android: AAR'
+        run: $G :kuicksilver-native:bundleAndroidMainAar
+      - name: 'android: size gate'
+        run: bash tools/check/size.sh "$AAR" "$SIZE_LIMIT"
+      - name: 'android: 16 KiB pages'
+        run: bash tools/check/page-align.sh "$AAR"
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules && sudo udevadm trigger --name-match=kvm
+      - name: 'android: device tests (emulator)'
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
         with:
           api-level: ${{ matrix.api }}
           arch: x86_64
-          script: ./gradlew androidConnectedCheck
-  native-macos:
-    needs: openssl
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+          disable-animations: true
+          script: ./gradlew --stacktrace androidConnectedCheck
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: failure()
         with:
-          distribution: temurin
-          java-version: '21'
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: 'openssl-*'
-          path: build/openssl
-          merge-multiple: false
-      - run: ./gradlew macosArm64Test iosSimulatorArm64Test
-      - run: for t in macos-arm64 ios-arm64 ios-sim-arm64; do bash tools/prefix/check-no-unprefixed.sh build/openssl-prefixed/$t/lib; done
-  native-linux:
-    needs: openssl
+          name: 'reports-android-${{ matrix.api }}'
+          path: '**/build/reports/'
+          retention-days: 7
+
+  jdk-compat:
+    # Review I7: the libraries promise JVM 17. Compiled against the JDK 17 API (-Xjdk-release=17, always on in kuicksilver.kmp),
+    # every JVM suite runs on Temurin 17; on JDK 25 the same suites run with restricted native access denied unless the
+    # application enables it (JEP 472) — the library must never need more than --enable-native-access.
+    needs: linux
     strategy:
+      fail-fast: false
       matrix:
-        include:
-          - { os: ubuntu-latest, target: linuxX64, dir: linux-x64-kn, glibc: '2.19' }
-          - { os: ubuntu-24.04-arm, target: linuxArm64, dir: linux-arm64-kn, glibc: '2.25' }
-    runs-on: ${{ matrix.os }}
+        jdk: [17, 25]
+    runs-on: ubuntu-24.04
+    permissions: { contents: read }
+    timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - id: testjdk
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
         with:
           distribution: temurin
-          java-version: '21'
-      - uses: actions/download-artifact@v4
+          java-version: '${{ matrix.jdk }}'
+      - uses: ./.github/actions/setup
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with: { name: jni-linux-x86_64, path: kuicksilver-native/build/jni }
+      - name: 'jvm: all module tests on JDK ${{ matrix.jdk }} (JDK 17 API)'
+        env:
+          TEST_JDK: ${{ steps.testjdk.outputs.path }}
+          TEST_JVM_ARGS: ${{ matrix.jdk == 25 && '--illegal-native-access=deny --enable-native-access=ALL-UNNAMED' || '' }}
+        run: |
+          . tools/ci/matrix.sh
+          # shellcheck disable=SC2086
+          $G -x :kuicksilver-native:buildJniHost -Pkuicksilver.test.jdk=${{ matrix.jdk }} \
+            "-Porg.gradle.java.installations.paths=$TEST_JDK" ${TEST_JVM_ARGS:+"-Pkuicksilver.test.jvmArgs=$TEST_JVM_ARGS"} $KSL_JVM_TESTS
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: failure()
         with:
-          name: openssl-${{ matrix.dir }}
-          path: build/openssl/${{ matrix.dir }}
-      - run: ./gradlew ${{ matrix.target }}Test
-      - run: bash tools/check/glibc-floor.sh kuicksilver-native/build/bin/${{ matrix.target }}/debugTest/test.kexe ${{ matrix.glibc }}
-      - run: bash tools/prefix/check-no-unprefixed.sh build/openssl-prefixed/${{ matrix.dir }}/lib
-  native-windows:
-    needs: openssl
-    runs-on: windows-latest
+          name: 'reports-jdk-${{ matrix.jdk }}'
+          path: '**/build/reports/tests/'
+          retention-days: 7
+
+  interop-images:
+    # Both interop endpoint images: JVM (kuicksilver-interop:local, with the manylinux libksl.so from the linux job)
+    # and Kotlin/Native (kuicksilver-interop-native:local), built once and handed to the per-peer jobs.
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.interop)
+    needs: [openssl-docker, linux]
+    runs-on: ubuntu-24.04
+    permissions: { contents: read }
+    timeout-minutes: 120
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '21'
-      - uses: actions/download-artifact@v4
-        with:
-          name: openssl-mingw-x64
-          path: build/openssl/mingw-x64
-      - run: ./gradlew mingwX64Test
-  system-openssl:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - run: bash tools/ci/system-openssl.sh
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - uses: ./.github/actions/setup
+        with: { ndk: 'true', konan: 'linux_x64 linux_arm64', openssl-cache: interop }
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with: { name: openssl-linux-x64, path: build/openssl/linux-x64 }
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with: { name: jni-linux-x86_64, path: kuicksilver-native/build/jni }
+      - name: 'docker: image linux-x64'   # build-image.sh builds the .so in it when the artifact lacks the current ABI
+        run: bash tools/openssl/build-docker.sh --image linux-x64
+      - name: 'interop: jvm image'
+        run: bash tools/interop/build-image.sh
+      - name: 'interop: native image'
+        run: bash tools/interop/build-image.sh --native
+      - name: Save images
+        run: docker save kuicksilver-interop:local kuicksilver-interop-native:local | gzip -1 > interop-images.tar.gz
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with: { name: interop-images, path: interop-images.tar.gz, if-no-files-found: error, retention-days: 3, compression-level: 0 }
+
   interop:
-    # The QUIC Interop Runner against the peers in tools/interop/required.json; manual because it pulls the peer images (~30 min).
-    if: ${{ github.event_name == 'workflow_dispatch' }}
-    needs: openssl
-    runs-on: ubuntu-latest
+    # The QUIC Interop Runner (pinned in tools/interop/runner.lock) with kuicksilver as server and as client against each peer;
+    # --check-required fails on any cell of tools/interop/required.json in this run's scope (its image, peer and cases).
+    needs: interop-images
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [jvm, native]
+        peer: [quic-go, ngtcp2, quiche, picoquic, quinn, msquic]   # = KSL_INTEROP_PEERS in tools/ci/matrix.sh
+    runs-on: ubuntu-24.04
+    permissions: { contents: read }
+    timeout-minutes: 300
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with: { name: interop-images }
+      - name: Load images
+        run: gunzip -c interop-images.tar.gz | docker load && rm interop-images.tar.gz
+      - name: Runner prerequisites
+        run: |
+          sudo apt-get update -q
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends tshark python3-venv
+          sudo modprobe ip6table_filter   # the simulator's IPv6 network
+      - name: 'interop: ${{ matrix.image }} image vs ${{ matrix.peer }}, required cells'
+        env:
+          IMAGE: ${{ matrix.image }}
+          PEER: ${{ matrix.peer }}
+        run: |
+          . tools/ci/matrix.sh
+          case " $KSL_INTEROP_PEERS " in *" $PEER "*) ;; *) echo "::error::$PEER is not in KSL_INTEROP_PEERS (tools/ci/matrix.sh)"; exit 1 ;; esac
+          if [ "$IMAGE" = native ]; then
+            bash tools/interop/run-local.sh --check-required --image native -t "$KSL_INTEROP_NATIVE_CASES" "$PEER"
+          else
+            bash tools/interop/run-local.sh --check-required -t "$KSL_INTEROP_CASES" "$PEER"
+          fi
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
         with:
-          distribution: temurin
-          java-version: '21'
-      - uses: actions/download-artifact@v4
-        with:
-          name: openssl-linux-x64
-          path: build/openssl/linux-x64
-      - run: sudo apt-get install -y tshark
-      - run: bash tools/interop/build-image.sh
-      - run: bash tools/interop/build-image.sh --native
-      - run: bash tools/interop/run-local.sh --check-required -t handshake,transfer,longrtt,chacha20,multiplexing,retry,keyupdate,blackhole,ecn,amplificationlimit,handshakeloss,transferloss,handshakecorruption,transfercorruption,ipv6,v2,rebind-port,rebind-addr
-      - run: bash tools/interop/run-local.sh --check-required --image native -t handshake,transfer,retry,keyupdate,ecn,rebind-port quic-go ngtcp2 quinn msquic picoquic
+          name: 'interop-${{ matrix.image }}-${{ matrix.peer }}'
+          path: build/interop/2*
+          retention-days: 14
+
+  consumer-smoke:
+    # PLACEHOLDER for K6 part E (E2), off until the publication config lands: the published artifacts, consumed the way a user
+    # does — publishToMavenLocal, then samples/realtime-telemetry built from mavenLocal() without includeBuild.
+    # Part E replaces the last step and turns the job on by setting the repository variable KSL_CONSUMER_SMOKE to 'true'.
+    if: vars.KSL_CONSUMER_SMOKE == 'true'
+    needs: apple
+    runs-on: macos-26
+    permissions: { contents: read }
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - uses: ./.github/actions/setup
+        with: { ndk: 'true', xcode: 'true', konan: 'linux_x64 linux_arm64 mingw_x64', openssl-cache: apple }
+      - name: 'publish: mavenLocal'
+        run: $G publishToMavenLocal
+      - name: 'sample: realtime-telemetry from mavenLocal'
+        run: echo "part E (E2) adds the mavenLocal mode of samples/realtime-telemetry"; exit 1

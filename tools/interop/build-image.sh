@@ -24,6 +24,6 @@ for cls in linux-x86_64 linux-aarch_64; do
       "[ -d /usr/lib/jvm/java/include ] || yum -q -y install java-11-openjdk-devel >/dev/null 2>&1 || true; bash tools/build-jni.sh $cls kuicksilver-native/build/jni"
   fi
 done
-./gradlew --max-workers=2 -q :kuicksilver-interop:installJvmDist
+./gradlew --max-workers=2 -q -x :kuicksilver-native:buildJniHost :kuicksilver-interop:installJvmDist   # the image carries the manylinux .so above, never a host build (review I8)
 docker buildx build --platform "$platforms" --load -t kuicksilver-interop:local -f tools/interop/Dockerfile .
 echo "built kuicksilver-interop:local for $platforms"
