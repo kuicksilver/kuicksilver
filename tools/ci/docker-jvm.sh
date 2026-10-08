@@ -25,6 +25,6 @@ if [ "$(uname -s)" = Linux ] && [ "$(uname -m)" = "$march" ] && [ "${KSL_JVM_IN_
   (cd "$root" && ./gradlew ${KSL_GRADLE_ARGS:-} -x :kuicksilver-native:buildJniHost $KSL_JVM_TESTS)
 else
   docker run --rm --platform "$plat" -v "$root:/w" -v "$HOME/.gradle:/root/.gradle" -w /w -e GRADLE_OPTS="-Dorg.gradle.workers.max=2" \
-    eclipse-temurin:21 bash -c \
+    eclipse-temurin:21@sha256:3e3c176ffed168beb42c607be9bc1639b466cf00261a0fb04425562c9d0c5c2b bash -c \
     "./gradlew --offline -q -x :kuicksilver-native:buildJniHost $KSL_JVM_TESTS"
 fi

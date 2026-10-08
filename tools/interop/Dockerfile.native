@@ -1,7 +1,9 @@
 # Copyright 2026 The Kuicksilver Authors
 # SPDX-License-Identifier: Apache-2.0
 # QUIC Interop Runner endpoint on Kotlin/Native: the statically linked Linux executable (ksl + OpenSSL inside) on the simulator base image.
-FROM martenseemann/quic-network-simulator-endpoint:latest
+# Pinned by digest (review I8; tag and digest resolved from the registry 2026-10-08). Renovate updates the digest; to pin the image
+# a local build already used instead: docker inspect --format "{{index .RepoDigests 0}}" <image>.
+FROM martenseemann/quic-network-simulator-endpoint:latest@sha256:3b2b9e6fa317da238c8140a7b6d2bf8d4d45a8464b873eecac3ff2a32520b71a
 ARG TARGETARCH
 RUN apt-get update && apt-get install -y --no-install-recommends openssl && rm -rf /var/lib/apt/lists/*
 COPY kuicksilver-interop/build/install/kuicksilver-interop-native/${TARGETARCH}/kuicksilver-interop /app/kuicksilver-interop

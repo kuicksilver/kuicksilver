@@ -20,7 +20,7 @@ esac
 O="$root/build/openssl/$ossl"; [ -d "$O/lib" ] || { echo "OpenSSL for $ossl not built" >&2; exit 2; }
 mkdir -p "$out/$abi" "$root/build/android-jni"; map="$root/build/android-jni/exports.map"; printf '{ global: JNI_OnLoad; JNI_OnLoad_ksl; local: *; };\n' > "$map"
 src=$(ls "$root"/kuicksilver-native/src/c/ksl_*.c) 
-"$T/clang" --target="$target" -std=c11 -Os -fvisibility=hidden -fno-omit-frame-pointer -fPIC -ffunction-sections -fdata-sections -Wall -Wextra -Werror -Wno-misleading-indentation \
+"$T/clang" --target="$target" -std=c11 -Os -ffile-prefix-map="$root"=. -fvisibility=hidden -fno-omit-frame-pointer -fPIC -ffunction-sections -fdata-sections -Wall -Wextra -Werror -Wno-misleading-indentation \
   -I"$O/include" -I"$root/kuicksilver-native/src/c" -shared -Wl,--version-script="$map" -Wl,--exclude-libs,ALL -Wl,--no-undefined \
   -Wl,-z,max-page-size=16384 -Wl,-z,common-page-size=16384 -Wl,--gc-sections -Wl,-z,noexecstack \
   $src "$root/kuicksilver-native/src/jni/ksl_jni.c" "$O/lib/libssl.a" "$O/lib/libcrypto.a" -llog -o "$out/$abi/libksl.so"

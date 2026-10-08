@@ -19,7 +19,7 @@ case "$target" in
 esac
 work="$root/build/ksl/$target"; rm -rf "$work"; mkdir -p "$work"
 for f in "$root"/kuicksilver-native/src/c/ksl_*.c; do
-  $CC -std=c11 -O2 -fvisibility=hidden -fno-omit-frame-pointer -fPIC -ffunction-sections -fdata-sections -Wall -Wextra -Werror -Wno-misleading-indentation -I"$O/include" -I"$root/kuicksilver-native/src/c" -c "$f" -o "$work/$(basename "${f%.c}").o"
+  $CC -std=c11 -O2 -ffile-prefix-map="$root"=. -fvisibility=hidden -fno-omit-frame-pointer -fPIC -ffunction-sections -fdata-sections -Wall -Wextra -Werror -Wno-misleading-indentation -I"$O/include" -I"$root/kuicksilver-native/src/c" -c "$f" -o "$work/$(basename "${f%.c}").o"
 done
 export ZERO_AR_DATE=1; rm -f "$O/lib/libksl.a"; $AR qc "$O/lib/libksl.a" "$work"/*.o; $AR s "$O/lib/libksl.a" 2>/dev/null || true
 echo "$O/lib/libksl.a"
