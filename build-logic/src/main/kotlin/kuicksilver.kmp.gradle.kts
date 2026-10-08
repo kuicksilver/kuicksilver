@@ -78,3 +78,11 @@ configurations.matching { it.name.contains("AndroidDeviceTest") || it.name.conta
 
 // Explicit native library for the JVM tests (Linux containers, CI): -Pkuicksilver.native.path=... is forwarded to the test JVM.
 tasks.withType<Test>().configureEach { providers.gradleProperty("kuicksilver.native.path").orNull?.let { systemProperty("kuicksilver.native.path", it) } }
+// CI jdk-compat job (review I7, M3): -Pkuicksilver.test.jdk=<N> runs the JVM tests on JDK N (a toolchain Gradle can find, e.g. through
+// -Porg.gradle.java.installations.paths=...), -Pkuicksilver.test.jvmArgs="<args>" passes JVM flags to them (JDK 24+: --illegal-native-access=deny).
+tasks.withType<Test>().matching { it.name == "jvmTest" }.configureEach {
+    providers.gradleProperty("kuicksilver.test.jdk").orNull?.let { v ->
+        javaLauncher.set(project.extensions.getByType<org.gradle.jvm.toolchain.JavaToolchainService>().launcherFor { languageVersion.set(org.gradle.jvm.toolchain.JavaLanguageVersion.of(v)) })
+    }
+    providers.gradleProperty("kuicksilver.test.jvmArgs").orNull?.let { a -> jvmArgs(a.split(' ').filter { it.isNotBlank() }) }
+}

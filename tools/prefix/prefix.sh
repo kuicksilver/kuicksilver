@@ -6,9 +6,10 @@
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"; root="$here/../.."
 target="${1:?target}"
-OBJCOPY="${2:-${LLVM_OBJCOPY:-$(ls "$HOME"/Library/Android/sdk/ndk/*/toolchains/llvm/prebuilt/*/bin/llvm-objcopy 2>/dev/null | head -1)}}"
-[ -x "$OBJCOPY" ] || { echo "llvm-objcopy not found (set LLVM_OBJCOPY)" >&2; exit 2; }
-NM="$(dirname "$OBJCOPY")/llvm-nm"
+. "$here/../check/llvm-tool.sh"
+OBJCOPY="${2:-$(ksl_llvm_tool llvm-objcopy)}"
+[ -n "$OBJCOPY" ] && [ -x "$OBJCOPY" ] || { echo "llvm-objcopy not found (set LLVM_OBJCOPY or ANDROID_NDK_ROOT)" >&2; exit 2; }
+NM="$(dirname "$OBJCOPY")/llvm-nm"; [ -x "$NM" ] || NM="$(ksl_llvm_tool llvm-nm)"   # same LLVM as the objcopy when it ships one
 case "$target" in
   macos-*|ios-*) fmt=macho ;;
   mingw-x64) fmt=coff ;;

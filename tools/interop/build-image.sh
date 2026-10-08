@@ -18,8 +18,10 @@ for cls in linux-x86_64 linux-aarch_64; do
   abi=$(sed -n 's/^#define KSL_ABI_VERSION \([0-9]*\)u/\1/p' kuicksilver-native/src/c/ksl.h)
   if ! ls kuicksilver-native/build/jni/$cls/libksl_${abi}_*.so >/dev/null 2>&1; then   # the .so of the current ABI, not any leftover
     case "$cls" in linux-x86_64) plat=linux/amd64; img=kuicksilver-openssl-linux-x64 ;; *) plat=linux/arm64; img=kuicksilver-openssl-linux-arm64 ;; esac
-    docker run --rm --platform "$plat" -v "$root:/w" -w /w -e CC=/opt/rh/devtoolset-10/root/usr/bin/gcc -e JAVA_HOME=/usr/lib/jvm/java "$img" bash -c \
-      "yum -q -y install java-11-openjdk-devel >/dev/null 2>&1 || true; bash tools/build-jni.sh $cls kuicksilver-native/build/jni"
+    uflag=""; [ "$(uname -s)" = Linux ] && uflag="--user $(id -u):$(id -g)"   # CI: the host Gradle must be able to write next to the result
+    # shellcheck disable=SC2086
+    docker run --rm $uflag -e HOME=/tmp --platform "$plat" -v "$root:/w" -w /w -e CC=/opt/rh/devtoolset-10/root/usr/bin/gcc -e JAVA_HOME=/usr/lib/jvm/java "$img" bash -c \
+      "[ -d /usr/lib/jvm/java/include ] || yum -q -y install java-11-openjdk-devel >/dev/null 2>&1 || true; bash tools/build-jni.sh $cls kuicksilver-native/build/jni"
   fi
 done
 ./gradlew --max-workers=2 -q :kuicksilver-interop:installJvmDist

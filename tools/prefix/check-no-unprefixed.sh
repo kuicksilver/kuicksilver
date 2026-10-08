@@ -6,8 +6,9 @@
 # any defined global that does not start with ksl_ is a finding, whatever its spelling.
 # Usage: check-no-unprefixed.sh <lib dir> [llvm-nm]
 set -uo pipefail
-dir="${1:?dir}"; NM="${2:-${LLVM_NM:-$(ls "$HOME"/Library/Android/sdk/ndk/*/toolchains/llvm/prebuilt/*/bin/llvm-nm 2>/dev/null | head -1)}}"
-[ -n "$NM" ] && [ -x "$NM" ] || { echo "FAIL: llvm-nm not found (pass it as \$2 or LLVM_NM)"; exit 2; }
+. "$(dirname "${BASH_SOURCE[0]}")/../check/llvm-tool.sh"
+dir="${1:?dir}"; NM="${2:-$(ksl_llvm_tool llvm-nm)}"
+[ -n "$NM" ] && [ -x "$NM" ] || { echo "FAIL: llvm-nm not found (pass it as \$2, or set LLVM_NM or ANDROID_NDK_ROOT)"; exit 2; }
 for a in libcrypto.a libssl.a; do [ -f "$dir/$a" ] || { echo "FAIL: $dir/$a missing"; exit 2; }; done
 archives="libcrypto.a libssl.a"; if [ -f "$dir/libksl.a" ]; then archives="$archives libksl.a"; else echo "note: libksl.a not present yet, checking OpenSSL archives only"; fi
 # mingw emits a compiler-generated indirection symbol `.refptr.<name>` for an external; it names a ksl_ symbol and is not a new global

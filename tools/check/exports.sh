@@ -4,9 +4,10 @@
 # Whitelist check of a shared library's exported symbols: only ksl_*, JNI_OnLoad and JNI_OnLoad_ksl may be visible.
 # Usage: exports.sh <lib.so|dylib|dll> <linux|android|macos|windows> [llvm-nm]
 set -uo pipefail
-lib="${1:?lib}"; plat="${2:?platform}"; NM="${3:-${LLVM_NM:-$(ls "$HOME"/Library/Android/sdk/ndk/*/toolchains/llvm/prebuilt/*/bin/llvm-nm 2>/dev/null | head -1)}}"
+. "$(dirname "${BASH_SOURCE[0]}")/llvm-tool.sh"
+lib="${1:?lib}"; plat="${2:?platform}"; NM="${3:-$(ksl_llvm_tool llvm-nm)}"
 [ -f "$lib" ] || { echo "FAIL: $lib missing"; exit 2; }
-[ -x "$NM" ] || { echo "FAIL: llvm-nm not found (set LLVM_NM)"; exit 2; }
+[ -x "$NM" ] || { echo "FAIL: llvm-nm not found (set LLVM_NM or ANDROID_NDK_ROOT)"; exit 2; }
 case "$plat" in
   macos)   syms=$("$NM" -gU --defined-only "$lib" | awk 'NF>=3 {print $3}' | sed 's/^_//') ;;
   windows) syms=$("$NM" --defined-only -g "$lib" 2>/dev/null | awk 'NF>=3 {print $3}' | grep -v '^\.' ) ;;

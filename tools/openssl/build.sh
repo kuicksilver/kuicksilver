@@ -25,7 +25,9 @@ case "$target" in
   ios-arm64)     cfg=ios64-xcrun;        extra="-mios-version-min=15.0" ;;
   ios-sim-arm64) cfg=iossimulator-arm64-xcrun; extra="-mios-simulator-version-min=15.0" ;;
   android-arm64|android-x86_64|android-arm)
-    export ANDROID_NDK_ROOT="${ANDROID_NDK_ROOT:-$( (ls -d "$HOME"/Library/Android/sdk/ndk/* "$HOME"/Android/Sdk/ndk/* 2>/dev/null || true) | sort -V | tail -1)}"; [ -d "$ANDROID_NDK_ROOT" ] || { echo "set ANDROID_NDK_ROOT" >&2; exit 2; }
+    # the NDK pinned in gradle/toolchains.toml when installed, else the newest one (CI sets ANDROID_NDK_ROOT to the pinned NDK)
+    pin=$(sed -n 's/^ndk = "\(.*\)".*/\1/p' "$root/gradle/toolchains.toml" 2>/dev/null || true)
+    export ANDROID_NDK_ROOT="${ANDROID_NDK_ROOT:-$( (ls -d "$HOME"/Library/Android/sdk/ndk/"${pin:-none}" "$HOME"/Android/Sdk/ndk/"${pin:-none}" 2>/dev/null || ls -d "$HOME"/Library/Android/sdk/ndk/* "$HOME"/Android/Sdk/ndk/* 2>/dev/null || true) | sort -V | tail -1)}"; [ -d "$ANDROID_NDK_ROOT" ] || { echo "set ANDROID_NDK_ROOT" >&2; exit 2; }
     cfg=$target   # the OpenSSL Configure names; android-arm is armv7-a (NDK triple armv7a-linux-androideabi, its default softfp ABI + NEON)
     tc="$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/$(ls "$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt")"
     export PATH="$tc/bin:$PATH"
@@ -36,7 +38,9 @@ case "$target" in
   linux-x64-kn|linux-arm64-kn)
     # Kotlin/Native toolchain: konan clang + the gcc-8.3.0/glibc sysroot K/N links against.
     kdeps="${KONAN_DEPS:-$HOME/.konan/dependencies}"
-    llvm=$(ls -d "$kdeps"/llvm-21-*-essentials-* | head -1)
+    # konan.properties: macOS hosts use the "essentials" LLVM, Linux x64 hosts the "dev" one (llvm-21-x86_64-linux-dev-*)
+    llvm=$( (ls -d "$kdeps"/llvm-21-*-essentials-* "$kdeps"/llvm-21-*-dev-* 2>/dev/null || true) | head -1)
+    [ -n "$llvm" ] || { echo "no Kotlin/Native LLVM in $kdeps (run tools/ci/konan-bootstrap.sh)" >&2; exit 2; }
     if [ "$target" = linux-x64-kn ]; then triple=x86_64-unknown-linux-gnu; cfg=linux-x86_64; else triple=aarch64-unknown-linux-gnu; cfg=linux-aarch64; fi
     tc=$(ls -d "$kdeps"/$triple-gcc-8.3.0-glibc-* | head -1)
     export CC="$llvm/bin/clang"

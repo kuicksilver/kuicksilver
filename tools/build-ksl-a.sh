@@ -6,7 +6,7 @@
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"; target="${1:?target}"
 O="$root/build/openssl/$target"; [ -d "$O/lib" ] || { echo "build OpenSSL for $target first" >&2; exit 2; }
-kdeps="${KONAN_DEPS:-$HOME/.konan/dependencies}"; llvm=$( (ls -d "$kdeps"/llvm-*-essentials-* 2>/dev/null || true) | sort -V | tail -1)
+kdeps="${KONAN_DEPS:-$HOME/.konan/dependencies}"; llvm=$( (ls -d "$kdeps"/llvm-*-essentials-* "$kdeps"/llvm-*-dev-* 2>/dev/null || true) | sort -V | tail -1)   # essentials on macOS hosts, dev on Linux x64 hosts
 case "$target" in
   linux-x64-kn)   triple=x86_64-unknown-linux-gnu;  tc=$(ls -d "$kdeps"/$triple-gcc-8.3.0-glibc-* | head -1); CC="$llvm/bin/clang --target=$triple --sysroot=$tc/$triple/sysroot --gcc-toolchain=$tc -U_FORTIFY_SOURCE"; AR="$llvm/bin/llvm-ar" ;;
   linux-arm64-kn) triple=aarch64-unknown-linux-gnu; tc=$(ls -d "$kdeps"/$triple-gcc-8.3.0-glibc-* | head -1); CC="$llvm/bin/clang --target=$triple --sysroot=$tc/$triple/sysroot --gcc-toolchain=$tc -U_FORTIFY_SOURCE"; AR="$llvm/bin/llvm-ar" ;;

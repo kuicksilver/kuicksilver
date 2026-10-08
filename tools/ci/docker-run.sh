@@ -5,4 +5,7 @@
 # Usage: docker-run.sh <platform> <image> "<command>"
 set -euo pipefail
 root="$(cd "$(dirname "$0")/../.." && pwd)"
-docker run --rm --platform "$1" -v "$root:/w" -w /w "$2" bash -c "$3"
+# On Linux hosts (CI) the container runs as the invoking user: files it writes into the checkout must stay writable for the host Gradle.
+uflag=""; [ "$(uname -s)" = Linux ] && uflag="--user $(id -u):$(id -g)"
+# shellcheck disable=SC2086
+docker run --rm $uflag -e HOME=/tmp --platform "$1" -v "$root:/w" -w /w "$2" bash -c "$3"

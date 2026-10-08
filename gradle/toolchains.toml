@@ -1,0 +1,11 @@
+# Copyright 2026 The Kuicksilver Authors
+# SPDX-License-Identifier: Apache-2.0
+# Toolchain pins outside the Gradle version catalog (spec 8.5, review I8). Read by tools/build-android-so.sh,
+# tools/check/llvm-tool.sh and .github/workflows/build.yml; update together with the CI runner images.
+[android]
+# NDK r28c (16 KiB pages by default; build-android-so.sh still passes the max-page-size flags so r27 hosts stay correct)
+ndk = "28.2.13676358"
+
+[apple]
+# Xcode for Kotlin 2.4.20 (spec 8.5); CI selects /Applications/Xcode_<xcode>.app and fails if the runner image lacks it
+xcode = "26.4"

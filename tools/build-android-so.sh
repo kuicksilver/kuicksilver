@@ -2,10 +2,14 @@
 # Copyright 2026 The Kuicksilver Authors
 # SPDX-License-Identifier: Apache-2.0
 # Builds libksl.so for one Android ABI with the NDK clang: ksl + JNI + static OpenSSL, JNI_OnLoad* only, 16 KiB pages.
-# Usage: build-android-so.sh <arm64-v8a|x86_64|armeabi-v7a> [out dir]   (NDK from ANDROID_NDK_ROOT or the SDK's newest ndk/)
+# Usage: build-android-so.sh <arm64-v8a|x86_64|armeabi-v7a> [out dir]   (NDK from ANDROID_NDK_ROOT, else the SDK's ndk/<pin of gradle/toolchains.toml>, else its newest ndk/)
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"; abi="${1:?abi}"; out="${2:-$root/kuicksilver-native/src/androidMain/jniLibs}"
-ndk="${ANDROID_NDK_ROOT:-$( (ls -d "$HOME"/Library/Android/sdk/ndk/* "$HOME"/Android/Sdk/ndk/* 2>/dev/null || true) | sort -V | tail -1)}"
+pin=$(sed -n 's/^ndk = "\(.*\)".*/\1/p' "$root/gradle/toolchains.toml" 2>/dev/null || true)
+ndk="${ANDROID_NDK_ROOT:-$( (ls -d "$HOME"/Library/Android/sdk/ndk/"${pin:-none}" "$HOME"/Android/Sdk/ndk/"${pin:-none}" 2>/dev/null || ls -d "$HOME"/Library/Android/sdk/ndk/* "$HOME"/Android/Sdk/ndk/* 2>/dev/null || true) | sort -V | tail -1)}"
+[ -d "$ndk" ] || { echo "no NDK found: set ANDROID_NDK_ROOT (pinned: $pin)" >&2; exit 2; }
+rev=$(sed -n 's/^Pkg.Revision *= *//p' "$ndk/source.properties" 2>/dev/null || true)
+[ "$rev" = "$pin" ] || echo "warning: NDK $rev at $ndk is not the pinned $pin (gradle/toolchains.toml); CI builds with the pin" >&2
 T=$(ls -d "$ndk"/toolchains/llvm/prebuilt/*/bin | head -1)
 case "$abi" in
   arm64-v8a) target=aarch64-linux-android24; ossl=android-arm64 ;;
