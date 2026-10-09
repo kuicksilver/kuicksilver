@@ -12,7 +12,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
-        with: { distribution: temurin, java-version: '21' }
+        with:
+          distribution: temurin
+          java-version: '21'
       - run: ./gradlew checkSpdxHeaders checkLayerDependencies checkKotlinAbi checkQuicArchitecture
   openssl:
     strategy:
@@ -50,7 +52,9 @@ jobs:
           cmp build/openssl/${{ matrix.target }}/lib/libssl.a build/openssl-repro/${{ matrix.target }}/lib/libssl.a
         if: ${{ matrix.target == 'macos-arm64' }}
       - uses: actions/upload-artifact@v4
-        with: { name: openssl-${{ matrix.target }}, path: build/openssl/${{ matrix.target }} }
+        with:
+          name: openssl-${{ matrix.target }}
+          path: build/openssl/${{ matrix.target }}
   c-tests:
     needs: openssl
     strategy:
@@ -63,7 +67,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
-        with: { name: openssl-${{ matrix.target }}, path: build/openssl/${{ matrix.target }} }
+        with:
+          name: openssl-${{ matrix.target }}
+          path: build/openssl/${{ matrix.target }}
       - run: bash tools/c-test.sh ${{ matrix.target }}
   jvm:
     needs: openssl
@@ -77,9 +83,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
-        with: { distribution: temurin, java-version: '21' }
+        with:
+          distribution: temurin
+          java-version: '21'
       - uses: actions/download-artifact@v4
-        with: { name: openssl-${{ matrix.target }}, path: build/openssl/${{ matrix.target }} }
+        with:
+          name: openssl-${{ matrix.target }}
+          path: build/openssl/${{ matrix.target }}
       - run: ./gradlew :kuicksilver-native:jvmTest :kuicksilver-tls:jvmTest :kuicksilver-ktor-network:jvmTest :kuicksilver-quic:jvmTest :kuicksilver-testing:jvmTest :kuicksilver-interop:jvmTest
       - name: fuzz regression corpus
         run: ./gradlew :kuicksilver-quic:jvmTest --tests 'io.kuicksilver.quic.fuzz.*'
@@ -101,13 +111,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
-        with: { distribution: temurin, java-version: '21' }
+        with:
+          distribution: temurin
+          java-version: '21'
       - uses: actions/download-artifact@v4
-        with: { name: openssl-android-arm64, path: build/openssl/android-arm64 }
+        with:
+          name: openssl-android-arm64
+          path: build/openssl/android-arm64
       - uses: actions/download-artifact@v4
-        with: { name: openssl-android-x86_64, path: build/openssl/android-x86_64 }
+        with:
+          name: openssl-android-x86_64
+          path: build/openssl/android-x86_64
       - uses: actions/download-artifact@v4
-        with: { name: openssl-android-arm, path: build/openssl/android-arm }
+        with:
+          name: openssl-android-arm
+          path: build/openssl/android-arm
       - run: ./gradlew :kuicksilver-native:bundleAndroidMainAar
       - run: bash tools/check/size.sh kuicksilver-native/build/outputs/aar/kuicksilver-native.aar && bash tools/check/page-align.sh kuicksilver-native/build/outputs/aar/kuicksilver-native.aar
       - uses: reactivecircus/android-emulator-runner@v2
@@ -121,9 +139,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
-        with: { distribution: temurin, java-version: '21' }
+        with:
+          distribution: temurin
+          java-version: '21'
       - uses: actions/download-artifact@v4
-        with: { pattern: 'openssl-*', path: build/openssl, merge-multiple: false }
+        with:
+          pattern: 'openssl-*'
+          path: build/openssl
+          merge-multiple: false
       - run: ./gradlew macosArm64Test iosSimulatorArm64Test
       - run: for t in macos-arm64 ios-arm64 ios-sim-arm64; do bash tools/prefix/check-no-unprefixed.sh build/openssl-prefixed/$t/lib; done
   native-linux:
@@ -137,9 +160,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
-        with: { distribution: temurin, java-version: '21' }
+        with:
+          distribution: temurin
+          java-version: '21'
       - uses: actions/download-artifact@v4
-        with: { name: openssl-${{ matrix.dir }}, path: build/openssl/${{ matrix.dir }} }
+        with:
+          name: openssl-${{ matrix.dir }}
+          path: build/openssl/${{ matrix.dir }}
       - run: ./gradlew ${{ matrix.target }}Test
       - run: bash tools/check/glibc-floor.sh kuicksilver-native/build/bin/${{ matrix.target }}/debugTest/test.kexe ${{ matrix.glibc }}
       - run: bash tools/prefix/check-no-unprefixed.sh build/openssl-prefixed/${{ matrix.dir }}/lib
@@ -149,9 +176,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
-        with: { distribution: temurin, java-version: '21' }
+        with:
+          distribution: temurin
+          java-version: '21'
       - uses: actions/download-artifact@v4
-        with: { name: openssl-mingw-x64, path: build/openssl/mingw-x64 }
+        with:
+          name: openssl-mingw-x64
+          path: build/openssl/mingw-x64
       - run: ./gradlew mingwX64Test
   system-openssl:
     runs-on: ubuntu-latest
@@ -166,9 +197,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
-        with: { distribution: temurin, java-version: '21' }
+        with:
+          distribution: temurin
+          java-version: '21'
       - uses: actions/download-artifact@v4
-        with: { name: openssl-linux-x64, path: build/openssl/linux-x64 }
+        with:
+          name: openssl-linux-x64
+          path: build/openssl/linux-x64
       - run: sudo apt-get install -y tshark
       - run: bash tools/interop/build-image.sh
       - run: bash tools/interop/build-image.sh --native
