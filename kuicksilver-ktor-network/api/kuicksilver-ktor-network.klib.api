@@ -1,0 +1,34 @@
+// Klib ABI Dump
+// Targets: [iosArm64, iosSimulatorArm64, linuxArm64, linuxX64, macosArm64, mingwX64]
+// Rendering settings:
+// - Signature version: 2
+// - Show manifest properties: true
+// - Show declarations: true
+
+// Library unique name: <io.kuicksilver:kuicksilver-ktor-network>
+final class io.kuicksilver.ktor.network/TlsSocket : io.ktor.network.sockets/Socket { // io.kuicksilver.ktor.network/TlsSocket|null[0]
+    final val coroutineContext // io.kuicksilver.ktor.network/TlsSocket.coroutineContext|{}coroutineContext[0]
+        final fun <get-coroutineContext>(): kotlin.coroutines/CoroutineContext // io.kuicksilver.ktor.network/TlsSocket.coroutineContext.<get-coroutineContext>|<get-coroutineContext>(){}[0]
+    final val localAddress // io.kuicksilver.ktor.network/TlsSocket.localAddress|{}localAddress[0]
+        final fun <get-localAddress>(): io.ktor.network.sockets/SocketAddress // io.kuicksilver.ktor.network/TlsSocket.localAddress.<get-localAddress>|<get-localAddress>(){}[0]
+    final val negotiatedAlpn // io.kuicksilver.ktor.network/TlsSocket.negotiatedAlpn|{}negotiatedAlpn[0]
+        final fun <get-negotiatedAlpn>(): kotlin/String? // io.kuicksilver.ktor.network/TlsSocket.negotiatedAlpn.<get-negotiatedAlpn>|<get-negotiatedAlpn>(){}[0]
+    final val peerCertificates // io.kuicksilver.ktor.network/TlsSocket.peerCertificates|{}peerCertificates[0]
+        final fun <get-peerCertificates>(): kotlin.collections/List<io.kuicksilver.tls/Certificate> // io.kuicksilver.ktor.network/TlsSocket.peerCertificates.<get-peerCertificates>|<get-peerCertificates>(){}[0]
+    final val remoteAddress // io.kuicksilver.ktor.network/TlsSocket.remoteAddress|{}remoteAddress[0]
+        final fun <get-remoteAddress>(): io.ktor.network.sockets/SocketAddress // io.kuicksilver.ktor.network/TlsSocket.remoteAddress.<get-remoteAddress>|<get-remoteAddress>(){}[0]
+    final val socketContext // io.kuicksilver.ktor.network/TlsSocket.socketContext|{}socketContext[0]
+        final fun <get-socketContext>(): kotlinx.coroutines/Job // io.kuicksilver.ktor.network/TlsSocket.socketContext.<get-socketContext>|<get-socketContext>(){}[0]
+    final val tls // io.kuicksilver.ktor.network/TlsSocket.tls|{}tls[0]
+        final fun <get-tls>(): io.kuicksilver.tls/TlsConnection // io.kuicksilver.ktor.network/TlsSocket.tls.<get-tls>|<get-tls>(){}[0]
+
+    final fun attachForReading(io.ktor.utils.io/ByteChannel): io.ktor.utils.io/WriterJob // io.kuicksilver.ktor.network/TlsSocket.attachForReading|attachForReading(io.ktor.utils.io.ByteChannel){}[0]
+    final fun attachForWriting(io.ktor.utils.io/ByteChannel): io.ktor.utils.io/ReaderJob // io.kuicksilver.ktor.network/TlsSocket.attachForWriting|attachForWriting(io.ktor.utils.io.ByteChannel){}[0]
+    final fun close() // io.kuicksilver.ktor.network/TlsSocket.close|close(){}[0]
+    final fun dispose() // io.kuicksilver.ktor.network/TlsSocket.dispose|dispose(){}[0]
+
+    final object Companion // io.kuicksilver.ktor.network/TlsSocket.Companion|null[0]
+}
+
+final suspend fun (io.ktor.network.sockets/Socket).io.kuicksilver.ktor.network/tls(io.kuicksilver.tls/TlsConfig, kotlin.coroutines/CoroutineContext = ...): io.kuicksilver.ktor.network/TlsSocket // io.kuicksilver.ktor.network/tls|tls@io.ktor.network.sockets.Socket(io.kuicksilver.tls.TlsConfig;kotlin.coroutines.CoroutineContext){}[0]
+final suspend fun (io.ktor.network.sockets/Socket).io.kuicksilver.ktor.network/tlsServer(io.kuicksilver.tls/TlsConfig, kotlin.coroutines/CoroutineContext = ...): io.kuicksilver.ktor.network/TlsSocket // io.kuicksilver.ktor.network/tlsServer|tlsServer@io.ktor.network.sockets.Socket(io.kuicksilver.tls.TlsConfig;kotlin.coroutines.CoroutineContext){}[0]

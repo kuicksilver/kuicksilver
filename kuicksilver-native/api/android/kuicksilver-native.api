@@ -1,0 +1,120 @@
+public abstract interface annotation class io/kuicksilver/annotations/DelicateKuicksilverApi : java/lang/annotation/Annotation {
+}
+
+public abstract interface annotation class io/kuicksilver/annotations/ExperimentalKuicksilverApi : java/lang/annotation/Annotation {
+}
+
+public abstract interface annotation class io/kuicksilver/annotations/InternalKuicksilverApi : java/lang/annotation/Annotation {
+}
+
+public abstract interface annotation class io/kuicksilver/annotations/KuicksilverDsl : java/lang/annotation/Annotation {
+}
+
+public final class io/kuicksilver/native/JvmNativeNames {
+	public static final field INSTANCE Lio/kuicksilver/native/JvmNativeNames;
+	public static final field RESOURCE_DIR Ljava/lang/String;
+	public final fun getArch ()Ljava/lang/String;
+	public final fun getClassifier ()Ljava/lang/String;
+	public final fun getOs ()Ljava/lang/String;
+	public final fun libraryFileName (I)Ljava/lang/String;
+	public static synthetic fun libraryFileName$default (Lio/kuicksilver/native/JvmNativeNames;IILjava/lang/Object;)Ljava/lang/String;
+}
+
+public abstract class io/kuicksilver/native/KslException : java/lang/RuntimeException {
+	public synthetic fun <init> (Ljava/lang/String;Ljava/lang/Throwable;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+}
+
+public final class io/kuicksilver/native/KslException$AbiMismatch : io/kuicksilver/native/KslException {
+	public fun <init> (II)V
+	public final fun getKotlin ()I
+	public final fun getNative ()I
+}
+
+public final class io/kuicksilver/native/KslException$Internal : io/kuicksilver/native/KslException {
+	public fun <init> (IILjava/lang/String;)V
+	public final fun getAlert ()I
+	public final fun getLib ()I
+	public final fun getPacked ()I
+	public final fun getReason ()I
+	public final fun isKsl ()Z
+}
+
+public final class io/kuicksilver/native/KslException$MissingSymbol : io/kuicksilver/native/KslException {
+	public fun <init> (Ljava/lang/String;)V
+	public final fun getName ()Ljava/lang/String;
+}
+
+public final class io/kuicksilver/native/KslException$NativeLoad : io/kuicksilver/native/KslException {
+	public fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/Throwable;)V
+	public synthetic fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/Throwable;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun getClassifier ()Ljava/lang/String;
+	public final fun getPlatform ()Ljava/lang/String;
+	public final fun getReason ()Ljava/lang/String;
+}
+
+public final class io/kuicksilver/native/KslException$Version : io/kuicksilver/native/KslException {
+	public fun <init> (Ljava/lang/String;Ljava/lang/String;)V
+	public final fun getFound ()Ljava/lang/String;
+	public final fun getRequired ()Ljava/lang/String;
+}
+
+public final class io/kuicksilver/native/KslKt {
+	public static final field KSL_ABI_VERSION I
+}
+
+public final class io/kuicksilver/native/KslLoader {
+	public static final field INSTANCE Lio/kuicksilver/native/KslLoader;
+	public final fun availability ()Lio/kuicksilver/native/NativeAvailability;
+	public final fun ensureLoaded ()V
+	public final fun isAvailable ()Z
+}
+
+public abstract interface class io/kuicksilver/native/NativeAvailability {
+}
+
+public final class io/kuicksilver/native/NativeAvailability$Available : io/kuicksilver/native/NativeAvailability {
+	public static final field INSTANCE Lio/kuicksilver/native/NativeAvailability$Available;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/kuicksilver/native/NativeAvailability$Unavailable : io/kuicksilver/native/NativeAvailability {
+	public fun <init> (Lio/kuicksilver/native/NativeUnavailableReason;Ljava/lang/String;Ljava/lang/Throwable;)V
+	public final fun getCause ()Ljava/lang/Throwable;
+	public final fun getDetail ()Ljava/lang/String;
+	public final fun getReason ()Lio/kuicksilver/native/NativeUnavailableReason;
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/kuicksilver/native/NativeUnavailableReason : java/lang/Enum {
+	public static final field AbiMismatch Lio/kuicksilver/native/NativeUnavailableReason;
+	public static final field IntegrityMismatch Lio/kuicksilver/native/NativeUnavailableReason;
+	public static final field LoadFailed Lio/kuicksilver/native/NativeUnavailableReason;
+	public static final field NoLibraryForPlatform Lio/kuicksilver/native/NativeUnavailableReason;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lio/kuicksilver/native/NativeUnavailableReason;
+	public static fun values ()[Lio/kuicksilver/native/NativeUnavailableReason;
+}
+
+public final class io/kuicksilver/native/PacketBuffer : java/lang/AutoCloseable {
+	public static final field Companion Lio/kuicksilver/native/PacketBuffer$Companion;
+	public final fun asByteBuffer ()Ljava/nio/ByteBuffer;
+	public fun close ()V
+	public final fun copyFrom ([BIII)V
+	public final fun copyTo ([BIII)V
+	public final fun get (I)B
+	public final fun getCapacity ()I
+	public final fun set (IB)V
+}
+
+public final class io/kuicksilver/native/PacketBuffer$Companion {
+	public final fun allocate (I)Lio/kuicksilver/native/PacketBuffer;
+}
+
+public final class io/kuicksilver/native/PacketBufferKt {
+	public static final fun of (Lio/kuicksilver/native/PacketBuffer$Companion;[B)Lio/kuicksilver/native/PacketBuffer;
+	public static final fun toByteArray (Lio/kuicksilver/native/PacketBuffer;I)[B
+	public static synthetic fun toByteArray$default (Lio/kuicksilver/native/PacketBuffer;IILjava/lang/Object;)[B
+}
+

@@ -1,0 +1,217 @@
+// Copyright 2026 The Kuicksilver Authors
+// SPDX-License-Identifier: Apache-2.0
+@file:OptIn(InternalKuicksilverApi::class)
+
+package io.kuicksilver.quic
+
+import io.ktor.network.sockets.InetSocketAddress
+import io.kuicksilver.annotations.InternalKuicksilverApi
+import io.kuicksilver.annotations.KuicksilverDsl
+import io.kuicksilver.tls.KslQuicCrypto
+import io.kuicksilver.tls.QuicCrypto
+import io.kuicksilver.tls.TlsConfig
+import io.kuicksilver.tls.TlsRole
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlin.time.Duration
+
+/**
+ * Client side of a connection: TLS plus transport settings. [Builder.build] throws `TlsException.Config` for a TLS config QUIC cannot use
+ * (TLS 1.2, empty ALPN, CCM_8, `sniSelector`; RFC 9001 section 4); build one with `quicClientConfig(tls) { }`.
+ *
+ * @property tls The client's TLS settings: the server name to verify, trust, ALPN.
+ * @property quic The transport settings of the connection.
+ */
+public class QuicClientConfig private constructor(
+    public val tls: TlsConfig,
+    public val quic: QuicConfig,
+) {
+    /**
+     * The mutable side of [QuicClientConfig].
+     *
+     * @property tls The client TLS settings; [build] checks them against RFC 9001 section 4.
+     */
+    @KuicksilverDsl
+    public class Builder(
+        public val tls: TlsConfig,
+    ) {
+        /** Default [QuicConfig.Default]; the transport settings of the connection. */
+        public var quic: QuicConfig = QuicConfig.Default
+
+        /** A [QuicClientConfig]; IllegalArgumentException for a server [tls], `TlsException.Config` for one QUIC cannot use. */
+        public fun build(): QuicClientConfig {
+            require(tls.role == TlsRole.Client) { "client config needs a client TlsConfig" }
+            tls.checkQuicCompatible()
+            return QuicClientConfig(tls, quic)
+        }
+    }
+}
+
+/**
+ * Server side of an endpoint: TLS identity plus transport settings. [Builder.build] rejects a TLS config QUIC cannot use, like
+ * [QuicClientConfig]; build one with `quicServerConfig(tls) { }`.
+ *
+ * @property tls The server's TLS identity (certificate chain and key), ALPN and client authentication.
+ * @property quic The transport settings of every connection the server accepts.
+ */
+public class QuicServerConfig private constructor(
+    public val tls: TlsConfig,
+    public val quic: QuicConfig,
+) {
+    /**
+     * The mutable side of [QuicServerConfig].
+     *
+     * @property tls The server TLS settings; [build] checks them against RFC 9001 section 4.
+     */
+    @KuicksilverDsl
+    public class Builder(
+        public val tls: TlsConfig,
+    ) {
+        /** Default [QuicConfig.Default]; its `connectionIdLength` must equal the endpoint's. */
+        public var quic: QuicConfig = QuicConfig.Default
+
+        /** A [QuicServerConfig]; IllegalArgumentException for a client [tls], `TlsException.Config` for one QUIC cannot use. */
+        public fun build(): QuicServerConfig {
+            require(tls.role == TlsRole.Server) { "server config needs a server TlsConfig" }
+            tls.checkQuicCompatible()
+            return QuicServerConfig(tls, quic)
+        }
+    }
+}
+
+/** An endpoint: optionally a server, the crypto provider, and the admission limits (docs/guide/quic.md, "Admission and endpoint limits"). */
+public class QuicEndpointConfig private constructor(
+    /** The server side; null makes a client-only endpoint, which admits no incoming connection. */
+    public val server: QuicServerConfig?,
+    /**
+     * The TLS and packet-protection provider of every connection and of the endpoint's Retry and reset keys; [KslQuicCrypto] (OpenSSL) by
+     * default.
+     */
+    public val crypto: QuicCrypto,
+    /** New Initial packets are dropped silently beyond this many connections. */
+    public val maxConnections: Int,
+    /**
+     * Handshaken connections waiting for `accept()`: while this many wait, a new client Initial is refused. Connections
+     * still handshaking are not counted, so the queue can briefly hold `acceptQueue` plus the handshakes that were in flight
+     * (those are bounded by [maxConnections] and the [ConnectionAdmission] policy).
+     */
+    public val acceptQueue: Int,
+    /** The single-threaded dispatcher of the endpoint loop; null means `Dispatchers.Default.limitedParallelism(1)`. */
+    public val dispatcher: CoroutineDispatcher?,
+    /** How the loop opens its socket; null means [DatagramIo.open]. */
+    public val io: (suspend (InetSocketAddress) -> DatagramIo)?,
+    /** Length of every connection ID this endpoint issues; short headers are parsed with it, so every connection's `QuicConfig.connectionIdLength` must match. */
+    public val connectionIdLength: Int,
+    /** Decides per new client Initial: create, Retry, drop or refuse; the default asks for a Retry above 256 handshakes in flight or 8 MiB of handshake buffers. */
+    public val admission: ConnectionAdmission,
+    /** Initials waiting for [admission] after one receive batch; more are dropped (1024 by default). */
+    public val initialQueueCap: Int,
+    /** Connections one client IP may hold at once, ports ignored; null disables the limit. The excess is dropped silently. */
+    public val maxConnectionsPerIp: Int?,
+    /** A server connection older than this is closed with NO_ERROR, whatever its activity; null means no limit. */
+    public val maxConnectionLifetime: Duration?,
+    /** Drop Initials whose source port is 53, 123, 1900, 5353 or 11211: a reflection attempt, never a real client (threat-model 3.1). */
+    public val rejectInitialFromReflectivePorts: Boolean,
+    /** Stateless answers (Retry, Version Negotiation, Stateless Reset, INVALID_TOKEN close) per client address per second (RFC 9000 section 8: amplification). */
+    public val statelessPerAddressPerSecond: Int,
+    /** Stateless answers per second over all addresses (like msquic `MaxBindingStatelessOperations`). */
+    public val statelessTotalPerSecond: Int,
+    /** Endpoint loops sharing the port with SO_REUSEPORT (docs/guide/quic.md, "Several loops on one port"): more than one needs a server and the accelerated transport (Linux, Android), else `bind` throws `UnsupportedOperationException`. */
+    public val loops: Int,
+) {
+    /** The mutable side of [QuicEndpointConfig] behind `quicEndpointConfig { }`; [build] validates the values together. */
+    @KuicksilverDsl
+    public class Builder {
+        /** Default null: a client-only endpoint. See [QuicEndpointConfig.server]. */
+        public var server: QuicServerConfig? = null
+
+        /** Default [KslQuicCrypto]; see [QuicEndpointConfig.crypto]. */
+        public var crypto: QuicCrypto = KslQuicCrypto
+
+        /** Default 10 000, at least 1; see [QuicEndpointConfig.maxConnections]. */
+        public var maxConnections: Int = 10_000
+
+        /** Default 32, at least 1; see [QuicEndpointConfig.acceptQueue]. */
+        public var acceptQueue: Int = 32
+
+        /** Default null (a one-thread view of `Dispatchers.Default`); must stay null with more than one of [loops]. */
+        public var dispatcher: CoroutineDispatcher? = null
+
+        /** Default null ([DatagramIo.open]); `kuicksilver-testing`'s `MemoryNetwork.open` runs the endpoint in memory. */
+        public var io: (suspend (InetSocketAddress) -> DatagramIo)? = null
+
+        /**
+         * Default 8 bytes (4..20); must equal the server's `QuicConfig.connectionIdLength`. See [QuicEndpointConfig.connectionIdLength].
+         */
+        public var connectionIdLength: Int = 8
+
+        /**
+         * Default `ConnectionAdmission.default()` (Retry above 256 handshakes in flight or 8 MiB of their buffers); see
+         * [QuicEndpointConfig.admission].
+         */
+        public var admission: ConnectionAdmission = ConnectionAdmission.default()
+
+        /** Default 1024, at least 1; see [QuicEndpointConfig.initialQueueCap]. */
+        public var initialQueueCap: Int = 1024
+
+        /** Default 256; null disables the limit. See [QuicEndpointConfig.maxConnectionsPerIp]. */
+        public var maxConnectionsPerIp: Int? = 256
+
+        /** Default null (no limit); positive otherwise. See [QuicEndpointConfig.maxConnectionLifetime]. */
+        public var maxConnectionLifetime: Duration? = null
+
+        /** Default true; see [QuicEndpointConfig.rejectInitialFromReflectivePorts]. */
+        public var rejectInitialFromReflectivePorts: Boolean = true
+
+        /** Default 8 per second, at least 1; see [QuicEndpointConfig.statelessPerAddressPerSecond]. */
+        public var statelessPerAddressPerSecond: Int = 8
+
+        /** Default 1000 per second, at least 1; see [QuicEndpointConfig.statelessTotalPerSecond]. */
+        public var statelessTotalPerSecond: Int = 1000
+
+        /** Default 1 (1..255); more needs a [server] and no [dispatcher]. See [QuicEndpointConfig.loops]. */
+        public var loops: Int = 1
+
+        /**
+         * An immutable [QuicEndpointConfig]; IllegalArgumentException for a value out of range or a combination that cannot work
+         * (connection ID lengths that differ, loops without a server).
+         */
+        public fun build(): QuicEndpointConfig {
+            require(maxConnections >= 1 && acceptQueue >= 1)
+            require(connectionIdLength in 4..20) { "connectionIdLength must be 4..20" }
+            require(initialQueueCap >= 1) { "initialQueueCap must be positive" }
+            require((maxConnectionsPerIp ?: 1) >= 1) { "maxConnectionsPerIp must be positive or null" }
+            require(maxConnectionLifetime?.isPositive() != false) { "maxConnectionLifetime must be positive or null" }
+            require(statelessPerAddressPerSecond >= 1 && statelessTotalPerSecond >= 1) { "stateless rate limits must be positive" }
+            server?.let {
+                require(it.quic.connectionIdLength == connectionIdLength) {
+                    "server QuicConfig.connectionIdLength (${it.quic.connectionIdLength}) must equal the endpoint's connectionIdLength ($connectionIdLength): short headers are parsed with one length"
+                }
+            }
+            require(loops in 1..255) { "loops must be 1..255 (the routing byte)" }
+            require(loops == 1 || server != null) { "loops > 1 needs a server" }
+            require(loops == 1 || dispatcher == null) { "loops > 1 cannot share one dispatcher" }
+            return QuicEndpointConfig(
+                server,
+                crypto,
+                maxConnections,
+                acceptQueue,
+                dispatcher,
+                io,
+                connectionIdLength,
+                admission,
+                initialQueueCap,
+                maxConnectionsPerIp,
+                maxConnectionLifetime,
+                rejectInitialFromReflectivePorts,
+                statelessPerAddressPerSecond,
+                statelessTotalPerSecond,
+                loops,
+            )
+        }
+    }
+
+    /** Holds [Default]. */
+    public companion object { /** A client-only endpoint with every default. */
+        public val Default: QuicEndpointConfig = Builder().build()
+    }
+}

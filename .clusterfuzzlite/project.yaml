@@ -1,0 +1,8 @@
+# Copyright 2026 The Kuicksilver Authors
+# SPDX-License-Identifier: Apache-2.0
+# ClusterFuzzLite project for the Jazzer targets of kuicksilver-quic and kuicksilver-http3 (JVM, libFuzzer engine).
+language: jvm
+fuzzing_engines:
+  - libfuzzer
+sanitizers:
+  - address

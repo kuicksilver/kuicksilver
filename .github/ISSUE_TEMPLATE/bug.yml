@@ -1,0 +1,85 @@
+# Copyright 2026 The Kuicksilver Authors
+# SPDX-License-Identifier: Apache-2.0
+name: Bug report
+description: Something does not work as documented.
+labels: [bug, triage]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Security issues must not be reported here.** Use a private report instead (see SECURITY.md).
+        For interoperability failures with another QUIC or HTTP/3 implementation, use the interop template.
+  - type: input
+    id: version
+    attributes:
+      label: Kuicksilver version or commit
+      placeholder: 0.1.0 / a1b2c3d
+    validations:
+      required: true
+  - type: dropdown
+    id: modules
+    attributes:
+      label: Module(s)
+      multiple: true
+      options:
+        - kuicksilver-native (ksl, OpenSSL, loader)
+        - kuicksilver-tls
+        - kuicksilver-ktor-network
+        - kuicksilver-quic
+        - kuicksilver-http3
+        - kuicksilver-ktor-client
+        - kuicksilver-ktor-server
+        - build / tooling
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      multiple: true
+      options:
+        - JVM on Linux
+        - JVM on macOS
+        - JVM on Windows
+        - Android
+        - Kotlin/Native linuxX64 / linuxArm64
+        - Kotlin/Native macOS
+        - Kotlin/Native iOS
+        - Kotlin/Native mingwX64
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: JDK or Android API level, OS and version, CPU architecture, Kotlin and Ktor versions.
+      placeholder: Temurin 21, Ubuntu 24.04, x86_64, Kotlin 2.4.20, Ktor 3.6.0
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened, and what did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How to reproduce
+      description: A minimal program or test is best. Include the configuration (redact keys and pins you consider private).
+      render: kotlin
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Stack trace, logs, qlog or packet capture
+      description: Never attach key logs (SSLKEYLOGFILE output) of production traffic.
+      render: text
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I searched existing issues and this is not a duplicate.
+          required: true
+        - label: This is not a security vulnerability.
+          required: true

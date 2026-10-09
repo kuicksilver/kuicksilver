@@ -1,0 +1,398 @@
+// Klib ABI Dump
+// Targets: [iosArm64, iosSimulatorArm64, linuxArm64, linuxX64, macosArm64, mingwX64]
+// Rendering settings:
+// - Signature version: 2
+// - Show manifest properties: true
+// - Show declarations: true
+
+// Library unique name: <io.kuicksilver:kuicksilver-http3>
+final enum class io.kuicksilver.http3/Http3Role : kotlin/Enum<io.kuicksilver.http3/Http3Role> { // io.kuicksilver.http3/Http3Role|null[0]
+    enum entry Client // io.kuicksilver.http3/Http3Role.Client|null[0]
+    enum entry Server // io.kuicksilver.http3/Http3Role.Server|null[0]
+
+    final val entries // io.kuicksilver.http3/Http3Role.entries|#static{}entries[0]
+        final fun <get-entries>(): kotlin.enums/EnumEntries<io.kuicksilver.http3/Http3Role> // io.kuicksilver.http3/Http3Role.entries.<get-entries>|<get-entries>#static(){}[0]
+
+    final fun valueOf(kotlin/String): io.kuicksilver.http3/Http3Role // io.kuicksilver.http3/Http3Role.valueOf|valueOf#static(kotlin.String){}[0]
+    final fun values(): kotlin/Array<io.kuicksilver.http3/Http3Role> // io.kuicksilver.http3/Http3Role.values|values#static(){}[0]
+}
+
+abstract interface io.kuicksilver.http3/Http3Response { // io.kuicksilver.http3/Http3Response|null[0]
+    abstract val body // io.kuicksilver.http3/Http3Response.body|{}body[0]
+        abstract fun <get-body>(): io.ktor.utils.io/ByteReadChannel // io.kuicksilver.http3/Http3Response.body.<get-body>|<get-body>(){}[0]
+    abstract val headers // io.kuicksilver.http3/Http3Response.headers|{}headers[0]
+        abstract fun <get-headers>(): io.kuicksilver.http3/Http3Headers // io.kuicksilver.http3/Http3Response.headers.<get-headers>|<get-headers>(){}[0]
+    abstract val status // io.kuicksilver.http3/Http3Response.status|{}status[0]
+        abstract fun <get-status>(): kotlin/Int // io.kuicksilver.http3/Http3Response.status.<get-status>|<get-status>(){}[0]
+    abstract val streamId // io.kuicksilver.http3/Http3Response.streamId|{}streamId[0]
+        abstract fun <get-streamId>(): kotlin/Long // io.kuicksilver.http3/Http3Response.streamId.<get-streamId>|<get-streamId>(){}[0]
+    abstract val trailers // io.kuicksilver.http3/Http3Response.trailers|{}trailers[0]
+        abstract fun <get-trailers>(): kotlinx.coroutines/Deferred<io.kuicksilver.http3/Http3Headers?> // io.kuicksilver.http3/Http3Response.trailers.<get-trailers>|<get-trailers>(){}[0]
+
+    abstract fun cancel(kotlin/Long = ...) // io.kuicksilver.http3/Http3Response.cancel|cancel(kotlin.Long){}[0]
+    abstract suspend fun updatePriority(io.kuicksilver.quic/StreamPriority) // io.kuicksilver.http3/Http3Response.updatePriority|updatePriority(io.kuicksilver.quic.StreamPriority){}[0]
+}
+
+abstract interface io.kuicksilver.http3/Http3ResponseWriter { // io.kuicksilver.http3/Http3ResponseWriter|null[0]
+    abstract val output // io.kuicksilver.http3/Http3ResponseWriter.output|{}output[0]
+        abstract fun <get-output>(): io.ktor.utils.io/ByteWriteChannel // io.kuicksilver.http3/Http3ResponseWriter.output.<get-output>|<get-output>(){}[0]
+
+    abstract suspend fun finish(io.kuicksilver.http3/Http3Headers? = ...) // io.kuicksilver.http3/Http3ResponseWriter.finish|finish(io.kuicksilver.http3.Http3Headers?){}[0]
+}
+
+abstract interface io.kuicksilver.http3/Http3ServerRequest { // io.kuicksilver.http3/Http3ServerRequest|null[0]
+    abstract val authority // io.kuicksilver.http3/Http3ServerRequest.authority|{}authority[0]
+        abstract fun <get-authority>(): kotlin/String? // io.kuicksilver.http3/Http3ServerRequest.authority.<get-authority>|<get-authority>(){}[0]
+    abstract val body // io.kuicksilver.http3/Http3ServerRequest.body|{}body[0]
+        abstract fun <get-body>(): io.ktor.utils.io/ByteReadChannel // io.kuicksilver.http3/Http3ServerRequest.body.<get-body>|<get-body>(){}[0]
+    abstract val headers // io.kuicksilver.http3/Http3ServerRequest.headers|{}headers[0]
+        abstract fun <get-headers>(): io.kuicksilver.http3/Http3Headers // io.kuicksilver.http3/Http3ServerRequest.headers.<get-headers>|<get-headers>(){}[0]
+    abstract val method // io.kuicksilver.http3/Http3ServerRequest.method|{}method[0]
+        abstract fun <get-method>(): kotlin/String // io.kuicksilver.http3/Http3ServerRequest.method.<get-method>|<get-method>(){}[0]
+    abstract val path // io.kuicksilver.http3/Http3ServerRequest.path|{}path[0]
+        abstract fun <get-path>(): kotlin/String? // io.kuicksilver.http3/Http3ServerRequest.path.<get-path>|<get-path>(){}[0]
+    abstract val priority // io.kuicksilver.http3/Http3ServerRequest.priority|{}priority[0]
+        abstract fun <get-priority>(): kotlinx.coroutines.flow/StateFlow<io.kuicksilver.quic/StreamPriority> // io.kuicksilver.http3/Http3ServerRequest.priority.<get-priority>|<get-priority>(){}[0]
+    abstract val protocol // io.kuicksilver.http3/Http3ServerRequest.protocol|{}protocol[0]
+        abstract fun <get-protocol>(): kotlin/String? // io.kuicksilver.http3/Http3ServerRequest.protocol.<get-protocol>|<get-protocol>(){}[0]
+    abstract val remoteAddress // io.kuicksilver.http3/Http3ServerRequest.remoteAddress|{}remoteAddress[0]
+        abstract fun <get-remoteAddress>(): io.ktor.network.sockets/InetSocketAddress // io.kuicksilver.http3/Http3ServerRequest.remoteAddress.<get-remoteAddress>|<get-remoteAddress>(){}[0]
+    abstract val scheme // io.kuicksilver.http3/Http3ServerRequest.scheme|{}scheme[0]
+        abstract fun <get-scheme>(): kotlin/String? // io.kuicksilver.http3/Http3ServerRequest.scheme.<get-scheme>|<get-scheme>(){}[0]
+    abstract val streamId // io.kuicksilver.http3/Http3ServerRequest.streamId|{}streamId[0]
+        abstract fun <get-streamId>(): kotlin/Long // io.kuicksilver.http3/Http3ServerRequest.streamId.<get-streamId>|<get-streamId>(){}[0]
+    abstract val trailers // io.kuicksilver.http3/Http3ServerRequest.trailers|{}trailers[0]
+        abstract fun <get-trailers>(): kotlinx.coroutines/Deferred<io.kuicksilver.http3/Http3Headers?> // io.kuicksilver.http3/Http3ServerRequest.trailers.<get-trailers>|<get-trailers>(){}[0]
+
+    abstract fun reset(kotlin/Long) // io.kuicksilver.http3/Http3ServerRequest.reset|reset(kotlin.Long){}[0]
+    abstract suspend fun acceptConnect(io.kuicksilver.http3/Http3Headers = ...): io.kuicksilver.http3/Http3Stream // io.kuicksilver.http3/Http3ServerRequest.acceptConnect|acceptConnect(io.kuicksilver.http3.Http3Headers){}[0]
+    abstract suspend fun respond(kotlin/Int, io.kuicksilver.http3/Http3Headers = ..., io.kuicksilver.quic/StreamPriority? = ...): io.kuicksilver.http3/Http3ResponseWriter // io.kuicksilver.http3/Http3ServerRequest.respond|respond(kotlin.Int;io.kuicksilver.http3.Http3Headers;io.kuicksilver.quic.StreamPriority?){}[0]
+    abstract suspend fun sendInformational(kotlin/Int, io.kuicksilver.http3/Http3Headers = ...) // io.kuicksilver.http3/Http3ServerRequest.sendInformational|sendInformational(kotlin.Int;io.kuicksilver.http3.Http3Headers){}[0]
+}
+
+abstract interface io.kuicksilver.http3/Http3Stream { // io.kuicksilver.http3/Http3Stream|null[0]
+    abstract val datagrams // io.kuicksilver.http3/Http3Stream.datagrams|{}datagrams[0]
+        abstract fun <get-datagrams>(): kotlinx.coroutines.flow/Flow<kotlin/ByteArray> // io.kuicksilver.http3/Http3Stream.datagrams.<get-datagrams>|<get-datagrams>(){}[0]
+    abstract val headers // io.kuicksilver.http3/Http3Stream.headers|{}headers[0]
+        abstract fun <get-headers>(): io.kuicksilver.http3/Http3Headers // io.kuicksilver.http3/Http3Stream.headers.<get-headers>|<get-headers>(){}[0]
+    abstract val input // io.kuicksilver.http3/Http3Stream.input|{}input[0]
+        abstract fun <get-input>(): io.ktor.utils.io/ByteReadChannel // io.kuicksilver.http3/Http3Stream.input.<get-input>|<get-input>(){}[0]
+    abstract val output // io.kuicksilver.http3/Http3Stream.output|{}output[0]
+        abstract fun <get-output>(): io.ktor.utils.io/ByteWriteChannel // io.kuicksilver.http3/Http3Stream.output.<get-output>|<get-output>(){}[0]
+    abstract val streamId // io.kuicksilver.http3/Http3Stream.streamId|{}streamId[0]
+        abstract fun <get-streamId>(): kotlin/Long // io.kuicksilver.http3/Http3Stream.streamId.<get-streamId>|<get-streamId>(){}[0]
+
+    abstract var priority // io.kuicksilver.http3/Http3Stream.priority|{}priority[0]
+        abstract fun <get-priority>(): io.kuicksilver.quic/StreamPriority // io.kuicksilver.http3/Http3Stream.priority.<get-priority>|<get-priority>(){}[0]
+        abstract fun <set-priority>(io.kuicksilver.quic/StreamPriority) // io.kuicksilver.http3/Http3Stream.priority.<set-priority>|<set-priority>(io.kuicksilver.quic.StreamPriority){}[0]
+
+    abstract fun reset(kotlin/Long) // io.kuicksilver.http3/Http3Stream.reset|reset(kotlin.Long){}[0]
+    abstract fun stopSending(kotlin/Long) // io.kuicksilver.http3/Http3Stream.stopSending|stopSending(kotlin.Long){}[0]
+    abstract fun trySendDatagram(kotlin/ByteArray): io.kuicksilver.quic/DatagramSendResult // io.kuicksilver.http3/Http3Stream.trySendDatagram|trySendDatagram(kotlin.ByteArray){}[0]
+    abstract suspend fun sendDatagram(kotlin/ByteArray) // io.kuicksilver.http3/Http3Stream.sendDatagram|sendDatagram(kotlin.ByteArray){}[0]
+}
+
+final class io.kuicksilver.http3/Http3Connection : kotlin/AutoCloseable { // io.kuicksilver.http3/Http3Connection|null[0]
+    final val closed // io.kuicksilver.http3/Http3Connection.closed|{}closed[0]
+        final fun <get-closed>(): kotlinx.coroutines/Deferred<kotlin/Throwable> // io.kuicksilver.http3/Http3Connection.closed.<get-closed>|<get-closed>(){}[0]
+    final val goAwayReceived // io.kuicksilver.http3/Http3Connection.goAwayReceived|{}goAwayReceived[0]
+        final fun <get-goAwayReceived>(): kotlinx.coroutines.flow/StateFlow<kotlin/Long?> // io.kuicksilver.http3/Http3Connection.goAwayReceived.<get-goAwayReceived>|<get-goAwayReceived>(){}[0]
+    final val peerSettings // io.kuicksilver.http3/Http3Connection.peerSettings|{}peerSettings[0]
+        final fun <get-peerSettings>(): kotlinx.coroutines.flow/StateFlow<io.kuicksilver.http3/Http3PeerSettings?> // io.kuicksilver.http3/Http3Connection.peerSettings.<get-peerSettings>|<get-peerSettings>(){}[0]
+    final val quic // io.kuicksilver.http3/Http3Connection.quic|{}quic[0]
+        final fun <get-quic>(): io.kuicksilver.quic/QuicConnection // io.kuicksilver.http3/Http3Connection.quic.<get-quic>|<get-quic>(){}[0]
+    final val role // io.kuicksilver.http3/Http3Connection.role|{}role[0]
+        final fun <get-role>(): io.kuicksilver.http3/Http3Role // io.kuicksilver.http3/Http3Connection.role.<get-role>|<get-role>(){}[0]
+    final val settings // io.kuicksilver.http3/Http3Connection.settings|{}settings[0]
+        final fun <get-settings>(): io.kuicksilver.http3/Http3Settings // io.kuicksilver.http3/Http3Connection.settings.<get-settings>|<get-settings>(){}[0]
+
+    final fun close() // io.kuicksilver.http3/Http3Connection.close|close(){}[0]
+    final suspend fun acceptRequest(): io.kuicksilver.http3/Http3ServerRequest // io.kuicksilver.http3/Http3Connection.acceptRequest|acceptRequest(){}[0]
+    final suspend fun close(kotlin/Long = ..., kotlin/String = ...) // io.kuicksilver.http3/Http3Connection.close|close(kotlin.Long;kotlin.String){}[0]
+    final suspend fun connect(io.kuicksilver.http3/Http3Request, kotlin/String): io.kuicksilver.http3/Http3Stream // io.kuicksilver.http3/Http3Connection.connect|connect(io.kuicksilver.http3.Http3Request;kotlin.String){}[0]
+    final suspend fun goAway() // io.kuicksilver.http3/Http3Connection.goAway|goAway(){}[0]
+    final suspend fun request(io.kuicksilver.http3/Http3Request): io.kuicksilver.http3/Http3Response // io.kuicksilver.http3/Http3Connection.request|request(io.kuicksilver.http3.Http3Request){}[0]
+
+    final object Companion { // io.kuicksilver.http3/Http3Connection.Companion|null[0]
+        final suspend fun client(io.kuicksilver.quic/QuicConnection, io.kuicksilver.http3/Http3Settings = ...): io.kuicksilver.http3/Http3Connection // io.kuicksilver.http3/Http3Connection.Companion.client|client(io.kuicksilver.quic.QuicConnection;io.kuicksilver.http3.Http3Settings){}[0]
+        final suspend fun server(io.kuicksilver.quic/QuicConnection, io.kuicksilver.http3/Http3Settings = ...): io.kuicksilver.http3/Http3Connection // io.kuicksilver.http3/Http3Connection.Companion.server|server(io.kuicksilver.quic.QuicConnection;io.kuicksilver.http3.Http3Settings){}[0]
+    }
+}
+
+final class io.kuicksilver.http3/Http3Endpoint : kotlin/AutoCloseable { // io.kuicksilver.http3/Http3Endpoint|null[0]
+    final val localAddress // io.kuicksilver.http3/Http3Endpoint.localAddress|{}localAddress[0]
+        final fun <get-localAddress>(): io.ktor.network.sockets/InetSocketAddress // io.kuicksilver.http3/Http3Endpoint.localAddress.<get-localAddress>|<get-localAddress>(){}[0]
+
+    final fun close() // io.kuicksilver.http3/Http3Endpoint.close|close(){}[0]
+    final suspend fun accept(): io.kuicksilver.http3/Http3Connection // io.kuicksilver.http3/Http3Endpoint.accept|accept(){}[0]
+    final suspend fun connect(io.ktor.network.sockets/InetSocketAddress, io.kuicksilver.tls/TlsConfig, io.kuicksilver.quic/QuicConfig = ..., io.kuicksilver.http3/Http3Settings = ...): io.kuicksilver.http3/Http3Connection // io.kuicksilver.http3/Http3Endpoint.connect|connect(io.ktor.network.sockets.InetSocketAddress;io.kuicksilver.tls.TlsConfig;io.kuicksilver.quic.QuicConfig;io.kuicksilver.http3.Http3Settings){}[0]
+
+    final object Companion { // io.kuicksilver.http3/Http3Endpoint.Companion|null[0]
+        final const val H3 // io.kuicksilver.http3/Http3Endpoint.Companion.H3|{}H3[0]
+            final fun <get-H3>(): kotlin/String // io.kuicksilver.http3/Http3Endpoint.Companion.H3.<get-H3>|<get-H3>(){}[0]
+
+        final suspend fun bind(io.ktor.network.sockets/InetSocketAddress, io.kuicksilver.quic/QuicEndpointConfig = ..., io.kuicksilver.http3/Http3Settings = ...): io.kuicksilver.http3/Http3Endpoint // io.kuicksilver.http3/Http3Endpoint.Companion.bind|bind(io.ktor.network.sockets.InetSocketAddress;io.kuicksilver.quic.QuicEndpointConfig;io.kuicksilver.http3.Http3Settings){}[0]
+    }
+}
+
+final class io.kuicksilver.http3/Http3Headers { // io.kuicksilver.http3/Http3Headers|null[0]
+    constructor <init>(kotlin.collections/List<kotlin/Pair<kotlin/String, kotlin/String>>) // io.kuicksilver.http3/Http3Headers.<init>|<init>(kotlin.collections.List<kotlin.Pair<kotlin.String,kotlin.String>>){}[0]
+
+    final val fields // io.kuicksilver.http3/Http3Headers.fields|{}fields[0]
+        final fun <get-fields>(): kotlin.collections/List<kotlin/Pair<kotlin/String, kotlin/String>> // io.kuicksilver.http3/Http3Headers.fields.<get-fields>|<get-fields>(){}[0]
+    final val size // io.kuicksilver.http3/Http3Headers.size|{}size[0]
+        final fun <get-size>(): kotlin/Int // io.kuicksilver.http3/Http3Headers.size.<get-size>|<get-size>(){}[0]
+
+    final fun equals(kotlin/Any?): kotlin/Boolean // io.kuicksilver.http3/Http3Headers.equals|equals(kotlin.Any?){}[0]
+    final fun get(kotlin/String): kotlin/String? // io.kuicksilver.http3/Http3Headers.get|get(kotlin.String){}[0]
+    final fun getAll(kotlin/String): kotlin.collections/List<kotlin/String> // io.kuicksilver.http3/Http3Headers.getAll|getAll(kotlin.String){}[0]
+    final fun hashCode(): kotlin/Int // io.kuicksilver.http3/Http3Headers.hashCode|hashCode(){}[0]
+    final fun plus(io.kuicksilver.http3/Http3Headers): io.kuicksilver.http3/Http3Headers // io.kuicksilver.http3/Http3Headers.plus|plus(io.kuicksilver.http3.Http3Headers){}[0]
+    final fun toString(): kotlin/String // io.kuicksilver.http3/Http3Headers.toString|toString(){}[0]
+
+    final object Companion { // io.kuicksilver.http3/Http3Headers.Companion|null[0]
+        final val Empty // io.kuicksilver.http3/Http3Headers.Companion.Empty|{}Empty[0]
+            final fun <get-Empty>(): io.kuicksilver.http3/Http3Headers // io.kuicksilver.http3/Http3Headers.Companion.Empty.<get-Empty>|<get-Empty>(){}[0]
+
+        final fun of(kotlin/Array<out kotlin/Pair<kotlin/String, kotlin/String>>...): io.kuicksilver.http3/Http3Headers // io.kuicksilver.http3/Http3Headers.Companion.of|of(kotlin.Array<out|kotlin.Pair<kotlin.String,kotlin.String>>...){}[0]
+    }
+}
+
+final class io.kuicksilver.http3/Http3PeerSettings { // io.kuicksilver.http3/Http3PeerSettings|null[0]
+    constructor <init>(kotlin/Long, kotlin/Long, kotlin/Long?, kotlin/Boolean, kotlin/Boolean, kotlin.collections/Map<kotlin/Long, kotlin/Long>) // io.kuicksilver.http3/Http3PeerSettings.<init>|<init>(kotlin.Long;kotlin.Long;kotlin.Long?;kotlin.Boolean;kotlin.Boolean;kotlin.collections.Map<kotlin.Long,kotlin.Long>){}[0]
+
+    final val enableConnectProtocol // io.kuicksilver.http3/Http3PeerSettings.enableConnectProtocol|{}enableConnectProtocol[0]
+        final fun <get-enableConnectProtocol>(): kotlin/Boolean // io.kuicksilver.http3/Http3PeerSettings.enableConnectProtocol.<get-enableConnectProtocol>|<get-enableConnectProtocol>(){}[0]
+    final val h3Datagram // io.kuicksilver.http3/Http3PeerSettings.h3Datagram|{}h3Datagram[0]
+        final fun <get-h3Datagram>(): kotlin/Boolean // io.kuicksilver.http3/Http3PeerSettings.h3Datagram.<get-h3Datagram>|<get-h3Datagram>(){}[0]
+    final val maxFieldSectionSize // io.kuicksilver.http3/Http3PeerSettings.maxFieldSectionSize|{}maxFieldSectionSize[0]
+        final fun <get-maxFieldSectionSize>(): kotlin/Long? // io.kuicksilver.http3/Http3PeerSettings.maxFieldSectionSize.<get-maxFieldSectionSize>|<get-maxFieldSectionSize>(){}[0]
+    final val qpackBlockedStreams // io.kuicksilver.http3/Http3PeerSettings.qpackBlockedStreams|{}qpackBlockedStreams[0]
+        final fun <get-qpackBlockedStreams>(): kotlin/Long // io.kuicksilver.http3/Http3PeerSettings.qpackBlockedStreams.<get-qpackBlockedStreams>|<get-qpackBlockedStreams>(){}[0]
+    final val qpackMaxTableCapacity // io.kuicksilver.http3/Http3PeerSettings.qpackMaxTableCapacity|{}qpackMaxTableCapacity[0]
+        final fun <get-qpackMaxTableCapacity>(): kotlin/Long // io.kuicksilver.http3/Http3PeerSettings.qpackMaxTableCapacity.<get-qpackMaxTableCapacity>|<get-qpackMaxTableCapacity>(){}[0]
+    final val unknown // io.kuicksilver.http3/Http3PeerSettings.unknown|{}unknown[0]
+        final fun <get-unknown>(): kotlin.collections/Map<kotlin/Long, kotlin/Long> // io.kuicksilver.http3/Http3PeerSettings.unknown.<get-unknown>|<get-unknown>(){}[0]
+
+    final fun toString(): kotlin/String // io.kuicksilver.http3/Http3PeerSettings.toString|toString(){}[0]
+}
+
+final class io.kuicksilver.http3/Http3Request { // io.kuicksilver.http3/Http3Request|null[0]
+    constructor <init>(kotlin/String, kotlin/String = ..., kotlin/String?, kotlin/String?, io.kuicksilver.http3/Http3Headers = ..., io.ktor.utils.io/ByteReadChannel? = ..., kotlin.coroutines/SuspendFunction0<io.kuicksilver.http3/Http3Headers?>? = ..., io.kuicksilver.quic/StreamPriority? = ..., kotlin/String? = ..., kotlin.coroutines/SuspendFunction2<kotlin/Int, io.kuicksilver.http3/Http3Headers, kotlin/Unit>? = ...) // io.kuicksilver.http3/Http3Request.<init>|<init>(kotlin.String;kotlin.String;kotlin.String?;kotlin.String?;io.kuicksilver.http3.Http3Headers;io.ktor.utils.io.ByteReadChannel?;kotlin.coroutines.SuspendFunction0<io.kuicksilver.http3.Http3Headers?>?;io.kuicksilver.quic.StreamPriority?;kotlin.String?;kotlin.coroutines.SuspendFunction2<kotlin.Int,io.kuicksilver.http3.Http3Headers,kotlin.Unit>?){}[0]
+
+    final val authority // io.kuicksilver.http3/Http3Request.authority|{}authority[0]
+        final fun <get-authority>(): kotlin/String? // io.kuicksilver.http3/Http3Request.authority.<get-authority>|<get-authority>(){}[0]
+    final val body // io.kuicksilver.http3/Http3Request.body|{}body[0]
+        final fun <get-body>(): io.ktor.utils.io/ByteReadChannel? // io.kuicksilver.http3/Http3Request.body.<get-body>|<get-body>(){}[0]
+    final val headers // io.kuicksilver.http3/Http3Request.headers|{}headers[0]
+        final fun <get-headers>(): io.kuicksilver.http3/Http3Headers // io.kuicksilver.http3/Http3Request.headers.<get-headers>|<get-headers>(){}[0]
+    final val method // io.kuicksilver.http3/Http3Request.method|{}method[0]
+        final fun <get-method>(): kotlin/String // io.kuicksilver.http3/Http3Request.method.<get-method>|<get-method>(){}[0]
+    final val onInformational // io.kuicksilver.http3/Http3Request.onInformational|{}onInformational[0]
+        final fun <get-onInformational>(): kotlin.coroutines/SuspendFunction2<kotlin/Int, io.kuicksilver.http3/Http3Headers, kotlin/Unit>? // io.kuicksilver.http3/Http3Request.onInformational.<get-onInformational>|<get-onInformational>(){}[0]
+    final val path // io.kuicksilver.http3/Http3Request.path|{}path[0]
+        final fun <get-path>(): kotlin/String? // io.kuicksilver.http3/Http3Request.path.<get-path>|<get-path>(){}[0]
+    final val priority // io.kuicksilver.http3/Http3Request.priority|{}priority[0]
+        final fun <get-priority>(): io.kuicksilver.quic/StreamPriority? // io.kuicksilver.http3/Http3Request.priority.<get-priority>|<get-priority>(){}[0]
+    final val protocol // io.kuicksilver.http3/Http3Request.protocol|{}protocol[0]
+        final fun <get-protocol>(): kotlin/String? // io.kuicksilver.http3/Http3Request.protocol.<get-protocol>|<get-protocol>(){}[0]
+    final val scheme // io.kuicksilver.http3/Http3Request.scheme|{}scheme[0]
+        final fun <get-scheme>(): kotlin/String // io.kuicksilver.http3/Http3Request.scheme.<get-scheme>|<get-scheme>(){}[0]
+    final val trailers // io.kuicksilver.http3/Http3Request.trailers|{}trailers[0]
+        final fun <get-trailers>(): kotlin.coroutines/SuspendFunction0<io.kuicksilver.http3/Http3Headers?>? // io.kuicksilver.http3/Http3Request.trailers.<get-trailers>|<get-trailers>(){}[0]
+}
+
+final class io.kuicksilver.http3/Http3Settings { // io.kuicksilver.http3/Http3Settings|null[0]
+    final val enableConnectProtocol // io.kuicksilver.http3/Http3Settings.enableConnectProtocol|{}enableConnectProtocol[0]
+        final fun <get-enableConnectProtocol>(): kotlin/Boolean // io.kuicksilver.http3/Http3Settings.enableConnectProtocol.<get-enableConnectProtocol>|<get-enableConnectProtocol>(){}[0]
+    final val encoderMaxTableCapacity // io.kuicksilver.http3/Http3Settings.encoderMaxTableCapacity|{}encoderMaxTableCapacity[0]
+        final fun <get-encoderMaxTableCapacity>(): kotlin/Long // io.kuicksilver.http3/Http3Settings.encoderMaxTableCapacity.<get-encoderMaxTableCapacity>|<get-encoderMaxTableCapacity>(){}[0]
+    final val glitchProtection // io.kuicksilver.http3/Http3Settings.glitchProtection|{}glitchProtection[0]
+        final fun <get-glitchProtection>(): kotlin/Boolean // io.kuicksilver.http3/Http3Settings.glitchProtection.<get-glitchProtection>|<get-glitchProtection>(){}[0]
+    final val grease // io.kuicksilver.http3/Http3Settings.grease|{}grease[0]
+        final fun <get-grease>(): kotlin/Boolean // io.kuicksilver.http3/Http3Settings.grease.<get-grease>|<get-grease>(){}[0]
+    final val h3Datagram // io.kuicksilver.http3/Http3Settings.h3Datagram|{}h3Datagram[0]
+        final fun <get-h3Datagram>(): kotlin/Boolean // io.kuicksilver.http3/Http3Settings.h3Datagram.<get-h3Datagram>|<get-h3Datagram>(){}[0]
+    final val maxEarlyPriorityUpdates // io.kuicksilver.http3/Http3Settings.maxEarlyPriorityUpdates|{}maxEarlyPriorityUpdates[0]
+        final fun <get-maxEarlyPriorityUpdates>(): kotlin/Int // io.kuicksilver.http3/Http3Settings.maxEarlyPriorityUpdates.<get-maxEarlyPriorityUpdates>|<get-maxEarlyPriorityUpdates>(){}[0]
+    final val maxFieldSectionSize // io.kuicksilver.http3/Http3Settings.maxFieldSectionSize|{}maxFieldSectionSize[0]
+        final fun <get-maxFieldSectionSize>(): kotlin/Long // io.kuicksilver.http3/Http3Settings.maxFieldSectionSize.<get-maxFieldSectionSize>|<get-maxFieldSectionSize>(){}[0]
+    final val maxInformationalResponses // io.kuicksilver.http3/Http3Settings.maxInformationalResponses|{}maxInformationalResponses[0]
+        final fun <get-maxInformationalResponses>(): kotlin/Int // io.kuicksilver.http3/Http3Settings.maxInformationalResponses.<get-maxInformationalResponses>|<get-maxInformationalResponses>(){}[0]
+    final val qpackBlockedStreams // io.kuicksilver.http3/Http3Settings.qpackBlockedStreams|{}qpackBlockedStreams[0]
+        final fun <get-qpackBlockedStreams>(): kotlin/Long // io.kuicksilver.http3/Http3Settings.qpackBlockedStreams.<get-qpackBlockedStreams>|<get-qpackBlockedStreams>(){}[0]
+    final val qpackMaxTableCapacity // io.kuicksilver.http3/Http3Settings.qpackMaxTableCapacity|{}qpackMaxTableCapacity[0]
+        final fun <get-qpackMaxTableCapacity>(): kotlin/Long // io.kuicksilver.http3/Http3Settings.qpackMaxTableCapacity.<get-qpackMaxTableCapacity>|<get-qpackMaxTableCapacity>(){}[0]
+
+    final fun toBuilder(): io.kuicksilver.http3/Http3Settings.Builder // io.kuicksilver.http3/Http3Settings.toBuilder|toBuilder(){}[0]
+
+    final class Builder { // io.kuicksilver.http3/Http3Settings.Builder|null[0]
+        constructor <init>() // io.kuicksilver.http3/Http3Settings.Builder.<init>|<init>(){}[0]
+
+        final var enableConnectProtocol // io.kuicksilver.http3/Http3Settings.Builder.enableConnectProtocol|{}enableConnectProtocol[0]
+            final fun <get-enableConnectProtocol>(): kotlin/Boolean // io.kuicksilver.http3/Http3Settings.Builder.enableConnectProtocol.<get-enableConnectProtocol>|<get-enableConnectProtocol>(){}[0]
+            final fun <set-enableConnectProtocol>(kotlin/Boolean) // io.kuicksilver.http3/Http3Settings.Builder.enableConnectProtocol.<set-enableConnectProtocol>|<set-enableConnectProtocol>(kotlin.Boolean){}[0]
+        final var encoderMaxTableCapacity // io.kuicksilver.http3/Http3Settings.Builder.encoderMaxTableCapacity|{}encoderMaxTableCapacity[0]
+            final fun <get-encoderMaxTableCapacity>(): kotlin/Long // io.kuicksilver.http3/Http3Settings.Builder.encoderMaxTableCapacity.<get-encoderMaxTableCapacity>|<get-encoderMaxTableCapacity>(){}[0]
+            final fun <set-encoderMaxTableCapacity>(kotlin/Long) // io.kuicksilver.http3/Http3Settings.Builder.encoderMaxTableCapacity.<set-encoderMaxTableCapacity>|<set-encoderMaxTableCapacity>(kotlin.Long){}[0]
+        final var glitchProtection // io.kuicksilver.http3/Http3Settings.Builder.glitchProtection|{}glitchProtection[0]
+            final fun <get-glitchProtection>(): kotlin/Boolean // io.kuicksilver.http3/Http3Settings.Builder.glitchProtection.<get-glitchProtection>|<get-glitchProtection>(){}[0]
+            final fun <set-glitchProtection>(kotlin/Boolean) // io.kuicksilver.http3/Http3Settings.Builder.glitchProtection.<set-glitchProtection>|<set-glitchProtection>(kotlin.Boolean){}[0]
+        final var grease // io.kuicksilver.http3/Http3Settings.Builder.grease|{}grease[0]
+            final fun <get-grease>(): kotlin/Boolean // io.kuicksilver.http3/Http3Settings.Builder.grease.<get-grease>|<get-grease>(){}[0]
+            final fun <set-grease>(kotlin/Boolean) // io.kuicksilver.http3/Http3Settings.Builder.grease.<set-grease>|<set-grease>(kotlin.Boolean){}[0]
+        final var h3Datagram // io.kuicksilver.http3/Http3Settings.Builder.h3Datagram|{}h3Datagram[0]
+            final fun <get-h3Datagram>(): kotlin/Boolean // io.kuicksilver.http3/Http3Settings.Builder.h3Datagram.<get-h3Datagram>|<get-h3Datagram>(){}[0]
+            final fun <set-h3Datagram>(kotlin/Boolean) // io.kuicksilver.http3/Http3Settings.Builder.h3Datagram.<set-h3Datagram>|<set-h3Datagram>(kotlin.Boolean){}[0]
+        final var maxEarlyPriorityUpdates // io.kuicksilver.http3/Http3Settings.Builder.maxEarlyPriorityUpdates|{}maxEarlyPriorityUpdates[0]
+            final fun <get-maxEarlyPriorityUpdates>(): kotlin/Int // io.kuicksilver.http3/Http3Settings.Builder.maxEarlyPriorityUpdates.<get-maxEarlyPriorityUpdates>|<get-maxEarlyPriorityUpdates>(){}[0]
+            final fun <set-maxEarlyPriorityUpdates>(kotlin/Int) // io.kuicksilver.http3/Http3Settings.Builder.maxEarlyPriorityUpdates.<set-maxEarlyPriorityUpdates>|<set-maxEarlyPriorityUpdates>(kotlin.Int){}[0]
+        final var maxFieldSectionSize // io.kuicksilver.http3/Http3Settings.Builder.maxFieldSectionSize|{}maxFieldSectionSize[0]
+            final fun <get-maxFieldSectionSize>(): kotlin/Long // io.kuicksilver.http3/Http3Settings.Builder.maxFieldSectionSize.<get-maxFieldSectionSize>|<get-maxFieldSectionSize>(){}[0]
+            final fun <set-maxFieldSectionSize>(kotlin/Long) // io.kuicksilver.http3/Http3Settings.Builder.maxFieldSectionSize.<set-maxFieldSectionSize>|<set-maxFieldSectionSize>(kotlin.Long){}[0]
+        final var maxInformationalResponses // io.kuicksilver.http3/Http3Settings.Builder.maxInformationalResponses|{}maxInformationalResponses[0]
+            final fun <get-maxInformationalResponses>(): kotlin/Int // io.kuicksilver.http3/Http3Settings.Builder.maxInformationalResponses.<get-maxInformationalResponses>|<get-maxInformationalResponses>(){}[0]
+            final fun <set-maxInformationalResponses>(kotlin/Int) // io.kuicksilver.http3/Http3Settings.Builder.maxInformationalResponses.<set-maxInformationalResponses>|<set-maxInformationalResponses>(kotlin.Int){}[0]
+        final var qpackBlockedStreams // io.kuicksilver.http3/Http3Settings.Builder.qpackBlockedStreams|{}qpackBlockedStreams[0]
+            final fun <get-qpackBlockedStreams>(): kotlin/Long // io.kuicksilver.http3/Http3Settings.Builder.qpackBlockedStreams.<get-qpackBlockedStreams>|<get-qpackBlockedStreams>(){}[0]
+            final fun <set-qpackBlockedStreams>(kotlin/Long) // io.kuicksilver.http3/Http3Settings.Builder.qpackBlockedStreams.<set-qpackBlockedStreams>|<set-qpackBlockedStreams>(kotlin.Long){}[0]
+        final var qpackMaxTableCapacity // io.kuicksilver.http3/Http3Settings.Builder.qpackMaxTableCapacity|{}qpackMaxTableCapacity[0]
+            final fun <get-qpackMaxTableCapacity>(): kotlin/Long // io.kuicksilver.http3/Http3Settings.Builder.qpackMaxTableCapacity.<get-qpackMaxTableCapacity>|<get-qpackMaxTableCapacity>(){}[0]
+            final fun <set-qpackMaxTableCapacity>(kotlin/Long) // io.kuicksilver.http3/Http3Settings.Builder.qpackMaxTableCapacity.<set-qpackMaxTableCapacity>|<set-qpackMaxTableCapacity>(kotlin.Long){}[0]
+
+        final fun build(): io.kuicksilver.http3/Http3Settings // io.kuicksilver.http3/Http3Settings.Builder.build|build(){}[0]
+        final fun enableQpackDynamicTable() // io.kuicksilver.http3/Http3Settings.Builder.enableQpackDynamicTable|enableQpackDynamicTable(){}[0]
+    }
+
+    final object Companion { // io.kuicksilver.http3/Http3Settings.Companion|null[0]
+        final val Default // io.kuicksilver.http3/Http3Settings.Companion.Default|{}Default[0]
+            final fun <get-Default>(): io.kuicksilver.http3/Http3Settings // io.kuicksilver.http3/Http3Settings.Companion.Default.<get-Default>|<get-Default>(){}[0]
+    }
+}
+
+sealed class io.kuicksilver.http3/Http3Exception : kotlinx.coroutines/CopyableThrowable<io.kuicksilver.http3/Http3Exception>, kotlinx.io/IOException { // io.kuicksilver.http3/Http3Exception|null[0]
+    final class ConnectRejected : io.kuicksilver.http3/Http3Exception { // io.kuicksilver.http3/Http3Exception.ConnectRejected|null[0]
+        constructor <init>(kotlin/Int, io.kuicksilver.http3/Http3Headers) // io.kuicksilver.http3/Http3Exception.ConnectRejected.<init>|<init>(kotlin.Int;io.kuicksilver.http3.Http3Headers){}[0]
+
+        final val headers // io.kuicksilver.http3/Http3Exception.ConnectRejected.headers|{}headers[0]
+            final fun <get-headers>(): io.kuicksilver.http3/Http3Headers // io.kuicksilver.http3/Http3Exception.ConnectRejected.headers.<get-headers>|<get-headers>(){}[0]
+        final val status // io.kuicksilver.http3/Http3Exception.ConnectRejected.status|{}status[0]
+            final fun <get-status>(): kotlin/Int // io.kuicksilver.http3/Http3Exception.ConnectRejected.status.<get-status>|<get-status>(){}[0]
+
+        final fun createCopy(): io.kuicksilver.http3/Http3Exception.ConnectRejected // io.kuicksilver.http3/Http3Exception.ConnectRejected.createCopy|createCopy(){}[0]
+    }
+
+    final class FieldSectionTooLarge : io.kuicksilver.http3/Http3Exception { // io.kuicksilver.http3/Http3Exception.FieldSectionTooLarge|null[0]
+        constructor <init>(kotlin/Long, kotlin/Long) // io.kuicksilver.http3/Http3Exception.FieldSectionTooLarge.<init>|<init>(kotlin.Long;kotlin.Long){}[0]
+
+        final val limit // io.kuicksilver.http3/Http3Exception.FieldSectionTooLarge.limit|{}limit[0]
+            final fun <get-limit>(): kotlin/Long // io.kuicksilver.http3/Http3Exception.FieldSectionTooLarge.limit.<get-limit>|<get-limit>(){}[0]
+        final val streamId // io.kuicksilver.http3/Http3Exception.FieldSectionTooLarge.streamId|{}streamId[0]
+            final fun <get-streamId>(): kotlin/Long // io.kuicksilver.http3/Http3Exception.FieldSectionTooLarge.streamId.<get-streamId>|<get-streamId>(){}[0]
+
+        final fun createCopy(): io.kuicksilver.http3/Http3Exception.FieldSectionTooLarge // io.kuicksilver.http3/Http3Exception.FieldSectionTooLarge.createCopy|createCopy(){}[0]
+    }
+
+    final class MessageError : io.kuicksilver.http3/Http3Exception { // io.kuicksilver.http3/Http3Exception.MessageError|null[0]
+        constructor <init>(kotlin/Long, kotlin/String) // io.kuicksilver.http3/Http3Exception.MessageError.<init>|<init>(kotlin.Long;kotlin.String){}[0]
+
+        final val reason // io.kuicksilver.http3/Http3Exception.MessageError.reason|{}reason[0]
+            final fun <get-reason>(): kotlin/String // io.kuicksilver.http3/Http3Exception.MessageError.reason.<get-reason>|<get-reason>(){}[0]
+        final val streamId // io.kuicksilver.http3/Http3Exception.MessageError.streamId|{}streamId[0]
+            final fun <get-streamId>(): kotlin/Long // io.kuicksilver.http3/Http3Exception.MessageError.streamId.<get-streamId>|<get-streamId>(){}[0]
+
+        final fun createCopy(): io.kuicksilver.http3/Http3Exception.MessageError // io.kuicksilver.http3/Http3Exception.MessageError.createCopy|createCopy(){}[0]
+    }
+
+    final class Protocol : io.kuicksilver.http3/Http3Exception { // io.kuicksilver.http3/Http3Exception.Protocol|null[0]
+        constructor <init>(kotlin/Long, io.kuicksilver.quic/Initiator, kotlin/Long?, kotlin/String? = ...) // io.kuicksilver.http3/Http3Exception.Protocol.<init>|<init>(kotlin.Long;io.kuicksilver.quic.Initiator;kotlin.Long?;kotlin.String?){}[0]
+
+        final val h3Code // io.kuicksilver.http3/Http3Exception.Protocol.h3Code|{}h3Code[0]
+            final fun <get-h3Code>(): kotlin/Long // io.kuicksilver.http3/Http3Exception.Protocol.h3Code.<get-h3Code>|<get-h3Code>(){}[0]
+        final val initiator // io.kuicksilver.http3/Http3Exception.Protocol.initiator|{}initiator[0]
+            final fun <get-initiator>(): io.kuicksilver.quic/Initiator // io.kuicksilver.http3/Http3Exception.Protocol.initiator.<get-initiator>|<get-initiator>(){}[0]
+        final val streamId // io.kuicksilver.http3/Http3Exception.Protocol.streamId|{}streamId[0]
+            final fun <get-streamId>(): kotlin/Long? // io.kuicksilver.http3/Http3Exception.Protocol.streamId.<get-streamId>|<get-streamId>(){}[0]
+
+        final fun createCopy(): io.kuicksilver.http3/Http3Exception.Protocol // io.kuicksilver.http3/Http3Exception.Protocol.createCopy|createCopy(){}[0]
+    }
+
+    final class Qpack : io.kuicksilver.http3/Http3Exception { // io.kuicksilver.http3/Http3Exception.Qpack|null[0]
+        constructor <init>(kotlin/Long, kotlin/String? = ...) // io.kuicksilver.http3/Http3Exception.Qpack.<init>|<init>(kotlin.Long;kotlin.String?){}[0]
+
+        final val code // io.kuicksilver.http3/Http3Exception.Qpack.code|{}code[0]
+            final fun <get-code>(): kotlin/Long // io.kuicksilver.http3/Http3Exception.Qpack.code.<get-code>|<get-code>(){}[0]
+
+        final fun createCopy(): io.kuicksilver.http3/Http3Exception.Qpack // io.kuicksilver.http3/Http3Exception.Qpack.createCopy|createCopy(){}[0]
+    }
+
+    final class RequestNotProcessed : io.kuicksilver.http3/Http3Exception { // io.kuicksilver.http3/Http3Exception.RequestNotProcessed|null[0]
+        constructor <init>(kotlin/Boolean = ...) // io.kuicksilver.http3/Http3Exception.RequestNotProcessed.<init>|<init>(kotlin.Boolean){}[0]
+
+        final val retrySafe // io.kuicksilver.http3/Http3Exception.RequestNotProcessed.retrySafe|{}retrySafe[0]
+            final fun <get-retrySafe>(): kotlin/Boolean // io.kuicksilver.http3/Http3Exception.RequestNotProcessed.retrySafe.<get-retrySafe>|<get-retrySafe>(){}[0]
+
+        final fun createCopy(): io.kuicksilver.http3/Http3Exception.RequestNotProcessed // io.kuicksilver.http3/Http3Exception.RequestNotProcessed.createCopy|createCopy(){}[0]
+    }
+
+    final class Settings : io.kuicksilver.http3/Http3Exception { // io.kuicksilver.http3/Http3Exception.Settings|null[0]
+        constructor <init>(kotlin/String) // io.kuicksilver.http3/Http3Exception.Settings.<init>|<init>(kotlin.String){}[0]
+
+        final fun createCopy(): io.kuicksilver.http3/Http3Exception.Settings // io.kuicksilver.http3/Http3Exception.Settings.createCopy|createCopy(){}[0]
+    }
+
+    final object Companion { // io.kuicksilver.http3/Http3Exception.Companion|null[0]
+        final fun fromQuic(io.kuicksilver.quic/QuicException): kotlinx.io/IOException // io.kuicksilver.http3/Http3Exception.Companion.fromQuic|fromQuic(io.kuicksilver.quic.QuicException){}[0]
+    }
+}
+
+final object io.kuicksilver.http3/Http3ErrorCode { // io.kuicksilver.http3/Http3ErrorCode|null[0]
+    final const val CLOSED_CRITICAL_STREAM // io.kuicksilver.http3/Http3ErrorCode.CLOSED_CRITICAL_STREAM|{}CLOSED_CRITICAL_STREAM[0]
+        final fun <get-CLOSED_CRITICAL_STREAM>(): kotlin/Long // io.kuicksilver.http3/Http3ErrorCode.CLOSED_CRITICAL_STREAM.<get-CLOSED_CRITICAL_STREAM>|<get-CLOSED_CRITICAL_STREAM>(){}[0]
+    final const val CONNECT_ERROR // io.kuicksilver.http3/Http3ErrorCode.CONNECT_ERROR|{}CONNECT_ERROR[0]
+        final fun <get-CONNECT_ERROR>(): kotlin/Long // io.kuicksilver.http3/Http3ErrorCode.CONNECT_ERROR.<get-CONNECT_ERROR>|<get-CONNECT_ERROR>(){}[0]
+    final const val DATAGRAM_ERROR // io.kuicksilver.http3/Http3ErrorCode.DATAGRAM_ERROR|{}DATAGRAM_ERROR[0]
+        final fun <get-DATAGRAM_ERROR>(): kotlin/Long // io.kuicksilver.http3/Http3ErrorCode.DATAGRAM_ERROR.<get-DATAGRAM_ERROR>|<get-DATAGRAM_ERROR>(){}[0]
+    final const val EXCESSIVE_LOAD // io.kuicksilver.http3/Http3ErrorCode.EXCESSIVE_LOAD|{}EXCESSIVE_LOAD[0]
+        final fun <get-EXCESSIVE_LOAD>(): kotlin/Long // io.kuicksilver.http3/Http3ErrorCode.EXCESSIVE_LOAD.<get-EXCESSIVE_LOAD>|<get-EXCESSIVE_LOAD>(){}[0]
+    final const val FRAME_ERROR // io.kuicksilver.http3/Http3ErrorCode.FRAME_ERROR|{}FRAME_ERROR[0]
+        final fun <get-FRAME_ERROR>(): kotlin/Long // io.kuicksilver.http3/Http3ErrorCode.FRAME_ERROR.<get-FRAME_ERROR>|<get-FRAME_ERROR>(){}[0]
+    final const val FRAME_UNEXPECTED // io.kuicksilver.http3/Http3ErrorCode.FRAME_UNEXPECTED|{}FRAME_UNEXPECTED[0]
+        final fun <get-FRAME_UNEXPECTED>(): kotlin/Long // io.kuicksilver.http3/Http3ErrorCode.FRAME_UNEXPECTED.<get-FRAME_UNEXPECTED>|<get-FRAME_UNEXPECTED>(){}[0]
+    final const val GENERAL_PROTOCOL_ERROR // io.kuicksilver.http3/Http3ErrorCode.GENERAL_PROTOCOL_ERROR|{}GENERAL_PROTOCOL_ERROR[0]
+        final fun <get-GENERAL_PROTOCOL_ERROR>(): kotlin/Long // io.kuicksilver.http3/Http3ErrorCode.GENERAL_PROTOCOL_ERROR.<get-GENERAL_PROTOCOL_ERROR>|<get-GENERAL_PROTOCOL_ERROR>(){}[0]
+    final const val ID_ERROR // io.kuicksilver.http3/Http3ErrorCode.ID_ERROR|{}ID_ERROR[0]
+        final fun <get-ID_ERROR>(): kotlin/Long // io.kuicksilver.http3/Http3ErrorCode.ID_ERROR.<get-ID_ERROR>|<get-ID_ERROR>(){}[0]
+    final const val INTERNAL_ERROR // io.kuicksilver.http3/Http3ErrorCode.INTERNAL_ERROR|{}INTERNAL_ERROR[0]
+        final fun <get-INTERNAL_ERROR>(): kotlin/Long // io.kuicksilver.http3/Http3ErrorCode.INTERNAL_ERROR.<get-INTERNAL_ERROR>|<get-INTERNAL_ERROR>(){}[0]
+    final const val MESSAGE_ERROR // io.kuicksilver.http3/Http3ErrorCode.MESSAGE_ERROR|{}MESSAGE_ERROR[0]
+        final fun <get-MESSAGE_ERROR>(): kotlin/Long // io.kuicksilver.http3/Http3ErrorCode.MESSAGE_ERROR.<get-MESSAGE_ERROR>|<get-MESSAGE_ERROR>(){}[0]
+    final const val MISSING_SETTINGS // io.kuicksilver.http3/Http3ErrorCode.MISSING_SETTINGS|{}MISSING_SETTINGS[0]
+        final fun <get-MISSING_SETTINGS>(): kotlin/Long // io.kuicksilver.http3/Http3ErrorCode.MISSING_SETTINGS.<get-MISSING_SETTINGS>|<get-MISSING_SETTINGS>(){}[0]
+    final const val NO_ERROR // io.kuicksilver.http3/Http3ErrorCode.NO_ERROR|{}NO_ERROR[0]
+        final fun <get-NO_ERROR>(): kotlin/Long // io.kuicksilver.http3/Http3ErrorCode.NO_ERROR.<get-NO_ERROR>|<get-NO_ERROR>(){}[0]
+    final const val QPACK_DECODER_STREAM_ERROR // io.kuicksilver.http3/Http3ErrorCode.QPACK_DECODER_STREAM_ERROR|{}QPACK_DECODER_STREAM_ERROR[0]
+        final fun <get-QPACK_DECODER_STREAM_ERROR>(): kotlin/Long // io.kuicksilver.http3/Http3ErrorCode.QPACK_DECODER_STREAM_ERROR.<get-QPACK_DECODER_STREAM_ERROR>|<get-QPACK_DECODER_STREAM_ERROR>(){}[0]
+    final const val QPACK_DECOMPRESSION_FAILED // io.kuicksilver.http3/Http3ErrorCode.QPACK_DECOMPRESSION_FAILED|{}QPACK_DECOMPRESSION_FAILED[0]
+        final fun <get-QPACK_DECOMPRESSION_FAILED>(): kotlin/Long // io.kuicksilver.http3/Http3ErrorCode.QPACK_DECOMPRESSION_FAILED.<get-QPACK_DECOMPRESSION_FAILED>|<get-QPACK_DECOMPRESSION_FAILED>(){}[0]
+    final const val QPACK_ENCODER_STREAM_ERROR // io.kuicksilver.http3/Http3ErrorCode.QPACK_ENCODER_STREAM_ERROR|{}QPACK_ENCODER_STREAM_ERROR[0]
+        final fun <get-QPACK_ENCODER_STREAM_ERROR>(): kotlin/Long // io.kuicksilver.http3/Http3ErrorCode.QPACK_ENCODER_STREAM_ERROR.<get-QPACK_ENCODER_STREAM_ERROR>|<get-QPACK_ENCODER_STREAM_ERROR>(){}[0]
+    final const val REQUEST_CANCELLED // io.kuicksilver.http3/Http3ErrorCode.REQUEST_CANCELLED|{}REQUEST_CANCELLED[0]
+        final fun <get-REQUEST_CANCELLED>(): kotlin/Long // io.kuicksilver.http3/Http3ErrorCode.REQUEST_CANCELLED.<get-REQUEST_CANCELLED>|<get-REQUEST_CANCELLED>(){}[0]
+    final const val REQUEST_INCOMPLETE // io.kuicksilver.http3/Http3ErrorCode.REQUEST_INCOMPLETE|{}REQUEST_INCOMPLETE[0]
+        final fun <get-REQUEST_INCOMPLETE>(): kotlin/Long // io.kuicksilver.http3/Http3ErrorCode.REQUEST_INCOMPLETE.<get-REQUEST_INCOMPLETE>|<get-REQUEST_INCOMPLETE>(){}[0]
+    final const val REQUEST_REJECTED // io.kuicksilver.http3/Http3ErrorCode.REQUEST_REJECTED|{}REQUEST_REJECTED[0]
+        final fun <get-REQUEST_REJECTED>(): kotlin/Long // io.kuicksilver.http3/Http3ErrorCode.REQUEST_REJECTED.<get-REQUEST_REJECTED>|<get-REQUEST_REJECTED>(){}[0]
+    final const val SETTINGS_ERROR // io.kuicksilver.http3/Http3ErrorCode.SETTINGS_ERROR|{}SETTINGS_ERROR[0]
+        final fun <get-SETTINGS_ERROR>(): kotlin/Long // io.kuicksilver.http3/Http3ErrorCode.SETTINGS_ERROR.<get-SETTINGS_ERROR>|<get-SETTINGS_ERROR>(){}[0]
+    final const val STREAM_CREATION_ERROR // io.kuicksilver.http3/Http3ErrorCode.STREAM_CREATION_ERROR|{}STREAM_CREATION_ERROR[0]
+        final fun <get-STREAM_CREATION_ERROR>(): kotlin/Long // io.kuicksilver.http3/Http3ErrorCode.STREAM_CREATION_ERROR.<get-STREAM_CREATION_ERROR>|<get-STREAM_CREATION_ERROR>(){}[0]
+    final const val VERSION_FALLBACK // io.kuicksilver.http3/Http3ErrorCode.VERSION_FALLBACK|{}VERSION_FALLBACK[0]
+        final fun <get-VERSION_FALLBACK>(): kotlin/Long // io.kuicksilver.http3/Http3ErrorCode.VERSION_FALLBACK.<get-VERSION_FALLBACK>|<get-VERSION_FALLBACK>(){}[0]
+
+    final fun isKnown(kotlin/Long): kotlin/Boolean // io.kuicksilver.http3/Http3ErrorCode.isKnown|isKnown(kotlin.Long){}[0]
+    final fun name(kotlin/Long): kotlin/String // io.kuicksilver.http3/Http3ErrorCode.name|name(kotlin.Long){}[0]
+    final fun normalize(kotlin/Long): kotlin/Long // io.kuicksilver.http3/Http3ErrorCode.normalize|normalize(kotlin.Long){}[0]
+}
+
+final inline fun io.kuicksilver.http3/http3Settings(kotlin/Function1<io.kuicksilver.http3/Http3Settings.Builder, kotlin/Unit>): io.kuicksilver.http3/Http3Settings // io.kuicksilver.http3/http3Settings|http3Settings(kotlin.Function1<io.kuicksilver.http3.Http3Settings.Builder,kotlin.Unit>){}[0]

@@ -1,0 +1,7 @@
+# Copyright 2026 The Kuicksilver Authors
+# SPDX-License-Identifier: Apache-2.0
+# cinterop for ksl.h; the static archives (ksl + prefixed OpenSSL) are embedded into the klib (symbols prefixed per ADR-0007).
+package = io.kuicksilver.native.cinterop
+headers = ksl.h
+staticLibraries = libksl.a libssl.a libcrypto.a
+linkerOpts.mingw_x64 = -lcrypt32 -lws2_32 -lbcrypt

@@ -1,0 +1,62 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": [
+    "Copyright 2026 The Kuicksilver Authors",
+    "SPDX-License-Identifier: Apache-2.0",
+    "Gradle dependencies, GitHub Actions pinned by digest, and the OpenSSL pin in gradle/openssl.toml. Nothing is auto-merged."
+  ],
+  "extends": [
+    "config:recommended",
+    "helpers:pinGitHubActionDigests",
+    ":semanticCommitTypeAll(build)"
+  ],
+  "schedule": ["before 6am on monday"],
+  "timezone": "UTC",
+  "automerge": false,
+  "dependencyDashboard": true,
+  "prConcurrentLimit": 5,
+  "labels": ["dependencies"],
+  "enabledManagers": ["gradle", "gradle-wrapper", "github-actions", "custom.regex"],
+  "packageRules": [
+    {
+      "description": "Kotlin, the Kotlin Gradle plugin and compiler plugins move together.",
+      "matchPackageNames": ["org.jetbrains.kotlin:**", "org.jetbrains.kotlin.**"],
+      "groupName": "Kotlin"
+    },
+    {
+      "description": "Ktor modules move together; the engines vendor Ktor 3.6.0 code and tests, so a Ktor update needs a manual review of docs/ktor-internal-api.md.",
+      "matchPackageNames": ["io.ktor:**"],
+      "groupName": "Ktor"
+    },
+    {
+      "description": "GitHub Actions: pinned by commit digest, grouped, minor and patch only.",
+      "matchManagers": ["github-actions"],
+      "groupName": "GitHub Actions",
+      "matchUpdateTypes": ["minor", "patch", "digest", "pinDigest"]
+    },
+    {
+      "description": "OpenSSL: stay on the 3.5 LTS branch, never auto-merge, open the PR immediately (security releases have a 72-hour SLA, see SECURITY.md).",
+      "matchManagers": ["custom.regex"],
+      "matchDepNames": ["openssl/openssl"],
+      "allowedVersions": "/^3\\.5\\./",
+      "schedule": ["at any time"],
+      "automerge": false,
+      "labels": ["dependencies", "openssl", "security-review"],
+      "prBodyNotes": [
+        "**OpenSSL pin update.** Renovate changes only `version` in `gradle/openssl.toml`. Before merging, a maintainer must: (1) download `openssl-<version>.tar.gz` and its `.asc` from the GitHub release, (2) verify the signature against `tools/openssl/openssl-release-key.asc` / `pgp_fingerprint` (update both only if OpenSSL rotated its key, after checking openssl-library.org), (3) put the tarball's SHA-256 into `sha256`, (4) run `tools/openssl/fetch.sh` and the full matrix. Until `sha256` is updated, `fetch.sh` fails on purpose."
+      ]
+    }
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "The OpenSSL release pinned in gradle/openssl.toml (version line; the sha256 line is updated by a maintainer, see prBodyNotes).",
+      "managerFilePatterns": ["/^gradle/openssl\\.toml$/"],
+      "matchStrings": ["\\[openssl\\]\\s*\\nversion = \"(?<currentValue>[^\"]+)\""],
+      "depNameTemplate": "openssl/openssl",
+      "datasourceTemplate": "github-releases",
+      "extractVersionTemplate": "^openssl-(?<version>.+)$",
+      "versioningTemplate": "semver"
+    }
+  ]
+}

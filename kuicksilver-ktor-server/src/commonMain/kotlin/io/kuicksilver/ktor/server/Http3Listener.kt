@@ -1,0 +1,173 @@
+// Copyright 2026 The Kuicksilver Authors
+// SPDX-License-Identifier: Apache-2.0
+package io.kuicksilver.ktor.server
+
+import io.ktor.network.sockets.InetSocketAddress
+import io.ktor.server.engine.handleFailure
+import io.ktor.util.pipeline.execute
+import io.kuicksilver.http3.Http3Connection
+import io.kuicksilver.http3.Http3Endpoint
+import io.kuicksilver.http3.Http3ServerRequest
+import io.kuicksilver.ktor.server.h3.H3Call
+import io.kuicksilver.ktor.server.h3.WebSocketOverH3
+import io.kuicksilver.quic.QuicConfig
+import io.kuicksilver.quic.QuicEndpointConfig
+import io.kuicksilver.quic.QuicServerConfig
+import io.kuicksilver.quic.quicConfig
+import io.kuicksilver.tls.Certificate
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableJob
+import kotlinx.coroutines.CoroutineName
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
+
+/** One HTTP/3 port: its accept loop, the supervisor of its connection handlers and the connections themselves (for GOAWAY at stop). */
+internal class H3Listener(
+    val endpoint: Http3Endpoint,
+    val acceptJob: Job,
+    val connections: CompletableJob,
+) {
+    private val lock = Mutex()
+    private val set = HashSet<Http3Connection>()
+
+    suspend fun add(c: Http3Connection) = lock.withLock { set += c }
+
+    suspend fun remove(c: Http3Connection) = lock.withLock { set -= c }
+
+    suspend fun live(): List<Http3Connection> = lock.withLock { set.toList() }
+}
+
+/**
+ * HTTP/3 on [port], opened after the TCP socket so `port = 0` resolves first. A platform without a QUIC
+ * server (Apple and Windows Native, ADR-0006) keeps serving HTTP/1.1 only, with a warning.
+ */
+internal suspend fun KuicksilverApplicationEngine.startHttp3(
+    scope: CoroutineScope,
+    tls: KuicksilverTlsConnector,
+    port: Int,
+): H3Listener? {
+    with(scope) {
+        if (!configuration.http3) return null
+        val quic =
+            configuration.quicMaxIdleTimeout?.let { idle ->
+                if (configuration.quic ===
+                    QuicConfig.Default
+                ) {
+                    quicConfig { maxIdleTimeout = idle }
+                } else {
+                    configuration.quic
+                }
+            }
+                ?: configuration.quic
+        val settings =
+            configuration.http3Settings.let {
+                if (configuration.webSocketsOverHttp3 &&
+                    !it.enableConnectProtocol
+                ) {
+                    it.toBuilder().apply { enableConnectProtocol = true }.build()
+                } else {
+                    it
+                }
+            }
+        val endpointConfig =
+            QuicEndpointConfig
+                .Builder()
+                .apply {
+                    server = QuicServerConfig.Builder(tls.tlsConfig(listOf(Http3Endpoint.H3))).apply { this.quic = quic }.build()
+                    connectionIdLength = quic.connectionIdLength
+                    loops = configuration.udpSocketCount
+                    configuration.quicAdmission?.let { admission = it }
+                }.build()
+        val endpoint =
+            try {
+                configuration.http3Bind(InetSocketAddress(tls.host, port), endpointConfig, settings)
+            } catch (
+                e: UnsupportedOperationException,
+            ) {
+                environment.log.warn("HTTP/3 is not served on port $port: ${e.message}")
+                return null
+            }
+        h3Endpoints += endpoint
+        h3Ports += port
+        val local = InetSocketAddress(tls.host, port)
+        // the handlers outlive the accept loop: a stop cancels accepting first and lets them finish
+        val connections = SupervisorJob(coroutineContext[Job])
+        lateinit var listener: H3Listener
+        val acceptJob =
+            launch(CoroutineName("http3-$port")) {
+                while (true) {
+                    val conn =
+                        try {
+                            endpoint.accept()
+                        } catch (
+                            e: CancellationException,
+                        ) {
+                            throw e
+                        } catch (e: Throwable) {
+                            environment.log.debug("HTTP/3 accept on port $port ended: $e")
+                            break
+                        }
+                    listener.add(conn)
+                    launch(connections) {
+                        val peer = conn.quic.peerCertificates
+                        try {
+                            while (true) {
+                                val req =
+                                    try {
+                                        conn.acceptRequest()
+                                    } catch (
+                                        e: CancellationException,
+                                    ) {
+                                        throw e
+                                    } catch (e: Throwable) {
+                                        break
+                                    }
+                                launch { handleHttp3(req, local, peer) }
+                            }
+                        } finally {
+                            listener.remove(conn)
+                            conn.close()
+                        }
+                    }
+                }
+            }
+        listener = H3Listener(endpoint, acceptJob, connections)
+        return listener
+    }
+}
+
+private suspend fun KuicksilverApplicationEngine.handleHttp3(
+    req: Http3ServerRequest,
+    local: InetSocketAddress,
+    peer: List<Certificate>,
+) {
+    // Extended CONNECT (RFC 9220): WebSockets go through Ktor's pipeline; other protocols are not served here
+    val webSocket = req.method == "CONNECT" && req.protocol == WebSocketOverH3.PROTOCOL
+    if (req.method == "CONNECT" && !webSocket) {
+        runCatching { req.respond(501).finish() }
+        return
+    }
+    withContext(userDispatcher) requestContext@{
+        val call =
+            H3Call(
+                applicationProvider(),
+                req,
+                local,
+                peer,
+                this@requestContext.coroutineContext,
+                engineDispatcher,
+                userDispatcher,
+                webSocket,
+            )
+        try {
+            pipeline.execute(call)
+        } catch (error: Throwable) {
+            handleFailure(call, error)
+        }
+    }
+}

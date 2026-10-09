@@ -1,0 +1,968 @@
+// Copyright 2014-2024 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Modifications Copyright 2026 The Kuicksilver Authors
+// SPDX-License-Identifier: Apache-2.0
+// Vendored from Ktor 3.6.0 ktor-server/ktor-server-test-suites/common/src/io/ktor/server/testing/suites/HttpServerCommonTestSuite.kt, adapted to the Kuicksilver engine.
+package io.kuicksilver.ktor.server.contract
+
+import io.ktor.client.*
+import io.ktor.client.call.*
+import io.ktor.client.request.*
+import io.ktor.client.statement.*
+import io.ktor.http.*
+import io.ktor.http.content.*
+import io.ktor.server.application.*
+import io.ktor.server.application.hooks.*
+import io.ktor.server.engine.*
+import io.ktor.server.http.*
+import io.ktor.server.plugins.*
+import io.ktor.server.plugins.autohead.*
+import io.ktor.server.plugins.forwardedheaders.*
+import io.ktor.server.plugins.hsts.*
+import io.ktor.server.plugins.statuspages.*
+import io.ktor.server.request.*
+import io.ktor.server.response.*
+import io.ktor.server.routing.*
+import io.ktor.server.sse.*
+import io.ktor.server.util.*
+import io.ktor.utils.io.*
+import io.ktor.utils.io.core.*
+import kotlinx.coroutines.*
+import kotlinx.io.readByteArray
+import kotlin.coroutines.AbstractCoroutineContextElement
+import kotlin.coroutines.CoroutineContext
+import kotlin.test.*
+import kotlin.time.Duration.Companion.minutes
+import kotlin.time.Duration.Companion.seconds
+import kotlin.use
+
+abstract class HttpServerCommonTestSuite<TEngine : ApplicationEngine, TConfiguration : ApplicationEngine.Configuration>(
+    hostFactory: ApplicationEngineFactory<TEngine, TConfiguration>,
+) : EngineTestBase<TEngine, TConfiguration>(hostFactory) {
+    @Test
+    fun testRedirect() =
+        runTest {
+            createAndStartServer {
+                handle {
+                    call.respondRedirect(Url("http://localhost:${call.request.port()}/page"), true)
+                }
+            }
+
+            withUrl("/") {
+                assertEquals(HttpStatusCode.MovedPermanently.value, status.value)
+            }
+        }
+
+    @Test
+    fun testRedirectFromInterceptor() =
+        runTest {
+            createAndStartServer {
+                application.intercept(ApplicationCallPipeline.Plugins) {
+                    call.respondRedirect("/2", true)
+                }
+            }
+
+            withUrl("/1/") {
+                assertEquals(HttpStatusCode.MovedPermanently.value, status.value)
+
+                assertEquals("/2", headers[HttpHeaders.Location])
+            }
+        }
+
+    @Test
+    fun testHeader() =
+        runTest(retries = 3) {
+            createAndStartServer {
+                handle {
+                    call.response.headers.append(HttpHeaders.ETag, "test-etag")
+                    call.respondText("Hello")
+                }
+            }
+
+            withUrl("/") {
+                assertEquals(200, status.value)
+                assertEquals("test-etag", headers[HttpHeaders.ETag])
+                assertNull(headers[HttpHeaders.TransferEncoding])
+                assertEquals("5", headers[HttpHeaders.ContentLength])
+            }
+        }
+
+    @Test
+    fun testAllHeaders() =
+        runTest {
+            createAndStartServer {
+                handle {
+                    call.response.headers.append("Name-1", "value-1")
+                    call.response.headers.append("Name-1", "value-2")
+                    call.response.headers.append("Name-2", "value")
+                    call.respondText(
+                        call.response.headers
+                            .allValues()
+                            .toString(),
+                    )
+                }
+            }
+
+            withUrl("/") {
+                assertEquals(200, status.value)
+                val body = call.response.bodyAsText()
+                val ignoreCase = call.response.version != HttpProtocolVersion.HTTP_1_1
+                assertTrue(body.contains("Name-1=[value-1, value-2]", ignoreCase))
+                assertTrue(body.contains("Name-2=[value]", ignoreCase))
+            }
+        }
+
+    @Test
+    open fun testHeadRequest() =
+        runTest {
+            createAndStartServer {
+                application.install(AutoHeadResponse)
+                handle {
+                    call.respondText("Hello")
+                }
+            }
+
+            withUrl("/", { method = HttpMethod.Head }) {
+                assertEquals(200, status.value)
+                assertNull(headers[HttpHeaders.TransferEncoding])
+                assertEquals("5", headers[HttpHeaders.ContentLength])
+            }
+        }
+
+    @Test
+    fun testCookie() =
+        runTest {
+            createAndStartServer {
+                handle {
+                    call.response.cookies.append("k1", "v1")
+                    call.respondText("Hello")
+                }
+            }
+
+            withUrl("/") {
+                assertEquals(200, status.value)
+                assertEquals($$"k1=v1; $x-enc=URI_ENCODING", headers[HttpHeaders.SetCookie])
+            }
+        }
+
+    @Test
+    fun testPathComponentsDecoding() =
+        runTest {
+            createAndStartServer {
+                get("/a%20b") {
+                    call.respondText("space")
+                }
+                get("/a+b") {
+                    call.respondText("plus")
+                }
+            }
+
+            withUrl("/a%20b") {
+                assertEquals(200, status.value)
+                assertEquals("space", bodyAsText())
+            }
+            withUrl("/a+b") {
+                assertEquals(200, status.value)
+                assertEquals("plus", bodyAsText())
+            }
+        }
+
+    @Test
+    fun testFormUrlEncoded() =
+        runTest {
+            createAndStartServer {
+                post("/") {
+                    call.respondText("${call.parameters["urlp"]},${call.receiveParameters()["formp"]}")
+                }
+            }
+
+            withUrl(
+                "/?urlp=1",
+                {
+                    method = HttpMethod.Post
+                    setBody(ByteArrayContent("formp=2".toByteArray(), ContentType.Application.FormUrlEncoded))
+                },
+            ) {
+                assertEquals(HttpStatusCode.OK.value, status.value)
+                assertEquals("1,2", bodyAsText())
+            }
+        }
+
+    @Test
+    fun testQueryMethodWithBody() =
+        runTest {
+            createAndStartServer {
+                query("/") {
+                    call.respondText("Hello")
+                }
+            }
+
+            withUrl(
+                "/",
+                {
+                    method = HttpMethod.Query
+                    setBody(ByteArrayContent("some=data".toByteArray(), ContentType.Application.FormUrlEncoded))
+                },
+            ) {
+                assertEquals(HttpStatusCode.OK.value, status.value)
+                assertEquals("Hello", bodyAsText())
+            }
+        }
+
+    @Test
+    @Http1Only
+    fun testRequestTwiceNoKeepAlive() =
+        runTest {
+            createAndStartServer {
+                get("/") {
+                    call.respondText("Text")
+                }
+            }
+
+            withUrl(
+                "/",
+                {
+                    header(HttpHeaders.Connection, "close")
+                },
+            ) {
+                assertEquals("Text", bodyAsText())
+            }
+
+            withUrl(
+                "/",
+                {
+                    header(HttpHeaders.Connection, "close")
+                },
+            ) {
+                assertEquals("Text", bodyAsText())
+            }
+        }
+
+    @Test
+    @Http1Only
+    fun testRequestTwiceWithKeepAlive() =
+        runTest {
+            createAndStartServer {
+                get("/") {
+                    call.respondText("Text")
+                }
+            }
+
+            withUrl(
+                "/",
+                {
+                    header(HttpHeaders.Connection, "keep-alive")
+                },
+            ) {
+                assertEquals(200, status.value)
+                assertEquals("Text", bodyAsText())
+            }
+
+            withUrl(
+                "/",
+                {
+                    header(HttpHeaders.Connection, "keep-alive")
+                },
+            ) {
+                assertEquals(200, status.value)
+                assertEquals("Text", bodyAsText())
+            }
+        }
+
+    @Test
+    fun test404() =
+        runTest {
+            createAndStartServer {
+            }
+
+            withUrl("/") {
+                assertEquals(HttpStatusCode.NotFound.value, status.value)
+            }
+
+            withUrl("/aaaa") {
+                assertEquals(HttpStatusCode.NotFound.value, status.value)
+            }
+        }
+
+    @Test
+    fun testStatusPages404() =
+        runTest {
+            createAndStartServer {
+                application.install(StatusPages) {
+                    status(HttpStatusCode.NotFound) { call, _ ->
+                        call.respondText(ContentType.parse("text/html"), HttpStatusCode.NotFound) {
+                            "Error string"
+                        }
+                    }
+                }
+            }
+
+            withUrl("/non-existent") {
+                assertEquals(HttpStatusCode.NotFound.value, status.value)
+                assertEquals("Error string", bodyAsText())
+            }
+        }
+
+    @Test
+    fun testRemoteAddress() =
+        runTest(retries = 3) {
+            createAndStartServer {
+                handle {
+                    call.respondText {
+                        call.request.local.remoteAddress
+                    }
+                }
+            }
+
+            withUrl("/") {
+                bodyAsText().also { text ->
+                    assertNotNull(
+                        listOf("localhost", "127.0.0.1", "::1", "0:0:0:0:0:0:0:1", "0.0.0.0").find {
+                            it == text
+                        },
+                    )
+                }
+            }
+        }
+
+    @Test
+    fun testRequestParameters() =
+        runTest {
+            createAndStartServer {
+                get("/*") {
+                    call.respond(
+                        call.request.queryParameters
+                            .getAll(call.request.path().removePrefix("/"))
+                            .toString(),
+                    )
+                }
+            }
+
+            withUrl("/single?single=value") {
+                assertEquals("[value]", bodyAsText())
+            }
+            withUrl("/multiple?multiple=value1&multiple=value2") {
+                assertEquals("[value1, value2]", bodyAsText())
+            }
+            withUrl("/missing") {
+                assertEquals("null", bodyAsText())
+            }
+        }
+
+    @Test
+    fun testStatusCodeDirect() =
+        runTest {
+            createAndStartServer {
+                get("/") {
+                    call.response.status(HttpStatusCode.Found)
+                    call.respond("Hello")
+                }
+            }
+
+            withUrl("/") {
+                assertEquals(HttpStatusCode.Found.value, status.value)
+                assertEquals("Hello", bodyAsText())
+            }
+        }
+
+    @Test
+    fun testStatusCodeViaResponseObject() =
+        runTest {
+            var completed = false
+            createAndStartServer {
+                get("/") {
+                    call.respond(HttpStatusCode.Found)
+                }
+            }
+
+            withUrl("/") {
+                assertEquals(HttpStatusCode.Found.value, status.value)
+                completed = true
+            }
+            assertTrue(completed)
+        }
+
+    @Test
+    fun testProxyHeaders() =
+        runTest {
+            createAndStartServer {
+                application.install(XForwardedHeaders)
+                get("/") {
+                    call.respond(call.url { })
+                }
+            }
+
+            withUrl(
+                "/",
+                {
+                    header(HttpHeaders.XForwardedHost, "my-host:90")
+                },
+            ) { port ->
+                val expectedProto = if (port == sslPort) "https" else "http"
+                assertEquals("$expectedProto://my-host:90/", bodyAsText())
+            }
+
+            withUrl(
+                "/",
+                {
+                    header(HttpHeaders.XForwardedHost, "my-host")
+                },
+            ) { port ->
+                val expectedProto = if (port == sslPort) "https" else "http"
+                assertEquals("$expectedProto://my-host/", bodyAsText())
+            }
+
+            withUrl(
+                "/",
+                {
+                    header(HttpHeaders.XForwardedHost, "my-host:90")
+                    header(HttpHeaders.XForwardedProto, "https")
+                },
+            ) {
+                assertEquals("https://my-host:90/", bodyAsText())
+            }
+
+            withUrl(
+                "/",
+                {
+                    header(HttpHeaders.XForwardedHost, "my-host")
+                    header(HttpHeaders.XForwardedProto, "https")
+                },
+            ) {
+                assertEquals("https://my-host/", bodyAsText())
+            }
+        }
+
+    @Test
+    fun testRequestParts() =
+        runTest {
+            createAndStartServer {
+                get("/path/1") {
+                    call.respond(call.request.path())
+                }
+                get("/document/1") {
+                    call.respond(call.request.document())
+                }
+                get("/queryString/1") {
+                    call.respond(call.request.queryString())
+                }
+                get("/uri/1") {
+                    call.respond(call.request.uri)
+                }
+            }
+
+            withUrl("/path/1?p=v") {
+                assertEquals("/path/1", bodyAsText())
+            }
+            withUrl("/path/1?") {
+                assertEquals("/path/1", bodyAsText())
+            }
+            withUrl("/path/1") {
+                assertEquals("/path/1", bodyAsText())
+            }
+
+            withUrl("/document/1?p=v") {
+                assertEquals("1", bodyAsText())
+            }
+            withUrl("/document/1?") {
+                assertEquals("1", bodyAsText())
+            }
+            withUrl("/document/1") {
+                assertEquals("1", bodyAsText())
+            }
+
+            withUrl("/queryString/1?p=v") {
+                assertEquals("p=v", bodyAsText())
+            }
+            withUrl("/queryString/1?") {
+                assertEquals("", bodyAsText())
+            }
+            withUrl("/queryString/1") {
+                assertEquals("", bodyAsText())
+            }
+
+            withUrl("/uri/1?p=v") {
+                assertEquals("/uri/1?p=v", bodyAsText())
+            }
+            withUrl("/uri/1?") {
+                assertEquals("/uri/1?", bodyAsText())
+            }
+            withUrl("/uri/1") {
+                assertEquals("/uri/1", bodyAsText())
+            }
+        }
+
+    @OptIn(UseHttp2Push::class)
+    @Test
+    @Http2Only
+    fun testServerPush() =
+        runTest {
+            createAndStartServer {
+                get("/child") {
+                    call.respondText("child")
+                }
+
+                get("/") {
+                    call.push("/child")
+                    call.respondText("test")
+                }
+            }
+
+            withUrl("/child") {
+                assertEquals(HttpStatusCode.OK, status)
+                assertEquals("child", bodyAsText())
+            }
+
+            withUrl("/") {
+                assertEquals(HttpStatusCode.OK, status)
+                assertEquals("test", bodyAsText())
+            }
+        }
+
+    @Test
+    fun testHeadersReturnCorrectly() =
+        runTest {
+            createAndStartServer {
+                get("/") {
+                    assertEquals("foo", call.request.headers["X-Single-Value"])
+                    assertEquals("foo,bar", call.request.headers["X-Double-Value"])
+
+                    assertNull(call.request.headers["X-Nonexistent-Header"])
+                    assertNull(call.request.headers.getAll("X-Nonexistent-Header"))
+
+                    call.respond(HttpStatusCode.OK, "OK")
+                }
+            }
+
+            withUrl(
+                "/",
+                {
+                    headers {
+                        append("X-Single-Value", "foo")
+                        append("X-Double-Value", "foo")
+                        append("X-Double-Value", "bar")
+                    }
+                },
+            ) {
+                assertEquals(HttpStatusCode.OK, status)
+                assertEquals("OK", bodyAsText())
+            }
+        }
+
+    @Test
+    fun testParentContextPropagates() =
+        runTest {
+            createAndStartServer(
+                parent = TestData("parent"),
+            ) {
+                get("/") {
+                    val testDataFromParent = currentCoroutineContext()[TestData]
+                    assertNotNull(testDataFromParent, "Context should contain test data from parent")
+                    call.respond(HttpStatusCode.OK, testDataFromParent.name)
+                }
+            }
+
+            withUrl("/") {
+                assertEquals(HttpStatusCode.OK, status)
+                assertEquals("parent", bodyAsText())
+            }
+        }
+
+    @Test
+    fun testNoRespond() =
+        runTest {
+            createAndStartServer {
+                get("/") {
+                    call.response.status(HttpStatusCode.Accepted)
+                    call.response.header("Custom-Header", "Custom value")
+                }
+            }
+
+            withUrl("/") {
+                assertEquals(HttpStatusCode.Accepted, status)
+                assertEquals(headers["Custom-Header"], "Custom value")
+            }
+        }
+
+    @Test
+    fun queryParameterContainingSemicolon() =
+        runTest {
+            createAndStartServer {
+                handle {
+                    assertEquals("01;21", call.request.queryParameters["code"])
+                    assertEquals("01;21", call.request.rawQueryParameters["code"])
+                    call.respond(HttpStatusCode.OK)
+                }
+            }
+
+            withUrl(
+                "/",
+                {
+                    url {
+                        encodedParameters.append("code", "01;21")
+                    }
+                },
+            ) {
+                assertEquals(200, status.value)
+            }
+        }
+
+    @Test
+    fun testRawAndDecodedQueryParameter() =
+        runTest {
+            createAndStartServer {
+                handle {
+                    assertEquals("value&1+2 3", call.request.queryParameters["key"])
+                    assertEquals("value%261%2B2+3", call.request.rawQueryParameters["key"])
+                    call.respond(HttpStatusCode.OK)
+                }
+            }
+
+            withUrl(
+                "/",
+                {
+                    url { parameters.append("key", "value&1+2 3") }
+                },
+            ) {
+                assertEquals(200, status.value)
+            }
+        }
+
+    @Test
+    open fun testFlushingHeaders() =
+        runTest {
+            createAndStartServer {
+                route("/timed") {
+                    post {
+                        val byteStream = ByteChannel(autoFlush = true)
+                        launch(Dispatchers.Unconfined) {
+                            byteStream.writePacket(call.receiveChannel().readBuffer())
+                            byteStream.close(null)
+                        }
+                        call.respond(
+                            object : OutgoingContent.ReadChannelContent() {
+                                override val status: HttpStatusCode = HttpStatusCode.OK
+                                override val contentType: ContentType = ContentType.Text.Plain
+                                override val headers: Headers = Headers.Empty
+                                override val contentLength: Long = 5
+
+                                override fun readFrom() = byteStream
+                            },
+                        )
+                    }
+                }
+            }
+
+            val client = HttpClient()
+            val requestBody = ByteChannel(true)
+
+            client
+                .preparePost("http://127.0.0.1:$port/timed") {
+                    setBody(requestBody)
+                }.execute { httpResponse ->
+                    assertEquals(httpResponse.status, HttpStatusCode.OK)
+                    assertEquals(httpResponse.contentType(), ContentType.Text.Plain)
+
+                    val channel: ByteReadChannel = httpResponse.body()
+                    assertEquals(0, channel.availableForRead)
+
+                    val content = ByteArray(5) { it.toByte() }
+                    requestBody.writeFully(content)
+                    requestBody.close(null)
+
+                    assertContentEquals(channel.readBuffer().readByteArray(), content)
+                }
+            client.close()
+        }
+
+    @OptIn(InternalAPI::class)
+    @Test
+    open fun testCanModifyRequestHeaders() =
+        runTest {
+            createAndStartServer {
+                install(
+                    createRouteScopedPlugin("plugin") {
+                        onCall { call ->
+                            call.request.setHeader("deleted", null)
+                            call.request.setHeader("changed", listOf("new-value1", "new-value-2"))
+                        }
+                    },
+                )
+                route("/") {
+                    post {
+                        assertEquals(listOf("new-value1", "new-value-2"), call.request.headers.getAll("changed"))
+                        assertNull(call.request.headers.getAll("deleted"))
+                        assertEquals(listOf("old"), call.request.headers.getAll("original"))
+                        call.respond(call.receiveText())
+                    }
+                }
+            }
+
+            HttpClient().use { client ->
+                val requestBody = ByteChannel(true)
+                requestBody.writeStringUtf8("test")
+
+                val response =
+                    client.post("http://127.0.0.1:$port/") {
+                        headers.append("original", "old")
+                        headers.append("deleted", "old")
+                        headers.append("changed", "old")
+                        setBody("test")
+                    }
+
+                assertEquals("test", response.bodyAsText())
+            }
+        }
+
+    @OptIn(InternalAPI::class, DelicateCoroutinesApi::class)
+    @Test
+    open fun testCanModifyRequestBody() =
+        runTest {
+            createAndStartServer {
+                install(
+                    createRouteScopedPlugin("plugin") {
+                        onCall { call ->
+                            val oldChannel = call.request.receiveChannel()
+                            val newChannel =
+                                GlobalScope
+                                    .writer {
+                                        channel.writeStringUtf8("start")
+                                        oldChannel.copyTo(channel)
+                                        channel.writeStringUtf8("finish")
+                                    }.channel
+                            call.request.setReceiveChannel(newChannel)
+                        }
+                    },
+                )
+                route("/") {
+                    post {
+                        call.respond(call.receiveText())
+                    }
+                }
+            }
+
+            HttpClient().use { client ->
+                val requestBody = ByteChannel(true)
+                requestBody.writeStringUtf8("test")
+                requestBody.close()
+
+                val response =
+                    client.post("http://127.0.0.1:$port/") {
+                        setBody(requestBody)
+                    }
+
+                assertEquals("starttestfinish", response.bodyAsText())
+            }
+        }
+
+    @Test
+    fun testHSTSWithCustomPlugin() =
+        runTest {
+            createAndStartServer {
+                val plugin =
+                    createApplicationPlugin("plugin") {
+                        on(CallSetup) { call ->
+                            call.mutableOriginConnectionPoint.scheme = "https"
+                            call.mutableOriginConnectionPoint.serverPort = 443
+                        }
+
+                        onCall { call ->
+                            call.respondText { "From plugin" }
+                        }
+                    }
+                check(this is RoutingNode)
+                application.install(plugin)
+                application.install(HSTS)
+
+                get("/") {
+                    call.respondText { "OK" }
+                }
+            }
+
+            withUrl("/") {
+                assertEquals(HttpStatusCode.OK, status)
+                assertEquals("From plugin", bodyAsText())
+            }
+        }
+
+    @Test
+    fun testErrorInBodyAndStatusIsSet() =
+        runTest {
+            var throwError = false
+            createAndStartServer {
+                val plugin =
+                    createApplicationPlugin("plugin") {
+                        onCallRespond { _ ->
+                            throwError = !throwError
+                            if (throwError) {
+                                throw ExpectedTestException("Test exception")
+                            }
+                        }
+                    }
+                application.install(plugin)
+
+                get("/") {
+                    call.respond(HttpStatusCode.OK, "OK")
+                }
+            }
+
+            withUrl("/") {
+                assertEquals(HttpStatusCode.InternalServerError, status)
+                assertEquals("Test exception", bodyAsText())
+            }
+        }
+
+    @Test
+    fun testErrorInBodyClosesConnection() =
+        runTest(1.minutes) {
+            createAndStartServer {
+                get("/") {
+                    call.respond(
+                        object : OutgoingContent.WriteChannelContent() {
+                            override suspend fun writeTo(channel: ByteWriteChannel) {
+                                channel.writeStringUtf8("first\n")
+                                channel.writeStringUtf8("second\n")
+                                throw ExpectedTestException("error")
+                            }
+                        },
+                    )
+                }
+            }
+
+            try {
+                withUrl("/") {
+                    body<ByteArray>()
+                }
+            } catch (_: Throwable) {
+                // expected
+            }
+        }
+
+    @Test
+    open fun testErrorInBodyClosesConnectionWithContentLength() =
+        runTest(1.minutes) {
+            createAndStartServer {
+                get("/") {
+                    call.respond(
+                        object : OutgoingContent.WriteChannelContent() {
+                            override val contentLength: Long = 100
+
+                            override suspend fun writeTo(channel: ByteWriteChannel) {
+                                channel.writeStringUtf8("first\n")
+                                channel.writeStringUtf8("second\n")
+                                throw ExpectedTestException("error")
+                            }
+                        },
+                    )
+                }
+            }
+
+            try {
+                withUrl("/") {
+                    body<ByteArray>()
+                }
+            } catch (_: Throwable) {
+                // expected
+            }
+        }
+
+    @Test
+    fun testSSEDoesNotSendConnectionOnHttp2() =
+        runTest {
+            createAndStartServer {
+                application.install(SSE)
+                application.routing {
+                    sse("/") {
+                        send("hello")
+                    }
+                }
+            }
+
+            withUrl("/", {
+                header(HttpHeaders.Accept, "text/event-stream")
+            }) {
+                if (version == HttpProtocolVersion.HTTP_2_0) {
+                    assertNull(headers[HttpHeaders.Connection])
+                }
+                assertEquals("text/event-stream", headers[HttpHeaders.ContentType])
+                assertEquals("data: hello", bodyAsText().trim())
+            }
+        }
+
+    @Test
+    open fun testFlushDuringActiveSSEConnection() =
+        runTest {
+            val sseIsActive = Job()
+
+            createAndStartServer {
+                application.install(SSE)
+                application.routing {
+                    sse("/sse") {
+                        send("active")
+                        sseIsActive.complete()
+                        delay(5.seconds)
+                    }
+                    get("/regular") {
+                        sseIsActive.join()
+                        call.respondText("ok")
+                    }
+                }
+            }
+
+            val sseJob =
+                launch {
+                    withUrl("/sse", {
+                        header(HttpHeaders.Accept, "text/event-stream")
+                    }) {
+                        bodyAsText()
+                    }
+                }
+
+            withUrl("/regular") {
+                withTimeout(3.seconds) {
+                    assertEquals("ok", bodyAsText())
+                }
+            }
+
+            sseJob.cancelAndJoin()
+        }
+
+    @Test
+    fun testResponseSentCalledOnce() =
+        runTest {
+            var responseSentCalled = 0
+            createAndStartServer {
+                serverConfig {
+                    enableSsl = false
+                    enableHttp2 = false
+                }
+                install(
+                    createRouteScopedPlugin("Plugin") {
+                        on(ResponseSent) {
+                            responseSentCalled++
+                        }
+                    },
+                )
+
+                get("/") {
+                    call.respond("ok")
+                    throw ExpectedTestException("exception")
+                }
+            }
+
+            withUrl("/") {
+                assertEquals(HttpStatusCode.OK, status)
+                assertEquals("ok", bodyAsText())
+            }
+            delay(500)
+            assertEquals(1, responseSentCalled)
+        }
+
+    private data class TestData(
+        val name: String,
+    ) : AbstractCoroutineContextElement(TestData) {
+        /**
+         * Key for [CoroutineName] instance in the coroutine context.
+         */
+        companion object Key : CoroutineContext.Key<TestData>
+    }
+}

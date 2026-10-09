@@ -1,0 +1,146 @@
+// Klib ABI Dump
+// Targets: [iosArm64, iosSimulatorArm64, linuxArm64, linuxX64, macosArm64, mingwX64]
+// Rendering settings:
+// - Signature version: 2
+// - Show manifest properties: true
+// - Show declarations: true
+
+// Library unique name: <io.kuicksilver:kuicksilver-ktor-client>
+final enum class io.kuicksilver.ktor.client/Http3DiscoveryMode : kotlin/Enum<io.kuicksilver.ktor.client/Http3DiscoveryMode> { // io.kuicksilver.ktor.client/Http3DiscoveryMode|null[0]
+    enum entry Auto // io.kuicksilver.ktor.client/Http3DiscoveryMode.Auto|null[0]
+    enum entry H1Only // io.kuicksilver.ktor.client/Http3DiscoveryMode.H1Only|null[0]
+    enum entry H3Only // io.kuicksilver.ktor.client/Http3DiscoveryMode.H3Only|null[0]
+    enum entry Preferred // io.kuicksilver.ktor.client/Http3DiscoveryMode.Preferred|null[0]
+
+    final val entries // io.kuicksilver.ktor.client/Http3DiscoveryMode.entries|#static{}entries[0]
+        final fun <get-entries>(): kotlin.enums/EnumEntries<io.kuicksilver.ktor.client/Http3DiscoveryMode> // io.kuicksilver.ktor.client/Http3DiscoveryMode.entries.<get-entries>|<get-entries>#static(){}[0]
+
+    final fun valueOf(kotlin/String): io.kuicksilver.ktor.client/Http3DiscoveryMode // io.kuicksilver.ktor.client/Http3DiscoveryMode.valueOf|valueOf#static(kotlin.String){}[0]
+    final fun values(): kotlin/Array<io.kuicksilver.ktor.client/Http3DiscoveryMode> // io.kuicksilver.ktor.client/Http3DiscoveryMode.values|values#static(){}[0]
+}
+
+abstract interface io.kuicksilver.ktor.client/AltSvcStore { // io.kuicksilver.ktor.client/AltSvcStore|null[0]
+    abstract fun clearNonPersistent() // io.kuicksilver.ktor.client/AltSvcStore.clearNonPersistent|clearNonPersistent(){}[0]
+    abstract fun get(kotlin/String): kotlin.collections/List<io.kuicksilver.ktor.client/AltSvcEntry> // io.kuicksilver.ktor.client/AltSvcStore.get|get(kotlin.String){}[0]
+    abstract fun put(kotlin/String, kotlin.collections/List<io.kuicksilver.ktor.client/AltSvcEntry>) // io.kuicksilver.ktor.client/AltSvcStore.put|put(kotlin.String;kotlin.collections.List<io.kuicksilver.ktor.client.AltSvcEntry>){}[0]
+    abstract fun remove(kotlin/String) // io.kuicksilver.ktor.client/AltSvcStore.remove|remove(kotlin.String){}[0]
+}
+
+final class io.kuicksilver.ktor.client/AltSvcEntry { // io.kuicksilver.ktor.client/AltSvcEntry|null[0]
+    constructor <init>(kotlin/String, kotlin/String?, kotlin/Int, kotlin/Long, kotlin/Boolean) // io.kuicksilver.ktor.client/AltSvcEntry.<init>|<init>(kotlin.String;kotlin.String?;kotlin.Int;kotlin.Long;kotlin.Boolean){}[0]
+
+    final val expiresAtEpochMillis // io.kuicksilver.ktor.client/AltSvcEntry.expiresAtEpochMillis|{}expiresAtEpochMillis[0]
+        final fun <get-expiresAtEpochMillis>(): kotlin/Long // io.kuicksilver.ktor.client/AltSvcEntry.expiresAtEpochMillis.<get-expiresAtEpochMillis>|<get-expiresAtEpochMillis>(){}[0]
+    final val host // io.kuicksilver.ktor.client/AltSvcEntry.host|{}host[0]
+        final fun <get-host>(): kotlin/String? // io.kuicksilver.ktor.client/AltSvcEntry.host.<get-host>|<get-host>(){}[0]
+    final val persist // io.kuicksilver.ktor.client/AltSvcEntry.persist|{}persist[0]
+        final fun <get-persist>(): kotlin/Boolean // io.kuicksilver.ktor.client/AltSvcEntry.persist.<get-persist>|<get-persist>(){}[0]
+    final val port // io.kuicksilver.ktor.client/AltSvcEntry.port|{}port[0]
+        final fun <get-port>(): kotlin/Int // io.kuicksilver.ktor.client/AltSvcEntry.port.<get-port>|<get-port>(){}[0]
+    final val protocol // io.kuicksilver.ktor.client/AltSvcEntry.protocol|{}protocol[0]
+        final fun <get-protocol>(): kotlin/String // io.kuicksilver.ktor.client/AltSvcEntry.protocol.<get-protocol>|<get-protocol>(){}[0]
+
+    final fun toString(): kotlin/String // io.kuicksilver.ktor.client/AltSvcEntry.toString|toString(){}[0]
+}
+
+final class io.kuicksilver.ktor.client/FileAltSvcStore : io.kuicksilver.ktor.client/AltSvcStore { // io.kuicksilver.ktor.client/FileAltSvcStore|null[0]
+    constructor <init>(kotlinx.io.files/Path, kotlin/Function0<kotlin/Long> = ...) // io.kuicksilver.ktor.client/FileAltSvcStore.<init>|<init>(kotlinx.io.files.Path;kotlin.Function0<kotlin.Long>){}[0]
+
+    final fun clearNonPersistent() // io.kuicksilver.ktor.client/FileAltSvcStore.clearNonPersistent|clearNonPersistent(){}[0]
+    final fun get(kotlin/String): kotlin.collections/List<io.kuicksilver.ktor.client/AltSvcEntry> // io.kuicksilver.ktor.client/FileAltSvcStore.get|get(kotlin.String){}[0]
+    final fun put(kotlin/String, kotlin.collections/List<io.kuicksilver.ktor.client/AltSvcEntry>) // io.kuicksilver.ktor.client/FileAltSvcStore.put|put(kotlin.String;kotlin.collections.List<io.kuicksilver.ktor.client.AltSvcEntry>){}[0]
+    final fun remove(kotlin/String) // io.kuicksilver.ktor.client/FileAltSvcStore.remove|remove(kotlin.String){}[0]
+}
+
+final class io.kuicksilver.ktor.client/H3BodyConsumed : kotlin/IllegalStateException { // io.kuicksilver.ktor.client/H3BodyConsumed|null[0]
+    constructor <init>(kotlin/String, kotlin/Throwable? = ...) // io.kuicksilver.ktor.client/H3BodyConsumed.<init>|<init>(kotlin.String;kotlin.Throwable?){}[0]
+}
+
+final class io.kuicksilver.ktor.client/HostPort { // io.kuicksilver.ktor.client/HostPort|null[0]
+    constructor <init>(kotlin/String, kotlin/Int) // io.kuicksilver.ktor.client/HostPort.<init>|<init>(kotlin.String;kotlin.Int){}[0]
+
+    final val host // io.kuicksilver.ktor.client/HostPort.host|{}host[0]
+        final fun <get-host>(): kotlin/String // io.kuicksilver.ktor.client/HostPort.host.<get-host>|<get-host>(){}[0]
+    final val port // io.kuicksilver.ktor.client/HostPort.port|{}port[0]
+        final fun <get-port>(): kotlin/Int // io.kuicksilver.ktor.client/HostPort.port.<get-port>|<get-port>(){}[0]
+
+    final fun equals(kotlin/Any?): kotlin/Boolean // io.kuicksilver.ktor.client/HostPort.equals|equals(kotlin.Any?){}[0]
+    final fun hashCode(): kotlin/Int // io.kuicksilver.ktor.client/HostPort.hashCode|hashCode(){}[0]
+    final fun toString(): kotlin/String // io.kuicksilver.ktor.client/HostPort.toString|toString(){}[0]
+}
+
+final class io.kuicksilver.ktor.client/Http3ClientConfig { // io.kuicksilver.ktor.client/Http3ClientConfig|null[0]
+    constructor <init>() // io.kuicksilver.ktor.client/Http3ClientConfig.<init>|<init>(){}[0]
+
+    final var altSvcStore // io.kuicksilver.ktor.client/Http3ClientConfig.altSvcStore|{}altSvcStore[0]
+        final fun <get-altSvcStore>(): io.kuicksilver.ktor.client/AltSvcStore // io.kuicksilver.ktor.client/Http3ClientConfig.altSvcStore.<get-altSvcStore>|<get-altSvcStore>(){}[0]
+        final fun <set-altSvcStore>(io.kuicksilver.ktor.client/AltSvcStore) // io.kuicksilver.ktor.client/Http3ClientConfig.altSvcStore.<set-altSvcStore>|<set-altSvcStore>(io.kuicksilver.ktor.client.AltSvcStore){}[0]
+    final var clearOnNetworkChange // io.kuicksilver.ktor.client/Http3ClientConfig.clearOnNetworkChange|{}clearOnNetworkChange[0]
+        final fun <get-clearOnNetworkChange>(): kotlin/Boolean // io.kuicksilver.ktor.client/Http3ClientConfig.clearOnNetworkChange.<get-clearOnNetworkChange>|<get-clearOnNetworkChange>(){}[0]
+        final fun <set-clearOnNetworkChange>(kotlin/Boolean) // io.kuicksilver.ktor.client/Http3ClientConfig.clearOnNetworkChange.<set-clearOnNetworkChange>|<set-clearOnNetworkChange>(kotlin.Boolean){}[0]
+    final var discovery // io.kuicksilver.ktor.client/Http3ClientConfig.discovery|{}discovery[0]
+        final fun <get-discovery>(): io.kuicksilver.ktor.client/Http3DiscoveryMode // io.kuicksilver.ktor.client/Http3ClientConfig.discovery.<get-discovery>|<get-discovery>(){}[0]
+        final fun <set-discovery>(io.kuicksilver.ktor.client/Http3DiscoveryMode) // io.kuicksilver.ktor.client/Http3ClientConfig.discovery.<set-discovery>|<set-discovery>(io.kuicksilver.ktor.client.Http3DiscoveryMode){}[0]
+    final var endpoint // io.kuicksilver.ktor.client/Http3ClientConfig.endpoint|{}endpoint[0]
+        final fun <get-endpoint>(): io.kuicksilver.quic/QuicEndpointConfig // io.kuicksilver.ktor.client/Http3ClientConfig.endpoint.<get-endpoint>|<get-endpoint>(){}[0]
+        final fun <set-endpoint>(io.kuicksilver.quic/QuicEndpointConfig) // io.kuicksilver.ktor.client/Http3ClientConfig.endpoint.<set-endpoint>|<set-endpoint>(io.kuicksilver.quic.QuicEndpointConfig){}[0]
+    final var hardDelay // io.kuicksilver.ktor.client/Http3ClientConfig.hardDelay|{}hardDelay[0]
+        final fun <get-hardDelay>(): kotlin.time/Duration? // io.kuicksilver.ktor.client/Http3ClientConfig.hardDelay.<get-hardDelay>|<get-hardDelay>(){}[0]
+        final fun <set-hardDelay>(kotlin.time/Duration?) // io.kuicksilver.ktor.client/Http3ClientConfig.hardDelay.<set-hardDelay>|<set-hardDelay>(kotlin.time.Duration?){}[0]
+    final var networkId // io.kuicksilver.ktor.client/Http3ClientConfig.networkId|{}networkId[0]
+        final fun <get-networkId>(): kotlin/Function0<kotlin/String?> // io.kuicksilver.ktor.client/Http3ClientConfig.networkId.<get-networkId>|<get-networkId>(){}[0]
+        final fun <set-networkId>(kotlin/Function0<kotlin/String?>) // io.kuicksilver.ktor.client/Http3ClientConfig.networkId.<set-networkId>|<set-networkId>(kotlin.Function0<kotlin.String?>){}[0]
+    final var quicHints // io.kuicksilver.ktor.client/Http3ClientConfig.quicHints|{}quicHints[0]
+        final fun <get-quicHints>(): kotlin.collections/Set<io.kuicksilver.ktor.client/HostPort> // io.kuicksilver.ktor.client/Http3ClientConfig.quicHints.<get-quicHints>|<get-quicHints>(){}[0]
+        final fun <set-quicHints>(kotlin.collections/Set<io.kuicksilver.ktor.client/HostPort>) // io.kuicksilver.ktor.client/Http3ClientConfig.quicHints.<set-quicHints>|<set-quicHints>(kotlin.collections.Set<io.kuicksilver.ktor.client.HostPort>){}[0]
+    final var settings // io.kuicksilver.ktor.client/Http3ClientConfig.settings|{}settings[0]
+        final fun <get-settings>(): io.kuicksilver.http3/Http3Settings // io.kuicksilver.ktor.client/Http3ClientConfig.settings.<get-settings>|<get-settings>(){}[0]
+        final fun <set-settings>(io.kuicksilver.http3/Http3Settings) // io.kuicksilver.ktor.client/Http3ClientConfig.settings.<set-settings>|<set-settings>(io.kuicksilver.http3.Http3Settings){}[0]
+    final var softDelay // io.kuicksilver.ktor.client/Http3ClientConfig.softDelay|{}softDelay[0]
+        final fun <get-softDelay>(): kotlin.time/Duration // io.kuicksilver.ktor.client/Http3ClientConfig.softDelay.<get-softDelay>|<get-softDelay>(){}[0]
+        final fun <set-softDelay>(kotlin.time/Duration) // io.kuicksilver.ktor.client/Http3ClientConfig.softDelay.<set-softDelay>|<set-softDelay>(kotlin.time.Duration){}[0]
+}
+
+final class io.kuicksilver.ktor.client/InMemoryAltSvcStore : io.kuicksilver.ktor.client/AltSvcStore { // io.kuicksilver.ktor.client/InMemoryAltSvcStore|null[0]
+    constructor <init>() // io.kuicksilver.ktor.client/InMemoryAltSvcStore.<init>|<init>(){}[0]
+
+    final fun clearNonPersistent() // io.kuicksilver.ktor.client/InMemoryAltSvcStore.clearNonPersistent|clearNonPersistent(){}[0]
+    final fun get(kotlin/String): kotlin.collections/List<io.kuicksilver.ktor.client/AltSvcEntry> // io.kuicksilver.ktor.client/InMemoryAltSvcStore.get|get(kotlin.String){}[0]
+    final fun put(kotlin/String, kotlin.collections/List<io.kuicksilver.ktor.client/AltSvcEntry>) // io.kuicksilver.ktor.client/InMemoryAltSvcStore.put|put(kotlin.String;kotlin.collections.List<io.kuicksilver.ktor.client.AltSvcEntry>){}[0]
+    final fun remove(kotlin/String) // io.kuicksilver.ktor.client/InMemoryAltSvcStore.remove|remove(kotlin.String){}[0]
+}
+
+final class io.kuicksilver.ktor.client/KuicksilverEngineConfig : io.ktor.client.engine/HttpClientEngineConfig { // io.kuicksilver.ktor.client/KuicksilverEngineConfig|null[0]
+    constructor <init>() // io.kuicksilver.ktor.client/KuicksilverEngineConfig.<init>|<init>(){}[0]
+
+    final val http3 // io.kuicksilver.ktor.client/KuicksilverEngineConfig.http3|{}http3[0]
+        final fun <get-http3>(): io.kuicksilver.ktor.client/Http3ClientConfig // io.kuicksilver.ktor.client/KuicksilverEngineConfig.http3.<get-http3>|<get-http3>(){}[0]
+
+    final var connectTimeout // io.kuicksilver.ktor.client/KuicksilverEngineConfig.connectTimeout|{}connectTimeout[0]
+        final fun <get-connectTimeout>(): kotlin.time/Duration // io.kuicksilver.ktor.client/KuicksilverEngineConfig.connectTimeout.<get-connectTimeout>|<get-connectTimeout>(){}[0]
+        final fun <set-connectTimeout>(kotlin.time/Duration) // io.kuicksilver.ktor.client/KuicksilverEngineConfig.connectTimeout.<set-connectTimeout>|<set-connectTimeout>(kotlin.time.Duration){}[0]
+    final var identity // io.kuicksilver.ktor.client/KuicksilverEngineConfig.identity|{}identity[0]
+        final fun <get-identity>(): io.kuicksilver.tls/TlsIdentity? // io.kuicksilver.ktor.client/KuicksilverEngineConfig.identity.<get-identity>|<get-identity>(){}[0]
+        final fun <set-identity>(io.kuicksilver.tls/TlsIdentity?) // io.kuicksilver.ktor.client/KuicksilverEngineConfig.identity.<set-identity>|<set-identity>(io.kuicksilver.tls.TlsIdentity?){}[0]
+    final var maxConnectionsPerHost // io.kuicksilver.ktor.client/KuicksilverEngineConfig.maxConnectionsPerHost|{}maxConnectionsPerHost[0]
+        final fun <get-maxConnectionsPerHost>(): kotlin/Int // io.kuicksilver.ktor.client/KuicksilverEngineConfig.maxConnectionsPerHost.<get-maxConnectionsPerHost>|<get-maxConnectionsPerHost>(){}[0]
+        final fun <set-maxConnectionsPerHost>(kotlin/Int) // io.kuicksilver.ktor.client/KuicksilverEngineConfig.maxConnectionsPerHost.<set-maxConnectionsPerHost>|<set-maxConnectionsPerHost>(kotlin.Int){}[0]
+    final var quic // io.kuicksilver.ktor.client/KuicksilverEngineConfig.quic|{}quic[0]
+        final fun <get-quic>(): io.kuicksilver.quic/QuicConfig // io.kuicksilver.ktor.client/KuicksilverEngineConfig.quic.<get-quic>|<get-quic>(){}[0]
+        final fun <set-quic>(io.kuicksilver.quic/QuicConfig) // io.kuicksilver.ktor.client/KuicksilverEngineConfig.quic.<set-quic>|<set-quic>(io.kuicksilver.quic.QuicConfig){}[0]
+    final var tls // io.kuicksilver.ktor.client/KuicksilverEngineConfig.tls|{}tls[0]
+        final fun <get-tls>(): kotlin/Function1<io.kuicksilver.tls/TlsConfig.Builder, kotlin/Unit> // io.kuicksilver.ktor.client/KuicksilverEngineConfig.tls.<get-tls>|<get-tls>(){}[0]
+        final fun <set-tls>(kotlin/Function1<io.kuicksilver.tls/TlsConfig.Builder, kotlin/Unit>) // io.kuicksilver.ktor.client/KuicksilverEngineConfig.tls.<set-tls>|<set-tls>(kotlin.Function1<io.kuicksilver.tls.TlsConfig.Builder,kotlin.Unit>){}[0]
+    final var trust // io.kuicksilver.ktor.client/KuicksilverEngineConfig.trust|{}trust[0]
+        final fun <get-trust>(): io.kuicksilver.tls/TrustConfig // io.kuicksilver.ktor.client/KuicksilverEngineConfig.trust.<get-trust>|<get-trust>(){}[0]
+        final fun <set-trust>(io.kuicksilver.tls/TrustConfig) // io.kuicksilver.ktor.client/KuicksilverEngineConfig.trust.<set-trust>|<set-trust>(io.kuicksilver.tls.TrustConfig){}[0]
+
+    final fun http3(kotlin/Function1<io.kuicksilver.ktor.client/Http3ClientConfig, kotlin/Unit>) // io.kuicksilver.ktor.client/KuicksilverEngineConfig.http3|http3(kotlin.Function1<io.kuicksilver.ktor.client.Http3ClientConfig,kotlin.Unit>){}[0]
+}
+
+final object io.kuicksilver.ktor.client/Kuicksilver : io.ktor.client.engine/HttpClientEngineFactory<io.kuicksilver.ktor.client/KuicksilverEngineConfig> { // io.kuicksilver.ktor.client/Kuicksilver|null[0]
+    final fun create(kotlin/Function1<io.kuicksilver.ktor.client/KuicksilverEngineConfig, kotlin/Unit>): io.ktor.client.engine/HttpClientEngine // io.kuicksilver.ktor.client/Kuicksilver.create|create(kotlin.Function1<io.kuicksilver.ktor.client.KuicksilverEngineConfig,kotlin.Unit>){}[0]
+    final fun equals(kotlin/Any?): kotlin/Boolean // io.kuicksilver.ktor.client/Kuicksilver.equals|equals(kotlin.Any?){}[0]
+    final fun hashCode(): kotlin/Int // io.kuicksilver.ktor.client/Kuicksilver.hashCode|hashCode(){}[0]
+    final fun toString(): kotlin/String // io.kuicksilver.ktor.client/Kuicksilver.toString|toString(){}[0]
+}

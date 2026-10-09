@@ -1,0 +1,10 @@
+Kuicksilver
+Copyright 2026 The Kuicksilver Authors
+
+This product is statically linked against OpenSSL 3.5.x (https://openssl-library.org),
+licensed under the Apache License 2.0; see licenses/LICENSE.openssl.txt.
+
+kuicksilver-ktor-client and kuicksilver-ktor-server, including their test sources, contain
+files adapted from Ktor 3.6.0 (https://github.com/ktorio/ktor, Copyright 2014-2025 JetBrains
+s.r.o and contributors, Apache License 2.0). Each such file keeps the original copyright line
+and names the Ktor file it comes from.

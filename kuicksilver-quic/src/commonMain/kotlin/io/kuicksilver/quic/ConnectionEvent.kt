@@ -1,0 +1,117 @@
+// Copyright 2026 The Kuicksilver Authors
+// SPDX-License-Identifier: Apache-2.0
+package io.kuicksilver.quic
+
+import io.kuicksilver.tls.Certificate
+import io.kuicksilver.tls.QuicTlsSession
+
+/** Lifecycle of a connection as the core reports it. */
+public enum class ConnectionState {
+    /** The TLS handshake is running (RFC 9001 section 4). */
+    Handshaking,
+
+    /** The handshake completed on our side; the client waits for HANDSHAKE_DONE to confirm it (RFC 9001 section 4.1.1). */
+    Established,
+
+    /** The handshake is confirmed (RFC 9001 section 4.1.2): key updates and migration are allowed. */
+    Confirmed,
+
+    /** We sent CONNECTION_CLOSE and answer further packets with it for 3 x PTO (RFC 9000 section 10.2.1). */
+    Closing,
+
+    /** The peer closed or reset the connection; we send nothing for 3 x PTO (RFC 9000 section 10.2.2). */
+    Draining,
+
+    /** The connection is over and its native resources are freed. */
+    Closed,
+}
+
+/** What the core tells its runtime through [ConnectionCore.nextEvent]. */
+public sealed interface ConnectionEvent {
+    /**
+     * The handshake completed (RFC 9001 section 4.1.1): [ConnectionCore.peerCertificates] and [ConnectionCore.negotiatedAlpn] are readable.
+     */
+    public object HandshakeCompleted : ConnectionEvent
+
+    /** The handshake paused for certificate verification: run `session.verifyPeer(chain)` off the loop and pass the result to [ConnectionCore.resumeVerify]. */
+    public class VerifyRequested(
+        public val chain: List<Certificate>,
+        public val session: QuicTlsSession,
+    ) : ConnectionEvent
+
+    /** The peer opened stream [id] (RFC 9000 section 3.2); a lower stream of the same type it skipped gets its own event first. */
+    public class StreamOpened(
+        public val id: Long,
+    ) : ConnectionEvent
+
+    /** Stream [id] has new data, its end or its reset for [ConnectionCore.readStream]; raised again only after more arrives. */
+    public class StreamReadable(
+        public val id: Long,
+    ) : ConnectionEvent
+
+    /**
+     * Meant for stream [id] taking data again; not raised in this version: retry [ConnectionCore.writeStream] after the core made progress.
+     */
+    public class StreamWritable(
+        public val id: Long,
+    ) : ConnectionEvent
+
+    /** The peer abandoned stream [id] with RESET_STREAM and application error [code] (RFC 9000 section 19.4); its reads end with -1. */
+    public class StreamReset(
+        public val id: Long,
+        public val code: Long,
+    ) : ConnectionEvent
+
+    /**
+     * The peer sent STOP_SENDING with [code] for stream [id] (RFC 9000 section 19.5); the core already answered with RESET_STREAM carrying
+     * the same code.
+     */
+    public class StopSendingReceived(
+        public val id: Long,
+        public val code: Long,
+    ) : ConnectionEvent
+
+    /** Meant for stream [id] being done in both directions; not raised in this version. */
+    public class StreamFinished(
+        public val id: Long,
+    ) : ConnectionEvent
+
+    /**
+     * Meant for room under the peer's stream limit ([bidi] or unidirectional); not raised in this version: retry
+     * [ConnectionCore.openStream].
+     */
+    public class StreamsAvailable(
+        public val bidi: Boolean,
+    ) : ConnectionEvent
+
+    /** The connection ended for [reason]; the last event of the connection, raised once. */
+    public class Closed(
+        public val reason: QuicException.ConnectionLost,
+    ) : ConnectionEvent
+
+    /** DPLPMTUD changed the datagram size of [path] to [mtu] bytes of UDP payload (RFC 8899); after a black hole it drops back to 1200. */
+    public class MtuUpdated(
+        public val path: PathId,
+        public val mtu: Int,
+    ) : ConnectionEvent
+
+    /** DATAGRAM payloads wait in [ConnectionCore.readDatagram] (RFC 9221). */
+    public object DatagramsReadable : ConnectionEvent
+
+    /** [path] answered our PATH_CHALLENGE (RFC 9000 section 8.2.3). */
+    public class PathValidated(
+        public val path: PathId,
+    ) : ConnectionEvent
+
+    /** [path] never answered within the validation timeout (RFC 9000 section 8.2.4). */
+    public class PathFailed(
+        public val path: PathId,
+    ) : ConnectionEvent
+
+    /** Packets now go to [new] instead of [old] (RFC 9000 section 9.3), for the given [reason]. */
+    public class PathChanged(
+        public val old: PathId,
+        public val new: PathId,
+        public val reason: PathChangeReason,
+    ) : ConnectionEvent
+}

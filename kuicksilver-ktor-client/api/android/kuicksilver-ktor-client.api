@@ -1,0 +1,106 @@
+public final class io/kuicksilver/ktor/client/AltSvcEntry {
+	public fun <init> (Ljava/lang/String;Ljava/lang/String;IJZ)V
+	public final fun getExpiresAtEpochMillis ()J
+	public final fun getHost ()Ljava/lang/String;
+	public final fun getPersist ()Z
+	public final fun getPort ()I
+	public final fun getProtocol ()Ljava/lang/String;
+	public fun toString ()Ljava/lang/String;
+}
+
+public abstract interface class io/kuicksilver/ktor/client/AltSvcStore {
+	public abstract fun clearNonPersistent ()V
+	public abstract fun get (Ljava/lang/String;)Ljava/util/List;
+	public abstract fun put (Ljava/lang/String;Ljava/util/List;)V
+	public abstract fun remove (Ljava/lang/String;)V
+}
+
+public final class io/kuicksilver/ktor/client/FileAltSvcStore : io/kuicksilver/ktor/client/AltSvcStore {
+	public fun <init> (Lkotlinx/io/files/Path;Lkotlin/jvm/functions/Function0;)V
+	public synthetic fun <init> (Lkotlinx/io/files/Path;Lkotlin/jvm/functions/Function0;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun clearNonPersistent ()V
+	public fun get (Ljava/lang/String;)Ljava/util/List;
+	public fun put (Ljava/lang/String;Ljava/util/List;)V
+	public fun remove (Ljava/lang/String;)V
+}
+
+public final class io/kuicksilver/ktor/client/H3BodyConsumed : java/lang/IllegalStateException {
+	public fun <init> (Ljava/lang/String;Ljava/lang/Throwable;)V
+	public synthetic fun <init> (Ljava/lang/String;Ljava/lang/Throwable;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+}
+
+public final class io/kuicksilver/ktor/client/HostPort {
+	public fun <init> (Ljava/lang/String;I)V
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getHost ()Ljava/lang/String;
+	public final fun getPort ()I
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/kuicksilver/ktor/client/Http3ClientConfig {
+	public fun <init> ()V
+	public final fun getAltSvcStore ()Lio/kuicksilver/ktor/client/AltSvcStore;
+	public final fun getClearOnNetworkChange ()Z
+	public final fun getDiscovery ()Lio/kuicksilver/ktor/client/Http3DiscoveryMode;
+	public final fun getEndpoint ()Lio/kuicksilver/quic/QuicEndpointConfig;
+	public final fun getHardDelay-FghU774 ()Lkotlin/time/Duration;
+	public final fun getNetworkId ()Lkotlin/jvm/functions/Function0;
+	public final fun getQuicHints ()Ljava/util/Set;
+	public final fun getSettings ()Lio/kuicksilver/http3/Http3Settings;
+	public final fun getSoftDelay-UwyO8pc ()J
+	public final fun setAltSvcStore (Lio/kuicksilver/ktor/client/AltSvcStore;)V
+	public final fun setClearOnNetworkChange (Z)V
+	public final fun setDiscovery (Lio/kuicksilver/ktor/client/Http3DiscoveryMode;)V
+	public final fun setEndpoint (Lio/kuicksilver/quic/QuicEndpointConfig;)V
+	public final fun setHardDelay-BwNAW2A (Lkotlin/time/Duration;)V
+	public final fun setNetworkId (Lkotlin/jvm/functions/Function0;)V
+	public final fun setQuicHints (Ljava/util/Set;)V
+	public final fun setSettings (Lio/kuicksilver/http3/Http3Settings;)V
+	public final fun setSoftDelay-LRDsOJo (J)V
+}
+
+public final class io/kuicksilver/ktor/client/Http3DiscoveryMode : java/lang/Enum {
+	public static final field Auto Lio/kuicksilver/ktor/client/Http3DiscoveryMode;
+	public static final field H1Only Lio/kuicksilver/ktor/client/Http3DiscoveryMode;
+	public static final field H3Only Lio/kuicksilver/ktor/client/Http3DiscoveryMode;
+	public static final field Preferred Lio/kuicksilver/ktor/client/Http3DiscoveryMode;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lio/kuicksilver/ktor/client/Http3DiscoveryMode;
+	public static fun values ()[Lio/kuicksilver/ktor/client/Http3DiscoveryMode;
+}
+
+public final class io/kuicksilver/ktor/client/InMemoryAltSvcStore : io/kuicksilver/ktor/client/AltSvcStore {
+	public fun <init> ()V
+	public fun clearNonPersistent ()V
+	public fun get (Ljava/lang/String;)Ljava/util/List;
+	public fun put (Ljava/lang/String;Ljava/util/List;)V
+	public fun remove (Ljava/lang/String;)V
+}
+
+public final class io/kuicksilver/ktor/client/Kuicksilver : io/ktor/client/engine/HttpClientEngineFactory {
+	public static final field INSTANCE Lio/kuicksilver/ktor/client/Kuicksilver;
+	public fun create (Lkotlin/jvm/functions/Function1;)Lio/ktor/client/engine/HttpClientEngine;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/kuicksilver/ktor/client/KuicksilverEngineConfig : io/ktor/client/engine/HttpClientEngineConfig {
+	public fun <init> ()V
+	public final fun getConnectTimeout-UwyO8pc ()J
+	public final fun getHttp3 ()Lio/kuicksilver/ktor/client/Http3ClientConfig;
+	public final fun getIdentity ()Lio/kuicksilver/tls/TlsIdentity;
+	public final fun getMaxConnectionsPerHost ()I
+	public final fun getQuic ()Lio/kuicksilver/quic/QuicConfig;
+	public final fun getTls ()Lkotlin/jvm/functions/Function1;
+	public final fun getTrust ()Lio/kuicksilver/tls/TrustConfig;
+	public final fun http3 (Lkotlin/jvm/functions/Function1;)V
+	public final fun setConnectTimeout-LRDsOJo (J)V
+	public final fun setIdentity (Lio/kuicksilver/tls/TlsIdentity;)V
+	public final fun setMaxConnectionsPerHost (I)V
+	public final fun setQuic (Lio/kuicksilver/quic/QuicConfig;)V
+	public final fun setTls (Lkotlin/jvm/functions/Function1;)V
+	public final fun setTrust (Lio/kuicksilver/tls/TrustConfig;)V
+}
+

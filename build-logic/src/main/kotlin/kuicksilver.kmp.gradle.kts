@@ -1,0 +1,80 @@
+// Copyright 2026 The Kuicksilver Authors
+// SPDX-License-Identifier: Apache-2.0
+
+import org.jetbrains.kotlin.gradle.dsl.abi.ExperimentalAbiValidation
+
+plugins {
+    id("org.jetbrains.kotlin.multiplatform")
+    id("com.android.kotlin.multiplatform.library")
+    id("org.jetbrains.dokka")
+    id("org.jmailen.kotlinter")   // ktlint (ktlint_official, 140 columns, .editorconfig): `formatKotlin` rewrites, `lintKotlin` gates `check`
+}
+
+group = "io.kuicksilver"
+version = providers.gradleProperty("kuicksilver.version").getOrElse("0.1.0-SNAPSHOT")
+
+kotlin {
+    explicitApi()
+    applyDefaultHierarchyTemplate {
+        common { group("jvmCommon") { withJvm(); withCompilations { it.platformType == org.jetbrains.kotlin.gradle.plugin.KotlinPlatformType.androidJvm } } }
+    }
+    jvmToolchain(21)
+    jvm {
+        compilerOptions { jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17) }
+        // the published JVM artifacts link against the JDK 17 API only, whatever toolchain builds them; tests may use the toolchain's JDK
+        compilations.getByName("main").compileTaskProvider.configure { compilerOptions.freeCompilerArgs.add("-Xjdk-release=17") }
+    }
+    androidLibrary {
+        // "native" is a Java keyword: R classes need a valid Java package, so that module uses io.kuicksilver.nativelib
+        namespace = "io.kuicksilver." + project.name.removePrefix("kuicksilver-").replace('-', '.').replace("native", "nativelib")
+        compileSdk = 35
+        minSdk = 24
+        withHostTestBuilder {}.configure {}
+        withDeviceTestBuilder { sourceSetTreeName = "test" }.configure { instrumentationRunner = "androidx.test.runner.AndroidJUnitRunner" }
+        packaging { resources.excludes += setOf("META-INF/AL2.0", "META-INF/LGPL2.1", "META-INF/*.kotlin_module") }   // LICENSE/NOTICE stay: every artifact carries them (Apache-2.0 section 4)
+    }
+    linuxX64(); linuxArm64()
+    macosArm64()   // macosX64 dropped 2026-10-09 (owner decision): deprecated by Kotlin, never tested; the JVM on Intel Macs keeps its JNI library
+    iosArm64(); iosSimulatorArm64()
+    mingwX64()
+
+    @OptIn(ExperimentalAbiValidation::class)
+    abiValidation { filters { exclude { annotatedWith.add("io.kuicksilver.annotations.InternalKuicksilverApi") } } }   // internal API is not part of the public ABI, so it stays out of the ABI dumps
+
+    // test source sets may use the internal API (NullCryptoProvider, address literals); production code opts in per use site
+    sourceSets.matching { it.name.endsWith("Test") }.configureEach { languageSettings.optIn("io.kuicksilver.annotations.InternalKuicksilverApi") }
+    sourceSets {
+        commonTest.dependencies {
+            implementation(kotlin("test"))
+            implementation(catalog.findLibrary("kotlinx-coroutines-test").get())
+            implementation(catalog.findLibrary("kotest-property").get())
+        }
+        getByName("androidDeviceTest").dependencies {
+            implementation(kotlin("test-junit"))
+            implementation("androidx.test:runner:1.6.2")
+            implementation("androidx.test.ext:junit:1.2.1")
+        }
+    }
+}
+
+// Every published artifact (jar, AAR) carries the project LICENSE and NOTICE and the OpenSSL license it links statically (Apache-2.0 section 4(a)/(d)).
+val licenseResources = tasks.register<Sync>("licenseResources") {
+    from(rootProject.file("LICENSE")) { into("META-INF") }
+    from(rootProject.file("NOTICE")) { into("META-INF") }
+    // AGP strips META-INF/LICENSE and META-INF/NOTICE from an AAR by default, and an app that depends on several of our AARs
+    // fails its resource merge on any path two of them share: the texts also travel under META-INF/licenses/<module>/
+    val dir = "META-INF/licenses/${project.name}"
+    from(rootProject.file("licenses/LICENSE.openssl.txt")) { into(dir) }
+    from(rootProject.file("LICENSE")) { into(dir); rename { "LICENSE.txt" } }
+    from(rootProject.file("NOTICE")) { into(dir); rename { "NOTICE.txt" } }
+    into(layout.buildDirectory.dir("generated/license-resources"))
+}
+kotlin.sourceSets.getByName("commonMain").resources.srcDir(licenseResources.map { it.destinationDir })
+kotlin.sourceSets.getByName("androidMain").resources.srcDir(licenseResources.map { it.destinationDir })   // the AAR packages androidMain resources, not commonMain ones
+tasks.withType<Jar>().configureEach { from(rootProject.file("LICENSE")) { into("META-INF") }; from(rootProject.file("NOTICE")) { into("META-INF") }; from(rootProject.file("licenses/LICENSE.openssl.txt")) { into("META-INF/licenses") }; duplicatesStrategy = DuplicatesStrategy.EXCLUDE }
+
+// kotest-property (commonTest) pulls in mordant, whose FFM code cannot be dexed for minSdk 24: keep it out of the device-test APK.
+configurations.matching { it.name.contains("AndroidDeviceTest") || it.name.contains("androidDeviceTest") }.configureEach { exclude(group = "com.github.ajalt.mordant") }
+
+// Explicit native library for the JVM tests (Linux containers, CI): -Pkuicksilver.native.path=... is forwarded to the test JVM.
+tasks.withType<Test>().configureEach { providers.gradleProperty("kuicksilver.native.path").orNull?.let { systemProperty("kuicksilver.native.path", it) } }

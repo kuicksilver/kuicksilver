@@ -1,0 +1,172 @@
+# HTTP/3 with Kuicksilver
+
+Kuicksilver's HTTP/3 layer (`io.kuicksilver:kuicksilver-http3`) implements HTTP/3 (RFC 9114) with QPACK (RFC 9204),
+extensible priorities (RFC 9218), Extended CONNECT (RFC 9220) and HTTP datagrams (RFC 9297) on top of
+`kuicksilver-quic`. Server push is not implemented. The frame and QPACK codecs are sans-IO (ADR-0004); the connection
+runtime is a set of coroutines over `QuicConnection` streams. The code blocks below compile and run as
+`GuideSamplesTest` (`kuicksilver-http3/src/jvmTest`).
+
+## QPACK
+
+Header compression uses the static table always and the dynamic table only when both sides allow it:
+
+- What we advertise to the peer (`Http3Settings.qpackMaxTableCapacity`, `qpackBlockedStreams`) defaults to 0/0, like
+  most implementations: the peer's encoder then sends static references and literals only. `enableQpackDynamicTable()`
+  advertises 4096 bytes and 16 blocked streams.
+- Our own encoder uses at most `encoderMaxTableCapacity` (4096 by default) of whatever the peer advertises, and blocks
+  at most min(peer's `SETTINGS_QPACK_BLOCKED_STREAMS`, 100) streams. Without a blocking budget it still inserts
+  entries, but references them only once the peer has acknowledged them.
+- At most 1000 sections wait for the peer's acknowledgment; above that the encoder sends static references and
+  literals until the peer catches up, so a peer that never acknowledges sections cannot grow the encoder's state.
+- `authorization`, `proxy-authorization`, `cookie` and `set-cookie` are never inserted into the dynamic table and are
+  sent with the never-index bit (RFC 9204 section 7.1); neither are values longer than a quarter of the table.
+- The decoder rejects, before allocating, integers longer than 62 bits and string literals above 64 KiB, and counts the
+  decoded size of a field section as it goes (name + value + 32 per line, RFC 9114 section 4.2.2), stopping at
+  `maxFieldSectionSize`.
+- A field section that references entries still in flight on the peer's encoder stream waits for them (at most
+  `qpackBlockedStreams` such streams; one more closes the connection with `QPACK_DECOMPRESSION_FAILED`). If the peer
+  resets a stream while it waits, the decoder sends a Stream Cancellation.
+
+```kotlin
+// guide:http3:qpack
+val settings = http3Settings { enableQpackDynamicTable() }   // advertise 4096 bytes / 16 blocked streams
+val client = Http3Connection.client(quicConnection, settings)
+```
+
+## Messages and errors
+
+Requests and responses are validated as RFC 9114 sections 4.2-4.3 require. A malformed message (a field name that is
+not a lowercase token, CR, LF or NUL anywhere, whitespace at either end of a value, a connection-specific field such
+as `transfer-encoding`, a missing or duplicated pseudo-header, `:authority` and `host` that disagree) is a *stream*
+error: the stream is reset with `H3_MESSAGE_ERROR` and the connection keeps serving other requests.
+
+Failures surface as `Http3Exception`:
+
+| Type | When |
+|---|---|
+| `Http3Exception.Protocol(h3Code, initiator, streamId)` | an HTTP/3 error code closed the connection (`streamId == null`) or reset a stream; unknown codes read as `H3_NO_ERROR` |
+| `Http3Exception.Qpack(code)` | a QPACK error (0x200-0x202) |
+| `Http3Exception.RequestNotProcessed(retrySafe)` | the server did not process the request (`GOAWAY`, `H3_REQUEST_REJECTED`); safe to retry on a new connection |
+| `Http3Exception.MessageError(streamId, reason)` | the peer's message on this stream was malformed |
+| `Http3Exception.FieldSectionTooLarge(streamId, limit)` | headers or trailers above `maxFieldSectionSize` once decoded |
+| `Http3Exception.Settings(message)` | an operation needs a setting the peer did not send (Extended CONNECT) |
+| `Http3Exception.ConnectRejected(status, headers)` | Extended CONNECT answered with a non-2xx status |
+
+Transport failures stay `QuicException`; `Http3Exception.fromQuic(e)` reads an HTTP/3 meaning out of an application
+close or a stream reset. Every exception is copyable (`CopyableThrowable`), and cancellation is never wrapped.
+
+## Endpoints and connections
+
+`Http3Endpoint` binds a QUIC endpoint and speaks HTTP/3 on it. Its TLS configurations must offer ALPN `h3`; a server
+closes accepted connections that negotiated anything else. `SETTINGS_H3_DATAGRAM` follows the transport: it is sent as
+1 only when `QuicConfig.maxDatagramFrameSize` is not 0.
+
+```kotlin
+// guide:http3:endpoints
+val server = Http3Endpoint.bind(
+    InetSocketAddress("0.0.0.0", 443),
+    QuicEndpointConfig.Builder().apply { this.server = QuicServerConfig.Builder(serverTls /* alpn = listOf("h3") */).build() }.build(),
+)
+val client = Http3Endpoint.bind(InetSocketAddress("0.0.0.0", 0))
+val connection = client.connect(serverAddress, clientTls /* alpn = listOf("h3") */)
+```
+
+`Http3Connection.client(quic)` and `Http3Connection.server(quic)` also wrap a `QuicConnection` you already have. Either
+way the control stream, the two QPACK streams and SETTINGS go out at once, without waiting for the peer's; a reserved
+setting, frame and unidirectional stream are sent too (`Http3Settings.grease`, on by default) so peers stay tolerant of
+extensions. The peer's SETTINGS are in `peerSettings` once they arrive.
+
+## Client requests
+
+```kotlin
+// guide:http3:client-request
+val response = connection.request(Http3Request("GET", authority = "example.com", path = "/"))
+println(response.status)
+val body = response.body            // a ByteReadChannel; reading it to the end completes response.trailers
+```
+
+A request body is any `ByteReadChannel`; it is copied into DATA frames as the transport accepts it, so a slow peer
+slows the producer instead of filling memory. `trailers` is called after the body ends. Interim responses (1xx,
+103 Early Hints included) reach `onInformational`; more than `maxInformationalResponses` (5) fail the request with
+`H3_EXCESSIVE_LOAD`. There is no automatic `100-continue`. `Http3Response.cancel()` (or cancelling the calling
+coroutine) resets the stream with `H3_REQUEST_CANCELLED`; the connection keeps serving other requests.
+
+## Serving requests
+
+```kotlin
+// guide:http3:serve
+val connection = server.accept()
+while (true) {
+    val request = connection.acceptRequest()
+    launch {
+        val writer = request.respond(200, Http3Headers.of("content-type" to "text/plain"))
+        writer.output.writeStringUtf8("hello")
+        writer.finish()                  // or finish(Http3Headers.of("x-checksum" to "...")) to send trailers
+    }
+}
+```
+
+Malformed requests never reach `acceptRequest`: their stream is reset with `H3_MESSAGE_ERROR` (that includes a
+`content-length` that is not digits or conflicts with another; identical repeats collapse to one field). A response
+field the validator rejects makes `respond` throw and resets the stream with `H3_INTERNAL_ERROR`. A request body the
+application has not finished reading when its response is complete is dropped with `STOP_SENDING H3_NO_ERROR`; the
+client's upload then ends with `QuicException.StreamError.Stopped` (code `H3_NO_ERROR`) in its body channel, and the
+stream is retired as soon as the client's FIN or reset arrives, so unread uploads never exhaust the stream credit. Field
+names and values are octets: a character above U+00FF is rejected rather than truncated. A response to HEAD may carry
+a `content-length` without a body. A request whose header
+section is above `maxFieldSectionSize` once decoded is answered with 431 and `STOP_SENDING H3_EXCESSIVE_LOAD` by the
+connection itself. `request.remoteAddress` follows the client's path when it migrates.
+
+## Shutdown and GOAWAY
+
+`connection.goAway()` shuts a connection down gracefully (RFC 9114 section 5.2). A server first announces
+2^62-4 ("no promises yet"), waits about two round trips so requests already in flight arrive, then announces the first
+request id it will not process; such requests are reset with `H3_REQUEST_REJECTED`. Once every accepted request is
+answered the server closes with `H3_NO_ERROR`. A client receiving GOAWAY fails the requests it did not cover, and every
+new request, with `Http3Exception.RequestNotProcessed(retrySafe = true)`: they were never processed and can be sent
+again on a new connection (the Ktor engine does that by itself). A client's own `goAway()` sends GOAWAY(0) and stops
+issuing requests.
+
+A peer that keeps sending frames nobody needs (unknown frames on the control stream, empty unidirectional streams,
+PRIORITY_UPDATE floods) spends tokens of a glitch bucket (1000 tokens, 33 per second); an empty bucket closes the
+connection with `H3_EXCESSIVE_LOAD`. `Http3Settings.glitchProtection = false` turns this off.
+
+## Priorities
+
+Requests carry RFC 9218 priorities: `Http3Request.priority` becomes the `priority` field when it differs from the
+default (`u=3`, not incremental), and `Http3Response.updatePriority(...)` sends a PRIORITY_UPDATE later. Only the
+server acts on the client's signal: `Http3ServerRequest.priority` follows the field and later updates, and the response
+stream is scheduled with it unless the server picks its own with `respond(status, headers, priority)`, which wins. The
+transport scheduler serves eight urgency levels in order and shares a level round-robin between incremental streams;
+the control and QPACK streams always go first. A PRIORITY_UPDATE that arrives before its stream is remembered (up to 32
+of them); one that arrives after the field replaces it.
+
+## Extended CONNECT and datagrams
+
+A server that accepts Extended CONNECT (RFC 9220) sets `enableConnectProtocol = true`; a client calls `connect`, which
+waits for the server's SETTINGS and fails with `Http3Exception.Settings` if the server did not opt in. The result is an
+`Http3Stream`: a byte stream both ways (WebSocket frames for `:protocol = websocket`, capsules for other protocols)
+plus HTTP datagrams bound to the stream (RFC 9297). `Http3Stream.headers` holds the peer's fields: the CONNECT request's on
+the server, the 2xx response's on the client (for example `sec-websocket-protocol`, RFC 9220 section 3). Each
+direction ends on its own: closing `output` sends FIN and leaves `input` readable until the peer's FIN (a TCP-style
+half-close, RFC 9114 section 4.4); the stream and its datagram registration are released once both directions ended or
+the stream was reset.
+
+```kotlin
+// guide:http3:connect (server)
+val request = connection.acceptRequest()
+if (request.protocol == "echo") {
+    val stream = request.acceptConnect()          // :status 200
+    stream.input.copyTo(stream.output)
+} else request.respond(501).finish()
+
+// guide:http3:connect (client)
+val stream = client.connect(Http3Request("CONNECT", authority = "example.com", path = "/chat"), protocol = "echo")
+stream.trySendDatagram(byteArrayOf(1, 2, 3))      // Unsupported until both sides sent SETTINGS_H3_DATAGRAM=1
+stream.datagrams.collect { println(it.size) }
+```
+
+`SETTINGS_H3_DATAGRAM` is always sent (its absence would be a fingerprint); it is 1 only when the QUIC connection has
+datagrams on. A peer that announces it without QUIC datagram support is a connection error `H3_SETTINGS_ERROR`.
+Datagrams for streams nobody registered are dropped silently; a datagram whose quarter stream ID cannot be parsed
+closes the connection with `H3_DATAGRAM_ERROR`. Each stream keeps the newest 32 datagrams nobody has collected.

@@ -1,0 +1,10 @@
+# Copyright 2026 The Kuicksilver Authors
+# SPDX-License-Identifier: Apache-2.0
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/kuicksilver/kuicksilver/security/advisories/new
+    about: Report vulnerabilities privately through GitHub Security Advisories, never in a public issue.
+  - name: Questions and ideas
+    url: https://github.com/kuicksilver/kuicksilver/discussions
+    about: Ask how to use Kuicksilver or discuss an idea before opening an issue.

@@ -1,0 +1,137 @@
+// Klib ABI Dump
+// Targets: [iosArm64, iosSimulatorArm64, linuxArm64, linuxX64, macosArm64, mingwX64]
+// Rendering settings:
+// - Signature version: 2
+// - Show manifest properties: true
+// - Show declarations: true
+
+// Library unique name: <io.kuicksilver:kuicksilver-native>
+open annotation class io.kuicksilver.annotations/DelicateKuicksilverApi : kotlin/Annotation { // io.kuicksilver.annotations/DelicateKuicksilverApi|null[0]
+    constructor <init>() // io.kuicksilver.annotations/DelicateKuicksilverApi.<init>|<init>(){}[0]
+}
+
+open annotation class io.kuicksilver.annotations/ExperimentalKuicksilverApi : kotlin/Annotation { // io.kuicksilver.annotations/ExperimentalKuicksilverApi|null[0]
+    constructor <init>() // io.kuicksilver.annotations/ExperimentalKuicksilverApi.<init>|<init>(){}[0]
+}
+
+open annotation class io.kuicksilver.annotations/InternalKuicksilverApi : kotlin/Annotation { // io.kuicksilver.annotations/InternalKuicksilverApi|null[0]
+    constructor <init>() // io.kuicksilver.annotations/InternalKuicksilverApi.<init>|<init>(){}[0]
+}
+
+open annotation class io.kuicksilver.annotations/KuicksilverDsl : kotlin/Annotation { // io.kuicksilver.annotations/KuicksilverDsl|null[0]
+    constructor <init>() // io.kuicksilver.annotations/KuicksilverDsl.<init>|<init>(){}[0]
+}
+
+final enum class io.kuicksilver.native/NativeUnavailableReason : kotlin/Enum<io.kuicksilver.native/NativeUnavailableReason> { // io.kuicksilver.native/NativeUnavailableReason|null[0]
+    enum entry AbiMismatch // io.kuicksilver.native/NativeUnavailableReason.AbiMismatch|null[0]
+    enum entry IntegrityMismatch // io.kuicksilver.native/NativeUnavailableReason.IntegrityMismatch|null[0]
+    enum entry LoadFailed // io.kuicksilver.native/NativeUnavailableReason.LoadFailed|null[0]
+    enum entry NoLibraryForPlatform // io.kuicksilver.native/NativeUnavailableReason.NoLibraryForPlatform|null[0]
+
+    final val entries // io.kuicksilver.native/NativeUnavailableReason.entries|#static{}entries[0]
+        final fun <get-entries>(): kotlin.enums/EnumEntries<io.kuicksilver.native/NativeUnavailableReason> // io.kuicksilver.native/NativeUnavailableReason.entries.<get-entries>|<get-entries>#static(){}[0]
+
+    final fun valueOf(kotlin/String): io.kuicksilver.native/NativeUnavailableReason // io.kuicksilver.native/NativeUnavailableReason.valueOf|valueOf#static(kotlin.String){}[0]
+    final fun values(): kotlin/Array<io.kuicksilver.native/NativeUnavailableReason> // io.kuicksilver.native/NativeUnavailableReason.values|values#static(){}[0]
+}
+
+sealed interface io.kuicksilver.native/NativeAvailability { // io.kuicksilver.native/NativeAvailability|null[0]
+    final class Unavailable : io.kuicksilver.native/NativeAvailability { // io.kuicksilver.native/NativeAvailability.Unavailable|null[0]
+        constructor <init>(io.kuicksilver.native/NativeUnavailableReason, kotlin/String, kotlin/Throwable?) // io.kuicksilver.native/NativeAvailability.Unavailable.<init>|<init>(io.kuicksilver.native.NativeUnavailableReason;kotlin.String;kotlin.Throwable?){}[0]
+
+        final val cause // io.kuicksilver.native/NativeAvailability.Unavailable.cause|{}cause[0]
+            final fun <get-cause>(): kotlin/Throwable? // io.kuicksilver.native/NativeAvailability.Unavailable.cause.<get-cause>|<get-cause>(){}[0]
+        final val detail // io.kuicksilver.native/NativeAvailability.Unavailable.detail|{}detail[0]
+            final fun <get-detail>(): kotlin/String // io.kuicksilver.native/NativeAvailability.Unavailable.detail.<get-detail>|<get-detail>(){}[0]
+        final val reason // io.kuicksilver.native/NativeAvailability.Unavailable.reason|{}reason[0]
+            final fun <get-reason>(): io.kuicksilver.native/NativeUnavailableReason // io.kuicksilver.native/NativeAvailability.Unavailable.reason.<get-reason>|<get-reason>(){}[0]
+
+        final fun toString(): kotlin/String // io.kuicksilver.native/NativeAvailability.Unavailable.toString|toString(){}[0]
+    }
+
+    final object Available : io.kuicksilver.native/NativeAvailability { // io.kuicksilver.native/NativeAvailability.Available|null[0]
+        final fun equals(kotlin/Any?): kotlin/Boolean // io.kuicksilver.native/NativeAvailability.Available.equals|equals(kotlin.Any?){}[0]
+        final fun hashCode(): kotlin/Int // io.kuicksilver.native/NativeAvailability.Available.hashCode|hashCode(){}[0]
+        final fun toString(): kotlin/String // io.kuicksilver.native/NativeAvailability.Available.toString|toString(){}[0]
+    }
+}
+
+final class io.kuicksilver.native/PacketBuffer : kotlin/AutoCloseable { // io.kuicksilver.native/PacketBuffer|null[0]
+    final val capacity // io.kuicksilver.native/PacketBuffer.capacity|{}capacity[0]
+        final fun <get-capacity>(): kotlin/Int // io.kuicksilver.native/PacketBuffer.capacity.<get-capacity>|<get-capacity>(){}[0]
+
+    final fun close() // io.kuicksilver.native/PacketBuffer.close|close(){}[0]
+    final fun copyFrom(kotlin/ByteArray, kotlin/Int, kotlin/Int, kotlin/Int) // io.kuicksilver.native/PacketBuffer.copyFrom|copyFrom(kotlin.ByteArray;kotlin.Int;kotlin.Int;kotlin.Int){}[0]
+    final fun copyTo(kotlin/ByteArray, kotlin/Int, kotlin/Int, kotlin/Int) // io.kuicksilver.native/PacketBuffer.copyTo|copyTo(kotlin.ByteArray;kotlin.Int;kotlin.Int;kotlin.Int){}[0]
+    final fun get(kotlin/Int): kotlin/Byte // io.kuicksilver.native/PacketBuffer.get|get(kotlin.Int){}[0]
+    final fun set(kotlin/Int, kotlin/Byte) // io.kuicksilver.native/PacketBuffer.set|set(kotlin.Int;kotlin.Byte){}[0]
+
+    final object Companion { // io.kuicksilver.native/PacketBuffer.Companion|null[0]
+        final fun allocate(kotlin/Int): io.kuicksilver.native/PacketBuffer // io.kuicksilver.native/PacketBuffer.Companion.allocate|allocate(kotlin.Int){}[0]
+    }
+}
+
+sealed class io.kuicksilver.native/KslException : kotlin/RuntimeException { // io.kuicksilver.native/KslException|null[0]
+    final class AbiMismatch : io.kuicksilver.native/KslException { // io.kuicksilver.native/KslException.AbiMismatch|null[0]
+        constructor <init>(kotlin/Int, kotlin/Int) // io.kuicksilver.native/KslException.AbiMismatch.<init>|<init>(kotlin.Int;kotlin.Int){}[0]
+
+        final val kotlin // io.kuicksilver.native/KslException.AbiMismatch.kotlin|{}kotlin[0]
+            final fun <get-kotlin>(): kotlin/Int // io.kuicksilver.native/KslException.AbiMismatch.kotlin.<get-kotlin>|<get-kotlin>(){}[0]
+        final val native // io.kuicksilver.native/KslException.AbiMismatch.native|{}native[0]
+            final fun <get-native>(): kotlin/Int // io.kuicksilver.native/KslException.AbiMismatch.native.<get-native>|<get-native>(){}[0]
+    }
+
+    final class Internal : io.kuicksilver.native/KslException { // io.kuicksilver.native/KslException.Internal|null[0]
+        constructor <init>(kotlin/Int, kotlin/Int, kotlin/String) // io.kuicksilver.native/KslException.Internal.<init>|<init>(kotlin.Int;kotlin.Int;kotlin.String){}[0]
+
+        final val alert // io.kuicksilver.native/KslException.Internal.alert|{}alert[0]
+            final fun <get-alert>(): kotlin/Int // io.kuicksilver.native/KslException.Internal.alert.<get-alert>|<get-alert>(){}[0]
+        final val isKsl // io.kuicksilver.native/KslException.Internal.isKsl|{}isKsl[0]
+            final fun <get-isKsl>(): kotlin/Boolean // io.kuicksilver.native/KslException.Internal.isKsl.<get-isKsl>|<get-isKsl>(){}[0]
+        final val lib // io.kuicksilver.native/KslException.Internal.lib|{}lib[0]
+            final fun <get-lib>(): kotlin/Int // io.kuicksilver.native/KslException.Internal.lib.<get-lib>|<get-lib>(){}[0]
+        final val packed // io.kuicksilver.native/KslException.Internal.packed|{}packed[0]
+            final fun <get-packed>(): kotlin/Int // io.kuicksilver.native/KslException.Internal.packed.<get-packed>|<get-packed>(){}[0]
+        final val reason // io.kuicksilver.native/KslException.Internal.reason|{}reason[0]
+            final fun <get-reason>(): kotlin/Int // io.kuicksilver.native/KslException.Internal.reason.<get-reason>|<get-reason>(){}[0]
+    }
+
+    final class MissingSymbol : io.kuicksilver.native/KslException { // io.kuicksilver.native/KslException.MissingSymbol|null[0]
+        constructor <init>(kotlin/String) // io.kuicksilver.native/KslException.MissingSymbol.<init>|<init>(kotlin.String){}[0]
+
+        final val name // io.kuicksilver.native/KslException.MissingSymbol.name|{}name[0]
+            final fun <get-name>(): kotlin/String // io.kuicksilver.native/KslException.MissingSymbol.name.<get-name>|<get-name>(){}[0]
+    }
+
+    final class NativeLoad : io.kuicksilver.native/KslException { // io.kuicksilver.native/KslException.NativeLoad|null[0]
+        constructor <init>(kotlin/String, kotlin/String, kotlin/String, kotlin/Throwable? = ...) // io.kuicksilver.native/KslException.NativeLoad.<init>|<init>(kotlin.String;kotlin.String;kotlin.String;kotlin.Throwable?){}[0]
+
+        final val classifier // io.kuicksilver.native/KslException.NativeLoad.classifier|{}classifier[0]
+            final fun <get-classifier>(): kotlin/String // io.kuicksilver.native/KslException.NativeLoad.classifier.<get-classifier>|<get-classifier>(){}[0]
+        final val platform // io.kuicksilver.native/KslException.NativeLoad.platform|{}platform[0]
+            final fun <get-platform>(): kotlin/String // io.kuicksilver.native/KslException.NativeLoad.platform.<get-platform>|<get-platform>(){}[0]
+        final val reason // io.kuicksilver.native/KslException.NativeLoad.reason|{}reason[0]
+            final fun <get-reason>(): kotlin/String // io.kuicksilver.native/KslException.NativeLoad.reason.<get-reason>|<get-reason>(){}[0]
+    }
+
+    final class Version : io.kuicksilver.native/KslException { // io.kuicksilver.native/KslException.Version|null[0]
+        constructor <init>(kotlin/String, kotlin/String) // io.kuicksilver.native/KslException.Version.<init>|<init>(kotlin.String;kotlin.String){}[0]
+
+        final val found // io.kuicksilver.native/KslException.Version.found|{}found[0]
+            final fun <get-found>(): kotlin/String // io.kuicksilver.native/KslException.Version.found.<get-found>|<get-found>(){}[0]
+        final val required // io.kuicksilver.native/KslException.Version.required|{}required[0]
+            final fun <get-required>(): kotlin/String // io.kuicksilver.native/KslException.Version.required.<get-required>|<get-required>(){}[0]
+    }
+}
+
+final object io.kuicksilver.native/KslLoader { // io.kuicksilver.native/KslLoader|null[0]
+    final fun availability(): io.kuicksilver.native/NativeAvailability // io.kuicksilver.native/KslLoader.availability|availability(){}[0]
+    final fun ensureLoaded() // io.kuicksilver.native/KslLoader.ensureLoaded|ensureLoaded(){}[0]
+    final fun isAvailable(): kotlin/Boolean // io.kuicksilver.native/KslLoader.isAvailable|isAvailable(){}[0]
+}
+
+final const val io.kuicksilver.native/KSL_ABI_VERSION // io.kuicksilver.native/KSL_ABI_VERSION|{}KSL_ABI_VERSION[0]
+    final fun <get-KSL_ABI_VERSION>(): kotlin/Int // io.kuicksilver.native/KSL_ABI_VERSION.<get-KSL_ABI_VERSION>|<get-KSL_ABI_VERSION>(){}[0]
+
+final fun (io.kuicksilver.native/PacketBuffer).io.kuicksilver.native/toByteArray(kotlin/Int = ...): kotlin/ByteArray // io.kuicksilver.native/toByteArray|toByteArray@io.kuicksilver.native.PacketBuffer(kotlin.Int){}[0]
+final fun (io.kuicksilver.native/PacketBuffer.Companion).io.kuicksilver.native/of(kotlin/ByteArray): io.kuicksilver.native/PacketBuffer // io.kuicksilver.native/of|of@io.kuicksilver.native.PacketBuffer.Companion(kotlin.ByteArray){}[0]

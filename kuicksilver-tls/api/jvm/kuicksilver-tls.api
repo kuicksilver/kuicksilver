@@ -1,0 +1,603 @@
+public final class io/kuicksilver/tls/Aead : java/lang/Enum {
+	public static final field AES_128_GCM Lio/kuicksilver/tls/Aead;
+	public static final field AES_256_GCM Lio/kuicksilver/tls/Aead;
+	public static final field CHACHA20_POLY1305 Lio/kuicksilver/tls/Aead;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public final fun getKeyLength ()I
+	public static fun valueOf (Ljava/lang/String;)Lio/kuicksilver/tls/Aead;
+	public static fun values ()[Lio/kuicksilver/tls/Aead;
+}
+
+public final class io/kuicksilver/tls/Certificate {
+	public static final field Companion Lio/kuicksilver/tls/Certificate$Companion;
+	public fun <init> ([B)V
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getDer ()[B
+	public final fun getDnsNames ()Ljava/util/List;
+	public final fun getIpAddresses ()Ljava/util/List;
+	public final fun getNotAfterEpochSeconds ()J
+	public final fun getNotBeforeEpochSeconds ()J
+	public final fun getSpkiSha256 ()Lio/kuicksilver/tls/SpkiSha256;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/kuicksilver/tls/Certificate$Companion {
+	public final fun parsePem (Ljava/lang/String;)Ljava/util/List;
+}
+
+public abstract interface class io/kuicksilver/tls/CertificateVerifier {
+	public abstract fun verify (Ljava/util/List;Ljava/lang/String;Lio/kuicksilver/tls/TlsRole;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+}
+
+public final class io/kuicksilver/tls/CipherSuites {
+	public static final field AES_128_GCM Ljava/lang/String;
+	public static final field AES_256_GCM Ljava/lang/String;
+	public static final field CHACHA20_POLY1305 Ljava/lang/String;
+	public static final field Companion Lio/kuicksilver/tls/CipherSuites$Companion;
+	public fun <init> (Ljava/util/List;)V
+	public final fun getSuites ()Ljava/util/List;
+}
+
+public final class io/kuicksilver/tls/CipherSuites$Companion {
+	public final fun getDefault ()Lio/kuicksilver/tls/CipherSuites;
+}
+
+public final class io/kuicksilver/tls/ClientAuth : java/lang/Enum {
+	public static final field None Lio/kuicksilver/tls/ClientAuth;
+	public static final field Optional Lio/kuicksilver/tls/ClientAuth;
+	public static final field Required Lio/kuicksilver/tls/ClientAuth;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lio/kuicksilver/tls/ClientAuth;
+	public static fun values ()[Lio/kuicksilver/tls/ClientAuth;
+}
+
+public final class io/kuicksilver/tls/ClientHelloInfo {
+	public fun <init> (Ljava/lang/String;Ljava/util/List;Ljava/util/List;)V
+	public final fun getAlpn ()Ljava/util/List;
+	public final fun getServerName ()Ljava/lang/String;
+	public final fun getSignatureSchemes ()Ljava/util/List;
+}
+
+public final class io/kuicksilver/tls/Direction : java/lang/Enum {
+	public static final field Read Lio/kuicksilver/tls/Direction;
+	public static final field Write Lio/kuicksilver/tls/Direction;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lio/kuicksilver/tls/Direction;
+	public static fun values ()[Lio/kuicksilver/tls/Direction;
+}
+
+public abstract interface class io/kuicksilver/tls/DriveResult {
+}
+
+public final class io/kuicksilver/tls/DriveResult$Failed : io/kuicksilver/tls/DriveResult {
+	public fun <init> (Lio/kuicksilver/tls/TlsException;Ljava/lang/Integer;)V
+	public final fun getAlert ()Ljava/lang/Integer;
+	public final fun getException ()Lio/kuicksilver/tls/TlsException;
+}
+
+public final class io/kuicksilver/tls/DriveResult$Progress : io/kuicksilver/tls/DriveResult {
+	public static final field INSTANCE Lio/kuicksilver/tls/DriveResult$Progress;
+}
+
+public final class io/kuicksilver/tls/DriveResult$WantRead : io/kuicksilver/tls/DriveResult {
+	public static final field INSTANCE Lio/kuicksilver/tls/DriveResult$WantRead;
+}
+
+public final class io/kuicksilver/tls/DriveResult$WantVerify : io/kuicksilver/tls/DriveResult {
+	public fun <init> (Ljava/util/List;)V
+	public final fun getChain ()Ljava/util/List;
+}
+
+public final class io/kuicksilver/tls/EarlyDataState : java/lang/Enum {
+	public static final field Disabled Lio/kuicksilver/tls/EarlyDataState;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lio/kuicksilver/tls/EarlyDataState;
+	public static fun values ()[Lio/kuicksilver/tls/EarlyDataState;
+}
+
+public final class io/kuicksilver/tls/EncryptionLevel : java/lang/Enum {
+	public static final field Application Lio/kuicksilver/tls/EncryptionLevel;
+	public static final field EarlyData Lio/kuicksilver/tls/EncryptionLevel;
+	public static final field Handshake Lio/kuicksilver/tls/EncryptionLevel;
+	public static final field Initial Lio/kuicksilver/tls/EncryptionLevel;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lio/kuicksilver/tls/EncryptionLevel;
+	public static fun values ()[Lio/kuicksilver/tls/EncryptionLevel;
+}
+
+public final class io/kuicksilver/tls/Hash : java/lang/Enum {
+	public static final field Sha256 Lio/kuicksilver/tls/Hash;
+	public static final field Sha384 Lio/kuicksilver/tls/Hash;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public final fun getSize ()I
+	public static fun valueOf (Ljava/lang/String;)Lio/kuicksilver/tls/Hash;
+	public static fun values ()[Lio/kuicksilver/tls/Hash;
+}
+
+public final class io/kuicksilver/tls/HostName {
+	public static final field Companion Lio/kuicksilver/tls/HostName$Companion;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getValue ()Ljava/lang/String;
+	public fun hashCode ()I
+	public final fun isIpLiteral ()Z
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/kuicksilver/tls/HostName$Companion {
+	public final fun normalize (Ljava/lang/String;)Lio/kuicksilver/tls/HostName;
+}
+
+public final class io/kuicksilver/tls/InMemoryKeylog : io/kuicksilver/tls/KeylogSink {
+	public fun <init> ()V
+	public final fun getLines ()Ljava/util/List;
+	public fun log (Ljava/lang/String;)V
+}
+
+public final class io/kuicksilver/tls/KeylogFile_jvmKt {
+	public static final fun keylogFile (Ljava/lang/String;)Lio/kuicksilver/tls/KeylogSink;
+	public static final fun keylogFromEnvironment ()Lio/kuicksilver/tls/KeylogSink;
+}
+
+public abstract interface class io/kuicksilver/tls/KeylogSink {
+	public static final field Companion Lio/kuicksilver/tls/KeylogSink$Companion;
+	public abstract fun log (Ljava/lang/String;)V
+}
+
+public final class io/kuicksilver/tls/KeylogSink$Companion {
+	public final fun inMemory ()Lio/kuicksilver/tls/InMemoryKeylog;
+}
+
+public final class io/kuicksilver/tls/KslCrypto {
+	public static final field INSTANCE Lio/kuicksilver/tls/KslCrypto;
+	public final fun hkdfExpandLabel (Lio/kuicksilver/tls/Hash;[BLjava/lang/String;[BI)[B
+	public final fun randomBytes (I)[B
+	public final fun sha256 ([B)[B
+	public final fun sha384 ([B)[B
+	public final fun sign (Lio/kuicksilver/tls/SignatureAlgorithm;[B[B)[B
+	public final fun spkiSha256 ([B)Lio/kuicksilver/tls/SpkiSha256;
+	public final fun verify (Lio/kuicksilver/tls/SignatureAlgorithm;[B[B[B)Z
+}
+
+public final class io/kuicksilver/tls/KslQuicCrypto : io/kuicksilver/tls/QuicCrypto {
+	public static final field INSTANCE Lio/kuicksilver/tls/KslQuicCrypto;
+	public fun initialProtectors ([BILio/kuicksilver/tls/TlsRole;)Lkotlin/Pair;
+	public fun newResetKey ()Lio/kuicksilver/tls/ResetKey;
+	public fun newSession (Lio/kuicksilver/tls/TlsConfig;)Lio/kuicksilver/tls/QuicTlsSession;
+	public fun newTokenKey ()Lio/kuicksilver/tls/TokenKey;
+	public fun retryIntegrityTag (I[B[B)[B
+}
+
+public final class io/kuicksilver/tls/KslUdpSocket$Companion {
+	public final fun encodeAddress ([BI)[B
+	public final fun getSupported ()Z
+	public final fun ipOf ([B)[B
+	public final fun open ([BI)Lio/kuicksilver/tls/KslUdpSocket;
+	public final fun portOf ([B)I
+}
+
+public final class io/kuicksilver/tls/KslUdpSocket$Stats {
+	public fun <init> (JJJ)V
+	public final fun getGsoFallbacks ()J
+	public final fun getReceiveSyscalls ()J
+	public final fun getSendSyscalls ()J
+}
+
+public final class io/kuicksilver/tls/PacketProtectionException : java/io/IOException {
+	public fun <init> (Ljava/lang/String;)V
+}
+
+public abstract interface class io/kuicksilver/tls/PacketProtector : java/lang/AutoCloseable {
+	public abstract fun getAead ()Lio/kuicksilver/tls/Aead;
+	public abstract fun headerMask (Lio/kuicksilver/native/PacketBuffer;I[B)V
+	public abstract fun next ()Lio/kuicksilver/tls/PacketProtector;
+	public abstract fun open (JLio/kuicksilver/native/PacketBuffer;IILio/kuicksilver/native/PacketBuffer;II)I
+	public fun open (JLio/kuicksilver/native/PacketBuffer;ILio/kuicksilver/native/PacketBuffer;I)I
+	public abstract fun seal (JLio/kuicksilver/native/PacketBuffer;IILio/kuicksilver/native/PacketBuffer;II)I
+	public fun seal (JLio/kuicksilver/native/PacketBuffer;ILio/kuicksilver/native/PacketBuffer;I)I
+}
+
+public final class io/kuicksilver/tls/PacketProtector$DefaultImpls {
+	public static fun open (Lio/kuicksilver/tls/PacketProtector;JLio/kuicksilver/native/PacketBuffer;ILio/kuicksilver/native/PacketBuffer;I)I
+	public static fun seal (Lio/kuicksilver/tls/PacketProtector;JLio/kuicksilver/native/PacketBuffer;ILio/kuicksilver/native/PacketBuffer;I)I
+}
+
+public final class io/kuicksilver/tls/PinScope : java/lang/Enum {
+	public static final field AnyInValidatedChain Lio/kuicksilver/tls/PinScope;
+	public static final field Leaf Lio/kuicksilver/tls/PinScope;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lio/kuicksilver/tls/PinScope;
+	public static fun values ()[Lio/kuicksilver/tls/PinScope;
+}
+
+public final class io/kuicksilver/tls/PlatformVerifier_jvmKt {
+	public static final fun fromTrustManager (Lio/kuicksilver/tls/TrustConfig$Companion;Ljavax/net/ssl/X509TrustManager;)Lio/kuicksilver/tls/TrustConfig;
+}
+
+public abstract interface class io/kuicksilver/tls/PrivateKeySigner {
+	public abstract fun chooseScheme (Ljava/util/List;)Ljava/lang/Integer;
+	public abstract fun getPublicKey ()[B
+	public abstract fun sign (I[BLkotlin/coroutines/Continuation;)Ljava/lang/Object;
+}
+
+public abstract interface class io/kuicksilver/tls/QuicCrypto {
+	public abstract fun initialProtectors ([BILio/kuicksilver/tls/TlsRole;)Lkotlin/Pair;
+	public abstract fun newResetKey ()Lio/kuicksilver/tls/ResetKey;
+	public abstract fun newSession (Lio/kuicksilver/tls/TlsConfig;)Lio/kuicksilver/tls/QuicTlsSession;
+	public abstract fun newTokenKey ()Lio/kuicksilver/tls/TokenKey;
+	public abstract fun retryIntegrityTag (I[B[B)[B
+}
+
+public abstract interface class io/kuicksilver/tls/QuicTlsSession : java/lang/AutoCloseable {
+	public abstract fun drive ()Lio/kuicksilver/tls/DriveResult;
+	public abstract fun exportKeyingMaterial (Ljava/lang/String;[BI)[B
+	public abstract fun getEarlyData ()Lio/kuicksilver/tls/EarlyDataState;
+	public abstract fun getNegotiatedAlpn ()Ljava/lang/String;
+	public abstract fun getPeerCertificates ()Ljava/util/List;
+	public abstract fun nextEvent ()Lio/kuicksilver/tls/TlsEvent;
+	public abstract fun provide (Lio/kuicksilver/tls/EncryptionLevel;[BII)V
+	public static synthetic fun provide$default (Lio/kuicksilver/tls/QuicTlsSession;Lio/kuicksilver/tls/EncryptionLevel;[BIIILjava/lang/Object;)V
+	public abstract fun resumeVerify (Lio/kuicksilver/tls/VerifyResult;)V
+	public abstract fun setQuicVersion (I)V
+	public abstract fun setTransportParameters ([B)V
+	public abstract fun verifyPeer (Ljava/util/List;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+}
+
+public final class io/kuicksilver/tls/QuicTlsSession$DefaultImpls {
+	public static synthetic fun provide$default (Lio/kuicksilver/tls/QuicTlsSession;Lio/kuicksilver/tls/EncryptionLevel;[BIIILjava/lang/Object;)V
+}
+
+public abstract interface class io/kuicksilver/tls/ResetKey : java/lang/AutoCloseable {
+	public abstract fun token (Lio/kuicksilver/native/PacketBuffer;II[BI)V
+}
+
+public final class io/kuicksilver/tls/ServerTlsOverride {
+	public fun <init> (Lio/kuicksilver/tls/TlsIdentity;Ljava/util/List;Lio/kuicksilver/tls/ClientAuth;Lio/kuicksilver/tls/TrustConfig;)V
+	public synthetic fun <init> (Lio/kuicksilver/tls/TlsIdentity;Ljava/util/List;Lio/kuicksilver/tls/ClientAuth;Lio/kuicksilver/tls/TrustConfig;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun getAlpn ()Ljava/util/List;
+	public final fun getClientAuth ()Lio/kuicksilver/tls/ClientAuth;
+	public final fun getIdentity ()Lio/kuicksilver/tls/TlsIdentity;
+	public final fun getTrust ()Lio/kuicksilver/tls/TrustConfig;
+}
+
+public final class io/kuicksilver/tls/SessionTicketConfig {
+	public static final field Companion Lio/kuicksilver/tls/SessionTicketConfig$Companion;
+	public fun <init> ()V
+	public synthetic fun <init> (Ljava/util/List;JJILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public synthetic fun <init> (Ljava/util/List;JJLkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun getKeys ()Ljava/util/List;
+	public final fun getRotateEvery-UwyO8pc ()J
+	public final fun getTicketLifetime-UwyO8pc ()J
+}
+
+public final class io/kuicksilver/tls/SessionTicketConfig$Companion {
+	public final fun getDefault ()Lio/kuicksilver/tls/SessionTicketConfig;
+}
+
+public final class io/kuicksilver/tls/SignatureAlgorithm : java/lang/Enum {
+	public static final field EcdsaP256 Lio/kuicksilver/tls/SignatureAlgorithm;
+	public static final field Ed25519 Lio/kuicksilver/tls/SignatureAlgorithm;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lio/kuicksilver/tls/SignatureAlgorithm;
+	public static fun values ()[Lio/kuicksilver/tls/SignatureAlgorithm;
+}
+
+public final class io/kuicksilver/tls/SpkiSha256 {
+	public static final field Companion Lio/kuicksilver/tls/SpkiSha256$Companion;
+	public fun <init> ([B)V
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getBytes ()[B
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/kuicksilver/tls/SpkiSha256$Companion {
+	public final fun parse (Ljava/lang/String;)Lio/kuicksilver/tls/SpkiSha256;
+}
+
+public final class io/kuicksilver/tls/TlsConfig {
+	public final fun getAlpn ()Ljava/util/List;
+	public final fun getCipherSuites ()Lio/kuicksilver/tls/CipherSuites;
+	public final fun getClientAuth ()Lio/kuicksilver/tls/ClientAuth;
+	public final fun getGenericAlerts ()Z
+	public final fun getHandshakeTimeout-UwyO8pc ()J
+	public final fun getIdentity ()Lio/kuicksilver/tls/TlsIdentity;
+	public final fun getKeylog ()Lio/kuicksilver/tls/KeylogSink;
+	public final fun getRole ()Lio/kuicksilver/tls/TlsRole;
+	public final fun getServerName ()Ljava/lang/String;
+	public final fun getSessionTickets ()Lio/kuicksilver/tls/SessionTicketConfig;
+	public final fun getSniSelector ()Lkotlin/jvm/functions/Function2;
+	public final fun getTrust ()Lio/kuicksilver/tls/TrustConfig;
+	public final fun getVersions ()Lio/kuicksilver/tls/TlsVersions;
+}
+
+public final class io/kuicksilver/tls/TlsConfig$Builder {
+	public fun <init> (Lio/kuicksilver/tls/TlsRole;)V
+	public final fun build ()Lio/kuicksilver/tls/TlsConfig;
+	public final fun getAlpn ()Ljava/util/List;
+	public final fun getCipherSuites ()Lio/kuicksilver/tls/CipherSuites;
+	public final fun getClientAuth ()Lio/kuicksilver/tls/ClientAuth;
+	public final fun getGenericAlerts ()Z
+	public final fun getHandshakeTimeout-UwyO8pc ()J
+	public final fun getIdentity ()Lio/kuicksilver/tls/TlsIdentity;
+	public final fun getKeylog ()Lio/kuicksilver/tls/KeylogSink;
+	public final fun getRole ()Lio/kuicksilver/tls/TlsRole;
+	public final fun getServerName ()Ljava/lang/String;
+	public final fun getSessionTickets ()Lio/kuicksilver/tls/SessionTicketConfig;
+	public final fun getSniSelector ()Lkotlin/jvm/functions/Function2;
+	public final fun getTrust ()Lio/kuicksilver/tls/TrustConfig;
+	public final fun getVersions ()Lio/kuicksilver/tls/TlsVersions;
+	public final fun setAlpn (Ljava/util/List;)V
+	public final fun setCipherSuites (Lio/kuicksilver/tls/CipherSuites;)V
+	public final fun setClientAuth (Lio/kuicksilver/tls/ClientAuth;)V
+	public final fun setGenericAlerts (Z)V
+	public final fun setHandshakeTimeout-LRDsOJo (J)V
+	public final fun setIdentity (Lio/kuicksilver/tls/TlsIdentity;)V
+	public final fun setKeylog (Lio/kuicksilver/tls/KeylogSink;)V
+	public final fun setServerName (Ljava/lang/String;)V
+	public final fun setSessionTickets (Lio/kuicksilver/tls/SessionTicketConfig;)V
+	public final fun setSniSelector (Lkotlin/jvm/functions/Function2;)V
+	public final fun setTrust (Lio/kuicksilver/tls/TrustConfig;)V
+	public final fun setVersions (Lio/kuicksilver/tls/TlsVersions;)V
+}
+
+public final class io/kuicksilver/tls/TlsConfigKt {
+	public static final fun tlsConfig (Lio/kuicksilver/tls/TlsRole;Lkotlin/jvm/functions/Function1;)Lio/kuicksilver/tls/TlsConfig;
+}
+
+public final class io/kuicksilver/tls/TlsConnection : java/lang/AutoCloseable {
+	public static final field Companion Lio/kuicksilver/tls/TlsConnection$Companion;
+	public final fun channelBinding (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public fun close ()V
+	public final fun exportKeyingMaterial (Ljava/lang/String;[BILkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public final fun getInput ()Lio/ktor/utils/io/ByteReadChannel;
+	public final fun getNegotiatedAlpn ()Ljava/lang/String;
+	public final fun getOutput ()Lio/ktor/utils/io/ByteWriteChannel;
+	public final fun getPeerCertificates ()Ljava/util/List;
+	public final fun getProtocolVersion ()Lio/kuicksilver/tls/TlsVersion;
+	public final fun getSessionReused ()Z
+	public final fun keyUpdate (ZLkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static synthetic fun keyUpdate$default (Lio/kuicksilver/tls/TlsConnection;ZLkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+	public final fun shutdown (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+}
+
+public final class io/kuicksilver/tls/TlsConnection$Companion {
+	public final fun client (Lio/ktor/utils/io/ByteReadChannel;Lio/ktor/utils/io/ByteWriteChannel;Lio/kuicksilver/tls/TlsConfig;Lkotlin/coroutines/CoroutineContext;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static synthetic fun client$default (Lio/kuicksilver/tls/TlsConnection$Companion;Lio/ktor/utils/io/ByteReadChannel;Lio/ktor/utils/io/ByteWriteChannel;Lio/kuicksilver/tls/TlsConfig;Lkotlin/coroutines/CoroutineContext;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+	public final fun server (Lio/ktor/utils/io/ByteReadChannel;Lio/ktor/utils/io/ByteWriteChannel;Lio/kuicksilver/tls/TlsConfig;Lkotlin/coroutines/CoroutineContext;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static synthetic fun server$default (Lio/kuicksilver/tls/TlsConnection$Companion;Lio/ktor/utils/io/ByteReadChannel;Lio/ktor/utils/io/ByteWriteChannel;Lio/kuicksilver/tls/TlsConfig;Lkotlin/coroutines/CoroutineContext;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+}
+
+public abstract interface class io/kuicksilver/tls/TlsEvent {
+}
+
+public final class io/kuicksilver/tls/TlsEvent$CryptoData : io/kuicksilver/tls/TlsEvent {
+	public fun <init> (Lio/kuicksilver/tls/EncryptionLevel;[B)V
+	public final fun getData ()[B
+	public final fun getLevel ()Lio/kuicksilver/tls/EncryptionLevel;
+}
+
+public final class io/kuicksilver/tls/TlsEvent$HandshakeDone : io/kuicksilver/tls/TlsEvent {
+	public static final field INSTANCE Lio/kuicksilver/tls/TlsEvent$HandshakeDone;
+}
+
+public final class io/kuicksilver/tls/TlsEvent$Keys : io/kuicksilver/tls/TlsEvent {
+	public fun <init> (Lio/kuicksilver/tls/EncryptionLevel;Lio/kuicksilver/tls/Direction;Lio/kuicksilver/tls/PacketProtector;)V
+	public final fun getDirection ()Lio/kuicksilver/tls/Direction;
+	public final fun getLevel ()Lio/kuicksilver/tls/EncryptionLevel;
+	public final fun getProtector ()Lio/kuicksilver/tls/PacketProtector;
+}
+
+public final class io/kuicksilver/tls/TlsEvent$PeerTransportParameters : io/kuicksilver/tls/TlsEvent {
+	public fun <init> ([BI)V
+	public final fun getEncoded ()[B
+	public final fun getNegotiatedVersion ()I
+}
+
+public abstract class io/kuicksilver/tls/TlsException : javax/net/ssl/SSLException {
+	public synthetic fun <init> (Ljava/lang/String;Ljava/lang/Throwable;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+}
+
+public final class io/kuicksilver/tls/TlsException$AlertReceived : io/kuicksilver/tls/TlsException {
+	public fun <init> (ILjava/lang/String;)V
+	public final fun getCode ()I
+	public final fun getDescription ()Ljava/lang/String;
+}
+
+public final class io/kuicksilver/tls/TlsException$Config : io/kuicksilver/tls/TlsException {
+	public fun <init> (Ljava/lang/String;)V
+}
+
+public final class io/kuicksilver/tls/TlsException$Protocol : io/kuicksilver/tls/TlsException {
+	public fun <init> (Ljava/lang/Integer;Ljava/lang/String;Ljava/lang/Throwable;)V
+	public final fun getOpenSslCode ()Ljava/lang/Integer;
+}
+
+public final class io/kuicksilver/tls/TlsException$Verify : io/kuicksilver/tls/TlsException {
+	public fun <init> (Lio/kuicksilver/tls/VerifyReason;Ljava/util/List;)V
+	public final fun getChain ()Ljava/util/List;
+	public final fun getReason ()Lio/kuicksilver/tls/VerifyReason;
+}
+
+public final class io/kuicksilver/tls/TlsExceptionKt {
+	public static final fun getAlertCode (Lio/kuicksilver/tls/VerifyReason;)I
+}
+
+public abstract interface class io/kuicksilver/tls/TlsIdentity {
+	public static final field Companion Lio/kuicksilver/tls/TlsIdentity$Companion;
+	public abstract fun getChain ()Ljava/util/List;
+}
+
+public final class io/kuicksilver/tls/TlsIdentity$Companion {
+	public final fun fromDer (Ljava/util/List;[B)Lio/kuicksilver/tls/TlsIdentity$InMemory;
+	public final fun fromPem (Ljava/lang/String;[C[C)Lio/kuicksilver/tls/TlsIdentity$InMemory;
+	public static synthetic fun fromPem$default (Lio/kuicksilver/tls/TlsIdentity$Companion;Ljava/lang/String;[C[CILjava/lang/Object;)Lio/kuicksilver/tls/TlsIdentity$InMemory;
+}
+
+public final class io/kuicksilver/tls/TlsIdentity$InMemory : io/kuicksilver/tls/TlsIdentity, java/lang/AutoCloseable {
+	public fun close ()V
+	public fun getChain ()Ljava/util/List;
+}
+
+public final class io/kuicksilver/tls/TlsIdentity$Signer : io/kuicksilver/tls/TlsIdentity {
+	public fun <init> (Ljava/util/List;Lio/kuicksilver/tls/PrivateKeySigner;)V
+	public fun getChain ()Ljava/util/List;
+	public final fun getSigner ()Lio/kuicksilver/tls/PrivateKeySigner;
+}
+
+public final class io/kuicksilver/tls/TlsIdentity_jvmKt {
+	public static final fun fromKeyStore (Lio/kuicksilver/tls/TlsIdentity$Companion;Ljava/security/KeyStore;Ljava/lang/String;[C)Lio/kuicksilver/tls/TlsIdentity$InMemory;
+	public static final fun fromPkcs12 (Lio/kuicksilver/tls/TlsIdentity$Companion;[B[C)Lio/kuicksilver/tls/TlsIdentity$InMemory;
+}
+
+public final class io/kuicksilver/tls/TlsRole : java/lang/Enum {
+	public static final field Client Lio/kuicksilver/tls/TlsRole;
+	public static final field Server Lio/kuicksilver/tls/TlsRole;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lio/kuicksilver/tls/TlsRole;
+	public static fun values ()[Lio/kuicksilver/tls/TlsRole;
+}
+
+public final class io/kuicksilver/tls/TlsVersion : java/lang/Enum {
+	public static final field Tls12 Lio/kuicksilver/tls/TlsVersion;
+	public static final field Tls13 Lio/kuicksilver/tls/TlsVersion;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lio/kuicksilver/tls/TlsVersion;
+	public static fun values ()[Lio/kuicksilver/tls/TlsVersion;
+}
+
+public final class io/kuicksilver/tls/TlsVersions : java/lang/Enum {
+	public static final field Tls12And13 Lio/kuicksilver/tls/TlsVersions;
+	public static final field Tls13 Lio/kuicksilver/tls/TlsVersions;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lio/kuicksilver/tls/TlsVersions;
+	public static fun values ()[Lio/kuicksilver/tls/TlsVersions;
+}
+
+public abstract interface class io/kuicksilver/tls/TofuStore {
+	public abstract fun get (Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public abstract fun put (Ljava/lang/String;Lio/kuicksilver/tls/SpkiSha256;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+}
+
+public abstract interface class io/kuicksilver/tls/TokenKey : java/lang/AutoCloseable {
+	public abstract fun open (J[B[B)[B
+	public abstract fun seal (J[B[B)[B
+}
+
+public abstract interface class io/kuicksilver/tls/TrustConfig {
+	public static final field Companion Lio/kuicksilver/tls/TrustConfig$Companion;
+}
+
+public final class io/kuicksilver/tls/TrustConfig$AnchoredCa : io/kuicksilver/tls/TrustConfig {
+	public fun <init> (Ljava/util/List;)V
+	public final fun getRoots ()Ljava/util/List;
+}
+
+public final class io/kuicksilver/tls/TrustConfig$Companion {
+}
+
+public final class io/kuicksilver/tls/TrustConfig$Custom : io/kuicksilver/tls/TrustConfig {
+	public fun <init> (Lio/kuicksilver/tls/CertificateVerifier;)V
+	public final fun getVerifier ()Lio/kuicksilver/tls/CertificateVerifier;
+}
+
+public final class io/kuicksilver/tls/TrustConfig$ExpectedName : io/kuicksilver/tls/TrustConfig {
+	public fun <init> (Ljava/lang/String;Lio/kuicksilver/tls/TrustConfig;)V
+	public synthetic fun <init> (Ljava/lang/String;Lio/kuicksilver/tls/TrustConfig;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun getBase ()Lio/kuicksilver/tls/TrustConfig;
+	public final fun getName ()Ljava/lang/String;
+}
+
+public final class io/kuicksilver/tls/TrustConfig$Pinned : io/kuicksilver/tls/TrustConfig {
+	public fun <init> (Ljava/util/Set;Lio/kuicksilver/tls/PinScope;Lio/kuicksilver/tls/TrustConfig;)V
+	public synthetic fun <init> (Ljava/util/Set;Lio/kuicksilver/tls/PinScope;Lio/kuicksilver/tls/TrustConfig;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun getBase ()Lio/kuicksilver/tls/TrustConfig;
+	public final fun getPins ()Ljava/util/Set;
+	public final fun getScope ()Lio/kuicksilver/tls/PinScope;
+}
+
+public final class io/kuicksilver/tls/TrustConfig$Platform : io/kuicksilver/tls/TrustConfig {
+	public static final field INSTANCE Lio/kuicksilver/tls/TrustConfig$Platform;
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/kuicksilver/tls/TrustConfig$Tofu : io/kuicksilver/tls/TrustConfig {
+	public fun <init> (Lio/kuicksilver/tls/TofuStore;)V
+	public final fun getStore ()Lio/kuicksilver/tls/TofuStore;
+}
+
+public abstract interface class io/kuicksilver/tls/VerifyReason {
+}
+
+public final class io/kuicksilver/tls/VerifyReason$BadEncoding : io/kuicksilver/tls/VerifyReason {
+	public static final field INSTANCE Lio/kuicksilver/tls/VerifyReason$BadEncoding;
+}
+
+public final class io/kuicksilver/tls/VerifyReason$BadSignature : io/kuicksilver/tls/VerifyReason {
+	public static final field INSTANCE Lio/kuicksilver/tls/VerifyReason$BadSignature;
+}
+
+public final class io/kuicksilver/tls/VerifyReason$CertificateTransparency : io/kuicksilver/tls/VerifyReason {
+	public static final field INSTANCE Lio/kuicksilver/tls/VerifyReason$CertificateTransparency;
+}
+
+public final class io/kuicksilver/tls/VerifyReason$Custom : io/kuicksilver/tls/VerifyReason {
+	public fun <init> (Ljava/lang/String;)V
+	public final fun getText ()Ljava/lang/String;
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/kuicksilver/tls/VerifyReason$Expired : io/kuicksilver/tls/VerifyReason {
+	public static final field INSTANCE Lio/kuicksilver/tls/VerifyReason$Expired;
+}
+
+public final class io/kuicksilver/tls/VerifyReason$HostnameMismatch : io/kuicksilver/tls/VerifyReason {
+	public fun <init> (Ljava/lang/String;Ljava/util/List;)V
+	public final fun getExpected ()Ljava/lang/String;
+	public final fun getPresented ()Ljava/util/List;
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/kuicksilver/tls/VerifyReason$InvalidPurpose : io/kuicksilver/tls/VerifyReason {
+	public static final field INSTANCE Lio/kuicksilver/tls/VerifyReason$InvalidPurpose;
+}
+
+public final class io/kuicksilver/tls/VerifyReason$NoCertificate : io/kuicksilver/tls/VerifyReason {
+	public static final field INSTANCE Lio/kuicksilver/tls/VerifyReason$NoCertificate;
+}
+
+public final class io/kuicksilver/tls/VerifyReason$NotYetValid : io/kuicksilver/tls/VerifyReason {
+	public static final field INSTANCE Lio/kuicksilver/tls/VerifyReason$NotYetValid;
+}
+
+public final class io/kuicksilver/tls/VerifyReason$PinMismatch : io/kuicksilver/tls/VerifyReason {
+	public fun <init> (Ljava/util/List;)V
+	public final fun getChainPins ()Ljava/util/List;
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/kuicksilver/tls/VerifyReason$Revoked : io/kuicksilver/tls/VerifyReason {
+	public static final field INSTANCE Lio/kuicksilver/tls/VerifyReason$Revoked;
+}
+
+public final class io/kuicksilver/tls/VerifyReason$UnknownIssuer : io/kuicksilver/tls/VerifyReason {
+	public static final field INSTANCE Lio/kuicksilver/tls/VerifyReason$UnknownIssuer;
+}
+
+public final class io/kuicksilver/tls/VerifyReason$UnknownRevocationStatus : io/kuicksilver/tls/VerifyReason {
+	public static final field INSTANCE Lio/kuicksilver/tls/VerifyReason$UnknownRevocationStatus;
+}
+
+public abstract interface class io/kuicksilver/tls/VerifyResult {
+}
+
+public final class io/kuicksilver/tls/VerifyResult$Accepted : io/kuicksilver/tls/VerifyResult {
+	public fun <init> (Ljava/util/List;)V
+	public final fun getValidatedChain ()Ljava/util/List;
+}
+
+public final class io/kuicksilver/tls/VerifyResult$Rejected : io/kuicksilver/tls/VerifyResult {
+	public fun <init> (Lio/kuicksilver/tls/VerifyReason;)V
+	public final fun getReason ()Lio/kuicksilver/tls/VerifyReason;
+}
+

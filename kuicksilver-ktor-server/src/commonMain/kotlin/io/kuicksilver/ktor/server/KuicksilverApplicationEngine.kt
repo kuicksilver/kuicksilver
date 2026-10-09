@@ -1,0 +1,248 @@
+// Copyright 2026 The Kuicksilver Authors
+// SPDX-License-Identifier: Apache-2.0
+package io.kuicksilver.ktor.server
+
+import io.ktor.events.Events
+import io.ktor.events.raiseCatching
+import io.ktor.network.sockets.InetSocketAddress
+import io.ktor.server.application.Application
+import io.ktor.server.application.ApplicationEnvironment
+import io.ktor.server.application.ApplicationStopPreparing
+import io.ktor.server.application.ServerReady
+import io.ktor.server.engine.ApplicationEngine
+import io.ktor.server.engine.BaseApplicationEngine
+import io.ktor.server.engine.ConnectorType
+import io.ktor.server.engine.EngineConnectorConfig
+import io.ktor.server.engine.withPort
+import io.kuicksilver.http3.Http3Endpoint
+import io.kuicksilver.http3.Http3Settings
+import io.kuicksilver.quic.ConnectionAdmission
+import io.kuicksilver.quic.QuicConfig
+import io.kuicksilver.quic.QuicEndpointConfig
+import io.kuicksilver.tls.TlsException
+import io.kuicksilver.tls.TlsIdentity
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CompletableJob
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.joinAll
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.concurrent.Volatile
+import kotlin.time.Duration
+
+/**
+ * The Kuicksilver server engine (docs/guide/ktor.md): HTTP/1.1 over TLS on TCP through the CIO connection pipeline of Ktor, and
+ * HTTP/3 on UDP on the same port. Start it with `embeddedServer(Kuicksilver, ...)`.
+ */
+public class KuicksilverApplicationEngine(
+    environment: ApplicationEnvironment,
+    monitor: Events,
+    developmentMode: Boolean,
+    /** The engine settings and connectors this engine was created with; read when it starts. */
+    public val configuration: Configuration,
+    internal val applicationProvider: () -> Application,
+) : BaseApplicationEngine(environment, monitor, developmentMode) {
+    /** Engine settings; HTTP/3 knobs follow the names of Ktor's Netty engine where one exists. */
+    public class Configuration : BaseApplicationEngine.Configuration() {
+        /** Seconds an idle HTTP/1.1 keep-alive connection stays open. */
+        public var connectionIdleTimeoutSeconds: Int = 45
+
+        /** When set, every plain connector (`port = ...` of embeddedServer, `connector {}`) serves TLS with this identity instead. */
+        public var identity: TlsIdentity? = null
+
+        /** Announce HTTP/3 with `Alt-Svc: h3=":<port>"; ma=86400` on HTTP/1.1 responses over TLS (on by default). */
+        public var altSvc: Boolean = true
+
+        /** Serve HTTP/3 on UDP on the port of every TLS connector. */
+        public var http3: Boolean = true
+
+        /** QUIC transport settings of the HTTP/3 listener. */
+        public var quic: QuicConfig = QuicConfig.Default
+
+        /** `quic.maxIdleTimeout` for the default [quic] configuration (the name follows Ktor-Netty); ignored when [quic] was set explicitly, which carries its own timeout. */
+        public var quicMaxIdleTimeout: Duration? = null
+
+        /** Endpoint loops on the UDP port (SO_REUSEPORT, Linux), as Ktor-Netty's `udpSocketCount`. */
+        public var udpSocketCount: Int = 1
+
+        /** Admission of new QUIC connections (Retry above a handshake threshold by default); Ktor-Netty's `quicTokenHandler`. */
+        public var quicAdmission: ConnectionAdmission? = null
+
+        /** HTTP/3 settings (QPACK, limits). Extended CONNECT is turned on by [webSocketsOverHttp3]. */
+        public var http3Settings: Http3Settings = Http3Settings.Default
+
+        /** Accept WebSockets over HTTP/3 (RFC 9220): advertises `SETTINGS_ENABLE_CONNECT_PROTOCOL`. */
+        public var webSocketsOverHttp3: Boolean = true
+
+        /** How the HTTP/3 listener binds (tests replace it to simulate platforms without a QUIC server). */
+        internal var http3Bind: suspend (
+            InetSocketAddress,
+            QuicEndpointConfig,
+            Http3Settings,
+        ) -> Http3Endpoint = { a, c, s -> Http3Endpoint.bind(a, c, s) }
+
+        /** Adds a TLS connector (HTTP/1.1 over TLS plus HTTP/3 on the same port). */
+        public fun tlsConnector(
+            identity: TlsIdentity,
+            block: KuicksilverTlsConnector.Builder.() -> Unit = {},
+        ) {
+            connectors.add(KuicksilverTlsConnector.Builder(identity).apply(block).build())
+        }
+    }
+
+    internal val engineDispatcher = Dispatchers.IO
+    internal val userDispatcher = Dispatchers.IO
+    private val startupJob: CompletableDeferred<Unit> = CompletableDeferred()
+    private val stopRequest: CompletableJob = Job()
+
+    @Volatile
+    private var serverJob: Job = Job()
+
+    init {
+        serverJob = initServerJob()
+        serverJob.invokeOnCompletion { cause ->
+            cause?.let { stopRequest.completeExceptionally(cause) }
+            cause?.let { startupJob.completeExceptionally(cause) }
+        }
+    }
+
+    override suspend fun startSuspend(wait: Boolean): ApplicationEngine {
+        serverJob.start()
+        startupJob.await()
+        monitor.raiseCatching(ServerReady, environment, environment.log)
+        if (wait) serverJob.join()
+        return this
+    }
+
+    override fun start(wait: Boolean): ApplicationEngine = runBlocking { startSuspend(wait) }
+
+    override suspend fun stopSuspend(
+        gracePeriodMillis: Long,
+        timeoutMillis: Long,
+    ) {
+        stopRequest.complete()
+        val result =
+            withTimeoutOrNull(gracePeriodMillis) {
+                serverJob.join()
+                true
+            }
+        if (result == null) {
+            serverJob.cancel()
+            withTimeoutOrNull(timeoutMillis - gracePeriodMillis) { serverJob.join() }
+        }
+    }
+
+    override fun stop(
+        gracePeriodMillis: Long,
+        timeoutMillis: Long,
+    ): Unit = runBlocking { stopSuspend(gracePeriodMillis, timeoutMillis) }
+
+    /** A connector as the engine runs it: TLS (with its connector) or plain HTTP. */
+    internal class Listener(
+        val config: EngineConnectorConfig,
+        val tls: KuicksilverTlsConnector?,
+    )
+
+    private fun resolve(c: EngineConnectorConfig): Listener =
+        when {
+            c is KuicksilverTlsConnector -> {
+                Listener(c, c)
+            }
+
+            c.type == ConnectorType.HTTP -> {
+                configuration.identity?.let { id ->
+                    KuicksilverTlsConnector
+                        .Builder(id)
+                        .apply {
+                            host = c.host
+                            port =
+                                c.port
+                        }.build()
+                        .let { Listener(it, it) }
+                }
+                    ?: Listener(c, null)
+            }
+
+            else -> {
+                platformTlsConnector(c)?.let { Listener(it, it) }
+                    ?: throw TlsException.Config(
+                        "connector $c is not supported by the Kuicksilver engine: use tlsConnector(identity) or a plain connector",
+                    )
+            }
+        }
+
+    private fun initServerJob(): Job {
+        val stopRequest = stopRequest
+        val startupJob = startupJob
+        return CoroutineScope(applicationProvider().parentCoroutineContext + engineDispatcher).launch(start = CoroutineStart.LAZY) {
+            val servers = ArrayList<TcpServer>()
+            val h3 = ArrayList<H3Listener>()
+            try {
+                try {
+                    val listeners = configuration.connectors.map { resolve(it) }
+                    // TCP accepting waits for the HTTP/3 listeners: h3Ports is complete (and published) before any connection reads it
+                    val h3Ready = Job()
+                    servers += listeners.map { startTcp(this, it, h3Ready) }
+                    val resolved =
+                        listeners.zip(servers).map { (l, s) ->
+                            val port = (s.socket.await().localAddress as? InetSocketAddress)?.port ?: l.config.port
+                            if (l.tls != null) startHttp3(this, l.tls, port)?.let { h3 += it }
+                            if (l.tls != null) l.tls.withPort(port) else l.config.withPort(port)
+                        }
+                    h3Ready.complete()
+                    resolvedConnectorsDeferred.complete(resolved)
+                } catch (cause: Throwable) {
+                    servers.forEach { it.rootJob.cancel() }
+                    h3.forEach {
+                        it.acceptJob.cancel()
+                        it.connections.cancel()
+                    }
+                    stopRequest.completeExceptionally(cause)
+                    startupJob.completeExceptionally(cause)
+                    // the failure reaches the caller through startupJob; rethrowing it here would make it an uncaught coroutine exception, which terminates a Kotlin/Native process (seen on Linux arm64)
+                    if (cause is CancellationException) throw cause else return@launch
+                }
+                startupJob.complete(Unit)
+                stopRequest.join()
+                // graceful stop (RFC 9114 5.2): no new connections or requests, GOAWAY to every live HTTP/3 connection, then wait for the
+                // in-flight calls; `stopSuspend` cancels this job at the grace deadline, which closes what is left
+                servers.forEach { it.acceptJob.cancel() }
+                // every connection at once: goAway() waits 2×RTT between its two frames, one after another the k-th would wait k×50 ms
+                h3.forEach { l ->
+                    l.acceptJob.cancel()
+                    for (c in l.live()) launch { runCatching { c.goAway() } }
+                }
+                withContext(userDispatcher) { monitor.raise(ApplicationStopPreparing, environment) }
+                servers.map { it.rootJob }.joinAll()
+                h3.forEach { l ->
+                    l.connections.children
+                        .toList()
+                        .joinAll()
+                }
+            } finally {
+                withContext(NonCancellable) {
+                    h3.forEach { l ->
+                        l.connections.cancel()
+                        l.endpoint.close()
+                    }
+                }
+            }
+        }
+    }
+
+    /** TCP ports whose UDP twin serves HTTP/3: only those advertise it with Alt-Svc. Written at startup before TCP accepting begins, read-only after. */
+    internal val h3Ports = HashSet<Int>()
+    internal val h3Endpoints = ArrayList<Http3Endpoint>()
+}
+
+/** `EngineSSLConnectorConfig` (JVM `sslConnector {}`) as a Kuicksilver connector; null on platforms without it. */
+internal expect fun platformTlsConnector(c: EngineConnectorConfig): KuicksilverTlsConnector?

@@ -1,0 +1,92 @@
+// Copyright 2026 The Kuicksilver Authors
+// SPDX-License-Identifier: Apache-2.0
+package io.kuicksilver.ktor.client
+
+import io.ktor.http.Url
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
+
+class AltSvcTest {
+    private var now = 1_000_000L
+    private val store = InMemoryAltSvcStore()
+    private val cache = AltSvcCache(store) { now }
+    private val origin = Url("https://example.com/")
+
+    private fun respond(
+        status: Int = 200,
+        vararg values: String,
+        verified: Boolean = true,
+        url: Url = origin,
+    ) = cache.onResponse(url, status, values.toList(), verified)
+
+    @Test fun parsesMaAndPersist() {
+        val e = AltSvcParser.parse("h3=\":443\"; ma=3600; persist=1, h3-29=\":443\"", now)!!
+        assertEquals(1, e.size)
+        assertEquals("h3", e[0].protocol)
+        assertNull(e[0].host)
+        assertEquals(443, e[0].port)
+        assertEquals(now + 3_600_000, e[0].expiresAtEpochMillis)
+        assertTrue(e[0].persist)
+    }
+
+    @Test fun defaultMa86400() {
+        assertEquals(now + 86_400_000, AltSvcParser.parse("h3=\"alt.example.com:8443\"", now)!!.single().expiresAtEpochMillis)
+    }
+
+    @Test fun clearReturnsNull() {
+        assertNull(AltSvcParser.parse("clear", now))
+    }
+
+    @Test fun malformedEntriesSkipped() {
+        assertEquals(
+            listOf(443),
+            AltSvcParser.parse("h3=:443, h3=\"x:notaport\", h3=\":444\"; ma=abc, h3=\":443\"; ma=60", now)!!.map { it.port },
+        )
+    }
+
+    @Test fun replacesAllEntriesOfOrigin() {
+        respond(200, "h3=\":443\"")
+        respond(200, "h3=\"alt.example.com:443\"; ma=60")
+        assertEquals("alt.example.com", cache.h3For(origin)!!.host)
+        assertEquals(1, store.get("https://example.com:443").size)
+        respond(200, "clear")
+        assertNull(cache.h3For(origin))
+    }
+
+    @Test fun status421RemovesEntry() {
+        respond(200, "h3=\":443\"")
+        respond(421, "h3=\":9443\"")
+        assertNull(cache.h3For(origin))
+    }
+
+    @Test fun lowPortOriginRejectsHighAltPort() {
+        respond(200, "h3=\":8443\"")
+        assertNull(cache.h3For(origin)) // origin 443 (privileged) -> alt 8443 refused
+        val high = Url("https://example.com:8443/")
+        respond(200, "h3=\":9443\"", url = high)
+        assertEquals(9443, cache.h3For(high)!!.port) // origin 8443 -> alt 9443 accepted
+    }
+
+    @Test fun expiredEntryIgnored() {
+        respond(200, "h3=\":443\"; ma=10")
+        now += 11_000
+        assertNull(cache.h3For(origin))
+    }
+
+    @Test fun negative_altSvcFromUnverifiedTls() {
+        respond(200, "h3=\":443\"", verified = false)
+        assertNull(cache.h3For(origin))
+        assertTrue(store.get("https://example.com:443").isEmpty())
+    }
+
+    @Test fun networkChangeClearsNonPersistent() {
+        respond(200, "h3=\":443\"")
+        respond(200, "h3=\":443\"; persist=1", url = Url("https://other.example/"))
+        cache.onNetworkChanged(clearNonPersistent = true)
+        assertNull(cache.h3For(origin))
+        assertNotNull(cache.h3For(Url("https://other.example/")))
+    }
+}

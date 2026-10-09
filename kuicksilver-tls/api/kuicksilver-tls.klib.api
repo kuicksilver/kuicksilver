@@ -1,0 +1,689 @@
+// Klib ABI Dump
+// Targets: [iosArm64, iosSimulatorArm64, linuxArm64, linuxX64, macosArm64, mingwX64]
+// Rendering settings:
+// - Signature version: 2
+// - Show manifest properties: true
+// - Show declarations: true
+
+// Library unique name: <io.kuicksilver:kuicksilver-tls>
+final enum class io.kuicksilver.tls/Aead : kotlin/Enum<io.kuicksilver.tls/Aead> { // io.kuicksilver.tls/Aead|null[0]
+    enum entry AES_128_GCM // io.kuicksilver.tls/Aead.AES_128_GCM|null[0]
+    enum entry AES_256_GCM // io.kuicksilver.tls/Aead.AES_256_GCM|null[0]
+    enum entry CHACHA20_POLY1305 // io.kuicksilver.tls/Aead.CHACHA20_POLY1305|null[0]
+
+    final val entries // io.kuicksilver.tls/Aead.entries|#static{}entries[0]
+        final fun <get-entries>(): kotlin.enums/EnumEntries<io.kuicksilver.tls/Aead> // io.kuicksilver.tls/Aead.entries.<get-entries>|<get-entries>#static(){}[0]
+    final val keyLength // io.kuicksilver.tls/Aead.keyLength|{}keyLength[0]
+        final fun <get-keyLength>(): kotlin/Int // io.kuicksilver.tls/Aead.keyLength.<get-keyLength>|<get-keyLength>(){}[0]
+
+    final fun valueOf(kotlin/String): io.kuicksilver.tls/Aead // io.kuicksilver.tls/Aead.valueOf|valueOf#static(kotlin.String){}[0]
+    final fun values(): kotlin/Array<io.kuicksilver.tls/Aead> // io.kuicksilver.tls/Aead.values|values#static(){}[0]
+}
+
+final enum class io.kuicksilver.tls/ClientAuth : kotlin/Enum<io.kuicksilver.tls/ClientAuth> { // io.kuicksilver.tls/ClientAuth|null[0]
+    enum entry None // io.kuicksilver.tls/ClientAuth.None|null[0]
+    enum entry Optional // io.kuicksilver.tls/ClientAuth.Optional|null[0]
+    enum entry Required // io.kuicksilver.tls/ClientAuth.Required|null[0]
+
+    final val entries // io.kuicksilver.tls/ClientAuth.entries|#static{}entries[0]
+        final fun <get-entries>(): kotlin.enums/EnumEntries<io.kuicksilver.tls/ClientAuth> // io.kuicksilver.tls/ClientAuth.entries.<get-entries>|<get-entries>#static(){}[0]
+
+    final fun valueOf(kotlin/String): io.kuicksilver.tls/ClientAuth // io.kuicksilver.tls/ClientAuth.valueOf|valueOf#static(kotlin.String){}[0]
+    final fun values(): kotlin/Array<io.kuicksilver.tls/ClientAuth> // io.kuicksilver.tls/ClientAuth.values|values#static(){}[0]
+}
+
+final enum class io.kuicksilver.tls/Direction : kotlin/Enum<io.kuicksilver.tls/Direction> { // io.kuicksilver.tls/Direction|null[0]
+    enum entry Read // io.kuicksilver.tls/Direction.Read|null[0]
+    enum entry Write // io.kuicksilver.tls/Direction.Write|null[0]
+
+    final val entries // io.kuicksilver.tls/Direction.entries|#static{}entries[0]
+        final fun <get-entries>(): kotlin.enums/EnumEntries<io.kuicksilver.tls/Direction> // io.kuicksilver.tls/Direction.entries.<get-entries>|<get-entries>#static(){}[0]
+
+    final fun valueOf(kotlin/String): io.kuicksilver.tls/Direction // io.kuicksilver.tls/Direction.valueOf|valueOf#static(kotlin.String){}[0]
+    final fun values(): kotlin/Array<io.kuicksilver.tls/Direction> // io.kuicksilver.tls/Direction.values|values#static(){}[0]
+}
+
+final enum class io.kuicksilver.tls/EarlyDataState : kotlin/Enum<io.kuicksilver.tls/EarlyDataState> { // io.kuicksilver.tls/EarlyDataState|null[0]
+    enum entry Disabled // io.kuicksilver.tls/EarlyDataState.Disabled|null[0]
+
+    final val entries // io.kuicksilver.tls/EarlyDataState.entries|#static{}entries[0]
+        final fun <get-entries>(): kotlin.enums/EnumEntries<io.kuicksilver.tls/EarlyDataState> // io.kuicksilver.tls/EarlyDataState.entries.<get-entries>|<get-entries>#static(){}[0]
+
+    final fun valueOf(kotlin/String): io.kuicksilver.tls/EarlyDataState // io.kuicksilver.tls/EarlyDataState.valueOf|valueOf#static(kotlin.String){}[0]
+    final fun values(): kotlin/Array<io.kuicksilver.tls/EarlyDataState> // io.kuicksilver.tls/EarlyDataState.values|values#static(){}[0]
+}
+
+final enum class io.kuicksilver.tls/EncryptionLevel : kotlin/Enum<io.kuicksilver.tls/EncryptionLevel> { // io.kuicksilver.tls/EncryptionLevel|null[0]
+    enum entry Application // io.kuicksilver.tls/EncryptionLevel.Application|null[0]
+    enum entry EarlyData // io.kuicksilver.tls/EncryptionLevel.EarlyData|null[0]
+    enum entry Handshake // io.kuicksilver.tls/EncryptionLevel.Handshake|null[0]
+    enum entry Initial // io.kuicksilver.tls/EncryptionLevel.Initial|null[0]
+
+    final val entries // io.kuicksilver.tls/EncryptionLevel.entries|#static{}entries[0]
+        final fun <get-entries>(): kotlin.enums/EnumEntries<io.kuicksilver.tls/EncryptionLevel> // io.kuicksilver.tls/EncryptionLevel.entries.<get-entries>|<get-entries>#static(){}[0]
+
+    final fun valueOf(kotlin/String): io.kuicksilver.tls/EncryptionLevel // io.kuicksilver.tls/EncryptionLevel.valueOf|valueOf#static(kotlin.String){}[0]
+    final fun values(): kotlin/Array<io.kuicksilver.tls/EncryptionLevel> // io.kuicksilver.tls/EncryptionLevel.values|values#static(){}[0]
+}
+
+final enum class io.kuicksilver.tls/Hash : kotlin/Enum<io.kuicksilver.tls/Hash> { // io.kuicksilver.tls/Hash|null[0]
+    enum entry Sha256 // io.kuicksilver.tls/Hash.Sha256|null[0]
+    enum entry Sha384 // io.kuicksilver.tls/Hash.Sha384|null[0]
+
+    final val entries // io.kuicksilver.tls/Hash.entries|#static{}entries[0]
+        final fun <get-entries>(): kotlin.enums/EnumEntries<io.kuicksilver.tls/Hash> // io.kuicksilver.tls/Hash.entries.<get-entries>|<get-entries>#static(){}[0]
+    final val size // io.kuicksilver.tls/Hash.size|{}size[0]
+        final fun <get-size>(): kotlin/Int // io.kuicksilver.tls/Hash.size.<get-size>|<get-size>(){}[0]
+
+    final fun valueOf(kotlin/String): io.kuicksilver.tls/Hash // io.kuicksilver.tls/Hash.valueOf|valueOf#static(kotlin.String){}[0]
+    final fun values(): kotlin/Array<io.kuicksilver.tls/Hash> // io.kuicksilver.tls/Hash.values|values#static(){}[0]
+}
+
+final enum class io.kuicksilver.tls/PinScope : kotlin/Enum<io.kuicksilver.tls/PinScope> { // io.kuicksilver.tls/PinScope|null[0]
+    enum entry AnyInValidatedChain // io.kuicksilver.tls/PinScope.AnyInValidatedChain|null[0]
+    enum entry Leaf // io.kuicksilver.tls/PinScope.Leaf|null[0]
+
+    final val entries // io.kuicksilver.tls/PinScope.entries|#static{}entries[0]
+        final fun <get-entries>(): kotlin.enums/EnumEntries<io.kuicksilver.tls/PinScope> // io.kuicksilver.tls/PinScope.entries.<get-entries>|<get-entries>#static(){}[0]
+
+    final fun valueOf(kotlin/String): io.kuicksilver.tls/PinScope // io.kuicksilver.tls/PinScope.valueOf|valueOf#static(kotlin.String){}[0]
+    final fun values(): kotlin/Array<io.kuicksilver.tls/PinScope> // io.kuicksilver.tls/PinScope.values|values#static(){}[0]
+}
+
+final enum class io.kuicksilver.tls/SignatureAlgorithm : kotlin/Enum<io.kuicksilver.tls/SignatureAlgorithm> { // io.kuicksilver.tls/SignatureAlgorithm|null[0]
+    enum entry EcdsaP256 // io.kuicksilver.tls/SignatureAlgorithm.EcdsaP256|null[0]
+    enum entry Ed25519 // io.kuicksilver.tls/SignatureAlgorithm.Ed25519|null[0]
+
+    final val entries // io.kuicksilver.tls/SignatureAlgorithm.entries|#static{}entries[0]
+        final fun <get-entries>(): kotlin.enums/EnumEntries<io.kuicksilver.tls/SignatureAlgorithm> // io.kuicksilver.tls/SignatureAlgorithm.entries.<get-entries>|<get-entries>#static(){}[0]
+
+    final fun valueOf(kotlin/String): io.kuicksilver.tls/SignatureAlgorithm // io.kuicksilver.tls/SignatureAlgorithm.valueOf|valueOf#static(kotlin.String){}[0]
+    final fun values(): kotlin/Array<io.kuicksilver.tls/SignatureAlgorithm> // io.kuicksilver.tls/SignatureAlgorithm.values|values#static(){}[0]
+}
+
+final enum class io.kuicksilver.tls/TlsRole : kotlin/Enum<io.kuicksilver.tls/TlsRole> { // io.kuicksilver.tls/TlsRole|null[0]
+    enum entry Client // io.kuicksilver.tls/TlsRole.Client|null[0]
+    enum entry Server // io.kuicksilver.tls/TlsRole.Server|null[0]
+
+    final val entries // io.kuicksilver.tls/TlsRole.entries|#static{}entries[0]
+        final fun <get-entries>(): kotlin.enums/EnumEntries<io.kuicksilver.tls/TlsRole> // io.kuicksilver.tls/TlsRole.entries.<get-entries>|<get-entries>#static(){}[0]
+
+    final fun valueOf(kotlin/String): io.kuicksilver.tls/TlsRole // io.kuicksilver.tls/TlsRole.valueOf|valueOf#static(kotlin.String){}[0]
+    final fun values(): kotlin/Array<io.kuicksilver.tls/TlsRole> // io.kuicksilver.tls/TlsRole.values|values#static(){}[0]
+}
+
+final enum class io.kuicksilver.tls/TlsVersion : kotlin/Enum<io.kuicksilver.tls/TlsVersion> { // io.kuicksilver.tls/TlsVersion|null[0]
+    enum entry Tls12 // io.kuicksilver.tls/TlsVersion.Tls12|null[0]
+    enum entry Tls13 // io.kuicksilver.tls/TlsVersion.Tls13|null[0]
+
+    final val entries // io.kuicksilver.tls/TlsVersion.entries|#static{}entries[0]
+        final fun <get-entries>(): kotlin.enums/EnumEntries<io.kuicksilver.tls/TlsVersion> // io.kuicksilver.tls/TlsVersion.entries.<get-entries>|<get-entries>#static(){}[0]
+
+    final fun valueOf(kotlin/String): io.kuicksilver.tls/TlsVersion // io.kuicksilver.tls/TlsVersion.valueOf|valueOf#static(kotlin.String){}[0]
+    final fun values(): kotlin/Array<io.kuicksilver.tls/TlsVersion> // io.kuicksilver.tls/TlsVersion.values|values#static(){}[0]
+}
+
+final enum class io.kuicksilver.tls/TlsVersions : kotlin/Enum<io.kuicksilver.tls/TlsVersions> { // io.kuicksilver.tls/TlsVersions|null[0]
+    enum entry Tls12And13 // io.kuicksilver.tls/TlsVersions.Tls12And13|null[0]
+    enum entry Tls13 // io.kuicksilver.tls/TlsVersions.Tls13|null[0]
+
+    final val entries // io.kuicksilver.tls/TlsVersions.entries|#static{}entries[0]
+        final fun <get-entries>(): kotlin.enums/EnumEntries<io.kuicksilver.tls/TlsVersions> // io.kuicksilver.tls/TlsVersions.entries.<get-entries>|<get-entries>#static(){}[0]
+
+    final fun valueOf(kotlin/String): io.kuicksilver.tls/TlsVersions // io.kuicksilver.tls/TlsVersions.valueOf|valueOf#static(kotlin.String){}[0]
+    final fun values(): kotlin/Array<io.kuicksilver.tls/TlsVersions> // io.kuicksilver.tls/TlsVersions.values|values#static(){}[0]
+}
+
+abstract fun interface io.kuicksilver.tls/CertificateVerifier { // io.kuicksilver.tls/CertificateVerifier|null[0]
+    abstract suspend fun verify(kotlin.collections/List<io.kuicksilver.tls/Certificate>, kotlin/String?, io.kuicksilver.tls/TlsRole): io.kuicksilver.tls/VerifyResult // io.kuicksilver.tls/CertificateVerifier.verify|verify(kotlin.collections.List<io.kuicksilver.tls.Certificate>;kotlin.String?;io.kuicksilver.tls.TlsRole){}[0]
+}
+
+abstract fun interface io.kuicksilver.tls/KeylogSink { // io.kuicksilver.tls/KeylogSink|null[0]
+    abstract fun log(kotlin/String) // io.kuicksilver.tls/KeylogSink.log|log(kotlin.String){}[0]
+
+    final object Companion { // io.kuicksilver.tls/KeylogSink.Companion|null[0]
+        final fun inMemory(): io.kuicksilver.tls/InMemoryKeylog // io.kuicksilver.tls/KeylogSink.Companion.inMemory|inMemory(){}[0]
+    }
+}
+
+abstract interface io.kuicksilver.tls/PacketProtector : kotlin/AutoCloseable { // io.kuicksilver.tls/PacketProtector|null[0]
+    abstract val aead // io.kuicksilver.tls/PacketProtector.aead|{}aead[0]
+        abstract fun <get-aead>(): io.kuicksilver.tls/Aead // io.kuicksilver.tls/PacketProtector.aead.<get-aead>|<get-aead>(){}[0]
+
+    abstract fun headerMask(io.kuicksilver.native/PacketBuffer, kotlin/Int, kotlin/ByteArray) // io.kuicksilver.tls/PacketProtector.headerMask|headerMask(io.kuicksilver.native.PacketBuffer;kotlin.Int;kotlin.ByteArray){}[0]
+    abstract fun next(): io.kuicksilver.tls/PacketProtector // io.kuicksilver.tls/PacketProtector.next|next(){}[0]
+    abstract fun open(kotlin/Long, io.kuicksilver.native/PacketBuffer, kotlin/Int, kotlin/Int, io.kuicksilver.native/PacketBuffer, kotlin/Int, kotlin/Int): kotlin/Int // io.kuicksilver.tls/PacketProtector.open|open(kotlin.Long;io.kuicksilver.native.PacketBuffer;kotlin.Int;kotlin.Int;io.kuicksilver.native.PacketBuffer;kotlin.Int;kotlin.Int){}[0]
+    abstract fun seal(kotlin/Long, io.kuicksilver.native/PacketBuffer, kotlin/Int, kotlin/Int, io.kuicksilver.native/PacketBuffer, kotlin/Int, kotlin/Int): kotlin/Int // io.kuicksilver.tls/PacketProtector.seal|seal(kotlin.Long;io.kuicksilver.native.PacketBuffer;kotlin.Int;kotlin.Int;io.kuicksilver.native.PacketBuffer;kotlin.Int;kotlin.Int){}[0]
+    open fun open(kotlin/Long, io.kuicksilver.native/PacketBuffer, kotlin/Int, io.kuicksilver.native/PacketBuffer, kotlin/Int): kotlin/Int // io.kuicksilver.tls/PacketProtector.open|open(kotlin.Long;io.kuicksilver.native.PacketBuffer;kotlin.Int;io.kuicksilver.native.PacketBuffer;kotlin.Int){}[0]
+    open fun seal(kotlin/Long, io.kuicksilver.native/PacketBuffer, kotlin/Int, io.kuicksilver.native/PacketBuffer, kotlin/Int): kotlin/Int // io.kuicksilver.tls/PacketProtector.seal|seal(kotlin.Long;io.kuicksilver.native.PacketBuffer;kotlin.Int;io.kuicksilver.native.PacketBuffer;kotlin.Int){}[0]
+}
+
+abstract interface io.kuicksilver.tls/PrivateKeySigner { // io.kuicksilver.tls/PrivateKeySigner|null[0]
+    abstract val publicKey // io.kuicksilver.tls/PrivateKeySigner.publicKey|{}publicKey[0]
+        abstract fun <get-publicKey>(): kotlin/ByteArray // io.kuicksilver.tls/PrivateKeySigner.publicKey.<get-publicKey>|<get-publicKey>(){}[0]
+
+    abstract fun chooseScheme(kotlin.collections/List<kotlin/Int>): kotlin/Int? // io.kuicksilver.tls/PrivateKeySigner.chooseScheme|chooseScheme(kotlin.collections.List<kotlin.Int>){}[0]
+    abstract suspend fun sign(kotlin/Int, kotlin/ByteArray): kotlin/ByteArray // io.kuicksilver.tls/PrivateKeySigner.sign|sign(kotlin.Int;kotlin.ByteArray){}[0]
+}
+
+abstract interface io.kuicksilver.tls/QuicCrypto { // io.kuicksilver.tls/QuicCrypto|null[0]
+    abstract fun initialProtectors(kotlin/ByteArray, kotlin/Int, io.kuicksilver.tls/TlsRole): kotlin/Pair<io.kuicksilver.tls/PacketProtector, io.kuicksilver.tls/PacketProtector> // io.kuicksilver.tls/QuicCrypto.initialProtectors|initialProtectors(kotlin.ByteArray;kotlin.Int;io.kuicksilver.tls.TlsRole){}[0]
+    abstract fun newResetKey(): io.kuicksilver.tls/ResetKey // io.kuicksilver.tls/QuicCrypto.newResetKey|newResetKey(){}[0]
+    abstract fun newSession(io.kuicksilver.tls/TlsConfig): io.kuicksilver.tls/QuicTlsSession // io.kuicksilver.tls/QuicCrypto.newSession|newSession(io.kuicksilver.tls.TlsConfig){}[0]
+    abstract fun newTokenKey(): io.kuicksilver.tls/TokenKey // io.kuicksilver.tls/QuicCrypto.newTokenKey|newTokenKey(){}[0]
+    abstract fun retryIntegrityTag(kotlin/Int, kotlin/ByteArray, kotlin/ByteArray): kotlin/ByteArray // io.kuicksilver.tls/QuicCrypto.retryIntegrityTag|retryIntegrityTag(kotlin.Int;kotlin.ByteArray;kotlin.ByteArray){}[0]
+}
+
+abstract interface io.kuicksilver.tls/QuicTlsSession : kotlin/AutoCloseable { // io.kuicksilver.tls/QuicTlsSession|null[0]
+    abstract val earlyData // io.kuicksilver.tls/QuicTlsSession.earlyData|{}earlyData[0]
+        abstract fun <get-earlyData>(): io.kuicksilver.tls/EarlyDataState // io.kuicksilver.tls/QuicTlsSession.earlyData.<get-earlyData>|<get-earlyData>(){}[0]
+    abstract val negotiatedAlpn // io.kuicksilver.tls/QuicTlsSession.negotiatedAlpn|{}negotiatedAlpn[0]
+        abstract fun <get-negotiatedAlpn>(): kotlin/String? // io.kuicksilver.tls/QuicTlsSession.negotiatedAlpn.<get-negotiatedAlpn>|<get-negotiatedAlpn>(){}[0]
+    abstract val peerCertificates // io.kuicksilver.tls/QuicTlsSession.peerCertificates|{}peerCertificates[0]
+        abstract fun <get-peerCertificates>(): kotlin.collections/List<io.kuicksilver.tls/Certificate> // io.kuicksilver.tls/QuicTlsSession.peerCertificates.<get-peerCertificates>|<get-peerCertificates>(){}[0]
+
+    abstract fun drive(): io.kuicksilver.tls/DriveResult // io.kuicksilver.tls/QuicTlsSession.drive|drive(){}[0]
+    abstract fun exportKeyingMaterial(kotlin/String, kotlin/ByteArray?, kotlin/Int): kotlin/ByteArray // io.kuicksilver.tls/QuicTlsSession.exportKeyingMaterial|exportKeyingMaterial(kotlin.String;kotlin.ByteArray?;kotlin.Int){}[0]
+    abstract fun nextEvent(): io.kuicksilver.tls/TlsEvent? // io.kuicksilver.tls/QuicTlsSession.nextEvent|nextEvent(){}[0]
+    abstract fun provide(io.kuicksilver.tls/EncryptionLevel, kotlin/ByteArray, kotlin/Int = ..., kotlin/Int = ...) // io.kuicksilver.tls/QuicTlsSession.provide|provide(io.kuicksilver.tls.EncryptionLevel;kotlin.ByteArray;kotlin.Int;kotlin.Int){}[0]
+    abstract fun resumeVerify(io.kuicksilver.tls/VerifyResult) // io.kuicksilver.tls/QuicTlsSession.resumeVerify|resumeVerify(io.kuicksilver.tls.VerifyResult){}[0]
+    abstract fun setQuicVersion(kotlin/Int) // io.kuicksilver.tls/QuicTlsSession.setQuicVersion|setQuicVersion(kotlin.Int){}[0]
+    abstract fun setTransportParameters(kotlin/ByteArray) // io.kuicksilver.tls/QuicTlsSession.setTransportParameters|setTransportParameters(kotlin.ByteArray){}[0]
+    abstract suspend fun verifyPeer(kotlin.collections/List<io.kuicksilver.tls/Certificate>): io.kuicksilver.tls/VerifyResult // io.kuicksilver.tls/QuicTlsSession.verifyPeer|verifyPeer(kotlin.collections.List<io.kuicksilver.tls.Certificate>){}[0]
+}
+
+abstract interface io.kuicksilver.tls/ResetKey : kotlin/AutoCloseable { // io.kuicksilver.tls/ResetKey|null[0]
+    abstract fun token(io.kuicksilver.native/PacketBuffer, kotlin/Int, kotlin/Int, kotlin/ByteArray, kotlin/Int) // io.kuicksilver.tls/ResetKey.token|token(io.kuicksilver.native.PacketBuffer;kotlin.Int;kotlin.Int;kotlin.ByteArray;kotlin.Int){}[0]
+}
+
+abstract interface io.kuicksilver.tls/TofuStore { // io.kuicksilver.tls/TofuStore|null[0]
+    abstract suspend fun get(kotlin/String): io.kuicksilver.tls/SpkiSha256? // io.kuicksilver.tls/TofuStore.get|get(kotlin.String){}[0]
+    abstract suspend fun put(kotlin/String, io.kuicksilver.tls/SpkiSha256) // io.kuicksilver.tls/TofuStore.put|put(kotlin.String;io.kuicksilver.tls.SpkiSha256){}[0]
+}
+
+abstract interface io.kuicksilver.tls/TokenKey : kotlin/AutoCloseable { // io.kuicksilver.tls/TokenKey|null[0]
+    abstract fun open(kotlin/Long, kotlin/ByteArray, kotlin/ByteArray): kotlin/ByteArray? // io.kuicksilver.tls/TokenKey.open|open(kotlin.Long;kotlin.ByteArray;kotlin.ByteArray){}[0]
+    abstract fun seal(kotlin/Long, kotlin/ByteArray, kotlin/ByteArray): kotlin/ByteArray // io.kuicksilver.tls/TokenKey.seal|seal(kotlin.Long;kotlin.ByteArray;kotlin.ByteArray){}[0]
+}
+
+sealed interface io.kuicksilver.tls/DriveResult { // io.kuicksilver.tls/DriveResult|null[0]
+    final class Failed : io.kuicksilver.tls/DriveResult { // io.kuicksilver.tls/DriveResult.Failed|null[0]
+        constructor <init>(io.kuicksilver.tls/TlsException, kotlin/Int?) // io.kuicksilver.tls/DriveResult.Failed.<init>|<init>(io.kuicksilver.tls.TlsException;kotlin.Int?){}[0]
+
+        final val alert // io.kuicksilver.tls/DriveResult.Failed.alert|{}alert[0]
+            final fun <get-alert>(): kotlin/Int? // io.kuicksilver.tls/DriveResult.Failed.alert.<get-alert>|<get-alert>(){}[0]
+        final val exception // io.kuicksilver.tls/DriveResult.Failed.exception|{}exception[0]
+            final fun <get-exception>(): io.kuicksilver.tls/TlsException // io.kuicksilver.tls/DriveResult.Failed.exception.<get-exception>|<get-exception>(){}[0]
+    }
+
+    final class WantVerify : io.kuicksilver.tls/DriveResult { // io.kuicksilver.tls/DriveResult.WantVerify|null[0]
+        constructor <init>(kotlin.collections/List<io.kuicksilver.tls/Certificate>) // io.kuicksilver.tls/DriveResult.WantVerify.<init>|<init>(kotlin.collections.List<io.kuicksilver.tls.Certificate>){}[0]
+
+        final val chain // io.kuicksilver.tls/DriveResult.WantVerify.chain|{}chain[0]
+            final fun <get-chain>(): kotlin.collections/List<io.kuicksilver.tls/Certificate> // io.kuicksilver.tls/DriveResult.WantVerify.chain.<get-chain>|<get-chain>(){}[0]
+    }
+
+    final object Progress : io.kuicksilver.tls/DriveResult // io.kuicksilver.tls/DriveResult.Progress|null[0]
+
+    final object WantRead : io.kuicksilver.tls/DriveResult // io.kuicksilver.tls/DriveResult.WantRead|null[0]
+}
+
+sealed interface io.kuicksilver.tls/TlsEvent { // io.kuicksilver.tls/TlsEvent|null[0]
+    final class CryptoData : io.kuicksilver.tls/TlsEvent { // io.kuicksilver.tls/TlsEvent.CryptoData|null[0]
+        constructor <init>(io.kuicksilver.tls/EncryptionLevel, kotlin/ByteArray) // io.kuicksilver.tls/TlsEvent.CryptoData.<init>|<init>(io.kuicksilver.tls.EncryptionLevel;kotlin.ByteArray){}[0]
+
+        final val data // io.kuicksilver.tls/TlsEvent.CryptoData.data|{}data[0]
+            final fun <get-data>(): kotlin/ByteArray // io.kuicksilver.tls/TlsEvent.CryptoData.data.<get-data>|<get-data>(){}[0]
+        final val level // io.kuicksilver.tls/TlsEvent.CryptoData.level|{}level[0]
+            final fun <get-level>(): io.kuicksilver.tls/EncryptionLevel // io.kuicksilver.tls/TlsEvent.CryptoData.level.<get-level>|<get-level>(){}[0]
+    }
+
+    final class Keys : io.kuicksilver.tls/TlsEvent { // io.kuicksilver.tls/TlsEvent.Keys|null[0]
+        constructor <init>(io.kuicksilver.tls/EncryptionLevel, io.kuicksilver.tls/Direction, io.kuicksilver.tls/PacketProtector) // io.kuicksilver.tls/TlsEvent.Keys.<init>|<init>(io.kuicksilver.tls.EncryptionLevel;io.kuicksilver.tls.Direction;io.kuicksilver.tls.PacketProtector){}[0]
+
+        final val direction // io.kuicksilver.tls/TlsEvent.Keys.direction|{}direction[0]
+            final fun <get-direction>(): io.kuicksilver.tls/Direction // io.kuicksilver.tls/TlsEvent.Keys.direction.<get-direction>|<get-direction>(){}[0]
+        final val level // io.kuicksilver.tls/TlsEvent.Keys.level|{}level[0]
+            final fun <get-level>(): io.kuicksilver.tls/EncryptionLevel // io.kuicksilver.tls/TlsEvent.Keys.level.<get-level>|<get-level>(){}[0]
+        final val protector // io.kuicksilver.tls/TlsEvent.Keys.protector|{}protector[0]
+            final fun <get-protector>(): io.kuicksilver.tls/PacketProtector // io.kuicksilver.tls/TlsEvent.Keys.protector.<get-protector>|<get-protector>(){}[0]
+    }
+
+    final class PeerTransportParameters : io.kuicksilver.tls/TlsEvent { // io.kuicksilver.tls/TlsEvent.PeerTransportParameters|null[0]
+        constructor <init>(kotlin/ByteArray, kotlin/Int) // io.kuicksilver.tls/TlsEvent.PeerTransportParameters.<init>|<init>(kotlin.ByteArray;kotlin.Int){}[0]
+
+        final val encoded // io.kuicksilver.tls/TlsEvent.PeerTransportParameters.encoded|{}encoded[0]
+            final fun <get-encoded>(): kotlin/ByteArray // io.kuicksilver.tls/TlsEvent.PeerTransportParameters.encoded.<get-encoded>|<get-encoded>(){}[0]
+        final val negotiatedVersion // io.kuicksilver.tls/TlsEvent.PeerTransportParameters.negotiatedVersion|{}negotiatedVersion[0]
+            final fun <get-negotiatedVersion>(): kotlin/Int // io.kuicksilver.tls/TlsEvent.PeerTransportParameters.negotiatedVersion.<get-negotiatedVersion>|<get-negotiatedVersion>(){}[0]
+    }
+
+    final object HandshakeDone : io.kuicksilver.tls/TlsEvent // io.kuicksilver.tls/TlsEvent.HandshakeDone|null[0]
+}
+
+sealed interface io.kuicksilver.tls/TlsIdentity { // io.kuicksilver.tls/TlsIdentity|null[0]
+    abstract val chain // io.kuicksilver.tls/TlsIdentity.chain|{}chain[0]
+        abstract fun <get-chain>(): kotlin.collections/List<io.kuicksilver.tls/Certificate> // io.kuicksilver.tls/TlsIdentity.chain.<get-chain>|<get-chain>(){}[0]
+
+    final class InMemory : io.kuicksilver.tls/TlsIdentity, kotlin/AutoCloseable { // io.kuicksilver.tls/TlsIdentity.InMemory|null[0]
+        final val chain // io.kuicksilver.tls/TlsIdentity.InMemory.chain|{}chain[0]
+            final fun <get-chain>(): kotlin.collections/List<io.kuicksilver.tls/Certificate> // io.kuicksilver.tls/TlsIdentity.InMemory.chain.<get-chain>|<get-chain>(){}[0]
+
+        final fun close() // io.kuicksilver.tls/TlsIdentity.InMemory.close|close(){}[0]
+    }
+
+    final class Signer : io.kuicksilver.tls/TlsIdentity { // io.kuicksilver.tls/TlsIdentity.Signer|null[0]
+        constructor <init>(kotlin.collections/List<io.kuicksilver.tls/Certificate>, io.kuicksilver.tls/PrivateKeySigner) // io.kuicksilver.tls/TlsIdentity.Signer.<init>|<init>(kotlin.collections.List<io.kuicksilver.tls.Certificate>;io.kuicksilver.tls.PrivateKeySigner){}[0]
+
+        final val chain // io.kuicksilver.tls/TlsIdentity.Signer.chain|{}chain[0]
+            final fun <get-chain>(): kotlin.collections/List<io.kuicksilver.tls/Certificate> // io.kuicksilver.tls/TlsIdentity.Signer.chain.<get-chain>|<get-chain>(){}[0]
+        final val signer // io.kuicksilver.tls/TlsIdentity.Signer.signer|{}signer[0]
+            final fun <get-signer>(): io.kuicksilver.tls/PrivateKeySigner // io.kuicksilver.tls/TlsIdentity.Signer.signer.<get-signer>|<get-signer>(){}[0]
+    }
+
+    final object Companion { // io.kuicksilver.tls/TlsIdentity.Companion|null[0]
+        final fun fromDer(kotlin.collections/List<kotlin/ByteArray>, kotlin/ByteArray): io.kuicksilver.tls/TlsIdentity.InMemory // io.kuicksilver.tls/TlsIdentity.Companion.fromDer|fromDer(kotlin.collections.List<kotlin.ByteArray>;kotlin.ByteArray){}[0]
+        final fun fromPem(kotlin/String, kotlin/CharArray, kotlin/CharArray? = ...): io.kuicksilver.tls/TlsIdentity.InMemory // io.kuicksilver.tls/TlsIdentity.Companion.fromPem|fromPem(kotlin.String;kotlin.CharArray;kotlin.CharArray?){}[0]
+    }
+}
+
+sealed interface io.kuicksilver.tls/TrustConfig { // io.kuicksilver.tls/TrustConfig|null[0]
+    final class AnchoredCa : io.kuicksilver.tls/TrustConfig { // io.kuicksilver.tls/TrustConfig.AnchoredCa|null[0]
+        constructor <init>(kotlin.collections/List<io.kuicksilver.tls/Certificate>) // io.kuicksilver.tls/TrustConfig.AnchoredCa.<init>|<init>(kotlin.collections.List<io.kuicksilver.tls.Certificate>){}[0]
+
+        final val roots // io.kuicksilver.tls/TrustConfig.AnchoredCa.roots|{}roots[0]
+            final fun <get-roots>(): kotlin.collections/List<io.kuicksilver.tls/Certificate> // io.kuicksilver.tls/TrustConfig.AnchoredCa.roots.<get-roots>|<get-roots>(){}[0]
+    }
+
+    final class Custom : io.kuicksilver.tls/TrustConfig { // io.kuicksilver.tls/TrustConfig.Custom|null[0]
+        constructor <init>(io.kuicksilver.tls/CertificateVerifier) // io.kuicksilver.tls/TrustConfig.Custom.<init>|<init>(io.kuicksilver.tls.CertificateVerifier){}[0]
+
+        final val verifier // io.kuicksilver.tls/TrustConfig.Custom.verifier|{}verifier[0]
+            final fun <get-verifier>(): io.kuicksilver.tls/CertificateVerifier // io.kuicksilver.tls/TrustConfig.Custom.verifier.<get-verifier>|<get-verifier>(){}[0]
+    }
+
+    final class ExpectedName : io.kuicksilver.tls/TrustConfig { // io.kuicksilver.tls/TrustConfig.ExpectedName|null[0]
+        constructor <init>(kotlin/String, io.kuicksilver.tls/TrustConfig = ...) // io.kuicksilver.tls/TrustConfig.ExpectedName.<init>|<init>(kotlin.String;io.kuicksilver.tls.TrustConfig){}[0]
+
+        final val base // io.kuicksilver.tls/TrustConfig.ExpectedName.base|{}base[0]
+            final fun <get-base>(): io.kuicksilver.tls/TrustConfig // io.kuicksilver.tls/TrustConfig.ExpectedName.base.<get-base>|<get-base>(){}[0]
+        final val name // io.kuicksilver.tls/TrustConfig.ExpectedName.name|{}name[0]
+            final fun <get-name>(): kotlin/String // io.kuicksilver.tls/TrustConfig.ExpectedName.name.<get-name>|<get-name>(){}[0]
+    }
+
+    final class Pinned : io.kuicksilver.tls/TrustConfig { // io.kuicksilver.tls/TrustConfig.Pinned|null[0]
+        constructor <init>(kotlin.collections/Set<io.kuicksilver.tls/SpkiSha256>, io.kuicksilver.tls/PinScope = ..., io.kuicksilver.tls/TrustConfig = ...) // io.kuicksilver.tls/TrustConfig.Pinned.<init>|<init>(kotlin.collections.Set<io.kuicksilver.tls.SpkiSha256>;io.kuicksilver.tls.PinScope;io.kuicksilver.tls.TrustConfig){}[0]
+
+        final val base // io.kuicksilver.tls/TrustConfig.Pinned.base|{}base[0]
+            final fun <get-base>(): io.kuicksilver.tls/TrustConfig // io.kuicksilver.tls/TrustConfig.Pinned.base.<get-base>|<get-base>(){}[0]
+        final val pins // io.kuicksilver.tls/TrustConfig.Pinned.pins|{}pins[0]
+            final fun <get-pins>(): kotlin.collections/Set<io.kuicksilver.tls/SpkiSha256> // io.kuicksilver.tls/TrustConfig.Pinned.pins.<get-pins>|<get-pins>(){}[0]
+        final val scope // io.kuicksilver.tls/TrustConfig.Pinned.scope|{}scope[0]
+            final fun <get-scope>(): io.kuicksilver.tls/PinScope // io.kuicksilver.tls/TrustConfig.Pinned.scope.<get-scope>|<get-scope>(){}[0]
+    }
+
+    final class Tofu : io.kuicksilver.tls/TrustConfig { // io.kuicksilver.tls/TrustConfig.Tofu|null[0]
+        constructor <init>(io.kuicksilver.tls/TofuStore) // io.kuicksilver.tls/TrustConfig.Tofu.<init>|<init>(io.kuicksilver.tls.TofuStore){}[0]
+
+        final val store // io.kuicksilver.tls/TrustConfig.Tofu.store|{}store[0]
+            final fun <get-store>(): io.kuicksilver.tls/TofuStore // io.kuicksilver.tls/TrustConfig.Tofu.store.<get-store>|<get-store>(){}[0]
+    }
+
+    final object Companion // io.kuicksilver.tls/TrustConfig.Companion|null[0]
+
+    final object Platform : io.kuicksilver.tls/TrustConfig { // io.kuicksilver.tls/TrustConfig.Platform|null[0]
+        final fun toString(): kotlin/String // io.kuicksilver.tls/TrustConfig.Platform.toString|toString(){}[0]
+    }
+}
+
+sealed interface io.kuicksilver.tls/VerifyReason { // io.kuicksilver.tls/VerifyReason|null[0]
+    final class Custom : io.kuicksilver.tls/VerifyReason { // io.kuicksilver.tls/VerifyReason.Custom|null[0]
+        constructor <init>(kotlin/String) // io.kuicksilver.tls/VerifyReason.Custom.<init>|<init>(kotlin.String){}[0]
+
+        final val text // io.kuicksilver.tls/VerifyReason.Custom.text|{}text[0]
+            final fun <get-text>(): kotlin/String // io.kuicksilver.tls/VerifyReason.Custom.text.<get-text>|<get-text>(){}[0]
+
+        final fun toString(): kotlin/String // io.kuicksilver.tls/VerifyReason.Custom.toString|toString(){}[0]
+    }
+
+    final class HostnameMismatch : io.kuicksilver.tls/VerifyReason { // io.kuicksilver.tls/VerifyReason.HostnameMismatch|null[0]
+        constructor <init>(kotlin/String, kotlin.collections/List<kotlin/String>) // io.kuicksilver.tls/VerifyReason.HostnameMismatch.<init>|<init>(kotlin.String;kotlin.collections.List<kotlin.String>){}[0]
+
+        final val expected // io.kuicksilver.tls/VerifyReason.HostnameMismatch.expected|{}expected[0]
+            final fun <get-expected>(): kotlin/String // io.kuicksilver.tls/VerifyReason.HostnameMismatch.expected.<get-expected>|<get-expected>(){}[0]
+        final val presented // io.kuicksilver.tls/VerifyReason.HostnameMismatch.presented|{}presented[0]
+            final fun <get-presented>(): kotlin.collections/List<kotlin/String> // io.kuicksilver.tls/VerifyReason.HostnameMismatch.presented.<get-presented>|<get-presented>(){}[0]
+
+        final fun toString(): kotlin/String // io.kuicksilver.tls/VerifyReason.HostnameMismatch.toString|toString(){}[0]
+    }
+
+    final class PinMismatch : io.kuicksilver.tls/VerifyReason { // io.kuicksilver.tls/VerifyReason.PinMismatch|null[0]
+        constructor <init>(kotlin.collections/List<io.kuicksilver.tls/SpkiSha256>) // io.kuicksilver.tls/VerifyReason.PinMismatch.<init>|<init>(kotlin.collections.List<io.kuicksilver.tls.SpkiSha256>){}[0]
+
+        final val chainPins // io.kuicksilver.tls/VerifyReason.PinMismatch.chainPins|{}chainPins[0]
+            final fun <get-chainPins>(): kotlin.collections/List<io.kuicksilver.tls/SpkiSha256> // io.kuicksilver.tls/VerifyReason.PinMismatch.chainPins.<get-chainPins>|<get-chainPins>(){}[0]
+
+        final fun toString(): kotlin/String // io.kuicksilver.tls/VerifyReason.PinMismatch.toString|toString(){}[0]
+    }
+
+    final object BadEncoding : io.kuicksilver.tls/VerifyReason // io.kuicksilver.tls/VerifyReason.BadEncoding|null[0]
+
+    final object BadSignature : io.kuicksilver.tls/VerifyReason // io.kuicksilver.tls/VerifyReason.BadSignature|null[0]
+
+    final object CertificateTransparency : io.kuicksilver.tls/VerifyReason // io.kuicksilver.tls/VerifyReason.CertificateTransparency|null[0]
+
+    final object Expired : io.kuicksilver.tls/VerifyReason // io.kuicksilver.tls/VerifyReason.Expired|null[0]
+
+    final object InvalidPurpose : io.kuicksilver.tls/VerifyReason // io.kuicksilver.tls/VerifyReason.InvalidPurpose|null[0]
+
+    final object NoCertificate : io.kuicksilver.tls/VerifyReason // io.kuicksilver.tls/VerifyReason.NoCertificate|null[0]
+
+    final object NotYetValid : io.kuicksilver.tls/VerifyReason // io.kuicksilver.tls/VerifyReason.NotYetValid|null[0]
+
+    final object Revoked : io.kuicksilver.tls/VerifyReason // io.kuicksilver.tls/VerifyReason.Revoked|null[0]
+
+    final object UnknownIssuer : io.kuicksilver.tls/VerifyReason // io.kuicksilver.tls/VerifyReason.UnknownIssuer|null[0]
+
+    final object UnknownRevocationStatus : io.kuicksilver.tls/VerifyReason // io.kuicksilver.tls/VerifyReason.UnknownRevocationStatus|null[0]
+}
+
+sealed interface io.kuicksilver.tls/VerifyResult { // io.kuicksilver.tls/VerifyResult|null[0]
+    final class Accepted : io.kuicksilver.tls/VerifyResult { // io.kuicksilver.tls/VerifyResult.Accepted|null[0]
+        constructor <init>(kotlin.collections/List<io.kuicksilver.tls/Certificate>) // io.kuicksilver.tls/VerifyResult.Accepted.<init>|<init>(kotlin.collections.List<io.kuicksilver.tls.Certificate>){}[0]
+
+        final val validatedChain // io.kuicksilver.tls/VerifyResult.Accepted.validatedChain|{}validatedChain[0]
+            final fun <get-validatedChain>(): kotlin.collections/List<io.kuicksilver.tls/Certificate> // io.kuicksilver.tls/VerifyResult.Accepted.validatedChain.<get-validatedChain>|<get-validatedChain>(){}[0]
+    }
+
+    final class Rejected : io.kuicksilver.tls/VerifyResult { // io.kuicksilver.tls/VerifyResult.Rejected|null[0]
+        constructor <init>(io.kuicksilver.tls/VerifyReason) // io.kuicksilver.tls/VerifyResult.Rejected.<init>|<init>(io.kuicksilver.tls.VerifyReason){}[0]
+
+        final val reason // io.kuicksilver.tls/VerifyResult.Rejected.reason|{}reason[0]
+            final fun <get-reason>(): io.kuicksilver.tls/VerifyReason // io.kuicksilver.tls/VerifyResult.Rejected.reason.<get-reason>|<get-reason>(){}[0]
+    }
+}
+
+final class io.kuicksilver.tls/Certificate { // io.kuicksilver.tls/Certificate|null[0]
+    constructor <init>(kotlin/ByteArray) // io.kuicksilver.tls/Certificate.<init>|<init>(kotlin.ByteArray){}[0]
+
+    final val der // io.kuicksilver.tls/Certificate.der|{}der[0]
+        final fun <get-der>(): kotlin/ByteArray // io.kuicksilver.tls/Certificate.der.<get-der>|<get-der>(){}[0]
+    final val dnsNames // io.kuicksilver.tls/Certificate.dnsNames|{}dnsNames[0]
+        final fun <get-dnsNames>(): kotlin.collections/List<kotlin/String> // io.kuicksilver.tls/Certificate.dnsNames.<get-dnsNames>|<get-dnsNames>(){}[0]
+    final val ipAddresses // io.kuicksilver.tls/Certificate.ipAddresses|{}ipAddresses[0]
+        final fun <get-ipAddresses>(): kotlin.collections/List<kotlin/ByteArray> // io.kuicksilver.tls/Certificate.ipAddresses.<get-ipAddresses>|<get-ipAddresses>(){}[0]
+    final val notAfterEpochSeconds // io.kuicksilver.tls/Certificate.notAfterEpochSeconds|{}notAfterEpochSeconds[0]
+        final fun <get-notAfterEpochSeconds>(): kotlin/Long // io.kuicksilver.tls/Certificate.notAfterEpochSeconds.<get-notAfterEpochSeconds>|<get-notAfterEpochSeconds>(){}[0]
+    final val notBeforeEpochSeconds // io.kuicksilver.tls/Certificate.notBeforeEpochSeconds|{}notBeforeEpochSeconds[0]
+        final fun <get-notBeforeEpochSeconds>(): kotlin/Long // io.kuicksilver.tls/Certificate.notBeforeEpochSeconds.<get-notBeforeEpochSeconds>|<get-notBeforeEpochSeconds>(){}[0]
+    final val spkiSha256 // io.kuicksilver.tls/Certificate.spkiSha256|{}spkiSha256[0]
+        final fun <get-spkiSha256>(): io.kuicksilver.tls/SpkiSha256 // io.kuicksilver.tls/Certificate.spkiSha256.<get-spkiSha256>|<get-spkiSha256>(){}[0]
+
+    final fun equals(kotlin/Any?): kotlin/Boolean // io.kuicksilver.tls/Certificate.equals|equals(kotlin.Any?){}[0]
+    final fun hashCode(): kotlin/Int // io.kuicksilver.tls/Certificate.hashCode|hashCode(){}[0]
+    final fun toString(): kotlin/String // io.kuicksilver.tls/Certificate.toString|toString(){}[0]
+
+    final object Companion { // io.kuicksilver.tls/Certificate.Companion|null[0]
+        final fun parsePem(kotlin/String): kotlin.collections/List<io.kuicksilver.tls/Certificate> // io.kuicksilver.tls/Certificate.Companion.parsePem|parsePem(kotlin.String){}[0]
+    }
+}
+
+final class io.kuicksilver.tls/CipherSuites { // io.kuicksilver.tls/CipherSuites|null[0]
+    constructor <init>(kotlin.collections/List<kotlin/String>) // io.kuicksilver.tls/CipherSuites.<init>|<init>(kotlin.collections.List<kotlin.String>){}[0]
+
+    final val suites // io.kuicksilver.tls/CipherSuites.suites|{}suites[0]
+        final fun <get-suites>(): kotlin.collections/List<kotlin/String> // io.kuicksilver.tls/CipherSuites.suites.<get-suites>|<get-suites>(){}[0]
+
+    final object Companion { // io.kuicksilver.tls/CipherSuites.Companion|null[0]
+        final const val AES_128_GCM // io.kuicksilver.tls/CipherSuites.Companion.AES_128_GCM|{}AES_128_GCM[0]
+            final fun <get-AES_128_GCM>(): kotlin/String // io.kuicksilver.tls/CipherSuites.Companion.AES_128_GCM.<get-AES_128_GCM>|<get-AES_128_GCM>(){}[0]
+        final const val AES_256_GCM // io.kuicksilver.tls/CipherSuites.Companion.AES_256_GCM|{}AES_256_GCM[0]
+            final fun <get-AES_256_GCM>(): kotlin/String // io.kuicksilver.tls/CipherSuites.Companion.AES_256_GCM.<get-AES_256_GCM>|<get-AES_256_GCM>(){}[0]
+        final const val CHACHA20_POLY1305 // io.kuicksilver.tls/CipherSuites.Companion.CHACHA20_POLY1305|{}CHACHA20_POLY1305[0]
+            final fun <get-CHACHA20_POLY1305>(): kotlin/String // io.kuicksilver.tls/CipherSuites.Companion.CHACHA20_POLY1305.<get-CHACHA20_POLY1305>|<get-CHACHA20_POLY1305>(){}[0]
+
+        final val Default // io.kuicksilver.tls/CipherSuites.Companion.Default|{}Default[0]
+            final fun <get-Default>(): io.kuicksilver.tls/CipherSuites // io.kuicksilver.tls/CipherSuites.Companion.Default.<get-Default>|<get-Default>(){}[0]
+    }
+}
+
+final class io.kuicksilver.tls/ClientHelloInfo { // io.kuicksilver.tls/ClientHelloInfo|null[0]
+    constructor <init>(kotlin/String?, kotlin.collections/List<kotlin/String>, kotlin.collections/List<kotlin/Int>) // io.kuicksilver.tls/ClientHelloInfo.<init>|<init>(kotlin.String?;kotlin.collections.List<kotlin.String>;kotlin.collections.List<kotlin.Int>){}[0]
+
+    final val alpn // io.kuicksilver.tls/ClientHelloInfo.alpn|{}alpn[0]
+        final fun <get-alpn>(): kotlin.collections/List<kotlin/String> // io.kuicksilver.tls/ClientHelloInfo.alpn.<get-alpn>|<get-alpn>(){}[0]
+    final val serverName // io.kuicksilver.tls/ClientHelloInfo.serverName|{}serverName[0]
+        final fun <get-serverName>(): kotlin/String? // io.kuicksilver.tls/ClientHelloInfo.serverName.<get-serverName>|<get-serverName>(){}[0]
+    final val signatureSchemes // io.kuicksilver.tls/ClientHelloInfo.signatureSchemes|{}signatureSchemes[0]
+        final fun <get-signatureSchemes>(): kotlin.collections/List<kotlin/Int> // io.kuicksilver.tls/ClientHelloInfo.signatureSchemes.<get-signatureSchemes>|<get-signatureSchemes>(){}[0]
+}
+
+final class io.kuicksilver.tls/HostName { // io.kuicksilver.tls/HostName|null[0]
+    final val isIpLiteral // io.kuicksilver.tls/HostName.isIpLiteral|{}isIpLiteral[0]
+        final fun <get-isIpLiteral>(): kotlin/Boolean // io.kuicksilver.tls/HostName.isIpLiteral.<get-isIpLiteral>|<get-isIpLiteral>(){}[0]
+    final val value // io.kuicksilver.tls/HostName.value|{}value[0]
+        final fun <get-value>(): kotlin/String // io.kuicksilver.tls/HostName.value.<get-value>|<get-value>(){}[0]
+
+    final fun equals(kotlin/Any?): kotlin/Boolean // io.kuicksilver.tls/HostName.equals|equals(kotlin.Any?){}[0]
+    final fun hashCode(): kotlin/Int // io.kuicksilver.tls/HostName.hashCode|hashCode(){}[0]
+    final fun toString(): kotlin/String // io.kuicksilver.tls/HostName.toString|toString(){}[0]
+
+    final object Companion { // io.kuicksilver.tls/HostName.Companion|null[0]
+        final fun normalize(kotlin/String): io.kuicksilver.tls/HostName // io.kuicksilver.tls/HostName.Companion.normalize|normalize(kotlin.String){}[0]
+    }
+}
+
+final class io.kuicksilver.tls/InMemoryKeylog : io.kuicksilver.tls/KeylogSink { // io.kuicksilver.tls/InMemoryKeylog|null[0]
+    constructor <init>() // io.kuicksilver.tls/InMemoryKeylog.<init>|<init>(){}[0]
+
+    final val lines // io.kuicksilver.tls/InMemoryKeylog.lines|{}lines[0]
+        final fun <get-lines>(): kotlin.collections/List<kotlin/String> // io.kuicksilver.tls/InMemoryKeylog.lines.<get-lines>|<get-lines>(){}[0]
+
+    final fun log(kotlin/String) // io.kuicksilver.tls/InMemoryKeylog.log|log(kotlin.String){}[0]
+}
+
+final class io.kuicksilver.tls/PacketProtectionException : kotlinx.io/IOException { // io.kuicksilver.tls/PacketProtectionException|null[0]
+    constructor <init>(kotlin/String) // io.kuicksilver.tls/PacketProtectionException.<init>|<init>(kotlin.String){}[0]
+}
+
+final class io.kuicksilver.tls/ServerTlsOverride { // io.kuicksilver.tls/ServerTlsOverride|null[0]
+    constructor <init>(io.kuicksilver.tls/TlsIdentity, kotlin.collections/List<kotlin/String>? = ..., io.kuicksilver.tls/ClientAuth? = ..., io.kuicksilver.tls/TrustConfig? = ...) // io.kuicksilver.tls/ServerTlsOverride.<init>|<init>(io.kuicksilver.tls.TlsIdentity;kotlin.collections.List<kotlin.String>?;io.kuicksilver.tls.ClientAuth?;io.kuicksilver.tls.TrustConfig?){}[0]
+
+    final val alpn // io.kuicksilver.tls/ServerTlsOverride.alpn|{}alpn[0]
+        final fun <get-alpn>(): kotlin.collections/List<kotlin/String>? // io.kuicksilver.tls/ServerTlsOverride.alpn.<get-alpn>|<get-alpn>(){}[0]
+    final val clientAuth // io.kuicksilver.tls/ServerTlsOverride.clientAuth|{}clientAuth[0]
+        final fun <get-clientAuth>(): io.kuicksilver.tls/ClientAuth? // io.kuicksilver.tls/ServerTlsOverride.clientAuth.<get-clientAuth>|<get-clientAuth>(){}[0]
+    final val identity // io.kuicksilver.tls/ServerTlsOverride.identity|{}identity[0]
+        final fun <get-identity>(): io.kuicksilver.tls/TlsIdentity // io.kuicksilver.tls/ServerTlsOverride.identity.<get-identity>|<get-identity>(){}[0]
+    final val trust // io.kuicksilver.tls/ServerTlsOverride.trust|{}trust[0]
+        final fun <get-trust>(): io.kuicksilver.tls/TrustConfig? // io.kuicksilver.tls/ServerTlsOverride.trust.<get-trust>|<get-trust>(){}[0]
+}
+
+final class io.kuicksilver.tls/SessionTicketConfig { // io.kuicksilver.tls/SessionTicketConfig|null[0]
+    constructor <init>(kotlin.collections/List<kotlin/ByteArray>? = ..., kotlin.time/Duration = ..., kotlin.time/Duration = ...) // io.kuicksilver.tls/SessionTicketConfig.<init>|<init>(kotlin.collections.List<kotlin.ByteArray>?;kotlin.time.Duration;kotlin.time.Duration){}[0]
+
+    final val keys // io.kuicksilver.tls/SessionTicketConfig.keys|{}keys[0]
+        final fun <get-keys>(): kotlin.collections/List<kotlin/ByteArray>? // io.kuicksilver.tls/SessionTicketConfig.keys.<get-keys>|<get-keys>(){}[0]
+    final val rotateEvery // io.kuicksilver.tls/SessionTicketConfig.rotateEvery|{}rotateEvery[0]
+        final fun <get-rotateEvery>(): kotlin.time/Duration // io.kuicksilver.tls/SessionTicketConfig.rotateEvery.<get-rotateEvery>|<get-rotateEvery>(){}[0]
+    final val ticketLifetime // io.kuicksilver.tls/SessionTicketConfig.ticketLifetime|{}ticketLifetime[0]
+        final fun <get-ticketLifetime>(): kotlin.time/Duration // io.kuicksilver.tls/SessionTicketConfig.ticketLifetime.<get-ticketLifetime>|<get-ticketLifetime>(){}[0]
+
+    final object Companion { // io.kuicksilver.tls/SessionTicketConfig.Companion|null[0]
+        final val Default // io.kuicksilver.tls/SessionTicketConfig.Companion.Default|{}Default[0]
+            final fun <get-Default>(): io.kuicksilver.tls/SessionTicketConfig // io.kuicksilver.tls/SessionTicketConfig.Companion.Default.<get-Default>|<get-Default>(){}[0]
+    }
+}
+
+final class io.kuicksilver.tls/SpkiSha256 { // io.kuicksilver.tls/SpkiSha256|null[0]
+    constructor <init>(kotlin/ByteArray) // io.kuicksilver.tls/SpkiSha256.<init>|<init>(kotlin.ByteArray){}[0]
+
+    final val bytes // io.kuicksilver.tls/SpkiSha256.bytes|{}bytes[0]
+        final fun <get-bytes>(): kotlin/ByteArray // io.kuicksilver.tls/SpkiSha256.bytes.<get-bytes>|<get-bytes>(){}[0]
+
+    final fun equals(kotlin/Any?): kotlin/Boolean // io.kuicksilver.tls/SpkiSha256.equals|equals(kotlin.Any?){}[0]
+    final fun hashCode(): kotlin/Int // io.kuicksilver.tls/SpkiSha256.hashCode|hashCode(){}[0]
+    final fun toString(): kotlin/String // io.kuicksilver.tls/SpkiSha256.toString|toString(){}[0]
+
+    final object Companion { // io.kuicksilver.tls/SpkiSha256.Companion|null[0]
+        final fun parse(kotlin/String): io.kuicksilver.tls/SpkiSha256 // io.kuicksilver.tls/SpkiSha256.Companion.parse|parse(kotlin.String){}[0]
+    }
+}
+
+final class io.kuicksilver.tls/TlsConfig { // io.kuicksilver.tls/TlsConfig|null[0]
+    final val alpn // io.kuicksilver.tls/TlsConfig.alpn|{}alpn[0]
+        final fun <get-alpn>(): kotlin.collections/List<kotlin/String> // io.kuicksilver.tls/TlsConfig.alpn.<get-alpn>|<get-alpn>(){}[0]
+    final val cipherSuites // io.kuicksilver.tls/TlsConfig.cipherSuites|{}cipherSuites[0]
+        final fun <get-cipherSuites>(): io.kuicksilver.tls/CipherSuites // io.kuicksilver.tls/TlsConfig.cipherSuites.<get-cipherSuites>|<get-cipherSuites>(){}[0]
+    final val clientAuth // io.kuicksilver.tls/TlsConfig.clientAuth|{}clientAuth[0]
+        final fun <get-clientAuth>(): io.kuicksilver.tls/ClientAuth // io.kuicksilver.tls/TlsConfig.clientAuth.<get-clientAuth>|<get-clientAuth>(){}[0]
+    final val genericAlerts // io.kuicksilver.tls/TlsConfig.genericAlerts|{}genericAlerts[0]
+        final fun <get-genericAlerts>(): kotlin/Boolean // io.kuicksilver.tls/TlsConfig.genericAlerts.<get-genericAlerts>|<get-genericAlerts>(){}[0]
+    final val handshakeTimeout // io.kuicksilver.tls/TlsConfig.handshakeTimeout|{}handshakeTimeout[0]
+        final fun <get-handshakeTimeout>(): kotlin.time/Duration // io.kuicksilver.tls/TlsConfig.handshakeTimeout.<get-handshakeTimeout>|<get-handshakeTimeout>(){}[0]
+    final val identity // io.kuicksilver.tls/TlsConfig.identity|{}identity[0]
+        final fun <get-identity>(): io.kuicksilver.tls/TlsIdentity? // io.kuicksilver.tls/TlsConfig.identity.<get-identity>|<get-identity>(){}[0]
+    final val keylog // io.kuicksilver.tls/TlsConfig.keylog|{}keylog[0]
+        final fun <get-keylog>(): io.kuicksilver.tls/KeylogSink? // io.kuicksilver.tls/TlsConfig.keylog.<get-keylog>|<get-keylog>(){}[0]
+    final val role // io.kuicksilver.tls/TlsConfig.role|{}role[0]
+        final fun <get-role>(): io.kuicksilver.tls/TlsRole // io.kuicksilver.tls/TlsConfig.role.<get-role>|<get-role>(){}[0]
+    final val serverName // io.kuicksilver.tls/TlsConfig.serverName|{}serverName[0]
+        final fun <get-serverName>(): kotlin/String? // io.kuicksilver.tls/TlsConfig.serverName.<get-serverName>|<get-serverName>(){}[0]
+    final val sessionTickets // io.kuicksilver.tls/TlsConfig.sessionTickets|{}sessionTickets[0]
+        final fun <get-sessionTickets>(): io.kuicksilver.tls/SessionTicketConfig // io.kuicksilver.tls/TlsConfig.sessionTickets.<get-sessionTickets>|<get-sessionTickets>(){}[0]
+    final val sniSelector // io.kuicksilver.tls/TlsConfig.sniSelector|{}sniSelector[0]
+        final fun <get-sniSelector>(): kotlin.coroutines/SuspendFunction1<io.kuicksilver.tls/ClientHelloInfo, io.kuicksilver.tls/ServerTlsOverride?>? // io.kuicksilver.tls/TlsConfig.sniSelector.<get-sniSelector>|<get-sniSelector>(){}[0]
+    final val trust // io.kuicksilver.tls/TlsConfig.trust|{}trust[0]
+        final fun <get-trust>(): io.kuicksilver.tls/TrustConfig // io.kuicksilver.tls/TlsConfig.trust.<get-trust>|<get-trust>(){}[0]
+    final val versions // io.kuicksilver.tls/TlsConfig.versions|{}versions[0]
+        final fun <get-versions>(): io.kuicksilver.tls/TlsVersions // io.kuicksilver.tls/TlsConfig.versions.<get-versions>|<get-versions>(){}[0]
+
+    final class Builder { // io.kuicksilver.tls/TlsConfig.Builder|null[0]
+        constructor <init>(io.kuicksilver.tls/TlsRole) // io.kuicksilver.tls/TlsConfig.Builder.<init>|<init>(io.kuicksilver.tls.TlsRole){}[0]
+
+        final val role // io.kuicksilver.tls/TlsConfig.Builder.role|{}role[0]
+            final fun <get-role>(): io.kuicksilver.tls/TlsRole // io.kuicksilver.tls/TlsConfig.Builder.role.<get-role>|<get-role>(){}[0]
+
+        final var alpn // io.kuicksilver.tls/TlsConfig.Builder.alpn|{}alpn[0]
+            final fun <get-alpn>(): kotlin.collections/List<kotlin/String> // io.kuicksilver.tls/TlsConfig.Builder.alpn.<get-alpn>|<get-alpn>(){}[0]
+            final fun <set-alpn>(kotlin.collections/List<kotlin/String>) // io.kuicksilver.tls/TlsConfig.Builder.alpn.<set-alpn>|<set-alpn>(kotlin.collections.List<kotlin.String>){}[0]
+        final var cipherSuites // io.kuicksilver.tls/TlsConfig.Builder.cipherSuites|{}cipherSuites[0]
+            final fun <get-cipherSuites>(): io.kuicksilver.tls/CipherSuites // io.kuicksilver.tls/TlsConfig.Builder.cipherSuites.<get-cipherSuites>|<get-cipherSuites>(){}[0]
+            final fun <set-cipherSuites>(io.kuicksilver.tls/CipherSuites) // io.kuicksilver.tls/TlsConfig.Builder.cipherSuites.<set-cipherSuites>|<set-cipherSuites>(io.kuicksilver.tls.CipherSuites){}[0]
+        final var clientAuth // io.kuicksilver.tls/TlsConfig.Builder.clientAuth|{}clientAuth[0]
+            final fun <get-clientAuth>(): io.kuicksilver.tls/ClientAuth // io.kuicksilver.tls/TlsConfig.Builder.clientAuth.<get-clientAuth>|<get-clientAuth>(){}[0]
+            final fun <set-clientAuth>(io.kuicksilver.tls/ClientAuth) // io.kuicksilver.tls/TlsConfig.Builder.clientAuth.<set-clientAuth>|<set-clientAuth>(io.kuicksilver.tls.ClientAuth){}[0]
+        final var genericAlerts // io.kuicksilver.tls/TlsConfig.Builder.genericAlerts|{}genericAlerts[0]
+            final fun <get-genericAlerts>(): kotlin/Boolean // io.kuicksilver.tls/TlsConfig.Builder.genericAlerts.<get-genericAlerts>|<get-genericAlerts>(){}[0]
+            final fun <set-genericAlerts>(kotlin/Boolean) // io.kuicksilver.tls/TlsConfig.Builder.genericAlerts.<set-genericAlerts>|<set-genericAlerts>(kotlin.Boolean){}[0]
+        final var handshakeTimeout // io.kuicksilver.tls/TlsConfig.Builder.handshakeTimeout|{}handshakeTimeout[0]
+            final fun <get-handshakeTimeout>(): kotlin.time/Duration // io.kuicksilver.tls/TlsConfig.Builder.handshakeTimeout.<get-handshakeTimeout>|<get-handshakeTimeout>(){}[0]
+            final fun <set-handshakeTimeout>(kotlin.time/Duration) // io.kuicksilver.tls/TlsConfig.Builder.handshakeTimeout.<set-handshakeTimeout>|<set-handshakeTimeout>(kotlin.time.Duration){}[0]
+        final var identity // io.kuicksilver.tls/TlsConfig.Builder.identity|{}identity[0]
+            final fun <get-identity>(): io.kuicksilver.tls/TlsIdentity? // io.kuicksilver.tls/TlsConfig.Builder.identity.<get-identity>|<get-identity>(){}[0]
+            final fun <set-identity>(io.kuicksilver.tls/TlsIdentity?) // io.kuicksilver.tls/TlsConfig.Builder.identity.<set-identity>|<set-identity>(io.kuicksilver.tls.TlsIdentity?){}[0]
+        final var keylog // io.kuicksilver.tls/TlsConfig.Builder.keylog|{}keylog[0]
+            final fun <get-keylog>(): io.kuicksilver.tls/KeylogSink? // io.kuicksilver.tls/TlsConfig.Builder.keylog.<get-keylog>|<get-keylog>(){}[0]
+            final fun <set-keylog>(io.kuicksilver.tls/KeylogSink?) // io.kuicksilver.tls/TlsConfig.Builder.keylog.<set-keylog>|<set-keylog>(io.kuicksilver.tls.KeylogSink?){}[0]
+        final var serverName // io.kuicksilver.tls/TlsConfig.Builder.serverName|{}serverName[0]
+            final fun <get-serverName>(): kotlin/String? // io.kuicksilver.tls/TlsConfig.Builder.serverName.<get-serverName>|<get-serverName>(){}[0]
+            final fun <set-serverName>(kotlin/String?) // io.kuicksilver.tls/TlsConfig.Builder.serverName.<set-serverName>|<set-serverName>(kotlin.String?){}[0]
+        final var sessionTickets // io.kuicksilver.tls/TlsConfig.Builder.sessionTickets|{}sessionTickets[0]
+            final fun <get-sessionTickets>(): io.kuicksilver.tls/SessionTicketConfig // io.kuicksilver.tls/TlsConfig.Builder.sessionTickets.<get-sessionTickets>|<get-sessionTickets>(){}[0]
+            final fun <set-sessionTickets>(io.kuicksilver.tls/SessionTicketConfig) // io.kuicksilver.tls/TlsConfig.Builder.sessionTickets.<set-sessionTickets>|<set-sessionTickets>(io.kuicksilver.tls.SessionTicketConfig){}[0]
+        final var sniSelector // io.kuicksilver.tls/TlsConfig.Builder.sniSelector|{}sniSelector[0]
+            final fun <get-sniSelector>(): kotlin.coroutines/SuspendFunction1<io.kuicksilver.tls/ClientHelloInfo, io.kuicksilver.tls/ServerTlsOverride?>? // io.kuicksilver.tls/TlsConfig.Builder.sniSelector.<get-sniSelector>|<get-sniSelector>(){}[0]
+            final fun <set-sniSelector>(kotlin.coroutines/SuspendFunction1<io.kuicksilver.tls/ClientHelloInfo, io.kuicksilver.tls/ServerTlsOverride?>?) // io.kuicksilver.tls/TlsConfig.Builder.sniSelector.<set-sniSelector>|<set-sniSelector>(kotlin.coroutines.SuspendFunction1<io.kuicksilver.tls.ClientHelloInfo,io.kuicksilver.tls.ServerTlsOverride?>?){}[0]
+        final var trust // io.kuicksilver.tls/TlsConfig.Builder.trust|{}trust[0]
+            final fun <get-trust>(): io.kuicksilver.tls/TrustConfig // io.kuicksilver.tls/TlsConfig.Builder.trust.<get-trust>|<get-trust>(){}[0]
+            final fun <set-trust>(io.kuicksilver.tls/TrustConfig) // io.kuicksilver.tls/TlsConfig.Builder.trust.<set-trust>|<set-trust>(io.kuicksilver.tls.TrustConfig){}[0]
+        final var versions // io.kuicksilver.tls/TlsConfig.Builder.versions|{}versions[0]
+            final fun <get-versions>(): io.kuicksilver.tls/TlsVersions // io.kuicksilver.tls/TlsConfig.Builder.versions.<get-versions>|<get-versions>(){}[0]
+            final fun <set-versions>(io.kuicksilver.tls/TlsVersions) // io.kuicksilver.tls/TlsConfig.Builder.versions.<set-versions>|<set-versions>(io.kuicksilver.tls.TlsVersions){}[0]
+
+        final fun build(): io.kuicksilver.tls/TlsConfig // io.kuicksilver.tls/TlsConfig.Builder.build|build(){}[0]
+    }
+}
+
+final class io.kuicksilver.tls/TlsConnection : kotlin/AutoCloseable { // io.kuicksilver.tls/TlsConnection|null[0]
+    final val input // io.kuicksilver.tls/TlsConnection.input|{}input[0]
+        final fun <get-input>(): io.ktor.utils.io/ByteReadChannel // io.kuicksilver.tls/TlsConnection.input.<get-input>|<get-input>(){}[0]
+    final val output // io.kuicksilver.tls/TlsConnection.output|{}output[0]
+        final fun <get-output>(): io.ktor.utils.io/ByteWriteChannel // io.kuicksilver.tls/TlsConnection.output.<get-output>|<get-output>(){}[0]
+    final val peerCertificates // io.kuicksilver.tls/TlsConnection.peerCertificates|{}peerCertificates[0]
+        final fun <get-peerCertificates>(): kotlin.collections/List<io.kuicksilver.tls/Certificate> // io.kuicksilver.tls/TlsConnection.peerCertificates.<get-peerCertificates>|<get-peerCertificates>(){}[0]
+    final val sessionReused // io.kuicksilver.tls/TlsConnection.sessionReused|{}sessionReused[0]
+        final fun <get-sessionReused>(): kotlin/Boolean // io.kuicksilver.tls/TlsConnection.sessionReused.<get-sessionReused>|<get-sessionReused>(){}[0]
+
+    final var negotiatedAlpn // io.kuicksilver.tls/TlsConnection.negotiatedAlpn|{}negotiatedAlpn[0]
+        final fun <get-negotiatedAlpn>(): kotlin/String? // io.kuicksilver.tls/TlsConnection.negotiatedAlpn.<get-negotiatedAlpn>|<get-negotiatedAlpn>(){}[0]
+    final var protocolVersion // io.kuicksilver.tls/TlsConnection.protocolVersion|{}protocolVersion[0]
+        final fun <get-protocolVersion>(): io.kuicksilver.tls/TlsVersion // io.kuicksilver.tls/TlsConnection.protocolVersion.<get-protocolVersion>|<get-protocolVersion>(){}[0]
+
+    final fun close() // io.kuicksilver.tls/TlsConnection.close|close(){}[0]
+    final suspend fun channelBinding(): kotlin/ByteArray // io.kuicksilver.tls/TlsConnection.channelBinding|channelBinding(){}[0]
+    final suspend fun exportKeyingMaterial(kotlin/String, kotlin/ByteArray?, kotlin/Int): kotlin/ByteArray // io.kuicksilver.tls/TlsConnection.exportKeyingMaterial|exportKeyingMaterial(kotlin.String;kotlin.ByteArray?;kotlin.Int){}[0]
+    final suspend fun keyUpdate(kotlin/Boolean = ...) // io.kuicksilver.tls/TlsConnection.keyUpdate|keyUpdate(kotlin.Boolean){}[0]
+    final suspend fun shutdown() // io.kuicksilver.tls/TlsConnection.shutdown|shutdown(){}[0]
+
+    final object Companion { // io.kuicksilver.tls/TlsConnection.Companion|null[0]
+        final suspend fun client(io.ktor.utils.io/ByteReadChannel, io.ktor.utils.io/ByteWriteChannel, io.kuicksilver.tls/TlsConfig, kotlin.coroutines/CoroutineContext = ...): io.kuicksilver.tls/TlsConnection // io.kuicksilver.tls/TlsConnection.Companion.client|client(io.ktor.utils.io.ByteReadChannel;io.ktor.utils.io.ByteWriteChannel;io.kuicksilver.tls.TlsConfig;kotlin.coroutines.CoroutineContext){}[0]
+        final suspend fun server(io.ktor.utils.io/ByteReadChannel, io.ktor.utils.io/ByteWriteChannel, io.kuicksilver.tls/TlsConfig, kotlin.coroutines/CoroutineContext = ...): io.kuicksilver.tls/TlsConnection // io.kuicksilver.tls/TlsConnection.Companion.server|server(io.ktor.utils.io.ByteReadChannel;io.ktor.utils.io.ByteWriteChannel;io.kuicksilver.tls.TlsConfig;kotlin.coroutines.CoroutineContext){}[0]
+    }
+}
+
+sealed class io.kuicksilver.tls/TlsException : kotlinx.io/IOException { // io.kuicksilver.tls/TlsException|null[0]
+    final class AlertReceived : io.kuicksilver.tls/TlsException { // io.kuicksilver.tls/TlsException.AlertReceived|null[0]
+        constructor <init>(kotlin/Int, kotlin/String) // io.kuicksilver.tls/TlsException.AlertReceived.<init>|<init>(kotlin.Int;kotlin.String){}[0]
+
+        final val code // io.kuicksilver.tls/TlsException.AlertReceived.code|{}code[0]
+            final fun <get-code>(): kotlin/Int // io.kuicksilver.tls/TlsException.AlertReceived.code.<get-code>|<get-code>(){}[0]
+        final val description // io.kuicksilver.tls/TlsException.AlertReceived.description|{}description[0]
+            final fun <get-description>(): kotlin/String // io.kuicksilver.tls/TlsException.AlertReceived.description.<get-description>|<get-description>(){}[0]
+    }
+
+    final class Config : io.kuicksilver.tls/TlsException { // io.kuicksilver.tls/TlsException.Config|null[0]
+        constructor <init>(kotlin/String) // io.kuicksilver.tls/TlsException.Config.<init>|<init>(kotlin.String){}[0]
+    }
+
+    final class Protocol : io.kuicksilver.tls/TlsException { // io.kuicksilver.tls/TlsException.Protocol|null[0]
+        constructor <init>(kotlin/Int?, kotlin/String, kotlin/Throwable?) // io.kuicksilver.tls/TlsException.Protocol.<init>|<init>(kotlin.Int?;kotlin.String;kotlin.Throwable?){}[0]
+
+        final val openSslCode // io.kuicksilver.tls/TlsException.Protocol.openSslCode|{}openSslCode[0]
+            final fun <get-openSslCode>(): kotlin/Int? // io.kuicksilver.tls/TlsException.Protocol.openSslCode.<get-openSslCode>|<get-openSslCode>(){}[0]
+    }
+
+    final class Verify : io.kuicksilver.tls/TlsException { // io.kuicksilver.tls/TlsException.Verify|null[0]
+        constructor <init>(io.kuicksilver.tls/VerifyReason, kotlin.collections/List<io.kuicksilver.tls/Certificate>) // io.kuicksilver.tls/TlsException.Verify.<init>|<init>(io.kuicksilver.tls.VerifyReason;kotlin.collections.List<io.kuicksilver.tls.Certificate>){}[0]
+
+        final val chain // io.kuicksilver.tls/TlsException.Verify.chain|{}chain[0]
+            final fun <get-chain>(): kotlin.collections/List<io.kuicksilver.tls/Certificate> // io.kuicksilver.tls/TlsException.Verify.chain.<get-chain>|<get-chain>(){}[0]
+        final val reason // io.kuicksilver.tls/TlsException.Verify.reason|{}reason[0]
+            final fun <get-reason>(): io.kuicksilver.tls/VerifyReason // io.kuicksilver.tls/TlsException.Verify.reason.<get-reason>|<get-reason>(){}[0]
+    }
+}
+
+final object io.kuicksilver.tls/KslCrypto { // io.kuicksilver.tls/KslCrypto|null[0]
+    final fun hkdfExpandLabel(io.kuicksilver.tls/Hash, kotlin/ByteArray, kotlin/String, kotlin/ByteArray, kotlin/Int): kotlin/ByteArray // io.kuicksilver.tls/KslCrypto.hkdfExpandLabel|hkdfExpandLabel(io.kuicksilver.tls.Hash;kotlin.ByteArray;kotlin.String;kotlin.ByteArray;kotlin.Int){}[0]
+    final fun randomBytes(kotlin/Int): kotlin/ByteArray // io.kuicksilver.tls/KslCrypto.randomBytes|randomBytes(kotlin.Int){}[0]
+    final fun sha256(kotlin/ByteArray): kotlin/ByteArray // io.kuicksilver.tls/KslCrypto.sha256|sha256(kotlin.ByteArray){}[0]
+    final fun sha384(kotlin/ByteArray): kotlin/ByteArray // io.kuicksilver.tls/KslCrypto.sha384|sha384(kotlin.ByteArray){}[0]
+    final fun sign(io.kuicksilver.tls/SignatureAlgorithm, kotlin/ByteArray, kotlin/ByteArray): kotlin/ByteArray // io.kuicksilver.tls/KslCrypto.sign|sign(io.kuicksilver.tls.SignatureAlgorithm;kotlin.ByteArray;kotlin.ByteArray){}[0]
+    final fun spkiSha256(kotlin/ByteArray): io.kuicksilver.tls/SpkiSha256 // io.kuicksilver.tls/KslCrypto.spkiSha256|spkiSha256(kotlin.ByteArray){}[0]
+    final fun verify(io.kuicksilver.tls/SignatureAlgorithm, kotlin/ByteArray, kotlin/ByteArray, kotlin/ByteArray): kotlin/Boolean // io.kuicksilver.tls/KslCrypto.verify|verify(io.kuicksilver.tls.SignatureAlgorithm;kotlin.ByteArray;kotlin.ByteArray;kotlin.ByteArray){}[0]
+}
+
+final object io.kuicksilver.tls/KslQuicCrypto : io.kuicksilver.tls/QuicCrypto { // io.kuicksilver.tls/KslQuicCrypto|null[0]
+    final fun initialProtectors(kotlin/ByteArray, kotlin/Int, io.kuicksilver.tls/TlsRole): kotlin/Pair<io.kuicksilver.tls/PacketProtector, io.kuicksilver.tls/PacketProtector> // io.kuicksilver.tls/KslQuicCrypto.initialProtectors|initialProtectors(kotlin.ByteArray;kotlin.Int;io.kuicksilver.tls.TlsRole){}[0]
+    final fun newResetKey(): io.kuicksilver.tls/ResetKey // io.kuicksilver.tls/KslQuicCrypto.newResetKey|newResetKey(){}[0]
+    final fun newSession(io.kuicksilver.tls/TlsConfig): io.kuicksilver.tls/QuicTlsSession // io.kuicksilver.tls/KslQuicCrypto.newSession|newSession(io.kuicksilver.tls.TlsConfig){}[0]
+    final fun newTokenKey(): io.kuicksilver.tls/TokenKey // io.kuicksilver.tls/KslQuicCrypto.newTokenKey|newTokenKey(){}[0]
+    final fun retryIntegrityTag(kotlin/Int, kotlin/ByteArray, kotlin/ByteArray): kotlin/ByteArray // io.kuicksilver.tls/KslQuicCrypto.retryIntegrityTag|retryIntegrityTag(kotlin.Int;kotlin.ByteArray;kotlin.ByteArray){}[0]
+}
+
+final val io.kuicksilver.tls/alertCode // io.kuicksilver.tls/alertCode|@io.kuicksilver.tls.VerifyReason{}alertCode[0]
+    final fun (io.kuicksilver.tls/VerifyReason).<get-alertCode>(): kotlin/Int // io.kuicksilver.tls/alertCode.<get-alertCode>|<get-alertCode>@io.kuicksilver.tls.VerifyReason(){}[0]
+
+final fun io.kuicksilver.tls/keylogFile(kotlin/String): io.kuicksilver.tls/KeylogSink // io.kuicksilver.tls/keylogFile|keylogFile(kotlin.String){}[0]
+final fun io.kuicksilver.tls/keylogFromEnvironment(): io.kuicksilver.tls/KeylogSink? // io.kuicksilver.tls/keylogFromEnvironment|keylogFromEnvironment(){}[0]
+final inline fun io.kuicksilver.tls/tlsConfig(io.kuicksilver.tls/TlsRole, kotlin/Function1<io.kuicksilver.tls/TlsConfig.Builder, kotlin/Unit>): io.kuicksilver.tls/TlsConfig // io.kuicksilver.tls/tlsConfig|tlsConfig(io.kuicksilver.tls.TlsRole;kotlin.Function1<io.kuicksilver.tls.TlsConfig.Builder,kotlin.Unit>){}[0]

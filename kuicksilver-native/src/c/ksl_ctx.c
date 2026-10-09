@@ -1,0 +1,169 @@
+/* Copyright 2026 The Kuicksilver Authors
+ * SPDX-License-Identifier: Apache-2.0 */
+/* TLS contexts: identity, roots, ALPN, cipher profile, ticket keys, options; immutable after freeze. */
+#include "ksl_internal.h"
+#include <openssl/hmac.h>
+#include <openssl/rand.h>
+#include <openssl/core_names.h>
+
+#define TLS12_PROFILE "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305"
+#define TLS13_DEFAULT "TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256"
+
+static int alpn_select_cb(SSL *ssl, const unsigned char **out, unsigned char *outlen, const unsigned char *in, unsigned int inlen, void *arg) {
+    (void)ssl; ksl_ctx *c = arg;
+    if (SSL_select_next_proto((unsigned char **)out, outlen, c->alpn, (unsigned)c->alpn_len, in, inlen) == OPENSSL_NPN_NEGOTIATED) return SSL_TLSEXT_ERR_OK;
+    return SSL_TLSEXT_ERR_ALERT_FATAL;   /* no_application_protocol (120) */
+}
+/* Records alerts for both modes: sent -> code, received -> code | 0x100 (ksl_ssl_last_error). */
+static void info_cb(const SSL *ssl, int where, int ret) {
+    if (!(where & SSL_CB_ALERT)) return; ksl_ssl *s = SSL_get_ex_data(ssl, 1); if (!s) return;
+    int code = ret & 0xff; if ((ret >> 8) != SSL3_AL_FATAL && code != SSL_AD_CLOSE_NOTIFY) return;
+    s->last_alert = (where & SSL_CB_READ) ? (code | 0x100) : code;
+}
+static void keylog_cb(const SSL *ssl, const char *line) {
+    ksl_ssl *s = SSL_get_ex_data(ssl, 1); if (!s || !s->owner->keylog) return;
+    size_t l = strlen(line);
+    if (s->keylog_len + l + 2 > s->keylog_cap) { size_t nc = (s->keylog_len + l + 2) * 2; char *nb = realloc(s->keylog, nc); if (!nb) return; s->keylog = nb; s->keylog_cap = nc; }
+    memcpy(s->keylog + s->keylog_len, line, l); s->keylog_len += l; s->keylog[s->keylog_len++] = '\n'; s->keylog[s->keylog_len] = 0;
+}
+/* RFC 8446 section 4.6.1 tickets: name16 | aes-256 key 32 | hmac-sha256 key 32; current key encrypts, all keys decrypt. */
+static int ticket_cb(SSL *ssl, unsigned char key_name[16], unsigned char iv[EVP_MAX_IV_LENGTH], EVP_CIPHER_CTX *ectx, EVP_MAC_CTX *hctx, int enc) {
+    ksl_ssl *s = SSL_get_ex_data(ssl, 1); ksl_ctx *c = s->owner;
+    const uint8_t *k = NULL; if (!c->ticket_keys) return -1;   /* an override context without keys: no tickets */
+    /* KSL_OPT_NUM_TICKETS 0: tickets only from ksl_ssl_new_session_ticket (after Kotlin's pin verdict). TLS 1.2 issues its ticket inside the
+       handshake, before any verdict: 0 sends an empty one, so no 1.2 session is resumable (a 1.2 ticket would otherwise precede the pin verdict). SSL_OP_NO_TICKET would switch TLS 1.3
+       to stateful tickets, which need the server cache ksl keeps off. */
+    if (enc && c->num_tickets == 0 && SSL_version(ssl) < TLS1_3_VERSION) return 0;
+    if (enc) { k = c->ticket_keys; memcpy(key_name, k, 16); if (RAND_bytes(iv, 16) != 1) return -1; }
+    else { for (size_t i = 0; i < c->ticket_key_count; i++) if (!memcmp(c->ticket_keys + i * 80, key_name, 16)) { k = c->ticket_keys + i * 80; break; } if (!k) return 0; }
+    if (EVP_CipherInit_ex(ectx, EVP_aes_256_cbc(), NULL, k + 16, iv, enc) != 1) return -1;
+    OSSL_PARAM p[3]; p[0] = OSSL_PARAM_construct_octet_string(OSSL_MAC_PARAM_KEY, (void *)(k + 48), 32);
+    p[1] = OSSL_PARAM_construct_utf8_string(OSSL_MAC_PARAM_DIGEST, "SHA256", 0); p[2] = OSSL_PARAM_construct_end();
+    if (EVP_MAC_CTX_set_params(hctx, p) != 1) return -1;
+    return enc ? 1 : (k == c->ticket_keys ? 1 : 2);   /* 2 = decrypted with a previous key: renew the ticket */
+}
+
+ksl_ctx *ksl_ctx_new(int role) {
+    ksl_ctx *c = calloc(1, sizeof *c); if (!c) return NULL;
+    c->role = role; c->verify_mode = KSL_VERIFY_OPENSSL;
+    c->ctx = SSL_CTX_new_ex(NULL, NULL, TLS_method()); if (!c->ctx) { free(c); return NULL; }
+    SSL_CTX_set_min_proto_version(c->ctx, TLS1_3_VERSION); SSL_CTX_set_max_proto_version(c->ctx, TLS1_3_VERSION);
+    SSL_CTX_set_options(c->ctx, SSL_OP_NO_RENEGOTIATION | SSL_OP_NO_COMPRESSION);
+    SSL_CTX_clear_options(c->ctx, SSL_OP_LEGACY_SERVER_CONNECT);
+    SSL_CTX_set_cipher_list(c->ctx, TLS12_PROFILE); SSL_CTX_set_ciphersuites(c->ctx, TLS13_DEFAULT);
+    /* One tuple of key-exchange groups: a server takes the client's X25519 key share instead of answering HelloRetryRequest for
+       X25519MLKEM768 when the client supports it but sent no share for it (OpenSSL's default puts the hybrid alone in the first
+       tuple; ngtcp2 and others ship X25519 shares only, and the extra round trip doubled handshake loss in interop). A client
+       still sends shares for the hybrid and X25519 (the '*' marks), so a post-quantum server picks the hybrid in one flight. */
+    if (SSL_CTX_set1_groups_list(c->ctx, role == KSL_SERVER ? "X25519MLKEM768:X25519:secp256r1:X448:secp384r1:secp521r1" : "*X25519MLKEM768:*X25519:secp256r1:X448:secp384r1:secp521r1") != 1) { SSL_CTX_free(c->ctx); free(c); return NULL; }
+    SSL_CTX_set_cert_verify_callback(c->ctx, ksl_cert_verify_cb, c);
+    SSL_CTX_set_verify(c->ctx, role == KSL_CLIENT ? SSL_VERIFY_PEER : SSL_VERIFY_NONE, NULL);
+    SSL_CTX_set_num_tickets(c->ctx, 0); SSL_CTX_set_keylog_callback(c->ctx, keylog_cb); SSL_CTX_set_info_callback(c->ctx, info_cb);
+    SSL_CTX_set_session_cache_mode(c->ctx, SSL_SESS_CACHE_OFF);
+    /* required by OpenSSL to resume a session whose handshake verified a client certificate */
+    SSL_CTX_set_session_id_context(c->ctx, (const unsigned char *)"ksl", 3);
+    return c;
+}
+void ksl_ctx_free(ksl_ctx *c) {
+    if (!c) return; SSL_CTX_free(c->ctx);
+    if (c->ticket_keys) { OPENSSL_cleanse(c->ticket_keys, c->ticket_key_count * 80); free(c->ticket_keys); }
+    free(c);
+}
+static int frozen(ksl_ctx *c) { if (c->frozen) { ksl_ctx_set_error(c, KSL_E_CTX_FROZEN, "ksl: context is frozen"); return 1; } return 0; }
+
+int ksl_ctx_set_alpn(ksl_ctx *c, const uint8_t *wire, size_t len) {
+    if (frozen(c)) return KSL_ERROR;
+    if (!wire || len == 0 || len > sizeof c->alpn) { ksl_ctx_set_error(c, KSL_E_BAD_ARG, "ksl: alpn list empty or too long"); return KSL_ERROR; }
+    memcpy(c->alpn, wire, len); c->alpn_len = len;
+    if (c->role == KSL_CLIENT) { if (SSL_CTX_set_alpn_protos(c->ctx, wire, (unsigned)len) != 0) { ksl_ctx_set_error(c, KSL_E_BAD_ARG, "ksl: bad alpn list"); return KSL_ERROR; } }
+    else SSL_CTX_set_alpn_select_cb(c->ctx, alpn_select_cb, c);
+    return KSL_OK;
+}
+int ksl_parse_chain(const uint8_t *framed, size_t len, STACK_OF(X509) **out) {
+    STACK_OF(X509) *sk = sk_X509_new_null(); size_t off = 0;
+    while (off + 4 <= len) {
+        size_t l = ((size_t)framed[off] << 24) | ((size_t)framed[off + 1] << 16) | ((size_t)framed[off + 2] << 8) | framed[off + 3]; off += 4;
+        if (off + l > len) break;
+        const unsigned char *p = framed + off; X509 *x = d2i_X509(NULL, &p, (long)l); if (!x || !sk_X509_push(sk, x)) { X509_free(x); sk_X509_pop_free(sk, X509_free); return 0; }
+        off += l;
+    }
+    if (off != len) { sk_X509_pop_free(sk, X509_free); return 0; }
+    *out = sk; return 1;
+}
+int ksl_ctx_set_identity(ksl_ctx *c, const uint8_t *chain, size_t chain_len, const uint8_t *key_der, size_t key_len) {
+    if (frozen(c)) return KSL_ERROR; ERR_clear_error();
+    STACK_OF(X509) *sk = NULL; if (!ksl_parse_chain(chain, chain_len, &sk) || sk_X509_num(sk) == 0) { sk_X509_pop_free(sk, X509_free); ksl_ctx_set_error(c, KSL_E_BAD_ARG, "ksl: bad certificate chain framing"); return KSL_ERROR; }
+    const unsigned char *p = key_der; EVP_PKEY *k = d2i_AutoPrivateKey(NULL, &p, (long)key_len);
+    int ok = k && SSL_CTX_use_certificate(c->ctx, sk_X509_value(sk, 0)) == 1 && SSL_CTX_use_PrivateKey(c->ctx, k) == 1 && SSL_CTX_check_private_key(c->ctx) == 1;
+    for (int i = 1; ok && i < sk_X509_num(sk); i++) ok = SSL_CTX_add1_chain_cert(c->ctx, sk_X509_value(sk, i)) == 1;
+    EVP_PKEY_free(k); sk_X509_pop_free(sk, X509_free);
+    if (!ok) { ksl_ctx_set_error(c, KSL_E_BAD_ARG, "ksl: identity rejected"); return KSL_ERROR; }
+    return KSL_OK;
+}
+int ksl_ctx_set_roots(ksl_ctx *c, const uint8_t *roots, size_t roots_len) {
+    if (frozen(c)) return KSL_ERROR; ERR_clear_error();
+    X509_STORE *st = SSL_CTX_get_cert_store(c->ctx);
+    if (roots_len == 0) {
+        /* The bundled OpenSSL has --openssldir=/nonexistent: the system store is located explicitly (SSL_CERT_FILE / SSL_CERT_DIR, then the usual distribution paths). */
+        static const char *files[] = {"/etc/ssl/certs/ca-certificates.crt", "/etc/pki/tls/certs/ca-bundle.crt", "/etc/ssl/ca-bundle.pem", "/etc/pki/tls/cacert.pem", "/etc/ssl/cert.pem", "/usr/local/etc/openssl/cert.pem", NULL};
+        static const char *dirs[] = {"/etc/ssl/certs", "/etc/pki/tls/certs", NULL};
+        int loaded = 0; const char *ef = getenv("SSL_CERT_FILE"), *ed = getenv("SSL_CERT_DIR");
+        if (ef && *ef && X509_STORE_load_file(st, ef) == 1) loaded = 1;
+        if (ed && *ed && X509_STORE_load_path(st, ed) == 1) loaded = 1;
+        for (int i = 0; !loaded && files[i]; i++) if (X509_STORE_load_file(st, files[i]) == 1) loaded = 1;
+        for (int i = 0; !loaded && dirs[i]; i++) if (X509_STORE_load_path(st, dirs[i]) == 1) loaded = 1;
+        ERR_clear_error();
+        if (!loaded) { ksl_ctx_set_error(c, KSL_E_BAD_ARG, "ksl: no system certificate store found (set SSL_CERT_FILE or SSL_CERT_DIR)"); return KSL_ERROR; }
+        return KSL_OK;
+    }
+    STACK_OF(X509) *sk = NULL; if (!ksl_parse_chain(roots, roots_len, &sk)) { ksl_ctx_set_error(c, KSL_E_BAD_ARG, "ksl: bad roots framing"); return KSL_ERROR; }
+    int ok = 1; for (int i = 0; ok && i < sk_X509_num(sk); i++) ok = X509_STORE_add_cert(st, sk_X509_value(sk, i)) == 1;
+    sk_X509_pop_free(sk, X509_free);
+    if (!ok) { ksl_ctx_set_error(c, KSL_E_BAD_ARG, "ksl: root rejected"); return KSL_ERROR; }
+    return KSL_OK;
+}
+int ksl_ctx_set_ciphers(ksl_ctx *c, const char *tls13_suites, const char *tls12_list) {
+    if (frozen(c)) return KSL_ERROR; ERR_clear_error();
+    if (tls13_suites && SSL_CTX_set_ciphersuites(c->ctx, tls13_suites) != 1) { ksl_ctx_set_error(c, KSL_E_BAD_ARG, "ksl: bad TLS 1.3 suites"); return KSL_ERROR; }
+    if (tls12_list && SSL_CTX_set_cipher_list(c->ctx, tls12_list) != 1) { ksl_ctx_set_error(c, KSL_E_BAD_ARG, "ksl: bad TLS 1.2 list"); return KSL_ERROR; }
+    return KSL_OK;
+}
+int ksl_ctx_set_ticket_keys(ksl_ctx *c, const uint8_t *keys, size_t n) {
+    if (frozen(c)) return KSL_ERROR;
+    if (!keys || n == 0) { ksl_ctx_set_error(c, KSL_E_BAD_ARG, "ksl: no ticket keys"); return KSL_ERROR; }
+    uint8_t *copy = malloc(n * 80); if (!copy) return KSL_ERROR; memcpy(copy, keys, n * 80);
+    if (c->ticket_keys) { OPENSSL_cleanse(c->ticket_keys, c->ticket_key_count * 80); free(c->ticket_keys); }
+    c->ticket_keys = copy; c->ticket_key_count = n;
+    SSL_CTX_set_tlsext_ticket_key_evp_cb(c->ctx, ticket_cb); return KSL_OK;
+}
+/* Binds tickets to a server configuration: OpenSSL resumes a session only when its sid_ctx equals the SSL's, otherwise a full handshake
+   runs. Kotlin derives it from the trust configuration, so a resumed session proves this configuration's verdict. */
+int ksl_ctx_set_session_context(ksl_ctx *c, const uint8_t *sid_ctx, size_t len) {
+    if (frozen(c)) return KSL_ERROR; ERR_clear_error();
+    if (!sid_ctx || len == 0 || len > SSL_MAX_SID_CTX_LENGTH || SSL_CTX_set_session_id_context(c->ctx, sid_ctx, (unsigned)len) != 1) { ksl_ctx_set_error(c, KSL_E_BAD_ARG, "ksl: session context is 1..32 bytes"); return KSL_ERROR; }
+    return KSL_OK;
+}
+int ksl_ctx_set_option(ksl_ctx *c, int option, int value) {
+    if (frozen(c)) return KSL_ERROR;
+    switch (option) {
+    case KSL_OPT_VERIFY_MODE:
+        if (c->role == KSL_SERVER && value == KSL_VERIFY_PAUSE) { ksl_ctx_set_error(c, KSL_E_SERVER_PAUSE_FORBIDDEN, "ksl: verify pause is client-only (OpenSSL would accept silently)"); return KSL_ERROR; }
+        c->verify_mode = value;
+        if (c->role == KSL_CLIENT) SSL_CTX_set_verify(c->ctx, value == KSL_VERIFY_NONE ? SSL_VERIFY_NONE : SSL_VERIFY_PEER, NULL);
+        return KSL_OK;
+    case KSL_OPT_CLIENT_CERT:
+        c->client_cert_mode = value;
+        SSL_CTX_set_verify(c->ctx, value == KSL_CLIENT_CERT_NONE ? SSL_VERIFY_NONE : value == KSL_CLIENT_CERT_OPTIONAL ? SSL_VERIFY_PEER : SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT, NULL);
+        return KSL_OK;
+    case KSL_OPT_MIN_VERSION: return SSL_CTX_set_min_proto_version(c->ctx, value) == 1 ? KSL_OK : KSL_ERROR;
+    case KSL_OPT_MAX_VERSION: return SSL_CTX_set_max_proto_version(c->ctx, value) == 1 ? KSL_OK : KSL_ERROR;
+    case KSL_OPT_NUM_TICKETS: c->num_tickets = (size_t)value; return SSL_CTX_set_num_tickets(c->ctx, (size_t)value) == 1 ? KSL_OK : KSL_ERROR;
+    case KSL_OPT_KEYLOG: c->keylog = value != 0; return KSL_OK;
+    case KSL_OPT_GENERIC_ALERTS: c->generic_alerts = value != 0; return KSL_OK;
+    case KSL_OPT_TICKET_LIFETIME: return SSL_CTX_set_timeout(c->ctx, value) >= 0 ? KSL_OK : KSL_ERROR;
+    case KSL_OPT_SNI_PAUSE:
+        c->sni_pause = value != 0; SSL_CTX_set_client_hello_cb(c->ctx, value ? ksl_client_hello_cb : NULL, c); return KSL_OK;
+    default: ksl_ctx_set_error(c, KSL_E_BAD_ARG, "ksl: unknown option"); return KSL_ERROR;
+    }
+}
+int ksl_ctx_freeze(ksl_ctx *c) { c->frozen = 1; return KSL_OK; }

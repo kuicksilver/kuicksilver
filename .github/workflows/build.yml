@@ -1,0 +1,176 @@
+# Copyright 2026 The Kuicksilver Authors
+# SPDX-License-Identifier: Apache-2.0
+# Draft: the matrix tools/ci/local-matrix.sh runs on the owner's macOS host today; this file is the same
+# sequence of jobs for GitHub Actions and is exercised there once the repository is public.
+name: build
+on: [push, pull_request, workflow_dispatch]
+env:
+  GRADLE_OPTS: -Dorg.gradle.workers.max=2
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '21' }
+      - run: ./gradlew checkSpdxHeaders checkLayerDependencies checkKotlinAbi checkQuicArchitecture
+  openssl:
+    strategy:
+      matrix:
+        include:
+          - { os: macos-latest, target: macos-arm64 }
+          - { os: macos-latest, target: ios-arm64 }
+          - { os: macos-latest, target: ios-sim-arm64 }
+          - { os: macos-latest, target: android-arm64 }
+          - { os: macos-latest, target: android-x86_64 }
+          - { os: macos-latest, target: android-arm }
+          - { os: ubuntu-latest, target: linux-x64 }
+          - { os: ubuntu-24.04-arm, target: linux-arm64 }
+          - { os: ubuntu-latest, target: mingw-x64 }
+          - { os: ubuntu-latest, target: linux-x64-kn }
+          - { os: ubuntu-24.04-arm, target: linux-arm64-kn }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: build/openssl-work/cache
+          key: openssl-${{ matrix.target }}-${{ hashFiles('gradle/openssl.toml', 'tools/openssl/configure-flags.txt', 'tools/openssl/build.sh') }}
+      - run: bash tools/openssl/fetch.sh
+      - run: bash tools/openssl/build.sh ${{ matrix.target }}
+        if: ${{ !startsWith(matrix.target, 'linux') && matrix.target != 'mingw-x64' }}
+      - run: bash tools/openssl/build-docker.sh ${{ matrix.target }}
+        if: ${{ startsWith(matrix.target, 'linux-x64') || startsWith(matrix.target, 'linux-arm64') || matrix.target == 'mingw-x64' }}
+      - run: bash tools/check/keylog-disabled.sh build/openssl/${{ matrix.target }}/include
+      - name: reproducibility (second build must be byte-identical)
+        run: |
+          mkdir -p build/openssl-work-repro && cp -R build/openssl-work/src build/openssl-work-repro/
+          KSL_OPENSSL_OUT=$PWD/build/openssl-repro KSL_OPENSSL_WORK=$PWD/build/openssl-work-repro bash tools/openssl/build.sh ${{ matrix.target }}
+          cmp build/openssl/${{ matrix.target }}/lib/libcrypto.a build/openssl-repro/${{ matrix.target }}/lib/libcrypto.a
+          cmp build/openssl/${{ matrix.target }}/lib/libssl.a build/openssl-repro/${{ matrix.target }}/lib/libssl.a
+        if: ${{ matrix.target == 'macos-arm64' }}
+      - uses: actions/upload-artifact@v4
+        with: { name: openssl-${{ matrix.target }}, path: build/openssl/${{ matrix.target }} }
+  c-tests:
+    needs: openssl
+    strategy:
+      matrix:
+        include:
+          - { os: macos-latest, target: macos-arm64 }
+          - { os: ubuntu-latest, target: linux-x64 }
+          - { os: ubuntu-24.04-arm, target: linux-arm64 }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { name: openssl-${{ matrix.target }}, path: build/openssl/${{ matrix.target }} }
+      - run: bash tools/c-test.sh ${{ matrix.target }}
+  jvm:
+    needs: openssl
+    strategy:
+      matrix:
+        include:
+          - { os: macos-latest, target: macos-arm64, classifier: osx-aarch_64 }
+          - { os: ubuntu-latest, target: linux-x64, classifier: linux-x86_64 }
+          - { os: ubuntu-24.04-arm, target: linux-arm64, classifier: linux-aarch_64 }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '21' }
+      - uses: actions/download-artifact@v4
+        with: { name: openssl-${{ matrix.target }}, path: build/openssl/${{ matrix.target }} }
+      - run: ./gradlew :kuicksilver-native:jvmTest :kuicksilver-tls:jvmTest :kuicksilver-ktor-network:jvmTest :kuicksilver-quic:jvmTest :kuicksilver-testing:jvmTest :kuicksilver-interop:jvmTest
+      - name: fuzz regression corpus
+        run: ./gradlew :kuicksilver-quic:jvmTest --tests 'io.kuicksilver.quic.fuzz.*'
+      - name: simulator Monte-Carlo
+        run: ./gradlew :kuicksilver-testing:jvmTest -Pkuicksilver.sim.runs=200 --tests io.kuicksilver.testing.MonteCarloTest
+      - name: allocation gate
+        run: ./gradlew :kuicksilver-bench:jvmTest
+      - run: bash tools/check/exports.sh kuicksilver-native/build/jni/${{ matrix.classifier }}/libksl_3_*.* ${{ startsWith(matrix.os, 'macos') && 'macos' || 'linux' }}
+      - run: bash tools/check/glibc-floor.sh kuicksilver-native/build/jni/${{ matrix.classifier }}/libksl_3_linux_*.so 2.17
+        if: ${{ startsWith(matrix.os, 'ubuntu') }}
+      - name: JDK 24+ restricted native access must stay allowed by the application, never by the library
+        run: ./gradlew :kuicksilver-native:jvmTest -Dkuicksilver.test.jvmargs=--illegal-native-access=deny
+        if: ${{ false }}   # enabled when the runner image ships JDK 24
+  android:
+    needs: openssl
+    runs-on: ubuntu-latest
+    strategy:
+      matrix: { api: [24, 35] }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '21' }
+      - uses: actions/download-artifact@v4
+        with: { name: openssl-android-arm64, path: build/openssl/android-arm64 }
+      - uses: actions/download-artifact@v4
+        with: { name: openssl-android-x86_64, path: build/openssl/android-x86_64 }
+      - uses: actions/download-artifact@v4
+        with: { name: openssl-android-arm, path: build/openssl/android-arm }
+      - run: ./gradlew :kuicksilver-native:bundleAndroidMainAar
+      - run: bash tools/check/size.sh kuicksilver-native/build/outputs/aar/kuicksilver-native.aar && bash tools/check/page-align.sh kuicksilver-native/build/outputs/aar/kuicksilver-native.aar
+      - uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: ${{ matrix.api }}
+          arch: x86_64
+          script: ./gradlew androidConnectedCheck
+  native-macos:
+    needs: openssl
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '21' }
+      - uses: actions/download-artifact@v4
+        with: { pattern: 'openssl-*', path: build/openssl, merge-multiple: false }
+      - run: ./gradlew macosArm64Test iosSimulatorArm64Test
+      - run: for t in macos-arm64 ios-arm64 ios-sim-arm64; do bash tools/prefix/check-no-unprefixed.sh build/openssl-prefixed/$t/lib; done
+  native-linux:
+    needs: openssl
+    strategy:
+      matrix:
+        include:
+          - { os: ubuntu-latest, target: linuxX64, dir: linux-x64-kn, glibc: '2.19' }
+          - { os: ubuntu-24.04-arm, target: linuxArm64, dir: linux-arm64-kn, glibc: '2.25' }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '21' }
+      - uses: actions/download-artifact@v4
+        with: { name: openssl-${{ matrix.dir }}, path: build/openssl/${{ matrix.dir }} }
+      - run: ./gradlew ${{ matrix.target }}Test
+      - run: bash tools/check/glibc-floor.sh kuicksilver-native/build/bin/${{ matrix.target }}/debugTest/test.kexe ${{ matrix.glibc }}
+      - run: bash tools/prefix/check-no-unprefixed.sh build/openssl-prefixed/${{ matrix.dir }}/lib
+  native-windows:
+    needs: openssl
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '21' }
+      - uses: actions/download-artifact@v4
+        with: { name: openssl-mingw-x64, path: build/openssl/mingw-x64 }
+      - run: ./gradlew mingwX64Test
+  system-openssl:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash tools/ci/system-openssl.sh
+  interop:
+    # The QUIC Interop Runner against the peers in tools/interop/required.json; manual because it pulls the peer images (~30 min).
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    needs: openssl
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '21' }
+      - uses: actions/download-artifact@v4
+        with: { name: openssl-linux-x64, path: build/openssl/linux-x64 }
+      - run: sudo apt-get install -y tshark
+      - run: bash tools/interop/build-image.sh
+      - run: bash tools/interop/build-image.sh --native
+      - run: bash tools/interop/run-local.sh --check-required -t handshake,transfer,longrtt,chacha20,multiplexing,retry,keyupdate,blackhole,ecn,amplificationlimit,handshakeloss,transferloss,handshakecorruption,transfercorruption,ipv6,v2,rebind-port,rebind-addr
+      - run: bash tools/interop/run-local.sh --check-required --image native -t handshake,transfer,retry,keyupdate,ecn,rebind-port quic-go ngtcp2 quinn msquic picoquic

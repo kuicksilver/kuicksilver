@@ -1,0 +1,420 @@
+// Copyright 2026 The Kuicksilver Authors
+// SPDX-License-Identifier: Apache-2.0
+package io.kuicksilver.quic.core
+
+import io.ktor.network.sockets.InetSocketAddress
+import io.kuicksilver.annotations.ExperimentalKuicksilverApi
+import io.kuicksilver.native.PacketBuffer
+import io.kuicksilver.quic.ConnectionCore
+import io.kuicksilver.quic.ConnectionState
+import io.kuicksilver.quic.PathId
+import io.kuicksilver.quic.TimeMark
+import io.kuicksilver.quic.TransportError
+import io.kuicksilver.quic.VersionProfile
+import io.kuicksilver.quic.crypto.PacketProtection
+import io.kuicksilver.quic.recovery.SpaceId
+import io.kuicksilver.quic.wire.AckFrameView
+import io.kuicksilver.quic.wire.FrameDecoder
+import io.kuicksilver.quic.wire.PacketHeaderCodec
+import io.kuicksilver.quic.wire.PacketHeaderView
+import io.kuicksilver.quic.wire.PacketType
+import io.kuicksilver.quic.wire.QuicWireException
+import io.kuicksilver.quic.wire.VersionNegotiationPacket
+import io.kuicksilver.quic.wire.WireReader
+import io.kuicksilver.tls.TlsRole
+
+/** The receive path of a connection: header parsing, key selection, decryption, frames handed to [FrameDispatcher] (RFC 9000 sections 12–13). */
+@OptIn(ExperimentalKuicksilverApi::class)
+internal class PacketReceiver(
+    private val c: ConnectionCore,
+) {
+    private val hv = PacketHeaderView()
+    private val mask = ByteArray(5)
+    private val ackView = AckFrameView()
+    private val frames = FrameDispatcher(c, this)
+    internal val reader = WireReader(PacketBuffer.allocate(1), 0, 0)
+    internal var now = TimeMark(0)
+    internal var space = SpaceId.Initial
+    private var packetType = PacketType.Initial
+    internal var level = 0
+
+    private class Buffered(
+        val level: Int,
+        val bytes: ByteArray,
+        val from: InetSocketAddress,
+    )
+
+    private val buffered = ArrayList<Buffered>()
+    val bufferedCount: Int get() = buffered.size
+
+    /** Bytes of packets held for keys that have not arrived yet. */
+    val bufferedBytes: Long get() {
+        var n = 0L
+        for (b in buffered) n += b.bytes.size
+        return n
+    }
+
+    internal var socket: PathId = PathId.Initial
+    internal var from: InetSocketAddress? = null
+    internal var datagramLength = 0
+    private var datagramEcn: io.kuicksilver.quic.Ecn = io.kuicksilver.quic.Ecn.NotEct
+
+    fun onDatagram(
+        data: PacketBuffer,
+        length: Int,
+        from: InetSocketAddress,
+        socket: PathId,
+        ecn: io.kuicksilver.quic.Ecn,
+        now: TimeMark,
+    ) {
+        this.now = now
+        this.socket = socket
+        this.from = from
+        datagramLength = length
+        if (c.role == TlsRole.Client && c.paths.byRemote(socket, from) == null) {
+            c.datagramsDropped++
+            return
+        } // RFC 9000 section 9: a client discards packets from an unknown server address
+        c.bytesReceived += length
+        c.paths
+            .byRemote(socket, from)
+            ?.amplification
+            ?.onReceived(length) // per-path bytes; RFC 9000 sections 8.1 and 9.3.1: an unvalidated path has a 3x budget
+        datagramEcn = ecn // a socket that cannot read marks delivers NotEct itself (ADR-0006)
+        var off = 0
+        var processed = false
+        while (off < length) {
+            if (!PacketHeaderCodec.parse(data, off, length, c.localCid.length, hv)) break
+            if (hv.isVersionNegotiation) {
+                if (c.localCid.contentEquals(data, hv.dcidOff, hv.dcidLen) &&
+                    c.odcid.contentEquals(data, hv.scidOff, hv.scidLen)
+                ) {
+                    c.onVersionNegotiation(
+                        VersionNegotiationPacket.versions(
+                            data,
+                            hv.scidOff + hv.scidLen,
+                            length,
+                        ),
+                    )
+                } else {
+                    c.datagramsDropped++
+                }
+                return
+            }
+            if (hv.unsupportedVersion) break
+            if (hv.type == PacketType.Initial && off == 0 && c.role == TlsRole.Server && length < 1200) return // RFC 9000 section 14.1
+            if (processPacket(data, from)) processed = true
+            if (hv.packetEnd <= off) break
+            off = hv.packetEnd
+        }
+        if (!processed && length >= io.kuicksilver.quic.endpoint.StatelessReset.MIN_SIZE &&
+            data[0].toInt() and 0x80 == 0
+        ) {
+            c.checkStatelessReset(data, length, now) // RFC 9000 section 10.3.1: a reset looks like an undecryptable short header
+        }
+    }
+
+    private fun matchesLocalCid(data: PacketBuffer): Boolean {
+        if (c.localCid.contentEquals(data, hv.dcidOff, hv.dcidLen) || c.cids.localMatches(data, hv.dcidOff, hv.dcidLen)) return true
+        if (hv.type != PacketType.Initial || c.role != TlsRole.Server) return false
+        // RFC 9000 section 7.2: a client's Initials carry the original DCID or, after a Retry, our Retry SCID
+        return c.odcid.contentEquals(data, hv.dcidOff, hv.dcidLen) || c.retryScid?.contentEquals(data, hv.dcidOff, hv.dcidLen) == true
+    }
+
+    /** Returns true when the packet was decrypted and processed. */
+    private fun processPacket(
+        data: PacketBuffer,
+        from: InetSocketAddress,
+    ): Boolean {
+        val type = hv.type ?: return false
+        if (type == PacketType.Retry) {
+            onRetry(data)
+            return false
+        }
+        if (!matchesLocalCid(data)) return false
+        // RFC 9000 section 7.2: after the server's first Initial its Source Connection ID is fixed; a long-header packet with another one belongs to a stranger
+        // (msquic answers a retransmitted Initial from a second connection instance) and is discarded before any key is tried
+        if (c.role == TlsRole.Client && type != PacketType.OneRtt && remoteCidSet &&
+            peerScid?.contentEquals(data, hv.scidOff, hv.scidLen) == false
+        ) {
+            // msquic acknowledges the ClientHello from an Initial whose SCID is still the client's DCID and chooses its own only with the ServerHello: until Initial CRYPTO arrived, a new SCID is adopted, not discarded
+            if (initialCryptoSeen) {
+                c.datagramsDropped++
+                return false
+            }
+            remoteCidSet = false
+            c.loss
+                .space(SpaceId.Initial)
+                .ack
+                .forgetAll() // what the provisional instance sent is not ours to acknowledge
+        }
+        space =
+            when (type) {
+                PacketType.Initial -> SpaceId.Initial
+                PacketType.Handshake -> SpaceId.Handshake
+                else -> SpaceId.Application
+            }
+        level =
+            when (type) {
+                PacketType.Initial -> 0
+                PacketType.ZeroRtt -> 1
+                PacketType.Handshake -> 2
+                else -> 3
+            }
+        packetType = type
+        if (c.spaceDiscarded[space.ordinal]) return false
+        // RFC 9000 section 17.2/17.3.1: not a valid packet of this version unless we allowed it (RFC 9287)
+        if (!hv.fixedBitSet && !c.config.greaseQuicBit) return false
+        // section 17.2.2: a server Initial carries no token
+        if (type == PacketType.Initial && c.role == TlsRole.Client && hv.tokenLen != 0) return false
+        // migration off, or to loopback/link-local (threat-model 3.14)
+        if (type == PacketType.OneRtt && c.role == TlsRole.Server && !c.path.isRemote(from) && !c.migrationAllowedFrom(from)) return false
+        if (type != PacketType.OneRtt && hv.version != c.version.version) {
+            val profile = VersionProfile.of(hv.version) ?: return false
+            if (c.role == TlsRole.Client) {
+                if (!c.switchClientVersion(profile)) return false
+            } else if (!(type == PacketType.Initial && hv.version == c.originalVersion.version)) {
+                return false
+            }
+        }
+        val key =
+            if (type == PacketType.Initial && c.role == TlsRole.Server && hv.version == c.originalVersion.version &&
+                c.initialReadOriginal != null
+            ) {
+                c.initialReadOriginal
+            } else {
+                c.readKeys[level]
+            }
+        if (key == null) {
+            if (type == PacketType.ZeroRtt) return false
+            if (buffered.size >= c.config.limits.undecryptablePackets) {
+                c.datagramsDropped++
+                return false
+            }
+            val bytes = ByteArray(hv.packetEnd - hv.pnOffset + (hv.pnOffset - headerStart()))
+            val start = headerStart()
+            data.copyTo(bytes, start, 0, bytes.size)
+            buffered += Buffered(level, bytes, from)
+            return false
+        }
+        val sp = c.loss.space(space)
+        val kp = if (type == PacketType.OneRtt) c.keyPhase else null
+        val pn: Long
+        if (kp != null) {
+            // RFC 9001 section 6: header protection first (its key never changes), then the Key Phase bit picks the AEAD key
+            pn =
+                PacketProtection.removeHeaderProtection(
+                    data,
+                    headerStart(),
+                    hv.pnOffset,
+                    hv.packetEnd,
+                    sp.ack.largestReceived,
+                    kp.hpRead,
+                    mask,
+                )
+            if (pn < 0) return false
+            val bit = data[headerStart()].toInt() and 0x04 != 0
+            val aead = kp.readKey(bit, pn) ?: return false
+            if (!PacketProtection.openPayload(data, headerStart(), hv.pnOffset, hv.packetEnd, pn, aead)) {
+                c.onAuthenticationFailure(aead.aead)
+                return false
+                // discarded silently (RFC 9000 section 12.2): anyone who sees a connection ID can forge these, so they must not spend glitch
+                // tokens
+            }
+            try {
+                kp.onAuthenticated(bit, pn, now, c.pto())
+            } catch (
+                e: QuicWireException,
+            ) {
+                c.fail(e.code, e.frameType, e.message ?: "", e)
+                return true
+            }
+        } else {
+            pn = PacketProtection.removeHeaderProtection(data, headerStart(), hv.pnOffset, hv.packetEnd, sp.ack.largestReceived, key, mask)
+            if (pn < 0) return false
+            if (!PacketProtection.openPayload(data, headerStart(), hv.pnOffset, hv.packetEnd, pn, key)) {
+                if (type !=
+                    PacketType.Initial
+                ) {
+                    c.onAuthenticationFailure(key.aead)
+                }
+                return false
+            }
+        }
+        if (sp.ack.isDuplicate(pn)) {
+            c.duplicatesDropped++
+            return false
+        }
+        if (data[headerStart()].toInt() and (if (type == PacketType.OneRtt) 0x18 else 0x0c) !=
+            0
+        ) {
+            c.fail(TransportError.PROTOCOL_VIOLATION, 0, "reserved header bits set", null)
+            return true
+        } // sections 17.2 and 17.3.1: checked once both protections are off
+        val pnLen = (data[headerStart()].toInt() and 0x03) + 1
+        reader.buf = data
+        reader.pos = hv.pnOffset + pnLen
+        reader.limit = hv.packetEnd - 16
+        if (type == PacketType.Initial && c.role == TlsRole.Server && c.remoteCid.length == 0) {}
+        if (c.role == TlsRole.Client && type == PacketType.Initial &&
+            !remoteCidSet
+        ) {
+            val scid =
+                io.kuicksilver.quic.wire
+                    .ConnectionId(ByteArray(hv.scidLen).also { data.copyTo(it, hv.scidOff, 0, hv.scidLen) })
+            c.onPeerInitialCid(scid)
+            peerScid =
+                scid
+            remoteCidSet = true
+        }
+        c.anyPeerPacket = true
+        c.timers.lastActivity = now
+        c.timers.ackElicitingSentSinceReceive = false
+        if (c.path.isRemote(from) && socket == c.path.socket) {
+            c.lastReceivedOnActivePath = now
+        } else if ((type == PacketType.Initial || type == PacketType.Handshake) && c.role == TlsRole.Server &&
+            c.state == ConnectionState.Handshaking
+        ) {
+            c.onHandshakeAddressChange(
+                socket,
+                from,
+                datagramLength,
+                initial =
+                    type == PacketType.Initial,
+            ) // a NAT rebinding in the middle of the handshake (interop rebind cases)
+        }
+        val ackEliciting =
+            try {
+                FrameDecoder.decode(reader, type, frames, ackView)
+            } catch (e: QuicWireException) {
+                c.fail(
+                    e.code,
+                    e.frameType,
+                    e.message ?: "",
+                    e,
+                )
+                return true
+            }
+        c.packetsReceived++
+        c.qlog?.packetReceived(space, pn, hv.packetEnd - headerStart(), now)
+        sp.ack.onEcn(datagramEcn) // RFC 9000 section 13.4.1 / 21.10: only processed packets move the ECN counts
+        // PING-only packets beyond a PTO pair (RFC 9002 section 6.2.4: two probes, both PING when nothing is left to resend) within one RTT
+        // are a glitch
+        if (type == PacketType.OneRtt && reader.pingOnly) {
+            if (lastPingOnly == TimeMark.NEVER || now - lastPingOnly >= c.rtt.smoothed) {
+                lastPingOnly = now
+                pingOnlyInRtt = 1
+            } else if (++pingOnlyInRtt >
+                2
+            ) {
+                try {
+                    c.glitch(0x01)
+                } catch (e: QuicWireException) {
+                    c.fail(e.code, e.frameType, e.message ?: "", e)
+                    return true
+                }
+            }
+        }
+        sp.ack.onPacketReceived(pn, ackEliciting, now)
+        if (type == PacketType.Handshake &&
+            c.role == TlsRole.Server
+        ) {
+            c.onInitialPathValidated()
+            if (!c.spaceDiscarded[0]) c.discardInitialPending = true
+        }
+        if (type == PacketType.OneRtt) c.onPathPacket(socket, from, pn, !reader.probingOnly, datagramLength)
+        if (c.role == TlsRole.Client && type == PacketType.Handshake) c.loss.peerAddressValidated = c.loss.peerAddressValidated
+        return true
+    }
+
+    private var remoteCidSet = c.role == TlsRole.Server
+
+    /** The server's Source Connection ID taken from its first Initial (client only); later long-header packets must carry it. */
+    private var peerScid: io.kuicksilver.quic.wire.ConnectionId? = null
+
+    /** True once an Initial packet with CRYPTO data was processed: from then on the peer's SCID is final (RFC 9000 section 7.2). */
+    internal var initialCryptoSeen = false
+    private var lastPingOnly: TimeMark = TimeMark.NEVER
+    private var pingOnlyInRtt = 0
+
+    /** A glitch found outside frame decoding (nothing to throw through): closes the connection directly when the bucket is empty. */
+    private fun glitchOutsideFrame() {
+        try {
+            c.glitch(0)
+        } catch (
+            e: QuicWireException,
+        ) {
+            c.fail(e.code, e.frameType, e.message ?: "", e)
+        }
+    }
+
+    /** RFC 9000 section 17.2.5.2: a client takes exactly one Retry, before any other server packet, with a non-empty token, a new SCID and a valid tag (RFC 9001 section 5.8). */
+    private fun onRetry(data: PacketBuffer) {
+        if (c.role != TlsRole.Client || c.anyPeerPacket || c.retryScid != null || c.state != ConnectionState.Handshaking) return
+        if (!c.localCid.contentEquals(data, hv.dcidOff, hv.dcidLen) || hv.tokenLen == 0) return
+        if (c.odcid.contentEquals(data, hv.scidOff, hv.scidLen)) return
+        if (!io.kuicksilver.quic.wire.RetryPacket
+                .verify(data, headerStart(), hv.packetEnd, c.odcid, c.crypto)
+        ) {
+            return
+        }
+        val scid =
+            io.kuicksilver.quic.wire
+                .ConnectionId(ByteArray(hv.scidLen).also { data.copyTo(it, hv.scidOff, 0, hv.scidLen) })
+        val token = ByteArray(hv.tokenLen).also { data.copyTo(it, hv.tokenOff, 0, hv.tokenLen) }
+        c.onRetry(scid, token)
+        c.tlsDirty = true
+    }
+
+    private fun headerStart(): Int = if (hv.type == PacketType.OneRtt) hv.dcidOff - 1 else hv.dcidOff - 6
+
+    /** Packets kept until their keys arrived are fed again (they already counted toward the amplification budget). */
+    fun replayBuffered(level: Int) {
+        if (buffered.none { it.level == level }) return
+        val again = buffered.filter { it.level == level }
+        buffered.removeAll { it.level == level }
+        for (b in again) {
+            val buf = PacketBuffer.allocate(b.bytes.size)
+            try {
+                buf.copyFrom(b.bytes, 0, 0, b.bytes.size)
+                var off = 0
+                while (off <
+                    b.bytes.size
+                ) {
+                    if (!PacketHeaderCodec.parse(buf, off, b.bytes.size, c.localCid.length, hv)) break
+                    processPacket(buf, b.from)
+                    if (hv.packetEnd <=
+                        off
+                    ) {
+                        break
+                    }
+                    off = hv.packetEnd
+                }
+            } finally {
+                buf.close()
+            }
+        }
+    }
+
+    /** After a Version Negotiation restart: forget buffered packets and the peer CID learned so far. */
+    fun reset() {
+        buffered.clear()
+        remoteCidSet = c.role == TlsRole.Server
+        peerScid = null
+        initialCryptoSeen = false
+    }
+
+    fun dropBuffered(space: SpaceId) {
+        val level =
+            if (space ==
+                SpaceId.Initial
+            ) {
+                0
+            } else if (space == SpaceId.Handshake) {
+                2
+            } else {
+                3
+            }
+        ; buffered.removeAll { it.level == level }
+    }
+}

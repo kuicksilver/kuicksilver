@@ -1,0 +1,147 @@
+<!--
+Copyright 2026 The Kuicksilver Authors
+SPDX-License-Identifier: Apache-2.0
+-->
+
+# Contributing to Kuicksilver
+
+Thank you for helping. Kuicksilver is a network security component, so the bar for changes is high and the process is
+explicit: an issue first for anything that changes behaviour or API, tests that fail before the fix, and a sign-off on
+every commit. This document says how to build, test and propose changes. By participating you agree to the
+[Code of Conduct](CODE_OF_CONDUCT.md). Security issues go through [SECURITY.md](SECURITY.md), never a public issue.
+
+## Building
+
+### Prerequisites
+
+| Tool | Needed for |
+|---|---|
+| JDK 21 | Gradle and the build (the toolchain is 21; JVM bytecode targets 17) |
+| `curl`, `gpg`, `perl`, `shasum` | fetching and verifying the OpenSSL tarball, building OpenSSL |
+| A C compiler (clang or gcc) | the `ksl` shim and its C tests |
+| Docker (with `linux/amd64` and `linux/arm64`) | OpenSSL and `libksl` for Linux (manylinux2014, glibc 2.17) and Windows (mingw-w64), Linux test runs |
+| Android SDK with NDK r28+ (r27 works: the scripts pass the 16 KiB page flags) | the Android AAR; set `ANDROID_NDK_ROOT` or let the scripts pick the newest NDK in the SDK |
+| macOS with Xcode | Apple targets (cinterop needs a Mac host) |
+| Python 3 | tools under `tools/` (symbol maps, QPACK tables, link check) |
+
+The Gradle wrapper (`./gradlew`) downloads Gradle; Kotlin/Native downloads its toolchain into `~/.konan` on the first
+native build. Please keep builds polite on shared machines: `--max-workers=2` is what the scripts use.
+
+### OpenSSL
+
+The project builds its own OpenSSL from a pinned release. `gradle/openssl.toml` holds the version, the tarball's
+SHA-256 and the release signing key's fingerprint; `tools/openssl/fetch.sh` downloads the tarball and its signature,
+checks the signature against the vendored key (`tools/openssl/openssl-release-key.asc`) and the SHA-256, and unpacks
+it. `tools/openssl/build.sh <target>` builds a static OpenSSL with the flags in `tools/openssl/configure-flags.txt`;
+Linux and mingw targets go through Docker (`tools/openssl/build-docker.sh`). On Kotlin/Native the OpenSSL symbols are
+renamed with a `ksl_ossl_` prefix (`tools/prefix`, ADR-0007) so that another OpenSSL in the same binary cannot clash.
+
+You rarely call these scripts by hand: the Gradle tasks (`opensslBuild<Target>`, `buildJniHost`, `buildAndroidJni`,
+`buildKslA<Target>`) run them on demand. Outputs land in `build/openssl/<target>` and `build/openssl-prefixed/<target>`.
+Never edit the pin without also updating the SHA-256 (and the key fingerprint if the signer changed), and never
+disable the signature check.
+
+### Common commands
+
+```sh
+./gradlew --max-workers=2 :kuicksilver-quic:jvmTest              # one module's JVM tests (builds OpenSSL + libksl for the host first)
+./gradlew --max-workers=2 :kuicksilver-quic:macosArm64Test       # the same on Kotlin/Native (macOS host)
+bash tools/c-test.sh                                             # the ksl C tests under ASan/UBSan
+./gradlew checkSpdxHeaders checkLayerDependencies                # headers and module layering
+./gradlew :kuicksilver-quic:checkQuicArchitecture :kuicksilver-http3:checkHttp3Architecture   # sans-IO and import rules
+./gradlew checkKotlinAbi                                         # public ABI against the dumps in <module>/api/
+./gradlew updateKotlinAbi                                        # regenerate the dumps after an intended API change
+bash tools/check/links.sh                                        # relative links in the Markdown files
+tools/ci/local-matrix.sh --dry-run                               # list the full CI matrix; drop --dry-run to run it
+```
+
+`checkKotlinAbi` over all modules covers every Kotlin/Native target, so it needs every OpenSSL build, including the
+Docker ones. Linux JVM tests against the manylinux library run with `tools/ci/docker-jvm.sh linux-x86_64`. The QUIC
+Interop Runner is driven by `tools/interop/build-image.sh` and `tools/interop/run-local.sh` (hours; needs the peers'
+images).
+
+## Style
+
+- **EditorConfig.** `.editorconfig` is the formatting contract (UTF-8, LF, 4 spaces, 2 for YAML/TOML, 140 columns for
+  Kotlin, `ktlint_official` code style). `./gradlew formatKotlin` rewrites, `lintKotlin` runs under `check`; the vendored
+  Ktor contract tests keep upstream's style.
+- **Explicit API.** Every module uses `explicitApi()`: public declarations carry a visibility modifier and a KDoc that
+  states the contract (what it does, what it throws, which thread or coroutine context it expects). Internal helpers stay
+  `internal`.
+- **ABI dumps.** A change to the public API updates the dumps with `./gradlew updateKotlinAbi` in the same commit;
+  reviewers read the `api/` diff. Declarations annotated `@InternalKuicksilverApi` are excluded from the dumps.
+- **Readability.** A human reviewer reads the code, not only a test runner: one statement per line (no `;` between
+  statements, no `if (…) { a; b }` on one line), at most 140 columns, a comment says why and cites the RFC section or
+  the decision, not what the next line does. Big files are split by responsibility, not by size.
+- **SPDX headers.** Every source file starts with the two-line header, as a comment in the file's syntax:
+  `Copyright 2026 The Kuicksilver Authors` and `SPDX-License-Identifier: Apache-2.0`. `checkSpdxHeaders` enforces it
+  for Kotlin, Gradle scripts, C, shell, Python, cinterop `.def`, TOML, YAML and Dockerfiles; please add it to Markdown
+  as well (JSON has no comments).
+- **Layers and rules.** A module depends only on the layer directly below it (ADR-0005); the QUIC and HTTP/3 codecs are
+  sans-IO (ADR-0004): no sockets, clocks, coroutines or default randomness in those packages. The checks above fail
+  otherwise.
+- **Commits.** `<type>(<scope>): <what>` on the first line (`feat`, `fix`, `test`, `docs`, `build`, `ci`, `refactor`,
+  `chore`; scope is the module or area, for example `quic`, `tls`, `http3`, `ksl`), then a body that says why.
+- **Documentation.** The code blocks of `docs/guide/tls.md`, `quic.md` and `http3.md` are compiled and run by
+  `GuideSamplesTest` (marked `// guide:<module>:<name>`); change both together. Behaviour that touches an RFC or a
+  threat updates `docs/spec/rfc-compliance.md` or `docs/spec/threat-model.md` in the same pull request.
+
+## Tests
+
+- **Test first.** A bug fix starts with a test that fails for the reason in the issue (RED), then the fix makes it pass
+  (GREEN). Say in the pull request which test went red.
+- **Negative controls.** Every security check has a test that must fail when the check is removed. Such tests are named
+  `negative_<what>` and are listed in the threat model; keep the names stable.
+- **Determinism, no sleeps.** Do not wait with `sleep` or `delay` for something to happen. Use virtual time
+  (`kotlinx-coroutines-test`, the sans-IO core takes time as a parameter), the network simulator in
+  `kuicksilver-testing` (seeded and reproducible), `MemoryNetwork` for in-memory UDP, or wait for an explicit event with
+  a generous timeout. A test that is flaky is a bug; report the seed.
+- **Platforms.** Common behaviour is tested in `commonTest` so it runs on the JVM, Android and Native. Tests that need a
+  Linux-only facility (the accelerated UDP socket, `SO_REUSEPORT`) skip themselves elsewhere and run in the Docker steps.
+- **Fuzzing.** Jazzer targets live in `kuicksilver-quic` and `kuicksilver-http3` under `src/jvmTest/.../fuzz`; their
+  committed inputs run as regression tests in `jvmTest`. `tools/fuzz/gen-seeds.sh` regenerates the QUIC seed corpus. A
+  crash you find becomes a `crash-*` input next to the seeds.
+
+## Proposing a change
+
+1. **Open an issue first** for anything beyond a small fix: new API, changed behaviour, a new dependency, a new
+   platform. Describe the use case before the API.
+2. **New public API** starts as `@ExperimentalKuicksilverApi`; it becomes stable after it has been used, in a later
+   minor release. API that can break security guarantees when misused (custom verifiers, key logging) is
+   `@DelicateKuicksilverApi`. Deprecations go warning, then error, then removal, with at least one minor release between
+   steps.
+3. **Keep pull requests focused**: one concern per pull request, one logical change per commit.
+4. Add an entry to [CHANGELOG.md](CHANGELOG.md) under `Unreleased` for any user-visible change.
+
+## Developer Certificate of Origin
+
+Every commit must be signed off: `git commit -s` adds
+`Signed-off-by: Your Name <you@example.com>`, which certifies the [Developer Certificate of Origin 1.1](https://developercertificate.org/)
+— that you wrote the change or otherwise have the right to submit it under the project's license. Use your real name or
+the name you are publicly known by. Only a human signs off; a tool never adds `Signed-off-by` on your behalf. A pull
+request with an unsigned commit cannot be merged (`git commit --amend -s` or `git rebase --signoff` fixes it).
+
+## AI assistance
+
+The maintainers use AI coding tools in this project, and contributors may too, under these rules:
+
+- **You understand every line you submit and you are responsible for it**, exactly as if you had typed it. "The tool
+  wrote it" is not an answer in review. Be ready to explain any part of the change.
+- **Disclose it.** If an AI tool generated a meaningful part of a commit, add a trailer naming the tool (and model when
+  you know it): `Assisted-by: <tool>[:<model>]`, for example `Assisted-by: Claude Code`. Do not use `Co-authored-by:`
+  for a tool. `Signed-off-by:` is yours alone.
+- **Write issues and review comments in your own words.** Summaries are fine; walls of generated text are not.
+- **Never paste non-public vulnerability details** (reports, exploits, embargoed advisories) into third-party AI
+  services.
+- Generated tests must still fail without the fix; generated documentation must match the code.
+
+## Pull request checklist
+
+- [ ] An issue exists for non-trivial changes and is linked.
+- [ ] Every commit is signed off (`git commit -s`); AI help is disclosed with `Assisted-by:`.
+- [ ] Tests: a test failed before the change and passes after it; new security checks have a `negative_*` control.
+- [ ] `checkSpdxHeaders`, `checkLayerDependencies`, the architecture checks and the affected module tests pass locally.
+- [ ] Public API: KDoc written, `./gradlew updateKotlinAbi` run and the `api/` diff reviewed; new API is
+      `@ExperimentalKuicksilverApi`.
+- [ ] Docs: guides, `rfc-compliance.md` or `threat-model.md` updated where behaviour changed; `tools/check/links.sh` passes.
+- [ ] `CHANGELOG.md` has an `Unreleased` entry for user-visible changes.

@@ -1,0 +1,101 @@
+// Copyright 2026 The Kuicksilver Authors
+// SPDX-License-Identifier: Apache-2.0
+package io.kuicksilver.quic
+
+import io.ktor.network.selector.SelectorManager
+import io.ktor.network.sockets.BoundDatagramSocket
+import io.ktor.network.sockets.Datagram
+import io.ktor.network.sockets.InetSocketAddress
+import io.ktor.network.sockets.aSocket
+import io.kuicksilver.annotations.ExperimentalKuicksilverApi
+import io.kuicksilver.native.toByteArray
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.io.Buffer
+import kotlinx.io.readByteArray
+
+/**
+ * Portable Native transport over ktor-network's datagram socket (ADR-0006), client use in K2: an empty incoming
+ * datagram stops ktor's receive loop for good (known ktor behaviour, not worked around here), and the server side
+ * waits for the accelerated `DatagramIo` of K3.
+ */
+@OptIn(ExperimentalKuicksilverApi::class)
+internal class KtorDatagramIo private constructor(
+    private val selector: SelectorManager,
+    private val socket: BoundDatagramSocket,
+) : DatagramIo {
+    override val localAddress: InetSocketAddress = socket.localAddress as InetSocketAddress
+    override val capabilities: StateFlow<IoCapabilities> = MutableStateFlow(IoCapabilities.Portable)
+    private var lastAddress: InetSocketAddress? = null
+
+    override suspend fun receive(into: PacketBatch): Int {
+        if (into.count >= into.capacity) return 0
+        val d = socket.receive()
+        val i = into.count
+        val bytes = d.packet.readByteArray()
+        val n = minOf(bytes.size, into.segmentSize)
+        into.buffer(i).copyFrom(bytes, 0, 0, n)
+        into.setLength(i, n)
+        val a = d.address as InetSocketAddress
+        val cached = lastAddress
+        into.setAddress(
+            i,
+            if (cached != null && cached.hostname == a.hostname &&
+                cached.port == a.port
+            ) {
+                cached
+            } else {
+                a.also { lastAddress = it }
+            },
+        )
+        into.setEcn(i, Ecn.NotEct)
+        return 1
+    }
+
+    override suspend fun send(batch: PacketBatch): Int {
+        var sent = 0
+        for (i in 0 until batch.count) {
+            val a =
+                batch.address(i) ?: continue
+            socket.send(Datagram(Buffer().also { it.write(batch.buffer(i).toByteArray(batch.length(i))) }, a))
+            sent++
+        }
+        return sent
+    }
+
+    override fun trySend(batch: PacketBatch): Int {
+        var sent = 0
+        for (i in 0 until batch.count) {
+            val a =
+                batch.address(i) ?: continue
+            if (socket.outgoing
+                    .trySend(
+                        Datagram(
+                            Buffer().also {
+                                it.write(batch.buffer(i).toByteArray(batch.length(i)))
+                            },
+                            a,
+                        ),
+                    ).isSuccess
+            ) {
+                sent++
+            } else {
+                break
+            }
+        }
+        return sent
+    }
+
+    override fun close() {
+        socket.close()
+        selector.close()
+    }
+
+    companion object {
+        suspend fun open(local: InetSocketAddress): KtorDatagramIo {
+            val selector = SelectorManager()
+            val s = aSocket(selector).udp().bind(local)
+            return KtorDatagramIo(selector, s)
+        }
+    }
+}

@@ -1,0 +1,65 @@
+# Copyright 2026 The Kuicksilver Authors
+# SPDX-License-Identifier: Apache-2.0
+name: Interoperability problem
+description: Kuicksilver fails against another QUIC, HTTP/3 or TLS implementation.
+labels: [interop, triage]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you. Interop bugs are easiest to fix with a packet capture plus the key log of a **test** connection
+        (never of production traffic). If the failure could be a vulnerability, report it privately (SECURITY.md).
+  - type: input
+    id: version
+    attributes:
+      label: Kuicksilver version or commit
+    validations:
+      required: true
+  - type: input
+    id: peer
+    attributes:
+      label: Peer implementation and version
+      placeholder: quic-go 0.x, ngtcp2 1.x, Chrome 1xx, curl --http3 with quiche...
+    validations:
+      required: true
+  - type: dropdown
+    id: role
+    attributes:
+      label: Kuicksilver's role
+      options:
+        - client
+        - server
+    validations:
+      required: true
+  - type: dropdown
+    id: protocol
+    attributes:
+      label: Layer
+      options:
+        - QUIC handshake
+        - QUIC transport (streams, loss recovery, flow control)
+        - QUIC migration / NAT rebinding
+        - QUIC datagrams
+        - Version negotiation / QUIC v2
+        - HTTP/3 or QPACK
+        - Ktor engine (HTTP/1.1 fallback, Alt-Svc)
+        - TLS over TCP
+    validations:
+      required: true
+  - type: input
+    id: runner
+    attributes:
+      label: QUIC Interop Runner test case (if applicable)
+      placeholder: handshakeloss, rebind-addr, http3...
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: Expected and actual behaviour, error codes, which side closed the connection and why.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: Links or attachments - pcap with key log, qlog of both sides, runner logs (build/interop/<run>/).

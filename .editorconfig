@@ -1,0 +1,29 @@
+root = true
+[*]
+charset = utf-8
+end_of_line = lf
+indent_style = space
+indent_size = 4
+insert_final_newline = true
+trim_trailing_whitespace = true
+[*.{kt,kts}]
+max_line_length = 140
+ktlint_code_style = ktlint_official
+# Comment placement is the author's call here: comments next to the code they explain (RFC sections, decisions) are the house style.
+ktlint_standard_no-consecutive-comments = disabled
+ktlint_standard_kdoc = disabled
+ktlint_standard_if-else-wrapping = disabled
+ktlint_standard_kdoc-wrapping = disabled
+ktlint_standard_comment-wrapping = disabled
+ktlint_standard_value-parameter-comment = disabled
+[*.{yml,yaml,toml}]
+indent_size = 2
+
+# Vendored Ktor engine contract tests keep upstream's style (wildcard imports); see NOTICE.
+[**/contract/**.kt]
+ktlint_standard_no-wildcard-imports = disabled
+ktlint_standard_property-naming = disabled
+
+# cinterop bindings: the generated `ksl` package and kotlinx.cinterop are used as a whole
+[kuicksilver-native/src/nativeMain/kotlin/io/kuicksilver/native/Ksl.native.kt]
+ktlint_standard_no-wildcard-imports = disabled

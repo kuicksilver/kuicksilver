@@ -1,0 +1,48 @@
+# Copyright 2026 The Kuicksilver Authors
+# SPDX-License-Identifier: Apache-2.0
+# ClusterFuzzLite PR fuzzing of the Jazzer targets (.clusterfuzzlite/). DISABLED until the repository is published:
+# the job carries `if: false`; remove it after the first public push, once the build has been checked on a runner.
+# Before enabling, pin the two actions by commit digest (Renovate's helpers:pinGitHubActionDigests does it).
+name: ClusterFuzzLite PR fuzzing
+on:
+  pull_request:
+    paths:
+      - 'kuicksilver-native/**'
+      - 'kuicksilver-tls/**'
+      - 'kuicksilver-quic/**'
+      - 'kuicksilver-http3/**'
+      - 'gradle/**'
+      - 'tools/openssl/**'
+      - 'tools/build-jni.sh'
+      - '.clusterfuzzlite/**'
+      - '.github/workflows/cflite_pr.yml'
+permissions: read-all
+jobs:
+  PR:
+    if: false   # disabled until first publication (see the header)
+    runs-on: ubuntu-latest
+    concurrency:
+      group: ${{ github.workflow }}-${{ matrix.sanitizer }}-${{ github.ref }}
+      cancel-in-progress: true
+    strategy:
+      fail-fast: false
+      matrix:
+        sanitizer:
+          - address   # for JVM projects the only sanitizer setting; Jazzer reports Kotlin/Java findings
+    steps:
+      - name: Build Fuzzers (${{ matrix.sanitizer }})
+        id: build
+        uses: google/clusterfuzzlite/actions/build_fuzzers@v1
+        with:
+          language: jvm
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          sanitizer: ${{ matrix.sanitizer }}
+      - name: Run Fuzzers (${{ matrix.sanitizer }})
+        id: run
+        uses: google/clusterfuzzlite/actions/run_fuzzers@v1
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          fuzz-seconds: 600
+          mode: 'code-change'
+          sanitizer: ${{ matrix.sanitizer }}
+          output-sarif: true

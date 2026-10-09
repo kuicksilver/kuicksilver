@@ -1,0 +1,389 @@
+// Copyright 2026 The Kuicksilver Authors
+// SPDX-License-Identifier: Apache-2.0
+@file:OptIn(ExperimentalKuicksilverApi::class, io.kuicksilver.annotations.InternalKuicksilverApi::class)
+
+package io.kuicksilver.quic
+
+import io.ktor.network.sockets.InetSocketAddress
+import io.ktor.utils.io.writeFully
+import io.kuicksilver.annotations.ExperimentalKuicksilverApi
+import io.kuicksilver.native.KslLoader
+import io.kuicksilver.native.toByteArray
+import io.kuicksilver.quic.EcnState
+import io.kuicksilver.quic.api.readExactly
+import io.kuicksilver.tls.KslQuicCrypto
+import io.kuicksilver.tls.KslUdpSocket
+import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
+import org.junit.jupiter.api.Assumptions.assumeTrue
+import kotlin.test.Test
+import kotlin.test.assertContentEquals
+import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertNotNull
+import kotlin.test.assertSame
+import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.seconds
+
+/** The accelerated transport (ADR-0006) on real Linux loopback; elsewhere `open` answers null and the tests report skipped (JUnit assumptions). */
+class KslDatagramIoTest {
+    private val lo = InetSocketAddress("127.0.0.1", 0)
+
+    private fun ready(): Boolean {
+        KslLoader.ensureLoaded()
+        return KslUdpSocket.supported
+    }
+
+    @Test fun loopbackBatchSendReceive() =
+        runBlocking {
+            assumeTrue(ready(), "needs the accelerated socket (Linux)")
+            val a = assertNotNull(KslDatagramIo.open(lo))
+            val b = assertNotNull(KslDatagramIo.open(lo))
+            try {
+                val out = PacketBatch(32)
+                for (i in 0 until 32) {
+                    val n =
+                        100 + i * 37
+                    out.buffer(i).copyFrom(ByteArray(n) { (it + i).toByte() }, 0, 0, n)
+                    out.setLength(i, n)
+                    out.setAddress(i, b.localAddress)
+                }
+                assertEquals(32, a.send(out))
+                val inb = PacketBatch(32)
+                withTimeout(5.seconds) { while (inb.count < 32) b.receive(inb) }
+                for (i in 0 until 32) {
+                    val n =
+                        100 + i * 37
+                    assertEquals(n, inb.length(i))
+                    assertContentEquals(ByteArray(n) { (it + i).toByte() }, inb.buffer(i).toByteArray(n))
+                    assertEquals(a.localAddress.port, inb.address(i)!!.port)
+                }
+                out.close()
+                inb.close()
+            } finally {
+                a.close()
+                b.close()
+            }
+        }
+
+    @Test fun capabilitiesReportAccelerated() =
+        runBlocking {
+            assumeTrue(ready(), "needs the accelerated socket (Linux)")
+            val a = assertNotNull(KslDatagramIo.open(lo))
+            try {
+                val c = a.capabilities.value
+                assertTrue(c.ecnSend && c.ecnReceive, "ecn")
+                assertTrue(c.gsoMaxSegments >= 2, "gso")
+                assertTrue(c.gro, "gro")
+                assertTrue(c.df, "df")
+                assertTrue(c.batch >= 16, "batch")
+            } finally {
+                a.close()
+            }
+        }
+
+    @Test fun gsoCoalescesSameDestination() =
+        runBlocking {
+            assumeTrue(ready(), "needs the accelerated socket (Linux)")
+            val a = assertNotNull(KslDatagramIo.open(lo))
+            val b = assertNotNull(KslDatagramIo.open(lo))
+            try {
+                assertTrue(a.capabilities.value.gsoMaxSegments >= 16, "loopback grants GSO")
+                val out = PacketBatch(16)
+                for (i in 0 until 16) {
+                    out.buffer(i).copyFrom(ByteArray(1200) { i.toByte() }, 0, 0, 1200)
+                    out.setLength(i, 1200)
+                    out.setAddress(i, b.localAddress)
+                    out.setEcn(i, Ecn.Ect0)
+                }
+                assertEquals(16, a.send(out))
+                val inb = PacketBatch(16)
+                withTimeout(5.seconds) { while (inb.count < 16) b.receive(inb) }
+                for (i in 0 until 16) {
+                    assertEquals(1200, inb.length(i))
+                    assertEquals(i.toByte(), inb.buffer(i)[0])
+                    assertEquals(Ecn.Ect0, inb.ecn(i))
+                }
+                assertEquals(1L, a.statsForTest().sendSyscalls, "one sendmsg for the run")
+                out.close()
+                inb.close()
+            } finally {
+                a.close()
+                b.close()
+            }
+        }
+
+    @Test fun ecnSurvivesLoopback() =
+        runBlocking {
+            assumeTrue(ready(), "needs the accelerated socket (Linux)")
+            val a = assertNotNull(KslDatagramIo.open(lo))
+            val b = assertNotNull(KslDatagramIo.open(lo))
+            try {
+                val out = PacketBatch(3)
+                val marks = listOf(Ecn.Ect0, Ecn.Ce, Ecn.NotEct)
+                for (i in 0 until 3) {
+                    out.buffer(i).copyFrom(byteArrayOf(1, 2, 3), 0, 0, 3)
+                    out.setLength(i, 3)
+                    out.setAddress(i, b.localAddress)
+                    out.setEcn(i, marks[i])
+                }
+                assertEquals(3, a.send(out))
+                val inb = PacketBatch(3)
+                withTimeout(5.seconds) { while (inb.count < 3) b.receive(inb) }
+                assertEquals(marks, (0 until 3).map { inb.ecn(it) })
+                a.disableEcnMarking()
+                out.clear()
+                out.buffer(0).copyFrom(byteArrayOf(9), 0, 0, 1)
+                out.setLength(0, 1)
+                out.setAddress(0, b.localAddress)
+                out.setEcn(0, Ecn.Ect0)
+                assertEquals(1, a.send(out))
+                inb.clear()
+                withTimeout(5.seconds) { while (inb.count < 1) b.receive(inb) }
+                assertEquals(
+                    Ecn.Ect0,
+                    inb.ecn(0),
+                    "marks are per datagram: one failed path does not stop the socket marking (runtime review I7)",
+                )
+                assertTrue(a.capabilities.value.ecnSend)
+                out.close()
+                inb.close()
+            } finally {
+                a.close()
+                b.close()
+            }
+        }
+
+    @Test fun peerAddressInstanceReused() =
+        runBlocking {
+            assumeTrue(ready(), "needs the accelerated socket (Linux)")
+            val a = assertNotNull(KslDatagramIo.open(lo))
+            val b = assertNotNull(KslDatagramIo.open(lo))
+            try {
+                val out = PacketBatch(1)
+                out.buffer(0).copyFrom(byteArrayOf(1), 0, 0, 1)
+                out.setLength(0, 1)
+                out.setAddress(0, b.localAddress)
+                val inb = PacketBatch(4)
+                assertEquals(1, a.send(out))
+                withTimeout(5.seconds) { while (inb.count < 1) b.receive(inb) }
+                val first = inb.address(0)!!
+                inb.clear()
+                assertEquals(1, a.send(out))
+                withTimeout(5.seconds) { while (inb.count < 1) b.receive(inb) }
+                assertSame(first, inb.address(0), "the same InetSocketAddress instance for the same peer")
+                out.close()
+                inb.close()
+            } finally {
+                a.close()
+                b.close()
+            }
+        }
+
+    @Test fun closeUnblocksReceive() =
+        runBlocking {
+            assumeTrue(ready(), "needs the accelerated socket (Linux)")
+            val a = assertNotNull(KslDatagramIo.open(lo))
+            val inb = PacketBatch(4)
+            val r = async { runCatching { a.receive(inb) } }
+            delay(100)
+            a.close()
+            val outcome = withTimeoutOrNull(3.seconds) { r.await() }
+            assertNotNull(outcome, "receive returned after close")
+            assertTrue(outcome.isFailure, "a closed transport throws from receive")
+            inb.close()
+        }
+
+    /** Focus 5: the lossless GSO fallback itself is driven by a C test hook (`udp_gso_eio_falls_back_and_resends`); here a socket that never lost GSO reports no fallback and keeps its capability. */
+    @Test fun gsoFallbackCounterStartsAtZero() =
+        runBlocking {
+            assumeTrue(ready(), "needs the accelerated socket (Linux)")
+            val a = assertNotNull(KslDatagramIo.open(lo))
+            val b = assertNotNull(KslDatagramIo.open(lo))
+            try {
+                val out = PacketBatch(8)
+                for (i in 0 until 8) {
+                    out.buffer(i).copyFrom(ByteArray(1200) { i.toByte() }, 0, 0, 1200)
+                    out.setLength(i, 1200)
+                    out.setAddress(i, b.localAddress)
+                }
+                repeat(300) { assertEquals(8, a.send(out)) } // past the capability refresh interval
+                assertEquals(0L, a.statsForTest().gsoFallbacks)
+                assertTrue(a.capabilities.value.gsoMaxSegments >= 2, "capabilities refreshed and GSO still on")
+                out.close()
+            } finally {
+                a.close()
+                b.close()
+            }
+        }
+
+    @Test fun realUdpServerClient50MiBAccelerated() =
+        runBlocking {
+            assumeTrue(ready(), "needs the accelerated socket (Linux)")
+            val server =
+                QuicEndpoint.bind(
+                    lo,
+                    QuicEndpointConfig
+                        .Builder()
+                        .apply {
+                            this.server =
+                                QuicServerConfig.Builder(CoreFixtures.server()).build()
+                            ; crypto = KslQuicCrypto
+                        }.build(),
+                )
+            val client = QuicEndpoint.bind(lo, QuicEndpointConfig.Builder().apply { crypto = KslQuicCrypto }.build())
+            try {
+                withTimeout(180.seconds) {
+                    val accepted = async { server.accept() }
+                    val c = client.connect(server.localAddress, QuicClientConfig.Builder(CoreFixtures.client()).build())
+                    val s = accepted.await()
+                    val data = ByteArray(50 shl 20) { (it * 7).toByte() }
+                    val sink =
+                        async {
+                            val st = s.acceptStream()
+                            st.input.readExactly(data.size)
+                        }
+                    val st = c.openBidi()
+                    launch {
+                        st.output.writeFully(data, 0, data.size)
+                        st.output.flushAndClose()
+                    }
+                    assertContentEquals(data, sink.await())
+                    assertEquals(EcnState.Capable, c.stats.ecnState, "ECN validated over the accelerated socket")
+                    assertEquals(EcnState.Capable, s.stats.ecnState)
+                    assertEquals(1452, c.stats.pathMtu, "PMTUD reached the loopback ceiling")
+                    assertEquals(1452, s.stats.pathMtu)
+                    c.close()
+                    s.close()
+                }
+            } finally {
+                client.close()
+                server.close()
+            }
+        }
+
+    @Test fun oneClientBleachingEcnLeavesOthersCapable() =
+        runBlocking {
+            // client A's path bleaches ECN, so the server's validation for A fails; B, on the same accelerated server socket, still validates
+            assumeTrue(ready(), "needs the accelerated socket (Linux)")
+            val server =
+                QuicEndpoint.bind(
+                    lo,
+                    QuicEndpointConfig
+                        .Builder()
+                        .apply {
+                            this.server =
+                                QuicServerConfig.Builder(CoreFixtures.server()).build()
+                            ; crypto = KslQuicCrypto
+                        }.build(),
+                )
+            val bleaching =
+                QuicEndpoint.bind(
+                    lo,
+                    QuicEndpointConfig
+                        .Builder()
+                        .apply {
+                            crypto = KslQuicCrypto
+                            io =
+                                { local ->
+                                    val inner = KslDatagramIo.open(local)!!
+                                    object : DatagramIo by inner {
+                                        override suspend fun receive(into: PacketBatch): Int {
+                                            val from = into.count
+                                            val n = inner.receive(into)
+                                            for (i in from until
+                                                from + n) {
+                                                into.setEcn(i, Ecn.NotEct)
+                                            }
+                                            return n
+                                        }
+                                    }
+                                }
+                        }.build(),
+                )
+            val clean = QuicEndpoint.bind(lo, QuicEndpointConfig.Builder().apply { crypto = KslQuicCrypto }.build())
+            try {
+                withTimeout(120.seconds) {
+                    suspend fun transfer(client: QuicEndpoint): Pair<QuicConnection, QuicConnection> {
+                        val accepted = async { server.accept() }
+                        val c = client.connect(server.localAddress, QuicClientConfig.Builder(CoreFixtures.client()).build())
+                        val s = accepted.await()
+                        val data = ByteArray(2 shl 20) { it.toByte() }
+                        val sink = async { s.acceptStream().input.readExactly(data.size) }
+                        val st = c.openBidi()
+                        st.output.writeFully(data, 0, data.size)
+                        st.output.flushAndClose()
+                        sink.await()
+                        return c to s
+                    }
+                    val (ca, sa) = transfer(bleaching)
+                    assertTrue(
+                        sa.stats.ecnState == EcnState.Failed,
+                        "the server's validation for the bleaching client failed: ${sa.stats.ecnState}",
+                    )
+                    val (cb, sb) = transfer(clean)
+                    assertEquals(EcnState.Capable, cb.stats.ecnState)
+                    assertEquals(EcnState.Capable, sb.stats.ecnState, "the server still marks for the other client")
+                    ca.close()
+                    sa.close()
+                    cb.close()
+                    sb.close()
+                }
+            } finally {
+                bleaching.close()
+                clean.close()
+                server.close()
+            }
+        }
+
+    @Test fun eightyIdleEndpointsDoNotStarveTheEightyFirst() =
+        runBlocking {
+            // an idle accelerated socket must not pin a Dispatchers.IO thread (64 by default) for its lifetime
+            assumeTrue(ready(), "needs the accelerated socket (Linux)")
+            val server =
+                QuicEndpoint.bind(
+                    lo,
+                    QuicEndpointConfig
+                        .Builder()
+                        .apply {
+                            this.server =
+                                QuicServerConfig.Builder(CoreFixtures.server()).build()
+                            ; crypto = KslQuicCrypto
+                        }.build(),
+                )
+            val clients = List(80) { QuicEndpoint.bind(lo, QuicEndpointConfig.Builder().apply { crypto = KslQuicCrypto }.build()) }
+            try {
+                withTimeout(30.seconds) {
+                    val accepted = async { server.accept() }
+                    val c = clients.last().connect(server.localAddress, QuicClientConfig.Builder(CoreFixtures.client()).build())
+                    val s = accepted.await()
+                    c.close()
+                    s.close()
+                }
+            } finally {
+                clients.forEach { it.close() }
+                server.close()
+            }
+        }
+
+    @Test fun openPrefersAcceleratedOnLinux() =
+        runBlocking {
+            assumeTrue(ready(), "needs the accelerated socket (Linux)")
+            val io = DatagramIo.open(lo)
+            try {
+                assertTrue(io is KslDatagramIo, "accelerated by default")
+            } finally {
+                io.close()
+            }
+            val p = DatagramIo.open(lo, IoPreference.Portable)
+            try {
+                assertTrue(p !is KslDatagramIo)
+            } finally {
+                p.close()
+            }
+        }
+}

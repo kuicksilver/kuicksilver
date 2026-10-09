@@ -1,0 +1,42 @@
+// Copyright 2014-2026 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
+// Modifications Copyright 2026 The Kuicksilver Authors
+// SPDX-License-Identifier: Apache-2.0
+// Vendored from Ktor 3.6.0 ktor-test-server/src/main/kotlin/test/server/ServerUtils.kt, adapted to the Kuicksilver engine.
+package io.kuicksilver.ktor.client.contract
+
+import io.ktor.http.*
+import io.ktor.http.content.*
+import io.ktor.utils.io.*
+import kotlinx.io.readByteArray
+import kotlin.io.encoding.Base64
+
+fun makeArray(size: Int): ByteArray = ByteArray(size) { it.toByte() }
+
+fun makeString(size: Int): String = Base64.encode(ByteArray(size) { it.toChar().code.toByte() }).take(size)
+
+suspend fun PartData.makeString(): String =
+    buildString {
+        val part = this@makeString
+        append("${part.name!!}\n")
+        val content =
+            when (part) {
+                is PartData.FileItem -> filenameContentTypeAndContentString(part.provider, part.headers)
+                is PartData.FormItem -> part.value
+                is PartData.BinaryItem -> error("BinaryItem is not supported in test server")
+                is PartData.BinaryChannelItem -> filenameContentTypeAndContentString(part.provider, part.headers)
+            }
+
+        append(content)
+    }
+
+internal suspend fun filenameContentTypeAndContentString(
+    provider: () -> ByteReadChannel,
+    headers: Headers,
+): String {
+    val dispositionHeader: String = headers.getAll(HttpHeaders.ContentDisposition)!!.joinToString(";")
+    val disposition: ContentDisposition = ContentDisposition.parse(dispositionHeader)
+    val filename: String = disposition.parameter("filename") ?: ""
+    val contentType = headers[HttpHeaders.ContentType]?.let { ContentType.parse(it) } ?: ""
+    val content: String = provider().readRemaining().readByteArray().let { "Content of ${it.size} bytes" }
+    return "$filename$contentType$content"
+}

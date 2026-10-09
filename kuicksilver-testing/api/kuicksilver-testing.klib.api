@@ -1,0 +1,146 @@
+// Klib ABI Dump
+// Targets: [iosArm64, iosSimulatorArm64, linuxArm64, linuxX64, macosArm64, mingwX64]
+// Rendering settings:
+// - Signature version: 2
+// - Show manifest properties: true
+// - Show declarations: true
+
+// Library unique name: <io.kuicksilver:kuicksilver-testing>
+sealed interface io.kuicksilver.testing/EcnMarking { // io.kuicksilver.testing/EcnMarking|null[0]
+    final class CeRate : io.kuicksilver.testing/EcnMarking { // io.kuicksilver.testing/EcnMarking.CeRate|null[0]
+        constructor <init>(kotlin/Double) // io.kuicksilver.testing/EcnMarking.CeRate.<init>|<init>(kotlin.Double){}[0]
+
+        final val rate // io.kuicksilver.testing/EcnMarking.CeRate.rate|{}rate[0]
+            final fun <get-rate>(): kotlin/Double // io.kuicksilver.testing/EcnMarking.CeRate.rate.<get-rate>|<get-rate>(){}[0]
+    }
+
+    final object Bleach : io.kuicksilver.testing/EcnMarking // io.kuicksilver.testing/EcnMarking.Bleach|null[0]
+
+    final object Pass : io.kuicksilver.testing/EcnMarking // io.kuicksilver.testing/EcnMarking.Pass|null[0]
+}
+
+final class io.kuicksilver.testing/BurstLoss { // io.kuicksilver.testing/BurstLoss|null[0]
+    constructor <init>(kotlin/Int, kotlin/Int) // io.kuicksilver.testing/BurstLoss.<init>|<init>(kotlin.Int;kotlin.Int){}[0]
+
+    final val length // io.kuicksilver.testing/BurstLoss.length|{}length[0]
+        final fun <get-length>(): kotlin/Int // io.kuicksilver.testing/BurstLoss.length.<get-length>|<get-length>(){}[0]
+    final val startIndex // io.kuicksilver.testing/BurstLoss.startIndex|{}startIndex[0]
+        final fun <get-startIndex>(): kotlin/Int // io.kuicksilver.testing/BurstLoss.startIndex.<get-startIndex>|<get-startIndex>(){}[0]
+}
+
+final class io.kuicksilver.testing/LinkParams { // io.kuicksilver.testing/LinkParams|null[0]
+    constructor <init>(kotlin.time/Duration = ..., kotlin.time/Duration = ..., kotlin/Long? = ..., kotlin/Double = ..., kotlin.collections/Set<kotlin/Int> = ..., io.kuicksilver.testing/BurstLoss? = ..., kotlin/Double = ..., kotlin/Double = ..., kotlin/Double = ..., kotlin/Int? = ..., io.kuicksilver.testing/EcnMarking = ...) // io.kuicksilver.testing/LinkParams.<init>|<init>(kotlin.time.Duration;kotlin.time.Duration;kotlin.Long?;kotlin.Double;kotlin.collections.Set<kotlin.Int>;io.kuicksilver.testing.BurstLoss?;kotlin.Double;kotlin.Double;kotlin.Double;kotlin.Int?;io.kuicksilver.testing.EcnMarking){}[0]
+
+    final val bandwidthBitsPerSecond // io.kuicksilver.testing/LinkParams.bandwidthBitsPerSecond|{}bandwidthBitsPerSecond[0]
+        final fun <get-bandwidthBitsPerSecond>(): kotlin/Long? // io.kuicksilver.testing/LinkParams.bandwidthBitsPerSecond.<get-bandwidthBitsPerSecond>|<get-bandwidthBitsPerSecond>(){}[0]
+    final val burstLoss // io.kuicksilver.testing/LinkParams.burstLoss|{}burstLoss[0]
+        final fun <get-burstLoss>(): io.kuicksilver.testing/BurstLoss? // io.kuicksilver.testing/LinkParams.burstLoss.<get-burstLoss>|<get-burstLoss>(){}[0]
+    final val corruptRate // io.kuicksilver.testing/LinkParams.corruptRate|{}corruptRate[0]
+        final fun <get-corruptRate>(): kotlin/Double // io.kuicksilver.testing/LinkParams.corruptRate.<get-corruptRate>|<get-corruptRate>(){}[0]
+    final val delay // io.kuicksilver.testing/LinkParams.delay|{}delay[0]
+        final fun <get-delay>(): kotlin.time/Duration // io.kuicksilver.testing/LinkParams.delay.<get-delay>|<get-delay>(){}[0]
+    final val duplicateRate // io.kuicksilver.testing/LinkParams.duplicateRate|{}duplicateRate[0]
+        final fun <get-duplicateRate>(): kotlin/Double // io.kuicksilver.testing/LinkParams.duplicateRate.<get-duplicateRate>|<get-duplicateRate>(){}[0]
+    final val ecn // io.kuicksilver.testing/LinkParams.ecn|{}ecn[0]
+        final fun <get-ecn>(): io.kuicksilver.testing/EcnMarking // io.kuicksilver.testing/LinkParams.ecn.<get-ecn>|<get-ecn>(){}[0]
+    final val jitter // io.kuicksilver.testing/LinkParams.jitter|{}jitter[0]
+        final fun <get-jitter>(): kotlin.time/Duration // io.kuicksilver.testing/LinkParams.jitter.<get-jitter>|<get-jitter>(){}[0]
+    final val lossMask // io.kuicksilver.testing/LinkParams.lossMask|{}lossMask[0]
+        final fun <get-lossMask>(): kotlin.collections/Set<kotlin/Int> // io.kuicksilver.testing/LinkParams.lossMask.<get-lossMask>|<get-lossMask>(){}[0]
+    final val lossRate // io.kuicksilver.testing/LinkParams.lossRate|{}lossRate[0]
+        final fun <get-lossRate>(): kotlin/Double // io.kuicksilver.testing/LinkParams.lossRate.<get-lossRate>|<get-lossRate>(){}[0]
+    final val mtu // io.kuicksilver.testing/LinkParams.mtu|{}mtu[0]
+        final fun <get-mtu>(): kotlin/Int? // io.kuicksilver.testing/LinkParams.mtu.<get-mtu>|<get-mtu>(){}[0]
+    final val reorderRate // io.kuicksilver.testing/LinkParams.reorderRate|{}reorderRate[0]
+        final fun <get-reorderRate>(): kotlin/Double // io.kuicksilver.testing/LinkParams.reorderRate.<get-reorderRate>|<get-reorderRate>(){}[0]
+
+    final fun toString(): kotlin/String // io.kuicksilver.testing/LinkParams.toString|toString(){}[0]
+}
+
+final class io.kuicksilver.testing/MemoryNetwork { // io.kuicksilver.testing/MemoryNetwork|null[0]
+    constructor <init>() // io.kuicksilver.testing/MemoryNetwork.<init>|<init>(){}[0]
+
+    final val dropped // io.kuicksilver.testing/MemoryNetwork.dropped|{}dropped[0]
+        final fun <get-dropped>(): kotlin/Long // io.kuicksilver.testing/MemoryNetwork.dropped.<get-dropped>|<get-dropped>(){}[0]
+
+    final var mtu // io.kuicksilver.testing/MemoryNetwork.mtu|{}mtu[0]
+        final fun <get-mtu>(): kotlin/Int // io.kuicksilver.testing/MemoryNetwork.mtu.<get-mtu>|<get-mtu>(){}[0]
+        final fun <set-mtu>(kotlin/Int) // io.kuicksilver.testing/MemoryNetwork.mtu.<set-mtu>|<set-mtu>(kotlin.Int){}[0]
+
+    final fun cut(io.ktor.network.sockets/InetSocketAddress) // io.kuicksilver.testing/MemoryNetwork.cut|cut(io.ktor.network.sockets.InetSocketAddress){}[0]
+    final fun open(io.ktor.network.sockets/InetSocketAddress): io.kuicksilver.quic/DatagramIo // io.kuicksilver.testing/MemoryNetwork.open|open(io.ktor.network.sockets.InetSocketAddress){}[0]
+    final fun restore(io.ktor.network.sockets/InetSocketAddress) // io.kuicksilver.testing/MemoryNetwork.restore|restore(io.ktor.network.sockets.InetSocketAddress){}[0]
+}
+
+final class io.kuicksilver.testing/SimConnection { // io.kuicksilver.testing/SimConnection|null[0]
+    final val client // io.kuicksilver.testing/SimConnection.client|{}client[0]
+        final fun <get-client>(): io.kuicksilver.quic/ConnectionCore // io.kuicksilver.testing/SimConnection.client.<get-client>|<get-client>(){}[0]
+    final val clientEvents // io.kuicksilver.testing/SimConnection.clientEvents|{}clientEvents[0]
+        final fun <get-clientEvents>(): kotlin.collections/MutableList<io.kuicksilver.quic/ConnectionEvent> // io.kuicksilver.testing/SimConnection.clientEvents.<get-clientEvents>|<get-clientEvents>(){}[0]
+    final val handshakeDone // io.kuicksilver.testing/SimConnection.handshakeDone|{}handshakeDone[0]
+        final fun <get-handshakeDone>(): kotlin/Boolean // io.kuicksilver.testing/SimConnection.handshakeDone.<get-handshakeDone>|<get-handshakeDone>(){}[0]
+    final val serverEvents // io.kuicksilver.testing/SimConnection.serverEvents|{}serverEvents[0]
+        final fun <get-serverEvents>(): kotlin.collections/MutableList<io.kuicksilver.quic/ConnectionEvent> // io.kuicksilver.testing/SimConnection.serverEvents.<get-serverEvents>|<get-serverEvents>(){}[0]
+
+    final var maxPtoCount // io.kuicksilver.testing/SimConnection.maxPtoCount|{}maxPtoCount[0]
+        final fun <get-maxPtoCount>(): kotlin/Int // io.kuicksilver.testing/SimConnection.maxPtoCount.<get-maxPtoCount>|<get-maxPtoCount>(){}[0]
+    final var server // io.kuicksilver.testing/SimConnection.server|{}server[0]
+        final fun <get-server>(): io.kuicksilver.quic/ConnectionCore? // io.kuicksilver.testing/SimConnection.server.<get-server>|<get-server>(){}[0]
+
+    final fun closed(): io.kuicksilver.quic/QuicException.ConnectionLost? // io.kuicksilver.testing/SimConnection.closed|closed(){}[0]
+}
+
+final class io.kuicksilver.testing/SimResult { // io.kuicksilver.testing/SimResult|null[0]
+    constructor <init>(kotlin/Boolean, kotlin.time/Duration, kotlin/Long, kotlin.collections/List<kotlin/String>) // io.kuicksilver.testing/SimResult.<init>|<init>(kotlin.Boolean;kotlin.time.Duration;kotlin.Long;kotlin.collections.List<kotlin.String>){}[0]
+
+    final val elapsed // io.kuicksilver.testing/SimResult.elapsed|{}elapsed[0]
+        final fun <get-elapsed>(): kotlin.time/Duration // io.kuicksilver.testing/SimResult.elapsed.<get-elapsed>|<get-elapsed>(){}[0]
+    final val finished // io.kuicksilver.testing/SimResult.finished|{}finished[0]
+        final fun <get-finished>(): kotlin/Boolean // io.kuicksilver.testing/SimResult.finished.<get-finished>|<get-finished>(){}[0]
+    final val traceHash // io.kuicksilver.testing/SimResult.traceHash|{}traceHash[0]
+        final fun <get-traceHash>(): kotlin/Long // io.kuicksilver.testing/SimResult.traceHash.<get-traceHash>|<get-traceHash>(){}[0]
+    final val violations // io.kuicksilver.testing/SimResult.violations|{}violations[0]
+        final fun <get-violations>(): kotlin.collections/List<kotlin/String> // io.kuicksilver.testing/SimResult.violations.<get-violations>|<get-violations>(){}[0]
+}
+
+final class io.kuicksilver.testing/Simulator { // io.kuicksilver.testing/Simulator|null[0]
+    constructor <init>(kotlin/Long, io.kuicksilver.testing/LinkParams, io.kuicksilver.testing/LinkParams = ..., io.kuicksilver.tls/QuicCrypto = ..., io.kuicksilver.quic/IoCapabilities = ...) // io.kuicksilver.testing/Simulator.<init>|<init>(kotlin.Long;io.kuicksilver.testing.LinkParams;io.kuicksilver.testing.LinkParams;io.kuicksilver.tls.QuicCrypto;io.kuicksilver.quic.IoCapabilities){}[0]
+
+    final val seed // io.kuicksilver.testing/Simulator.seed|{}seed[0]
+        final fun <get-seed>(): kotlin/Long // io.kuicksilver.testing/Simulator.seed.<get-seed>|<get-seed>(){}[0]
+
+    final var clientAddress // io.kuicksilver.testing/Simulator.clientAddress|{}clientAddress[0]
+        final fun <get-clientAddress>(): io.ktor.network.sockets/InetSocketAddress // io.kuicksilver.testing/Simulator.clientAddress.<get-clientAddress>|<get-clientAddress>(){}[0]
+    final var dropNextClientToServer // io.kuicksilver.testing/Simulator.dropNextClientToServer|{}dropNextClientToServer[0]
+        final fun <get-dropNextClientToServer>(): kotlin/Boolean // io.kuicksilver.testing/Simulator.dropNextClientToServer.<get-dropNextClientToServer>|<get-dropNextClientToServer>(){}[0]
+        final fun <set-dropNextClientToServer>(kotlin/Boolean) // io.kuicksilver.testing/Simulator.dropNextClientToServer.<set-dropNextClientToServer>|<set-dropNextClientToServer>(kotlin.Boolean){}[0]
+    final var lastClientSourceSeenByServer // io.kuicksilver.testing/Simulator.lastClientSourceSeenByServer|{}lastClientSourceSeenByServer[0]
+        final fun <get-lastClientSourceSeenByServer>(): io.ktor.network.sockets/InetSocketAddress? // io.kuicksilver.testing/Simulator.lastClientSourceSeenByServer.<get-lastClientSourceSeenByServer>|<get-lastClientSourceSeenByServer>(){}[0]
+    final var misrouted // io.kuicksilver.testing/Simulator.misrouted|{}misrouted[0]
+        final fun <get-misrouted>(): kotlin/Long // io.kuicksilver.testing/Simulator.misrouted.<get-misrouted>|<get-misrouted>(){}[0]
+    final var now // io.kuicksilver.testing/Simulator.now|{}now[0]
+        final fun <get-now>(): io.kuicksilver.quic/TimeMark // io.kuicksilver.testing/Simulator.now.<get-now>|<get-now>(){}[0]
+    final var progress // io.kuicksilver.testing/Simulator.progress|{}progress[0]
+        final fun <get-progress>(): kotlin/Long // io.kuicksilver.testing/Simulator.progress.<get-progress>|<get-progress>(){}[0]
+        final fun <set-progress>(kotlin/Long) // io.kuicksilver.testing/Simulator.progress.<set-progress>|<set-progress>(kotlin.Long){}[0]
+
+    final fun addClientPath(io.ktor.network.sockets/InetSocketAddress, io.kuicksilver.testing/LinkParams): kotlin/Int // io.kuicksilver.testing/Simulator.addClientPath|addClientPath(io.ktor.network.sockets.InetSocketAddress;io.kuicksilver.testing.LinkParams){}[0]
+    final fun connect(io.kuicksilver.quic/QuicConfig = ..., io.kuicksilver.quic/QuicConfig = ..., io.kuicksilver.tls/TlsConfig, io.kuicksilver.tls/TlsConfig): io.kuicksilver.testing/SimConnection // io.kuicksilver.testing/Simulator.connect|connect(io.kuicksilver.quic.QuicConfig;io.kuicksilver.quic.QuicConfig;io.kuicksilver.tls.TlsConfig;io.kuicksilver.tls.TlsConfig){}[0]
+    final fun pathDelivered(kotlin/Int): kotlin/Long // io.kuicksilver.testing/Simulator.pathDelivered|pathDelivered(kotlin.Int){}[0]
+    final fun rebindClient(kotlin/Int? = ..., kotlin/String? = ...) // io.kuicksilver.testing/Simulator.rebindClient|rebindClient(kotlin.Int?;kotlin.String?){}[0]
+    final fun runUntil(kotlin.time/Duration, kotlin/Function0<kotlin/Boolean>): io.kuicksilver.testing/SimResult // io.kuicksilver.testing/Simulator.runUntil|runUntil(kotlin.time.Duration;kotlin.Function0<kotlin.Boolean>){}[0]
+    final fun setMtu(kotlin/Int?, kotlin/Int?) // io.kuicksilver.testing/Simulator.setMtu|setMtu(kotlin.Int?;kotlin.Int?){}[0]
+}
+
+final object io.kuicksilver.testing/SimScenario { // io.kuicksilver.testing/SimScenario|null[0]
+    final var defaultTls // io.kuicksilver.testing/SimScenario.defaultTls|{}defaultTls[0]
+        final fun <get-defaultTls>(): kotlin/Function0<kotlin/Pair<io.kuicksilver.tls/TlsConfig, io.kuicksilver.tls/TlsConfig>>? // io.kuicksilver.testing/SimScenario.defaultTls.<get-defaultTls>|<get-defaultTls>(){}[0]
+        final fun <set-defaultTls>(kotlin/Function0<kotlin/Pair<io.kuicksilver.tls/TlsConfig, io.kuicksilver.tls/TlsConfig>>?) // io.kuicksilver.testing/SimScenario.defaultTls.<set-defaultTls>|<set-defaultTls>(kotlin.Function0<kotlin.Pair<io.kuicksilver.tls.TlsConfig,io.kuicksilver.tls.TlsConfig>>?){}[0]
+
+    final fun nullTls(io.kuicksilver.tls/TlsIdentity): kotlin/Pair<io.kuicksilver.tls/TlsConfig, io.kuicksilver.tls/TlsConfig> // io.kuicksilver.testing/SimScenario.nullTls|nullTls(io.kuicksilver.tls.TlsIdentity){}[0]
+    final fun transfer(io.kuicksilver.testing/Simulator, kotlin/Int, kotlin/Int = ..., io.kuicksilver.testing/SimConnection? = ..., kotlin/Boolean = ..., kotlin.time/Duration = ..., kotlin/Long = ..., kotlin/Function0<kotlin/Unit> = ..., kotlin/Boolean = ..., kotlin/Function0<kotlin/Unit> = ...): io.kuicksilver.testing/SimResult // io.kuicksilver.testing/SimScenario.transfer|transfer(io.kuicksilver.testing.Simulator;kotlin.Int;kotlin.Int;io.kuicksilver.testing.SimConnection?;kotlin.Boolean;kotlin.time.Duration;kotlin.Long;kotlin.Function0<kotlin.Unit>;kotlin.Boolean;kotlin.Function0<kotlin.Unit>){}[0]
+}
+
+final fun io.kuicksilver.testing/recordFailure(kotlin/String, kotlin/Long, io.kuicksilver.testing/LinkParams) // io.kuicksilver.testing/recordFailure|recordFailure(kotlin.String;kotlin.Long;io.kuicksilver.testing.LinkParams){}[0]
+final fun io.kuicksilver.testing/simForceViolation(): kotlin/Boolean // io.kuicksilver.testing/simForceViolation|simForceViolation(){}[0]
+final fun io.kuicksilver.testing/simRuns(kotlin/Int): kotlin/Int // io.kuicksilver.testing/simRuns|simRuns(kotlin.Int){}[0]

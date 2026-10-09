@@ -1,0 +1,25 @@
+public final class io/kuicksilver/ktor/network/SocketTlsKt {
+	public static final fun tls (Lio/ktor/network/sockets/Socket;Lio/kuicksilver/tls/TlsConfig;Lkotlin/coroutines/CoroutineContext;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static synthetic fun tls$default (Lio/ktor/network/sockets/Socket;Lio/kuicksilver/tls/TlsConfig;Lkotlin/coroutines/CoroutineContext;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+	public static final fun tlsServer (Lio/ktor/network/sockets/Socket;Lio/kuicksilver/tls/TlsConfig;Lkotlin/coroutines/CoroutineContext;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static synthetic fun tlsServer$default (Lio/ktor/network/sockets/Socket;Lio/kuicksilver/tls/TlsConfig;Lkotlin/coroutines/CoroutineContext;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+}
+
+public final class io/kuicksilver/ktor/network/TlsSocket : io/ktor/network/sockets/Socket {
+	public static final field Companion Lio/kuicksilver/ktor/network/TlsSocket$Companion;
+	public fun attachForReading (Lio/ktor/utils/io/ByteChannel;)Lio/ktor/utils/io/WriterJob;
+	public fun attachForWriting (Lio/ktor/utils/io/ByteChannel;)Lio/ktor/utils/io/ReaderJob;
+	public fun close ()V
+	public fun dispose ()V
+	public fun getCoroutineContext ()Lkotlin/coroutines/CoroutineContext;
+	public fun getLocalAddress ()Lio/ktor/network/sockets/SocketAddress;
+	public final fun getNegotiatedAlpn ()Ljava/lang/String;
+	public final fun getPeerCertificates ()Ljava/util/List;
+	public fun getRemoteAddress ()Lio/ktor/network/sockets/SocketAddress;
+	public fun getSocketContext ()Lkotlinx/coroutines/Job;
+	public final fun getTls ()Lio/kuicksilver/tls/TlsConnection;
+}
+
+public final class io/kuicksilver/ktor/network/TlsSocket$Companion {
+}
+

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Copyright 2026 The Kuicksilver Authors
+     SPDX-License-Identifier: Apache-2.0 -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- TLS over sockets needs INTERNET even on loopback; merged into consumers and the test APK. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+</manifest>

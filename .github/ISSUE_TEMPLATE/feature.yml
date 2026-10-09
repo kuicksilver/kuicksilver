@@ -1,0 +1,42 @@
+# Copyright 2026 The Kuicksilver Authors
+# SPDX-License-Identifier: Apache-2.0
+name: Feature request or API proposal
+description: Propose new behaviour or a change to the public API.
+labels: [enhancement, triage]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        New public API is discussed in an issue before a pull request, and ships as `@ExperimentalKuicksilverApi` first
+        (see CONTRIBUTING.md). Some things are out of scope for v1 by decision: 0-RTT (ADR-0008), HTTP/2 (ADR-0009),
+        HTTP/3 server push, WebTransport, JS/Wasm targets.
+  - type: textarea
+    id: use-case
+    attributes:
+      label: Use case
+      description: What are you building, and what can you not do today? Start with the problem, not the API.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: The behaviour or API you suggest. A Kotlin sketch of the call site helps.
+      render: kotlin
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives and workarounds
+  - type: textarea
+    id: standards
+    attributes:
+      label: Standards and prior art
+      description: Relevant RFCs or drafts, and how other implementations (quinn, quic-go, ngtcp2, OkHttp, Ktor...) do it.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I searched existing issues and discussions.
+          required: true
+        - label: I would be willing to contribute this, with guidance.

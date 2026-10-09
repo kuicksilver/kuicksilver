@@ -1,0 +1,105 @@
+public final class io/kuicksilver/testing/BurstLoss {
+	public fun <init> (II)V
+	public final fun getLength ()I
+	public final fun getStartIndex ()I
+}
+
+public abstract interface class io/kuicksilver/testing/EcnMarking {
+}
+
+public final class io/kuicksilver/testing/EcnMarking$Bleach : io/kuicksilver/testing/EcnMarking {
+	public static final field INSTANCE Lio/kuicksilver/testing/EcnMarking$Bleach;
+}
+
+public final class io/kuicksilver/testing/EcnMarking$CeRate : io/kuicksilver/testing/EcnMarking {
+	public fun <init> (D)V
+	public final fun getRate ()D
+}
+
+public final class io/kuicksilver/testing/EcnMarking$Pass : io/kuicksilver/testing/EcnMarking {
+	public static final field INSTANCE Lio/kuicksilver/testing/EcnMarking$Pass;
+}
+
+public final class io/kuicksilver/testing/LinkParams {
+	public fun <init> ()V
+	public synthetic fun <init> (JJLjava/lang/Long;DLjava/util/Set;Lio/kuicksilver/testing/BurstLoss;DDDLjava/lang/Integer;Lio/kuicksilver/testing/EcnMarking;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public synthetic fun <init> (JJLjava/lang/Long;DLjava/util/Set;Lio/kuicksilver/testing/BurstLoss;DDDLjava/lang/Integer;Lio/kuicksilver/testing/EcnMarking;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun getBandwidthBitsPerSecond ()Ljava/lang/Long;
+	public final fun getBurstLoss ()Lio/kuicksilver/testing/BurstLoss;
+	public final fun getCorruptRate ()D
+	public final fun getDelay-UwyO8pc ()J
+	public final fun getDuplicateRate ()D
+	public final fun getEcn ()Lio/kuicksilver/testing/EcnMarking;
+	public final fun getJitter-UwyO8pc ()J
+	public final fun getLossMask ()Ljava/util/Set;
+	public final fun getLossRate ()D
+	public final fun getMtu ()Ljava/lang/Integer;
+	public final fun getReorderRate ()D
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/kuicksilver/testing/MemoryNetwork {
+	public fun <init> ()V
+	public final fun cut (Lio/ktor/network/sockets/InetSocketAddress;)V
+	public final fun getDropped ()J
+	public final fun getMtu ()I
+	public final fun open (Lio/ktor/network/sockets/InetSocketAddress;)Lio/kuicksilver/quic/DatagramIo;
+	public final fun restore (Lio/ktor/network/sockets/InetSocketAddress;)V
+	public final fun setMtu (I)V
+}
+
+public final class io/kuicksilver/testing/SimConnection {
+	public final fun closed ()Lio/kuicksilver/quic/QuicException$ConnectionLost;
+	public final fun getClient ()Lio/kuicksilver/quic/ConnectionCore;
+	public final fun getClientEvents ()Ljava/util/List;
+	public final fun getHandshakeDone ()Z
+	public final fun getMaxPtoCount ()I
+	public final fun getServer ()Lio/kuicksilver/quic/ConnectionCore;
+	public final fun getServerEvents ()Ljava/util/List;
+}
+
+public final class io/kuicksilver/testing/SimEnv_jvmKt {
+	public static final fun recordFailure (Ljava/lang/String;JLio/kuicksilver/testing/LinkParams;)V
+	public static final fun simForceViolation ()Z
+	public static final fun simRuns (I)I
+}
+
+public final class io/kuicksilver/testing/SimResult {
+	public synthetic fun <init> (ZJJLjava/util/List;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun getElapsed-UwyO8pc ()J
+	public final fun getFinished ()Z
+	public final fun getTraceHash ()J
+	public final fun getViolations ()Ljava/util/List;
+}
+
+public final class io/kuicksilver/testing/SimScenario {
+	public static final field INSTANCE Lio/kuicksilver/testing/SimScenario;
+	public final fun getDefaultTls ()Lkotlin/jvm/functions/Function0;
+	public final fun nullTls (Lio/kuicksilver/tls/TlsIdentity;)Lkotlin/Pair;
+	public final fun setDefaultTls (Lkotlin/jvm/functions/Function0;)V
+	public final fun transfer-uXu1xCo (Lio/kuicksilver/testing/Simulator;IILio/kuicksilver/testing/SimConnection;ZJJLkotlin/jvm/functions/Function0;ZLkotlin/jvm/functions/Function0;)Lio/kuicksilver/testing/SimResult;
+	public static synthetic fun transfer-uXu1xCo$default (Lio/kuicksilver/testing/SimScenario;Lio/kuicksilver/testing/Simulator;IILio/kuicksilver/testing/SimConnection;ZJJLkotlin/jvm/functions/Function0;ZLkotlin/jvm/functions/Function0;ILjava/lang/Object;)Lio/kuicksilver/testing/SimResult;
+}
+
+public final class io/kuicksilver/testing/Simulator {
+	public fun <init> (JLio/kuicksilver/testing/LinkParams;Lio/kuicksilver/testing/LinkParams;Lio/kuicksilver/tls/QuicCrypto;Lio/kuicksilver/quic/IoCapabilities;)V
+	public synthetic fun <init> (JLio/kuicksilver/testing/LinkParams;Lio/kuicksilver/testing/LinkParams;Lio/kuicksilver/tls/QuicCrypto;Lio/kuicksilver/quic/IoCapabilities;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun addClientPath (Lio/ktor/network/sockets/InetSocketAddress;Lio/kuicksilver/testing/LinkParams;)I
+	public final fun connect (Lio/kuicksilver/quic/QuicConfig;Lio/kuicksilver/quic/QuicConfig;Lio/kuicksilver/tls/TlsConfig;Lio/kuicksilver/tls/TlsConfig;)Lio/kuicksilver/testing/SimConnection;
+	public static synthetic fun connect$default (Lio/kuicksilver/testing/Simulator;Lio/kuicksilver/quic/QuicConfig;Lio/kuicksilver/quic/QuicConfig;Lio/kuicksilver/tls/TlsConfig;Lio/kuicksilver/tls/TlsConfig;ILjava/lang/Object;)Lio/kuicksilver/testing/SimConnection;
+	public final fun getClientAddress ()Lio/ktor/network/sockets/InetSocketAddress;
+	public final fun getDropNextClientToServer ()Z
+	public final fun getLastClientSourceSeenByServer ()Lio/ktor/network/sockets/InetSocketAddress;
+	public final fun getMisrouted ()J
+	public final fun getNow-Jjb1_Os ()J
+	public final fun getProgress ()J
+	public final fun getSeed ()J
+	public final fun pathDelivered (I)J
+	public final fun rebindClient (Ljava/lang/Integer;Ljava/lang/String;)V
+	public static synthetic fun rebindClient$default (Lio/kuicksilver/testing/Simulator;Ljava/lang/Integer;Ljava/lang/String;ILjava/lang/Object;)V
+	public final fun runUntil-VtjQ1oo (JLkotlin/jvm/functions/Function0;)Lio/kuicksilver/testing/SimResult;
+	public final fun setDropNextClientToServer (Z)V
+	public final fun setMtu (Ljava/lang/Integer;Ljava/lang/Integer;)V
+	public final fun setProgress (J)V
+}
+

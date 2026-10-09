@@ -1,0 +1,8 @@
+# Copyright 2026 The Kuicksilver Authors
+# SPDX-License-Identifier: Apache-2.0
+* text=auto eol=lf
+*.bat text eol=crlf
+*.sha256 text eol=lf
+*.jar binary
+*.der binary
+*.api linguist-generated

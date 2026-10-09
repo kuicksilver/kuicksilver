@@ -1,0 +1,120 @@
+<!--
+Copyright 2026 The Kuicksilver Authors
+SPDX-License-Identifier: Apache-2.0
+-->
+
+# Security Policy
+
+Kuicksilver implements TLS, QUIC and HTTP/3 and ships a statically linked OpenSSL, so we treat security reports as our
+highest priority. Thank you for reporting responsibly.
+
+## Reporting a vulnerability
+
+**Do not open a public issue, discussion or pull request for a vulnerability.**
+
+Report it privately through GitHub's private vulnerability reporting:
+<https://github.com/kuicksilver/kuicksilver/security/advisories/new> (repository tab **Security**, then **Report a
+vulnerability**). Only the maintainers can see the report.
+
+Please include:
+
+- the affected version or commit, the platform (JVM, Android, Kotlin/Native target) and the module;
+- what an attacker can do, and from where (network observer, malicious peer, malicious server, local);
+- a reproduction: a test, a packet capture with a key log, or a minimal program;
+- whether you used AI tools to find or describe the issue (it helps us judge the report, it does not lower its priority).
+
+Hardening suggestions that are not exploitable may be filed as ordinary issues. If you are unsure, report privately.
+
+## What happens next
+
+| Step | Target |
+|---|---|
+| Acknowledgement of your report | within 3 business days |
+| Initial assessment (valid or not, severity, affected versions) | within 14 days |
+| Fix released for Critical and High severity | within 30 days of the assessment |
+| Public disclosure | coordinated with you; by default no later than 90 days after the report |
+
+We keep you informed while we work on the fix, agree the disclosure date with you, and credit you in the advisory
+unless you prefer otherwise. Advisories are published as GitHub Security Advisories, with a CVE requested through
+GitHub. A few days before a security release we announce that a release with a security fix is coming, without
+details, and the release's `CHANGELOG.md` entry lists the fix under **Security**. There is no bug bounty.
+
+## Supported versions
+
+| Version | Supported |
+|---|---|
+| latest 0.x release | yes |
+| older 0.x releases | no — upgrade to the latest |
+
+Kuicksilver is pre-1.0: only the latest 0.x release receives fixes. From 1.0 on, the latest minor release of each
+supported major version will receive security fixes, and a major version will be supported for at least two years
+after the next major version is released. Until the first release, fixes go to the `main` branch.
+
+## OpenSSL
+
+Every Kuicksilver artifact (JVM jars, the Android AAR, the Kotlin/Native klibs) contains a statically linked OpenSSL
+built by this repository. Applications do not get OpenSSL updates from their operating system for it; they get them
+from us, so we commit to the following.
+
+- **Pinned release.** We use the OpenSSL 3.5 LTS branch. The exact release, the SHA-256 of its tarball and the
+  fingerprint of the OpenSSL release signing key are pinned in [`gradle/openssl.toml`](gradle/openssl.toml); the build
+  verifies the signature and the hash before compiling (`tools/openssl/fetch.sh`). The build configuration
+  ([`tools/openssl/configure-flags.txt`](tools/openssl/configure-flags.txt)) compiles out everything the stack does
+  not use (legacy protocols and ciphers, DTLS, OpenSSL's own QUIC and socket code, engines, dynamic modules, key
+  logging, and more), which removes a large part of OpenSSL's attack surface.
+- **Watching upstream.** The maintainers follow the openssl-announce list, which pre-announces security releases.
+- **When OpenSSL publishes a fix**, we check the advisory against our configuration and release a Kuicksilver version
+  with the fixed OpenSSL:
+
+  | OpenSSL severity | Kuicksilver release with the fixed OpenSSL |
+  |---|---|
+  | Critical or High | within 72 hours of the OpenSSL release |
+  | Moderate | within 14 days |
+  | Low, or not reachable in our configuration | in the next planned release, with a note saying why it does not affect us |
+  | Non-security 3.5.x patch release | within 30 days |
+
+- **Version strings.** The OpenSSL version stays visible in the native libraries (and in the JVM jar manifest as
+  `OpenSSL-Version` and `OpenSSL-SHA256`), so scanners can see which release you ship. Update Kuicksilver promptly when
+  an OpenSSL advisory applies.
+- **System OpenSSL.** On Linux, `ksl` can also be compiled against a system OpenSSL 3.5 or newer (`KSL_SYSTEM_OPENSSL`);
+  published artifacts never do this. If you build that way, your operating system vendor is responsible for patching
+  OpenSSL.
+
+A vulnerability in OpenSSL itself should be reported to the OpenSSL project
+(<https://openssl-library.org/policies/general/security-policy/>). If it is reachable through Kuicksilver in a way
+OpenSSL's advisory does not cover, report that to us as well.
+
+## Scope
+
+The threat model is in [docs/spec/threat-model.md](docs/spec/threat-model.md). In scope, for example:
+
+- memory unsafety, undefined behaviour or a crash in the `ksl` C shim or its JNI/cinterop bindings;
+- bypassing host name verification, a pin, `ExpectedName`, or the trust configuration in any way;
+- unbounded memory or CPU growth driven by a peer, beyond the configured limits;
+- nonce reuse, key or secret material leaking into the Kotlin heap, logs or files without the explicit key-log API;
+- predictable connection IDs, Retry or stateless-reset tokens; amplification beyond the 3x limit of RFC 9000;
+- a crash of an endpoint, or of other connections, caused by a single malicious peer;
+- a tampered native library that loads anyway.
+
+Out of scope:
+
+- resource use within the limits you configured (raise or lower them for your threat model);
+- a `TrustConfig.Custom` verifier, or a `KeylogSink`, that does what your code told it to do;
+- secrets exposed through the explicit key-log API (`@DelicateKuicksilverApi`);
+- side channels of the host (shared CPU caches, power analysis), traffic analysis, and compromise of the operating
+  system or a root user on the host;
+- bugs in OpenSSL that Kuicksilver does not make reachable (report them to OpenSSL);
+- anything in `samples/`, test certificates and test keys, or the unpublished modules (`kuicksilver-testing`,
+  `kuicksilver-bench`, `kuicksilver-interop`), unless it shows a flaw in a published module.
+
+## Safe harbor
+
+We consider security research carried out in good faith under this policy to be authorized. We will not pursue or
+support legal action against you for accidentally violating this policy while trying to follow it, provided you:
+
+- test only against systems you own or are allowed to test, and never against other people's servers or data;
+- avoid privacy violations, data destruction and service degradation;
+- give us reasonable time to fix the issue before any public disclosure.
+
+If a third party takes legal action against you for research done under this policy, we will make it known that your
+actions were authorized by us. If in doubt, ask us privately first.

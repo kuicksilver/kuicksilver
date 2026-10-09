@@ -1,0 +1,87 @@
+public final class io/kuicksilver/ktor/server/EngineMain {
+	public static final field INSTANCE Lio/kuicksilver/ktor/server/EngineMain;
+	public final fun createServer ([Ljava/lang/String;)Lio/ktor/server/engine/EmbeddedServer;
+	public static final fun main ([Ljava/lang/String;)V
+}
+
+public final class io/kuicksilver/ktor/server/Kuicksilver : io/ktor/server/engine/ApplicationEngineFactory {
+	public static final field INSTANCE Lio/kuicksilver/ktor/server/Kuicksilver;
+	public synthetic fun configuration (Lkotlin/jvm/functions/Function1;)Lio/ktor/server/engine/ApplicationEngine$Configuration;
+	public fun configuration (Lkotlin/jvm/functions/Function1;)Lio/kuicksilver/ktor/server/KuicksilverApplicationEngine$Configuration;
+	public synthetic fun create (Lio/ktor/server/application/ApplicationEnvironment;Lio/ktor/events/Events;ZLio/ktor/server/engine/ApplicationEngine$Configuration;Lkotlin/jvm/functions/Function0;)Lio/ktor/server/engine/ApplicationEngine;
+	public fun create (Lio/ktor/server/application/ApplicationEnvironment;Lio/ktor/events/Events;ZLio/kuicksilver/ktor/server/KuicksilverApplicationEngine$Configuration;Lkotlin/jvm/functions/Function0;)Lio/kuicksilver/ktor/server/KuicksilverApplicationEngine;
+}
+
+public final class io/kuicksilver/ktor/server/KuicksilverApplicationEngine : io/ktor/server/engine/BaseApplicationEngine {
+	public fun <init> (Lio/ktor/server/application/ApplicationEnvironment;Lio/ktor/events/Events;ZLio/kuicksilver/ktor/server/KuicksilverApplicationEngine$Configuration;Lkotlin/jvm/functions/Function0;)V
+	public final fun getConfiguration ()Lio/kuicksilver/ktor/server/KuicksilverApplicationEngine$Configuration;
+	public fun start (Z)Lio/ktor/server/engine/ApplicationEngine;
+	public fun startSuspend (ZLkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public fun stop (JJ)V
+	public fun stopSuspend (JJLkotlin/coroutines/Continuation;)Ljava/lang/Object;
+}
+
+public final class io/kuicksilver/ktor/server/KuicksilverApplicationEngine$Configuration : io/ktor/server/engine/BaseApplicationEngine$Configuration {
+	public fun <init> ()V
+	public final fun getAltSvc ()Z
+	public final fun getConnectionIdleTimeoutSeconds ()I
+	public final fun getHttp3 ()Z
+	public final fun getHttp3Settings ()Lio/kuicksilver/http3/Http3Settings;
+	public final fun getIdentity ()Lio/kuicksilver/tls/TlsIdentity;
+	public final fun getQuic ()Lio/kuicksilver/quic/QuicConfig;
+	public final fun getQuicAdmission ()Lio/kuicksilver/quic/ConnectionAdmission;
+	public final fun getQuicMaxIdleTimeout-FghU774 ()Lkotlin/time/Duration;
+	public final fun getUdpSocketCount ()I
+	public final fun getWebSocketsOverHttp3 ()Z
+	public final fun setAltSvc (Z)V
+	public final fun setConnectionIdleTimeoutSeconds (I)V
+	public final fun setHttp3 (Z)V
+	public final fun setHttp3Settings (Lio/kuicksilver/http3/Http3Settings;)V
+	public final fun setIdentity (Lio/kuicksilver/tls/TlsIdentity;)V
+	public final fun setQuic (Lio/kuicksilver/quic/QuicConfig;)V
+	public final fun setQuicAdmission (Lio/kuicksilver/quic/ConnectionAdmission;)V
+	public final fun setQuicMaxIdleTimeout-BwNAW2A (Lkotlin/time/Duration;)V
+	public final fun setUdpSocketCount (I)V
+	public final fun setWebSocketsOverHttp3 (Z)V
+	public final fun tlsConnector (Lio/kuicksilver/tls/TlsIdentity;Lkotlin/jvm/functions/Function1;)V
+	public static synthetic fun tlsConnector$default (Lio/kuicksilver/ktor/server/KuicksilverApplicationEngine$Configuration;Lio/kuicksilver/tls/TlsIdentity;Lkotlin/jvm/functions/Function1;ILjava/lang/Object;)V
+}
+
+public final class io/kuicksilver/ktor/server/KuicksilverTlsConnector : io/ktor/server/engine/EngineConnectorConfig {
+	public fun getAddressDescription ()Ljava/lang/String;
+	public final fun getCipherSuites ()Lio/kuicksilver/tls/CipherSuites;
+	public final fun getClientAuth ()Lio/kuicksilver/tls/ClientAuth;
+	public fun getHost ()Ljava/lang/String;
+	public final fun getIdentity ()Lio/kuicksilver/tls/TlsIdentity;
+	public fun getPort ()I
+	public final fun getSniSelector ()Lkotlin/jvm/functions/Function2;
+	public final fun getTrust ()Lio/kuicksilver/tls/TrustConfig;
+	public fun getType ()Lio/ktor/server/engine/ConnectorType;
+	public final fun tlsConfig (Ljava/util/List;)Lio/kuicksilver/tls/TlsConfig;
+	public fun toString ()Ljava/lang/String;
+	public final fun withPort (I)Lio/kuicksilver/ktor/server/KuicksilverTlsConnector;
+}
+
+public final class io/kuicksilver/ktor/server/KuicksilverTlsConnector$Builder {
+	public fun <init> (Lio/kuicksilver/tls/TlsIdentity;)V
+	public final fun build ()Lio/kuicksilver/ktor/server/KuicksilverTlsConnector;
+	public final fun getCipherSuites ()Lio/kuicksilver/tls/CipherSuites;
+	public final fun getClientAuth ()Lio/kuicksilver/tls/ClientAuth;
+	public final fun getHost ()Ljava/lang/String;
+	public final fun getIdentity ()Lio/kuicksilver/tls/TlsIdentity;
+	public final fun getPort ()I
+	public final fun getSniSelector ()Lkotlin/jvm/functions/Function2;
+	public final fun getTrust ()Lio/kuicksilver/tls/TrustConfig;
+	public final fun setCipherSuites (Lio/kuicksilver/tls/CipherSuites;)V
+	public final fun setClientAuth (Lio/kuicksilver/tls/ClientAuth;)V
+	public final fun setHost (Ljava/lang/String;)V
+	public final fun setIdentity (Lio/kuicksilver/tls/TlsIdentity;)V
+	public final fun setPort (I)V
+	public final fun setSniSelector (Lkotlin/jvm/functions/Function2;)V
+	public final fun setTrust (Lio/kuicksilver/tls/TrustConfig;)V
+}
+
+public final class io/kuicksilver/ktor/server/PeerCertificatesKt {
+	public static final fun getPeerCertificates (Lio/ktor/server/request/ApplicationRequest;)Ljava/util/List;
+}
+

@@ -1,0 +1,120 @@
+// Klib ABI Dump
+// Targets: [iosArm64, iosSimulatorArm64, linuxArm64, linuxX64, macosArm64, mingwX64]
+// Rendering settings:
+// - Signature version: 2
+// - Show manifest properties: true
+// - Show declarations: true
+
+// Library unique name: <io.kuicksilver:kuicksilver-ktor-server>
+final class io.kuicksilver.ktor.server/KuicksilverApplicationEngine : io.ktor.server.engine/BaseApplicationEngine { // io.kuicksilver.ktor.server/KuicksilverApplicationEngine|null[0]
+    constructor <init>(io.ktor.server.application/ApplicationEnvironment, io.ktor.events/Events, kotlin/Boolean, io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration, kotlin/Function0<io.ktor.server.application/Application>) // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.<init>|<init>(io.ktor.server.application.ApplicationEnvironment;io.ktor.events.Events;kotlin.Boolean;io.kuicksilver.ktor.server.KuicksilverApplicationEngine.Configuration;kotlin.Function0<io.ktor.server.application.Application>){}[0]
+
+    final val configuration // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.configuration|{}configuration[0]
+        final fun <get-configuration>(): io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.configuration.<get-configuration>|<get-configuration>(){}[0]
+
+    final fun start(kotlin/Boolean): io.ktor.server.engine/ApplicationEngine // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.start|start(kotlin.Boolean){}[0]
+    final fun stop(kotlin/Long, kotlin/Long) // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.stop|stop(kotlin.Long;kotlin.Long){}[0]
+    final suspend fun startSuspend(kotlin/Boolean): io.ktor.server.engine/ApplicationEngine // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.startSuspend|startSuspend(kotlin.Boolean){}[0]
+    final suspend fun stopSuspend(kotlin/Long, kotlin/Long) // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.stopSuspend|stopSuspend(kotlin.Long;kotlin.Long){}[0]
+
+    final class Configuration : io.ktor.server.engine/BaseApplicationEngine.Configuration { // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration|null[0]
+        constructor <init>() // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration.<init>|<init>(){}[0]
+
+        final var altSvc // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration.altSvc|{}altSvc[0]
+            final fun <get-altSvc>(): kotlin/Boolean // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration.altSvc.<get-altSvc>|<get-altSvc>(){}[0]
+            final fun <set-altSvc>(kotlin/Boolean) // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration.altSvc.<set-altSvc>|<set-altSvc>(kotlin.Boolean){}[0]
+        final var connectionIdleTimeoutSeconds // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration.connectionIdleTimeoutSeconds|{}connectionIdleTimeoutSeconds[0]
+            final fun <get-connectionIdleTimeoutSeconds>(): kotlin/Int // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration.connectionIdleTimeoutSeconds.<get-connectionIdleTimeoutSeconds>|<get-connectionIdleTimeoutSeconds>(){}[0]
+            final fun <set-connectionIdleTimeoutSeconds>(kotlin/Int) // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration.connectionIdleTimeoutSeconds.<set-connectionIdleTimeoutSeconds>|<set-connectionIdleTimeoutSeconds>(kotlin.Int){}[0]
+        final var http3 // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration.http3|{}http3[0]
+            final fun <get-http3>(): kotlin/Boolean // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration.http3.<get-http3>|<get-http3>(){}[0]
+            final fun <set-http3>(kotlin/Boolean) // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration.http3.<set-http3>|<set-http3>(kotlin.Boolean){}[0]
+        final var http3Settings // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration.http3Settings|{}http3Settings[0]
+            final fun <get-http3Settings>(): io.kuicksilver.http3/Http3Settings // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration.http3Settings.<get-http3Settings>|<get-http3Settings>(){}[0]
+            final fun <set-http3Settings>(io.kuicksilver.http3/Http3Settings) // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration.http3Settings.<set-http3Settings>|<set-http3Settings>(io.kuicksilver.http3.Http3Settings){}[0]
+        final var identity // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration.identity|{}identity[0]
+            final fun <get-identity>(): io.kuicksilver.tls/TlsIdentity? // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration.identity.<get-identity>|<get-identity>(){}[0]
+            final fun <set-identity>(io.kuicksilver.tls/TlsIdentity?) // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration.identity.<set-identity>|<set-identity>(io.kuicksilver.tls.TlsIdentity?){}[0]
+        final var quic // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration.quic|{}quic[0]
+            final fun <get-quic>(): io.kuicksilver.quic/QuicConfig // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration.quic.<get-quic>|<get-quic>(){}[0]
+            final fun <set-quic>(io.kuicksilver.quic/QuicConfig) // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration.quic.<set-quic>|<set-quic>(io.kuicksilver.quic.QuicConfig){}[0]
+        final var quicAdmission // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration.quicAdmission|{}quicAdmission[0]
+            final fun <get-quicAdmission>(): io.kuicksilver.quic/ConnectionAdmission? // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration.quicAdmission.<get-quicAdmission>|<get-quicAdmission>(){}[0]
+            final fun <set-quicAdmission>(io.kuicksilver.quic/ConnectionAdmission?) // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration.quicAdmission.<set-quicAdmission>|<set-quicAdmission>(io.kuicksilver.quic.ConnectionAdmission?){}[0]
+        final var quicMaxIdleTimeout // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration.quicMaxIdleTimeout|{}quicMaxIdleTimeout[0]
+            final fun <get-quicMaxIdleTimeout>(): kotlin.time/Duration? // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration.quicMaxIdleTimeout.<get-quicMaxIdleTimeout>|<get-quicMaxIdleTimeout>(){}[0]
+            final fun <set-quicMaxIdleTimeout>(kotlin.time/Duration?) // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration.quicMaxIdleTimeout.<set-quicMaxIdleTimeout>|<set-quicMaxIdleTimeout>(kotlin.time.Duration?){}[0]
+        final var udpSocketCount // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration.udpSocketCount|{}udpSocketCount[0]
+            final fun <get-udpSocketCount>(): kotlin/Int // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration.udpSocketCount.<get-udpSocketCount>|<get-udpSocketCount>(){}[0]
+            final fun <set-udpSocketCount>(kotlin/Int) // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration.udpSocketCount.<set-udpSocketCount>|<set-udpSocketCount>(kotlin.Int){}[0]
+        final var webSocketsOverHttp3 // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration.webSocketsOverHttp3|{}webSocketsOverHttp3[0]
+            final fun <get-webSocketsOverHttp3>(): kotlin/Boolean // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration.webSocketsOverHttp3.<get-webSocketsOverHttp3>|<get-webSocketsOverHttp3>(){}[0]
+            final fun <set-webSocketsOverHttp3>(kotlin/Boolean) // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration.webSocketsOverHttp3.<set-webSocketsOverHttp3>|<set-webSocketsOverHttp3>(kotlin.Boolean){}[0]
+
+        final fun tlsConnector(io.kuicksilver.tls/TlsIdentity, kotlin/Function1<io.kuicksilver.ktor.server/KuicksilverTlsConnector.Builder, kotlin/Unit> = ...) // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration.tlsConnector|tlsConnector(io.kuicksilver.tls.TlsIdentity;kotlin.Function1<io.kuicksilver.ktor.server.KuicksilverTlsConnector.Builder,kotlin.Unit>){}[0]
+    }
+}
+
+final class io.kuicksilver.ktor.server/KuicksilverTlsConnector : io.ktor.server.engine/EngineConnectorConfig { // io.kuicksilver.ktor.server/KuicksilverTlsConnector|null[0]
+    final val cipherSuites // io.kuicksilver.ktor.server/KuicksilverTlsConnector.cipherSuites|{}cipherSuites[0]
+        final fun <get-cipherSuites>(): io.kuicksilver.tls/CipherSuites // io.kuicksilver.ktor.server/KuicksilverTlsConnector.cipherSuites.<get-cipherSuites>|<get-cipherSuites>(){}[0]
+    final val clientAuth // io.kuicksilver.ktor.server/KuicksilverTlsConnector.clientAuth|{}clientAuth[0]
+        final fun <get-clientAuth>(): io.kuicksilver.tls/ClientAuth // io.kuicksilver.ktor.server/KuicksilverTlsConnector.clientAuth.<get-clientAuth>|<get-clientAuth>(){}[0]
+    final val host // io.kuicksilver.ktor.server/KuicksilverTlsConnector.host|{}host[0]
+        final fun <get-host>(): kotlin/String // io.kuicksilver.ktor.server/KuicksilverTlsConnector.host.<get-host>|<get-host>(){}[0]
+    final val identity // io.kuicksilver.ktor.server/KuicksilverTlsConnector.identity|{}identity[0]
+        final fun <get-identity>(): io.kuicksilver.tls/TlsIdentity // io.kuicksilver.ktor.server/KuicksilverTlsConnector.identity.<get-identity>|<get-identity>(){}[0]
+    final val port // io.kuicksilver.ktor.server/KuicksilverTlsConnector.port|{}port[0]
+        final fun <get-port>(): kotlin/Int // io.kuicksilver.ktor.server/KuicksilverTlsConnector.port.<get-port>|<get-port>(){}[0]
+    final val sniSelector // io.kuicksilver.ktor.server/KuicksilverTlsConnector.sniSelector|{}sniSelector[0]
+        final fun <get-sniSelector>(): kotlin.coroutines/SuspendFunction1<io.kuicksilver.tls/ClientHelloInfo, io.kuicksilver.tls/ServerTlsOverride?>? // io.kuicksilver.ktor.server/KuicksilverTlsConnector.sniSelector.<get-sniSelector>|<get-sniSelector>(){}[0]
+    final val trust // io.kuicksilver.ktor.server/KuicksilverTlsConnector.trust|{}trust[0]
+        final fun <get-trust>(): io.kuicksilver.tls/TrustConfig? // io.kuicksilver.ktor.server/KuicksilverTlsConnector.trust.<get-trust>|<get-trust>(){}[0]
+    final val type // io.kuicksilver.ktor.server/KuicksilverTlsConnector.type|{}type[0]
+        final fun <get-type>(): io.ktor.server.engine/ConnectorType // io.kuicksilver.ktor.server/KuicksilverTlsConnector.type.<get-type>|<get-type>(){}[0]
+
+    final fun tlsConfig(kotlin.collections/List<kotlin/String>): io.kuicksilver.tls/TlsConfig // io.kuicksilver.ktor.server/KuicksilverTlsConnector.tlsConfig|tlsConfig(kotlin.collections.List<kotlin.String>){}[0]
+    final fun toString(): kotlin/String // io.kuicksilver.ktor.server/KuicksilverTlsConnector.toString|toString(){}[0]
+    final fun withPort(kotlin/Int): io.kuicksilver.ktor.server/KuicksilverTlsConnector // io.kuicksilver.ktor.server/KuicksilverTlsConnector.withPort|withPort(kotlin.Int){}[0]
+
+    final class Builder { // io.kuicksilver.ktor.server/KuicksilverTlsConnector.Builder|null[0]
+        constructor <init>(io.kuicksilver.tls/TlsIdentity) // io.kuicksilver.ktor.server/KuicksilverTlsConnector.Builder.<init>|<init>(io.kuicksilver.tls.TlsIdentity){}[0]
+
+        final var cipherSuites // io.kuicksilver.ktor.server/KuicksilverTlsConnector.Builder.cipherSuites|{}cipherSuites[0]
+            final fun <get-cipherSuites>(): io.kuicksilver.tls/CipherSuites // io.kuicksilver.ktor.server/KuicksilverTlsConnector.Builder.cipherSuites.<get-cipherSuites>|<get-cipherSuites>(){}[0]
+            final fun <set-cipherSuites>(io.kuicksilver.tls/CipherSuites) // io.kuicksilver.ktor.server/KuicksilverTlsConnector.Builder.cipherSuites.<set-cipherSuites>|<set-cipherSuites>(io.kuicksilver.tls.CipherSuites){}[0]
+        final var clientAuth // io.kuicksilver.ktor.server/KuicksilverTlsConnector.Builder.clientAuth|{}clientAuth[0]
+            final fun <get-clientAuth>(): io.kuicksilver.tls/ClientAuth // io.kuicksilver.ktor.server/KuicksilverTlsConnector.Builder.clientAuth.<get-clientAuth>|<get-clientAuth>(){}[0]
+            final fun <set-clientAuth>(io.kuicksilver.tls/ClientAuth) // io.kuicksilver.ktor.server/KuicksilverTlsConnector.Builder.clientAuth.<set-clientAuth>|<set-clientAuth>(io.kuicksilver.tls.ClientAuth){}[0]
+        final var host // io.kuicksilver.ktor.server/KuicksilverTlsConnector.Builder.host|{}host[0]
+            final fun <get-host>(): kotlin/String // io.kuicksilver.ktor.server/KuicksilverTlsConnector.Builder.host.<get-host>|<get-host>(){}[0]
+            final fun <set-host>(kotlin/String) // io.kuicksilver.ktor.server/KuicksilverTlsConnector.Builder.host.<set-host>|<set-host>(kotlin.String){}[0]
+        final var identity // io.kuicksilver.ktor.server/KuicksilverTlsConnector.Builder.identity|{}identity[0]
+            final fun <get-identity>(): io.kuicksilver.tls/TlsIdentity // io.kuicksilver.ktor.server/KuicksilverTlsConnector.Builder.identity.<get-identity>|<get-identity>(){}[0]
+            final fun <set-identity>(io.kuicksilver.tls/TlsIdentity) // io.kuicksilver.ktor.server/KuicksilverTlsConnector.Builder.identity.<set-identity>|<set-identity>(io.kuicksilver.tls.TlsIdentity){}[0]
+        final var port // io.kuicksilver.ktor.server/KuicksilverTlsConnector.Builder.port|{}port[0]
+            final fun <get-port>(): kotlin/Int // io.kuicksilver.ktor.server/KuicksilverTlsConnector.Builder.port.<get-port>|<get-port>(){}[0]
+            final fun <set-port>(kotlin/Int) // io.kuicksilver.ktor.server/KuicksilverTlsConnector.Builder.port.<set-port>|<set-port>(kotlin.Int){}[0]
+        final var sniSelector // io.kuicksilver.ktor.server/KuicksilverTlsConnector.Builder.sniSelector|{}sniSelector[0]
+            final fun <get-sniSelector>(): kotlin.coroutines/SuspendFunction1<io.kuicksilver.tls/ClientHelloInfo, io.kuicksilver.tls/ServerTlsOverride?>? // io.kuicksilver.ktor.server/KuicksilverTlsConnector.Builder.sniSelector.<get-sniSelector>|<get-sniSelector>(){}[0]
+            final fun <set-sniSelector>(kotlin.coroutines/SuspendFunction1<io.kuicksilver.tls/ClientHelloInfo, io.kuicksilver.tls/ServerTlsOverride?>?) // io.kuicksilver.ktor.server/KuicksilverTlsConnector.Builder.sniSelector.<set-sniSelector>|<set-sniSelector>(kotlin.coroutines.SuspendFunction1<io.kuicksilver.tls.ClientHelloInfo,io.kuicksilver.tls.ServerTlsOverride?>?){}[0]
+        final var trust // io.kuicksilver.ktor.server/KuicksilverTlsConnector.Builder.trust|{}trust[0]
+            final fun <get-trust>(): io.kuicksilver.tls/TrustConfig? // io.kuicksilver.ktor.server/KuicksilverTlsConnector.Builder.trust.<get-trust>|<get-trust>(){}[0]
+            final fun <set-trust>(io.kuicksilver.tls/TrustConfig?) // io.kuicksilver.ktor.server/KuicksilverTlsConnector.Builder.trust.<set-trust>|<set-trust>(io.kuicksilver.tls.TrustConfig?){}[0]
+
+        final fun build(): io.kuicksilver.ktor.server/KuicksilverTlsConnector // io.kuicksilver.ktor.server/KuicksilverTlsConnector.Builder.build|build(){}[0]
+    }
+}
+
+final object io.kuicksilver.ktor.server/EngineMain { // io.kuicksilver.ktor.server/EngineMain|null[0]
+    final fun createServer(kotlin/Array<kotlin/String>): io.ktor.server.engine/EmbeddedServer<io.kuicksilver.ktor.server/KuicksilverApplicationEngine, io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration> // io.kuicksilver.ktor.server/EngineMain.createServer|createServer(kotlin.Array<kotlin.String>){}[0]
+    final fun main(kotlin/Array<kotlin/String>) // io.kuicksilver.ktor.server/EngineMain.main|main(kotlin.Array<kotlin.String>){}[0]
+}
+
+final object io.kuicksilver.ktor.server/Kuicksilver : io.ktor.server.engine/ApplicationEngineFactory<io.kuicksilver.ktor.server/KuicksilverApplicationEngine, io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration> { // io.kuicksilver.ktor.server/Kuicksilver|null[0]
+    final fun configuration(kotlin/Function1<io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration, kotlin/Unit>): io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration // io.kuicksilver.ktor.server/Kuicksilver.configuration|configuration(kotlin.Function1<io.kuicksilver.ktor.server.KuicksilverApplicationEngine.Configuration,kotlin.Unit>){}[0]
+    final fun create(io.ktor.server.application/ApplicationEnvironment, io.ktor.events/Events, kotlin/Boolean, io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration, kotlin/Function0<io.ktor.server.application/Application>): io.kuicksilver.ktor.server/KuicksilverApplicationEngine // io.kuicksilver.ktor.server/Kuicksilver.create|create(io.ktor.server.application.ApplicationEnvironment;io.ktor.events.Events;kotlin.Boolean;io.kuicksilver.ktor.server.KuicksilverApplicationEngine.Configuration;kotlin.Function0<io.ktor.server.application.Application>){}[0]
+}
+
+final val io.kuicksilver.ktor.server/peerCertificates // io.kuicksilver.ktor.server/peerCertificates|@io.ktor.server.request.ApplicationRequest{}peerCertificates[0]
+    final fun (io.ktor.server.request/ApplicationRequest).<get-peerCertificates>(): kotlin.collections/List<io.kuicksilver.tls/Certificate> // io.kuicksilver.ktor.server/peerCertificates.<get-peerCertificates>|<get-peerCertificates>@io.ktor.server.request.ApplicationRequest(){}[0]

@@ -1,0 +1,175 @@
+/* Copyright 2026 The Kuicksilver Authors
+ * SPDX-License-Identifier: Apache-2.0 */
+/* Sessions: lifecycle, names, getters, pause/resume, drive loop shared by QUIC and TCP modes. */
+#include "ksl_internal.h"
+
+extern const OSSL_DISPATCH ksl_quic_dispatch[];
+
+ksl_ssl *ksl_ssl_new(ksl_ctx *c, int mode) {
+    ksl_ssl *s = calloc(1, sizeof *s); if (!s) return NULL;
+    s->owner = c; s->mode = mode; s->rcd_level = -1; s->quic_version = 0x00000001u; s->ssl = SSL_new(c->ctx);
+    if (!s->ssl) { free(s); return NULL; }
+    SSL_set_ex_data(s->ssl, 1, s);
+    if (c->role == KSL_CLIENT) SSL_set_connect_state(s->ssl); else SSL_set_accept_state(s->ssl);
+    if (mode == KSL_MODE_QUIC) {
+        if (!SSL_set_quic_tls_cbs(s->ssl, ksl_quic_dispatch, s)) { SSL_free(s->ssl); free(s); return NULL; }
+    } else {
+        BIO *internal = NULL; if (!BIO_new_bio_pair(&internal, 0, &s->net, 0)) { SSL_free(s->ssl); free(s); return NULL; }
+        SSL_set_bio(s->ssl, internal, internal);
+    }
+    return s;
+}
+void ksl_ssl_free(ksl_ssl *s) {
+    if (!s) return;
+    SSL_set_shutdown(s->ssl, SSL_SENT_SHUTDOWN | SSL_RECEIVED_SHUTDOWN);   /* keeps the session resumable */
+    SSL_free(s->ssl); BIO_free(s->net);
+    for (int i = 0; i < KSL_NLEVELS; i++) { free(s->in[i].buf); free(s->stash[i].buf); }
+    while (s->qh != s->qt) { if (s->q[s->qh].type == KSL_EV_KEY) ksl_key_free(s->q[s->qh].key); free(s->qbuf[s->qh]); s->qh = (s->qh + 1) % KSL_EVQ; }
+    free(s->last_popped); free(s->tp); free(s->verify_host); free(s->verify_ip);
+    sk_X509_pop_free(s->presented_chain, X509_free); sk_X509_pop_free(s->validated_chain, X509_free);
+    if (s->keylog) { OPENSSL_cleanse(s->keylog, s->keylog_cap); free(s->keylog); }
+    free(s);
+}
+static int set_sni(ksl_ssl *s, const char *host) {
+    if (!host || !*host) return ksl_ssl_fail(s, KSL_E_BAD_ARG, "ksl: empty SNI"), s->fatal = 0, KSL_ERROR;
+    return SSL_set_tlsext_host_name(s->ssl, host) == 1 ? KSL_OK : (ksl_ssl_set_error(s, KSL_E_BAD_ARG, "ksl: SNI rejected"), KSL_ERROR);
+}
+static char *dup_str(const char *s) { size_t n = strlen(s) + 1; char *d = malloc(n); if (d) memcpy(d, s, n); return d; }   /* portable duplicate (C11) */
+static int ascii_host(const char *n) { for (; *n; n++) if ((unsigned char)*n >= 0x80 || *n == ' ') return 0; return 1; }
+static int set_verify_name(ksl_ssl *s, const char *name) {
+    if (!name || !*name || !ascii_host(name)) { ksl_ssl_set_error(s, KSL_E_BAD_ARG, "ksl: verify name must be a non-empty ASCII host or IP literal"); return KSL_ERROR; }
+    X509_VERIFY_PARAM *p = SSL_get0_param(s->ssl);
+    s->verify_flags = X509_CHECK_FLAG_NEVER_CHECK_SUBJECT | X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS;
+    X509_VERIFY_PARAM_set_hostflags(p, s->verify_flags);
+    free(s->verify_host); free(s->verify_ip); s->verify_host = s->verify_ip = NULL;
+    ERR_clear_error();
+    if (X509_VERIFY_PARAM_set1_ip_asc(p, name) == 1) { s->verify_ip = dup_str(name); s->verify_name_set = 1; return KSL_OK; }   /* IP-ID: no SNI (RFC 6066 section 3) */
+    ERR_clear_error();
+    if (X509_VERIFY_PARAM_set1_host(p, name, 0) != 1) { ksl_ssl_set_error(s, KSL_E_BAD_ARG, "ksl: host name rejected"); return KSL_ERROR; }
+    s->verify_host = dup_str(name); s->verify_name_set = 1; return KSL_OK;
+}
+int ksl_ssl_set(ksl_ssl *s, int what, const uint8_t *data, size_t len) {
+    ERR_clear_error();
+    switch (what) {
+    case KSL_SET_SNI: case KSL_SET_VERIFY_NAME: {
+        if (!data || len == 0 || len > 255 || memchr(data, 0, len)) { ksl_ssl_set_error(s, KSL_E_BAD_ARG, "ksl: name must be 1..255 bytes without NUL"); return KSL_ERROR; }
+        char name[256]; memcpy(name, data, len); name[len] = 0;
+        return what == KSL_SET_SNI ? set_sni(s, name) : set_verify_name(s, name);
+    }
+    case KSL_SET_QUIC_VERSION: {
+        if (!data || len != 4) { ksl_ssl_set_error(s, KSL_E_BAD_ARG, "ksl: QUIC version is 4 bytes"); return KSL_ERROR; }
+        uint32_t v = ((uint32_t)data[0] << 24) | ((uint32_t)data[1] << 16) | ((uint32_t)data[2] << 8) | data[3];
+        if (v != 0x00000001u && v != 0x6b3343cfu) { ksl_ssl_set_error(s, KSL_E_BAD_ARG, "ksl: unknown QUIC version"); return KSL_ERROR; }
+        if (s->hs_keys) { ksl_ssl_set_error(s, KSL_E_TOO_LATE, "ksl: QUIC version is fixed once Handshake keys exist"); return KSL_ERROR; }
+        s->quic_version = v; return KSL_OK;
+    }
+    default: ksl_ssl_set_error(s, KSL_E_BAD_ARG, "ksl: unknown setter"); return KSL_ERROR;
+    }
+}
+static int copy_out(uint8_t *out, size_t cap, size_t *len, const void *src, size_t n) {
+    if (len) *len = n; if (n > cap) return KSL_ERROR; if (n) memcpy(out, src, n); return KSL_OK;
+}
+int ksl_ssl_get(ksl_ssl *s, int what, uint8_t *out, size_t cap, size_t *len) {
+    ERR_clear_error();
+    if (s->fatal && what != KSL_GET_VERSION && what != KSL_GET_KEYLOG) { ksl_ssl_set_error(s, KSL_E_NOT_SUPPORTED, "ksl: session failed"); return KSL_ERROR; }
+    switch (what) {
+    case KSL_GET_ALPN: { const unsigned char *a; unsigned l; SSL_get0_alpn_selected(s->ssl, &a, &l); return copy_out(out, cap, len, a, l); }
+    case KSL_GET_VERSION: { int v = SSL_version(s->ssl); uint8_t b[2] = {(uint8_t)(v >> 8), (uint8_t)v}; return copy_out(out, cap, len, b, 2); }
+    case KSL_GET_CHANNEL_BINDING: {
+        uint8_t cb[32];
+        if (SSL_version(s->ssl) < TLS1_3_VERSION && !SSL_get_extms_support(s->ssl)) { ksl_ssl_set_error(s, KSL_E_EMS_REQUIRED, "ksl: tls-exporter needs extended master secret"); return KSL_ERROR; }
+        if (SSL_export_keying_material(s->ssl, cb, 32, "EXPORTER-Channel-Binding", 24, (const unsigned char *)"", 0, 1) != 1) { ksl_ssl_set_error(s, KSL_E_NOT_SUPPORTED, "ksl: exporter failed"); return KSL_ERROR; }
+        return copy_out(out, cap, len, cb, 32);
+    }
+    case KSL_GET_KEYLOG: { int rc = copy_out(out, cap, len, s->keylog, s->keylog_len); if (rc == KSL_OK && s->keylog) { OPENSSL_cleanse(s->keylog, s->keylog_len); s->keylog_len = 0; } return rc; }
+    case KSL_GET_SESSION_REUSED: { uint8_t b = SSL_session_reused(s->ssl) ? 1 : 0; return copy_out(out, cap, len, &b, 1); }
+    case KSL_GET_EMS: { uint8_t b = SSL_get_extms_support(s->ssl) == 1; return copy_out(out, cap, len, &b, 1); }
+    case KSL_GET_QUIC_VERSION: { uint32_t v = s->quic_version; uint8_t b[4] = {(uint8_t)(v >> 24), (uint8_t)(v >> 16), (uint8_t)(v >> 8), (uint8_t)v}; return copy_out(out, cap, len, b, 4); }
+    default: ksl_ssl_set_error(s, KSL_E_BAD_ARG, "ksl: unknown getter"); return KSL_ERROR;
+    }
+}
+int ksl_ssl_get_peer_chain(ksl_ssl *s, int which, int idx, uint8_t *out, size_t cap, size_t *len) {
+    STACK_OF(X509) *chain = which == KSL_CHAIN_VALIDATED ? s->validated_chain : s->presented_chain;
+    X509 *single = NULL;
+    if (!chain || sk_X509_num(chain) == 0) single = SSL_get0_peer_certificate(s->ssl);   /* resumed session: only the leaf survives in the session */
+    int count = chain && sk_X509_num(chain) ? sk_X509_num(chain) : (single ? 1 : 0);
+    if (idx < 0) return count;
+    if (idx >= count) { ksl_ssl_set_error(s, KSL_E_BAD_ARG, "ksl: chain index out of range"); return KSL_ERROR; }
+    unsigned char *der = NULL; int l = i2d_X509(single ? single : sk_X509_value(chain, idx), &der); if (l < 0) return KSL_ERROR;
+    int rc = copy_out(out, cap, len, der, (size_t)l); OPENSSL_free(der); return rc;
+}
+int ksl_ssl_verify_resume(ksl_ssl *s, int accept, int alert) {
+    if (s->verify_pending != 1) { ksl_ssl_set_error(s, KSL_E_NOT_PAUSED, "ksl: no verification is pending"); return KSL_ERROR; }
+    s->verify_pending = 2; s->verify_decision = accept; s->verify_alert = alert; return KSL_OK;
+}
+int ksl_ssl_export_keying_material(ksl_ssl *s, uint8_t *out, size_t out_len, const char *label, size_t label_len, const uint8_t *context, size_t context_len) {
+    if (!s->done) { ksl_ssl_set_error(s, KSL_E_NOT_SUPPORTED, "ksl: exporter before the handshake completed"); return KSL_ERROR; }
+    ERR_clear_error();
+    if (SSL_export_keying_material(s->ssl, out, out_len, label, label_len, context, context_len, context != NULL) != 1) { ksl_ssl_set_error(s, KSL_E_NOT_SUPPORTED, "ksl: exporter failed"); return KSL_ERROR; }
+    return KSL_OK;
+}
+/* ksl_session is an SSL_SESSION: reference-counted, its master key cleansed by OpenSSL on the last free (never serialized to Kotlin, so the secret stays in native memory) */
+ksl_session *ksl_ssl_get1_session(ksl_ssl *s) {
+    ERR_clear_error(); SSL_SESSION *sess = SSL_get1_session(s->ssl);
+    if (sess && !SSL_SESSION_is_resumable(sess)) { SSL_SESSION_free(sess); sess = NULL; }
+    return (ksl_session *)sess;
+}
+int ksl_ssl_set_session(ksl_ssl *s, ksl_session *session) {
+    ERR_clear_error();
+    if (!session || SSL_set_session(s->ssl, (SSL_SESSION *)session) != 1) { ksl_ssl_set_error(s, KSL_E_BAD_ARG, "ksl: session rejected"); return KSL_ERROR; }
+    return KSL_OK;
+}
+void ksl_session_free(ksl_session *session) { SSL_SESSION_free((SSL_SESSION *)session); }
+int ksl_ssl_new_session_ticket(ksl_ssl *s) { ERR_clear_error(); if (SSL_new_session_ticket(s->ssl) != 1) { ksl_ssl_set_error(s, KSL_E_NOT_SUPPORTED, "ksl: ticket request failed"); return KSL_ERROR; } return KSL_OK; }
+int ksl_ssl_key_update(ksl_ssl *s, int request_peer) {
+    ERR_clear_error();
+    if (SSL_key_update(s->ssl, request_peer ? SSL_KEY_UPDATE_REQUESTED : SSL_KEY_UPDATE_NOT_REQUESTED) != 1) { ksl_ssl_set_error(s, KSL_E_NOT_SUPPORTED, "ksl: key update failed"); return KSL_ERROR; }
+    return KSL_OK;
+}
+int ksl_ssl_client_hello(ksl_ssl *s, ksl_client_hello *out) {
+    if (!s->sni_pending) { ksl_ssl_set_error(s, KSL_E_NOT_PAUSED, "ksl: not paused at ClientHello"); return KSL_ERROR; }
+    memset(out, 0, sizeof *out); const unsigned char *p; size_t l;
+    if (SSL_client_hello_get0_ext(s->ssl, TLSEXT_TYPE_server_name, &p, &l) == 1 && l >= 5 && p[2] == 0) {   /* list len(2) type(1) name len(2) name */
+        size_t nl = ((size_t)p[3] << 8) | p[4]; if (5 + nl <= l) { out->sni = p + 5; out->sni_len = nl; }
+    }
+    if (SSL_client_hello_get0_ext(s->ssl, TLSEXT_TYPE_application_layer_protocol_negotiation, &p, &l) == 1 && l >= 2) { out->alpn = p + 2; out->alpn_len = l - 2; }
+    if (SSL_client_hello_get0_ext(s->ssl, TLSEXT_TYPE_signature_algorithms, &p, &l) == 1 && l >= 2) { out->sig_algs = p + 2; out->sig_algs_len = l - 2; }
+    return KSL_OK;
+}
+int ksl_ssl_sni_resume(ksl_ssl *s, ksl_ctx *override, int alert) {
+    if (!s->sni_pending) { ksl_ssl_set_error(s, KSL_E_NOT_PAUSED, "ksl: not paused at ClientHello"); return KSL_ERROR; }
+    s->sni_pending = 2; s->sni_override = override; s->sni_decision_alert = alert; return KSL_OK;
+}
+
+/* Drives the handshake, then post-handshake messages. The verify name rule (ADR-0011: the host name is always checked by the shared matcher, also after a platform verdict) is enforced here. */
+int ksl_drive(ksl_ssl *s) {
+    if (s->fatal) return KSL_ERROR;
+    if (!s->done && s->owner->role == KSL_CLIENT && s->owner->verify_mode != KSL_VERIFY_NONE && !s->verify_name_set)
+        return ksl_ssl_fail(s, KSL_E_NO_VERIFY_NAME, "ksl: verify name not set (reference identifier is mandatory)");
+    ERR_clear_error(); int r;
+    if (!s->done) {
+        r = SSL_do_handshake(s->ssl);
+        if (r == 1) {
+            s->done = 1;
+            if (s->mode == KSL_MODE_TCP && SSL_version(s->ssl) < TLS1_3_VERSION && !SSL_get_extms_support(s->ssl)) return ksl_ssl_fail(s, KSL_E_EMS_REQUIRED, "ksl: TLS 1.2 without extended master secret rejected");
+            if (s->mode == KSL_MODE_QUIC) ksl_push_event(s, KSL_EV_HANDSHAKE_DONE, NULL, 0);
+            return KSL_OK;
+        }
+    } else {
+        size_t n; unsigned char dummy[1]; r = SSL_read_ex(s->ssl, dummy, 0, &n);   /* post-handshake processing (QUIC pod) */
+        if (r == 1) return KSL_OK;
+    }
+    switch (SSL_get_error(s->ssl, r)) {
+    case SSL_ERROR_WANT_READ: case SSL_ERROR_WANT_WRITE: ERR_clear_error(); return KSL_WANT_READ;
+    case SSL_ERROR_WANT_RETRY_VERIFY: ERR_clear_error(); return KSL_WANT_VERIFY;
+    case SSL_ERROR_WANT_CLIENT_HELLO_CB: ERR_clear_error(); return KSL_WANT_SNI;
+    case SSL_ERROR_ZERO_RETURN: ERR_clear_error(); return KSL_EOF;
+    case SSL_ERROR_SYSCALL: if (!ERR_peek_error()) return ksl_ssl_fail(s, KSL_E_TRUNCATED, "ksl: unexpected EOF"); /* fallthrough */
+    default: s->fatal = 1; ksl_ssl_set_error(s, KSL_E_NOT_SUPPORTED, "ksl: handshake failed"); return KSL_ERROR;
+    }
+}
+
+#ifdef KSL_TEST
+/* Test hook: the OpenSSL object behind a session, for tests that need to shape the client (groups, message callbacks). */
+SSL *ksl_ssl_raw_for_test(ksl_ssl *s) { return s->ssl; }
+#endif

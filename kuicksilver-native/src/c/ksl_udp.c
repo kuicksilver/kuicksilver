@@ -1,0 +1,95 @@
+/* Copyright 2026 The Kuicksilver Authors
+ * SPDX-License-Identifier: Apache-2.0 */
+/* Accelerated UDP for Linux (ADR-0006; threat-model 3.12, 3.16): one socket, batched sendmsg with UDP_SEGMENT,
+ * recvmsg with UDP_GRO split into the caller's slots inside C, ECN through IP_TOS / IP_RECVTOS, DF in PROBE mode (never DO),
+ * SO_REUSEPORT. No allocation after open; errors stay in the object. Other platforms: KSL_E_NOT_SUPPORTED.
+ * The socket's life (open, get, shutdown, close) lives here, sending in ksl_udp_send.c, receiving in ksl_udp_recv.c. */
+#include "ksl_udp_internal.h"
+
+#ifdef __linux__
+static void be32(uint8_t *p, uint32_t v) { p[0] = (uint8_t)(v >> 24); p[1] = (uint8_t)(v >> 16); p[2] = (uint8_t)(v >> 8); p[3] = (uint8_t)v; }
+static void be16(uint8_t *p, uint16_t v) { p[0] = (uint8_t)(v >> 8); p[1] = (uint8_t)v; }
+
+ksl_udp *ksl_udp_open(const uint8_t addr[KSL_UDP_ADDR_LEN], int flags, uint32_t *err, char *msg, size_t msglen) {
+    if (!addr || (addr[0] != 4 && addr[0] != 6)) { if (err) *err = KSL_E_BAD_ARG; if (msg && msglen) snprintf(msg, msglen, "ksl_udp: bad address"); return NULL; }
+    ksl_udp *u = calloc(1, sizeof *u); if (!u) { if (err) *err = KSL_E_BAD_ARG; return NULL; }
+    u->family = addr[0] == 4 ? AF_INET : AF_INET6; u->requested = (uint32_t)flags; u->wake[0] = u->wake[1] = -1; u->fd = -1;
+    u->fd = socket(u->family, SOCK_DGRAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0);
+    if (u->fd < 0) { int e = errno; if (err) *err = KSL_E_NOT_SUPPORTED; if (msg && msglen) snprintf(msg, msglen, "socket: %s", strerror(e)); free(u); return NULL; }
+    int one = 1;
+    if (flags & KSL_UDP_REUSEPORT) { if (setsockopt(u->fd, SOL_SOCKET, SO_REUSEPORT, &one, sizeof one) == 0) u->granted |= KSL_UDP_REUSEPORT; }
+    if (u->family == AF_INET6) setsockopt(u->fd, IPPROTO_IPV6, IPV6_V6ONLY, &one, sizeof one);
+    struct sockaddr_storage ss; socklen_t sl = to_sockaddr(addr, &ss);
+    if (bind(u->fd, (struct sockaddr *)&ss, sl) != 0) { int e = errno; if (err) *err = KSL_E_BAD_ARG; if (msg && msglen) snprintf(msg, msglen, "bind: %s", strerror(e)); close(u->fd); free(u); return NULL; }
+    int rcv = 7 * 1024 * 1024; setsockopt(u->fd, SOL_SOCKET, SO_RCVBUF, &rcv, sizeof rcv); setsockopt(u->fd, SOL_SOCKET, SO_SNDBUF, &rcv, sizeof rcv);
+    if (flags & KSL_UDP_ECN) {   /* read marks on the way in; marks on the way out travel as a per-message cmsg */
+        int ok = u->family == AF_INET ? setsockopt(u->fd, IPPROTO_IP, IP_RECVTOS, &one, sizeof one) : setsockopt(u->fd, IPPROTO_IPV6, IPV6_RECVTCLASS, &one, sizeof one);
+        if (ok == 0) { u->granted |= KSL_UDP_ECN; u->tos_cmsg_on = 1; }
+    }
+    if (flags & KSL_UDP_DF) {   /* PROBE: DF set, no kernel path MTU cache driving sizes (an attacker's ICMP would shrink it: quic-go CVE-2024-53259) */
+        int probe = IP_PMTUDISC_PROBE; int ok;
+        if (u->family == AF_INET) ok = setsockopt(u->fd, IPPROTO_IP, IP_MTU_DISCOVER, &probe, sizeof probe);
+        else { int p6 = IPV6_PMTUDISC_PROBE; ok = setsockopt(u->fd, IPPROTO_IPV6, IPV6_MTU_DISCOVER, &p6, sizeof p6); if (ok == 0) setsockopt(u->fd, IPPROTO_IPV6, IPV6_DONTFRAG, &one, sizeof one); }
+        if (ok == 0) u->granted |= KSL_UDP_DF;
+    }
+    if (flags & KSL_UDP_GSO) { int zero = 0; if (setsockopt(u->fd, SOL_UDP, UDP_SEGMENT, &zero, sizeof zero) == 0) { u->granted |= KSL_UDP_GSO; u->gso_on = 1; u->gso_max = GSO_SEGMENTS; } }
+    if (flags & KSL_UDP_GRO) { if (setsockopt(u->fd, SOL_UDP, UDP_GRO, &one, sizeof one) == 0) u->granted |= KSL_UDP_GRO; }
+    u->batch = 16;
+    if (pipe2(u->wake, O_CLOEXEC | O_NONBLOCK) != 0) { u->wake[0] = u->wake[1] = -1; }
+    u->scratch = malloc(GRO_MAX); u->tx = malloc(GRO_MAX); if (!u->scratch || !u->tx) { if (err) *err = KSL_E_BAD_ARG; free(u->scratch); free(u->tx); close(u->fd); free(u); return NULL; }
+    sl = sizeof ss; if (getsockname(u->fd, (struct sockaddr *)&ss, &sl) == 0) from_sockaddr(&ss, u->local);
+    return u;
+}
+
+int ksl_udp_get(ksl_udp *u, int what, uint8_t *out, size_t cap, size_t *len) {
+    if (!u || !out || !len) return KSL_ERROR;
+    switch (what) {
+    case KSL_UDP_GET_FD: if (cap < 4) return KSL_ERROR; be32(out, (uint32_t)u->fd); *len = 4; return KSL_OK;
+    case KSL_UDP_GET_CAPS: if (cap < 8) return KSL_ERROR; be32(out, u->granted); be16(out + 4, u->gso_on ? u->gso_max : 0); be16(out + 6, u->batch); *len = 8; return KSL_OK;
+    case KSL_UDP_GET_LOCAL: if (cap < KSL_UDP_ADDR_LEN) return KSL_ERROR; memcpy(out, u->local, KSL_UDP_ADDR_LEN); *len = KSL_UDP_ADDR_LEN; return KSL_OK;
+    case KSL_UDP_GET_STATS: if (cap < 12) return KSL_ERROR; be32(out, u->sends); be32(out + 4, u->recvs); be32(out + 8, u->gso_fallbacks); *len = 12; return KSL_OK;
+    case KSL_UDP_GET_ERROR: { if (cap < 4) return KSL_ERROR; be32(out, u->last_errno); size_t m = strlen(u->last_msg); if (m > cap - 4) m = cap - 4; memcpy(out + 4, u->last_msg, m); *len = 4 + m; return KSL_OK; }
+    default: return KSL_ERROR;
+    }
+}
+
+void ksl_udp_shutdown(ksl_udp *u) {
+    if (!u || u->closed) return;
+    u->closed = 1; if (u->wake[1] >= 0) { uint8_t b = 1; ssize_t w = write(u->wake[1], &b, 1); (void)w; }
+    if (u->fd >= 0) { shutdown(u->fd, SHUT_RDWR); }
+}
+void ksl_udp_close(ksl_udp *u) {
+    if (!u) return;
+    ksl_udp_shutdown(u);
+    for (int i = 0; i < 1000 && __atomic_load_n(&u->in_recv, __ATOMIC_SEQ_CST) > 0; i++) { struct timespec ts = { 0, 1000000 }; nanosleep(&ts, NULL); }   /* a receiver woke up and leaves the object */
+    if (u->fd >= 0) close(u->fd); if (u->wake[0] >= 0) close(u->wake[0]); if (u->wake[1] >= 0) close(u->wake[1]);
+    free(u->scratch); free(u->tx); memset(u, 0, sizeof *u); free(u);
+}
+
+#ifdef KSL_TEST
+uint32_t ksl_udp_syscalls_for_test(ksl_udp *u) { return u->sends; }
+void ksl_udp_fail_next_gso_for_test(ksl_udp *u, int err) { u->fail_next_gso = err; }
+void ksl_udp_fail_next_send_for_test(ksl_udp *u, int err) { u->fail_next_send = err; }
+int ksl_udp_df_mode_for_test(int fd) { int v = -1; socklen_t l = sizeof v; if (getsockopt(fd, IPPROTO_IP, IP_MTU_DISCOVER, &v, &l) != 0) return -1; return v; }
+static void *blocked_recv(void *arg) { ksl_udp *u = arg; uint8_t buf[64]; uint8_t *bufs[1] = { buf }; uint32_t caps[1] = { 64 }, lens[1], got; uint8_t a[KSL_UDP_ADDR_LEN], e[1]; ksl_udp_recv(u, bufs, caps, lens, a, e, 1, &got, 5000); return NULL; }
+int ksl_udp_close_wakes_for_test(ksl_udp *u) {
+    pthread_t t; if (pthread_create(&t, NULL, blocked_recv, u) != 0) return 100000;
+    struct timespec ts = { 0, 20000000 }; nanosleep(&ts, NULL);
+    struct timespec t0, t1; clock_gettime(CLOCK_MONOTONIC, &t0); ksl_udp_shutdown(u); pthread_join(t, NULL); clock_gettime(CLOCK_MONOTONIC, &t1); ksl_udp_close(u);
+    return (int)((t1.tv_sec - t0.tv_sec) * 1000 + (t1.tv_nsec - t0.tv_nsec) / 1000000);
+}
+#endif
+
+#else /* not Linux: the portable DatagramIo does the work */
+ksl_udp *ksl_udp_open(const uint8_t addr[KSL_UDP_ADDR_LEN], int flags, uint32_t *err, char *msg, size_t msglen) { (void)addr; (void)flags; if (err) *err = KSL_E_NOT_SUPPORTED; if (msg && msglen) snprintf(msg, msglen, "ksl_udp: accelerated UDP is Linux-only"); return NULL; }
+int ksl_udp_get(ksl_udp *u, int what, uint8_t *out, size_t cap, size_t *len) { (void)u; (void)what; (void)out; (void)cap; (void)len; return KSL_ERROR; }
+void ksl_udp_shutdown(ksl_udp *u) { (void)u; }
+void ksl_udp_close(ksl_udp *u) { (void)u; }
+#ifdef KSL_TEST
+uint32_t ksl_udp_syscalls_for_test(ksl_udp *u) { (void)u; return 0; }
+void ksl_udp_fail_next_gso_for_test(ksl_udp *u, int err) { (void)u; (void)err; }
+void ksl_udp_fail_next_send_for_test(ksl_udp *u, int err) { (void)u; (void)err; }
+int ksl_udp_df_mode_for_test(int fd) { (void)fd; return -1; }
+int ksl_udp_close_wakes_for_test(ksl_udp *u) { (void)u; return 0; }
+#endif
+#endif

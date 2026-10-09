@@ -1,0 +1,27 @@
+# Internal working documents (owner decision 2026-10-02): never published
+docs/brief/
+docs/plans/
+docs/spec/2026-*-design.md
+docs/spec/reference-comparison.md
+docs/spec/quic-transport-comparison.md
+
+# Build
+.gradle/
+build/
+.kotlin/
+*.iml
+.idea/
+local.properties
+.superpowers/
+**/build/
+*.hprof
+kuicksilver-native/build/
+kuicksilver-native/src/androidMain/jniLibs/
+
+# Jazzer fuzzing mode scratch corpus
+.cifuzz-corpus/
+.claude/
+.worktrees/
+
+# macOS
+.DS_Store
