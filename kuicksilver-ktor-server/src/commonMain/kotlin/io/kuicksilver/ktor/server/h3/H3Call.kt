@@ -68,6 +68,8 @@ internal class H3Call(
     init {
         putResponseAttribute()
         attributes.put(PeerCertificatesKey, peerCertificates)
+        @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+        if (h3.receivedEarly) attributes.put(io.kuicksilver.ktor.server.ReceivedEarlyKey, true)
     }
 
     companion object {

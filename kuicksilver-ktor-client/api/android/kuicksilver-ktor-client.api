@@ -45,6 +45,7 @@ public final class io/kuicksilver/ktor/client/Http3ClientConfig {
 	public final fun getAltSvcStore ()Lio/kuicksilver/ktor/client/AltSvcStore;
 	public final fun getClearOnNetworkChange ()Z
 	public final fun getDiscovery ()Lio/kuicksilver/ktor/client/Http3DiscoveryMode;
+	public final fun getEarlyData ()Z
 	public final fun getEndpoint ()Lio/kuicksilver/quic/QuicEndpointConfig;
 	public final fun getHardDelay-FghU774 ()Lkotlin/time/Duration;
 	public final fun getNetworkId ()Lkotlin/jvm/functions/Function0;
@@ -54,6 +55,7 @@ public final class io/kuicksilver/ktor/client/Http3ClientConfig {
 	public final fun setAltSvcStore (Lio/kuicksilver/ktor/client/AltSvcStore;)V
 	public final fun setClearOnNetworkChange (Z)V
 	public final fun setDiscovery (Lio/kuicksilver/ktor/client/Http3DiscoveryMode;)V
+	public final fun setEarlyData (Z)V
 	public final fun setEndpoint (Lio/kuicksilver/quic/QuicEndpointConfig;)V
 	public final fun setHardDelay-BwNAW2A (Lkotlin/time/Duration;)V
 	public final fun setNetworkId (Lkotlin/jvm/functions/Function0;)V

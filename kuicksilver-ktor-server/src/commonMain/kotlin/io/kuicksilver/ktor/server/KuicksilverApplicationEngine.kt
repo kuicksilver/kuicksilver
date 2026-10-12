@@ -83,6 +83,14 @@ public class KuicksilverApplicationEngine(
         /** Accept WebSockets over HTTP/3 (RFC 9220): advertises `SETTINGS_ENABLE_CONNECT_PROTOCOL`. */
         public var webSocketsOverHttp3: Boolean = true
 
+        /**
+         * Accept 0-RTT on HTTP/3 (off by default; ADR-0015). Early requests can be replayed by an attacker: by default only
+         * GET, HEAD and OPTIONS run before the handshake completes (`http3Settings.earlyData` decides), every other request
+         * waits for it. Handlers of early requests must be free of side effects; see `ApplicationRequest.receivedEarly`.
+         */
+        @io.kuicksilver.annotations.ExperimentalKuicksilverApi
+        public var quicEarlyData: Boolean = false
+
         /** How the HTTP/3 listener binds (tests replace it to simulate platforms without a QUIC server). */
         internal var http3Bind: suspend (
             InetSocketAddress,
