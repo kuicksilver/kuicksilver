@@ -99,7 +99,8 @@ val client = HttpClient(Kuicksilver) {
   SNI and verification use the URL's host. `http://` and `ws://` are plain HTTP/1.1 over TCP.
 - HTTP/1.1 requests are written and responses parsed with Ktor's CIO code (vendored, see `docs/ktor-internal-api.md`):
   chunked bodies, `Expect: 100-continue`, keep-alive with at most `maxConnectionsPerHost` idle connections per origin
-  (a pooled connection the server already closed is replaced once, transparently). Requests on one connection are
+  (a pooled connection the server already closed is replaced once, transparently, for idempotent requests; a POST
+  that failed on one is reported, never sent again). Requests on one connection are
   sequential; `pipelining` is not used.
 - A proxy (`proxy = ProxyBuilder.http(...)`) is used for HTTP/1.1 only: `CONNECT` tunnels for `https`, absolute-form
   requests for `http`; SOCKS proxies are refused with `UnsupportedOperationException`. HTTP/3 never goes through a proxy.
