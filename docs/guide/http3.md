@@ -23,6 +23,8 @@ Header compression uses the static table always and the dynamic table only when 
 - The decoder rejects, before allocating, integers longer than 62 bits and string literals above 64 KiB, and counts the
   decoded size of a field section as it goes (name + value + 32 per line, RFC 9114 section 4.2.2), stopping at
   `maxFieldSectionSize`.
+- An encoder-stream instruction the transport delivers in pieces is reassembled in linear time: once its length is
+  known the decoder only appends bytes until it is complete (at most 2 x 64 KiB + 64 bytes are held).
 - A field section that references entries still in flight on the peer's encoder stream waits for them (at most
   `qpackBlockedStreams` such streams; one more closes the connection with `QPACK_DECOMPRESSION_FAILED`). If the peer
   resets a stream while it waits, the decoder sends a Stream Cancellation.

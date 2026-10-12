@@ -70,6 +70,12 @@ Nothing has been released yet. This section summarises the development of the fi
 
 ### Fixed
 
+K7 (0.2.0), HTTP/3 and the Ktor engines:
+
+- A QPACK encoder-stream instruction cut into many fragments by the transport was re-copied and re-parsed per
+  fragment (quadratic in its length); it is now appended to once and parsed when its known length has arrived
+  (RFC 9204 section 7.4).
+
 Fixes from a full five-reviewer pass over the code before the first release, among them:
 
 - Streams reset or stopped by the peer, or stopped locally, are retired and return their stream credit; lost
