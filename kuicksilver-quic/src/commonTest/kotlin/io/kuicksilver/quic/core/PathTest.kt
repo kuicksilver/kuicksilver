@@ -291,6 +291,26 @@ class PathTest {
         }
     }
 
+    @Test fun validationTimeoutFollowsInitialRtt() {
+        // RFC 9000 section 8.2.4 with initialRtt = 100 ms: max(3 x PTO, 6 x 100 ms) — the 20 ms pair's 3 x PTO is below 600 ms
+        val (p, c) = connected(serverQuic = quicConfig { initialRtt = 100.milliseconds })
+        try {
+            p.clientListensOnSource = false
+            val s = p.server()
+            assertEquals(maxOf(s.pto() * 3, 600.milliseconds), s.validationTimeout())
+            assertEquals(600.milliseconds, s.validationTimeout())
+            p.clientSource = other
+            send(c)
+            p.step()
+            val t0 = p.now
+            assertTrue(p.runUntil(5.seconds) { p.events[s]!!.any { it is ConnectionEvent.PathFailed } })
+            val took = p.now - t0
+            assertTrue(took >= 590.milliseconds && took <= 900.milliseconds, "validation failed after $took")
+        } finally {
+            p.close()
+        }
+    }
+
     @Test fun pathChallengeRepeatsBackOff() {
         // RFC 9000 section 8.2.1 and RFC 9002 section 6.2.1: an unanswered PATH_CHALLENGE is repeated with an exponentially growing gap, not once per PTO
         val (p, c) = connected()

@@ -87,7 +87,11 @@ public class QuicConfig private constructor(
      * prefer v2 while still starting in v1 and upgrading through compatible negotiation (RFC 9368 section 2.3).
      */
     public val initialVersion: VersionProfile?,
-    /** RTT assumed before the first sample (RFC 9002 section 6.2.2); sets the first PTO and the path validation timeout of a new path. */
+    /**
+     * RTT assumed before the first sample (RFC 9002 section 6.2.2), in (0, 10 s]: the first PTO is 3 x this (999 ms at the 333 ms
+     * default, then 2 s, 4 s ...), and a path validation lasts at least 6 x this (RFC 9000 section 8.2.4). Lower recovers a lost
+     * first flight sooner at the price of spurious retransmissions on slow links; see docs/guide/quic.md, "Configuration".
+     */
     public val initialRtt: Duration,
     /** Error code sent in STOP_SENDING / RESET_STREAM when a channel is cancelled or closed with a cause. */
     public val defaultStreamErrorCode: Long,
@@ -128,6 +132,7 @@ public class QuicConfig private constructor(
         require(activeConnectionIdLimit >= 2) { "activeConnectionIdLimit must be at least 2" }
         require(ackDelayExponent in 0..20) { "ackDelayExponent must be 0..20" }
         require(maxAckDelay < 16384.milliseconds) { "maxAckDelay must be below 2^14 ms" }
+        require(initialRtt > Duration.ZERO && initialRtt <= 10.seconds) { "initialRtt must be positive and at most 10 s" }
         require(initialStreamWindow in 1..maxStreamWindow && initialConnectionWindow in 1..maxConnectionWindow) { "windows out of range" }
         require(maxBidiStreams in 0..(1L shl 60) && maxUniStreams in 0..(1L shl 60)) { "stream limits must be at most 2^60" }
         require(maxDatagramFrameSize in 0..65_535L) { "maxDatagramFrameSize must be 0..65535" }
@@ -199,7 +204,7 @@ public class QuicConfig private constructor(
         /** Default null (the first of [versions]); must be one of [versions]. See [QuicConfig.initialVersion]. */
         public var initialVersion: VersionProfile? = null
 
-        /** Default 333 ms (RFC 9002 section 6.2.2); see [QuicConfig.initialRtt]. */
+        /** Default 333 ms (RFC 9002 section 6.2.2), at most 10 s; see [QuicConfig.initialRtt]. */
         public var initialRtt: Duration = 333.milliseconds
 
         /** Default 0; see [QuicConfig.defaultStreamErrorCode]. Must fit a varint (0..2^62-1). */

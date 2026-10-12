@@ -188,6 +188,16 @@ class LossDetectionTest {
         assertEquals(t0 + 999.milliseconds, ld.timeout())
     }
 
+    @Test fun initialPtoFollowsInitialRtt() {
+        // RFC 9002 section 6.2.2: before the first sample PTO = 3 x initial RTT (quic-go's 100 ms default gives 300 ms), doubling per expiry
+        val (ld, _) = ld(config = quicConfig { initialRtt = 100.milliseconds })
+        send(ld, SpaceId.Initial, 0, t0)
+        assertEquals(t0 + 300.milliseconds, ld.timeout())
+        assertNotNull(ld.onTimeout(t0 + 300.milliseconds))
+        send(ld, SpaceId.Initial, 1, t0 + 300.milliseconds)
+        assertEquals(t0 + 300.milliseconds + 600.milliseconds, ld.timeout())
+    }
+
     @Test fun appSpacePtoAddsMaxAckDelayAfterConfirmed() {
         val (ld, _) = ld()
         ld.handshakeConfirmed = true

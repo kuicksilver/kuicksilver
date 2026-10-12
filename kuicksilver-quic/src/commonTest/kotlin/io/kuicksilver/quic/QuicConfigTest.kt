@@ -13,6 +13,7 @@ import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
@@ -57,6 +58,17 @@ class QuicConfigTest {
                     { io.kuicksilver.quic.NewReno() }
             }.congestionController(),
         )
+    }
+
+    @Test fun negative_initialRttMustBePositive() {
+        // RFC 9002 section 6.2.2: the initial RTT seeds the PTO; zero or negative would make it fire at once and forever, and an
+        // absurd value would leave a lost first flight unrepaired for minutes
+        for (bad in listOf(Duration.ZERO, (-1).milliseconds, 10.seconds + 1.milliseconds, Duration.INFINITE)) {
+            val e = assertFailsWith<IllegalArgumentException>("initialRtt = $bad") { quicConfig { initialRtt = bad } }
+            assertEquals("initialRtt must be positive and at most 10 s", e.message)
+        }
+        assertEquals(1.milliseconds, quicConfig { initialRtt = 1.milliseconds }.initialRtt)
+        assertEquals(10.seconds, quicConfig { initialRtt = 10.seconds }.initialRtt)
     }
 
     @Test fun keepAliveAboveThreeQuartersIdleRejected() {
