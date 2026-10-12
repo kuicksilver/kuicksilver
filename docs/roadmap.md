@@ -46,6 +46,9 @@ Known limits, stated on purpose:
 
 ## After 0.2.0
 
+- 0-RTT (RFC 9001 §4.6) is the next minor's headline: the ADR-0013 review (2026-10) keeps its three layers and puts
+  freshness on OpenSSL's ticket-age check. It adds a per-server replay register keyed by ticket, single-use client
+  tickets in the per-engine session cache, and HTTP/3 safe-method gating with RFC 8470 `425`. About 14 tasks.
 - QUIC server on Kotlin/Native Windows (`ksl_udp` over Winsock).
 - The interop runner's `perf` protocol and throughput thresholds in CI.
 - RFC 9460 HTTPS records as a source of h3, WebTransport, multipath and QUIC-LB (`PathId` and the CID layout are
