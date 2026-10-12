@@ -100,7 +100,7 @@ public class QuicConfig private constructor(
      * connection only.
      */
     public val qlog: QlogSink?,
-    /** Builds the congestion controller of each path; [Cubic] with HyStart++ by default, [NewReno] as an alternative. */
+    /** Builds the congestion controller of each path; [Cubic] with HyStart++ by default, [NewReno] or the experimental [Bbr] as alternatives. */
     public val congestionController: () -> CongestionController,
     /** Send the fixed bit as random when the peer allows it (RFC 9287). */
     public val greaseQuicBit: Boolean,

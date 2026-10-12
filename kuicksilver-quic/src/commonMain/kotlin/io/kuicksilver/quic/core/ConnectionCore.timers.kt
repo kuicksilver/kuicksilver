@@ -130,6 +130,7 @@ internal class ConnectionLossListener(
             }
         }
         if (f.dgCount > 0) core.datagramSender?.let { s -> for (i in 0 until f.dgCount) if (f.dgId[i] >= 0) s.onAcked(f.dgId[i]) }
+        if (p.inFlight) (p.cc as? io.kuicksilver.quic.Bbr)?.onPacketAcked(p, core.now)
     }
 
     override fun onLost(
@@ -137,6 +138,7 @@ internal class ConnectionLossListener(
         p: SentPacket,
     ) {
         core.lostPackets++
+        if (p.inFlight) (p.cc as? io.kuicksilver.quic.Bbr)?.onPacketLost(p, core.now)
         core.qlog?.packetLost(space, p.pn, "time_or_packet_threshold", core.now)
         if (p.ecnMarked) {
             core.paths.byId(PathId(p.pathId))?.let { path ->
@@ -193,6 +195,11 @@ internal class ConnectionLossListener(
             target.onLoss(event.now, event.bytes, event.sentTime, event.persistentCongestion)
         }
         core.qlog?.metricsUpdated(core.stats, event.now)
+    }
+
+    override fun onAckProcessed(now: TimeMark) {
+        val all = core.paths.all
+        for (i in all.indices) (all[i].cc as? io.kuicksilver.quic.Bbr)?.onAckProcessed(now)
     }
 
     override fun onDiscarded(bytes: Int) {

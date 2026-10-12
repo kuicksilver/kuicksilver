@@ -47,4 +47,6 @@ class CoreAllocationTest {
     @Test fun steadyStateDatagramsAllocatesZero() = measure(reverse = false, datagrams = true)
     /** CUBIC with HyStart++ (RFC 9438) stated explicitly, the default controller of `QuicConfig`. */
     @Test fun steadyStateCubicAllocatesZero() = measure(reverse = false, quic = io.kuicksilver.quic.quicConfig { congestionController = { io.kuicksilver.quic.Cubic() } })
+
+    @Test fun steadyStateBbrAllocatesZero() = measure(reverse = false, quic = io.kuicksilver.quic.quicConfig { congestionController = { io.kuicksilver.quic.Bbr() } })
 }

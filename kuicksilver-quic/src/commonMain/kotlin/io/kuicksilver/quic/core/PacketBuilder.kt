@@ -161,6 +161,10 @@ internal class PacketBuilder(
             c.amplification.onSent(n)
             if (c.closeFrame != null && c.closeSent) break
         }
+        // the sender ran out of data with room in the window and no pacing delay: the next rate samples show the application's pace
+        if (!congested && count < out.capacity && bytes < c.cc.sendQuantum && c.closeFrame == null && !hasData(SpaceId.Application)) {
+            (c.cc as? io.kuicksilver.quic.Bbr)?.onAppLimited()
+        }
         return count
     }
 
@@ -677,6 +681,8 @@ internal class PacketBuilder(
             c.loss.onPacketSent(space, p, now)
             if (p.inFlight) {
                 target.cc.onPacketSent(now, p.size)
+                // the delivery-rate snapshot (draft-ietf-ccwg-bbr section 4.1.2.2)
+                (target.cc as? io.kuicksilver.quic.Bbr)?.onPacketStamped(p, now)
                 target.pacer.onSent(now, p.size)
             }
             if (ackEliciting) {

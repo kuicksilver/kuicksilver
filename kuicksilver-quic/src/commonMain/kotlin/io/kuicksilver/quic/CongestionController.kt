@@ -7,7 +7,7 @@ import kotlin.time.Duration
 
 /**
  * Congestion control of one path (RFC 9002 section 7). The core calls these from its single-threaded loop; a controller
- * never blocks and never allocates on the hot path. [Cubic] with HyStart++ is the default; [NewReno] remains a choice.
+ * never blocks and never allocates on the hot path. [Cubic] with HyStart++ is the default; [NewReno] and the experimental [Bbr] are choices.
  */
 @ExperimentalKuicksilverApi
 @SubclassOptInRequired(ExperimentalKuicksilverApi::class)

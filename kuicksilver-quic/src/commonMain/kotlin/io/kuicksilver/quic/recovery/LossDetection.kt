@@ -72,6 +72,9 @@ internal interface LossListener {
 
     fun onCongestion(event: CongestionEvent)
 
+    /** One ACK frame newly acknowledged packets and every one of them was reported: per-ACK controllers (BBR) update their model now. */
+    fun onAckProcessed(now: TimeMark) {}
+
     /** Bytes removed from flight because their space was discarded. */
     fun onDiscarded(bytes: Int)
 }
@@ -234,6 +237,7 @@ internal class LossDetection(
             }
             sp.release(p)
         }
+        listener.onAckProcessed(now)
         if (peerCompletedAddressValidation()) ptoCount = 0
         timerBase = now
     }

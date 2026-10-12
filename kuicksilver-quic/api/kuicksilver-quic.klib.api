@@ -559,6 +559,26 @@ final class io.kuicksilver.quic.qlog/DirectoryQlogSink : io.kuicksilver.quic/Qlo
     final fun open(kotlin/String, io.kuicksilver.tls/TlsRole): io.kuicksilver.quic/QlogTrace? // io.kuicksilver.quic.qlog/DirectoryQlogSink.open|open(kotlin.String;io.kuicksilver.tls.TlsRole){}[0]
 }
 
+final class io.kuicksilver.quic/Bbr : io.kuicksilver.quic/CongestionController { // io.kuicksilver.quic/Bbr|null[0]
+    constructor <init>(kotlin/Int = ..., kotlin.random/Random? = ...) // io.kuicksilver.quic/Bbr.<init>|<init>(kotlin.Int;kotlin.random.Random?){}[0]
+
+    final val sendQuantum // io.kuicksilver.quic/Bbr.sendQuantum|{}sendQuantum[0]
+        final fun <get-sendQuantum>(): kotlin/Int // io.kuicksilver.quic/Bbr.sendQuantum.<get-sendQuantum>|<get-sendQuantum>(){}[0]
+
+    final var bytesInFlight // io.kuicksilver.quic/Bbr.bytesInFlight|{}bytesInFlight[0]
+        final fun <get-bytesInFlight>(): kotlin/Long // io.kuicksilver.quic/Bbr.bytesInFlight.<get-bytesInFlight>|<get-bytesInFlight>(){}[0]
+    final var cwnd // io.kuicksilver.quic/Bbr.cwnd|{}cwnd[0]
+        final fun <get-cwnd>(): kotlin/Long // io.kuicksilver.quic/Bbr.cwnd.<get-cwnd>|<get-cwnd>(){}[0]
+
+    final fun onAck(io.kuicksilver.quic/TimeMark, io.kuicksilver.quic/TimeMark, kotlin/Int, kotlin.time/Duration, kotlin/Boolean) // io.kuicksilver.quic/Bbr.onAck|onAck(io.kuicksilver.quic.TimeMark;io.kuicksilver.quic.TimeMark;kotlin.Int;kotlin.time.Duration;kotlin.Boolean){}[0]
+    final fun onDiscarded(kotlin/Int) // io.kuicksilver.quic/Bbr.onDiscarded|onDiscarded(kotlin.Int){}[0]
+    final fun onEcnCe(io.kuicksilver.quic/TimeMark, io.kuicksilver.quic/TimeMark) // io.kuicksilver.quic/Bbr.onEcnCe|onEcnCe(io.kuicksilver.quic.TimeMark;io.kuicksilver.quic.TimeMark){}[0]
+    final fun onLoss(io.kuicksilver.quic/TimeMark, kotlin/Int, io.kuicksilver.quic/TimeMark, kotlin/Boolean) // io.kuicksilver.quic/Bbr.onLoss|onLoss(io.kuicksilver.quic.TimeMark;kotlin.Int;io.kuicksilver.quic.TimeMark;kotlin.Boolean){}[0]
+    final fun onMtuUpdate(kotlin/Int) // io.kuicksilver.quic/Bbr.onMtuUpdate|onMtuUpdate(kotlin.Int){}[0]
+    final fun onPacketSent(io.kuicksilver.quic/TimeMark, kotlin/Int) // io.kuicksilver.quic/Bbr.onPacketSent|onPacketSent(io.kuicksilver.quic.TimeMark;kotlin.Int){}[0]
+    final fun pacingRate(kotlin.time/Duration): kotlin/Long // io.kuicksilver.quic/Bbr.pacingRate|pacingRate(kotlin.time.Duration){}[0]
+}
+
 final class io.kuicksilver.quic/ConnectionAttempt { // io.kuicksilver.quic/ConnectionAttempt|null[0]
     constructor <init>(io.ktor.network.sockets/InetSocketAddress, kotlin/Int, kotlin/Int, kotlin/Int, kotlin/Long, kotlin/Boolean) // io.kuicksilver.quic/ConnectionAttempt.<init>|<init>(io.ktor.network.sockets.InetSocketAddress;kotlin.Int;kotlin.Int;kotlin.Int;kotlin.Long;kotlin.Boolean){}[0]
 
