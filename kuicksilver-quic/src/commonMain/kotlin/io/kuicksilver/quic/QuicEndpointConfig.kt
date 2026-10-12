@@ -9,7 +9,6 @@ import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.annotations.InternalKuicksilverApi
 import io.kuicksilver.annotations.KuicksilverDsl
 import io.kuicksilver.quic.core.ServerEarlyData
-import io.kuicksilver.quic.endpoint.ZeroRttReplayRegister
 import io.kuicksilver.tls.ClientAuth
 import io.kuicksilver.tls.EarlyDataState
 import io.kuicksilver.tls.KslQuicCrypto
@@ -83,13 +82,14 @@ public class QuicServerConfig private constructor(
     private val early = AtomicReference<ServerEarlyData?>(null)
 
     /**
-     * The 0-RTT setup shared by every loop of the endpoints built from this config: the configuration digest and one replay
-     * register (keyed with [random] of the first loop that asks, a CSPRNG in production).
+     * The 0-RTT setup shared by every loop of the endpoints built from this config: the configuration digest and the process's
+     * replay register ([ProcessReplayRegister], shared with every other endpoint of the process; keyed with [random] of the
+     * first loop that asks, a CSPRNG in production).
      */
     internal fun earlySetup(random: Random): ServerEarlyData? {
         if (!earlyData) return null
         early.load()?.let { return it }
-        val made = ServerEarlyData.of(quic, tls.alpn, earlyDataContext, ZeroRttReplayRegister(random))
+        val made = ServerEarlyData.of(quic, tls.alpn, earlyDataContext, ProcessReplayRegister.get(random), ProcessReplayRegister::now)
         return if (early.compareAndSet(null, made)) made else early.load()
     }
 

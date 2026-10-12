@@ -47,8 +47,15 @@ Facts of the pinned OpenSSL 3.5.9 that fix the design:
 1. **Freshness:** OpenSSL's ±10 s ticket-age check. ADR-0013's `maxEarlyDataAge` knob is dropped. The allowance is a
    compile-time constant in OpenSSL, and the client's claimed age is not exposed to a callback, so a narrower window
    would need an OpenSSL patch (see the ledger `Ruling:`).
-2. **Replay register:** `ZeroRttReplayRegister` belongs to the server endpoint and is shared by all `LoopGroup` loops,
-   as the review asks. It is keyed by SipHash-64 (random key per register) of the first PSK identity's
+2. **Replay register:** there is one `ZeroRttReplayRegister` per process (`ProcessReplayRegister`), shared by every
+   server endpoint, `LoopGroup` loop and configuration, and kept across endpoint restarts. Its scope is the ticket key:
+   any endpoint of the process holding a key decrypts every ticket issued under it. The generated keys are process-wide,
+   one `Http3Endpoint.bind` or Ktor connector builds its own `QuicServerConfig`, equal `SessionTicketConfig.keys` may sit
+   in several configurations, and a rotated key set keeps the previous key. A register per endpoint or per configuration
+   therefore let a replay to a second listener of the same process through (security review of k7/0rtt), and a register
+   per key-set instance would too (equal keys in two instances, a key shared by the old and the new set). The register's
+   key begins with the ticket's key name, so one register per process is exactly one register per ticket key. It runs on
+   the process's monotonic clock, not a loop's. It is keyed by SipHash-64 (random key per register) of the first PSK identity's
    `key_name ‖ iv`, the first 32 bytes of our stateless ticket. These bytes identify one issued ticket exactly. The
    register reads them from the ClientHello itself, because the server must decide before ksl processes the hello:
    `KslQuicTlsSession` scans the complete ClientHello for `early_data` and `pre_shared_key`, which is about 60 lines
@@ -65,8 +72,9 @@ Facts of the pinned OpenSSL 3.5.9 that fix the design:
    parameters.
 4. **Idempotency:** the application decides (layer 3, below).
 
-Residue (threat model): ticket keys shared between processes (`SessionTicketConfig.keys`) let a replay into another
-process pass the freshness check only. The HTTP/3 server's default policy still never runs an unsafe early request on
+Residue (threat model): the register is per process per ticket key. Ticket keys shared between processes
+(`SessionTicketConfig.keys`) let a replay into another process (or into a restarted one, within the freshness window)
+pass the freshness check only. The HTTP/3 server's default policy still never runs an unsafe early request on
 a connection whose handshake does not complete. A replayer cannot complete the handshake because it lacks the PSK.
 
 ### Resumption and tickets

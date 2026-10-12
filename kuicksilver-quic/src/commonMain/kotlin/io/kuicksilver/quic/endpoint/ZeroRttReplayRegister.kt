@@ -10,8 +10,8 @@ import kotlin.time.Duration.Companion.seconds
 
 /**
  * The server's 0-RTT replay register (RFC 8446 section 8.2, ADR-0015): a ticket identity (`key_name ‖ iv` of our stateless
- * ticket) gets early data at most once while it could still pass OpenSSL's freshness check (±10 s). One per server endpoint,
- * shared by all its loops. Fingerprints are SipHash-64 under a random key, so a client cannot aim collisions at another
+ * ticket) gets early data at most once while it could still pass OpenSSL's freshness check (±10 s). One per process in
+ * production (`ProcessReplayRegister`), shared by every endpoint and loop. Fingerprints are SipHash-64 under a random key, so a client cannot aim collisions at another
  * client's tickets; a collision only costs one round trip (1-RTT instead of 0-RTT).
  *
  * Layout: [STRIPES] lock-striped buckets, each with two halves of [SLOTS] open-addressed 64-bit fingerprints; a half covers

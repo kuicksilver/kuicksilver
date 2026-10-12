@@ -5,6 +5,7 @@ package io.kuicksilver.quic.endpoint
 import io.kuicksilver.annotations.DelicateKuicksilverApi
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.native.KslLoader
+import io.kuicksilver.quic.ConnectionCore
 import io.kuicksilver.quic.ConnectionEvent
 import io.kuicksilver.quic.ConnectionState
 import io.kuicksilver.quic.CoreFixtures
@@ -56,5 +57,51 @@ class ZeroRttEndpointTest {
             n += r
         }
         assertEquals(req.size, n, "all of the early request is readable before the handshake completes")
+    }
+
+    /** The client's first flight of a 0-RTT connection to [p]'s server, captured on the wire; the server accepted its early data. */
+    private fun capturedEarlyFlight(p: EndpointPair): List<ByteArray> {
+        val t = ticket(p)
+        val flight = ArrayList<ByteArray>()
+        p.filterToServer = { _, b ->
+            flight += b
+            true
+        }
+        val c = p.client.connect(cfg, p.serverAddr, p.now, t)
+        val id = c.openStream(bidi = true)
+        val req = "POST /transfer".encodeToByteArray()
+        assertEquals(req.size, c.writeStream(id, req, 0, req.size, fin = true))
+        var server: ConnectionCore? = null
+        p.onServerCreated = { server = it }
+        p.step()
+        assertEquals(true, server!!.earlyDataAccepted, "the original connection gets its early data")
+        return flight.toList()
+    }
+
+    /** Replays [flight] to [q]'s server as an attacker on the path would; returns the connection it creates there. */
+    private fun replayTo(
+        q: EndpointPair,
+        flight: List<ByteArray>,
+    ): ConnectionCore {
+        var created: ConnectionCore? = null
+        for (b in flight) q.feed(q.server, b, q.clientAddr)?.let { if (created == null) created = it }
+        return created!!
+    }
+
+    @Test fun negative_0rttReplayToSecondEndpointRejected() {
+        // the same configuration bound twice in one process (IPv4 and IPv6 listeners, two ports, an HTTP/3 endpoint per bind):
+        // the ticket keys are process-wide, so the second endpoint decrypts the ticket and must still refuse its early data
+        val p = EndpointPair(crypto = ksl, serverEarlyData = true)
+        val flight = capturedEarlyFlight(p)
+        val q = EndpointPair(crypto = ksl, serverEarlyData = true)
+        val replay = replayTo(q, flight)
+        assertEquals(false, replay.earlyDataAccepted, "a second endpoint of this process refuses the replayed early data")
+        assertTrue(!replay.isStreamOpenForTest(0), "nothing of the replay reaches the application")
+        // the endpoints stop and a new one starts in the same process (an engine restart): the register outlives them
+        p.close()
+        q.close()
+        val r = EndpointPair(crypto = ksl, serverEarlyData = true)
+        assertEquals(false, replayTo(r, flight).earlyDataAccepted, "a restarted endpoint refuses the replayed early data")
+        r.close()
     }
 }
