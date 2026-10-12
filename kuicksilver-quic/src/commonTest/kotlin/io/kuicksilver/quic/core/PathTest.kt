@@ -1021,6 +1021,42 @@ class PathTest {
             .ConnectionId(datagram.copyOfRange(1, 9))
 
     /** RFC 9000 section 9.5: a probe on a new path never carries the connection ID the active path uses, on either side. */
+    /**
+     * K7 F1.10 (F2 trace of `MigrationApiTest.migrateMovesTrafficToNewIo`): after the client's active migration the server re-validates
+     * the client's old address (RFC 9000 section 9.3.3); the client must answer the first PATH_CHALLENGE there, not only a repeat.
+     */
+    @Test fun firstRevalidationChallengeIsAnswered() {
+        val (p, c) = connected()
+        try {
+            val s = p.server()
+            val id = c.addPath(p.serverAddr, p.now)
+            p.clientSocketSources[id] = other
+            p.clientListens += other
+            c.probePath(id, p.now)
+            assertTrue(p.runUntil(5.seconds) { c.pathState(id) == PathState.Validated }, "probe answered: ${c.pathState(id)}")
+            p.settle(5)
+            send(c, 300_000) // traffic both ways across the switch, as in the runtime echo
+            send(s, 300_000)
+            repeat(5) { p.step() }
+            val responsesBefore = c.pathResponsesSentForTest
+            c.switchPath(id, p.now)
+            assertTrue(p.runUntil(2.seconds) { s.remoteAddressForTest == other }, "the server follows the client")
+            val old = s.paths.all.first { it.isRemote(p.clientAddr) }
+            assertTrue(
+                p.runUntil(5.seconds) { old.state != PathState.Validating },
+                "the old address is re-validated (${old.state}, challenges ${s.challengedAddressesForTest})",
+            )
+            assertEquals(PathState.Validated, old.state)
+            assertEquals(
+                1,
+                s.challengedAddressesForTest.count { it == p.clientAddr },
+                "the first PATH_CHALLENGE to the old address is answered (client responses ${c.pathResponsesSentForTest - responsesBefore})",
+            )
+        } finally {
+            p.close()
+        }
+    }
+
     @Test fun probeUsesUnusedPeerCid() {
         val (p, c) = connected()
         try {
