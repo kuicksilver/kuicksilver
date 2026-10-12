@@ -31,7 +31,7 @@ static void gso_off(ksl_udp *u) { u->gso_on = 0; u->granted &= ~(uint32_t)KSL_UD
    cannot leave, the socket and its options are fine */
 static int dest_error(int e) { return e == EINVAL || e == EAFNOSUPPORT || e == EADDRNOTAVAIL || e == EDESTADDRREQ; }
 /* this datagram is lost on the wire: the socket lives, loss detection repairs it */
-static int slot_lost(int e) { return dest_error(e) || e == EMSGSIZE || e == EPERM || e == EACCES || e == ENETUNREACH || e == EHOSTUNREACH || e == ENOBUFS || e == ENOMEM || e == ECONNREFUSED; }
+static int slot_lost(int e) { return dest_error(e) || e == EMSGSIZE || e == EPERM || e == EACCES || e == ENETUNREACH || e == EHOSTUNREACH || e == ENETDOWN || e == EHOSTDOWN || e == ENOBUFS || e == ENOMEM || e == ECONNREFUSED; }
 
 int ksl_udp_send(ksl_udp *u, uint8_t *const *bufs, const uint32_t *lens, const uint8_t *addrs, const uint8_t *ecn, uint32_t n, uint32_t *sent) {
     if (!u || u->closed) return KSL_ERROR; *sent = 0; uint32_t i = 0;
