@@ -28,6 +28,7 @@ import io.ktor.utils.io.ClosedReadChannelException
 import io.kuicksilver.ktor.client.KuicksilverEngineConfig
 import io.kuicksilver.ktor.client.connectTimeoutMillis
 import io.kuicksilver.ktor.client.isIdempotent
+import io.kuicksilver.ktor.client.socketHost
 import io.kuicksilver.ktor.client.socketTimeoutMillis
 import io.kuicksilver.ktor.client.tlsConfigFor
 import io.kuicksilver.tls.SessionCache
@@ -265,11 +266,12 @@ internal class H1Pool(
                         config.proxy!!.resolveAddress().let { it as InetSocketAddress }
                     } else {
                         InetSocketAddress(
-                            url.host,
+                            socketHost(url.host),
                             url.port,
                         )
                     }
-                val tcp = aSocket(selector).tcp().connect(target.hostname, target.port)
+                // the address itself, not `hostname`: on the JVM that is a reverse lookup (::1 -> "localhost" -> 127.0.0.1)
+                val tcp = aSocket(selector).tcp().connect(target)
                 try {
                     val rawIn = tcp.openReadChannel()
                     val rawOut = tcp.openWriteChannel(autoFlush = true)

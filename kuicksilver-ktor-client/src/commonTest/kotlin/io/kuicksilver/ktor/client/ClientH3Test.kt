@@ -109,6 +109,39 @@ class ClientH3Test {
             }
         }
 
+    /**
+     * The same IPv6 server over HTTP/1.1 (TCP only). Ktor keeps the brackets in `Url.host` ("[::1]"); the JVM resolver accepts
+     * them, Kotlin/Native's `getaddrinfo` does not (EAI_NONAME, reported as "POSIX error 0").
+     */
+    @Test fun h1ToIpv6Loopback() =
+        h3Test {
+            val server =
+                io.ktor.server.engine.embeddedServer(io.kuicksilver.ktor.server.Kuicksilver, configure = {
+                    tlsConnector(ClientFixtures.identity()) {
+                        host = "::1"
+                        port = 0
+                    }
+                }) { routing { get("/") { call.respondText("v=${call.request.local.version}") } } }
+            if (runCatching { server.startSuspend(false) }.isFailure) {
+                println("h1ToIpv6Loopback skipped: needs an IPv6 loopback")
+                return@h3Test
+            }
+            try {
+                val port =
+                    server.engine
+                        .resolvedConnectors()
+                        .first()
+                        .port
+                testClient(Http3DiscoveryMode.H1Only).use { c ->
+                    val r = c.get("https://[::1]:$port/")
+                    assertEquals(HttpProtocolVersion.HTTP_1_1, r.version)
+                    assertEquals("v=HTTP/1.1", r.bodyAsText())
+                }
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
     @Test fun chunkedAndH3BodiesReadWhole() =
         h3Test {
             val (server, port) =
