@@ -109,7 +109,6 @@ final enum class io.kuicksilver.quic/PathState : kotlin/Enum<io.kuicksilver.quic
 }
 
 final enum class io.kuicksilver.quic/TimeoutKind : kotlin/Enum<io.kuicksilver.quic/TimeoutKind> { // io.kuicksilver.quic/TimeoutKind|null[0]
-    enum entry Disconnect // io.kuicksilver.quic/TimeoutKind.Disconnect|null[0]
     enum entry Handshake // io.kuicksilver.quic/TimeoutKind.Handshake|null[0]
     enum entry Idle // io.kuicksilver.quic/TimeoutKind.Idle|null[0]
     enum entry PathValidation // io.kuicksilver.quic/TimeoutKind.PathValidation|null[0]
@@ -580,6 +579,8 @@ final class io.kuicksilver.quic/ConnectionStats { // io.kuicksilver.quic/Connect
         final fun <get-datagramsDropped>(): kotlin/Long // io.kuicksilver.quic/ConnectionStats.datagramsDropped.<get-datagramsDropped>|<get-datagramsDropped>(){}[0]
     final val datagramsDroppedSend // io.kuicksilver.quic/ConnectionStats.datagramsDroppedSend|{}datagramsDroppedSend[0]
         final fun <get-datagramsDroppedSend>(): kotlin/Long // io.kuicksilver.quic/ConnectionStats.datagramsDroppedSend.<get-datagramsDroppedSend>|<get-datagramsDroppedSend>(){}[0]
+    final val datagramsDroppedSocket // io.kuicksilver.quic/ConnectionStats.datagramsDroppedSocket|{}datagramsDroppedSocket[0]
+        final fun <get-datagramsDroppedSocket>(): kotlin/Long // io.kuicksilver.quic/ConnectionStats.datagramsDroppedSocket.<get-datagramsDroppedSocket>|<get-datagramsDroppedSocket>(){}[0]
     final val duplicatesDropped // io.kuicksilver.quic/ConnectionStats.duplicatesDropped|{}duplicatesDropped[0]
         final fun <get-duplicatesDropped>(): kotlin/Long // io.kuicksilver.quic/ConnectionStats.duplicatesDropped.<get-duplicatesDropped>|<get-duplicatesDropped>(){}[0]
     final val ecnCeEvents // io.kuicksilver.quic/ConnectionStats.ecnCeEvents|{}ecnCeEvents[0]
@@ -1222,12 +1223,12 @@ sealed class io.kuicksilver.quic/QuicException : kotlinx.coroutines/CopyableThro
         }
 
         final class TransportClosed : io.kuicksilver.quic/QuicException.ConnectionLost { // io.kuicksilver.quic/QuicException.ConnectionLost.TransportClosed|null[0]
-            constructor <init>(kotlin/Long, kotlin/Long?, kotlin/String, kotlin/ByteArray, io.kuicksilver.quic/Initiator, kotlin/Throwable? = ...) // io.kuicksilver.quic/QuicException.ConnectionLost.TransportClosed.<init>|<init>(kotlin.Long;kotlin.Long?;kotlin.String;kotlin.ByteArray;io.kuicksilver.quic.Initiator;kotlin.Throwable?){}[0]
+            constructor <init>(kotlin/Long, kotlin/Long, kotlin/String, kotlin/ByteArray, io.kuicksilver.quic/Initiator, kotlin/Throwable? = ...) // io.kuicksilver.quic/QuicException.ConnectionLost.TransportClosed.<init>|<init>(kotlin.Long;kotlin.Long;kotlin.String;kotlin.ByteArray;io.kuicksilver.quic.Initiator;kotlin.Throwable?){}[0]
 
             final val code // io.kuicksilver.quic/QuicException.ConnectionLost.TransportClosed.code|{}code[0]
                 final fun <get-code>(): kotlin/Long // io.kuicksilver.quic/QuicException.ConnectionLost.TransportClosed.code.<get-code>|<get-code>(){}[0]
             final val frameType // io.kuicksilver.quic/QuicException.ConnectionLost.TransportClosed.frameType|{}frameType[0]
-                final fun <get-frameType>(): kotlin/Long? // io.kuicksilver.quic/QuicException.ConnectionLost.TransportClosed.frameType.<get-frameType>|<get-frameType>(){}[0]
+                final fun <get-frameType>(): kotlin/Long // io.kuicksilver.quic/QuicException.ConnectionLost.TransportClosed.frameType.<get-frameType>|<get-frameType>(){}[0]
             final val initiator // io.kuicksilver.quic/QuicException.ConnectionLost.TransportClosed.initiator|{}initiator[0]
                 final fun <get-initiator>(): io.kuicksilver.quic/Initiator // io.kuicksilver.quic/QuicException.ConnectionLost.TransportClosed.initiator.<get-initiator>|<get-initiator>(){}[0]
             final val reason // io.kuicksilver.quic/QuicException.ConnectionLost.TransportClosed.reason|{}reason[0]

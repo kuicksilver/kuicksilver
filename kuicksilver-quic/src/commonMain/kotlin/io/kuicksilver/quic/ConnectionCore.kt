@@ -6,7 +6,6 @@ import io.ktor.network.sockets.InetSocketAddress
 import io.kuicksilver.annotations.DelicateKuicksilverApi
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.native.PacketBuffer
-import io.kuicksilver.quic.VersionProfile
 import io.kuicksilver.quic.core.AmplificationLimit
 import io.kuicksilver.quic.core.CidRegistrar
 import io.kuicksilver.quic.core.ConnectionHandshakeSink
@@ -49,8 +48,10 @@ import io.kuicksilver.quic.core.requeueForProbe
 import io.kuicksilver.quic.core.setMtu
 import io.kuicksilver.quic.core.settleHandshakeValidated
 import io.kuicksilver.quic.core.silentClose
+import io.kuicksilver.quic.core.nextChallengeDelay
 import io.kuicksilver.quic.core.startValidation
 import io.kuicksilver.quic.core.switchPath
+import io.kuicksilver.quic.core.validationTimeout
 import io.kuicksilver.quic.flow.RecvFlowController
 import io.kuicksilver.quic.flow.SendFlowController
 import io.kuicksilver.quic.flow.StreamLimits
@@ -154,6 +155,9 @@ public class ConnectionCore internal constructor(
 
     // ---- DPLPMTUD (RFC 8899) ----
     internal var datagramsDroppedSend = 0L
+
+    /** Datagrams of this connection the socket refused (counted by the runtime that sends them). */
+    internal var datagramsDroppedSocket = 0L
     internal val ccMtuUpdatesForTest = ArrayList<Int>()
     internal var pmtudProbesSentForTest = 0
     internal val pmtudSearchDoneForTest: Boolean get() = path.pmtud?.searchDone == true
@@ -181,15 +185,48 @@ public class ConnectionCore internal constructor(
             if (caps.df && config.pmtud) Pmtud(upperBound = pmtudUpperBound()) else null
     }
 
+    internal fun pathCapabilitiesForTest(id: PathId): IoCapabilities? = paths.byId(id)?.caps
+
     /**
-     * Validation state of path [id] (RFC 9000 section 8.2); [PathState.Unknown] for an id the connection does not hold, a closed path
-     * included.
+     * The socket [socket] (a path id: the endpoint's socket is [PathId.Initial]) now reports [caps]. Only losses apply to the
+     * paths already on it: no ECN marking stops ECN on them, no DF ends PMTUD and drops back to 1200 bytes, fewer GSO segments
+     * or a smaller batch shrink theirs. A gain waits for the next path (validation would have to start over).
      */
-    public fun pathState(id: PathId): PathState = paths.byId(id)?.state ?: PathState.Unknown
+    internal fun updateSocketCapabilities(
+        socket: PathId,
+        caps: IoCapabilities,
+    ) {
+        for (i in 0 until paths.all.size) {
+            val p = paths.all[i]
+            if (p.socket != socket) continue
+            val had = p.caps
+            if (had.ecnSend && !caps.ecnSend) p.ecn.socketStoppedMarking()
+            if (had.df && !caps.df) {
+                p.pmtud = null
+                if (p.mtu > 1200) setMtu(p, 1200)
+            }
+            p.caps =
+                IoCapabilities(
+                    ecnSend = had.ecnSend && caps.ecnSend,
+                    ecnReceive = had.ecnReceive && caps.ecnReceive,
+                    gsoMaxSegments = minOf(had.gsoMaxSegments, caps.gsoMaxSegments),
+                    gro = had.gro && caps.gro,
+                    df = had.df && caps.df,
+                    batch = minOf(had.batch, caps.batch),
+                )
+        }
+    }
+
+    /**
+     * Validation state of path [id] (RFC 9000 section 8.2); [PathState.Closed] for a path the connection closed or evicted,
+     * [PathState.Unknown] for an id it never issued.
+     */
+    public fun pathState(id: PathId): PathState =
+        paths.byId(id)?.state ?: if (id.value in 0 until paths.issuedIds) PathState.Closed else PathState.Unknown
 
     internal fun ecnReceivedForTest(): LongArray = loss.space(SpaceId.Application).ack.ecnCounts ?: LongArray(3)
 
-    internal fun ecnPeerCountsForTest(): LongArray = path.ecn.peerCountsForTest
+    internal fun ecnPeerCountsForTest(): LongArray = loss.space(SpaceId.Application).peerEcn
 
     // ---- DATAGRAM (RFC 9221) ----
 
@@ -505,6 +542,7 @@ public class ConnectionCore internal constructor(
             ecnCeReceived(),
             ecnCeEvents,
             datagramsDroppedSend,
+            datagramsDroppedSocket,
         )
 
     private fun memoryCeiling(): Long =
@@ -705,8 +743,10 @@ public class ConnectionCore internal constructor(
                 } else if (p === paths.active &&
                     state == ConnectionState.Handshaking
                 ) {
+                    // the handshake (or its timeout) decides this path; a new validation period keeps the timer in the future
                     p.challengePending = true
-                    p.nextChallengeAt = now + pto()
+                    p.challengeDeadline = now + validationTimeout()
+                    p.nextChallengeAt = now + nextChallengeDelay(p)
                 } else {
                     onPathFailed(p)
                 }
@@ -714,7 +754,7 @@ public class ConnectionCore internal constructor(
                 now
             ) {
                 p.challengePending = true
-                p.nextChallengeAt = now + pto()
+                p.nextChallengeAt = now + nextChallengeDelay(p)
             }
         } // RFC 9000 section 8.2.4
         // QuicEndpointConfig.maxConnectionLifetime: a transport close with NO_ERROR

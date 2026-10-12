@@ -101,6 +101,8 @@ internal actual object PlatformVerifier {
 
                             errSecCertificateRevoked -> VerifyReason.Revoked
 
+                            ERR_SEC_INCOMPLETE_CERT_REVOCATION_CHECK -> VerifyReason.UnknownRevocationStatus
+
                             // errSecNotTrusted, errSecVerifyActionFailed (-67901), errSecCreateChainFailed: no path to a trusted anchor
                             else -> VerifyReason.UnknownIssuer
                         },
@@ -134,3 +136,6 @@ internal actual object PlatformVerifier {
             }
         }
 }
+
+/** `errSecIncompleteCertRevocationCheck` (SecBase.h): a revocation check required by the policy could not complete. */
+private const val ERR_SEC_INCOMPLETE_CERT_REVOCATION_CHECK = -67635

@@ -28,7 +28,7 @@ public object JvmNativeNames {
     public val classifier: String get() = "$os-$arch"
 
     /**
-     * The file name of the library for ABI [abi] on this platform, e.g. `libksl_4_linux_x86_64.so`; with the ABI in the name,
+     * The file name of the library for ABI [abi] on this platform, e.g. `libksl_5_linux_x86_64.so`; with the ABI in the name,
      * libraries of different releases never replace each other in the shared extraction directory.
      */
     public fun libraryFileName(abi: Int = KSL_ABI_VERSION): String =

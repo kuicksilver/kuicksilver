@@ -99,6 +99,25 @@ internal class Pump(
 class QuicHandshakeTest {
     @BeforeTest fun load() = KslLoader.ensureLoaded()
 
+    /** Misuse of the public session surfaces as IllegalStateException, never as the native layer's KslException. */
+    @Test fun exportBeforeHandshakeIsNotKslException() {
+        val s = KslQuicCrypto.newSession(Fixtures.client())
+        try {
+            assertFailsWith<IllegalStateException> { s.exportKeyingMaterial("EXPORTER-x", null, 32) }
+        } finally {
+            s.close()
+        }
+    }
+
+    @Test fun resumeVerifyWithoutPauseIsIllegalState() {
+        val s = KslQuicCrypto.newSession(Fixtures.client())
+        try {
+            assertFailsWith<IllegalStateException> { s.resumeVerify(VerifyResult.Accepted(emptyList())) }
+        } finally {
+            s.close()
+        }
+    }
+
     private fun pair(
         client: TlsConfig = Fixtures.client(),
         server: TlsConfig = Fixtures.server(),

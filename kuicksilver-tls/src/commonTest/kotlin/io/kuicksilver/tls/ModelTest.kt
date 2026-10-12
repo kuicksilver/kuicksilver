@@ -36,6 +36,14 @@ class TrustConfigTest {
         assertFailsWith<TlsException.Config> { TrustConfig.Pinned(setOf(pin), base = TrustConfig.Custom(noopVerifier)) }
     }
 
+    /** Pins check the chain a real validator built; a Custom verifier decides alone, so ExpectedName must not smuggle it under Pinned. */
+    @Test fun negative_pinnedOverExpectedNameCustomIsConfigError() {
+        assertFailsWith<TlsException.Config> {
+            TrustConfig.Pinned(setOf(pin), base = TrustConfig.ExpectedName("proxy.internal", base = TrustConfig.Custom(noopVerifier)))
+        }
+        TrustConfig.Pinned(setOf(pin), base = TrustConfig.ExpectedName("proxy.internal"))
+    }
+
     @Test fun pinnedNeedsPins() {
         assertFailsWith<IllegalArgumentException> { TrustConfig.Pinned(emptySet()) }
     }
@@ -140,6 +148,61 @@ class CertificateTest {
 }
 
 class TlsConfigTest {
+    /** RFC 7301 section 3.1: a protocol name is 1..255 bytes, not characters; the whole list must fit ksl's 255-byte wire buffer. */
+    @Test fun negative_alpnLengthCountedInBytes() {
+        assertFailsWith<TlsException.Config> { tlsConfig(TlsRole.Client) { alpn = listOf("\u00e9".repeat(200)) } } // 400 bytes in UTF-8
+        assertFailsWith<TlsException.Config> { tlsConfig(TlsRole.Client) { alpn = List(3) { "x".repeat(100) } } } // 303 bytes on the wire
+        tlsConfig(TlsRole.Client) { alpn = listOf("\u00e9".repeat(127)) } // 254 bytes + 1 length byte
+    }
+
+    /** The list is copied before it is validated: a caller's list that changes between reads cannot slip an unchecked name in. */
+    @Test fun negative_alpnValidatedCopyIsStored() {
+        val shifty = ShiftyList(listOf("h3", "h2"), listOf("h3", ""))
+        val config = tlsConfig(TlsRole.Client) { alpn = shifty }
+        assertEquals(listOf("h3", "h2"), config.alpn)
+        val mutable = mutableListOf("h3")
+        val config2 = tlsConfig(TlsRole.Client) { alpn = mutable }
+        mutable[0] = ""
+        assertEquals(listOf("h3"), config2.alpn)
+    }
+
+    /** Shows [first] to the first iteration and [later] to every one after it. */
+    private class ShiftyList(
+        private val first: List<String>,
+        private val later: List<String>,
+    ) : AbstractList<String>() {
+        private var iterations = 0
+        private val current get() = if (iterations <= 1) first else later
+        override val size: Int get() = current.size
+
+        override fun get(index: Int): String = current[index]
+
+        override fun iterator(): Iterator<String> {
+            iterations++
+            return current.toList().iterator()
+        }
+    }
+
+    /** A selector override passes the same checks as build(): client certificates need an AnchoredCa trust, ALPN is checked in bytes. */
+    @Test fun negative_overrideClientAuthNeedsAnchoredCa() {
+        val id = TlsIdentity.fromDer(listOf(TestCerts.server), TestCerts.serverKey.copyOf())
+        try {
+            val base =
+                tlsConfig(TlsRole.Server) {
+                    alpn = listOf("http/1.1")
+                    identity = id
+                }
+            assertFailsWith<TlsException.Config> {
+                base.withOverride(ServerTlsOverride(id, clientAuth = ClientAuth.Required, trust = TrustConfig.Platform))
+            }
+            assertFailsWith<TlsException.Config> { base.withOverride(ServerTlsOverride(id, clientAuth = ClientAuth.Required)) }
+            assertFailsWith<TlsException.Config> { base.withOverride(ServerTlsOverride(id, alpn = listOf("\u00e9".repeat(200)))) }
+            base.withOverride(ServerTlsOverride(id, clientAuth = ClientAuth.Required, trust = TrustConfig.AnchoredCa(listOf(Certificate(TestCerts.testCa)))))
+        } finally {
+            id.close()
+        }
+    }
+
     @Test fun quicRequiresTls13Only() {
         val c =
             tlsConfig(TlsRole.Client) {
@@ -222,7 +285,9 @@ class TlsIdentityTest {
         )
         assertEquals(1, id.chain.size)
         id.close()
-        assertFailsWith<IllegalStateException> { id.privateKeyDer }
+        assertTrue(id.isClosed)
+        assertFailsWith<IllegalStateException> { id.withKey { } }
+        id.close() // idempotent
     }
 
     @Test fun keyMismatchRejected() {

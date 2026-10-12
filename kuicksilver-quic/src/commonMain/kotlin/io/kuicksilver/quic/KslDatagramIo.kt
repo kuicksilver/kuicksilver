@@ -134,7 +134,7 @@ internal class KslDatagramIo private constructor(
                 return
             }
         }
-        val ip = a.resolveAddress() ?: throw IllegalArgumentException("unresolvable address ${a.hostname}")
+        val ip = a.ipBytesNoDns() ?: throw IllegalArgumentException("not an IP address: ${a.hostname}") // connect resolved the name once
         val enc = KslUdpSocket.encodeAddress(ip, a.port)
         val slot = destNext
         destNext = (destNext + 1) % 4

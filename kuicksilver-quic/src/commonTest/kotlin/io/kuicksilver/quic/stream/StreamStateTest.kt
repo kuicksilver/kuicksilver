@@ -4,6 +4,7 @@ package io.kuicksilver.quic.stream
 
 import io.kuicksilver.native.PacketBuffer
 import io.kuicksilver.native.of
+import io.kuicksilver.quic.ConnectionEvent
 import io.kuicksilver.quic.QuicConfig
 import io.kuicksilver.quic.StreamPriority
 import io.kuicksilver.quic.flow.RecvFlowController
@@ -47,6 +48,8 @@ class StreamStateTest {
     private fun manager(
         role: TlsRole = TlsRole.Client,
         peerMaxData: Long = 1L shl 40,
+        maxStreams: Long = 100,
+        streamWindow: Long = 1L shl 30,
     ): StreamManager {
         val m =
             StreamManager(
@@ -54,17 +57,29 @@ class StreamStateTest {
                 QuicConfig.Default,
                 RecvFlowController(786_432, 15_728_640),
                 SendFlowController(peerMaxData),
-                StreamLimits(role, 100, 100),
+                StreamLimits(role, maxStreams, maxStreams),
             )
         m.applyPeerParameters(
-            initialMaxStreamDataBidiLocal = 1L shl 30,
-            initialMaxStreamDataBidiRemote = 1L shl 30,
-            initialMaxStreamDataUni =
-                1L shl 30,
-            maxStreamsBidi = 100,
-            maxStreamsUni = 100,
+            initialMaxStreamDataBidiLocal = streamWindow,
+            initialMaxStreamDataBidiRemote = streamWindow,
+            initialMaxStreamDataUni = streamWindow,
+            maxStreamsBidi = maxStreams,
+            maxStreamsUni = maxStreams,
         )
         return m
+    }
+
+    @Test fun maxDataWithoutGrowthTouchesNoStream() {
+        // RFC 9000 section 21.6: a MAX_DATA that raises nothing costs the peer one frame; it must not cost us a pass over every stream
+        val m = manager(peerMaxData = 1L shl 20, maxStreams = 1000)
+        repeat(1000) {
+            val id = m.open(bidi = true, StreamPriority.Default)
+            assertTrue(id >= 0)
+            m.write(id, ByteArray(10), 0, 10, false)
+        }
+        val before = m.schedulerTouchesForTest
+        assertTrue(!m.onMaxData(1L shl 20), "the same limit again grows nothing")
+        assertEquals(0L, m.schedulerTouchesForTest - before, "no stream was touched")
     }
 
     private fun recv(
@@ -211,6 +226,29 @@ class StreamStateTest {
         assertNotNull(c)
         assertEquals(ControlKind.DataBlocked, c.kind)
         assertEquals(500L, c.a)
+    }
+
+    @Test fun maxStreamDataRaisesStreamWritable() {
+        // RFC 9000 section 4.1: credit from MAX_STREAM_DATA lets data that was waiting go out; the stream learns it without polling
+        val m = manager(streamWindow = 500)
+        val id = m.open(bidi = true, StreamPriority.Default)
+        m.write(id, ByteArray(1000), 0, 1000, false)
+        assertEquals(500, sendOnce(m)!!.streamLength[0])
+        assertNull(sendOnce(m))
+        m.events.clear()
+        assertTrue(m.onMaxStreamData(id, 2000))
+        assertTrue(m.events.any { it is ConnectionEvent.StreamWritable && it.id == id }, "events: ${m.events}")
+    }
+
+    @Test fun maxStreamsRaisesStreamsAvailable() {
+        // RFC 9000 section 4.6: an open refused at the peer's limit can be retried once MAX_STREAMS raises it
+        val m = manager(maxStreams = 1)
+        assertTrue(m.open(bidi = true, StreamPriority.Default) >= 0)
+        assertEquals(-1L, m.open(bidi = true, StreamPriority.Default))
+        m.events.clear()
+        assertTrue(m.onMaxStreams(true, 2))
+        assertTrue(m.events.any { it is ConnectionEvent.StreamsAvailable && it.bidi }, "events: ${m.events}")
+        assertTrue(m.open(bidi = true, StreamPriority.Default) >= 0)
     }
 
     // ---- final review fix pass ----

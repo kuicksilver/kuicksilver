@@ -40,9 +40,13 @@ public final class io/kuicksilver/testing/LinkParams {
 
 public final class io/kuicksilver/testing/MemoryNetwork {
 	public fun <init> ()V
+	public fun <init> (IZ)V
+	public synthetic fun <init> (IZILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public final fun cut (Lio/ktor/network/sockets/InetSocketAddress;)V
+	public final fun getAssignEphemeralPorts ()Z
 	public final fun getDropped ()J
 	public final fun getMtu ()I
+	public final fun getReceiveBuffer ()I
 	public final fun open (Lio/ktor/network/sockets/InetSocketAddress;)Lio/kuicksilver/quic/DatagramIo;
 	public final fun restore (Lio/ktor/network/sockets/InetSocketAddress;)V
 	public final fun setMtu (I)V

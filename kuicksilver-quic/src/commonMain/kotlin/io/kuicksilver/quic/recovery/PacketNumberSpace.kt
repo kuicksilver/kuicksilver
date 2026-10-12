@@ -2,14 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.kuicksilver.quic.recovery
 
-import io.kuicksilver.quic.PathId
 import io.kuicksilver.quic.TimeMark
 import kotlin.random.Random
 
-/** Sending and receiving state of one packet number space on one path. */
+/** Sending and receiving state of one packet number space (shared by every path of the connection). */
 internal class PacketNumberSpace(
     val id: SpaceId,
-    val path: PathId = PathId.Initial,
     ackRanges: Int = 64,
 ) {
     var nextPn: Long = 0
@@ -24,7 +22,11 @@ internal class PacketNumberSpace(
         private set
     private var nextSkip: Long = -1
 
-    internal val sent = ArrayList<SentPacket>()
+    internal val sent = SentPackets()
+
+    /** The peer's last reported ECN counts for this space (ECT(0), ECT(1), CE), taken from ACKs that raised the largest acknowledged packet (RFC 9000 section 13.4.2.1). */
+    internal val peerEcn = LongArray(3)
+    internal var peerEcnSeen = false
     internal var lossTime: TimeMark = TimeMark.NEVER
     internal var lastAckElicitingTime: TimeMark = TimeMark.NEVER
     internal var ackElicitingInFlight = 0

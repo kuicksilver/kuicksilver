@@ -28,6 +28,16 @@ internal object KslNative {
         key: ByteArray,
     ): Int
 
+    @JvmStatic external fun ctxSetIdentityPkey(
+        ctx: Long,
+        chain: ByteArray,
+        pkey: Long,
+    ): Int
+
+    @JvmStatic external fun pkeyNew(der: ByteArray): Long
+
+    @JvmStatic external fun pkeyFree(pkey: Long)
+
     @JvmStatic external fun ctxSetRoots(
         ctx: Long,
         roots: ByteArray,

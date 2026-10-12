@@ -134,6 +134,48 @@ class EcnTest {
         }
     }
 
+    @Test fun ecnStaysCapableAcrossReorderedAcks() {
+        // RFC 9000 section 13.4.2.1: the network reorders ACKs, so a later ACK carries smaller counts than one already processed;
+        // a stale ACK must neither fail the validation ("counts decreased") nor count its CE marks again
+        val (p, c) = pair()
+        var held: ByteArray? = null
+        var reordered = 0
+        p.filterToClient =
+            { i, b ->
+                when (i % 3) {
+                    1 -> {
+                        held = b
+                        false
+                    }
+
+                    2 -> true
+
+                    else -> {
+                        held?.let {
+                            p.feedEcn(p.client, it, p.serverAddr, Ecn.Ect0)
+                            reordered++
+                        }
+                        held = null
+                        true
+                    }
+                }
+            }
+        try {
+            transfer(p, c, 2_000_000) // the pair acknowledges once per 10 ms step: a long transfer for enough ACK datagrams
+            assertTrue(reordered > 10, "ACK datagrams were reordered: $reordered of ${p.sentToClient}")
+            assertEquals(EcnState.Capable, c.stats.ecnState, "the sender keeps ECN across reordered ACKs")
+            assertEquals(
+                EcnState.Capable,
+                p.server
+                    .connections()
+                    .single()
+                    .stats.ecnState,
+            )
+        } finally {
+            p.close()
+        }
+    }
+
     @Test fun validationFailsOnBleaching() {
         // a network that clears the ECN bits: the peer reports no counts for packets we marked → Failed, and nothing is marked afterwards (section 13.4.2)
         val (p, c) = pair { ecnToServer = { Ecn.NotEct } }

@@ -170,7 +170,11 @@ public interface Http3ServerRequest {
         headers: Http3Headers = Http3Headers.Empty,
     )
 
-    /** Sends the final response HEADERS; the body goes through the returned writer. [priority] overrides the client's signal. */
+    /**
+     * Sends the final response HEADERS; the body goes through the returned writer. [priority] overrides the client's signal.
+     * A response to HEAD, and a 204 or 304, has no content (RFC 9110 sections 9.3.2, 15.3.5, 15.4.5): what is written to
+     * its writer is dropped, while its `content-length` is sent as given.
+     */
     public suspend fun respond(
         status: Int,
         headers: Http3Headers = Http3Headers.Empty,
@@ -189,6 +193,10 @@ public interface Http3ResponseWriter {
     /** The response content; the transport's flow control applies backpressure to writes. */
     public val output: ByteWriteChannel
 
-    /** Flushes [output], sends [trailers] if any, then FIN. Closing [output] without calling this ends the response without trailers. */
+    /**
+     * Flushes [output], sends [trailers] if any, then FIN. Closing [output] without calling this ends the response without trailers.
+     * Trailers above the peer's `SETTINGS_MAX_FIELD_SECTION_SIZE` throw [Http3Exception.FieldSectionTooLarge] and reset the
+     * stream with H3_INTERNAL_ERROR.
+     */
     public suspend fun finish(trailers: Http3Headers? = null)
 }

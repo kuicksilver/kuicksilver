@@ -22,6 +22,7 @@ import io.kuicksilver.http3.frame.VarInt
 import io.kuicksilver.http3.message.GlitchLimiter
 import io.kuicksilver.http3.message.PriorityField
 import io.kuicksilver.http3.qpack.QpackError
+import io.kuicksilver.http3.qpack.entrySize
 import io.kuicksilver.quic.Initiator
 import io.kuicksilver.quic.PathEvent
 import io.kuicksilver.quic.QuicConnection
@@ -34,6 +35,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineName
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
@@ -43,7 +45,9 @@ import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlin.random.Random
+import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
 import kotlin.time.TimeSource
 
 /**
@@ -106,6 +110,16 @@ internal class H3Session(
         private set
     var maxRequestId = -1L // server: highest client stream id seen
     private var activeRequests = 0 // server: accepted requests whose response has not ended
+
+    /** Server: how long a request stream may take to complete its HEADERS once the final GOAWAY went out; internal for tests. */
+    var headerDeadlineAfterGoAway: Duration = HEADER_DEADLINE_AFTER_GOAWAY
+
+    /** Server: request streams still reading their HEADERS, with the coroutine reading them. */
+    val pendingHeaders = HashMap<Long, Pair<QuicStream, Job>>()
+
+    /** Server: the header deadline after GOAWAY passed; a request stream that still has no HEADERS is rejected. */
+    var headerDeadlinePassed = false
+        private set
     val rejectedByGoAway = HashSet<Long>() // client: in-flight requests the peer's GOAWAY did not cover
     val clientStreams = HashMap<Long, QuicStream>() // client: requests waiting for their response
 
@@ -334,6 +348,23 @@ internal class H3Session(
         }
     }
 
+    /**
+     * Throws [Http3Exception.FieldSectionTooLarge] when [fields] (pseudo-headers included) exceed the peer's
+     * `SETTINGS_MAX_FIELD_SECTION_SIZE`, counted as name + value + 32 per field (RFC 9114 section 4.2.2): the peer would
+     * refuse it anyway. No limit is known before the peer's SETTINGS arrive.
+     */
+    fun checkPeerFieldLimit(
+        streamId: Long,
+        fields: List<Pair<String, String>>,
+    ) {
+        val limit = peerSettings.value?.maxFieldSectionSize ?: return
+        var size = 0L
+        for ((n, v) in fields) {
+            size += entrySize(n, v)
+            if (size > limit) throw Http3Exception.FieldSectionTooLarge(streamId, limit)
+        }
+    }
+
     private suspend fun applyPeerSettings(m: Map<Long, Long>) {
         val known =
             setOf(
@@ -445,6 +476,15 @@ internal class H3Session(
         goAwayPhase = 2
         goAwaySentId = id
         sendControl(FrameType.GOAWAY, ControlFrames.goAwayPayload(id))
+        // a request below the GOAWAY id whose HEADERS never complete must not hold the connection open forever
+        scope.launch {
+            delay(headerDeadlineAfterGoAway)
+            headerDeadlinePassed = true
+            for ((st, reader) in pendingHeaders.values.toList()) {
+                abort(st, Http3ErrorCode.REQUEST_REJECTED)
+                reader.cancel()
+            }
+        }
         closeIfIdle()
     }
 
@@ -522,6 +562,8 @@ internal class H3Session(
     }
 
     companion object {
+        /** A client that started a request before GOAWAY gets this long to finish its HEADERS (no RFC value; see docs/guide/http3.md). */
+        val HEADER_DEADLINE_AFTER_GOAWAY: Duration = 10.seconds
         val CRITICAL = StreamPriority(0)
         const val MAX_PRIORITY_UPDATE = 256
 

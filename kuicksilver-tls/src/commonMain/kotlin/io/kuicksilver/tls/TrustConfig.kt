@@ -30,7 +30,8 @@ public sealed interface TrustConfig {
 
     /**
      * Replaces the reference identifier: the certificate must match [name] (from configuration only) instead of the connection's host.
-     * [base] is [Platform], [AnchoredCa] or [Custom]; to pin as well, wrap this one: `Pinned(pins, base = ExpectedName(name, base))`.
+     * [base] is [Platform], [AnchoredCa] or [Custom]; to pin as well, wrap this one: `Pinned(pins, base = ExpectedName(name, base))`
+     * (not with a [Custom] base: pins never sit on top of a Custom verifier).
      *
      * @property name the DNS name or IP literal the certificate must match (RFC 9525); never blank, validated when the
      *   [TlsConfig] is built. SNI still carries [TlsConfig.serverName].
@@ -59,7 +60,8 @@ public sealed interface TrustConfig {
      *
      * @property scope which certificates of the validated chain may match; default [PinScope.Leaf], the strictest.
      * @property base the trust that must accept the chain as well (AND, never OR: ADR-0011); default [Platform]. [Tofu],
-     *   [Custom] and another [Pinned] throw [TlsException.Config]; to pin a [Custom] verifier wrap it in [ExpectedName].
+     *   [Custom] (also inside [ExpectedName]) and another [Pinned] throw [TlsException.Config]: a Custom verifier decides on
+     *   its own, so pins on top of it would only look like a second check.
      */
     public class Pinned(
         pins: Set<SpkiSha256>,
@@ -75,6 +77,7 @@ public sealed interface TrustConfig {
         init {
             require(pins.isNotEmpty()) { "Pinned needs at least one pin" }
             if (base is Tofu || base is Custom) throw TlsException.Config("Pinned cannot be combined with ${base::class.simpleName}")
+            if (base is ExpectedName && base.base is Custom) throw TlsException.Config("Pinned cannot be combined with Custom, even through ExpectedName")
             if (base is Pinned) throw TlsException.Config("Pinned cannot wrap Pinned")
         }
     }
@@ -229,8 +232,9 @@ public sealed interface VerifyReason {
     public object Revoked : VerifyReason
 
     /**
-     * The revocation status could not be determined and the verifier requires it; alert `unknown_ca` (48). The built-in
-     * verifiers do not report it in v1; it is there for a [CertificateVerifier].
+     * The revocation status could not be determined and the verifier requires it; alert `unknown_ca` (48). Reported by the
+     * platform verifier when it says so (JVM PKIX `UNDETERMINED_REVOCATION_STATUS`, Apple
+     * `errSecIncompleteCertRevocationCheck`) and by a [CertificateVerifier]; `ksl`'s own verifier does not check revocation in v1.
      */
     public object UnknownRevocationStatus : VerifyReason
 
@@ -247,8 +251,8 @@ public sealed interface VerifyReason {
     public object NoCertificate : VerifyReason
 
     /**
-     * A Certificate Transparency policy (RFC 6962) rejected the chain; alert `certificate_unknown` (46). The built-in
-     * verifiers do not report it in v1; it is there for a [CertificateVerifier].
+     * A Certificate Transparency policy (RFC 6962) rejected the chain; alert `certificate_unknown` (46). Reported by the
+     * platform verifier when it says so (Android, whose CT policy names it in its error) and by a [CertificateVerifier].
      */
     public object CertificateTransparency : VerifyReason
 

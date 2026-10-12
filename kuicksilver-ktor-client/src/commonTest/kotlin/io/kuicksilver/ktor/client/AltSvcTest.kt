@@ -32,6 +32,13 @@ class AltSvcTest {
         assertTrue(e[0].persist)
     }
 
+    /** One header with 100 alternatives keeps the first `MAX_ENTRIES_PER_ORIGIN` (as Chromium): the store is bounded per origin. */
+    @Test fun negative_altSvcEntriesPerOriginCapped() {
+        respond(200, (1..100).joinToString(", ") { "h3=\":$it\"" })
+        assertEquals(AltSvcCache.MAX_ENTRIES_PER_ORIGIN, store.get(cache.originOf(origin)).size)
+        assertEquals(1, cache.h3For(origin)?.port)
+    }
+
     @Test fun defaultMa86400() {
         assertEquals(now + 86_400_000, AltSvcParser.parse("h3=\"alt.example.com:8443\"", now)!!.single().expiresAtEpochMillis)
     }

@@ -8,6 +8,7 @@ import io.kuicksilver.native.toByteArray
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.yield
 
 /** An in-memory UDP "network" (all platforms, no sockets): datagrams are routed to the [MemoryDatagramIo] bound to their destination address, or dropped. */
 @OptIn(ExperimentalKuicksilverApi::class)
@@ -57,8 +58,7 @@ internal class MemoryNetwork {
             dropped++
             return
         }
-        target.inbox.trySend(bytes to from)
-        target.received++
+        if (target.inbox.trySend(bytes to from).isSuccess) target.received++ else dropped++ // a full receive buffer
     }
 
     internal fun unbind(io: MemoryDatagramIo) {
@@ -74,7 +74,8 @@ internal class MemoryDatagramIo internal constructor(
     internal val deaf: Boolean,
     df: Boolean = false,
 ) : DatagramIo {
-    internal val inbox = Channel<Pair<ByteArray, InetSocketAddress>>(Channel.UNLIMITED)
+    /** Like a socket's receive buffer: 256 unread datagrams, then drops (as the public MemoryNetwork). */
+    internal val inbox = Channel<Pair<ByteArray, InetSocketAddress>>(256)
     override val capabilities: StateFlow<IoCapabilities> =
         MutableStateFlow(
             if (df) {
@@ -101,7 +102,10 @@ internal class MemoryDatagramIo internal constructor(
 
     override suspend fun receive(into: PacketBatch): Int {
         if (into.count >= into.capacity) return 0
-        val (bytes, from) = inbox.receive()
+        // like a socket: a non-empty buffer answers at once, after a yield (taken before the datagram, so a cancelled receiver loses nothing)
+        @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+        if (!inbox.isEmpty) yield()
+        val (bytes, from) = inbox.tryReceive().getOrNull() ?: inbox.receive()
         val i = into.count
         into.buffer(i).copyFrom(bytes, 0, 0, bytes.size)
         into.setLength(i, bytes.size)

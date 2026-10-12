@@ -19,6 +19,12 @@ if (!KslLoader.isAvailable()) fallBackToTcp()   // never throws; the outcome is 
 `AbiMismatch`, with the original exception as `cause`. The check makes the same single load attempt as
 `KslLoader.ensureLoaded()`; after a failure, `ensureLoaded()` throws that same exception without retrying.
 
+On the JVM the library is extracted once into `<java.io.tmpdir>/kuicksilver-native-<user>` (or
+`-Dkuicksilver.native.workdir=<dir>`, for a `noexec` temp directory) and verified against the jar's SHA-256 manifest on
+every start. The directory must be a real directory that you own and that nobody else can write (the loader applies
+`rwx------`); a symbolic link, another owner or permissions that cannot be removed give `IntegrityMismatch`. The file is
+kept between runs and shared between JVMs of the same user: its name carries the `ksl` ABI version.
+
 ## Configuration
 
 A `TlsConfig` is immutable; build it with the `tlsConfig` DSL. A client needs a server name (its reference identifier)
@@ -35,7 +41,7 @@ val client = tlsConfig(TlsRole.Client) {
 
 ```kotlin
 // guide:tls:server-config
-val identity = TlsIdentity.fromPem(chainPem, keyPem.toCharArray())   // the key array is zeroed after import
+val identity = TlsIdentity.fromPem(chainPem, keyPem.toCharArray())   // the key array is zeroed; the key now lives in OpenSSL only
 val server = tlsConfig(TlsRole.Server) {
     alpn = listOf("http/1.1")
     this.identity = identity
@@ -45,7 +51,8 @@ val server = tlsConfig(TlsRole.Server) {
 ## Trust
 
 Host names are always checked (RFC 9525) and the check cannot be disabled; it can be redirected with `ExpectedName`
-for proxies (`ExpectedName` wraps `Platform`, `AnchoredCa` or `Custom`; to pin as well, put it inside `Pinned`:
+for proxies (`ExpectedName` wraps `Platform`, `AnchoredCa` or `Custom`; to pin as well, put it inside `Pinned` — except
+around `Custom`, which `Pinned` refuses directly and through `ExpectedName`:
 `Pinned(pins, base = ExpectedName(name, base))`). Pins are an additional check against the validated chain, never a
 replacement for it.
 
@@ -96,9 +103,19 @@ plaintext; `shutdown()` sends `close_notify`.
 
 Secrets never leave native memory unless you ask. That includes the TCP client's session cache: a ticket kept for
 resumption is a handle to a native OpenSSL session, never its serialized bytes, and the secret is wiped when the
-entry is used, replaced or expires, or when the engine that owns the cache closes (the cache itself is internal API). `TlsConfig.keylog` accepts a `KeylogSink` (RFC 9850 lines); the
+entry is used, replaced, evicted or expires, or when the engine that owns the cache closes. Each Ktor client engine
+keeps its own cache of at most 256 sessions (the least recently stored one is evicted first); `Socket.tls` and
+`TlsConnection.client` share one process-wide cache with the same bound (the cache itself is internal API). `TlsConfig.keylog` accepts a `KeylogSink` (RFC 9850 lines); the
 `SSLKEYLOGFILE` variable is ignored by the library and by the bundled OpenSSL. `keylogFile(path)` creates the file
-with mode 0600, `keylogFromEnvironment()` reads the variable explicitly.
+with mode 0600 and checks it before the first line: a symlink at the path, a file that is not a regular file, has more than one
+hard link or belongs to another user, or a file system without POSIX permissions is refused with an `IllegalArgumentException`, and an existing
+file that is readable by the group or others is tightened to 0600 (on the JVM, Linux and Apple; on Windows the file is
+only created, so keep it in a directory that only you can write). On the JVM the file is opened once, when the sink is
+created, and every line goes through that descriptor, so a file removed and recreated at the path later receives nothing;
+the JVM sink is also `java.io.Closeable` (close it when you are done, otherwise the descriptor stays open until the
+channel is collected or the process exits). Kotlin/Native reopens the file without following links for every line and
+repeats the checks on the new descriptor.
+`keylogFromEnvironment()` reads the variable explicitly.
 
 ```kotlin
 val path = "/tmp/kuicksilver-keys.txt"

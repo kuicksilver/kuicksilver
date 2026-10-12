@@ -68,6 +68,8 @@ internal object CoreFixtures {
 internal class Dgram(
     val bytes: ByteArray,
     val from: InetSocketAddress,
+    /** The ECN codepoint the datagram arrives with (NotEct unless a test marks it). */
+    val ecn: Ecn = Ecn.NotEct,
 )
 
 /**
@@ -130,7 +132,7 @@ internal class CorePair(
                 queue.removeFirstOrNull() ?: break
             val b = PacketBuffer.of(d.bytes)
             try {
-                core.handleDatagram(b, d.bytes.size, d.from, Ecn.NotEct, now)
+                core.handleDatagram(b, d.bytes.size, d.from, d.ecn, now)
             } finally {
                 b.close()
             }

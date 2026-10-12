@@ -14,6 +14,21 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 Nothing has been released yet. This section summarises the development of the first 0.x version.
 
+### Fixed
+- Platform trust reports `VerifyReason.UnknownRevocationStatus` when the JVM PKIX validator (`UNDETERMINED_REVOCATION_STATUS`) or Apple (`errSecIncompleteCertRevocationCheck`) could not determine revocation, and `VerifyReason.CertificateTransparency` when Android's CT policy rejects a chain, instead of `UnknownIssuer`.
+- `QuicTlsSession` (`setTransportParameters`, `provide`, `resumeVerify`, `exportKeyingMaterial`) and `TlsConnection.exportKeyingMaterial` no longer leak the native `KslException.Internal`: a call in the wrong state throws `IllegalStateException`, other TLS errors `TlsException.Protocol`.
+- `TrustConfig.Pinned` refuses a `Custom` base wrapped in `ExpectedName` as it already refused a bare `Custom` (the spec: pins are checked against a chain the library validated, a custom verifier decides alone).
+- `TlsConfig` counts ALPN names in UTF-8 bytes (a 200-character `é` name passed as 200) and refuses a list longer than 255 bytes on the wire; a server's `ServerTlsOverride` passes the same ALPN and client-certificate trust checks as `build()` instead of none. Both copy the ALPN list before validating it, so the stored list is the one that was checked.
+- The TCP client session cache holds at most 256 sessions (the least recently stored one is evicted and its native session freed) and each Ktor client engine owns its own cache, which it clears when it closes; before, one process-wide cache grew without bound and outlived every engine.
+- `KslLoader` (JVM) refuses a work directory that is a symbolic link, not a directory, owned by another user or not private to it (`IntegrityMismatch`), and no longer deletes the extracted, verified library on exit, so a second JVM that shares the directory is not pulled from under its own `System.load`. It creates the work directory owner-only in one call (not under the umask), reuses an extracted library only when this user owns it (otherwise it reinstalls it atomically) and refuses to load when the user of the process cannot be determined on a POSIX file system.
+- `ksl`: `KSL_OPT_CLIENT_CERT` is refused on a client context (it rewrote `SSL_CTX_set_verify` and switched server verification off); `KSL_OPT_VERIFY_MODE` and `KSL_OPT_CLIENT_CERT` reject values outside 0..2.
+- `ksl`: setting the verify name a second time with the other identifier type (host after IP literal or the reverse) clears the previous one instead of checking both.
+- `TlsIdentity.fromPem` decodes the key straight from its `CharArray` instead of turning it into `String`s (which stayed on the heap) and wipes every decoded key block, also when the import fails.
+- `keylogFile(path)` refuses a symlink, a non-regular file, a file with more than one hard link, a file of another user or a file system without POSIX permissions, tightens an existing file to 0600 and reopens it without following links for every line (threat model section 3.7). On the JVM the sink keeps the one descriptor it checked for its lifetime (it is `java.io.Closeable`) instead of reopening the path for every line without re-checking the owner, so a file recreated at the path by another local user receives no secrets.
+
+### Changed
+- `ksl` ABI 5: identity private keys stay in OpenSSL. `TlsIdentity.fromDer`/`fromPem` parse the key once into a native `ksl_pkey` (`ksl_pkey_new`, `ksl_pkey_free`, `ksl_ctx_set_identity_pkey`) and keep only its handle, so a heap dump no longer holds the key; `TlsIdentity.InMemory.close()` frees it once the contexts built from it are gone. A library of ABI 4 is refused (`AbiMismatch`).
+
 ### Changed (API freeze before 0.1.0)
 - `NullCryptoProvider` is `@InternalKuicksilverApi` (a test fixture, not a transport); `ConnectionStats` and `EndpointStats` are built by the library only.
 - `PathChanged` is nested as `PathEvent.Changed` beside `Validated` and `Failed`; the top-level name is a deprecated alias until 0.2.0.
@@ -30,10 +45,13 @@ Nothing has been released yet. This section summarises the development of the fi
 - Android armeabi-v7a: the `kuicksilver-native` AAR ships `libksl.so` for arm64-v8a, armeabi-v7a and x86_64 (OpenSSL
   target `android-arm`, `minSdk` 24, 16 KiB pages); `-Pkuicksilver.android.armv7=false` leaves it out of a local build.
 - `KslLoader.availability()` and `KslLoader.isAvailable()` (`@ExperimentalKuicksilverApi`): a non-throwing check whether the native library can be used, so an application on an OS or ABI without a build falls back to another transport; `NativeAvailability.Unavailable` carries a `NativeUnavailableReason` (`NoLibraryForPlatform`, `LoadFailed`, `IntegrityMismatch`, `AbiMismatch`) and the original exception. The outcome of the one load attempt is cached: `ensureLoaded()` no longer retries after a failure and rethrows the same exception.
+- `QuicConfig.initialRtt` is validated (positive, at most 10 s) and documented: it sets the first PTO (3 x `initialRtt`,
+  doubling) and the floor of a path validation; a lower value shortens a handshake under loss at the price of spurious
+  retransmissions (`docs/guide/quic.md`, "Configuration").
 - `kuicksilver-bom`: a bill of materials that pins every module to one version (`implementation(platform("io.kuicksilver:kuicksilver-bom:<version>"))`).
 
 - **Native layer** (`kuicksilver-native`): the `ksl` C shim over OpenSSL 3.5 with one header for JNI and cinterop
-  (ABI version 4); OpenSSL 3.5.9 built from a pinned, PGP-verified tarball with a minimal configuration; OpenSSL
+  (ABI version 5); OpenSSL 3.5.9 built from a pinned, PGP-verified tarball with a minimal configuration; OpenSSL
   symbols prefixed with `ksl_ossl_` on Kotlin/Native; a JVM loader that checks the library's SHA-256 and ABI version;
   an Android AAR (arm64-v8a, armeabi-v7a, x86_64) aligned for 16 KiB pages; JVM jar manifest entries for the OpenSSL release.
 - **TLS** (`kuicksilver-tls`, `kuicksilver-ktor-network`): TLS 1.3 (and opt-in TLS 1.2) over any byte channel and over
@@ -59,9 +77,17 @@ Nothing has been released yet. This section summarises the development of the fi
   architecture, layering, SPDX, ABI, symbol-export, glibc-floor, page-alignment and size checks.
 - Documentation: user guides, architecture overview, ADRs, RFC compliance matrix, threat model; the
   `samples/realtime-telemetry` application.
+- `MemoryNetwork(receiveBuffer, assignEphemeralPorts)` (`@ExperimentalKuicksilverApi`): sockets of the in-memory network
+  hold at most `receiveBuffer` unread datagrams (256 by default) and count what a full buffer drops, `open` on port 0 binds
+  an ephemeral port, oversized datagrams are dropped instead of truncated, and `trySend` counts only addressed datagrams.
 
 ### Changed
 
+- QUIC API for 0.2.0 (breaking, before 1.0): `QuicException.ConnectionLost.TransportClosed.frameType` is a non-null `Long`
+  (0 when no frame triggered the error; it was never null); `TimeoutKind.Disconnect`, never produced, is removed;
+  `QuicStream.priority` reports the priority the stream was opened with instead of `StreamPriority.Default`;
+  `ConnectionCore.pathState` answers `PathState.Closed` for a path the connection closed or evicted (`Unknown` stays for
+  ids it never issued), so `QuicPath.state` of a path evicted by migration reads `Closed`.
 - JVM jars and the Android AAR carry `LICENSE`, `NOTICE` and the OpenSSL license.
 - Public ABI dumps no longer include declarations marked `@InternalKuicksilverApi`.
 - TCP session resumption keeps sessions in native memory (handles instead of serialized session bytes); `ksl` ABI 3 → 4.
@@ -69,6 +95,79 @@ Nothing has been released yet. This section summarises the development of the fi
   throws `IllegalStateException`; `accept()` after `close()` throws; the outgoing datagram queue is bounded.
 
 ### Fixed
+
+Hardening of the QUIC core for 0.2.0 (review of 2026-10-08, deferred items):
+
+- QUIC: an unanswered `PATH_CHALLENGE` is repeated with an exponentially growing gap (1, 1, 2, 4 ... x PTO, so
+  three challenges fit in the 3 x PTO validation timeout) instead of once per PTO (RFC 9000 §8.2.1, §8.2.4, RFC 9002 §6.2.1).
+- QUIC server: a client that migrates several times before its new addresses can answer no longer loses its newest
+  address: with all four path slots taken, a migration abandons the oldest validation of a path the client has left
+  (RFC 9000 §8.2.4); a probe takes the slot of a validating path only after max(3 x PTO, 5 s) of silence.
+- QUIC: a handshaking server that follows a new address on an Initial no longer re-runs its timers continuously once
+  that path's validation deadline passed without a Handshake packet (one forged Initial was enough).
+- QUIC: a packet buffered until its keys arrive is processed with the ECN mark, socket, source and length of its own
+  datagram, not of the datagram that delivered the keys (RFC 9000 §13.4.1).
+- QUIC: a lost `NEW_CONNECTION_ID` whose sequence is below our own `retire_prior_to` is no longer retransmitted,
+  and that connection ID stops routing 3 x PTO after the loss instead of staying registered (RFC 9000 §5.1.2, §19.15).
+- QUIC server: a Retry token is bound to the Retry's Source Connection ID; an Initial presenting it under another DCID is
+  refused with a stateless `INVALID_TOKEN` close instead of becoming a connection (RFC 9000 §8.1.2–§8.1.4). Tokens minted
+  before this change are not accepted (they live 10 s).
+- QUIC: ECN validation looks only at ACKs that raise the largest acknowledged packet, keeps the peer's counts per packet
+  number space instead of per path, and counts newly acknowledged marked packets per path; a reordered ACK no longer
+  fails ECN on the path, and a new path no longer takes the first counts it sees for a CE signal (RFC 9000 §13.4.2.1).
+- QUIC: work a peer can trigger no longer grows with what it controls (RFC 9000 §21.6): an ACK costs a binary search per
+  range instead of a walk over every packet in flight, a `MAX_DATA` that raises nothing touches no stream, and choosing or
+  scheduling a stream is logarithmic in the number of streams instead of linear.
+- QUIC: `ConnectionEvent.StreamWritable` and `StreamsAvailable` are raised (their KDoc said "not raised in this version"):
+  after a refused write once acknowledgements free buffer room or new flow-control credit reaches waiting data, and after
+  `MAX_STREAMS` raises a limit that refused an open; the coroutine API wakes the waiting writer or `openBidi`/`openUni`
+  directly. The KDoc of `StreamFinished`, which was always raised, now says so (RFC 9000 §4.1, §4.6).
+
+K7 (0.2.0), HTTP/3 and the Ktor engines:
+
+- A QPACK encoder-stream instruction cut into many fragments by the transport was re-copied and re-parsed per
+  fragment (quadratic in its length); it is now appended to once and parsed when its known length has arrived
+  (RFC 9204 section 7.4).
+- Request-stream frame hygiene: a flood of unknown frames on a request stream (reserved GREASE types excepted) spends
+  glitch tokens and closes the
+  connection with `H3_EXCESSIVE_LOAD` like one on the control stream (RFC 9114 section 7.2.8); DATA on a response to
+  HEAD or with status 204 or 304 is a malformed message (`Http3Exception.MessageError`) instead of a body; `te` is
+  accepted in requests only — a response or trailers carrying it are malformed, the server engine drops it from
+  application responses (RFC 9110 section 10.1.4).
+- HTTP/3 server: a request whose HEADERS were still arriving when the final GOAWAY went out counted as idle, so the
+  connection could close under it; a request stream now counts as in flight from its first byte (RFC 9114 section 5.2), and is
+  rejected with `H3_REQUEST_REJECTED` if its HEADERS are still incomplete 10 seconds after the final GOAWAY.
+- Ktor server: with `port = 0` the HTTP/3 endpoint bound the UDP twin of the port the OS gave TCP, and the start
+  failed with `BindException` when that UDP port was taken; the TCP + UDP pair is now retried on a new port up to 16
+  times, then HTTP/3 is skipped with a warning and HTTP/1.1 is served alone.
+- HTTP/3 server: a body the application wrote to a response to HEAD, or with status 204 or 304, went out as DATA
+  (Ktor's `respondText` on a HEAD route did that), which a conforming client treats as a malformed message; it is now
+  dropped and `content-length` is kept (RFC 9110 sections 9.3.2, 15.3.5, 15.4.5).
+- HTTP/3 client: the `Http3Request.onInformational` and `trailers` callbacks ran on the connection's single-threaded
+  dispatcher, so a slow callback stalled every stream of the connection; they now run on the caller's dispatcher.
+- HTTP/3: the peer's `SETTINGS_MAX_FIELD_SECTION_SIZE` is honoured when sending (RFC 9114 section 4.2.2): a request
+  above it fails with `Http3Exception.FieldSectionTooLarge` before a stream is opened, response headers and trailers
+  above it fail `respond`/`finish` (refused trailers reset the stream with `H3_INTERNAL_ERROR` rather than
+  leaving it without FIN), request trailers reset the stream and fail the request or its response
+  body with `FieldSectionTooLarge` — instead of being sent for the peer to refuse.
+- Ktor client: a non-idempotent request that failed on a pooled HTTP/1.1 connection the server had closed is no
+  longer sent again (RFC 9112 section 9.3.1); only idempotent requests get the transparent retry, and connections
+  already closed for reading are dropped when taken from the pool.
+- Ktor client: the h3/h1 connection race makes one HTTP/1.1 attempt (a second TCP connection was opened when both
+  setups failed), closes an HTTP/1.1 connection that lost the race instead of leaking it (also when the caller is
+  cancelled), and marks the alternative broken when a request fell back to HTTP/1.1 after its HTTP/3 connection
+  failed — not for a single stream error (RFC 7838 section 2.4, RFC 8305 section 5).
+- Ktor client: the Alt-Svc stores, broken-alternative marks and per-origin RTTs are bounded — 8 alternatives per origin (the first ones
+  of the header), 1000 origins with the least recently used dropped — so a server, or many origins, can no longer grow
+  them without limit. `FileAltSvcStore` reads at most that many records, skips the rewrite when a repeated header only
+  moves the expiry later by less than half its lifetime (a shorter `ma` always replaces the cached expiry), writes through a uniquely named temporary file, and, behind the
+  when used by the engine, writes after the engine's lock is released instead of blocking every request on disk I/O (a write is not lost
+  when its request is cancelled, and a pending one is flushed when the engine closes). `AltSvcEntry`
+  equality compares the alternative, not its expiry (RFC 7838 sections 2.2, 3, 9.4).
+- Ktor server: a `tlsConnector` with a `sniSelector` and HTTP/3 on failed to start with `TlsException.Config`; it now
+  serves HTTP/1.1 and skips HTTP/3 with a warning (no `Alt-Svc`), as on a platform without a QUIC server.
+- Ktor server contract: the two multipart-upload tests run over HTTP/3 as well (they were marked HTTP/1.1-only;
+  they pass unchanged).
 
 Fixes from a full five-reviewer pass over the code before the first release, among them:
 
@@ -85,6 +184,26 @@ Fixes from a full five-reviewer pass over the code before the first release, amo
   graceful stop; cookie crumbs are joined; truncated frames and oversized `content-length` are rejected.
 - `ksl_udp` treats per-destination send errors as the loss of one datagram instead of a socket failure; Initials
   from source port 0 are dropped; the certificate parser accepts the time formats OpenSSL accepts.
+- The endpoint's receive loop yields after 16 rounds or 2 ms of continuous traffic, so a socket that never runs dry
+  (a flood) no longer starves the connection timers and queued application commands.
+- No resolver call on the endpoint loop: on Kotlin/Native the address bytes of a datagram's source are parsed from its IP
+  literal instead of `getaddrinfo`, and Stateless Reset candidates are keyed by address bytes and port, so a reset from
+  `0:0:0:0:0:0:0:1` matches a connection to `::1`.
+- A server whose peer keeps moving no longer keeps a path object per address it ever saw: paths the connection evicts
+  (at most four) leave `QuicConnection.paths` and their sockets are closed.
+- Datagrams the socket did not take (a failed send, or a full buffer that took part of a batch) are counted in the new
+  `ConnectionStats.datagramsDroppedSocket` (`@ExperimentalKuicksilverApi`); the portable JVM socket waits once, briefly,
+  for room instead of treating a refused datagram as sent.
+- A socket whose `capabilities` lose ECN marking or DF (for example the portable socket clearing IP_TOS after a failed
+  ECN validation) now downgrades the connections already on it, the endpoint's socket and a migrating client's extra
+  sockets alike, instead of only the connections that start afterwards.
+- The accept queue never holds more than `acceptQueue` connections: a handshake that completes while the queue is full
+  is closed with CONNECTION_REFUSED. Admission counts only the connections waiting for `accept()`, so half-open
+  handshakes from spoofed sources cannot lock real clients out.
+- An `accept()` cancelled just as the queue handed it a connection no longer keeps that queue slot and leaves the
+  connection open: the connection is closed and the slot released.
+- `samples/realtime-telemetry` reads control lines with a 1024-byte limit; a longer line closes the connection (code 2)
+  instead of growing the server's buffer.
 
 ### Security
 

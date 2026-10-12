@@ -1,10 +1,12 @@
 public final class io/kuicksilver/ktor/client/AltSvcEntry {
 	public fun <init> (Ljava/lang/String;Ljava/lang/String;IJZ)V
+	public fun equals (Ljava/lang/Object;)Z
 	public final fun getExpiresAtEpochMillis ()J
 	public final fun getHost ()Ljava/lang/String;
 	public final fun getPersist ()Z
 	public final fun getPort ()I
 	public final fun getProtocol ()Ljava/lang/String;
+	public fun hashCode ()I
 	public fun toString ()Ljava/lang/String;
 }
 

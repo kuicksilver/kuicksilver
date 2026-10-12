@@ -22,6 +22,28 @@ class KslSmokeTest {
 
     @Test fun abiVersionMatches() = assertEquals(KSL_ABI_VERSION, Ksl.abiVersion())
 
+    /** ABI 5: a parsed key handle serves a context after the caller dropped its own reference; garbage and a foreign key are refused. */
+    @Test fun pkeyHandleSetsIdentity() {
+        val k = Ksl.pkeyNew(TestCerts.serverKey.copyOf())
+        val ctx = Ksl.ctxNew(KslConst.SERVER)
+        try {
+            Ksl.ctxSetIdentityKey(ctx, listOf(TestCerts.server), k)
+            Ksl.pkeyFree(k)
+            Ksl.ctxFreeze(ctx)
+        } finally {
+            Ksl.ctxFree(ctx)
+        }
+        assertFailsWith<KslException.Internal> { Ksl.pkeyNew(byteArrayOf(0x30, 0x03, 0x02, 0x01, 0x00)) }
+        val other = Ksl.pkeyNew(TestCerts.clientKey.copyOf())
+        val ctx2 = Ksl.ctxNew(KslConst.SERVER)
+        try {
+            assertFailsWith<KslException.Internal> { Ksl.ctxSetIdentityKey(ctx2, listOf(TestCerts.server), other) }
+        } finally {
+            Ksl.ctxFree(ctx2)
+            Ksl.pkeyFree(other)
+        }
+    }
+
     @Test fun versionStringMentionsOpenSsl359() = assertTrue(Ksl.version().contains("OpenSSL 3.5.9"), Ksl.version())
 
     @Test fun ctxFreezeRejectsMutation() {

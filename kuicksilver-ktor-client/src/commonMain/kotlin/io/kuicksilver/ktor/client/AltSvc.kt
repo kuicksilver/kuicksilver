@@ -12,6 +12,9 @@ import io.ktor.http.Url
  * @property port the alternative's UDP port, 1..65535.
  * @property expiresAtEpochMillis the end of freshness in epoch milliseconds: receipt time plus `ma` (86400 s by default).
  * @property persist `persist=1`: the entry survives a network change even with [Http3ClientConfig.clearOnNetworkChange].
+ *
+ * Two entries are equal when they name the same alternative ([protocol], [host], [port], [persist]); the expiry is left
+ * out, so a repeated `Alt-Svc` header compares equal to the stored one.
  */
 public class AltSvcEntry(
     public val protocol: String,
@@ -20,6 +23,11 @@ public class AltSvcEntry(
     public val expiresAtEpochMillis: Long,
     public val persist: Boolean,
 ) {
+    override fun equals(other: Any?): Boolean =
+        other is AltSvcEntry && protocol == other.protocol && host == other.host && port == other.port && persist == other.persist
+
+    override fun hashCode(): Int = ((protocol.hashCode() * 31 + host.hashCode()) * 31 + port) * 31 + persist.hashCode()
+
     override fun toString(): String = "$protocol=\"${host ?: ""}:$port\" (expires $expiresAtEpochMillis${if (persist) ", persist" else ""})"
 }
 
@@ -44,21 +52,23 @@ public interface AltSvcStore {
     public fun clearNonPersistent()
 }
 
-/** The default [AltSvcStore]: in memory, thread-safe enough for one engine (all calls happen under the engine's lock). */
+/**
+ * The default [AltSvcStore]: in memory, thread-safe enough for one engine (all calls happen under the engine's lock).
+ * It keeps at most 1000 origins; the least recently used go first (threat-model 3.18).
+ */
 public class InMemoryAltSvcStore : AltSvcStore {
-    private val map = HashMap<String, List<AltSvcEntry>>()
+    private val map = LinkedHashMap<String, List<AltSvcEntry>>()
 
-    override fun get(origin: String): List<AltSvcEntry> = map[origin].orEmpty()
+    override fun get(origin: String): List<AltSvcEntry> = map.touch(origin).orEmpty()
 
     override fun put(
         origin: String,
         entries: List<AltSvcEntry>,
     ) {
-        if (entries.isEmpty()) {
-            map.remove(origin)
-        } else {
-            map[origin] =
-                entries.toList()
+        map.remove(origin)
+        if (entries.isNotEmpty()) {
+            map[origin] = entries.take(AltSvcCache.MAX_ENTRIES_PER_ORIGIN)
+            map.evictEldest(AltSvcCache.MAX_ORIGINS)
         }
     }
 
@@ -193,7 +203,7 @@ internal class AltSvcCache(
                 }
             entries += parsed
         }
-        val usable = entries.filter { !(url.port < 1024 && it.port >= 1024) }
+        val usable = entries.filter { !(url.port < 1024 && it.port >= 1024) }.take(MAX_ENTRIES_PER_ORIGIN)
         if (usable.isEmpty()) store.remove(origin) else store.put(origin, usable)
     }
 
@@ -212,5 +222,35 @@ internal class AltSvcCache(
 
     fun onNetworkChanged(clearNonPersistent: Boolean) {
         if (clearNonPersistent) store.clearNonPersistent()
+    }
+
+    init {
+        (store as? FileAltSvcStore)?.deferWrites = true
+    }
+
+    /**
+     * The file write left by the last change of a [FileAltSvcStore] (null for other stores or when nothing changed).
+     * Taken under the engine's lock and run after it, so a slow disk never stalls requests (threat-model 3.18).
+     */
+    fun takePendingWrite(): (() -> Unit)? = (store as? FileAltSvcStore)?.takePendingWrite()
+
+    companion object {
+        /** Alternatives kept per origin; the first ones of the header win (RFC 7838 section 3: listed by preference). */
+        const val MAX_ENTRIES_PER_ORIGIN: Int = 8
+
+        /** Origins kept by the built-in stores and broken marks; the least recently used go first. */
+        const val MAX_ORIGINS: Int = 1000
+    }
+}
+
+/** Moves [key] to the most recently used end of this insertion-ordered map and returns its value. */
+internal fun <K, V : Any> LinkedHashMap<K, V>.touch(key: K): V? = remove(key)?.also { put(key, it) }
+
+/** Drops the eldest entries until at most [max] remain. */
+internal fun <K, V> MutableMap<K, V>.evictEldest(max: Int) {
+    val it = entries.iterator()
+    while (size > max && it.hasNext()) {
+        it.next()
+        it.remove()
     }
 }

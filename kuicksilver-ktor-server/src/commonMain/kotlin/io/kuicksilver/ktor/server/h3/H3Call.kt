@@ -151,8 +151,8 @@ internal class H3ConnectionPoint(
     override fun toString(): String = "H3ConnectionPoint(uri=$uri, method=$method, remote=$remoteAddress:$remotePort)"
 }
 
-/** Connection-specific fields HTTP/3 forbids (RFC 9114 section 4.2): dropped from Ktor's response headers. */
-private val HOP_BY_HOP = setOf("connection", "keep-alive", "proxy-connection", "transfer-encoding", "upgrade")
+/** Connection-specific fields HTTP/3 forbids (RFC 9114 section 4.2) and `te`, a request-only field (RFC 9110 section 10.1.4): dropped from Ktor's response headers. */
+private val HOP_BY_HOP = setOf("connection", "keep-alive", "proxy-connection", "transfer-encoding", "upgrade", "te")
 
 internal open class H3Response(
     call: PipelineCall,

@@ -291,6 +291,76 @@ class PathTest {
         }
     }
 
+    @Test fun validationTimeoutFollowsInitialRtt() {
+        // RFC 9000 section 8.2.4 with initialRtt = 100 ms: max(3 x PTO, 6 x 100 ms) — the 20 ms pair's 3 x PTO is below 600 ms
+        val (p, c) = connected(serverQuic = quicConfig { initialRtt = 100.milliseconds })
+        try {
+            p.clientListensOnSource = false
+            val s = p.server()
+            assertEquals(maxOf(s.pto() * 3, 600.milliseconds), s.validationTimeout())
+            assertEquals(600.milliseconds, s.validationTimeout())
+            p.clientSource = other
+            send(c)
+            p.step()
+            val t0 = p.now
+            assertTrue(p.runUntil(5.seconds) { p.events[s]!!.any { it is ConnectionEvent.PathFailed } })
+            val took = p.now - t0
+            assertTrue(took >= 590.milliseconds && took <= 900.milliseconds, "validation failed after $took")
+        } finally {
+            p.close()
+        }
+    }
+
+    @Test fun pathChallengeRepeatsBackOff() {
+        // RFC 9000 section 8.2.1 and RFC 9002 section 6.2.1: an unanswered PATH_CHALLENGE is repeated after 1 PTO twice (three
+        // attempts inside the 3 x PTO validation timeout, as quic-go), then with an exponentially growing gap, not once per PTO
+        val (p, c) = connected()
+        try {
+            val id = c.addPath(p.serverAddr, p.now)
+            c.probePath(id, p.now)
+            val path = c.paths.byId(id)!!
+            val g1 = path.nextChallengeAt - p.now
+            assertTrue(g1 > Duration.ZERO)
+            val t1 = path.nextChallengeAt
+            c.onTimeout(t1)
+            val g2 = path.nextChallengeAt - t1
+            assertEquals(g1, g2, "the second repeat follows after the same PTO")
+            val t2 = path.nextChallengeAt
+            c.onTimeout(t2)
+            val g3 = path.nextChallengeAt - t2
+            assertTrue(g3 >= g2 * 2, "third gap $g3 is at least twice the second $g2")
+            val t3 = path.nextChallengeAt
+            if (path.state == PathState.Validating) {
+                c.onTimeout(t3)
+                val g4 = path.nextChallengeAt - t3
+                if (path.state == PathState.Validating) assertTrue(g4 >= g3 * 2, "fourth gap $g4 is at least twice the third $g3")
+            }
+        } finally {
+            p.close()
+        }
+    }
+
+    @Test fun newPathGetsThreeChallengesBeforeDeadline() {
+        // RFC 9000 section 8.2.4: three PATH_CHALLENGEs (at 0, 1 and 2 PTO) go out before the 3 x PTO validation timeout
+        // a 1 ms initialRtt keeps the 6 x initialRtt floor out of the way: the deadline is 3 x PTO
+        val (p, c) = connected(clientQuic = quicConfig { initialRtt = 1.milliseconds })
+        try {
+            assertEquals(c.pto() * 3, c.validationTimeout())
+            val id = c.addPath(p.serverAddr, p.now)
+            c.probePath(id, p.now)
+            val path = c.paths.byId(id)!!
+            val deadline = path.challengeDeadline
+            var attempts = 1
+            while (path.state == PathState.Validating && path.nextChallengeAt < deadline) {
+                c.onTimeout(path.nextChallengeAt)
+                attempts++
+            }
+            assertTrue(attempts >= 3, "$attempts PATH_CHALLENGEs before the validation deadline")
+        } finally {
+            p.close()
+        }
+    }
+
     @Test fun negative_migrationToLoopback() {
         // a client at 10.0.0.1 cannot "move" to loopback or link-local: no path change and not a byte sent there
         for (bad in listOf(
@@ -406,6 +476,35 @@ class PathTest {
                 p.step()
             }
             assertEquals(4, s.pathCountForTest, "the initial path plus three probes; the fifth address is dropped")
+            assertNull(p.closed(s))
+        } finally {
+            p.close()
+        }
+    }
+
+    /**
+     * K7 F1.10: a client that moves four times before any of its new addresses could answer (each old NAT mapping dies at once) fills
+     * every path slot with validations of dead addresses; RFC 9000 section 8.2.4 lets a migration abandon those, so the newest address
+     * still becomes the active path and validates.
+     */
+    @Test fun rapidMigrationsKeepTheNewestPath() {
+        val (p, c) = connected()
+        try {
+            val s = p.server()
+            val newest = InetSocketAddress("10.0.4.1", 40000)
+            p.clientListens.clear()
+            p.clientListensOnSource = false
+            p.clientListens += newest // only the last mapping is alive
+            for (i in 1..4) {
+                p.clientSource = InetSocketAddress("10.0.$i.1", 40000)
+                send(c)
+                repeat(10) { p.step() }
+            }
+            assertTrue(
+                p.runUntil(2.seconds) { s.remoteAddressForTest == newest && s.pathState(s.stats.currentPath) == PathState.Validated },
+                "the newest address is the validated active path (server at ${s.remoteAddressForTest}, paths ${s.paths.all})",
+            )
+            assertTrue(s.pathCountForTest <= 4)
             assertNull(p.closed(s))
         } finally {
             p.close()
@@ -632,6 +731,19 @@ class PathTest {
         }
     }
 
+    @Test fun closedPathStateIsClosed() {
+        // a path id the connection issued and then closed is Closed, not Unknown (which stays for ids it never issued)
+        val (p, c) = connected()
+        try {
+            val id = c.addPath(p.serverAddr, p.now)
+            c.closePath(id)
+            assertEquals(PathState.Closed, c.pathState(id))
+            assertEquals(PathState.Unknown, c.pathState(PathId(id.value + 1)))
+        } finally {
+            p.close()
+        }
+    }
+
     @Test fun pathStateOfUnknownIdIsUnknown() {
         val (p, _) = connected()
         try {
@@ -803,6 +915,44 @@ class PathTest {
         }
     }
 
+    /**
+     * Review of k7/f1-core: one Initial from a new address (public keys, so anyone can forge it) makes a handshaking server challenge that
+     * address; with no Handshake packet after it, the passed validation deadline must move on with the repeat instead of staying in the
+     * past and making every timer check due again until the handshake timeout.
+     */
+    @Test fun negative_spoofedInitialFromNewAddressDoesNotSpinTimers() {
+        val p = EndpointPair()
+        try {
+            val newPort = InetSocketAddress("10.0.0.1", 40002)
+            p.rebindDuringHandshake(newPort)
+            assertTrue(
+                p.runUntil(5.seconds) {
+                    p.server.connections().singleOrNull()?.paths?.active?.let { it.isRemote(newPort) && it.state == PathState.Validating } == true
+                },
+                "the server follows the Initial from the new address",
+            )
+            p.filterToServer = { _, _ -> false } // nothing after that Initial: no Handshake packet validates the address
+            val s = p.server()
+            val path = s.paths.active
+            assertFalse(path.handshakeValidated)
+            val end = p.now + QuicConfig.Default.handshakeTimeout
+            p.now = maxOf(p.now, path.challengeDeadline - 10.milliseconds)
+            p.step() // the validation deadline passes while the handshake is still running
+            assertTrue(s.state == io.kuicksilver.quic.ConnectionState.Handshaking && path.state == PathState.Validating)
+            assertTrue(s.nextTimeoutOrNever() >= p.now + s.pto(), "next timer ${s.nextTimeoutOrNever()} is a PTO after ${p.now}")
+            var fired = 0
+            while (p.now < end && s.state == io.kuicksilver.quic.ConnectionState.Handshaking) {
+                val next = s.nextTimeoutOrNever()
+                p.now = maxOf(p.now, next - 10.milliseconds)
+                p.step()
+                fired++
+            }
+            assertTrue(fired < 20, "$fired timer rounds within the handshake timeout")
+        } finally {
+            p.close()
+        }
+    }
+
     /** A client that never answers the handshake-time challenge: the Handshake packet already validated the address (RFC 9000 section 8.1), so the deadline settles the path instead of closing the connection. */
     @Test fun unansweredHandshakeTimeChallengeDoesNotCloseTheConnection() {
         val p = EndpointPair()
@@ -871,6 +1021,42 @@ class PathTest {
             .ConnectionId(datagram.copyOfRange(1, 9))
 
     /** RFC 9000 section 9.5: a probe on a new path never carries the connection ID the active path uses, on either side. */
+    /**
+     * K7 F1.10 (F2 trace of `MigrationApiTest.migrateMovesTrafficToNewIo`): after the client's active migration the server re-validates
+     * the client's old address (RFC 9000 section 9.3.3); the client must answer the first PATH_CHALLENGE there, not only a repeat.
+     */
+    @Test fun firstRevalidationChallengeIsAnswered() {
+        val (p, c) = connected()
+        try {
+            val s = p.server()
+            val id = c.addPath(p.serverAddr, p.now)
+            p.clientSocketSources[id] = other
+            p.clientListens += other
+            c.probePath(id, p.now)
+            assertTrue(p.runUntil(5.seconds) { c.pathState(id) == PathState.Validated }, "probe answered: ${c.pathState(id)}")
+            p.settle(5)
+            send(c, 300_000) // traffic both ways across the switch, as in the runtime echo
+            send(s, 300_000)
+            repeat(5) { p.step() }
+            val responsesBefore = c.pathResponsesSentForTest
+            c.switchPath(id, p.now)
+            assertTrue(p.runUntil(2.seconds) { s.remoteAddressForTest == other }, "the server follows the client")
+            val old = s.paths.all.first { it.isRemote(p.clientAddr) }
+            assertTrue(
+                p.runUntil(5.seconds) { old.state != PathState.Validating },
+                "the old address is re-validated (${old.state}, challenges ${s.challengedAddressesForTest})",
+            )
+            assertEquals(PathState.Validated, old.state)
+            assertEquals(
+                1,
+                s.challengedAddressesForTest.count { it == p.clientAddr },
+                "the first PATH_CHALLENGE to the old address is answered (client responses ${c.pathResponsesSentForTest - responsesBefore})",
+            )
+        } finally {
+            p.close()
+        }
+    }
+
     @Test fun probeUsesUnusedPeerCid() {
         val (p, c) = connected()
         try {

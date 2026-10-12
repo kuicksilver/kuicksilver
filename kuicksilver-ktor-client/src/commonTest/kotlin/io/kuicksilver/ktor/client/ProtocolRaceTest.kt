@@ -2,10 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.kuicksilver.ktor.client
 
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.currentTime
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
 import kotlinx.io.IOException
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -88,6 +92,44 @@ class ProtocolRaceTest {
             assertEquals(0L, startedAt)
         }
 
+    /** An h1 setup that completed just as h3 won is handed to [onLoser] (the engine closes it) instead of being leaked. */
+    @Test fun losingH1ResultIsHandedToOnLoser() =
+        runTest {
+            val lost = ArrayList<String>()
+            val r = race.race({ "h3" }, { "h1" }, null, quicConfirmed = false, onLoser = { lost += it })
+            assertEquals(Protocol.H3, r.winner)
+            assertEquals(listOf("h1"), lost)
+        }
+
+    /** A caller cancelled while an h1 setup completes (it cannot be interrupted) still hands the connection to [onLoser]. */
+    @Test fun loserIsHandedOverWhenCallerIsCancelled() =
+        runTest {
+            val lost = ArrayList<String>()
+            val h1Started = CompletableDeferred<Unit>()
+            val gate = CompletableDeferred<Unit>()
+            val caller =
+                launch {
+                    race.race(
+                        { awaitCancellation() },
+                        {
+                            withContext(NonCancellable) {
+                                h1Started.complete(Unit)
+                                gate.await()
+                                "h1"
+                            }
+                        },
+                        null,
+                        quicConfirmed = false,
+                        onLoser = { lost += it },
+                    )
+                }
+            h1Started.await()
+            caller.cancel()
+            gate.complete(Unit)
+            caller.join()
+            assertEquals(listOf("h1"), lost)
+        }
+
     @Test fun bothFailThrowsH1Failure() =
         runTest {
             val e = assertFailsWith<IOException> { race.race<String>({ throw IOException("h3") }, { throw IOException("h1") }, null, true) }
@@ -131,6 +173,20 @@ class BrokenAltSvcTest {
         now +=
             5.minutes.inWholeMilliseconds
         assertFalse(broken.isBroken("o", "a"))
+    }
+
+    /** A peer cycling origins (or networks) cannot grow the marks without bound: the oldest go past `MAX_ORIGINS` (threat-model 3.18). */
+    @Test fun negative_brokenMarksBounded() {
+        val n = AltSvcCache.MAX_ORIGINS + 500
+        for (i in 0 until n) {
+            broken.markBroken("o$i", "a")
+            broken.confirmQuic("net$i")
+        }
+        assertFalse(broken.isBroken("o0", "a"), "the oldest mark was evicted")
+        assertTrue(broken.isBroken("o${n - 1}", "a"))
+        assertEquals(AltSvcCache.MAX_ORIGINS, (0 until n).count { broken.isBroken("o$it", "a") })
+        assertFalse(broken.quicConfirmedOn("net0"))
+        assertEquals(AltSvcCache.MAX_ORIGINS, (0 until n).count { broken.quicConfirmedOn("net$it") })
     }
 
     @Test fun networkChangeResets() {

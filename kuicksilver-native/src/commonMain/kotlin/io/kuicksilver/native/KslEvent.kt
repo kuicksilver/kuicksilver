@@ -4,7 +4,7 @@ package io.kuicksilver.native
 
 import io.kuicksilver.annotations.InternalKuicksilverApi
 
-/** Constants mirroring ksl.h. Values are part of the native ABI and must not change without bumping [Ksl.ABI_VERSION]. */
+/** Constants mirroring ksl.h. Values are part of the native ABI and must not change without bumping [KSL_ABI_VERSION]. */
 @InternalKuicksilverApi
 public object KslConst {
     public const val OK: Int = 0

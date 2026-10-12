@@ -23,10 +23,12 @@ public value class PathId(
 
 /** Validation state of a path (RFC 9000 section 8.2). */
 public enum class PathState {
-    /** Not validated yet and no challenge sent, or a path id the connection does not hold. */
+    /** Not validated yet and no challenge sent, or a path id the connection never issued. */
     Unknown,
 
-    /** A PATH_CHALLENGE is outstanding; it is repeated every PTO until an answer or the timeout (RFC 9000 section 8.2.1). */
+    /**
+     * A PATH_CHALLENGE is outstanding; it is repeated after 1, 1, 2, 4 ... x PTO until an answer or the timeout (RFC 9000 section 8.2.1).
+     */
     Validating,
 
     /** The peer answered the challenge, or the handshake proved the address (RFC 9000 sections 8.1 and 8.2.3). */

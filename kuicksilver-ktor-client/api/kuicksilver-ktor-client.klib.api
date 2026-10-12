@@ -40,6 +40,8 @@ final class io.kuicksilver.ktor.client/AltSvcEntry { // io.kuicksilver.ktor.clie
     final val protocol // io.kuicksilver.ktor.client/AltSvcEntry.protocol|{}protocol[0]
         final fun <get-protocol>(): kotlin/String // io.kuicksilver.ktor.client/AltSvcEntry.protocol.<get-protocol>|<get-protocol>(){}[0]
 
+    final fun equals(kotlin/Any?): kotlin/Boolean // io.kuicksilver.ktor.client/AltSvcEntry.equals|equals(kotlin.Any?){}[0]
+    final fun hashCode(): kotlin/Int // io.kuicksilver.ktor.client/AltSvcEntry.hashCode|hashCode(){}[0]
     final fun toString(): kotlin/String // io.kuicksilver.ktor.client/AltSvcEntry.toString|toString(){}[0]
 }
 

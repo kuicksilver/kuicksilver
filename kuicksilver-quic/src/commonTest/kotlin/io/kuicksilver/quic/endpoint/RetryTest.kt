@@ -362,13 +362,48 @@ class RetryTest {
         }
     }
 
+    @Test fun negative_retryTokenReusedWithOtherDcid() {
+        // RFC 9000 sections 8.1.2-8.1.4 and 17.2.5.3: a Retry token is bound to the SCID of the Retry that carried it; an Initial that
+        // presents it under another Destination Connection ID is refused with INVALID_TOKEN, statelessly, and makes no connection
+        val p = EndpointPair(crypto = KslQuicCrypto) { admission = ConnectionAdmission.AlwaysRetry }
+        var token: ByteArray? = null
+        p.filterToClient =
+            { _, b ->
+                if (token == null && isRetry(b)) {
+                    val v = PacketHeaderView()
+                    val buf = PacketBuffer.of(b)
+                    try {
+                        if (PacketHeaderCodec.parse(buf, 0, b.size, 8, v)) token = b.copyOfRange(v.tokenOff, v.tokenOff + v.tokenLen)
+                    } finally {
+                        buf.close()
+                    }
+                }
+                true
+            }
+        try {
+            val c1 = p.connect()
+            assertTrue(p.confirmed(c1), "${p.closed(c1)}")
+            val stolen = assertNotNull(token)
+            val c2 = p.connect()
+            c2.testInitialToken = stolen // a fresh connection: its DCID is not the Retry SCID the token was minted for
+            assertTrue(p.runUntil { p.closed(c2) != null }, "the second client is told")
+            val r = p.closed(c2)
+            assertIs<QuicException.ConnectionLost.TransportClosed>(r)
+            assertEquals(0x0bL, r.code, "INVALID_TOKEN, not a connection with mismatching transport parameters")
+            assertEquals(1, p.server.connectionCount, "no connection for a token under another DCID")
+        } finally {
+            p.close()
+        }
+    }
+
     @Test fun tokenSurvivesOneRotationNotTwo() {
         val tokens = RetryTokens(KslQuicCrypto, Random(1), lifetime = 10.hours, rotateEvery = 1.hours)
         val client = InetSocketAddress("10.0.0.1", 40000)
         val odcid = ConnectionId(ByteArray(8) { 1 })
+        val retryScid = ConnectionId(ByteArray(8) { 2 })
         try {
             val t0 = TimeMark(1_000_000_000L)
-            val tok = tokens.mint(odcid, client, 1, t0)
+            val tok = tokens.mint(odcid, retryScid, client, 1, t0)
 
             fun check(at: TimeMark): TokenCheck {
                 val b = PacketBuffer.of(tok)

@@ -7,8 +7,14 @@ package io.kuicksilver.native
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.annotations.InternalKuicksilverApi
 import java.io.File
+import java.io.IOException
+import java.nio.file.FileAlreadyExistsException
 import java.nio.file.Files
+import java.nio.file.LinkOption
+import java.nio.file.Path
+import java.nio.file.attribute.PosixFileAttributes
 import java.nio.file.attribute.PosixFilePermissions
+import java.nio.file.attribute.UserPrincipal
 import java.security.MessageDigest
 
 /**
@@ -120,23 +126,94 @@ public object JvmLoader {
 
     /**
      * The directory the jar resource is extracted to: `kuicksilver.native.workdir` from [props], else
-     * `<java.io.tmpdir>/kuicksilver-native-<user.name>`. It is created when missing and restricted to its owner (`rwx------`)
-     * where the file system has POSIX permissions; the owner of an existing directory is not checked. Set the property when
-     * the temporary directory is mounted `noexec`.
+     * `<java.io.tmpdir>/kuicksilver-native-<user.name>`. It is created when missing and then checked by [checkWorkDir]: a
+     * symbolic link, something other than a directory, a directory owned by another user or one that keeps group/other
+     * permissions after `rwx------` is applied fails with [KslException.NativeLoad] (`IntegrityMismatch`). Set the property
+     * when the temporary directory is mounted `noexec`.
      */
     public fun privateWorkDir(props: Map<String, String> = emptyMap()): File {
         val base =
             props[WORKDIR]?.let(::File)
                 ?: File(System.getProperty("java.io.tmpdir"), "kuicksilver-native-" + System.getProperty("user.name"))
-        base.mkdirs()
-        try {
-            Files.setPosixFilePermissions(base.toPath(), PosixFilePermissions.fromString("rwx------"))
-        } catch (
-            _: UnsupportedOperationException,
-        ) {
-        }
+        createWorkDir(base.toPath())
+        checkWorkDir(base.toPath())
         return base
     }
+
+    /**
+     * Creates [dir] when nothing is at that path: the parents normally, the directory itself in one call with `rwx------`
+     * where the file system has a POSIX view (never under the umask first), plainly elsewhere (Windows). An existing entry,
+     * including a symbolic link, is left for [checkWorkDir] to judge.
+     */
+    internal fun createWorkDir(dir: Path) {
+        if (Files.exists(dir, LinkOption.NOFOLLOW_LINKS)) return
+        dir.toAbsolutePath().parent?.let { Files.createDirectories(it) }
+        try {
+            if (hasPosix(dir)) {
+                Files.createDirectory(dir, PosixFilePermissions.asFileAttribute(OWNER_ONLY))
+            } else {
+                Files.createDirectory(dir)
+            }
+        } catch (_: FileAlreadyExistsException) {
+            // another JVM won the race; checkWorkDir decides whether it is acceptable
+        }
+    }
+
+    private fun hasPosix(p: Path): Boolean = "posix" in p.fileSystem.supportedFileAttributeViews()
+
+    /**
+     * Refuses [dir] as the extraction directory unless it is a real directory (not a symbolic link) owned by [expectedOwner]
+     * and private to it: the owner of the directory could replace the library between the manifest check and `System.load`.
+     * Group/other permissions are stripped first; a directory that keeps them (a sticky or ACL-managed mount) is refused as well.
+     * When this process's user cannot be determined ([expectedOwner] null) the directory is refused rather than left unchecked.
+     * Without a POSIX view (Windows) only the directory check applies.
+     */
+    internal fun checkWorkDir(
+        dir: Path,
+        expectedOwner: UserPrincipal? = currentUser(dir),
+    ) {
+        fun refuse(why: String): Nothing =
+            throw KslException.NativeLoad(
+                JvmNativeNames.os,
+                JvmNativeNames.classifier,
+                "work directory $dir $why; set -D$WORKDIR to a directory only you own",
+                null,
+                NativeUnavailableReason.IntegrityMismatch,
+            )
+        if (Files.isSymbolicLink(dir)) refuse("is a symbolic link")
+        val attrs =
+            try {
+                Files.readAttributes(dir, PosixFileAttributes::class.java, LinkOption.NOFOLLOW_LINKS)
+            } catch (_: UnsupportedOperationException) {
+                if (!Files.isDirectory(dir, LinkOption.NOFOLLOW_LINKS)) refuse("is not a directory")
+                return
+            } catch (e: IOException) {
+                refuse("cannot be read: ${e.message}")
+            }
+        if (!attrs.isDirectory) refuse("is not a directory")
+        if (expectedOwner == null) refuse("cannot be checked: the user of this process cannot be determined")
+        if (attrs.owner() != expectedOwner) refuse("is owned by ${attrs.owner().name}, not by this user")
+        try {
+            Files.setPosixFilePermissions(dir, OWNER_ONLY)
+        } catch (_: IOException) {
+        }
+        val perms = Files.getPosixFilePermissions(dir, LinkOption.NOFOLLOW_LINKS)
+        if (perms.any { it !in OWNER_ONLY }) refuse("keeps group/other permissions ${PosixFilePermissions.toString(perms)}")
+    }
+
+    private val OWNER_ONLY = PosixFilePermissions.fromString("rwx------")
+
+    /** The principal of this process: `user.name` looked up on [dir]'s file system, else the owner of a file created now; null when neither works. */
+    private fun currentUser(dir: Path): UserPrincipal? =
+        runCatching { dir.fileSystem.userPrincipalLookupService.lookupPrincipalByName(System.getProperty("user.name")) }
+            .recoverCatching {
+                val probe = Files.createTempFile("ksl-owner", null)
+                try {
+                    Files.getOwner(probe)
+                } finally {
+                    Files.deleteIfExists(probe)
+                }
+            }.getOrNull()
 
     /**
      * Throws [KslException.NativeLoad] unless the SHA-256 of [file] equals the hash on the [manifest] line (`<hex> <path>`)
@@ -174,13 +251,40 @@ public object JvmLoader {
         }
     }
 
-    /** Writes the library unless an identical, manifest-verified copy is already there (another JVM may have it mapped); new content goes through a temp file and an atomic rename. */
+    /**
+     * Writes the library unless an identical, manifest-verified copy owned by this process's user is already there (another
+     * JVM may have it mapped); new content, or a replacement for a copy of another owner, goes through a temp file and an
+     * atomic rename. On a POSIX file system an undeterminable current user fails with [KslException.NativeLoad]; without a
+     * POSIX view (Windows) ownership is not checked.
+     */
     public fun installLibrary(
         out: File,
         content: ByteArray,
         manifest: String,
+    ): Unit = installLibrary(out, content, manifest, currentUser(out.toPath().toAbsolutePath().parent ?: out.toPath()))
+
+    internal fun installLibrary(
+        out: File,
+        content: ByteArray,
+        manifest: String,
+        expectedOwner: UserPrincipal?,
     ) {
-        if (out.isFile && runCatching { verifyAgainstManifest(out, manifest) }.isSuccess) return
+        val path = out.toPath()
+        val posix = hasPosix(path)
+        if (posix && expectedOwner == null) {
+            throw KslException.NativeLoad(
+                JvmNativeNames.os,
+                JvmNativeNames.classifier,
+                "library ${out.name} cannot be installed: the user of this process cannot be determined",
+                null,
+                NativeUnavailableReason.IntegrityMismatch,
+            )
+        }
+        val reusable =
+            Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS) &&
+                (!posix || runCatching { Files.getOwner(path, LinkOption.NOFOLLOW_LINKS) == expectedOwner }.getOrDefault(false)) &&
+                runCatching { verifyAgainstManifest(out, manifest) }.isSuccess
+        if (reusable) return
         val tmp = File.createTempFile(out.name, ".tmp", out.parentFile)
         try {
             Files.newOutputStream(tmp.toPath()).use { it.write(content) } // fully written and closed before loading
@@ -250,7 +354,7 @@ public object JvmLoader {
         val dir = privateWorkDir(props)
         val out = File(dir, name)
         installLibrary(out, bytes[0], manifest)
-        if (JvmNativeNames.os != "windows") out.deleteOnExit()
+        // the file stays: its name carries the ABI, its content was verified, and another JVM may be between its own check and System.load
         return out
     }
 }

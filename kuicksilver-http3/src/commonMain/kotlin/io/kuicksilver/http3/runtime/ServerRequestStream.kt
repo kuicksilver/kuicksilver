@@ -8,6 +8,7 @@ import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.ByteWriteChannel
 import io.ktor.utils.io.readAvailable
 import io.kuicksilver.http3.Http3ErrorCode
+import io.kuicksilver.http3.Http3Exception
 import io.kuicksilver.http3.Http3Headers
 import io.kuicksilver.http3.Http3ResponseWriter
 import io.kuicksilver.http3.Http3ServerRequest
@@ -25,6 +26,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
@@ -37,75 +39,93 @@ internal suspend fun handleRequestStream(
 ) = with(session) {
     if (st.id > maxRequestId) maxRequestId = st.id
     goAwaySentId?.let {
-        if (st.id >= it) {
+        if (st.id >= it || headerDeadlinePassed) {
             abort(st, Http3ErrorCode.REQUEST_REJECTED)
             return@with
         }
     }
-    val frames = RequestFrames(st.input, isServerSide = true, maxHeadersFrame = maxHeadersFrame, onBuffered = { bufferedHeaderBytes += it })
-    val first =
-        try {
-            frames.next()
-        } catch (
-            e: IncompleteFrame,
-        ) {
-            truncated(st, null, null)
-            return@with
-        } catch (e: QuicException.StreamError) {
-            return@with
-        }
-    val block =
-        when (first) {
-            RequestFrame.End -> {
-                abort(st, Http3ErrorCode.REQUEST_INCOMPLETE)
+    // in flight from the first byte, not from the parsed HEADERS: a request below the GOAWAY id whose HEADERS are
+    // still arriving must keep the idle close away (RFC 9114 section 5.2), until the header deadline after GOAWAY
+    requestStarted()
+    pendingHeaders[st.id] = st to currentCoroutineContext()[Job]!!
+    var handedOff = false
+    try {
+        val frames =
+            RequestFrames(
+                st.input,
+                isServerSide = true,
+                maxHeadersFrame = maxHeadersFrame,
+                onSkipped = { glitch("unknown frame on a request stream") },
+                onBuffered = { bufferedHeaderBytes += it },
+            )
+        val first =
+            try {
+                frames.next()
+            } catch (
+                e: IncompleteFrame,
+            ) {
+                truncated(st, null, null)
+                return@with
+            } catch (e: QuicException.StreamError) {
                 return@with
             }
+        val block =
+            when (first) {
+                RequestFrame.End -> {
+                    abort(st, Http3ErrorCode.REQUEST_INCOMPLETE)
+                    return@with
+                }
 
-            is RequestFrame.Data -> {
-                throw H3ProtocolError(Http3ErrorCode.FRAME_UNEXPECTED, "DATA before HEADERS on stream ${st.id}")
+                is RequestFrame.Data -> {
+                    throw H3ProtocolError(Http3ErrorCode.FRAME_UNEXPECTED, "DATA before HEADERS on stream ${st.id}")
+                }
+
+                is RequestFrame.HeadersTooLarge -> {
+                    reject431(st)
+                    return@with
+                }
+
+                is RequestFrame.Headers -> {
+                    first.block
+                }
             }
-
-            is RequestFrame.HeadersTooLarge -> {
+        val fields =
+            try {
+                decodeSection(st, block)
+            } catch (
+                e: StreamFailure,
+            ) {
                 reject431(st)
                 return@with
+            } catch (e: StreamAbandoned) {
+                return@with
             }
-
-            is RequestFrame.Headers -> {
-                first.block
+        val parsed =
+            try {
+                PseudoHeaders.parseRequest(fields, settings.enableConnectProtocol)
+            } catch (
+                e: MalformedMessage,
+            ) {
+                abort(st, Http3ErrorCode.MESSAGE_ERROR)
+                return@with
             }
-        }
-    val fields =
-        try {
-            decodeSection(st, block)
-        } catch (
-            e: StreamFailure,
-        ) {
-            reject431(st)
-            return@with
-        } catch (e: StreamAbandoned) {
+        pendingHeaders.remove(st.id)
+        val req = ServerRequestImpl(this, st, parsed)
+        handedOff = true // from here ServerRequestImpl.done() ends the request
+        if (requests.trySend(req).isFailure) {
+            abort(st, Http3ErrorCode.REQUEST_REJECTED)
+            req.done()
             return@with
         }
-    val parsed =
-        try {
-            PseudoHeaders.parseRequest(fields, settings.enableConnectProtocol)
-        } catch (
-            e: MalformedMessage,
-        ) {
-            abort(st, Http3ErrorCode.MESSAGE_ERROR)
-            return@with
+        pumpBody(st, frames, req.bodyChannel, req.trailersDeferred, contentLength(parsed.regular)) { f ->
+            if (f.code == Http3ErrorCode.EXCESSIVE_LOAD && !req.responseStarted) reject431(st) else abort(st, f.code)
+            req.done()
         }
-    val req = ServerRequestImpl(this, st, parsed)
-    requestStarted()
-    if (requests.trySend(req).isFailure) {
-        abort(st, Http3ErrorCode.REQUEST_REJECTED)
-        req.done()
-        return@with
+        req.receiveEnded()
+    } finally {
+        pendingHeaders.remove(st.id)
+        if (!handedOff) requestDone()
     }
-    pumpBody(st, frames, req.bodyChannel, req.trailersDeferred, contentLength(parsed.regular)) { f ->
-        if (f.code == Http3ErrorCode.EXCESSIVE_LOAD && !req.responseStarted) reject431(st) else abort(st, f.code)
-        req.done()
-    }
-    req.receiveEnded()
 }
 
 /** 431 and STOP_SENDING H3_EXCESSIVE_LOAD (RFC 9114 section 4.2.2; quic-go CVE-2025-64702). */
@@ -249,7 +269,8 @@ internal class ServerRequestImpl(
                 abortInternal()
                 throw e
             }
-            ResponseWriterImpl(session, st, this@ServerRequestImpl)
+            // HEAD, 204 and 304 carry no content (RFC 9110 sections 9.3.2, 15.3.5, 15.4.5): what the application writes is dropped
+            ResponseWriterImpl(session, st, this@ServerRequestImpl, discardBody = method == "HEAD" || status == 204 || status == 304)
         }
     }
 
@@ -260,11 +281,12 @@ internal class ServerRequestImpl(
         done()
     }
 
+    /** Response fields: no pseudo-headers, no connection-specific fields, and no `te` (a request-only field, RFC 9110 section 10.1.4). */
     private fun validateFields(headers: Http3Headers) {
         for ((n, v) in headers.fields) {
             require(
                 !n.startsWith(':') && FieldValidator.checkName(n) == null && FieldValidator.checkValue(v) == null &&
-                    n !in FieldValidator.CONNECTION_SPECIFIC,
+                    n !in FieldValidator.CONNECTION_SPECIFIC && n != "te",
             ) { "invalid response field '$n'" }
         }
     }
@@ -274,8 +296,10 @@ internal class ServerRequestImpl(
         headers: Http3Headers,
     ) {
         validateFields(headers)
+        val fields = PseudoHeaders.buildResponse(status, headers)
+        session.checkPeerFieldLimit(st.id, fields)
         try {
-            st.output.writeFrame(FrameType.HEADERS, session.qpack.encode(st.id, PseudoHeaders.buildResponse(status, headers)))
+            st.output.writeFrame(FrameType.HEADERS, session.qpack.encode(st.id, fields))
         } catch (
             e: CancellationException,
         ) {
@@ -292,11 +316,15 @@ internal class ServerRequestImpl(
     }
 }
 
-/** Copies what the application writes into DATA frames; [finish] adds trailers and FIN. */
+/**
+ * Copies what the application writes into DATA frames; [finish] adds trailers and FIN. With [discardBody] (a response
+ * that has no content) the bytes are read and dropped, so the peer never sees DATA it must treat as malformed.
+ */
 internal class ResponseWriterImpl(
     private val session: H3Session,
     private val st: QuicStream,
     private val request: ServerRequestImpl?,
+    private val discardBody: Boolean = false,
 ) : Http3ResponseWriter {
     private val channel = ByteChannel()
     override val output: ByteWriteChannel get() = channel
@@ -308,7 +336,7 @@ internal class ResponseWriterImpl(
                 while (true) {
                     val n = channel.readAvailable(buf, 0, buf.size)
                     if (n < 0) break
-                    if (n > 0) {
+                    if (n > 0 && !discardBody) {
                         st.output.writeFrame(FrameType.DATA, buf, 0, n)
                         st.output.flush()
                     }
@@ -334,8 +362,21 @@ internal class ResponseWriterImpl(
         pump.join()
         channel.closedCause?.let { throw session.map(it) }
         withContext(session.dispatcher) {
+            if (trailers != null) {
+                // checked before anything is closed: refused trailers reset the stream instead of leaving it without FIN
+                try {
+                    session.checkPeerFieldLimit(st.id, trailers.fields)
+                } catch (e: Http3Exception.FieldSectionTooLarge) {
+                    runCatching { st.reset(Http3ErrorCode.INTERNAL_ERROR) }
+                    runCatching { st.stopSending(Http3ErrorCode.INTERNAL_ERROR) }
+                    request?.done()
+                    throw e
+                }
+            }
             try {
-                if (trailers != null) st.output.writeFrame(FrameType.HEADERS, session.qpack.encode(st.id, trailers.fields))
+                if (trailers != null) {
+                    st.output.writeFrame(FrameType.HEADERS, session.qpack.encode(st.id, trailers.fields))
+                }
                 st.output.flushAndClose()
             } catch (
                 e: CancellationException,

@@ -79,10 +79,16 @@ public sealed class Http3Exception(
     }
 
     /**
-     * A field section (headers or trailers) above `maxFieldSectionSize` once decoded; the stream was stopped with H3_EXCESSIVE_LOAD.
+     * A field section (headers or trailers) above `maxFieldSectionSize` once decoded; the stream was stopped with
+     * H3_EXCESSIVE_LOAD. Also thrown locally, before anything is sent, for a section above the peer's
+     * `SETTINGS_MAX_FIELD_SECTION_SIZE`: a request is refused before its stream is opened, a response by `respond`
+     * (the stream is reset with H3_INTERNAL_ERROR), request trailers by resetting the stream with H3_REQUEST_CANCELLED in both directions and failing `request`,
+     * or the response body and trailers when the response already began, with this exception.
      *
-     * @property streamId the request stream whose field section was refused.
-     * @property limit our [Http3Settings.maxFieldSectionSize] in bytes, counted as name + value + 32 per field (RFC 9114 section 4.2.2).
+     * @property streamId the request stream whose field section was refused; -1 for a request refused before its
+     *   stream was opened.
+     * @property limit our [Http3Settings.maxFieldSectionSize], or the peer's limit when sending, in bytes, counted as
+     *   name + value + 32 per field (RFC 9114 section 4.2.2).
      */
     public class FieldSectionTooLarge(
         public val streamId: Long,

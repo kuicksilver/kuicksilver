@@ -133,6 +133,9 @@ internal class StreamManager(
 
     fun hasStreamData(): Boolean = scheduler.next() != null
 
+    /** How often a stream was handed to the scheduler, for the complexity tests. */
+    internal val schedulerTouchesForTest: Long get() = scheduler.addsForTest
+
     private fun newEntry(id: Long): Entry {
         val local = StreamIds.isLocal(id, role)
         val bidi = StreamIds.isBidi(id)
@@ -170,11 +173,15 @@ internal class StreamManager(
 
     private val sendLimit = HashMap<Long, SendFlowController>()
 
+    /** An [open] of that type ([0] bidi, [1] uni) was refused at the peer's limit; MAX_STREAMS then raises StreamsAvailable. */
+    private val openBlocked = BooleanArray(2)
+
     fun open(
         bidi: Boolean,
         priority: StreamPriority,
     ): Long {
         if (!limits.canOpenLocal(bidi)) {
+            openBlocked[if (bidi) 0 else 1] = true
             limits.takeStreamsBlocked(bidi).let {
                 if (it >=
                     0
@@ -197,10 +204,7 @@ internal class StreamManager(
      * was already closed and retired: frames for closed streams are ignored (section 3; a spurious retransmit must not
      * fail the connection). A locally initiated stream the application never opened is STREAM_STATE_ERROR.
      */
-    private fun peerStream(
-        id: Long,
-        forSend: Boolean,
-    ): Entry? {
+    private fun peerStream(id: Long): Entry? {
         streams[id]?.let { return it }
         val bidi = StreamIds.isBidi(id)
         val i = if (bidi) 0 else 1
@@ -249,7 +253,7 @@ internal class StreamManager(
         len: Int,
         fin: Boolean,
     ) {
-        val e = peerStream(id, false) ?: return
+        val e = peerStream(id) ?: return
         val r = e.recv ?: throw QuicWireException(TransportError.STREAM_STATE_ERROR, 0x08, "STREAM frame on our send-only stream $id")
         val before = r.readable
         val advanced = r.onData(offset, data, off, len, fin)
@@ -272,7 +276,7 @@ internal class StreamManager(
         finalSize: Long,
     ) {
         val e =
-            peerStream(id, false) ?: return
+            peerStream(id) ?: return
         val r =
             e.recv ?: throw QuicWireException(TransportError.STREAM_STATE_ERROR, 0x04, "RESET_STREAM on our send-only stream $id")
         val advanced = r.onReset(code, finalSize)
@@ -290,12 +294,13 @@ internal class StreamManager(
         code: Long,
     ) {
         val e =
-            peerStream(id, true) ?: return
+            peerStream(id) ?: return
         val s =
             e.send ?: throw QuicWireException(TransportError.STREAM_STATE_ERROR, 0x05, "STOP_SENDING on our receive-only stream $id")
         if (s.state == SendState.ResetSent || s.state == SendState.DataRecvd) return
         sendBufferedBytes -= s.reset()
         scheduler.remove(s)
+        wakeRefusedWriters()
         queueControl(ControlKind.ResetStream, id, code, s.sentEnd)
         events += ConnectionEvent.StopSendingReceived(id, code)
         maybeClose(id)
@@ -307,11 +312,12 @@ internal class StreamManager(
         max: Long,
     ): Boolean {
         val e =
-            peerStream(id, true) ?: return true
+            peerStream(id) ?: return true
         val s =
             e.send ?: throw QuicWireException(TransportError.STREAM_STATE_ERROR, 0x11, "MAX_STREAM_DATA on our receive-only stream $id")
         val grew = sendLimit[id]!!.onMaxUpdate(max)
         if (s.hasPending) scheduler.add(s)
+        if (grew && s.sentEnd < s.written) events += e.writable // data was waiting for this credit
         return grew
     }
 
@@ -324,16 +330,48 @@ internal class StreamManager(
         }
     }
 
+    /** Streams that ran out of connection-level credit, rescheduled by the next MAX_DATA that raises it (and only by that). */
+    private val connBlocked = ArrayList<SendStream>()
+
     fun onMaxData(max: Long): Boolean {
         val grew = connSend.onMaxUpdate(max)
-        for (e in streams.values) e.send?.let { if (it.hasPending) scheduler.add(it) }
-        return grew
+        if (!grew) return false // RFC 9000 section 21.6: a frame that raises nothing must not cost a pass over the streams
+        for (i in connBlocked.indices) {
+            val s = connBlocked[i]
+            s.connBlocked = false
+            val e = streams[s.id] ?: continue
+            if (e.send !== s) continue
+            if (s.hasPending) scheduler.add(s)
+            if (s.sentEnd < s.written) events += e.writable
+        }
+        connBlocked.clear()
+        return true
+    }
+
+    private fun blockedOnConnection(s: SendStream) {
+        if (s.connBlocked) return
+        if (connBlocked.size >= 2 * streams.size + 16) { // drop streams closed while waiting, so the list stays bounded by the live ones
+            connBlocked.removeAll { (streams[it.id]?.send !== it).also { gone -> if (gone) it.connBlocked = false } }
+        }
+        s.connBlocked = true
+        connBlocked += s
     }
 
     fun onMaxStreams(
         bidi: Boolean,
         max: Long,
-    ): Boolean = limits.onPeerMaxStreams(bidi, max)
+    ): Boolean {
+        val grew = limits.onPeerMaxStreams(bidi, max)
+        val i = if (bidi) 0 else 1
+        if (grew && openBlocked[i]) {
+            openBlocked[i] = false
+            events += if (bidi) availableBidi else availableUni
+        }
+        return grew
+    }
+
+    private val availableBidi = ConnectionEvent.StreamsAvailable(true)
+    private val availableUni = ConnectionEvent.StreamsAvailable(false)
 
     /** STREAMS_BLOCKED from the peer: below the limit we granted, our MAX_STREAMS was lost or is still in flight, so it goes out again. */
     fun onStreamsBlocked(
@@ -368,6 +406,10 @@ internal class StreamManager(
         s.enqueue(data, off, accepted, fin && accepted == len)
         sendBufferedBytes += accepted
         if (s.hasPending) scheduler.add(s)
+        if (accepted < len && !s.writeRefused) { // the send buffer is full: StreamWritable follows once acknowledgements free room
+            s.writeRefused = true
+            writeRefused += s
+        }
         return accepted
     }
 
@@ -392,7 +434,7 @@ internal class StreamManager(
                 }
             } // connection window ≥ 1.5 × stream window
         }
-        if (n < 0) finishedRecv(id, r)
+        if (n < 0) maybeClose(id)
         return n
     }
 
@@ -407,13 +449,6 @@ internal class StreamManager(
                 queueControl(if (StreamIds.isBidi(e.id)) ControlKind.MaxStreamsBidi else ControlKind.MaxStreamsUni, 0, it)
             }
         }
-    }
-
-    private fun finishedRecv(
-        id: Long,
-        r: RecvStream,
-    ) {
-        maybeClose(id)
     }
 
     private fun maybeClose(id: Long) {
@@ -445,6 +480,7 @@ internal class StreamManager(
         }
         sendBufferedBytes -= s.reset()
         scheduler.remove(s)
+        wakeRefusedWriters()
         queueControl(ControlKind.ResetStream, id, code, s.sentEnd)
         maybeClose(id)
     }
@@ -467,7 +503,9 @@ internal class StreamManager(
         id: Long,
         p: StreamPriority,
     ) {
-        streams[id]?.send?.priority = p
+        val s = streams[id]?.send ?: return
+        s.priority = p
+        if (s.schedQueue >= 0) scheduler.reschedule(s)
     }
 
     /** Writes one STREAM frame for the next scheduled stream into [w]; records it in [frames]. False when nothing can be sent. */
@@ -495,6 +533,7 @@ internal class StreamManager(
                             queueControl(ControlKind.StreamDataBlocked, s.id, it)
                         }
                     }
+                    if (connSend.available <= 0) blockedOnConnection(s)
                     connSend.takeBlocked().let {
                         if (it >=
                             0
@@ -526,7 +565,11 @@ internal class StreamManager(
         }
     }
 
+    /** Streams whose [write] took fewer bytes than offered; each gets StreamWritable once acknowledgements free buffer room. */
+    private val writeRefused = ArrayList<SendStream>()
+
     fun onFramesAcked(f: SentFrames) {
+        val bufferedBefore = sendBufferedBytes
         for (i in 0 until f.streamCount) {
             val s =
                 streams[f.streamId[i]]?.send ?: continue
@@ -539,6 +582,19 @@ internal class StreamManager(
                 s.onAcked(f.streamOffset[i], f.streamLength[i], f.streamFin[i])
             if (s.state == SendState.DataRecvd) maybeClose(s.id)
         }
+        if (sendBufferedBytes < bufferedBefore) wakeRefusedWriters()
+    }
+
+    /** The send buffer has room again: every stream whose write was cut short learns it (and live ones only). */
+    private fun wakeRefusedWriters() {
+        if (writeRefused.isEmpty()) return
+        for (i in writeRefused.indices) {
+            val s = writeRefused[i]
+            s.writeRefused = false
+            val e = streams[s.id] ?: continue
+            if (e.send === s && s.state != SendState.ResetSent) events += e.writable
+        }
+        writeRefused.clear()
     }
 
     fun onFramesLost(f: SentFrames) {
@@ -546,7 +602,7 @@ internal class StreamManager(
             val s =
                 streams[f.streamId[i]]?.send ?: continue
             s.onLost(f.streamOffset[i], f.streamLength[i], f.streamFin[i])
-            if (s.hasPending) scheduler.markRetransmit(s)
+            if (s.hasPending) scheduler.reschedule(s)
         }
         for (i in 0 until f.idCount) {
             when (f.idKind[i]) {

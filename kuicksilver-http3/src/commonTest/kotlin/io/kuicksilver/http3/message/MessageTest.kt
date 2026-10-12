@@ -63,6 +63,12 @@ class FieldValidatorTest {
         assertFailsWith<MalformedMessage> { PseudoHeaders.parseRequest(req + ("te" to "gzip"), false) }
     }
 
+    /** RFC 9110 section 10.1.4: `te` is a request field; a response (or trailers) carrying it is malformed. */
+    @Test fun teInResponseIsMalformed() {
+        assertFailsWith<MalformedMessage> { PseudoHeaders.parseResponse(listOf(":status" to "200", "te" to "trailers")) }
+        assertFailsWith<MalformedMessage> { PseudoHeaders.parseTrailers(listOf("te" to "trailers")) }
+    }
+
     private val req = listOf(":method" to "GET", ":scheme" to "https", ":authority" to "example.com", ":path" to "/")
 }
 

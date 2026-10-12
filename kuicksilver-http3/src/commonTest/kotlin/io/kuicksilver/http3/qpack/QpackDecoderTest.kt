@@ -9,6 +9,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 private fun QpackDecoder.feed(h: String) {
     val b = hex(h)
@@ -132,6 +133,20 @@ class QpackDecoderTest {
         assertEquals(0, d.insertCount)
         d.onEncoderStream(ins, 8, ins.size - 8)
         assertEquals(1, d.insertCount)
+    }
+
+    @Test fun negative_qpackFragmentedEncoderInstructionLinear() {
+        val d = dec(cap = 4096)
+        d.feed("3fe11f") // capacity 4096
+        val w = QpackWriter() // Insert with Literal Name, name "x-n", a 60 000-byte value
+        w.writeString(0x40, 5, "x-n", huffman = false)
+        w.writeString(0x00, 7, "v".repeat(60_000), huffman = false)
+        val b = w.toByteArray()
+        for (i in 0 until b.size - 1) d.onEncoderStream(b, i, 1) // one byte at a time, as a hostile transport could
+        assertEquals(0, d.insertCount)
+        // the complete entry is larger than the table: an encoder-stream error (RFC 9204 section 3.2.2)
+        assertEquals(Http3ErrorCode.QPACK_ENCODER_STREAM_ERROR, assertFailsWith<QpackError> { d.onEncoderStream(b, b.size - 1, 1) }.code)
+        assertTrue(d.scannedBytes < 4L * b.size, "scanned ${d.scannedBytes} bytes for ${b.size}: quadratic reassembly")
     }
 
     @Test fun dynamicIndexAtOrAboveRequiredInsertCountFails() {

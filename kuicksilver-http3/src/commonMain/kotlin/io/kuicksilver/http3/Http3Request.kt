@@ -24,13 +24,19 @@ public class Http3Request(
     public val headers: Http3Headers = Http3Headers.Empty,
     /** The request content, read until the channel closes; a channel that closes with an error fails the request. */
     public val body: ByteReadChannel? = null,
-    /** Called once after [body] ended; the fields it returns are sent as trailers, null sends none. */
+    /**
+     * Called once after [body] ended; the fields it returns are sent as trailers, null sends none. It runs on the
+     * dispatcher of the coroutine that called `request` (not the connection's), so it may suspend or block briefly.
+     */
     public val trailers: (suspend () -> Http3Headers?)? = null,
     /** Sent as the `priority` field (RFC 9218 section 5) when not the default u=3, i=false. */
     public val priority: StreamPriority? = null,
     /** `:protocol` of an Extended CONNECT (RFC 9220); set by `Http3Connection.connect`. */
     public val protocol: String? = null,
-    /** Called for each interim (1xx) response before the final one, 103 Early Hints included. */
+    /**
+     * Called for each interim (1xx) response before the final one, 103 Early Hints included. It runs on the dispatcher of
+     * the coroutine that called `request` (not the connection's); the final response waits for it to return.
+     */
     public val onInformational: (suspend (status: Int, headers: Http3Headers) -> Unit)? = null,
 )
 

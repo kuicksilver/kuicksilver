@@ -31,8 +31,8 @@ public class KuicksilverTlsConnector private constructor(
     /** The TLS 1.3 cipher suites in preference order. */
     public val cipherSuites: CipherSuites,
     /**
-     * Picks an identity per SNI name on TCP connections; QUIC cannot use it, so with HTTP/3 on a connector that sets it
-     * fails to start with `TlsException.Config`.
+     * Picks an identity per SNI name on TCP connections. QUIC cannot use it in v1, so HTTP/3 is skipped for this
+     * connector with a warning: it serves HTTP/1.1 only and sends no `Alt-Svc`.
      */
     public val sniSelector: (suspend (ClientHelloInfo) -> ServerTlsOverride?)?,
 ) : EngineConnectorConfig {
@@ -79,7 +79,10 @@ public class KuicksilverTlsConnector private constructor(
         /** The TLS 1.3 cipher suites in preference order; AES-128-GCM, AES-256-GCM, ChaCha20-Poly1305 by default. */
         public var cipherSuites: CipherSuites = CipherSuites.Default
 
-        /** Picks an identity per SNI name (TCP connections). */
+        /**
+         * Picks an identity per SNI name (TCP connections). HTTP/3 is skipped for this connector with a warning: QUIC
+         * cannot pick an identity per SNI name in v1.
+         */
         public var sniSelector: (suspend (ClientHelloInfo) -> ServerTlsOverride?)? = null
 
         /** The connector; throws [IllegalArgumentException] for a port outside 0..65535. */

@@ -24,6 +24,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.coroutines.EmptyCoroutineContext
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
@@ -73,8 +74,9 @@ internal fun connect(
     client: TlsConfig,
     server: TlsConfig,
     pair: ChannelPair = ChannelPair(),
+    clientCache: SessionCache = SessionCache.Default,
 ): Pair<Deferred<TlsConnection>, Deferred<TlsConnection>> {
-    val c = testScope.async { TlsConnection.client(pair.clientIn, pair.clientOut, client) }
+    val c = testScope.async { TlsConnection.client(pair.clientIn, pair.clientOut, client, EmptyCoroutineContext, clientCache) }
     val s = testScope.async { TlsConnection.server(pair.serverIn, pair.serverOut, server) }
     return c to s
 }
@@ -101,7 +103,7 @@ internal object TcpFixtures {
 class TlsConnectionTest {
     @BeforeTest fun load() {
         KslLoader.ensureLoaded()
-        runBlocking { SessionCache.clear() }
+        runBlocking { SessionCache.Default.clear() }
     }
 
     private fun both(
@@ -280,7 +282,7 @@ class TlsConnectionTest {
 class TlsServerTest {
     @BeforeTest fun load() {
         KslLoader.ensureLoaded()
-        runBlocking { SessionCache.clear() }
+        runBlocking { SessionCache.Default.clear() }
     }
 
     private val proxyIdentity get() = TlsIdentity.fromDer(listOf(TestCerts.proxy), TestCerts.proxyKey.copyOf())
@@ -457,7 +459,7 @@ class TlsServerTest {
             assertIs<VerifyReason.PinMismatch>(assertFailsWith<TlsException.Verify> { withTimeout(10.seconds) { sd.await() } }.reason)
             runCatching { withTimeout(10.seconds) { cd.await() }.close() }
             delay(200)
-            assertEquals(0, SessionCache.size(), "TLS 1.3: no ticket reached the rejected client")
+            assertEquals(0, SessionCache.Default.size(), "TLS 1.3: no ticket reached the rejected client")
 
             val pair = ChannelPair()
             val sd2 = testScope.async { TlsConnection.server(pair.serverIn, pair.serverOut, server) }
@@ -534,7 +536,7 @@ class TlsServerTest {
 class SessionResumptionTest {
     @BeforeTest fun load() {
         KslLoader.ensureLoaded()
-        runBlocking { SessionCache.clear() }
+        runBlocking { SessionCache.Default.clear() }
     }
 
     private fun once(
@@ -565,7 +567,7 @@ class SessionResumptionTest {
 
     private suspend fun awaitTicket(key: String): Boolean =
         withTimeoutOrNull(5.seconds) {
-            while (!SessionCache.peek(key)) delay(10)
+            while (!SessionCache.Default.peek(key)) delay(10)
             true
         } ?: false
 
@@ -587,23 +589,26 @@ class SessionResumptionTest {
     /**
      * The ticket travels before the data that follows it, so it is cached before the application sees that data: a
      * client that reads one response and closes keeps its ticket (run 38287900994, SocketTlsTest on the macOS runner).
+     * The ticket goes into the connection's own cache (an engine's), not into [SessionCache.Default].
      */
     @Test fun ticketCachedBeforeTheDataThatFollowsIt() {
         val client = TcpFixtures.client()
         val key = keyOf(client)
         repeat(100) { round ->
             runBlocking {
-                SessionCache.clear()
-                val (cd, sd) = connect(client, TcpFixtures.server())
+                val own = SessionCache()
+                val (cd, sd) = connect(client, TcpFixtures.server(), clientCache = own)
                 val c = withTimeout(20.seconds) { cd.await() }
                 val s = withTimeout(20.seconds) { sd.await() }
                 s.output.writeFully(byteArrayOf(2), 0, 1)
                 s.output.flush()
                 c.input.readExactly(1)
-                val cached = SessionCache.peek(key)
+                val cached = own.peek(key)
                 c.close()
                 s.close()
+                own.clear()
                 assertTrue(cached, "round $round: the ticket that preceded the data is cached")
+                assertEquals(0, SessionCache.Default.size(), "round $round: the ticket stays in the connection's own cache")
             }
         }
     }
@@ -619,7 +624,7 @@ class SessionResumptionTest {
         assertTrue(stored(key))
         val (_, r3) = once(client, server)
         assertTrue(r3, "every resumed connection leaves a fresh ticket behind")
-        runBlocking { SessionCache.clear() }
+        runBlocking { SessionCache.Default.clear() }
         val (_, r4) = once(client, server)
         assertTrue(!r4, "a consumed ticket is never replayed")
     }

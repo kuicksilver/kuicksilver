@@ -19,6 +19,7 @@ import io.kuicksilver.quic.recovery.SpaceId
 import io.kuicksilver.quic.wire.ConnectionId
 import io.kuicksilver.tls.TlsRole
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.seconds
 
 // Paths of a [ConnectionCore]: PMTUD and ECN per path, peer connection IDs, path validation, migration and NAT rebinding (RFC 9000
 // sections 5.1, 8.2, 9 and 13.4; RFC 8899).
@@ -126,13 +127,24 @@ internal fun ConnectionCore.onPathPacket(
         socket == active.socket
     ) {
         if (nonProbing && pn > largestNonProbingPn) largestNonProbingPn = pn
+        active.lastReceivedAt = now
         return
     }
     if (role == TlsRole.Client) return // servers do not migrate (preferred_address is not supported)
     var p = paths.byRemote(socket, from)
     if (p == null) {
-        // four paths already: the fifth address is ignored
-        p = paths.add(socket, from, config.congestionController(), config.initialRtt) ?: return
+        // four paths already: a migration (the newest non-probing packet) may abandon the oldest validation (RFC 9000 section 8.2.4),
+        // a probe only one that has been silent for max(3 x PTO, 5 s) (quic-go's pathTimeout); otherwise the address is ignored
+        val migrating = nonProbing && pn > largestNonProbingPn
+        val idle = maxOf(pto() * 3, PATH_IDLE_TIMEOUT)
+        p = paths.add(
+            socket,
+            from,
+            config.congestionController(),
+            config.initialRtt,
+            now = now,
+            abandonValidatingHeardBefore = if (migrating) TimeMark.NEVER else now - idle,
+        ) ?: return
         p.amplification.onReceived(datagramBytes)
         p.caps = active.caps
         if (p.caps.ecnSend) p.ecn.enable() // the same socket: ECN is validated afresh on the new path (section 13.4.2)
@@ -142,6 +154,7 @@ internal fun ConnectionCore.onPathPacket(
     } else if (p.state == PathState.Unknown || (p.state == PathState.Failed && p.standbyUntil <= now)) {
         startValidation(p) // a path first seen through the peer's probe is validated once it carries anything else
     }
+    p.lastReceivedAt = now
     if (nonProbing &&
         pn > largestNonProbingPn
     ) {
@@ -158,13 +171,30 @@ internal fun ConnectionCore.onPathPacket(
     }
 }
 
+/** A validating path silent this long may give its slot to a probe from a new address (quic-go's pathTimeout). */
+internal val PATH_IDLE_TIMEOUT: Duration = 5.seconds
+
 internal fun ConnectionCore.startValidation(p: Path) {
     p.challenge = random.nextLong()
     p.challengePending = true
     p.state = PathState.Validating
     p.handshakeValidated = false
+    p.challengeRetries = 0
     p.challengeDeadline = now + validationTimeout()
-    p.nextChallengeAt = now + pto()
+    p.nextChallengeAt = now + nextChallengeDelay(p)
+}
+
+/**
+ * The gap before the next PATH_CHALLENGE repeat on [p]: one PTO for the first two repeats, so three challenges (at 0, 1 and 2 PTO) go out
+ * inside the 3 x PTO validation timeout, then doubled on every further unanswered repeat (capped at 64 x PTO), so a dead path is not probed
+ * once per PTO for as long as it is remembered (RFC 9000 sections 8.2.1 and 8.2.4; the backoff of RFC 9002 section 6.2.1, as quic-go's
+ * path_manager_outgoing.go doubles its probe interval).
+ */
+internal fun ConnectionCore.nextChallengeDelay(p: Path): Duration {
+    val r = p.challengeRetries
+    val shift = if (r < 1) 0 else if (r < 7) r - 1 else 6
+    p.challengeRetries++
+    return pto() * (1 shl shift)
 }
 
 internal fun ConnectionCore.switchPath(
@@ -284,6 +314,7 @@ internal fun ConnectionCore.onPathResponse(data: Long) {
             p.state = PathState.Validated
             p.amplification.validated = true
             p.challengePending = false
+            p.challengeRetries = 0
             p.challengeDeadline =
                 TimeMark.NEVER
             p.nextChallengeAt = TimeMark.NEVER
