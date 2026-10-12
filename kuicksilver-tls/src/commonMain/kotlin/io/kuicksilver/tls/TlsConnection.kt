@@ -427,12 +427,12 @@ public class TlsConnection private constructor(
 
     // ---- public operations ----
 
-    /** RFC 5705 / RFC 8446 section 7.5 exporter; only after the handshake. */
+    /** RFC 5705 / RFC 8446 section 7.5 exporter; only after the handshake. Throws [IllegalStateException] when the exporter is unavailable, [TlsException.Protocol] for other TLS errors. */
     public suspend fun exportKeyingMaterial(
         label: String,
         context: ByteArray?,
         length: Int,
-    ): ByteArray = lock.withLock { Ksl.sslExportKeyingMaterial(s(), label, context, length) }
+    ): ByteArray = lock.withLock { mapped { Ksl.sslExportKeyingMaterial(s(), label, context, length) } }
 
     /** RFC 9266 `tls-exporter` channel binding (32 bytes); TLS 1.2 without EMS throws. */
     public suspend fun channelBinding(): ByteArray =
