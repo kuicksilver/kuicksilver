@@ -3,6 +3,7 @@
 package io.kuicksilver.ktor.client
 
 import io.ktor.util.date.getTimeMillis
+import io.ktor.util.logging.KtorSimpleLogger
 import kotlinx.io.buffered
 import kotlinx.io.files.Path
 import kotlinx.io.files.SystemFileSystem
@@ -15,7 +16,9 @@ import kotlin.random.Random
  * start can already use HTTP/3). One record per line, tab-separated: origin, protocol, host (empty when the origin's),
  * port, expiry in epoch milliseconds, `1` when `persist=1`. The file is read once at construction (expired and
  * malformed records are dropped, at most 1000 origins of 8 alternatives are kept) and rewritten after every change
- * through a uniquely named temporary file and an atomic move, so a crash leaves either the old or the new content.
+ * through a uniquely named temporary file and an atomic move, so a crash leaves either the old or the new content
+ * (on Android API 24-25, which lacks `java.nio.file`, the move is a `java.io.File.renameTo`, atomic on one filesystem).
+ * A store that cannot be written keeps working in memory; the first failed write is logged as a warning.
  * A repeated header always replaces the alternatives in memory (RFC 7838 section 3); it is not
  * written when it only moves the expiry later by less than half the new lifetime. The store keeps at
  * most 1000 origins, dropping the least recently used (threat-model 3.18). Used by the engine, the file is written
@@ -40,6 +43,13 @@ public class FileAltSvcStore(
     private var persisted: Map<String, List<AltSvcEntry>> = emptyMap()
     private var snapshots = 0L
     private var written = -1L
+    private var warned = false
+
+    /** The atomic replace of the store file; a test seam for the platforms where kotlinx-io cannot do it. */
+    internal var atomicMove: (Path, Path) -> Unit = { source, destination -> SystemFileSystem.atomicMove(source, destination) }
+
+    /** Where the first failed write is reported. */
+    internal var warn: (String) -> Unit = { LOG.warn(it) }
 
     init {
         load()
@@ -149,9 +159,31 @@ public class FileAltSvcStore(
         val tmp = Path(path.parent ?: Path("."), "${path.name}.${Random.nextLong().toULong()}.tmp")
         try {
             SystemFileSystem.sink(tmp).buffered().use { it.writeString(text) }
-            SystemFileSystem.atomicMove(tmp, path)
-        } catch (_: Exception) {
+            try {
+                atomicMove(tmp, path)
+            } catch (_: UnsupportedOperationException) {
+                renameReplacing(tmp, path) // kotlinx-io's JVM atomicMove needs java.nio.file: Android API 26+
+            }
+        } catch (e: Exception) {
             runCatching { SystemFileSystem.delete(tmp, mustExist = false) }
-        } // a store that cannot be written keeps working in memory
+            // a store that cannot be written keeps working in memory, but says so once
+            if (!warned) {
+                warned = true
+                warn("Alt-Svc store $path cannot be written, alternatives are kept in memory only: $e")
+            }
+        }
+    }
+
+    private companion object {
+        val LOG = KtorSimpleLogger("io.kuicksilver.ktor.client.FileAltSvcStore")
     }
 }
+
+/**
+ * Renames [source] to [destination], replacing it, where `SystemFileSystem.atomicMove` is unsupported; throws when it
+ * cannot.
+ */
+internal expect fun renameReplacing(
+    source: Path,
+    destination: Path,
+)
