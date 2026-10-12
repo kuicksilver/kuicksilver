@@ -6,6 +6,7 @@ import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.tls.TlsRole
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.cancel
@@ -25,6 +26,9 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlin.concurrent.atomics.AtomicBoolean
+import kotlin.concurrent.atomics.AtomicReference
+import kotlin.concurrent.atomics.ExperimentalAtomicApi
 
 /**
  * Keeps a client [connection] on the current network: whenever [networks] reports a different network, it opens a socket on it
@@ -50,6 +54,7 @@ import kotlinx.coroutines.withContext
  *   it returns), so it should not wait long.
  * @param scope where [start] runs the migrator.
  */
+@OptIn(ExperimentalAtomicApi::class)
 @ExperimentalKuicksilverApi
 public class NetworkMigrator<N : Any>(
     private val connection: QuicConnection,
@@ -77,14 +82,22 @@ public class NetworkMigrator<N : Any>(
     /** Test hook: runs after a successful probe, right before the switch. */
     internal var beforeSwitch: () -> Unit = {}
 
-    private var job: Job? = null
-    private var closed = false
+    private val job = AtomicReference<Job?>(null)
+    private val closedFlag = AtomicBoolean(false)
+    private val closed get() = closedFlag.load()
 
-    /** Starts following [networks] in the scope; once only (IllegalStateException on a second call). The job ends with [close]. */
+    /**
+     * Starts following [networks] in the scope; once only (IllegalStateException on a second call, also from another thread).
+     * The job ends with [close]; after [close] it ends at once. Thread-safe.
+     */
     public fun start(): Job {
-        check(job == null) { "already started" }
-        val j = scope.launch { if (!closed) run() }
-        job = j
+        val j = scope.launch(start = CoroutineStart.LAZY) { run() }
+        if (!job.compareAndSet(null, j)) {
+            j.cancel()
+            throw IllegalStateException("already started")
+        }
+        if (closed) j.cancel() // close() ran before the job was published: it never runs
+        j.start()
         return j
     }
 
@@ -92,10 +105,11 @@ public class NetworkMigrator<N : Any>(
      * Stops following the networks. A migration that has not switched yet is abandoned: its new path and socket are closed,
      * nothing is reported, and the connection stays on the path it was on. A switch already under way completes (the
      * connection is on the new network then) and still reports [MigrationEvent.Migrated]. The connection stays open.
+     * Thread-safe, also against a concurrent [start].
      */
     override fun close() {
-        closed = true
-        job?.cancel()
+        closedFlag.store(true)
+        job.load()?.cancel()
     }
 
     private suspend fun run() =
