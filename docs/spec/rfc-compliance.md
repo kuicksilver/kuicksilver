@@ -137,6 +137,15 @@ Red cells, analysed (pcap + keylog in `build/interop/<run>/`): `msquic->kuicksil
 
 Measurements (the runner's 10 Mbit/s link, JVM image; a measurement, not a promise): goodput — kuicksilver server/ngtcp2 client 9293 ± 84 kbit/s, kuicksilver client/ngtcp2 server 9103 ± 19, server/quinn 9300 ± 4, client/quinn 9169 ± 6; crosstraffic (competing with TCP CUBIC) — 7042 ± 165, 5249 ± 674, 3633 ± 355, 4063 ± 329 kbit/s respectively. The run went in parallel with the work of two agents on the same host.
 
+Throughput gate: these eight cells are the floors in `tools/interop/perf-thresholds.json` (key `server->client:measurement`,
+kbit/s): the recorded mean minus 25 % for goodput and minus 40 % for crosstraffic, rounded down to 100 kbit/s (6900/6800
+goodput, 2100–4200 crosstraffic). `.github/workflows/perf.yml` runs the two measurements weekly (and on dispatch) on
+GitHub-hosted runners against every peer in that file, and `tools/interop/check-perf.sh` fails the job when a cell is
+failed or missing; locally `tools/interop/run-local.sh --perf` does the same. A cell below its floor only warns until
+the floors are re-measured on GitHub-hosted runners (`"blocking": false` in the thresholds file; CONTRIBUTING.md,
+Throughput). The floors catch a collapse (a congestion-control or pacing regression), not a few per cent; the native
+image has no floors yet.
+
 Native image (linuxArm64, 54/60 green; "?" for `ecn` — quic-go and msquic do not support the case, `rebind-port` for msquic — its client):
 
 | case | msquic S / C | ngtcp2 S / C | picoquic S / C | quic-go S / C | quinn S / C |
