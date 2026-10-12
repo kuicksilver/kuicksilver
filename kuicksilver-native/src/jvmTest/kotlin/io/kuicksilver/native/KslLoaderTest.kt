@@ -83,6 +83,23 @@ class KslLoaderTest {
         JvmLoader.checkWorkDir(dir.toPath()) // our own directory passes
     }
 
+    /** When this process's user cannot be resolved on a POSIX file system, the owner check is not skipped: the directory is refused. */
+    @Test fun negative_workdirUnknownUserRefused() {
+        val dir = Files.createTempDirectory("ksl-workdir-nouser").toFile().apply { deleteOnExit() }
+        val e = assertFailsWith<KslException.NativeLoad> { JvmLoader.checkWorkDir(dir.toPath(), null) }
+        assertTrue(e.reason.contains("cannot be determined"), e.reason)
+    }
+
+    /** The final work directory is created with rwx------ in the same call, not under the umask and tightened afterwards. */
+    @Test fun workDirCreatedWithOwnerOnlyPermissions() {
+        val parent = Files.createTempDirectory("ksl-workdir-parent").toFile().apply { deleteOnExit() }
+        val dir = File(parent, "a/b/kuicksilver-native").toPath()
+        JvmLoader.createWorkDir(dir)
+        dir.toFile().deleteOnExit()
+        assertEquals("rwx------", java.nio.file.attribute.PosixFilePermissions.toString(Files.getPosixFilePermissions(dir)))
+        JvmLoader.createWorkDir(dir) // an existing directory is left to checkWorkDir
+    }
+
     /** A file in the work directory is not deleted when a JVM exits: another JVM may have just verified it and be about to load it. */
     @Test fun sharedLibrarySurvivesOtherJvmExit() {
         val dir = Files.createTempDirectory("ksl-workdir-shared").toFile().apply { deleteOnExit() }
@@ -145,5 +162,23 @@ class LoaderInstallTest {
                 },
             "a corrupt copy is replaced atomically, no temp files left",
         )
+    }
+
+    /** A verified copy that belongs to someone else is not reused: it is replaced by a fresh file of this user. */
+    @Test fun negative_existingLibraryWithForeignOwnerIsReinstalled() {
+        val resourceDir = File(System.getProperty("ksl.native.resources")!!)
+        val lib = File(resourceDir, "META-INF/native/" + JvmNativeNames.libraryFileName())
+        val manifest = File(resourceDir, "META-INF/native/manifest.sha256").readText()
+        val dir = Files.createTempDirectory("ksl-install-owner").toFile().apply { deleteOnExit() }
+        val out = File(dir, lib.name).apply { deleteOnExit() }
+        JvmLoader.installLibrary(out, lib.readBytes(), manifest)
+        val before = Files.readAttributes(out.toPath(), java.nio.file.attribute.BasicFileAttributes::class.java).fileKey()
+        val root = dir.toPath().fileSystem.userPrincipalLookupService.lookupPrincipalByName("root")
+        JvmLoader.installLibrary(out, lib.readBytes(), manifest, root)
+        val after = Files.readAttributes(out.toPath(), java.nio.file.attribute.BasicFileAttributes::class.java).fileKey()
+        kotlin.test.assertNotEquals(before, after, "a copy owned by another user was reused")
+        kotlin.test.assertTrue(dir.listFiles()!!.none { it.name.endsWith(".tmp") }, "no temp files left")
+        val e = assertFailsWith<KslException.NativeLoad> { JvmLoader.installLibrary(out, lib.readBytes(), manifest, null) }
+        kotlin.test.assertTrue(e.reason.contains("cannot be determined"), e.reason)
     }
 }
