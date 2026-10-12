@@ -11,7 +11,7 @@ KSL_MODULES="kuicksilver-native kuicksilver-tls kuicksilver-ktor-network kuicksi
 # Modules whose Kotlin/Native tests run on macosArm64 (kuicksilver-interop's native code is the Linux interop executable).
 KSL_APPLE_MODULES="kuicksilver-native kuicksilver-tls kuicksilver-ktor-network kuicksilver-quic kuicksilver-testing kuicksilver-http3 kuicksilver-ktor-client kuicksilver-ktor-server"
 # Modules whose test executables are linked for Linux, iOS simulator and mingw and run outside Gradle (test.kexe / test.exe).
-KSL_LINK_MODULES="kuicksilver-native kuicksilver-quic"
+KSL_LINK_MODULES="$KSL_APPLE_MODULES"   # every module with Kotlin/Native targets is linked and its tests run on Linux, Windows and the iOS simulator
 
 ksl_tasks() { # <task> <modules...> -> ":m1:task :m2:task ..."
   local t="$1" m out=""; shift
@@ -22,6 +22,8 @@ ksl_tasks() { # <task> <modules...> -> ":m1:task :m2:task ..."
 KSL_JVM_TESTS=$(ksl_tasks jvmTest $KSL_MODULES)
 # shellcheck disable=SC2086
 KSL_MACOS_TESTS=$(ksl_tasks macosArm64Test $KSL_APPLE_MODULES)
+KSL_IOS_SIM_TESTS=$(ksl_tasks iosSimulatorArm64Test $KSL_APPLE_MODULES)
+KSL_IOS_COMPILE=$(ksl_tasks compileKotlinIosArm64 $KSL_APPLE_MODULES)
 KSL_CHECKS="checkSpdxHeaders checkLayerDependencies checkKotlinAbi"
 KSL_ARCH_CHECKS="checkQuicArchitecture checkHttp3Architecture"
 KSL_FUZZ_ARGS=(:kuicksilver-quic:jvmTest --tests "io.kuicksilver.quic.fuzz.*" :kuicksilver-http3:jvmTest --tests "io.kuicksilver.http3.fuzz.*")

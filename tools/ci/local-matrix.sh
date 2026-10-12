@@ -44,7 +44,8 @@ fi
 step "native: macosArm64 tests"                 $G $KSL_MACOS_TESTS
 step "native: prefix whitelist (apple)"         bash -c 'for t in macos-arm64 ios-arm64 ios-sim-arm64; do bash tools/prefix/check-no-unprefixed.sh build/openssl-prefixed/$t/lib || exit 1; done'
 # shellcheck disable=SC2046,SC2086
-step "native: link ios-sim tests"               $G $(ksl_tasks linkDebugTestIosSimulatorArm64 $KSL_LINK_MODULES)
+step "native: iosSimulatorArm64 tests"          $G $KSL_IOS_SIM_TESTS
+step "native: compile iosArm64 (device)"        $G $KSL_IOS_COMPILE
 # shellcheck disable=SC2046,SC2086
 step "native: link linux/mingw tests"           $G $(ksl_tasks linkDebugTestLinuxX64 $KSL_LINK_MODULES) $(ksl_tasks linkDebugTestLinuxArm64 $KSL_LINK_MODULES) $(ksl_tasks linkDebugTestMingwX64 $KSL_LINK_MODULES)
 step "native: glibc floors"                     bash -c 'bash tools/check/glibc-floor.sh kuicksilver-native/build/bin/linuxX64/debugTest/test.kexe 2.19 && bash tools/check/glibc-floor.sh kuicksilver-native/build/bin/linuxArm64/debugTest/test.kexe 2.25'
@@ -53,10 +54,8 @@ step "repro: double build (macos-arm64)"        bash tools/check/double-build.sh
 if [ "$skip_docker" = 0 ]; then
 step "docker: c-tests linux-x64"                bash tools/ci/docker-run.sh linux/amd64 kuicksilver-openssl-linux-x64 "CC=/opt/rh/devtoolset-10/root/usr/bin/gcc SAN= bash tools/c-test.sh linux-x64"
 step "docker: c-tests linux-arm64"              bash tools/ci/docker-run.sh linux/arm64 kuicksilver-openssl-linux-arm64 "CC=/opt/rh/devtoolset-10/root/usr/bin/gcc SAN= bash tools/c-test.sh linux-arm64"
-step "docker: native test.kexe linux-x64"       bash tools/ci/docker-run.sh linux/amd64 kuicksilver-openssl-linux-x64 "kuicksilver-native/build/bin/linuxX64/debugTest/test.kexe"
-step "docker: native test.kexe linux-arm64"     bash tools/ci/docker-run.sh linux/arm64 "$KSL_UBUNTU_IMAGE" "kuicksilver-native/build/bin/linuxArm64/debugTest/test.kexe"
-step "docker: quic test.kexe linux-x64"         bash tools/ci/docker-run.sh linux/amd64 kuicksilver-openssl-linux-x64 "kuicksilver-quic/build/bin/linuxX64/debugTest/test.kexe"
-step "docker: quic test.kexe linux-arm64"       bash tools/ci/docker-run.sh linux/arm64 "$KSL_UBUNTU_IMAGE" "kuicksilver-quic/build/bin/linuxArm64/debugTest/test.kexe"
+step "docker: test.kexe linux-x64 (all modules)"  bash tools/ci/run-kexe.sh linux/amd64 kuicksilver-openssl-linux-x64 linuxX64 $KSL_LINK_MODULES
+step "docker: test.kexe linux-arm64 (all modules)" bash tools/ci/run-kexe.sh linux/arm64 "$KSL_UBUNTU_IMAGE" linuxArm64 $KSL_LINK_MODULES
 step "docker: jvm linux-x64 (.so + tests)"      bash tools/ci/docker-jvm.sh linux-x86_64
 step "docker: jvm linux-arm64 (.so + tests)"    bash tools/ci/docker-jvm.sh linux-aarch_64   # the accelerated UDP, the multi-loop server and the Native-server guard run natively here
 step "docker: system OpenSSL mode"              bash tools/ci/system-openssl.sh
