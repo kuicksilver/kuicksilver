@@ -56,7 +56,10 @@ class EarlyDataTest {
 
         @kotlin.concurrent.Volatile var last: Seen? = null
         val executions = AtomicInt(0)
-        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+        // accept()/acceptRequest() end with an exception when the endpoint or a connection closes: on Kotlin/Native an
+        // unhandled one would end the test process
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default + kotlinx.coroutines.CoroutineExceptionHandler { _, _ -> })
         lateinit var server: Http3Endpoint
         lateinit var client: Http3Endpoint
         val serverSettings: Http3Settings = http3Settings { earlyData = policy }
