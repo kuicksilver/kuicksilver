@@ -62,10 +62,17 @@ images).
 
 Throughput: `bash tools/interop/run-local.sh --perf` runs only the runner's `goodput` and `crosstraffic` measurements
 (5 repetitions each, both roles) against the peers listed in `tools/interop/perf-thresholds.json`, then
-`tools/interop/check-perf.sh` compares them with the floors there and exits 1 on a regression; `--perf --results DIR`
-re-checks an earlier run. To move the floors after an intended change (or a new peer), run `--perf` on a quiet host,
-review `bash tools/interop/check-perf.sh --update build/interop/<run> > /tmp/t.json`, copy it over the thresholds file
-and update the «Measurements» line of `docs/spec/rfc-compliance.md` in the same commit.
+`tools/interop/check-perf.sh` compares them with the floors there and exits 1 on a regression or on a cell (peer, role,
+measurement) with no result; `--perf --results DIR` re-checks an earlier run. To move the floors after an intended change
+(or a new peer), run `--perf` on a quiet host, review `bash tools/interop/check-perf.sh --update build/interop/<run> >
+/tmp/t.json`, copy it over the thresholds file and update the «Measurements» line of `docs/spec/rfc-compliance.md` in
+the same commit. `bash tools/interop/check-perf-test.sh` runs the checker's exit-code cases on `tools/interop/testdata`.
+
+The floors were measured on a local host, so the thresholds file says `"blocking": false`: a cell below its floor is a
+warning (exit 0, a `::warning::` annotation in the weekly `perf` workflow) while a failed or missing cell still fails.
+To make the floors blocking, download the `perf-<peer>` result artifacts of a few weekly runs, fold them in with
+`check-perf.sh --update <dir>[,<dir>...]` (it keeps the best mean per cell), commit the new floors and set
+`"blocking": true` in the same commit.
 
 ## Style
 

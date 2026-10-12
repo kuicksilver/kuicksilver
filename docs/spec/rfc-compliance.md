@@ -141,8 +141,10 @@ Throughput gate: these eight cells are the floors in `tools/interop/perf-thresho
 kbit/s): the recorded mean minus 25 % for goodput and minus 40 % for crosstraffic, rounded down to 100 kbit/s (6900/6800
 goodput, 2100–4200 crosstraffic). `.github/workflows/perf.yml` runs the two measurements weekly (and on dispatch) on
 GitHub-hosted runners against every peer in that file, and `tools/interop/check-perf.sh` fails the job when a cell is
-below its floor, failed or missing; locally `tools/interop/run-local.sh --perf` does the same. The floors catch a
-collapse (a congestion-control or pacing regression), not a few per cent; the native image has no floors yet.
+failed or missing; locally `tools/interop/run-local.sh --perf` does the same. A cell below its floor only warns until
+the floors are re-measured on GitHub-hosted runners (`"blocking": false` in the thresholds file; CONTRIBUTING.md,
+Throughput). The floors catch a collapse (a congestion-control or pacing regression), not a few per cent; the native
+image has no floors yet.
 
 Native image (linuxArm64, 54/60 green; "?" for `ecn` — quic-go and msquic do not support the case, `rebind-port` for msquic — its client):
 

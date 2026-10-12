@@ -53,7 +53,7 @@ done
 fi
 echo "results in $out"
 if [ $perf -eq 1 ]; then
-  bash tools/interop/check-perf.sh "$out" "$thresholds" || exit 1
+  bash tools/interop/check-perf.sh --expect "$(IFS=,; echo "${peers[*]}")" "$out" "$thresholds" || exit 1   # a role without a result file is MISSING
   exit $fail   # a runner crash that left no result file for a role also fails the run
 fi
 if [ $check -eq 1 ]; then
