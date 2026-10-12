@@ -42,6 +42,10 @@ Nothing has been released yet. This section summarises the development of the fi
 
 ### Added
 
+- CI/tools: throughput floors for the QUIC Interop Runner measurements — `tools/interop/perf-thresholds.json` (goodput and
+  crosstraffic per peer and role, from the recorded runs minus 25 % / 40 %), `tools/interop/check-perf.sh` (table of
+  measured vs floor, exit 1 on a regression, `--update` proposes new floors), `tools/interop/run-local.sh --perf` and the
+  weekly `.github/workflows/perf.yml` (JVM image vs ngtcp2 and quinn, runner logs and results kept 7 days).
 - Android armeabi-v7a: the `kuicksilver-native` AAR ships `libksl.so` for arm64-v8a, armeabi-v7a and x86_64 (OpenSSL
   target `android-arm`, `minSdk` 24, 16 KiB pages); `-Pkuicksilver.android.armv7=false` leaves it out of a local build.
 - `KslLoader.availability()` and `KslLoader.isAvailable()` (`@ExperimentalKuicksilverApi`): a non-throwing check whether the native library can be used, so an application on an OS or ABI without a build falls back to another transport; `NativeAvailability.Unavailable` carries a `NativeUnavailableReason` (`NoLibraryForPlatform`, `LoadFailed`, `IntegrityMismatch`, `AbiMismatch`) and the original exception. The outcome of the one load attempt is cached: `ensureLoaded()` no longer retries after a failure and rethrows the same exception.

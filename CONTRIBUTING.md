@@ -60,6 +60,13 @@ Docker ones. Linux JVM tests against the manylinux library run with `tools/ci/do
 Interop Runner is driven by `tools/interop/build-image.sh` and `tools/interop/run-local.sh` (hours; needs the peers'
 images).
 
+Throughput: `bash tools/interop/run-local.sh --perf` runs only the runner's `goodput` and `crosstraffic` measurements
+(5 repetitions each, both roles) against the peers listed in `tools/interop/perf-thresholds.json`, then
+`tools/interop/check-perf.sh` compares them with the floors there and exits 1 on a regression; `--perf --results DIR`
+re-checks an earlier run. To move the floors after an intended change (or a new peer), run `--perf` on a quiet host,
+review `bash tools/interop/check-perf.sh --update build/interop/<run> > /tmp/t.json`, copy it over the thresholds file
+and update the «Measurements» line of `docs/spec/rfc-compliance.md` in the same commit.
+
 ## Style
 
 - **EditorConfig.** `.editorconfig` is the formatting contract (UTF-8, LF, 4 spaces, 2 for YAML/TOML, 140 columns for
