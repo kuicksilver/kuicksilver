@@ -120,14 +120,17 @@ void run_udp(void) {
             for (int tries = 0; tries < 20; tries++) { if (ksl_udp_recv(b, rb, rc, rl, ra, re, 8, &got, 100) == KSL_OK) drained += got; else break; }
             CHECK(drained == 5, "five of the six reached the wire (the unreachable one was skipped)");
             for (int i = 0; i < 2; i++) free(bufs[i]); for (int i = 0; i < 8; i++) free(rb[i]); }
-        /* udp_host_or_net_down_is_slot_loss: EHOSTDOWN and ENETDOWN (a peer's link went away, Darwin reports both) lose that slot only */
+        /* udp_host_or_net_down_is_slot_loss: EHOSTDOWN and ENETDOWN (a peer's link went away, Darwin reports both) lose that slot only;
+           udp_enobufs_is_backpressure: a full interface queue answers KSL_OK with the datagrams sent so far, as EAGAIN, and nothing is lost */
         { uint8_t *bufs[2]; uint32_t lens[2] = { 100, 90 }; uint8_t addrs[2 * KSL_UDP_ADDR_LEN]; uint8_t ecns[2] = { 0, 0 }; for (int i = 0; i < 2; i++) { bufs[i] = malloc(100); memset(bufs[i], 0x20 + i, 100); memcpy(addrs + i * KSL_UDP_ADDR_LEN, lb, KSL_UDP_ADDR_LEN); }
             uint32_t sent = 0;
             ksl_udp_fail_next_send_for_test(a, EHOSTDOWN); CHECK(ksl_udp_send(a, bufs, lens, addrs, ecns, 2, &sent) == KSL_OK && sent == 2, "EHOSTDOWN: the slot is lost, the batch goes on");
             ksl_udp_fail_next_send_for_test(a, ENETDOWN); CHECK(ksl_udp_send(a, bufs, lens, addrs, ecns, 2, &sent) == KSL_OK && sent == 2, "ENETDOWN: the slot is lost, the batch goes on");
+            ksl_udp_fail_next_send_for_test(a, ENOBUFS); CHECK(ksl_udp_send(a, bufs, lens, addrs, ecns, 2, &sent) == KSL_OK && sent == 0, "ENOBUFS: backpressure, nothing counted as sent");
+            CHECK(ksl_udp_send(a, bufs, lens, addrs, ecns, 2, &sent) == KSL_OK && sent == 2, "the retry sends both");
             uint8_t *rb[8]; uint32_t rc[8], rl[8], got = 0, drained = 0; uint8_t ra[8 * KSL_UDP_ADDR_LEN], re[8]; for (int i = 0; i < 8; i++) { rb[i] = malloc(200); rc[i] = 200; }
             for (int tries = 0; tries < 20; tries++) { if (ksl_udp_recv(b, rb, rc, rl, ra, re, 8, &got, 100) == KSL_OK) drained += got; else break; }
-            CHECK(drained == 2, "two reached the wire: one of each batch");
+            CHECK(drained == 4, "four reached the wire: one of each down batch, both of the retry");
             for (int i = 0; i < 2; i++) free(bufs[i]); for (int i = 0; i < 8; i++) free(rb[i]); }
         /* udp_bad_destination_keeps_ecn_and_gso: the kernel answers EINVAL for port 0 (a spoofed Initial's source); that is the
            destination's fault — the slot is lost like any datagram on the wire, the batch goes on, and neither the ECN cmsg nor GSO is withdrawn */

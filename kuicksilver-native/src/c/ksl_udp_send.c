@@ -30,8 +30,10 @@ static void gso_off(ksl_udp *u) { u->gso_on = 0; u->granted &= ~(uint32_t)KSL_UD
 /* errors a destination causes (port 0, a link-local IPv6 address without its scope id, a family the socket cannot reach): that datagram
    cannot leave, the socket and its options are fine */
 static int dest_error(int e) { return e == EINVAL || e == EAFNOSUPPORT || e == EADDRNOTAVAIL || e == EDESTADDRREQ; }
+/* the kernel's queue is full (EAGAIN; ENOBUFS when Darwin's interface queue or Linux's qdisc is): stop, the caller sends the rest later */
+static int backpressure(int e) { return e == EAGAIN || e == EWOULDBLOCK || e == ENOBUFS; }
 /* this datagram is lost on the wire: the socket lives, loss detection repairs it */
-static int slot_lost(int e) { return dest_error(e) || e == EMSGSIZE || e == EPERM || e == EACCES || e == ENETUNREACH || e == EHOSTUNREACH || e == ENETDOWN || e == EHOSTDOWN || e == ENOBUFS || e == ENOMEM || e == ECONNREFUSED; }
+static int slot_lost(int e) { return dest_error(e) || e == EMSGSIZE || e == EPERM || e == EACCES || e == ENETUNREACH || e == EHOSTUNREACH || e == ENETDOWN || e == EHOSTDOWN || e == ENOMEM || e == ECONNREFUSED; }
 
 int ksl_udp_send(ksl_udp *u, uint8_t *const *bufs, const uint32_t *lens, const uint8_t *addrs, const uint8_t *ecn, uint32_t n, uint32_t *sent) {
     if (!u || u->closed) return KSL_ERROR; *sent = 0; uint32_t i = 0;
@@ -47,7 +49,7 @@ int ksl_udp_send(ksl_udp *u, uint8_t *const *bufs, const uint32_t *lens, const u
             int e = 0;
             if (run > 1 && send_one(u, joined, (uint32_t)total, addrs + i * KSL_UDP_ADDR_LEN, ecn[i], (uint16_t)lens[i], &e) == 0) { i += run; *sent += run; continue; }
             if (run > 1) {
-                if (e == EAGAIN || e == EWOULDBLOCK) return KSL_OK;
+                if (backpressure(e)) return KSL_OK;
                 if ((e == EINVAL || e == EMSGSIZE) && lens[i] > 1200) { /* the segment size, not GSO itself, was refused (a narrow link): the run goes out one by one, GSO stays */ }
                 else if (e == EINVAL) gso_probe = 1;   /* GSO, the TOS cmsg or the destination: decided by the single send below */
                 else if (e == EIO || e == ENOTSUP || e == EOPNOTSUPP) gso_off(u);
@@ -58,10 +60,10 @@ int ksl_udp_send(ksl_udp *u, uint8_t *const *bufs, const uint32_t *lens, const u
         }
         int e = 0;
         if (send_one(u, bufs[i], lens[i], addrs + i * KSL_UDP_ADDR_LEN, ecn[i], 0, &e) == 0) { if (gso_probe) gso_off(u); gso_probe = 0; i++; (*sent)++; u->eperm_retried = 0; continue; }
-        if (e == EAGAIN || e == EWOULDBLOCK) return KSL_OK;
+        if (backpressure(e)) return KSL_OK;
         if (e == EINVAL && u->tos_cmsg_on && ecn[i]) {   /* the TOS cmsg or the destination: the same datagram without the mark decides */
             if (send_one(u, bufs[i], lens[i], addrs + i * KSL_UDP_ADDR_LEN, 0, 0, &e) == 0) { u->tos_cmsg_on = 0; u->granted &= ~(uint32_t)KSL_UDP_ECN; gso_probe = 0; i++; (*sent)++; u->eperm_retried = 0; continue; }   /* the kernel rejected the TOS cmsg: never send it again */
-            if (e == EAGAIN || e == EWOULDBLOCK) return KSL_OK;
+            if (backpressure(e)) return KSL_OK;
         }
         gso_probe = 0;   /* the datagram failed alone too: GSO was not the cause */
         if (e == EPERM && !u->eperm_retried) { u->eperm_retried = 1; continue; }   /* a filter hiccup: one retry, then the datagram is given up like any other transient error */
