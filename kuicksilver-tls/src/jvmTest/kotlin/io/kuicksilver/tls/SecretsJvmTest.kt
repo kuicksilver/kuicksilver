@@ -20,6 +20,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import java.io.File
 import java.lang.management.ManagementFactory
+import java.nio.file.FileSystems
 import java.nio.file.Files
 import java.nio.file.attribute.PosixFilePermission
 import java.nio.file.attribute.PosixFilePermissions
@@ -28,6 +29,7 @@ import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFails
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
@@ -39,12 +41,26 @@ class SecretsJvmTest {
         runBlocking { SessionCache.Default.clear() }
     }
 
+    /** False on Windows (NTFS has no POSIX view): there `keylogFile` refuses every path, which the keylog tests assert instead. */
+    private val posix = "posix" in FileSystems.getDefault().supportedFileAttributeViews()
+
+    /** Without a POSIX view nothing can vouch for the file (owner, mode, links): the sink is refused before a line is written. */
+    private fun assertRefusedWithoutPosix(f: File) {
+        val e = assertFailsWith<IllegalArgumentException> { keylogFile(f.path) }
+        assertTrue(e.message!!.contains("no POSIX permissions"), e.message)
+        assertTrue(!f.exists() || f.length() == 0L, "nothing was written")
+    }
+
+    /** The heap-dump tests need the secrets on disk: `keylogFile` where it is allowed, else (Windows) a plain append sink. */
+    private fun diskSink(f: File): KeylogSink = if (posix) keylogFile(f.path) else KeylogSink { line -> f.appendText(line + "\n") }
+
     @Test fun negative_keylogFileMode0600() {
         val f =
             File.createTempFile("ksl-keylog", ".txt").also {
                 it.delete()
                 it.deleteOnExit()
             }
+        if (!posix) return assertRefusedWithoutPosix(f)
         keylogFile(f.path).log("CLIENT_RANDOM 00 11")
         val perms = Files.getPosixFilePermissions(f.toPath())
         assertTrue(PosixFilePermission.GROUP_READ !in perms && PosixFilePermission.OTHERS_READ !in perms, perms.toString())
@@ -54,6 +70,7 @@ class SecretsJvmTest {
     /** An existing world-readable file is tightened to 0600 before the first line lands in it. */
     @Test fun negative_keylogFileExistingModeTightened() {
         val f = File.createTempFile("ksl-keylog", ".txt").also { it.deleteOnExit() }
+        if (!posix) return assertRefusedWithoutPosix(f)
         Files.setPosixFilePermissions(f.toPath(), PosixFilePermissions.fromString("rw-r--r--"))
         keylogFile(f.path).log("X")
         val perms = Files.getPosixFilePermissions(f.toPath())
@@ -84,6 +101,7 @@ class SecretsJvmTest {
                 it.delete()
                 it.deleteOnExit()
             }
+        if (!posix) return assertRefusedWithoutPosix(f)
         val sink = keylogFile(f.path)
         try {
             sink.log("FIRST")
@@ -128,7 +146,7 @@ class SecretsJvmTest {
 
     @Test fun negative_heapDumpNoSecrets() {
         val log = File.createTempFile("ksl-keylog", ".txt").also { it.deleteOnExit() }
-        val sink = keylogFile(log.path) // writes straight to disk; nothing retained on the heap
+        val sink = diskSink(log) // writes straight to disk; nothing retained on the heap
         val p = Pump(KslQuicCrypto.newSession(Fixtures.client { keylog = sink }), KslQuicCrypto.newSession(Fixtures.server()))
         p.c.setTransportParameters(Fixtures.tp)
         p.s.setTransportParameters(Fixtures.tp)
@@ -313,7 +331,7 @@ class SecretsJvmTest {
                         TcpFixtures.client {
                             versions =
                                 TlsVersions.Tls12And13
-                            ; keylog = keylogFile(log.path)
+                            ; keylog = diskSink(log)
                         },
                     )
                 }

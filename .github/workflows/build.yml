@@ -9,6 +9,7 @@
 #                                                        ├─ linux-native: -kn OpenSSL, test.kexe x64 + arm64, mingw test.exe + ksl_test.exe ── windows
 #                                                        ├─ apple (macOS arm64): ABI dumps, ASan C tests, JVM + macosArm64 suites, Intel-Mac dylib, repro
 #                                                        └─ interop-images ── interop (weekly / dispatch): JVM and native image × 6 peers
+#   openssl-docker ── windows-jvm (windows-2025): the JVM suites against the mingw-w64 JNI dll
 #   openssl-docker + linux + apple ── jvm-jar: the kuicksilver-native jar with all five JNI libraries ── consumer-smoke (mavenLocal)
 #   JNI artifacts jni-<classifier> (tools/build-jni.sh output dirs; .github/workflows/release.yml reuses them from the green run):
 #     linux-x86_64, linux-aarch_64 ← linux · osx-aarch_64, osx-x86_64 ← apple · windows-x86_64 ← openssl-docker (mingw-x64)
@@ -251,6 +252,36 @@ jobs:
             if ($LASTEXITCODE -ne 0) { $failed += $e.FullName }
           }
           if ($failed.Count -gt 0) { Write-Host "::error::test.exe failed: $($failed -join ', ')"; exit 1 }
+
+  windows-jvm:
+    # The JVM suites on a Windows host against the mingw-w64 JNI dll that openssl-docker built (the dll the jar ships). Nothing
+    # native is built here: kuicksilver.openssl.prebuilt=true (also written by the setup action) keeps every opensslBuild* task
+    # from running, and -x buildJniHost drops the only task that would shell out to tools/build-jni.sh (bash + a C toolchain +
+    # OpenSSL for the host); the artifact is that script's output directory, so it lands where buildJniHost would have put it and
+    # the loader checks it against its manifest.sha256 as usual. Platform differences are asserted per test, never by skipping a
+    # suite: no POSIX file view (keylog and work-directory checks assert the Windows behaviour), USO/URO/ECN only where granted.
+    needs: openssl-docker
+    runs-on: windows-2025
+    permissions: { contents: read }
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - uses: ./.github/actions/setup
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with: { name: jni-windows-x86_64, path: kuicksilver-native/build/jni }
+      - name: 'jvm: module tests on Windows (CI-built dll)'
+        run: |
+          ls -l kuicksilver-native/build/jni/resources/META-INF/native
+          $G --max-workers=2 -Pkuicksilver.openssl.prebuilt=true -x :kuicksilver-native:buildJniHost \
+            :kuicksilver-native:jvmTest :kuicksilver-tls:jvmTest :kuicksilver-quic:jvmTest :kuicksilver-http3:jvmTest \
+            :kuicksilver-ktor-network:jvmTest :kuicksilver-ktor-client:jvmTest :kuicksilver-ktor-server:jvmTest
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: failure()
+        with:
+          name: reports-windows-jvm
+          path: '**/build/reports/tests/'
+          retention-days: 7
 
   apple:
     # macOS arm64: everything that needs Xcode or the host JVM on a Mac, in the order of tools/ci/local-matrix.sh. checkKotlinAbi

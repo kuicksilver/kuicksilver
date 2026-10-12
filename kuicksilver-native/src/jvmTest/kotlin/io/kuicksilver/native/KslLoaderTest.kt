@@ -6,6 +6,7 @@ package io.kuicksilver.native
 
 import io.kuicksilver.annotations.InternalKuicksilverApi
 import java.io.File
+import java.nio.file.FileSystems
 import java.nio.file.Files
 import java.nio.file.attribute.PosixFilePermission
 import java.util.concurrent.TimeUnit
@@ -16,6 +17,8 @@ import kotlin.test.assertTrue
 
 /** The loader contract: resource + SHA-256 manifest, ABI check, explicit path override, private work dir. */
 class KslLoaderTest {
+    /** False on Windows: no POSIX view, so the loader checks only that the work directory is a real directory (KslLoader.jvm.kt). */
+    private val posix = "posix" in FileSystems.getDefault().supportedFileAttributeViews()
     private val resourceDir = File(System.getProperty("ksl.native.resources")!!) // META-INF/native as the jar would carry it
 
     @Test fun loadsFromResourceAndVerifiesSha256() {
@@ -57,6 +60,7 @@ class KslLoaderTest {
 
     @Test fun workdirIsPrivate() {
         val dir = JvmLoader.privateWorkDir()
+        if (!posix) return assertTrue(dir.isDirectory, "$dir") // Windows: no mode bits to check
         val perms = Files.getPosixFilePermissions(dir.toPath())
         assertTrue(PosixFilePermission.GROUP_READ !in perms && PosixFilePermission.OTHERS_READ !in perms, perms.toString())
     }
@@ -73,6 +77,7 @@ class KslLoaderTest {
     /** A directory owned by someone else is refused: its owner could swap the library between the hash check and System.load. */
     @Test fun negative_workdirForeignOwnerRefused() {
         val dir = Files.createTempDirectory("ksl-workdir-owner").toFile().apply { deleteOnExit() }
+        if (!posix) return assertOnlyTheDirectoryCheckWithoutPosix(dir) // Windows: no "root", ownership not checked
         val root =
             dir
                 .toPath()
@@ -86,6 +91,7 @@ class KslLoaderTest {
     /** When this process's user cannot be resolved on a POSIX file system, the owner check is not skipped: the directory is refused. */
     @Test fun negative_workdirUnknownUserRefused() {
         val dir = Files.createTempDirectory("ksl-workdir-nouser").toFile().apply { deleteOnExit() }
+        if (!posix) return assertOnlyTheDirectoryCheckWithoutPosix(dir) // Windows: ownership not checked
         val e = assertFailsWith<KslException.NativeLoad> { JvmLoader.checkWorkDir(dir.toPath(), null) }
         assertTrue(e.reason.contains("cannot be determined"), e.reason)
     }
@@ -96,6 +102,7 @@ class KslLoaderTest {
         val dir = File(parent, "a/b/kuicksilver-native").toPath()
         JvmLoader.createWorkDir(dir)
         dir.toFile().deleteOnExit()
+        if (!posix) return assertTrue(Files.isDirectory(dir), "$dir") // Windows: created plainly, no mode bits
         assertEquals(
             "rwx------",
             java.nio.file.attribute.PosixFilePermissions
@@ -126,6 +133,14 @@ class KslLoaderTest {
         assertTrue(out.contains("loaded abi $KSL_ABI_VERSION"), out)
         val lib = File(dir, JvmNativeNames.libraryFileName())
         assertTrue(lib.isFile, "the shared library is still there after the other JVM exited: ${dir.list()?.toList()}")
+    }
+
+    /** Without a POSIX view [JvmLoader.checkWorkDir] passes any real directory (owner unknown included) and refuses a file. */
+    private fun assertOnlyTheDirectoryCheckWithoutPosix(dir: File) {
+        JvmLoader.checkWorkDir(dir.toPath(), null)
+        val file = File(dir, "not-a-dir").apply { writeText("x") }
+        val e = assertFailsWith<KslException.NativeLoad> { JvmLoader.checkWorkDir(file.toPath()) }
+        assertTrue(e.reason.contains("not a directory"), e.reason)
     }
 
     @Test fun duplicateResourceWithDifferentHashIsRefused() {
@@ -176,6 +191,13 @@ class LoaderInstallTest {
         val dir = Files.createTempDirectory("ksl-install-owner").toFile().apply { deleteOnExit() }
         val out = File(dir, lib.name).apply { deleteOnExit() }
         JvmLoader.installLibrary(out, lib.readBytes(), manifest)
+        if ("posix" !in FileSystems.getDefault().supportedFileAttributeViews()) {
+            // Windows: no "root" principal and ownership is not checked; a verified copy is reused whatever the expected owner
+            val mtime = out.lastModified()
+            JvmLoader.installLibrary(out, lib.readBytes(), manifest, null)
+            kotlin.test.assertEquals(mtime, out.lastModified(), "a verified copy is reused without an owner check")
+            return
+        }
         val before = Files.readAttributes(out.toPath(), java.nio.file.attribute.BasicFileAttributes::class.java).fileKey()
         val root =
             dir

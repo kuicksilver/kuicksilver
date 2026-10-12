@@ -61,6 +61,10 @@ step "docker: jvm linux-x64 (.so + tests)"      bash tools/ci/docker-jvm.sh linu
 step "docker: jvm linux-arm64 (.so + tests)"    bash tools/ci/docker-jvm.sh linux-aarch_64   # the accelerated UDP, the multi-loop server and the Native-server guard run natively here
 step "docker: system OpenSSL mode"              bash tools/ci/system-openssl.sh
 step "docker: JNI library windows-x86_64 (mingw)" bash tools/ci/jni-windows.sh build/jni-windows
+# CI windows-jvm runs the JVM suites of native, tls, quic, http3, ktor-network, ktor-client and ktor-server on windows-2025
+# against this dll (-Pkuicksilver.openssl.prebuilt=true -x :kuicksilver-native:buildJniHost); there is no Windows host
+# locally, so that step has no local counterpart (nor has CI's windows job running ksl_test.exe; tools/c-test.sh mingw-x64
+# cross-builds it here).
 fi
 if [ "$with_interop" = 1 ]; then
 # CI runs one job per image x peer (the same cases and peers); --check-required is scoped to each run's image, peers and cases
