@@ -22,6 +22,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -72,6 +73,9 @@ public class NetworkMigrator<N : Any>(
      */
     public val network: StateFlow<N?> = onNetwork.asStateFlow()
 
+    /** Test hook: runs after a successful probe, right before the switch. */
+    internal var beforeSwitch: () -> Unit = {}
+
     private var job: Job? = null
     private var closed = false
 
@@ -83,7 +87,11 @@ public class NetworkMigrator<N : Any>(
         return j
     }
 
-    /** Stops following the networks; a migration in progress is abandoned and its socket closed. The connection stays open. */
+    /**
+     * Stops following the networks. A migration that has not switched yet is abandoned: its new path and socket are closed,
+     * nothing is reported, and the connection stays on the path it was on. A switch already under way completes (the
+     * connection is on the new network then) and still reports [MigrationEvent.Migrated]. The connection stays open.
+     */
     override fun close() {
         closed = true
         job?.cancel()
@@ -160,7 +168,11 @@ public class NetworkMigrator<N : Any>(
                 eventFlow.tryEmit(MigrationEvent.Failed(n, IllegalStateException("path validation failed")))
                 return
             }
+            beforeSwitch()
+            val self = currentCoroutineContext().job
             withContext(NonCancellable) {
+                // the last point of no return: a migrator closed (or a migration superseded) by now does not switch
+                if (closed || !self.isActive) return@withContext
                 path.switchTo()
                 done = true
                 switched(path)

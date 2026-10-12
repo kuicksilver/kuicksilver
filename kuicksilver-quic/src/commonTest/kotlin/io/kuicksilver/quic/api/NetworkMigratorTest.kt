@@ -236,7 +236,12 @@ class NetworkMigratorTest {
                     val (c, _) = p.connect()
                     val nets = MutableStateFlow<Int?>(1)
                     val o = Opener(p, deaf = setOf(3))
-                    val m = NetworkMigrator(c, nets, { o.open(it) }, this)
+                    var calls = 0
+                    val m =
+                        NetworkMigrator(c, nets, {
+                            calls++
+                            o.open(it)
+                        }, this)
                     val (events, collector) = eventsOf(m)
                     val job = m.start()
                     m.network.first { it == 1 }
@@ -245,7 +250,9 @@ class NetworkMigratorTest {
                     nets.value = 3
                     o.openedDeaf.await()
                     m.close() // mid-validation
+                    nets.value = 4 // before the job ended: a closed migrator must not start another migration
                     job.join()
+                    assertEquals(2, calls, "no openIo after close()")
                     waitClosed(o.opened.single { it.first == 3 }.second)
                     assertFalse(
                         o.opened
@@ -254,9 +261,6 @@ class NetworkMigratorTest {
                         "the active path's socket belongs to the connection",
                     )
                     assertEquals(addr(2), c.activePath!!.localAddress)
-                    nets.value = 4
-                    yield()
-                    assertEquals(listOf(2, 3), o.opened.map { it.first }, "a closed migrator opens nothing")
                     collector.cancel()
                     c.close()
                 }
@@ -301,6 +305,32 @@ class NetworkMigratorTest {
                     )
                     ping(c, s)
                     m.close()
+                    collector.cancel()
+                    c.close()
+                }
+            }
+        }
+
+    @Test fun closeBeforeSwitchAbandonsTheMigration() =
+        runBlocking {
+            ApiPair.open().use { p ->
+                withTimeout(60.seconds) {
+                    val (c, s) = p.connect()
+                    val nets = MutableStateFlow<Int?>(1)
+                    val o = Opener(p)
+                    val m = NetworkMigrator(c, nets, { o.open(it) }, this)
+                    m.beforeSwitch = { m.close() } // close() lands between a successful probe and switchTo
+                    val (events, collector) = eventsOf(m)
+                    val original = c.activePath!!
+                    val job = m.start()
+                    m.network.first { it == 1 }
+                    nets.value = 2
+                    job.join()
+                    assertEquals(original.id, c.activePath!!.id, "a closed migrator does not switch")
+                    waitClosed(o.opened.single().second)
+                    assertEquals(1, m.network.value)
+                    assertTrue(events.tryReceive().isFailure, "nothing to report")
+                    ping(c, s)
                     collector.cancel()
                     c.close()
                 }
