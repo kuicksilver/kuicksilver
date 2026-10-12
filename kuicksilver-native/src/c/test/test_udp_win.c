@@ -156,6 +156,11 @@ void run_udp_win(void) {
       if (c) { ksl_udp_shutdown(c); uint8_t buf[8] = {0}; uint8_t *bufs[1] = { buf }; uint32_t lens[1] = { 8 }, rc[1] = { 8 }, got = 0, sent = 0; uint8_t e[1] = { 0 };
         CHECK(ksl_udp_send(c, bufs, lens, lb, e, 1, &sent) == KSL_ERROR, "send after shutdown is an error"); CHECK(ksl_udp_recv(c, bufs, rc, lens, lc, e, 1, &got, 1000) == KSL_ERROR && got == 0, "recv after shutdown is an error, at once"); ksl_udp_close(c); } }
     ksl_udp_close(a); ksl_udp_close(b);
+    /* udp_win_host_cleanup_restarts_winsock: a host that calls WSACleanup more often than WSAStartup took ksl's reference; the next
+       open sees WSANOTINITIALISED, starts Winsock once more and succeeds (last: it ends every socket of the process) */
+    { int cleaned = 0; while (cleaned < 32 && WSACleanup() == 0) cleaned++;
+      CHECK(cleaned >= 1 && WSACleanup() == SOCKET_ERROR && WSAGetLastError() == WSANOTINITIALISED, "Winsock fully cleaned up by the 'host'");
+      uint8_t lc[KSL_UDP_ADDR_LEN]; ksl_udp *c = wopen_lo(0, lc); CHECK(c != NULL, "ksl_udp_open restarts Winsock after the host's WSACleanup"); if (c) ksl_udp_close(c); }
 }
 #else
 typedef int test_udp_win_empty_unit;   /* ISO C: a translation unit declares something */

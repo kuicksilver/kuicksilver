@@ -88,7 +88,9 @@ static void fail(uint32_t *err, uint32_t code, char *msg, size_t msglen, const c
    when it creates a socket: every Winsock call before that failed with WSANOTINITIALISED (10093). The Kotlin/Native runtime
    starts it before any Kotlin code runs (an eager property in kuicksilver-native's mingwMain, `who` 1); ksl_init (2) and
    ksl_udp_open (3) start it too, for the JVM's dll and C callers. Never from a C constructor: in a DLL (a Kotlin/Native
-   sharedLib, the JNI dll) constructors run under the loader lock, where WSAStartup must not be called. */
+   sharedLib, the JNI dll) constructors run under the loader lock, where WSAStartup must not be called.
+   A host that calls WSACleanup once more than its own WSAStartup takes our reference away: ksl_udp_open then sees
+   WSANOTINITIALISED, starts Winsock once more and retries (wsa_restart). */
 static volatile LONG wsa_state = 0;   /* 0 not started, 1 starting, 2 ready, 3 failed */
 static volatile LONG wsa_first = 0;   /* who started it first */
 int ksl_win_sockets_start(int who) {
@@ -99,6 +101,8 @@ int ksl_win_sockets_start(int who) {
 }
 int ksl_win_sockets_started_by(void) { return (int)InterlockedCompareExchange(&wsa_first, 0, 0); }
 int ksl_win_sockets_init(void) { return ksl_win_sockets_start(2); }   /* ksl_init */
+/* our reference was cleaned up by the host: forget the once-state and start again (other threads wait in ksl_win_sockets_start) */
+static int wsa_restart(void) { InterlockedCompareExchange(&wsa_state, 0, 2); return ksl_win_sockets_start(3); }
 static int wsa_ready(void) { return ksl_win_sockets_start(3); }
 
 static int is_mapped(const uint8_t *a16) { static const uint8_t pre[12] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff }; return memcmp(a16, pre, 12) == 0; }
@@ -137,6 +141,7 @@ ksl_udp *ksl_udp_open(const uint8_t addr[KSL_UDP_ADDR_LEN], int flags, uint32_t 
     ksl_udp *u = calloc(1, sizeof *u); if (!u) { if (err) *err = KSL_E_BAD_ARG; return NULL; }
     u->family = addr[0] == 4 ? AF_INET : AF_INET6; u->requested = (uint32_t)flags; u->wake = INVALID_SOCKET;
     u->fd = WSASocketW(u->family, SOCK_DGRAM, IPPROTO_UDP, NULL, 0, WSA_FLAG_NO_HANDLE_INHERIT);
+    if (u->fd == INVALID_SOCKET && WSAGetLastError() == WSANOTINITIALISED && wsa_restart()) u->fd = WSASocketW(u->family, SOCK_DGRAM, IPPROTO_UDP, NULL, 0, WSA_FLAG_NO_HANDLE_INHERIT);   /* once */
     if (u->fd == INVALID_SOCKET) { fail(err, KSL_E_NOT_SUPPORTED, msg, msglen, "WSASocketW", WSAGetLastError()); free(u); return NULL; }
     GUID rg = WSAID_WSARECVMSG, sg = WSAID_WSASENDMSG; DWORD got = 0;
     if (WSAIoctl(u->fd, SIO_GET_EXTENSION_FUNCTION_POINTER, &rg, sizeof rg, &u->recv_msg, sizeof u->recv_msg, &got, NULL, NULL) != 0 ||

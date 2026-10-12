@@ -95,6 +95,9 @@ cross-checked with msquic `src/platform/datapath_winuser.c`.
   it. `ksl_win_sockets_started_by` records the first starter, so `WinsockReadyTest` proves the order whatever ran before it.
   `@EagerInitialization` is deprecated as a migration aid; should it go, the replacement is a documented call before the first
   address lookup.
+  Winsock's start is reference counted: a host that calls `WSACleanup` once more than its own `WSAStartup` takes ksl's reference
+  away. `ksl_udp_open` then sees `WSANOTINITIALISED`, forgets its once-state, starts Winsock once more and retries the socket
+  once; sockets the cleanup already closed are not revived, and a lookup in between still fails until then.
 - **Verification.** Cross-compiled on macOS with the Kotlin/Native llvm + mingw sysroot (`tools/c-test.sh mingw-x64`, `-Werror`)
   and with the Ubuntu mingw-w64 gcc 13 of the JNI build; run only by the CI windows job: `test_udp_win.c` (batch, USO in one call,
   two senders, ECN round trip when granted, DF probe, truncation, USO fallback, transient and destination errors, dual-stack,
