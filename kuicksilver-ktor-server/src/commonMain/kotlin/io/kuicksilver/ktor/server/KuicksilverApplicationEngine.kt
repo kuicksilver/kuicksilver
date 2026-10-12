@@ -124,6 +124,11 @@ public class KuicksilverApplicationEngine(
     }
 
     override suspend fun startSuspend(wait: Boolean): ApplicationEngine {
+        @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class, io.ktor.utils.io.InternalAPI::class)
+        io.kuicksilver.ktor.network.KtorVersionPolicy.check(
+            "ktor-server-core" to io.ktor.server.engine.BaseApplicationEngine::class,
+            "ktor-server-cio" to io.ktor.server.cio.backend.ServerIncomingConnection::class,
+        ) // docs/guide/ktor.md, "Supported Ktor versions"
         serverJob.start()
         startupJob.await()
         monitor.raiseCatching(ServerReady, environment, environment.log)

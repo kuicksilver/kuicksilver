@@ -1,7 +1,9 @@
 # Ktor internals the engines depend on
 
 This is the list of the Ktor 3.6.0 APIs the engines use although Ktor marks them internal or does not
-publish them, kept because each is a compatibility risk on a Ktor upgrade. Re-check every entry when the Ktor version moves.
+publish them, kept because each is a compatibility risk on a Ktor upgrade. Re-check every entry when the Ktor version moves,
+then move `KtorVersionPolicy.SUPPORTED` (`kuicksilver-ktor-network`), the major.minor the engines check at startup
+(docs/guide/ktor.md, "Supported Ktor versions").
 
 ## Server engine (`kuicksilver-ktor-server`)
 

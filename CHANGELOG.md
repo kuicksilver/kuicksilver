@@ -59,6 +59,10 @@ Nothing has been released yet. This section summarises the development of the fi
   `maxConnectionLifetime` (infinite) retires connections by age; a background reaper does both and drops the bookkeeping of
   origins without connections. HTTP/3 keeps one connection per origin and queues requests for the peer's MAX_STREAMS credit
   (bounded by the request timeout) instead of failing or opening more connections.
+- Ktor version policy: the engines support Ktor 3.6.x. Creating a client engine and starting a server engine on the
+  JVM or Android read the Ktor jars' manifest versions and fail with an `IllegalStateException` that says what to do
+  when the major.minor differs; `-Dkuicksilver.ktor.versionCheck=false` turns the check off. Kotlin/Native fails at link
+  time instead.
 - QUIC server on Kotlin/Native Windows (`mingwX64`): `ksl_udp` over Winsock (`WSASendMsg`/`WSARecvMsg` with `WSAPoll` and a wake socket, ECN through `IP_ECN`/`IPV6_ECN` on Windows 10 2004+ / Server 2022, USO/URO where the system grants them, DF, dual-stack IPv6, `SO_EXCLUSIVEADDRUSE`); the JVM on Windows uses the same socket through JNI. Winsock is started when the Kotlin/Native runtime starts (not from a C constructor, which in a `sharedLib` would run under the loader lock), so address lookups before the first socket no longer fail with `WSANOTINITIALISED`. Verified by the CI windows job only. `loops > 1` without `SO_REUSEPORT` granted on the first socket (Windows always) throws the documented `UnsupportedOperationException` instead of failing the second bind with `KslException.Internal`.
 - 0-RTT, opt-in and experimental (ADR-0015, RFC 9001 section 4.6, RFC 8470): `QuicClientConfig.earlyData`,
   `QuicServerConfig.earlyData`/`earlyDataContext`, `QuicEndpoint.connectEarly`, `QuicConnection.awaitHandshake`/

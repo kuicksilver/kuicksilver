@@ -236,6 +236,28 @@ default.
 > **Replay warning.** An attacker can replay a 0-RTT request (RFC 8446 section 8). Turn this on only when the handlers
 > of GET, HEAD and OPTIONS have no side effects.
 
+## Supported Ktor versions
+
+Kuicksilver 0.x supports **Ktor 3.6.x** (built and tested against 3.6.0). The engines use a few Ktor internals and
+vendor parts of Ktor CIO (`docs/ktor-internal-api.md`), which Ktor may change in any minor release, so another
+major.minor is not supported even when it happens to link.
+
+- **At startup.** Creating a client engine (`HttpClient(Kuicksilver)`, also through `ServiceLoader`) checks
+  `ktor-client-core` and `ktor-http-cio`; starting a server engine checks `ktor-server-core` and `ktor-server-cio`. On the
+  JVM and Android the version is the `Implementation-Version` in the manifest of the jar that holds each class; when the
+  major.minor is not 3.6, the engine fails with an `IllegalStateException` naming the artifact, its version and the
+  fix. Where no version can be read (Android after dexing, shaded or repackaged jars, classes from a directory) the check
+  passes silently.
+- **Opting out.** `-Dkuicksilver.ktor.versionCheck=false` (or `System.setProperty` before the engine is created) skips
+  the check, for experts who verified their Ktor themselves; a mismatch then fails later, if at all, with
+  `NoSuchMethodError` or `AbstractMethodError`.
+- **Kotlin/Native.** klibs are resolved when the binary is linked: a Ktor whose ABI differs fails the link (unresolved
+  symbols), so there is no runtime check. Keep every `io.ktor` dependency on the same 3.6.x, best with
+  `platform("io.ktor:ktor-bom:3.6.0")`.
+- **Upgrades.** A new Ktor minor is adopted in a Kuicksilver release: the version catalog moves, every entry of
+  `docs/ktor-internal-api.md` is re-checked, the vendored CIO code and contract tests are re-vendored from the new tag,
+  and `KtorVersionPolicy.SUPPORTED` moves with them. Ktor patch releases (3.6.x) need nothing and are accepted at once.
+
 ## Compatibility
 
 Both engines run Ktor 3.6.0's own engine contract tests, vendored under `src/commonTest/kotlin/.../contract` (and
