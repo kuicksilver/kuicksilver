@@ -2,18 +2,29 @@
 # Copyright 2026 The Kuicksilver Authors
 # SPDX-License-Identifier: Apache-2.0
 # Runs the QUIC Interop Runner locally with kuicksilver as server and as client against the given peers, one peer at a time.
-# Usage: run-local.sh [--check-required] [--results DIR] [--image native] [-t testcases] [peer ...]   (default peers: quic-go ngtcp2 quiche picoquic quinn msquic)
+# Usage: run-local.sh [--check-required | --perf] [--results DIR] [--image native] [-t testcases] [peer ...]   (default peers: quic-go ngtcp2 quiche picoquic quinn msquic)
 # --image native runs kuicksilver-interop-native:local (the Kotlin/Native executable) under the name kuicksilver-native.
 # --results DIR[,DIR...] checks existing results directories (the union of their cells) instead of running the matrix again.
 # Results: build/interop/<date>/<peer>-{server,client}/ (logs) and <peer>-{server,client}.json (matrix). With --check-required every cell listed in
 # tools/interop/required.json that this run could produce (its implementations and test cases) must be successful, otherwise exit 1; --results dir1,dir2 merges runs.
+# --perf runs only the runner's measurements (goodput, crosstraffic; -t narrows them) against the peers of tools/interop/perf-thresholds.json
+# (unless peers are given) and then tools/interop/check-perf.sh on the results: exit 1 on a measurement below its threshold or missing.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/../.." && pwd)"; cd "$root"
 [ -d /Applications/Wireshark.app/Contents/MacOS ] && export PATH="$PATH:/Applications/Wireshark.app/Contents/MacOS"   # the runner needs tshark
 export LC_ALL=C   # the runner's certs.sh pipes /dev/urandom through tr, which rejects bytes under a UTF-8 locale on macOS (long chains of amplificationlimit failed silently)
-check=0; results=""; tests="handshake,transfer"; peers=(); image=jvm; me=kuicksilver
-while [ $# -gt 0 ]; do case "$1" in --check-required) check=1 ;; --results) results="$2"; shift ;; --image) image="$2"; shift ;; -t) tests="$2"; shift ;; *) peers+=("$1") ;; esac; shift; done
+check=0; perf=0; results=""; tests=""; peers=(); image=jvm; me=kuicksilver
+while [ $# -gt 0 ]; do case "$1" in --check-required) check=1 ;; --perf) perf=1 ;; --results) results="$2"; shift ;; --image) image="$2"; shift ;; -t) tests="$2"; shift ;; *) peers+=("$1") ;; esac; shift; done
 [ "$image" = native ] && me=kuicksilver-native
+thresholds=tools/interop/perf-thresholds.json
+if [ $perf -eq 1 ]; then
+  [ $check -eq 0 ] || { echo "--perf and --check-required are separate runs" >&2; exit 2; }
+  [ -n "$tests" ] || tests="goodput,crosstraffic"
+  # shellcheck disable=SC2207   # peer names have no spaces
+  [ ${#peers[@]} -gt 0 ] || peers=($(jq -r --arg me "$me" '[.thresholds | keys[] | split(":")[0] | split("->") | select(index($me)) | .[] | select(. != $me)] | unique | .[]' "$thresholds"))
+  [ ${#peers[@]} -gt 0 ] || { echo "no thresholds for $me in $thresholds" >&2; exit 2; }
+fi
+[ -n "$tests" ] || tests="handshake,transfer"
 [ ${#peers[@]} -gt 0 ] || peers=(quic-go ngtcp2 quiche picoquic quinn msquic)
 runner=build/interop/runner; lock=$(cat tools/interop/runner.lock)
 [ -d "$runner" ] || git clone -q https://github.com/quic-interop/quic-interop-runner "$runner"
@@ -41,6 +52,10 @@ for peer in "${peers[@]}"; do
 done
 fi
 echo "results in $out"
+if [ $perf -eq 1 ]; then
+  bash tools/interop/check-perf.sh "$out" "$thresholds" || exit 1
+  exit $fail   # a runner crash that left no result file for a role also fails the run
+fi
 if [ $check -eq 1 ]; then
   python3 - "$out" tools/interop/required.json <<'PY'
 import json, sys, glob, os

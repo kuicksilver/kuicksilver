@@ -1,0 +1,14 @@
+{
+  "note": "Minimum goodput per QUIC Interop Runner measurement cell (runner 740c05a; key = server->client:measurement, the runner's own naming as in required.json; value in kbps, the unit the runner reports). Recorded numbers: docs/spec/rfc-compliance.md, Interop matrix K3 «Measurements» (JVM image, the runner's 10 Mbit/s link, each the mean of the runner's 5 repetitions). Rule: min_kbps = recorded mean x (1 - tolerance), rounded down to 100 kbps; tolerance 0.25 for goodput (5 repetitions, recorded spread at most 1 %), 0.40 for crosstraffic (the share left by a competing TCP CUBIC flow; recorded spread up to 13 % and GitHub-hosted runners add CPU noise). Only cells with a recorded green measurement are listed: ngtcp2 and quinn, both roles, JVM image. tools/interop/check-perf.sh checks a run against this file; check-perf.sh --update proposes new values from a run.",
+  "tolerance": { "goodput": 0.25, "crosstraffic": 0.40 },
+  "thresholds": {
+    "kuicksilver->ngtcp2:goodput": { "min_kbps": 6900, "recorded_kbps": 9293 },
+    "ngtcp2->kuicksilver:goodput": { "min_kbps": 6800, "recorded_kbps": 9103 },
+    "kuicksilver->quinn:goodput": { "min_kbps": 6900, "recorded_kbps": 9300 },
+    "quinn->kuicksilver:goodput": { "min_kbps": 6800, "recorded_kbps": 9169 },
+    "kuicksilver->ngtcp2:crosstraffic": { "min_kbps": 4200, "recorded_kbps": 7042 },
+    "ngtcp2->kuicksilver:crosstraffic": { "min_kbps": 3100, "recorded_kbps": 5249 },
+    "kuicksilver->quinn:crosstraffic": { "min_kbps": 2100, "recorded_kbps": 3633 },
+    "quinn->kuicksilver:crosstraffic": { "min_kbps": 2400, "recorded_kbps": 4063 }
+  }
+}
