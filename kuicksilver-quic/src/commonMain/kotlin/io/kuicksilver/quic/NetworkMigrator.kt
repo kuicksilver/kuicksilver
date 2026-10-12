@@ -41,7 +41,8 @@ import kotlinx.coroutines.withContext
  * - Repeated equal values are ignored. A change while a migration runs supersedes it: the unfinished path and its socket are
  *   closed and nothing is reported for it.
  *
- * The migrator stops when [close] is called, when [scope] is cancelled or when the connection ends. Server connections are
+ * The migrator stops when [close] is called, when [scope] is cancelled or when the connection ends (a migration cut short by
+ * the end of the connection reports nothing: no [MigrationEvent.Failed] for a dead connection). Server connections are
  * rejected with IllegalArgumentException: only the client migrates (RFC 9000 section 9).
  *
  * @param N the platform's network handle (`android.net.Network` on Android); compared with `equals`.
@@ -166,7 +167,7 @@ public class NetworkMigrator<N : Any>(
             withContext(NonCancellable) { p = connection.addPath(io) }
             val path = p!!
             if (!path.probe()) {
-                eventFlow.tryEmit(MigrationEvent.Failed(n, IllegalStateException("path validation failed")))
+                fail(n, IllegalStateException("path validation failed"))
                 return
             }
             beforeSwitch()
@@ -180,10 +181,8 @@ public class NetworkMigrator<N : Any>(
             }
         } catch (e: CancellationException) {
             throw e
-        } catch (e: QuicException.ConnectionLost) {
-            throw CancellationException("connection lost", e)
         } catch (e: Exception) {
-            eventFlow.tryEmit(MigrationEvent.Failed(n, e))
+            fail(n, e)
         } finally {
             if (!done) {
                 try {
@@ -193,6 +192,15 @@ public class NetworkMigrator<N : Any>(
                 }
             }
         }
+    }
+
+    /** Reports a failed migration, unless the connection is gone: a dead connection has nothing left to migrate, the watcher ends the migrator. */
+    private fun fail(
+        n: N,
+        cause: Exception,
+    ) {
+        if (cause is QuicException.ConnectionLost || connection.closed.isCompleted) return
+        eventFlow.tryEmit(MigrationEvent.Failed(n, cause))
     }
 }
 

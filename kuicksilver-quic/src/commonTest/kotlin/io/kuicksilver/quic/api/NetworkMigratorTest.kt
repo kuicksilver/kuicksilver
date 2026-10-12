@@ -337,6 +337,29 @@ class NetworkMigratorTest {
             }
         }
 
+    @Test fun noFailedEventForAClosedConnection() =
+        runBlocking {
+            ApiPair.open().use { p ->
+                withTimeout(60.seconds) {
+                    val (c, _) = p.connect()
+                    val nets = MutableStateFlow<Int?>(1)
+                    val o = Opener(p, deaf = setOf(2))
+                    val m = NetworkMigrator(c, nets, { o.open(it) }, this)
+                    val (events, collector) = eventsOf(m)
+                    val job = m.start()
+                    m.network.first { it == 1 }
+                    nets.value = 2
+                    o.openedDeaf.await()
+                    c.close() // mid-validation: the connection is gone, nothing failed
+                    job.join()
+                    yield()
+                    assertTrue(events.tryReceive().isFailure, "no event for a dead connection")
+                    waitClosed(o.opened.single().second)
+                    collector.cancel()
+                }
+            }
+        }
+
     @Test fun closesTheActualPreviousPathAfterAnOutsideSwitch() =
         runBlocking {
             ApiPair.open().use { p ->
