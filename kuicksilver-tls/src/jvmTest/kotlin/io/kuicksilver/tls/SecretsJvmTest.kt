@@ -74,6 +74,29 @@ class SecretsJvmTest {
         assertEquals(0L, target.length(), "nothing was written through the symlink")
     }
 
+    /**
+     * The sink keeps the descriptor it checked: once the file is removed and something else appears at the path (another
+     * local user's 0666 file in a shared directory), later lines go to the original, unlinked inode, never into the new file.
+     */
+    @Test fun negative_keylogFileRecreatedByAnotherOwnerGetsNothing() {
+        val f =
+            File.createTempFile("ksl-keylog", ".txt").also {
+                it.delete()
+                it.deleteOnExit()
+            }
+        val sink = keylogFile(f.path)
+        try {
+            sink.log("FIRST")
+            assertTrue(f.delete())
+            assertTrue(f.createNewFile())
+            Files.setPosixFilePermissions(f.toPath(), PosixFilePermissions.fromString("rw-rw-rw-"))
+            sink.log("SECOND")
+            assertEquals(0L, f.length(), "a file recreated at the path received a line")
+        } finally {
+            (sink as? java.io.Closeable)?.close()
+        }
+    }
+
     @Test fun negative_keylogDisabledInRelease() {
         // the Gradle test task sets SSLKEYLOGFILE; neither OpenSSL (no-sslkeylog) nor the library may touch it
         val env = System.getenv("SSLKEYLOGFILE")
