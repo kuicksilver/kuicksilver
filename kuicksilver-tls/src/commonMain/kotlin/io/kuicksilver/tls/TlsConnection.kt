@@ -315,6 +315,9 @@ public class TlsConnection private constructor(
                         }
                     when {
                         r > 0 -> {
+                            // a ticket that preceded these bytes is cached before the application sees them: a
+                            // client that reads one response and closes would otherwise cancel this pump first
+                            rememberSession()
                             inputChannel.writeFully(plain, 0, r)
                         }
 

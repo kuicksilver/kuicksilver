@@ -584,6 +584,30 @@ class SessionResumptionTest {
         assertTrue(stored(key), "the resumed connection stored the fresh ticket")
     }
 
+    /**
+     * The ticket travels before the data that follows it, so it is cached before the application sees that data: a
+     * client that reads one response and closes keeps its ticket (run 38287900994, SocketTlsTest on the macOS runner).
+     */
+    @Test fun ticketCachedBeforeTheDataThatFollowsIt() {
+        val client = TcpFixtures.client()
+        val key = keyOf(client)
+        repeat(100) { round ->
+            runBlocking {
+                SessionCache.clear()
+                val (cd, sd) = connect(client, TcpFixtures.server())
+                val c = withTimeout(20.seconds) { cd.await() }
+                val s = withTimeout(20.seconds) { sd.await() }
+                s.output.writeFully(byteArrayOf(2), 0, 1)
+                s.output.flush()
+                c.input.readExactly(1)
+                val cached = SessionCache.peek(key)
+                c.close()
+                s.close()
+                assertTrue(cached, "round $round: the ticket that preceded the data is cached")
+            }
+        }
+    }
+
     @Test fun ticketIsSingleUse() {
         val client = TcpFixtures.client()
         val server = TcpFixtures.server()

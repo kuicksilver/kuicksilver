@@ -31,7 +31,6 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlin.test.BeforeTest
@@ -161,7 +160,7 @@ class SocketTlsTest {
                     srv.close()
                 }
             }
-            withTimeout(5.seconds) { while (SessionCache.size() == 0) delay(10) } // the fresh ticket lands asynchronously
+            // the ticket preceded the echo, so it is cached by the time the echo was read
             assertEquals(1, SessionCache.size())
         }
 
