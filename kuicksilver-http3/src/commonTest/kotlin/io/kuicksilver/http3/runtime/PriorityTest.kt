@@ -137,7 +137,7 @@ class PriorityTest {
                 Http3Connection.client(c)
                 val raw = RawPeer(s)
                 raw.openControl()
-                raw.priorityUpdate(0, "u=1")
+                peerMayHaveClosed { raw.priorityUpdate(0, "u=1") }
                 assertEquals(Http3ErrorCode.FRAME_UNEXPECTED, peerSawClose(s))
             }
         }
@@ -149,7 +149,7 @@ class PriorityTest {
                 Http3Connection.server(s)
                 val raw = RawPeer(c)
                 raw.openControl()
-                raw.priorityUpdate(2, "u=1") // a unidirectional stream id
+                peerMayHaveClosed { raw.priorityUpdate(2, "u=1") } // a unidirectional stream id
                 assertEquals(Http3ErrorCode.ID_ERROR, peerSawClose(c))
             }
         }

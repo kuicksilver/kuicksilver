@@ -179,7 +179,7 @@ class RequestTest {
                     ) +
                         raw.data(ByteArray(4)),
                 )
-                st.output.flushAndClose()
+                peerMayHaveClosed { st.output.flushAndClose() }
                 val r = server.acceptRequest()
                 val e = assertFailsWith<Http3Exception.MessageError> { r.body.readAllBytes() }
                 assertEquals(st.id, e.streamId)
@@ -205,7 +205,7 @@ class RequestTest {
                         ),
                     ),
                 )
-                bad.output.flushAndClose() // no :path
+                peerMayHaveClosed { bad.output.flushAndClose() } // no :path
                 val e = assertFailsWith<QuicException.StreamError.Reset> { bad.input.readAllBytes() }
                 assertEquals(Http3ErrorCode.MESSAGE_ERROR, e.code)
                 val good = c.openBidi()
@@ -336,7 +336,7 @@ class RequestTest {
                                 lengths.map { "content-length" to it },
                         ),
                     )
-                    runCatching {
+                    peerMayHaveClosed {
                         st.output.writeFully(raw.data(byteArrayOf(1, 2, 3, 4)))
                         st.output.flushAndClose()
                     } // the server may stop the stream on the HEADERS alone

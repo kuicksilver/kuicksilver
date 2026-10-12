@@ -39,7 +39,7 @@ class LimitsTest {
                 raw.openControl()
                 val st = c.openBidi()
                 st.output.writeFully(raw.headers(st.id, GET + big))
-                st.output.flush()
+                peerMayHaveClosed { st.output.flush() }
                 val resp = st.input.readAllBytes() // a 431 response, then FIN
                 val h = FrameHeaders.parse(resp, 0, resp.size)!!
                 assertEquals(FrameType.HEADERS, h.type)
@@ -120,7 +120,7 @@ class LimitsTest {
                 val hdr = ByteArray(16)
                 val n = FrameHeaders.write(FrameType.HEADERS, 1L shl 30, hdr, 0)
                 st.output.writeFully(hdr.copyOf(n) + ByteArray(100))
-                st.output.flush()
+                peerMayHaveClosed { st.output.flush() }
                 val resp = st.input.readAllBytes()
                 assertTrue(resp.isNotEmpty()) // a 431, not a hang
                 assertTrue(!server.closed.isCompleted)
@@ -160,7 +160,7 @@ class LimitsTest {
                 val hdr = ByteArray(16)
                 val n = FrameHeaders.write(0x21, 1L shl 40, hdr, 0)
                 st.output.writeFully(raw.headers(st.id, GET) + hdr.copyOf(n) + ByteArray(10))
-                st.output.flushAndClose()
+                peerMayHaveClosed { st.output.flushAndClose() }
                 val r = server.acceptRequest()
                 // skipped as it streams (no 1 TiB buffer); the FIN inside it is a connection error H3_FRAME_ERROR (RFC 9114 section 7.1)
                 val e = assertFailsWith<Http3Exception.Protocol> { r.body.readAllBytes() }

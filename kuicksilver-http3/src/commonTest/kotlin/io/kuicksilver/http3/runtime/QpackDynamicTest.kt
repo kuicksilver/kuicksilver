@@ -174,10 +174,12 @@ class QpackDynamicTest {
                 val (c, s) = q.connect()
                 val server = Http3Connection.server(s, dyn)
                 RawPeer(c).openControl()
-                repeat(17) {
-                    val st = c.openBidi()
-                    st.output.writeFully(FrameHeaders.frame(FrameType.HEADERS, blockedSection()))
-                    st.output.flush()
+                peerMayHaveClosed {
+                    repeat(17) {
+                        val st = c.openBidi()
+                        st.output.writeFully(FrameHeaders.frame(FrameType.HEADERS, blockedSection()))
+                        st.output.flush()
+                    }
                 }
                 assertEquals(Http3ErrorCode.QPACK_DECOMPRESSION_FAILED, peerSawClose(c))
                 server.closed.await()

@@ -227,7 +227,7 @@ class ExtendedConnectTest {
                         ),
                     ),
                 )
-                st.output.flush()
+                peerMayHaveClosed { st.output.flush() }
                 assertEquals(
                     Http3ErrorCode.MESSAGE_ERROR,
                     assertFailsWith<QuicException.StreamError.Reset> { st.input.readAllBytes() }.code,

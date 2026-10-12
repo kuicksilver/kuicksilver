@@ -70,7 +70,7 @@ class ConnectionTest {
                 val hdr = ByteArray(16)
                 val n = FrameHeaders.write(FrameType.DATA, 10, hdr, 0)
                 st.output.writeFully(raw.headers(st.id, GET) + hdr.copyOf(n) + ByteArray(3))
-                st.output.flushAndClose() // DATA announces 10 bytes, FIN after 3
+                peerMayHaveClosed { st.output.flushAndClose() } // DATA announces 10 bytes, FIN after 3
                 assertEquals(Http3ErrorCode.FRAME_ERROR, withTimeout(5.seconds) { peerSawClose(c) })
             }
         }
@@ -108,7 +108,7 @@ class ConnectionTest {
             val (c, s) = q.connect()
             val server = Http3Connection.server(s)
             val raw = RawPeer(c)
-            block(raw)
+            peerMayHaveClosed { block(raw) }
             val code = peerSawClose(c)
             val local = server.closed.await()
             code to local
@@ -224,7 +224,7 @@ class ConnectionTest {
                 raw.openControl()
                 val b = s.openBidi()
                 b.output.writeFully(raw.data(byteArrayOf(1)))
-                b.output.flush()
+                peerMayHaveClosed { b.output.flush() }
                 assertEquals(Http3ErrorCode.STREAM_CREATION_ERROR, peerSawClose(s))
             }
         }

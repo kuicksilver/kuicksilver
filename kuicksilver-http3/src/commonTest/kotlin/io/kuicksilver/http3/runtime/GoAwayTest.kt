@@ -141,7 +141,7 @@ class GoAwayTest {
                     raw.frame(FrameType.GOAWAY, ControlFrames.goAwayPayload(4)) +
                         raw.frame(FrameType.GOAWAY, ControlFrames.goAwayPayload(8)),
                 )
-                runCatching { raw.control.output.flush() } // the client may already have closed the connection
+                peerMayHaveClosed { raw.control.output.flush() }
                 assertEquals(Http3ErrorCode.ID_ERROR, peerSawClose(s))
                 assertIs<Http3Exception.Protocol>(client.closed.await())
             }
@@ -242,7 +242,7 @@ class GlitchLimiterTest {
                         b
                     },
                 )
-                raw.control.output.flush()
+                peerMayHaveClosed { raw.control.output.flush() }
                 assertEquals(Http3ErrorCode.EXCESSIVE_LOAD, peerSawClose(c))
             }
         }
