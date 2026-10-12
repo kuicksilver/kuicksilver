@@ -32,8 +32,8 @@ public interface QuicStream {
     public val output: ByteWriteChannel
 
     /**
-     * Send priority among the connection's streams; an assignment reaches the endpoint loop asynchronously. Reads [StreamPriority.Default]
-     * until assigned, even for a stream opened with another priority.
+     * Send priority among the connection's streams (RFC 9218 at the transport): the priority the stream was opened with, or
+     * [StreamPriority.Default] for a stream the peer opened, until assigned; an assignment reaches the endpoint loop asynchronously.
      */
     public var priority: StreamPriority
 

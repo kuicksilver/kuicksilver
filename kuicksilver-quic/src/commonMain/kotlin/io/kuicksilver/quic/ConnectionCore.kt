@@ -183,10 +183,11 @@ public class ConnectionCore internal constructor(
     }
 
     /**
-     * Validation state of path [id] (RFC 9000 section 8.2); [PathState.Unknown] for an id the connection does not hold, a closed path
-     * included.
+     * Validation state of path [id] (RFC 9000 section 8.2); [PathState.Closed] for a path the connection closed or evicted,
+     * [PathState.Unknown] for an id it never issued.
      */
-    public fun pathState(id: PathId): PathState = paths.byId(id)?.state ?: PathState.Unknown
+    public fun pathState(id: PathId): PathState =
+        paths.byId(id)?.state ?: if (id.value in 0 until paths.issuedIds) PathState.Closed else PathState.Unknown
 
     internal fun ecnReceivedForTest(): LongArray = loss.space(SpaceId.Application).ack.ecnCounts ?: LongArray(3)
 

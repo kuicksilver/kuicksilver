@@ -204,7 +204,7 @@ the new address, sends a `PATH_CHALLENGE` there first and repeats it every PTO (
 rather than closing the connection. A `PATH_CHALLENGE` of the active path always travels in its own 1200-byte
 datagram ahead of everything else, and no PMTU probe goes to an address still under validation. The core
 reports `PathEvent.Changed(old, new, reason)`, `PathEvent.Validated(path)` and `PathEvent.Failed(path)` events, and `pathState(id)`
-answers for any path. Every migration and every 10 000 packets the connection switches to an unused connection ID of the
+answers for any path (`Closed` once a path was closed or evicted, `Unknown` for an id never issued). Every migration and every 10 000 packets the connection switches to an unused connection ID of the
 peer and retires the old one; a connection ID the peer retired keeps routing for 3 × PTO so packets in flight still
 arrive. `allowMigration = false` advertises `disable_active_migration` and drops datagrams from other addresses; a
 move to a loopback or link-local address from a connection that did not start on one is refused unless

@@ -16,9 +16,15 @@ class QuicExceptionTest {
         assertIs<QuicException.ConnectionLost>(e)
     }
 
+    @Test fun frameTypeIsNonNull() {
+        // 0.2.0: the frame type is always known (0 when no frame triggered the error), so the API no longer makes callers handle null
+        val ft: Long = QuicException.ConnectionLost.TransportClosed(0x0a, 0x06, "", ByteArray(0), Initiator.Peer).frameType
+        assertEquals(0x06L, ft)
+    }
+
     @Test fun createCopyKeepsFieldsAndCause() {
         val cause = IllegalStateException("boom")
-        val e = QuicException.ConnectionLost.TransportClosed(0x0130L, null, "bad cert", byteArrayOf(1, 2), Initiator.Local, cause)
+        val e = QuicException.ConnectionLost.TransportClosed(0x0130L, 0L, "bad cert", byteArrayOf(1, 2), Initiator.Local, cause)
         val copy = e.createCopy()
         assertIs<QuicException.ConnectionLost.TransportClosed>(copy)
         assertEquals(0x0130L, copy.code)

@@ -418,7 +418,10 @@ internal class ConnectionRuntime(
         for (t in tickers) t.close(reason)
     }
 
-    private fun stream(id: Long): StreamRuntime =
+    private fun stream(
+        id: Long,
+        priority: StreamPriority = StreamPriority.Default,
+    ): StreamRuntime =
         streams.getOrPut(id) {
             StreamRuntime(
                 this,
@@ -427,6 +430,7 @@ internal class ConnectionRuntime(
                 recv =
                     (id and 2L == 0L) || !isLocal(id),
                 send = (id and 2L == 0L) || isLocal(id),
+                initialPriority = priority,
             )
         }
 
@@ -449,7 +453,7 @@ internal class ConnectionRuntime(
                     if (finished) throw closedDeferred.await()
                     val id = core.openStream(bidi, priority)
                     if (id >= 0) {
-                        val s = stream(id)
+                        val s = stream(id, priority)
                         loop.flush(core)
                         return@withContext s
                     }

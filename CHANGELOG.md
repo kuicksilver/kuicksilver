@@ -62,6 +62,11 @@ Nothing has been released yet. This section summarises the development of the fi
 
 ### Changed
 
+- QUIC API for 0.2.0 (breaking, before 1.0): `QuicException.ConnectionLost.TransportClosed.frameType` is a non-null `Long`
+  (0 when no frame triggered the error; it was never null); `TimeoutKind.Disconnect`, never produced, is removed;
+  `QuicStream.priority` reports the priority the stream was opened with instead of `StreamPriority.Default`;
+  `ConnectionCore.pathState` answers `PathState.Closed` for a path the connection closed or evicted (`Unknown` stays for
+  ids it never issued), so `QuicPath.state` of a path evicted by migration reads `Closed`.
 - JVM jars and the Android AAR carry `LICENSE`, `NOTICE` and the OpenSSL license.
 - Public ABI dumps no longer include declarations marked `@InternalKuicksilverApi`.
 - TCP session resumption keeps sessions in native memory (handles instead of serialized session bytes); `ksl` ABI 3 → 4.

@@ -654,6 +654,19 @@ class PathTest {
         }
     }
 
+    @Test fun closedPathStateIsClosed() {
+        // a path id the connection issued and then closed is Closed, not Unknown (which stays for ids it never issued)
+        val (p, c) = connected()
+        try {
+            val id = c.addPath(p.serverAddr, p.now)
+            c.closePath(id)
+            assertEquals(PathState.Closed, c.pathState(id))
+            assertEquals(PathState.Unknown, c.pathState(PathId(id.value + 1)))
+        } finally {
+            p.close()
+        }
+    }
+
     @Test fun pathStateOfUnknownIdIsUnknown() {
         val (p, _) = connected()
         try {

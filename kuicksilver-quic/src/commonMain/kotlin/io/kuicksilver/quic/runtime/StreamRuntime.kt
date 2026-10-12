@@ -25,6 +25,7 @@ internal class StreamRuntime(
     override val id: Long,
     recv: Boolean,
     send: Boolean,
+    initialPriority: StreamPriority = StreamPriority.Default,
 ) : QuicStream {
     private val inChannel: StreamInput? = if (recv) StreamInput(this) else null
     private val outChannel: StreamOutput? = if (send) StreamOutput(this) else null
@@ -32,7 +33,7 @@ internal class StreamRuntime(
     override val output: ByteWriteChannel get() = outChannel ?: throw IllegalStateException("stream $id is receive-only")
     internal val readable = Channel<Unit>(Channel.CONFLATED)
     internal val ticker = conn.newTicker()
-    override var priority: StreamPriority = StreamPriority.Default
+    override var priority: StreamPriority = initialPriority
         set(v) {
             field = v
             loop.scope.launch { conn.core.setPriority(id, v) }

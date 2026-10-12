@@ -111,6 +111,9 @@ internal class Paths(
     /** The most recent path that passed validation, to fall back to (RFC 9000 section 9.3.2). */
     var lastValidated: Path = first
     private var nextId = 1
+
+    /** Path ids below this were issued (and those not in [all] since closed or evicted); ids are never reused. */
+    val issuedIds: Int get() = nextId
     val responseData = LongArray(3)
     val responsePath = arrayOfNulls<Path>(3)
     var responses = 0
