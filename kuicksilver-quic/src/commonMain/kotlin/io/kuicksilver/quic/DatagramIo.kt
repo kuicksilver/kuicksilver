@@ -54,6 +54,8 @@ public interface DatagramIo : AutoCloseable {
     /**
      * Sends the slots of [batch] in order; returns how many left. A result below `batch.count` means the socket refused the
      * rest (a full send buffer): the endpoint counts them in [ConnectionStats.datagramsDroppedSocket] and loss recovery repairs them.
+     * A send that throws is counted as losing the whole batch, so an implementation that can should return the slots it sent
+     * before a failure instead of throwing.
      */
     public suspend fun send(batch: PacketBatch): Int
 

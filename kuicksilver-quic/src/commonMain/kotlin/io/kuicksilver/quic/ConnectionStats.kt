@@ -74,6 +74,8 @@ public class ConnectionStats internal constructor(
     /**
      * UDP datagrams of this connection the socket did not take: a send that failed (a filter, an unreachable route) or took
      * only part of a batch (a full send buffer). Loss recovery repairs them; a steady rise means the socket is the bottleneck.
+     * It may over-count when the socket fails mid-batch: a send that throws counts its whole batch, although the slots
+     * before the failing one may have left.
      */
     @property:ExperimentalKuicksilverApi
     public val datagramsDroppedSocket: Long,

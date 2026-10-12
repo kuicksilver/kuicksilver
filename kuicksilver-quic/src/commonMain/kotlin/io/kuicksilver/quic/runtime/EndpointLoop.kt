@@ -266,7 +266,8 @@ internal class EndpointLoop private constructor(
     /**
      * A send that throws (EPERM from a filter, an unreachable route, a socket closed under a closing endpoint) loses this batch,
      * one that takes only part of it (a full send buffer) loses the rest; loss detection repairs both, and [rt]'s connection
-     * counts them. It never propagates: it would end a loop coroutine.
+     * counts them (a throwing send counts its whole batch, so the count may exceed what was really lost when the socket
+     * fails mid-batch). It never propagates: it would end a loop coroutine.
      */
     private suspend fun sendOrLose(
         target: DatagramIo,
