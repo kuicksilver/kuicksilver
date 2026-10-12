@@ -59,6 +59,9 @@ internal class Path(
     /** PATH_CHALLENGE repeats sent in the current validation; the gap before the next one is PTO x 2^min(retries, 6). */
     var challengeRetries: Int = 0
 
+    /** When a packet from the peer last arrived on this path (its creation for a path we opened); the oldest is evicted first. */
+    var lastReceivedAt: TimeMark = TimeMark.NEVER
+
     /** After a failed validation the path is not probed again before this time. */
     var standbyUntil: TimeMark = TimeMark.NEVER
 
@@ -140,27 +143,50 @@ internal class Paths(
         return null
     }
 
-    /** A new path for [remote]; null when four paths exist and none of them can be dropped (the active and the last validated stay). */
+    /**
+     * A new path for [remote]; null when four paths exist and none of them can be dropped. The active and the last validated path
+     * always stay; a path neither validating nor active goes first, then the validating path heard from longest ago, provided nothing
+     * arrived on it since [abandonValidatingHeardBefore] (null: validating paths stay) — RFC 9000 section 8.2.4 lets a migration
+     * abandon the validation of an older path.
+     */
     fun add(
         socket: PathId?,
         remote: InetSocketAddress,
         cc: CongestionController,
         initialRtt: Duration,
         evict: Boolean = true,
+        now: TimeMark = TimeMark.NEVER,
+        abandonValidatingHeardBefore: TimeMark? = null,
     ): Path? {
         if (all.size >=
             maxPaths
         ) {
             if (!evict) return null
-            val victim =
-                all.firstOrNull { it !== active && it !== lastValidated && it.state != PathState.Validating } ?: return null
+            val victim = victim(abandonValidatingHeardBefore) ?: return null
             remove(victim)
             onEvicted?.invoke(victim)
         } // remove(): its queued PATH_RESPONSEs go too
         val id = PathId(nextId++)
         val p = Path(id, remote, socket ?: id, cc, initialRtt)
+        p.lastReceivedAt = now
         all += p
         return p
+    }
+
+    private fun victim(abandonValidatingHeardBefore: TimeMark?): Path? {
+        var best: Path? = null
+        for (i in 0 until all.size) {
+            val p = all[i]
+            if (p === active || p === lastValidated) continue
+            if (p.state != PathState.Validating) return p
+            if (abandonValidatingHeardBefore != null &&
+                p.lastReceivedAt < abandonValidatingHeardBefore &&
+                (best == null || p.lastReceivedAt < best.lastReceivedAt)
+            ) {
+                best = p
+            }
+        }
+        return best
     }
 
     /** The most recently validated path other than [except], if any. */

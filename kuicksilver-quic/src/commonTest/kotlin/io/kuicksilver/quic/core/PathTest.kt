@@ -482,6 +482,35 @@ class PathTest {
         }
     }
 
+    /**
+     * K7 F1.10: a client that moves four times before any of its new addresses could answer (each old NAT mapping dies at once) fills
+     * every path slot with validations of dead addresses; RFC 9000 section 8.2.4 lets a migration abandon those, so the newest address
+     * still becomes the active path and validates.
+     */
+    @Test fun rapidMigrationsKeepTheNewestPath() {
+        val (p, c) = connected()
+        try {
+            val s = p.server()
+            val newest = InetSocketAddress("10.0.4.1", 40000)
+            p.clientListens.clear()
+            p.clientListensOnSource = false
+            p.clientListens += newest // only the last mapping is alive
+            for (i in 1..4) {
+                p.clientSource = InetSocketAddress("10.0.$i.1", 40000)
+                send(c)
+                repeat(10) { p.step() }
+            }
+            assertTrue(
+                p.runUntil(2.seconds) { s.remoteAddressForTest == newest && s.pathState(s.stats.currentPath) == PathState.Validated },
+                "the newest address is the validated active path (server at ${s.remoteAddressForTest}, paths ${s.paths.all})",
+            )
+            assertTrue(s.pathCountForTest <= 4)
+            assertNull(p.closed(s))
+        } finally {
+            p.close()
+        }
+    }
+
     @Test fun peerMigrationWhileServerSendsCompletes() {
         // the interop rebind-addr case: the server is the sender, the client's IP changes mid-download; the transfer must finish without a stall
         val (p, c) = connected(crypto = KslQuicCrypto)

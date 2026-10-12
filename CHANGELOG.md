@@ -82,6 +82,9 @@ Hardening of the QUIC core for 0.2.0 (review of 2026-10-08, deferred items):
 
 - QUIC: an unanswered `PATH_CHALLENGE` is repeated with an exponentially growing gap (1, 1, 2, 4 ... x PTO, so
   three challenges fit in the 3 x PTO validation timeout) instead of once per PTO (RFC 9000 §8.2.1, §8.2.4, RFC 9002 §6.2.1).
+- QUIC server: a client that migrates several times before its new addresses can answer no longer loses its newest
+  address: with all four path slots taken, a migration abandons the oldest validation of a path the client has left
+  (RFC 9000 §8.2.4); a probe takes the slot of a validating path only after max(3 x PTO, 5 s) of silence.
 - QUIC: a handshaking server that follows a new address on an Initial no longer re-runs its timers continuously once
   that path's validation deadline passed without a Handshake packet (one forged Initial was enough).
 - QUIC: a packet buffered until its keys arrive is processed with the ECN mark, socket, source and length of its own
