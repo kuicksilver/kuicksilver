@@ -25,9 +25,6 @@ public enum class TimeoutKind {
 
     /** Reserved: not produced in this version; a failed validation leads to [ConnectionLost.NoViablePath]. */
     PathValidation,
-
-    /** Reserved: not produced in this version. */
-    Disconnect,
 }
 
 private const val MAX_CODE: Long = (1L shl 62) - 1
@@ -55,14 +52,14 @@ public sealed class QuicException(
          * CONNECTION_CLOSE with a transport error code (frame type 0x1c), or a local transport failure.
          *
          * @property code The transport error code (RFC 9000 section 20.1; a TLS alert as `0x0100 + alert`, see [TransportError]).
-         * @property frameType The frame type that triggered the error, 0 when none; nullable in the API but always set in this version.
+         * @property frameType The frame type that triggered the error (RFC 9000 section 19.19), 0 when no frame did.
          * @property reason The reason phrase; a peer's is decoded as UTF-8 (malformed bytes replaced) and kept within 1 KiB.
          * @property reasonBytes The reason phrase as it travelled on the wire, at most 1024 bytes.
          * @property initiator Who closed: we on a protocol error we detected, or the peer.
          */
         public class TransportClosed(
             public val code: Long,
-            public val frameType: Long?,
+            public val frameType: Long,
             public val reason: String,
             public val reasonBytes: ByteArray,
             public val initiator: Initiator,

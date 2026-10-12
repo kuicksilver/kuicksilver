@@ -46,6 +46,13 @@ internal fun EndpointCore.admitOne(
         statelessInitialClose(data, profile, from, TransportError.INVALID_TOKEN, now)
         return false
     }
+    if (check is TokenCheck.Valid && !check.retryScid.contentEquals(data, hv.dcidOff, hv.dcidLen)) {
+        // RFC 9000 sections 8.1.2-8.1.4 and 17.2.5.3: the token belongs to the Initial whose DCID is the Retry SCID; under another
+        // DCID it is a replay (or a copy), refused the same way
+        invalidTokens++
+        statelessInitialClose(data, profile, from, TransportError.INVALID_TOKEN, now)
+        return false
+    }
     // ---- hard limits: no policy may lift them ----
     if (connections.size >= config.maxConnections || acceptBacklog() >= config.acceptQueue) {
         initialsDropped++
@@ -96,7 +103,7 @@ internal fun EndpointCore.admitOne(
             val clientDcid = ConnectionId(ByteArray(hv.dcidLen).also { data.copyTo(it, hv.dcidOff, 0, hv.dcidLen) })
             val clientScid = ConnectionId(ByteArray(hv.scidLen).also { data.copyTo(it, hv.scidOff, 0, hv.scidLen) })
             val ourScid = ServerCidFormat.generate(loopIndex, server.quic.connectionIdLength, random)
-            val token = tokens.mint(clientDcid, from, hv.version, now)
+            val token = tokens.mint(clientDcid, ourScid, from, hv.version, now)
             val n = RetryPacket.write(vnBuffer, profile, clientScid, ourScid, token, clientDcid, config.crypto, random.nextInt(16))
             stateless +=
                 Stateless(ByteArray(n).also { vnBuffer.copyTo(it, 0, 0, n) }, from)

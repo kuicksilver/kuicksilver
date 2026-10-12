@@ -36,11 +36,18 @@ internal class PtoProbe(
 )
 
 internal interface LossListener {
-    /** One ACK frame processed: its ECN counts (null without), how many newly acknowledged packets were sent marked, the largest newly acknowledged packet's send time and path. */
+    /**
+     * One ACK frame that raised the largest acknowledged packet, for one path it newly acknowledged packets on: whether the frame
+     * carried ECN counts, whether the counts moved consistently with the last ones of the space ([countsValid]: no decrease, no ECT(1),
+     * growth of at least the newly acknowledged marked packets of all paths), how many newly acknowledged packets of [pathId] were sent
+     * marked, whether the CE count grew (reported once, to the path of the largest newly acknowledged packet), that packet's send time.
+     */
     fun onEcnAck(
         space: SpaceId,
-        ecn: LongArray?,
+        countsPresent: Boolean,
+        countsValid: Boolean,
         newlyAckedMarked: Int,
+        ceGrew: Boolean,
         now: TimeMark,
         largestSentTime: TimeMark,
         pathId: Int,
@@ -104,6 +111,9 @@ internal class LossDetection(
 
     fun storedPackets(id: SpaceId): Int = space(id).sent.size
 
+    /** Sent packets examined by [onAck] (the walk and the compaction), for the complexity tests. */
+    internal var visitedForTest = 0
+
     fun onPacketSent(
         space: SpaceId,
         p: SentPacket,
@@ -115,7 +125,7 @@ internal class LossDetection(
             sp.release(p)
             return
         }
-        sp.sent += p
+        sp.sent.add(p)
         if (p.inFlight) bytesInFlight += p.size
         if (p.ackEliciting) {
             sp.lastAckElicitingTime = now
@@ -154,31 +164,29 @@ internal class LossDetection(
                 }
             }
         }
+        val prevLargestAcked = sp.largestAcked
         if (ack.largest > sp.largestAcked) sp.largestAcked = ack.largest
         acked.clear()
-        // sent packets are in ascending order, ACK ranges in descending order: one pass over both (RFC 9002 appendix A.7 in linear time)
-        var i = sp.sent.size - 1
-        var r = 0
-        while (i >= 0 && r < ack.rangeCount) {
-            val p = sp.sent[i]
-            when {
-                p.pn > ack.largest(r) -> {
-                    i--
-                }
-
-                p.pn < ack.smallest(r) -> {
-                    r++
-                }
-
-                else -> {
-                    p.marked = true
+        // RFC 9002 appendix A.7 without a pass over everything in flight (RFC 9000 section 21.6): ranges come in descending order,
+        // each is found by binary search and walked downwards, so the first match is the largest newly acknowledged packet
+        val sent = sp.sent
+        for (r in 0 until ack.rangeCount) {
+            val smallest = ack.smallest(r)
+            if (sent.isEmpty() || ack.largest(r) < sent.pnAt(sent.start)) break // this and every later range lie below the oldest packet
+            var i = sent.lowerBound(ack.largest(r) + 1) - 1
+            val lo = sent.lowerBound(smallest)
+            while (i >= lo) {
+                visitedForTest++
+                val p = sent.at(i)
+                if (p != null) {
                     acked += p
-                    i--
+                    sent.removeAt(i)
                 }
+                i--
             }
         }
         if (acked.isEmpty()) return
-        compact(sp.sent)
+        visitedForTest += sent.trim()
         val largestNewlyAcked = acked[0] // the walk goes downwards: the first match is the largest
         if (largestNewlyAcked.pn == ack.largest && largestNewlyAcked.ackEliciting && largestNewlyAcked.pathId == activePath) {
             val maxMicros = Long.MAX_VALUE / 1000 shr peerAckDelayExponent
@@ -205,10 +213,8 @@ internal class LossDetection(
             rtt.onSample(now - largestNewlyAcked.timeSent, ackDelay, handshakeConfirmed, peerMaxAckDelay)
             listener.onRttSample(now, rtt.latest, rtt.min)
         }
-        var newlyAckedMarked = 0
-        for (k in acked.indices) if (acked[k].ecnMarked) newlyAckedMarked++
-        // RFC 9000 section 13.4.2: validate the counts, CE growth is a congestion signal
-        listener.onEcnAck(space, ack.ecn, newlyAckedMarked, now, largestNewlyAcked.timeSent, largestNewlyAcked.pathId)
+        // RFC 9000 section 13.4.2.1: only an ACK that raises the largest acknowledged packet carries counts newer than the last ones
+        if (ack.largest > prevLargestAcked) processEcn(sp, space, ack, now, largestNewlyAcked)
         detectLost(sp, now)
         for (k in acked.indices) {
             val p = acked[k]
@@ -232,19 +238,62 @@ internal class LossDetection(
         timerBase = now
     }
 
-    /** Removes the marked packets in one pass and clears their marks. */
-    private fun compact(sent: ArrayList<SentPacket>) {
-        var w = 0
-        for (k in sent.indices) {
-            val p = sent[k]
-            if (p.marked) {
-                p.marked = false
-            } else {
-                sent[w++] =
-                    p
+    private var ecnPaths = IntArray(4)
+    private var ecnMarkedPerPath = IntArray(4)
+
+    /**
+     * The ECN part of an ACK that raised the largest acknowledged packet (RFC 9000 section 13.4.2): the counts are compared with the
+     * last ones of the space (kept in [PacketNumberSpace.peerEcn]) and must not decrease, must not show ECT(1) and must grow by at
+     * least the newly acknowledged marked packets; every path with newly acknowledged packets then learns the verdict with its own
+     * marked count, and CE growth is reported once, to the path of the largest newly acknowledged packet (as quic-go's ecn.go
+     * validates per path from the connection-wide counts).
+     */
+    private fun processEcn(
+        sp: PacketNumberSpace,
+        space: SpaceId,
+        ack: AckFrameView,
+        now: TimeMark,
+        largest: SentPacket,
+    ) {
+        var paths = 0
+        var totalMarked = 0
+        for (k in acked.indices) {
+            val p = acked[k]
+            var i = 0
+            while (i < paths && ecnPaths[i] != p.pathId) i++
+            if (i == paths) {
+                if (paths == ecnPaths.size) {
+                    ecnPaths = ecnPaths.copyOf(paths * 2)
+                    ecnMarkedPerPath = ecnMarkedPerPath.copyOf(paths * 2)
+                }
+                ecnPaths[paths] = p.pathId
+                ecnMarkedPerPath[paths] = 0
+                paths++
+            }
+            if (p.ecnMarked) {
+                ecnMarkedPerPath[i]++
+                totalMarked++
             }
         }
-        while (sent.size > w) sent.removeAt(sent.size - 1)
+        val counts = ack.ecn
+        var valid = false
+        var ceGrew = false
+        if (counts != null) {
+            val ect0 = counts[0] - (if (sp.peerEcnSeen) sp.peerEcn[0] else 0L)
+            val ect1 = counts[1] - (if (sp.peerEcnSeen) sp.peerEcn[1] else 0L)
+            val ce = counts[2] - (if (sp.peerEcnSeen) sp.peerEcn[2] else 0L)
+            valid = ect0 >= 0 && ect1 == 0L && ce >= 0 && ect0 + ect1 + ce >= totalMarked
+            ceGrew = ce > 0
+            sp.peerEcn[0] = counts[0]
+            sp.peerEcn[1] = counts[1]
+            sp.peerEcn[2] = counts[2]
+            sp.peerEcnSeen = true
+        }
+        for (i in 0 until paths) {
+            val pid = ecnPaths[i]
+            if (ecnMarkedPerPath[i] == 0 && pid != largest.pathId) continue // nothing of this path to validate
+            listener.onEcnAck(space, counts != null, valid, ecnMarkedPerPath[i], ceGrew && pid == largest.pathId, now, largest.timeSent, pid)
+        }
     }
 
     private fun lossDelay(): Duration {
@@ -274,19 +323,22 @@ internal class LossDetection(
         val delay = lossDelay()
         val lostSendTime = now - delay
         lost.clear()
-        for (i in sp.sent.indices) {
-            val p = sp.sent[i]
-            if (p.pn > sp.largestAcked) break // ascending: nothing above the largest acknowledged can be declared lost
+        // only packets below the largest acknowledged can be lost, and every one more than 3 below it is (packet threshold): the walk
+        // costs the packets it declares lost plus at most 3 survivors and the tombstones between them
+        val sent = sp.sent
+        val end = sent.lowerBound(sp.largestAcked + 1)
+        for (i in sent.start until end) {
+            val p = sent.at(i) ?: continue
             if (p.timeSent <= lostSendTime || sp.largestAcked >= p.pn + 3) {
-                p.marked = true
                 lost += p
+                sent.removeAt(i)
             } else {
                 val t = p.timeSent + delay
                 if (t < sp.lossTime) sp.lossTime = t
             }
         }
         if (lost.isEmpty()) return
-        compact(sp.sent)
+        sent.trim()
         var lostBytes = 0
         var largestSent = TimeMark(Long.MIN_VALUE)
         var earliest = TimeMark(Long.MAX_VALUE)
@@ -472,11 +524,6 @@ internal class LossDetection(
         ptoCount++
         timerBase = now
         return PtoProbe(timerSpace, if (bytesInFlight > 0) 2 else 1)
-    }
-
-    /** After a Retry the Initial space keeps going with new keys: nothing to undo beyond what [discard] left (the space object is reused). */
-    fun undiscard(space: SpaceId) {
-        timerBase = timerBase
     }
 
     /** Drops the keys' space (RFC 9002 section 6.4): its packets leave the in-flight accounting and timers. */

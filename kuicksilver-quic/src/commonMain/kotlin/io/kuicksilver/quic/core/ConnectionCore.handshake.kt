@@ -91,7 +91,6 @@ internal fun ConnectionCore.onRetry(
         for (i in 0 until f.cryptoCount) cryptoStreams.send[f.cryptoLevel[i]].onLost(f.cryptoOffset[i], f.cryptoLength[i])
     }
     loss.discard(SpaceId.Initial)
-    loss.undiscard(SpaceId.Initial)
     installInitialKeys(version)
     receiver.reset()
 }

@@ -54,15 +54,12 @@ internal class ConnectionRuntime(
 
     /** Signalled after every poll: writers and stream openers retry. */
     private val tickers = ArrayList<Channel<Unit>>()
+
+    /** Tickers of [open] calls waiting for the peer's stream limit; StreamsAvailable wakes them. */
+    private val openWaiters = ArrayList<Channel<Unit>>()
     internal var serverSide = false
 
     @Volatile private var finished = false
-
-    /** The reason a finished connection closed (the deferred is complete by then). */
-    private fun closedReasonNow(): QuicException.ConnectionLost =
-        closedDeferred.let {
-            if (it.isCompleted) it.getCompleted() else QuicException.ConnectionLost.Internal("connection closed", null)
-        }
 
     @Volatile private var certificates: List<Certificate> = emptyList()
 
@@ -74,12 +71,12 @@ internal class ConnectionRuntime(
     private val role = core.role
 
     // ---- paths ----
-    /** Copy-on-write: mutated on the loop, read from application threads through [paths]. */
 
     /** The path the connection sends on, as last seen by the loop (any thread reads it; the loop re-checks before acting). */
     @Volatile internal var activePathId: PathId = PathId.Initial
         private set
 
+    /** Copy-on-write: mutated on the loop, read from application threads through [paths]. */
     @Volatile private var pathList: List<PathRuntime> = listOf(PathRuntime(this, loop, PathId.Initial, loop.localAddress, null))
     private val pathEventFlow = MutableSharedFlow<PathEvent>(extraBufferCapacity = 64)
     override val paths: List<QuicPath> get() = pathList.filter { it.stateFlow.value != PathState.Closed }
@@ -314,7 +311,9 @@ internal class ConnectionRuntime(
                     streams[e.id]?.signalReadable()
                 }
 
-                is ConnectionEvent.StreamWritable -> {}
+                is ConnectionEvent.StreamWritable -> {
+                    streams[e.id]?.ticker?.trySend(Unit) // the broadcast tick after each flush stays as the fallback
+                }
 
                 is ConnectionEvent.StreamReset -> {
                     streams[e.id]?.peerReset(e.code)
@@ -331,7 +330,9 @@ internal class ConnectionRuntime(
                 }
 
                 // both halves done and consumed: the wrapper and its ticker go
-                is ConnectionEvent.StreamsAvailable -> {}
+                is ConnectionEvent.StreamsAvailable -> {
+                    for (t in openWaiters) t.trySend(Unit)
+                }
 
                 is ConnectionEvent.Closed -> {
                     failed(e.reason)
@@ -411,7 +412,10 @@ internal class ConnectionRuntime(
         for (t in tickers) t.close(reason)
     }
 
-    private fun stream(id: Long): StreamRuntime =
+    private fun stream(
+        id: Long,
+        priority: StreamPriority = StreamPriority.Default,
+    ): StreamRuntime =
         streams.getOrPut(id) {
             StreamRuntime(
                 this,
@@ -420,6 +424,7 @@ internal class ConnectionRuntime(
                 recv =
                     (id and 2L == 0L) || !isLocal(id),
                 send = (id and 2L == 0L) || isLocal(id),
+                initialPriority = priority,
             )
         }
 
@@ -436,12 +441,13 @@ internal class ConnectionRuntime(
     ): QuicStream =
         withContext(loop.dispatcher) {
             val ticker = newTicker()
+            openWaiters += ticker
             try {
                 while (true) {
                     if (finished) throw closedDeferred.await()
                     val id = core.openStream(bidi, priority)
                     if (id >= 0) {
-                        val s = stream(id)
+                        val s = stream(id, priority)
                         loop.flush(core)
                         return@withContext s
                     }
@@ -451,6 +457,7 @@ internal class ConnectionRuntime(
                 throw IllegalStateException()
             } finally {
                 tickers.remove(ticker)
+                openWaiters.remove(ticker)
             }
         }
 

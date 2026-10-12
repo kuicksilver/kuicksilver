@@ -855,12 +855,12 @@ public final class io/kuicksilver/quic/QuicException$ConnectionLost$Timeout : io
 }
 
 public final class io/kuicksilver/quic/QuicException$ConnectionLost$TransportClosed : io/kuicksilver/quic/QuicException$ConnectionLost {
-	public fun <init> (JLjava/lang/Long;Ljava/lang/String;[BLio/kuicksilver/quic/Initiator;Ljava/lang/Throwable;)V
-	public synthetic fun <init> (JLjava/lang/Long;Ljava/lang/String;[BLio/kuicksilver/quic/Initiator;Ljava/lang/Throwable;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun <init> (JJLjava/lang/String;[BLio/kuicksilver/quic/Initiator;Ljava/lang/Throwable;)V
+	public synthetic fun <init> (JJLjava/lang/String;[BLio/kuicksilver/quic/Initiator;Ljava/lang/Throwable;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public fun createCopy ()Lio/kuicksilver/quic/QuicException$ConnectionLost$TransportClosed;
 	public synthetic fun createCopy ()Ljava/lang/Throwable;
 	public final fun getCode ()J
-	public final fun getFrameType ()Ljava/lang/Long;
+	public final fun getFrameType ()J
 	public final fun getInitiator ()Lio/kuicksilver/quic/Initiator;
 	public final fun getReason ()Ljava/lang/String;
 	public final fun getReasonBytes ()[B
@@ -992,7 +992,6 @@ public final class io/kuicksilver/quic/TimeMark$Companion {
 }
 
 public final class io/kuicksilver/quic/TimeoutKind : java/lang/Enum {
-	public static final field Disconnect Lio/kuicksilver/quic/TimeoutKind;
 	public static final field Handshake Lio/kuicksilver/quic/TimeoutKind;
 	public static final field Idle Lio/kuicksilver/quic/TimeoutKind;
 	public static final field PathValidation Lio/kuicksilver/quic/TimeoutKind;

@@ -22,6 +22,7 @@ import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.VersionProfile
 import io.kuicksilver.quic.ksl
 import io.kuicksilver.quic.quicConfig
+import io.kuicksilver.quic.recovery.SpaceId
 import io.kuicksilver.quic.server
 import kotlin.test.BeforeTest
 import kotlin.test.Test
@@ -81,6 +82,48 @@ class ReceivePathTest {
             assertTrue(maxBuffered >= 1, "Handshake packets were buffered until the keys arrived")
             assertEquals(0L, p.client.stats.datagramsDropped, "dropped")
             assertEquals(0L, p.client.stats.lostPackets, "lost")
+        } finally {
+            p.close()
+        }
+    }
+
+    @Test fun replayedPacketKeepsItsOwnEcn() {
+        // RFC 9000 section 13.4.1: a Handshake packet held for its keys arrived in a datagram marked ECT(0); when it is fed again after the
+        // (unmarked) datagram that brought the keys, it must be counted with its own mark, not the replaying datagram's
+        val p = CorePair(crypto = ksl)
+        var held: ByteArray? = null
+        var maxEct0 = 0L
+        p.filterToClient =
+            { i, b ->
+                when (i) {
+                    0 -> {
+                        held = b
+                        false
+                    }
+
+                    1 -> {
+                        p.toClient.addLast(Dgram(b, CoreFixtures.serverAddr, Ecn.Ect0))
+                        false
+                    }
+
+                    2 -> {
+                        p.toClient.addLast(Dgram(held!!, CoreFixtures.serverAddr))
+                        true
+                    }
+
+                    else -> true
+                }
+            }
+        try {
+            assertTrue(
+                p.runUntil {
+                    maxEct0 = maxOf(maxEct0, p.client.loss.space(SpaceId.Handshake).ack.ecnCounts?.get(0) ?: 0L)
+                    p.clientEvents.any { it is ConnectionEvent.HandshakeCompleted } &&
+                        p.serverEvents.any { it is ConnectionEvent.HandshakeCompleted }
+                },
+                "client=${p.closedReason(p.clientEvents)}",
+            )
+            assertTrue(maxEct0 >= 1, "the replayed Handshake packet counted as ECT(0): $maxEct0")
         } finally {
             p.close()
         }

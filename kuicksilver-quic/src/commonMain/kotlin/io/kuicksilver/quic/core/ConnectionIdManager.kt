@@ -139,7 +139,6 @@ internal class ConnectionIdManager(
 
     val localCount: Int get() = local.size
     val peerCount: Int get() = peer.size
-    val localSeqs: List<Long> get() = local.map { it.seq }
 
     /** The ID we used in the handshake (sequence 0), registered by whoever created the connection. */
     fun adoptInitialLocalCid(cid: ConnectionId) {
@@ -166,13 +165,12 @@ internal class ConnectionIdManager(
         }
     }
 
-    /** The peer's `active_connection_id_limit`: issue IDs up to min(limit, 8) in total. */
-
     /** How new local IDs are made; the endpoint sets the server CID format with its routing byte, clients keep random bytes. */
     var generator: ((Random) -> ConnectionId)? = null
 
     private fun newLocalCid(): ConnectionId = generator?.invoke(random) ?: ConnectionId(ByteArray(cidLength).also { random.nextBytes(it) })
 
+    /** The peer's `active_connection_id_limit`: issue IDs up to min(limit, 8) in total. */
     fun setPeerLimit(limit: Long) {
         target = minOf(limit, 8L).toInt()
         fill()
@@ -200,11 +198,15 @@ internal class ConnectionIdManager(
         return false
     } // indexed: no iterator per packet (allocation gate)
 
+    /** The highest retire_prior_to we sent: a lost NEW_CONNECTION_ID below it is not retransmitted (RFC 9000 section 19.15). */
+    private var issuedRetirePriorTo = 0L
+
     /** Issues one more ID that asks the peer to retire every earlier one (test hook for retire_prior_to). */
     fun issueRetiringOlder() {
         val cid = newLocalCid()
         val l = Local(nextLocalSeq++, cid, tokenFor(cid))
         l.retirePriorTo = l.seq
+        if (l.seq > issuedRetirePriorTo) issuedRetirePriorTo = l.seq
         local +=
             l
         core?.let { registrar.add(cid, it) }
@@ -216,8 +218,24 @@ internal class ConnectionIdManager(
         return null
     }
 
-    fun onNewCidLost(seq: Long) {
-        local.firstOrNull { it.seq == seq }?.sent = false
+    /**
+     * NEW_CONNECTION_ID for [seq] was lost: it is sent again unless we have since asked the peer to retire it (RFC 9000 section 5.1.2).
+     * Such an ID may never reach the peer, which then never retires it: it keeps routing until [dropAt] (3 x PTO, in case the frame
+     * arrived after all) and then leaves the registry like an ID the peer retired.
+     */
+    fun onNewCidLost(
+        seq: Long,
+        dropAt: TimeMark,
+    ) {
+        val i = local.indexOfFirst { it.seq == seq }
+        if (i < 0) return
+        if (seq >= issuedRetirePriorTo) {
+            local[i].sent = false
+            return
+        }
+        retiredLocal += local.removeAt(i)
+        retiredUntil += dropAt
+        fill()
     }
 
     fun hasPendingFrames(): Boolean {
@@ -225,8 +243,6 @@ internal class ConnectionIdManager(
         for (i in local.indices) if (!local[i].sent) return true
         return false
     }
-
-    /** The peer retired one of our IDs: drop it and issue a replacement (RFC 9000 section 5.1.2). */
 
     /** The peer retired our ID [seq]: it keeps routing until [until] (3 x PTO), then leaves the registry; a replacement is issued at once. */
     fun onPeerRetired(
@@ -239,7 +255,11 @@ internal class ConnectionIdManager(
             throw QuicWireException(TransportError.PROTOCOL_VIOLATION, 0x19, "RETIRE_CONNECTION_ID for an unissued sequence")
         }
         val i = local.indexOfFirst { it.seq == seq }
-        if (i < 0) return false // already retired: nothing to do (a glitch when it is not a retransmission)
+        if (i < 0) {
+            // still in its grace period: a retransmission, or an ID we dropped after its NEW_CONNECTION_ID was declared lost
+            for (k in 0 until retiredLocal.size) if (retiredLocal[k].seq == seq) return true
+            return false // already gone: nothing to do (a glitch)
+        }
         retiredLocal += local.removeAt(i)
         retiredUntil += until
         retiredByPeer++

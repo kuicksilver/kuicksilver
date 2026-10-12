@@ -6,6 +6,7 @@ import io.kuicksilver.quic.StreamPriority
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertTrue
 
 class StreamSchedulerTest {
     private fun stream(
@@ -47,6 +48,36 @@ class StreamSchedulerTest {
 
     @Test fun retransmissionsBeforeNewDataOnSameLevel() =
         assertEquals(listOf(8L, 0L, 4L), order(stream(0), stream(4), stream(8, retransmit = true)))
+
+    @Test fun addIsLogarithmicAtTenThousandStreams() {
+        // RFC 9000 section 21.6: the peer's stream limit sets how many streams can be live; scheduling one must not cost a pass over all of them
+        val sch = StreamScheduler()
+        val streams = List(10_000) { stream(4L * it) }
+        for (s in streams.asReversed()) sch.add(s) // descending ids: the worst case for an ordered insert
+        assertTrue(sch.comparisonsForTest < 20L * 10_000, "comparisons for 10 000 adds: ${sch.comparisonsForTest}")
+        assertEquals(0L, sch.next()!!.id)
+        for (s in streams) sch.add(s) // already scheduled: a no-op
+        assertTrue(sch.comparisonsForTest < 40L * 10_000, "comparisons after 10 000 repeated adds: ${sch.comparisonsForTest}")
+    }
+
+    @Test fun streamWithNewLossOrPriorityIsRefiled() {
+        // the queues are keyed by state that changes while a stream is queued: a loss and a priority change must move it
+        val a = stream(0)
+        val b = stream(4)
+        val sch = StreamScheduler()
+        sch.add(a)
+        sch.add(b)
+        b.markSent(0, 100)
+        b.onLost(0, 100)
+        sch.reschedule(b)
+        assertEquals(4L, sch.next()!!.id, "a retransmission goes first")
+        a.priority = StreamPriority(0)
+        sch.reschedule(a)
+        assertEquals(0L, sch.next()!!.id, "a more urgent stream goes before the retransmission")
+        sch.remove(a)
+        sch.remove(b)
+        assertTrue(sch.isEmpty)
+    }
 
     @Test fun urgencyOutOfRangeRejected() {
         assertFailsWith<IllegalArgumentException> { StreamPriority(8) }

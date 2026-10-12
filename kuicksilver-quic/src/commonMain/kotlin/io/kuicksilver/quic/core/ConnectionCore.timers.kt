@@ -167,7 +167,7 @@ internal class ConnectionLossListener(
         for (i in 0 until f.idCount) {
             when (f.idKind[i]) {
                 SentFrames.ID_RETIRE_CONNECTION_ID -> core.cids.onRetireLost(f.idValue[i])
-                SentFrames.ID_NEW_CONNECTION_ID -> core.cids.onNewCidLost(f.idValue[i])
+                SentFrames.ID_NEW_CONNECTION_ID -> core.cids.onNewCidLost(f.idValue[i], core.now + core.pto() * 3)
             }
         }
         // RFC 9221 section 5: never retransmitted, only reported
@@ -209,14 +209,16 @@ internal class ConnectionLossListener(
 
     override fun onEcnAck(
         space: SpaceId,
-        ecn: LongArray?,
+        countsPresent: Boolean,
+        countsValid: Boolean,
         newlyAckedMarked: Int,
+        ceGrew: Boolean,
         now: TimeMark,
         largestSentTime: TimeMark,
         pathId: Int,
     ) {
         val p = core.paths.byId(PathId(pathId)) ?: return // the path is gone: its ECN state too
-        val ceGrew = p.ecn.onAck(space.ordinal, ecn, newlyAckedMarked)
+        p.ecn.onAck(countsPresent, countsValid, newlyAckedMarked)
         core.ecnPathFailed(p)
         if (ceGrew &&
             (core.ceRecoveryStart == TimeMark.NEVER || largestSentTime > core.ceRecoveryStart)

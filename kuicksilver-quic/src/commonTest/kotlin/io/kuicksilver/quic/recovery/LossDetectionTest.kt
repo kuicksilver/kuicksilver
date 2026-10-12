@@ -17,6 +17,7 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.microseconds
 import kotlin.time.Duration.Companion.milliseconds
 
 class LossDetectionTest {
@@ -40,6 +41,20 @@ class LossDetectionTest {
         val acked = ArrayList<Long>()
         val lost = ArrayList<Long>()
         val events = ArrayList<String>()
+        var ecnCalls = 0
+
+        override fun onEcnAck(
+            space: SpaceId,
+            countsPresent: Boolean,
+            countsValid: Boolean,
+            newlyAckedMarked: Int,
+            ceGrew: Boolean,
+            now: TimeMark,
+            largestSentTime: TimeMark,
+            pathId: Int,
+        ) {
+            ecnCalls++
+        }
 
         override fun onAcked(
             space: SpaceId,
@@ -78,12 +93,14 @@ class LossDetectionTest {
         at: TimeMark,
         size: Int = 1200,
         ackEliciting: Boolean = true,
+        marked: Boolean = false,
     ) {
         val p = ld.space(space).newSentPacket()
         p.pn = pn
         p.timeSent = at
         p.size = size
         p.ackEliciting = ackEliciting
+        p.ecnMarked = marked
         p.inFlight =
             ackEliciting
         ld.onPacketSent(space, p, at)
@@ -92,13 +109,58 @@ class LossDetectionTest {
     private fun ack(
         vararg ranges: Pair<Long, Long>,
         delay: Long = 0,
+        ecn: LongArray? = null,
     ): AckFrameView =
         AckFrameView().also { v ->
             v.largest =
                 ranges[0].second
             ; v.ackDelay = delay
             for ((s, l) in ranges) v.addRange(s, l)
+            if (ecn != null) v.setEcn(ecn[0], ecn[1], ecn[2])
         }
+
+    @Test fun ackOfOldestPacketIsSublinear() {
+        // RFC 9002 appendix A.7 and RFC 9000 section 21.6: the peer chooses what it acknowledges and how much is outstanding; an ACK of the
+        // oldest packet must not walk every packet in flight
+        val (ld, l) = ld()
+        for (pn in 0L until 10_000L) send(ld, SpaceId.Application, pn, t0 + pn.toInt().microseconds)
+        ld.visitedForTest = 0
+        ld.onAck(SpaceId.Application, ack(0L to 0L), t0 + 100.milliseconds)
+        assertEquals(listOf(0L), l.acked)
+        assertTrue(ld.visitedForTest < 64, "packets visited for an ACK of the oldest of 10 000: ${ld.visitedForTest}")
+        assertEquals(9_999, ld.storedPackets(SpaceId.Application))
+    }
+
+    @Test fun ackOfTombstoneRangeIsSublinear() {
+        // review of k7/f1-core (RFC 9000 section 21.6): a peer repeating an ACK over a range already acknowledged must not make every
+        // frame walk the tombstones that range left behind. The packet threshold (RFC 9002 section 6.1.1) declares every packet more
+        // than 3 below the largest acknowledged lost on that same ACK, so the front skip removes the run below 999 at once and no
+        // tombstone run can sit under a live packet older than largest - 2.
+        val (ld, l) = ld()
+        for (pn in 0L until 1500L) send(ld, SpaceId.Application, pn, t0 + pn.toInt().microseconds)
+        ld.onAck(SpaceId.Application, ack(500L to 998L), t0 + 100.milliseconds)
+        assertEquals(499, l.acked.size)
+        assertEquals(500, l.lost.size, "0..499 are lost by the packet threshold")
+        assertEquals(501, ld.storedPackets(SpaceId.Application))
+        repeat(10) {
+            ld.visitedForTest = 0
+            ld.onAck(SpaceId.Application, ack(500L to 998L), t0 + 101.milliseconds)
+            assertTrue(ld.visitedForTest < 64, "slots visited for a repeated ACK of 499 tombstones: ${ld.visitedForTest}")
+        }
+        assertEquals(499, l.acked.size)
+        assertEquals(501, ld.storedPackets(SpaceId.Application))
+    }
+
+    @Test fun staleAckDoesNotReachEcnValidation() {
+        // RFC 9000 section 13.4.2.1: an ACK that does not raise the largest acknowledged packet was reordered on the way; its counts
+        // are older than the ones already validated and must not be validated (or counted) again
+        val (ld, l) = ld()
+        for (pn in 0L..3L) send(ld, SpaceId.Application, pn, t0 + pn.toInt().milliseconds, marked = true)
+        ld.onAck(SpaceId.Application, ack(3L to 3L, ecn = longArrayOf(4, 0, 0)), t0 + 100.milliseconds)
+        assertEquals(1, l.ecnCalls)
+        ld.onAck(SpaceId.Application, ack(0L to 1L, ecn = longArrayOf(2, 0, 0)), t0 + 101.milliseconds)
+        assertEquals(1, l.ecnCalls, "a stale ACK does not reach ECN validation")
+    }
 
     private fun sample(
         ld: LossDetection,
@@ -144,6 +206,16 @@ class LossDetectionTest {
         val (ld, _) = ld()
         send(ld, SpaceId.Initial, 0, t0)
         assertEquals(t0 + 999.milliseconds, ld.timeout())
+    }
+
+    @Test fun initialPtoFollowsInitialRtt() {
+        // RFC 9002 section 6.2.2: before the first sample PTO = 3 x initial RTT (quic-go's 100 ms default gives 300 ms), doubling per expiry
+        val (ld, _) = ld(config = quicConfig { initialRtt = 100.milliseconds })
+        send(ld, SpaceId.Initial, 0, t0)
+        assertEquals(t0 + 300.milliseconds, ld.timeout())
+        assertNotNull(ld.onTimeout(t0 + 300.milliseconds))
+        send(ld, SpaceId.Initial, 1, t0 + 300.milliseconds)
+        assertEquals(t0 + 300.milliseconds + 600.milliseconds, ld.timeout())
     }
 
     @Test fun appSpacePtoAddsMaxAckDelayAfterConfirmed() {

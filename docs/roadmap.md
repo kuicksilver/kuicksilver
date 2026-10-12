@@ -21,7 +21,7 @@ with Alt-Svc discovery) and the Ktor server engine, TLS 1.3 over OpenSSL 3.5 thr
 Known limits, stated on purpose:
 - A handshake under heavy loss with an ML-KEM peer: both flights span two datagrams and the RFC 9002 initial PTO
   (1 s, 2 s, 4 s before an RTT sample) gives three retransmissions before a 10 s peer timeout
-  (`spec/rfc-compliance.md`, interop `handshakecorruption`).
+  (`spec/rfc-compliance.md`, interop `handshakecorruption`); mitigated by `QuicConfig.initialRtt` (0.2.0, `guide/quic.md`).
 - No 0-RTT (ADR-0008), no HTTP/2 in the client engine (ADR-0009), no HTTP/3 server push, no certificate
   compression (RFC 8879), no OCSP/CRL checks of our own (the platform verifier decides under `TrustConfig.Platform`).
 - No macosX64 target.
@@ -37,7 +37,8 @@ Known limits, stated on purpose:
   idle close after GOAWAY with unfinished requests, QPACK on fragmented input, `te`/HEAD/204/304 edge cases,
   `keylogFile` O_NOFOLLOW, `KslLoader` directory ownership, `SessionCache` across engines.
 - `QuicConfig.initialRtt` (default 333 ms per RFC 9002; a lower value trades spurious retransmissions for a faster
-  handshake under loss) and the lossy-handshake behaviour documented in the guide.
+  handshake under loss) validated in (0, 10 s] and the lossy-handshake behaviour documented in the guide (done on
+  `k7/f1-core`).
 - QUIC server on Kotlin/Native macOS: `ksl_udp` over `sendmsg`/`recvmsg` and kqueue, the server test suites on
   `macosArm64`.
 - Coverage reports (Kover once it supports the `com.android.kotlin.multiplatform.library` plugin, or JaCoCo for the JVM only).

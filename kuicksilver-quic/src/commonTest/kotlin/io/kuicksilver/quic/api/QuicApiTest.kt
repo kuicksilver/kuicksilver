@@ -12,6 +12,7 @@ import io.kuicksilver.quic.CoreFixtures
 import io.kuicksilver.quic.Initiator
 import io.kuicksilver.quic.QuicClientConfig
 import io.kuicksilver.quic.QuicException
+import io.kuicksilver.quic.StreamPriority
 import io.kuicksilver.quic.TimeoutKind
 import io.kuicksilver.quic.quicConfig
 import io.kuicksilver.quic.runtime.KslRandom
@@ -56,6 +57,17 @@ class QuicApiTest {
                     assertEquals(2L, c.stats.keyUpdates, "a second update once the first phase was acknowledged")
                     c.close()
                     s.close()
+                }
+            }
+        }
+
+    @Test fun openedStreamReportsItsPriority() =
+        runBlocking {
+            ApiPair.open().use { p ->
+                withTimeout(20.seconds) {
+                    val (c, _) = p.connect()
+                    assertEquals(StreamPriority(1, true), c.openBidi(StreamPriority(1, true)).priority)
+                    assertEquals(StreamPriority(5), c.openUni(StreamPriority(5)).priority)
                 }
             }
         }

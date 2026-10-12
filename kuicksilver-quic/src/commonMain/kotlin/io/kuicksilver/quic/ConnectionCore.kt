@@ -6,7 +6,6 @@ import io.ktor.network.sockets.InetSocketAddress
 import io.kuicksilver.annotations.DelicateKuicksilverApi
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.native.PacketBuffer
-import io.kuicksilver.quic.VersionProfile
 import io.kuicksilver.quic.core.AmplificationLimit
 import io.kuicksilver.quic.core.CidRegistrar
 import io.kuicksilver.quic.core.ConnectionHandshakeSink
@@ -49,8 +48,10 @@ import io.kuicksilver.quic.core.requeueForProbe
 import io.kuicksilver.quic.core.setMtu
 import io.kuicksilver.quic.core.settleHandshakeValidated
 import io.kuicksilver.quic.core.silentClose
+import io.kuicksilver.quic.core.nextChallengeDelay
 import io.kuicksilver.quic.core.startValidation
 import io.kuicksilver.quic.core.switchPath
+import io.kuicksilver.quic.core.validationTimeout
 import io.kuicksilver.quic.flow.RecvFlowController
 import io.kuicksilver.quic.flow.SendFlowController
 import io.kuicksilver.quic.flow.StreamLimits
@@ -182,14 +183,15 @@ public class ConnectionCore internal constructor(
     }
 
     /**
-     * Validation state of path [id] (RFC 9000 section 8.2); [PathState.Unknown] for an id the connection does not hold, a closed path
-     * included.
+     * Validation state of path [id] (RFC 9000 section 8.2); [PathState.Closed] for a path the connection closed or evicted,
+     * [PathState.Unknown] for an id it never issued.
      */
-    public fun pathState(id: PathId): PathState = paths.byId(id)?.state ?: PathState.Unknown
+    public fun pathState(id: PathId): PathState =
+        paths.byId(id)?.state ?: if (id.value in 0 until paths.issuedIds) PathState.Closed else PathState.Unknown
 
     internal fun ecnReceivedForTest(): LongArray = loss.space(SpaceId.Application).ack.ecnCounts ?: LongArray(3)
 
-    internal fun ecnPeerCountsForTest(): LongArray = path.ecn.peerCountsForTest
+    internal fun ecnPeerCountsForTest(): LongArray = loss.space(SpaceId.Application).peerEcn
 
     // ---- DATAGRAM (RFC 9221) ----
 
@@ -705,8 +707,10 @@ public class ConnectionCore internal constructor(
                 } else if (p === paths.active &&
                     state == ConnectionState.Handshaking
                 ) {
+                    // the handshake (or its timeout) decides this path; a new validation period keeps the timer in the future
                     p.challengePending = true
-                    p.nextChallengeAt = now + pto()
+                    p.challengeDeadline = now + validationTimeout()
+                    p.nextChallengeAt = now + nextChallengeDelay(p)
                 } else {
                     onPathFailed(p)
                 }
@@ -714,7 +718,7 @@ public class ConnectionCore internal constructor(
                 now
             ) {
                 p.challengePending = true
-                p.nextChallengeAt = now + pto()
+                p.nextChallengeAt = now + nextChallengeDelay(p)
             }
         } // RFC 9000 section 8.2.4
         // QuicEndpointConfig.maxConnectionLifetime: a transport close with NO_ERROR

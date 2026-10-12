@@ -45,6 +45,9 @@ Nothing has been released yet. This section summarises the development of the fi
 - Android armeabi-v7a: the `kuicksilver-native` AAR ships `libksl.so` for arm64-v8a, armeabi-v7a and x86_64 (OpenSSL
   target `android-arm`, `minSdk` 24, 16 KiB pages); `-Pkuicksilver.android.armv7=false` leaves it out of a local build.
 - `KslLoader.availability()` and `KslLoader.isAvailable()` (`@ExperimentalKuicksilverApi`): a non-throwing check whether the native library can be used, so an application on an OS or ABI without a build falls back to another transport; `NativeAvailability.Unavailable` carries a `NativeUnavailableReason` (`NoLibraryForPlatform`, `LoadFailed`, `IntegrityMismatch`, `AbiMismatch`) and the original exception. The outcome of the one load attempt is cached: `ensureLoaded()` no longer retries after a failure and rethrows the same exception.
+- `QuicConfig.initialRtt` is validated (positive, at most 10 s) and documented: it sets the first PTO (3 x `initialRtt`,
+  doubling) and the floor of a path validation; a lower value shortens a handshake under loss at the price of spurious
+  retransmissions (`docs/guide/quic.md`, "Configuration").
 - `kuicksilver-bom`: a bill of materials that pins every module to one version (`implementation(platform("io.kuicksilver:kuicksilver-bom:<version>"))`).
 
 - **Native layer** (`kuicksilver-native`): the `ksl` C shim over OpenSSL 3.5 with one header for JNI and cinterop
@@ -77,6 +80,11 @@ Nothing has been released yet. This section summarises the development of the fi
 
 ### Changed
 
+- QUIC API for 0.2.0 (breaking, before 1.0): `QuicException.ConnectionLost.TransportClosed.frameType` is a non-null `Long`
+  (0 when no frame triggered the error; it was never null); `TimeoutKind.Disconnect`, never produced, is removed;
+  `QuicStream.priority` reports the priority the stream was opened with instead of `StreamPriority.Default`;
+  `ConnectionCore.pathState` answers `PathState.Closed` for a path the connection closed or evicted (`Unknown` stays for
+  ids it never issued), so `QuicPath.state` of a path evicted by migration reads `Closed`.
 - JVM jars and the Android AAR carry `LICENSE`, `NOTICE` and the OpenSSL license.
 - Public ABI dumps no longer include declarations marked `@InternalKuicksilverApi`.
 - TCP session resumption keeps sessions in native memory (handles instead of serialized session bytes); `ksl` ABI 3 → 4.
@@ -84,6 +92,33 @@ Nothing has been released yet. This section summarises the development of the fi
   throws `IllegalStateException`; `accept()` after `close()` throws; the outgoing datagram queue is bounded.
 
 ### Fixed
+
+Hardening of the QUIC core for 0.2.0 (review of 2026-10-08, deferred items):
+
+- QUIC: an unanswered `PATH_CHALLENGE` is repeated with an exponentially growing gap (1, 1, 2, 4 ... x PTO, so
+  three challenges fit in the 3 x PTO validation timeout) instead of once per PTO (RFC 9000 §8.2.1, §8.2.4, RFC 9002 §6.2.1).
+- QUIC server: a client that migrates several times before its new addresses can answer no longer loses its newest
+  address: with all four path slots taken, a migration abandons the oldest validation of a path the client has left
+  (RFC 9000 §8.2.4); a probe takes the slot of a validating path only after max(3 x PTO, 5 s) of silence.
+- QUIC: a handshaking server that follows a new address on an Initial no longer re-runs its timers continuously once
+  that path's validation deadline passed without a Handshake packet (one forged Initial was enough).
+- QUIC: a packet buffered until its keys arrive is processed with the ECN mark, socket, source and length of its own
+  datagram, not of the datagram that delivered the keys (RFC 9000 §13.4.1).
+- QUIC: a lost `NEW_CONNECTION_ID` whose sequence is below our own `retire_prior_to` is no longer retransmitted,
+  and that connection ID stops routing 3 x PTO after the loss instead of staying registered (RFC 9000 §5.1.2, §19.15).
+- QUIC server: a Retry token is bound to the Retry's Source Connection ID; an Initial presenting it under another DCID is
+  refused with a stateless `INVALID_TOKEN` close instead of becoming a connection (RFC 9000 §8.1.2–§8.1.4). Tokens minted
+  before this change are not accepted (they live 10 s).
+- QUIC: ECN validation looks only at ACKs that raise the largest acknowledged packet, keeps the peer's counts per packet
+  number space instead of per path, and counts newly acknowledged marked packets per path; a reordered ACK no longer
+  fails ECN on the path, and a new path no longer takes the first counts it sees for a CE signal (RFC 9000 §13.4.2.1).
+- QUIC: work a peer can trigger no longer grows with what it controls (RFC 9000 §21.6): an ACK costs a binary search per
+  range instead of a walk over every packet in flight, a `MAX_DATA` that raises nothing touches no stream, and choosing or
+  scheduling a stream is logarithmic in the number of streams instead of linear.
+- QUIC: `ConnectionEvent.StreamWritable` and `StreamsAvailable` are raised (their KDoc said "not raised in this version"):
+  after a refused write once acknowledgements free buffer room or new flow-control credit reaches waiting data, and after
+  `MAX_STREAMS` raises a limit that refused an open; the coroutine API wakes the waiting writer or `openBidi`/`openUni`
+  directly. The KDoc of `StreamFinished`, which was always raised, now says so (RFC 9000 §4.1, §4.6).
 
 Fixes from a full five-reviewer pass over the code before the first release, among them:
 

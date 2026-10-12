@@ -8,6 +8,7 @@ import io.kuicksilver.native.PacketBuffer
 import io.kuicksilver.native.of
 import io.kuicksilver.quic.CorePair
 import io.kuicksilver.quic.QuicException
+import io.kuicksilver.quic.TimeMark
 import io.kuicksilver.quic.wire.ConnectionId
 import io.kuicksilver.quic.wire.QuicWireException
 import kotlin.random.Random
@@ -51,6 +52,62 @@ class ConnectionIdTest {
         } finally {
             p.close()
         }
+    }
+
+    @Test fun lostNewCidBelowOwnRetirePriorToIsNotResent() {
+        // RFC 9000 sections 5.1.2 and 19.15: once we asked the peer to retire every ID below retire_prior_to, a lost NEW_CONNECTION_ID
+        // for one of those IDs is not retransmitted (the peer would only retire it again)
+        val m = manager()
+        m.setPeerLimit(3)
+        while (true) m.nextNewCidToSend()?.let { it.sent = true } ?: break
+        m.issueRetiringOlder()
+        while (true) m.nextNewCidToSend()?.let { it.sent = true } ?: break
+        m.onNewCidLost(1, TimeMark(1_000_000_000L))
+        assertNull(m.nextNewCidToSend(), "sequence 1 is below our own retire_prior_to: not resent")
+    }
+
+    @Test fun suppressedNewCidIsDroppedLocallyAfterThreePto() {
+        // review of k7/f1-core, RFC 9000 section 5.1.2: a lost NEW_CONNECTION_ID below our retire_prior_to is not resent, so the peer
+        // may never learn (and never retire) that ID; it stops routing 3 x PTO after the loss instead of staying registered forever
+        val removed = ArrayList<ConnectionId>()
+        val registrar =
+            object : CidRegistrar {
+                override fun add(
+                    cid: ConnectionId,
+                    core: io.kuicksilver.quic.ConnectionCore,
+                ) {}
+
+                override fun remove(cid: ConnectionId) {
+                    removed += cid
+                }
+            }
+        val m = ConnectionIdManager(localLimit = 4, retiredCap = 32, cidLength = 8, random = Random(1), registrar = registrar)
+        m.setPeerLimit(3)
+        while (true) m.nextNewCidToSend()?.let { it.sent = true } ?: break
+        m.issueRetiringOlder()
+        while (true) m.nextNewCidToSend()?.let { it.sent = true } ?: break
+        val cid = m.localForTest(1)!!.cid
+        val t = TimeMark(1_000_000_000L)
+        val dropAt = t + 300.milliseconds // 3 x PTO after the loss
+        m.onNewCidLost(1, dropAt)
+        assertNull(m.nextNewCidToSend(), "sequence 1 is still not resent")
+        val bytes = PacketBuffer.of(cid.toByteArray())
+        assertTrue(m.localMatches(bytes, 0, cid.length), "packets already in flight still route during the grace period")
+        assertEquals(dropAt, m.nextRetiredExpiry())
+        assertTrue(m.onPeerRetired(1, dropAt), "a RETIRE_CONNECTION_ID for it (the frame was not lost after all) costs no glitch")
+        m.expireRetired(dropAt)
+        assertTrue(!m.localMatches(bytes, 0, cid.length), "the ID no longer routes after 3 x PTO")
+        assertTrue(removed.any { it == cid }, "the registrar entry is removed")
+    }
+
+    @Test fun lostNewCidRetiredByPeerIsNotResent() {
+        val m = manager()
+        m.setPeerLimit(3)
+        while (true) m.nextNewCidToSend()?.let { it.sent = true } ?: break
+        m.onPeerRetired(1, TimeMark(1_000_000_000L))
+        while (true) m.nextNewCidToSend()?.let { it.sent = true } ?: break
+        m.onNewCidLost(1, TimeMark(1_000_000_000L))
+        assertNull(m.nextNewCidToSend(), "an ID the peer already retired is not resent")
     }
 
     @Test fun negative_cidLimit() {
