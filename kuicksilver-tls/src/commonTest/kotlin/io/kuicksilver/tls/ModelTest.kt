@@ -222,7 +222,9 @@ class TlsIdentityTest {
         )
         assertEquals(1, id.chain.size)
         id.close()
-        assertFailsWith<IllegalStateException> { id.privateKeyDer }
+        assertTrue(id.isClosed)
+        assertFailsWith<IllegalStateException> { id.withKey { } }
+        id.close() // idempotent
     }
 
     @Test fun keyMismatchRejected() {

@@ -1,6 +1,6 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
-@file:OptIn(InternalKuicksilverApi::class)
+@file:OptIn(InternalKuicksilverApi::class, ExperimentalAtomicApi::class)
 
 package io.kuicksilver.tls
 
@@ -11,6 +11,8 @@ import io.kuicksilver.native.Ksl
 import io.kuicksilver.native.KslConst
 import io.kuicksilver.native.KslException
 import io.kuicksilver.native.KslLoader
+import kotlin.concurrent.atomics.AtomicInt
+import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.io.encoding.Base64
 
 /** A certificate chain (leaf first, RFC 8446 section 4.4.2) and the matching private key. */
@@ -18,19 +20,48 @@ public sealed interface TlsIdentity {
     /** The certificates sent to the peer, leaf first; the leaf's public key matches the private key. */
     public val chain: List<Certificate>
 
-    /** v1: the key is held in memory (PKCS#8 DER); it is checked against `chain[0]` on creation and zeroed on [close]. */
+    /**
+     * v1: the key is parsed once into OpenSSL (a native `ksl_pkey`) and checked against `chain[0]` on creation; Kotlin keeps
+     * only the handle, never the key bytes (threat model 1, 3.7). Every context built from this identity holds its own
+     * reference, so [close] frees the key once those contexts are gone too; closing is safe while connections still run.
+     * Building a context after [close] throws [IllegalStateException].
+     */
     public class InMemory internal constructor(
         chain: List<Certificate>,
-        keyDer: ByteArray,
+        pkey: Long,
     ) : TlsIdentity,
         AutoCloseable {
         override val chain: List<Certificate> = chain.toList()
-        private var key: ByteArray? = keyDer
-        internal val privateKeyDer: ByteArray get() = key ?: throw IllegalStateException("identity closed")
+        private val pkey: Long = pkey
+
+        // 1 for the owner until close(), +1 for each use in progress; the last release frees the native key
+        private val refs = AtomicInt(1)
+
+        private val closed = AtomicInt(0)
+
+        /** Runs [block] with the native key handle; the key cannot be freed by a concurrent [close] meanwhile. */
+        internal fun <T> withKey(block: (Long) -> T): T {
+            while (true) {
+                val r = refs.load()
+                if (r == 0) throw IllegalStateException("identity closed")
+                if (refs.compareAndSet(r, r + 1)) break
+            }
+            try {
+                return block(pkey)
+            } finally {
+                release()
+            }
+        }
+
+        private fun release() {
+            if (refs.addAndFetch(-1) == 0) Ksl.pkeyFree(pkey)
+        }
+
+        /** True once [close] ran (the native key may still serve contexts built before). */
+        internal val isClosed: Boolean get() = closed.load() != 0
 
         override fun close() {
-            key?.fill(0)
-            key = null
+            if (closed.compareAndSet(0, 1)) release()
         }
     }
 
@@ -72,16 +103,27 @@ public sealed interface TlsIdentity {
             }
         }
 
-        /** DER chain (leaf first) + PKCS#8 DER key; [keyDer] is zeroed after import. */
+        /** DER chain (leaf first) + PKCS#8 DER key; [keyDer] is zeroed after import, the key then lives in OpenSSL only. */
         public fun fromDer(
             chain: List<ByteArray>,
             keyDer: ByteArray,
         ): InMemory {
             try {
                 if (chain.isEmpty()) throw TlsException.Config("empty certificate chain")
-                val copy = keyDer.copyOf()
-                checkKeyMatches(chain, copy)
-                return InMemory(chain.map { Certificate(it) }, copy)
+                KslLoader.ensureLoaded()
+                val pkey =
+                    try {
+                        Ksl.pkeyNew(keyDer)
+                    } catch (e: KslException.Internal) {
+                        throw TlsException.Config("the private key is not PKCS#8 DER: ${e.message}")
+                    }
+                try {
+                    checkKeyMatches(chain, pkey)
+                } catch (t: Throwable) {
+                    Ksl.pkeyFree(pkey)
+                    throw t
+                }
+                return InMemory(chain.map { Certificate(it) }, pkey)
             } finally {
                 keyDer.fill(0)
             }
@@ -90,12 +132,11 @@ public sealed interface TlsIdentity {
         /** Lets `ksl` (OpenSSL) confirm that the key belongs to the leaf; the temporary context is freed immediately. */
         private fun checkKeyMatches(
             chain: List<ByteArray>,
-            keyDer: ByteArray,
+            pkey: Long,
         ) {
-            KslLoader.ensureLoaded()
             val ctx = Ksl.ctxNew(KslConst.SERVER)
             try {
-                Ksl.ctxSetIdentity(ctx, chain, keyDer)
+                Ksl.ctxSetIdentityKey(ctx, chain, pkey)
             } catch (
                 e: KslException.Internal,
             ) {

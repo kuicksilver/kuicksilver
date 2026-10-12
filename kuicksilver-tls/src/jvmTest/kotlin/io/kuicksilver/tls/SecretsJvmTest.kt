@@ -132,6 +132,43 @@ class SecretsJvmTest {
     }
 
     /**
+     * An identity's private key lives in OpenSSL only (ksl ABI 5): while a [TlsIdentity.InMemory] and a context built from it
+     * are alive, a heap dump holds no copy of the EC private scalar. The key is one no other test touches, so the only heap
+     * copy is the array handed to `fromDer` (zeroed there); the needle is kept masked until the dump is written.
+     */
+    @Test fun negative_heapDumpNoIdentityPrivateKey() {
+        val der = TestCerts.clientNoEkuKey // the lazily cached array itself: fromDer zeroes it
+        val at = (0 until der.size - 34).first { der[it] == 0x04.toByte() && der[it + 1] == 0x20.toByte() && der[it - 3] == 0x02.toByte() } + 2
+        val masked = ByteArray(32) { (der[at + it].toInt() xor 0x5a).toByte() }
+        val id = TlsIdentity.fromDer(listOf(TestCerts.clientNoEku), der)
+        assertTrue(der.all { it == 0.toByte() }, "fromDer zeroes the caller's array")
+        val ctx = KslContext.create(tlsConfig(TlsRole.Server) { alpn = listOf("x"); identity = id }, quic = false)
+        val dump =
+            File.createTempFile("ksl-heap", ".hprof").also {
+                it.delete()
+                it.deleteOnExit()
+            }
+        try {
+            System.gc()
+            val bean =
+                ManagementFactory.newPlatformMXBeanProxy(
+                    ManagementFactory.getPlatformMBeanServer(),
+                    "com.sun.management:type=HotSpotDiagnostic",
+                    com.sun.management.HotSpotDiagnosticMXBean::class.java,
+                )
+            bean.dumpHeap(dump.path, true)
+            assertEquals(1, id.chain.size) // the identity is reachable while the heap is dumped
+        } finally {
+            ctx.close()
+            id.close()
+        }
+        val heap = dump.readBytes()
+        val scalar = ByteArray(32) { (masked[it].toInt() xor 0x5a).toByte() }
+        assertFalse(contains(heap, scalar), "the identity's private key was found in the heap dump")
+        assertTrue(contains(heap, "kuicksilver".encodeToByteArray()), "sanity: the dump is searchable")
+    }
+
+    /**
      * A TCP client keeps its resumption ticket for later connections. The session (master secret, resumption PSK) must stay
      * native: the heap holds a handle, never `i2d_SSL_SESSION` bytes. TLS 1.2 makes the check exact: the session's master key is the
      * `CLIENT_RANDOM` secret of the keylog. The server is a raw TLS 1.2-only `ksl` session (TlsConfig cannot cap a peer at 1.2).

@@ -41,7 +41,7 @@ val client = tlsConfig(TlsRole.Client) {
 
 ```kotlin
 // guide:tls:server-config
-val identity = TlsIdentity.fromPem(chainPem, keyPem.toCharArray())   // the key array is zeroed after import
+val identity = TlsIdentity.fromPem(chainPem, keyPem.toCharArray())   // the key array is zeroed; the key now lives in OpenSSL only
 val server = tlsConfig(TlsRole.Server) {
     alpn = listOf("http/1.1")
     this.identity = identity

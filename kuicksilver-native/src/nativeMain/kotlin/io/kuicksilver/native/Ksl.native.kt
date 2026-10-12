@@ -6,6 +6,7 @@ package io.kuicksilver.native
 
 import cnames.structs.ksl_ctx
 import cnames.structs.ksl_key
+import cnames.structs.ksl_pkey
 import cnames.structs.ksl_session
 import cnames.structs.ksl_ssl
 import cnames.structs.ksl_udp
@@ -81,6 +82,19 @@ public actual object Ksl {
         chainDer: List<ByteArray>,
         keyDer: ByteArray,
     ): Unit = frameDerList(chainDer).pin { c, cn -> keyDer.pin { k, kn -> ctxCheck(ctx, ksl_ctx_set_identity(ctx(ctx), c, cn, k, kn)) } }
+
+    private fun pkey(h: Long): CPointer<ksl_pkey>? = if (h == 0L) null else interpretCPointer(nativeNullPtr + h)
+
+    public actual fun ctxSetIdentityKey(
+        ctx: Long,
+        chainDer: List<ByteArray>,
+        pkey: Long,
+    ): Unit = frameDerList(chainDer).pin { c, cn -> ctxCheck(ctx, ksl_ctx_set_identity_pkey(ctx(ctx), c, cn, pkey(pkey))) }
+
+    // pinned, not copied: the only key bytes are the caller's array, which the caller wipes
+    public actual fun pkeyNew(der: ByteArray): Long = der.pin { p, n -> ksl_pkey_new(p, n) }.h().also { if (it == 0L) internal("not a private key") }
+
+    public actual fun pkeyFree(pkey: Long): Unit = ksl_pkey_free(pkey(pkey))
 
     public actual fun ctxSetRoots(
         ctx: Long,
