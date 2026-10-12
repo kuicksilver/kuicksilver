@@ -94,8 +94,8 @@ and public API, its internal transitions are extension functions in `core/Connec
 `EndpointCore.admission.kt` decides queued Initials. `runtime` turns the core into the coroutine API:
 `EndpointLoop` (one loop, one socket, a timer heap), `LoopGroup` (several loops on one port), `ConnectionRuntime`
 (`QuicConnection`: lifecycle, paths, datagrams), `StreamRuntime` with its ktor-io channels (`StreamChannels.kt`)
-and datagram queues. `DatagramIo` is the socket abstraction, with the accelerated `KslDatagramIo` (batched UDP with GSO,
-GRO and ECN through `ksl`) and the portable NIO or ktor-network sockets (ADR-0006).
+and datagram queues. `DatagramIo` is the socket abstraction, with the accelerated `KslDatagramIo` (batched UDP with ECN and DF
+through `ksl`, GSO/GRO on Linux; Linux, Android, Apple) and the portable NIO or ktor-network sockets (ADR-0006).
 
 **Architecture Invariant:** the core packages import no coroutines, no sockets, no clocks and no default randomness;
 `tools/check/sans-io.sh` enforces it. Only `runtime` and the coroutine-level files know about them.

@@ -14,7 +14,7 @@ import kotlin.test.assertTrue
 class ServerH3DisabledTest {
     @BeforeTest fun load() = KslLoader.ensureLoaded()
 
-    /** Where a QUIC server cannot run (Apple and Windows Native, ADR-0006) HTTP/1.1 keeps working and no Alt-Svc is sent. */
+    /** Where a QUIC server cannot run (Windows Native, ADR-0006) HTTP/1.1 keeps working and no Alt-Svc is sent. */
     @Test fun h3DisabledWhenQuicServerUnsupported() =
         serverTest {
             val (server, port) =

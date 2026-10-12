@@ -12,10 +12,10 @@ with Alt-Svc discovery) and the Ktor server engine, TLS 1.3 over OpenSSL 3.5 thr
 
 | Platform | Client | Server | UDP path |
 |---|---|---|---|
-| JVM (Linux, macOS) | yes | yes | NIO; accelerated `KslDatagramIo` on Linux |
+| JVM (Linux, macOS) | yes | yes | accelerated `KslDatagramIo` (GSO/GRO on Linux only); NIO on Windows |
 | Android (arm64-v8a, armeabi-v7a, x86_64) | yes | yes | accelerated |
 | Kotlin/Native Linux x64 / arm64 | yes | yes | accelerated |
-| Kotlin/Native macOS arm64, iOS | yes | no (ADR-0006) | portable |
+| Kotlin/Native macOS arm64, iOS | yes | yes (macOS arm64 tested; iOS compiled and linked) | accelerated, without GSO/GRO (ADR-0006) |
 | Kotlin/Native Windows (mingw x64) | yes | no | portable |
 
 Known limits, stated on purpose:
@@ -39,8 +39,8 @@ Known limits, stated on purpose:
 - `QuicConfig.initialRtt` (default 333 ms per RFC 9002; a lower value trades spurious retransmissions for a faster
   handshake under loss) validated in (0, 10 s] and the lossy-handshake behaviour documented in the guide (done on
   `k7/f1-core`).
-- QUIC server on Kotlin/Native macOS: `ksl_udp` over `sendmsg`/`recvmsg` and kqueue, the server test suites on
-  `macosArm64`.
+- QUIC server on Kotlin/Native macOS: `ksl_udp` over `sendmsg`/`recvmsg` and `poll` (kqueue not needed, ADR-0006), the
+  server test suites on `macosArm64` (done on `k7/macos-server`).
 - Coverage reports (Kover once it supports the `com.android.kotlin.multiplatform.library` plugin, or JaCoCo for the JVM only).
 - The 0-RTT anti-replay design of ADR-0013 reviewed for implementation in a later minor.
 

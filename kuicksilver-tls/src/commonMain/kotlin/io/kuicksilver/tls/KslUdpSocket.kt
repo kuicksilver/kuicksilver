@@ -190,7 +190,7 @@ public class KslUdpSocket private constructor(
         private const val CLOSED = 1 shl 29
         private const val COUNT = CLOSED - 1
 
-        /** True where `ksl_udp` works (Linux, Android): learned once by opening a loopback socket. */
+        /** True where `ksl_udp` works (Linux, Android, Apple): learned once by opening a loopback socket. */
         public val supported: Boolean by lazy {
             KslLoader.ensureLoaded()
             try {
