@@ -1,10 +1,11 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
-@file:OptIn(InternalKuicksilverApi::class, DelicateKuicksilverApi::class)
+@file:OptIn(InternalKuicksilverApi::class, DelicateKuicksilverApi::class, ExperimentalKuicksilverApi::class)
 
 package io.kuicksilver.tls
 
 import io.kuicksilver.annotations.DelicateKuicksilverApi
+import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.annotations.InternalKuicksilverApi
 import io.kuicksilver.native.Ksl
 import io.kuicksilver.native.KslConst
@@ -16,7 +17,24 @@ import io.kuicksilver.native.of
 
 /** The OpenSSL-backed [QuicCrypto]. */
 public object KslQuicCrypto : QuicCrypto {
-    override fun newSession(config: TlsConfig): QuicTlsSession = KslQuicTlsSession(KslContext.create(config, quic = true))
+    override fun newSession(config: TlsConfig): QuicTlsSession =
+        KslQuicTlsSession(KslContext.create(config, quic = true), earlyDataSession = false)
+
+    override fun newSession(
+        config: TlsConfig,
+        earlyData: Boolean,
+    ): QuicTlsSession =
+        KslQuicTlsSession(
+            KslContext.create(config, quic = true, quicTickets = earlyData, earlyData = earlyData),
+            earlyDataSession = earlyData,
+        )
+
+    /** Test hook: a server whose tickets do not allow early data (RFC 8446 section 4.2.10), to prove a client then sends no 0-RTT. */
+    internal fun newSessionForTest(
+        config: TlsConfig,
+        ticketsWithoutEarlyData: Boolean,
+    ): QuicTlsSession =
+        KslQuicTlsSession(KslContext.create(config, quic = true, quicTickets = ticketsWithoutEarlyData), earlyDataSession = true)
 
     override fun initialProtectors(
         dcid: ByteArray,
@@ -190,6 +208,7 @@ internal class KslPacketProtector(
 
 internal class KslQuicTlsSession(
     private val ctx: KslContext,
+    private val earlyDataSession: Boolean = false,
 ) : QuicTlsSession {
     private var ssl: Long = Ksl.sslNew(ctx.handle, KslConst.MODE_QUIC)
     private val event = KslEvent()
@@ -204,22 +223,7 @@ internal class KslQuicTlsSession(
     init {
         val config = ctx.config
         if (config.role == TlsRole.Client) {
-            val reference =
-                when (val t = config.trust) {
-                    is TrustConfig.ExpectedName -> {
-                        t.name
-                    }
-
-                    is TrustConfig.Pinned -> {
-                        (t.base as? TrustConfig.ExpectedName)?.name
-                            ?: config.serverName
-                    }
-
-                    else -> {
-                        config.serverName
-                    }
-                }
-                    ?: throw TlsException.Config("a client needs serverName (or ExpectedName) as the reference identifier")
+            val reference = referenceOf(config)
             val host = HostName.normalize(reference)
             this.reference = host
             sniOf(config)?.let { Ksl.sslSet(ssl, KslConst.SET_SNI, it.encodeToByteArray()) }
@@ -264,7 +268,102 @@ internal class KslQuicTlsSession(
         data: ByteArray,
         offset: Int,
         length: Int,
-    ): Unit = mapped { Ksl.quicProvide(s(), level.ksl, data, offset, length) }
+    ) {
+        mapped { Ksl.quicProvide(s(), level.ksl, data, offset, length) }
+        val sc = scan ?: return
+        if (level != EncryptionLevel.Initial) return
+        val r = sc.feed(data, offset, length) ?: return
+        scan = null
+        val id = r.ticketId
+        if (r.earlyData && id != null && admission?.admit(id) == true) {
+            admitted = id
+            mapped { Ksl.sslSet(s(), KslConst.SET_EARLY_DATA, byteArrayOf(1)) }
+        }
+    }
+
+    // ---- 0-RTT (ADR-0015) ----
+    private var scan: ClientHelloScan? = null
+    private var admission: EarlyDataAdmission? = null
+    private var admitted: ByteArray? = null // the ticket identity the register admitted, until TLS confirmed or refused the early data
+    private var resumed: QuicSessionTicket? = null
+    private var lastSession = 0L // our reference to the newest session seen, so a new ticket is told apart from it
+    private val pendingTickets = ArrayDeque<QuicSessionTicket>()
+
+    override fun resume(ticket: QuicSessionTicket): Boolean {
+        check(ctx.config.role == TlsRole.Client) { "only a client resumes" }
+        if (ticket.closed) return false
+        return try {
+            Ksl.sslSetSession(s(), ticket.entry.session)
+            resumed?.close()
+            resumed = ticket // kept until close: its chain stands in for the certificates a resumed handshake does not carry
+            true
+        } catch (_: KslException.Internal) {
+            ticket.close()
+            false
+        }
+    }
+
+    override fun enableEarlyData(
+        context: ByteArray?,
+        admission: EarlyDataAdmission?,
+    ): Boolean {
+        if (ctx.config.role == TlsRole.Client) {
+            if (resumed == null) return false
+            return try {
+                Ksl.sslSet(s(), KslConst.SET_EARLY_DATA, byteArrayOf(1))
+                true
+            } catch (_: KslException.Internal) {
+                false
+            }
+        }
+        check(earlyDataSession) { "a server session needs newSession(config, earlyData = true)" }
+        require(context != null && context.size in 1..64) { "the early-data context is 1..64 bytes" }
+        mapped { Ksl.sslSet(s(), KslConst.SET_EARLY_CONTEXT, context) }
+        if (admission != null) {
+            this.admission = admission
+            scan = ClientHelloScan()
+        }
+        return true
+    }
+
+    private fun earlyStatus(): Int = if (ssl == 0L) 0 else Ksl.sslGet(ssl, KslConst.GET_EARLY_DATA)[0].toInt()
+
+    override val earlyDataAccepted: Boolean? get() {
+        // the client counts early data as rejected until EncryptedExtensions says otherwise
+        if (ctx.config.role == TlsRole.Client && !done) return null
+        return when (earlyStatus()) {
+            2 -> true
+            1 -> false
+            else -> null
+        }
+    }
+
+    /** Server: a hello the register admitted keeps its reservation only if TLS accepted its early data. */
+    private fun settleAdmission(failed: Boolean) {
+        val id = admitted ?: return
+        val st = if (failed) 1 else earlyStatus()
+        if (st == 0) return
+        admitted = null
+        if (st != 2) admission?.release(id)
+    }
+
+    /** Client: a NewSessionTicket replaced the session; queue it as a [TlsEvent.SessionTicket]. */
+    private fun collectTicket() {
+        if (!earlyDataSession || ctx.config.role != TlsRole.Client || !done || failure != null) return
+        val h = Ksl.sslGet1Session(s())
+        if (h == 0L) return
+        if (h == lastSession || h == resumed?.entry?.session) {
+            Ksl.sessionFree(h)
+            return
+        }
+        val prev = lastSession
+        lastSession = h
+        if (prev != 0L) Ksl.sessionFree(prev)
+        val chain = resumed?.entry?.chain ?: presented
+        val validated =
+            resumed?.entry?.validated ?: if (ctx.verifyMode == KslConst.VERIFY_OPENSSL) validatedChain() else presented
+        Ksl.sslGet1Session(s()).let { pendingTickets += QuicSessionTicket(SessionCache.Entry(it, chain, validated)) }
+    }
 
     override fun drive(): DriveResult {
         failure?.let { return it }
@@ -283,8 +382,10 @@ internal class KslQuicTlsSession(
                     } else {
                         e.toTlsFailure(presented)
                     }
+                settleAdmission(failed = true)
                 return DriveResult.Failed(ex, alert).also { failure = it }
             }
+        settleAdmission(failed = false)
         return when (rc) {
             KslConst.WANT_READ -> {
                 DriveResult.WantRead
@@ -297,9 +398,10 @@ internal class KslQuicTlsSession(
 
             else -> {
                 if (!done) completed()
+                collectTicket()
                 failure ?: DriveResult.Progress
             }
-        }
+        }.also { if (rc == KslConst.WANT_READ) collectTicket() }
     }
 
     /** Handshake finished on the OpenSSL side: when ksl verified the chain itself (AnchoredCa), pins are checked here against its validated chain. */
@@ -310,9 +412,20 @@ internal class KslQuicTlsSession(
         val pinsApply =
             (config.role == TlsRole.Client && ctx.verifyMode == KslConst.VERIFY_OPENSSL) ||
                 (config.role == TlsRole.Server && config.clientAuth != ClientAuth.None && config.trust is TrustConfig.Pinned)
+        val cached =
+            resumed?.entry?.takeIf {
+                config.role == TlsRole.Client && Ksl
+                    .sslGet(
+                        s(),
+                        KslConst.GET_SESSION_REUSED,
+                    )[0]
+                    .toInt() == 1
+            }
+        // a resumed handshake carries no Certificate; the cached chain was verified again before resuming
+        if (cached != null) presented = cached.chain
         if (pinsApply) {
-            presented = Ksl.sslPeerChain(s(), KslConst.CHAIN_PRESENTED).map(::Certificate)
-            val r = verification.pinCheck(validatedChain())
+            if (cached == null) presented = Ksl.sslPeerChain(s(), KslConst.CHAIN_PRESENTED).map(::Certificate)
+            val r = verification.pinCheck(cached?.validated ?: validatedChain())
             if (r is VerifyResult.Rejected) {
                 failure =
                     DriveResult.Failed(TlsException.Verify(r.reason, presented), if (config.genericAlerts) 40 else r.reason.alertCode)
@@ -342,7 +455,7 @@ internal class KslQuicTlsSession(
             while (Ksl.quicNextEvent(s(), event)) if (event.type == KslConst.EV_KEY) Ksl.keyFree(event.key)
             return null
         } // a failed session hands out nothing, not even keys
-        if (!Ksl.quicNextEvent(s(), event)) return null
+        if (!Ksl.quicNextEvent(s(), event)) return pendingTickets.removeFirstOrNull()?.let { TlsEvent.SessionTicket(it) }
         return when (event.type) {
             KslConst.EV_CRYPTO_SEND -> {
                 TlsEvent.CryptoData(EncryptionLevel.of(event.level), event.payload)
@@ -386,7 +499,6 @@ internal class KslQuicTlsSession(
             presented
         }
     override val negotiatedAlpn: String? get() = alpn
-    override val earlyData: EarlyDataState get() = EarlyDataState.Disabled
 
     override fun exportKeyingMaterial(
         label: String,
@@ -411,9 +523,23 @@ internal class KslQuicTlsSession(
             Ksl.sslFree(ssl)
             ssl = 0L
         }
+        resumed?.close()
+        resumed = null
+        pendingTickets.forEach { it.close() }
+        pendingTickets.clear()
+        if (lastSession != 0L) Ksl.sessionFree(lastSession)
+        lastSession = 0L
         ctx.close()
     }
 }
+
+/** A client's reference identifier (RFC 9525): the ExpectedName, else the server name; Config error when there is none. */
+internal fun referenceOf(config: TlsConfig): String =
+    when (val t = config.trust) {
+        is TrustConfig.ExpectedName -> t.name
+        is TrustConfig.Pinned -> (t.base as? TrustConfig.ExpectedName)?.name ?: config.serverName
+        else -> config.serverName
+    } ?: throw TlsException.Config("a client needs serverName (or ExpectedName) as the reference identifier")
 
 /**
  * Keeps the native layer's [KslException.Internal] behind the public TLS surface: a call in the wrong state (no verification

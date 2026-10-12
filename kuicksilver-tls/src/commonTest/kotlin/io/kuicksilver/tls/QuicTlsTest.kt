@@ -62,6 +62,9 @@ internal class Pump(
     val cs = Side()
     val ss = Side()
 
+    /** Sees every event (true = from the client) before the pump handles it. */
+    var onEvent: (Boolean, TlsEvent) -> Unit = { _, _ -> }
+
     fun run(
         rounds: Int = 40,
         onVerify: ((DriveResult.WantVerify) -> VerifyResult)? = null,
@@ -75,11 +78,25 @@ internal class Pump(
                 while (true) {
                     val ev = me.nextEvent() ?: break
                     progressed = true
+                    onEvent(me === c, ev)
                     when (ev) {
-                        is TlsEvent.CryptoData -> peer.provide(ev.level, ev.data)
-                        is TlsEvent.Keys -> side.keys += ev.protector
-                        is TlsEvent.PeerTransportParameters -> side.tp = ev.encoded
-                        TlsEvent.HandshakeDone -> side.done = true
+                        is TlsEvent.CryptoData -> {
+                            peer.provide(ev.level, ev.data)
+                        }
+
+                        is TlsEvent.Keys -> {
+                            side.keys += ev.protector
+                        }
+
+                        is TlsEvent.PeerTransportParameters -> {
+                            side.tp = ev.encoded
+                        }
+
+                        TlsEvent.HandshakeDone -> {
+                            side.done = true
+                        }
+
+                        is TlsEvent.SessionTicket -> {}
                     }
                 }
                 if (r is DriveResult.Failed) return cs.last to ss.last
@@ -580,6 +597,10 @@ class QuicVersionTest {
                     val ev = me.nextEvent() ?: break
                     progressed = true
                     when (ev) {
+                        is TlsEvent.SessionTicket -> {
+                            ev.ticket.close()
+                        }
+
                         is TlsEvent.CryptoData -> {
                             if (me === s && ev.level == EncryptionLevel.Initial &&
                                 switch != null

@@ -10,7 +10,6 @@ import io.kuicksilver.quic.wire.chooseVersion
 import io.kuicksilver.tls.Certificate
 import io.kuicksilver.tls.Direction
 import io.kuicksilver.tls.DriveResult
-import io.kuicksilver.tls.EarlyDataState
 import io.kuicksilver.tls.EncryptionLevel
 import io.kuicksilver.tls.QuicTlsSession
 import io.kuicksilver.tls.TlsConfig
@@ -162,7 +161,6 @@ internal class NullTlsSession(
     override var negotiatedAlpn: String? = null
         private set
     override val peerCertificates: List<Certificate> get() = emptyList()
-    override val earlyData: EarlyDataState get() = EarlyDataState.Disabled
 
     /** Deterministic stand-in: the label and context bytes, repeated or cut to [length]. */
     override fun exportKeyingMaterial(

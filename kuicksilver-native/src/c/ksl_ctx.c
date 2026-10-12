@@ -56,7 +56,7 @@ static SSL_TICKET_RETURN ticket_dec_cb(SSL *ssl, SSL_SESSION *sess, const unsign
     case SSL_TICKET_SUCCESS: case SSL_TICKET_SUCCESS_RENEW: {
         void *d = NULL; size_t l = 0;
         if (s) s->early_ctx_match = SSL_SESSION_get0_ticket_appdata(sess, &d, &l) == 1 && l > 0 && l == s->early_ctx_len && !memcmp(d, s->early_ctx, l);
-        return status == SSL_TICKET_SUCCESS ? SSL_TICKET_RETURN_USE : SSL_TICKET_RETURN_USE_RENEW;
+        return SSL_TICKET_RETURN_USE_RENEW;   /* client tickets are single-use: every resumption gets a fresh one */
     }
     case SSL_TICKET_EMPTY: case SSL_TICKET_NO_DECRYPT: return SSL_TICKET_RETURN_IGNORE_RENEW;
     default: return SSL_TICKET_RETURN_IGNORE;

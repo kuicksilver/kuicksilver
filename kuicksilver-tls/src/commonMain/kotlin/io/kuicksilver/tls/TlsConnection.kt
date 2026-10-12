@@ -11,6 +11,7 @@ import io.ktor.utils.io.cancel
 import io.ktor.utils.io.readAvailable
 import io.ktor.utils.io.writeFully
 import io.kuicksilver.annotations.DelicateKuicksilverApi
+import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.annotations.InternalKuicksilverApi
 import io.kuicksilver.native.Ksl
 import io.kuicksilver.native.KslConst
@@ -625,6 +626,9 @@ public class SessionCache(
         var session: Long = session
             private set
 
+        /** What a QUIC transport stores with the ticket (the server's transport parameters, RFC 9000 section 7.4.1). */
+        var remembered: ByteArray? = null
+
         /** True once [close] ran: the native reference is released (tests observe eviction through it). */
         var closed: Boolean = false
             private set
@@ -711,6 +715,47 @@ public class SessionCache(
     public suspend fun size(): Int = mutex.withLock { entries.size }
 
     internal suspend fun peek(key: String): Boolean = mutex.withLock { entries.containsKey(key) }
+
+    /**
+     * QUIC (ADR-0015): takes the ticket stored for [config] (single use) and checks its cached chain again against the
+     * current trust (pins, platform or custom verdict), as a TCP resumption does; null when there is none or the chain no
+     * longer passes (the ticket is then dropped).
+     */
+    @ExperimentalKuicksilverApi
+    public suspend fun takeQuic(config: TlsConfig): QuicSessionTicket? {
+        val e = take(quicKey(config)) ?: return null
+        val verdict =
+            try {
+                val v = Verification(config)
+                if (KslContext.verifyModeFor(config) == KslConst.VERIFY_OPENSSL) {
+                    v.pinCheck(e.validated)
+                } else {
+                    v.verify(e.chain, HostName.normalize(referenceOf(config)))
+                }
+            } catch (t: Throwable) {
+                e.close()
+                throw t
+            }
+        if (verdict is VerifyResult.Rejected) {
+            e.close()
+            return null
+        }
+        return QuicSessionTicket(e)
+    }
+
+    /** QUIC: stores [ticket] for [config], replacing the previous one of that origin. */
+    @ExperimentalKuicksilverApi
+    public suspend fun putQuic(
+        config: TlsConfig,
+        ticket: QuicSessionTicket,
+    ) {
+        if (ticket.closed) return
+        put(quicKey(config), ticket.entry)
+    }
+
+    private fun quicKey(config: TlsConfig): String =
+        "quic|" + config.alpn.joinToString(",") + "|" +
+            key(config.serverName, HostName.normalize(referenceOf(config)).value, config.trust, config.identity)
 }
 
 internal expect fun nowSeconds(): Long

@@ -44,7 +44,9 @@ final enum class io.kuicksilver.tls/Direction : kotlin/Enum<io.kuicksilver.tls/D
 }
 
 final enum class io.kuicksilver.tls/EarlyDataState : kotlin/Enum<io.kuicksilver.tls/EarlyDataState> { // io.kuicksilver.tls/EarlyDataState|null[0]
+    enum entry Allowed // io.kuicksilver.tls/EarlyDataState.Allowed|null[0]
     enum entry Disabled // io.kuicksilver.tls/EarlyDataState.Disabled|null[0]
+    enum entry Required // io.kuicksilver.tls/EarlyDataState.Required|null[0]
 
     final val entries // io.kuicksilver.tls/EarlyDataState.entries|#static{}entries[0]
         final fun <get-entries>(): kotlin.enums/EnumEntries<io.kuicksilver.tls/EarlyDataState> // io.kuicksilver.tls/EarlyDataState.entries.<get-entries>|<get-entries>#static(){}[0]
@@ -146,6 +148,11 @@ abstract fun interface io.kuicksilver.tls/KeylogSink { // io.kuicksilver.tls/Key
     }
 }
 
+abstract interface io.kuicksilver.tls/EarlyDataAdmission { // io.kuicksilver.tls/EarlyDataAdmission|null[0]
+    abstract fun admit(kotlin/ByteArray): kotlin/Boolean // io.kuicksilver.tls/EarlyDataAdmission.admit|admit(kotlin.ByteArray){}[0]
+    abstract fun release(kotlin/ByteArray) // io.kuicksilver.tls/EarlyDataAdmission.release|release(kotlin.ByteArray){}[0]
+}
+
 abstract interface io.kuicksilver.tls/PacketProtector : kotlin/AutoCloseable { // io.kuicksilver.tls/PacketProtector|null[0]
     abstract val aead // io.kuicksilver.tls/PacketProtector.aead|{}aead[0]
         abstract fun <get-aead>(): io.kuicksilver.tls/Aead // io.kuicksilver.tls/PacketProtector.aead.<get-aead>|<get-aead>(){}[0]
@@ -172,15 +179,16 @@ abstract interface io.kuicksilver.tls/QuicCrypto { // io.kuicksilver.tls/QuicCry
     abstract fun newSession(io.kuicksilver.tls/TlsConfig): io.kuicksilver.tls/QuicTlsSession // io.kuicksilver.tls/QuicCrypto.newSession|newSession(io.kuicksilver.tls.TlsConfig){}[0]
     abstract fun newTokenKey(): io.kuicksilver.tls/TokenKey // io.kuicksilver.tls/QuicCrypto.newTokenKey|newTokenKey(){}[0]
     abstract fun retryIntegrityTag(kotlin/Int, kotlin/ByteArray, kotlin/ByteArray): kotlin/ByteArray // io.kuicksilver.tls/QuicCrypto.retryIntegrityTag|retryIntegrityTag(kotlin.Int;kotlin.ByteArray;kotlin.ByteArray){}[0]
+    open fun newSession(io.kuicksilver.tls/TlsConfig, kotlin/Boolean): io.kuicksilver.tls/QuicTlsSession // io.kuicksilver.tls/QuicCrypto.newSession|newSession(io.kuicksilver.tls.TlsConfig;kotlin.Boolean){}[0]
 }
 
 abstract interface io.kuicksilver.tls/QuicTlsSession : kotlin/AutoCloseable { // io.kuicksilver.tls/QuicTlsSession|null[0]
-    abstract val earlyData // io.kuicksilver.tls/QuicTlsSession.earlyData|{}earlyData[0]
-        abstract fun <get-earlyData>(): io.kuicksilver.tls/EarlyDataState // io.kuicksilver.tls/QuicTlsSession.earlyData.<get-earlyData>|<get-earlyData>(){}[0]
     abstract val negotiatedAlpn // io.kuicksilver.tls/QuicTlsSession.negotiatedAlpn|{}negotiatedAlpn[0]
         abstract fun <get-negotiatedAlpn>(): kotlin/String? // io.kuicksilver.tls/QuicTlsSession.negotiatedAlpn.<get-negotiatedAlpn>|<get-negotiatedAlpn>(){}[0]
     abstract val peerCertificates // io.kuicksilver.tls/QuicTlsSession.peerCertificates|{}peerCertificates[0]
         abstract fun <get-peerCertificates>(): kotlin.collections/List<io.kuicksilver.tls/Certificate> // io.kuicksilver.tls/QuicTlsSession.peerCertificates.<get-peerCertificates>|<get-peerCertificates>(){}[0]
+    open val earlyDataAccepted // io.kuicksilver.tls/QuicTlsSession.earlyDataAccepted|{}earlyDataAccepted[0]
+        open fun <get-earlyDataAccepted>(): kotlin/Boolean? // io.kuicksilver.tls/QuicTlsSession.earlyDataAccepted.<get-earlyDataAccepted>|<get-earlyDataAccepted>(){}[0]
 
     abstract fun drive(): io.kuicksilver.tls/DriveResult // io.kuicksilver.tls/QuicTlsSession.drive|drive(){}[0]
     abstract fun exportKeyingMaterial(kotlin/String, kotlin/ByteArray?, kotlin/Int): kotlin/ByteArray // io.kuicksilver.tls/QuicTlsSession.exportKeyingMaterial|exportKeyingMaterial(kotlin.String;kotlin.ByteArray?;kotlin.Int){}[0]
@@ -190,6 +198,8 @@ abstract interface io.kuicksilver.tls/QuicTlsSession : kotlin/AutoCloseable { //
     abstract fun setQuicVersion(kotlin/Int) // io.kuicksilver.tls/QuicTlsSession.setQuicVersion|setQuicVersion(kotlin.Int){}[0]
     abstract fun setTransportParameters(kotlin/ByteArray) // io.kuicksilver.tls/QuicTlsSession.setTransportParameters|setTransportParameters(kotlin.ByteArray){}[0]
     abstract suspend fun verifyPeer(kotlin.collections/List<io.kuicksilver.tls/Certificate>): io.kuicksilver.tls/VerifyResult // io.kuicksilver.tls/QuicTlsSession.verifyPeer|verifyPeer(kotlin.collections.List<io.kuicksilver.tls.Certificate>){}[0]
+    open fun enableEarlyData(kotlin/ByteArray?, io.kuicksilver.tls/EarlyDataAdmission?): kotlin/Boolean // io.kuicksilver.tls/QuicTlsSession.enableEarlyData|enableEarlyData(kotlin.ByteArray?;io.kuicksilver.tls.EarlyDataAdmission?){}[0]
+    open fun resume(io.kuicksilver.tls/QuicSessionTicket): kotlin/Boolean // io.kuicksilver.tls/QuicTlsSession.resume|resume(io.kuicksilver.tls.QuicSessionTicket){}[0]
 }
 
 abstract interface io.kuicksilver.tls/ResetKey : kotlin/AutoCloseable { // io.kuicksilver.tls/ResetKey|null[0]
@@ -256,6 +266,13 @@ sealed interface io.kuicksilver.tls/TlsEvent { // io.kuicksilver.tls/TlsEvent|nu
             final fun <get-encoded>(): kotlin/ByteArray // io.kuicksilver.tls/TlsEvent.PeerTransportParameters.encoded.<get-encoded>|<get-encoded>(){}[0]
         final val negotiatedVersion // io.kuicksilver.tls/TlsEvent.PeerTransportParameters.negotiatedVersion|{}negotiatedVersion[0]
             final fun <get-negotiatedVersion>(): kotlin/Int // io.kuicksilver.tls/TlsEvent.PeerTransportParameters.negotiatedVersion.<get-negotiatedVersion>|<get-negotiatedVersion>(){}[0]
+    }
+
+    final class SessionTicket : io.kuicksilver.tls/TlsEvent { // io.kuicksilver.tls/TlsEvent.SessionTicket|null[0]
+        constructor <init>(io.kuicksilver.tls/QuicSessionTicket) // io.kuicksilver.tls/TlsEvent.SessionTicket.<init>|<init>(io.kuicksilver.tls.QuicSessionTicket){}[0]
+
+        final val ticket // io.kuicksilver.tls/TlsEvent.SessionTicket.ticket|{}ticket[0]
+            final fun <get-ticket>(): io.kuicksilver.tls/QuicSessionTicket // io.kuicksilver.tls/TlsEvent.SessionTicket.ticket.<get-ticket>|<get-ticket>(){}[0]
     }
 
     final object HandshakeDone : io.kuicksilver.tls/TlsEvent // io.kuicksilver.tls/TlsEvent.HandshakeDone|null[0]
@@ -486,6 +503,17 @@ final class io.kuicksilver.tls/PacketProtectionException : kotlinx.io/IOExceptio
     constructor <init>(kotlin/String) // io.kuicksilver.tls/PacketProtectionException.<init>|<init>(kotlin.String){}[0]
 }
 
+final class io.kuicksilver.tls/QuicSessionTicket : kotlin/AutoCloseable { // io.kuicksilver.tls/QuicSessionTicket|null[0]
+    final val closed // io.kuicksilver.tls/QuicSessionTicket.closed|{}closed[0]
+        final fun <get-closed>(): kotlin/Boolean // io.kuicksilver.tls/QuicSessionTicket.closed.<get-closed>|<get-closed>(){}[0]
+
+    final var remembered // io.kuicksilver.tls/QuicSessionTicket.remembered|{}remembered[0]
+        final fun <get-remembered>(): kotlin/ByteArray? // io.kuicksilver.tls/QuicSessionTicket.remembered.<get-remembered>|<get-remembered>(){}[0]
+        final fun <set-remembered>(kotlin/ByteArray?) // io.kuicksilver.tls/QuicSessionTicket.remembered.<set-remembered>|<set-remembered>(kotlin.ByteArray?){}[0]
+
+    final fun close() // io.kuicksilver.tls/QuicSessionTicket.close|close(){}[0]
+}
+
 final class io.kuicksilver.tls/ServerTlsOverride { // io.kuicksilver.tls/ServerTlsOverride|null[0]
     constructor <init>(io.kuicksilver.tls/TlsIdentity, kotlin.collections/List<kotlin/String>? = ..., io.kuicksilver.tls/ClientAuth? = ..., io.kuicksilver.tls/TrustConfig? = ...) // io.kuicksilver.tls/ServerTlsOverride.<init>|<init>(io.kuicksilver.tls.TlsIdentity;kotlin.collections.List<kotlin.String>?;io.kuicksilver.tls.ClientAuth?;io.kuicksilver.tls.TrustConfig?){}[0]
 
@@ -677,6 +705,7 @@ final object io.kuicksilver.tls/KslQuicCrypto : io.kuicksilver.tls/QuicCrypto { 
     final fun initialProtectors(kotlin/ByteArray, kotlin/Int, io.kuicksilver.tls/TlsRole): kotlin/Pair<io.kuicksilver.tls/PacketProtector, io.kuicksilver.tls/PacketProtector> // io.kuicksilver.tls/KslQuicCrypto.initialProtectors|initialProtectors(kotlin.ByteArray;kotlin.Int;io.kuicksilver.tls.TlsRole){}[0]
     final fun newResetKey(): io.kuicksilver.tls/ResetKey // io.kuicksilver.tls/KslQuicCrypto.newResetKey|newResetKey(){}[0]
     final fun newSession(io.kuicksilver.tls/TlsConfig): io.kuicksilver.tls/QuicTlsSession // io.kuicksilver.tls/KslQuicCrypto.newSession|newSession(io.kuicksilver.tls.TlsConfig){}[0]
+    final fun newSession(io.kuicksilver.tls/TlsConfig, kotlin/Boolean): io.kuicksilver.tls/QuicTlsSession // io.kuicksilver.tls/KslQuicCrypto.newSession|newSession(io.kuicksilver.tls.TlsConfig;kotlin.Boolean){}[0]
     final fun newTokenKey(): io.kuicksilver.tls/TokenKey // io.kuicksilver.tls/KslQuicCrypto.newTokenKey|newTokenKey(){}[0]
     final fun retryIntegrityTag(kotlin/Int, kotlin/ByteArray, kotlin/ByteArray): kotlin/ByteArray // io.kuicksilver.tls/KslQuicCrypto.retryIntegrityTag|retryIntegrityTag(kotlin.Int;kotlin.ByteArray;kotlin.ByteArray){}[0]
 }
