@@ -133,6 +133,30 @@ class ServerH3Test {
             }
         }
 
+    /** `te` is a request-only field (RFC 9110 section 10.1.4): the engine drops it from an HTTP/3 response like the other hop-by-hop fields. */
+    @Test fun teStrippedFromH3Response() =
+        serverTest {
+            val (server, port) =
+                tlsServer {
+                    routing {
+                        get("/") {
+                            call.response.header("TE", "trailers")
+                            call.respondText("ok")
+                        }
+                    }
+                }
+            try {
+                h3(port) { c ->
+                    val r = c.request(get())
+                    assertEquals(200, r.status)
+                    assertNull(r.headers["te"])
+                    assertEquals("ok", r.body.readFullBody().decodeToString())
+                }
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
     @Test fun altSvcOnH1Responses() =
         serverTest {
             val (server, port) = tlsServer { routing { get("/") { call.respondText("ok") } } }

@@ -42,7 +42,14 @@ internal suspend fun handleRequestStream(
             return@with
         }
     }
-    val frames = RequestFrames(st.input, isServerSide = true, maxHeadersFrame = maxHeadersFrame, onBuffered = { bufferedHeaderBytes += it })
+    val frames =
+        RequestFrames(
+            st.input,
+            isServerSide = true,
+            maxHeadersFrame = maxHeadersFrame,
+            onSkipped = { glitch("unknown frame on a request stream") },
+            onBuffered = { bufferedHeaderBytes += it },
+        )
     val first =
         try {
             frames.next()
@@ -260,11 +267,12 @@ internal class ServerRequestImpl(
         done()
     }
 
+    /** Response fields: no pseudo-headers, no connection-specific fields, and no `te` (a request-only field, RFC 9110 section 10.1.4). */
     private fun validateFields(headers: Http3Headers) {
         for ((n, v) in headers.fields) {
             require(
                 !n.startsWith(':') && FieldValidator.checkName(n) == null && FieldValidator.checkValue(v) == null &&
-                    n !in FieldValidator.CONNECTION_SPECIFIC,
+                    n !in FieldValidator.CONNECTION_SPECIFIC && n != "te",
             ) { "invalid response field '$n'" }
         }
     }

@@ -86,15 +86,22 @@ internal object FieldValidator {
         }
     }
 
-    /** Validates the regular fields of a message; throws [MalformedMessage]. */
+    /**
+     * Validates one regular field of a message; throws [MalformedMessage]. `te` is a request field (RFC 9110 section
+     * 10.1.4) and may only say `trailers` (RFC 9114 section 4.2); in a response or in trailers ([request] false) it is malformed.
+     */
     fun checkRegular(
         name: String,
         value: String,
+        request: Boolean,
     ) {
         checkName(name)?.let { throw MalformedMessage("$it: '$name'") }
         checkValue(value)?.let { throw MalformedMessage("$it in '$name'") }
         if (name in CONNECTION_SPECIFIC) throw MalformedMessage("connection-specific field '$name'")
-        if (name == "te" && value != "trailers") throw MalformedMessage("te other than trailers")
+        if (name == "te") {
+            if (!request) throw MalformedMessage("te in a response")
+            if (value != "trailers") throw MalformedMessage("te other than trailers")
+        }
     }
 }
 
@@ -125,7 +132,7 @@ internal object PseudoHeaders {
                 FieldValidator.checkValue(v)?.let { throw MalformedMessage("$it in $n") }
                 pseudo[n] = v
             } else {
-                FieldValidator.checkRegular(n, v)
+                FieldValidator.checkRegular(n, v, request = true)
                 regular += n to v
             }
         }
@@ -171,7 +178,7 @@ internal object PseudoHeaders {
                 if (status != null) throw MalformedMessage("duplicate :status")
                 status = v
             } else {
-                FieldValidator.checkRegular(n, v)
+                FieldValidator.checkRegular(n, v, request = false)
                 regular += n to v
             }
         }
@@ -185,7 +192,7 @@ internal object PseudoHeaders {
     fun parseTrailers(fields: List<Pair<String, String>>): Http3Headers {
         for ((n, v) in fields) {
             if (n.startsWith(':')) throw MalformedMessage("pseudo-header $n in trailers")
-            FieldValidator.checkRegular(n, v)
+            FieldValidator.checkRegular(n, v, request = false)
         }
         return Http3Headers(fields)
     }

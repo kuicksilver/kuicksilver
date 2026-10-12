@@ -135,10 +135,13 @@ private suspend fun H3Session.exchange(
             if (!stoppedWithNoError(e)) throw e
         }
         val frames =
-            RequestFrames(st.input, isServerSide = false, maxHeadersFrame = maxHeadersFrame, onBuffered = {
-                bufferedHeaderBytes +=
-                    it
-            })
+            RequestFrames(
+                st.input,
+                isServerSide = false,
+                maxHeadersFrame = maxHeadersFrame,
+                onSkipped = { glitch("unknown frame on a request stream") },
+                onBuffered = { bufferedHeaderBytes += it },
+            )
         var interim = 0
         while (true) {
             when (val f = frames.next()) {
@@ -199,11 +202,12 @@ private suspend fun H3Session.exchange(
                         headers,
                         frames,
                         sender,
-                        expectBody =
-                            !(
-                                r.method == "HEAD" ||
-                                    (r.method == "CONNECT" && status in 200..299)
-                            ),
+                        bodyLimit =
+                            when {
+                                r.method == "CONNECT" && status in 200..299 -> null // a tunnel: no message framing
+                                r.method == "HEAD" || status == 204 || status == 304 -> 0L // no content (RFC 9110 sections 9.3.2, 15.3.5, 15.4.5)
+                                else -> contentLength(headers)
+                            },
                     )
                 }
             }
@@ -286,7 +290,11 @@ private suspend fun H3Session.sendBody(
     }
 }
 
-/** [expectBody] is false for a HEAD response or a 2xx to CONNECT: their content-length describes no body (RFC 9114 section 4.1.2). */
+/**
+ * [bodyLimit] is how many DATA bytes the response may carry: 0 for HEAD, 204 and 304 (any DATA is a malformed message),
+ * the `content-length` otherwise, null when unbounded (no `content-length`, or a 2xx to CONNECT whose content-length
+ * describes no body, RFC 9114 section 4.1.2).
+ */
 internal class ResponseImpl(
     private val session: H3Session,
     internal val stream: QuicStream,
@@ -294,7 +302,7 @@ internal class ResponseImpl(
     override val headers: Http3Headers,
     frames: RequestFrames,
     private val sender: Job?,
-    expectBody: Boolean = true,
+    bodyLimit: Long? = null,
 ) : Http3Response {
     private val st get() = stream
     override val streamId: Long get() = st.id
@@ -305,19 +313,7 @@ internal class ResponseImpl(
     override val trailers: Deferred<Http3Headers?> get() = trailersDeferred
     internal val pump: Job =
         session.scope.launch {
-            session.pumpBody(
-                st,
-                frames,
-                bodyChannel,
-                trailersDeferred,
-                if (!expectBody || status == 204 ||
-                    status == 304
-                ) {
-                    null
-                } else {
-                    contentLength(headers)
-                },
-            ) { f -> session.run { abortClient(f.code) } }
+            session.pumpBody(st, frames, bodyChannel, trailersDeferred, bodyLimit) { f -> session.run { abortClient(f.code) } }
         }
 
     private suspend fun abortClient(code: Long) {

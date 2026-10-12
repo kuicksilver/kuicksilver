@@ -75,6 +75,11 @@ K7 (0.2.0), HTTP/3 and the Ktor engines:
 - A QPACK encoder-stream instruction cut into many fragments by the transport was re-copied and re-parsed per
   fragment (quadratic in its length); it is now appended to once and parsed when its known length has arrived
   (RFC 9204 section 7.4).
+- Request-stream frame hygiene: a flood of unknown frames on a request stream spends glitch tokens and closes the
+  connection with `H3_EXCESSIVE_LOAD` like one on the control stream (RFC 9114 section 7.2.8); DATA on a response to
+  HEAD or with status 204 or 304 is a malformed message (`Http3Exception.MessageError`) instead of a body; `te` is
+  accepted in requests only — a response or trailers carrying it are malformed, the server engine drops it from
+  application responses (RFC 9110 section 10.1.4).
 
 Fixes from a full five-reviewer pass over the code before the first release, among them:
 

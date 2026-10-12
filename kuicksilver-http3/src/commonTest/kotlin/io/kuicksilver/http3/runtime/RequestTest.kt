@@ -19,9 +19,12 @@ import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.quicConfig
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelChildren
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
@@ -248,6 +251,56 @@ class RequestTest {
                 assertEquals("abc", r.body.readAllBytes().decodeToString())
             }
         }
+
+    /** RFC 9114 section 7.2.8 / 8.1: unknown frames are skipped, but a flood of them is useless work that spends glitch tokens. */
+    @Test fun unknownFramesOnRequestStreamSpendGlitchTokens() =
+        h3Test {
+            QuicPair.open().use { q ->
+                val (c, s) = q.connect()
+                Http3Connection.server(s)
+                val raw = RawPeer(c)
+                raw.openControl()
+                val st = c.openBidi()
+                val one = raw.frame(0x21, ByteArray(0))
+                val flood = ByteArray(one.size * 1001)
+                for (i in 0 until 1001) one.copyInto(flood, i * one.size)
+                st.output.writeFully(flood)
+                st.output.flush()
+                assertEquals(Http3ErrorCode.EXCESSIVE_LOAD, peerSawClose(c))
+            }
+        }
+
+    /** RFC 9114 section 4.1.2 / RFC 9110 sections 9.3.2, 15.3.5, 15.4.5: DATA on a response that has no content is malformed. */
+    private suspend fun CoroutineScope.dataOnBodilessResponseIsMessageError(
+        method: String,
+        status: Int,
+    ) {
+        QuicPair.open().use { q ->
+            val (c, s) = q.connect()
+            val client = Http3Connection.client(c)
+            val raw = RawPeer(s)
+            raw.openControl()
+            client.peerSettings.filterNotNull().first()
+            val served =
+                async {
+                    val st = s.acceptBidi()
+                    st.output.writeFully(raw.headers(st.id, listOf(":status" to status.toString())) + raw.data("hello".encodeToByteArray()))
+                    st.output.flushAndClose()
+                    st
+                }
+            val resp = client.request(Http3Request(method, authority = "server.test", path = "/"))
+            assertEquals(status, resp.status)
+            val e = assertFailsWith<Http3Exception.MessageError> { resp.body.readAllBytes() }
+            assertEquals(served.await().id, e.streamId)
+            assertTrue(!client.closed.isCompleted, "a stream error, not a connection error")
+        }
+    }
+
+    @Test fun dataInHeadResponseIsMessageError() = h3Test { dataOnBodilessResponseIsMessageError("HEAD", 200) }
+
+    @Test fun dataIn204ResponseIsMessageError() = h3Test { dataOnBodilessResponseIsMessageError("GET", 204) }
+
+    @Test fun dataIn304ResponseIsMessageError() = h3Test { dataOnBodilessResponseIsMessageError("GET", 304) }
 
     @Test fun cancelledRequestStopsStreamAndConnectionSurvives() =
         h3Test {

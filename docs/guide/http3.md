@@ -39,8 +39,9 @@ val client = Http3Connection.client(quicConnection, settings)
 
 Requests and responses are validated as RFC 9114 sections 4.2-4.3 require. A malformed message (a field name that is
 not a lowercase token, CR, LF or NUL anywhere, whitespace at either end of a value, a connection-specific field such
-as `transfer-encoding`, a missing or duplicated pseudo-header, `:authority` and `host` that disagree) is a *stream*
-error: the stream is reset with `H3_MESSAGE_ERROR` and the connection keeps serving other requests.
+as `transfer-encoding`, `te` other than `trailers` or `te` in a response, a missing or duplicated pseudo-header,
+`:authority` and `host` that disagree, DATA on a response to HEAD or with status 204 or 304) is a *stream* error: the
+stream is reset with `H3_MESSAGE_ERROR` and the connection keeps serving other requests.
 
 Failures surface as `Http3Exception`:
 
@@ -129,8 +130,8 @@ new request, with `Http3Exception.RequestNotProcessed(retrySafe = true)`: they w
 again on a new connection (the Ktor engine does that by itself). A client's own `goAway()` sends GOAWAY(0) and stops
 issuing requests.
 
-A peer that keeps sending frames nobody needs (unknown frames on the control stream, empty unidirectional streams,
-PRIORITY_UPDATE floods) spends tokens of a glitch bucket (1000 tokens, 33 per second); an empty bucket closes the
+A peer that keeps sending frames nobody needs (unknown frames on the control stream or on a request stream, empty
+unidirectional streams, PRIORITY_UPDATE floods) spends tokens of a glitch bucket (1000 tokens, 33 per second); an empty bucket closes the
 connection with `H3_EXCESSIVE_LOAD`. `Http3Settings.glitchProtection = false` turns this off.
 
 ## Priorities

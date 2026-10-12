@@ -127,7 +127,10 @@ internal sealed interface RequestFrame {
     object End : RequestFrame
 }
 
-/** Frame reader for a request stream (RFC 9114 section 4.1): reserved and unknown frames are skipped as they stream by. */
+/**
+ * Frame reader for a request stream (RFC 9114 section 4.1): reserved and unknown frames are skipped as they stream by
+ * (section 7.2.8); [onSkipped] is called for each, so a flood of them can spend glitch tokens (section 8.1).
+ */
 internal class RequestFrames(
     val input: ByteReadChannel,
     private val isServerSide: Boolean,
