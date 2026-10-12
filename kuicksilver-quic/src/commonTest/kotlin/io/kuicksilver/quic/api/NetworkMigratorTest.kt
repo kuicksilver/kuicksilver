@@ -18,10 +18,13 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -388,6 +391,34 @@ class NetworkMigratorTest {
                     assertTrue(c.paths.size <= 2, "paths stay bounded: ${c.paths.map { it.localAddress }}")
                     ping(c, s)
                     m.close()
+                    collector.cancel()
+                    c.close()
+                }
+            }
+        }
+
+    @Test fun networkSourceFailureDoesNotCancelCallerScope() =
+        runBlocking {
+            ApiPair.open().use { p ->
+                withTimeout(60.seconds) {
+                    val (c, s) = p.connect()
+                    val caller = CoroutineScope(coroutineContext + Job()) // the application's scope
+                    // like registerDefaultNetworkCallback throwing TooManyRequestsException
+                    val source =
+                        flow<Int?> {
+                            emit(1)
+                            throw IllegalStateException("too many requests")
+                        }
+                    val m = NetworkMigrator(c, source, { error("no network change") }, caller)
+                    val (events, collector) = eventsOf(m)
+                    val job = m.start()
+                    val e = assertIs<MigrationEvent.SourceFailed>(events.receive())
+                    assertEquals("too many requests", e.cause.message)
+                    job.join()
+                    assertTrue(caller.isActive, "the caller's scope survives")
+                    assertFalse(job.isCancelled, "the migrator ended normally")
+                    ping(c, s)
+                    caller.cancel()
                     collector.cancel()
                     c.close()
                 }

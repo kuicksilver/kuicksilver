@@ -290,6 +290,15 @@ sealed interface <#A: out kotlin/Any?> io.kuicksilver.quic/MigrationEvent { // i
         final fun toString(): kotlin/String // io.kuicksilver.quic/MigrationEvent.Migrated.toString|toString(){}[0]
     }
 
+    final class SourceFailed : io.kuicksilver.quic/MigrationEvent<kotlin/Nothing> { // io.kuicksilver.quic/MigrationEvent.SourceFailed|null[0]
+        constructor <init>(kotlin/Throwable) // io.kuicksilver.quic/MigrationEvent.SourceFailed.<init>|<init>(kotlin.Throwable){}[0]
+
+        final val cause // io.kuicksilver.quic/MigrationEvent.SourceFailed.cause|{}cause[0]
+            final fun <get-cause>(): kotlin/Throwable // io.kuicksilver.quic/MigrationEvent.SourceFailed.cause.<get-cause>|<get-cause>(){}[0]
+
+        final fun toString(): kotlin/String // io.kuicksilver.quic/MigrationEvent.SourceFailed.toString|toString(){}[0]
+    }
+
     final object NetworkLost : io.kuicksilver.quic/MigrationEvent<kotlin/Nothing> { // io.kuicksilver.quic/MigrationEvent.NetworkLost|null[0]
         final fun equals(kotlin/Any?): kotlin/Boolean // io.kuicksilver.quic/MigrationEvent.NetworkLost.equals|equals(kotlin.Any?){}[0]
         final fun hashCode(): kotlin/Int // io.kuicksilver.quic/MigrationEvent.NetworkLost.hashCode|hashCode(){}[0]

@@ -20,6 +20,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.isActive
@@ -42,6 +43,8 @@ import kotlin.concurrent.atomics.ExperimentalAtomicApi
  * - `null` (no network) emits [MigrationEvent.NetworkLost] and waits: the next network is migrated to, unless it is the one the
  *   connection is still on. Like Chromium's QUIC session pool, the connection is not closed on a network loss; its idle timeout
  *   decides if no network comes back.
+ * - If [networks] throws, [MigrationEvent.SourceFailed] is the last event and the migrator stops; the exception never reaches
+ *   [scope]. When [networks] completes, the migrator stops too.
  * - Repeated equal values are ignored. A change while a migration runs supersedes it: the unfinished path and its socket are
  *   closed and nothing is reported for it.
  *
@@ -129,7 +132,9 @@ public class NetworkMigrator<N : Any>(
 
     private suspend fun follow() {
         var path: QuicPath? = null // the path of the last migration; only a fallback for when the connection has no active path
-        networks.distinctUntilChanged().collectLatest { n ->
+        var failure: Throwable? = null
+        // a failing source (Android: registerDefaultNetworkCallback throws TooManyRequestsException) ends the migrator, never the caller's scope
+        networks.catch { failure = it }.distinctUntilChanged().collectLatest { n ->
             val current = onNetwork.value
             when {
                 n == null -> {
@@ -157,6 +162,7 @@ public class NetworkMigrator<N : Any>(
                 }
             }
         }
+        failure?.let { eventFlow.tryEmit(MigrationEvent.SourceFailed(it)) }
     }
 
     /**
@@ -247,4 +253,16 @@ public sealed interface MigrationEvent<out N> {
 
     /** The source reported no network; the migrator waits for the next one and leaves the connection as it is. */
     public data object NetworkLost : MigrationEvent<Nothing>
+
+    /**
+     * The network source failed with [cause] (on Android, for example, the system refused another network callback); the
+     * migrator has stopped, its job completed normally, and the connection stays where it is. The last event.
+     */
+    public class SourceFailed(
+        /** What the source threw. */
+        public val cause: Throwable,
+    ) : MigrationEvent<Nothing> {
+        /** For logs. */
+        override fun toString(): String = "SourceFailed($cause)"
+    }
 }

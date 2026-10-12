@@ -268,10 +268,14 @@ server advertised `disable_active_migration` (RFC 9000 section 18.2), the new so
 where it was and `events` reports `Failed(network, cause)`. A `null` means no network: `NetworkLost` is reported and the
 migrator waits; the connection is not closed (its idle timeout decides), and if the same network comes back nothing
 moves. Repeated values are ignored, and a change during a migration supersedes it: the unfinished path is closed and
-nothing is reported for it. `network` is the network the connection is on as far as the migrator knows. `close()`
-stops following (a migration in flight is abandoned and its socket closed) but leaves the connection open; the
-migrator also stops when the connection ends. Only a client migrates (RFC 9000 section 9): a server connection is
-refused with `IllegalArgumentException`.
+nothing is reported for it (`openIo` itself is not cancelled, so keep it short: the socket it returns is closed). The
+path closed after a migration is the one the connection was really on, also when it moved since (a fallback, the peer).
+`network` is the network the connection is on as far as the migrator knows. `close()` (thread-safe, like `start()`)
+stops following: a migration that has not switched yet is abandoned and its path and socket closed, one already
+switching completes and reports `Migrated`; the connection stays open. The migrator also stops when the connection
+ends, without a `Failed` for the migration it cut short. If the network flow throws, `SourceFailed(cause)` is the last
+event and the migrator stops; the exception never reaches `scope`. Only a client migrates (RFC 9000 section 9): a
+server connection is refused with `IllegalArgumentException`.
 
 On Android, `followDefaultNetwork` does the wiring (API 24+):
 
@@ -282,7 +286,9 @@ lifecycleScope.launch { migrator.events.collect { Log.i("quic", "$it") } }
 ```
 
 It feeds `ConnectivityManager.registerDefaultNetworkCallback` into a started `NetworkMigrator` (`cm.defaultNetworks()`
-is the flow alone; the callback is unregistered when the migrator stops) and opens each new socket with
+is the flow alone). All migrators of one `ConnectivityManager` share a single callback, registered with the first and
+unregistered after the last, because Android refuses more than about 100 callbacks per app (`TooManyRequestsException`,
+reported as `SourceFailed`). It opens each new socket with
 `DatagramIo.open(local, network, prefer)`, which binds it to that network with `Network.bindSocket` before it carries a
 datagram: the portable socket before `bind`, the accelerated one through a duplicate of its descriptor that is closed
 again. The default network at the call is taken as the one the connection is on (a socket that is not bound to a

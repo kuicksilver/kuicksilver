@@ -39,11 +39,19 @@ public suspend fun DatagramIo.Companion.open(
 
 /**
  * The device's default network (`ConnectivityManager.registerDefaultNetworkCallback`, API 24) as a [NetworkMigrator]
- * source: the current default first, then each new one, null while there is none. The callback is unregistered when
- * collection ends. Needs `ACCESS_NETWORK_STATE`, which the library manifest declares.
+ * source: the current default first, then each new one, null while there is none. All collectors of one manager share a
+ * single callback (Android allows about 100 per app, so one per connection would run out in a large pool); it is registered
+ * with the first collector and unregistered when the last one stops. When registering throws (`TooManyRequestsException`),
+ * every current collection ends with that exception and the next collection tries again; a [NetworkMigrator] reports it as
+ * [MigrationEvent.SourceFailed]. Needs `ACCESS_NETWORK_STATE`, which the library manifest declares.
  */
 @ExperimentalKuicksilverApi
-public fun ConnectivityManager.defaultNetworks(): Flow<Network?> =
+public fun ConnectivityManager.defaultNetworks(): Flow<Network?> = sharedDefaultNetworks[this]
+
+/** One default-network callback per manager. */
+private val sharedDefaultNetworks = SharedPerKey<ConnectivityManager, Network?> { it.registerDefaultNetworks() }
+
+private fun ConnectivityManager.registerDefaultNetworks(): Flow<Network?> =
     defaultNetworkUpdates { available, lost ->
         val callback =
             object : ConnectivityManager.NetworkCallback() {
@@ -69,6 +77,19 @@ public fun QuicConnection.followDefaultNetwork(
     local: InetSocketAddress? = null,
     prefer: IoPreference = IoPreference.Accelerated,
 ): NetworkMigrator<Network> {
-    val bindTo = local ?: InetSocketAddress(if (paths.firstOrNull()?.remoteAddress?.resolveAddress()?.size == 16) "::" else "0.0.0.0", 0)
+    val bindTo =
+        local ?: InetSocketAddress(
+            if (paths
+                    .firstOrNull()
+                    ?.remoteAddress
+                    ?.resolveAddress()
+                    ?.size == 16
+            ) {
+                "::"
+            } else {
+                "0.0.0.0"
+            },
+            0,
+        )
     return NetworkMigrator(this, connectivity.defaultNetworks(), { n -> DatagramIo.open(bindTo, n, prefer) }, scope).also { it.start() }
 }
