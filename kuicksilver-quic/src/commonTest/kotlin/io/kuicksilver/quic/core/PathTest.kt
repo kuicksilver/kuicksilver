@@ -312,7 +312,8 @@ class PathTest {
     }
 
     @Test fun pathChallengeRepeatsBackOff() {
-        // RFC 9000 section 8.2.1 and RFC 9002 section 6.2.1: an unanswered PATH_CHALLENGE is repeated with an exponentially growing gap, not once per PTO
+        // RFC 9000 section 8.2.1 and RFC 9002 section 6.2.1: an unanswered PATH_CHALLENGE is repeated after 1 PTO twice (three
+        // attempts inside the 3 x PTO validation timeout, as quic-go), then with an exponentially growing gap, not once per PTO
         val (p, c) = connected()
         try {
             val id = c.addPath(p.serverAddr, p.now)
@@ -323,11 +324,38 @@ class PathTest {
             val t1 = path.nextChallengeAt
             c.onTimeout(t1)
             val g2 = path.nextChallengeAt - t1
-            assertTrue(g2 >= g1 * 2, "second gap $g2 is at least twice the first $g1")
+            assertEquals(g1, g2, "the second repeat follows after the same PTO")
             val t2 = path.nextChallengeAt
             c.onTimeout(t2)
             val g3 = path.nextChallengeAt - t2
             assertTrue(g3 >= g2 * 2, "third gap $g3 is at least twice the second $g2")
+            val t3 = path.nextChallengeAt
+            if (path.state == PathState.Validating) {
+                c.onTimeout(t3)
+                val g4 = path.nextChallengeAt - t3
+                if (path.state == PathState.Validating) assertTrue(g4 >= g3 * 2, "fourth gap $g4 is at least twice the third $g3")
+            }
+        } finally {
+            p.close()
+        }
+    }
+
+    @Test fun newPathGetsThreeChallengesBeforeDeadline() {
+        // RFC 9000 section 8.2.4: three PATH_CHALLENGEs (at 0, 1 and 2 PTO) go out before the 3 x PTO validation timeout
+        // a 1 ms initialRtt keeps the 6 x initialRtt floor out of the way: the deadline is 3 x PTO
+        val (p, c) = connected(clientQuic = quicConfig { initialRtt = 1.milliseconds })
+        try {
+            assertEquals(c.pto() * 3, c.validationTimeout())
+            val id = c.addPath(p.serverAddr, p.now)
+            c.probePath(id, p.now)
+            val path = c.paths.byId(id)!!
+            val deadline = path.challengeDeadline
+            var attempts = 1
+            while (path.state == PathState.Validating && path.nextChallengeAt < deadline) {
+                c.onTimeout(path.nextChallengeAt)
+                attempts++
+            }
+            assertTrue(attempts >= 3, "$attempts PATH_CHALLENGEs before the validation deadline")
         } finally {
             p.close()
         }

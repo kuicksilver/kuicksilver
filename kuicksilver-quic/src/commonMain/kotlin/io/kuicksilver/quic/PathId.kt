@@ -27,7 +27,7 @@ public enum class PathState {
     Unknown,
 
     /**
-     * A PATH_CHALLENGE is outstanding; it is repeated after 1, 2, 4 ... x PTO until an answer or the timeout (RFC 9000 section 8.2.1).
+     * A PATH_CHALLENGE is outstanding; it is repeated after 1, 1, 2, 4 ... x PTO until an answer or the timeout (RFC 9000 section 8.2.1).
      */
     Validating,
 
