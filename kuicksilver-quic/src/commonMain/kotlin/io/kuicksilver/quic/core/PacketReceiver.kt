@@ -13,6 +13,7 @@ import io.kuicksilver.quic.TransportError
 import io.kuicksilver.quic.VersionProfile
 import io.kuicksilver.quic.crypto.PacketProtection
 import io.kuicksilver.quic.recovery.SpaceId
+import io.kuicksilver.quic.stream.ReassemblyFull
 import io.kuicksilver.quic.wire.AckFrameView
 import io.kuicksilver.quic.wire.FrameDecoder
 import io.kuicksilver.quic.wire.PacketHeaderCodec
@@ -289,6 +290,10 @@ internal class PacketReceiver(
         val ackEliciting =
             try {
                 FrameDecoder.decode(reader, type, frames, ackView)
+            } catch (_: ReassemblyFull) {
+                // not acknowledged, so the peer resends it; the frames before the refused one are idempotent (K7 F2.9)
+                c.datagramsDropped++
+                return true
             } catch (e: QuicWireException) {
                 c.fail(
                     e.code,

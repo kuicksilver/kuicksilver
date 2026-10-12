@@ -308,8 +308,8 @@ class DatagramCoreTest {
                 p.batch.clear()
                 check(p.client.poll(p.batch, p.now) == 1)
                 val ping = p.batch.buffer(0).toByteArray(p.batch.length(0))
-                val header = 1 + 8 + (ping[0].toInt() and 0x03) + 1 // Null crypto: plaintext header, zero tag
-                val d = ping.copyOf(header) + byteArrayOf(0x30) + ByteArray(payload) { 0x61 } + ByteArray(16)
+                val header = 1 + 8 + (ping[0].toInt() and 0x03) + 1 // Null crypto: plaintext header, the tag carries the packet number
+                val d = ping.copyOf(header) + byteArrayOf(0x30) + ByteArray(payload) { 0x61 } + ping.copyOfRange(ping.size - 16, ping.size)
                 val b = PacketBuffer.of(d)
                 try {
                     s.handleDatagram(b, d.size, io.kuicksilver.quic.CoreFixtures.clientAddr, io.kuicksilver.quic.Ecn.NotEct, p.now)

@@ -7,7 +7,7 @@ import io.kuicksilver.native.KslLoader
 import io.kuicksilver.native.PacketBuffer
 import io.kuicksilver.quic.stream.RangeBudget
 import io.kuicksilver.quic.stream.Reassembler
-import io.kuicksilver.quic.wire.QuicWireException
+import io.kuicksilver.quic.stream.ReassemblyFull
 import java.util.BitSet
 
 /**
@@ -45,7 +45,7 @@ class ReassemblerFuzzTest {
                         val before = r.rangeCount
                         try {
                             r.insert(offset, src, pad, len)
-                        } catch (e: QuicWireException) {
+                        } catch (e: ReassemblyFull) {
                             check(r.rangeCount == before) { "a refused insert changed the ranges" }
                             check(before >= 4 || budget.used >= budget.max) { "refused below the limits: ${e.message}" }
                             continue

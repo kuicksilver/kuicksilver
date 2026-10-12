@@ -77,14 +77,14 @@ class NullCryptoTest {
                 TlsIdentity.fromDer(listOf(TestCerts.server), TestCerts.serverKey.copyOf())
         }
 
-    @Test fun nullSealAppendsSixteenZeroBytes() {
+    @Test fun nullSealAppendsTheZeroPaddedPacketNumber() {
         val (_, w) = NullCryptoProvider.initialProtectors(ByteArray(8), 1, TlsRole.Client)
         val h = PacketBuffer.of(byteArrayOf(1, 2))
         val p = PacketBuffer.allocate(40)
         try {
             p.copyFrom(ByteArray(10) { 7 }, 0, 4, 10)
-            assertEquals(26, w.seal(1, h, 0, 2, p, 4, 10))
-            assertContentEquals(ByteArray(10) { 7 } + ByteArray(16), p.toByteArray(30).copyOfRange(4, 30))
+            assertEquals(26, w.seal(0x0102, h, 0, 2, p, 4, 10))
+            assertContentEquals(ByteArray(10) { 7 } + ByteArray(14) + byteArrayOf(1, 2), p.toByteArray(30).copyOfRange(4, 30))
         } finally {
             h.close()
             p.close()
@@ -92,13 +92,16 @@ class NullCryptoTest {
         }
     }
 
-    @Test fun nullOpenRejectsNonZeroTag() {
+    @Test fun nullOpenRejectsAWrongTag() {
         val (r, _) = NullCryptoProvider.initialProtectors(ByteArray(8), 1, TlsRole.Server)
         val h = PacketBuffer.of(byteArrayOf(1))
         val p = PacketBuffer.allocate(40)
         try {
-            assertEquals(4, r.open(1, h, 1, p, 20))
+            assertEquals(4, r.open(0, h, 1, p, 20))
             p[19] = 1
+            assertFailsWith<PacketProtectionException> { r.open(0, h, 1, p, 20) }
+            assertEquals(4, r.open(1, h, 1, p, 20))
+            p[10] = 1
             assertFailsWith<PacketProtectionException> { r.open(1, h, 1, p, 20) }
         } finally {
             h.close()

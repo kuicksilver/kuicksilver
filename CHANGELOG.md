@@ -15,6 +15,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 Nothing has been released yet. This section summarises the development of the first 0.x version.
 
 ### Fixed
+
+- QUIC: a burst of losses that left more than `maxReassemblyRanges` gaps in a stream (every other packet lost within one RTT, e.g. a full receive buffer) closed the connection with FLOW_CONTROL_ERROR although the peer stayed within flow control; the packet that would open one gap too many is now dropped unacknowledged and retransmitted by the peer, and the memory bound is unchanged (RFC 9000 §21.7).
 - `FileAltSvcStore` persists on Android API 24-25: kotlinx-io's `atomicMove` needs `java.nio.file` (API 26), so every write failed and the store silently kept alternatives in memory only; it now falls back to `java.io.File.renameTo`, and a store that cannot be written logs one warning.
 - `keylogFile` (and `keylogFile(context)`) on Android below API 26 throws `IllegalArgumentException` (the file cannot be checked without `java.nio.file`) instead of `NoClassDefFoundError`.
 - `KslUdpSocket.supported` answers false when its loopback probe fails for any reason (for example `bind` refused by the App Sandbox) instead of throwing, and `DatagramIo.open` falls back to the portable socket when the accelerated one is refused at bind time, with one line on standard error.
