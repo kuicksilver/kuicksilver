@@ -114,6 +114,10 @@ internal class LoopGroup private constructor(
             val first =
                 KslDatagramIo.open(local, reusePort = true)
                     ?: throw UnsupportedOperationException("loops > 1 needs the accelerated transport (Linux, Android)")
+            if (!first.reusePortGranted) {
+                first.close()
+                throw UnsupportedOperationException("loops > 1 needs SO_REUSEPORT with flow hashing (Linux, Android); Darwin has none")
+            }
             val ios = ArrayList<KslDatagramIo>(config.loops)
             ios += first
             try {

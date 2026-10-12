@@ -149,8 +149,15 @@ void run_udp(void) {
               for (int tries = 0; tries < 10 && !got; tries++) ksl_udp_recv(v6, rb, rc, rl, ra, re, 1, &got, 100);
               CHECK(got == 1 && rl[0] == 63 && re[0] == 2, "ECT(0) arrives over IPv6 loopback"); }
             ksl_udp_close(v6); } }
-        /* udp_reuseport_two_sockets_one_port */
-        { uint8_t l1[KSL_UDP_ADDR_LEN]; ksl_udp *r1 = open_lo(KSL_UDP_REUSEPORT, l1); CHECK(r1 != NULL, "reuseport socket 1"); if (r1) { uint32_t err = 0; char msg[128] = {0}; ksl_udp *r2 = ksl_udp_open(l1, KSL_UDP_REUSEPORT, &err, msg, sizeof msg); CHECK(r2 != NULL, "second socket on the same port with REUSEPORT"); if (r2) ksl_udp_close(r2); ksl_udp_close(r1); } }
+        /* udp_reuseport_two_sockets_one_port (Linux); udp_reuseport_not_granted_on_apple: Darwin hands unicast UDP to one of the
+           SO_REUSEPORT sockets only (no flow hashing), so the flag is never granted there and a second bind on the port fails */
+        { uint8_t l1[KSL_UDP_ADDR_LEN]; ksl_udp *r1 = open_lo(KSL_UDP_REUSEPORT, l1); CHECK(r1 != NULL, "reuseport socket 1"); if (r1) { uint32_t err = 0; char msg[128] = {0}; ksl_udp *r2 = ksl_udp_open(l1, KSL_UDP_REUSEPORT, &err, msg, sizeof msg);
+#ifdef __APPLE__
+            CHECK(!(caps_of(r1, NULL) & KSL_UDP_REUSEPORT), "REUSEPORT not granted on Darwin"); CHECK(r2 == NULL && err == KSL_E_BAD_ARG, "second socket on the same port refused");
+#else
+            CHECK(caps_of(r1, NULL) & KSL_UDP_REUSEPORT, "REUSEPORT granted"); CHECK(r2 != NULL, "second socket on the same port with REUSEPORT");
+#endif
+            if (r2) ksl_udp_close(r2); ksl_udp_close(r1); } }
         /* udp_close_wakes_blocked_recv: a receive blocked with a long timeout returns within 100 ms of close */
         { uint8_t lc[KSL_UDP_ADDR_LEN]; ksl_udp *c = open_lo(0, lc); CHECK(c != NULL, "socket for close test"); if (c) { CHECK(ksl_udp_close_wakes_for_test(c) <= 100, "shutdown wakes a blocked recv within 100 ms"); } }
         /* udp_shutdown_then_calls_fail_fast: a shut socket answers KSL_ERROR to send and recv without waiting; close after shutdown is fine */

@@ -28,7 +28,9 @@ ksl_udp *ksl_udp_open(const uint8_t addr[KSL_UDP_ADDR_LEN], int flags, uint32_t 
 #ifdef SO_NOSIGPIPE
     setsockopt(u->fd, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof one);   /* Darwin: an error never raises SIGPIPE in the host process */
 #endif
+#ifdef __linux__   /* Darwin has SO_REUSEPORT but hands unicast UDP to one of the sockets only (no flow hashing): loops would starve, so never granted there */
     if (flags & KSL_UDP_REUSEPORT) { if (setsockopt(u->fd, SOL_SOCKET, SO_REUSEPORT, &one, sizeof one) == 0) u->granted |= KSL_UDP_REUSEPORT; }
+#endif
     if (u->family == AF_INET6) setsockopt(u->fd, IPPROTO_IPV6, IPV6_V6ONLY, &one, sizeof one);
     struct sockaddr_storage ss; socklen_t sl = to_sockaddr(addr, &ss);
     if (bind(u->fd, (struct sockaddr *)&ss, sl) != 0) { int e = errno; if (err) *err = KSL_E_BAD_ARG; if (msg && msglen) snprintf(msg, msglen, "bind: %s", strerror(e)); close(u->fd); free(u); return NULL; }
