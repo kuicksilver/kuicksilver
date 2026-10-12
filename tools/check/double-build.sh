@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Copyright 2026 The Kuicksilver Authors
 # SPDX-License-Identifier: Apache-2.0
-# Reproducibility gate (spec 8.8, review I8): two builds from two different checkout paths must be byte-identical.
+# Reproducibility gate (review I8): two builds from two different checkout paths must be byte-identical.
 #   OpenSSL: build/openssl/<target> (as built here) against a fresh build in build/double-build/b (no build.sh cache);
 #   libksl:  libksl.a (tools/build-ksl-a.sh), its ksl_ossl_-prefixed archives and map, and the JNI library of the target
 #            (tools/build-jni.sh on macOS, tools/build-android-so.sh for Android) built in build/double-build/a and .../b.

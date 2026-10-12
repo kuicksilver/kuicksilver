@@ -1,8 +1,7 @@
 # Copyright 2026 The Kuicksilver Authors
 # SPDX-License-Identifier: Apache-2.0
-# ClusterFuzzLite PR fuzzing of the Jazzer targets (.clusterfuzzlite/). DISABLED until the repository is published:
-# the job carries `if: false`; remove it after the first public push, once the build has been checked on a runner.
-# Before enabling, pin the two actions by commit digest (Renovate's helpers:pinGitHubActionDigests does it).
+# ClusterFuzzLite PR fuzzing of the Jazzer targets (.clusterfuzzlite/). Off until the repository variable KSL_CFLITE is
+# 'true' (set it after the first public push, once the build has been checked on a runner); actions pinned by commit SHA.
 name: ClusterFuzzLite PR fuzzing
 on:
   pull_request:
@@ -19,7 +18,7 @@ on:
 permissions: read-all
 jobs:
   PR:
-    if: false   # disabled until first publication (see the header)
+    if: vars.KSL_CFLITE == 'true'   # off until the first publication (see the header)
     runs-on: ubuntu-latest
     concurrency:
       group: ${{ github.workflow }}-${{ matrix.sanitizer }}-${{ github.ref }}
@@ -32,14 +31,14 @@ jobs:
     steps:
       - name: Build Fuzzers (${{ matrix.sanitizer }})
         id: build
-        uses: google/clusterfuzzlite/actions/build_fuzzers@v1
+        uses: google/clusterfuzzlite/actions/build_fuzzers@884713a6c30a92e5e8544c39945cd7cb630abcd1 # v1
         with:
           language: jvm
           github-token: ${{ secrets.GITHUB_TOKEN }}
           sanitizer: ${{ matrix.sanitizer }}
       - name: Run Fuzzers (${{ matrix.sanitizer }})
         id: run
-        uses: google/clusterfuzzlite/actions/run_fuzzers@v1
+        uses: google/clusterfuzzlite/actions/run_fuzzers@884713a6c30a92e5e8544c39945cd7cb630abcd1 # v1
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           fuzz-seconds: 600

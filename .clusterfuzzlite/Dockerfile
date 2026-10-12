@@ -9,7 +9,8 @@
 #
 # Status: prepared, not run yet (enabled after the repository is published; see .github/workflows/cflite_pr.yml).
 
-FROM gcr.io/oss-fuzz-base/base-builder-jvm
+# pinned by digest (tools/check/pins.sh; resolved from gcr.io 2026-10-12, Renovate updates it)
+FROM gcr.io/oss-fuzz-base/base-builder-jvm@sha256:bd13a763de1a0fb22099442094e7e0049657a8c47f01e9d7af8bb849e0ad4699
 
 # OpenSSL build and verification: perl for Configure, gnupg + curl for fetch.sh (shasum ships with perl).
 RUN apt-get update && apt-get install -y --no-install-recommends perl gnupg curl make zip && rm -rf /var/lib/apt/lists/*

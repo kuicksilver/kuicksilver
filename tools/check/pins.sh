@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Copyright 2026 The Kuicksilver Authors
 # SPDX-License-Identifier: Apache-2.0
-# Supply-chain pins (spec 8.8, review I8): every GitHub action by a full commit SHA with a version comment, every Dockerfile base
+# Supply-chain pins (review I8): every GitHub action by a full commit SHA with a version comment, every Dockerfile base
 # image by digest, the Gradle wrapper by distributionSha256Sum, and no owner placeholder (OWNER-FILL-IN) left anywhere.
 # Usage: pins.sh [root]
 set -uo pipefail

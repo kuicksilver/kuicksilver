@@ -30,7 +30,7 @@ KSL_SIM_ARGS=(:kuicksilver-testing:jvmTest -Pkuicksilver.sim.runs=200 --tests "i
 # Runtime image for the linuxArm64 test.kexe: the K/N arm64 sysroot needs glibc 2.25 > manylinux2014 (K1 ruling, task 14).
 KSL_UBUNTU_IMAGE="ubuntu:24.04@sha256:534baea6a22c03a63003dbc8dbe78fe34bc0d7e595d9a9dc9834884ff530eb55"
 
-# QUIC Interop Runner (spec 9.4): the full case list for the JVM image, the subset for the Kotlin/Native image, the peers.
+# QUIC Interop Runner: the full case list for the JVM image, the subset for the Kotlin/Native image, the peers.
 KSL_INTEROP_CASES="handshake,transfer,longrtt,chacha20,multiplexing,retry,keyupdate,blackhole,ecn,amplificationlimit,handshakeloss,transferloss,handshakecorruption,transfercorruption,ipv6,v2,rebind-port,rebind-addr,http3"
 KSL_INTEROP_NATIVE_CASES="handshake,transfer,retry,keyupdate,ecn,rebind-port,http3"
 KSL_INTEROP_PEERS="quic-go ngtcp2 quiche picoquic quinn msquic"
