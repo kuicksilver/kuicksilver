@@ -1,0 +1,51 @@
+// Copyright 2026 The Kuicksilver Authors
+// SPDX-License-Identifier: Apache-2.0
+package io.kuicksilver.ktor.server
+
+import io.ktor.network.sockets.InetSocketAddress
+import io.ktor.server.response.respondText
+import io.ktor.server.routing.get
+import io.ktor.server.routing.routing
+import io.ktor.utils.io.readRemaining
+import io.kuicksilver.http3.Http3Endpoint
+import io.kuicksilver.http3.Http3Request
+import io.kuicksilver.native.KslLoader
+import kotlinx.io.readByteArray
+import kotlin.experimental.ExperimentalNativeApi
+import kotlin.native.OsFamily
+import kotlin.native.Platform
+import kotlin.test.BeforeTest
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertTrue
+
+/** The engine serves HTTP/3 on Kotlin/Native where the accelerated UDP socket exists (Linux, Apple; ADR-0006); Windows has none. */
+@OptIn(ExperimentalNativeApi::class)
+class NativeServerH3Test {
+    @BeforeTest fun load() = KslLoader.ensureLoaded()
+
+    @Test fun h3ServedAndAdvertisedOnNative() =
+        serverTest {
+            if (Platform.osFamily == OsFamily.WINDOWS) return@serverTest // ServerH3DisabledTest covers the refusal
+            val (server, port) = tlsServer { routing { get("/") { call.respondText("native h3") } } }
+            try {
+                val resp = rawHttp(port, "GET / HTTP/1.1\r\nHost: server.test\r\nConnection: close\r\n\r\n")
+                assertTrue(resp.contains("Alt-Svc: h3=\":$port\""), resp)
+                val ep = Http3Endpoint.bind(InetSocketAddress("127.0.0.1", 0))
+                try {
+                    val c = ep.connect(InetSocketAddress("127.0.0.1", port), ServerFixtures.clientTls(alpn = listOf("h3")))
+                    try {
+                        val r = c.request(Http3Request("GET", authority = "server.test", path = "/"))
+                        assertEquals(200, r.status)
+                        assertEquals("native h3", r.body.readRemaining().readByteArray().decodeToString())
+                    } finally {
+                        c.close()
+                    }
+                } finally {
+                    ep.close()
+                }
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+}
