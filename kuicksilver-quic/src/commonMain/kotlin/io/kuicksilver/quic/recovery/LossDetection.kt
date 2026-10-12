@@ -292,7 +292,16 @@ internal class LossDetection(
         for (i in 0 until paths) {
             val pid = ecnPaths[i]
             if (ecnMarkedPerPath[i] == 0 && pid != largest.pathId) continue // nothing of this path to validate
-            listener.onEcnAck(space, counts != null, valid, ecnMarkedPerPath[i], ceGrew && pid == largest.pathId, now, largest.timeSent, pid)
+            listener.onEcnAck(
+                space,
+                counts != null,
+                valid,
+                ecnMarkedPerPath[i],
+                ceGrew && pid == largest.pathId,
+                now,
+                largest.timeSent,
+                pid,
+            )
         }
     }
 

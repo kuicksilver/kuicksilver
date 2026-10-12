@@ -256,9 +256,18 @@ internal object Pem {
             val c = chars[i]
             when {
                 c == ' ' || c == '\t' || c == '\r' || c == '\n' -> {}
-                c == '=' -> pad++
-                pad == 0 && sextet(c) >= 0 -> digits++
-                else -> throw TlsException.Config("bad Base64 in the PEM block")
+
+                c == '=' -> {
+                    pad++
+                }
+
+                pad == 0 && sextet(c) >= 0 -> {
+                    digits++
+                }
+
+                else -> {
+                    throw TlsException.Config("bad Base64 in the PEM block")
+                }
             }
         }
         if ((digits + pad) % 4 != 0 || pad > 2 || digits % 4 == 1) throw TlsException.Config("bad Base64 length in the PEM block")

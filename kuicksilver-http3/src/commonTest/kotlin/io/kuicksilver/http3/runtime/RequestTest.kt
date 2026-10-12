@@ -338,8 +338,13 @@ class RequestTest {
                 // twice the bucket, in one write: the flood test's 1001 unknown frames close the connection
                 val flood =
                     (0 until 2002)
-                        .map { raw.frame(io.kuicksilver.http3.frame.FrameType.grease(it.toLong()), ByteArray(0)) }
-                        .reduce { a, b -> a + b }
+                        .map {
+                            raw.frame(
+                                io.kuicksilver.http3.frame.FrameType
+                                    .grease(it.toLong()),
+                                ByteArray(0),
+                            )
+                        }.reduce { a, b -> a + b }
                 st.output.writeFully(flood + raw.headers(st.id, GET))
                 st.output.flushAndClose()
                 val r = withTimeout(5.seconds) { server.acceptRequest() }

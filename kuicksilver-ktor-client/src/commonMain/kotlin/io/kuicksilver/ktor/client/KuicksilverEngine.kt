@@ -35,9 +35,9 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlin.coroutines.CoroutineContext
 
 /** `HttpClient(Kuicksilver)`: HTTP/3 and HTTP/1.1 over TLS 1.3 (docs/guide/ktor.md). */
@@ -80,16 +80,17 @@ internal class KuicksilverEngine(
 
     init {
         val requests = coroutineContext[Job]!!
-        cleanup = GlobalScope.launch(super.coroutineContext, start = CoroutineStart.ATOMIC) {
-            try {
-                requests.join()
-            } finally {
-                withContext(NonCancellable) { altSvcUpdate {} } // a snapshot no request took (an expiry dropped on lookup)
-                h1.closeAll()
-                h3.close()
-                selector.close()
+        cleanup =
+            GlobalScope.launch(super.coroutineContext, start = CoroutineStart.ATOMIC) {
+                try {
+                    requests.join()
+                } finally {
+                    withContext(NonCancellable) { altSvcUpdate {} } // a snapshot no request took (an expiry dropped on lookup)
+                    h1.closeAll()
+                    h3.close()
+                    selector.close()
+                }
             }
-        }
     }
 
     override fun close() {
@@ -208,7 +209,14 @@ internal class KuicksilverEngine(
                                 null
                             ) {
                                 brokenAltSvc.confirmQuic(network)
-                                runCatching { rememberSrtt(origin, h3Attempt.getCompleted().quic.stats.smoothedRtt) }
+                                runCatching {
+                                    rememberSrtt(
+                                        origin,
+                                        h3Attempt
+                                            .getCompleted()
+                                            .quic.stats.smoothedRtt,
+                                    )
+                                }
                             } // lost the race, but QUIC works here
                             else if (cause !is CancellationException) {
                                 brokenAltSvc.markBroken(origin, alt)

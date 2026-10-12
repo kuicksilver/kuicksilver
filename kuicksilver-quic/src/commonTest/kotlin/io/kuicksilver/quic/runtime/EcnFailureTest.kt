@@ -111,7 +111,8 @@ class EcnFailureTest {
     private class CapsIo(
         private val inner: MemoryDatagramIo,
     ) : DatagramIo by inner {
-        val caps = MutableStateFlow(IoCapabilities(ecnSend = true, ecnReceive = false, gsoMaxSegments = 1, gro = false, df = true, batch = 1))
+        val caps =
+            MutableStateFlow(IoCapabilities(ecnSend = true, ecnReceive = false, gsoMaxSegments = 1, gro = false, df = true, batch = 1))
         override val capabilities: StateFlow<IoCapabilities> get() = caps
     }
 
