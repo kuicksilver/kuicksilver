@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.kuicksilver.http3
 
+import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.annotations.KuicksilverDsl
 
 /** Local HTTP/3 settings: what we advertise in SETTINGS (RFC 9114 section 7.2.4) and our own resource limits; build with [http3Settings]. */
@@ -26,6 +27,9 @@ public class Http3Settings private constructor(
     public val maxEarlyPriorityUpdates: Int,
     /** Close a connection whose peer floods useless frames (glitch limiter: 1000 tokens, 33/s). */
     public val glitchProtection: Boolean,
+    /** Server: what happens to requests received in 0-RTT before the handshake completed (only with `QuicServerConfig.earlyData`). */
+    @property:ExperimentalKuicksilverApi
+    public val earlyData: Http3EarlyDataPolicy,
 ) {
     /** Mutable form of [Http3Settings], used through [http3Settings] or [toBuilder]; ranges are checked by [build]. */
     @KuicksilverDsl
@@ -60,6 +64,10 @@ public class Http3Settings private constructor(
         /** Close with H3_EXCESSIVE_LOAD a connection whose peer floods useless frames (1000 tokens, 33/s); true by default. */
         public var glitchProtection: Boolean = true
 
+        /** Server: early requests that are not replayable wait for the handshake; [Http3EarlyDataPolicy.WaitForHandshake] by default. */
+        @ExperimentalKuicksilverApi
+        public var earlyData: Http3EarlyDataPolicy = Http3EarlyDataPolicy.WaitForHandshake()
+
         /** Advertises a 4096-byte dynamic table and 16 blocked streams (the dynamic table is off by default). */
         public fun enableQpackDynamicTable() {
             qpackMaxTableCapacity = 4096
@@ -84,6 +92,7 @@ public class Http3Settings private constructor(
                 maxInformationalResponses,
                 maxEarlyPriorityUpdates,
                 glitchProtection,
+                earlyData,
             )
         }
     }
@@ -104,7 +113,15 @@ public class Http3Settings private constructor(
             it.maxEarlyPriorityUpdates = maxEarlyPriorityUpdates
             it.glitchProtection =
                 glitchProtection
+            it.earlyData = earlyData
         }
+
+    /**
+     * The settings a 0-RTT client relies on (RFC 9114 section 7.2.4.2), bound into the server's tickets: a ticket issued
+     * under other SETTINGS gets no early data.
+     */
+    internal fun earlyDataContext(): ByteArray =
+        "h3|$qpackMaxTableCapacity|$qpackBlockedStreams|$maxFieldSectionSize|$enableConnectProtocol|$h3Datagram".encodeToByteArray()
 
     /** Holds [Default]. */
     public companion object { /** The defaults listed on [Builder]'s properties. */

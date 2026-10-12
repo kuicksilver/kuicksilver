@@ -44,6 +44,9 @@ internal class MemoryNet {
     private val sockets = HashMap<InetSocketAddress, MemoryIo>()
 
     @Volatile var delay: Duration = Duration.ZERO
+
+    /** Sees every datagram (from, to, bytes) before delivery: the 0-RTT tests capture a client's flight to replay it. */
+    @Volatile var tap: ((InetSocketAddress, InetSocketAddress, ByteArray) -> Unit)? = null
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     fun open(local: InetSocketAddress): MemoryIo {
@@ -57,6 +60,7 @@ internal class MemoryNet {
         to: InetSocketAddress,
         bytes: ByteArray,
     ) {
+        tap?.invoke(from, to, bytes)
         val d = delay
         if (d ==
             Duration.ZERO

@@ -22,6 +22,29 @@ public final class io/kuicksilver/http3/Http3Connection$Companion {
 	public static synthetic fun server$default (Lio/kuicksilver/http3/Http3Connection$Companion;Lio/kuicksilver/quic/QuicConnection;Lio/kuicksilver/http3/Http3Settings;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 }
 
+public abstract class io/kuicksilver/http3/Http3EarlyDataPolicy {
+	public static final field Companion Lio/kuicksilver/http3/Http3EarlyDataPolicy$Companion;
+	public synthetic fun <init> (Lkotlin/jvm/functions/Function1;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun getReplayable ()Lkotlin/jvm/functions/Function1;
+}
+
+public final class io/kuicksilver/http3/Http3EarlyDataPolicy$Companion {
+	public final fun getSAFE_METHODS ()Ljava/util/Set;
+	public final fun getSafeMethods ()Lkotlin/jvm/functions/Function1;
+}
+
+public final class io/kuicksilver/http3/Http3EarlyDataPolicy$Reject425 : io/kuicksilver/http3/Http3EarlyDataPolicy {
+	public fun <init> ()V
+	public fun <init> (Lkotlin/jvm/functions/Function1;)V
+	public synthetic fun <init> (Lkotlin/jvm/functions/Function1;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+}
+
+public final class io/kuicksilver/http3/Http3EarlyDataPolicy$WaitForHandshake : io/kuicksilver/http3/Http3EarlyDataPolicy {
+	public fun <init> ()V
+	public fun <init> (Lkotlin/jvm/functions/Function1;)V
+	public synthetic fun <init> (Lkotlin/jvm/functions/Function1;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+}
+
 public final class io/kuicksilver/http3/Http3Endpoint : java/lang/AutoCloseable {
 	public static final field Companion Lio/kuicksilver/http3/Http3Endpoint$Companion;
 	public static final field H3 Ljava/lang/String;
@@ -29,6 +52,8 @@ public final class io/kuicksilver/http3/Http3Endpoint : java/lang/AutoCloseable 
 	public fun close ()V
 	public final fun connect (Lio/ktor/network/sockets/InetSocketAddress;Lio/kuicksilver/tls/TlsConfig;Lio/kuicksilver/quic/QuicConfig;Lio/kuicksilver/http3/Http3Settings;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public static synthetic fun connect$default (Lio/kuicksilver/http3/Http3Endpoint;Lio/ktor/network/sockets/InetSocketAddress;Lio/kuicksilver/tls/TlsConfig;Lio/kuicksilver/quic/QuicConfig;Lio/kuicksilver/http3/Http3Settings;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+	public final fun connectEarly (Lio/ktor/network/sockets/InetSocketAddress;Lio/kuicksilver/tls/TlsConfig;Lio/kuicksilver/quic/QuicConfig;Lio/kuicksilver/http3/Http3Settings;Lio/kuicksilver/tls/EarlyDataState;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static synthetic fun connectEarly$default (Lio/kuicksilver/http3/Http3Endpoint;Lio/ktor/network/sockets/InetSocketAddress;Lio/kuicksilver/tls/TlsConfig;Lio/kuicksilver/quic/QuicConfig;Lio/kuicksilver/http3/Http3Settings;Lio/kuicksilver/tls/EarlyDataState;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 	public final fun getLocalAddress ()Lio/ktor/network/sockets/InetSocketAddress;
 }
 
@@ -161,8 +186,9 @@ public final class io/kuicksilver/http3/Http3PeerSettings {
 }
 
 public final class io/kuicksilver/http3/Http3Request {
-	public fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Lio/kuicksilver/http3/Http3Headers;Lio/ktor/utils/io/ByteReadChannel;Lkotlin/jvm/functions/Function1;Lio/kuicksilver/quic/StreamPriority;Ljava/lang/String;Lkotlin/jvm/functions/Function3;)V
-	public synthetic fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Lio/kuicksilver/http3/Http3Headers;Lio/ktor/utils/io/ByteReadChannel;Lkotlin/jvm/functions/Function1;Lio/kuicksilver/quic/StreamPriority;Ljava/lang/String;Lkotlin/jvm/functions/Function3;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Lio/kuicksilver/http3/Http3Headers;Lio/ktor/utils/io/ByteReadChannel;Lkotlin/jvm/functions/Function1;Lio/kuicksilver/quic/StreamPriority;Ljava/lang/String;Lkotlin/jvm/functions/Function3;Z)V
+	public synthetic fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Lio/kuicksilver/http3/Http3Headers;Lio/ktor/utils/io/ByteReadChannel;Lkotlin/jvm/functions/Function1;Lio/kuicksilver/quic/StreamPriority;Ljava/lang/String;Lkotlin/jvm/functions/Function3;ZILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun getAllowEarlyData ()Z
 	public final fun getAuthority ()Ljava/lang/String;
 	public final fun getBody ()Lio/ktor/utils/io/ByteReadChannel;
 	public final fun getHeaders ()Lio/kuicksilver/http3/Http3Headers;
@@ -218,6 +244,7 @@ public abstract interface class io/kuicksilver/http3/Http3ServerRequest {
 	public abstract fun getPath ()Ljava/lang/String;
 	public abstract fun getPriority ()Lkotlinx/coroutines/flow/StateFlow;
 	public abstract fun getProtocol ()Ljava/lang/String;
+	public fun getReceivedEarly ()Z
 	public abstract fun getRemoteAddress ()Lio/ktor/network/sockets/InetSocketAddress;
 	public abstract fun getScheme ()Ljava/lang/String;
 	public abstract fun getStreamId ()J
@@ -231,12 +258,14 @@ public abstract interface class io/kuicksilver/http3/Http3ServerRequest {
 
 public final class io/kuicksilver/http3/Http3ServerRequest$DefaultImpls {
 	public static synthetic fun acceptConnect$default (Lio/kuicksilver/http3/Http3ServerRequest;Lio/kuicksilver/http3/Http3Headers;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+	public static fun getReceivedEarly (Lio/kuicksilver/http3/Http3ServerRequest;)Z
 	public static synthetic fun respond$default (Lio/kuicksilver/http3/Http3ServerRequest;ILio/kuicksilver/http3/Http3Headers;Lio/kuicksilver/quic/StreamPriority;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 	public static synthetic fun sendInformational$default (Lio/kuicksilver/http3/Http3ServerRequest;ILio/kuicksilver/http3/Http3Headers;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 }
 
 public final class io/kuicksilver/http3/Http3Settings {
 	public static final field Companion Lio/kuicksilver/http3/Http3Settings$Companion;
+	public final fun getEarlyData ()Lio/kuicksilver/http3/Http3EarlyDataPolicy;
 	public final fun getEnableConnectProtocol ()Z
 	public final fun getEncoderMaxTableCapacity ()J
 	public final fun getGlitchProtection ()Z
@@ -254,6 +283,7 @@ public final class io/kuicksilver/http3/Http3Settings$Builder {
 	public fun <init> ()V
 	public final fun build ()Lio/kuicksilver/http3/Http3Settings;
 	public final fun enableQpackDynamicTable ()V
+	public final fun getEarlyData ()Lio/kuicksilver/http3/Http3EarlyDataPolicy;
 	public final fun getEnableConnectProtocol ()Z
 	public final fun getEncoderMaxTableCapacity ()J
 	public final fun getGlitchProtection ()Z
@@ -264,6 +294,7 @@ public final class io/kuicksilver/http3/Http3Settings$Builder {
 	public final fun getMaxInformationalResponses ()I
 	public final fun getQpackBlockedStreams ()J
 	public final fun getQpackMaxTableCapacity ()J
+	public final fun setEarlyData (Lio/kuicksilver/http3/Http3EarlyDataPolicy;)V
 	public final fun setEnableConnectProtocol (Z)V
 	public final fun setEncoderMaxTableCapacity (J)V
 	public final fun setGlitchProtection (Z)V

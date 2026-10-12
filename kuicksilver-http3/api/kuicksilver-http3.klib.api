@@ -63,6 +63,8 @@ abstract interface io.kuicksilver.http3/Http3ServerRequest { // io.kuicksilver.h
         abstract fun <get-streamId>(): kotlin/Long // io.kuicksilver.http3/Http3ServerRequest.streamId.<get-streamId>|<get-streamId>(){}[0]
     abstract val trailers // io.kuicksilver.http3/Http3ServerRequest.trailers|{}trailers[0]
         abstract fun <get-trailers>(): kotlinx.coroutines/Deferred<io.kuicksilver.http3/Http3Headers?> // io.kuicksilver.http3/Http3ServerRequest.trailers.<get-trailers>|<get-trailers>(){}[0]
+    open val receivedEarly // io.kuicksilver.http3/Http3ServerRequest.receivedEarly|{}receivedEarly[0]
+        open fun <get-receivedEarly>(): kotlin/Boolean // io.kuicksilver.http3/Http3ServerRequest.receivedEarly.<get-receivedEarly>|<get-receivedEarly>(){}[0]
 
     abstract fun reset(kotlin/Long) // io.kuicksilver.http3/Http3ServerRequest.reset|reset(kotlin.Long){}[0]
     abstract suspend fun acceptConnect(io.kuicksilver.http3/Http3Headers = ...): io.kuicksilver.http3/Http3Stream // io.kuicksilver.http3/Http3ServerRequest.acceptConnect|acceptConnect(io.kuicksilver.http3.Http3Headers){}[0]
@@ -126,6 +128,7 @@ final class io.kuicksilver.http3/Http3Endpoint : kotlin/AutoCloseable { // io.ku
     final fun close() // io.kuicksilver.http3/Http3Endpoint.close|close(){}[0]
     final suspend fun accept(): io.kuicksilver.http3/Http3Connection // io.kuicksilver.http3/Http3Endpoint.accept|accept(){}[0]
     final suspend fun connect(io.ktor.network.sockets/InetSocketAddress, io.kuicksilver.tls/TlsConfig, io.kuicksilver.quic/QuicConfig = ..., io.kuicksilver.http3/Http3Settings = ...): io.kuicksilver.http3/Http3Connection // io.kuicksilver.http3/Http3Endpoint.connect|connect(io.ktor.network.sockets.InetSocketAddress;io.kuicksilver.tls.TlsConfig;io.kuicksilver.quic.QuicConfig;io.kuicksilver.http3.Http3Settings){}[0]
+    final suspend fun connectEarly(io.ktor.network.sockets/InetSocketAddress, io.kuicksilver.tls/TlsConfig, io.kuicksilver.quic/QuicConfig = ..., io.kuicksilver.http3/Http3Settings = ..., io.kuicksilver.tls/EarlyDataState = ...): io.kuicksilver.http3/Http3Connection // io.kuicksilver.http3/Http3Endpoint.connectEarly|connectEarly(io.ktor.network.sockets.InetSocketAddress;io.kuicksilver.tls.TlsConfig;io.kuicksilver.quic.QuicConfig;io.kuicksilver.http3.Http3Settings;io.kuicksilver.tls.EarlyDataState){}[0]
 
     final object Companion { // io.kuicksilver.http3/Http3Endpoint.Companion|null[0]
         final const val H3 // io.kuicksilver.http3/Http3Endpoint.Companion.H3|{}H3[0]
@@ -178,8 +181,10 @@ final class io.kuicksilver.http3/Http3PeerSettings { // io.kuicksilver.http3/Htt
 }
 
 final class io.kuicksilver.http3/Http3Request { // io.kuicksilver.http3/Http3Request|null[0]
-    constructor <init>(kotlin/String, kotlin/String = ..., kotlin/String?, kotlin/String?, io.kuicksilver.http3/Http3Headers = ..., io.ktor.utils.io/ByteReadChannel? = ..., kotlin.coroutines/SuspendFunction0<io.kuicksilver.http3/Http3Headers?>? = ..., io.kuicksilver.quic/StreamPriority? = ..., kotlin/String? = ..., kotlin.coroutines/SuspendFunction2<kotlin/Int, io.kuicksilver.http3/Http3Headers, kotlin/Unit>? = ...) // io.kuicksilver.http3/Http3Request.<init>|<init>(kotlin.String;kotlin.String;kotlin.String?;kotlin.String?;io.kuicksilver.http3.Http3Headers;io.ktor.utils.io.ByteReadChannel?;kotlin.coroutines.SuspendFunction0<io.kuicksilver.http3.Http3Headers?>?;io.kuicksilver.quic.StreamPriority?;kotlin.String?;kotlin.coroutines.SuspendFunction2<kotlin.Int,io.kuicksilver.http3.Http3Headers,kotlin.Unit>?){}[0]
+    constructor <init>(kotlin/String, kotlin/String = ..., kotlin/String?, kotlin/String?, io.kuicksilver.http3/Http3Headers = ..., io.ktor.utils.io/ByteReadChannel? = ..., kotlin.coroutines/SuspendFunction0<io.kuicksilver.http3/Http3Headers?>? = ..., io.kuicksilver.quic/StreamPriority? = ..., kotlin/String? = ..., kotlin.coroutines/SuspendFunction2<kotlin/Int, io.kuicksilver.http3/Http3Headers, kotlin/Unit>? = ..., kotlin/Boolean = ...) // io.kuicksilver.http3/Http3Request.<init>|<init>(kotlin.String;kotlin.String;kotlin.String?;kotlin.String?;io.kuicksilver.http3.Http3Headers;io.ktor.utils.io.ByteReadChannel?;kotlin.coroutines.SuspendFunction0<io.kuicksilver.http3.Http3Headers?>?;io.kuicksilver.quic.StreamPriority?;kotlin.String?;kotlin.coroutines.SuspendFunction2<kotlin.Int,io.kuicksilver.http3.Http3Headers,kotlin.Unit>?;kotlin.Boolean){}[0]
 
+    final val allowEarlyData // io.kuicksilver.http3/Http3Request.allowEarlyData|{}allowEarlyData[0]
+        final fun <get-allowEarlyData>(): kotlin/Boolean // io.kuicksilver.http3/Http3Request.allowEarlyData.<get-allowEarlyData>|<get-allowEarlyData>(){}[0]
     final val authority // io.kuicksilver.http3/Http3Request.authority|{}authority[0]
         final fun <get-authority>(): kotlin/String? // io.kuicksilver.http3/Http3Request.authority.<get-authority>|<get-authority>(){}[0]
     final val body // io.kuicksilver.http3/Http3Request.body|{}body[0]
@@ -203,6 +208,8 @@ final class io.kuicksilver.http3/Http3Request { // io.kuicksilver.http3/Http3Req
 }
 
 final class io.kuicksilver.http3/Http3Settings { // io.kuicksilver.http3/Http3Settings|null[0]
+    final val earlyData // io.kuicksilver.http3/Http3Settings.earlyData|{}earlyData[0]
+        final fun <get-earlyData>(): io.kuicksilver.http3/Http3EarlyDataPolicy // io.kuicksilver.http3/Http3Settings.earlyData.<get-earlyData>|<get-earlyData>(){}[0]
     final val enableConnectProtocol // io.kuicksilver.http3/Http3Settings.enableConnectProtocol|{}enableConnectProtocol[0]
         final fun <get-enableConnectProtocol>(): kotlin/Boolean // io.kuicksilver.http3/Http3Settings.enableConnectProtocol.<get-enableConnectProtocol>|<get-enableConnectProtocol>(){}[0]
     final val encoderMaxTableCapacity // io.kuicksilver.http3/Http3Settings.encoderMaxTableCapacity|{}encoderMaxTableCapacity[0]
@@ -229,6 +236,9 @@ final class io.kuicksilver.http3/Http3Settings { // io.kuicksilver.http3/Http3Se
     final class Builder { // io.kuicksilver.http3/Http3Settings.Builder|null[0]
         constructor <init>() // io.kuicksilver.http3/Http3Settings.Builder.<init>|<init>(){}[0]
 
+        final var earlyData // io.kuicksilver.http3/Http3Settings.Builder.earlyData|{}earlyData[0]
+            final fun <get-earlyData>(): io.kuicksilver.http3/Http3EarlyDataPolicy // io.kuicksilver.http3/Http3Settings.Builder.earlyData.<get-earlyData>|<get-earlyData>(){}[0]
+            final fun <set-earlyData>(io.kuicksilver.http3/Http3EarlyDataPolicy) // io.kuicksilver.http3/Http3Settings.Builder.earlyData.<set-earlyData>|<set-earlyData>(io.kuicksilver.http3.Http3EarlyDataPolicy){}[0]
         final var enableConnectProtocol // io.kuicksilver.http3/Http3Settings.Builder.enableConnectProtocol|{}enableConnectProtocol[0]
             final fun <get-enableConnectProtocol>(): kotlin/Boolean // io.kuicksilver.http3/Http3Settings.Builder.enableConnectProtocol.<get-enableConnectProtocol>|<get-enableConnectProtocol>(){}[0]
             final fun <set-enableConnectProtocol>(kotlin/Boolean) // io.kuicksilver.http3/Http3Settings.Builder.enableConnectProtocol.<set-enableConnectProtocol>|<set-enableConnectProtocol>(kotlin.Boolean){}[0]
@@ -267,6 +277,26 @@ final class io.kuicksilver.http3/Http3Settings { // io.kuicksilver.http3/Http3Se
     final object Companion { // io.kuicksilver.http3/Http3Settings.Companion|null[0]
         final val Default // io.kuicksilver.http3/Http3Settings.Companion.Default|{}Default[0]
             final fun <get-Default>(): io.kuicksilver.http3/Http3Settings // io.kuicksilver.http3/Http3Settings.Companion.Default.<get-Default>|<get-Default>(){}[0]
+    }
+}
+
+sealed class io.kuicksilver.http3/Http3EarlyDataPolicy { // io.kuicksilver.http3/Http3EarlyDataPolicy|null[0]
+    final val replayable // io.kuicksilver.http3/Http3EarlyDataPolicy.replayable|{}replayable[0]
+        final fun <get-replayable>(): kotlin/Function1<io.kuicksilver.http3/Http3ServerRequest, kotlin/Boolean> // io.kuicksilver.http3/Http3EarlyDataPolicy.replayable.<get-replayable>|<get-replayable>(){}[0]
+
+    final class Reject425 : io.kuicksilver.http3/Http3EarlyDataPolicy { // io.kuicksilver.http3/Http3EarlyDataPolicy.Reject425|null[0]
+        constructor <init>(kotlin/Function1<io.kuicksilver.http3/Http3ServerRequest, kotlin/Boolean> = ...) // io.kuicksilver.http3/Http3EarlyDataPolicy.Reject425.<init>|<init>(kotlin.Function1<io.kuicksilver.http3.Http3ServerRequest,kotlin.Boolean>){}[0]
+    }
+
+    final class WaitForHandshake : io.kuicksilver.http3/Http3EarlyDataPolicy { // io.kuicksilver.http3/Http3EarlyDataPolicy.WaitForHandshake|null[0]
+        constructor <init>(kotlin/Function1<io.kuicksilver.http3/Http3ServerRequest, kotlin/Boolean> = ...) // io.kuicksilver.http3/Http3EarlyDataPolicy.WaitForHandshake.<init>|<init>(kotlin.Function1<io.kuicksilver.http3.Http3ServerRequest,kotlin.Boolean>){}[0]
+    }
+
+    final object Companion { // io.kuicksilver.http3/Http3EarlyDataPolicy.Companion|null[0]
+        final val SAFE_METHODS // io.kuicksilver.http3/Http3EarlyDataPolicy.Companion.SAFE_METHODS|{}SAFE_METHODS[0]
+            final fun <get-SAFE_METHODS>(): kotlin.collections/Set<kotlin/String> // io.kuicksilver.http3/Http3EarlyDataPolicy.Companion.SAFE_METHODS.<get-SAFE_METHODS>|<get-SAFE_METHODS>(){}[0]
+        final val SafeMethods // io.kuicksilver.http3/Http3EarlyDataPolicy.Companion.SafeMethods|{}SafeMethods[0]
+            final fun <get-SafeMethods>(): kotlin/Function1<io.kuicksilver.http3/Http3ServerRequest, kotlin/Boolean> // io.kuicksilver.http3/Http3EarlyDataPolicy.Companion.SafeMethods.<get-SafeMethods>|<get-SafeMethods>(){}[0]
     }
 }
 

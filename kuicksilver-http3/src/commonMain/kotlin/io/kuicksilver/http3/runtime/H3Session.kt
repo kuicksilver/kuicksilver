@@ -72,6 +72,12 @@ internal class H3Session(
     val closed = CompletableDeferred<Throwable>()
     val requests = Channel<ServerRequestImpl>(Channel.UNLIMITED)
 
+    /** Test hook: the client sends unsafe requests in 0-RTT too (to exercise the server's RFC 8470 gate). */
+    internal var testSendUnsafeEarly = false
+
+    /** Requests repeated after a 425 Too Early (RFC 8470 section 5.2). */
+    internal var early425Retries = 0
+
     /** The path the connection sends on now (`remoteAddress` follows migration, RFC 9000 section 9). */
     var currentPath: QuicPath = quic.paths.first()
         private set
