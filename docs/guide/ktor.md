@@ -199,9 +199,9 @@ HTTP/3 did not reach the client.
 tests drive raw TCP sockets, so an HTTP/3 run would repeat them unchanged; WebSockets over HTTP/3 are covered by the
 engine's tests and by the client contract's `WebSocketTest` in `Kuicksilver-h3` mode. The test client is
 `HttpClient(Kuicksilver)` (a test-only dependency on `kuicksilver-ktor-client`), the plugins the suites install are
-Ktor 3.6.0's (test scope only). 143 tests, 134 pass, 9 skip: `@Http2Only` (server push, no HTTP/2 in Kuicksilver),
-`@Http1Only` over HTTP/3 (keep-alive tests, chunked encoding and the two multipart uploads that set
-`Transfer-Encoding`), and two tests `@Ignore`d upstream. Adapted: the test base (ports from the engine's resolved
+Ktor 3.6.0's (test scope only). 143 tests, 136 pass, 7 skip: `@Http2Only` (server push, no HTTP/2 in Kuicksilver),
+`@Http1Only` over HTTP/3 (the two keep-alive tests and chunked encoding), and two tests `@Ignore`d upstream. The
+multipart uploads (streamed bodies of unknown length, chunked over HTTP/1.1) run over HTTP/3 too. Adapted: the test base (ports from the engine's resolved
 connectors, the TLS identity from the test CA, real time instead of virtual time), the paths of the local-file and
 static-resource tests (this module's layout and package). Not vendored: `HttpServerJvmTestSuite`,
 `SustainabilityTestSuite`, `ClientCertTestSuite` and the other JVM suites — they rely on `HttpURLConnection`, JKS key

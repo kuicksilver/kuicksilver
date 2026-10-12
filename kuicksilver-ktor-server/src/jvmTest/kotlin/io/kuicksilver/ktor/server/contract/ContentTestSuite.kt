@@ -638,7 +638,6 @@ abstract class ContentTestSuite<TEngine : ApplicationEngine, TConfiguration : Ap
         }
 
     @Test
-    @Http1Only
     open fun testMultipartFileUpload() =
         runTest {
             createAndStartServer {
@@ -710,7 +709,6 @@ abstract class ContentTestSuite<TEngine : ApplicationEngine, TConfiguration : Ap
         }
 
     @Test
-    @Http1Only
     open fun testMultipartFileUploadLarge() =
         runTest {
             val numberOfLines = 10000
