@@ -72,10 +72,17 @@ internal class ZeroRttReplayRegister(
             return
         }
         if (now < s.start + HALF_SPAN) return
-        val keepPrevious = now < s.start + HALF_SPAN * 2
-        val old = s.previous
-        s.previous = if (keepPrevious) s.current else old.also { it.fill(EMPTY) }
-        s.current = old.also { it.fill(EMPTY) }
+        if (now < s.start + HALF_SPAN * 2) {
+            // one half passed: the current half becomes the previous one, the oldest is reused for the new half
+            val oldest = s.previous
+            s.previous = s.current
+            s.current = oldest.also { it.fill(EMPTY) }
+        } else {
+            // idle for two halves or more: nothing in either half is fresh. Clear both and keep them distinct arrays —
+            // aliasing them made every later rotation clear the only table (a replay right after a rotation got through).
+            s.previous.fill(EMPTY)
+            s.current.fill(EMPTY)
+        }
         s.live = 0
         s.tombstones = 0
         s.start = now
