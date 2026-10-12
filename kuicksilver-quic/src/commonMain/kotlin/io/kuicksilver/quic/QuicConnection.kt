@@ -100,4 +100,20 @@ public interface QuicConnection : AutoCloseable {
 
     /** The sans-IO core behind this connection; touch it only from the endpoint loop. */
     @ExperimentalKuicksilverApi public val core: ConnectionCore
+
+    /**
+     * Whether 0-RTT was accepted (RFC 9001 section 4.6.2): null until known or when none was attempted. Client: what we sent
+     * early was rejected (false) and went again in 1-RTT, or accepted (true). Server: this connection's early data was
+     * accepted; it may be a replay (RFC 8446 section 8).
+     */
+    @ExperimentalKuicksilverApi
+    public val earlyDataAccepted: Boolean? get() = null
+
+    /**
+     * Returns once the handshake completed (RFC 9001 section 4.1.1); throws the connection's [QuicException.ConnectionLost]
+     * when it failed. A server connection accepted before completion (0-RTT) is authenticated only from here on: act on
+     * input that is not safe to repeat only after this returns. Immediate for a connection from `connect`/`accept` without 0-RTT.
+     */
+    @ExperimentalKuicksilverApi
+    public suspend fun awaitHandshake() {}
 }

@@ -3,6 +3,7 @@
 package io.kuicksilver.quic
 
 import io.ktor.network.sockets.InetSocketAddress
+import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.quic.runtime.EndpointLoop
 import io.kuicksilver.quic.runtime.LoopGroup
 
@@ -20,7 +21,20 @@ public interface QuicEndpoint : AutoCloseable {
         config: QuicClientConfig,
     ): QuicConnection
 
-    /** The next accepted server connection (its handshake is complete). Throws [QuicException.EndpointClosing] once closed, also while handshaken connections were still queued (they close with the endpoint). */
+    /**
+     * As [connect] for a client with `QuicClientConfig.earlyData`: returns as soon as 0-RTT keys exist, so what the application
+     * writes before the handshake completes travels in 0-RTT (RFC 9001 section 4.6). Without a usable ticket it returns at
+     * handshake completion, and under `EarlyDataState.Required` it then throws [QuicException.ConnectionLost.ZeroRttRejected].
+     * Early data can be replayed by an attacker: write early only what is safe to execute twice, and use
+     * [QuicConnection.awaitHandshake] before the rest. A rejection is repaired by the transport (sent again in 1-RTT).
+     */
+    @ExperimentalKuicksilverApi
+    public suspend fun connectEarly(
+        remote: InetSocketAddress,
+        config: QuicClientConfig,
+    ): QuicConnection = connect(remote, config)
+
+    /** The next accepted server connection (its handshake is complete, or with `QuicServerConfig.earlyData` its 0-RTT accepted). Throws [QuicException.EndpointClosing] once closed, also while handshaken connections were still queued (they close with the endpoint). */
     public suspend fun accept(): QuicConnection
 
     /** The address the endpoint's socket is bound to, with the port the system picked when `bind` asked for port 0. */

@@ -59,6 +59,16 @@ internal class ConnectionRuntime(
     private val openWaiters = ArrayList<Channel<Unit>>()
     internal var serverSide = false
 
+    /** Server: handed to the accept queue (at 0-RTT acceptance or at handshake completion). Loop dispatcher only. */
+    internal var handedOff = false
+
+    @Volatile private var earlyAccepted: Boolean? = null
+    override val earlyDataAccepted: Boolean? get() = earlyAccepted
+
+    override suspend fun awaitHandshake() {
+        handshake.await()
+    }
+
     /** A server connection still handshaking, counted by its loop against the accept queue. Loop dispatcher only. */
     internal var handshaking = false
 
@@ -310,6 +320,7 @@ internal class ConnectionRuntime(
             val e = core.nextEvent() ?: break
             when (e) {
                 ConnectionEvent.HandshakeCompleted -> {
+                    earlyAccepted = core.earlyDataAccepted
                     certificates = core.peerCertificates // read once, on the loop: the TLS object is not shared across threads
                     handshake.complete(Unit)
                     loop.onHandshakeCompleted(this)
@@ -320,13 +331,21 @@ internal class ConnectionRuntime(
                 }
 
                 is ConnectionEvent.SessionTicket -> {
-                    e.ticket.close()
+                    loop.storeTicket(core.tlsConfig, e.ticket)
                 }
 
-                ConnectionEvent.EarlyDataAccepted, ConnectionEvent.EarlyDataRejected -> {}
+                ConnectionEvent.EarlyDataAccepted -> {
+                    earlyAccepted = true
+                    // a server hands the connection to accept() now: the application can answer in 0.5-RTT (ADR-0015)
+                    if (serverSide) loop.onHandshakeCompleted(this)
+                }
+
+                ConnectionEvent.EarlyDataRejected -> {
+                    earlyAccepted = false
+                }
 
                 is ConnectionEvent.StreamOpened -> {
-                    accepted.trySend(stream(e.id))
+                    accepted.trySend(stream(e.id).also { it.receivedEarly = core.streamReceivedEarly(e.id) })
                 }
 
                 is ConnectionEvent.StreamReadable -> {

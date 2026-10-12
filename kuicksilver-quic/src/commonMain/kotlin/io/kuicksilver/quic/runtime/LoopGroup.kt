@@ -47,6 +47,11 @@ internal class LoopGroup private constructor(
                 loops.size,
         ].connect(remote, config)
 
+    override suspend fun connectEarly(
+        remote: InetSocketAddress,
+        config: QuicClientConfig,
+    ): QuicConnection = loops[(next.incrementAndFetch() and 0x7fffffff) % loops.size].connectEarly(remote, config)
+
     override suspend fun accept(): QuicConnection = loops[0].accept() // the queue is shared; loop 0 closes only with the group
 
     private val closingFlag = AtomicInt(0)

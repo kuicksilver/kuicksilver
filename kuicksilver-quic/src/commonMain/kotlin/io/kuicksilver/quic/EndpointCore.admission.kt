@@ -137,6 +137,7 @@ internal fun EndpointCore.admitOne(
             resetKey,
             originalDcid,
             retryScid,
+            serverEarly,
         )
             ?: return false
     if (testForgeRetryScidInTp && retryScid != null) {
@@ -160,6 +161,7 @@ internal fun EndpointCore.admitOne(
     core.admissionIpKey = ipKey
     perIp[ipKey] = fromIp + 1
     accepted += core
+    if (serverEarly != null) replayEarly(core, core.initialKeyCid, now)
     return true
 }
 

@@ -38,6 +38,7 @@ internal class EndpointPair(
     serverQuic: QuicConfig = QuicConfig.Default,
     serverRandom: Random = Random(serverSeed),
     clientRandom: Random = Random(6),
+    serverEarlyData: Boolean = false,
     configure: QuicEndpointConfig.Builder.() -> Unit = {},
 ) {
     val clientAddr: InetSocketAddress = InetSocketAddress("10.0.0.1", 40000)
@@ -49,7 +50,12 @@ internal class EndpointPair(
                 .Builder()
                 .apply {
                     this.server =
-                        QuicServerConfig.Builder(CoreFixtures.server()).apply { quic = serverQuic }.build()
+                        QuicServerConfig
+                            .Builder(CoreFixtures.server())
+                            .apply {
+                                quic = serverQuic
+                                earlyData = serverEarlyData
+                            }.build()
                     ; this.crypto = crypto
                     configure()
                 }.build(),

@@ -1,17 +1,25 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
-@file:OptIn(InternalKuicksilverApi::class)
+@file:OptIn(InternalKuicksilverApi::class, ExperimentalKuicksilverApi::class, ExperimentalAtomicApi::class)
 
 package io.kuicksilver.quic
 
 import io.ktor.network.sockets.InetSocketAddress
+import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.annotations.InternalKuicksilverApi
 import io.kuicksilver.annotations.KuicksilverDsl
+import io.kuicksilver.quic.core.ServerEarlyData
+import io.kuicksilver.quic.endpoint.ZeroRttReplayRegister
+import io.kuicksilver.tls.ClientAuth
+import io.kuicksilver.tls.EarlyDataState
 import io.kuicksilver.tls.KslQuicCrypto
 import io.kuicksilver.tls.QuicCrypto
 import io.kuicksilver.tls.TlsConfig
 import io.kuicksilver.tls.TlsRole
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlin.concurrent.atomics.AtomicReference
+import kotlin.concurrent.atomics.ExperimentalAtomicApi
+import kotlin.random.Random
 import kotlin.time.Duration
 
 /**
@@ -24,6 +32,9 @@ import kotlin.time.Duration
 public class QuicClientConfig private constructor(
     public val tls: TlsConfig,
     public val quic: QuicConfig,
+    /** Whether this client resumes and sends 0-RTT (ADR-0015); see [Builder.earlyData]. */
+    @property:ExperimentalKuicksilverApi
+    public val earlyData: EarlyDataState,
 ) {
     /**
      * The mutable side of [QuicClientConfig].
@@ -37,11 +48,19 @@ public class QuicClientConfig private constructor(
         /** Default [QuicConfig.Default]; the transport settings of the connection. */
         public var quic: QuicConfig = QuicConfig.Default
 
+        /**
+         * Default [EarlyDataState.Disabled]. Otherwise the endpoint keeps the server's session tickets (per endpoint, single
+         * use) and `QuicEndpoint.connectEarly` sends what the application writes before the handshake completes in 0-RTT.
+         * 0-RTT data can be replayed by an attacker (RFC 8446 section 8): send early only what is safe to execute twice.
+         */
+        @ExperimentalKuicksilverApi
+        public var earlyData: EarlyDataState = EarlyDataState.Disabled
+
         /** A [QuicClientConfig]; IllegalArgumentException for a server [tls], `TlsException.Config` for one QUIC cannot use. */
         public fun build(): QuicClientConfig {
             require(tls.role == TlsRole.Client) { "client config needs a client TlsConfig" }
             tls.checkQuicCompatible()
-            return QuicClientConfig(tls, quic)
+            return QuicClientConfig(tls, quic, earlyData)
         }
     }
 }
@@ -56,7 +75,24 @@ public class QuicClientConfig private constructor(
 public class QuicServerConfig private constructor(
     public val tls: TlsConfig,
     public val quic: QuicConfig,
+    /** Whether the server accepts 0-RTT (ADR-0015); see [Builder.earlyData]. */
+    @property:ExperimentalKuicksilverApi
+    public val earlyData: Boolean,
+    private val earlyDataContext: ByteArray?,
 ) {
+    private val early = AtomicReference<ServerEarlyData?>(null)
+
+    /**
+     * The 0-RTT setup shared by every loop of the endpoints built from this config: the configuration digest and one replay
+     * register (keyed with [random] of the first loop that asks, a CSPRNG in production).
+     */
+    internal fun earlySetup(random: Random): ServerEarlyData? {
+        if (!earlyData) return null
+        early.load()?.let { return it }
+        val made = ServerEarlyData.of(quic, tls.alpn, earlyDataContext, ZeroRttReplayRegister(random))
+        return if (early.compareAndSet(null, made)) made else early.load()
+    }
+
     /**
      * The mutable side of [QuicServerConfig].
      *
@@ -69,11 +105,30 @@ public class QuicServerConfig private constructor(
         /** Default [QuicConfig.Default]; its `connectionIdLength` must equal the endpoint's. */
         public var quic: QuicConfig = QuicConfig.Default
 
+        /**
+         * Default false. True issues session tickets that allow 0-RTT and accepts early data (RFC 9001 section 4.6): fresh
+         * (OpenSSL's ±10 s ticket-age check), once per ticket (the server's replay register) and only for the configuration
+         * that issued the ticket. A connection then reaches `accept()` as soon as its 0-RTT is accepted, before the handshake
+         * completes: early data can still be a replay, so the application acts on anything not safe to repeat only after
+         * `QuicConnection.awaitHandshake()`. Not with client certificates.
+         */
+        @ExperimentalKuicksilverApi
+        public var earlyData: Boolean = false
+
+        /**
+         * Application settings a 0-RTT client relies on (HTTP/3 SETTINGS, RFC 9114 section 7.2.4.2), bound into tickets with
+         * the ALPN and the transport limits: a ticket from another configuration gets no early data. At most 256 bytes.
+         */
+        @ExperimentalKuicksilverApi
+        public var earlyDataContext: ByteArray? = null
+
         /** A [QuicServerConfig]; IllegalArgumentException for a client [tls], `TlsException.Config` for one QUIC cannot use. */
         public fun build(): QuicServerConfig {
             require(tls.role == TlsRole.Server) { "server config needs a server TlsConfig" }
             tls.checkQuicCompatible()
-            return QuicServerConfig(tls, quic)
+            require(!earlyData || tls.clientAuth == ClientAuth.None) { "earlyData cannot be combined with client certificates" }
+            require((earlyDataContext?.size ?: 0) <= 256) { "earlyDataContext is at most 256 bytes" }
+            return QuicServerConfig(tls, quic, earlyData, earlyDataContext?.copyOf())
         }
     }
 }

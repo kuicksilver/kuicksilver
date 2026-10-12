@@ -4,6 +4,7 @@ package io.kuicksilver.quic
 
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.ByteWriteChannel
+import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 
 /**
  * A QUIC stream as two ktor-io channels. Closing [output] sends FIN; closing it with a cause sends
@@ -48,4 +49,8 @@ public interface QuicStream {
      * [QuicException.StreamError.Stopped] and buffered data is dropped. Returns at once.
      */
     public fun stopSending(code: Long)
+
+    /** Server: data of this stream arrived in 0-RTT packets, before the handshake completed; it may be a replay (RFC 8446 section 8). */
+    @ExperimentalKuicksilverApi
+    public val receivedEarly: Boolean get() = false
 }
