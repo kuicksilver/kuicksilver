@@ -63,21 +63,24 @@ cross-checked with msquic `src/platform/datapath_winuser.c`.
   overlapped receives posted ahead into buffers C owns across calls and a completion thread — a second ownership model for the
   slots and an allocation pattern the contract excludes ("no allocation after open"). Known `WSAPoll` defects concern TCP
   `connect` failures only. If profiling on Windows shows the readiness path is the bottleneck, RIO/IOCP is the next step.
-- **Wake-up without pipes.** A UDP socket on 127.0.0.1 connected to itself: `ksl_udp_shutdown` sends it one byte, `WSAPoll`
+- **Wake-up without pipes.** A UDP socket on 127.0.0.1 (bound with `SO_EXCLUSIVEADDRUSE`) connected to itself: `ksl_udp_shutdown` sends it one byte, `WSAPoll`
   returns, the receiver sees `closed` and leaves. Being connected, the wake socket accepts datagrams only from itself, so no
   other local process can fake a shutdown; a readiness without `closed` set is drained and ignored. Without a wake socket the
   receive waits in 50 ms slices.
 - **Send/receive.** `WSASendMsg`/`WSARecvMsg` from `SIO_GET_EXTENSION_FUNCTION_POINTER`; the socket is non-blocking,
   `SIO_UDP_CONNRESET`/`SIO_UDP_NETRESET` are off (an ICMP unreachable must not fail the next receive; `WSAECONNRESET` is skipped
-  anyway); `WSAEMSGSIZE`/`MSG_TRUNC` drop the datagram whole. The send fallbacks are those of Linux with Winsock codes
+  anyway); `WSAEMSGSIZE`/`MSG_TRUNC` drop the datagram whole. `POLLERR`/`POLLHUP` without data read and clear `SO_ERROR`; with
+  nothing pending the rest of the slice is waited out on the wake socket (no spin). `WSAENETDOWN`/`WSAENOBUFS` on a receive
+  are a slice without data (`KSL_WANT_READ`), not a socket error. The send fallbacks are those of Linux with Winsock codes
   (`WSAEINVAL` decides by a single resend, destination and transient errors lose the slot); there is no `EPERM` retry.
 - **ECN** — `IP_ECN`/`IPV6_ECN` (value 50) as a socket option to read marks (cmsg on receive) and as a per-message cmsg to
   write them, as msquic does when DSCP is off. Windows 10 2004+ / Server 2022 grant it; older systems refuse the option and
   `KSL_UDP_ECN` is simply not granted (the core then never validates ECN on that path).
 - **USO/URO** — granted only when the probe answers: `getsockopt(UDP_SEND_MSG_SIZE)` for USO (runs leave as one
   `WSASendMsg` with a `UDP_SEND_MSG_SIZE` cmsg; the run rule is Linux's), `setsockopt(UDP_RECV_MAX_COALESCED_SIZE)` for URO
-  (segment size from the `UDP_COALESCED_INFO` cmsg, split into slots in C). `WSAEOPNOTSUPP`/`WSAENOPROTOOPT` on a USO send
-  switch USO off for the socket and resend one by one.
+  (segment size from the `UDP_COALESCED_INFO` cmsg, split into slots in C). `WSAEOPNOTSUPP`/`WSAENOPROTOOPT` on a USO send,
+  or a `WSAEINVAL` the single-datagram probe pins on the USO cmsg, switch USO off for the socket; any other error (`WSAENOBUFS`,
+  unreachable, `WSAEACCES`, a small `WSAEMSGSIZE`) resends that run one by one and keeps USO for the next run.
 - **DF** — `IP_DONTFRAGMENT`/`IPV6_DONTFRAG` (grants `KSL_UDP_DF`), plus `IP_MTU_DISCOVER`/`IPV6_MTU_DISCOVER = PROBE` where the
   system has it (Windows 10 1703+), so no path MTU cache drives sizes (quic-go CVE-2024-53259).
 - **Addresses and binding.** IPv6 sockets are dual-stack (`IPV6_V6ONLY = 0`, unlike Linux): a v4 peer of `[::]` is reported and
