@@ -178,8 +178,11 @@ server yet") is accepted in the configuration but not acted on in v1: the QUIC A
 
 ## Compatibility
 
-Both engines run Ktor 3.6.0's own engine contract tests, vendored under `src/jvmTest/kotlin/.../contract` (attribution
-in `NOTICE`), over HTTP/1.1 and over HTTP/3.
+Both engines run Ktor 3.6.0's own engine contract tests, vendored under `src/commonTest/kotlin/.../contract` (and
+`src/jvmTest` for the JVM-only `ContentTestSuite`; attribution in `NOTICE`), over HTTP/1.1 and over HTTP/3, on every target:
+the JVM, Android, Linux, macOS, iOS and Windows. The HTTP/3 runs, like the engines' own HTTP/3 tests in `commonTest`,
+need a QUIC server peer and run where one can bind (the JVM, Android, Linux; elsewhere they pass without running). The
+Linux test executables run the full set; macOS runs the HTTP/1.1 half.
 
 **Client** (`kuicksilver-ktor-client`): `ContentTest`, `PostTest`, `UploadTest`, `DownloadTest`, `HttpRedirectTest`,
 `HttpTimeoutTest` and `WebSocketTest` against Ktor's test-server routes hosted on the Kuicksilver server engine; every
@@ -204,14 +207,17 @@ HTTP/3 did not reach the client.
 tests drive raw TCP sockets, so an HTTP/3 run would repeat them unchanged; WebSockets over HTTP/3 are covered by the
 engine's tests and by the client contract's `WebSocketTest` in `Kuicksilver-h3` mode. The test client is
 `HttpClient(Kuicksilver)` (a test-only dependency on `kuicksilver-ktor-client`), the plugins the suites install are
-Ktor 3.6.0's (test scope only). 143 tests, 136 pass, 7 skip: `@Http2Only` (server push, no HTTP/2 in Kuicksilver),
+Ktor 3.6.0's (test scope only). On the JVM: 143 tests, 136 pass, 7 skip: `@Http2Only` (server push, no HTTP/2 in Kuicksilver),
 `@Http1Only` over HTTP/3 (the two keep-alive tests and chunked encoding), and two tests `@Ignore`d upstream. The
 multipart uploads (streamed bodies of unknown length, chunked over HTTP/1.1) run over HTTP/3 too. Adapted: the test base (ports from the engine's resolved
 connectors, the TLS identity from the test CA, real time instead of virtual time), the paths of the local-file and
 static-resource tests (this module's layout and package). Not vendored: `HttpServerJvmTestSuite`,
 `SustainabilityTestSuite`, `ClientCertTestSuite` and the other JVM suites — they rely on `HttpURLConnection`, JKS key
-stores and the Apache/OkHttp clients.
+stores and the Apache/OkHttp clients. Off the JVM, `PortableContentTestSuite` carries the 13 `ContentTestSuite` tests
+that need no `java.io` (with `respondBytesWriter` and `ChannelWriterContent` for the JVM writers) in its place.
 
 The suites found and fixed: a query parameter without a value (`?auto`) read as `null` instead of `""` over HTTP/3,
 and the HTTP/1.1 client sent a streamed request body completely before reading the response (a server that answers
-first, then reads the body, deadlocked).
+first, then reads the body, deadlocked). On Linux Native the client contract found that a failed HTTP/3 request (a peer
+resetting a WebSocket stream) escaped as an uncaught coroutine exception, which aborts a Kotlin/Native process; each
+request now contains its own failure.

@@ -24,9 +24,10 @@ internal fun Application.contentTestServer() {
                 call.respond("")
             }
             get("/chunked-data") {
-                call.respondTextWriter {
+                // respondTextWriter is JVM-only: the same chunks through the common writer
+                call.respondBytesWriter(ContentType.Text.Plain) {
                     val text = "x".repeat(call.parameters["size"]?.toInt() ?: 1000)
-                    text.chunked(255).forEach { write(it) }
+                    text.chunked(255).forEach { writeStringUtf8(it) }
                 }
             }
             head("/emptyHead") {

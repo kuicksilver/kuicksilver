@@ -18,6 +18,7 @@ import io.kuicksilver.quic.quicConfig
 import io.kuicksilver.tls.Certificate
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableJob
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineName
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -119,7 +120,11 @@ internal suspend fun KuicksilverApplicationEngine.startHttp3(
                             break
                         }
                     listener.add(conn)
-                    launch(connections) {
+                    // the last resort: a failure that still reaches this coroutine is logged, not left uncaught (Native aborts on those)
+                    launch(
+                        connections +
+                            CoroutineExceptionHandler { _, e -> environment.log.debug("HTTP/3 connection on port $port failed: $e") },
+                    ) {
                         val peer = conn.quic.peerCertificates
                         try {
                             while (true) {
@@ -133,7 +138,16 @@ internal suspend fun KuicksilverApplicationEngine.startHttp3(
                                     } catch (e: Throwable) {
                                         break
                                     }
-                                launch { handleHttp3(req, local, peer) }
+                                launch {
+                                    // a request's failure (e.g. a WebSocket reader seeing the peer's reset) ends that request only
+                                    try {
+                                        handleHttp3(req, local, peer)
+                                    } catch (e: CancellationException) {
+                                        throw e
+                                    } catch (e: Throwable) {
+                                        environment.log.debug("HTTP/3 request on port $port failed: $e")
+                                    }
+                                }
                             }
                         } finally {
                             listener.remove(conn)

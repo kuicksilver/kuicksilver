@@ -209,9 +209,8 @@ abstract class HttpServerCommonTestSuite<TEngine : ApplicationEngine, TConfigura
         }
 
     @Test
-    @Http1Only
     fun testRequestTwiceNoKeepAlive() =
-        runTest {
+        runTest(http1Only = true) {
             createAndStartServer {
                 get("/") {
                     call.respondText("Text")
@@ -238,9 +237,8 @@ abstract class HttpServerCommonTestSuite<TEngine : ApplicationEngine, TConfigura
         }
 
     @Test
-    @Http1Only
     fun testRequestTwiceWithKeepAlive() =
-        runTest {
+        runTest(http1Only = true) {
             createAndStartServer {
                 get("/") {
                     call.respondText("Text")
@@ -493,9 +491,8 @@ abstract class HttpServerCommonTestSuite<TEngine : ApplicationEngine, TConfigura
 
     @OptIn(UseHttp2Push::class)
     @Test
-    @Http2Only
     fun testServerPush() =
-        runTest {
+        runTest(http2Only = true) {
             createAndStartServer {
                 get("/child") {
                     call.respondText("child")

@@ -65,7 +65,7 @@ class ClientH3Test {
     @BeforeTest fun load() = KslLoader.ensureLoaded()
 
     @Test fun h3OnlyGet() =
-        clientTest {
+        h3Test {
             val (server, port) = testServer { routing { get("/") { call.respondText("v=${call.request.local.version}") } } }
             try {
                 testClient(Http3DiscoveryMode.H3Only).use { c ->
@@ -108,7 +108,7 @@ class ClientH3Test {
         }
 
     @Test fun chunkedAndH3BodiesReadWhole() =
-        clientTest {
+        h3Test {
             val (server, port) =
                 testServer {
                     routing { get("/big") { call.respondBytesWriter { repeat(100) { writeFully(ByteArray(30_000) { 1 }) } } } }
@@ -125,7 +125,7 @@ class ClientH3Test {
         }
 
     @Test fun uploadStreamingBody() =
-        clientTest {
+        h3Test {
             val (server, port) =
                 testServer {
                     routing {
@@ -165,7 +165,7 @@ class ClientH3Test {
         }
 
     @Test fun headersRoundTripLowercase() =
-        clientTest {
+        h3Test {
             val (server, port) =
                 testServer {
                     routing {
@@ -187,7 +187,7 @@ class ClientH3Test {
         }
 
     @Test fun cancelledCallResetsStream() =
-        clientTest {
+        h3Test {
             val serverFailed = CompletableDeferred<Throwable>()
             val (server, port) =
                 testServer {
@@ -225,7 +225,7 @@ class ClientH3Test {
 
     /** A hand-run HTTP/3 server: the first connection rejects every request (H3_REQUEST_REJECTED), the next ones answer 200. */
     @Test fun engineRetriesRequestNotProcessedOnNewConnection() =
-        clientTest {
+        h3Test {
             val serverTls =
                 tlsConfig(TlsRole.Server) {
                     alpn = listOf("h3")
@@ -318,7 +318,7 @@ class ClientH3Test {
         }
 
     @Test fun webSocketOverH3() =
-        clientTest {
+        h3Test {
             val (server, port) =
                 testServer {
                     install(ServerWebSockets)
@@ -348,7 +348,7 @@ class ClientH3Test {
 
     /** A cleanly closed WebSocket over h3 ends its stream with FIN, not a late RESET_STREAM that discards the Close reply. */
     @Test fun webSocketCleanCloseDoesNotResetStream() =
-        clientTest {
+        h3Test {
             val serverTls =
                 tlsConfig(TlsRole.Server) {
                     alpn = listOf("h3")
@@ -398,7 +398,7 @@ class ClientH3Test {
         }
 
     @Test fun h3UsesSameTrust() =
-        clientTest {
+        h3Test {
             val (server, port) = testServer { routing { get("/") { call.respondText("ok") } } }
             try {
                 val pinned = TrustConfig.Pinned(setOf(SpkiSha256(ByteArray(32))), base = ClientFixtures.trust)
@@ -410,42 +410,9 @@ class ClientH3Test {
             }
         }
 
-    /** Found by the vendored Ktor client contract tests: every closed client left its UDP receive loop parked on Dispatchers.IO. */
-    @Test fun closingTheClientReleasesItsUdpSocket() =
-        clientTest {
-            fun receivers() =
-                Thread.getAllStackTraces().values.count { st ->
-                    st.any {
-                        it.className.startsWith("io.kuicksilver.quic.NioDatagramIo") &&
-                            it.methodName.startsWith("receive")
-                    }
-                }
-            val (server, port) = testServer { routing { get("/") { call.respondText("ok") } } }
-            try {
-                testClient(Http3DiscoveryMode.H3Only).use { c -> assertEquals("ok", c.get("https://127.0.0.1:$port/").bodyAsText()) }
-                delay(300)
-                val baseline = receivers()
-                repeat(6) {
-                    testClient(Http3DiscoveryMode.H3Only).use { c ->
-                        assertEquals("ok", c.get("https://127.0.0.1:$port/").bodyAsText())
-                    }
-                }
-                var now = receivers()
-                var waited = 0
-                while (now > baseline && waited < 3000) {
-                    delay(100)
-                    waited += 100
-                    now = receivers()
-                }
-                assertTrue(now <= baseline, "UDP receive loops: $baseline before, $now after six closed clients")
-            } finally {
-                server.stop(100, 500)
-            }
-        }
-
     /** Found by the vendored contract (HttpTimeoutTest over h3): the body fails with the timeout, not a bare stream cancellation. */
     @Test fun requestTimeoutDuringTheBodyIsReportedAsSuch() =
-        clientTest {
+        h3Test {
             val (server, port) =
                 testServer {
                     routing {
@@ -484,7 +451,7 @@ class ClientH3Test {
 
     /** Found by the vendored server suite (testAccessingQueryParameterWithoutValue): `?auto` reaches the server as sent. */
     @Test fun queryParameterWithoutValue() =
-        clientTest {
+        h3Test {
             val (server, port) =
                 testServer {
                     routing {

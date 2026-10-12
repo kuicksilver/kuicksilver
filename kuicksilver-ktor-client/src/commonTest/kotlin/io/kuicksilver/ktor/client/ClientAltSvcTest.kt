@@ -22,7 +22,7 @@ class ClientAltSvcTest {
     @BeforeTest fun load() = KslLoader.ensureLoaded()
 
     @Test fun autoUpgradesToH3AfterAltSvc() =
-        clientTest {
+        h3Test {
             val (server, port) = testServer { routing { get("/") { call.respondText("used=${call.request.headers["Alt-Used"]}") } } }
             try {
                 testClient(Http3DiscoveryMode.Auto).use { c ->
@@ -47,7 +47,7 @@ class ClientAltSvcTest {
 
     /** A request cancelled while its Alt-Svc write waits behind another still gets the write done (it is not lost with the caller). */
     @Test fun deferredAltSvcWriteSurvivesCancellation() =
-        clientTest {
+        h3Test {
             val (server, port) =
                 testServer(configure = { http3 = false }) {
                     routing {

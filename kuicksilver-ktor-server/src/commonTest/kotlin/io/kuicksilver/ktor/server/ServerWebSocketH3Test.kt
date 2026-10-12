@@ -14,11 +14,13 @@ import io.ktor.websocket.RawWebSocket
 import io.ktor.websocket.readReason
 import io.ktor.websocket.readText
 import io.kuicksilver.http3.Http3Endpoint
+import io.kuicksilver.http3.Http3ErrorCode
 import io.kuicksilver.http3.Http3Exception
 import io.kuicksilver.http3.Http3Headers
 import io.kuicksilver.http3.Http3Request
 import io.kuicksilver.native.KslLoader
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
@@ -60,7 +62,7 @@ class ServerWebSocketH3Test {
     }
 
     @Test fun echoOverExtendedConnect() =
-        serverTest {
+        h3ServerTest {
             val (server, port) =
                 tlsServer {
                     install(WebSockets)
@@ -83,9 +85,41 @@ class ServerWebSocketH3Test {
             }
         }
 
+    /**
+     * Found on Linux Native by the client contract (testParallelWebsocketSessions over h3): a client that resets the CONNECT
+     * stream fails the session's reader with H3_REQUEST_CANCELLED; that failure escaped the per-connection coroutine as an
+     * uncaught exception, which Kotlin/Native turns into a process abort (the JVM only prints it).
+     */
+    @Test fun peerResetOfAWebSocketStreamStaysInsideTheServer() =
+        h3ServerTest {
+            val (server, port) =
+                tlsServer {
+                    install(WebSockets)
+                    routing {
+                        webSocket(
+                            "/ws",
+                        ) { for (frame in incoming) if (frame is Frame.Text) send(Frame.Text("echo:" + frame.readText())) }
+                    }
+                }
+            try {
+                repeat(2) { round ->
+                    h3(port) { c ->
+                        val stream = c.connect(wsRequest, "websocket")
+                        val ws = RawWebSocket(stream.input, stream.output, masking = true, coroutineContext = currentCoroutineContext())
+                        ws.send(Frame.Text("ping$round"))
+                        assertEquals("echo:ping$round", (ws.incoming.receive() as Frame.Text).readText())
+                        stream.reset(Http3ErrorCode.REQUEST_CANCELLED)
+                        ws.cancel()
+                    }
+                }
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
     /** Ktor's writer closes the output right after a server Close frame; the client's Close still arrives. */
     @Test fun serverInitiatedCloseReceivesClientReason() =
-        serverTest {
+        h3ServerTest {
             val reply = CompletableDeferred<CloseReason?>()
             val (server, port) =
                 tlsServer {
@@ -111,7 +145,7 @@ class ServerWebSocketH3Test {
         }
 
     @Test fun settingAdvertisedOnlyWhenEnabled() =
-        serverTest {
+        h3ServerTest {
             for (enabled in listOf(true, false)) {
                 val (server, port) = tlsServer(configure = { webSocketsOverHttp3 = enabled }) { }
                 try {
@@ -131,7 +165,7 @@ class ServerWebSocketH3Test {
         }
 
     @Test fun unknownProtocol501() =
-        serverTest {
+        h3ServerTest {
             val (server, port) =
                 tlsServer {
                     install(WebSockets)
@@ -152,7 +186,7 @@ class ServerWebSocketH3Test {
         }
 
     @Test fun nonWebSocketRouteAnswersItsStatus() =
-        serverTest {
+        h3ServerTest {
             val (server, port) =
                 tlsServer {
                     install(WebSockets)

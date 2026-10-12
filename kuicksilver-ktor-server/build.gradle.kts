@@ -18,9 +18,6 @@ kotlin {
         commonTest.dependencies {
             implementation(libs.ktor.server.websockets)
             implementation(libs.ktor.websockets)
-        }
-        jvmTest.dependencies {
-            implementation(kotlin("test-junit5"))
             // the vendored Ktor 3.6.0 engine contract suites: our client engine as the test client, and the plugins they install
             implementation(project(":kuicksilver-ktor-client"))
             implementation(libs.ktor.server.sse)
@@ -29,6 +26,9 @@ kotlin {
             implementation(libs.ktor.server.hsts)
             implementation(libs.ktor.server.forwarded.header)
             implementation(libs.ktor.server.auto.head.response)
+        }
+        jvmTest.dependencies {
+            implementation(kotlin("test-junit5"))
         }
     }
 }

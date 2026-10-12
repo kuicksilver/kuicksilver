@@ -30,7 +30,7 @@ internal fun Application.timeoutTest() {
 
             get("/with-stream") {
                 val delay = call.parameters["delay"]!!.toLong()
-                val response = "TextTextText".toByteArray()
+                val response = "TextTextText".encodeToByteArray()
                 call.respond(
                     object : OutgoingContent.WriteChannelContent() {
                         override val contentType = ContentType.Application.OctetStream

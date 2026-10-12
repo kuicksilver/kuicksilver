@@ -30,6 +30,7 @@ import io.kuicksilver.ktor.client.Http3DiscoveryMode
 import io.kuicksilver.ktor.client.Kuicksilver
 import io.kuicksilver.ktor.client.KuicksilverEngineConfig
 import io.kuicksilver.ktor.client.TestCerts
+import io.kuicksilver.ktor.client.quicServerSupported
 import io.kuicksilver.tls.Certificate
 import io.kuicksilver.tls.TlsIdentity
 import io.kuicksilver.tls.TrustConfig
@@ -39,9 +40,13 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlin.concurrent.Volatile
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.minutes
 import io.kuicksilver.ktor.server.Kuicksilver as KuicksilverServer
+
+/** The platform part of Ktor's engine selection patterns (`"jvm:CIO"`, `"native:*"`). */
+internal expect val contractPlatform: String
 
 /** One way of running the contract: the protocol and the URLs the tests see. */
 internal enum class ContractMode(
@@ -117,7 +122,7 @@ internal fun Application.contractTests() {
         }
         post("/echo-with-content-type") {
             val r = call.receiveText()
-            call.respondBytes(r.toByteArray(), call.request.header(HttpHeaders.ContentType)?.let { ContentType.parse(it) })
+            call.respondBytes(r.encodeToByteArray(), call.request.header(HttpHeaders.ContentType)?.let { ContentType.parse(it) })
         }
         get("/bytes") { call.respondBytes(makeArray(call.request.queryParameters["size"]!!.toInt())) }
         post("/content-type") { call.respondText(call.request.header(HttpHeaders.ContentType) ?: "") }
@@ -134,7 +139,7 @@ fun interface EngineSelectionRule {
     fun shouldRun(engineName: String): Boolean
 }
 
-private val platformName = "jvm"
+private val platformName = contractPlatform
 
 private fun matches(
     pattern: String,
@@ -161,6 +166,7 @@ abstract class ClientLoader(
         val failures = ArrayList<Pair<ContractMode, Throwable>>()
         for (mode in ContractMode.entries) {
             if (!this.rule.shouldRun(mode.engineName) || !rule.shouldRun(mode.engineName)) continue
+            if (mode == ContractMode.H3 && !runBlocking { quicServerSupported() }) continue // no QUIC server on this platform (ADR-0006)
             ContractServer.ports
             ContractServer.mode = mode
             var last: Throwable? = null
