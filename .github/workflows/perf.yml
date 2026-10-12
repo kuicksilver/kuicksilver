@@ -1,0 +1,105 @@
+# Copyright 2026 The Kuicksilver Authors
+# SPDX-License-Identifier: Apache-2.0
+# Weekly throughput check: the QUIC Interop Runner measurements (goodput, crosstraffic; runner pinned in tools/interop/runner.lock)
+# with kuicksilver as server and as client against every peer of tools/interop/perf-thresholds.json, checked by
+# tools/interop/check-perf.sh — a measurement below its threshold, failed or missing turns the job red. Local equivalent:
+# bash tools/interop/run-local.sh --perf. Self-contained (no composite action) so it does not depend on build.yml's jobs.
+#
+#   image (JVM interop image, once; peers from the thresholds file) ── perf (one job per peer: both roles, both measurements)
+name: perf
+on:
+  schedule:
+    - cron: '43 4 * * 2'   # weekly, a day after build.yml's weekly interop run
+  workflow_dispatch:
+permissions: {}
+concurrency:
+  group: perf
+  cancel-in-progress: false
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  image:
+    # The JVM interop image (kuicksilver-interop:local) with the manylinux libksl.so, as build-image.sh builds it locally.
+    # Only the JVM image: the thresholds come from JVM-image measurements (docs/spec/rfc-compliance.md).
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    timeout-minutes: 90
+    outputs:
+      peers: ${{ steps.peers.outputs.peers }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+        with:
+          cache-read-only: true
+      - name: Gradle properties for CI
+        run: |
+          # the OpenSSL built below is reused, not rebuilt (kuicksilver-native/openssl.gradle.kts)
+          mkdir -p "${GRADLE_USER_HOME:-$HOME/.gradle}"
+          printf 'kuicksilver.openssl.prebuilt=true\norg.gradle.java.installations.auto-download=false\n' >> "${GRADLE_USER_HOME:-$HOME/.gradle}/gradle.properties"
+      - name: Peers with thresholds
+        id: peers
+        run: |
+          peers=$(jq -c '[.thresholds | keys[] | split(":")[0] | split("->")[] | select(. != "kuicksilver")] | unique' tools/interop/perf-thresholds.json)
+          [ "$peers" != "[]" ] || { echo "::error::no peers in tools/interop/perf-thresholds.json"; exit 1; }
+          echo "peers=$peers" >> "$GITHUB_OUTPUT"
+      - name: 'openssl: fetch and verify'
+        run: bash tools/openssl/fetch.sh
+      - name: 'openssl: build linux-x64'
+        run: bash tools/openssl/build-docker.sh linux-x64
+      - name: 'interop: jvm image'
+        run: bash tools/interop/build-image.sh
+      - name: Save image
+        run: docker save kuicksilver-interop:local | gzip -1 > interop-image.tar.gz
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: perf-interop-image
+          path: interop-image.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+  perf:
+    # Per peer: run.py -t goodput,crosstraffic for both roles (5 repetitions each, about 25-40 min), then check-perf.sh.
+    needs: image
+    strategy:
+      fail-fast: false
+      matrix:
+        peer: ${{ fromJSON(needs.image.outputs.peers) }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: perf-interop-image
+      - name: Load image
+        run: gunzip -c interop-image.tar.gz | docker load && rm interop-image.tar.gz
+      - name: Runner prerequisites
+        run: |
+          sudo apt-get update -q
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends tshark python3-venv jq
+          sudo modprobe ip6table_filter   # the simulator's IPv6 network
+      - name: 'perf: kuicksilver vs ${{ matrix.peer }}'
+        env:
+          PEER: ${{ matrix.peer }}
+        run: bash tools/interop/run-local.sh --perf "$PEER"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: 'perf-${{ matrix.peer }}'
+          path: build/interop/2*
+          if-no-files-found: warn
+          retention-days: 7
