@@ -2,14 +2,15 @@
 # SPDX-License-Identifier: Apache-2.0
 # Weekly throughput check: the QUIC Interop Runner measurements (goodput, crosstraffic; runner pinned in tools/interop/runner.lock)
 # with kuicksilver as server and as client against every peer of tools/interop/perf-thresholds.json, checked by
-# tools/interop/check-perf.sh — a measurement below its threshold, failed or missing turns the job red. Local equivalent:
+# tools/interop/check-perf.sh — a measurement failed or missing turns the job red; one below its threshold does too once
+# the thresholds file says "blocking": true (until then it is a warning annotation). Local equivalent:
 # bash tools/interop/run-local.sh --perf. Self-contained (no composite action) so it does not depend on build.yml's jobs.
 #
 #   image (JVM interop image, once; peers from the thresholds file) ── perf (one job per peer: both roles, both measurements)
 name: perf
 on:
   schedule:
-    - cron: '43 4 * * 2'   # weekly, a day after build.yml's weekly interop run
+    - cron: '43 4 * * 2'   # weekly (Tuesday 04:43 UTC); build.yml's interop job runs only on manual dispatch
   workflow_dispatch:
 permissions: {}
 concurrency:
@@ -96,10 +97,18 @@ jobs:
         env:
           PEER: ${{ matrix.peer }}
         run: bash tools/interop/run-local.sh --perf "$PEER"
+      # The result files (the measured means) always; the runner logs, with a pcap per repetition, only when the job failed.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: 'perf-${{ matrix.peer }}'
-          path: build/interop/2*
+          path: build/interop/2*/*.json
+          if-no-files-found: warn
+          retention-days: 7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: failure()
+        with:
+          name: 'perf-${{ matrix.peer }}-logs'
+          path: build/interop/2*/
           if-no-files-found: warn
           retention-days: 7
