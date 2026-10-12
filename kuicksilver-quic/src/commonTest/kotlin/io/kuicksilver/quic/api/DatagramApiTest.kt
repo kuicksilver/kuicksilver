@@ -112,7 +112,10 @@ class DatagramApiTest {
 
     @Test fun negative_datagramQueueCap() =
         runBlocking {
-            ApiPair.open().use { p ->
+            // the server announces the largest max_ack_delay, so the client's first PTO is over 16 s away: a PTO probe may
+            // carry a queued datagram (RFC 9002 section 6.2.4), and one that fired while the queue filled made the 33rd fit
+            // (run 38287900994, Linux arm64)
+            ApiPair.open(serverQuic = quicConfig { maxAckDelay = 16_383.milliseconds }).use { p ->
                 withTimeout(30.seconds) {
                     val (c, s) = p.connect()
                     congest(p, c)
@@ -136,8 +139,14 @@ class DatagramApiTest {
                     p.net.uncut(p.server.localAddress)
                     // receive side: 1000 datagrams nobody collects → the newest 128 survive in the core's queue
                     repeat(1000) { s.sendDatagram(ByteArray(4) { b -> (it shr (8 * b)).toByte() }, DatagramPolicy.Reject) }
-                    withTimeoutOrNull(10.seconds) { while (s.stats.bytesInFlight > 0 || s.core.datagramSender!!.hasPending()) delay(10) }
-                    delay(100)
+                    // settled: the server sent and saw acknowledged all 1000 (so the client received them) and the client evicted 872
+                    val sr = s as io.kuicksilver.quic.runtime.ConnectionRuntime
+                    val settled =
+                        withTimeoutOrNull(10.seconds) {
+                            while (sr.datagramsQueuedForTest > 0 || s.stats.bytesInFlight > 0 || c.stats.datagramsDropped < 1000 - 128) delay(10)
+                            true
+                        }
+                    assertTrue(settled == true, "queued ${sr.datagramsQueuedForTest}, dropped ${c.stats.datagramsDropped}")
                     val got = withTimeoutOrNull(5.seconds) { c.datagrams.take(128).toList() }!!
                     assertEquals(128, got.size)
                     assertEquals(
