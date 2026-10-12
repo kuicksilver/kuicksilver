@@ -135,11 +135,13 @@ public class TlsConfig private constructor(
     /** Whether every verification failure is sent as `handshake_failure`; see [Builder.genericAlerts]. */
     public val genericAlerts: Boolean,
 ) {
-    /** A copy with one connection's selector override applied (server side). */
-    internal fun withOverride(o: ServerTlsOverride): TlsConfig =
-        TlsConfig(
+    /** A copy with one connection's selector override applied (server side); the override passes the checks of [Builder.build]. */
+    internal fun withOverride(o: ServerTlsOverride): TlsConfig {
+        o.alpn?.let { validateAlpn(it) }
+        checkServerAuth(o.clientAuth ?: clientAuth, o.trust ?: trust)
+        return TlsConfig(
             role,
-            o.alpn ?: alpn,
+            o.alpn?.toList() ?: alpn,
             serverName,
             versions,
             cipherSuites,
@@ -152,6 +154,7 @@ public class TlsConfig private constructor(
             handshakeTimeout,
             genericAlerts,
         )
+    }
 
     /** Validates the combination for the transport it is used with; QUIC is stricter (RFC 9001 section 4.2). */
     internal fun validateFor(quic: Boolean) {
@@ -191,7 +194,7 @@ public class TlsConfig private constructor(
         public val role: TlsRole,
     ) {
         /**
-         * ALPN protocol IDs in preference order (RFC 7301), each 1..255 characters; default empty, which sends no ALPN
+         * ALPN protocol IDs in preference order (RFC 7301), each 1..255 bytes of UTF-8 and at most 255 bytes together with one length byte each; default empty, which sends no ALPN
          * extension. QUIC needs at least one (RFC 9001 section 8.1); a server that shares none with the client's offer
          * fails the handshake with `no_application_protocol`.
          */
@@ -257,27 +260,16 @@ public class TlsConfig private constructor(
 
         /**
          * Validates the settings and returns an immutable [TlsConfig]. Throws [TlsException.Config] for an ALPN entry that is
-         * empty or longer than 255, a server without [identity] or [sniSelector], [clientAuth] on a client or without an
+         * empty or longer than 255 bytes (UTF-8) or a list longer than 255 bytes on the wire, a server without [identity] or [sniSelector], [clientAuth] on a client or without an
          * AnchoredCa [trust], and an invalid [serverName] or ExpectedName. Transport-specific rules (QUIC) are checked when
          * the configuration is used.
          */
         @OptIn(DelicateKuicksilverApi::class)
         public fun build(): TlsConfig {
-            if (alpn.any { it.isEmpty() || it.length > 255 }) throw TlsException.Config("ALPN entries must be 1..255 bytes")
+            validateAlpn(alpn)
             if (role == TlsRole.Server) {
                 if (identity == null && sniSelector == null) throw TlsException.Config("a server needs an identity or an sniSelector")
-                if (clientAuth != ClientAuth.None) {
-                    val base =
-                        when (val t = trust) {
-                            is TrustConfig.Pinned -> t.base
-                            else -> t
-                        }
-                    if (base !is TrustConfig.AnchoredCa) {
-                        throw TlsException.Config(
-                            "client certificates are verified against AnchoredCa only (optionally with Pinned) in v1",
-                        )
-                    }
-                }
+                checkServerAuth(clientAuth, trust)
             } else {
                 if (clientAuth != ClientAuth.None) throw TlsException.Config("clientAuth applies to servers")
                 serverName?.let { HostName.normalize(it) }
@@ -299,6 +291,32 @@ public class TlsConfig private constructor(
                 genericAlerts,
             )
         }
+    }
+}
+
+/** The longest ALPN list `ksl` takes on the wire (each name with its length byte). */
+private const val ALPN_WIRE_MAX = 255
+
+/** RFC 7301 section 3.1: each protocol name is 1..255 bytes of UTF-8 and the whole list fits [ALPN_WIRE_MAX] bytes on the wire. */
+internal fun validateAlpn(alpn: List<String>) {
+    var wire = 0
+    for (p in alpn) {
+        val n = p.encodeToByteArray().size
+        if (n == 0 || n > 255) throw TlsException.Config("ALPN entries must be 1..255 bytes")
+        wire += 1 + n
+    }
+    if (wire > ALPN_WIRE_MAX) throw TlsException.Config("the ALPN list must fit $ALPN_WIRE_MAX bytes on the wire (it takes $wire)")
+}
+
+/** Client certificates are verified against an AnchoredCa trust only (optionally inside Pinned) in v1. */
+private fun checkServerAuth(
+    clientAuth: ClientAuth,
+    trust: TrustConfig,
+) {
+    if (clientAuth == ClientAuth.None) return
+    val base = if (trust is TrustConfig.Pinned) trust.base else trust
+    if (base !is TrustConfig.AnchoredCa) {
+        throw TlsException.Config("client certificates are verified against AnchoredCa only (optionally with Pinned) in v1")
     }
 }
 
@@ -328,8 +346,9 @@ public class ClientHelloInfo(
  * @property identity the chain and key presented on this connection instead of [TlsConfig.identity].
  * @property alpn replaces [TlsConfig.alpn] for this connection; null keeps it.
  * @property clientAuth replaces [TlsConfig.clientAuth] for this connection; null keeps it.
- * @property trust replaces [TlsConfig.trust] for client certificates on this connection; null keeps it. The v1 rule of
- *   [TlsConfig.Builder.trust] (AnchoredCa, optionally inside Pinned) applies but is not validated here.
+ * @property trust replaces [TlsConfig.trust] for client certificates on this connection; null keeps it. The override passes
+ *   the checks of [TlsConfig.Builder.build]: with client certificates the trust must be AnchoredCa (optionally inside Pinned)
+ *   and ALPN entries are counted in bytes; a failing override aborts that connection's handshake with [TlsException.Config].
  */
 public class ServerTlsOverride(
     public val identity: TlsIdentity,

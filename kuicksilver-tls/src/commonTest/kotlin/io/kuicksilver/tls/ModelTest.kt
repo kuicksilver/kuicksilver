@@ -140,6 +140,33 @@ class CertificateTest {
 }
 
 class TlsConfigTest {
+    /** RFC 7301 section 3.1: a protocol name is 1..255 bytes, not characters; the whole list must fit ksl's 255-byte wire buffer. */
+    @Test fun negative_alpnLengthCountedInBytes() {
+        assertFailsWith<TlsException.Config> { tlsConfig(TlsRole.Client) { alpn = listOf("\u00e9".repeat(200)) } } // 400 bytes in UTF-8
+        assertFailsWith<TlsException.Config> { tlsConfig(TlsRole.Client) { alpn = List(3) { "x".repeat(100) } } } // 303 bytes on the wire
+        tlsConfig(TlsRole.Client) { alpn = listOf("\u00e9".repeat(127)) } // 254 bytes + 1 length byte
+    }
+
+    /** A selector override passes the same checks as build(): client certificates need an AnchoredCa trust, ALPN is checked in bytes. */
+    @Test fun negative_overrideClientAuthNeedsAnchoredCa() {
+        val id = TlsIdentity.fromDer(listOf(TestCerts.server), TestCerts.serverKey.copyOf())
+        try {
+            val base =
+                tlsConfig(TlsRole.Server) {
+                    alpn = listOf("http/1.1")
+                    identity = id
+                }
+            assertFailsWith<TlsException.Config> {
+                base.withOverride(ServerTlsOverride(id, clientAuth = ClientAuth.Required, trust = TrustConfig.Platform))
+            }
+            assertFailsWith<TlsException.Config> { base.withOverride(ServerTlsOverride(id, clientAuth = ClientAuth.Required)) }
+            assertFailsWith<TlsException.Config> { base.withOverride(ServerTlsOverride(id, alpn = listOf("\u00e9".repeat(200)))) }
+            base.withOverride(ServerTlsOverride(id, clientAuth = ClientAuth.Required, trust = TrustConfig.AnchoredCa(listOf(Certificate(TestCerts.testCa)))))
+        } finally {
+            id.close()
+        }
+    }
+
     @Test fun quicRequiresTls13Only() {
         val c =
             tlsConfig(TlsRole.Client) {
