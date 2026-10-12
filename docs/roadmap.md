@@ -41,15 +41,15 @@ Known limits, stated on purpose:
   `k7/f1-core`).
 - QUIC server on Kotlin/Native macOS: `ksl_udp` over `sendmsg`/`recvmsg` and kqueue, the server test suites on
   `macosArm64`.
-- Coverage reports (Kover once it supports the `com.android.kotlin.multiplatform.library` plugin, or JaCoCo for the JVM only).
-- The 0-RTT anti-replay design of ADR-0013 reviewed for implementation in a later minor.
+- Coverage reports of the JVM tests with Kover (`-Pkuicksilver.coverage :koverHtmlReportJvmTests`, no threshold).
+- 0-RTT (RFC 9001 §4.6), owner decision to ship it in 0.2.0: the ADR-0013 review (2026-10) keeps its three layers and
+  puts freshness on OpenSSL's check (the ticket lifetime and the 10 s allowance between reported and computed ticket
+  age, which is the replay window). It adds a per-server replay register keyed by ticket, single-use client tickets in
+  the per-engine session cache, and HTTP/3 safe-method gating with RFC 8470 `425`. About 14 tasks.
+- QUIC server on Kotlin/Native Windows (`ksl_udp` over Winsock).
+- The interop runner's `perf` protocol and throughput thresholds in CI.
 
 ## After 0.2.0
 
-- 0-RTT (RFC 9001 §4.6) is the next minor's headline: the ADR-0013 review (2026-10) keeps its three layers and puts
-  freshness on OpenSSL's ticket-age check. It adds a per-server replay register keyed by ticket, single-use client
-  tickets in the per-engine session cache, and HTTP/3 safe-method gating with RFC 8470 `425`. About 14 tasks.
-- QUIC server on Kotlin/Native Windows (`ksl_udp` over Winsock).
-- The interop runner's `perf` protocol and throughput thresholds in CI.
 - RFC 9460 HTTPS records as a source of h3, WebTransport, multipath and QUIC-LB (`PathId` and the CID layout are
   prepared), BBR.
