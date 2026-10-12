@@ -55,6 +55,9 @@ public final class io/kuicksilver/http3/Http3Endpoint : java/lang/AutoCloseable 
 	public final fun connectEarly (Lio/ktor/network/sockets/InetSocketAddress;Lio/kuicksilver/tls/TlsConfig;Lio/kuicksilver/quic/QuicConfig;Lio/kuicksilver/http3/Http3Settings;Lio/kuicksilver/tls/EarlyDataState;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public static synthetic fun connectEarly$default (Lio/kuicksilver/http3/Http3Endpoint;Lio/ktor/network/sockets/InetSocketAddress;Lio/kuicksilver/tls/TlsConfig;Lio/kuicksilver/quic/QuicConfig;Lio/kuicksilver/http3/Http3Settings;Lio/kuicksilver/tls/EarlyDataState;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 	public final fun getLocalAddress ()Lio/ktor/network/sockets/InetSocketAddress;
+	public final fun getStats ()Lio/kuicksilver/quic/EndpointStats;
+	public final fun shutdown-rnQQ1Ag (JJLjava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static synthetic fun shutdown-rnQQ1Ag$default (Lio/kuicksilver/http3/Http3Endpoint;JJLjava/lang/String;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 }
 
 public final class io/kuicksilver/http3/Http3Endpoint$Companion {
