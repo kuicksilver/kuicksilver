@@ -85,6 +85,8 @@ Fixes from a full five-reviewer pass over the code before the first release, amo
   graceful stop; cookie crumbs are joined; truncated frames and oversized `content-length` are rejected.
 - `ksl_udp` treats per-destination send errors as the loss of one datagram instead of a socket failure; Initials
   from source port 0 are dropped; the certificate parser accepts the time formats OpenSSL accepts.
+- The endpoint's receive loop yields after 16 rounds or 2 ms of continuous traffic, so a socket that never runs dry
+  (a flood) no longer starves the connection timers and queued application commands.
 
 ### Security
 

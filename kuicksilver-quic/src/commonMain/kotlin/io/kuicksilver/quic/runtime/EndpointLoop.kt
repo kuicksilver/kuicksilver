@@ -35,6 +35,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.yield
 import kotlin.concurrent.Volatile
 import kotlin.concurrent.atomics.AtomicInt
 import kotlin.concurrent.atomics.AtomicLong
@@ -144,7 +145,9 @@ internal class EndpointLoop private constructor(
     ): kotlinx.coroutines.Job =
         scope.launch {
             val batch = PacketBatch(16, SLOT_SIZE)
+            val limiter = WorkLimiter()
             try {
+                limiter.start(now())
                 while (true) {
                     batch.clear()
                     io.receive(batch)
@@ -160,6 +163,10 @@ internal class EndpointLoop private constructor(
                         )
                     }
                     flush()
+                    if (limiter.shouldYield(now)) {
+                        yield()
+                        limiter.start(now())
+                    }
                 }
             } catch (e: CancellationException) {
                 throw e
@@ -246,14 +253,23 @@ internal class EndpointLoop private constructor(
         if (owner >= 0 && owner != index) group.forward(owner, buf, length, from, ecn, asReceived = false)
     }
 
+    /** Receive rounds (this socket's and the forwarded ones) between two yields: timers and commands share the dispatcher with the receivers. */
+    private val limiter = WorkLimiter()
+
     private suspend fun receiveLoop() {
         try {
+            limiter.start(now())
             while (true) {
                 inBatch.clear()
                 io.receive(inBatch)
                 val now = now()
                 for (i in 0 until inBatch.count) onDatagram(inBatch.buffer(i), inBatch.length(i), inBatch.address(i)!!, inBatch.ecn(i), now)
                 afterReceive(now)
+                // a socket that never runs dry (a flood) must not starve the timer coroutine and the queued application commands
+                if (limiter.shouldYield(now)) {
+                    yield()
+                    limiter.start(now())
+                }
             }
         } catch (e: CancellationException) {
             throw e
@@ -282,6 +298,7 @@ internal class EndpointLoop private constructor(
         try {
             // in batches like the receive loop: admission and a flush after each, then a yield, so a rebound high-rate flow cannot starve this loop's own socket, timers and commands
             var sinceRound = 0
+            limiter.start(now())
             for (f in forwarded) {
                 forwardedCount.incrementAndFetch()
                 buf.copyFrom(f.bytes, 0, 0, f.bytes.size)
@@ -300,7 +317,10 @@ internal class EndpointLoop private constructor(
                 if (++sinceRound == FORWARD_BATCH || forwarded.isEmpty) {
                     sinceRound = 0
                     afterReceive(now)
-                    kotlinx.coroutines.yield()
+                    if (limiter.shouldYield(now) || forwarded.isEmpty) {
+                        yield()
+                        limiter.start(now())
+                    }
                 }
             }
         } catch (
