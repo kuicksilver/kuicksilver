@@ -75,6 +75,47 @@ val roots = Certificate.parsePem(caPem)   // every CERTIFICATE block, in order; 
 val trust = TrustConfig.AnchoredCa(roots)
 ```
 
+### Platform trust
+
+`TrustConfig.Platform` hands the chain to the platform's own verifier. `ksl` checks the reference identifier with the
+shared RFC 9525 matcher afterwards on every platform, so a platform matcher can only make the decision stricter; pins
+(`Pinned`) are compared against the chain the platform built, never against certificates the peer merely sent.
+
+| Platform | Verifier and store | Revocation |
+|---|---|---|
+| JVM | the default `X509TrustManager`: the JDK's `cacerts` or `javax.net.ssl.trustStore`, not the OS store | as the JDK is configured (off by default) |
+| Android | the platform `TrustManager`, including the app's Network Security Config | the platform's policy |
+| Apple (macOS, iOS) | `SecTrust` with the SSL policy for the host name: the keychain and the system roots | the platform's policy; an incomplete required check is `UnknownRevocationStatus` |
+| Windows (mingwX64) | CryptoAPI: `CertGetCertificateChain` for the `serverAuth` (or, for a client certificate, `clientAuth`) usage with the presented intermediates, then `CertVerifyCertificateChainPolicy(CERT_CHAIN_POLICY_SSL)` with the host name: the Windows root store, missing intermediates fetched through AIA | the leaf's status is checked; a revoked leaf is `Revoked`, an unknown status is ignored (soft fail, as browsers); network fetches share a 10 s budget and run off the handshake's thread |
+| Linux (Native) | OpenSSL inside `ksl` with the system CA bundle (below) | none |
+
+Windows errors map to `VerifyReason`: `CERT_E_UNTRUSTEDROOT` and chaining failures to `UnknownIssuer`, `CERT_E_EXPIRED` to
+`Expired` or `NotYetValid`, `CERT_E_CN_NO_MATCH` to `HostnameMismatch`, `CRYPT_E_REVOKED` to `Revoked`,
+`CERT_E_WRONG_USAGE` to `InvalidPurpose`, a bad signature to `BadSignature`; anything else is `UnknownIssuer`.
+
+### Linux trust store
+
+On Linux Native the bundled OpenSSL has no built-in certificate directory, so `ksl` looks for the system store when a
+client context with `TrustConfig.Platform` is built, in this order:
+
+1. `SSL_CERT_FILE` (a PEM bundle) and `SSL_CERT_DIR` (a directory of hashed certificates, `c_rehash`). When either variable
+   is set, only these are used, as in Go's `crypto/x509`: a configured store never silently becomes another one.
+2. Otherwise the first bundle that loads: `/etc/ssl/certs/ca-certificates.crt` (Debian, Ubuntu, Alpine),
+   `/etc/pki/tls/certs/ca-bundle.crt` (Fedora, RHEL), `/etc/ssl/ca-bundle.pem` (openSUSE), `/etc/pki/tls/cacert.pem`,
+   `/etc/ssl/cert.pem`, `/usr/local/etc/openssl/cert.pem`.
+3. Otherwise the first of `/etc/ssl/certs` and `/etc/pki/tls/certs` that exists.
+
+When nothing is found (a distroless or `scratch` image without `ca-certificates`), building the configuration fails with
+`TlsException.Config` naming every path searched:
+
+```text
+invalid TLS configuration: ksl: no CA certificates for TrustConfig.Platform; searched /etc/ssl/certs/ca-certificates.crt, ...,
+/etc/pki/tls/certs/; install ca-certificates, set SSL_CERT_FILE or SSL_CERT_DIR, or use AnchoredCa
+```
+
+Install the distribution's `ca-certificates` package, copy a bundle into the image and point `SSL_CERT_FILE` at it, or
+ship your roots with `TrustConfig.AnchoredCa`.
+
 `TrustConfig.Tofu` stores the first key seen for a name; `TrustConfig.Custom` hands trust to your verifier and still
 runs the shared name check afterwards (it is marked `@DelicateKuicksilverApi` for that reason).
 
