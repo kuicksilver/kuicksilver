@@ -20,10 +20,11 @@ class SocketConfigureHookTest {
     @Test fun nioHookRunsBeforeBind() {
         var seen: DatagramChannel? = null
         var boundAtHook = true
-        val io = NioDatagramIo.open(lo) {
-            seen = it
-            boundAtHook = it.localAddress != null
-        }
+        val io =
+            NioDatagramIo.open(lo) {
+                seen = it
+                boundAtHook = it.localAddress != null
+            }
         try {
             assertFalse(boundAtHook, "Network.bindSocket needs a socket that is not bound to an address yet")
             assertTrue(seen!!.isOpen)
