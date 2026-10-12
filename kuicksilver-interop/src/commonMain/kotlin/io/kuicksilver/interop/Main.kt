@@ -27,7 +27,7 @@ internal object Interop {
                 val identity = TlsIdentity.fromPem(Files.readText("$certs/cert.pem"), Files.readText("$certs/priv.key").toCharArray())
                 val www = env["WWW"] ?: "/www"; val qlog = env["QLOGDIR"]?.let { DirectoryQlogSink(it) }
                 if (plan.http3) H3InteropServer.start(identity, 443, www, plan.versions, admission = plan.admission, cipherSuites = plan.cipherSuites, handshakeTimeout = plan.handshakeTimeout, qlog = qlog).use { awaitCancellation() }
-                else HqInteropServer.start(identity, 443, www, plan.versions, admission = plan.admission, cipherSuites = plan.cipherSuites, handshakeTimeout = plan.handshakeTimeout, qlog = qlog).use { awaitCancellation() }
+                else HqInteropServer.start(identity, 443, www, plan.versions, admission = plan.admission, cipherSuites = plan.cipherSuites, handshakeTimeout = plan.handshakeTimeout, qlog = qlog, earlyData = plan.earlyData).use { awaitCancellation() }
                 @Suppress("UNREACHABLE_CODE") 0
             }
             "client" -> runBlocking {
