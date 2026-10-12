@@ -10,6 +10,7 @@ import io.kuicksilver.http3.Http3ErrorCode
 import io.kuicksilver.http3.Http3Exception
 import io.kuicksilver.http3.QuicPair
 import io.kuicksilver.http3.frame.ControlFrames
+import io.kuicksilver.http3.frame.FrameHeaders
 import io.kuicksilver.http3.frame.FrameType
 import io.kuicksilver.http3.frame.StreamType
 import io.kuicksilver.http3.message.GlitchLimiter
@@ -24,6 +25,7 @@ import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.yield
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -168,6 +170,38 @@ class GoAwayTest {
                 val e = withTimeout(5.seconds) { p.client.closed.await() }
                 assertEquals(Http3ErrorCode.NO_ERROR, assertIs<Http3Exception.Protocol>(e).h3Code)
                 assertEquals(Initiator.Peer, (e as Http3Exception.Protocol).initiator)
+            }
+        }
+
+    /** A request below the GOAWAY id whose HEADERS are still arriving counts as in flight: the idle close waits for it (RFC 9114 section 5.2). */
+    @Test fun unreadRequestHeadersKeepConnectionOpenAfterGoAway() =
+        h3Test {
+            QuicPair.open().use { q ->
+                val (c, s) = q.connect()
+                val server = Http3Connection.server(s)
+                val raw = RawPeer(c)
+                raw.openControl()
+                val st = c.openBidi()
+                val frame = raw.headers(st.id, GET)
+                val half = frame.size / 2
+                st.output.writeFully(frame, 0, half)
+                st.output.flush()
+                withTimeout(5.seconds) { while (server.session.maxRequestId < st.id) yield() }
+                server.goAway()
+                assertFalse(server.closed.isCompleted, "the half-received request keeps the connection open")
+                st.output.writeFully(frame, half, frame.size)
+                st.output.flushAndClose()
+                server.acceptRequest().respond(200).finish()
+                val resp = withTimeout(5.seconds) { st.input.readAllBytes() }
+                val h = FrameHeaders.parse(resp, 0, resp.size)!!
+                assertEquals(FrameType.HEADERS, h.type)
+                val fields =
+                    io.kuicksilver.http3.qpack.QpackDecoder(0, 0, 65_536).decode(
+                        st.id,
+                        resp.copyOfRange(h.headerSize, h.headerSize + h.length.toInt()),
+                    )
+                assertEquals(":status" to "200", (fields as io.kuicksilver.http3.qpack.DecodeResult.Decoded).fields.first())
+                withTimeout(5.seconds) { server.closed.await() }
             }
         }
 

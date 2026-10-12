@@ -124,8 +124,9 @@ connection itself. `request.remoteAddress` follows the client's path when it mig
 
 `connection.goAway()` shuts a connection down gracefully (RFC 9114 section 5.2). A server first announces
 2^62-4 ("no promises yet"), waits about two round trips so requests already in flight arrive, then announces the first
-request id it will not process; such requests are reset with `H3_REQUEST_REJECTED`. Once every accepted request is
-answered the server closes with `H3_NO_ERROR`. A client receiving GOAWAY fails the requests it did not cover, and every
+request id it will not process; such requests are reset with `H3_REQUEST_REJECTED`. Once every request below that id
+is answered — including one whose HEADERS were still arriving when GOAWAY went out — the server closes with
+`H3_NO_ERROR`. A client receiving GOAWAY fails the requests it did not cover, and every
 new request, with `Http3Exception.RequestNotProcessed(retrySafe = true)`: they were never processed and can be sent
 again on a new connection (the Ktor engine does that by itself). A client's own `goAway()` sends GOAWAY(0) and stops
 issuing requests.

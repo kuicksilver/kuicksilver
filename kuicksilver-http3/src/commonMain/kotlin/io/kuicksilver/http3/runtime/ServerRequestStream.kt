@@ -42,77 +42,85 @@ internal suspend fun handleRequestStream(
             return@with
         }
     }
-    val frames =
-        RequestFrames(
-            st.input,
-            isServerSide = true,
-            maxHeadersFrame = maxHeadersFrame,
-            onSkipped = { glitch("unknown frame on a request stream") },
-            onBuffered = { bufferedHeaderBytes += it },
-        )
-    val first =
-        try {
-            frames.next()
-        } catch (
-            e: IncompleteFrame,
-        ) {
-            truncated(st, null, null)
-            return@with
-        } catch (e: QuicException.StreamError) {
-            return@with
-        }
-    val block =
-        when (first) {
-            RequestFrame.End -> {
-                abort(st, Http3ErrorCode.REQUEST_INCOMPLETE)
+    // in flight from the first byte, not from the parsed HEADERS: a request below the GOAWAY id whose HEADERS are
+    // still arriving must keep the idle close away (RFC 9114 section 5.2)
+    requestStarted()
+    var handedOff = false
+    try {
+        val frames =
+            RequestFrames(
+                st.input,
+                isServerSide = true,
+                maxHeadersFrame = maxHeadersFrame,
+                onSkipped = { glitch("unknown frame on a request stream") },
+                onBuffered = { bufferedHeaderBytes += it },
+            )
+        val first =
+            try {
+                frames.next()
+            } catch (
+                e: IncompleteFrame,
+            ) {
+                truncated(st, null, null)
+                return@with
+            } catch (e: QuicException.StreamError) {
                 return@with
             }
+        val block =
+            when (first) {
+                RequestFrame.End -> {
+                    abort(st, Http3ErrorCode.REQUEST_INCOMPLETE)
+                    return@with
+                }
 
-            is RequestFrame.Data -> {
-                throw H3ProtocolError(Http3ErrorCode.FRAME_UNEXPECTED, "DATA before HEADERS on stream ${st.id}")
+                is RequestFrame.Data -> {
+                    throw H3ProtocolError(Http3ErrorCode.FRAME_UNEXPECTED, "DATA before HEADERS on stream ${st.id}")
+                }
+
+                is RequestFrame.HeadersTooLarge -> {
+                    reject431(st)
+                    return@with
+                }
+
+                is RequestFrame.Headers -> {
+                    first.block
+                }
             }
-
-            is RequestFrame.HeadersTooLarge -> {
+        val fields =
+            try {
+                decodeSection(st, block)
+            } catch (
+                e: StreamFailure,
+            ) {
                 reject431(st)
                 return@with
+            } catch (e: StreamAbandoned) {
+                return@with
             }
-
-            is RequestFrame.Headers -> {
-                first.block
+        val parsed =
+            try {
+                PseudoHeaders.parseRequest(fields, settings.enableConnectProtocol)
+            } catch (
+                e: MalformedMessage,
+            ) {
+                abort(st, Http3ErrorCode.MESSAGE_ERROR)
+                return@with
             }
-        }
-    val fields =
-        try {
-            decodeSection(st, block)
-        } catch (
-            e: StreamFailure,
-        ) {
-            reject431(st)
-            return@with
-        } catch (e: StreamAbandoned) {
+        val req = ServerRequestImpl(this, st, parsed)
+        handedOff = true // from here ServerRequestImpl.done() ends the request
+        if (requests.trySend(req).isFailure) {
+            abort(st, Http3ErrorCode.REQUEST_REJECTED)
+            req.done()
             return@with
         }
-    val parsed =
-        try {
-            PseudoHeaders.parseRequest(fields, settings.enableConnectProtocol)
-        } catch (
-            e: MalformedMessage,
-        ) {
-            abort(st, Http3ErrorCode.MESSAGE_ERROR)
-            return@with
+        pumpBody(st, frames, req.bodyChannel, req.trailersDeferred, contentLength(parsed.regular)) { f ->
+            if (f.code == Http3ErrorCode.EXCESSIVE_LOAD && !req.responseStarted) reject431(st) else abort(st, f.code)
+            req.done()
         }
-    val req = ServerRequestImpl(this, st, parsed)
-    requestStarted()
-    if (requests.trySend(req).isFailure) {
-        abort(st, Http3ErrorCode.REQUEST_REJECTED)
-        req.done()
-        return@with
+        req.receiveEnded()
+    } finally {
+        if (!handedOff) requestDone()
     }
-    pumpBody(st, frames, req.bodyChannel, req.trailersDeferred, contentLength(parsed.regular)) { f ->
-        if (f.code == Http3ErrorCode.EXCESSIVE_LOAD && !req.responseStarted) reject431(st) else abort(st, f.code)
-        req.done()
-    }
-    req.receiveEnded()
 }
 
 /** 431 and STOP_SENDING H3_EXCESSIVE_LOAD (RFC 9114 section 4.2.2; quic-go CVE-2025-64702). */

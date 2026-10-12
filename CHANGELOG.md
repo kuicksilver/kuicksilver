@@ -80,6 +80,8 @@ K7 (0.2.0), HTTP/3 and the Ktor engines:
   HEAD or with status 204 or 304 is a malformed message (`Http3Exception.MessageError`) instead of a body; `te` is
   accepted in requests only — a response or trailers carrying it are malformed, the server engine drops it from
   application responses (RFC 9110 section 10.1.4).
+- HTTP/3 server: a request whose HEADERS were still arriving when the final GOAWAY went out counted as idle, so the
+  connection could close under it; a request stream now counts as in flight from its first byte (RFC 9114 section 5.2).
 - Ktor client: a non-idempotent request that failed on a pooled HTTP/1.1 connection the server had closed is no
   longer sent again (RFC 9112 section 9.3.1); only idempotent requests get the transparent retry, and connections
   already closed for reading are dropped when taken from the pool.
