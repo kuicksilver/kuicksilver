@@ -111,7 +111,11 @@ class NetworkMigratorTest {
                     val e2 = assertIs<MigrationEvent.Migrated<Int>>(events.receive())
                     assertEquals(2 to 3, e2.old to e2.new)
                     e.path.state.first { it == PathState.Closed }
-                    assertTrue(o.opened.single { it.first == 2 }.second.closed)
+                    assertTrue(
+                        o.opened
+                            .single { it.first == 2 }
+                            .second.closed,
+                    )
                     assertEquals(listOf(addr(3)), c.paths.map { it.localAddress })
                     ping(c, s)
                     m.close()
@@ -243,11 +247,60 @@ class NetworkMigratorTest {
                     m.close() // mid-validation
                     job.join()
                     waitClosed(o.opened.single { it.first == 3 }.second)
-                    assertFalse(o.opened.single { it.first == 2 }.second.closed, "the active path's socket belongs to the connection")
+                    assertFalse(
+                        o.opened
+                            .single { it.first == 2 }
+                            .second.closed,
+                        "the active path's socket belongs to the connection",
+                    )
                     assertEquals(addr(2), c.activePath!!.localAddress)
                     nets.value = 4
                     yield()
                     assertEquals(listOf(2, 3), o.opened.map { it.first }, "a closed migrator opens nothing")
+                    collector.cancel()
+                    c.close()
+                }
+            }
+        }
+
+    @Test fun supersededDuringOpenIoClosesTheSocket() =
+        runBlocking {
+            ApiPair.open().use { p ->
+                withTimeout(60.seconds) {
+                    val (c, s) = p.connect()
+                    val nets = MutableStateFlow<Int?>(1)
+                    val o = Opener(p)
+                    val opening = CompletableDeferred<Unit>()
+                    val gate = CompletableDeferred<Unit>()
+                    // like DatagramIo.open on Android: the socket exists before openIo returns (withContext(Dispatchers.IO))
+                    val m =
+                        NetworkMigrator(c, nets, { n ->
+                            val io = o.open(n)
+                            if (n == 2) {
+                                opening.complete(Unit)
+                                gate.await()
+                            }
+                            io
+                        }, this)
+                    val (events, collector) = eventsOf(m)
+                    m.start()
+                    m.network.first { it == 1 }
+                    nets.value = 2
+                    opening.await()
+                    nets.value = 3 // supersedes the migration while openIo runs
+                    yield()
+                    gate.complete(Unit)
+                    val e = assertIs<MigrationEvent.Migrated<Int>>(events.receive())
+                    assertEquals(1 to 3, e.old to e.new)
+                    waitClosed(o.opened.single { it.first == 2 }.second)
+                    assertEquals(listOf(2, 3), o.opened.map { it.first })
+                    assertEquals(
+                        listOf(addr(3)),
+                        o.opened.filter { !it.second.closed }.map { it.second.localAddress },
+                        "only the active socket is open",
+                    )
+                    ping(c, s)
+                    m.close()
                     collector.cancel()
                     c.close()
                 }
@@ -260,7 +313,14 @@ class NetworkMigratorTest {
                 withTimeout(60.seconds) {
                     val (c, s) = p.connect()
                     // RFC 9000 section 9: only the client initiates migration
-                    assertFailsWith<IllegalArgumentException> { NetworkMigrator(s, MutableStateFlow<Int?>(1), { p.net.open(addr(it)) }, this) }
+                    assertFailsWith<IllegalArgumentException> {
+                        NetworkMigrator(
+                            s,
+                            MutableStateFlow<Int?>(1),
+                            { p.net.open(addr(it)) },
+                            this,
+                        )
+                    }
                     c.close()
                 }
             }

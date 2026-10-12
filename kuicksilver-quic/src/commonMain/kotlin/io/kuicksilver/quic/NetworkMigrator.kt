@@ -11,14 +11,17 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -41,6 +44,8 @@ import kotlinx.coroutines.withContext
  * rejected with IllegalArgumentException: only the client migrates (RFC 9000 section 9).
  *
  * @param N the platform's network handle (`android.net.Network` on Android); compared with `equals`.
+ * @param openIo opens a socket on a network. It is not cancelled midway (a superseded or closed migration closes the socket
+ *   it returns), so it should not wait long.
  * @param scope where [start] runs the migrator.
  */
 @ExperimentalKuicksilverApi
@@ -104,8 +109,14 @@ public class NetworkMigrator<N : Any>(
         networks.distinctUntilChanged().collectLatest { n ->
             val current = onNetwork.value
             when {
-                n == null -> eventFlow.tryEmit(MigrationEvent.NetworkLost)
-                current == null -> onNetwork.value = n
+                n == null -> {
+                    eventFlow.tryEmit(MigrationEvent.NetworkLost)
+                }
+
+                current == null -> {
+                    onNetwork.value = n
+                }
+
                 n != current -> {
                     val from = path ?: connection.activePath
                     migrateTo(n) { p ->
@@ -126,8 +137,8 @@ public class NetworkMigrator<N : Any>(
 
     /**
      * Migrates to [n] and calls [switched] with the new, active path; a failure is reported and changes nothing. The steps that
-     * hand resources over (addPath, switchTo) are not cancelled midway, so a cancellation never loses a path: whatever it
-     * opened and did not switch to is closed.
+     * hand resources over (openIo, addPath, switchTo) are not cancelled midway, so a cancellation never loses a socket or a
+     * path: whatever it opened and did not switch to is closed.
      */
     private suspend fun migrateTo(
         n: N,
@@ -136,7 +147,12 @@ public class NetworkMigrator<N : Any>(
         var p: QuicPath? = null
         var done = false
         try {
-            val io = openIo(n)
+            // not cancelled midway: a socket opened by a cancelled openIo (withContext drops its result) would leak
+            val io = withContext(NonCancellable) { openIo(n) }
+            if (!currentCoroutineContext().isActive) {
+                io.close() // superseded or closed while the socket was being opened
+                currentCoroutineContext().ensureActive()
+            }
             // addPath owns io from here and closes it on any failure of its own
             withContext(NonCancellable) { p = connection.addPath(io) }
             val path = p!!
