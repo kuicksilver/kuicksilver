@@ -886,6 +886,44 @@ class PathTest {
         }
     }
 
+    /**
+     * Review of k7/f1-core: one Initial from a new address (public keys, so anyone can forge it) makes a handshaking server challenge that
+     * address; with no Handshake packet after it, the passed validation deadline must move on with the repeat instead of staying in the
+     * past and making every timer check due again until the handshake timeout.
+     */
+    @Test fun negative_spoofedInitialFromNewAddressDoesNotSpinTimers() {
+        val p = EndpointPair()
+        try {
+            val newPort = InetSocketAddress("10.0.0.1", 40002)
+            p.rebindDuringHandshake(newPort)
+            assertTrue(
+                p.runUntil(5.seconds) {
+                    p.server.connections().singleOrNull()?.paths?.active?.let { it.isRemote(newPort) && it.state == PathState.Validating } == true
+                },
+                "the server follows the Initial from the new address",
+            )
+            p.filterToServer = { _, _ -> false } // nothing after that Initial: no Handshake packet validates the address
+            val s = p.server()
+            val path = s.paths.active
+            assertFalse(path.handshakeValidated)
+            val end = p.now + QuicConfig.Default.handshakeTimeout
+            p.now = maxOf(p.now, path.challengeDeadline - 10.milliseconds)
+            p.step() // the validation deadline passes while the handshake is still running
+            assertTrue(s.state == io.kuicksilver.quic.ConnectionState.Handshaking && path.state == PathState.Validating)
+            assertTrue(s.nextTimeoutOrNever() >= p.now + s.pto(), "next timer ${s.nextTimeoutOrNever()} is a PTO after ${p.now}")
+            var fired = 0
+            while (p.now < end && s.state == io.kuicksilver.quic.ConnectionState.Handshaking) {
+                val next = s.nextTimeoutOrNever()
+                p.now = maxOf(p.now, next - 10.milliseconds)
+                p.step()
+                fired++
+            }
+            assertTrue(fired < 20, "$fired timer rounds within the handshake timeout")
+        } finally {
+            p.close()
+        }
+    }
+
     /** A client that never answers the handshake-time challenge: the Handshake packet already validated the address (RFC 9000 section 8.1), so the deadline settles the path instead of closing the connection. */
     @Test fun unansweredHandshakeTimeChallengeDoesNotCloseTheConnection() {
         val p = EndpointPair()

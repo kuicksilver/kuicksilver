@@ -51,6 +51,7 @@ import io.kuicksilver.quic.core.silentClose
 import io.kuicksilver.quic.core.nextChallengeDelay
 import io.kuicksilver.quic.core.startValidation
 import io.kuicksilver.quic.core.switchPath
+import io.kuicksilver.quic.core.validationTimeout
 import io.kuicksilver.quic.flow.RecvFlowController
 import io.kuicksilver.quic.flow.SendFlowController
 import io.kuicksilver.quic.flow.StreamLimits
@@ -706,7 +707,9 @@ public class ConnectionCore internal constructor(
                 } else if (p === paths.active &&
                     state == ConnectionState.Handshaking
                 ) {
+                    // the handshake (or its timeout) decides this path; a new validation period keeps the timer in the future
                     p.challengePending = true
+                    p.challengeDeadline = now + validationTimeout()
                     p.nextChallengeAt = now + nextChallengeDelay(p)
                 } else {
                     onPathFailed(p)
