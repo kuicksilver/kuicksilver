@@ -29,9 +29,10 @@ import kotlin.test.assertSame
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 
-/** The accelerated transport (ADR-0006) on real Linux loopback; elsewhere `open` answers null and the tests report skipped (JUnit assumptions). */
+/** The accelerated transport (ADR-0006) on real Linux and macOS loopback (GSO/GRO on Linux only); elsewhere `open` answers null and the tests report skipped (JUnit assumptions). */
 class KslDatagramIoTest {
     private val lo = InetSocketAddress("127.0.0.1", 0)
+    private val linux = System.getProperty("os.name").lowercase().contains("linux")
 
     private fun ready(): Boolean {
         KslLoader.ensureLoaded()
@@ -40,7 +41,7 @@ class KslDatagramIoTest {
 
     @Test fun loopbackBatchSendReceive() =
         runBlocking {
-            assumeTrue(ready(), "needs the accelerated socket (Linux)")
+            assumeTrue(ready(), "needs the accelerated socket (Linux, macOS)")
             val a = assertNotNull(KslDatagramIo.open(lo))
             val b = assertNotNull(KslDatagramIo.open(lo))
             try {
@@ -72,13 +73,13 @@ class KslDatagramIoTest {
 
     @Test fun capabilitiesReportAccelerated() =
         runBlocking {
-            assumeTrue(ready(), "needs the accelerated socket (Linux)")
+            assumeTrue(ready(), "needs the accelerated socket (Linux, macOS)")
             val a = assertNotNull(KslDatagramIo.open(lo))
             try {
                 val c = a.capabilities.value
                 assertTrue(c.ecnSend && c.ecnReceive, "ecn")
-                assertTrue(c.gsoMaxSegments >= 2, "gso")
-                assertTrue(c.gro, "gro")
+                assertEquals(linux, c.gsoMaxSegments >= 2, "gso on Linux only")
+                assertEquals(linux, c.gro, "gro on Linux only")
                 assertTrue(c.df, "df")
                 assertTrue(c.batch >= 16, "batch")
             } finally {
@@ -88,11 +89,11 @@ class KslDatagramIoTest {
 
     @Test fun gsoCoalescesSameDestination() =
         runBlocking {
-            assumeTrue(ready(), "needs the accelerated socket (Linux)")
+            assumeTrue(ready(), "needs the accelerated socket (Linux, macOS)")
             val a = assertNotNull(KslDatagramIo.open(lo))
             val b = assertNotNull(KslDatagramIo.open(lo))
             try {
-                assertTrue(a.capabilities.value.gsoMaxSegments >= 16, "loopback grants GSO")
+                if (linux) assertTrue(a.capabilities.value.gsoMaxSegments >= 16, "loopback grants GSO")
                 val out = PacketBatch(16)
                 for (i in 0 until 16) {
                     out.buffer(i).copyFrom(ByteArray(1200) { i.toByte() }, 0, 0, 1200)
@@ -108,7 +109,7 @@ class KslDatagramIoTest {
                     assertEquals(i.toByte(), inb.buffer(i)[0])
                     assertEquals(Ecn.Ect0, inb.ecn(i))
                 }
-                assertEquals(1L, a.statsForTest().sendSyscalls, "one sendmsg for the run")
+                assertEquals(if (linux) 1L else 16L, a.statsForTest().sendSyscalls, "one sendmsg for the run (Linux GSO), one per datagram on Darwin")
                 out.close()
                 inb.close()
             } finally {
@@ -119,7 +120,7 @@ class KslDatagramIoTest {
 
     @Test fun ecnSurvivesLoopback() =
         runBlocking {
-            assumeTrue(ready(), "needs the accelerated socket (Linux)")
+            assumeTrue(ready(), "needs the accelerated socket (Linux, macOS)")
             val a = assertNotNull(KslDatagramIo.open(lo))
             val b = assertNotNull(KslDatagramIo.open(lo))
             try {
@@ -160,7 +161,7 @@ class KslDatagramIoTest {
 
     @Test fun peerAddressInstanceReused() =
         runBlocking {
-            assumeTrue(ready(), "needs the accelerated socket (Linux)")
+            assumeTrue(ready(), "needs the accelerated socket (Linux, macOS)")
             val a = assertNotNull(KslDatagramIo.open(lo))
             val b = assertNotNull(KslDatagramIo.open(lo))
             try {
@@ -186,7 +187,7 @@ class KslDatagramIoTest {
 
     @Test fun closeUnblocksReceive() =
         runBlocking {
-            assumeTrue(ready(), "needs the accelerated socket (Linux)")
+            assumeTrue(ready(), "needs the accelerated socket (Linux, macOS)")
             val a = assertNotNull(KslDatagramIo.open(lo))
             val inb = PacketBatch(4)
             val r = async { runCatching { a.receive(inb) } }
@@ -201,7 +202,7 @@ class KslDatagramIoTest {
     /** Focus 5: the lossless GSO fallback itself is driven by a C test hook (`udp_gso_eio_falls_back_and_resends`); here a socket that never lost GSO reports no fallback and keeps its capability. */
     @Test fun gsoFallbackCounterStartsAtZero() =
         runBlocking {
-            assumeTrue(ready(), "needs the accelerated socket (Linux)")
+            assumeTrue(ready(), "needs the accelerated socket (Linux, macOS)")
             val a = assertNotNull(KslDatagramIo.open(lo))
             val b = assertNotNull(KslDatagramIo.open(lo))
             try {
@@ -213,7 +214,7 @@ class KslDatagramIoTest {
                 }
                 repeat(300) { assertEquals(8, a.send(out)) } // past the capability refresh interval
                 assertEquals(0L, a.statsForTest().gsoFallbacks)
-                assertTrue(a.capabilities.value.gsoMaxSegments >= 2, "capabilities refreshed and GSO still on")
+                if (linux) assertTrue(a.capabilities.value.gsoMaxSegments >= 2, "capabilities refreshed and GSO still on")
                 out.close()
             } finally {
                 a.close()
@@ -223,7 +224,7 @@ class KslDatagramIoTest {
 
     @Test fun realUdpServerClient50MiBAccelerated() =
         runBlocking {
-            assumeTrue(ready(), "needs the accelerated socket (Linux)")
+            assumeTrue(ready(), "needs the accelerated socket (Linux, macOS)")
             val server =
                 QuicEndpoint.bind(
                     lo,
@@ -269,7 +270,7 @@ class KslDatagramIoTest {
     @Test fun oneClientBleachingEcnLeavesOthersCapable() =
         runBlocking {
             // client A's path bleaches ECN, so the server's validation for A fails; B, on the same accelerated server socket, still validates
-            assumeTrue(ready(), "needs the accelerated socket (Linux)")
+            assumeTrue(ready(), "needs the accelerated socket (Linux, macOS)")
             val server =
                 QuicEndpoint.bind(
                     lo,
@@ -343,7 +344,7 @@ class KslDatagramIoTest {
     @Test fun eightyIdleEndpointsDoNotStarveTheEightyFirst() =
         runBlocking {
             // an idle accelerated socket must not pin a Dispatchers.IO thread (64 by default) for its lifetime
-            assumeTrue(ready(), "needs the accelerated socket (Linux)")
+            assumeTrue(ready(), "needs the accelerated socket (Linux, macOS)")
             val server =
                 QuicEndpoint.bind(
                     lo,
@@ -372,7 +373,7 @@ class KslDatagramIoTest {
 
     @Test fun openPrefersAcceleratedOnLinux() =
         runBlocking {
-            assumeTrue(ready(), "needs the accelerated socket (Linux)")
+            assumeTrue(ready(), "needs the accelerated socket (Linux, macOS)")
             val io = DatagramIo.open(lo)
             try {
                 assertTrue(io is KslDatagramIo, "accelerated by default")
