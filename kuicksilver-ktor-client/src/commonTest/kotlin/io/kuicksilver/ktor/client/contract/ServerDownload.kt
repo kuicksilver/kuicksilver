@@ -9,6 +9,7 @@ import io.ktor.http.content.*
 import io.ktor.server.application.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
+import io.ktor.utils.io.*
 import kotlinx.coroutines.delay
 
 private val content: String =
@@ -35,9 +36,11 @@ internal fun Application.downloadTest() {
                 call.respond(TextContent(content, ContentType.Text.Plain))
             }
             get("infinite") {
-                call.respondOutputStream {
+                call.respondBytesWriter {
+                    // respondOutputStream is JVM-only
                     while (true) {
-                        write("test".toByteArray())
+                        writeFully("test".encodeToByteArray())
+                        flush()
                         delay(1)
                     }
                 }

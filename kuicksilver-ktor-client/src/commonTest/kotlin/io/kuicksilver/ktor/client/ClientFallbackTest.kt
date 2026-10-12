@@ -186,7 +186,7 @@ class ClientFallbackTest {
 
     /** HTTP/3 failed at connection level while HTTP/1.1 served the request: the alternative is marked broken (RFC 7838 section 2.4). */
     @Test fun h3FailureWithH1SuccessMarksBroken() =
-        clientTest {
+        h3Test {
             val (server, port) = testServer(configure = { http3 = false }) { routing { get("/") { call.respondText("h1") } } }
             kotlinx.coroutines.coroutineScope {
                 val ep = failingH3(port, closeConnection = true)
@@ -211,7 +211,7 @@ class ClientFallbackTest {
 
     /** A single stream reset on a working HTTP/3 connection falls back for that request but does not mark the alternative broken. */
     @Test fun streamErrorDoesNotMarkAlternativeBroken() =
-        clientTest {
+        h3Test {
             val (server, port) = testServer(configure = { http3 = false }) { routing { get("/") { call.respondText("h1") } } }
             kotlinx.coroutines.coroutineScope {
                 val ep = failingH3(port, okPaths = setOf("/warmup"))
@@ -238,7 +238,7 @@ class ClientFallbackTest {
         }
 
     @Test fun idempotentRetriedOnH1() =
-        clientTest {
+        h3Test {
             var h1Calls = 0
             val (server, port) =
                 testServer(configure = { http3 = false }) {
@@ -266,7 +266,7 @@ class ClientFallbackTest {
         }
 
     @Test fun nonIdempotentNotRetriedAfterHeadersSent() =
-        clientTest {
+        h3Test {
             var h1Calls = 0
             val (server, port) =
                 testServer(configure = { http3 = false }) {
@@ -302,7 +302,7 @@ class ClientFallbackTest {
 
     /** A streamed body that HTTP/3 already consumed is not replayed on the HTTP/1.1 fallback: the failure surfaces instead. */
     @Test fun streamedBodyNotReplayedAfterMidUploadFailure() =
-        clientTest {
+        h3Test {
             var h1Calls = 0
             val (server, port) =
                 testServer(configure = { http3 = false }) {

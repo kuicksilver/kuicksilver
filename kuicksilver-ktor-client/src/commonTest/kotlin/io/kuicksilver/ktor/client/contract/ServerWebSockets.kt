@@ -50,7 +50,7 @@ internal fun Application.webSockets() {
             webSocket("close") {
                 for (packet in incoming) {
                     val data = packet.data
-                    if (String(data) == "End") {
+                    if (data.decodeToString() == "End") {
                         close(CloseReason(1000, "End"))
                     }
                 }
@@ -60,7 +60,7 @@ internal fun Application.webSockets() {
                 send(Frame.Text(param))
             }
             webSocketRaw("count-pong") {
-                send(Frame.Ping("ping".toByteArray()))
+                send(Frame.Ping("ping".encodeToByteArray()))
 
                 var countPong = 0
                 for (frame in incoming) {
