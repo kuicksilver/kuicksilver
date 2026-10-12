@@ -6,6 +6,7 @@ import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
 import io.ktor.server.routing.routing
 import io.kuicksilver.native.KslLoader
+import io.kuicksilver.tls.ServerTlsOverride
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertTrue
@@ -21,6 +22,19 @@ class ServerH3DisabledTest {
                     http3Bind =
                         { _, _, _ -> throw UnsupportedOperationException("no QUIC server on this platform") }
                 }) { routing { get("/") { call.respondText("ok") } } }
+            try {
+                val resp = rawHttp(port, "GET / HTTP/1.1\r\nHost: server.test\r\nConnection: close\r\n\r\n")
+                assertTrue(resp.endsWith("ok") && !resp.contains("Alt-Svc"), resp)
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
+    /** QUIC cannot use a per-SNI identity: a connector with `sniSelector` serves HTTP/1.1, skips HTTP/3 and sends no Alt-Svc. */
+    @Test fun h3SkippedForSniSelectorConnector() =
+        serverTest {
+            val (server, port) =
+                tlsServer(connector = { sniSelector = { ServerTlsOverride(ServerFixtures.identity()) } }) { routing { get("/") { call.respondText("ok") } } }
             try {
                 val resp = rawHttp(port, "GET / HTTP/1.1\r\nHost: server.test\r\nConnection: close\r\n\r\n")
                 assertTrue(resp.endsWith("ok") && !resp.contains("Alt-Svc"), resp)

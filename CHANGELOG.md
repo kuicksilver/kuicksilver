@@ -86,6 +86,8 @@ K7 (0.2.0), HTTP/3 and the Ktor engines:
   dispatcher, so a slow callback stalled every stream of the connection; they now run on the caller's dispatcher.
 - Ktor server contract: the two multipart-upload tests run over HTTP/3 as well (they were marked HTTP/1.1-only;
   they pass unchanged).
+- Ktor server: a `tlsConnector` with a `sniSelector` and HTTP/3 on failed to start with `TlsException.Config`; it now
+  serves HTTP/1.1 and skips HTTP/3 with a warning (no `Alt-Svc`), as on a platform without a QUIC server.
 - Ktor client: a non-idempotent request that failed on a pooled HTTP/1.1 connection the server had closed is no
   longer sent again (RFC 9112 section 9.3.1); only idempotent requests get the transparent retry, and connections
   already closed for reading are dropped when taken from the pool.

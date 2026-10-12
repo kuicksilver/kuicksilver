@@ -44,7 +44,8 @@ internal class H3Listener(
 
 /**
  * HTTP/3 on [port], opened after the TCP socket so `port = 0` resolves first. A platform without a QUIC
- * server (Apple and Windows Native, ADR-0006) keeps serving HTTP/1.1 only, with a warning.
+ * server (Apple and Windows Native, ADR-0006), or a connector with a `sniSelector` (QUIC cannot pick an identity per
+ * SNI name in v1), keeps serving HTTP/1.1 only, with a warning.
  */
 internal suspend fun KuicksilverApplicationEngine.startHttp3(
     scope: CoroutineScope,
@@ -53,6 +54,10 @@ internal suspend fun KuicksilverApplicationEngine.startHttp3(
 ): H3Listener? {
     with(scope) {
         if (!configuration.http3) return null
+        if (tls.sniSelector != null) {
+            environment.log.warn("HTTP/3 is not served on port $port: sniSelector is not supported by QUIC in v1")
+            return null
+        }
         val quic =
             configuration.quicMaxIdleTimeout?.let { idle ->
                 if (configuration.quic ===

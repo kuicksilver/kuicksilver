@@ -57,7 +57,8 @@ Knobs, named after Ktor's Netty engine where one exists: `http3` (on), `quic` (t
 (Retry policy, Ktor-Netty's `quicTokenHandler`), `http3Settings`. UDP socket buffer sizes are not configurable yet.
 
 Where a QUIC server cannot run — Apple and Windows Kotlin/Native (ADR-0006) — the engine logs a warning and serves
-HTTP/1.1 only, without `Alt-Svc`.
+HTTP/1.1 only, without `Alt-Svc`. The same applies to a `tlsConnector` with a `sniSelector`: QUIC cannot pick an
+identity per SNI name in v1, so that connector skips HTTP/3 with a warning instead of failing to start.
 
 ### WebSockets over HTTP/3
 
