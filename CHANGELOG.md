@@ -104,6 +104,8 @@ Fixes from a full five-reviewer pass over the code before the first release, amo
 - The accept queue never holds more than `acceptQueue` connections: a handshake that completes while the queue is full
   is closed with CONNECTION_REFUSED. Admission counts only the connections waiting for `accept()`, so half-open
   handshakes from spoofed sources cannot lock real clients out.
+- An `accept()` cancelled just as the queue handed it a connection no longer keeps that queue slot and leaves the
+  connection open: the connection is closed and the slot released.
 - `samples/realtime-telemetry` reads control lines with a 1024-byte limit; a longer line closes the connection (code 2)
   instead of growing the server's buffer.
 

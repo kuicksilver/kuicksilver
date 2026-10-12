@@ -199,6 +199,64 @@ class EndpointLifecycleTest {
             }
         }
 
+    @Test fun cancelledAcceptReleasesItsSlot() =
+        runBlocking {
+            withTimeout(30.seconds) {
+                // an accept() cancelled just after the queue handed it a connection must not keep its slot (nor the connection)
+                val net = MemoryNetwork()
+                val serverAddr = InetSocketAddress("10.0.0.2", 2222)
+                val server =
+                    QuicEndpoint.bind(
+                        serverAddr,
+                        QuicEndpointConfig
+                            .Builder()
+                            .apply {
+                                this.server = QuicServerConfig.Builder(CoreFixtures.server()).build()
+                                crypto = NullCryptoProvider
+                                acceptQueue = 2
+                                io = { net.open(serverAddr) }
+                            }.build(),
+                    )
+                val clientIo = net.open(InetSocketAddress("10.0.1.1", 1001))
+                val client =
+                    QuicEndpoint.bind(
+                        clientIo.localAddress,
+                        QuicEndpointConfig
+                            .Builder()
+                            .apply {
+                                crypto = NullCryptoProvider
+                                io = { clientIo }
+                            }.build(),
+                    )
+                val loop = server as EndpointLoop
+                try {
+                    repeat(3) {
+                        val handed = loop.acceptHandOffsForTest
+                        val waiter = launch(start = CoroutineStart.UNDISPATCHED) { server.accept() }
+                        launch(kotlinx.coroutines.Dispatchers.Default) {
+                            runCatching { client.connect(serverAddr, QuicClientConfig.Builder(CoreFixtures.client()).build()) }
+                        }
+                        // spin without suspending: the queue resumes the waiter, which cannot run on this thread before the cancel
+                        val spin = kotlin.time.TimeSource.Monotonic.markNow()
+                        while (loop.acceptHandOffsForTest == handed) {
+                            // a leaked slot refuses the handshake instead: fail rather than spin past withTimeout
+                            if (spin.elapsedNow() > 10.seconds) kotlin.test.fail("handshake ${it + 1} never reached the accept queue (pending ${loop.pendingAcceptForTest})")
+                        }
+                        waiter.cancel()
+                        waiter.join()
+                    }
+                    while (loop.pendingAcceptForTest != 0) delay(5)
+                    val accepted = async { server.accept() }
+                    client.connect(serverAddr, QuicClientConfig.Builder(CoreFixtures.client()).build())
+                    accepted.await()
+                    assertEquals(0, loop.pendingAcceptForTest)
+                } finally {
+                    client.close()
+                    server.close()
+                }
+            }
+        }
+
     @Test fun acceptBacklogNeverExceedsAcceptQueue() =
         runBlocking {
             withTimeout(30.seconds) {

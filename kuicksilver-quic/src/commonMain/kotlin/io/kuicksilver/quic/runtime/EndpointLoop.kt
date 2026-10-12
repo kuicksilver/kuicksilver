@@ -64,8 +64,8 @@ internal class EndpointLoop private constructor(
     internal val dispatcher: CoroutineDispatcher,
     internal val index: Int = 0,
     private val group: LoopGroup? = null,
-    private val acceptQueue: Channel<QuicConnection> = Channel(Channel.UNLIMITED),
     private val pendingAccept: AtomicInt = AtomicInt(0),
+    private val acceptQueue: Channel<QuicConnection> = acceptChannel(pendingAccept),
 ) : QuicEndpoint {
     /** Last-resort failures of coroutines the loop launched (none is expected to throw): counted, never handed to the thread's uncaught handler, which on Android kills the process. */
     internal val uncaughtFailures = AtomicLong(0)
@@ -514,7 +514,12 @@ internal class EndpointLoop private constructor(
             if (pendingAccept.compareAndSet(n, n + 1)) break
         }
         acceptQueue.trySend(rt)
+        acceptHandOffsForTest++
     }
+
+    /** Connections handed to the accept queue so far (test hook). */
+    @Volatile internal var acceptHandOffsForTest: Long = 0
+        private set
 
     /** [rt] no longer counts as a handshake in flight: it completed, or it closed before it could. */
     private fun handshakeEnded(rt: ConnectionRuntime) {
@@ -684,6 +689,17 @@ internal class EndpointLoop private constructor(
             group: LoopGroup,
             acceptQueue: Channel<QuicConnection>,
             pendingAccept: AtomicInt,
-        ): EndpointLoop = EndpointLoop(config, io, ownDispatcher(), index, group, acceptQueue, pendingAccept)
+        ): EndpointLoop = EndpointLoop(config, io, ownDispatcher(), index, group, pendingAccept, acceptQueue)
+
+        /**
+         * The accept queue, whose slots [pending] counts. A connection the queue cannot deliver (an `accept()` cancelled
+         * after the queue had handed it the connection, or the queue closed) releases its slot and is closed: otherwise
+         * each such race would keep a slot forever and, once acceptQueue of them leaked, every handshake would be refused.
+         */
+        internal fun acceptChannel(pending: AtomicInt): Channel<QuicConnection> =
+            Channel(Channel.UNLIMITED) { c ->
+                pending.decrementAndFetch()
+                c.close() // CONNECTION_CLOSE with application code 0, on the connection's loop
+            }
     }
 }

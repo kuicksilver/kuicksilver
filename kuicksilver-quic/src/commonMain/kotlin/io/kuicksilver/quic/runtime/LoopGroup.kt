@@ -14,7 +14,6 @@ import io.kuicksilver.quic.QuicConnection
 import io.kuicksilver.quic.QuicEndpoint
 import io.kuicksilver.quic.QuicEndpointConfig
 import io.kuicksilver.quic.withLiteralHost
-import kotlinx.coroutines.channels.Channel
 import kotlin.concurrent.atomics.AtomicInt
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.concurrent.atomics.incrementAndFetch
@@ -31,8 +30,8 @@ internal class LoopGroup private constructor(
     private val config: QuicEndpointConfig,
 ) : QuicEndpoint {
     private lateinit var loops: List<EndpointLoop>
-    private val acceptQueue = Channel<QuicConnection>(Channel.UNLIMITED)
     private val pendingAccept = AtomicInt(0)
+    private val acceptQueue = EndpointLoop.acceptChannel(pendingAccept)
     private val next = AtomicInt(0)
     override val localAddress: InetSocketAddress get() = loops[0].localAddress
 
