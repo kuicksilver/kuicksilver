@@ -14,6 +14,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 Nothing has been released yet. This section summarises the development of the first 0.x version.
 
+### Fixed
+- `keylogFile(path)` refuses a symlink, a non-regular file, a file of another user or a file system without POSIX permissions, tightens an existing file to 0600 and reopens it without following links for every line (threat model section 3.7).
+
 ### Changed (API freeze before 0.1.0)
 - `NullCryptoProvider` is `@InternalKuicksilverApi` (a test fixture, not a transport); `ConnectionStats` and `EndpointStats` are built by the library only.
 - `PathChanged` is nested as `PathEvent.Changed` beside `Validated` and `Failed`; the top-level name is a deprecated alias until 0.2.0.

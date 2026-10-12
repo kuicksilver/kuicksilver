@@ -22,10 +22,12 @@ import java.io.File
 import java.lang.management.ManagementFactory
 import java.nio.file.Files
 import java.nio.file.attribute.PosixFilePermission
+import java.nio.file.attribute.PosixFilePermissions
 import javax.management.MBeanServer
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFails
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
@@ -47,6 +49,29 @@ class SecretsJvmTest {
         val perms = Files.getPosixFilePermissions(f.toPath())
         assertTrue(PosixFilePermission.GROUP_READ !in perms && PosixFilePermission.OTHERS_READ !in perms, perms.toString())
         assertEquals("CLIENT_RANDOM 00 11\n", f.readText())
+    }
+
+    /** An existing world-readable file is tightened to 0600 before the first line lands in it. */
+    @Test fun negative_keylogFileExistingModeTightened() {
+        val f = File.createTempFile("ksl-keylog", ".txt").also { it.deleteOnExit() }
+        Files.setPosixFilePermissions(f.toPath(), PosixFilePermissions.fromString("rw-r--r--"))
+        keylogFile(f.path).log("X")
+        val perms = Files.getPosixFilePermissions(f.toPath())
+        assertTrue(PosixFilePermission.GROUP_READ !in perms && PosixFilePermission.OTHERS_READ !in perms, perms.toString())
+        assertEquals("X\n", f.readText())
+    }
+
+    /** A symlink at the keylog path is refused outright: not one line goes into the file it points to. */
+    @Test fun negative_keylogFileRefusesSymlink() {
+        val target = File.createTempFile("ksl-keylog-target", ".txt").also { it.deleteOnExit() }
+        val link =
+            File.createTempFile("ksl-keylog-link", ".txt").also {
+                it.delete()
+                it.deleteOnExit()
+            }
+        Files.createSymbolicLink(link.toPath(), target.toPath())
+        assertFails { keylogFile(link.path).log("X") }
+        assertEquals(0L, target.length(), "nothing was written through the symlink")
     }
 
     @Test fun negative_keylogDisabledInRelease() {
