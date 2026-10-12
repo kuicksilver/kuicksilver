@@ -155,6 +155,34 @@ class TlsConfigTest {
         tlsConfig(TlsRole.Client) { alpn = listOf("\u00e9".repeat(127)) } // 254 bytes + 1 length byte
     }
 
+    /** The list is copied before it is validated: a caller's list that changes between reads cannot slip an unchecked name in. */
+    @Test fun negative_alpnValidatedCopyIsStored() {
+        val shifty = ShiftyList(listOf("h3", "h2"), listOf("h3", ""))
+        val config = tlsConfig(TlsRole.Client) { alpn = shifty }
+        assertEquals(listOf("h3", "h2"), config.alpn)
+        val mutable = mutableListOf("h3")
+        val config2 = tlsConfig(TlsRole.Client) { alpn = mutable }
+        mutable[0] = ""
+        assertEquals(listOf("h3"), config2.alpn)
+    }
+
+    /** Shows [first] to the first iteration and [later] to every one after it. */
+    private class ShiftyList(
+        private val first: List<String>,
+        private val later: List<String>,
+    ) : AbstractList<String>() {
+        private var iterations = 0
+        private val current get() = if (iterations <= 1) first else later
+        override val size: Int get() = current.size
+
+        override fun get(index: Int): String = current[index]
+
+        override fun iterator(): Iterator<String> {
+            iterations++
+            return current.toList().iterator()
+        }
+    }
+
     /** A selector override passes the same checks as build(): client certificates need an AnchoredCa trust, ALPN is checked in bytes. */
     @Test fun negative_overrideClientAuthNeedsAnchoredCa() {
         val id = TlsIdentity.fromDer(listOf(TestCerts.server), TestCerts.serverKey.copyOf())

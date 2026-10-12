@@ -137,11 +137,11 @@ public class TlsConfig private constructor(
 ) {
     /** A copy with one connection's selector override applied (server side); the override passes the checks of [Builder.build]. */
     internal fun withOverride(o: ServerTlsOverride): TlsConfig {
-        o.alpn?.let { validateAlpn(it) }
+        val overrideAlpn = o.alpn?.toList()?.also { validateAlpn(it) } // copy first: the stored list is the one validated
         checkServerAuth(o.clientAuth ?: clientAuth, o.trust ?: trust)
         return TlsConfig(
             role,
-            o.alpn?.toList() ?: alpn,
+            overrideAlpn ?: alpn,
             serverName,
             versions,
             cipherSuites,
@@ -266,7 +266,7 @@ public class TlsConfig private constructor(
          */
         @OptIn(DelicateKuicksilverApi::class)
         public fun build(): TlsConfig {
-            validateAlpn(alpn)
+            val validAlpn = alpn.toList().also { validateAlpn(it) } // copy first: the stored list is the one validated
             if (role == TlsRole.Server) {
                 if (identity == null && sniSelector == null) throw TlsException.Config("a server needs an identity or an sniSelector")
                 checkServerAuth(clientAuth, trust)
@@ -277,7 +277,7 @@ public class TlsConfig private constructor(
             if (trust is TrustConfig.ExpectedName) HostName.normalize((trust as TrustConfig.ExpectedName).name)
             return TlsConfig(
                 role,
-                alpn.toList(),
+                validAlpn,
                 serverName,
                 versions,
                 cipherSuites,
