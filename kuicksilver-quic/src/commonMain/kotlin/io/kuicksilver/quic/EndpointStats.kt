@@ -4,7 +4,7 @@ package io.kuicksilver.quic
 
 /** A snapshot of an endpoint's stateless work and admission outcomes; every value counts since the endpoint started. */
 public class EndpointStats internal constructor(
-    /** Initials discarded by the endpoint: queue overflow, hard limits (`maxConnections`, `acceptQueue`, `maxConnectionsPerIp`), reflective source ports and [AdmissionDecision.Drop]. */
+    /** Initials discarded by the endpoint: queue overflow, hard limits (`maxConnections`, `maxConnectionsPerIp`), reflective source ports and [AdmissionDecision.Drop]. */
     public val initialsDropped: Long,
     /** Retry packets sent (RFC 9000 section 8.1.2). */
     public val retriesSent: Long,
@@ -14,7 +14,7 @@ public class EndpointStats internal constructor(
     public val versionNegotiations: Long,
     /** Stateless Reset packets sent (RFC 9000 section 10.3). */
     public val statelessResets: Long,
-    /** Stateless answers (Retry, Version Negotiation, Stateless Reset, INVALID_TOKEN close) withheld by the per-address or total rate limit. */
+    /** Stateless answers (Retry, Version Negotiation, Stateless Reset, INVALID_TOKEN or CONNECTION_REFUSED close) withheld by the per-address or total rate limit. */
     public val statelessRateLimited: Long,
     /** [AdmissionDecision.Retry] returned for an already validated address, or an exception out of [ConnectionAdmission.admit]; each one was dropped. */
     public val admissionContractViolations: Long,

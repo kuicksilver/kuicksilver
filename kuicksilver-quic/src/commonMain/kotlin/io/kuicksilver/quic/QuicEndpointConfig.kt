@@ -90,10 +90,12 @@ public class QuicEndpointConfig private constructor(
     /** New Initial packets are dropped silently beyond this many connections. */
     public val maxConnections: Int,
     /**
-     * Handshaken connections waiting for `accept()`, never more: while this many wait, a new client Initial is dropped, and a
-     * handshake that completes while this many wait is closed with CONNECTION_REFUSED (0x02) instead of joining the queue.
-     * Handshakes in flight are not counted (unvalidated, possibly spoofed Initials must not lock real clients out); they
-     * are bounded by [maxConnections], [maxConnectionsPerIp] and the [ConnectionAdmission] policy.
+     * Handshaken connections waiting for `accept()` (shared by all [loops]), never more. While this many wait, a new client
+     * Initial is answered statelessly with an Initial CONNECTION_CLOSE carrying CONNECTION_REFUSED (0x02), under the
+     * stateless rate limits, so the client fails at once instead of at its handshake timeout and no TLS handshake is spent
+     * on it; a handshake admitted earlier that completes while this many wait is closed with CONNECTION_REFUSED instead of
+     * joining the queue. Handshakes in flight are not counted (unvalidated, possibly spoofed Initials must not lock real
+     * clients out); they are bounded by [maxConnections], [maxConnectionsPerIp] and the [ConnectionAdmission] policy.
      */
     public val acceptQueue: Int,
     /** The single-threaded dispatcher of the endpoint loop; null means `Dispatchers.Default.limitedParallelism(1)`. */
@@ -131,8 +133,8 @@ public class QuicEndpointConfig private constructor(
         /** Default 10 000, at least 1; see [QuicEndpointConfig.maxConnections]. */
         public var maxConnections: Int = 10_000
 
-        /** Default 32, at least 1; see [QuicEndpointConfig.acceptQueue]. */
-        public var acceptQueue: Int = 32
+        /** Default 128, at least 1; see [QuicEndpointConfig.acceptQueue]. */
+        public var acceptQueue: Int = 128
 
         /** Default null (a one-thread view of `Dispatchers.Default`); must stay null with more than one of [loops]. */
         public var dispatcher: CoroutineDispatcher? = null

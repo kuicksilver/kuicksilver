@@ -281,13 +281,75 @@ class AdmissionTest {
         }
     }
 
-    @Test fun acceptQueueFullDrops() {
+    @Test fun acceptQueueFullRefusesStatelessly() {
+        // RFC 9000 section 5.2.2: a server that will not take the connection answers with an Initial CONNECTION_CLOSE
+        // (quic-go sendConnectionRefused) instead of leaving the client to its handshake timeout
         val p = EndpointPair { acceptQueue = 2 }
         try {
             repeat(3) { p.feed(p.server, firstInitial(p), addr(it)) }
             assertEquals(2, p.server.connectionCount)
-            assertEquals(1L, p.server.stats.initialsDropped)
-            assertEquals(0, p.stateless(p.server).size)
+            assertEquals(0L, p.server.stats.initialsDropped)
+            assertEquals(1L, p.server.acceptQueueRefusals)
+            val answers = p.stateless(p.server)
+            assertEquals(1, answers.size)
+            assertEquals(PacketType.Initial, packetType(answers.single()))
+        } finally {
+            p.close()
+        }
+    }
+
+    @Test fun initialWhileAcceptQueueFullIsRefusedStatelessly() {
+        // a handshaken connection waits for accept(): the next client learns CONNECTION_REFUSED from its first Initial, no
+        // connection (and so no TLS handshake) is created for it, and its connect fails at once, not at the handshake timeout
+        val p = EndpointPair(crypto = KslQuicCrypto) { acceptQueue = 1 }
+        try {
+            val first = p.connect()
+            assertTrue(p.confirmed(first))
+            val created = p.server.stats.connectionsCreated
+            var serverCores = 0
+            p.onServerCreated = { serverCores++ }
+            val second = p.connect()
+            assertTrue(p.runUntil(200.milliseconds) { p.closed(second) != null }, "refused within a round trip")
+            val lost = assertIs<QuicException.ConnectionLost.TransportClosed>(p.closed(second))
+            assertEquals(TransportError.CONNECTION_REFUSED, lost.code)
+            assertEquals(1, p.server.connectionCount)
+            assertEquals(created, p.server.stats.connectionsCreated, "no connection state for the refused client")
+            assertEquals(0, serverCores)
+            assertTrue(p.server.acceptQueueRefusals >= 1, "every datagram of its first flight is refused alike")
+            assertNull(p.closed(first), "the waiting connection is untouched")
+        } finally {
+            p.close()
+        }
+    }
+
+    @Test fun negative_refusalIsAmplificationLimited() {
+        // threat-model 3.1, RFC 9000 section 8.1: a refusal answers a spoofable datagram, so it is small (far below 3x the
+        // Initial) and goes through the stateless rate limits like Retry, Version Negotiation and INVALID_TOKEN
+        val p =
+            EndpointPair {
+                acceptQueue = 1
+                statelessPerAddressPerSecond = 2
+                statelessTotalPerSecond = 3
+            }
+        try {
+            p.server.acceptBacklog = { 1 }
+            val received = HashMap<Int, Long>()
+            for (i in 0 until 8) {
+                val from = if (i < 5) 1 else i
+                val initial = firstInitial(p)
+                received[from] = (received[from] ?: 0L) + initial.size
+                assertNull(p.feed(p.server, initial, addr(from)))
+            }
+            val answers = p.stateless(p.server)
+            assertEquals(3, answers.size, "the total limit")
+            assertEquals(5L, p.server.stats.statelessRateLimited)
+            assertEquals(0, p.server.connectionCount)
+            val sent = answers.sumOf { it.size.toLong() }
+            assertTrue(
+                answers.all { 3L * it.size <= 1200 },
+                "each answer is under a third of a minimum Initial: ${answers.map { it.size }}",
+            )
+            assertTrue(sent <= 3L * received.values.sum(), "amplification: $sent for ${received.values.sum()}")
         } finally {
             p.close()
         }
@@ -442,6 +504,7 @@ class AdmissionTest {
         assertNull(c.maxConnectionLifetime)
         assertTrue(c.rejectInitialFromReflectivePorts)
         assertEquals(8, c.statelessPerAddressPerSecond)
+        assertEquals(128, c.acceptQueue)
         assertEquals(1000, c.statelessTotalPerSecond)
         assertEquals(AdmissionDecision.Allow, c.admission.admit(attempt()))
         assertEquals(AdmissionDecision.Retry, ConnectionAdmission.AlwaysRetry.admit(attempt()))

@@ -54,8 +54,15 @@ internal fun EndpointCore.admitOne(
         return false
     }
     // ---- hard limits: no policy may lift them ----
-    if (connections.size >= config.maxConnections || acceptBacklog() >= config.acceptQueue) {
+    if (connections.size >= config.maxConnections) {
         initialsDropped++
+        return false
+    }
+    if (acceptBacklog() >= config.acceptQueue) {
+        // RFC 9000 section 5.2.2: refuse before any handshake state, statelessly and under the rate limit (quic-go
+        // sendConnectionRefused); only connections waiting for accept() count, never handshakes in flight (threat-model 3.2)
+        acceptQueueRefusals++
+        statelessInitialClose(data, profile, from, TransportError.CONNECTION_REFUSED, now)
         return false
     }
     val ipKey = AddressClass.ipKey(from)
@@ -163,7 +170,10 @@ internal fun EndpointCore.admitOne(
     return true
 }
 
-/** A stateless Initial CONNECTION_CLOSE to the client of the Initial in [data] (RFC 9000 section 10.2.3), under the rate limit. */
+/**
+ * A stateless Initial CONNECTION_CLOSE to the client of the Initial in [data] (RFC 9000 section 10.2.3), under the rate limit:
+ * well under a third of the at least 1200-byte Initial it answers (section 8.1).
+ */
 internal fun EndpointCore.statelessInitialClose(
     data: PacketBuffer,
     profile: VersionProfile,
