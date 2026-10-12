@@ -14,8 +14,9 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 
 /**
- * A Native server needs the accelerated transport (ADR-0006): Linux and Apple have it and `bind` starts the server; where it
- * is absent (Windows) the server is still refused, because the portable Native io cannot serve.
+ * A Native server needs the accelerated transport (ADR-0006): every Native target has it (Linux and Apple in the shared
+ * `ksl_udp*.c`, Windows in `ksl_udp_win.c`) and `bind` starts the server; where it is absent the server is refused, because the
+ * portable Native io cannot serve.
  */
 @OptIn(ExperimentalKuicksilverApi::class, io.kuicksilver.annotations.InternalKuicksilverApi::class, ExperimentalNativeApi::class)
 class NativeServerGuardTest {
@@ -29,7 +30,7 @@ class NativeServerGuardTest {
 
     @Test fun nativeServerBindsWhereTheAcceleratedIoExists() =
         runBlocking {
-            val accelerated = Platform.osFamily != OsFamily.WINDOWS
+            val accelerated = Platform.osFamily in setOf(OsFamily.LINUX, OsFamily.MACOSX, OsFamily.IOS, OsFamily.WINDOWS)
             assertEquals(accelerated, KslUdpSocket.supported, "ksl_udp on ${Platform.osFamily}")
             if (!accelerated) return@runBlocking
             val server = QuicEndpoint.bind(InetSocketAddress("127.0.0.1", 0), serverConfig())
@@ -38,7 +39,7 @@ class NativeServerGuardTest {
 
     @Test fun nativeServerWithPortableIoRejected() =
         runBlocking {
-            if (KslUdpSocket.supported) return@runBlocking // Linux, Apple: nativeServerBindsWhereTheAcceleratedIoExists
+            if (KslUdpSocket.supported) return@runBlocking // Linux, Apple, Windows: nativeServerBindsWhereTheAcceleratedIoExists
             assertFailsWith<UnsupportedOperationException> { QuicEndpoint.bind(InetSocketAddress("127.0.0.1", 0), serverConfig()) }
             Unit
         }

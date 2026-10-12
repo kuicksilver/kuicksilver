@@ -17,7 +17,13 @@ static int check_system_openssl(void) {
     return KSL_OK;
 }
 #endif
+#ifdef _WIN32
+int ksl_win_sockets_init(void);   /* ksl_udp_win.c: WSAStartup once */
+#endif
 int ksl_init(void) {
+#ifdef _WIN32
+    ksl_win_sockets_init();   /* address lookups (getaddrinfo) need Winsock before any socket exists */
+#endif
 #ifdef KSL_SYSTEM_OPENSSL
     int rc = check_system_openssl(); if (rc != KSL_OK) return rc;
 #endif

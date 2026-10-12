@@ -14,7 +14,10 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
-/** The accelerated UDP socket (ADR-0006) over `ksl_udp_*`: Linux and macOS deliver batches with ECN (GSO/GRO on Linux only); elsewhere `open` says so. */
+/**
+ * The accelerated UDP socket (ADR-0006) over `ksl_udp_*`: Linux and macOS deliver batches with ECN (GSO/GRO on Linux only),
+ * Windows with ECN, USO and URO where the Windows version grants them; on any other OS `open` says it is not supported.
+ */
 class KslUdpSocketTest {
     @BeforeTest fun load() {
         KslLoader.ensureLoaded()
@@ -22,18 +25,19 @@ class KslUdpSocketTest {
 
     private val os = System.getProperty("os.name").lowercase()
     private val linux = os.contains("linux")
+    private val windows = os.contains("windows")
 
     /** Where `ksl_udp` must exist: the tests below run there instead of skipping. */
-    private val accelerated = linux || os.contains("mac")
+    private val accelerated = linux || windows || os.contains("mac")
 
-    @Test fun supportedOnLinuxAndMacos() {
+    @Test fun supportedOnLinuxMacosAndWindows() {
         assertEquals(accelerated, KslUdpSocket.supported, os)
     }
 
     private fun loopback() = KslUdpSocket.encodeAddress(byteArrayOf(127, 0, 0, 1), 0)
 
     @Test fun openSendReceive() {
-        if (!accelerated) return // Windows: covered by openOnUnsupportedPlatformThrows
+        if (!accelerated) return // another OS: covered by openOnUnsupportedPlatformThrows
         KslUdpSocket.open(loopback(), KslUdpSocket.ECN or KslUdpSocket.GSO or KslUdpSocket.GRO).use { a ->
             KslUdpSocket.open(loopback(), KslUdpSocket.ECN or KslUdpSocket.GRO).use { b ->
                 val n = 8
@@ -47,6 +51,8 @@ class KslUdpSocketTest {
                 val rl = IntArray(n)
                 val ra = ByteArray(n * KslUdpSocket.ADDR_LEN)
                 val re = ByteArray(n)
+                // Windows grants ECN from 10 2004 / Server 2022 on (IP_ECN); Linux and macOS always do
+                val ecnRead = !windows || b.grantedFlags and KslUdpSocket.ECN != 0
                 var got = 0
                 while (got <
                     n
@@ -58,7 +64,7 @@ class KslUdpSocketTest {
                 assertEquals(n, got)
                 for (i in 0 until n) {
                     assertEquals(1200, rl[i])
-                    assertEquals(2, re[i].toInt(), "ECT(0) on slot $i")
+                    if (ecnRead) assertEquals(2, re[i].toInt(), "ECT(0) on slot $i")
                     assertEquals(
                         a.localAddress.toList(),
                         ra.copyOfRange(i * KslUdpSocket.ADDR_LEN, (i + 1) * KslUdpSocket.ADDR_LEN).toList(),
@@ -72,15 +78,18 @@ class KslUdpSocketTest {
     }
 
     @Test fun grantedFlags() {
-        if (!accelerated) return // Windows: covered by openOnUnsupportedPlatformThrows
+        if (!accelerated) return // another OS: covered by openOnUnsupportedPlatformThrows
         KslUdpSocket.open(loopback(), KslUdpSocket.ECN or KslUdpSocket.GSO or KslUdpSocket.GRO or KslUdpSocket.DF).use { s ->
             val f = s.grantedFlags
-            assertTrue(f and KslUdpSocket.ECN != 0, "ECN")
+            if (!windows) assertTrue(f and KslUdpSocket.ECN != 0, "ECN")
             assertTrue(f and KslUdpSocket.DF != 0, "DF")
             if (linux) {
                 assertTrue(f and KslUdpSocket.GSO != 0, "GSO")
                 assertTrue(f and KslUdpSocket.GRO != 0, "GRO")
                 assertTrue(s.gsoMaxSegments >= 2)
+            } else if (windows) {
+                // ECN, USO and URO depend on the Windows version (ksl_udp_win.c probes them); only their consistency is fixed
+                assertEquals(f and KslUdpSocket.GSO != 0, s.gsoMaxSegments >= 2, "USO granted iff segments are offered")
             } else {
                 assertEquals(0, f and (KslUdpSocket.GSO or KslUdpSocket.GRO), "Darwin has no UDP_SEGMENT/UDP_GRO")
                 assertEquals(0, s.gsoMaxSegments)
@@ -92,7 +101,7 @@ class KslUdpSocketTest {
     }
 
     @Test fun closeUnblocksReceive() {
-        if (!accelerated) return // Windows: covered by openOnUnsupportedPlatformThrows
+        if (!accelerated) return // another OS: covered by openOnUnsupportedPlatformThrows
         val s = KslUdpSocket.open(loopback(), 0)
         val bufs = Array(1) { PacketBuffer.allocate(64) }
         var result = -2
@@ -116,7 +125,7 @@ class KslUdpSocketTest {
 
     /** A receive error on a socket nobody shut down throws instead of looking like a timeout. */
     @Test fun negative_receiveErrorIsNotATimeout() {
-        if (!accelerated) return // Windows: no ksl_udp
+        if (!accelerated) return // another OS: no ksl_udp
         KslUdpSocket.open(loopback(), 0).use { s ->
             io.kuicksilver.native.Ksl
                 .udpShutdown(s.handle) // the native socket fails underneath a wrapper that was not shut down

@@ -58,7 +58,8 @@ Knobs, named after Ktor's Netty engine where one exists: `http3` (on), `quic` (t
 (applies when `quic` is the default), `udpSocketCount` (endpoint loops on `SO_REUSEPORT`, Linux), `quicAdmission`
 (Retry policy, Ktor-Netty's `quicTokenHandler`), `http3Settings`. UDP socket buffer sizes are not configurable yet.
 
-Where a QUIC server cannot run — Apple and Windows Kotlin/Native (ADR-0006) — the engine logs a warning and serves
+The engine serves HTTP/3 on every target, Kotlin/Native Linux, Apple and Windows included (the accelerated `ksl` socket,
+ADR-0006); `udpSocketCount > 1` needs Linux or Android. Where a QUIC server cannot run, the engine logs a warning and serves
 HTTP/1.1 only, without `Alt-Svc`. The same applies to a `tlsConnector` with a `sniSelector`: QUIC cannot pick an
 identity per SNI name in v1, so that connector skips HTTP/3 with a warning instead of failing to start.
 

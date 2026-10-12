@@ -71,6 +71,6 @@ int ksl_udp_send(ksl_udp *u, uint8_t *const *bufs, const uint32_t *lens, const u
     return KSL_OK;
 }
 
-#else /* neither Linux nor Apple: the portable DatagramIo does the work */
+#elif !defined(_WIN32) /* neither Linux, Apple nor Windows (ksl_udp_win.c): the portable DatagramIo does the work */
 int ksl_udp_send(ksl_udp *u, uint8_t *const *bufs, const uint32_t *lens, const uint8_t *addrs, const uint8_t *ecn, uint32_t n, uint32_t *sent) { (void)u; (void)bufs; (void)lens; (void)addrs; (void)ecn; (void)n; if (sent) *sent = 0; return KSL_ERROR; }
 #endif

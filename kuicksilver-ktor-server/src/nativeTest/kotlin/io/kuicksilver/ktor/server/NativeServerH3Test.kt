@@ -11,22 +11,17 @@ import io.kuicksilver.http3.Http3Endpoint
 import io.kuicksilver.http3.Http3Request
 import io.kuicksilver.native.KslLoader
 import kotlinx.io.readByteArray
-import kotlin.experimental.ExperimentalNativeApi
-import kotlin.native.OsFamily
-import kotlin.native.Platform
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
-/** The engine serves HTTP/3 on Kotlin/Native where the accelerated UDP socket exists (Linux, Apple; ADR-0006); Windows has none. */
-@OptIn(ExperimentalNativeApi::class)
+/** The engine serves HTTP/3 on Kotlin/Native where the accelerated UDP socket exists (Linux, Apple, Windows; ADR-0006). */
 class NativeServerH3Test {
     @BeforeTest fun load() = KslLoader.ensureLoaded()
 
     @Test fun h3ServedAndAdvertisedOnNative() =
         serverTest {
-            if (Platform.osFamily == OsFamily.WINDOWS) return@serverTest // ServerH3DisabledTest covers the refusal
             val (server, port) = tlsServer { routing { get("/") { call.respondText("native h3") } } }
             try {
                 val resp = rawHttp(port, "GET / HTTP/1.1\r\nHost: server.test\r\nConnection: close\r\n\r\n")

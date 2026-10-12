@@ -16,7 +16,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.withContext
 
 /**
- * The accelerated transport (ADR-0006): one [KslUdpSocket] of `ksl` on Linux and Android. Batches go to C as the
+ * The accelerated transport (ADR-0006): one [KslUdpSocket] of `ksl` on Linux, Android, Apple and Windows. Batches go to C as the
  * slots' own [PacketBuffer]s (no copy in Kotlin); GSO runs, GRO splitting, per-datagram ECN and DF probe mode happen there.
  *
  * `receive` blocks a `Dispatchers.IO` thread in 100 ms slices, returning it between slices, until a datagram arrives or the socket is closed; peers' addresses
@@ -184,14 +184,14 @@ internal class KslDatagramIo private constructor(
 
     internal fun statsForTest(): KslUdpSocket.Stats = socket.stats
 
-    /** True when the kernel granted SO_REUSEPORT with flow hashing (Linux, Android; never Darwin): several loops may share the port. */
+    /** True when the kernel granted SO_REUSEPORT with flow hashing (Linux, Android; never Apple or Windows): several loops may share the port. */
     internal val reusePortGranted: Boolean get() = socket.grantedFlags and KslUdpSocket.REUSEPORT != 0
 
     companion object {
         private const val PEERS = 64
         private const val REFRESH = 256
 
-        /** Opens the accelerated socket on [local]; null where `ksl_udp` is not available (Windows) or the address cannot be resolved. */
+        /** Opens the accelerated socket on [local]; null where `ksl_udp` cannot open its socket or the address cannot be resolved. */
         fun open(
             local: InetSocketAddress,
             reusePort: Boolean = false,

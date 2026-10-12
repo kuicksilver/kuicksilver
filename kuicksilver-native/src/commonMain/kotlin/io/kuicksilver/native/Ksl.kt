@@ -297,7 +297,7 @@ public expect object Ksl {
 
     // accelerated UDP (Linux; ADR-0006). Slots are [PacketBuffer]s read and written in place; at most [KslConst.UDP_MAX_BATCH] per call.
 
-    /** Opens and binds; throws [KslException.Internal] with [KslConst.E_NOT_SUPPORTED] where `ksl_udp` is not available (Apple, Windows). */
+    /** Opens and binds; throws [KslException.Internal] with [KslConst.E_NOT_SUPPORTED] where `ksl_udp` is not available (a target that is neither Linux, Android, Apple nor Windows). */
     public fun udpOpen(
         addr: ByteArray,
         flags: Int,

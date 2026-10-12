@@ -21,7 +21,7 @@ import kotlin.concurrent.atomics.ExperimentalAtomicApi
  *
  * Thread safety: one thread sends and one receives; [shutdown] and [close] may be called from any thread. A receive blocked in
  * [receive] is woken by [shutdown] (and so by [close]) and answers 0; the native object is freed only once no receiver is inside.
- * Where `ksl_udp` is not available (Apple, Windows) [supported] is false and [open] throws [KslException.Internal] with
+ * Where `ksl_udp` is not available (any target but Linux, Android, Apple and Windows) or cannot open its socket, [supported] is false and [open] throws [KslException.Internal] with
  * [KslConst.E_NOT_SUPPORTED]: the portable io is used there.
  */
 @InternalKuicksilverApi
@@ -190,7 +190,7 @@ public class KslUdpSocket private constructor(
         private const val CLOSED = 1 shl 29
         private const val COUNT = CLOSED - 1
 
-        /** True where `ksl_udp` works (Linux, Android, Apple): learned once by opening a loopback socket. */
+        /** True where `ksl_udp` works (Linux, Android, Apple, Windows): learned once by opening a loopback socket. */
         public val supported: Boolean by lazy {
             KslLoader.ensureLoaded()
             try {

@@ -64,9 +64,11 @@ The endpoint's socket comes from `DatagramIo.open(local, prefer)`. On Linux and 
 ECN marks read and written per datagram, DF in probe mode for PMTUD, and `SO_REUSEPORT` for several loops on one
 port. On macOS and iOS (JVM and Kotlin/Native) it is the same `ksl` socket without GSO and GRO, which Darwin lacks:
 batches leave as one `sendmsg` per datagram, ECN marks and DF work as on Linux, and `SO_REUSEPORT` is not offered.
-Everywhere else (Windows), or with `IoPreference.Portable`, the portable socket is used (NIO on the JVM, `ktor-network`
-on Native); `io.capabilities` says what the socket can do and the core adapts (ECN validation, PMTUD) per path. A QUIC
-server on Kotlin/Native needs the accelerated socket (Linux, Apple): on Windows `bind` with a `server` throws
+On Windows (Kotlin/Native and the JVM) the `ksl` socket is Winsock: `WSASendMsg`/`WSARecvMsg`, USO/URO and ECN where the
+Windows version grants them (`io.capabilities` tells), DF, an exclusive bind and no `SO_REUSEPORT` (one loop per port).
+With `IoPreference.Portable`, or where `ksl` cannot open its socket, the portable socket is used (NIO on the JVM,
+`ktor-network` on Native); `io.capabilities` says what the socket can do and the core adapts (ECN validation, PMTUD) per
+path. A QUIC server on Kotlin/Native needs the accelerated socket (Linux, Apple, Windows): without it `bind` with a `server` throws
 `UnsupportedOperationException`, since the portable Native socket is client-only (ADR-0006).
 
 ```kotlin
@@ -273,7 +275,8 @@ client flow onto one socket, and the loop that admits a connection owns it for l
 every connection ID that loop issues. A datagram that lands on another loop after a NAT rebind is copied to the owner;
 no loop ever answers a Stateless Reset for a connection ID that names another loop. `accept()` is one queue over all
 loops, `connect` picks loops in turn. `loops > 1` needs a server and the accelerated transport with kernel flow hashing (Linux, Android); elsewhere,
-macOS included (Darwin hands a port's unicast datagrams to one `SO_REUSEPORT` socket only), `bind` throws
+macOS included (Darwin hands a port's unicast datagrams to one `SO_REUSEPORT` socket only) and Windows (the socket is bound
+with `SO_EXCLUSIVEADDRUSE`), `bind` throws
 `UnsupportedOperationException`. Inside each loop a flush visits only the connections something happened to
 since the last one, and the timers sit in a heap, so neither grows with the number of idle connections.
 

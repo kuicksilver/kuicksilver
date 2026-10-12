@@ -116,7 +116,7 @@ public class QuicEndpointConfig private constructor(
     public val statelessPerAddressPerSecond: Int,
     /** Stateless answers per second over all addresses (like msquic `MaxBindingStatelessOperations`). */
     public val statelessTotalPerSecond: Int,
-    /** Endpoint loops sharing the port with SO_REUSEPORT (docs/guide/quic.md, "Several loops on one port"): more than one needs a server and the accelerated transport with SO_REUSEPORT flow hashing (Linux, Android; not Apple), else `bind` throws `UnsupportedOperationException`. */
+    /** Endpoint loops sharing the port with SO_REUSEPORT (docs/guide/quic.md, "Several loops on one port"): more than one needs a server and the accelerated transport with SO_REUSEPORT flow hashing (Linux, Android; not Apple or Windows), else `bind` throws `UnsupportedOperationException`. */
     public val loops: Int,
 ) {
     /** The mutable side of [QuicEndpointConfig] behind `quicEndpointConfig { }`; [build] validates the values together. */

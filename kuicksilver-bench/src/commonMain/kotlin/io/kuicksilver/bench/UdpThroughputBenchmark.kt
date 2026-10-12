@@ -37,7 +37,7 @@ import kotlinx.coroutines.runBlocking
 /**
  * One operation moves one MiB of stream data over real UDP on loopback through the whole runtime (two endpoints, two
  * loops, the Null crypto provider so the transport, not AEAD, is measured): ops/s is MiB/s. [io] picks the socket: the
- * accelerated `ksl_udp` one where it exists (Linux, Android, Apple) or the portable one (NIO on the JVM, ktor-network on Native).
+ * accelerated `ksl_udp` one where it exists (Linux, Android, Apple, Windows) or the portable one (NIO on the JVM, ktor-network on Native).
  * On a host without the accelerated socket the "accelerated" row measures the portable fallback; the numbers are a measurement, not a promise.
  */
 @State(Scope.Benchmark)

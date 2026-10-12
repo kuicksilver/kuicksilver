@@ -43,6 +43,7 @@ Nothing has been released yet. This section summarises the development of the fi
 - The `macosX64` Kotlin/Native target (deprecated by Kotlin, never part of the test matrix). The JVM on Intel Macs keeps its `osx-x86_64` JNI library.
 
 ### Added
+- QUIC server on Kotlin/Native Windows (`mingwX64`): `ksl_udp` over Winsock (`WSASendMsg`/`WSARecvMsg` with `WSAPoll` and a wake socket, ECN through `IP_ECN`/`IPV6_ECN` on Windows 10 2004+ / Server 2022, USO/URO where the system grants them, DF, dual-stack IPv6, `SO_EXCLUSIVEADDRUSE`); the JVM on Windows uses the same socket through JNI. Winsock is started at program start, so address lookups before the first socket no longer fail with `WSANOTINITIALISED`. Verified by the CI windows job only.
 
 - QUIC server on Kotlin/Native macOS: the accelerated `ksl` UDP socket (ADR-0006) now works on Apple platforms — ECN marks sent and read per datagram, DF set for PMTUD (`IP_DONTFRAG`), no GSO/GRO (Darwin has none). `QuicEndpoint.bind` with a server and the Ktor server engine over HTTP/3 run on `macosArm64` (iOS compiles and links the same code); the JVM on macOS uses the accelerated socket by default instead of NIO. `loops > 1` stays Linux/Android-only: Darwin has no `SO_REUSEPORT` flow hashing, so `bind` refuses it there.
 - Android armeabi-v7a: the `kuicksilver-native` AAR ships `libksl.so` for arm64-v8a, armeabi-v7a and x86_64 (OpenSSL

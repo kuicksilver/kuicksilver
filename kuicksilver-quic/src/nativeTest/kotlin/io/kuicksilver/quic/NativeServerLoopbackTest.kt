@@ -13,20 +13,15 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
-import kotlin.experimental.ExperimentalNativeApi
-import kotlin.native.OsFamily
-import kotlin.native.Platform
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.time.Duration.Companion.seconds
 
-/** A QUIC server on Kotlin/Native over the accelerated transport (Linux, Apple); Windows has none and the guard test covers the refusal. */
-@OptIn(ExperimentalNativeApi::class)
+/** A QUIC server on Kotlin/Native over the accelerated transport (Linux, Apple, Windows: every Native target; NativeServerGuardTest asserts it exists). */
 class NativeServerLoopbackTest {
     @Test fun nativeServerServes10MiB() =
         runBlocking {
-            if (Platform.osFamily == OsFamily.WINDOWS) return@runBlocking // no ksl_udp: NativeServerGuardTest
             val lo = InetSocketAddress("127.0.0.1", 0)
             val server =
                 QuicEndpoint.bind(

@@ -111,12 +111,14 @@ internal class LoopGroup private constructor(
                     "loops > 1 needs the accelerated transport with SO_REUSEPORT, not a caller-supplied DatagramIo",
                 )
             }
-            val first =
-                KslDatagramIo.open(local, reusePort = true)
-                    ?: throw UnsupportedOperationException("loops > 1 needs the accelerated transport (Linux, Android)")
-            if (!first.reusePortGranted) {
-                first.close()
-                throw UnsupportedOperationException("loops > 1 needs SO_REUSEPORT with flow hashing (Linux, Android); Darwin has none")
+            // One guard for every platform without kernel flow hashing over SO_REUSEPORT: no accelerated socket at all, Darwin
+            // (one socket gets all unicast datagrams) and Windows (exclusive bind): ksl_udp grants KSL_UDP_REUSEPORT on Linux only.
+            val first = KslDatagramIo.open(local, reusePort = true)
+            if (first == null || !first.reusePortGranted) {
+                first?.close()
+                throw UnsupportedOperationException(
+                    "loops > 1 needs the accelerated transport with SO_REUSEPORT flow hashing (Linux, Android); not on Apple or Windows",
+                )
             }
             val ios = ArrayList<KslDatagramIo>(config.loops)
             ios += first
