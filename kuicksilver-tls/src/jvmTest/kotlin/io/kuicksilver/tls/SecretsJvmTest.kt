@@ -205,6 +205,76 @@ class SecretsJvmTest {
     }
 
     /**
+     * `fromPem` reads the key from the caller's `CharArray` without creating a `String` of it and wipes every decoded block:
+     * neither the EC private scalar nor the Base64 text of the PEM body (a stretch that spans a line break, which no
+     * one-line literal contains) is in a heap dump that includes unreachable objects. The key is this test's own (generated
+     * for it, not in [TestCerts]); its DER is wiped after the PEM `CharArray` is built, and both needles stay masked until the
+     * dump is written.
+     */
+    @Test fun negative_heapDumpNoIdentityPrivateKeyFromPem() {
+        val der = java.util.Base64.getDecoder().decode(PEM_TEST_KEY)
+        val at = (0 until der.size - 34).first { der[it] == 0x04.toByte() && der[it + 1] == 0x20.toByte() && der[it - 3] == 0x02.toByte() } + 2
+        val maskedScalar = ByteArray(32) { (der[at + it].toInt() xor 0x5a).toByte() }
+        val pem = pemChars(der)
+        der.fill(0)
+        val nl = pem.indexOf('\n') // the end of the BEGIN line
+        val body = nl + 1
+        val maskedText = ByteArray(21) { (pem[body + 54 + it].code xor 0x5a).toByte() } // 10 chars, '\n', 10 chars
+        assertEquals('\n'.code, maskedText[10].toInt() xor 0x5a)
+        val id = TlsIdentity.fromPem(TestCerts.toPem("CERTIFICATE", java.util.Base64.getDecoder().decode(PEM_TEST_CERT)), pem)
+        assertTrue(pem.all { it == '\u0000' }, "fromPem zeroes the caller's array")
+        val dump =
+            File.createTempFile("ksl-heap", ".hprof").also {
+                it.delete()
+                it.deleteOnExit()
+            }
+        try {
+            val bean =
+                ManagementFactory.newPlatformMXBeanProxy(
+                    ManagementFactory.getPlatformMBeanServer(),
+                    "com.sun.management:type=HotSpotDiagnostic",
+                    com.sun.management.HotSpotDiagnosticMXBean::class.java,
+                )
+            bean.dumpHeap(dump.path, false) // unreachable objects too: a String dropped by fromPem is still in the heap
+            assertEquals(1, id.chain.size)
+        } finally {
+            id.close()
+        }
+        val heap = dump.readBytes()
+        val scalar = ByteArray(32) { (maskedScalar[it].toInt() xor 0x5a).toByte() }
+        assertFalse(contains(heap, scalar), "the identity's private key was found in the heap dump")
+        val text = ByteArray(maskedText.size) { (maskedText[it].toInt() xor 0x5a).toByte() }
+        assertFalse(contains(heap, text), "the Base64 text of the PEM key was found in the heap dump")
+        assertTrue(contains(heap, "kuicksilver".encodeToByteArray()), "sanity: the dump is searchable")
+    }
+
+    /** PKCS#8 PEM of [der] as a CharArray, 64 characters a line, built without a String of the key. */
+    private fun pemChars(der: ByteArray): CharArray {
+        val alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+        val b64 = CharArray((der.size + 2) / 3 * 4)
+        var o = 0
+        var i = 0
+        while (i < der.size) {
+            val n = minOf(3, der.size - i)
+            val v = (0 until 3).fold(0) { acc, k -> (acc shl 8) or (if (k < n) der[i + k].toInt() and 0xff else 0) }
+            for (k in 0 until 4) b64[o++] = if (k <= n) alphabet[(v shr (18 - 6 * k)) and 0x3f] else '='
+            i += 3
+        }
+        val begin = "-----BEGIN PRIVATE KEY-----\n"
+        val end = "-----END PRIVATE KEY-----\n"
+        val out = CharArray(begin.length + b64.size + (b64.size + 63) / 64 + end.length)
+        var p = 0
+        for (c in begin) out[p++] = c
+        for (j in b64.indices) {
+            out[p++] = b64[j]
+            if (j % 64 == 63 || j == b64.size - 1) out[p++] = '\n'
+        }
+        for (c in end) out[p++] = c
+        b64.fill('\u0000')
+        return out
+    }
+
+    /**
      * A TCP client keeps its resumption ticket for later connections. The session (master secret, resumption PSK) must stay
      * native: the heap holds a handle, never `i2d_SSL_SESSION` bytes. TLS 1.2 makes the check exact: the session's master key is the
      * `CLIENT_RANDOM` secret of the keylog. The server is a raw TLS 1.2-only `ksl` session (TlsConfig cannot cap a peer at 1.2).
@@ -329,3 +399,9 @@ class SecretsJvmTest {
         return false
     }
 }
+
+/** A P-256 key and its self-signed certificate used only by [SecretsJvmTest.negative_heapDumpNoIdentityPrivateKeyFromPem]. */
+private const val PEM_TEST_KEY =
+    "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgkurDS6tlARHsfz6oak6PgHs/SXvWtQNwkR5wy5f5VOuhRANCAATpGhO4BkysWPUd5oM2arp0/5ylD+IAHWhuvV/eS7LElH2vO8aQ/HsL2dxcPg4Btoy5zYHzGdoOzuIgYl784hzH"
+private const val PEM_TEST_CERT =
+    "MIIBfjCCASOgAwIBAgIUTlytV3OQG7F2dBfriiAjGmhWtq0wCgYIKoZIzj0EAwIwEzERMA8GA1UEAwwIcGVtLnRlc3QwIBcNMjYxMDEyMTgxMDU5WhgPMjEyNjA5MTgxODEwNTlaMBMxETAPBgNVBAMMCHBlbS50ZXN0MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE6RoTuAZMrFj1HeaDNmq6dP+cpQ/iAB1obr1f3kuyxJR9rzvGkPx7C9ncXD4OAbaMuc2B8xnaDs7iIGJe/OIcx6NTMFEwHQYDVR0OBBYEFGil2JFWBPR1dMOE1aCKXtYhAVbuMB8GA1UdIwQYMBaAFGil2JFWBPR1dMOE1aCKXtYhAVbuMA8GA1UdEwEB/wQFMAMBAf8wCgYIKoZIzj0EAwIDSQAwRgIhAIYIMTibazWqEpqMIxPeUPl9rrplGuKZiWop+s0I3MyDAiEAsSqxnw6SDx9WaBuXlXUeDlY7r6w6ttFisFt4daH1aSY="

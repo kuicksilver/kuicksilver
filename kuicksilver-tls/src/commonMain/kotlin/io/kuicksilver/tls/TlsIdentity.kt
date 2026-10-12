@@ -85,7 +85,11 @@ public sealed interface TlsIdentity {
 
     /** Factories: [fromPem], [fromDer], and on the JVM `fromKeyStore` and `fromPkcs12`. Each throws [TlsException.Config] on bad input. */
     public companion object {
-        /** PEM chain (leaf first) + PKCS#8 PEM key as a `CharArray`, zeroed after import; encrypted keys are not supported in v1. */
+        /**
+         * PEM chain (leaf first) + PKCS#8 PEM key as a `CharArray`, zeroed after import; encrypted keys are not supported in
+         * v1. The key is decoded straight from the array (no `String` of it is made) and every decoded block is wiped, on
+         * failure too; a `String` the caller read the key into is outside the library's reach.
+         */
         public fun fromPem(
             chainPem: String,
             keyPem: CharArray,
@@ -94,9 +98,13 @@ public sealed interface TlsIdentity {
             try {
                 if (password != null) throw TlsException.Config("encrypted PEM keys are not supported in v1; decrypt before import")
                 val chain = Pem.blocks(chainPem, "CERTIFICATE").map { Certificate(it) }
-                val keys = Pem.blocks(keyPem.concatToString(), "PRIVATE KEY")
-                if (keys.size != 1) throw TlsException.Config("expected exactly one PKCS#8 PRIVATE KEY block")
-                return fromDer(chain.map { it.der }, keys[0])
+                val keys = Pem.secretBlocks(keyPem, "PRIVATE KEY") // no String of the key text is ever made
+                try {
+                    if (keys.size != 1) throw TlsException.Config("expected exactly one PKCS#8 PRIVATE KEY block")
+                    return fromDer(chain.map { it.der }, keys[0])
+                } finally {
+                    keys.forEach { it.fill(0) }
+                }
             } finally {
                 keyPem.fill('\u0000')
                 password?.fill('\u0000')
@@ -180,6 +188,94 @@ internal object Pem {
             if (e < 0) throw TlsException.Config("unterminated PEM block $type")
             out += Base64.Mime.decode(pem.substring(b + begin.length, e))
             from = e + end.length
+        }
+        return out
+    }
+
+    /**
+     * The `-----BEGIN [type]-----` blocks of [pem] decoded straight from the `CharArray`, for key material: no `String` of
+     * the text is created, and the decoded arrays are wiped if any block fails. The caller wipes the returned arrays and [pem].
+     */
+    fun secretBlocks(
+        pem: CharArray,
+        type: String,
+    ): List<ByteArray> {
+        val begin = "-----BEGIN $type-----"
+        val end = "-----END $type-----"
+        val out = ArrayList<ByteArray>()
+        try {
+            var from = 0
+            while (true) {
+                val b = pem.find(begin, from)
+                if (b < 0) break
+                val e = pem.find(end, b)
+                if (e < 0) throw TlsException.Config("unterminated PEM block $type")
+                out += decodeBase64(pem, b + begin.length, e)
+                from = e + end.length
+            }
+            return out
+        } catch (t: Throwable) {
+            out.forEach { it.fill(0) }
+            throw t
+        }
+    }
+
+    private fun CharArray.find(
+        needle: String,
+        from: Int,
+    ): Int {
+        var i = from
+        while (i <= size - needle.length) {
+            var j = 0
+            while (j < needle.length && this[i + j] == needle[j]) j++
+            if (j == needle.length) return i
+            i++
+        }
+        return -1
+    }
+
+    private fun sextet(c: Char): Int =
+        when (c) {
+            in 'A'..'Z' -> c - 'A'
+            in 'a'..'z' -> c - 'a' + 26
+            in '0'..'9' -> c - '0' + 52
+            '+' -> 62
+            '/' -> 63
+            else -> -1
+        }
+
+    /** Base64 of `chars[from, to)`, whitespace skipped, `=` padding only at the end. */
+    private fun decodeBase64(
+        chars: CharArray,
+        from: Int,
+        to: Int,
+    ): ByteArray {
+        var digits = 0
+        var pad = 0
+        for (i in from until to) {
+            val c = chars[i]
+            when {
+                c == ' ' || c == '\t' || c == '\r' || c == '\n' -> {}
+                c == '=' -> pad++
+                pad == 0 && sextet(c) >= 0 -> digits++
+                else -> throw TlsException.Config("bad Base64 in the PEM block")
+            }
+        }
+        if ((digits + pad) % 4 != 0 || pad > 2 || digits % 4 == 1) throw TlsException.Config("bad Base64 length in the PEM block")
+        val out = ByteArray(digits * 3 / 4)
+        var acc = 0
+        var bits = 0
+        var o = 0
+        for (i in from until to) {
+            val v = sextet(chars[i])
+            if (v < 0) continue
+            acc = (acc shl 6) or v
+            bits += 6
+            if (bits >= 8) {
+                bits -= 8
+                out[o++] = (acc shr bits).toByte()
+                acc = acc and ((1 shl bits) - 1)
+            }
         }
         return out
     }
