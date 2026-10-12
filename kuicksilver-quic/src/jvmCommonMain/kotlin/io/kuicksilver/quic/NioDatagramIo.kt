@@ -161,13 +161,24 @@ internal class NioDatagramIo private constructor(
         /** How long a send waits for room in a full socket buffer before the rest of its batch is lost. */
         private const val WRITE_WAIT_MS = 5L
 
-        fun open(local: InetSocketAddress): NioDatagramIo {
+        /** [configure] runs on the unbound channel before `bind` (Android binds it to a network); if anything throws, the channel is closed. */
+        fun open(
+            local: InetSocketAddress,
+            configure: (DatagramChannel) -> Unit = {},
+        ): NioDatagramIo {
             val ch = DatagramChannel.open()
-            ch.setOption(StandardSocketOptions.SO_RCVBUF, 8 shl 20)
-            ch.setOption(StandardSocketOptions.SO_SNDBUF, 8 shl 20)
-            ch.bind(local.toJavaAddress())
-            ch.configureBlocking(false)
-            val selector = Selector.open()
+            val selector: Selector
+            try {
+                ch.setOption(StandardSocketOptions.SO_RCVBUF, 8 shl 20)
+                ch.setOption(StandardSocketOptions.SO_SNDBUF, 8 shl 20)
+                configure(ch)
+                ch.bind(local.toJavaAddress())
+                ch.configureBlocking(false)
+                selector = Selector.open()
+            } catch (e: Throwable) {
+                ch.close()
+                throw e
+            }
             ch.register(selector, SelectionKey.OP_READ)
             return NioDatagramIo(ch, selector).also { it.enableEcn() }
         }

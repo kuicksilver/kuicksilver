@@ -252,6 +252,57 @@ the peer's moves too. Migration needs a confirmed handshake and a server that di
 when the active path fails validation and no other validated path remains, the connection closes with
 `ConnectionLost.NoViablePath` (`TimeoutKind.PathValidation` exists in the API but is not produced in this version).
 
+## Network changes
+
+A phone moves between Wi-Fi and cellular; the connection can follow it instead of dying with the old network.
+`NetworkMigrator` (experimental) watches a `Flow` of the platform's network handles and migrates a client connection
+whenever the network changes:
+
+```kotlin
+// guide:quic:network-migrator
+val migrator = NetworkMigrator(connection, networks, { DatagramIo.open(InetSocketAddress("0.0.0.0", 0)) }, scope)
+val log = scope.launch { migrator.events.collect { println("network: $it") } }
+migrator.start()
+```
+
+The first network the flow reports is the one the connection is on already. Each different network gets a socket from
+`openIo` and a `migrate` (new path, `PATH_CHALLENGE`, switch); on success the previous path and its socket are closed and
+`events` reports `MigrationEvent.Migrated(old, new, path)`. When the new network never answers, `openIo` throws or the
+server advertised `disable_active_migration` (RFC 9000 section 18.2), the new socket is closed, the connection stays
+where it was and `events` reports `Failed(network, cause)`. A `null` means no network: `NetworkLost` is reported and the
+migrator waits; the connection is not closed (its idle timeout decides), and if the same network comes back nothing
+moves. Repeated values are ignored, and a change during a migration supersedes it: the unfinished path is closed and
+nothing is reported for it (`openIo` itself is not cancelled, so keep it short: the socket it returns is closed). The
+path closed after a migration is the one the connection was really on, also when it moved since (a fallback, the peer).
+`network` is the network the connection is on as far as the migrator knows. `close()` (thread-safe, like `start()`)
+stops following: a migration that has not switched yet is abandoned and its path and socket closed, one already
+switching completes and reports `Migrated`; the connection stays open. The migrator also stops when the connection
+ends, without a `Failed` for the migration it cut short. If the network flow throws, `SourceFailed(cause)` is the last
+event and the migrator stops; the exception never reaches `scope`. Only a client migrates (RFC 9000 section 9): a
+server connection is refused with `IllegalArgumentException`.
+
+On Android, `followDefaultNetwork` does the wiring (API 24+):
+
+```kotlin
+val cm = context.getSystemService(ConnectivityManager::class.java)
+val migrator = connection.followDefaultNetwork(cm, lifecycleScope)   // started; migrator.close() stops it
+lifecycleScope.launch { migrator.events.collect { Log.i("quic", "$it") } }
+```
+
+It feeds `ConnectivityManager.registerDefaultNetworkCallback` into a started `NetworkMigrator` (`cm.defaultNetworks()`
+is the flow alone). All migrators of one `ConnectivityManager` share a single callback, registered with the first and
+unregistered after the last, because Android refuses more than about 100 callbacks per app (`TooManyRequestsException`,
+reported as `SourceFailed`). It opens each new socket with
+`DatagramIo.open(local, network, prefer)`, which binds it to that network with `Network.bindSocket` before it carries a
+datagram: the portable socket before `bind`, the accelerated one through a duplicate of its descriptor that is closed
+again. The default network at the call is taken as the one the connection is on (a socket that is not bound to a
+network follows the default one). The AAR declares `ACCESS_NETWORK_STATE`, which the callback needs; nothing else is
+added to the manifest. What stays with the app: the callback only fires while the process runs, so a connection in a
+background process that Android froze or killed moves (or is lost) when the app is back; Doze and app standby cut
+network access whatever the default network is; and a server that advertised `disable_active_migration` is never moved
+(`Failed` events), so the app reconnects instead. As in Chromium's QUIC session pool, losing the network does not close
+the connection: if no network returns within the idle timeout, the connection closes as usual.
+
 ## Glitch protection
 
 Every connection carries a token bucket (1000 tokens, 33 back per second) that pays for work the peer makes us do

@@ -462,6 +462,45 @@ public final class io/kuicksilver/quic/IoPreference : java/lang/Enum {
 	public static fun values ()[Lio/kuicksilver/quic/IoPreference;
 }
 
+public abstract interface class io/kuicksilver/quic/MigrationEvent {
+}
+
+public final class io/kuicksilver/quic/MigrationEvent$Failed : io/kuicksilver/quic/MigrationEvent {
+	public fun <init> (Ljava/lang/Object;Ljava/lang/Throwable;)V
+	public final fun getCause ()Ljava/lang/Throwable;
+	public final fun getNetwork ()Ljava/lang/Object;
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/kuicksilver/quic/MigrationEvent$Migrated : io/kuicksilver/quic/MigrationEvent {
+	public fun <init> (Ljava/lang/Object;Ljava/lang/Object;Lio/kuicksilver/quic/QuicPath;)V
+	public final fun getNew ()Ljava/lang/Object;
+	public final fun getOld ()Ljava/lang/Object;
+	public final fun getPath ()Lio/kuicksilver/quic/QuicPath;
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/kuicksilver/quic/MigrationEvent$NetworkLost : io/kuicksilver/quic/MigrationEvent {
+	public static final field INSTANCE Lio/kuicksilver/quic/MigrationEvent$NetworkLost;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/kuicksilver/quic/MigrationEvent$SourceFailed : io/kuicksilver/quic/MigrationEvent {
+	public fun <init> (Ljava/lang/Throwable;)V
+	public final fun getCause ()Ljava/lang/Throwable;
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/kuicksilver/quic/NetworkMigrator : java/lang/AutoCloseable {
+	public fun <init> (Lio/kuicksilver/quic/QuicConnection;Lkotlinx/coroutines/flow/Flow;Lkotlin/jvm/functions/Function2;Lkotlinx/coroutines/CoroutineScope;)V
+	public fun close ()V
+	public final fun getEvents ()Lkotlinx/coroutines/flow/Flow;
+	public final fun getNetwork ()Lkotlinx/coroutines/flow/StateFlow;
+	public final fun start ()Lkotlinx/coroutines/Job;
+}
+
 public final class io/kuicksilver/quic/NewReno : io/kuicksilver/quic/CongestionController {
 	public fun <init> ()V
 	public fun <init> (I)V

@@ -265,6 +265,47 @@ abstract interface io.kuicksilver.quic/QuicStream { // io.kuicksilver.quic/QuicS
     abstract fun stopSending(kotlin/Long) // io.kuicksilver.quic/QuicStream.stopSending|stopSending(kotlin.Long){}[0]
 }
 
+sealed interface <#A: out kotlin/Any?> io.kuicksilver.quic/MigrationEvent { // io.kuicksilver.quic/MigrationEvent|null[0]
+    final class <#A1: out kotlin/Any?> Failed : io.kuicksilver.quic/MigrationEvent<#A1> { // io.kuicksilver.quic/MigrationEvent.Failed|null[0]
+        constructor <init>(#A1, kotlin/Throwable) // io.kuicksilver.quic/MigrationEvent.Failed.<init>|<init>(1:0;kotlin.Throwable){}[0]
+
+        final val cause // io.kuicksilver.quic/MigrationEvent.Failed.cause|{}cause[0]
+            final fun <get-cause>(): kotlin/Throwable // io.kuicksilver.quic/MigrationEvent.Failed.cause.<get-cause>|<get-cause>(){}[0]
+        final val network // io.kuicksilver.quic/MigrationEvent.Failed.network|{}network[0]
+            final fun <get-network>(): #A1 // io.kuicksilver.quic/MigrationEvent.Failed.network.<get-network>|<get-network>(){}[0]
+
+        final fun toString(): kotlin/String // io.kuicksilver.quic/MigrationEvent.Failed.toString|toString(){}[0]
+    }
+
+    final class <#A1: out kotlin/Any?> Migrated : io.kuicksilver.quic/MigrationEvent<#A1> { // io.kuicksilver.quic/MigrationEvent.Migrated|null[0]
+        constructor <init>(#A1, #A1, io.kuicksilver.quic/QuicPath) // io.kuicksilver.quic/MigrationEvent.Migrated.<init>|<init>(1:0;1:0;io.kuicksilver.quic.QuicPath){}[0]
+
+        final val new // io.kuicksilver.quic/MigrationEvent.Migrated.new|{}new[0]
+            final fun <get-new>(): #A1 // io.kuicksilver.quic/MigrationEvent.Migrated.new.<get-new>|<get-new>(){}[0]
+        final val old // io.kuicksilver.quic/MigrationEvent.Migrated.old|{}old[0]
+            final fun <get-old>(): #A1 // io.kuicksilver.quic/MigrationEvent.Migrated.old.<get-old>|<get-old>(){}[0]
+        final val path // io.kuicksilver.quic/MigrationEvent.Migrated.path|{}path[0]
+            final fun <get-path>(): io.kuicksilver.quic/QuicPath // io.kuicksilver.quic/MigrationEvent.Migrated.path.<get-path>|<get-path>(){}[0]
+
+        final fun toString(): kotlin/String // io.kuicksilver.quic/MigrationEvent.Migrated.toString|toString(){}[0]
+    }
+
+    final class SourceFailed : io.kuicksilver.quic/MigrationEvent<kotlin/Nothing> { // io.kuicksilver.quic/MigrationEvent.SourceFailed|null[0]
+        constructor <init>(kotlin/Throwable) // io.kuicksilver.quic/MigrationEvent.SourceFailed.<init>|<init>(kotlin.Throwable){}[0]
+
+        final val cause // io.kuicksilver.quic/MigrationEvent.SourceFailed.cause|{}cause[0]
+            final fun <get-cause>(): kotlin/Throwable // io.kuicksilver.quic/MigrationEvent.SourceFailed.cause.<get-cause>|<get-cause>(){}[0]
+
+        final fun toString(): kotlin/String // io.kuicksilver.quic/MigrationEvent.SourceFailed.toString|toString(){}[0]
+    }
+
+    final object NetworkLost : io.kuicksilver.quic/MigrationEvent<kotlin/Nothing> { // io.kuicksilver.quic/MigrationEvent.NetworkLost|null[0]
+        final fun equals(kotlin/Any?): kotlin/Boolean // io.kuicksilver.quic/MigrationEvent.NetworkLost.equals|equals(kotlin.Any?){}[0]
+        final fun hashCode(): kotlin/Int // io.kuicksilver.quic/MigrationEvent.NetworkLost.hashCode|hashCode(){}[0]
+        final fun toString(): kotlin/String // io.kuicksilver.quic/MigrationEvent.NetworkLost.toString|toString(){}[0]
+    }
+}
+
 sealed interface io.kuicksilver.quic/AdmissionDecision { // io.kuicksilver.quic/AdmissionDecision|null[0]
     final class Close : io.kuicksilver.quic/AdmissionDecision { // io.kuicksilver.quic/AdmissionDecision.Close|null[0]
         constructor <init>(kotlin/Long) // io.kuicksilver.quic/AdmissionDecision.Close.<init>|<init>(kotlin.Long){}[0]
@@ -479,6 +520,18 @@ sealed interface io.kuicksilver.quic/PathEvent { // io.kuicksilver.quic/PathEven
         final val path // io.kuicksilver.quic/PathEvent.Validated.path|{}path[0]
             final fun <get-path>(): io.kuicksilver.quic/QuicPath // io.kuicksilver.quic/PathEvent.Validated.path.<get-path>|<get-path>(){}[0]
     }
+}
+
+final class <#A: kotlin/Any> io.kuicksilver.quic/NetworkMigrator : kotlin/AutoCloseable { // io.kuicksilver.quic/NetworkMigrator|null[0]
+    constructor <init>(io.kuicksilver.quic/QuicConnection, kotlinx.coroutines.flow/Flow<#A?>, kotlin.coroutines/SuspendFunction1<#A, io.kuicksilver.quic/DatagramIo>, kotlinx.coroutines/CoroutineScope) // io.kuicksilver.quic/NetworkMigrator.<init>|<init>(io.kuicksilver.quic.QuicConnection;kotlinx.coroutines.flow.Flow<1:0?>;kotlin.coroutines.SuspendFunction1<1:0,io.kuicksilver.quic.DatagramIo>;kotlinx.coroutines.CoroutineScope){}[0]
+
+    final val events // io.kuicksilver.quic/NetworkMigrator.events|{}events[0]
+        final fun <get-events>(): kotlinx.coroutines.flow/Flow<io.kuicksilver.quic/MigrationEvent<#A>> // io.kuicksilver.quic/NetworkMigrator.events.<get-events>|<get-events>(){}[0]
+    final val network // io.kuicksilver.quic/NetworkMigrator.network|{}network[0]
+        final fun <get-network>(): kotlinx.coroutines.flow/StateFlow<#A?> // io.kuicksilver.quic/NetworkMigrator.network.<get-network>|<get-network>(){}[0]
+
+    final fun close() // io.kuicksilver.quic/NetworkMigrator.close|close(){}[0]
+    final fun start(): kotlinx.coroutines/Job // io.kuicksilver.quic/NetworkMigrator.start|start(){}[0]
 }
 
 final class io.kuicksilver.quic.qlog/DirectoryQlogSink : io.kuicksilver.quic/QlogSink { // io.kuicksilver.quic.qlog/DirectoryQlogSink|null[0]

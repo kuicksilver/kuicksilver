@@ -16,6 +16,7 @@ import io.kuicksilver.quic.VersionProfile
 import io.kuicksilver.quic.qlog.DirectoryQlogSink
 import io.kuicksilver.tls.KslQuicCrypto
 import kotlinx.coroutines.async
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.supervisorScope
@@ -26,6 +27,7 @@ import kotlin.random.Random
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertIs
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.seconds
@@ -340,6 +342,19 @@ class GuideSamplesTest {
                     val change = connection.migrate(DatagramIo.open(InetSocketAddress("0.0.0.0", 0))) // addPath + probe + switchTo
                     println("now on ${change.new.localAddress} (${change.reason})")
                     assertEquals(PathChangeReason.ActiveMigration, change.reason)
+                    val networks = kotlinx.coroutines.flow.MutableStateFlow<String?>("wifi") // what the platform reports
+                    val scope = this
+                    // guide:quic:network-migrator
+                    val migrator = NetworkMigrator(connection, networks, { DatagramIo.open(InetSocketAddress("0.0.0.0", 0)) }, scope)
+                    val log = scope.launch { migrator.events.collect { println("network: $it") } }
+                    migrator.start()
+                    migrator.network.first { it == "wifi" }
+                    val moved = async(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) { migrator.events.first() }
+                    networks.value = "cell"
+                    assertIs<MigrationEvent.Migrated<String>>(moved.await())
+                    assertEquals("cell", migrator.network.value)
+                    migrator.close()
+                    log.cancel()
                     connection.close(0, "done")
                     peer.close(0, "done")
                 }
