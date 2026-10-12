@@ -150,8 +150,8 @@ jobs:
 
   linux-native:
     # Kotlin/Native for Linux and Windows: the -kn OpenSSL builds with the konan clang and sysroots, the prefixed archives, the
-    # test executables; test.kexe x64 runs in the manylinux image, arm64 under QEMU in Ubuntu 24.04 (the K/N arm64 sysroot
-    # needs glibc 2.25 > manylinux2014), and the mingw test.exe goes to the windows job.
+    # test executables; test.kexe x64 runs in the manylinux image, the arm64 ones go to linux-native-arm64 (a native arm64
+    # runner: under QEMU the real-time suites ran 10-50x slower and timed out, run 38287900994), the mingw test.exe to windows.
     needs: openssl-docker
     runs-on: ubuntu-24.04
     permissions: { contents: read }
@@ -172,18 +172,12 @@ jobs:
         run: bash tools/check/glibc-floor.sh kuicksilver-native/build/bin/linuxX64/debugTest/test.kexe 2.19 && bash tools/check/glibc-floor.sh kuicksilver-native/build/bin/linuxArm64/debugTest/test.kexe 2.25
       - name: 'native: prefix whitelist (linux/mingw)'
         run: for t in linux-x64-kn linux-arm64-kn mingw-x64; do bash tools/prefix/check-no-unprefixed.sh build/openssl-prefixed/$t/lib || exit 1; done
-      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
-        with: { platforms: arm64 }
       - name: 'docker: image linux-x64'
         run: bash tools/openssl/build-docker.sh --image linux-x64
       - name: 'docker: native test.kexe linux-x64'
         run: bash tools/ci/docker-run.sh linux/amd64 kuicksilver-openssl-linux-x64 "kuicksilver-native/build/bin/linuxX64/debugTest/test.kexe"
-      - name: 'docker: native test.kexe linux-arm64'
-        run: . tools/ci/matrix.sh && bash tools/ci/docker-run.sh linux/arm64 "$KSL_UBUNTU_IMAGE" "kuicksilver-native/build/bin/linuxArm64/debugTest/test.kexe"
       - name: 'docker: quic test.kexe linux-x64'
         run: bash tools/ci/docker-run.sh linux/amd64 kuicksilver-openssl-linux-x64 "kuicksilver-quic/build/bin/linuxX64/debugTest/test.kexe"
-      - name: 'docker: quic test.kexe linux-arm64'
-        run: . tools/ci/matrix.sh && bash tools/ci/docker-run.sh linux/arm64 "$KSL_UBUNTU_IMAGE" "kuicksilver-quic/build/bin/linuxArm64/debugTest/test.kexe"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: mingw-test-exe
@@ -192,6 +186,35 @@ jobs:
             kuicksilver-quic/build/bin/mingwX64/debugTest/test.exe
           if-no-files-found: error
           retention-days: 7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: linux-arm64-test-kexe
+          path: |
+            kuicksilver-native/build/bin/linuxArm64/debugTest/test.kexe
+            kuicksilver-quic/build/bin/linuxArm64/debugTest/test.kexe
+          if-no-files-found: error
+          retention-days: 7
+
+  linux-native-arm64:
+    # The arm64 Kotlin/Native test executables linked by linux-native, run on a native arm64 runner in Ubuntu 24.04 (the K/N
+    # arm64 sysroot needs glibc 2.25 > manylinux2014).
+    needs: linux-native
+    runs-on: ubuntu-24.04-arm
+    permissions: { contents: read }
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with: { name: linux-arm64-test-kexe, path: . }
+      - name: 'docker: native test.kexe linux-arm64'
+        run: |
+          chmod +x kuicksilver-native/build/bin/linuxArm64/debugTest/test.kexe
+          . tools/ci/matrix.sh && bash tools/ci/docker-run.sh linux/arm64 "$KSL_UBUNTU_IMAGE" "kuicksilver-native/build/bin/linuxArm64/debugTest/test.kexe"
+      - name: 'docker: quic test.kexe linux-arm64'
+        run: |
+          chmod +x kuicksilver-quic/build/bin/linuxArm64/debugTest/test.kexe
+          . tools/ci/matrix.sh && bash tools/ci/docker-run.sh linux/arm64 "$KSL_UBUNTU_IMAGE" "kuicksilver-quic/build/bin/linuxArm64/debugTest/test.kexe"
 
   windows:
     # Only runs the mingwX64 test executables cross-linked by linux-native (mingwX64 is Tier 3, built off Windows).
