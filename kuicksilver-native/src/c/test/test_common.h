@@ -78,5 +78,6 @@ static inline uint32_t last_code(ksl_ssl *s, int *alert) { uint32_t c; char m[25
 void run_quic(void); void run_early(void); void run_key(void); void run_crypto(void); void run_tcp(void); void run_verify(void); void run_udp(void);
 /* test hooks of ksl_udp.c (KSL_TEST builds) */
 struct ssl_st *ksl_ssl_raw_for_test(ksl_ssl *);
+void ksl_trust_paths_for_test(const char *const *files, const char *const *dirs);   /* ksl_ctx.c: NULL restores the distribution paths */
 uint32_t ksl_udp_syscalls_for_test(ksl_udp *); void ksl_udp_fail_next_gso_for_test(ksl_udp *, int err); void ksl_udp_fail_next_send_for_test(ksl_udp *, int err); int ksl_udp_df_mode_for_test(int fd); int ksl_udp_close_wakes_for_test(ksl_udp *); void ksl_udp_no_ipv6_for_test(int on);
 #endif

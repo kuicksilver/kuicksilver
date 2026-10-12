@@ -30,8 +30,8 @@ public actual object Ksl {
     private fun ctxError(c: Long): KslException.Internal =
         memScoped {
             val code = alloc<UIntVar>()
-            val buf = allocArray<ByteVar>(256)
-            ksl_ctx_last_error(ctx(c), code.ptr, buf, 256u)
+            val buf = allocArray<ByteVar>(512)
+            ksl_ctx_last_error(ctx(c), code.ptr, buf, 512u)
             KslException.Internal(code.value.toInt(), 0, buf.toKString())
         }
 
@@ -39,8 +39,8 @@ public actual object Ksl {
         memScoped {
             val code = alloc<UIntVar>()
             val alert = alloc<IntVar>()
-            val buf = allocArray<ByteVar>(256)
-            ksl_ssl_last_error(ssl(s), code.ptr, alert.ptr, buf, 256u)
+            val buf = allocArray<ByteVar>(512)
+            ksl_ssl_last_error(ssl(s), code.ptr, alert.ptr, buf, 512u)
             KslException.Internal(code.value.toInt(), alert.value, buf.toKString())
         }
 
@@ -694,8 +694,8 @@ public actual object Ksl {
         require(addr.size == KslConst.UDP_ADDR_LEN) { "address is ${KslConst.UDP_ADDR_LEN} bytes" }
         return memScoped {
             val err = alloc<UIntVar>()
-            val buf = allocArray<ByteVar>(256)
-            val h = addr.usePinned { ksl_udp_open(it.addressOf(0).reinterpret(), flags, err.ptr, buf, 256u) }.h()
+            val buf = allocArray<ByteVar>(512)
+            val h = addr.usePinned { ksl_udp_open(it.addressOf(0).reinterpret(), flags, err.ptr, buf, 512u) }.h()
             if (h == 0L) throw KslException.Internal(if (err.value == 0u) KslConst.E_BAD_ARG else err.value.toInt(), 0, buf.toKString())
             h
         }
