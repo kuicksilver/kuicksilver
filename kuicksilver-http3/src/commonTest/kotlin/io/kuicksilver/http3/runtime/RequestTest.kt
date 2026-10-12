@@ -21,14 +21,15 @@ import io.kuicksilver.quic.quicConfig
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.async
-import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.cancelChildren
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.coroutines.ContinuationInterceptor
 import kotlin.test.BeforeTest
 import kotlin.test.Ignore
 import kotlin.test.Test
@@ -40,7 +41,6 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNotSame
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
-import kotlin.coroutines.ContinuationInterceptor
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
@@ -337,8 +337,13 @@ class RequestTest {
                 // twice the bucket, in one write: the flood test's 1001 unknown frames close the connection
                 val flood =
                     (0 until 2002)
-                        .map { raw.frame(io.kuicksilver.http3.frame.FrameType.grease(it.toLong()), ByteArray(0)) }
-                        .reduce { a, b -> a + b }
+                        .map {
+                            raw.frame(
+                                io.kuicksilver.http3.frame.FrameType
+                                    .grease(it.toLong()),
+                                ByteArray(0),
+                            )
+                        }.reduce { a, b -> a + b }
                 st.output.writeFully(flood + raw.headers(st.id, GET))
                 st.output.flushAndClose()
                 val r = withTimeout(5.seconds) { server.acceptRequest() }

@@ -149,8 +149,14 @@ class ClientFallbackTest {
     @Test fun raceFailureMakesOneH1Attempt() =
         clientTest {
             var accepts = 0
-            val selector = io.ktor.network.selector.SelectorManager(kotlinx.coroutines.Dispatchers.Default)
-            val listener = io.ktor.network.sockets.aSocket(selector).tcp().bind("127.0.0.1", 0)
+            val selector =
+                io.ktor.network.selector
+                    .SelectorManager(kotlinx.coroutines.Dispatchers.Default)
+            val listener =
+                io.ktor.network.sockets
+                    .aSocket(selector)
+                    .tcp()
+                    .bind("127.0.0.1", 0)
             val port = (listener.localAddress as InetSocketAddress).port
             kotlinx.coroutines.coroutineScope {
                 val acceptor =
@@ -218,7 +224,10 @@ class ClientFallbackTest {
                             5.seconds,
                         ) { while (!engine.hasH3Connection(io.ktor.http.Url("https://127.0.0.1:$port/"))) delay(20) }
                         assertEquals(HttpProtocolVersion.HTTP_1_1, c.get("https://127.0.0.1:$port/").version)
-                        assertTrue(!engine.brokenAltSvc.isBroken("https://127.0.0.1:$port", "127.0.0.1:$port"), "a stream reset is no broken alternative")
+                        assertTrue(
+                            !engine.brokenAltSvc.isBroken("https://127.0.0.1:$port", "127.0.0.1:$port"),
+                            "a stream reset is no broken alternative",
+                        )
                     }
                 } finally {
                     ep.close()

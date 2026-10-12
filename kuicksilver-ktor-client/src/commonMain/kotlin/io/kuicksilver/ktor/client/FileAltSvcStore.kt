@@ -101,7 +101,9 @@ public class FileAltSvcStore(
             buildString {
                 for ((origin, entries) in map) {
                     for (e in entries) {
-                        append("$origin\t${e.protocol}\t${e.host ?: ""}\t${e.port}\t${e.expiresAtEpochMillis}\t${if (e.persist) 1 else 0}\n")
+                        append(
+                            "$origin\t${e.protocol}\t${e.host ?: ""}\t${e.port}\t${e.expiresAtEpochMillis}\t${if (e.persist) 1 else 0}\n",
+                        )
                     }
                 }
             }

@@ -67,7 +67,15 @@ private suspend fun KuicksilverApplicationEngine.bindTcpAndUdp(
 ): Pair<ServerSocket, Http3Endpoint?> {
     val ephemeral = l.config.port == 0
     var last: Throwable? = null
-    repeat(if (h3 == null) 1 else if (ephemeral) EPHEMERAL_PAIR_ATTEMPTS else 1) {
+    repeat(
+        if (h3 == null) {
+            1
+        } else if (ephemeral) {
+            EPHEMERAL_PAIR_ATTEMPTS
+        } else {
+            1
+        },
+    ) {
         val server = aSocket(selector).tcp().bind(l.config.host, l.config.port)
         if (h3 == null) return server to null
         val port = (server.localAddress as? InetSocketAddress)?.port ?: l.config.port
@@ -89,7 +97,9 @@ private suspend fun KuicksilverApplicationEngine.bindTcpAndUdp(
             last = e
         }
     }
-    environment.log.warn("HTTP/3 is not served: no free UDP port next to an ephemeral TCP one after $EPHEMERAL_PAIR_ATTEMPTS attempts ($last)")
+    environment.log.warn(
+        "HTTP/3 is not served: no free UDP port next to an ephemeral TCP one after $EPHEMERAL_PAIR_ATTEMPTS attempts ($last)",
+    )
     return aSocket(selector).tcp().bind(l.config.host, l.config.port) to null
 }
 

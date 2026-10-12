@@ -148,7 +148,9 @@ class EcnTest {
                         false
                     }
 
-                    2 -> true
+                    2 -> {
+                        true
+                    }
 
                     else -> {
                         held?.let {

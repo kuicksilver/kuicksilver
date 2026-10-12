@@ -372,7 +372,10 @@ class StatelessResetTest {
                 val dg = p.batch.buffer(0).toByteArray(p.batch.length(0))
                 assertNull(p.feed(restarted, dg, clientAddr))
                 val reset = p.stateless(restarted).single()
-                assertNotNull(p.feed(p.client, reset, InetSocketAddress("0:0:0:0:0:0:0:1", 443)), "the reset is matched by the address bytes")
+                assertNotNull(
+                    p.feed(p.client, reset, InetSocketAddress("0:0:0:0:0:0:0:1", 443)),
+                    "the reset is matched by the address bytes",
+                )
                 val r =
                     p.closed(c) ?: run {
                         p.step()

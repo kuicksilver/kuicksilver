@@ -199,7 +199,8 @@ class MemoryNetworkTest {
         }
 
     @OptIn(ExperimentalKuicksilverApi::class)
-    @Test fun fullReceiveBufferDropsAndCounts() {
+    @Test
+    fun fullReceiveBufferDropsAndCounts() {
         // like a socket's receive buffer: what arrives while 256 datagrams wait unread is dropped and counted
         val net = MemoryNetwork(receiveBuffer = 256)
         val rx = net.open(serverAddr)

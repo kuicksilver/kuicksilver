@@ -42,10 +42,14 @@ internal actual object PlatformVerifier {
             VerifyResult.Rejected(
                 when {
                     msg.contains("Pin verification failed") -> VerifyReason.PinMismatch(emptyList())
+
                     msg.contains("expired", ignoreCase = true) -> VerifyReason.Expired
+
                     msg.contains("blocklisted", ignoreCase = true) || msg.contains("blacklisted", ignoreCase = true) -> VerifyReason.Revoked
+
                     // the platform CT policy (Android 16+, NSC <certificateTransparency>) names it in the message
                     msg.contains("transparency", ignoreCase = true) -> VerifyReason.CertificateTransparency
+
                     else -> VerifyReason.UnknownIssuer
                 },
             )
