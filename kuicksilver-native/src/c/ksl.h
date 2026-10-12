@@ -20,12 +20,13 @@ extern "C" {
 #endif
 
 /* 2: ksl_ssl_set replaces ksl_ssl_set_sni/ksl_ssl_set_verify_name; QUIC version selector (K2) */
-#define KSL_ABI_VERSION 5u
+#define KSL_ABI_VERSION 6u
 /* 3 (K3): endpoint keys ksl_key_random / ksl_key_mac16 (and ksl_udp_*) */
 /* 4: client sessions stay native (the session holds resumption secrets) — ksl_ssl_get1_session / ksl_session_free, ksl_ssl_set_session takes a handle,
    KSL_GET_SESSION (serialized session bytes) removed; ksl_ctx_set_session_context (a ticket resumes only under the trust configuration that issued it) */
 /* 5: identity private keys stay native — ksl_pkey_new / ksl_pkey_free / ksl_ctx_set_identity_pkey (a parsed key shared by reference
    between contexts, so the caller keeps no DER copy of it) */
+/* 6: 0-RTT — KSL_OPT_EARLY_DATA, KSL_SET_EARLY_CONTEXT, KSL_SET_EARLY_DATA, KSL_GET_EARLY_DATA; the 0-RTT secret arrives as KSL_EV_KEY at KSL_LEVEL_EARLY (ADR-0015) */
 
 /* return codes */
 #define KSL_OK 0
@@ -59,6 +60,9 @@ extern "C" {
 #define KSL_OPT_SNI_PAUSE 7        /* 1 = server pauses at ClientHello with KSL_WANT_SNI */
 #define KSL_OPT_GENERIC_ALERTS 8   /* 1 = every verification failure is sent as handshake_failure (40) */
 #define KSL_OPT_TICKET_LIFETIME 9  /* seconds a server-issued ticket stays valid */
+#define KSL_OPT_EARLY_DATA 10      /* server, 1 = QUIC sessions accept 0-RTT: tickets carry early_data, OpenSSL's cache-based anti-replay is off
+                                      (SSL_OP_NO_ANTI_REPLAY; the transport keeps the replay register), and each hello needs KSL_SET_EARLY_DATA
+                                      plus a matching KSL_SET_EARLY_CONTEXT; KSL_E_BAD_ARG on a client context */
 
 /* ksl_ssl_get keys */
 #define KSL_GET_ALPN 1             /* negotiated protocol, bytes */
@@ -69,12 +73,18 @@ extern "C" {
 #define KSL_GET_SESSION_REUSED 6   /* 1 byte: 1 if the handshake resumed a session */
 #define KSL_GET_EMS 7              /* 1 byte: 1 if extended master secret was used (TLS 1.2) */
 #define KSL_GET_QUIC_VERSION 8     /* 4 bytes big-endian: negotiated (server, RFC 9368) or set (client) QUIC version */
+#define KSL_GET_EARLY_DATA 9       /* 1 byte: 0 not attempted, 1 rejected, 2 accepted (final once EncryptedExtensions is sent / received) */
 
 /* ksl_ssl_set keys */
 #define KSL_SET_SNI 1              /* data = host name, ASCII */
 #define KSL_SET_VERIFY_NAME 2      /* data = DNS-ID or IP literal; required for verifying clients */
 #define KSL_SET_QUIC_VERSION 3     /* data = 4-byte big-endian QUIC version (0x00000001 | 0x6b3343cf): labels for Handshake/1-RTT keys (RFC 9369 3.3);
                                       unknown -> KSL_E_BAD_ARG, after Handshake keys exist -> KSL_E_TOO_LATE */
+#define KSL_SET_EARLY_CONTEXT 4    /* server, 1..64 bytes before the first drive: written into every ticket this session issues; a resumed ticket
+                                      whose stored context differs gets no early data (RFC 9001 section 4.6.3) */
+#define KSL_SET_EARLY_DATA 5       /* 1 byte before the first drive. Client: 1 = send 0-RTT with the session set by ksl_ssl_set_session
+                                      (KSL_E_NOT_SUPPORTED when its ticket does not allow early data). Server: 1 = the transport admits early
+                                      data for this hello (replay register), 0 = refuse; KSL_E_NOT_SUPPORTED without KSL_OPT_EARLY_DATA */
 
 /* ksl_ssl_get_peer_chain selector */
 #define KSL_CHAIN_PRESENTED 0      /* as sent by the peer: leaf first (available during the pause) */

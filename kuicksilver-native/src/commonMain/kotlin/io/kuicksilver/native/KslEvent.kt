@@ -39,6 +39,9 @@ public object KslConst {
     public const val OPT_GENERIC_ALERTS: Int = 8
     public const val OPT_TICKET_LIFETIME: Int = 9
 
+    /** Server context: QUIC sessions accept 0-RTT (ABI 6, ADR-0015). */
+    public const val OPT_EARLY_DATA: Int = 10
+
     public const val GET_ALPN: Int = 1
     public const val GET_VERSION: Int = 2
     public const val GET_CHANNEL_BINDING: Int = 4
@@ -47,9 +50,18 @@ public object KslConst {
     public const val GET_EMS: Int = 7
     public const val GET_QUIC_VERSION: Int = 8
 
+    /** 1 byte: 0 not attempted, 1 rejected, 2 accepted. */
+    public const val GET_EARLY_DATA: Int = 9
+
     public const val SET_SNI: Int = 1
     public const val SET_VERIFY_NAME: Int = 2
     public const val SET_QUIC_VERSION: Int = 3
+
+    /** Server: 1..64 bytes bound into issued tickets and compared on resumption. */
+    public const val SET_EARLY_CONTEXT: Int = 4
+
+    /** 1 byte: client requests 0-RTT; server admits early data for this hello. */
+    public const val SET_EARLY_DATA: Int = 5
 
     public const val CHAIN_PRESENTED: Int = 0
     public const val CHAIN_VALIDATED: Int = 1

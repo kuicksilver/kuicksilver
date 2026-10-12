@@ -20,7 +20,7 @@ typedef struct { uint8_t *buf; size_t len, cap, consumed; } ksl_inbuf;
 
 struct ksl_ctx {
     SSL_CTX *ctx;
-    int role, verify_mode, client_cert_mode, frozen, sni_pause, keylog, generic_alerts;
+    int role, verify_mode, client_cert_mode, frozen, sni_pause, keylog, generic_alerts, early_data;
     size_t num_tickets;
     uint8_t alpn[256]; size_t alpn_len;
     uint8_t *ticket_keys; size_t ticket_key_count;   /* 80-byte entries, first encrypts */
@@ -41,6 +41,8 @@ struct ksl_ssl {
     int verify_name_set; char *verify_host; char *verify_ip; unsigned verify_flags;
     int verify_pending, verify_decision, verify_alert;
     STACK_OF(X509) *presented_chain, *validated_chain;
+    /* 0-RTT (server): context stamped into tickets, the transport's verdict, whether the resumed ticket's context matched */
+    uint8_t early_ctx[64]; size_t early_ctx_len; int early_allow, early_ctx_match;
     /* server SNI pause */
     int sni_pending, sni_decision_alert; ksl_ctx *sni_override;
     /* TCP mode */
@@ -72,6 +74,9 @@ ksl_event *ksl_push_event(ksl_ssl *s, int type, const uint8_t *copy_from, size_t
 /* verification (ksl_verify.c) */
 int ksl_cert_verify_cb(X509_STORE_CTX *xctx, void *arg);
 int ksl_client_hello_cb(SSL *ssl, int *al, void *arg);
+
+/* 0-RTT (ksl_ctx.c) */
+void ksl_ctx_enable_early_data(SSL_CTX *ctx);
 
 /* keys (ksl_key.c) */
 ksl_key *ksl_key_from_secret(int aead, const uint8_t *secret, size_t slen, uint32_t version);

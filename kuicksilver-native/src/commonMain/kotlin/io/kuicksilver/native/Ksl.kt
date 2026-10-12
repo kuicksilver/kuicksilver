@@ -335,7 +335,7 @@ public expect object Ksl {
 }
 
 /** The ABI the Kotlin side was written against; checked against [Ksl.abiVersion] on load. */
-public const val KSL_ABI_VERSION: Int = 5
+public const val KSL_ABI_VERSION: Int = 6
 
 /**
  * Loads the native library once per process and checks the ABI. [availability] answers without throwing whether the
