@@ -84,10 +84,6 @@ K7 (0.2.0), HTTP/3 and the Ktor engines:
   connection could close under it; a request stream now counts as in flight from its first byte (RFC 9114 section 5.2).
 - HTTP/3 client: the `Http3Request.onInformational` and `trailers` callbacks ran on the connection's single-threaded
   dispatcher, so a slow callback stalled every stream of the connection; they now run on the caller's dispatcher.
-- Ktor server contract: the two multipart-upload tests run over HTTP/3 as well (they were marked HTTP/1.1-only;
-  they pass unchanged).
-- Ktor server: a `tlsConnector` with a `sniSelector` and HTTP/3 on failed to start with `TlsException.Config`; it now
-  serves HTTP/1.1 and skips HTTP/3 with a warning (no `Alt-Svc`), as on a platform without a QUIC server.
 - HTTP/3: the peer's `SETTINGS_MAX_FIELD_SECTION_SIZE` is honoured when sending (RFC 9114 section 4.2.2): a request
   above it fails with `Http3Exception.FieldSectionTooLarge` before a stream is opened, response headers and trailers
   above it fail `respond`/`finish`, request trailers reset the stream — instead of being sent for the peer to refuse.
@@ -103,6 +99,10 @@ K7 (0.2.0), HTTP/3 and the Ktor engines:
   refreshes the expiry by less than half its lifetime, writes through a uniquely named temporary file, and, behind the
   engine, writes after the engine's lock is released instead of blocking every request on disk I/O. `AltSvcEntry`
   equality compares the alternative, not its expiry (RFC 7838 sections 2.2, 3, 9.4).
+- Ktor server: a `tlsConnector` with a `sniSelector` and HTTP/3 on failed to start with `TlsException.Config`; it now
+  serves HTTP/1.1 and skips HTTP/3 with a warning (no `Alt-Svc`), as on a platform without a QUIC server.
+- Ktor server contract: the two multipart-upload tests run over HTTP/3 as well (they were marked HTTP/1.1-only;
+  they pass unchanged).
 
 Fixes from a full five-reviewer pass over the code before the first release, among them:
 
