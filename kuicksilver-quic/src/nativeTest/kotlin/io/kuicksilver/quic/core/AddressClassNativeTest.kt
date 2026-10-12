@@ -41,4 +41,13 @@ class AddressClassNativeTest {
             assertContentEquals(s.encodeToByteArray(), AddressClass.ipBytes(InetSocketAddress(s, 1)), s)
         }
     }
+
+    @Test fun nonAsciiDigitsAndLeadingZerosAreNotAddresses() {
+        // only ASCII hex digits; an octet with a leading zero is ambiguous (inet_aton reads 010 as octal 8), so not an address
+        for (s in listOf("fe80::\u0661", "fe80::\uFF46", "\u0661.2.3.4", "010.0.0.1", "1.2.3.00", "::ffff:010.0.0.1")) {
+            assertContentEquals(s.encodeToByteArray(), AddressClass.ipBytes(InetSocketAddress(s, 1)), s)
+        }
+        assertContentEquals(bytes(0, 0, 0, 0), AddressClass.ipBytes(InetSocketAddress("0.0.0.0", 1)))
+        assertContentEquals(bytes(10, 0, 0, 1), AddressClass.ipBytes(InetSocketAddress("10.0.0.1", 1)))
+    }
 }

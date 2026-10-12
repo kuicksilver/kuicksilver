@@ -6,7 +6,7 @@ import io.ktor.network.sockets.InetSocketAddress
 
 internal actual fun InetSocketAddress.ipBytesNoDns(): ByteArray? = parseIpLiteral(hostname)
 
-/** The bytes of an IPv4 dotted quad or an IPv6 literal (RFC 4291 section 2.2, optionally bracketed, a zone ID ignored); null for anything else. */
+/** The bytes of an IPv4 dotted quad (decimal octets without leading zeros) or an IPv6 literal (ASCII hex digits only) (RFC 4291 section 2.2, optionally bracketed, a zone ID ignored); null for anything else. */
 internal fun parseIpLiteral(text: String): ByteArray? {
     var s = text
     if (s.length >= 2 && s[0] == '[' && s[s.length - 1] == ']') s = s.substring(1, s.length - 1)
@@ -27,6 +27,8 @@ private fun parseIpv4(s: String): ByteArray? {
             value = -1
             digits = 0
         } else if (ch in '0'..'9') {
+            // a leading zero is refused: inet_aton reads 010 as octal 8, so such a literal names no single address
+            if (digits == 1 && value == 0) return null
             if (++digits > 3) return null
             value = (if (value < 0) 0 else value * 10) + (ch - '0')
             if (value > 255) return null
@@ -54,6 +56,15 @@ private fun parseIpv6(s: String): ByteArray? {
     return out
 }
 
+/** The value of an ASCII hex digit, -1 for anything else (`digitToIntOrNull` accepts Unicode digits and fullwidth letters). */
+private fun hexDigit(ch: Char): Int =
+    when (ch) {
+        in '0'..'9' -> ch - '0'
+        in 'a'..'f' -> ch - 'a' + 10
+        in 'A'..'F' -> ch - 'A' + 10
+        else -> -1
+    }
+
 /** Colon-separated hex groups as bytes (an IPv4 tail as 4 bytes when [allowV4]); empty text is no groups; null when malformed. */
 private fun groups(
     s: String,
@@ -71,7 +82,8 @@ private fun groups(
         if (p.isEmpty() || p.length > 4) return null
         var v = 0
         for (ch in p) {
-            val d = ch.digitToIntOrNull(16) ?: return null
+            val d = hexDigit(ch)
+            if (d < 0) return null
             v = v * 16 + d
         }
         out += (v ushr 8).toByte()
