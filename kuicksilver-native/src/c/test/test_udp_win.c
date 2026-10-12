@@ -9,6 +9,7 @@
 #include <windows.h>
 
 int ksl_udp_has_wake_for_test(ksl_udp *); void ksl_udp_fail_next_recv_for_test(ksl_udp *, int err); void ksl_udp_fake_pollerr_for_test(ksl_udp *, int on); uint32_t ksl_udp_polls_for_test(ksl_udp *);
+int ksl_udp_df_bit_for_test(int fd); int ksl_udp_df_probe_for_test(ksl_udp *);
 uint32_t ksl_udp_split_for_test(ksl_udp *, const uint8_t *train, uint32_t len, uint32_t seg, uint8_t mark, uint16_t port, uint8_t *const *bufs, const uint32_t *caps, uint32_t *lens, uint8_t *addrs, uint8_t *ecnv, uint32_t n);
 
 #define W_WSAEOPNOTSUPP 10045
@@ -77,12 +78,19 @@ void run_udp_win(void) {
       if (c) { uint8_t ra[64 * KSL_UDP_ADDR_LEN], rc2[64 * KSL_UDP_ADDR_LEN]; uint32_t rl[64]; uint32_t g1 = wping(a, b, lb, 4, 1200, 0, NULL, ra, rl), g2 = wping(c, b, lb, 4, 1200, 0, NULL, rc2, rl);
         int ok = g1 == 4 && g2 == 4; for (uint32_t i = 0; i < g1; i++) if (wport(ra + i * KSL_UDP_ADDR_LEN) != wport(la)) ok = 0; for (uint32_t i = 0; i < g2; i++) if (wport(rc2 + i * KSL_UDP_ADDR_LEN) != wport(lc)) ok = 0;
         CHECK(ok, "each sender's datagrams carry its own address"); ksl_udp_close(c); } }
-    /* udp_win_ecn_roundtrip: ECT(0) and CE arrive where ECN is granted (Windows 10 2004+ / Server 2022) */
-    if (caps & KSL_UDP_ECN) { uint8_t re[64]; uint32_t got = wping(a, b, lb, 2, 100, 2, re, NULL, NULL); CHECK(got == 2 && re[0] == 2 && re[1] == 2, "ECT(0) arrives"); got = wping(a, b, lb, 1, 100, 3, re, NULL, NULL); CHECK(got == 1 && re[0] == 3, "CE arrives"); }
+    /* udp_win_ecn_roundtrip: where ECN is granted (Windows 10 2004+ / Server 2022) the mark QUIC sends, ECT(0), is written and read
+       back. CE is set by routers, never by a QUIC sender (RFC 9000 section 13.4.1, RFC 3168 section 6.1); some Windows builds do not
+       carry a CE a sender asks for over loopback, so that leg only checks the datagram still arrives with a valid codepoint */
+    if (caps & KSL_UDP_ECN) { uint8_t re[64]; uint32_t got = wping(a, b, lb, 2, 100, 2, re, NULL, NULL); CHECK(got == 2 && re[0] == 2 && re[1] == 2, "ECT(0) arrives");
+      got = wping(a, b, lb, 1, 100, 3, re, NULL, NULL); CHECK(got == 1 && re[0] <= 3, "a datagram sent with CE arrives"); if (got == 1) printf("udp(win): CE sent over loopback arrived as codepoint %u\n", re[0]); }
     else printf("udp(win): ECN not granted by this Windows, ECN roundtrip skipped\n");
-    /* udp_win_df_probe_mode: IP_MTU_DISCOVER is PROBE where the system has the option, never DO */
+    /* udp_win_df_probe_mode: DF granted means IP_DONTFRAGMENT reads back set; where ksl took IP_MTU_DISCOVER it reads back PROBE, never
+       DO; where the system refused the option (some Windows 11 builds; msquic never sets it) DF alone is what was granted */
     { uint8_t fd8[4]; size_t n = 0; CHECK(ksl_udp_get(a, KSL_UDP_GET_FD, fd8, 4, &n) == KSL_OK && n == 4, "fd"); int fd = (int)(((uint32_t)fd8[0] << 24) | ((uint32_t)fd8[1] << 16) | ((uint32_t)fd8[2] << 8) | fd8[3]);
-      int mode = ksl_udp_df_mode_for_test(fd); CHECK(mode == 3, "IP_MTU_DISCOVER reads back PROBE (3); -1 (getsockopt failed) is a failure, never DO"); }
+      CHECK(ksl_udp_df_bit_for_test(fd) == 1, "DF granted: IP_DONTFRAGMENT reads back set");
+      int mode = ksl_udp_df_mode_for_test(fd); printf("udp(win): PMTU probe mode %s (IP_MTU_DISCOVER reads %d)\n", ksl_udp_df_probe_for_test(a) ? "taken" : "refused by this Windows", mode);
+      if (ksl_udp_df_probe_for_test(a)) CHECK(mode == 3, "IP_MTU_DISCOVER taken: it reads back PROBE (3), never DO");
+      else CHECK(mode != 2 /* IP_PMTUDISC_DO */, "IP_MTU_DISCOVER refused: whatever the system reports, it is not DO"); }
     /* udp_win_truncated_datagram_dropped: 1400 bytes into a 1000-byte slot are dropped, not truncated */
     { uint8_t *bufs[1]; uint32_t lens[1] = { 1400 }; uint8_t ecns[1] = { 0 }; bufs[0] = malloc(1400); memset(bufs[0], 7, 1400); uint32_t sent = 0;
       CHECK(ksl_udp_send(a, bufs, lens, lb, ecns, 1, &sent) == KSL_OK && sent == 1, "big one sent");
@@ -144,6 +152,31 @@ void run_udp_win(void) {
         CHECK(wping(a, d, to, 2, 200, 0, NULL, ra, rl) == 2 && ra[0] == 4 && wport(ra) == wport(la) && ra[3] == 127 && ra[6] == 1, "v4 peer reported as 127.0.0.1, family 4");
         CHECK(wping(d, a, la, 1, 150, 0, NULL, NULL, rl) == 1 && rl[0] == 150, "a family-4 destination leaves through the IPv6 socket (v4-mapped)");
         ksl_udp_close(d); } }
+    /* udp_win_wildcard_dual_stack: 0.0.0.0 opens one dual-stack socket on ::, as on Linux and Apple: 0.0.0.0 and the chosen port are
+       reported, IPv4 peers arrive as family 4, and IPv6 destinations are reachable (the Ktor client binds 0.0.0.0:0) */
+    { uint8_t any4[KSL_UDP_ADDR_LEN]; w4(any4, 0); memset(any4 + 3, 0, 4); uint8_t lw[KSL_UDP_ADDR_LEN]; ksl_udp *w = wopen(any4, KSL_UDP_ECN | KSL_UDP_DF, lw);
+      uint8_t l6[KSL_UDP_ADDR_LEN] = { 6 }, l6b[KSL_UDP_ADDR_LEN]; l6[18] = 1; uint32_t err = 0; char msg[128] = {0}; ksl_udp *s6 = ksl_udp_open(l6, KSL_UDP_ECN, &err, msg, sizeof msg);
+      CHECK(w != NULL, "0.0.0.0:0 opens");
+      if (w) CHECK(lw[0] == 4 && wport(lw) != 0 && !lw[3] && !lw[4] && !lw[5] && !lw[6], "0.0.0.0 asked: 0.0.0.0 and the chosen port reported");
+      if (!s6) printf("udp(win): no IPv6 loopback (%s), wildcard dual-stack case skipped\n", msg);
+      else if (w) { size_t n = 0; ksl_udp_get(s6, KSL_UDP_GET_LOCAL, l6b, KSL_UDP_ADDR_LEN, &n); uint8_t to4[KSL_UDP_ADDR_LEN], to6[KSL_UDP_ADDR_LEN], ra[64 * KSL_UDP_ADDR_LEN]; uint32_t rl[64];
+        w4(to4, wport(lw)); memcpy(to6, l6, KSL_UDP_ADDR_LEN); to6[1] = lw[1]; to6[2] = lw[2];
+        uint32_t c = wcaps(w, NULL); CHECK((c & KSL_UDP_DF), "DF granted on the dual-stack socket");
+        CHECK(wping(a, w, to4, 1, 100, 0, NULL, ra, rl) == 1 && ra[0] == 4 && ra[3] == 127 && ra[6] == 1 && wport(ra) == wport(la), "from 127.0.0.1: received, reported as family 4");
+        CHECK(wping(s6, w, to6, 1, 100, 0, NULL, ra, rl) == 1 && ra[0] == 6 && ra[18] == 1 && wport(ra) == wport(l6b), "from ::1: received, reported as ::1");
+        CHECK(wping(w, s6, l6b, 1, 120, 0, NULL, NULL, rl) == 1 && rl[0] == 120, "to ::1: an IPv6 destination is reachable from 0.0.0.0");
+        CHECK(wping(w, a, la, 1, 110, 0, NULL, NULL, rl) == 1 && rl[0] == 110, "to 127.0.0.1: delivered through the v4-mapped half");
+        if (c & KSL_UDP_ECN) { uint8_t re[4]; CHECK(wping(w, a, la, 1, 100, 2, re, NULL, NULL) == 1 && re[0] == 2, "ECT(0) on the v4-mapped half"); } }
+      if (w) ksl_udp_close(w); if (s6) ksl_udp_close(s6); }
+    /* udp_win_wildcard_without_ipv6_falls_back: WSASocketW(AF_INET6) fails (a host without IPv6): 0.0.0.0 opens AF_INET, :: fails */
+    { ksl_udp_no_ipv6_for_test(1); uint8_t any4[KSL_UDP_ADDR_LEN]; w4(any4, 0); memset(any4 + 3, 0, 4); uint32_t err = 0; char msg[128] = {0};
+      ksl_udp *w = ksl_udp_open(any4, KSL_UDP_DF, &err, msg, sizeof msg); CHECK(w != NULL, "0.0.0.0 without IPv6: AF_INET");
+      uint8_t any6[KSL_UDP_ADDR_LEN] = { 6 }; ksl_udp *w6 = ksl_udp_open(any6, 0, &err, msg, sizeof msg); CHECK(w6 == NULL && err == KSL_E_NOT_SUPPORTED, ":: without IPv6: not supported");
+      ksl_udp_no_ipv6_for_test(0);
+      if (w) { uint8_t lw[KSL_UDP_ADDR_LEN], to4[KSL_UDP_ADDR_LEN]; uint32_t rl[4]; size_t n = 0; ksl_udp_get(w, KSL_UDP_GET_LOCAL, lw, KSL_UDP_ADDR_LEN, &n); w4(to4, wport(lw));
+        CHECK(lw[0] == 4 && (wcaps(w, NULL) & KSL_UDP_DF), "the fallback reports family 4 and keeps DF");
+        CHECK(wping(a, w, to4, 1, 100, 0, NULL, NULL, rl) == 1, "the fallback receives IPv4"); ksl_udp_close(w); }
+      if (w6) ksl_udp_close(w6); }
     /* udp_win_exclusive_bind: a second socket on a bound port is refused (SO_EXCLUSIVEADDRUSE), REUSEPORT or not */
     { uint32_t err = 0; char msg[128] = {0}; ksl_udp *r2 = ksl_udp_open(la, KSL_UDP_REUSEPORT, &err, msg, sizeof msg); CHECK(r2 == NULL && err == KSL_E_BAD_ARG, "no second socket on the same port"); if (r2) ksl_udp_close(r2);
       /* a foreign socket asking for SO_REUSEADDR: without SO_EXCLUSIVEADDRUSE on ours, Windows would let it bind the same port */

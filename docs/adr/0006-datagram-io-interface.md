@@ -131,16 +131,27 @@ cross-checked with msquic `src/platform/datapath_winuser.c`.
   (`WSAEINVAL` decides by a single resend, destination and transient errors lose the slot); there is no `EPERM` retry.
 - **ECN** — `IP_ECN`/`IPV6_ECN` (value 50) as a socket option to read marks (cmsg on receive) and as a per-message cmsg to
   write them, as msquic does when DSCP is off. Windows 10 2004+ / Server 2022 grant it; older systems refuse the option and
-  `KSL_UDP_ECN` is simply not granted (the core then never validates ECN on that path).
+  `KSL_UDP_ECN` is simply not granted (the core then never validates ECN on that path). The granted capability is what QUIC
+  sends, ECT(0), written and read back; a CE a sender asks for is not carried over loopback by Windows 11 (it arrives Not-ECT,
+  `test_udp_win.c` prints it), which costs nothing: CE is set by routers, never by a QUIC sender (RFC 9000 section 13.4.1), and
+  the core's ECN validation (RFC 9000 section 13.4.2) still judges each path. The portable NIO socket on the Windows JVM cannot
+  mark at all: `DatagramChannel.setOption(IP_TOS)` throws `SocketException` there, so it reports `ecnSend = false` instead of
+  claiming ECT(0) (`NioDatagramIoTest.portableCapabilities`, `nioSetsIpTosEct0` assert exactly that pairing).
 - **USO/URO** — granted only when the probe answers: `getsockopt(UDP_SEND_MSG_SIZE)` for USO (runs leave as one
   `WSASendMsg` with a `UDP_SEND_MSG_SIZE` cmsg; the run rule is Linux's), `setsockopt(UDP_RECV_MAX_COALESCED_SIZE)` for URO
   (segment size from the `UDP_COALESCED_INFO` cmsg, split into slots in C). `WSAEOPNOTSUPP`/`WSAENOPROTOOPT` on a USO send,
   or a `WSAEINVAL` the single-datagram probe pins on the USO cmsg, switch USO off for the socket; any other error (`WSAENOBUFS`,
   unreachable, `WSAEACCES`, a small `WSAEMSGSIZE`) resends that run one by one and keeps USO for the next run.
 - **DF** — `IP_DONTFRAGMENT`/`IPV6_DONTFRAG` (grants `KSL_UDP_DF`), plus `IP_MTU_DISCOVER`/`IPV6_MTU_DISCOVER = PROBE` where the
-  system has it (Windows 10 1703+), so no path MTU cache drives sizes (quic-go CVE-2024-53259).
-- **Addresses and binding.** IPv6 sockets are dual-stack (`IPV6_V6ONLY = 0`, unlike Linux): a v4 peer of `[::]` is reported and
-  addressed as family 4 (v4-mapped inside C), so the Kotlin side sees the same 20-byte addresses as on Linux. The bind is
+  system takes it, so no path MTU cache drives sizes (quic-go CVE-2024-53259). Windows 11 (24H2 on ARM64, x64 emulation)
+  refuses it; msquic never sets it and runs on DF alone, and `WSAEMSGSIZE` on a send only loses that slot, so DF alone is
+  safe. The test checks the pairing: DF granted means `IP_DONTFRAGMENT` reads back set, and PROBE is required only where
+  `ksl` recorded that the option was taken.
+- **Addresses and binding.** IPv6 sockets are dual-stack (`IPV6_V6ONLY = 0`): a v4 peer of `[::]` is reported and
+  addressed as family 4 (v4-mapped inside C), so the Kotlin side sees the same 20-byte addresses as on Linux. A wildcard
+  `0.0.0.0` opens that dual-stack socket on `::` too and reports `0.0.0.0` with the chosen port, as on Linux and Apple, so the
+  Ktor client's `0.0.0.0:0` endpoint reaches IPv6 servers; without IPv6 it falls back to AF_INET
+  (`udp_win_wildcard_dual_stack`, `udp_win_wildcard_without_ipv6_falls_back`). The bind is
   `SO_EXCLUSIVEADDRUSE`; `KSL_UDP_REUSEPORT` is never granted (Windows `SO_REUSEADDR` lets another socket take the port over),
   so one loop per port: `LoopGroup` refuses `loops > 1` with the same `UnsupportedOperationException` as on Apple (the check is the
   missing `KSL_UDP_REUSEPORT` grant, not the platform).

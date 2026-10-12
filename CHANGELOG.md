@@ -16,6 +16,7 @@ Nothing has been released yet. This section summarises the development of the fi
 
 ### Fixed
 
+- Windows: the accelerated UDP socket opens a dual-stack IPv6 socket for `0.0.0.0`, as on Linux and Apple, so the Ktor client (which binds `0.0.0.0:0`) reaches IPv6 HTTP/3 servers on Windows too; without IPv6 it falls back to IPv4. DF stays on where Windows refuses `IP_MTU_DISCOVER = PROBE` (some Windows 11 builds), as msquic runs.
 - QUIC: a burst of losses that left more than `maxReassemblyRanges` gaps in a stream (every other packet lost within one RTT, e.g. a full receive buffer) closed the connection with FLOW_CONTROL_ERROR although the peer stayed within flow control; the packet that would open one gap too many is now dropped unacknowledged and retransmitted by the peer, and the memory bound is unchanged (RFC 9000 §21.7).
 - `FileAltSvcStore` persists on Android API 24-25: kotlinx-io's `atomicMove` needs `java.nio.file` (API 26), so every write failed and the store silently kept alternatives in memory only; it now falls back to `java.io.File.renameTo`, and a store that cannot be written logs one warning.
 - `keylogFile` (and `keylogFile(context)`) on Android below API 26 throws `IllegalArgumentException` (the file cannot be checked without `java.nio.file`) instead of `NoClassDefFoundError`.
