@@ -98,10 +98,14 @@ class ClientFallbackTest {
             }
         }
 
-    /** A raw HTTP/3 server on the UDP side of [port] that fails every request after reading it (H3_INTERNAL_ERROR), except [okPaths] (200). */
+    /**
+     * A raw HTTP/3 server on the UDP side of [port] that fails every request after reading it (H3_INTERNAL_ERROR), except
+     * [okPaths] (200): by resetting the stream, or with [closeConnection] by closing the whole connection.
+     */
     private suspend fun CoroutineScope.failingH3(
         port: Int,
         okPaths: Set<String> = emptySet(),
+        closeConnection: Boolean = false,
     ): Http3Endpoint {
         val tls =
             tlsConfig(TlsRole.Server) {
@@ -127,7 +131,11 @@ class ClientFallbackTest {
                         runCatching {
                             while (true) {
                                 val r = conn.acceptRequest()
-                                if (r.path in okPaths) r.respond(200).finish() else r.reset(Http3ErrorCode.INTERNAL_ERROR)
+                                when {
+                                    r.path in okPaths -> r.respond(200).finish()
+                                    closeConnection -> conn.close(Http3ErrorCode.INTERNAL_ERROR, "failing")
+                                    else -> r.reset(Http3ErrorCode.INTERNAL_ERROR)
+                                }
                             }
                         }
                     }
@@ -170,12 +178,12 @@ class ClientFallbackTest {
             }
         }
 
-    /** HTTP/3 failed on a working connection while HTTP/1.1 served the request: the alternative is marked broken (RFC 7838 section 2.4). */
+    /** HTTP/3 failed at connection level while HTTP/1.1 served the request: the alternative is marked broken (RFC 7838 section 2.4). */
     @Test fun h3FailureWithH1SuccessMarksBroken() =
         clientTest {
             val (server, port) = testServer(configure = { http3 = false }) { routing { get("/") { call.respondText("h1") } } }
             kotlinx.coroutines.coroutineScope {
-                val ep = failingH3(port)
+                val ep = failingH3(port, closeConnection = true)
                 try {
                     testClient(Http3DiscoveryMode.Preferred).use { c ->
                         // the first request may be won by HTTP/1.1 outright; the HTTP/3 setup outlives the race and serves the next one
@@ -186,6 +194,31 @@ class ClientFallbackTest {
                         ) { while (!engine.hasH3Connection(io.ktor.http.Url("https://127.0.0.1:$port/"))) delay(20) }
                         assertEquals(HttpProtocolVersion.HTTP_1_1, c.get("https://127.0.0.1:$port/").version)
                         assertTrue(engine.brokenAltSvc.isBroken("https://127.0.0.1:$port", "127.0.0.1:$port"))
+                    }
+                } finally {
+                    ep.close()
+                    server.stop(100, 500)
+                    coroutineContext[kotlinx.coroutines.Job]?.children?.forEach { it.cancel() }
+                }
+            }
+        }
+
+    /** A single stream reset on a working HTTP/3 connection falls back for that request but does not mark the alternative broken. */
+    @Test fun streamErrorDoesNotMarkAlternativeBroken() =
+        clientTest {
+            val (server, port) = testServer(configure = { http3 = false }) { routing { get("/") { call.respondText("h1") } } }
+            kotlinx.coroutines.coroutineScope {
+                val ep = failingH3(port, okPaths = setOf("/warmup"))
+                try {
+                    testClient(Http3DiscoveryMode.Preferred).use { c ->
+                        val engine = c.engine as KuicksilverEngine
+                        // the first request may be won by HTTP/1.1 outright; wait for the HTTP/3 connection the race left behind
+                        c.get("https://127.0.0.1:$port/warmup")
+                        kotlinx.coroutines.withTimeout(
+                            5.seconds,
+                        ) { while (!engine.hasH3Connection(io.ktor.http.Url("https://127.0.0.1:$port/"))) delay(20) }
+                        assertEquals(HttpProtocolVersion.HTTP_1_1, c.get("https://127.0.0.1:$port/").version)
+                        assertTrue(!engine.brokenAltSvc.isBroken("https://127.0.0.1:$port", "127.0.0.1:$port"), "a stream reset is no broken alternative")
                     }
                 } finally {
                     ep.close()

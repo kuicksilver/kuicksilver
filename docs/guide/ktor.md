@@ -168,7 +168,8 @@ serves the next requests once it is up; a TCP connection that loses is closed. W
 failure is reported — the race was the one HTTP/1.1 attempt, there is no second one.
 
 An alternative is marked broken only when HTTP/3 failed while HTTP/1.1 worked (a lost race, or a request that fell
-back to HTTP/1.1 after failing on an HTTP/3 connection) — per origin and alternative, never "UDP is blocked" for everything: 5 minutes, doubling up to 2 days, and forgotten when `networkId()` reports a new
+back to HTTP/1.1 after the HTTP/3 connection failed as a whole: setup, QUIC transport, an HTTP/3 connection error; a
+single stream reset or a malformed response falls back for that request only) — per origin and alternative, never "UDP is blocked" for everything: 5 minutes, doubling up to 2 days, and forgotten when `networkId()` reports a new
 network. Broken alternatives are skipped (straight to HTTP/1.1). The curl-style `softDelay` ("no UDP datagram from the
 server yet") is accepted in the configuration but not acted on in v1: the QUIC API does not expose that signal.
 

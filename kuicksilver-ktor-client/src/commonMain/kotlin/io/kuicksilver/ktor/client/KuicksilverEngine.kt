@@ -274,7 +274,7 @@ internal class KuicksilverEngine(
     /**
      * HTTP/3, falling back to HTTP/1.1 when it fails before the response headers: always if the request cannot have been
      * sent, otherwise for idempotent methods only (as Chromium's `retry_without_alt_svc_on_quic_errors`). A fallback that
-     * succeeds marks the alternative broken (RFC 7838 section 2.4): HTTP/3 failed where HTTP/1.1 worked.
+     * succeeds after a connection-level HTTP/3 failure marks the alternative broken (RFC 7838 section 2.4, [marksAlternativeBroken]).
      */
     private suspend fun h3WithFallback(
         target: H3Target,
@@ -291,14 +291,14 @@ internal class KuicksilverEngine(
         } catch (
             e: H3NotSent,
         ) {
-            fallbackToH1(target, data, callContext)
+            fallbackToH1(target, data, callContext, e)
         } catch (
             e: Throwable,
         ) {
             if (data.method.isIdempotent() && (e is QuicException || e is Http3Exception) &&
                 data.body.isReplayable()
             ) {
-                fallbackToH1(target, data, callContext)
+                fallbackToH1(target, data, callContext, e)
             } else {
                 throw e
             }
@@ -308,14 +308,32 @@ internal class KuicksilverEngine(
         target: H3Target,
         data: HttpRequestData,
         callContext: CoroutineContext,
+        h3Failure: Throwable,
     ): HttpResponseData {
         val r = h1.execute(data, callContext)
-        altSvcLock.withLock { brokenAltSvc.markBroken(originKey(data.url), "${target.host}:${target.port}") }
+        if (marksAlternativeBroken(h3Failure)) {
+            altSvcLock.withLock { brokenAltSvc.markBroken(originKey(data.url), "${target.host}:${target.port}") }
+        }
         return r
     }
 
     override fun toString(): String = "Kuicksilver"
 }
+
+/**
+ * Whether an HTTP/3 failure says the alternative itself does not work (RFC 7838 section 2.4): the connection could not be
+ * set up (handshake, transport) or failed as a whole. A single stream's reset, a malformed message, a refused request
+ * and a field section refused locally are about one exchange and leave the alternative usable.
+ */
+internal fun marksAlternativeBroken(e: Throwable): Boolean =
+    when (e) {
+        is H3NotSent -> e.cause !is Http3Exception.RequestNotProcessed
+        is QuicException.StreamError -> false
+        is QuicException -> true
+        is Http3Exception.Protocol -> e.streamId == null
+        is Http3Exception.Qpack, is Http3Exception.Settings -> true
+        else -> false
+    }
 
 /** RFC 9110 section 9.2.2. */
 internal fun HttpMethod.isIdempotent(): Boolean =
