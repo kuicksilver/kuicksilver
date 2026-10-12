@@ -28,7 +28,7 @@ K2 implements only the portable side of the `DatagramIo` interface; the accelera
 
 ## Implementation in K3 — accelerated UDP in `ksl`
 
-The accelerated side lives in `ksl` as `ksl_udp_*` (`kuicksilver-native/src/c/ksl_udp.c`, `ksl_udp_send.c`, `ksl_udp_recv.c`, `#ifdef __linux__` only; on Apple/Windows `ksl_udp_open` returns `NULL` + `KSL_E_NOT_SUPPORTED`, and the stack stays on the portable implementation). The wrapper is `io.kuicksilver.tls.KslUdpSocket` (common code over `Ksl.udp*`, JNI and cinterop), connected to `DatagramIo` as described below.
+The accelerated side lives in `ksl` as `ksl_udp_*` (`kuicksilver-native/src/c/ksl_udp.c`, `ksl_udp_send.c`, `ksl_udp_recv.c`, `#ifdef __linux__` only in K3; on Apple `ksl_udp_open` returns `NULL` + `KSL_E_NOT_SUPPORTED`, and the stack stays on the portable implementation; Windows since 0.2.0: see below). The wrapper is `io.kuicksilver.tls.KslUdpSocket` (common code over `Ksl.udp*`, JNI and cinterop), connected to `DatagramIo` as described below.
 
 - **One socket, batches.** `ksl_udp_send`/`ksl_udp_recv` take up to `KSL_UDP_MAX_BATCH` (64) slots — `PacketBuffer`s that C reads and writes in place: not a single copy in Kotlin, not a single allocation in C after `open` (addresses, lengths and ECN marks are fixed-size arrays on the stack of the JNI call). Slots with the same address, the same mark and the same length (the last one may be shorter) go out in one `sendmsg` with `UDP_SEGMENT`; receiving is `recvmsg` with `UDP_GRO` into a 64 KiB buffer, the segments are spread over the slots inside C, the remainder waits for the next call (`PacketBatch`/`handleDatagram` see no offsets).
 - **Lossless fallbacks.** `EIO`/`ENOTSUP` on a GSO send switch GSO off for the socket forever and send the segments one by one; `EINVAL` on GSO switches it off only if the first segment then goes out alone; `EINVAL` on a single send with a mark is retried without the `IP_TOS` cmsg, and the cmsg is switched off only if the retry went out; destination errors (`EINVAL`, `EAFNOSUPPORT`, `EADDRNOTAVAIL`, `EDESTADDRREQ`: port 0, link-local IPv6) lose only the slot; the first `EPERM` gets one retry; `EMSGSIZE` skips only that slot (it counts as sent, kernel PMTUD learns from the loss) and is never a socket error; `EAGAIN` is `KSL_OK` with a partial `sent`. What the kernel actually granted is read from `KSL_UDP_GET_CAPS` (flags | gso max | batch) — `KslUdpSocket.grantedFlags` after a short send.
@@ -49,3 +49,48 @@ The accelerated side lives in `ksl` as `ksl_udp_*` (`kuicksilver-native/src/c/ks
 - native-tls review: `EINVAL` caused by the destination (a reply to a forged Initial from port 0, a link-local IPv6 peer — the 20-byte address has no scope id) was read as the kernel refusing the `IP_TOS` cmsg or GSO: ECN and GSO were switched off forever, and a second `EINVAL` produced `KSL_ERROR`, and `EndpointLoop` lost the rest of the batch. Now a repeated single send (without a mark, without GSO) decides the cause, and destination errors are a slot loss; link-local IPv6 is not supported: `ksl_udp_recv` drops datagrams from `fe80::/10`. Tests (Linux): `udp_bad_destination_keeps_ecn_and_gso`, `udp_link_local_destination_is_slot_loss`.
 - `KslUdpSocket`: the getters `grantedFlags`/`gsoMaxSegments`/`batch`/`stats` enter the native object through the same counter as `send`/`receive`, and after `shutdown` return the last value read (use-after-free ruled out).
 - `EndpointLoop.close()`: the socket is closed first (waking a receive blocked in a native call), the receiver is awaited, and only then are the `PacketBatch`es freed — on Native the receive writes into their memory (`RuntimeRobustnessTest.closeWaitsForTheReceiverBeforeFreeingItsBatch`); a receive error closes the whole endpoint; a send error loses the packet, not the connection (`receiveFailureClosesTheEndpoint`, `oneFailedSendDoesNotKillTheEndpoint`).
+
+## Windows (K7, 0.2.0) — `ksl_udp` over Winsock
+
+`kuicksilver-native/src/c/ksl_udp_win.c` (the whole file under `_WIN32`; the POSIX files keep their own guards) implements the
+same `ksl_udp_*` contract for `mingwX64` and for the JVM on Windows (the JNI `.dll`), so `KslUdpSocket.supported` is true there,
+`DatagramIo.open` picks `KslDatagramIo` and the Native server guard no longer applies on Windows. Options and their order were
+cross-checked with msquic `src/platform/datapath_winuser.c`.
+
+- **Readiness: `WSAPoll`, not IOCP.** The `ksl_udp_recv` contract is a blocking batch call on the caller's thread into slots the
+  caller owns for that call only (`KslDatagramIo` blocks one `Dispatchers.IO` thread in 100 ms slices). `WSAPoll` over the socket
+  and a wake socket keeps that model and the POSIX code shape (`poll` + `recvmsg` + split). IOCP (as msquic uses) would need
+  overlapped receives posted ahead into buffers C owns across calls and a completion thread — a second ownership model for the
+  slots and an allocation pattern the contract excludes ("no allocation after open"). Known `WSAPoll` defects concern TCP
+  `connect` failures only. If profiling on Windows shows the readiness path is the bottleneck, RIO/IOCP is the next step.
+- **Wake-up without pipes.** A UDP socket on 127.0.0.1 connected to itself: `ksl_udp_shutdown` sends it one byte, `WSAPoll`
+  returns, the receiver sees `closed` and leaves. Being connected, the wake socket accepts datagrams only from itself, so no
+  other local process can fake a shutdown; a readiness without `closed` set is drained and ignored. Without a wake socket the
+  receive waits in 50 ms slices.
+- **Send/receive.** `WSASendMsg`/`WSARecvMsg` from `SIO_GET_EXTENSION_FUNCTION_POINTER`; the socket is non-blocking,
+  `SIO_UDP_CONNRESET`/`SIO_UDP_NETRESET` are off (an ICMP unreachable must not fail the next receive; `WSAECONNRESET` is skipped
+  anyway); `WSAEMSGSIZE`/`MSG_TRUNC` drop the datagram whole. The send fallbacks are those of Linux with Winsock codes
+  (`WSAEINVAL` decides by a single resend, destination and transient errors lose the slot); there is no `EPERM` retry.
+- **ECN** — `IP_ECN`/`IPV6_ECN` (value 50) as a socket option to read marks (cmsg on receive) and as a per-message cmsg to
+  write them, as msquic does when DSCP is off. Windows 10 2004+ / Server 2022 grant it; older systems refuse the option and
+  `KSL_UDP_ECN` is simply not granted (the core then never validates ECN on that path).
+- **USO/URO** — granted only when the probe answers: `getsockopt(UDP_SEND_MSG_SIZE)` for USO (runs leave as one
+  `WSASendMsg` with a `UDP_SEND_MSG_SIZE` cmsg; the run rule is Linux's), `setsockopt(UDP_RECV_MAX_COALESCED_SIZE)` for URO
+  (segment size from the `UDP_COALESCED_INFO` cmsg, split into slots in C). `WSAEOPNOTSUPP`/`WSAENOPROTOOPT` on a USO send
+  switch USO off for the socket and resend one by one.
+- **DF** — `IP_DONTFRAGMENT`/`IPV6_DONTFRAG` (grants `KSL_UDP_DF`), plus `IP_MTU_DISCOVER`/`IPV6_MTU_DISCOVER = PROBE` where the
+  system has it (Windows 10 1703+), so no path MTU cache drives sizes (quic-go CVE-2024-53259).
+- **Addresses and binding.** IPv6 sockets are dual-stack (`IPV6_V6ONLY = 0`, unlike Linux): a v4 peer of `[::]` is reported and
+  addressed as family 4 (v4-mapped inside C), so the Kotlin side sees the same 20-byte addresses as on Linux. The bind is
+  `SO_EXCLUSIVEADDRUSE`; `KSL_UDP_REUSEPORT` is never granted (Windows `SO_REUSEADDR` lets another socket take the port over),
+  so one loop per port (`loops > 1` throws as on Apple).
+- **Winsock start.** `WSAStartup(2.2)` once per process (never `WSACleanup`): at program start (a C constructor in static
+  Kotlin/Native binaries — not in the JNI `.dll`, whose constructors run under the loader lock), in `ksl_init` and in
+  `ksl_udp_open`. ktor-network starts Winsock only when it creates a socket, so `InetSocketAddress.resolveAddress()` (getaddrinfo)
+  before that failed with `WSANOTINITIALISED` (10093): 295 `kuicksilver-quic` tests on the first windows-2025 CI run.
+- **Verification.** Cross-compiled on macOS with the Kotlin/Native llvm + mingw sysroot (`tools/c-test.sh mingw-x64`, `-Werror`)
+  and with the Ubuntu mingw-w64 gcc 13 of the JNI build; run only by the CI windows job: `test_udp_win.c` (batch, USO in one call,
+  two senders, ECN round trip when granted, DF probe, truncation, USO fallback, transient and destination errors, dual-stack,
+  exclusive bind, wake-up < 100 ms, shutdown), `WinsockReadyTest` (kuicksilver-native),
+  `NativeServerLoopbackTest.nativeServerServes10MiB` (kuicksilver-quic: a real Winsock server and client, 10 MiB) and every
+  module's `test.exe` that resolves addresses before opening a socket.

@@ -17,7 +17,7 @@ case "$cls" in
 esac
 O="$root/build/openssl/$target"; [ -d "$O/lib" ] || { echo "OpenSSL for $target not built" >&2; exit 2; }
 lib="libksl_${abi}_${os}_${arch}.${ext}"; dir="$out/$cls"; mkdir -p "$dir" "$out/resources/META-INF/native"
-src="$root/kuicksilver-native/src/c/ksl_lib.c $root/kuicksilver-native/src/c/ksl_ctx.c $root/kuicksilver-native/src/c/ksl_ssl.c $root/kuicksilver-native/src/c/ksl_quic.c $root/kuicksilver-native/src/c/ksl_verify.c $root/kuicksilver-native/src/c/ksl_tcp.c $root/kuicksilver-native/src/c/ksl_udp.c $root/kuicksilver-native/src/c/ksl_udp_send.c $root/kuicksilver-native/src/c/ksl_udp_recv.c $root/kuicksilver-native/src/c/ksl_key.c $root/kuicksilver-native/src/c/ksl_crypto.c $root/kuicksilver-native/src/jni/ksl_jni.c"
+src="$root/kuicksilver-native/src/c/ksl_lib.c $root/kuicksilver-native/src/c/ksl_ctx.c $root/kuicksilver-native/src/c/ksl_ssl.c $root/kuicksilver-native/src/c/ksl_quic.c $root/kuicksilver-native/src/c/ksl_verify.c $root/kuicksilver-native/src/c/ksl_tcp.c $root/kuicksilver-native/src/c/ksl_udp.c $root/kuicksilver-native/src/c/ksl_udp_send.c $root/kuicksilver-native/src/c/ksl_udp_recv.c $root/kuicksilver-native/src/c/ksl_udp_win.c $root/kuicksilver-native/src/c/ksl_key.c $root/kuicksilver-native/src/c/ksl_crypto.c $root/kuicksilver-native/src/jni/ksl_jni.c"
 cflags="-std=c11 -O2 -fvisibility=hidden -fno-omit-frame-pointer -Wall -Wextra -Werror -Wno-misleading-indentation -I$O/include -I$root/kuicksilver-native/src/c"
 case "$os" in
   osx)
@@ -32,7 +32,7 @@ case "$os" in
     strip --strip-unneeded "$dir/$lib" ;;
   windows)
     JH="${JAVA_HOME:?JAVA_HOME with win32 headers}"; printf 'EXPORTS\nJNI_OnLoad\nJNI_OnLoad_ksl\n' > "$dir/exports.def"
-    x86_64-w64-mingw32-gcc $cflags -I"$JH/include" -I"$JH/include/win32" -shared -static-libgcc "$dir/exports.def" $src "$O/lib/libssl.a" "$O/lib/libcrypto.a" -lcrypt32 -lws2_32 -lbcrypt -o "$dir/$lib"
+    x86_64-w64-mingw32-gcc $cflags -DKSL_DLL -I"$JH/include" -I"$JH/include/win32" -shared -static-libgcc "$dir/exports.def" $src "$O/lib/libssl.a" "$O/lib/libcrypto.a" -lcrypt32 -lws2_32 -lbcrypt -o "$dir/$lib"
     x86_64-w64-mingw32-strip "$dir/$lib" ;;
 esac
 find "$out/resources/META-INF/native" -name 'libksl_*' ! -name "libksl_${abi}_*" -delete   # a shared output directory never ships a stale ABI

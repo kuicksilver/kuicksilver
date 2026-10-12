@@ -47,6 +47,6 @@ int ksl_udp_recv(ksl_udp *u, uint8_t *const *bufs, const uint32_t *caps, uint32_
     return rc;
 }
 
-#else /* not Linux: the portable DatagramIo does the work */
+#elif !defined(_WIN32) /* neither Linux nor Windows (ksl_udp_win.c): the portable DatagramIo does the work */
 int ksl_udp_recv(ksl_udp *u, uint8_t *const *bufs, const uint32_t *caps, uint32_t *lens, uint8_t *addrs, uint8_t *ecn, uint32_t n, uint32_t *received, int timeout_ms) { (void)u; (void)bufs; (void)caps; (void)lens; (void)addrs; (void)ecn; (void)n; (void)timeout_ms; if (received) *received = 0; return KSL_ERROR; }
 #endif

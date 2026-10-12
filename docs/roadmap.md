@@ -12,11 +12,11 @@ with Alt-Svc discovery) and the Ktor server engine, TLS 1.3 over OpenSSL 3.5 thr
 
 | Platform | Client | Server | UDP path |
 |---|---|---|---|
-| JVM (Linux, macOS) | yes | yes | NIO; accelerated `KslDatagramIo` on Linux |
+| JVM (Linux, macOS) | yes | yes | NIO; accelerated `KslDatagramIo` on Linux and Windows |
 | Android (arm64-v8a, armeabi-v7a, x86_64) | yes | yes | accelerated |
 | Kotlin/Native Linux x64 / arm64 | yes | yes | accelerated |
 | Kotlin/Native macOS arm64, iOS | yes | no (ADR-0006) | portable |
-| Kotlin/Native Windows (mingw x64) | yes | no | portable |
+| Kotlin/Native Windows (mingw x64) | yes | yes (0.2.0; verified only by the CI windows job) | accelerated (Winsock) |
 
 Known limits, stated on purpose:
 - A handshake under heavy loss with an ML-KEM peer: both flights span two datagrams and the RFC 9002 initial PTO
@@ -46,7 +46,6 @@ Known limits, stated on purpose:
 
 ## After 0.2.0
 
-- QUIC server on Kotlin/Native Windows (`ksl_udp` over Winsock).
 - The interop runner's `perf` protocol and throughput thresholds in CI.
 - RFC 9460 HTTPS records as a source of h3, WebTransport, multipath and QUIC-LB (`PathId` and the CID layout are
   prepared), BBR.

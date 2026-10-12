@@ -80,7 +80,7 @@ int ksl_udp_close_wakes_for_test(ksl_udp *u) {
 }
 #endif
 
-#else /* not Linux: the portable DatagramIo does the work */
+#elif !defined(_WIN32) /* neither Linux nor Windows (ksl_udp_win.c): the portable DatagramIo does the work */
 ksl_udp *ksl_udp_open(const uint8_t addr[KSL_UDP_ADDR_LEN], int flags, uint32_t *err, char *msg, size_t msglen) { (void)addr; (void)flags; if (err) *err = KSL_E_NOT_SUPPORTED; if (msg && msglen) snprintf(msg, msglen, "ksl_udp: accelerated UDP is Linux-only"); return NULL; }
 int ksl_udp_get(ksl_udp *u, int what, uint8_t *out, size_t cap, size_t *len) { (void)u; (void)what; (void)out; (void)cap; (void)len; return KSL_ERROR; }
 void ksl_udp_shutdown(ksl_udp *u) { (void)u; }

@@ -146,6 +146,8 @@ void run_udp(void) {
             CHECK(ksl_udp_send(c, bufs, lens, lb, e, 1, &sent) == KSL_ERROR, "send after shutdown is an error"); CHECK(ksl_udp_recv(c, bufs, caps, lens, lc, e, 1, &got, 1000) == KSL_ERROR && got == 0, "recv after shutdown is an error, at once"); ksl_udp_close(c); } }
         ksl_udp_close(a); ksl_udp_close(b);
     }
+#elif defined(_WIN32)
+    { void run_udp_win(void); (void)v4; run_udp_win(); }   /* test_udp_win.c */
 #else
     /* udp_open_unsupported_on_apple */
     { uint8_t a[KSL_UDP_ADDR_LEN]; v4(a, 0); uint32_t err = 0; char msg[64] = {0}; CHECK(ksl_udp_open(a, 0, &err, msg, sizeof msg) == NULL && err == KSL_E_NOT_SUPPORTED, "ksl_udp_open is Linux-only"); }

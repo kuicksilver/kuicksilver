@@ -184,6 +184,8 @@ jobs:
           name: openssl-mingw-x64
           path: build/openssl/mingw-x64
       - run: ./gradlew mingwX64Test
+      - run: bash tools/c-test.sh mingw-x64   # the ksl C tests (test_udp_win.c among them) with the Kotlin/Native llvm + mingw sysroot that mingwX64Test fetched
+        shell: bash
   system-openssl:
     runs-on: ubuntu-latest
     steps:

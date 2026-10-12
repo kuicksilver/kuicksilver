@@ -62,9 +62,11 @@ needs no `server` in its `QuicEndpointConfig`.
 The endpoint's socket comes from `DatagramIo.open(local, prefer)`. On Linux and Android the default
 (`IoPreference.Accelerated`) is the `ksl` socket: batches of up to 64 datagrams per syscall with UDP GSO and GRO,
 ECN marks read and written per datagram, DF in probe mode for PMTUD, and `SO_REUSEPORT` for several loops on one
-port. Everywhere else, or with `IoPreference.Portable`, the portable socket is used (NIO on the JVM, `ktor-network` on
+port. On Windows (Kotlin/Native and the JVM) the `ksl` socket is Winsock: `WSASendMsg`/`WSARecvMsg`, USO/URO and ECN
+where the Windows version grants them (`io.capabilities` tells), DF, an exclusive bind and no `SO_REUSEPORT` (one loop
+per port). Everywhere else, or with `IoPreference.Portable`, the portable socket is used (NIO on the JVM, `ktor-network` on
 Native); `io.capabilities` says what the socket can do and the core adapts (ECN validation, PMTUD) per path. A QUIC
-server on Kotlin/Native needs the accelerated socket (Linux): on Apple and Windows `bind` with a `server` throws
+server on Kotlin/Native needs the accelerated socket (Linux, Windows): on Apple `bind` with a `server` throws
 `UnsupportedOperationException`, since the portable Native socket is client-only (ADR-0006).
 
 ```kotlin
