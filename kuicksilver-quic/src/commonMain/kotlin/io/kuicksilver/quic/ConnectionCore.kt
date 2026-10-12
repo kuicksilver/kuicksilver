@@ -184,6 +184,38 @@ public class ConnectionCore internal constructor(
             if (caps.df && config.pmtud) Pmtud(upperBound = pmtudUpperBound()) else null
     }
 
+    internal fun pathCapabilitiesForTest(id: PathId): IoCapabilities? = paths.byId(id)?.caps
+
+    /**
+     * The socket [socket] (a path id: the endpoint's socket is [PathId.Initial]) now reports [caps]. Only losses apply to the
+     * paths already on it: no ECN marking stops ECN on them, no DF ends PMTUD and drops back to 1200 bytes, fewer GSO segments
+     * or a smaller batch shrink theirs. A gain waits for the next path (validation would have to start over).
+     */
+    internal fun updateSocketCapabilities(
+        socket: PathId,
+        caps: IoCapabilities,
+    ) {
+        for (i in 0 until paths.all.size) {
+            val p = paths.all[i]
+            if (p.socket != socket) continue
+            val had = p.caps
+            if (had.ecnSend && !caps.ecnSend) p.ecn.socketStoppedMarking()
+            if (had.df && !caps.df) {
+                p.pmtud = null
+                if (p.mtu > 1200) setMtu(p, 1200)
+            }
+            p.caps =
+                IoCapabilities(
+                    ecnSend = had.ecnSend && caps.ecnSend,
+                    ecnReceive = had.ecnReceive && caps.ecnReceive,
+                    gsoMaxSegments = minOf(had.gsoMaxSegments, caps.gsoMaxSegments),
+                    gro = had.gro && caps.gro,
+                    df = had.df && caps.df,
+                    batch = minOf(had.batch, caps.batch),
+                )
+        }
+    }
+
     /**
      * Validation state of path [id] (RFC 9000 section 8.2); [PathState.Unknown] for an id the connection does not hold, a closed path
      * included.

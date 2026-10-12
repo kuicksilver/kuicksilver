@@ -94,6 +94,11 @@ internal class EcnValidator {
         }
     } // appendix A.4: all test packets lost
 
+    /** The socket under the path stopped marking (its capabilities lost ECN): the path sends Not-ECT from now on, whatever it had learnt. */
+    fun socketStoppedMarking() {
+        if (state != EcnState.Failed) state = EcnState.Disabled
+    }
+
     private companion object {
         const val TEST_PACKETS = 10
     }

@@ -157,7 +157,9 @@ number space only for datagrams whose packets were processed, and a CE increase 
 event per recovery period. The portable socket marks every datagram through IP_TOS (`ecnSend`) but cannot read marks, so
 with it the peer's validation of our direction needs an accelerated socket on the peer; the accelerated socket of Linux
 and Android marks and reads per datagram, and two of them validate both directions (`Capable`). Because the portable socket
-marks the whole socket, a failed validation on any of its paths clears IP_TOS for every connection on it; the accelerated
+marks the whole socket, a failed validation on any of its paths clears IP_TOS for every connection on it (they all
+show `Disabled` from then on: a socket's `capabilities` that lose `ecnSend` or `df` reach the paths already on it, which
+stop marking or stop PMTUD and fall back to 1200 bytes; a gain applies to new paths only); the accelerated
 socket keeps marking, and only the failed path sends NotEct, so one client whose path bleaches marks does not turn ECN off
 for the server's other clients. `stats.ecnState` (an `EcnState`) says
 where a connection stands: `Disabled`, `Testing`, `Unknown`, `Capable` or `Failed`.

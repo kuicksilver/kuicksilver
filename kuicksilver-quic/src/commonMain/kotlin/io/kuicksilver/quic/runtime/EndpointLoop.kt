@@ -118,6 +118,7 @@ internal class EndpointLoop private constructor(
     internal fun start() {
         receiveJob = scope.launch { receiveLoop() }
         scope.launch { timerLoop() }
+        scope.launch { followCapabilities(io, PathId.Initial) }
         if (group !=
             null
         ) {
@@ -147,6 +148,7 @@ internal class EndpointLoop private constructor(
         path: PathId,
     ): kotlinx.coroutines.Job =
         scope.launch {
+            val caps = launch { followCapabilities(io, path, core) }
             val batch = PacketBatch(16, SLOT_SIZE)
             val limiter = WorkLimiter()
             try {
@@ -181,9 +183,30 @@ internal class EndpointLoop private constructor(
                     flush(core)
                 }
             } finally {
+                caps.cancel()
                 batch.close()
             } // a cancelled path closes its socket: not a failure
         }
+
+    /**
+     * A socket's capabilities can drop while connections run on it (ECN marking turned off, a route without DF): every
+     * connection hears of it on the paths that use [socket] (the endpoint's socket is [PathId.Initial], a migrating client's
+     * extra socket its path id). Runs on the loop dispatcher, so never inside a connection's poll.
+     */
+    private suspend fun followCapabilities(
+        io: DatagramIo,
+        socket: PathId,
+        only: ConnectionCore? = null,
+    ) {
+        // the current value too: a drop between the path's setup and this subscription must not be missed (a repeat changes nothing)
+        io.capabilities.collect { caps ->
+            for (rt in runtimes.values) {
+                if (only != null && rt.core !== only) continue
+                rt.core.updateSocketCapabilities(socket, caps)
+                core.markDirty(rt.core)
+            }
+        }
+    }
 
     /** The socket a slot of [out] goes out on: the endpoint's, or the one of the connection's path. */
     private fun ioFor(

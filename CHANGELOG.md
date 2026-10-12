@@ -95,6 +95,9 @@ Fixes from a full five-reviewer pass over the code before the first release, amo
 - Datagrams the socket did not take (a failed send, or a full buffer that took part of a batch) are counted in the new
   `ConnectionStats.datagramsDroppedSocket` (`@ExperimentalKuicksilverApi`); the portable JVM socket waits once, briefly,
   for room instead of treating a refused datagram as sent.
+- A socket whose `capabilities` lose ECN marking or DF (for example the portable socket clearing IP_TOS after a failed
+  ECN validation) now downgrades the connections already on it, the endpoint's socket and a migrating client's extra
+  sockets alike, instead of only the connections that start afterwards.
 
 ### Security
 
