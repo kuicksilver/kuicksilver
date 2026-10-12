@@ -2,7 +2,7 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 # Releasing
 
-How a version reaches Maven Central. The owner runs it; nothing here is automatic.
+How a version reaches Maven Central. The owner starts it; nothing is released without the owner pressing *Publish*.
 
 ## Once: accounts, keys, DNS
 
@@ -34,22 +34,36 @@ Done for the project in October 2026, kept here so it can be repeated for a new 
 
 ## Every release
 
-All targets are published from **one macOS host in one Gradle invocation**: the Apple targets need macOS, Linux and
-Windows cross-compile there, and the plugin creates one Central deployment per invocation (several runners would
-produce several deployments and inconsistent root metadata).
+All targets are published from **one macOS runner in one Gradle invocation** by the `release` workflow
+(`.github/workflows/release.yml`): the Apple targets need macOS, Linux and Windows cross-compile there, and the plugin
+creates one Central deployment per invocation (several runners would produce several deployments and inconsistent
+root metadata). The JNI libraries in the `kuicksilver-native` JVM jar come from CI, not from the release host: the
+`build` workflow builds and checks `libksl` for Linux x64 and arm64 (manylinux2014 `.so`), macOS arm64 and x64
+(`.dylib`; the JVM on Intel Macs keeps its library although Kotlin/Native `macosX64` was dropped) and Windows x64
+(mingw-w64 `.dll`) as the artifacts `jni-<classifier>`, and its `jvm-jar` job fails unless the jar lists all five.
 
 1. Branch `main`, the full local gate green: `tools/ci/local-matrix.sh --with-interop` (hours; `--skip-android`
-   and `--skip-docker` for a quick run) and the GitHub Actions workflow green on the release commit.
+   and `--skip-docker` for a quick run), and a green `build` workflow run on the release commit from a push, the weekly
+   schedule or a manual dispatch (a pull-request run builds the merge commit and does not count). Its artifacts live
+   7 days: an older run is re-run (*Run workflow* on `main`) before releasing.
 2. `CHANGELOG.md`: move `[Unreleased]` under the version and date; `docs/spec/rfc-compliance.md` and `docs/roadmap.md`
    say what the version does and does not do.
 3. Tag: `git tag -s v0.1.0 -m "Kuicksilver 0.1.0"`; the version is passed to Gradle, it is not stored in the tree.
-4. Publish to the portal without releasing:
+4. Publish to the portal without releasing: *Actions → release → Run workflow* on `main` with the version (`0.1.0`).
+   The `gate` job refuses a malformed or `-SNAPSHOT` version, another branch, or a commit without a green `build` run;
+   `publish` downloads that run's `jni-*` and `openssl-mingw-x64` artifacts into `build/`, checks every library against
+   its job's `manifest.sha256`, builds the jar and checks it, then runs
    ```
-   ./gradlew --max-workers=2 publishToMavenCentral -Pkuicksilver.version=0.1.0
+   ./gradlew --max-workers=2 -Pkuicksilver.version=0.1.0 -Pkuicksilver.openssl.prebuilt=true \
+     -x :kuicksilver-native:buildJniHost publishToMavenCentral
    ```
-   Open the deployment in the portal: it must read **VALIDATED** (every module, every platform publication, the BOM,
-   signatures and checksums). Then press *Publish*. A deployment that fails validation is dropped in the portal and the
-   command runs again after the fix; nothing was released.
+   with the credentials and the in-memory signing key from the repository secrets. Open the deployment in the portal:
+   it must read **VALIDATED** (every module, every platform publication, the BOM, signatures and checksums). Then press
+   *Publish* (`automaticRelease = false`). A deployment that fails validation is dropped in the portal and the workflow
+   runs again after the fix; nothing was released.
+   The same command works from the owner's Mac with `~/.gradle/gradle.properties` as a fallback, after the five
+   libraries are put in place with `tools/ci/collect-jni.sh <dir with the downloaded jni-* artifacts>`; without them the
+   jar would carry only what this host built.
 5. Consumer check from Central (allow the sync to `repo1.maven.org` an hour): `samples/realtime-telemetry` built against
    `io.kuicksilver:kuicksilver-bom:0.1.0` from `mavenCentral()` only, no `includeBuild`.
 6. GitHub release from the tag with the changelog section; push the tag only after the deployment is published.
@@ -59,7 +73,7 @@ produce several deployments and inconsistent root metadata).
 - `-Pkuicksilver.sign=false` publishes unsigned (to count files, or on a machine without the key); a release never uses it.
 
 - `./gradlew publishToMavenLocal -Pkuicksilver.version=0.1.0` and `samples/realtime-telemetry` built from
-  `mavenLocal()` (the CI job `consumer-smoke` does the same).
+  `mavenLocal()` (`tools/check/consumer-smoke.sh`; the CI job `consumer-smoke` does the same with the jar of `jvm-jar`).
 - The published jars and AARs carry `META-INF/LICENSE`, `META-INF/NOTICE` and the OpenSSL license under
   `META-INF/licenses/<module>/`; the native jar's manifest names the OpenSSL version and its SHA-256.
 - `./gradlew checkKotlinAbi` is green: the ABI dumps in `*/api/` are the contract of the version.

@@ -1,0 +1,117 @@
+# Copyright 2026 The Kuicksilver Authors
+# SPDX-License-Identifier: Apache-2.0
+# Release to Maven Central (docs/release.md, "Every release"), started by hand with the version to publish.
+#
+#   gate (ubuntu): the version, the main branch, a green build.yml run for this commit ── publish (macos-26)
+#
+# publish runs ONE Gradle invocation on one macOS runner (Apple targets need macOS, Linux and mingw cross-compile there;
+# the plugin makes one Central deployment per invocation). The kuicksilver-native jar's JNI libraries are not rebuilt:
+# they are the jni-<classifier> artifacts of the green build.yml run (artifacts live 7 days: past that, re-run build.yml
+# on the commit first). automaticRelease = false: the deployment stops at VALIDATED and the owner presses Publish.
+name: release
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: version to publish, without -SNAPSHOT (e.g. 0.1.0)
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: release
+  cancel-in-progress: false
+defaults:
+  run:
+    shell: bash
+env:
+  G: ./gradlew --stacktrace --max-workers=2
+
+jobs:
+  gate:
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read   # gh run list on build.yml
+      contents: read
+    timeout-minutes: 5
+    outputs:
+      build-run: ${{ steps.build.outputs.run }}
+    steps:
+      - name: 'release: version and branch'
+        env:
+          VERSION: ${{ inputs.version }}
+          REF: ${{ github.ref }}
+        run: |
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta|rc)\.?[0-9]+)?$ ]] || { echo "::error::version '$VERSION' is not X.Y.Z[-alpha|beta|rcN]"; exit 1; }
+          [ "$REF" = refs/heads/main ] || { echo "::error::releases are cut from main, not $REF"; exit 1; }
+      - name: 'release: green build.yml for this commit'
+        id: build
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          # a pull_request run builds the merge commit, not this one: only push / schedule / workflow_dispatch runs count
+          run=$(gh run list --repo "$REPO" --workflow build.yml --commit "$SHA" --status success --limit 50 \
+            --json databaseId,event --jq '[.[] | select(.event != "pull_request")][0].databaseId // empty')
+          [ -n "$run" ] || { echo "::error::no successful build.yml run (push, schedule or dispatch) for $SHA: run build.yml on it first"; exit 1; }
+          echo "build.yml run $run is green for $SHA"
+          echo "run=$run" >> "$GITHUB_OUTPUT"
+
+  publish:
+    needs: gate
+    runs-on: macos-26
+    permissions:
+      actions: read   # the artifacts of the build.yml run
+      contents: read
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          ndk: 'true'
+          xcode: 'true'
+          konan: 'linux_x64 linux_arm64 mingw_x64'
+          openssl-cache: apple
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: openssl-mingw-x64
+          path: build/openssl/mingw-x64
+          run-id: ${{ needs.gate.outputs.build-run }}
+          github-token: ${{ github.token }}
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: 'jni-*'
+          path: build/jni-artifacts
+          run-id: ${{ needs.gate.outputs.build-run }}
+          github-token: ${{ github.token }}
+      - name: 'jvm: collect JNI libraries'
+        run: bash tools/ci/collect-jni.sh build/jni-artifacts
+      - name: 'jvm: jar with every JNI library'
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          $G -Pkuicksilver.version="$VERSION" -Pkuicksilver.openssl.prebuilt=true -x :kuicksilver-native:buildJniHost :kuicksilver-native:jvmJar
+          bash tools/ci/collect-jni.sh --check-jar "kuicksilver-native/build/libs/kuicksilver-native-jvm-$VERSION.jar"
+      - name: 'release: publishToMavenCentral (one deployment, not released)'
+        env:
+          VERSION: ${{ inputs.version }}
+          ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+          ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.SIGNING_KEY }}
+          ORG_GRADLE_PROJECT_signingInMemoryKeyId: ${{ secrets.SIGNING_KEY_ID }}
+          ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.SIGNING_KEY_PASSWORD }}
+        run: |
+          # an empty secret would publish unsigned or fail late in the portal: stop here instead
+          for v in mavenCentralUsername mavenCentralPassword signingInMemoryKey signingInMemoryKeyId signingInMemoryKeyPassword; do
+            n="ORG_GRADLE_PROJECT_$v"; [ -n "${!n:-}" ] || { echo "::error::secret for $v is empty"; exit 1; }
+          done
+          $G -Pkuicksilver.version="$VERSION" -Pkuicksilver.openssl.prebuilt=true -x :kuicksilver-native:buildJniHost publishToMavenCentral
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: failure()
+        with:
+          name: reports-release
+          path: '**/build/reports/'
+          retention-days: 7
