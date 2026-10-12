@@ -9,3 +9,9 @@ package io.kuicksilver.ktor.client
  */
 internal fun socketHost(host: String): String =
     if (host.length > 2 && host.startsWith('[') && host.endsWith(']')) host.substring(1, host.length - 1) else host
+
+/**
+ * [host] as an RFC 3986 `uri-host` (used in `Alt-Used`, RFC 7838 section 5): an IPv6 literal gets its brackets, a name or
+ * an IPv4 address stays as it is.
+ */
+internal fun uriHost(host: String): String = if (':' in host && !host.startsWith('[')) "[$host]" else host

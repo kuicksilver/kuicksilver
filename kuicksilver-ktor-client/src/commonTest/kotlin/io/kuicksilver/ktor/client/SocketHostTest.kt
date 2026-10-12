@@ -19,4 +19,13 @@ class SocketHostTest {
         assertEquals("example.com", socketHost("example.com"))
         assertEquals("::1", socketHost("::1"))
     }
+
+    @Test fun altUsedHostIsBracketedForIpv6() {
+        // RFC 7838 section 5: Alt-Used carries uri-host [":" port]; an IPv6 literal needs its brackets
+        assertEquals("[::1]", uriHost("::1"))
+        assertEquals("[2001:db8::1]", uriHost("2001:db8::1"))
+        assertEquals("[::1]", uriHost("[::1]"))
+        assertEquals("alt.example", uriHost("alt.example"))
+        assertEquals("127.0.0.1", uriHost("127.0.0.1"))
+    }
 }
