@@ -44,104 +44,104 @@ public class MemoryNetwork
         @property:ExperimentalKuicksilverApi
         public val assignEphemeralPorts: Boolean = true,
     ) {
-    /** A network whose sockets hold 256 unread datagrams and assign ephemeral ports. */
-    public constructor() : this(DEFAULT_RECEIVE_BUFFER)
+        /** A network whose sockets hold 256 unread datagrams and assign ephemeral ports. */
+        public constructor() : this(DEFAULT_RECEIVE_BUFFER)
 
-    init {
-        require(receiveBuffer >= 1) { "receiveBuffer must be at least 1" }
-    }
-
-    private val sockets = AtomicReference<Map<InetSocketAddress, MemorySocket>>(emptyMap())
-    private val cutAddresses = AtomicReference<Set<InetSocketAddress>>(emptySet())
-    private val droppedCount = AtomicLong(0)
-    private val nextEphemeral = AtomicLong(EPHEMERAL_FIRST.toLong())
-
-    /** Largest datagram the network carries (bytes); bigger ones vanish, like a path that drops instead of fragmenting. */
-    @Volatile public var mtu: Int = 65_535
-
-    /** Datagrams that found no socket at their destination, crossed a [cut] address, exceeded [mtu] or the receiver's slot, or met a full receive buffer. */
-    public val dropped: Long get() = droppedCount.load()
-
-    /**
-     * Binds a socket at [local]; IllegalStateException while another open socket holds the address. Closing the socket frees
-     * it. Port 0 binds a free ephemeral port of the same host when [assignEphemeralPorts] is true (the socket's `localAddress`
-     * says which).
-     */
-    public fun open(local: InetSocketAddress): DatagramIo {
-        while (true) {
-            val current = sockets.load()
-            val address = if (local.port == 0 && assignEphemeralPorts) ephemeral(local.hostname, current) else local
-            check(address !in current) { "$address is already bound on this MemoryNetwork" }
-            val socket = MemorySocket(this, address, receiveBuffer)
-            if (sockets.compareAndSet(current, current + (address to socket))) return socket
+        init {
+            require(receiveBuffer >= 1) { "receiveBuffer must be at least 1" }
         }
-    }
 
-    /** The next free port of [host] in 49152..65535 (RFC 6335 dynamic ports), wrapping around. */
-    private fun ephemeral(
-        host: String,
-        bound: Map<InetSocketAddress, MemorySocket>,
-    ): InetSocketAddress {
-        repeat(EPHEMERAL_COUNT) {
-            val port = EPHEMERAL_FIRST + (nextEphemeral.fetchAndIncrement() - EPHEMERAL_FIRST).mod(EPHEMERAL_COUNT.toLong()).toInt()
-            val candidate = InetSocketAddress(host, port)
-            if (candidate !in bound) return candidate
+        private val sockets = AtomicReference<Map<InetSocketAddress, MemorySocket>>(emptyMap())
+        private val cutAddresses = AtomicReference<Set<InetSocketAddress>>(emptySet())
+        private val droppedCount = AtomicLong(0)
+        private val nextEphemeral = AtomicLong(EPHEMERAL_FIRST.toLong())
+
+        /** Largest datagram the network carries (bytes); bigger ones vanish, like a path that drops instead of fragmenting. */
+        @Volatile public var mtu: Int = 65_535
+
+        /** Datagrams that found no socket at their destination, crossed a [cut] address, exceeded [mtu] or the receiver's slot, or met a full receive buffer. */
+        public val dropped: Long get() = droppedCount.load()
+
+        /**
+         * Binds a socket at [local]; IllegalStateException while another open socket holds the address. Closing the socket frees
+         * it. Port 0 binds a free ephemeral port of the same host when [assignEphemeralPorts] is true (the socket's `localAddress`
+         * says which).
+         */
+        public fun open(local: InetSocketAddress): DatagramIo {
+            while (true) {
+                val current = sockets.load()
+                val address = if (local.port == 0 && assignEphemeralPorts) ephemeral(local.hostname, current) else local
+                check(address !in current) { "$address is already bound on this MemoryNetwork" }
+                val socket = MemorySocket(this, address, receiveBuffer)
+                if (sockets.compareAndSet(current, current + (address to socket))) return socket
+            }
         }
-        throw IllegalStateException("no free ephemeral port on $host")
-    }
 
-    /** From now on nothing reaches [address] and nothing it sends arrives: the address went dark (a dead Wi-Fi). */
-    public fun cut(address: InetSocketAddress) {
-        update(cutAddresses) { it + address }
-    }
+        /** The next free port of [host] in 49152..65535 (RFC 6335 dynamic ports), wrapping around. */
+        private fun ephemeral(
+            host: String,
+            bound: Map<InetSocketAddress, MemorySocket>,
+        ): InetSocketAddress {
+            repeat(EPHEMERAL_COUNT) {
+                val port = EPHEMERAL_FIRST + (nextEphemeral.fetchAndIncrement() - EPHEMERAL_FIRST).mod(EPHEMERAL_COUNT.toLong()).toInt()
+                val candidate = InetSocketAddress(host, port)
+                if (candidate !in bound) return candidate
+            }
+            throw IllegalStateException("no free ephemeral port on $host")
+        }
 
-    /** Undoes [cut]. */
-    public fun restore(address: InetSocketAddress) {
-        update(cutAddresses) { it - address }
-    }
+        /** From now on nothing reaches [address] and nothing it sends arrives: the address went dark (a dead Wi-Fi). */
+        public fun cut(address: InetSocketAddress) {
+            update(cutAddresses) { it + address }
+        }
 
-    internal fun deliver(
-        from: InetSocketAddress,
-        to: InetSocketAddress,
-        bytes: ByteArray,
-    ) {
-        val cut = cutAddresses.load()
-        val target = sockets.load()[to]
-        if (from in cut || to in cut || bytes.size > mtu || target == null || !target.offer(bytes, from)) countDrop()
-    }
+        /** Undoes [cut]. */
+        public fun restore(address: InetSocketAddress) {
+            update(cutAddresses) { it - address }
+        }
 
-    internal fun countDrop() {
-        droppedCount.incrementAndFetch()
-    }
+        internal fun deliver(
+            from: InetSocketAddress,
+            to: InetSocketAddress,
+            bytes: ByteArray,
+        ) {
+            val cut = cutAddresses.load()
+            val target = sockets.load()[to]
+            if (from in cut || to in cut || bytes.size > mtu || target == null || !target.offer(bytes, from)) countDrop()
+        }
 
-    internal fun unbind(socket: MemorySocket) {
-        update(sockets) {
-            if (it[socket.localAddress] ===
-                socket
-            ) {
-                it - socket.localAddress
-            } else {
-                it
+        internal fun countDrop() {
+            droppedCount.incrementAndFetch()
+        }
+
+        internal fun unbind(socket: MemorySocket) {
+            update(sockets) {
+                if (it[socket.localAddress] ===
+                    socket
+                ) {
+                    it - socket.localAddress
+                } else {
+                    it
+                }
+            }
+        }
+
+        private companion object {
+            const val DEFAULT_RECEIVE_BUFFER = 256
+            const val EPHEMERAL_FIRST = 49152
+            const val EPHEMERAL_COUNT = 65536 - EPHEMERAL_FIRST
+        }
+
+        private inline fun <T> update(
+            ref: AtomicReference<T>,
+            f: (T) -> T,
+        ) {
+            while (true) {
+                val v = ref.load()
+                if (ref.compareAndSet(v, f(v))) return
             }
         }
     }
-
-    private companion object {
-        const val DEFAULT_RECEIVE_BUFFER = 256
-        const val EPHEMERAL_FIRST = 49152
-        const val EPHEMERAL_COUNT = 65536 - EPHEMERAL_FIRST
-    }
-
-    private inline fun <T> update(
-        ref: AtomicReference<T>,
-        f: (T) -> T,
-    ) {
-        while (true) {
-            val v = ref.load()
-            if (ref.compareAndSet(v, f(v))) return
-        }
-    }
-}
 
 /** One socket of a [MemoryNetwork]: an inbox of [receiveBuffer] datagrams, portable capabilities (no ECN, no GSO/GRO, no DF). */
 internal class MemorySocket(

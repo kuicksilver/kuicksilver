@@ -60,7 +60,9 @@ private fun openKeylogChannel(p: Path): SeekableByteChannel {
         throw when (e) {
             // no POSIX view (Windows, some mounts): nothing can vouch for the file, and secrets do not go into an unchecked one
             is UnsupportedOperationException -> noPosix(p, e)
+
             is IOException -> IllegalArgumentException("keylog file $p cannot be checked: ${e.message}", e)
+
             else -> e
         }
     }

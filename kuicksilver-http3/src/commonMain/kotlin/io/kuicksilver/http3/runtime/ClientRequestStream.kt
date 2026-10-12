@@ -80,8 +80,7 @@ internal suspend fun H3Session.connect(
  * The dispatcher of the coroutine calling into the session: user callbacks ([Http3Request.onInformational],
  * [Http3Request.trailers]) run there, so a slow callback never stalls the connection's single-threaded dispatcher.
  */
-private suspend fun callerDispatcher(): ContinuationInterceptor =
-    currentCoroutineContext()[ContinuationInterceptor] ?: Dispatchers.Default
+private suspend fun callerDispatcher(): ContinuationInterceptor = currentCoroutineContext()[ContinuationInterceptor] ?: Dispatchers.Default
 
 internal suspend fun H3Session.request(
     r: Http3Request,
@@ -227,8 +226,12 @@ private suspend fun H3Session.exchange(
                         sendFailure,
                         bodyLimit =
                             when {
-                                r.method == "CONNECT" && status in 200..299 -> null // a tunnel: no message framing
-                                r.method == "HEAD" || status == 204 || status == 304 -> 0L // no content (RFC 9110 sections 9.3.2, 15.3.5, 15.4.5)
+                                r.method == "CONNECT" && status in 200..299 -> null
+
+                                // a tunnel: no message framing
+                                r.method == "HEAD" || status == 204 || status == 304 -> 0L
+
+                                // no content (RFC 9110 sections 9.3.2, 15.3.5, 15.4.5)
                                 else -> contentLength(headers)
                             },
                     )

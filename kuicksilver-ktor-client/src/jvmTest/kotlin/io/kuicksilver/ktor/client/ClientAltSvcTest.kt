@@ -77,7 +77,8 @@ class ClientAltSvcTest {
                 }
             } finally {
                 server.stop(100, 500)
-                kotlinx.io.files.SystemFileSystem.delete(path, mustExist = false)
+                kotlinx.io.files.SystemFileSystem
+                    .delete(path, mustExist = false)
             }
         }
 

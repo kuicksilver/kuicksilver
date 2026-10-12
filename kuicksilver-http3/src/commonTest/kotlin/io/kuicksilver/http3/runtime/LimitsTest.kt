@@ -43,7 +43,13 @@ class LimitsTest {
                         p.client.request(get(headers = Http3Headers.of("x-big" to "v".repeat(2000))))
                     }
                 assertEquals(1000L, e.limit)
-                val server = launch { p.server.acceptRequest().respond(204).finish() }
+                val server =
+                    launch {
+                        p.server
+                            .acceptRequest()
+                            .respond(204)
+                            .finish()
+                    }
                 val ok = p.client.request(get())
                 assertEquals(204, ok.status)
                 assertEquals(0L, ok.streamId, "the refused request opened no stream")
@@ -92,6 +98,7 @@ class LimitsTest {
         h3Test {
             H3Pair.open(serverSettings = http3Settings { maxFieldSectionSize = 1000 }).use { p ->
                 withTimeout(5.seconds) { p.client.peerSettings.first { it != null } }
+
                 fun post(before: CompletableDeferred<Unit>? = null) =
                     Http3Request("POST", authority = "server.test", path = "/", body = ByteReadChannel("ping"), trailers = {
                         before?.await()
