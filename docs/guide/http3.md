@@ -91,7 +91,9 @@ val body = response.body            // a ByteReadChannel; reading it to the end 
 A request body is any `ByteReadChannel`; it is copied into DATA frames as the transport accepts it, so a slow peer
 slows the producer instead of filling memory. `trailers` is called after the body ends. Interim responses (1xx,
 103 Early Hints included) reach `onInformational`; more than `maxInformationalResponses` (5) fail the request with
-`H3_EXCESSIVE_LOAD`. There is no automatic `100-continue`. `Http3Response.cancel()` (or cancelling the calling
+`H3_EXCESSIVE_LOAD`. Both callbacks run on the dispatcher of the coroutine that called `request`, never on the
+connection's own single-threaded dispatcher, so a slow callback delays only its own request. There is no automatic
+`100-continue`. `Http3Response.cancel()` (or cancelling the calling
 coroutine) resets the stream with `H3_REQUEST_CANCELLED`; the connection keeps serving other requests.
 
 ## Serving requests

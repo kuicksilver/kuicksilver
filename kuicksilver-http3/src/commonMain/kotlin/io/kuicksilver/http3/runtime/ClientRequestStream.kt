@@ -26,17 +26,21 @@ import io.kuicksilver.quic.StreamPriority
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlin.coroutines.ContinuationInterceptor
 
 /** Extended CONNECT (RFC 9220 section 3): waits for the peer's SETTINGS, then a request whose stream stays open both ways. */
 internal suspend fun H3Session.connect(
     r: Http3Request,
     protocol: String,
-): Http3Stream =
-    withContext(dispatcher) {
+): Http3Stream {
+    val caller = callerDispatcher()
+    return withContext(dispatcher) {
         val ps = awaitPeerSettings()
         if (!ps.enableConnectProtocol) throw Http3Exception.Settings("the peer did not send SETTINGS_ENABLE_CONNECT_PROTOCOL")
         val req =
@@ -50,7 +54,7 @@ internal suspend fun H3Session.connect(
                 protocol = protocol,
                 onInformational = r.onInformational,
             )
-        val resp = request(req, keepOpen = true) as ResponseImpl
+        val resp = request(req, keepOpen = true, caller = caller) as ResponseImpl
         if (resp.status !in
             200..299
         ) {
@@ -69,12 +73,22 @@ internal suspend fun H3Session.connect(
             scope.launch { datagrams.unregister(resp.streamId) }
         }
     }
+}
+
+/**
+ * The dispatcher of the coroutine calling into the session: user callbacks ([Http3Request.onInformational],
+ * [Http3Request.trailers]) run there, so a slow callback never stalls the connection's single-threaded dispatcher.
+ */
+private suspend fun callerDispatcher(): ContinuationInterceptor =
+    currentCoroutineContext()[ContinuationInterceptor] ?: Dispatchers.Default
 
 internal suspend fun H3Session.request(
     r: Http3Request,
     keepOpen: Boolean = false,
-): Http3Response =
-    withContext(dispatcher) {
+    caller: ContinuationInterceptor? = null,
+): Http3Response {
+    val callbacks = caller ?: callerDispatcher()
+    return withContext(dispatcher) {
         if (closed.isCompleted) throw connectionError()
         if (goAwayReceived.value != null) throw Http3Exception.RequestNotProcessed(true)
         check(goAwaySentId == null) { "this client sent GOAWAY: no new requests" }
@@ -101,7 +115,7 @@ internal suspend fun H3Session.request(
         clientStreams[st.id] = st
         val dgrams = if (keepOpen) datagrams.register(st.id) else null
         try {
-            exchange(st, r, keepOpen).also { it.datagramChannel = dgrams }
+            exchange(st, r, keepOpen, callbacks).also { it.datagramChannel = dgrams }
         } catch (e: Throwable) {
             if (dgrams != null) datagrams.unregister(st.id)
             // a GOAWAY that did not cover this stream aborted it: the server never processed it (RFC 9114 section 5.2)
@@ -112,11 +126,13 @@ internal suspend fun H3Session.request(
             rejectedByGoAway.remove(st.id)
         }
     }
+}
 
 private suspend fun H3Session.exchange(
     st: QuicStream,
     r: Http3Request,
     keepOpen: Boolean,
+    callbacks: ContinuationInterceptor,
 ): ResponseImpl {
     var sender: Job? = null
     try {
@@ -128,7 +144,7 @@ private suspend fun H3Session.exchange(
                 st.output.flushAndClose()
             } else {
                 st.output.flush()
-                sender = scope.launch { sendBody(st, r) }
+                sender = scope.launch { sendBody(st, r, callbacks) }
             }
         } catch (e: Throwable) {
             // a server that answered without the rest of the request may stop it with H3_NO_ERROR before our FIN left: the response still counts (RFC 9114 section 4.1)
@@ -192,7 +208,7 @@ private suspend fun H3Session.exchange(
                                 ),
                             )
                         }
-                        r.onInformational?.invoke(status, headers)
+                        r.onInformational?.let { cb -> withContext(callbacks) { cb(status, headers) } }
                         continue
                     }
                     return ResponseImpl(
@@ -250,6 +266,7 @@ private fun stoppedWithNoError(e: Throwable): Boolean =
 private suspend fun H3Session.sendBody(
     st: QuicStream,
     r: Http3Request,
+    callbacks: ContinuationInterceptor,
 ) {
     val buf = ByteArray(CHUNK)
     try {
@@ -270,7 +287,7 @@ private suspend fun H3Session.sendBody(
             }
             body.closedCause?.let { throw it }
         }
-        r.trailers?.invoke()?.let { t ->
+        r.trailers?.let { cb -> withContext(callbacks) { cb() } }?.let { t ->
             for ((n, v) in t.fields) {
                 require(
                     !n.startsWith(':') && FieldValidator.checkName(n) == null && FieldValidator.checkValue(v) == null,

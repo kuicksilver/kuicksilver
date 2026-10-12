@@ -21,6 +21,7 @@ import io.kuicksilver.quic.quicConfig
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.async
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.cancelChildren
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.filterNotNull
@@ -35,8 +36,11 @@ import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
+import kotlin.test.assertNotNull
+import kotlin.test.assertNotSame
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlin.coroutines.ContinuationInterceptor
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
@@ -136,6 +140,54 @@ class RequestTest {
                 assertEquals(listOf<Pair<Int, String?>>(103 to "</style.css>; rel=preload"), hints)
                 assertEquals(204, resp.status)
                 server.join() // the 204 arrives before finish() returns: closing earlier races the server's FIN
+            }
+        }
+
+    /** A slow `onInformational` must not stall the connection: it runs on the caller's dispatcher, not the session's. */
+    @Test fun onInformationalRunsOffConnectionDispatcher() =
+        h3Test {
+            H3Pair.open().use { p ->
+                val server =
+                    launch {
+                        val r = p.server.acceptRequest()
+                        r.sendInformational(103, Http3Headers.of("link" to "</a.css>; rel=preload"))
+                        r.respond(204).finish()
+                    }
+                var seen: Any? = null
+                p.client.request(
+                    Http3Request("GET", authority = "server.test", path = "/", onInformational = { _, _ ->
+                        seen = currentCoroutineContext()[ContinuationInterceptor]
+                    }),
+                )
+                server.join()
+                assertNotNull(seen)
+                assertNotSame<Any?>(p.client.session.dispatcher, seen)
+            }
+        }
+
+    /** The request's `trailers` callback runs on the caller's dispatcher, not the session's. */
+    @Test fun trailersCallbackRunsOffConnectionDispatcher() =
+        h3Test {
+            H3Pair.open().use { p ->
+                val server =
+                    launch {
+                        val r = p.server.acceptRequest()
+                        r.body.readAllBytes()
+                        assertEquals("c1", r.trailers.await()?.get("x-checksum"))
+                        r.respond(204).finish()
+                    }
+                var seen: Any? = null
+                val resp =
+                    p.client.request(
+                        Http3Request("POST", authority = "server.test", path = "/", body = ByteReadChannel("ping"), trailers = {
+                            seen = currentCoroutineContext()[ContinuationInterceptor]
+                            Http3Headers.of("x-checksum" to "c1")
+                        }),
+                    )
+                assertEquals(204, resp.status)
+                server.join()
+                assertNotNull(seen)
+                assertNotSame<Any?>(p.client.session.dispatcher, seen)
             }
         }
 
