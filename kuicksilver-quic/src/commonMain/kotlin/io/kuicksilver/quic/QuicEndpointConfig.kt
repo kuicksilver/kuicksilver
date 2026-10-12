@@ -266,6 +266,27 @@ public class QuicEndpointConfig private constructor(
         }
     }
 
+    /** A builder pre-filled with these values (for a layer above that adjusts one setting, such as `Http3Endpoint` binding SETTINGS into 0-RTT tickets). */
+    @ExperimentalKuicksilverApi
+    public fun toBuilder(): Builder =
+        Builder().also {
+            it.server = server
+            it.crypto = crypto
+            it.maxConnections = maxConnections
+            it.acceptQueue = acceptQueue
+            it.dispatcher = dispatcher
+            it.io = io
+            it.connectionIdLength = connectionIdLength
+            it.admission = admission
+            it.initialQueueCap = initialQueueCap
+            it.maxConnectionsPerIp = maxConnectionsPerIp
+            it.maxConnectionLifetime = maxConnectionLifetime
+            it.rejectInitialFromReflectivePorts = rejectInitialFromReflectivePorts
+            it.statelessPerAddressPerSecond = statelessPerAddressPerSecond
+            it.statelessTotalPerSecond = statelessTotalPerSecond
+            it.loops = loops
+        }
+
     /** Holds [Default]. */
     public companion object { /** A client-only endpoint with every default. */
         public val Default: QuicEndpointConfig = Builder().build()

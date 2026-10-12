@@ -724,6 +724,7 @@ public abstract interface class io/kuicksilver/quic/QuicConnection : java/lang/A
 	public abstract fun getPaths ()Ljava/util/List;
 	public abstract fun getPeerCertificates ()Ljava/util/List;
 	public abstract fun getStats ()Lio/kuicksilver/quic/ConnectionStats;
+	public fun isHandshakeComplete ()Z
 	public abstract fun keyUpdate (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun migrate (Lio/kuicksilver/quic/DatagramIo;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun openBidi (Lio/kuicksilver/quic/StreamPriority;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
@@ -740,6 +741,7 @@ public final class io/kuicksilver/quic/QuicConnection$DefaultImpls {
 	public static fun awaitHandshake (Lio/kuicksilver/quic/QuicConnection;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public static synthetic fun close$default (Lio/kuicksilver/quic/QuicConnection;JLjava/lang/String;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 	public static fun getEarlyDataAccepted (Lio/kuicksilver/quic/QuicConnection;)Ljava/lang/Boolean;
+	public static fun isHandshakeComplete (Lio/kuicksilver/quic/QuicConnection;)Z
 	public static synthetic fun openBidi$default (Lio/kuicksilver/quic/QuicConnection;Lio/kuicksilver/quic/StreamPriority;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 	public static synthetic fun openUni$default (Lio/kuicksilver/quic/QuicConnection;Lio/kuicksilver/quic/StreamPriority;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 	public static synthetic fun sendDatagram$default (Lio/kuicksilver/quic/QuicConnection;[BLio/kuicksilver/quic/DatagramPolicy;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
@@ -797,6 +799,7 @@ public final class io/kuicksilver/quic/QuicEndpointConfig {
 	public final fun getServer ()Lio/kuicksilver/quic/QuicServerConfig;
 	public final fun getStatelessPerAddressPerSecond ()I
 	public final fun getStatelessTotalPerSecond ()I
+	public final fun toBuilder ()Lio/kuicksilver/quic/QuicEndpointConfig$Builder;
 }
 
 public final class io/kuicksilver/quic/QuicEndpointConfig$Builder {

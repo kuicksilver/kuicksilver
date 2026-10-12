@@ -210,6 +210,8 @@ abstract interface io.kuicksilver.quic/QuicConnection : kotlin/AutoCloseable { /
         abstract fun <get-stats>(): io.kuicksilver.quic/ConnectionStats // io.kuicksilver.quic/QuicConnection.stats.<get-stats>|<get-stats>(){}[0]
     open val earlyDataAccepted // io.kuicksilver.quic/QuicConnection.earlyDataAccepted|{}earlyDataAccepted[0]
         open fun <get-earlyDataAccepted>(): kotlin/Boolean? // io.kuicksilver.quic/QuicConnection.earlyDataAccepted.<get-earlyDataAccepted>|<get-earlyDataAccepted>(){}[0]
+    open val isHandshakeComplete // io.kuicksilver.quic/QuicConnection.isHandshakeComplete|{}isHandshakeComplete[0]
+        open fun <get-isHandshakeComplete>(): kotlin/Boolean // io.kuicksilver.quic/QuicConnection.isHandshakeComplete.<get-isHandshakeComplete>|<get-isHandshakeComplete>(){}[0]
 
     abstract fun trySendDatagram(kotlin/ByteArray, io.kuicksilver.quic/DatagramPolicy = ...): io.kuicksilver.quic/DatagramSendResult // io.kuicksilver.quic/QuicConnection.trySendDatagram|trySendDatagram(kotlin.ByteArray;io.kuicksilver.quic.DatagramPolicy){}[0]
     abstract suspend fun acceptStream(): io.kuicksilver.quic/QuicStream // io.kuicksilver.quic/QuicConnection.acceptStream|acceptStream(){}[0]
@@ -1026,6 +1028,8 @@ final class io.kuicksilver.quic/QuicEndpointConfig { // io.kuicksilver.quic/Quic
         final fun <get-statelessPerAddressPerSecond>(): kotlin/Int // io.kuicksilver.quic/QuicEndpointConfig.statelessPerAddressPerSecond.<get-statelessPerAddressPerSecond>|<get-statelessPerAddressPerSecond>(){}[0]
     final val statelessTotalPerSecond // io.kuicksilver.quic/QuicEndpointConfig.statelessTotalPerSecond|{}statelessTotalPerSecond[0]
         final fun <get-statelessTotalPerSecond>(): kotlin/Int // io.kuicksilver.quic/QuicEndpointConfig.statelessTotalPerSecond.<get-statelessTotalPerSecond>|<get-statelessTotalPerSecond>(){}[0]
+
+    final fun toBuilder(): io.kuicksilver.quic/QuicEndpointConfig.Builder // io.kuicksilver.quic/QuicEndpointConfig.toBuilder|toBuilder(){}[0]
 
     final class Builder { // io.kuicksilver.quic/QuicEndpointConfig.Builder|null[0]
         constructor <init>() // io.kuicksilver.quic/QuicEndpointConfig.Builder.<init>|<init>(){}[0]

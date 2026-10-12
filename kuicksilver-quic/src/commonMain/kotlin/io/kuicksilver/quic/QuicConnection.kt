@@ -116,4 +116,8 @@ public interface QuicConnection : AutoCloseable {
      */
     @ExperimentalKuicksilverApi
     public suspend fun awaitHandshake() {}
+
+    /** True once the handshake completed (see [awaitHandshake]); false for a 0-RTT connection still handshaking. */
+    @ExperimentalKuicksilverApi
+    public val isHandshakeComplete: Boolean get() = true
 }

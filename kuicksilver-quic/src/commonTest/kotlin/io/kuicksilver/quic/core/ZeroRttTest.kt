@@ -132,6 +132,14 @@ class ZeroRttTest {
         // RFC 9001 section 4.9.3: the client drops its 0-RTT key with the 1-RTT key; the server within 3 PTO of its first 1-RTT packet
         assertNull(p.client.writeKeys[1])
         assertTrue(p.runUntil(limit = 5.seconds) { p.server!!.readKeys[1] == null }, "server 0-RTT read key discarded")
+        assertTrue(p.runUntil(limit = 2.seconds) { p.server!!.state == ConnectionState.Confirmed }, "server state ${p.server!!.state}")
+        // a stream opened after the handshake still flows
+        val id2 = p.client.openStream(bidi = true)
+        p.client.writeStream(id2, "later".encodeToByteArray(), 0, 5, fin = true)
+        assertTrue(
+            p.runUntil(limit = 2.seconds) { p.serverEvents.any { it is ConnectionEvent.StreamReadable && it.id == id2 } },
+            "late stream",
+        )
         p.close()
     }
 

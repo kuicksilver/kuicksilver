@@ -14,6 +14,7 @@ import io.kuicksilver.quic.runtime.EndpointLoop
 import io.kuicksilver.tls.EarlyDataState
 import io.kuicksilver.tls.KslQuicCrypto
 import kotlinx.coroutines.async
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.yield
@@ -73,6 +74,43 @@ class ZeroRttApiTest {
                     assertEquals("two:true/true", second.echo("two"), "accepted early and answered")
                     second.awaitHandshake()
                     assertEquals(true, second.earlyDataAccepted)
+                    server.await()
+                }
+            }
+        }
+
+    @Test fun streamsOpenedEarlyAndAfterTheHandshake() =
+        runBlocking {
+            ApiPair.open(crypto = KslQuicCrypto, serverEarlyData = true).use { p ->
+                withTimeout(20.seconds) {
+                    val server =
+                        async {
+                            repeat(2) {
+                                val c = p.server.accept()
+                                repeat(if (it == 0) 1 else 2) {
+                                    val s = c.acceptStream()
+                                    if (s.id and 2L != 0L) {
+                                        launch { s.input.readAll() } // the uni stream ends only after the echo
+                                    } else {
+                                        val got = s.input.readAll()
+                                        s.output.writeFully("$got!".encodeToByteArray())
+                                        s.output.flushAndClose()
+                                    }
+                                }
+                            }
+                        }
+                    val first = p.client.connect(p.server.localAddress, clientConfig())
+                    assertEquals("one!", first.echo("one"))
+                    val sessions = (p.client as EndpointLoop).sessions
+                    while (sessions.size() == 0) yield()
+                    first.close()
+                    val second = p.client.connectEarly(p.server.localAddress, clientConfig())
+                    val u = second.openUni()
+                    u.output.writeFully("control".encodeToByteArray())
+                    u.output.flush()
+                    second.awaitHandshake()
+                    assertEquals("after!", second.echo("after"), "a stream opened after the handshake on a 0-RTT connection")
+                    u.output.flushAndClose()
                     server.await()
                 }
             }

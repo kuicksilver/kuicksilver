@@ -498,7 +498,14 @@ internal class KslQuicTlsSession(
         } else {
             presented
         }
-    override val negotiatedAlpn: String? get() = alpn
+
+    // a server that accepted 0-RTT knows the protocol from the ClientHello, before the handshake completes
+    override val negotiatedAlpn: String? get() =
+        alpn ?: if (ssl != 0L && failure == null && ctx.config.role == TlsRole.Server) {
+            Ksl.sslGet(ssl, KslConst.GET_ALPN).takeIf { it.isNotEmpty() }?.decodeToString()
+        } else {
+            null
+        }
 
     override fun exportKeyingMaterial(
         label: String,
