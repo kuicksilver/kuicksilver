@@ -29,7 +29,7 @@ final class io.kuicksilver.testing/BurstLoss { // io.kuicksilver.testing/BurstLo
 }
 
 final class io.kuicksilver.testing/LinkParams { // io.kuicksilver.testing/LinkParams|null[0]
-    constructor <init>(kotlin.time/Duration = ..., kotlin.time/Duration = ..., kotlin/Long? = ..., kotlin/Double = ..., kotlin.collections/Set<kotlin/Int> = ..., io.kuicksilver.testing/BurstLoss? = ..., kotlin/Double = ..., kotlin/Double = ..., kotlin/Double = ..., kotlin/Int? = ..., io.kuicksilver.testing/EcnMarking = ...) // io.kuicksilver.testing/LinkParams.<init>|<init>(kotlin.time.Duration;kotlin.time.Duration;kotlin.Long?;kotlin.Double;kotlin.collections.Set<kotlin.Int>;io.kuicksilver.testing.BurstLoss?;kotlin.Double;kotlin.Double;kotlin.Double;kotlin.Int?;io.kuicksilver.testing.EcnMarking){}[0]
+    constructor <init>(kotlin.time/Duration = ..., kotlin.time/Duration = ..., kotlin/Long? = ..., kotlin/Double = ..., kotlin.collections/Set<kotlin/Int> = ..., io.kuicksilver.testing/BurstLoss? = ..., kotlin/Double = ..., kotlin/Double = ..., kotlin/Double = ..., kotlin/Int? = ..., io.kuicksilver.testing/EcnMarking = ..., kotlin/Long? = ...) // io.kuicksilver.testing/LinkParams.<init>|<init>(kotlin.time.Duration;kotlin.time.Duration;kotlin.Long?;kotlin.Double;kotlin.collections.Set<kotlin.Int>;io.kuicksilver.testing.BurstLoss?;kotlin.Double;kotlin.Double;kotlin.Double;kotlin.Int?;io.kuicksilver.testing.EcnMarking;kotlin.Long?){}[0]
 
     final val bandwidthBitsPerSecond // io.kuicksilver.testing/LinkParams.bandwidthBitsPerSecond|{}bandwidthBitsPerSecond[0]
         final fun <get-bandwidthBitsPerSecond>(): kotlin/Long? // io.kuicksilver.testing/LinkParams.bandwidthBitsPerSecond.<get-bandwidthBitsPerSecond>|<get-bandwidthBitsPerSecond>(){}[0]
@@ -51,6 +51,8 @@ final class io.kuicksilver.testing/LinkParams { // io.kuicksilver.testing/LinkPa
         final fun <get-lossRate>(): kotlin/Double // io.kuicksilver.testing/LinkParams.lossRate.<get-lossRate>|<get-lossRate>(){}[0]
     final val mtu // io.kuicksilver.testing/LinkParams.mtu|{}mtu[0]
         final fun <get-mtu>(): kotlin/Int? // io.kuicksilver.testing/LinkParams.mtu.<get-mtu>|<get-mtu>(){}[0]
+    final val queueLimitBytes // io.kuicksilver.testing/LinkParams.queueLimitBytes|{}queueLimitBytes[0]
+        final fun <get-queueLimitBytes>(): kotlin/Long? // io.kuicksilver.testing/LinkParams.queueLimitBytes.<get-queueLimitBytes>|<get-queueLimitBytes>(){}[0]
     final val reorderRate // io.kuicksilver.testing/LinkParams.reorderRate|{}reorderRate[0]
         final fun <get-reorderRate>(): kotlin/Double // io.kuicksilver.testing/LinkParams.reorderRate.<get-reorderRate>|<get-reorderRate>(){}[0]
 

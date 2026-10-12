@@ -22,8 +22,8 @@ public final class io/kuicksilver/testing/EcnMarking$Pass : io/kuicksilver/testi
 
 public final class io/kuicksilver/testing/LinkParams {
 	public fun <init> ()V
-	public synthetic fun <init> (JJLjava/lang/Long;DLjava/util/Set;Lio/kuicksilver/testing/BurstLoss;DDDLjava/lang/Integer;Lio/kuicksilver/testing/EcnMarking;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
-	public synthetic fun <init> (JJLjava/lang/Long;DLjava/util/Set;Lio/kuicksilver/testing/BurstLoss;DDDLjava/lang/Integer;Lio/kuicksilver/testing/EcnMarking;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public synthetic fun <init> (JJLjava/lang/Long;DLjava/util/Set;Lio/kuicksilver/testing/BurstLoss;DDDLjava/lang/Integer;Lio/kuicksilver/testing/EcnMarking;Ljava/lang/Long;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public synthetic fun <init> (JJLjava/lang/Long;DLjava/util/Set;Lio/kuicksilver/testing/BurstLoss;DDDLjava/lang/Integer;Lio/kuicksilver/testing/EcnMarking;Ljava/lang/Long;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public final fun getBandwidthBitsPerSecond ()Ljava/lang/Long;
 	public final fun getBurstLoss ()Lio/kuicksilver/testing/BurstLoss;
 	public final fun getCorruptRate ()D
@@ -34,6 +34,7 @@ public final class io/kuicksilver/testing/LinkParams {
 	public final fun getLossMask ()Ljava/util/Set;
 	public final fun getLossRate ()D
 	public final fun getMtu ()Ljava/lang/Integer;
+	public final fun getQueueLimitBytes ()Ljava/lang/Long;
 	public final fun getReorderRate ()D
 	public fun toString ()Ljava/lang/String;
 }

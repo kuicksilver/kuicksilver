@@ -5,6 +5,7 @@ package io.kuicksilver.testing
 import io.kuicksilver.quic.Ecn
 import io.kuicksilver.quic.TimeMark
 import kotlin.random.Random
+import kotlin.time.Duration
 import kotlin.time.Duration.Companion.nanoseconds
 
 /** A datagram travelling over a [SimLink]. */
@@ -12,6 +13,8 @@ internal class InFlight(
     val bytes: ByteArray,
     var arrival: TimeMark,
     val ecn: Ecn = Ecn.NotEct,
+    /** Which flow the datagram belongs to, for links several flows share (`SharedBottleneck`). */
+    val tag: Int = 0,
 )
 
 /** One direction of the link: applies loss, reordering, duplication, corruption, serialization and delay. */
@@ -35,10 +38,17 @@ internal class SimLink(
     /** Current MTU of this direction (changeable mid-run: a black hole that appears during a transfer). */
     var mtu: Int? = params.mtu
 
+    /** How long the last datagram sent waited for the link (0 without a bandwidth limit), and the datagrams the full buffer dropped. */
+    var lastQueueDelay: Duration = Duration.ZERO
+        private set
+    var tailDropped = 0L
+        private set
+
     fun send(
         bytes: ByteArray,
         ecn: Ecn,
         now: TimeMark,
+        tag: Int = 0,
     ) {
         val i = index++
         val tooBig = mtu?.let { bytes.size > it } ?: false
@@ -64,6 +74,14 @@ internal class SimLink(
             now + params.delay +
                 (if (params.jitter.isPositive()) (random.nextLong(params.jitter.inWholeNanoseconds)).nanoseconds else 0.nanoseconds)
         params.bandwidthBitsPerSecond?.let { bw ->
+            val waiting = if (linkFree > now) (linkFree - now).inWholeNanoseconds * bw / 8_000_000_000L else 0L
+            val limit = params.queueLimitBytes
+            if (limit != null && waiting + payload.size > limit) {
+                dropped++
+                tailDropped++
+                return
+            } // the bottleneck buffer is full
+            lastQueueDelay = if (linkFree > now) linkFree - now else Duration.ZERO
             val start =
                 if (linkFree >
                     now
@@ -101,7 +119,7 @@ internal class SimLink(
                     }
                 }
             }
-        queue += InFlight(payload, arrival, marked)
+        queue += InFlight(payload, arrival, marked, tag)
         if (params.reorderRate > 0 && queue.size >= 2 &&
             random.nextDouble() < params.reorderRate
         ) {
@@ -115,7 +133,7 @@ internal class SimLink(
         if (params.duplicateRate > 0 &&
             random.nextDouble() < params.duplicateRate
         ) {
-            queue += InFlight(payload, arrival + 1.nanoseconds, marked)
+            queue += InFlight(payload, arrival + 1.nanoseconds, marked, tag)
         }
     }
 
