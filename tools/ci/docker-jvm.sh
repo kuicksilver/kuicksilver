@@ -22,9 +22,9 @@ bash tools/check/glibc-floor.sh "$root/kuicksilver-native/build/jni/$cls/$so" 2.
 # 2) the Kotlin test suites on a Linux JVM against that library (buildJniHost skipped: it would build a host-gcc one)
 if [ "$(uname -s)" = Linux ] && [ "$(uname -m)" = "$march" ] && [ "${KSL_JVM_IN_CONTAINER:-0}" != 1 ]; then
   # shellcheck disable=SC2086
-  (cd "$root" && ./gradlew ${KSL_GRADLE_ARGS:-} -x :kuicksilver-native:buildJniHost $KSL_JVM_TESTS)
+  (cd "$root" && ./gradlew ${KSL_GRADLE_ARGS:-} --continue -x :kuicksilver-native:buildJniHost $KSL_JVM_TESTS)
 else
   docker run --rm --platform "$plat" -v "$root:/w" -v "$HOME/.gradle:/root/.gradle" -w /w -e GRADLE_OPTS="-Dorg.gradle.workers.max=2" \
     eclipse-temurin:21@sha256:3e3c176ffed168beb42c607be9bc1639b466cf00261a0fb04425562c9d0c5c2b bash -c \
-    "./gradlew --offline -q -x :kuicksilver-native:buildJniHost $KSL_JVM_TESTS"
+    "./gradlew --offline -q --continue -x :kuicksilver-native:buildJniHost $KSL_JVM_TESTS"
 fi

@@ -273,7 +273,7 @@ jobs:
       - name: 'jvm: module tests on Windows (CI-built dll)'
         run: |
           ls -l kuicksilver-native/build/jni/resources/META-INF/native
-          $G --max-workers=2 -Pkuicksilver.openssl.prebuilt=true -x :kuicksilver-native:buildJniHost \
+          $G --max-workers=2 --continue -Pkuicksilver.openssl.prebuilt=true -x :kuicksilver-native:buildJniHost \
             :kuicksilver-native:jvmTest :kuicksilver-tls:jvmTest :kuicksilver-quic:jvmTest :kuicksilver-http3:jvmTest \
             :kuicksilver-ktor-network:jvmTest :kuicksilver-ktor-client:jvmTest :kuicksilver-ktor-server:jvmTest
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -316,7 +316,7 @@ jobs:
         run: |
           . tools/ci/matrix.sh
           # shellcheck disable=SC2086   # the list splits into Gradle task paths on purpose
-          $G $KSL_JVM_TESTS
+          $G --continue $KSL_JVM_TESTS
       - name: 'sample: realtime-telemetry'
         run: cd samples/realtime-telemetry && ../../gradlew --stacktrace jvmTest
       - name: 'fuzz: regression corpus'
@@ -456,7 +456,7 @@ jobs:
         run: |
           . tools/ci/matrix.sh
           # shellcheck disable=SC2086
-          $G -x :kuicksilver-native:buildJniHost -Pkuicksilver.test.jdk=${{ matrix.jdk }} \
+          $G --continue -x :kuicksilver-native:buildJniHost -Pkuicksilver.test.jdk=${{ matrix.jdk }} \
             "-Porg.gradle.java.installations.paths=$TEST_JDK" ${TEST_JVM_ARGS:+"-Pkuicksilver.test.jvmArgs=$TEST_JVM_ARGS"} $KSL_JVM_TESTS
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: failure()
