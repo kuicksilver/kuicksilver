@@ -70,6 +70,11 @@ Nothing has been released yet. This section summarises the development of the fi
 
 ### Fixed
 
+Hardening of the QUIC core for 0.2.0 (review of 2026-10-08, deferred items):
+
+- QUIC: an unanswered `PATH_CHALLENGE` is repeated with an exponentially growing gap (1, 2, 4 ... x PTO) instead of
+  once per PTO (RFC 9000 §8.2.1, RFC 9002 §6.2.1).
+
 Fixes from a full five-reviewer pass over the code before the first release, among them:
 
 - Streams reset or stopped by the peer, or stopped locally, are retired and return their stream credit; lost

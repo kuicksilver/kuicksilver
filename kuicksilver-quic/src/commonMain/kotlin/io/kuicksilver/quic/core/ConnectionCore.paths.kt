@@ -163,8 +163,20 @@ internal fun ConnectionCore.startValidation(p: Path) {
     p.challengePending = true
     p.state = PathState.Validating
     p.handshakeValidated = false
+    p.challengeRetries = 0
     p.challengeDeadline = now + validationTimeout()
-    p.nextChallengeAt = now + pto()
+    p.nextChallengeAt = now + nextChallengeDelay(p)
+}
+
+/**
+ * The gap before the next PATH_CHALLENGE repeat on [p]: the PTO, doubled on every unanswered repeat (capped at 64 x PTO), so a dead
+ * path is not probed once per PTO for as long as it is remembered (RFC 9000 section 8.2.1; the backoff of RFC 9002 section 6.2.1, as
+ * quic-go's path_manager_outgoing.go doubles its probe interval).
+ */
+internal fun ConnectionCore.nextChallengeDelay(p: Path): Duration {
+    val shift = if (p.challengeRetries < 6) p.challengeRetries else 6
+    p.challengeRetries++
+    return pto() * (1 shl shift)
 }
 
 internal fun ConnectionCore.switchPath(
@@ -284,6 +296,7 @@ internal fun ConnectionCore.onPathResponse(data: Long) {
             p.state = PathState.Validated
             p.amplification.validated = true
             p.challengePending = false
+            p.challengeRetries = 0
             p.challengeDeadline =
                 TimeMark.NEVER
             p.nextChallengeAt = TimeMark.NEVER

@@ -49,6 +49,7 @@ import io.kuicksilver.quic.core.requeueForProbe
 import io.kuicksilver.quic.core.setMtu
 import io.kuicksilver.quic.core.settleHandshakeValidated
 import io.kuicksilver.quic.core.silentClose
+import io.kuicksilver.quic.core.nextChallengeDelay
 import io.kuicksilver.quic.core.startValidation
 import io.kuicksilver.quic.core.switchPath
 import io.kuicksilver.quic.flow.RecvFlowController
@@ -706,7 +707,7 @@ public class ConnectionCore internal constructor(
                     state == ConnectionState.Handshaking
                 ) {
                     p.challengePending = true
-                    p.nextChallengeAt = now + pto()
+                    p.nextChallengeAt = now + nextChallengeDelay(p)
                 } else {
                     onPathFailed(p)
                 }
@@ -714,7 +715,7 @@ public class ConnectionCore internal constructor(
                 now
             ) {
                 p.challengePending = true
-                p.nextChallengeAt = now + pto()
+                p.nextChallengeAt = now + nextChallengeDelay(p)
             }
         } // RFC 9000 section 8.2.4
         // QuicEndpointConfig.maxConnectionLifetime: a transport close with NO_ERROR

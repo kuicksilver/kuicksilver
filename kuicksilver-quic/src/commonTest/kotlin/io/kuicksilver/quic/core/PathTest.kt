@@ -291,6 +291,28 @@ class PathTest {
         }
     }
 
+    @Test fun pathChallengeRepeatsBackOff() {
+        // RFC 9000 section 8.2.1 and RFC 9002 section 6.2.1: an unanswered PATH_CHALLENGE is repeated with an exponentially growing gap, not once per PTO
+        val (p, c) = connected()
+        try {
+            val id = c.addPath(p.serverAddr, p.now)
+            c.probePath(id, p.now)
+            val path = c.paths.byId(id)!!
+            val g1 = path.nextChallengeAt - p.now
+            assertTrue(g1 > Duration.ZERO)
+            val t1 = path.nextChallengeAt
+            c.onTimeout(t1)
+            val g2 = path.nextChallengeAt - t1
+            assertTrue(g2 >= g1 * 2, "second gap $g2 is at least twice the first $g1")
+            val t2 = path.nextChallengeAt
+            c.onTimeout(t2)
+            val g3 = path.nextChallengeAt - t2
+            assertTrue(g3 >= g2 * 2, "third gap $g3 is at least twice the second $g2")
+        } finally {
+            p.close()
+        }
+    }
+
     @Test fun negative_migrationToLoopback() {
         // a client at 10.0.0.1 cannot "move" to loopback or link-local: no path change and not a byte sent there
         for (bad in listOf(
