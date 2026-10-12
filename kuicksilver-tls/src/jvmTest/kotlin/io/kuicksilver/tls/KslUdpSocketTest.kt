@@ -30,6 +30,23 @@ class KslUdpSocketTest {
         assertEquals(accelerated, KslUdpSocket.supported, os)
     }
 
+    /** A probe that fails for any reason (an App Sandbox without network entitlements refuses bind: EPERM) means "unsupported", never an exception (review of k7/macos-server). */
+    @Test fun probeFailureMeansUnsupported() {
+        if (!accelerated) return
+        val unassigned = KslUdpSocket.encodeAddress(byteArrayOf(192.toByte(), 0, 2, 1), 0) // TEST-NET-1: bind fails with EADDRNOTAVAIL
+        assertEquals(false, KslUdpSocket.probe { KslUdpSocket.open(unassigned, 0).close() })
+        assertEquals(true, KslUdpSocket.probe { KslUdpSocket.open(loopback(), 0).close() })
+    }
+
+    /** [KslUdpSocket.openOrNull] answers null for a socket the kernel refuses and reports why. */
+    @Test fun openOrNullReportsFailure() {
+        if (!accelerated) return
+        var why: Throwable? = null
+        assertEquals(null, KslUdpSocket.openOrNull(KslUdpSocket.encodeAddress(byteArrayOf(192.toByte(), 0, 2, 1), 0), 0) { why = it })
+        assertTrue(why is KslException, "$why")
+        KslUdpSocket.openOrNull(loopback(), 0)!!.close()
+    }
+
     private fun loopback() = KslUdpSocket.encodeAddress(byteArrayOf(127, 0, 0, 1), 0)
 
     @Test fun openSendReceive() {

@@ -81,7 +81,10 @@ class KslDatagramIoTest {
             val v4 = assertNotNull(KslDatagramIo.open(lo))
             try {
                 assertContentEquals(ByteArray(4), w.localAddress.resolveAddress(), "0.0.0.0 asked, 0.0.0.0 reported")
-                for ((peer, to) in listOf(v4 to InetSocketAddress("127.0.0.1", v4.localAddress.port), v6!! to InetSocketAddress("::1", v6.localAddress.port))) {
+                for ((peer, to) in listOf(
+                    v4 to InetSocketAddress("127.0.0.1", v4.localAddress.port),
+                    v6!! to InetSocketAddress("::1", v6.localAddress.port),
+                )) {
                     val out = PacketBatch(1)
                     out.buffer(0).copyFrom(ByteArray(40) { 7 }, 0, 0, 40)
                     out.setLength(0, 40)
@@ -98,7 +101,25 @@ class KslDatagramIoTest {
                     withTimeout(5.seconds) { while (reply.count < 1) w.receive(reply) }
                     val from = reply.address(0)!!
                     assertEquals(peer.localAddress.port, from.port)
-                    assertContentEquals(if (peer === v4) byteArrayOf(127, 0, 0, 1) else ByteArray(16) { if (it == 15) 1 else 0 }, from.resolveAddress(), "an IPv4 peer is IPv4, not v4-mapped")
+                    assertContentEquals(
+                        if (peer ===
+                            v4
+                        ) {
+                            byteArrayOf(127, 0, 0, 1)
+                        } else {
+                            ByteArray(16) {
+                                if (it ==
+                                    15
+                                ) {
+                                    1
+                                } else {
+                                    0
+                                }
+                            }
+                        },
+                        from.resolveAddress(),
+                        "an IPv4 peer is IPv4, not v4-mapped",
+                    )
                     out.close()
                     inb.close()
                     reply.close()
@@ -107,6 +128,31 @@ class KslDatagramIoTest {
                 w.close()
                 v4.close()
                 v6!!.close()
+            }
+        }
+
+    /** A refused accelerated socket (a sandbox, limits) falls back to the portable one instead of failing the bind (review of k7/macos-server). */
+    @Test fun refusedSocketFallsBackToPortable() =
+        runBlocking {
+            assumeTrue(ready(), "needs the accelerated socket (Linux, macOS)")
+            val real = KslDatagramIo.socketOpener
+            val unassigned = KslUdpSocket.encodeAddress(byteArrayOf(192.toByte(), 0, 2, 1), 0)
+            var refused = 0
+            KslDatagramIo.socketOpener = { _, f, failed ->
+                refused++
+                KslUdpSocket.openOrNull(unassigned, f, failed)
+            } // EADDRNOTAVAIL from the kernel, as an EPERM from a sandbox would be
+            try {
+                val io = DatagramIo.open(lo)
+                try {
+                    assertEquals(1, refused)
+                    assertTrue(io !is KslDatagramIo, "portable socket expected, got $io")
+                    assertTrue(io.localAddress.port != 0)
+                } finally {
+                    io.close()
+                }
+            } finally {
+                KslDatagramIo.socketOpener = real
             }
         }
 

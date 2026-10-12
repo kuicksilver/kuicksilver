@@ -191,7 +191,7 @@ internal class KslDatagramIo private constructor(
         private const val PEERS = 64
         private const val REFRESH = 256
 
-        /** Opens the accelerated socket on [local]; null where `ksl_udp` is not available (Windows) or the address cannot be resolved. */
+        /** Opens the accelerated socket on [local]; null where `ksl_udp` is not available (Windows), the address cannot be resolved, or (one socket, no [reusePort]) the kernel refuses it: the caller takes the portable socket, said once on standard error. */
         fun open(
             local: InetSocketAddress,
             reusePort: Boolean = false,
@@ -201,9 +201,28 @@ internal class KslDatagramIo private constructor(
             val flags =
                 KslUdpSocket.ECN or KslUdpSocket.GSO or KslUdpSocket.GRO or KslUdpSocket.DF or
                     (if (reusePort) KslUdpSocket.REUSEPORT else 0)
-            // `supported` was true: a failure here is a real one (bind, limits)
-            return KslDatagramIo(KslUdpSocket.open(KslUdpSocket.encodeAddress(ip, local.port), flags))
+            val addr = KslUdpSocket.encodeAddress(ip, local.port)
+            // loops > 1 must see why the shared port failed; a single socket falls back to the portable one (a sandbox, limits)
+            if (reusePort) return KslDatagramIo(KslUdpSocket.open(addr, flags))
+            val socket =
+                socketOpener(addr, flags) { e ->
+                    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+                    if (fallbackWarned.compareAndSet(false, true)) {
+                        printWarning("kuicksilver: accelerated UDP socket refused on $local (${e.message}); using the portable socket")
+                    }
+                } ?: return null
+            return KslDatagramIo(socket)
         }
+
+        @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+        private val fallbackWarned = kotlin.concurrent.atomics.AtomicBoolean(false)
+
+        /** Opens the `ksl` socket or answers null with the reason; a test replaces it to inject a refusal. */
+        internal var socketOpener: (
+            ByteArray,
+            Int,
+            (Throwable) -> Unit,
+        ) -> KslUdpSocket? = { a, f, failed -> KslUdpSocket.openOrNull(a, f, failed) }
 
         /**
          * Runs blocking [slice]s (each waits at most ~100 ms and answers 0 when nothing arrived) on [blocking] until one returns

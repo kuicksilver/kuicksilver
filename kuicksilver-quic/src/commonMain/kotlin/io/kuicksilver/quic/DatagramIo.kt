@@ -80,3 +80,6 @@ public interface DatagramIo : AutoCloseable {
 }
 
 internal expect suspend fun openPortableDatagramIo(local: InetSocketAddress): DatagramIo
+
+/** One line to standard error: the library has no logger, and a silent fallback to the portable socket would hide lost ECN, DF and batching. */
+internal expect fun printWarning(line: String)

@@ -178,6 +178,8 @@ public final class io/kuicksilver/tls/KslUdpSocket$Companion {
 	public final fun getSupported ()Z
 	public final fun ipOf ([B)[B
 	public final fun open ([BI)Lio/kuicksilver/tls/KslUdpSocket;
+	public final fun openOrNull ([BILkotlin/jvm/functions/Function1;)Lio/kuicksilver/tls/KslUdpSocket;
+	public static synthetic fun openOrNull$default (Lio/kuicksilver/tls/KslUdpSocket$Companion;[BILkotlin/jvm/functions/Function1;ILjava/lang/Object;)Lio/kuicksilver/tls/KslUdpSocket;
 	public final fun portOf ([B)I
 }
 
