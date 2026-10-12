@@ -101,24 +101,26 @@ class GuideSamplesTest {
                     )
                 val client = Http3Connection.client(quicConnection, settings)
                 val echoed = CompletableDeferred<Int>()
-                launch {
-                    val connection = serverConnection
-                    // guide:http3:connect (server)
-                    val request = connection.acceptRequest()
-                    if (request.protocol == "echo") {
-                        val stream = request.acceptConnect() // :status 200
-                        launch { echoed.complete(stream.datagrams.first().size) }
-                        stream.input.copyTo(stream.output)
-                    } else {
-                        request.respond(501).finish()
+                val serving =
+                    launch {
+                        val connection = serverConnection
+                        // guide:http3:connect (server)
+                        val request = connection.acceptRequest()
+                        if (request.protocol == "echo") {
+                            val stream = request.acceptConnect() // :status 200
+                            launch { echoed.complete(stream.datagrams.first().size) }
+                            stream.input.copyTo(stream.output)
+                        } else {
+                            request.respond(501).finish()
+                        }
                     }
-                }
                 // guide:http3:connect (client)
                 val stream = client.connect(Http3Request("CONNECT", authority = "example.com", path = "/chat"), protocol = "echo")
                 stream.trySendDatagram(byteArrayOf(1, 2, 3))
                 val collector = launch { stream.datagrams.collect { println(it.size) } }
                 assertEquals(3, echoed.await())
                 stream.output.flushAndClose()
+                serving.join() // the server's echo ends before the connections close under it
                 collector.cancel()
                 client.close()
                 serverConnection.close()

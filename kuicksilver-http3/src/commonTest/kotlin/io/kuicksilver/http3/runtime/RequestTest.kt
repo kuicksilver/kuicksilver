@@ -15,20 +15,22 @@ import io.kuicksilver.http3.Http3Request
 import io.kuicksilver.http3.QuicPair
 import io.kuicksilver.http3.frame.FrameType
 import io.kuicksilver.http3.readAllBytes
+import io.kuicksilver.http3.useScoped
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.quicConfig
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.async
-import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.cancelChildren
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.coroutines.ContinuationInterceptor
 import kotlin.test.BeforeTest
 import kotlin.test.Ignore
 import kotlin.test.Test
@@ -40,7 +42,6 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNotSame
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
-import kotlin.coroutines.ContinuationInterceptor
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
@@ -54,7 +55,7 @@ class RequestTest {
 
     @Test fun getRoundTrip() =
         h3Test {
-            H3Pair.open().use { p ->
+            H3Pair.open().useScoped { p ->
                 launch {
                     val r = p.server.acceptRequest()
                     assertEquals("GET", r.method)
@@ -76,7 +77,7 @@ class RequestTest {
         h3Test {
             val size = 5 * 1024 * 1024
             val payload = ByteArray(size) { (it % 251).toByte() }
-            H3Pair.open().use { p ->
+            H3Pair.open().useScoped { p ->
                 launch {
                     val r = p.server.acceptRequest()
                     delay(200) // the client must wait on flow control, not buffer everything
@@ -97,7 +98,7 @@ class RequestTest {
 
     @Test fun trailersBothWays() =
         h3Test {
-            H3Pair.open().use { p ->
+            H3Pair.open().useScoped { p ->
                 launch {
                     val r = p.server.acceptRequest()
                     assertEquals("ping", r.body.readAllBytes().decodeToString())
@@ -119,7 +120,7 @@ class RequestTest {
 
     @Test fun informational103ThenFinal() =
         h3Test {
-            H3Pair.open().use { p ->
+            H3Pair.open().useScoped { p ->
                 val server =
                     launch {
                         val r = p.server.acceptRequest()
@@ -146,7 +147,7 @@ class RequestTest {
     /** A slow `onInformational` must not stall the connection: it runs on the caller's dispatcher, not the session's. */
     @Test fun onInformationalRunsOffConnectionDispatcher() =
         h3Test {
-            H3Pair.open().use { p ->
+            H3Pair.open().useScoped { p ->
                 val server =
                     launch {
                         val r = p.server.acceptRequest()
@@ -168,7 +169,7 @@ class RequestTest {
     /** The request's `trailers` callback runs on the caller's dispatcher, not the session's. */
     @Test fun trailersCallbackRunsOffConnectionDispatcher() =
         h3Test {
-            H3Pair.open().use { p ->
+            H3Pair.open().useScoped { p ->
                 val server =
                     launch {
                         val r = p.server.acceptRequest()
@@ -193,7 +194,7 @@ class RequestTest {
 
     @Test fun tooManyInformationalIsExcessiveLoad() =
         h3Test {
-            H3Pair.open().use { p ->
+            H3Pair.open().useScoped { p ->
                 val server =
                     launch {
                         val r = p.server.acceptRequest()
@@ -353,7 +354,7 @@ class RequestTest {
         method: String,
         status: Int,
     ) {
-        QuicPair.open().use { q ->
+        QuicPair.open().useScoped { q ->
             val (c, s) = q.connect()
             val client = Http3Connection.client(c)
             val raw = RawPeer(s)
@@ -382,7 +383,7 @@ class RequestTest {
 
     @Test fun cancelledRequestStopsStreamAndConnectionSurvives() =
         h3Test {
-            H3Pair.open().use { p ->
+            H3Pair.open().useScoped { p ->
                 val streamGone = CompletableDeferred<Throwable>()
                 launch {
                     val r = p.server.acceptRequest()
@@ -422,7 +423,7 @@ class RequestTest {
 
     @Test fun requestCoroutineCancelledResetsStream() =
         h3Test {
-            H3Pair.open().use { p ->
+            H3Pair.open().useScoped { p ->
                 val serverSaw = CompletableDeferred<Throwable>()
                 launch {
                     val r = p.server.acceptRequest()
@@ -452,7 +453,7 @@ class RequestTest {
     /** RFC 9114 section 4.1.2 / RFC 9110 section 8.6: a non-numeric or conflicting content-length is malformed; identical repeats collapse to one. */
     @Test fun invalidOrConflictingContentLengthIsMessageError() =
         h3Test {
-            QuicPair.open().use { q ->
+            QuicPair.open().useScoped { q ->
                 val (c, s) = q.connect()
                 val server = Http3Connection.server(s)
                 val raw = RawPeer(c)
@@ -493,7 +494,7 @@ class RequestTest {
     /** RFC 9114 section 4.1.2: a response to HEAD may carry a content-length without a body. */
     @Test fun headResponseWithContentLength() =
         h3Test {
-            H3Pair.open().use { p ->
+            H3Pair.open().useScoped { p ->
                 launch {
                     val r = p.server.acceptRequest()
                     assertEquals("HEAD", r.method)
@@ -514,7 +515,7 @@ class RequestTest {
     /** A response field the validator rejects must not leave the stream half-open: the stream is reset and the client sees an error. */
     @Test fun invalidResponseFieldResetsStream() =
         h3Test {
-            H3Pair.open().use { p ->
+            H3Pair.open().useScoped { p ->
                 launch {
                     val r = p.server.acceptRequest()
                     assertFailsWith<IllegalArgumentException> {
@@ -541,7 +542,7 @@ class RequestTest {
     /** A request body the application never reads is stopped with H3_NO_ERROR once the response is complete (RFC 9114 section 4.1). */
     @Test fun unreadBodyIsStoppedAfterResponse() =
         h3Test {
-            H3Pair.open().use { p ->
+            H3Pair.open().useScoped { p ->
                 val served = CompletableDeferred<io.kuicksilver.http3.Http3ServerRequest>()
                 launch {
                     val r = p.server.acceptRequest()
@@ -604,7 +605,7 @@ class RequestTest {
      */
     @Test fun unreadBodiesDoNotExhaustStreamCredit() =
         h3Test {
-            H3Pair.open(serverQuic = quicConfig { maxBidiStreams = 3 }).use { p ->
+            H3Pair.open(serverQuic = quicConfig { maxBidiStreams = 3 }).useScoped { p ->
                 launch {
                     while (true) {
                         val r = p.server.acceptRequest()

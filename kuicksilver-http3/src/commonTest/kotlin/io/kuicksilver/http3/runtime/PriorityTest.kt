@@ -11,6 +11,7 @@ import io.kuicksilver.http3.Http3ServerRequest
 import io.kuicksilver.http3.QuicPair
 import io.kuicksilver.http3.frame.ControlFrames
 import io.kuicksilver.http3.frame.FrameType
+import io.kuicksilver.http3.useScoped
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.StreamPriority
 import kotlinx.coroutines.delay
@@ -44,7 +45,7 @@ class PriorityTest {
 
     @Test fun headerAppliedOnServer() =
         h3Test {
-            H3Pair.open().use { p ->
+            H3Pair.open().useScoped { p ->
                 launch { p.client.request(Http3Request("GET", authority = "server.test", path = "/", priority = StreamPriority(1, true))) }
                 val r = p.server.acceptRequest()
                 assertEquals(StreamPriority(1, true), r.priority.value)
@@ -156,7 +157,7 @@ class PriorityTest {
 
     @Test fun clientUpdatePriorityReachesServer() =
         h3Test {
-            H3Pair.open().use { p ->
+            H3Pair.open().useScoped { p ->
                 var served: Http3ServerRequest? = null
                 launch {
                     val r = p.server.acceptRequest()

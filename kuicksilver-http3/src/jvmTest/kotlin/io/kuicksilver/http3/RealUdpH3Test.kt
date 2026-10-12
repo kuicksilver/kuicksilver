@@ -69,8 +69,8 @@ class RealUdpH3Test {
                                 }.awaitAll()
                         }
                     assertEquals((0 until 100).map { "hello /$it" }, bodies)
+                    serving.cancel() // before the client closes: a finish() still running would fail on that close
                     conn.close()
-                    serving.cancel()
                 } finally {
                     client.close()
                     server.close()

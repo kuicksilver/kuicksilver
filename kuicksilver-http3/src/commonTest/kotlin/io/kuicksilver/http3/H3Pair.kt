@@ -199,6 +199,16 @@ internal class H3Pair(
     }
 }
 
+/**
+ * [use] for a [QuicPair] or [H3Pair] whose test launches the peer side (usually the server) next to the client: [block]
+ * runs in its own scope, so the pair closes only after every coroutine [block] launched has finished. With plain [use]
+ * those coroutines belong to the enclosing test scope, and when the client side returns first the pair is closed under
+ * a server coroutine that is still writing; the failure that close provokes then fails the test (run 38292521169,
+ * ExtendedConnectTest.streamCarriesThePeersFields and LimitsTest.responseHeadersTooLargeOnClient on the Linux arm64
+ * runner). A coroutine that runs until cancelled is cancelled by the test before [block] returns.
+ */
+internal suspend fun <P : AutoCloseable, R> P.useScoped(block: suspend CoroutineScope.(P) -> R): R = use { coroutineScope { block(it) } }
+
 /** Reads to the end: ktor-io reports a cancelled channel as EOF with the cause in closedCause, so surface it. */
 internal suspend fun ByteReadChannel.readAllBytes(): ByteArray {
     val out = kotlinx.io.Buffer()

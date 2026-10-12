@@ -46,6 +46,7 @@ import io.kuicksilver.tls.tlsConfig
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -251,6 +252,8 @@ class ClientH3Test {
                                 }.awaitAll()
                         assertEquals(listOf("ok", "ok", "ok"), bodies)
                         assertEquals(2, connections)
+                        // the server stops before the client closes: a finish() still running would fail on that close
+                        serving.cancelAndJoin()
                     }
                 } finally {
                     serving.cancel()

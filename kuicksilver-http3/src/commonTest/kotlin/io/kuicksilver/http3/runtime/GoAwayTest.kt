@@ -15,6 +15,7 @@ import io.kuicksilver.http3.frame.FrameType
 import io.kuicksilver.http3.frame.StreamType
 import io.kuicksilver.http3.message.GlitchLimiter
 import io.kuicksilver.http3.readAllBytes
+import io.kuicksilver.http3.useScoped
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.Initiator
 import io.kuicksilver.quic.QuicException
@@ -50,7 +51,7 @@ class GoAwayTest {
 
     @Test fun twoPhaseIds() =
         h3Test {
-            QuicPair.open().use { q ->
+            QuicPair.open().useScoped { q ->
                 val (c, s) = q.connect()
                 val server = Http3Connection.server(s)
                 val raw = RawPeer(c)
@@ -104,7 +105,7 @@ class GoAwayTest {
 
     @Test fun goAwayFailsOnlyHigherStreams() =
         h3Test {
-            QuicPair.open().use { q ->
+            QuicPair.open().useScoped { q ->
                 val (c, s) = q.connect()
                 val client = Http3Connection.client(c)
                 val raw = RawPeer(s)
@@ -125,7 +126,7 @@ class GoAwayTest {
 
     @Test fun requestAfterGoAwayNotProcessed() =
         h3Test {
-            H3Pair.open().use { p ->
+            H3Pair.open().useScoped { p ->
                 launch { runCatching { p.server.goAway() } }
                 p.client.goAwayReceived
                     .filterNotNull()
@@ -153,7 +154,7 @@ class GoAwayTest {
 
     @Test fun rejectedResetIsRetrySafe() =
         h3Test {
-            QuicPair.open().use { q ->
+            QuicPair.open().useScoped { q ->
                 val (c, s) = q.connect()
                 val client = Http3Connection.client(c)
                 RawPeer(s).openControl()
@@ -231,7 +232,7 @@ class GoAwayTest {
 
     @Test fun inFlightRequestsCompleteBeforeIdleClose() =
         h3Test {
-            H3Pair.open().use { p ->
+            H3Pair.open().useScoped { p ->
                 val serving =
                     launch {
                         val r = p.server.acceptRequest()

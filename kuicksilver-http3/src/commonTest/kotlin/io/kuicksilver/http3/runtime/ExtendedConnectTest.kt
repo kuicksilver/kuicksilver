@@ -19,6 +19,7 @@ import io.kuicksilver.http3.frame.VarInt
 import io.kuicksilver.http3.http3Settings
 import io.kuicksilver.http3.message.CapsuleParser
 import io.kuicksilver.http3.readAllBytes
+import io.kuicksilver.http3.useScoped
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.DatagramSendResult
 import io.kuicksilver.quic.DatagramUnsupportedReason
@@ -88,7 +89,7 @@ class ExtendedConnectTest {
 
     @Test fun connectWaitsForPeerSettings() =
         h3Test {
-            QuicPair.open().use { q ->
+            QuicPair.open().useScoped { q ->
                 val (c, s) = q.connect()
                 val client = Http3Connection.client(c)
                 val raw = RawPeer(s)
@@ -109,7 +110,7 @@ class ExtendedConnectTest {
 
     @Test fun bidirectionalEcho() =
         h3Test {
-            H3Pair.open(serverSettings = connectOn).use { p ->
+            H3Pair.open(serverSettings = connectOn).useScoped { p ->
                 launch {
                     val r = p.server.acceptRequest()
                     assertEquals("echo", r.protocol)
@@ -131,7 +132,7 @@ class ExtendedConnectTest {
     /** The server closing its direction (FIN) leaves the client's direction open (RFC 9114 section 4.4). */
     @Test fun serverHalfCloseKeepsClientDirection() =
         h3Test {
-            H3Pair.open(serverSettings = connectOn).use { p ->
+            H3Pair.open(serverSettings = connectOn).useScoped { p ->
                 val got =
                     async {
                         val s = p.server.acceptRequest().acceptConnect()
@@ -151,7 +152,7 @@ class ExtendedConnectTest {
     /** A tunnel that ended cleanly both ways releases its datagram registration on both sides. */
     @Test fun cleanEndUnregistersDatagrams() =
         h3Test {
-            H3Pair.open(serverSettings = connectOn).use { p ->
+            H3Pair.open(serverSettings = connectOn).useScoped { p ->
                 launch {
                     val s = p.server.acceptRequest().acceptConnect()
                     s.input.copyTo(s.output)
@@ -182,7 +183,7 @@ class ExtendedConnectTest {
     /** The 2xx's fields reach the client (e.g. `sec-websocket-protocol`, RFC 9220 section 3); found by the vendored Ktor contract. */
     @Test fun streamCarriesThePeersFields() =
         h3Test {
-            H3Pair.open(serverSettings = connectOn).use { p ->
+            H3Pair.open(serverSettings = connectOn).useScoped { p ->
                 launch {
                     val r = p.server.acceptRequest()
                     val s = r.acceptConnect(Http3Headers(listOf("sec-websocket-protocol" to "chat")))
@@ -237,7 +238,7 @@ class ExtendedConnectTest {
 
     @Test fun rejectedConnectReportsStatus() =
         h3Test {
-            H3Pair.open(serverSettings = connectOn).use { p ->
+            H3Pair.open(serverSettings = connectOn).useScoped { p ->
                 launch {
                     val w = p.server.acceptRequest().respond(501)
                     runCatching { w.finish() }
@@ -252,7 +253,7 @@ class H3DatagramTest {
 
     @Test fun datagramsPerStream() =
         h3Test {
-            H3Pair.open(serverSettings = connectOn).use { p ->
+            H3Pair.open(serverSettings = connectOn).useScoped { p ->
                 p.client.peerSettings
                     .filterNotNull()
                     .first()
@@ -335,7 +336,7 @@ class H3DatagramTest {
                             enableConnectProtocol = true
                             h3Datagram = false
                         },
-                ).use { p ->
+                ).useScoped { p ->
                     launch { p.server.acceptRequest().acceptConnect() }
                     val s = p.client.connect(connectReq(), "echo")
                     assertEquals(

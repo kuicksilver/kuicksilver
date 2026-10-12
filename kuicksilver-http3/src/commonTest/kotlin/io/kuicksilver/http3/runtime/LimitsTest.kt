@@ -15,6 +15,7 @@ import io.kuicksilver.http3.frame.FrameHeaders
 import io.kuicksilver.http3.frame.FrameType
 import io.kuicksilver.http3.http3Settings
 import io.kuicksilver.http3.readAllBytes
+import io.kuicksilver.http3.useScoped
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.QuicException
 import kotlinx.coroutines.CompletableDeferred
@@ -36,7 +37,7 @@ class LimitsTest {
     /** A field section above the peer's SETTINGS_MAX_FIELD_SECTION_SIZE fails locally, before a stream is opened (RFC 9114 section 4.2.2). */
     @Test fun peerMaxFieldSectionSizeEnforcedOnSend() =
         h3Test {
-            H3Pair.open(serverSettings = http3Settings { maxFieldSectionSize = 1000 }).use { p ->
+            H3Pair.open(serverSettings = http3Settings { maxFieldSectionSize = 1000 }).useScoped { p ->
                 withTimeout(5.seconds) { p.client.peerSettings.first { it != null } }
                 val e =
                     assertFailsWith<Http3Exception.FieldSectionTooLarge> {
@@ -54,7 +55,7 @@ class LimitsTest {
     /** The server's response above the client's SETTINGS_MAX_FIELD_SECTION_SIZE fails `respond` instead of being sent. */
     @Test fun responseAbovePeerLimitFailsRespond() =
         h3Test {
-            H3Pair.open(clientSettings = http3Settings { maxFieldSectionSize = 1000 }).use { p ->
+            H3Pair.open(clientSettings = http3Settings { maxFieldSectionSize = 1000 }).useScoped { p ->
                 withTimeout(5.seconds) { p.server.peerSettings.first { it != null } }
                 val resp = async { runCatching { p.client.request(get()) } }
                 val r = p.server.acceptRequest()
@@ -70,7 +71,7 @@ class LimitsTest {
     /** Server trailers above the client's limit reset the stream (H3_INTERNAL_ERROR) instead of leaving it half-open. */
     @Test fun trailersAbovePeerLimitResetTheStream() =
         h3Test {
-            H3Pair.open(clientSettings = http3Settings { maxFieldSectionSize = 1000 }).use { p ->
+            H3Pair.open(clientSettings = http3Settings { maxFieldSectionSize = 1000 }).useScoped { p ->
                 withTimeout(5.seconds) { p.server.peerSettings.first { it != null } }
                 val resp = async { p.client.request(get()) }
                 val r = p.server.acceptRequest()
@@ -90,7 +91,7 @@ class LimitsTest {
     /** Request trailers above the server's limit: the caller of `request` or of the response body sees FieldSectionTooLarge. */
     @Test fun requestTrailersAbovePeerLimitReachTheCaller() =
         h3Test {
-            H3Pair.open(serverSettings = http3Settings { maxFieldSectionSize = 1000 }).use { p ->
+            H3Pair.open(serverSettings = http3Settings { maxFieldSectionSize = 1000 }).useScoped { p ->
                 withTimeout(5.seconds) { p.client.peerSettings.first { it != null } }
                 fun post(before: CompletableDeferred<Unit>? = null) =
                     Http3Request("POST", authority = "server.test", path = "/", body = ByteReadChannel("ping"), trailers = {
@@ -209,15 +210,16 @@ class LimitsTest {
     /** Receive side: a raw server (which ignores our SETTINGS) answers with 70 KiB of fields; a compliant sender refuses them first. */
     @Test fun responseHeadersTooLargeOnClient() =
         h3Test {
-            QuicPair.open().use { q ->
+            QuicPair.open().useScoped { q ->
                 val (c, s) = q.connect()
                 val client = Http3Connection.client(c)
                 val raw = RawPeer(s)
                 raw.openControl()
                 launch {
                     val st = s.acceptBidi()
-                    runCatching {
-                        st.input.readAllBytes()
+                    st.input.readAllBytes()
+                    // the client stops the stream on the oversized section, possibly before this write returns
+                    peerMayHaveClosed {
                         st.output.writeFully(raw.headers(st.id, listOf(":status" to "200") + big))
                         st.output.flushAndClose()
                     }

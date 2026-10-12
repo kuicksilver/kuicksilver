@@ -12,6 +12,7 @@ import io.kuicksilver.http3.frame.FrameHeaders
 import io.kuicksilver.http3.frame.FrameType
 import io.kuicksilver.http3.frame.StreamType
 import io.kuicksilver.http3.http3Settings
+import io.kuicksilver.http3.useScoped
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.Initiator
 import io.kuicksilver.quic.QuicException
@@ -78,7 +79,7 @@ class ConnectionTest {
     @Test fun greaseSentByDefault() =
         h3Test {
             for (grease in listOf(true, false)) {
-                QuicPair.open().use { q ->
+                QuicPair.open().useScoped { q ->
                     val (c, s) = q.connect()
                     val server = async { Http3Connection.server(s, http3Settings { this.grease = grease }) }
                     val types = ArrayList<Long>()

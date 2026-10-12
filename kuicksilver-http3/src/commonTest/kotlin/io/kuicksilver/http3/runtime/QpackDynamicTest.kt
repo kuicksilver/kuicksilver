@@ -15,6 +15,7 @@ import io.kuicksilver.http3.frame.StreamType
 import io.kuicksilver.http3.frame.VarInt
 import io.kuicksilver.http3.http3Settings
 import io.kuicksilver.http3.qpack.QpackEncoder
+import io.kuicksilver.http3.useScoped
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.QuicConnection
 import io.kuicksilver.quic.QuicStream
@@ -44,7 +45,7 @@ class QpackDynamicTest {
 
     @Test fun dynamicTableUsedWhenBothEnable() =
         h3Test {
-            H3Pair.open(clientSettings = dyn, serverSettings = dyn).use { p ->
+            H3Pair.open(clientSettings = dyn, serverSettings = dyn).useScoped { p ->
                 p.client.peerSettings
                     .filterNotNull()
                     .first()
@@ -68,7 +69,7 @@ class QpackDynamicTest {
 
     @Test fun defaultIsStaticOnly() =
         h3Test {
-            H3Pair.open().use { p ->
+            H3Pair.open().useScoped { p ->
                 launch {
                     repeat(10) {
                         p.server
