@@ -55,12 +55,16 @@ internal class MemoryNet {
         return io
     }
 
+    /** Datagrams it returns true for are lost (after [tap] saw them): an attacker who keeps the client's flight. */
+    @Volatile var drop: ((InetSocketAddress, InetSocketAddress, ByteArray) -> Boolean)? = null
+
     fun deliver(
         from: InetSocketAddress,
         to: InetSocketAddress,
         bytes: ByteArray,
     ) {
         tap?.invoke(from, to, bytes)
+        if (drop?.invoke(from, to, bytes) == true) return
         val d = delay
         if (d ==
             Duration.ZERO

@@ -1,6 +1,6 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
-@file:OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+@file:OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class, kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
 
 package io.kuicksilver.http3.runtime
 
@@ -34,6 +34,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlin.concurrent.atomics.incrementAndFetch
 
 /** A request stream accepted by a server: HEADERS first, then the body pump (RFC 9114 section 4.1). */
 internal suspend fun handleRequestStream(
@@ -123,6 +124,7 @@ internal suspend fun handleRequestStream(
                 reject425(st)
                 return@with
             } else {
+                earlyHeldForHandshake.incrementAndFetch()
                 try {
                     quic.awaitHandshake()
                 } catch (e: CancellationException) {

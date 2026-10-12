@@ -78,6 +78,10 @@ internal class H3Session(
     /** Requests repeated after a 425 Too Early (RFC 8470 section 5.2). */
     internal var early425Retries = 0
 
+    /** Test hook: requests that came in 0-RTT and waited for the handshake (RFC 8470 gate). */
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    internal val earlyHeldForHandshake = kotlin.concurrent.atomics.AtomicInt(0)
+
     /** The path the connection sends on now (`remoteAddress` follows migration, RFC 9000 section 9). */
     var currentPath: QuicPath = quic.paths.first()
         private set

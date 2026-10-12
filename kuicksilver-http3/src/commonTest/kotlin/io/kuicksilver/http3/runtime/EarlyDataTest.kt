@@ -57,6 +57,12 @@ class EarlyDataTest {
         @kotlin.concurrent.Volatile var last: Seen? = null
         val executions = AtomicInt(0)
 
+        /** Server connections in accept order (one writer, the accept loop). */
+        @kotlin.concurrent.Volatile var accepted: List<Http3Connection> = emptyList()
+
+        /** Requests that came in 0-RTT and the server's gate held for the handshake (RFC 8470), over all connections. */
+        val heldEarly: Int get() = accepted.sumOf { it.session.earlyHeldForHandshake.load() }
+
         // accept()/acceptRequest() end with an exception when the endpoint or a connection closes: on Kotlin/Native an
         // unhandled one would end the test process
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default + kotlinx.coroutines.CoroutineExceptionHandler { _, _ -> })
@@ -90,6 +96,7 @@ class EarlyDataTest {
             scope.launch {
                 while (true) {
                     val c = server.accept()
+                    accepted = accepted + c
                     scope.launch {
                         // each connection on its own: a closed one must not end the accept loop
                         while (true) {
@@ -175,8 +182,6 @@ class EarlyDataTest {
                 withTimeout(20.seconds) {
                     f.start()
                     f.warmUp()
-                    val flight = kotlinx.coroutines.channels.Channel<ByteArray>(kotlinx.coroutines.channels.Channel.UNLIMITED)
-                    f.net.tap = { from, to, bytes -> if (to.port == 443 && from.port == 1111) flight.trySend(bytes) }
                     f.net.delay = 50.milliseconds
                     val c = f.client.connectEarly(f.server.localAddress, H3Fixtures.client())
                     assertTrue(!c.quic.isHandshakeComplete, "connectEarly returned before the handshake")
@@ -189,14 +194,43 @@ class EarlyDataTest {
                             .readAllBytes()
                             .decodeToString(),
                     )
-                    f.net.tap = null
+                    c.quic.awaitHandshake()
+                    assertEquals(true, c.quic.earlyDataAccepted, "the server accepted the 0-RTT that carried the POST")
+                    assertEquals(1, f.heldEarly, "the POST arrived in 0-RTT and the gate held it")
                     val last = f.last!!
-                    assertTrue(!last.early && last.handshakeDone, "the early POST waited for the handshake")
+                    assertTrue(!last.early && last.handshakeDone, "the early POST ran only after the handshake")
                     assertEquals(1, f.executions.load())
-                    // an attacker replays the client's whole flight from another address: no handshake completes, nothing runs
-                    flight.close()
-                    f.net.delay = kotlin.time.Duration.ZERO // delivered at once and in order, ahead of the next connection
-                    for (b in flight) f.net.deliver(InetSocketAddress("10.0.0.9", 9999), InetSocketAddress("10.0.0.2", 443), b)
+                    c.close()
+
+                    // The replay, stopped by the HTTP/3 gate alone: an attacker on the path keeps a client's datagrams from the
+                    // server and sends copies from its own address, so the replay register sees the ticket for the first time
+                    // and admits it; the server's answers go to the attacker, who cannot complete the handshake.
+                    f.warmUp() // a fresh ticket for the victim
+                    f.net.delay = kotlin.time.Duration.ZERO // delivered at once, in order
+                    val attacker = InetSocketAddress("10.0.0.9", 9999)
+                    val fromClient = { from: InetSocketAddress, to: InetSocketAddress -> to.port == 443 && from.port == 1111 }
+                    // the victim's packets are all long-header (its handshake never completes): told apart by their DCID
+                    val dcid = { b: ByteArray -> if (b[0].toInt() and 0x80 != 0) b.copyOfRange(6, 6 + b[5]) else null }
+                    var victim: ByteArray? = null
+                    val isVictim = { from: InetSocketAddress, to: InetSocketAddress, b: ByteArray ->
+                        fromClient(from, to) && dcid(b)?.contentEquals(victim) == true
+                    }
+                    f.net.tap = { from, to, bytes ->
+                        if (fromClient(from, to) && victim == null) victim = dcid(bytes)
+                        if (isVictim(from, to, bytes)) f.net.deliver(attacker, to, bytes)
+                    }
+                    f.net.drop = isVictim
+                    val v = f.client.connectEarly(f.server.localAddress, H3Fixtures.client())
+                    v.session.testSendUnsafeEarly = true
+                    val pending = f.scope.launch { v.request(f.post()) }
+                    while (f.heldEarly < 2) kotlinx.coroutines.yield()
+                    assertEquals(
+                        true,
+                        f.accepted
+                            .last()
+                            .quic.earlyDataAccepted,
+                        "the register admitted the replay: only the gate is left",
+                    )
                     // a later request on a new connection is processed after the replayed datagrams (one loop, FIFO)
                     val d = f.client.connect(f.server.localAddress, H3Fixtures.client())
                     assertEquals(
@@ -207,7 +241,9 @@ class EarlyDataTest {
                             .readAllBytes()
                             .decodeToString(),
                     )
-                    assertEquals(2, f.executions.load(), "the replayed POST never ran")
+                    assertEquals(2, f.executions.load(), "the replayed POST never ran: its handshake cannot complete")
+                    pending.cancel()
+                    v.close()
                 }
             }
         }
