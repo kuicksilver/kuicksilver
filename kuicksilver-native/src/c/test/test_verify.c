@@ -121,4 +121,22 @@ static void test_system_store(void) {
     CHECK(rc == KSL_OK, "system certificate store located on this host (SSL_CERT_FILE/DIR or distribution paths)"); if (rc != KSL_OK) printf("  %s\n", m);
     ksl_ctx_free(c); END();
 }
-void run_verify_review(void) { test_review_alerts(); test_system_store(); }
+/* KSL_SET_VERIFY_NAME may be called more than once (a config applied to a session, then a redirect): the previous identifier of the
+   other type must not linger in the X509_VERIFY_PARAM, or a host mismatch would be reported against the stale host. */
+static void test_name_switch(void) {
+    SECTION("verify_name_switch_clears_other_type");
+    const char *seq[2][2] = {{"wrong.test", "127.0.0.1"}, {"127.0.0.1", "server.test"}};
+    for (int i = 0; i < 2; i++) {
+        ksl_ctx *cc = client_ctx("test-ca", KSL_VERIFY_OPENSSL), *sc = server_ctx("server");
+        ksl_ssl *c = ksl_ssl_new(cc, KSL_MODE_QUIC), *s = ksl_ssl_new(sc, KSL_MODE_QUIC);
+        ksl_ssl_set(c, KSL_SET_SNI, (const uint8_t *)"server.test", sizeof "server.test" - 1);
+        CHECK(ksl_ssl_set(c, KSL_SET_VERIFY_NAME, (const uint8_t *)seq[i][0], strlen(seq[i][0])) == KSL_OK, "first verify name accepted");
+        CHECK(ksl_ssl_set(c, KSL_SET_VERIFY_NAME, (const uint8_t *)seq[i][1], strlen(seq[i][1])) == KSL_OK, "second verify name accepted");
+        ksl_quic_set_transport_params(c, TP, sizeof TP); ksl_quic_set_transport_params(s, TP, sizeof TP); side cs = {0}, ss = {0}; pump(c, s, &cs, &ss, 40, NULL, NULL);
+        CHECK(cs.done && ss.done, "only the last verify name is checked");
+        if (!(cs.done && ss.done)) { int al; last_code(c, &al); printf("  %s -> %s: alert=%d\n", seq[i][0], seq[i][1], al); }
+        ksl_ssl_free(c); ksl_ssl_free(s); ksl_ctx_free(cc); ksl_ctx_free(sc);
+    }
+    END();
+}
+void run_verify_review(void) { test_review_alerts(); test_system_store(); test_name_switch(); }
