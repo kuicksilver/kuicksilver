@@ -39,7 +39,7 @@ The accelerated side lives in `ksl` as `ksl_udp_*` (`kuicksilver-native/src/c/ks
 ### `KslDatagramIo` and servers on Native and Android
 
 - `KslDatagramIo` (`kuicksilver-quic/src/commonMain`, common code) is a `DatagramIo` over `KslUdpSocket`: `PacketBatch` slots go to C as they are; `receive` blocks a `Dispatchers.IO` thread in 100 ms slices until the first datagram or close (like the NIO implementation with a selector; a separate receiver coroutine with a ring of two batches, as originally planned, is not needed — the endpoint loop waits on `receive` anyway); peer addresses are a 64-entry cache keyed by the 20 bytes → one `InetSocketAddress` instance per peer (the core compares paths by reference), destination addresses are a cache of the last 4 by identity. `capabilities` (`StateFlow`) are re-read from `KSL_UDP_GET_CAPS` every 256 sends and after a short send: a GSO/ECN fallback in C shows up in them with that delay, the datagrams themselves are not lost during the fallback.
-- `DatagramIo.open(local, prefer = Accelerated)` returns `KslDatagramIo` where `KslUdpSocket.supported` (Linux JVM/Native, Android), otherwise the portable one; `IoPreference.Portable` always returns the portable one (NIO tests request it explicitly).
+- `DatagramIo.open(local, prefer = Accelerated)` returns `KslDatagramIo` where `KslUdpSocket.supported` (Linux JVM/Native, Android; from K7 also Apple JVM/Native), otherwise the portable one; `IoPreference.Portable` always returns the portable one (NIO tests request it explicitly).
 - A server on Native is allowed only with the accelerated transport: `QuicEndpoint.bind` with `server` on Apple/Windows still throws `UnsupportedOperationException` (`NativeServerGuardTest`), on Linux it starts a server (`NativeServerLoopbackTest.nativeServerServes10MiB`, `test.kexe` x64/arm64 in Docker). On Android the server also worked on NIO; `AndroidServerTest.serverOnDeviceServesLoopbackClient` (emulator API 34, `androidConnectedCheck`) goes through the accelerated path: `ecn=Capable`, `mtu=1452`.
 - Verification on the JVM: `KslDatagramIoTest` (Linux in Docker, both architectures): a batch of 32, capabilities, GSO in one `sendmsg` (the `KSL_UDP_GET_STATS` counter), ECN on loopback and switching marks off after a failed validation, reuse of the address instance, waking `receive` by close, 50 MiB through `KslQuicCrypto` with `ecnState == Capable` and `pathMtu == 1452` on both sides.
 
@@ -49,3 +49,40 @@ The accelerated side lives in `ksl` as `ksl_udp_*` (`kuicksilver-native/src/c/ks
 - native-tls review: `EINVAL` caused by the destination (a reply to a forged Initial from port 0, a link-local IPv6 peer — the 20-byte address has no scope id) was read as the kernel refusing the `IP_TOS` cmsg or GSO: ECN and GSO were switched off forever, and a second `EINVAL` produced `KSL_ERROR`, and `EndpointLoop` lost the rest of the batch. Now a repeated single send (without a mark, without GSO) decides the cause, and destination errors are a slot loss; link-local IPv6 is not supported: `ksl_udp_recv` drops datagrams from `fe80::/10`. Tests (Linux): `udp_bad_destination_keeps_ecn_and_gso`, `udp_link_local_destination_is_slot_loss`.
 - `KslUdpSocket`: the getters `grantedFlags`/`gsoMaxSegments`/`batch`/`stats` enter the native object through the same counter as `send`/`receive`, and after `shutdown` return the last value read (use-after-free ruled out).
 - `EndpointLoop.close()`: the socket is closed first (waking a receive blocked in a native call), the receiver is awaited, and only then are the `PacketBatch`es freed — on Native the receive writes into their memory (`RuntimeRobustnessTest.closeWaitsForTheReceiverBeforeFreeingItsBatch`); a receive error closes the whole endpoint; a send error loses the packet, not the connection (`receiveFailureClosesTheEndpoint`, `oneFailedSendDoesNotKillTheEndpoint`).
+
+## Implementation in K7 — accelerated UDP on Apple (2026-10-13)
+
+`ksl_udp_*` now builds and runs on Apple (`#if defined(__linux__) || defined(__APPLE__)`, `KSL_UDP_ACCEL` in
+`ksl_udp_internal.h`); only Windows keeps the `KSL_E_NOT_SUPPORTED` stubs. So a QUIC server runs on Kotlin/Native macOS
+(the `NativeServerGuardTest` refusal remains for Windows), the Ktor engine serves HTTP/3 there, and the JVM on macOS uses
+`KslDatagramIo` by default instead of NIO (ECN read and written per datagram, DF, so PMTUD reaches 1452 on loopback).
+
+- **No GSO/GRO.** Darwin has no `UDP_SEGMENT`/`UDP_GRO`. The run-joining code is not compiled there, a batch leaves as one
+  `sendmsg` per datagram and arrives as one `recvmsg` per datagram (still up to 64 per native call, so the JNI/cinterop
+  crossing is batched); `KSL_UDP_GET_CAPS` never grants GSO/GRO and `IoCapabilities` reports `gsoMaxSegments = 0`,
+  `gro = false`. The private `sendmsg_x`/`recvmsg_x` are not used (undocumented; quic-go does not use them either).
+- **`poll`, not kqueue.** A receive waits on two descriptors, the socket and the shutdown pipe, from a blocking slice of
+  at most 100 ms on its own `Dispatchers.IO` thread. kqueue pays off when one thread multiplexes many sockets (msquic
+  `datapath_kqueue.c` runs its own event loop over every socket of the process); here it would add a kqueue descriptor
+  per socket and a second receive loop for the same two-descriptor wait, while `poll` is POSIX and keeps one receive path
+  for Linux and Apple.
+- **DF.** Darwin has no `IP_MTU_DISCOVER` modes: DF is `IP_DONTFRAG` (IPv4) or `IPV6_DONTFRAG` (the socket is
+  IPv6-only), as in quic-go `sys_conn_df_darwin.go`. There is no `_PROBE` equivalent; should the kernel ever refuse a
+  size after a forged ICMP PTB (the CVE-2024-53259 shape on Linux `_DO`), `EMSGSIZE` loses only that slot and the PMTUD
+  black-hole rule falls back to 1200 — a residual that is not tested (no ICMP injection on the macOS host).
+- **ECN.** Marks leave as the `IP_TOS`/`IPV6_TCLASS` cmsg as on Linux; Darwin labels the received IPv4 cmsg `IP_RECVTOS`
+  (one byte) rather than `IP_TOS`, and both are accepted (as in msquic and quic-go `sys_conn_helper_darwin.go`). Loopback
+  keeps the marks: `test_udp.c` checks ECT(0) and CE over IPv4 and ECT(0) over IPv6, and `NativeServerLoopbackTest`
+  ends with `ecnState == Capable` on `macosArm64`.
+- **No `SO_REUSEPORT`.** Darwin accepts the option but hands a port's unicast datagrams to one of the sockets (the last
+  bound), with no flow hashing: with four loops, `MultiLoopTest` saw 100 of 100 connections on one loop. `ksl_udp` never
+  sets or grants `KSL_UDP_REUSEPORT` there and `LoopGroup` refuses `loops > 1` with `UnsupportedOperationException`.
+- **Other Darwin details.** `pipe` + `fcntl(O_NONBLOCK, FD_CLOEXEC)` instead of `pipe2`, the same for the socket instead
+  of `SOCK_CLOEXEC | SOCK_NONBLOCK`; `sin_len`/`sin6_len` set; `SO_NOSIGPIPE`; `SO_RCVBUF`/`SO_SNDBUF` start at 7 MB and
+  halve until the kernel accepts them (`kern.ipc.maxsockbuf` is 8 MB including overhead).
+- **iOS.** The same C compiles for `iosArm64`/`iosSimulatorArm64`, and `bind` with a server is not refused there: nothing
+  in the platform forbids a listening UDP socket in an app. iOS is compiled and linked only; its tests have not run.
+- **Verification (macOS arm64).** `tools/c-test.sh macos-arm64` (the whole `test_udp.c`, with Apple variants for the
+  caps, DF and REUSEPORT checks); `KslUdpSocketTest`, `KslDatagramIoTest` (incl. 50 MiB with `ecnState == Capable` and
+  `pathMtu == 1452`) on the JVM; `NativeServerLoopbackTest` (10 MiB), `NativeServerGuardTest`, and the Ktor engine's
+  `NativeServerH3Test` on `macosArm64`.

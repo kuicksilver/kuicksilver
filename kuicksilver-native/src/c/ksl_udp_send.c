@@ -1,17 +1,21 @@
 /* Copyright 2026 The Kuicksilver Authors
  * SPDX-License-Identifier: Apache-2.0 */
 /* Accelerated UDP, sending (ADR-0006): batched sendmsg, runs of equal datagrams joined with UDP_SEGMENT (GSO), the ECN mark
- * as a per-message cmsg, and the fallbacks when the kernel refuses either. */
+ * as a per-message cmsg, and the fallbacks when the kernel refuses either. Apple has no GSO: gso_on stays 0 and every datagram is its own sendmsg. */
 #include "ksl_udp_internal.h"
 
-#ifdef __linux__
+#ifdef KSL_UDP_ACCEL
 static int send_one(ksl_udp *u, const uint8_t *buf, uint32_t len, const uint8_t *addr, uint8_t ecn, uint16_t gso_size, int *errnum) {
     struct sockaddr_storage ss; socklen_t sl = to_sockaddr(addr, &ss);
     struct iovec iov = { (void *)buf, len };
     uint8_t cbuf[CMSG_SPACE(sizeof(uint16_t)) + CMSG_SPACE(sizeof(int))]; memset(cbuf, 0, sizeof cbuf);   /* CMSG_NXTHDR reads the next header's length: garbage there answers NULL and the TOS cmsg would be lost */
     struct msghdr m; memset(&m, 0, sizeof m); m.msg_name = &ss; m.msg_namelen = sl; m.msg_iov = &iov; m.msg_iovlen = 1; m.msg_control = cbuf; m.msg_controllen = sizeof cbuf;
     struct cmsghdr *c = CMSG_FIRSTHDR(&m); size_t used = 0;
+#ifndef __linux__
+    (void)gso_size;   /* no UDP_SEGMENT: callers never join a run */
+#else
     if (gso_size) { c->cmsg_level = SOL_UDP; c->cmsg_type = UDP_SEGMENT; c->cmsg_len = CMSG_LEN(sizeof(uint16_t)); memcpy(CMSG_DATA(c), &gso_size, sizeof gso_size); used += CMSG_SPACE(sizeof(uint16_t)); c = CMSG_NXTHDR(&m, c); }
+#endif
     if (ecn && u->tos_cmsg_on && c) { int tos = ecn & 3; c->cmsg_level = u->family == AF_INET ? IPPROTO_IP : IPPROTO_IPV6; c->cmsg_type = u->family == AF_INET ? IP_TOS : IPV6_TCLASS; c->cmsg_len = CMSG_LEN(sizeof(int)); memcpy(CMSG_DATA(c), &tos, sizeof tos); used += CMSG_SPACE(sizeof(int)); }
     m.msg_controllen = used; if (!used) m.msg_control = NULL;
     u->sends++;
@@ -67,6 +71,6 @@ int ksl_udp_send(ksl_udp *u, uint8_t *const *bufs, const uint32_t *lens, const u
     return KSL_OK;
 }
 
-#else /* not Linux: the portable DatagramIo does the work */
+#else /* neither Linux nor Apple: the portable DatagramIo does the work */
 int ksl_udp_send(ksl_udp *u, uint8_t *const *bufs, const uint32_t *lens, const uint8_t *addrs, const uint8_t *ecn, uint32_t n, uint32_t *sent) { (void)u; (void)bufs; (void)lens; (void)addrs; (void)ecn; (void)n; if (sent) *sent = 0; return KSL_ERROR; }
 #endif

@@ -694,7 +694,7 @@ internal class EndpointLoop private constructor(
                 io !is io.kuicksilver.quic.KslDatagramIo
             ) {
                 io.close()
-                throw UnsupportedOperationException("Native server requires the accelerated DatagramIo (Linux in K3)")
+                throw UnsupportedOperationException("Native server requires the accelerated DatagramIo (Linux, Apple)")
             }
             return EndpointLoop(config, io, config.dispatcher ?: ownDispatcher()).also { it.start() }
         }

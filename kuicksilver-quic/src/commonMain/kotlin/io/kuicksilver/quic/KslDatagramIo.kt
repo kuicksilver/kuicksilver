@@ -184,11 +184,14 @@ internal class KslDatagramIo private constructor(
 
     internal fun statsForTest(): KslUdpSocket.Stats = socket.stats
 
+    /** True when the kernel granted SO_REUSEPORT with flow hashing (Linux, Android; never Darwin): several loops may share the port. */
+    internal val reusePortGranted: Boolean get() = socket.grantedFlags and KslUdpSocket.REUSEPORT != 0
+
     companion object {
         private const val PEERS = 64
         private const val REFRESH = 256
 
-        /** Opens the accelerated socket on [local]; null where `ksl_udp` is not available (Apple, Windows) or the address cannot be resolved. */
+        /** Opens the accelerated socket on [local]; null where `ksl_udp` is not available (Windows) or the address cannot be resolved. */
         fun open(
             local: InetSocketAddress,
             reusePort: Boolean = false,

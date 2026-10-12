@@ -14,16 +14,26 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
-/** The accelerated UDP socket (ADR-0006) over `ksl_udp_*`: Linux delivers batches with ECN; elsewhere `open` says so. */
+/** The accelerated UDP socket (ADR-0006) over `ksl_udp_*`: Linux and macOS deliver batches with ECN (GSO/GRO on Linux only); elsewhere `open` says so. */
 class KslUdpSocketTest {
     @BeforeTest fun load() {
         KslLoader.ensureLoaded()
     }
 
+    private val os = System.getProperty("os.name").lowercase()
+    private val linux = os.contains("linux")
+
+    /** Where `ksl_udp` must exist: the tests below run there instead of skipping. */
+    private val accelerated = linux || os.contains("mac")
+
+    @Test fun supportedOnLinuxAndMacos() {
+        assertEquals(accelerated, KslUdpSocket.supported, os)
+    }
+
     private fun loopback() = KslUdpSocket.encodeAddress(byteArrayOf(127, 0, 0, 1), 0)
 
     @Test fun openSendReceive() {
-        if (!KslUdpSocket.supported) return // Apple, Windows: covered by openOnUnsupportedPlatformThrows
+        if (!accelerated) return // Windows: covered by openOnUnsupportedPlatformThrows
         KslUdpSocket.open(loopback(), KslUdpSocket.ECN or KslUdpSocket.GSO or KslUdpSocket.GRO).use { a ->
             KslUdpSocket.open(loopback(), KslUdpSocket.ECN or KslUdpSocket.GRO).use { b ->
                 val n = 8
@@ -61,15 +71,20 @@ class KslUdpSocketTest {
         }
     }
 
-    @Test fun grantedFlagsOnLinux() {
-        if (!KslUdpSocket.supported) return // Apple, Windows: covered by openOnUnsupportedPlatformThrows
+    @Test fun grantedFlags() {
+        if (!accelerated) return // Windows: covered by openOnUnsupportedPlatformThrows
         KslUdpSocket.open(loopback(), KslUdpSocket.ECN or KslUdpSocket.GSO or KslUdpSocket.GRO or KslUdpSocket.DF).use { s ->
             val f = s.grantedFlags
             assertTrue(f and KslUdpSocket.ECN != 0, "ECN")
             assertTrue(f and KslUdpSocket.DF != 0, "DF")
-            assertTrue(f and KslUdpSocket.GSO != 0, "GSO")
-            assertTrue(f and KslUdpSocket.GRO != 0, "GRO")
-            assertTrue(s.gsoMaxSegments >= 2)
+            if (linux) {
+                assertTrue(f and KslUdpSocket.GSO != 0, "GSO")
+                assertTrue(f and KslUdpSocket.GRO != 0, "GRO")
+                assertTrue(s.gsoMaxSegments >= 2)
+            } else {
+                assertEquals(0, f and (KslUdpSocket.GSO or KslUdpSocket.GRO), "Darwin has no UDP_SEGMENT/UDP_GRO")
+                assertEquals(0, s.gsoMaxSegments)
+            }
             assertTrue(s.fd >= 0)
             assertEquals(4, s.localAddress[0].toInt())
             assertTrue(KslUdpSocket.portOf(s.localAddress) > 0)
@@ -77,7 +92,7 @@ class KslUdpSocketTest {
     }
 
     @Test fun closeUnblocksReceive() {
-        if (!KslUdpSocket.supported) return // Apple, Windows: covered by openOnUnsupportedPlatformThrows
+        if (!accelerated) return // Windows: covered by openOnUnsupportedPlatformThrows
         val s = KslUdpSocket.open(loopback(), 0)
         val bufs = Array(1) { PacketBuffer.allocate(64) }
         var result = -2
@@ -99,9 +114,9 @@ class KslUdpSocketTest {
         assertEquals(0, s.receive(bufs, IntArray(1), ByteArray(KslUdpSocket.ADDR_LEN), ByteArray(1), 1, 10))
     }
 
-    /** A receive error on a socket nobody shut down throws instead of looking like a timeout (Linux only). */
+    /** A receive error on a socket nobody shut down throws instead of looking like a timeout. */
     @Test fun negative_receiveErrorIsNotATimeout() {
-        if (!KslUdpSocket.supported) return // Apple, Windows: no ksl_udp
+        if (!accelerated) return // Windows: no ksl_udp
         KslUdpSocket.open(loopback(), 0).use { s ->
             io.kuicksilver.native.Ksl
                 .udpShutdown(s.handle) // the native socket fails underneath a wrapper that was not shut down
@@ -112,7 +127,7 @@ class KslUdpSocketTest {
     }
 
     @Test fun openOnUnsupportedPlatformThrows() {
-        if (KslUdpSocket.supported) return
+        if (accelerated) return
         val e = assertFailsWith<KslException.Internal> { KslUdpSocket.open(loopback(), 0) }
         assertEquals(io.kuicksilver.native.KslConst.E_NOT_SUPPORTED, e.packed)
     }

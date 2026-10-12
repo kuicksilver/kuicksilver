@@ -30,9 +30,9 @@ public class IoCapabilities(
     }
 }
 
-/** Which implementation [DatagramIo.open] prefers: the accelerated `ksl` socket where it exists (Linux, Android), the portable one otherwise or on request. */
+/** Which implementation [DatagramIo.open] prefers: the accelerated `ksl` socket where it exists (Linux, Android, Apple), the portable one otherwise or on request. */
 public enum class IoPreference {
-    /** The `ksl` socket with batching, GSO/GRO, ECN and DF where the platform has it (Linux, Android); the portable one elsewhere. */
+    /** The `ksl` socket with batching, GSO/GRO, ECN and DF where the platform has it (Linux, Android; Apple without GSO/GRO); the portable one elsewhere. */
     Accelerated,
 
     /** Always the portable socket: NIO on the JVM, `ktor-network` on Native. */

@@ -44,6 +44,7 @@ Nothing has been released yet. This section summarises the development of the fi
 
 ### Added
 
+- QUIC server on Kotlin/Native macOS: the accelerated `ksl` UDP socket (ADR-0006) now works on Apple platforms — ECN marks sent and read per datagram, DF set for PMTUD (`IP_DONTFRAG`), no GSO/GRO (Darwin has none). `QuicEndpoint.bind` with a server and the Ktor server engine over HTTP/3 run on `macosArm64` (iOS compiles and links the same code); the JVM on macOS uses the accelerated socket by default instead of NIO. `loops > 1` stays Linux/Android-only: Darwin has no `SO_REUSEPORT` flow hashing, so `bind` refuses it there.
 - Android armeabi-v7a: the `kuicksilver-native` AAR ships `libksl.so` for arm64-v8a, armeabi-v7a and x86_64 (OpenSSL
   target `android-arm`, `minSdk` 24, 16 KiB pages); `-Pkuicksilver.android.armv7=false` leaves it out of a local build.
 - `KslLoader.availability()` and `KslLoader.isAvailable()` (`@ExperimentalKuicksilverApi`): a non-throwing check whether the native library can be used, so an application on an OS or ABI without a build falls back to another transport; `NativeAvailability.Unavailable` carries a `NativeUnavailableReason` (`NoLibraryForPlatform`, `LoadFailed`, `IntegrityMismatch`, `AbiMismatch`) and the original exception. The outcome of the one load attempt is cached: `ensureLoaded()` no longer retries after a failure and rethrows the same exception.
