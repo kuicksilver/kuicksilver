@@ -143,7 +143,11 @@ class DatagramApiTest {
                     val sr = s as io.kuicksilver.quic.runtime.ConnectionRuntime
                     val settled =
                         withTimeoutOrNull(10.seconds) {
-                            while (sr.datagramsQueuedForTest > 0 || s.stats.bytesInFlight > 0 || c.stats.datagramsDropped < 1000 - 128) delay(10)
+                            while (sr.datagramsQueuedForTest > 0 || s.stats.bytesInFlight > 0 ||
+                                c.stats.datagramsDropped < 1000 - 128
+                            ) {
+                                delay(10)
+                            }
                             true
                         }
                     assertTrue(settled == true, "queued ${sr.datagramsQueuedForTest}, dropped ${c.stats.datagramsDropped}")
