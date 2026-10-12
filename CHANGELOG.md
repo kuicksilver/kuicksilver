@@ -15,6 +15,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 Nothing has been released yet. This section summarises the development of the first 0.x version.
 
 ### Fixed
+- Platform trust reports `VerifyReason.UnknownRevocationStatus` when the JVM PKIX validator (`UNDETERMINED_REVOCATION_STATUS`) or Apple (`errSecIncompleteCertRevocationCheck`) could not determine revocation, and `VerifyReason.CertificateTransparency` when Android's CT policy rejects a chain, instead of `UnknownIssuer`.
 - `QuicTlsSession` (`setTransportParameters`, `provide`, `resumeVerify`, `exportKeyingMaterial`) and `TlsConnection.exportKeyingMaterial` no longer leak the native `KslException.Internal`: a call in the wrong state throws `IllegalStateException`, other TLS errors `TlsException.Protocol`.
 - `TrustConfig.Pinned` refuses a `Custom` base wrapped in `ExpectedName` as it already refused a bare `Custom` (the spec: pins are checked against a chain the library validated, a custom verifier decides alone).
 - `TlsConfig` counts ALPN names in UTF-8 bytes (a 200-character `é` name passed as 200) and refuses a list longer than 255 bytes on the wire; a server's `ServerTlsOverride` passes the same ALPN and client-certificate trust checks as `build()` instead of none.

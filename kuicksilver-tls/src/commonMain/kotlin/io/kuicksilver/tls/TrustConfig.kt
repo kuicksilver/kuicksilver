@@ -232,8 +232,9 @@ public sealed interface VerifyReason {
     public object Revoked : VerifyReason
 
     /**
-     * The revocation status could not be determined and the verifier requires it; alert `unknown_ca` (48). The built-in
-     * verifiers do not report it in v1; it is there for a [CertificateVerifier].
+     * The revocation status could not be determined and the verifier requires it; alert `unknown_ca` (48). Reported by the
+     * platform verifier when it says so (JVM PKIX `UNDETERMINED_REVOCATION_STATUS`, Apple
+     * `errSecIncompleteCertRevocationCheck`) and by a [CertificateVerifier]; `ksl`'s own verifier does not check revocation in v1.
      */
     public object UnknownRevocationStatus : VerifyReason
 
@@ -250,8 +251,8 @@ public sealed interface VerifyReason {
     public object NoCertificate : VerifyReason
 
     /**
-     * A Certificate Transparency policy (RFC 6962) rejected the chain; alert `certificate_unknown` (46). The built-in
-     * verifiers do not report it in v1; it is there for a [CertificateVerifier].
+     * A Certificate Transparency policy (RFC 6962) rejected the chain; alert `certificate_unknown` (46). Reported by the
+     * platform verifier when it says so (Android, whose CT policy names it in its error) and by a [CertificateVerifier].
      */
     public object CertificateTransparency : VerifyReason
 
