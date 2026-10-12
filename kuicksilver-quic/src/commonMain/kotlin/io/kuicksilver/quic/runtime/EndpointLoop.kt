@@ -107,6 +107,9 @@ internal class EndpointLoop private constructor(
     /** Batches whose send threw (a transient socket error): the datagrams are treated as lost, nothing else happens. */
     internal var sendFailures = 0L
 
+    /** Datagrams the sockets did not take (failed or partial sends), stateless replies included. */
+    internal var socketDrops = 0L
+
     init {
         core.acceptBacklog = { pendingAccept.load() }
     }
@@ -206,7 +209,7 @@ internal class EndpointLoop private constructor(
         var mixed = false
         for (i in 0 until out.count) if (out.path(i) != PathId.Initial) mixed = true
         if (!mixed) {
-            sendOrLose(io, out)
+            sendOrLose(io, out, rt)
             return
         }
         for (i in 0 until out.count) {
@@ -217,21 +220,32 @@ internal class EndpointLoop private constructor(
             single.setLength(0, n)
             single.setAddress(0, out.address(i)!!)
             single.setEcn(0, out.ecn(i))
-            sendOrLose(ioFor(rt, out.path(i)), single)
+            sendOrLose(ioFor(rt, out.path(i)), single, rt)
         }
     }
 
-    /** A send that throws (EPERM from a filter, an unreachable route, a socket closed under a closing endpoint) loses this batch; loss detection repairs it. It never propagates: it would end a loop coroutine. */
+    /**
+     * A send that throws (EPERM from a filter, an unreachable route, a socket closed under a closing endpoint) loses this batch,
+     * one that takes only part of it (a full send buffer) loses the rest; loss detection repairs both, and [rt]'s connection
+     * counts them. It never propagates: it would end a loop coroutine.
+     */
     private suspend fun sendOrLose(
         target: DatagramIo,
         batch: PacketBatch,
+        rt: ConnectionRuntime?,
     ) {
-        try {
-            target.send(batch)
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Throwable) {
-            sendFailures++
+        val lost =
+            try {
+                batch.count - target.send(batch).coerceIn(0, batch.count)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                sendFailures++
+                batch.count
+            }
+        if (lost > 0) {
+            socketDrops += lost
+            if (rt != null) rt.core.datagramsDroppedSocket += lost
         }
     }
 
@@ -314,10 +328,12 @@ internal class EndpointLoop private constructor(
                 } else {
                     core.handleDatagram(buf, f.bytes.size, f.from, f.ecn, now)
                 }
-                if (++sinceRound == FORWARD_BATCH || forwarded.isEmpty) {
+                @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+                val drained = forwarded.isEmpty
+                if (++sinceRound == FORWARD_BATCH || drained) {
                     sinceRound = 0
                     afterReceive(now)
-                    if (limiter.shouldYield(now) || forwarded.isEmpty) {
+                    if (limiter.shouldYield(now) || drained) {
                         yield()
                         limiter.start(now())
                     }
@@ -411,7 +427,7 @@ internal class EndpointLoop private constructor(
                 }
             }
             outBatch.clear()
-            if (core.pollStateless(outBatch) > 0) sendOrLose(io, outBatch)
+            if (core.pollStateless(outBatch) > 0) sendOrLose(io, outBatch, null)
             val newHead = timers.peek()?.heapDeadline ?: TimeMark.NEVER
             if (signalTimer && newHead < head) wake.trySend(Unit)
         }

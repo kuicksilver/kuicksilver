@@ -69,7 +69,8 @@ public interface QuicConnection : AutoCloseable {
     ): DatagramSendResult
 
     /**
-     * Received datagrams, newest-128 semantics: what nobody collected in time is dropped (`stats.datagramsDropped`).
+     * Received datagrams, newest-128 semantics: what nobody collected in time is dropped (counted in `stats.datagramsDropped`
+     * beside the UDP datagrams the connection discarded unprocessed).
      * Pull-based over one queue, so two collectors split the datagrams between them. When the connection ends the flow
      * throws its [QuicException.ConnectionLost], a local `close` included ([QuicException.ConnectionLost.ApplicationClosed]).
      */

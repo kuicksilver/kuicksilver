@@ -10,6 +10,7 @@ import io.ktor.utils.io.writeFully
 import io.kuicksilver.annotations.DelicateKuicksilverApi
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.native.KslLoader
+import io.kuicksilver.native.toByteArray
 import io.kuicksilver.quic.CoreFixtures
 import io.kuicksilver.quic.DatagramIo
 import io.kuicksilver.quic.DatagramSendResult
@@ -53,12 +54,31 @@ class RuntimeRobustnessTest {
 
         override suspend fun receive(into: PacketBatch): Int = onReceive?.invoke(into) ?: inner.receive(into)
 
+        /** Sends that take all but the last datagram of their batch (a full socket buffer mid-batch) and say so. */
+        var shortSendsLeft = 0
+
         override suspend fun send(batch: PacketBatch): Int {
             if (failSendsLeft >
                 0
             ) {
                 failSendsLeft--
                 throw IOException("sendmsg: EPERM")
+            }
+            if (shortSendsLeft > 0 && batch.count > 0) {
+                shortSendsLeft--
+                val one = PacketBatch(1)
+                try {
+                    for (i in 0 until batch.count - 1) {
+                        one.clear()
+                        one.buffer(0).copyFrom(batch.buffer(i).toByteArray(batch.length(i)), 0, 0, batch.length(i))
+                        one.setLength(0, batch.length(i))
+                        one.setAddress(0, batch.address(i)!!)
+                        inner.trySend(one)
+                    }
+                } finally {
+                    one.close()
+                }
+                return batch.count - 1
             }
             return inner.send(batch)
         }
@@ -153,6 +173,39 @@ class RuntimeRobustnessTest {
                     st.output.flushAndClose()
                     val ss = s.acceptStream()
                     assertEquals(10, ss.input.readExactly(10).size)
+                    c.close(0, "done")
+                    s.close(0, "done")
+                } finally {
+                    client.close()
+                    server.close()
+                }
+            }
+        }
+
+    @Test fun shortSendIsCountedAsSocketDrop() =
+        runBlocking {
+            withTimeout(30.seconds) {
+                // a socket that takes part of a batch reports how many it took: the rest is lost and counted, loss recovery repairs it
+                val net = MemoryNetwork()
+                val sio = ShapedIo(net.open(b))
+                val cio = net.open(a)
+                val server = QuicEndpoint.bind(b, serverConfig(sio))
+                val client = QuicEndpoint.bind(a, clientConfig(cio))
+                try {
+                    val accepted = async { server.accept() }
+                    val c = client.connect(b, QuicClientConfig.Builder(CoreFixtures.client()).build())
+                    val s = accepted.await()
+                    sio.shortSendsLeft = 3
+                    val st = c.openBidi()
+                    st.output.writeFully(ByteArray(64 shl 10) { 1 }, 0, 64 shl 10)
+                    st.output.flushAndClose()
+                    val ss = s.acceptStream()
+                    assertEquals(64 shl 10, ss.input.readExactly(64 shl 10).size)
+                    ss.output.writeFully(ByteArray(64 shl 10) { 2 }, 0, 64 shl 10)
+                    ss.output.flushAndClose()
+                    assertEquals(64 shl 10, st.input.readExactly(64 shl 10).size, "the echo arrives despite the short sends")
+                    assertTrue(s.stats.datagramsDroppedSocket >= 1, "dropped by the socket: ${s.stats.datagramsDroppedSocket}")
+                    assertEquals(0L, c.stats.datagramsDroppedSocket)
                     c.close(0, "done")
                     s.close(0, "done")
                 } finally {

@@ -92,6 +92,9 @@ Fixes from a full five-reviewer pass over the code before the first release, amo
   `0:0:0:0:0:0:0:1` matches a connection to `::1`.
 - A server whose peer keeps moving no longer keeps a path object per address it ever saw: paths the connection evicts
   (at most four) leave `QuicConnection.paths` and their sockets are closed.
+- Datagrams the socket did not take (a failed send, or a full buffer that took part of a batch) are counted in the new
+  `ConnectionStats.datagramsDroppedSocket` (`@ExperimentalKuicksilverApi`); the portable JVM socket waits once, briefly,
+  for room instead of treating a refused datagram as sent.
 
 ### Security
 

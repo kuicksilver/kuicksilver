@@ -219,6 +219,7 @@ public final class io/kuicksilver/quic/ConnectionStats {
 	public final fun getCwnd ()J
 	public final fun getDatagramsDropped ()J
 	public final fun getDatagramsDroppedSend ()J
+	public final fun getDatagramsDroppedSocket ()J
 	public final fun getDuplicatesDropped ()J
 	public final fun getEcnCeEvents ()J
 	public final fun getEcnCeReceived ()J

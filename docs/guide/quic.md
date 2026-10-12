@@ -131,6 +131,11 @@ The controller sees packets sent, acknowledged and lost, ECN marks, MTU changes 
 answers with the window, the pacing rate and the burst size. A connection that migrates to a new IP starts the new path
 from the initial window; a NAT rebinding keeps the state.
 
+When the socket refuses datagrams (a send that fails, or a full send buffer that takes only part of a batch; the portable
+JVM socket waits up to 5 ms once for room), the rest of the batch is lost: loss recovery repairs it and
+`stats.datagramsDroppedSocket` counts it per connection. A steady rise there means the socket, not the network, is the
+bottleneck.
+
 ## Path MTU
 
 Datagrams start at 1200 bytes. On a socket that sets DF, DPLPMTUD (RFC 8899) probes upwards with PING+PADDING packets
@@ -296,7 +301,8 @@ rejects DATAGRAM frames). On the sans-IO core, `maxDatagramPayload` says how man
 peer and MTU, less 32 bytes kept for a short ACK next to a full-size datagram (0 when the peer does not support datagrams); a `DatagramSender` set on the core is asked for frames while
 each 1-RTT packet is built with an open congestion window, and learns through `onAcked` / `onLost` what became of each
 id — datagrams are never retransmitted. Received payloads wait in a queue of 128 (`datagramReceiveQueue`); when it is
-full the oldest is dropped and counted in `stats.datagramsDropped`. The core raises `DatagramsReadable` and hands them out
+full the oldest is dropped and counted in `stats.datagramsDropped` (which also counts received UDP datagrams the connection
+discarded unprocessed: from an unknown server address, a late Initial, a full undecryptable-packet buffer). The core raises `DatagramsReadable` and hands them out
 with `readDatagram`.
 
 On a `QuicConnection`:
@@ -316,7 +322,8 @@ a burst that outruns the loop drops its oldest datagrams even on an idle network
 returns. `trySendDatagram` never enters the loop and allocates only the copy plus a small wrapper. A payload above
 `maxDatagramSize` (a `StateFlow`, following the path MTU) gives `TooLarge` / `DatagramTooLarge`; without datagram support
 on either side you get `Unsupported` / `DatagramUnsupported`. `datagrams` reads the core's 128-entry queue directly, so
-what nobody collected in time is dropped there and counted in `stats.datagramsDropped`.
+what nobody collected in time is dropped there and counted in `stats.datagramsDropped` (beside the UDP datagrams the
+connection discarded unprocessed).
 
 ## Testing your application
 

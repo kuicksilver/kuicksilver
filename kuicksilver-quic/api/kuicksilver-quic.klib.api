@@ -580,6 +580,8 @@ final class io.kuicksilver.quic/ConnectionStats { // io.kuicksilver.quic/Connect
         final fun <get-datagramsDropped>(): kotlin/Long // io.kuicksilver.quic/ConnectionStats.datagramsDropped.<get-datagramsDropped>|<get-datagramsDropped>(){}[0]
     final val datagramsDroppedSend // io.kuicksilver.quic/ConnectionStats.datagramsDroppedSend|{}datagramsDroppedSend[0]
         final fun <get-datagramsDroppedSend>(): kotlin/Long // io.kuicksilver.quic/ConnectionStats.datagramsDroppedSend.<get-datagramsDroppedSend>|<get-datagramsDroppedSend>(){}[0]
+    final val datagramsDroppedSocket // io.kuicksilver.quic/ConnectionStats.datagramsDroppedSocket|{}datagramsDroppedSocket[0]
+        final fun <get-datagramsDroppedSocket>(): kotlin/Long // io.kuicksilver.quic/ConnectionStats.datagramsDroppedSocket.<get-datagramsDroppedSocket>|<get-datagramsDroppedSocket>(){}[0]
     final val duplicatesDropped // io.kuicksilver.quic/ConnectionStats.duplicatesDropped|{}duplicatesDropped[0]
         final fun <get-duplicatesDropped>(): kotlin/Long // io.kuicksilver.quic/ConnectionStats.duplicatesDropped.<get-duplicatesDropped>|<get-duplicatesDropped>(){}[0]
     final val ecnCeEvents // io.kuicksilver.quic/ConnectionStats.ecnCeEvents|{}ecnCeEvents[0]

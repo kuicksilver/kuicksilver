@@ -51,7 +51,10 @@ public interface DatagramIo : AutoCloseable {
     /** Fills free slots of [into] (from `count`) with received datagrams; suspends until at least one arrived. Throws once closed. */
     public suspend fun receive(into: PacketBatch): Int
 
-    /** Sends every slot of [batch]; returns how many left. */
+    /**
+     * Sends the slots of [batch] in order; returns how many left. A result below `batch.count` means the socket refused the
+     * rest (a full send buffer): the endpoint counts them in [ConnectionStats.datagramsDroppedSocket] and loss recovery repairs them.
+     */
     public suspend fun send(batch: PacketBatch): Int
 
     /** Sends what can be sent without suspending; returns the count. */

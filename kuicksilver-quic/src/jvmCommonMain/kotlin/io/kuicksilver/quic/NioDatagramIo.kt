@@ -116,32 +116,51 @@ internal class NioDatagramIo private constructor(
         }
     }
 
-    override suspend fun send(batch: PacketBatch): Int = trySend(batch)
+    /** Registered for OP_WRITE only; `send` waits on it when the socket buffer is full (the read selector belongs to `receive`). */
+    private val writeSelector: Selector = Selector.open().also { channel.register(it, SelectionKey.OP_WRITE) }
 
-    override fun trySend(batch: PacketBatch): Int {
-        var sent = 0
-        for (i in 0 until batch.count) {
-            val a =
-                batch.address(i) ?: continue
-            val view = batch.buffer(i).asByteBuffer()
-            view.limit(batch.length(i))
-            if (channel.send(view, javaOf(a)) >
-                0 ||
-                batch.length(i) == 0
-            ) {
-                sent++
+    override suspend fun send(batch: PacketBatch): Int {
+        var sent = sendFrom(batch, 0)
+        if (sent < batch.count && channel.isOpen) {
+            // the send buffer is full: wait once, briefly, for room and send the rest; what still does not fit is lost (counted by the loop)
+            runInterruptible(Dispatchers.IO) {
+                writeSelector.select(WRITE_WAIT_MS)
+                writeSelector.selectedKeys().clear()
             }
+            sent = sendFrom(batch, sent)
         }
         return sent
+    }
+
+    override fun trySend(batch: PacketBatch): Int = sendFrom(batch, 0)
+
+    /** Sends the slots of [batch] from [from] in order until the socket refuses one; returns the index of the first slot not sent. */
+    private fun sendFrom(
+        batch: PacketBatch,
+        from: Int,
+    ): Int {
+        for (i in from until batch.count) {
+            val a =
+                batch.address(i) ?: continue // nothing to send: not a refusal
+            val view = batch.buffer(i).asByteBuffer()
+            view.limit(batch.length(i))
+            if (channel.send(view, javaOf(a)) == 0 && batch.length(i) > 0) return i // a non-blocking channel takes all or nothing
+        }
+        return batch.count
     }
 
     override fun close() {
         channel.close()
         selector.wakeup()
         selector.close()
+        writeSelector.wakeup()
+        writeSelector.close()
     }
 
     companion object {
+        /** How long a send waits for room in a full socket buffer before the rest of its batch is lost. */
+        private const val WRITE_WAIT_MS = 5L
+
         fun open(local: InetSocketAddress): NioDatagramIo {
             val ch = DatagramChannel.open()
             ch.setOption(StandardSocketOptions.SO_RCVBUF, 8 shl 20)
