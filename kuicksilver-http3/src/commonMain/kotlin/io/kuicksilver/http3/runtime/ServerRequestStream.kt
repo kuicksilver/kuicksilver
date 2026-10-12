@@ -8,6 +8,7 @@ import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.ByteWriteChannel
 import io.ktor.utils.io.readAvailable
 import io.kuicksilver.http3.Http3ErrorCode
+import io.kuicksilver.http3.Http3Exception
 import io.kuicksilver.http3.Http3Headers
 import io.kuicksilver.http3.Http3ResponseWriter
 import io.kuicksilver.http3.Http3ServerRequest
@@ -352,9 +353,19 @@ internal class ResponseWriterImpl(
         pump.join()
         channel.closedCause?.let { throw session.map(it) }
         withContext(session.dispatcher) {
+            if (trailers != null) {
+                // checked before anything is closed: refused trailers reset the stream instead of leaving it without FIN
+                try {
+                    session.checkPeerFieldLimit(st.id, trailers.fields)
+                } catch (e: Http3Exception.FieldSectionTooLarge) {
+                    runCatching { st.reset(Http3ErrorCode.INTERNAL_ERROR) }
+                    runCatching { st.stopSending(Http3ErrorCode.INTERNAL_ERROR) }
+                    request?.done()
+                    throw e
+                }
+            }
             try {
                 if (trailers != null) {
-                    session.checkPeerFieldLimit(st.id, trailers.fields)
                     st.output.writeFrame(FrameType.HEADERS, session.qpack.encode(st.id, trailers.fields))
                 }
                 st.output.flushAndClose()

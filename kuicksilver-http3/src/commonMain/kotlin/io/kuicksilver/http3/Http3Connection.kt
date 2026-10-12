@@ -189,6 +189,10 @@ public interface Http3ResponseWriter {
     /** The response content; the transport's flow control applies backpressure to writes. */
     public val output: ByteWriteChannel
 
-    /** Flushes [output], sends [trailers] if any, then FIN. Closing [output] without calling this ends the response without trailers. */
+    /**
+     * Flushes [output], sends [trailers] if any, then FIN. Closing [output] without calling this ends the response without trailers.
+     * Trailers above the peer's `SETTINGS_MAX_FIELD_SECTION_SIZE` throw [Http3Exception.FieldSectionTooLarge] and reset the
+     * stream with H3_INTERNAL_ERROR.
+     */
     public suspend fun finish(trailers: Http3Headers? = null)
 }

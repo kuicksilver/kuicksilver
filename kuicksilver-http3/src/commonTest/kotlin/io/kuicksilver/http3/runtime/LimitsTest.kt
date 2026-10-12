@@ -66,6 +66,26 @@ class LimitsTest {
             }
         }
 
+    /** Server trailers above the client's limit reset the stream (H3_INTERNAL_ERROR) instead of leaving it half-open. */
+    @Test fun trailersAbovePeerLimitResetTheStream() =
+        h3Test {
+            H3Pair.open(clientSettings = http3Settings { maxFieldSectionSize = 1000 }).use { p ->
+                withTimeout(5.seconds) { p.server.peerSettings.first { it != null } }
+                val resp = async { p.client.request(get()) }
+                val r = p.server.acceptRequest()
+                val w = r.respond(200)
+                w.output.writeFully("hello".encodeToByteArray())
+                w.output.flush()
+                val e =
+                    assertFailsWith<Http3Exception.FieldSectionTooLarge> {
+                        w.finish(Http3Headers.of("x-big" to "v".repeat(2000)))
+                    }
+                assertEquals(1000L, e.limit)
+                val body = withTimeout(5.seconds) { runCatching { resp.await().body.readAllBytes() } }
+                assertTrue(body.isFailure, "the client saw a complete body ${body.getOrNull()?.decodeToString()}")
+            }
+        }
+
     private val big = (0 until 7).map { "x-big-$it" to "v".repeat(10_000) } // 7 x 10039 = 70273 decoded bytes > 65536
 
     /** The response a raw client gets on [streamId]: status and the STOP_SENDING code if one came. */

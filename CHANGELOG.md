@@ -86,7 +86,8 @@ K7 (0.2.0), HTTP/3 and the Ktor engines:
   dispatcher, so a slow callback stalled every stream of the connection; they now run on the caller's dispatcher.
 - HTTP/3: the peer's `SETTINGS_MAX_FIELD_SECTION_SIZE` is honoured when sending (RFC 9114 section 4.2.2): a request
   above it fails with `Http3Exception.FieldSectionTooLarge` before a stream is opened, response headers and trailers
-  above it fail `respond`/`finish`, request trailers reset the stream — instead of being sent for the peer to refuse.
+  above it fail `respond`/`finish` (refused trailers reset the stream with `H3_INTERNAL_ERROR` rather than
+  leaving it without FIN), request trailers reset the stream — instead of being sent for the peer to refuse.
 - Ktor client: a non-idempotent request that failed on a pooled HTTP/1.1 connection the server had closed is no
   longer sent again (RFC 9112 section 9.3.1); only idempotent requests get the transparent retry, and connections
   already closed for reading are dropped when taken from the pool.

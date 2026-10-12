@@ -122,7 +122,7 @@ a `content-length` without a body. A request whose header
 section is above `maxFieldSectionSize` once decoded is answered with 431 and `STOP_SENDING H3_EXCESSIVE_LOAD` by the
 connection itself. The other way round, a section above the peer's `SETTINGS_MAX_FIELD_SECTION_SIZE` is never sent:
 `request` fails with `FieldSectionTooLarge` before it opens a stream, `respond` and `finish(trailers)` fail before
-writing. `request.remoteAddress` follows the client's path when it migrates.
+writing; refused trailers also reset the stream with `H3_INTERNAL_ERROR`, since the body already went out. `request.remoteAddress` follows the client's path when it migrates.
 
 ## Shutdown and GOAWAY
 
