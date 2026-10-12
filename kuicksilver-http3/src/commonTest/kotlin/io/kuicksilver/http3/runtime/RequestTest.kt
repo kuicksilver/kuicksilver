@@ -368,8 +368,13 @@ class RequestTest {
             val served =
                 async {
                     val st = s.acceptBidi()
-                    st.output.writeFully(raw.headers(st.id, listOf(":status" to status.toString())) + raw.data("hello".encodeToByteArray()))
-                    st.output.flushAndClose()
+                    // the client stops the stream as soon as it sees the DATA; on a fast host that lands before this close returns
+                    peerMayHaveClosed {
+                        st.output.writeFully(
+                            raw.headers(st.id, listOf(":status" to status.toString())) + raw.data("hello".encodeToByteArray()),
+                        )
+                        st.output.flushAndClose()
+                    }
                     st
                 }
             val resp = client.request(Http3Request(method, authority = "server.test", path = "/"))
