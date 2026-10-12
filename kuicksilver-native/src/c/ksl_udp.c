@@ -81,7 +81,9 @@ ksl_udp *ksl_udp_open(const uint8_t addr[KSL_UDP_ADDR_LEN], int flags, uint32_t 
     }
     if (flags & KSL_UDP_DF) {   /* DF set; never DO mode: the kernel's path MTU cache must not drive sizes (an attacker's ICMP would shrink it: quic-go CVE-2024-53259) */
         int ok = 1;
-#ifdef __APPLE__   /* Darwin has only the DF bit, as in quic-go sys_conn_df_darwin.go; on AF_INET6 IPV6_DONTFRAG covers v4-mapped traffic too (IP_DONTFRAG: EINVAL) */
+#ifdef __APPLE__   /* Darwin has only the DF bit, as in quic-go sys_conn_df_darwin.go; on AF_INET6 IPV6_DONTFRAG covers v4-mapped traffic too (IP_DONTFRAG: EINVAL).
+                      It does cache a path MTU from an ICMPv6 Packet Too Big (clamped to >= 1280): a larger datagram then fails with EMSGSIZE,
+                      a lost slot, and QUIC's 1248-byte IPv6 floor (1200 + headers) still fits, so a forged PTB cannot stop sending */
         ok = v6 ? setsockopt(u->fd, IPPROTO_IPV6, IPV6_DONTFRAG, &one, sizeof one) == 0 : setsockopt(u->fd, IPPROTO_IP, IP_DONTFRAG, &one, sizeof one) == 0;
 #else
         int probe = IP_PMTUDISC_PROBE, p6 = IPV6_PMTUDISC_PROBE;

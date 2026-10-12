@@ -72,7 +72,7 @@ void run_udp(void) {
         /* udp_df_probe_mode: IP_MTU_DISCOVER == IP_PMTUDISC_PROBE (never _DO: quic-go CVE-2024-53259), IPV6_DONTFRAG where applicable */
         { uint8_t fd8[4]; size_t n = 0; CHECK(ksl_udp_get(a, KSL_UDP_GET_FD, fd8, 4, &n) == KSL_OK && n == 4, "fd"); int fd = (int)(((uint32_t)fd8[0] << 24) | ((uint32_t)fd8[1] << 16) | ((uint32_t)fd8[2] << 8) | fd8[3]); 
 #ifdef __APPLE__
-          CHECK(ksl_udp_df_mode_for_test(fd) == 1, "IP_DONTFRAG set (Darwin has no PMTUDISC modes and no PMTU cache for UDP sends)"); }
+          CHECK(ksl_udp_df_mode_for_test(fd) == 1, "IP_DONTFRAG set (Darwin has no PMTUDISC modes; its ICMPv6 PMTU cache is clamped to >= 1280, above QUIC's 1248-byte floor)"); }
 #else
           CHECK(ksl_udp_df_mode_for_test(fd) == 3 /* IP_PMTUDISC_PROBE */, "probe mode, not DO"); }
 #endif
