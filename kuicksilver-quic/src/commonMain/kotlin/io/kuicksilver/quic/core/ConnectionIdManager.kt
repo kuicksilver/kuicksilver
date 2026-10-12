@@ -200,11 +200,15 @@ internal class ConnectionIdManager(
         return false
     } // indexed: no iterator per packet (allocation gate)
 
+    /** The highest retire_prior_to we sent: a lost NEW_CONNECTION_ID below it is not retransmitted (RFC 9000 section 19.15). */
+    private var issuedRetirePriorTo = 0L
+
     /** Issues one more ID that asks the peer to retire every earlier one (test hook for retire_prior_to). */
     fun issueRetiringOlder() {
         val cid = newLocalCid()
         val l = Local(nextLocalSeq++, cid, tokenFor(cid))
         l.retirePriorTo = l.seq
+        if (l.seq > issuedRetirePriorTo) issuedRetirePriorTo = l.seq
         local +=
             l
         core?.let { registrar.add(cid, it) }
@@ -216,7 +220,9 @@ internal class ConnectionIdManager(
         return null
     }
 
+    /** NEW_CONNECTION_ID for [seq] was lost: it is sent again unless we have since asked the peer to retire it (RFC 9000 section 5.1.2). */
     fun onNewCidLost(seq: Long) {
+        if (seq < issuedRetirePriorTo) return
         local.firstOrNull { it.seq == seq }?.sent = false
     }
 

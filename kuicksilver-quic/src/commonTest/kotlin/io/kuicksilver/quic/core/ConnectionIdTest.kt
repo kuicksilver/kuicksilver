@@ -8,6 +8,7 @@ import io.kuicksilver.native.PacketBuffer
 import io.kuicksilver.native.of
 import io.kuicksilver.quic.CorePair
 import io.kuicksilver.quic.QuicException
+import io.kuicksilver.quic.TimeMark
 import io.kuicksilver.quic.wire.ConnectionId
 import io.kuicksilver.quic.wire.QuicWireException
 import kotlin.random.Random
@@ -51,6 +52,28 @@ class ConnectionIdTest {
         } finally {
             p.close()
         }
+    }
+
+    @Test fun lostNewCidBelowOwnRetirePriorToIsNotResent() {
+        // RFC 9000 sections 5.1.2 and 19.15: once we asked the peer to retire every ID below retire_prior_to, a lost NEW_CONNECTION_ID
+        // for one of those IDs is not retransmitted (the peer would only retire it again)
+        val m = manager()
+        m.setPeerLimit(3)
+        while (true) m.nextNewCidToSend()?.let { it.sent = true } ?: break
+        m.issueRetiringOlder()
+        while (true) m.nextNewCidToSend()?.let { it.sent = true } ?: break
+        m.onNewCidLost(1)
+        assertNull(m.nextNewCidToSend(), "sequence 1 is below our own retire_prior_to: not resent")
+    }
+
+    @Test fun lostNewCidRetiredByPeerIsNotResent() {
+        val m = manager()
+        m.setPeerLimit(3)
+        while (true) m.nextNewCidToSend()?.let { it.sent = true } ?: break
+        m.onPeerRetired(1, TimeMark(1_000_000_000L))
+        while (true) m.nextNewCidToSend()?.let { it.sent = true } ?: break
+        m.onNewCidLost(1)
+        assertNull(m.nextNewCidToSend(), "an ID the peer already retired is not resent")
     }
 
     @Test fun negative_cidLimit() {

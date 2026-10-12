@@ -76,6 +76,8 @@ Hardening of the QUIC core for 0.2.0 (review of 2026-10-08, deferred items):
   once per PTO (RFC 9000 §8.2.1, RFC 9002 §6.2.1).
 - QUIC: a packet buffered until its keys arrive is processed with the ECN mark, socket, source and length of its own
   datagram, not of the datagram that delivered the keys (RFC 9000 §13.4.1).
+- QUIC: a lost `NEW_CONNECTION_ID` whose sequence is below our own `retire_prior_to` is no longer retransmitted
+  (RFC 9000 §5.1.2, §19.15).
 
 Fixes from a full five-reviewer pass over the code before the first release, among them:
 
