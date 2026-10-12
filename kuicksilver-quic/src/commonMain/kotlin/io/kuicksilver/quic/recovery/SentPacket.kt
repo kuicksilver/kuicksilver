@@ -156,6 +156,19 @@ internal class SentPacket {
 
     val frames: SentFrames = SentFrames()
 
+    /** Delivery-rate snapshot at send (draft-ietf-ccwg-bbr section 4.1.2.1.2), written only for a sampling controller ([DeliveryRateSampler]); -1: none. */
+    var rsId: Long = -1
+
+    /** C.delivered, C.delivered_time and C.first_send_time when the packet left. */
+    var rsDelivered: Long = 0
+    var rsDeliveredTime: TimeMark = TimeMark(0)
+    var rsFirstSentTime: TimeMark = TimeMark(0)
+
+    /** C.inflight right after the packet left, C.lost then, and whether the sender was application-limited. */
+    var rsTxInFlight: Long = 0
+    var rsLost: Long = 0
+    var rsAppLimited: Boolean = false
+
     internal fun reset() {
         pn = 0
         timeSent = TimeMark(0)
@@ -167,6 +180,7 @@ internal class SentPacket {
         cc = null
         ecnMarked =
             false
+        rsId = -1
         frames.clear()
     }
 }
