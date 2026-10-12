@@ -9,7 +9,9 @@
 #include "ksl_udp_internal.h"
 
 #ifdef KSL_UDP_ACCEL
+#ifndef __linux__   /* Darwin has neither SOCK_CLOEXEC/SOCK_NONBLOCK nor pipe2 */
 static int cloexec_nonblock(int fd) { int fl = fcntl(fd, F_GETFL); if (fl < 0 || fcntl(fd, F_SETFL, fl | O_NONBLOCK) != 0) return -1; int fd_fl = fcntl(fd, F_GETFD); return fd_fl < 0 || fcntl(fd, F_SETFD, fd_fl | FD_CLOEXEC) != 0 ? -1 : 0; }
+#endif
 static void be32(uint8_t *p, uint32_t v) { p[0] = (uint8_t)(v >> 24); p[1] = (uint8_t)(v >> 16); p[2] = (uint8_t)(v >> 8); p[3] = (uint8_t)v; }
 static void be16(uint8_t *p, uint16_t v) { p[0] = (uint8_t)(v >> 8); p[1] = (uint8_t)v; }
 
