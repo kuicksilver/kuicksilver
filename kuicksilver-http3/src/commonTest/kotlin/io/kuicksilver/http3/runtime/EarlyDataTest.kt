@@ -124,7 +124,7 @@ class EarlyDataTest {
         }
     }
 
-    @Test fun earlyGetIsAnsweredIn0Rtt() =
+    @Test fun earlyGetIsAnsweredIn0Rtt(): Unit =
         runBlocking {
             Fixture(Http3EarlyDataPolicy.WaitForHandshake()).use { f ->
                 withTimeout(20.seconds) {
@@ -143,7 +143,7 @@ class EarlyDataTest {
             }
         }
 
-    @Test fun unsafeRequestWaitsForHandshakeOnTheClient() =
+    @Test fun unsafeRequestWaitsForHandshakeOnTheClient(): Unit =
         runBlocking {
             Fixture(Http3EarlyDataPolicy.WaitForHandshake()).use { f ->
                 withTimeout(20.seconds) {
@@ -166,7 +166,7 @@ class EarlyDataTest {
             }
         }
 
-    @Test fun negative_unsafeMethodNotProcessedInEarlyData() =
+    @Test fun negative_unsafeMethodNotProcessedInEarlyData(): Unit =
         runBlocking {
             Fixture(Http3EarlyDataPolicy.WaitForHandshake()).use { f ->
                 withTimeout(20.seconds) {
@@ -209,7 +209,7 @@ class EarlyDataTest {
             }
         }
 
-    @Test fun reject425PolicyAndOneRetry() =
+    @Test fun reject425PolicyAndOneRetry(): Unit =
         runBlocking {
             Fixture(Http3EarlyDataPolicy.Reject425()).use { f ->
                 withTimeout(20.seconds) {

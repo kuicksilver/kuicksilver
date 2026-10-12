@@ -50,7 +50,7 @@ class ZeroRttApiTest {
         }
     }
 
-    @Test fun connectEarlySendsRequestIn0Rtt() =
+    @Test fun connectEarlySendsRequestIn0Rtt(): Unit =
         runBlocking {
             ApiPair.open(crypto = KslQuicCrypto, serverEarlyData = true).use { p ->
                 withTimeout(20.seconds) {
@@ -79,7 +79,7 @@ class ZeroRttApiTest {
             }
         }
 
-    @Test fun streamsOpenedEarlyAndAfterTheHandshake() =
+    @Test fun streamsOpenedEarlyAndAfterTheHandshake(): Unit =
         runBlocking {
             ApiPair.open(crypto = KslQuicCrypto, serverEarlyData = true).use { p ->
                 withTimeout(20.seconds) {
@@ -116,7 +116,7 @@ class ZeroRttApiTest {
             }
         }
 
-    @Test fun requiredWithoutTicketFails() =
+    @Test fun requiredWithoutTicketFails(): Unit =
         runBlocking {
             ApiPair.open(crypto = KslQuicCrypto, serverEarlyData = true).use { p ->
                 withTimeout(20.seconds) {
@@ -127,7 +127,7 @@ class ZeroRttApiTest {
             }
         }
 
-    @Test fun earlyDataDisabledByDefault() =
+    @Test fun earlyDataDisabledByDefault(): Unit =
         runBlocking {
             ApiPair.open(crypto = KslQuicCrypto).use { p ->
                 withTimeout(20.seconds) {
