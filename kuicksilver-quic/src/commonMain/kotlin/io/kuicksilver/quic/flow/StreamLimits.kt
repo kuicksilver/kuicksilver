@@ -47,6 +47,8 @@ internal class StreamLimits(
         if (index + 1 > peerOpened[idx(bidi)]) peerOpened[idx(bidi)] = index + 1
     }
 
+    fun localOpened(bidi: Boolean): Long = ourOpened[idx(bidi)]
+
     fun canOpenLocal(bidi: Boolean): Boolean = ourOpened[idx(bidi)] < ourLimit[idx(bidi)]
 
     fun onLocalOpened(bidi: Boolean) {

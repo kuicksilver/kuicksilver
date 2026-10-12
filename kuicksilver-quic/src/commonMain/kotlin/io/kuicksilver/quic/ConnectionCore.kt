@@ -27,9 +27,11 @@ import io.kuicksilver.quic.core.Timers
 import io.kuicksilver.quic.core.buildLocalTp
 import io.kuicksilver.quic.core.checkPmtuBlackHoles
 import io.kuicksilver.quic.core.discardSpace
+import io.kuicksilver.quic.core.discardZeroRttKeys
 import io.kuicksilver.quic.core.driveTls
 import io.kuicksilver.quic.core.ecnCeReceived
 import io.kuicksilver.quic.core.ecnPathFailed
+import io.kuicksilver.quic.core.enableServerEarlyData
 import io.kuicksilver.quic.core.enterClosing
 import io.kuicksilver.quic.core.fail
 import io.kuicksilver.quic.core.glitch
@@ -37,6 +39,7 @@ import io.kuicksilver.quic.core.idleDeadline
 import io.kuicksilver.quic.core.installInitialKeys
 import io.kuicksilver.quic.core.keepAliveDeadline
 import io.kuicksilver.quic.core.markClosed
+import io.kuicksilver.quic.core.nextChallengeDelay
 import io.kuicksilver.quic.core.onPathFailed
 import io.kuicksilver.quic.core.pmtudUpperBound
 import io.kuicksilver.quic.core.probeOtherHandshakeSpace
@@ -48,7 +51,6 @@ import io.kuicksilver.quic.core.requeueForProbe
 import io.kuicksilver.quic.core.setMtu
 import io.kuicksilver.quic.core.settleHandshakeValidated
 import io.kuicksilver.quic.core.silentClose
-import io.kuicksilver.quic.core.nextChallengeDelay
 import io.kuicksilver.quic.core.startValidation
 import io.kuicksilver.quic.core.switchPath
 import io.kuicksilver.quic.core.validationTimeout
@@ -101,6 +103,10 @@ public class ConnectionCore internal constructor(
     internal var remoteCid: ConnectionId,
     startVersion: VersionProfile,
     resetKey: ResetKey? = null,
+    /** Client: whether to resume and send 0-RTT (ADR-0015). */
+    internal val earlyMode: io.kuicksilver.tls.EarlyDataState = io.kuicksilver.tls.EarlyDataState.Disabled,
+    /** Server: the 0-RTT setup, or null when this server does not accept early data. */
+    internal val serverEarly: io.kuicksilver.quic.core.ServerEarlyData? = null,
 ) {
     /** Where the connection is in its life (RFC 9000 section 10); [ConnectionState.Closed] once its TLS session and keys are freed. */
     public var state: ConnectionState = ConnectionState.Handshaking
@@ -310,7 +316,35 @@ public class ConnectionCore internal constructor(
     internal var initialReadOriginal: PacketProtector? = null
     internal val spaceDiscarded = BooleanArray(3)
     internal val events = ArrayDeque<ConnectionEvent>()
-    internal var handshake: HandshakeDriver = HandshakeDriver(crypto.newSession(tlsConfig), ConnectionHandshakeSink(this))
+    internal var handshake: HandshakeDriver =
+        HandshakeDriver(
+            crypto.newSession(tlsConfig, earlyMode != io.kuicksilver.tls.EarlyDataState.Disabled || serverEarly != null),
+            ConnectionHandshakeSink(this),
+        )
+
+    // ---- 0-RTT (ADR-0015) ----
+
+    /** Client: the server's remembered transport parameters while 0-RTT is pending; null once settled or when none is used. */
+    internal var remembered: TransportParameters? = null
+    internal var rememberedAlpn: String? = null
+
+    /** The peer's transport parameters as they arrived, stored with tickets (client). */
+    internal var peerTpEncoded: ByteArray? = null
+    internal var earlyAccepted: Boolean? = null
+
+    /** Server: when the 0-RTT read key goes (3 PTO after the first 1-RTT packet, RFC 9001 section 4.9.3). */
+    internal var zeroRttReadDiscardAt: TimeMark = TimeMark.NEVER
+
+    /**
+     * Whether 0-RTT was accepted (RFC 9001 section 4.6.2): client, known with the server's EncryptedExtensions; server,
+     * as soon as it decided. Null when none was attempted or not known yet.
+     */
+    @ExperimentalKuicksilverApi
+    public val earlyDataAccepted: Boolean? get() = earlyAccepted ?: if (released) null else handshake.session.earlyDataAccepted
+
+    /** Server: true when any STREAM frame of stream [id] arrived in a 0-RTT packet (it may be a replay, RFC 8446 section 8). */
+    @ExperimentalKuicksilverApi
+    public fun streamReceivedEarly(id: Long): Boolean = streams.receivedEarly(id)
 
     /** Set by the endpoint so issued connection IDs route back to this core. */
     internal var registrar: CidRegistrar = NoopRegistrar
@@ -482,6 +516,7 @@ public class ConnectionCore internal constructor(
         val tp = buildLocalTp()
         handshake.session.setTransportParameters(TransportParametersCodec.encode(tp, role, 27))
         handshake.session.setQuicVersion(startVersion.version)
+        serverEarly?.let { enableServerEarlyData(it) }
         if (role == TlsRole.Client) {
             installInitialKeys(startVersion)
             tlsDirty = true
@@ -657,6 +692,7 @@ public class ConnectionCore internal constructor(
         if (keep < t) t = keep
         if (lifetimeDeadline < t) t = lifetimeDeadline
         keyPhase?.let { if (it.discardAt < t) t = it.discardAt }
+        if (zeroRttReadDiscardAt < t) t = zeroRttReadDiscardAt
         for (i in 0 until paths.all.size) {
             val p = paths.all[i]
             if (p.state ==
@@ -721,6 +757,7 @@ public class ConnectionCore internal constructor(
             return
         }
         cids.expireRetired(now)
+        if (zeroRttReadDiscardAt <= now) discardZeroRttKeys()
         for (i in 0 until paths.all.size) paths.all[i].pmtud?.onTimeout(now)
         var pi = paths.all.size - 1
         while (pi >=
@@ -1010,6 +1047,7 @@ public class ConnectionCore internal constructor(
             random: Random,
             now: TimeMark,
             resetKey: ResetKey?,
+            earlyMode: io.kuicksilver.tls.EarlyDataState = io.kuicksilver.tls.EarlyDataState.Disabled,
         ): ConnectionCore {
             // the crypto provider validates the rest (sniSelector etc.)
             require(tls.role == TlsRole.Client) { "client core needs a client TlsConfig" }
@@ -1028,6 +1066,7 @@ public class ConnectionCore internal constructor(
                 odcid,
                 config.firstVersion,
                 resetKey,
+                earlyMode,
             )
         }
     }
@@ -1064,6 +1103,7 @@ internal fun ConnectionCore.Companion.serverWithKeys(
     resetKey: ResetKey?,
     originalDcid: ConnectionId? = null,
     retryScid: ConnectionId? = null,
+    early: io.kuicksilver.quic.core.ServerEarlyData? = null,
 ): ConnectionCore? {
     require(tls.role == TlsRole.Server)
     val hv = PacketHeaderView()
@@ -1079,7 +1119,22 @@ internal fun ConnectionCore.Companion.serverWithKeys(
     val odcid = originalDcid ?: packetDcid
     val remoteCid = ConnectionId(ByteArray(hv.scidLen).also { data.copyTo(it, hv.scidOff, 0, hv.scidLen) })
     val scid = localCidBytes?.let { ConnectionId(it) } ?: ConnectionId(ByteArray(config.connectionIdLength).also { random.nextBytes(it) })
-    val core = ConnectionCore(TlsRole.Server, config, tls, crypto, remote, random, now, odcid, scid, remoteCid, profile, resetKey)
+    val core =
+        ConnectionCore(
+            TlsRole.Server,
+            config,
+            tls,
+            crypto,
+            remote,
+            random,
+            now,
+            odcid,
+            scid,
+            remoteCid,
+            profile,
+            resetKey,
+            serverEarly = early,
+        )
     if (retryScid !=
         null
     ) {

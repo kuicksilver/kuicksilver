@@ -120,8 +120,8 @@ internal class PacketReceiver(
 
     private fun matchesLocalCid(data: PacketBuffer): Boolean {
         if (c.localCid.contentEquals(data, hv.dcidOff, hv.dcidLen) || c.cids.localMatches(data, hv.dcidOff, hv.dcidLen)) return true
-        if (hv.type != PacketType.Initial || c.role != TlsRole.Server) return false
-        // RFC 9000 section 7.2: a client's Initials carry the original DCID or, after a Retry, our Retry SCID
+        if ((hv.type != PacketType.Initial && hv.type != PacketType.ZeroRtt) || c.role != TlsRole.Server) return false
+        // RFC 9000 section 7.2: a client's Initials (and 0-RTT packets) carry the original DCID or, after a Retry, our Retry SCID
         return c.odcid.contentEquals(data, hv.dcidOff, hv.dcidLen) || c.retryScid?.contentEquals(data, hv.dcidOff, hv.dcidLen) == true
     }
 
@@ -190,7 +190,12 @@ internal class PacketReceiver(
                 c.readKeys[level]
             }
         if (key == null) {
-            if (type == PacketType.ZeroRtt) return false
+            // 0-RTT waits for its key only on a server that accepts it, and only until the handshake shows whether it was accepted
+            if (type == PacketType.ZeroRtt &&
+                (c.role != TlsRole.Server || c.serverEarly == null || c.state != ConnectionState.Handshaking)
+            ) {
+                return false
+            }
             if (buffered.size >= c.config.limits.undecryptablePackets) {
                 c.datagramsDropped++
                 return false
@@ -325,7 +330,10 @@ internal class PacketReceiver(
             c.onInitialPathValidated()
             if (!c.spaceDiscarded[0]) c.discardInitialPending = true
         }
-        if (type == PacketType.OneRtt) c.onPathPacket(socket, from, pn, !reader.probingOnly, datagramLength)
+        if (type == PacketType.OneRtt) {
+            c.onPathPacket(socket, from, pn, !reader.probingOnly, datagramLength)
+            c.onFirstOneRttFromClient()
+        }
         return true
     }
 
@@ -412,6 +420,13 @@ internal class PacketReceiver(
         remoteCidSet = c.role == TlsRole.Server
         peerScid = null
         initialCryptoSeen = false
+    }
+
+    /** Whether the packet being decoded is a 0-RTT one (its STREAM frames mark their streams as received early). */
+    internal val inZeroRtt: Boolean get() = packetType == PacketType.ZeroRtt
+
+    fun dropBufferedLevel(level: Int) {
+        buffered.removeAll { it.level == level }
     }
 
     fun dropBuffered(space: SpaceId) {

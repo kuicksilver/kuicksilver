@@ -319,6 +319,12 @@ internal class ConnectionRuntime(
                     loop.scope.launch(Dispatchers.Default) { verify(e) }
                 }
 
+                is ConnectionEvent.SessionTicket -> {
+                    e.ticket.close()
+                }
+
+                ConnectionEvent.EarlyDataAccepted, ConnectionEvent.EarlyDataRejected -> {}
+
                 is ConnectionEvent.StreamOpened -> {
                     accepted.trySend(stream(e.id))
                 }

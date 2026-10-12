@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.kuicksilver.quic
 
+import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import kotlinx.coroutines.CopyableThrowable
 import kotlinx.io.IOException
 import kotlin.time.Duration
@@ -135,6 +136,16 @@ public sealed class QuicException(
         /** A Stateless Reset from the peer (RFC 9000 section 10.3): it lost its state; the connection drains without a CONNECTION_CLOSE. */
         public class StatelessReset : ConnectionLost("stateless reset received") {
             override fun createCopy(): StatelessReset = StatelessReset()
+        }
+
+        /**
+         * The server rejected 0-RTT and its answer leaves no safe way to resend it in 1-RTT (another ALPN, or lower limits
+         * than the 0-RTT data already used), or `EarlyDataState.Required` was asked for and 0-RTT was refused or unavailable.
+         * The connection closed with NO_ERROR; retry on a new connection.
+         */
+        @ExperimentalKuicksilverApi
+        public class ZeroRttRejected : ConnectionLost("0-RTT rejected") {
+            override fun createCopy(): ZeroRttRejected = ZeroRttRejected()
         }
 
         /** A bug or an unexpected failure inside the stack: the connection is dropped silently (no CONNECTION_CLOSE leaves, the peer sees an idle timeout) and the cause is kept for the report. */

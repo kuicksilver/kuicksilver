@@ -292,7 +292,16 @@ internal class LossDetection(
         for (i in 0 until paths) {
             val pid = ecnPaths[i]
             if (ecnMarkedPerPath[i] == 0 && pid != largest.pathId) continue // nothing of this path to validate
-            listener.onEcnAck(space, counts != null, valid, ecnMarkedPerPath[i], ceGrew && pid == largest.pathId, now, largest.timeSent, pid)
+            listener.onEcnAck(
+                space,
+                counts != null,
+                valid,
+                ecnMarkedPerPath[i],
+                ceGrew && pid == largest.pathId,
+                now,
+                largest.timeSent,
+                pid,
+            )
         }
     }
 
@@ -527,6 +536,30 @@ internal class LossDetection(
     }
 
     /** Drops the keys' space (RFC 9002 section 6.4): its packets leave the in-flight accounting and timers. */
+
+    /**
+     * Removes the 0-RTT packets of the Application space (rejected 0-RTT, a Retry or a Version Negotiation restart): out of
+     * flight without a congestion signal (RFC 9002 section 6.4), [each] sees them first to queue their frames again.
+     */
+    fun discardZeroRtt(each: (SentPacket) -> Unit) {
+        val sp = space(SpaceId.Application)
+        var removed = 0
+        for (i in sp.sent.start until sp.sent.end) {
+            val p = sp.sent.at(i) ?: continue
+            if (!p.zeroRtt) continue
+            each(p)
+            if (p.inFlight) {
+                bytesInFlight -= p.size
+                removed += p.size
+            }
+            if (p.ackEliciting) sp.ackElicitingInFlight--
+            sp.sent.removeAt(i)
+            sp.release(p)
+        }
+        sp.sent.trim()
+        if (removed > 0) listener.onDiscarded(removed)
+    }
+
     fun discard(space: SpaceId) {
         val sp = this.space(space)
         var removed = 0

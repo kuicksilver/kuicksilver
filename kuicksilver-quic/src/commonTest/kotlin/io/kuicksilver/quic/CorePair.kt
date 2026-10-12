@@ -84,10 +84,24 @@ internal class CorePair(
     private val serverQuic: QuicConfig = QuicConfig.Default,
     private val crypto: QuicCrypto = NullCryptoProvider,
     seed: Long = 1,
+    clientEarly: io.kuicksilver.tls.EarlyDataState = io.kuicksilver.tls.EarlyDataState.Disabled,
+    private val serverEarly: io.kuicksilver.quic.core.ServerEarlyData? = null,
+    clientSetup: (ConnectionCore) -> Unit = {},
 ) {
     var now: TimeMark = TimeMark(1_000_000_000L)
     val random = Random(seed)
-    val client: ConnectionCore = ConnectionCore.client(clientQuic, clientTls, crypto, CoreFixtures.serverAddr, Random(seed + 1), now)
+    val client: ConnectionCore =
+        ConnectionCore
+            .client(
+                clientQuic,
+                clientTls,
+                crypto,
+                CoreFixtures.serverAddr,
+                Random(seed + 1),
+                now,
+                null,
+                clientEarly,
+            ).also(clientSetup)
     var server: ConnectionCore? = null
         private set
     val toServer = ArrayDeque<Dgram>()
@@ -159,7 +173,20 @@ internal class CorePair(
         val d = toServer.firstOrNull() ?: return
         val b = PacketBuffer.of(d.bytes)
         try {
-            server = ConnectionCore.server(serverQuic, serverTls, crypto, d.from, Random(99), now, b, d.bytes.size)
+            server =
+                ConnectionCore.serverWithKeys(
+                    serverQuic,
+                    serverTls,
+                    crypto,
+                    d.from,
+                    Random(99),
+                    now,
+                    b,
+                    d.bytes.size,
+                    null,
+                    null,
+                    early = serverEarly,
+                )
         } finally {
             b.close()
         }

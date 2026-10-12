@@ -164,18 +164,21 @@ internal class PacketBuilder(
         return count
     }
 
+    /** A client before 1-RTT keys sends Application data in 0-RTT packets (RFC 9001 section 4.6.1). */
+    private val zeroRtt: Boolean get() = c.role == TlsRole.Client && c.zeroRttWritable
+
     private fun spaceLevel(space: SpaceId): Int =
         when (space) {
             SpaceId.Initial -> 0
             SpaceId.Handshake -> 2
-            SpaceId.Application -> 3
+            SpaceId.Application -> if (zeroRtt) 1 else 3
         }
 
     private fun packetType(space: SpaceId): PacketType =
         when (space) {
             SpaceId.Initial -> PacketType.Initial
             SpaceId.Handshake -> PacketType.Handshake
-            SpaceId.Application -> PacketType.OneRtt
+            SpaceId.Application -> if (zeroRtt) PacketType.ZeroRtt else PacketType.OneRtt
         }
 
     private fun hasAckToSend(
@@ -215,7 +218,8 @@ internal class PacketBuilder(
         now: TimeMark,
     ): Boolean {
         if (c.spaceDiscarded[space.ordinal] || c.writeKeys[spaceLevel(space)] == null) return false
-        if (c.closeFrame != null) return !c.closeSentIn[space.ordinal]
+        if (c.closeFrame != null) return spaceLevel(space) != 1 && !c.closeSentIn[space.ordinal] // no CONNECTION_CLOSE (0x1c) in 0-RTT
+        if (spaceLevel(space) == 1) return !congested && (c.streams.hasControlFrames() || c.streams.hasStreamData())
         if (hasAckToSend(space, now)) return true
         // path validation is not congestion controlled (RFC 9000 section 9.1): a rebind while the window is full must still be challenged
         if (space == SpaceId.Application && (c.path.challengePending || c.paths.hasResponseFor(c.path))) return true
@@ -396,7 +400,7 @@ internal class PacketBuilder(
             val a = sp.ack
             // a test probe (testInjectPathChallenges) carries no ACK: a probing-only packet, RFC 9000 section 9.1
             if (a.hasRanges && (hasAckToSend(space, now) || hasData(space)) &&
-                c.testInjectPathChallenges == 0
+                c.testInjectPathChallenges == 0 && type != PacketType.ZeroRtt
             ) {
                 val o = a.ackOverhead(now, c.config.ackDelayExponent)
                 if (o <=
@@ -602,71 +606,7 @@ internal class PacketBuilder(
                             ackEliciting = true
                         }
                     }
-                    while (true) {
-                        val cf = c.streams.takeControlFrame() ?: break
-                        if (c.streams.controlOverhead(cf) > w.remaining) {
-                            c.streams.pushBackControlFrame(cf)
-                            break
-                        }
-                        when (cf.kind) {
-                            ControlKind.ResetStream -> {
-                                FrameEncoder.resetStream(w, cf.id, cf.a, cf.b)
-                                frames.addId(SentFrames.ID_RESET_STREAM, cf.id, cf.a, cf.b)
-                            }
-
-                            ControlKind.StopSending -> {
-                                FrameEncoder.stopSending(w, cf.id, cf.a)
-                                frames.addId(SentFrames.ID_STOP_SENDING, cf.id, cf.a)
-                            }
-
-                            ControlKind.MaxStreamData -> {
-                                FrameEncoder.maxStreamData(w, cf.id, cf.a)
-                                frames.addId(SentFrames.ID_MAX_STREAM_DATA, cf.id, cf.a)
-                            }
-
-                            ControlKind.StreamDataBlocked -> {
-                                FrameEncoder.streamDataBlocked(w, cf.id, cf.a)
-                                frames.addId(SentFrames.ID_STREAM_DATA_BLOCKED, cf.id, cf.a)
-                            }
-
-                            ControlKind.DataBlocked -> {
-                                FrameEncoder.dataBlocked(w, cf.a)
-                                frames.flags =
-                                    frames.flags or SentFrames.DATA_BLOCKED
-                            }
-
-                            ControlKind.MaxData -> {
-                                FrameEncoder.maxData(w, cf.a)
-                                frames.flags = frames.flags or SentFrames.MAX_DATA
-                            }
-
-                            ControlKind.MaxStreamsBidi -> {
-                                FrameEncoder.maxStreams(w, true, cf.a)
-                                frames.flags =
-                                    frames.flags or SentFrames.MAX_STREAMS_BIDI
-                            }
-
-                            ControlKind.MaxStreamsUni -> {
-                                FrameEncoder.maxStreams(w, false, cf.a)
-                                frames.flags =
-                                    frames.flags or SentFrames.MAX_STREAMS_UNI
-                            }
-
-                            ControlKind.StreamsBlockedBidi -> {
-                                FrameEncoder.streamsBlocked(w, true, cf.a)
-                                frames.flags =
-                                    frames.flags or SentFrames.STREAMS_BLOCKED_BIDI
-                            }
-
-                            ControlKind.StreamsBlockedUni -> {
-                                FrameEncoder.streamsBlocked(w, false, cf.a)
-                                frames.flags =
-                                    frames.flags or SentFrames.STREAMS_BLOCKED_UNI
-                            }
-                        }
-                        c.streams.releaseControlFrame(cf)
-                        ackEliciting = true
-                    }
+                    if (writeControlFrames(w, frames)) ackEliciting = true
                     c.datagramSender?.let { s ->
                         val max = c.maxDatagramPayload
                         if (max > 0 &&
@@ -694,6 +634,11 @@ internal class PacketBuilder(
                     }
                     while (w.remaining > 8 && c.streams.writeStreamFrame(w, frames)) ackEliciting = true
                 }
+                if (type == PacketType.ZeroRtt) {
+                    // 0-RTT carries stream data and its control frames only: no ACK, CRYPTO, connection IDs or path frames (RFC 9000 section 12.4)
+                    if (writeControlFrames(w, frames)) ackEliciting = true
+                    while (w.remaining > 8 && c.streams.writeStreamFrame(w, frames)) ackEliciting = true
+                }
             }
         }
         val payloadBytes = w.pos - payloadStart
@@ -712,7 +657,8 @@ internal class PacketBuilder(
         val payloadEnd = w.pos
         if (lengthOff >= 0) VarInt.writeFixed(buf, lengthOff, (pnLen + (payloadEnd - payloadStart) + 16).toLong(), 2)
         val end = PacketProtection.protect(buf, start, pnOff, pnLen, payloadEnd, pn, key, mask)
-        if (space == SpaceId.Application) c.onOneRttPacketSealed(pn)
+        if (type == PacketType.OneRtt) c.onOneRttPacketSealed(pn)
+        p.zeroRtt = type == PacketType.ZeroRtt
         p.pn = pn
         p.timeSent = now
         p.size = end - start
@@ -750,5 +696,79 @@ internal class PacketBuilder(
         c.qlog?.packetSent(space, pn, end - start, if (close == null) frames else null, now)
         if (space == SpaceId.Handshake && c.role == TlsRole.Client && !c.spaceDiscarded[0]) c.discardInitialPending = true
         return end - start
+    }
+
+    /** Queued stream control frames (RESET_STREAM, MAX_DATA, ...): allowed in 0-RTT and 1-RTT packets alike. True when one was written. */
+    private fun writeControlFrames(
+        w: WireWriter,
+        frames: SentFrames,
+    ): Boolean {
+        var ackEliciting = false
+        while (true) {
+            val cf = c.streams.takeControlFrame() ?: break
+            if (c.streams.controlOverhead(cf) > w.remaining) {
+                c.streams.pushBackControlFrame(cf)
+                break
+            }
+            when (cf.kind) {
+                ControlKind.ResetStream -> {
+                    FrameEncoder.resetStream(w, cf.id, cf.a, cf.b)
+                    frames.addId(SentFrames.ID_RESET_STREAM, cf.id, cf.a, cf.b)
+                }
+
+                ControlKind.StopSending -> {
+                    FrameEncoder.stopSending(w, cf.id, cf.a)
+                    frames.addId(SentFrames.ID_STOP_SENDING, cf.id, cf.a)
+                }
+
+                ControlKind.MaxStreamData -> {
+                    FrameEncoder.maxStreamData(w, cf.id, cf.a)
+                    frames.addId(SentFrames.ID_MAX_STREAM_DATA, cf.id, cf.a)
+                }
+
+                ControlKind.StreamDataBlocked -> {
+                    FrameEncoder.streamDataBlocked(w, cf.id, cf.a)
+                    frames.addId(SentFrames.ID_STREAM_DATA_BLOCKED, cf.id, cf.a)
+                }
+
+                ControlKind.DataBlocked -> {
+                    FrameEncoder.dataBlocked(w, cf.a)
+                    frames.flags =
+                        frames.flags or SentFrames.DATA_BLOCKED
+                }
+
+                ControlKind.MaxData -> {
+                    FrameEncoder.maxData(w, cf.a)
+                    frames.flags = frames.flags or SentFrames.MAX_DATA
+                }
+
+                ControlKind.MaxStreamsBidi -> {
+                    FrameEncoder.maxStreams(w, true, cf.a)
+                    frames.flags =
+                        frames.flags or SentFrames.MAX_STREAMS_BIDI
+                }
+
+                ControlKind.MaxStreamsUni -> {
+                    FrameEncoder.maxStreams(w, false, cf.a)
+                    frames.flags =
+                        frames.flags or SentFrames.MAX_STREAMS_UNI
+                }
+
+                ControlKind.StreamsBlockedBidi -> {
+                    FrameEncoder.streamsBlocked(w, true, cf.a)
+                    frames.flags =
+                        frames.flags or SentFrames.STREAMS_BLOCKED_BIDI
+                }
+
+                ControlKind.StreamsBlockedUni -> {
+                    FrameEncoder.streamsBlocked(w, false, cf.a)
+                    frames.flags =
+                        frames.flags or SentFrames.STREAMS_BLOCKED_UNI
+                }
+            }
+            c.streams.releaseControlFrame(cf)
+            ackEliciting = true
+        }
+        return ackEliciting
     }
 }

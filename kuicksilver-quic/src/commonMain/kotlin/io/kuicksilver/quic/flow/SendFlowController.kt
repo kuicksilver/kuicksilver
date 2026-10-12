@@ -13,6 +13,9 @@ internal class SendFlowController(
     val available: Long get() = limit - sent
     val maxLimit: Long get() = limit
 
+    /** Credit consumed so far (the highest offset sent). */
+    val used: Long get() = sent
+
     fun consume(bytes: Long) {
         require(bytes <= available) { "flow control credit exceeded" }
         sent += bytes

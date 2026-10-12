@@ -81,6 +81,7 @@ internal class FrameDispatcher(
         fin: Boolean,
     ) {
         c.streams.onStream(id, offset, data, off, len, fin)
+        if (r.inZeroRtt) c.streams.markReceivedEarly(id)
     }
 
     // a MAX_DATA / MAX_STREAM_DATA / MAX_STREAMS that raises nothing is an honest retransmission or reordering (quic-go repeats MAX_STREAMS per packet until acknowledged: 1040 of them in one multiplexing run); it costs nothing and spends nothing

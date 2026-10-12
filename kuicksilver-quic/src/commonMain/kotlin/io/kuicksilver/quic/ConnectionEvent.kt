@@ -2,7 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.kuicksilver.quic
 
+import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.tls.Certificate
+import io.kuicksilver.tls.QuicSessionTicket
 import io.kuicksilver.tls.QuicTlsSession
 
 /** Lifecycle of a connection as the core reports it. */
@@ -119,5 +121,25 @@ public sealed interface ConnectionEvent {
         public val old: PathId,
         public val new: PathId,
         public val reason: PathChangeReason,
+    ) : ConnectionEvent
+
+    /**
+     * Server: 0-RTT of this connection was accepted and its packets are read from now on, before the handshake completes;
+     * client: the server accepted our 0-RTT (RFC 9001 section 4.6.2). Early data can be a replay (RFC 8446 section 8).
+     */
+    @ExperimentalKuicksilverApi
+    public object EarlyDataAccepted : ConnectionEvent
+
+    /** Client: the server rejected our 0-RTT; what it carried is being sent again in 1-RTT (RFC 9001 section 4.6.2). */
+    @ExperimentalKuicksilverApi
+    public object EarlyDataRejected : ConnectionEvent
+
+    /**
+     * Client with early data: a ticket for a later 0-RTT connection, with the server's transport parameters remembered
+     * (RFC 9000 section 7.4.1). The receiver owns it: store it (single use) or close it.
+     */
+    @ExperimentalKuicksilverApi
+    public class SessionTicket(
+        public val ticket: QuicSessionTicket,
     ) : ConnectionEvent
 }

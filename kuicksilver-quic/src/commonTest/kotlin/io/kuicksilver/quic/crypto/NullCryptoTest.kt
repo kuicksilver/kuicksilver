@@ -157,6 +157,8 @@ class NullCryptoTest {
                         TlsEvent.HandshakeDone -> {
                             me.done = true
                         }
+
+                        else -> {}
                     }
                 }
                 if (me.last is DriveResult.Failed) return cs to ss
