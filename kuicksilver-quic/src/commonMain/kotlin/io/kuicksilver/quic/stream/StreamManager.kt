@@ -133,6 +133,9 @@ internal class StreamManager(
 
     fun hasStreamData(): Boolean = scheduler.next() != null
 
+    /** How often a stream was handed to the scheduler, for the complexity tests. */
+    internal val schedulerTouchesForTest: Long get() = scheduler.addsForTest
+
     private fun newEntry(id: Long): Entry {
         val local = StreamIds.isLocal(id, role)
         val bidi = StreamIds.isBidi(id)
@@ -324,10 +327,28 @@ internal class StreamManager(
         }
     }
 
+    /** Streams that ran out of connection-level credit, rescheduled by the next MAX_DATA that raises it (and only by that). */
+    private val connBlocked = ArrayList<SendStream>()
+
     fun onMaxData(max: Long): Boolean {
         val grew = connSend.onMaxUpdate(max)
-        for (e in streams.values) e.send?.let { if (it.hasPending) scheduler.add(it) }
-        return grew
+        if (!grew) return false // RFC 9000 section 21.6: a frame that raises nothing must not cost a pass over the streams
+        for (i in connBlocked.indices) {
+            val s = connBlocked[i]
+            s.connBlocked = false
+            if (streams[s.id]?.send === s && s.hasPending) scheduler.add(s)
+        }
+        connBlocked.clear()
+        return true
+    }
+
+    private fun blockedOnConnection(s: SendStream) {
+        if (s.connBlocked) return
+        if (connBlocked.size >= 2 * streams.size + 16) { // drop streams closed while waiting, so the list stays bounded by the live ones
+            connBlocked.removeAll { (streams[it.id]?.send !== it).also { gone -> if (gone) it.connBlocked = false } }
+        }
+        s.connBlocked = true
+        connBlocked += s
     }
 
     fun onMaxStreams(
@@ -467,7 +488,9 @@ internal class StreamManager(
         id: Long,
         p: StreamPriority,
     ) {
-        streams[id]?.send?.priority = p
+        val s = streams[id]?.send ?: return
+        s.priority = p
+        if (s.schedQueue >= 0) scheduler.reschedule(s)
     }
 
     /** Writes one STREAM frame for the next scheduled stream into [w]; records it in [frames]. False when nothing can be sent. */
@@ -495,6 +518,7 @@ internal class StreamManager(
                             queueControl(ControlKind.StreamDataBlocked, s.id, it)
                         }
                     }
+                    if (connSend.available <= 0) blockedOnConnection(s)
                     connSend.takeBlocked().let {
                         if (it >=
                             0
@@ -546,7 +570,7 @@ internal class StreamManager(
             val s =
                 streams[f.streamId[i]]?.send ?: continue
             s.onLost(f.streamOffset[i], f.streamLength[i], f.streamFin[i])
-            if (s.hasPending) scheduler.markRetransmit(s)
+            if (s.hasPending) scheduler.reschedule(s)
         }
         for (i in 0 until f.idCount) {
             when (f.idKind[i]) {

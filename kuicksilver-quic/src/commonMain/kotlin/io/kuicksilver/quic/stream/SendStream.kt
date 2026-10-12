@@ -16,6 +16,15 @@ internal class SendStream(
 ) {
     var state: SendState = SendState.Ready
 
+    /** [StreamScheduler] bookkeeping: the queue holding this stream (-1 when unscheduled), its heap slot or list neighbours. */
+    internal var schedQueue = -1
+    internal var schedIndex = 0
+    internal var schedPrev: SendStream? = null
+    internal var schedNext: SendStream? = null
+
+    /** Queued in [StreamManager]'s list of streams waiting for connection-level credit. */
+    internal var connBlocked = false
+
     /** Unacknowledged bytes in a ring buffer: [head] is the ring index of stream offset [releasedUpTo]; it grows to the high-water mark once and then never allocates. */
     private var ring = ByteArray(4096)
     private var head = 0

@@ -111,6 +111,9 @@ internal class LossDetection(
 
     fun storedPackets(id: SpaceId): Int = space(id).sent.size
 
+    /** Sent packets examined by [onAck] (the walk and the compaction), for the complexity tests. */
+    internal var visitedForTest = 0
+
     fun onPacketSent(
         space: SpaceId,
         p: SentPacket,
@@ -122,7 +125,7 @@ internal class LossDetection(
             sp.release(p)
             return
         }
-        sp.sent += p
+        sp.sent.add(p)
         if (p.inFlight) bytesInFlight += p.size
         if (p.ackEliciting) {
             sp.lastAckElicitingTime = now
@@ -164,29 +167,26 @@ internal class LossDetection(
         val prevLargestAcked = sp.largestAcked
         if (ack.largest > sp.largestAcked) sp.largestAcked = ack.largest
         acked.clear()
-        // sent packets are in ascending order, ACK ranges in descending order: one pass over both (RFC 9002 appendix A.7 in linear time)
-        var i = sp.sent.size - 1
-        var r = 0
-        while (i >= 0 && r < ack.rangeCount) {
-            val p = sp.sent[i]
-            when {
-                p.pn > ack.largest(r) -> {
-                    i--
-                }
-
-                p.pn < ack.smallest(r) -> {
-                    r++
-                }
-
-                else -> {
-                    p.marked = true
+        // RFC 9002 appendix A.7 without a pass over everything in flight (RFC 9000 section 21.6): ranges come in descending order,
+        // each is found by binary search and walked downwards, so the first match is the largest newly acknowledged packet
+        val sent = sp.sent
+        for (r in 0 until ack.rangeCount) {
+            val smallest = ack.smallest(r)
+            if (sent.isEmpty() || ack.largest(r) < sent.pnAt(sent.start)) break // this and every later range lie below the oldest packet
+            var i = sent.lowerBound(ack.largest(r) + 1) - 1
+            val lo = sent.lowerBound(smallest)
+            while (i >= lo) {
+                visitedForTest++
+                val p = sent.at(i)
+                if (p != null) {
                     acked += p
-                    i--
+                    sent.removeAt(i)
                 }
+                i--
             }
         }
         if (acked.isEmpty()) return
-        compact(sp.sent)
+        visitedForTest += sent.trim()
         val largestNewlyAcked = acked[0] // the walk goes downwards: the first match is the largest
         if (largestNewlyAcked.pn == ack.largest && largestNewlyAcked.ackEliciting && largestNewlyAcked.pathId == activePath) {
             val maxMicros = Long.MAX_VALUE / 1000 shr peerAckDelayExponent
@@ -296,21 +296,6 @@ internal class LossDetection(
         }
     }
 
-    /** Removes the marked packets in one pass and clears their marks. */
-    private fun compact(sent: ArrayList<SentPacket>) {
-        var w = 0
-        for (k in sent.indices) {
-            val p = sent[k]
-            if (p.marked) {
-                p.marked = false
-            } else {
-                sent[w++] =
-                    p
-            }
-        }
-        while (sent.size > w) sent.removeAt(sent.size - 1)
-    }
-
     private fun lossDelay(): Duration {
         val d =
             if (rtt.smoothed >
@@ -338,19 +323,22 @@ internal class LossDetection(
         val delay = lossDelay()
         val lostSendTime = now - delay
         lost.clear()
-        for (i in sp.sent.indices) {
-            val p = sp.sent[i]
-            if (p.pn > sp.largestAcked) break // ascending: nothing above the largest acknowledged can be declared lost
+        // only packets below the largest acknowledged can be lost, and every one more than 3 below it is (packet threshold): the walk
+        // costs the packets it declares lost plus at most 3 survivors and the tombstones between them
+        val sent = sp.sent
+        val end = sent.lowerBound(sp.largestAcked + 1)
+        for (i in sent.start until end) {
+            val p = sent.at(i) ?: continue
             if (p.timeSent <= lostSendTime || sp.largestAcked >= p.pn + 3) {
-                p.marked = true
                 lost += p
+                sent.removeAt(i)
             } else {
                 val t = p.timeSent + delay
                 if (t < sp.lossTime) sp.lossTime = t
             }
         }
         if (lost.isEmpty()) return
-        compact(sp.sent)
+        sent.trim()
         var lostBytes = 0
         var largestSent = TimeMark(Long.MIN_VALUE)
         var earliest = TimeMark(Long.MAX_VALUE)

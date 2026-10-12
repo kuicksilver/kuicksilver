@@ -47,6 +47,7 @@ class StreamStateTest {
     private fun manager(
         role: TlsRole = TlsRole.Client,
         peerMaxData: Long = 1L shl 40,
+        maxStreams: Long = 100,
     ): StreamManager {
         val m =
             StreamManager(
@@ -54,17 +55,30 @@ class StreamStateTest {
                 QuicConfig.Default,
                 RecvFlowController(786_432, 15_728_640),
                 SendFlowController(peerMaxData),
-                StreamLimits(role, 100, 100),
+                StreamLimits(role, maxStreams, maxStreams),
             )
         m.applyPeerParameters(
             initialMaxStreamDataBidiLocal = 1L shl 30,
             initialMaxStreamDataBidiRemote = 1L shl 30,
             initialMaxStreamDataUni =
                 1L shl 30,
-            maxStreamsBidi = 100,
-            maxStreamsUni = 100,
+            maxStreamsBidi = maxStreams,
+            maxStreamsUni = maxStreams,
         )
         return m
+    }
+
+    @Test fun maxDataWithoutGrowthTouchesNoStream() {
+        // RFC 9000 section 21.6: a MAX_DATA that raises nothing costs the peer one frame; it must not cost us a pass over every stream
+        val m = manager(peerMaxData = 1L shl 20, maxStreams = 1000)
+        repeat(1000) {
+            val id = m.open(bidi = true, StreamPriority.Default)
+            assertTrue(id >= 0)
+            m.write(id, ByteArray(10), 0, 10, false)
+        }
+        val before = m.schedulerTouchesForTest
+        assertTrue(!m.onMaxData(1L shl 20), "the same limit again grows nothing")
+        assertEquals(0L, m.schedulerTouchesForTest - before, "no stream was touched")
     }
 
     private fun recv(

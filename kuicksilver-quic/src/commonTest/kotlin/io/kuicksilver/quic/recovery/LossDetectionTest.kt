@@ -17,6 +17,7 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.microseconds
 import kotlin.time.Duration.Companion.milliseconds
 
 class LossDetectionTest {
@@ -117,6 +118,18 @@ class LossDetectionTest {
             for ((s, l) in ranges) v.addRange(s, l)
             if (ecn != null) v.setEcn(ecn[0], ecn[1], ecn[2])
         }
+
+    @Test fun ackOfOldestPacketIsSublinear() {
+        // RFC 9002 appendix A.7 and RFC 9000 section 21.6: the peer chooses what it acknowledges and how much is outstanding; an ACK of the
+        // oldest packet must not walk every packet in flight
+        val (ld, l) = ld()
+        for (pn in 0L until 10_000L) send(ld, SpaceId.Application, pn, t0 + pn.toInt().microseconds)
+        ld.visitedForTest = 0
+        ld.onAck(SpaceId.Application, ack(0L to 0L), t0 + 100.milliseconds)
+        assertEquals(listOf(0L), l.acked)
+        assertTrue(ld.visitedForTest < 64, "packets visited for an ACK of the oldest of 10 000: ${ld.visitedForTest}")
+        assertEquals(9_999, ld.storedPackets(SpaceId.Application))
+    }
 
     @Test fun staleAckDoesNotReachEcnValidation() {
         // RFC 9000 section 13.4.2.1: an ACK that does not raise the largest acknowledged packet was reordered on the way; its counts

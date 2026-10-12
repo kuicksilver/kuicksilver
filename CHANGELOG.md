@@ -84,6 +84,9 @@ Hardening of the QUIC core for 0.2.0 (review of 2026-10-08, deferred items):
 - QUIC: ECN validation looks only at ACKs that raise the largest acknowledged packet, keeps the peer's counts per packet
   number space instead of per path, and counts newly acknowledged marked packets per path; a reordered ACK no longer
   fails ECN on the path, and a new path no longer takes the first counts it sees for a CE signal (RFC 9000 §13.4.2.1).
+- QUIC: work a peer can trigger no longer grows with what it controls (RFC 9000 §21.6): an ACK costs a binary search per
+  range instead of a walk over every packet in flight, a `MAX_DATA` that raises nothing touches no stream, and choosing or
+  scheduling a stream is logarithmic in the number of streams instead of linear.
 
 Fixes from a full five-reviewer pass over the code before the first release, among them:
 

@@ -151,8 +151,6 @@ internal class SentPacket {
     /** Sent with ECT(0) (RFC 9000 section 13.4.2). */
     var ecnMarked: Boolean = false
 
-    /** Scratch mark for the ACK/loss walks (set and cleared within one call). */
-    var marked: Boolean = false
     val frames: SentFrames = SentFrames()
 
     internal fun reset() {
