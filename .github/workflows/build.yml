@@ -5,10 +5,13 @@
 # Written to pass on fresh GitHub-hosted runners; to be confirmed by the first run after the repository goes public.
 #
 #   lint ──────────────────────────────────────────────── pins, SPDX, script syntax
-#   openssl-docker (linux-x64, linux-arm64, mingw-x64) ─┬─ linux (x64, arm64): manylinux C tests, .so, JVM suites, system OpenSSL
+#   openssl-docker (linux-x64, linux-arm64, mingw-x64 + the Windows JNI dll) ─┬─ linux (x64, arm64): manylinux C tests, .so, JVM suites, system OpenSSL
 #                                                        ├─ linux-native: -kn OpenSSL, test.kexe x64 + arm64 (QEMU), mingw test.exe ── windows
-#                                                        ├─ apple (macOS arm64): ABI dumps, ASan C tests, JVM + macosArm64 suites, repro
+#                                                        ├─ apple (macOS arm64): ABI dumps, ASan C tests, JVM + macosArm64 suites, Intel-Mac dylib, repro
 #                                                        └─ interop-images ── interop (weekly / dispatch): JVM and native image × 6 peers
+#   openssl-docker + linux + apple ── jvm-jar: the kuicksilver-native jar with all five JNI libraries ── consumer-smoke (mavenLocal)
+#   JNI artifacts jni-<classifier> (tools/build-jni.sh output dirs; .github/workflows/release.yml reuses them from the green run):
+#     linux-x86_64, linux-aarch_64 ← linux · osx-aarch_64, osx-x86_64 ← apple · windows-x86_64 ← openssl-docker (mingw-x64)
 #   android (API 24, 35): AAR (arm64-v8a, x86_64, armeabi-v7a), size and 16 KiB gates, emulator tests
 #   linux ── jdk-compat (JDK 17 API, tests on 17 / 25)
 name: build
@@ -86,6 +89,16 @@ jobs:
         with:
           name: openssl-${{ matrix.target }}
           path: build/openssl/${{ matrix.target }}
+          if-no-files-found: error
+          retention-days: 7
+      - name: 'docker: JNI library windows-x86_64 (mingw)'
+        if: matrix.target == 'mingw-x64'
+        run: bash tools/ci/jni-windows.sh build/jni-windows
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: matrix.target == 'mingw-x64'
+        with:
+          name: jni-windows-x86_64
+          path: build/jni-windows
           if-no-files-found: error
           retention-days: 7
 
@@ -246,6 +259,27 @@ jobs:
         run: |
           # shellcheck disable=SC2012   # library names are fixed ASCII
           bash tools/check/exports.sh "$(ls kuicksilver-native/build/jni/osx-aarch_64/libksl_*_osx_aarch_64.dylib | tail -1)" macos
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: jni-osx-aarch_64
+          path: kuicksilver-native/build/jni
+          if-no-files-found: error
+          retention-days: 7
+      - name: 'jvm: JNI library osx-x86_64 (Intel Macs)'
+        # the JVM on Intel Macs keeps its library although Kotlin/Native macosX64 was dropped (kuicksilver-native/openssl.gradle.kts)
+        run: |
+          $G :kuicksilver-native:opensslBuildMacosX64
+          bash tools/check/keylog-disabled.sh build/openssl/macos-x64/include
+          bash tools/build-jni.sh osx-x86_64 build/jni-osx-x86_64
+          set -- build/jni-osx-x86_64/osx-x86_64/libksl_*_osx_x86_64.dylib
+          [ "$(lipo -archs "$1")" = x86_64 ] || { echo "::error::$1 is $(lipo -archs "$1"), not x86_64"; exit 1; }
+          bash tools/check/exports.sh "$1" macos
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: jni-osx-x86_64
+          path: build/jni-osx-x86_64
+          if-no-files-found: error
+          retention-days: 7
       - name: 'native: macosArm64 tests'
         run: |
           . tools/ci/matrix.sh
@@ -416,21 +450,48 @@ jobs:
           path: build/interop/2*
           retention-days: 14
 
+  jvm-jar:
+    # The kuicksilver-native JVM jar as it is published: libksl for every JVM platform, each library built (and, except the
+    # Windows dll and the Intel-Mac dylib, tested) by its own job and checked against that job's manifest.sha256.
+    # buildJniHost is excluded: on this runner it would replace the manylinux .so with a host-gcc build.
+    needs: [openssl-docker, linux, apple]
+    runs-on: ubuntu-24.04
+    permissions: { contents: read }
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - uses: ./.github/actions/setup
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with: { pattern: 'jni-*', path: build/jni-artifacts }
+      - name: 'jvm: collect JNI libraries'
+        run: bash tools/ci/collect-jni.sh build/jni-artifacts
+      - name: 'jvm: jar with every JNI library'
+        run: |
+          $G --max-workers=2 -Pkuicksilver.openssl.prebuilt=true -x :kuicksilver-native:buildJniHost :kuicksilver-native:jvmJar
+          set -- kuicksilver-native/build/libs/kuicksilver-native-jvm-*.jar
+          unzip -l "$1" 'META-INF/native/*'
+          bash tools/ci/collect-jni.sh --check-jar "$1"
+
   consumer-smoke:
-    # PLACEHOLDER for K6 part E (E2), off until the publication config lands: the published artifacts, consumed the way a user
-    # does — publishToMavenLocal, then samples/realtime-telemetry built from mavenLocal() without includeBuild.
-    # Part E replaces the last step and turns the job on by setting the repository variable KSL_CONSUMER_SMOKE to 'true'.
-    if: vars.KSL_CONSUMER_SMOKE == 'true'
-    needs: apple
+    # The published artifacts consumed the way a user does: publishToMavenLocal (unsigned, the jar with all five JNI
+    # libraries), then samples/realtime-telemetry built from mavenLocal() without includeBuild (tools/check/consumer-smoke.sh).
+    needs: [openssl-docker, jvm-jar]
     runs-on: macos-26
     permissions: { contents: read }
-    timeout-minutes: 120
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { persist-credentials: false }
       - uses: ./.github/actions/setup
         with: { ndk: 'true', xcode: 'true', konan: 'linux_x64 linux_arm64 mingw_x64', openssl-cache: apple }
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with: { name: openssl-mingw-x64, path: build/openssl/mingw-x64 }
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with: { pattern: 'jni-*', path: build/jni-artifacts }
+      - name: 'jvm: collect JNI libraries'
+        run: bash tools/ci/collect-jni.sh build/jni-artifacts
       - name: 'publish: mavenLocal'
-        run: $G publishToMavenLocal
+        run: $G --max-workers=2 -Pkuicksilver.sign=false -x :kuicksilver-native:buildJniHost publishToMavenLocal
       - name: 'sample: realtime-telemetry from mavenLocal'
-        run: echo "part E (E2) adds the mavenLocal mode of samples/realtime-telemetry"; exit 1
+        run: bash tools/check/consumer-smoke.sh

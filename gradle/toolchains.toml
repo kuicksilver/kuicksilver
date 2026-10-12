@@ -1,7 +1,7 @@
 # Copyright 2026 The Kuicksilver Authors
 # SPDX-License-Identifier: Apache-2.0
 # Toolchain pins outside the Gradle version catalog (review I8). Read by tools/build-android-so.sh,
-# tools/check/llvm-tool.sh and .github/workflows/build.yml; update together with the CI runner images.
+# tools/check/llvm-tool.sh, tools/ci/jni-windows.sh and .github/workflows/build.yml; update together with the CI runner images.
 [android]
 # NDK r28c (16 KiB pages by default; build-android-so.sh still passes the max-page-size flags so r27 hosts stay correct)
 ndk = "28.2.13676358"
@@ -9,3 +9,9 @@ ndk = "28.2.13676358"
 [apple]
 # Xcode for Kotlin 2.4.20; CI selects /Applications/Xcode_<xcode>.app and fails if the runner image lacks it
 xcode = "26.4"
+
+[windows]
+# Temurin JDK 21 for Windows x64, used only for its JNI headers (include/, include/win32) by tools/ci/jni-windows.sh, which
+# cross-builds the Windows libksl dll with mingw-w64 on Linux. Any JDK 8+ has the same JNI ABI; bump with the sha256 from Adoptium.
+jdk-url = "https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.12.1%2B1/OpenJDK21U-jdk_x64_windows_hotspot_21.0.12.1_1.zip"
+jdk-sha256 = "f9d6e191ab098c0d416e7d588a24420a8621cd2f4720dab2459b8b7b2d2d8b4e"

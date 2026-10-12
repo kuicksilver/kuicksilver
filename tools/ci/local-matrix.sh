@@ -33,6 +33,7 @@ step "fuzz: regression corpus"                  $G "${KSL_FUZZ_ARGS[@]}"
 step "sim: Monte-Carlo (KSL_SIM_RUNS=200)"      $G "${KSL_SIM_ARGS[@]}"
 step "bench: allocation gate"                   $G :kuicksilver-bench:jvmTest
 step "jvm: exports whitelist (dylib)"           bash -c 'bash tools/check/exports.sh "$(ls kuicksilver-native/build/jni/osx-aarch_64/libksl_*_osx_aarch_64.dylib | tail -1)" macos'
+step "jvm: JNI library osx-x86_64 (Intel Macs)"  bash -c "$G :kuicksilver-native:opensslBuildMacosX64"' && bash tools/check/keylog-disabled.sh build/openssl/macos-x64/include && bash tools/build-jni.sh osx-x86_64 build/jni-osx-x86_64 && set -- build/jni-osx-x86_64/osx-x86_64/libksl_*_osx_x86_64.dylib && [ "$(lipo -archs "$1")" = x86_64 ] && bash tools/check/exports.sh "$1" macos'
 step "android: AAR"                             $G :kuicksilver-native:bundleAndroidMainAar
 step "android: size gate"                       bash tools/check/size.sh "$aar" "$SIZE_LIMIT"
 step "android: 16 KiB pages"                    bash tools/check/page-align.sh "$aar"
@@ -59,6 +60,7 @@ step "docker: quic test.kexe linux-arm64"       bash tools/ci/docker-run.sh linu
 step "docker: jvm linux-x64 (.so + tests)"      bash tools/ci/docker-jvm.sh linux-x86_64
 step "docker: jvm linux-arm64 (.so + tests)"    bash tools/ci/docker-jvm.sh linux-aarch_64   # the accelerated UDP, the multi-loop server and the Native-server guard run natively here
 step "docker: system OpenSSL mode"              bash tools/ci/system-openssl.sh
+step "docker: JNI library windows-x86_64 (mingw)" bash tools/ci/jni-windows.sh build/jni-windows
 fi
 if [ "$with_interop" = 1 ]; then
 # CI runs one job per image x peer (the same cases and peers); --check-required is scoped to each run's image, peers and cases
