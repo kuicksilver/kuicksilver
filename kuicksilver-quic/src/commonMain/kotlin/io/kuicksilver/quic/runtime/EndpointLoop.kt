@@ -552,6 +552,7 @@ internal class EndpointLoop private constructor(
         remote: InetSocketAddress,
         config: QuicClientConfig,
     ): QuicConnection = connectResolved(resolveOnce(remote), config)
+
     /**
      * The connect target as an IP literal, resolved once here: the socket reports peers as IP literals, Kotlin/Native's
      * InetSocketAddress compares strings, the loop compares addresses by bytes, and `hostname` would do a reverse DNS lookup (see

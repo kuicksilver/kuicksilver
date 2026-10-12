@@ -37,7 +37,13 @@ class NativeServerH3Test {
                     try {
                         val r = c.request(Http3Request("GET", authority = "server.test", path = "/"))
                         assertEquals(200, r.status)
-                        assertEquals("native h3", r.body.readRemaining().readByteArray().decodeToString())
+                        assertEquals(
+                            "native h3",
+                            r.body
+                                .readRemaining()
+                                .readByteArray()
+                                .decodeToString(),
+                        )
                     } finally {
                         c.close()
                     }

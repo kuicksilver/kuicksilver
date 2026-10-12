@@ -34,7 +34,9 @@ class ServerH3DisabledTest {
     @Test fun h3SkippedForSniSelectorConnector() =
         serverTest {
             val (server, port) =
-                tlsServer(connector = { sniSelector = { ServerTlsOverride(ServerFixtures.identity()) } }) { routing { get("/") { call.respondText("ok") } } }
+                tlsServer(connector = {
+                    sniSelector = { ServerTlsOverride(ServerFixtures.identity()) }
+                }) { routing { get("/") { call.respondText("ok") } } }
             try {
                 val resp = rawHttp(port, "GET / HTTP/1.1\r\nHost: server.test\r\nConnection: close\r\n\r\n")
                 assertTrue(resp.endsWith("ok") && !resp.contains("Alt-Svc"), resp)

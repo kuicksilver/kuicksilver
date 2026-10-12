@@ -165,7 +165,8 @@ class MultiLoopTest {
                         io = { DatagramIo.open(it, IoPreference.Portable) }
                     }.build()
             assertFailsWith<UnsupportedOperationException> { QuicEndpoint.bind(lo, cfg) }
-            if (!ready()) assertFailsWith<UnsupportedOperationException> { QuicEndpoint.bind(lo, serverConfig(2)) } // macOS: no flow hashing
+            // macOS: the accelerated socket exists but has no SO_REUSEPORT flow hashing
+            if (!ready()) assertFailsWith<UnsupportedOperationException> { QuicEndpoint.bind(lo, serverConfig(2)) }
             // loops > 1 needs a server
             assertFailsWith<IllegalArgumentException> { QuicEndpointConfig.Builder().apply { loops = 2 }.build() }
             Unit

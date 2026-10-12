@@ -109,7 +109,11 @@ class KslDatagramIoTest {
                     assertEquals(i.toByte(), inb.buffer(i)[0])
                     assertEquals(Ecn.Ect0, inb.ecn(i))
                 }
-                assertEquals(if (linux) 1L else 16L, a.statsForTest().sendSyscalls, "one sendmsg for the run (Linux GSO), one per datagram on Darwin")
+                assertEquals(
+                    if (linux) 1L else 16L,
+                    a.statsForTest().sendSyscalls,
+                    "one sendmsg for the run (Linux GSO), one per datagram on Darwin",
+                )
                 out.close()
                 inb.close()
             } finally {
