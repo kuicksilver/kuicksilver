@@ -337,6 +337,40 @@ class NetworkMigratorTest {
             }
         }
 
+    @Test fun closesTheActualPreviousPathAfterAnOutsideSwitch() =
+        runBlocking {
+            ApiPair.open().use { p ->
+                withTimeout(60.seconds) {
+                    val (c, s) = p.connect()
+                    val nets = MutableStateFlow<Int?>(1)
+                    val o = Opener(p)
+                    val m = NetworkMigrator(c, nets, { o.open(it) }, this)
+                    val (events, collector) = eventsOf(m)
+                    m.start()
+                    m.network.first { it == 1 }
+                    nets.value = 2
+                    val e2 = assertIs<MigrationEvent.Migrated<Int>>(events.receive())
+                    // the connection moves without the migrator (as a core fallback would): it is on path 9 now
+                    val p9 = c.addPath(p.net.open(addr(9)))
+                    assertTrue(p9.probe())
+                    p9.switchTo()
+                    nets.value = 3
+                    val e3 = assertIs<MigrationEvent.Migrated<Int>>(events.receive())
+                    assertEquals(2 to 3, e3.old to e3.new)
+                    p9.state.first { it == PathState.Closed } // the path the connection really left
+                    nets.value = 4
+                    assertIs<MigrationEvent.Migrated<Int>>(events.receive())
+                    e3.path.state.first { it == PathState.Closed }
+                    assertEquals(addr(4), c.activePath!!.localAddress)
+                    assertTrue(c.paths.size <= 2, "paths stay bounded: ${c.paths.map { it.localAddress }}")
+                    ping(c, s)
+                    m.close()
+                    collector.cancel()
+                    c.close()
+                }
+            }
+        }
+
     @Test fun negative_serverConnectionIsRejected() =
         runBlocking {
             ApiPair.open().use { p ->

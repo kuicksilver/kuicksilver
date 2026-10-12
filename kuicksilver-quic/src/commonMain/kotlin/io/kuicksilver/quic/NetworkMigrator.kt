@@ -113,7 +113,7 @@ public class NetworkMigrator<N : Any>(
         }
 
     private suspend fun follow() {
-        var path: QuicPath? = null // and its path; null until the first migration (then the path the connection started on is active)
+        var path: QuicPath? = null // the path of the last migration; only a fallback for when the connection has no active path
         networks.distinctUntilChanged().collectLatest { n ->
             val current = onNetwork.value
             when {
@@ -126,7 +126,8 @@ public class NetworkMigrator<N : Any>(
                 }
 
                 n != current -> {
-                    val from = path ?: connection.activePath
+                    // the path the connection is on now: the core may have fallen back (or the peer moved) since the last migration
+                    val from = connection.activePath ?: path
                     migrateTo(n) { p ->
                         // runs once the connection switched, even if this migration is being superseded right now
                         onNetwork.value = n
