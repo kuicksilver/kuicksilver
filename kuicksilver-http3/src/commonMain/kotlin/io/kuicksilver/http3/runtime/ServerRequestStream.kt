@@ -269,7 +269,8 @@ internal class ServerRequestImpl(
                 abortInternal()
                 throw e
             }
-            ResponseWriterImpl(session, st, this@ServerRequestImpl)
+            // HEAD, 204 and 304 carry no content (RFC 9110 sections 9.3.2, 15.3.5, 15.4.5): what the application writes is dropped
+            ResponseWriterImpl(session, st, this@ServerRequestImpl, discardBody = method == "HEAD" || status == 204 || status == 304)
         }
     }
 
@@ -315,11 +316,15 @@ internal class ServerRequestImpl(
     }
 }
 
-/** Copies what the application writes into DATA frames; [finish] adds trailers and FIN. */
+/**
+ * Copies what the application writes into DATA frames; [finish] adds trailers and FIN. With [discardBody] (a response
+ * that has no content) the bytes are read and dropped, so the peer never sees DATA it must treat as malformed.
+ */
 internal class ResponseWriterImpl(
     private val session: H3Session,
     private val st: QuicStream,
     private val request: ServerRequestImpl?,
+    private val discardBody: Boolean = false,
 ) : Http3ResponseWriter {
     private val channel = ByteChannel()
     override val output: ByteWriteChannel get() = channel
@@ -331,7 +336,7 @@ internal class ResponseWriterImpl(
                 while (true) {
                     val n = channel.readAvailable(buf, 0, buf.size)
                     if (n < 0) break
-                    if (n > 0) {
+                    if (n > 0 && !discardBody) {
                         st.output.writeFrame(FrameType.DATA, buf, 0, n)
                         st.output.flush()
                     }

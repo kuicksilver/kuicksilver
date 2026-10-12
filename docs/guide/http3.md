@@ -118,7 +118,8 @@ application has not finished reading when its response is complete is dropped wi
 client's upload then ends with `QuicException.StreamError.Stopped` (code `H3_NO_ERROR`) in its body channel, and the
 stream is retired as soon as the client's FIN or reset arrives, so unread uploads never exhaust the stream credit. Field
 names and values are octets: a character above U+00FF is rejected rather than truncated. A response to HEAD may carry
-a `content-length` without a body. A request whose header
+a `content-length` without a body; the server drops whatever the application writes to a HEAD, 204 or 304 response
+rather than sending DATA the client must treat as malformed. A request whose header
 section is above `maxFieldSectionSize` once decoded is answered with 431 and `STOP_SENDING H3_EXCESSIVE_LOAD` by the
 connection itself. The other way round, a section above the peer's `SETTINGS_MAX_FIELD_SECTION_SIZE` is never sent:
 `request` fails with `FieldSectionTooLarge` before it opens a stream, `respond` and `finish(trailers)` fail before
