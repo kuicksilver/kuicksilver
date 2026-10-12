@@ -435,6 +435,10 @@ internal class EndpointLoop private constructor(
         }
     }
 
+    /** Flushes that returned with connections still on the dirty list (test hook). */
+    @Volatile internal var flushesEndingDirtyForTest: Long = 0
+        private set
+
     /** Sockets that did not take a whole batch during the current flush: the rest of the flush only `trySend`s on them. */
     private val fullThisFlush = ArrayList<DatagramIo>(2)
 
@@ -449,38 +453,45 @@ internal class EndpointLoop private constructor(
             val dirty = core.dirtyConnections
             if (dirty.isEmpty() && !core.hasStateless) return@withLock
             val head = timers.peek()?.heapDeadline ?: TimeMark.NEVER
-            // the list is copied: a flush can retire connections, and a failure inside one marks others dirty
-            val list = dirty.toList()
-            core.clearDirty()
             fullThisFlush.clear()
-            for (c in list) {
-                val rt = runtimes[c] ?: continue
-                try {
-                    rt.drainEvents()
-                    outBatch.clear()
-                    if (c.poll(outBatch, now) > 0) sendOut(rt, outBatch)
-                    rt.drainEvents()
-                    rt.tick()
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Throwable) {
-                    c.failInternal(e)
-                    rt.drainEvents()
-                }
-                if (c.state ==
-                    ConnectionState.Closed
-                ) {
-                    handshakeEnded(rt)
-                    rt.finish()
-                    timers.remove(c)
-                    core.remove(c)
-                    runtimes.remove(c)
-                } else {
-                    timers.update(c, c.nextTimeoutOrNever())
+            // connections marked dirty while this flush runs (a refusal in onHandshakeCompleted, a failure marking others) get
+            // further rounds here: their CONNECTION_CLOSE must not wait for the next datagram or timer
+            var rounds = 0
+            while (dirty.isNotEmpty() && rounds++ < FLUSH_ROUNDS) {
+                // the list is copied: a flush can retire connections, and a failure inside one marks others dirty
+                val list = dirty.toList()
+                core.clearDirty()
+                for (c in list) {
+                    val rt = runtimes[c] ?: continue
+                    try {
+                        rt.drainEvents()
+                        outBatch.clear()
+                        if (c.poll(outBatch, now) > 0) sendOut(rt, outBatch)
+                        rt.drainEvents()
+                        rt.tick()
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Throwable) {
+                        c.failInternal(e)
+                        rt.drainEvents()
+                    }
+                    if (c.state ==
+                        ConnectionState.Closed
+                    ) {
+                        handshakeEnded(rt)
+                        rt.finish()
+                        timers.remove(c)
+                        core.remove(c)
+                        runtimes.remove(c)
+                    } else {
+                        timers.update(c, c.nextTimeoutOrNever())
+                    }
                 }
             }
+            if (dirty.isNotEmpty()) wake.trySend(Unit) // still more after the bounded rounds: the timer coroutine flushes again
             outBatch.clear()
             if (core.pollStateless(outBatch) > 0) sendOrLose(io, outBatch, null)
+            if (core.dirtyConnections.isNotEmpty()) flushesEndingDirtyForTest++
             val newHead = timers.peek()?.heapDeadline ?: TimeMark.NEVER
             if (signalTimer && newHead < head) wake.trySend(Unit)
         }
@@ -658,6 +669,9 @@ internal class EndpointLoop private constructor(
             require(quic.maxUdpPayloadSize <= SLOT_SIZE) {
                 "maxUdpPayloadSize ${quic.maxUdpPayloadSize} exceeds the endpoint runtime's $SLOT_SIZE-byte datagram slots"
             }
+
+        /** Rounds one flush runs over connections that became dirty during it; more go to the next flush. */
+        const val FLUSH_ROUNDS: Int = 4
 
         /** Forwarded datagrams handled before admission, flush and a yield. */
         const val FORWARD_BATCH: Int = 16

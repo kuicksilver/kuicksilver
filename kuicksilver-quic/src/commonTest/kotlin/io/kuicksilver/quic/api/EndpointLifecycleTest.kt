@@ -257,6 +257,63 @@ class EndpointLifecycleTest {
             }
         }
 
+    @Test fun refusedClientHearsTheClosePromptly() =
+        runBlocking {
+            withTimeout(30.seconds) {
+                // the CONNECTION_CLOSE of a refused handshake leaves in the flush that refused it, not with the next event
+                val net = MemoryNetwork()
+                val serverAddr = InetSocketAddress("10.0.0.2", 2222)
+                val sio = HoldIo(net.open(serverAddr), held = 2) // both Initials in one admission round: both handshakes complete
+                val server =
+                    QuicEndpoint.bind(
+                        serverAddr,
+                        QuicEndpointConfig
+                            .Builder()
+                            .apply {
+                                this.server = QuicServerConfig.Builder(CoreFixtures.server()).build()
+                                crypto = NullCryptoProvider
+                                acceptQueue = 1
+                                io = { sio }
+                            }.build(),
+                    )
+                val clients =
+                    (1..2).map { i ->
+                        val io = net.open(InetSocketAddress("10.0.1.$i", 1000 + i))
+                        QuicEndpoint.bind(
+                            io.localAddress,
+                            QuicEndpointConfig
+                                .Builder()
+                                .apply {
+                                    crypto = NullCryptoProvider
+                                    this.io = { io }
+                                }.build(),
+                        )
+                    }
+                val loop = server as EndpointLoop
+                try {
+                    val outcomes =
+                        clients
+                            .map { ep ->
+                                async {
+                                    try {
+                                        val c = ep.connect(serverAddr, QuicClientConfig.Builder(CoreFixtures.client()).build())
+                                        withTimeoutOrNull(2.seconds) { c.closed.await() }
+                                    } catch (e: QuicException.ConnectionLost) {
+                                        e
+                                    }
+                                }
+                            }.awaitAll()
+                    val refused = outcomes.filterIsInstance<QuicException.ConnectionLost.TransportClosed>()
+                    assertEquals(1, refused.size, "outcomes within 2 s: $outcomes")
+                    assertEquals(TransportError.CONNECTION_REFUSED, refused.single().code)
+                    assertEquals(0L, loop.flushesEndingDirtyForTest, "flushes that left a connection dirty")
+                } finally {
+                    clients.forEach { it.close() }
+                    server.close()
+                }
+            }
+        }
+
     @Test fun acceptBacklogNeverExceedsAcceptQueue() =
         runBlocking {
             withTimeout(30.seconds) {
