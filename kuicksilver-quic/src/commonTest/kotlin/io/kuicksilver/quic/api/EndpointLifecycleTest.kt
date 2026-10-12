@@ -2,6 +2,19 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.kuicksilver.quic.api
 
+import io.ktor.network.sockets.InetSocketAddress
+import io.kuicksilver.quic.DatagramIo
+import io.kuicksilver.quic.MemoryDatagramIo
+import io.kuicksilver.quic.MemoryNetwork
+import io.kuicksilver.quic.NullCryptoProvider
+import io.kuicksilver.quic.PacketBatch
+import io.kuicksilver.quic.QuicConnection
+import io.kuicksilver.quic.QuicEndpoint
+import io.kuicksilver.quic.QuicEndpointConfig
+import io.kuicksilver.quic.QuicServerConfig
+import io.kuicksilver.quic.TransportError
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import io.kuicksilver.annotations.DelicateKuicksilverApi
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.native.KslLoader
@@ -112,6 +125,81 @@ class EndpointLifecycleTest {
                     )
                 }
                 assertEquals(0, (p.client as EndpointLoop).core.connectionCount)
+            }
+        }
+
+    /** The server's socket: its first receive waits until [held] datagrams are queued and returns them in one batch, so they reach one admission round. */
+    private class HoldIo(
+        private val inner: MemoryDatagramIo,
+        private val held: Int,
+    ) : DatagramIo by inner {
+        private var released = false
+
+        override suspend fun receive(into: PacketBatch): Int {
+            if (released) return inner.receive(into)
+            while (inner.received < held) delay(5)
+            released = true
+            var n = 0
+            repeat(held) { n += inner.receive(into) }
+            return n
+        }
+    }
+
+    @Test fun acceptBacklogNeverExceedsAcceptQueue() =
+        runBlocking {
+            withTimeout(30.seconds) {
+                // nobody calls accept(): six handshakes admitted in one round must not leave more than acceptQueue waiting;
+                // the connections that complete above it are refused with CONNECTION_REFUSED
+                val net = MemoryNetwork()
+                val serverAddr = InetSocketAddress("10.0.0.2", 2222)
+                val sio = HoldIo(net.open(serverAddr), held = 6)
+                val server =
+                    QuicEndpoint.bind(
+                        serverAddr,
+                        QuicEndpointConfig
+                            .Builder()
+                            .apply {
+                                this.server = QuicServerConfig.Builder(CoreFixtures.server()).build()
+                                crypto = NullCryptoProvider
+                                acceptQueue = 2
+                                io = { sio }
+                            }.build(),
+                    )
+                val clients =
+                    (1..6).map { i ->
+                        val io = net.open(InetSocketAddress("10.0.1.$i", 1000 + i))
+                        QuicEndpoint.bind(
+                            io.localAddress,
+                            QuicEndpointConfig
+                                .Builder()
+                                .apply {
+                                    crypto = NullCryptoProvider
+                                    this.io = { io }
+                                }.build(),
+                        )
+                    }
+                try {
+                    val outcomes =
+                        clients
+                            .map { ep ->
+                                async {
+                                    try {
+                                        val c: QuicConnection = ep.connect(serverAddr, QuicClientConfig.Builder(CoreFixtures.client()).build())
+                                        withTimeoutOrNull(3.seconds) { c.closed.await() }
+                                    } catch (e: QuicException.ConnectionLost) {
+                                        e
+                                    }
+                                }
+                            }.awaitAll()
+                    val loop = server as EndpointLoop
+                    assertTrue(loop.pendingAcceptForTest <= 2, "waiting for accept(): ${loop.pendingAcceptForTest}")
+                    val refused = outcomes.filterIsInstance<QuicException.ConnectionLost.TransportClosed>()
+                    assertEquals(4, refused.size, "outcomes: $outcomes")
+                    assertTrue(refused.all { it.code == TransportError.CONNECTION_REFUSED }, "refusals: $refused")
+                } finally {
+                    clients.forEach { it.close() }
+                    server.close()
+                }
             }
         }
 }

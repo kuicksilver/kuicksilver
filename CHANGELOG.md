@@ -101,6 +101,8 @@ Fixes from a full five-reviewer pass over the code before the first release, amo
 - A socket whose `capabilities` lose ECN marking or DF (for example the portable socket clearing IP_TOS after a failed
   ECN validation) now downgrades the connections already on it, the endpoint's socket and a migrating client's extra
   sockets alike, instead of only the connections that start afterwards.
+- The accept queue never holds more than `acceptQueue` connections: admission counts the handshakes in flight, and a
+  handshake that completes while the queue is full is closed with CONNECTION_REFUSED.
 
 ### Security
 

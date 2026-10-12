@@ -19,6 +19,8 @@ import io.kuicksilver.quic.QuicEndpoint
 import io.kuicksilver.quic.QuicEndpointConfig
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.TimeMark
+import io.kuicksilver.quic.TransportError
+import io.kuicksilver.quic.core.fail
 import io.kuicksilver.quic.core.failInternal
 import io.kuicksilver.quic.ipLiteral
 import io.kuicksilver.quic.withLiteralHost
@@ -107,11 +109,21 @@ internal class EndpointLoop private constructor(
     /** Batches whose send threw (a transient socket error): the datagrams are treated as lost, nothing else happens. */
     internal var sendFailures = 0L
 
+    internal val pendingAcceptForTest: Int get() = pendingAccept.load()
+
     /** Datagrams the sockets did not take (failed or partial sends), stateless replies included. */
     internal var socketDrops = 0L
 
+    /** Server connections this loop adopted whose handshake has not completed yet (they may still join the accept queue). */
+    private var handshaking = 0
+
+    /** Handshakes that completed while the accept queue was full: refused with CONNECTION_REFUSED. */
+    internal var acceptOverflows = 0L
+
     init {
-        core.acceptBacklog = { pendingAccept.load() }
+        // admission counts the handshakes in flight too: each may join the queue (connections admitted in the same round
+        // are not counted yet; those that complete above the limit are refused in onHandshakeCompleted)
+        core.acceptBacklog = { pendingAccept.load() + handshaking }
     }
 
     /** Starts the receive, timer and forward coroutines; a [LoopGroup] calls it only once every loop exists, so no datagram is forwarded to a loop not built yet. */
@@ -324,7 +336,10 @@ internal class EndpointLoop private constructor(
         core.processPending(now) // admission runs once per receive batch
         while (true) {
             val c = core.nextAccepted() ?: break
-            adopt(c).serverSide = true
+            val rt = adopt(c)
+            rt.serverSide = true
+            rt.handshaking = true
+            handshaking++
         } // new server connections leave the core's queue at once
         flush()
     }
@@ -441,6 +456,7 @@ internal class EndpointLoop private constructor(
                 if (c.state ==
                     ConnectionState.Closed
                 ) {
+                    handshakeEnded(rt)
                     rt.finish()
                     timers.remove(c)
                     core.remove(c)
@@ -470,15 +486,34 @@ internal class EndpointLoop private constructor(
     }
 
     internal fun onHandshakeCompleted(rt: ConnectionRuntime) {
-        if (rt.serverSide) {
-            pendingAccept.incrementAndFetch()
-            acceptQueue.trySend(rt)
+        if (!rt.serverSide) return
+        handshakeEnded(rt)
+        // the accept queue never holds more than acceptQueue (shared by a group's loops, hence the compare-and-set)
+        while (true) {
+            val n = pendingAccept.load()
+            if (n >= config.acceptQueue) {
+                acceptOverflows++
+                rt.core.fail(TransportError.CONNECTION_REFUSED, 0, "accept queue full", null)
+                core.markDirty(rt.core)
+                return
+            }
+            if (pendingAccept.compareAndSet(n, n + 1)) break
+        }
+        acceptQueue.trySend(rt)
+    }
+
+    /** [rt] no longer counts as a handshake in flight: it completed, or it closed before it could. */
+    private fun handshakeEnded(rt: ConnectionRuntime) {
+        if (rt.handshaking) {
+            rt.handshaking = false
+            handshaking--
         }
     }
 
     private fun failAll(reason: QuicException.ConnectionLost) {
         for (rt in runtimes.values) rt.failed(reason)
         runtimes.clear()
+        handshaking = 0
     }
 
     override suspend fun connect(

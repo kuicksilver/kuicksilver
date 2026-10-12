@@ -56,6 +56,9 @@ internal class ConnectionRuntime(
     private val tickers = ArrayList<Channel<Unit>>()
     internal var serverSide = false
 
+    /** A server connection still handshaking, counted by its loop against the accept queue. Loop dispatcher only. */
+    internal var handshaking = false
+
     @Volatile private var finished = false
 
     /** The reason a finished connection closed (the deferred is complete by then). */
