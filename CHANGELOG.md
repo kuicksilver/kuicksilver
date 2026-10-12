@@ -81,7 +81,8 @@ K7 (0.2.0), HTTP/3 and the Ktor engines:
   accepted in requests only — a response or trailers carrying it are malformed, the server engine drops it from
   application responses (RFC 9110 section 10.1.4).
 - HTTP/3 server: a request whose HEADERS were still arriving when the final GOAWAY went out counted as idle, so the
-  connection could close under it; a request stream now counts as in flight from its first byte (RFC 9114 section 5.2).
+  connection could close under it; a request stream now counts as in flight from its first byte (RFC 9114 section 5.2), and is
+  rejected with `H3_REQUEST_REJECTED` if its HEADERS are still incomplete 10 seconds after the final GOAWAY.
 - HTTP/3 client: the `Http3Request.onInformational` and `trailers` callbacks ran on the connection's single-threaded
   dispatcher, so a slow callback stalled every stream of the connection; they now run on the caller's dispatcher.
 - HTTP/3: the peer's `SETTINGS_MAX_FIELD_SECTION_SIZE` is honoured when sending (RFC 9114 section 4.2.2): a request

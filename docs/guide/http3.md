@@ -132,7 +132,9 @@ trailers reset the stream with `H3_REQUEST_CANCELLED`, and `request` (or, once t
 2^62-4 ("no promises yet"), waits about two round trips so requests already in flight arrive, then announces the first
 request id it will not process; such requests are reset with `H3_REQUEST_REJECTED`. Once every request below that id
 is answered — including one whose HEADERS were still arriving when GOAWAY went out — the server closes with
-`H3_NO_ERROR`. A client receiving GOAWAY fails the requests it did not cover, and every
+`H3_NO_ERROR`. A stream gets 10 seconds after the final GOAWAY to complete its HEADERS; after that it is reset with
+`H3_REQUEST_REJECTED` (it was never processed) and no longer holds the connection open. (quic-go has no such
+per-stream deadline; it bounds the whole graceful shutdown with the caller's context.) A client receiving GOAWAY fails the requests it did not cover, and every
 new request, with `Http3Exception.RequestNotProcessed(retrySafe = true)`: they were never processed and can be sent
 again on a new connection (the Ktor engine does that by itself). A client's own `goAway()` sends GOAWAY(0) and stops
 issuing requests.

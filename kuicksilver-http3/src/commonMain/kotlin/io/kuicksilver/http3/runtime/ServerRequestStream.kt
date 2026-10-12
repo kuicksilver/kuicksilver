@@ -26,6 +26,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
@@ -38,14 +39,15 @@ internal suspend fun handleRequestStream(
 ) = with(session) {
     if (st.id > maxRequestId) maxRequestId = st.id
     goAwaySentId?.let {
-        if (st.id >= it) {
+        if (st.id >= it || headerDeadlinePassed) {
             abort(st, Http3ErrorCode.REQUEST_REJECTED)
             return@with
         }
     }
     // in flight from the first byte, not from the parsed HEADERS: a request below the GOAWAY id whose HEADERS are
-    // still arriving must keep the idle close away (RFC 9114 section 5.2)
+    // still arriving must keep the idle close away (RFC 9114 section 5.2), until the header deadline after GOAWAY
     requestStarted()
+    pendingHeaders[st.id] = st to currentCoroutineContext()[Job]!!
     var handedOff = false
     try {
         val frames =
@@ -107,6 +109,7 @@ internal suspend fun handleRequestStream(
                 abort(st, Http3ErrorCode.MESSAGE_ERROR)
                 return@with
             }
+        pendingHeaders.remove(st.id)
         val req = ServerRequestImpl(this, st, parsed)
         handedOff = true // from here ServerRequestImpl.done() ends the request
         if (requests.trySend(req).isFailure) {
@@ -120,6 +123,7 @@ internal suspend fun handleRequestStream(
         }
         req.receiveEnded()
     } finally {
+        pendingHeaders.remove(st.id)
         if (!handedOff) requestDone()
     }
 }

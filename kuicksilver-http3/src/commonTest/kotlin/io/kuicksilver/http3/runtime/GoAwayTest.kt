@@ -17,6 +17,7 @@ import io.kuicksilver.http3.message.GlitchLimiter
 import io.kuicksilver.http3.readAllBytes
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.Initiator
+import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.QuicStream
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -33,6 +34,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
 /** Reads frames from the peer's control stream (after its type byte). */
@@ -202,6 +204,28 @@ class GoAwayTest {
                     )
                 assertEquals(":status" to "200", (fields as io.kuicksilver.http3.qpack.DecodeResult.Decoded).fields.first())
                 withTimeout(5.seconds) { server.closed.await() }
+            }
+        }
+
+    /** HEADERS that never complete after GOAWAY do not hold the connection forever: the stream is rejected after a deadline. */
+    @Test fun incompleteRequestHeadersRejectedAfterGoAwayDeadline() =
+        h3Test {
+            QuicPair.open().use { q ->
+                val (c, s) = q.connect()
+                val server = Http3Connection.server(s)
+                server.session.headerDeadlineAfterGoAway = 300.milliseconds
+                val raw = RawPeer(c)
+                raw.openControl()
+                val st = c.openBidi()
+                val frame = raw.headers(st.id, GET)
+                st.output.writeFully(frame, 0, frame.size / 2)
+                st.output.flush()
+                withTimeout(5.seconds) { while (server.session.maxRequestId < st.id) yield() }
+                server.goAway()
+                withTimeout(5.seconds) { server.closed.await() }
+                val e = runCatching { st.input.readAllBytes() }.exceptionOrNull()
+                val reset = generateSequence(e) { it.cause }.filterIsInstance<QuicException.StreamError.Reset>().firstOrNull()
+                if (reset != null) assertEquals(Http3ErrorCode.REQUEST_REJECTED, reset.code)
             }
         }
 
