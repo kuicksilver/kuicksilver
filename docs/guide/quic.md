@@ -64,6 +64,8 @@ The endpoint's socket comes from `DatagramIo.open(local, prefer)`. On Linux and 
 ECN marks read and written per datagram, DF in probe mode for PMTUD, and `SO_REUSEPORT` for several loops on one
 port. On macOS and iOS (JVM and Kotlin/Native) it is the same `ksl` socket without GSO and GRO, which Darwin lacks:
 batches leave as one `sendmsg` per datagram, ECN marks and DF work as on Linux, and `SO_REUSEPORT` is not offered.
+A wildcard address (`0.0.0.0` or `::`) gives a dual-stack socket, as NIO does: one socket bound to `::` sends to and
+receives from IPv4 and IPv6 peers, and IPv4 peers appear as IPv4 addresses. A specific address keeps its own family.
 Everywhere else (Windows), or with `IoPreference.Portable`, the portable socket is used (NIO on the JVM, `ktor-network`
 on Native); `io.capabilities` says what the socket can do and the core adapts (ECN validation, PMTUD) per path. A QUIC
 server on Kotlin/Native needs the accelerated socket (Linux, Apple): on Windows `bind` with a `server` throws

@@ -6,7 +6,7 @@
 
 #ifdef KSL_UDP_ACCEL
 static int send_one(ksl_udp *u, const uint8_t *buf, uint32_t len, const uint8_t *addr, uint8_t ecn, uint16_t gso_size, int *errnum) {
-    struct sockaddr_storage ss; socklen_t sl = to_sockaddr(addr, &ss);
+    struct sockaddr_storage ss; socklen_t sl = dest_sockaddr(u, addr, &ss);
     struct iovec iov = { (void *)buf, len };
     uint8_t cbuf[CMSG_SPACE(sizeof(uint16_t)) + CMSG_SPACE(sizeof(int))]; memset(cbuf, 0, sizeof cbuf);   /* CMSG_NXTHDR reads the next header's length: garbage there answers NULL and the TOS cmsg would be lost */
     struct msghdr m; memset(&m, 0, sizeof m); m.msg_name = &ss; m.msg_namelen = sl; m.msg_iov = &iov; m.msg_iovlen = 1; m.msg_control = cbuf; m.msg_controllen = sizeof cbuf;
@@ -16,7 +16,8 @@ static int send_one(ksl_udp *u, const uint8_t *buf, uint32_t len, const uint8_t 
 #else
     if (gso_size) { c->cmsg_level = SOL_UDP; c->cmsg_type = UDP_SEGMENT; c->cmsg_len = CMSG_LEN(sizeof(uint16_t)); memcpy(CMSG_DATA(c), &gso_size, sizeof gso_size); used += CMSG_SPACE(sizeof(uint16_t)); c = CMSG_NXTHDR(&m, c); }
 #endif
-    if (ecn && u->tos_cmsg_on && c) { int tos = ecn & 3; c->cmsg_level = u->family == AF_INET ? IPPROTO_IP : IPPROTO_IPV6; c->cmsg_type = u->family == AF_INET ? IP_TOS : IPV6_TCLASS; c->cmsg_len = CMSG_LEN(sizeof(int)); memcpy(CMSG_DATA(c), &tos, sizeof tos); used += CMSG_SPACE(sizeof(int)); }
+    /* the level follows the destination: Linux ignores IPV6_TCLASS for a v4-mapped peer of a dual-stack socket, IP_TOS works on both */
+    if (ecn && u->tos_cmsg_on && c) { int tos = ecn & 3; c->cmsg_level = addr[0] == 4 ? IPPROTO_IP : IPPROTO_IPV6; c->cmsg_type = addr[0] == 4 ? IP_TOS : IPV6_TCLASS; c->cmsg_len = CMSG_LEN(sizeof(int)); memcpy(CMSG_DATA(c), &tos, sizeof tos); used += CMSG_SPACE(sizeof(int)); }
     m.msg_controllen = used; if (!used) m.msg_control = NULL;
     u->sends++;
 #ifdef KSL_TEST

@@ -82,6 +82,22 @@ The accelerated side lives in `ksl` as `ksl_udp_*` (`kuicksilver-native/src/c/ks
   halve until the kernel accepts them (`kern.ipc.maxsockbuf` is 8 MB including overhead).
 - **iOS.** The same C compiles for `iosArm64`/`iosSimulatorArm64`, and `bind` with a server is not refused there: nothing
   in the platform forbids a listening UDP socket in an app. iOS is compiled and linked only; its tests have not run.
+- **Wildcard binds are dual-stack (review of k7/macos-server).** A `0.0.0.0` bind used to open an `AF_INET` socket and
+  every IPv6 socket was `IPV6_V6ONLY`, while NIO's `DatagramChannel.open()` is dual-stack with `0.0.0.0` taken as `::`:
+  the Ktor client's endpoint on `0.0.0.0:0` could not reach an IPv6 h3 server (the slot was lost, the handshake timed out)
+  and a Ktor server on the default host answered HTTP/3 over IPv4 only while its TCP listener took IPv6. Now, on Linux and
+  Apple, a wildcard (`0.0.0.0` or `::`) opens one `AF_INET6` socket bound to `::` with `IPV6_V6ONLY = 0`; an IPv4
+  destination leaves as `::ffff:a.b.c.d`, a v4-mapped source is reported as IPv4 (family 4), and a `0.0.0.0` request
+  still reports `0.0.0.0` as its local address (Windows does the same in `ksl_udp_win.c`). A specific address keeps its
+  own family, IPv6 ones stay `IPV6_V6ONLY`. When the dual-stack socket cannot be made (no IPv6 in the kernel, `::` taken)
+  `0.0.0.0` falls back to the `AF_INET` socket of before. ECN and DF cover both halves: the outgoing mark's cmsg follows
+  the destination (`IP_TOS` for IPv4: Linux ignores `IPV6_TCLASS` for a v4-mapped peer); Linux sets `IP_RECVTOS` and
+  `IP_MTU_DISCOVER = PROBE` on the `AF_INET6` socket for the v4-mapped half beside `IPV6_RECVTCLASS`/`IPV6_MTU_DISCOVER`;
+  Darwin refuses `IP_RECVTOS` and `IP_DONTFRAG` there (`EINVAL`) but `IPV6_RECVTCLASS` reports v4-mapped marks and
+  `IPV6_DONTFRAG` sets DF on v4-mapped datagrams (a 20000-byte datagram to `127.0.0.1` over `lo0`, MTU 16384, fails with
+  `EMSGSIZE`). Tests: `udp_wildcard_is_dual_stack` (both families in and out, ECT(0)/CE, DF; macOS and Linux arm64 in
+  Docker), `udp_wildcard_without_ipv6_falls_back` (a test hook fails `socket(AF_INET6)`),
+  `KslDatagramIoTest.wildcardBindReachesBothFamilies`, `ClientH3Test.h3ToIpv6Loopback`.
 - **Verification (macOS arm64).** `tools/c-test.sh macos-arm64` (the whole `test_udp.c`, with Apple variants for the
   caps, DF and REUSEPORT checks); `KslUdpSocketTest`, `KslDatagramIoTest` (incl. 50 MiB with `ecnState == Capable` and
   `pathMtu == 1452`) on the JVM; `NativeServerLoopbackTest` (10 MiB), `NativeServerGuardTest`, and the Ktor engine's

@@ -163,6 +163,50 @@ void run_udp(void) {
               for (int tries = 0; tries < 10 && !got; tries++) ksl_udp_recv(v6, rb, rc, rl, ra, re, 1, &got, 100);
               CHECK(got == 1 && rl[0] == 63 && re[0] == 2, "ECT(0) arrives over IPv6 loopback"); }
             ksl_udp_close(v6); } }
+        /* udp_wildcard_is_dual_stack: 0.0.0.0 (and ::) open one AF_INET6 socket with IPV6_V6ONLY off, as NIO: it receives from and sends to
+           an IPv4 and an IPv6 peer, IPv4 peers come back as family 4 (not v4-mapped), ECN marks and DF hold for both families
+           (skipped where the host has no IPv6 loopback, e.g. a default Docker network) */
+        { uint8_t l6[KSL_UDP_ADDR_LEN] = { 6 }; l6[18] = 1; uint32_t err = 0; char msg[128] = {0}; ksl_udp *s6 = ksl_udp_open(l6, KSL_UDP_ECN, &err, msg, sizeof msg); uint8_t lp[KSL_UDP_ADDR_LEN]; ksl_udp *p4 = open_lo(KSL_UDP_ECN, lp);   /* a fresh IPv4 peer: a still holds the concurrent test's backlog */
+          uint8_t any4[KSL_UDP_ADDR_LEN]; v4(any4, 0); memset(any4 + 3, 0, 4); ksl_udp *w = ksl_udp_open(any4, KSL_UDP_ECN | KSL_UDP_DF, &err, msg, sizeof msg);
+          CHECK(w != NULL, "0.0.0.0:0 opens");
+          if (!s6) printf("udp: no IPv6 loopback (%s), dual-stack case skipped\n", msg);
+          else if (w && p4) { uint8_t lw[KSL_UDP_ADDR_LEN], l6b[KSL_UDP_ADDR_LEN]; size_t n = 0; ksl_udp_get(w, KSL_UDP_GET_LOCAL, lw, KSL_UDP_ADDR_LEN, &n); ksl_udp_get(s6, KSL_UDP_GET_LOCAL, l6b, KSL_UDP_ADDR_LEN, &n);
+            CHECK(lw[0] == 4 && port_of(lw) != 0 && !lw[3] && !lw[4] && !lw[5] && !lw[6], "0.0.0.0 asked, 0.0.0.0 and the chosen port reported");
+            uint32_t c = caps_of(w, NULL); CHECK((c & KSL_UDP_ECN) && (c & KSL_UDP_DF), "ECN and DF granted on the dual-stack socket");
+            uint8_t to4[KSL_UDP_ADDR_LEN], to6[KSL_UDP_ADDR_LEN]; v4(to4, port_of(lw)); memcpy(to6, l6, KSL_UDP_ADDR_LEN); to6[1] = lw[1]; to6[2] = lw[2];
+            uint8_t re[64], ra[64 * KSL_UDP_ADDR_LEN];
+            CHECK(ping(p4, w, to4, 1, 100, 2, re, ra, NULL) == 1 && re[0] == 2, "from 127.0.0.1: received, ECT(0)");
+            CHECK(ra[0] == 4 && ra[3] == 127 && ra[6] == 1 && port_of(ra) == port_of(lp), "the IPv4 peer reported as 127.0.0.1, not ::ffff:127.0.0.1");
+            CHECK(ping(s6, w, to6, 1, 100, 3, re, ra, NULL) == 1 && re[0] == 3, "from ::1: received, CE");
+            CHECK(ra[0] == 6 && ra[18] == 1 && port_of(ra) == port_of(l6b), "the IPv6 peer reported as ::1");
+            CHECK(ping(w, p4, lp, 1, 100, 2, re, NULL, NULL) == 1 && re[0] == 2, "to 127.0.0.1: delivered with ECT(0) (IP_TOS on the v4-mapped half)");
+            CHECK(ping(w, s6, l6b, 1, 100, 2, re, NULL, NULL) == 1 && re[0] == 2, "to ::1: delivered with ECT(0)");
+            uint8_t fd8[4]; CHECK(ksl_udp_get(w, KSL_UDP_GET_FD, fd8, 4, &n) == KSL_OK, "fd"); int fd = (int)(((uint32_t)fd8[0] << 24) | ((uint32_t)fd8[1] << 16) | ((uint32_t)fd8[2] << 8) | fd8[3]);
+#ifdef __APPLE__
+            CHECK(ksl_udp_df_mode_for_test(fd) == 1, "IPV6_DONTFRAG set on the dual-stack socket");
+            /* Darwin applies IPV6_DONTFRAG to the v4-mapped half too: 20000 bytes over lo0 (MTU 16384) cannot leave unfragmented */
+            { uint8_t *big = malloc(20000); memset(big, 9, 20000); uint8_t *bb[1] = { big }; uint32_t bl[1] = { 20000 }, sent = 0; uint8_t be[1] = { 0 };
+              CHECK(ksl_udp_send(w, bb, bl, lp, be, 1, &sent) == KSL_OK && sent == 1, "a datagram over the MTU is a lost slot");
+              uint8_t *rb[1] = { big }; uint32_t rc[1] = { 20000 }, rl[1], got = 0; uint8_t ra1[KSL_UDP_ADDR_LEN], re1[1]; int r = ksl_udp_recv(p4, rb, rc, rl, ra1, re1, 1, &got, 200);
+              CHECK(r == KSL_WANT_READ || got == 0, "DF held for the IPv4 peer: nothing fragmented arrived"); free(big); }
+#else
+            CHECK(ksl_udp_df_mode_for_test(fd) == 3, "IPv4 half in probe mode (IP_MTU_DISCOVER on the AF_INET6 socket)");
+#endif
+          }
+          if (w) ksl_udp_close(w); if (s6) ksl_udp_close(s6); if (p4) ksl_udp_close(p4);
+          /* :: asked: the same dual-stack socket, :: reported */
+          uint8_t any6[KSL_UDP_ADDR_LEN] = { 6 }; ksl_udp *w6 = ksl_udp_open(any6, 0, &err, msg, sizeof msg);
+          if (w6) { uint8_t lw[KSL_UDP_ADDR_LEN], to4[KSL_UDP_ADDR_LEN]; size_t n = 0; ksl_udp_get(w6, KSL_UDP_GET_LOCAL, lw, KSL_UDP_ADDR_LEN, &n); CHECK(lw[0] == 6, ":: reported"); v4(to4, port_of(lw));
+            CHECK(ping(a, w6, to4, 1, 100, 0, NULL, NULL, NULL) == 1, ":: takes IPv4 too"); ksl_udp_close(w6); } }
+        /* udp_wildcard_without_ipv6_falls_back: socket(AF_INET6) fails (a host without IPv6): 0.0.0.0 opens AF_INET as before, :: fails */
+        { ksl_udp_no_ipv6_for_test(1); uint8_t any4[KSL_UDP_ADDR_LEN]; v4(any4, 0); memset(any4 + 3, 0, 4); uint32_t err = 0; char msg[128] = {0};
+          ksl_udp *w = ksl_udp_open(any4, KSL_UDP_ECN | KSL_UDP_DF, &err, msg, sizeof msg); CHECK(w != NULL, "0.0.0.0 without IPv6: AF_INET");
+          uint8_t any6[KSL_UDP_ADDR_LEN] = { 6 }; ksl_udp *w6 = ksl_udp_open(any6, 0, &err, msg, sizeof msg); CHECK(w6 == NULL && err == KSL_E_NOT_SUPPORTED, ":: without IPv6: not supported");
+          ksl_udp_no_ipv6_for_test(0);
+          if (w) { uint8_t lw[KSL_UDP_ADDR_LEN], to4[KSL_UDP_ADDR_LEN], re[4]; size_t n = 0; ksl_udp_get(w, KSL_UDP_GET_LOCAL, lw, KSL_UDP_ADDR_LEN, &n); v4(to4, port_of(lw));
+            CHECK((caps_of(w, NULL) & KSL_UDP_ECN) && (caps_of(w, NULL) & KSL_UDP_DF), "ECN and DF on the AF_INET fallback");
+            CHECK(ping(a, w, to4, 1, 100, 2, re, NULL, NULL) == 1 && re[0] == 2, "the fallback receives IPv4 with its mark"); ksl_udp_close(w); }
+          if (w6) ksl_udp_close(w6); }
         /* udp_open_without_wake_pipe: with one free descriptor below RLIMIT_NOFILE the socket opens but the wake pipe cannot.
            Darwin: the pipe is the only way to wake a blocked receive, so open fails (KSL_E_NOT_SUPPORTED) and leaks no descriptor;
            Linux: open goes on without the pipe */

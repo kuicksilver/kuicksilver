@@ -71,6 +71,45 @@ class KslDatagramIoTest {
             }
         }
 
+    /** A wildcard bind is dual-stack, as NIO: a client on 0.0.0.0:0 reaches an IPv6 server and an IPv4 one, and IPv4 peers come back as IPv4 (review of k7/macos-server). */
+    @Test fun wildcardBindReachesBothFamilies() =
+        runBlocking {
+            assumeTrue(ready(), "needs the accelerated socket (Linux, macOS)")
+            val v6 = runCatching { KslDatagramIo.open(InetSocketAddress("::1", 0)) }.getOrNull()
+            assumeTrue(v6 != null, "needs an IPv6 loopback")
+            val w = assertNotNull(KslDatagramIo.open(InetSocketAddress("0.0.0.0", 0)))
+            val v4 = assertNotNull(KslDatagramIo.open(lo))
+            try {
+                assertContentEquals(ByteArray(4), w.localAddress.resolveAddress(), "0.0.0.0 asked, 0.0.0.0 reported")
+                for ((peer, to) in listOf(v4 to InetSocketAddress("127.0.0.1", v4.localAddress.port), v6!! to InetSocketAddress("::1", v6.localAddress.port))) {
+                    val out = PacketBatch(1)
+                    out.buffer(0).copyFrom(ByteArray(40) { 7 }, 0, 0, 40)
+                    out.setLength(0, 40)
+                    out.setAddress(0, to)
+                    assertEquals(1, w.send(out), "send to $to")
+                    val inb = PacketBatch(1)
+                    withTimeout(5.seconds) { while (inb.count < 1) peer.receive(inb) }
+                    assertEquals(40, inb.length(0), "received from 0.0.0.0 at $to")
+                    val back = inb.address(0)!!
+                    assertEquals(w.localAddress.port, back.port)
+                    out.setAddress(0, InetSocketAddress(if (peer === v4) "127.0.0.1" else "::1", w.localAddress.port))
+                    assertEquals(1, peer.send(out))
+                    val reply = PacketBatch(1)
+                    withTimeout(5.seconds) { while (reply.count < 1) w.receive(reply) }
+                    val from = reply.address(0)!!
+                    assertEquals(peer.localAddress.port, from.port)
+                    assertContentEquals(if (peer === v4) byteArrayOf(127, 0, 0, 1) else ByteArray(16) { if (it == 15) 1 else 0 }, from.resolveAddress(), "an IPv4 peer is IPv4, not v4-mapped")
+                    out.close()
+                    inb.close()
+                    reply.close()
+                }
+            } finally {
+                w.close()
+                v4.close()
+                v6!!.close()
+            }
+        }
+
     @Test fun capabilitiesReportAccelerated() =
         runBlocking {
             assumeTrue(ready(), "needs the accelerated socket (Linux, macOS)")
