@@ -6,7 +6,12 @@
 // `koverHtmlReportJvmTests` in a module, and in the root `koverHtmlReportJvmTests` / `koverXmlReportJvmTests` merge the
 // published modules. Kover's total variant would also run `testAndroidHostTest`, and the host JVM cannot load the
 // Android JNI library there.
+//
+// Instrumentation is opt-in: without `-Pkuicksilver.coverage` no test task gets the Kover agent, so `jvmTest`, the fuzz
+// and Monte-Carlo runs and `testAndroidHostTest` run uninstrumented. The report tasks need the property.
 plugins { id("org.jetbrains.kotlinx.kover") }
+
+kover { currentProject { instrumentation { disabledForAll = !providers.gradleProperty("kuicksilver.coverage").isPresent } } }
 
 if (project == rootProject) {
     val published = listOf("native", "tls", "ktor-network", "quic", "http3", "ktor-client", "ktor-server")
