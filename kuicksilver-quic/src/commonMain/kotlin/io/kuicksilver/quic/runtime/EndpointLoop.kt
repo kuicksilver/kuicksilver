@@ -275,7 +275,12 @@ internal class EndpointLoop private constructor(
     ) {
         val lost =
             try {
-                batch.count - target.send(batch).coerceIn(0, batch.count)
+                // a socket that already refused part of a batch in this flush (after its one wait for room) is not waited on
+                // again: the flush holds flushLock, so each wait would stall ACKs and timers of every other connection
+                val full = fullThisFlush.any { it === target }
+                val sent = (if (full) target.trySend(batch) else target.send(batch)).coerceIn(0, batch.count)
+                if (sent < batch.count && !full) fullThisFlush.add(target)
+                batch.count - sent
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Throwable) {
@@ -430,6 +435,9 @@ internal class EndpointLoop private constructor(
         }
     }
 
+    /** Sockets that did not take a whole batch during the current flush: the rest of the flush only `trySend`s on them. */
+    private val fullThisFlush = ArrayList<DatagramIo>(2)
+
     /** Drains events, sends what the dirty connections have to send, retires closed ones, re-arms their timers. Loop dispatcher only; [touched] joins the dirty list first. */
     internal suspend fun flush(
         touched: ConnectionCore? = null,
@@ -444,6 +452,7 @@ internal class EndpointLoop private constructor(
             // the list is copied: a flush can retire connections, and a failure inside one marks others dirty
             val list = dirty.toList()
             core.clearDirty()
+            fullThisFlush.clear()
             for (c in list) {
                 val rt = runtimes[c] ?: continue
                 try {
