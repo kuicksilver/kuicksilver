@@ -89,7 +89,15 @@ public class QuicServerConfig private constructor(
     internal fun earlySetup(random: Random): ServerEarlyData? {
         if (!earlyData) return null
         early.load()?.let { return it }
-        val made = ServerEarlyData.of(quic, tls.alpn, earlyDataContext, ProcessReplayRegister.get(random), ProcessReplayRegister::now)
+        val made =
+            ServerEarlyData.of(
+                quic,
+                tls.alpn,
+                earlyDataContext,
+                ProcessReplayRegister.get(random),
+                ProcessReplayRegister::now,
+                ProcessReplayRegister::wallMillis,
+            )
         return if (early.compareAndSet(null, made)) made else early.load()
     }
 

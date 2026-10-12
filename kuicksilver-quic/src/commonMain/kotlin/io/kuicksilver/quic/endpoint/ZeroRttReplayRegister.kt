@@ -32,6 +32,11 @@ internal class ZeroRttReplayRegister(
         var live = 0 // fingerprints in [current]
         var tombstones = 0 // released slots of [current]
         var start = TimeMark.NEVER
+
+        // the wall clock against the monotonic one (milliseconds): see [wallClockStepped]
+        var clockSeen = false
+        var offsetHigh = 0L // highest wall - monotonic seen
+        var wallHigh = 0L // latest wall clock of an admission
     }
 
     private val stripes = Array(STRIPES) { Stripe() }
@@ -90,6 +95,34 @@ internal class ZeroRttReplayRegister(
         return -1
     }
 
+    /**
+     * True while a backward wall-clock step could make a forgotten hello fresh again. OpenSSL judges a ticket's age by the
+     * wall clock and accepts a hello within 10 s of the age it passed with the first time (age in [claimed - 1 s,
+     * claimed + 9 s]); the register forgets by the monotonic clock after at least [HALF_SPAN]. Without a step, a forgotten
+     * hello is stale for good; after the wall clock fell back by more than [WALL_SLACK] against the monotonic one, every
+     * hello this stripe admitted could still be fresh until the wall clock passes the latest of them plus [HALF_SPAN], so
+     * the stripe refuses early data until then and then takes the new offset as its baseline.
+     */
+    private fun wallClockStepped(
+        s: Stripe,
+        now: TimeMark,
+        wallMillis: Long,
+    ): Boolean {
+        val offset = wallMillis - now.nanos / 1_000_000
+        if (!s.clockSeen) {
+            s.clockSeen = true
+            s.offsetHigh = offset
+            return false
+        }
+        if (offset >= s.offsetHigh - WALL_SLACK.inWholeMilliseconds) {
+            if (offset > s.offsetHigh) s.offsetHigh = offset
+            return false
+        }
+        if (wallMillis <= s.wallHigh + HALF_SPAN.inWholeMilliseconds) return true
+        s.offsetHigh = offset
+        return false
+    }
+
     /** Rebuilds [Stripe.current] without its tombstones, so released slots do not lengthen probes or count as load. */
     private fun compact(s: Stripe) {
         val old = s.current.copyOf()
@@ -104,17 +137,20 @@ internal class ZeroRttReplayRegister(
     }
 
     /**
-     * True when [id] was not seen within the window (and is reserved now); false for a replay or a full register. The
+     * True when [id] was not seen within the window (and is reserved now); false for a replay, a full register or a wall
+     * clock ([wallMillis], what OpenSSL's ticket age uses) stepped back (see [wallClockStepped]). The
      * reservation is what makes two concurrent hellos with one ticket get early data once; it stays only if TLS accepts the
      * early data (ticket decrypted, binder verified, fresh, same configuration), otherwise [release] frees it at once.
      */
     fun admit(
         id: ByteArray,
         now: TimeMark,
+        wallMillis: Long = now.nanos / 1_000_000,
     ): Boolean {
         val fp = fingerprint(id)
         val s = stripeOf(fp)
         return locked(s) {
+            if (wallClockStepped(s, now, wallMillis)) return@locked false
             rotate(s, now)
             if (find(s.current, fp) >= 0 || find(s.previous, fp) >= 0) return@locked false
             if (s.live >= LIMIT) return@locked false
@@ -124,6 +160,7 @@ internal class ZeroRttReplayRegister(
             if (s.current[i] == TOMBSTONE) s.tombstones--
             s.current[i] = fp
             s.live++
+            if (wallMillis > s.wallHigh) s.wallHigh = wallMillis
             true
         }
     }
@@ -157,5 +194,11 @@ internal class ZeroRttReplayRegister(
 
         /** One half of the window: more than OpenSSL's 10 s ticket-age allowance plus clock slack. */
         val HALF_SPAN = 20.seconds
+
+        /**
+         * A backward wall-clock step the register tolerates: a replay after an entry expired needs the wall clock back by at
+         * least [HALF_SPAN] minus OpenSSL's 10 s window, so a smaller step (an NTP correction) never reopens one.
+         */
+        val WALL_SLACK = 5.seconds
     }
 }

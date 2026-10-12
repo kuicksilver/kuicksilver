@@ -27,12 +27,14 @@ import io.kuicksilver.tls.TlsRole
 /**
  * A server's 0-RTT setup: [context] binds tickets to this configuration (RFC 9001 section 4.6.3), [register] is the
  * replay register (RFC 8446 section 8.2; the process's one in production) and [clock] the time it is kept in (the
- * process's monotonic clock in production; null: the connection's clock, for tests in virtual time).
+ * process's monotonic clock in production; null: the connection's clock, for tests in virtual time) and [wallClock] the
+ * wall clock in milliseconds OpenSSL judges ticket ages by (null: [clock]'s, no steps).
  */
 internal class ServerEarlyData(
     val context: ByteArray,
     val register: ZeroRttReplayRegister,
     val clock: (() -> io.kuicksilver.quic.TimeMark)? = null,
+    val wallClock: (() -> Long)? = null,
 ) {
     companion object {
         /**
@@ -47,6 +49,7 @@ internal class ServerEarlyData(
             application: ByteArray?,
             register: ZeroRttReplayRegister,
             clock: (() -> io.kuicksilver.quic.TimeMark)? = null,
+            wallClock: (() -> Long)? = null,
         ): ServerEarlyData {
             val b = PacketBuffer.allocate(512 + (application?.size ?: 0))
             try {
@@ -76,7 +79,7 @@ internal class ServerEarlyData(
                     ctx[i] = (h0 ushr (8 * i)).toByte()
                     ctx[8 + i] = (h1 ushr (8 * i)).toByte()
                 }
-                return ServerEarlyData(ctx, register, clock)
+                return ServerEarlyData(ctx, register, clock, wallClock)
             } finally {
                 b.close()
             }
@@ -108,7 +111,10 @@ internal fun ConnectionCore.enableServerEarlyData(early: ServerEarlyData) {
     handshake.session.enableEarlyData(
         early.context,
         object : EarlyDataAdmission {
-            override fun admit(ticketId: ByteArray): Boolean = early.register.admit(ticketId, early.clock?.invoke() ?: core.now)
+            override fun admit(ticketId: ByteArray): Boolean {
+                val now = early.clock?.invoke() ?: core.now
+                return early.register.admit(ticketId, now, early.wallClock?.invoke() ?: (now.nanos / 1_000_000))
+            }
 
             override fun release(ticketId: ByteArray) = early.register.release(ticketId)
         },

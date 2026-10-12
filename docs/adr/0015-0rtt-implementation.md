@@ -70,6 +70,11 @@ Facts of the pinned OpenSSL 3.5.9 that fix the design:
    reservation within the same `ksl` call. A released slot leaves the load count at once (live entries and tombstones are
    counted apart; tombstones are compacted away), so forged hellos never fill the register: only tickets this process
    issued and a client completed a resumption with take room. A false positive only downgrades to 1-RTT.
+   OpenSSL judges freshness by the wall clock (a hello passes when the server's ticket age lies in [claimed − 1 s,
+   claimed + 9 s], so a replay is fresh at most 10 s of wall time after the original), while the register forgets after
+   at least 20 s of monotonic time. A backward wall-clock step could make a forgotten hello fresh again, so each stripe
+   tracks the wall-minus-monotonic offset it saw: when it falls by more than 5 s (smaller steps cannot reopen a replay),
+   the stripe refuses early data until the wall clock passes its latest admission plus 20 s, then takes the new offset.
 3. **Configuration binding (RFC 9000 §7.4.1, RFC 9001 §4.6.3, RFC 9114 §7.2.4.2):** the early context is SHA-256 of
    the ALPN list, the server's §7.4.1 transport parameters (initial windows, stream limits, `active_connection_id_limit`,
    `max_datagram_frame_size`, idle timeout, `max_udp_payload_size`, `disable_active_migration`) and the application

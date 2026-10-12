@@ -6,6 +6,7 @@ import io.kuicksilver.quic.endpoint.ZeroRttReplayRegister
 import kotlin.concurrent.atomics.AtomicReference
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.random.Random
+import kotlin.time.Clock
 import kotlin.time.TimeSource
 
 /**
@@ -30,4 +31,7 @@ internal object ProcessReplayRegister {
 
     /** Monotonic time of the process (not of one loop). */
     fun now(): TimeMark = TimeMark(1_000_000_000L + origin.elapsedNow().inWholeNanoseconds)
+
+    /** The wall clock in milliseconds since the epoch: what OpenSSL's ticket-age check uses. */
+    fun wallMillis(): Long = Clock.System.now().toEpochMilliseconds()
 }
