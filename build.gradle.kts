@@ -4,4 +4,5 @@
 plugins {
     id("kuicksilver.spdx")
     id("kuicksilver.layers")
+    id("kuicksilver.coverage")
 }

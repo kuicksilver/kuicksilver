@@ -25,6 +25,7 @@ step "c-tests: macos-arm64 (ASan/UBSan)"        bash tools/c-test.sh macos-arm64
 step "jvm: native/tls/ktor-network tests"       $G :kuicksilver-native:jvmTest :kuicksilver-tls:jvmTest :kuicksilver-ktor-network:jvmTest
 step "jvm: quic/testing/interop tests"          $G :kuicksilver-quic:jvmTest :kuicksilver-testing:jvmTest :kuicksilver-interop:jvmTest
 step "jvm: http3/ktor engine tests"             $G :kuicksilver-http3:jvmTest :kuicksilver-ktor-client:jvmTest :kuicksilver-ktor-server:jvmTest
+step "jvm: coverage report"                    $G :koverHtmlReportJvmTests :koverXmlReportJvmTests   # no threshold; build/reports/kover/htmlJvmTests
 step "sample: realtime-telemetry"               bash -c 'cd samples/realtime-telemetry && ../../gradlew --max-workers=2 -q jvmTest'
 step "fuzz: regression corpus"                  $G :kuicksilver-quic:jvmTest --tests "io.kuicksilver.quic.fuzz.*" :kuicksilver-http3:jvmTest --tests "io.kuicksilver.http3.fuzz.*"
 step "sim: Monte-Carlo (KSL_SIM_RUNS=200)"      $G :kuicksilver-testing:jvmTest -Pkuicksilver.sim.runs=200 --tests "io.kuicksilver.testing.MonteCarloTest"

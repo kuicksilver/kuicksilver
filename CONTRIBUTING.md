@@ -98,6 +98,12 @@ images).
   a generous timeout. A test that is flaky is a bug; report the seed.
 - **Platforms.** Common behaviour is tested in `commonTest` so it runs on the JVM, Android and Native. Tests that need a
   Linux-only facility (the accelerated UDP socket, `SO_REUSEPORT`) skip themselves elsewhere and run in the Docker steps.
+- **Coverage.** `./gradlew --max-workers=2 :koverHtmlReportJvmTests` runs the JVM tests of the published modules under
+  Kover and merges their line and branch coverage into `build/reports/kover/htmlJvmTests/index.html`.
+  `:koverXmlReportJvmTests` writes the same data as XML to `build/reports/kover/reportJvmTests.xml`, and
+  `:<module>:koverHtmlReportJvmTests` reports one module. Only the JVM target is measured: Android host tests cannot load
+  the JNI library, and Kover does not instrument Kotlin/Native. The generated QPACK tables are excluded. The report has
+  no threshold, by decision; use it to find untested code, not as a gate.
 - **Fuzzing.** Jazzer targets live in `kuicksilver-quic` and `kuicksilver-http3` under `src/jvmTest/.../fuzz`; their
   committed inputs run as regression tests in `jvmTest`. `tools/fuzz/gen-seeds.sh` regenerates the QUIC seed corpus. A
   crash you find becomes a `crash-*` input next to the seeds.
