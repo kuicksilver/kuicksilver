@@ -397,5 +397,10 @@ try {
 } finally { out.close() }
 ```
 
+Stream events tell such a loop when to retry instead of polling: `StreamReadable` after new data, an end or a reset;
+`StreamWritable` once acknowledgements free send-buffer room after `writeStream` took fewer bytes than offered, or once the
+peer's `MAX_STREAM_DATA`/`MAX_DATA` gives credit to data that was waiting; `StreamsAvailable` once `MAX_STREAMS` raises a
+limit that refused `openStream`; `StreamFinished` once a stream is done in both directions and retired.
+
 `core` is reached through `QuicConnection.core` too (`@ExperimentalKuicksilverApi`), but it must only be touched from
 the endpoint loop that owns it when the connection came from `QuicEndpoint`.

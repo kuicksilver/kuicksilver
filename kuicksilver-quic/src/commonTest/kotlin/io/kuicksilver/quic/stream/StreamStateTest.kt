@@ -4,6 +4,7 @@ package io.kuicksilver.quic.stream
 
 import io.kuicksilver.native.PacketBuffer
 import io.kuicksilver.native.of
+import io.kuicksilver.quic.ConnectionEvent
 import io.kuicksilver.quic.QuicConfig
 import io.kuicksilver.quic.StreamPriority
 import io.kuicksilver.quic.flow.RecvFlowController
@@ -48,6 +49,7 @@ class StreamStateTest {
         role: TlsRole = TlsRole.Client,
         peerMaxData: Long = 1L shl 40,
         maxStreams: Long = 100,
+        streamWindow: Long = 1L shl 30,
     ): StreamManager {
         val m =
             StreamManager(
@@ -58,10 +60,9 @@ class StreamStateTest {
                 StreamLimits(role, maxStreams, maxStreams),
             )
         m.applyPeerParameters(
-            initialMaxStreamDataBidiLocal = 1L shl 30,
-            initialMaxStreamDataBidiRemote = 1L shl 30,
-            initialMaxStreamDataUni =
-                1L shl 30,
+            initialMaxStreamDataBidiLocal = streamWindow,
+            initialMaxStreamDataBidiRemote = streamWindow,
+            initialMaxStreamDataUni = streamWindow,
             maxStreamsBidi = maxStreams,
             maxStreamsUni = maxStreams,
         )
@@ -225,6 +226,29 @@ class StreamStateTest {
         assertNotNull(c)
         assertEquals(ControlKind.DataBlocked, c.kind)
         assertEquals(500L, c.a)
+    }
+
+    @Test fun maxStreamDataRaisesStreamWritable() {
+        // RFC 9000 section 4.1: credit from MAX_STREAM_DATA lets data that was waiting go out; the stream learns it without polling
+        val m = manager(streamWindow = 500)
+        val id = m.open(bidi = true, StreamPriority.Default)
+        m.write(id, ByteArray(1000), 0, 1000, false)
+        assertEquals(500, sendOnce(m)!!.streamLength[0])
+        assertNull(sendOnce(m))
+        m.events.clear()
+        assertTrue(m.onMaxStreamData(id, 2000))
+        assertTrue(m.events.any { it is ConnectionEvent.StreamWritable && it.id == id }, "events: ${m.events}")
+    }
+
+    @Test fun maxStreamsRaisesStreamsAvailable() {
+        // RFC 9000 section 4.6: an open refused at the peer's limit can be retried once MAX_STREAMS raises it
+        val m = manager(maxStreams = 1)
+        assertTrue(m.open(bidi = true, StreamPriority.Default) >= 0)
+        assertEquals(-1L, m.open(bidi = true, StreamPriority.Default))
+        m.events.clear()
+        assertTrue(m.onMaxStreams(true, 2))
+        assertTrue(m.events.any { it is ConnectionEvent.StreamsAvailable && it.bidi }, "events: ${m.events}")
+        assertTrue(m.open(bidi = true, StreamPriority.Default) >= 0)
     }
 
     // ---- final review fix pass ----

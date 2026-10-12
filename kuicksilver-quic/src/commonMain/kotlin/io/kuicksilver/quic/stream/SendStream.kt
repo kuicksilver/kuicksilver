@@ -25,6 +25,9 @@ internal class SendStream(
     /** Queued in [StreamManager]'s list of streams waiting for connection-level credit. */
     internal var connBlocked = false
 
+    /** Queued in [StreamManager]'s list of streams whose last write did not fit the send buffer. */
+    internal var writeRefused = false
+
     /** Unacknowledged bytes in a ring buffer: [head] is the ring index of stream offset [releasedUpTo]; it grows to the high-water mark once and then never allocates. */
     private var ring = ByteArray(4096)
     private var head = 0

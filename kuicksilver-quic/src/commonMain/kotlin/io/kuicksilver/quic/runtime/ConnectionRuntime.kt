@@ -54,6 +54,9 @@ internal class ConnectionRuntime(
 
     /** Signalled after every poll: writers and stream openers retry. */
     private val tickers = ArrayList<Channel<Unit>>()
+
+    /** Tickers of [open] calls waiting for the peer's stream limit; StreamsAvailable wakes them. */
+    private val openWaiters = ArrayList<Channel<Unit>>()
     internal var serverSide = false
 
     @Volatile private var finished = false
@@ -314,7 +317,9 @@ internal class ConnectionRuntime(
                     streams[e.id]?.signalReadable()
                 }
 
-                is ConnectionEvent.StreamWritable -> {}
+                is ConnectionEvent.StreamWritable -> {
+                    streams[e.id]?.ticker?.trySend(Unit) // the broadcast tick after each flush stays as the fallback
+                }
 
                 is ConnectionEvent.StreamReset -> {
                     streams[e.id]?.peerReset(e.code)
@@ -331,7 +336,9 @@ internal class ConnectionRuntime(
                 }
 
                 // both halves done and consumed: the wrapper and its ticker go
-                is ConnectionEvent.StreamsAvailable -> {}
+                is ConnectionEvent.StreamsAvailable -> {
+                    for (t in openWaiters) t.trySend(Unit)
+                }
 
                 is ConnectionEvent.Closed -> {
                     failed(e.reason)
@@ -436,6 +443,7 @@ internal class ConnectionRuntime(
     ): QuicStream =
         withContext(loop.dispatcher) {
             val ticker = newTicker()
+            openWaiters += ticker
             try {
                 while (true) {
                     if (finished) throw closedDeferred.await()
@@ -451,6 +459,7 @@ internal class ConnectionRuntime(
                 throw IllegalStateException()
             } finally {
                 tickers.remove(ticker)
+                openWaiters.remove(ticker)
             }
         }
 

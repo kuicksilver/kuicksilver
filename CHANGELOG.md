@@ -87,6 +87,10 @@ Hardening of the QUIC core for 0.2.0 (review of 2026-10-08, deferred items):
 - QUIC: work a peer can trigger no longer grows with what it controls (RFC 9000 §21.6): an ACK costs a binary search per
   range instead of a walk over every packet in flight, a `MAX_DATA` that raises nothing touches no stream, and choosing or
   scheduling a stream is logarithmic in the number of streams instead of linear.
+- QUIC: `ConnectionEvent.StreamWritable` and `StreamsAvailable` are raised (their KDoc said "not raised in this version"):
+  after a refused write once acknowledgements free buffer room or new flow-control credit reaches waiting data, and after
+  `MAX_STREAMS` raises a limit that refused an open; the coroutine API wakes the waiting writer or `openBidi`/`openUni`
+  directly. The KDoc of `StreamFinished`, which was always raised, now says so (RFC 9000 §4.1, §4.6).
 
 Fixes from a full five-reviewer pass over the code before the first release, among them:
 

@@ -50,7 +50,10 @@ public sealed interface ConnectionEvent {
     ) : ConnectionEvent
 
     /**
-     * Meant for stream [id] taking data again; not raised in this version: retry [ConnectionCore.writeStream] after the core made progress.
+     * Stream [id] can make progress again: acknowledgements freed send-buffer room after [ConnectionCore.writeStream] took fewer bytes
+     * than offered, or the peer raised its flow-control credit (MAX_STREAM_DATA, MAX_DATA; RFC 9000 section 4.1) while the stream had
+     * data waiting to be sent. Retry the write; the event is a hint, a write may still take fewer bytes when other streams share the
+     * buffer.
      */
     public class StreamWritable(
         public val id: Long,
@@ -71,14 +74,17 @@ public sealed interface ConnectionEvent {
         public val code: Long,
     ) : ConnectionEvent
 
-    /** Meant for stream [id] being done in both directions; not raised in this version. */
+    /**
+     * Stream [id] is done in both directions — its sending half acknowledged or reset, its receiving half read to the end or reset
+     * and consumed — and was retired: its state is gone and, for a peer stream, its credit returns through MAX_STREAMS. Raised once.
+     */
     public class StreamFinished(
         public val id: Long,
     ) : ConnectionEvent
 
     /**
-     * Meant for room under the peer's stream limit ([bidi] or unidirectional); not raised in this version: retry
-     * [ConnectionCore.openStream].
+     * The peer raised its stream limit ([bidi] or unidirectional) with MAX_STREAMS (RFC 9000 section 4.6) after
+     * [ConnectionCore.openStream] was refused at the old one: retry the open. Raised once per refusal.
      */
     public class StreamsAvailable(
         public val bidi: Boolean,
