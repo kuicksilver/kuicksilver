@@ -248,6 +248,31 @@ the peer's moves too. Migration needs a confirmed handshake and a server that di
 when the active path fails validation and no other validated path remains, the connection closes with
 `ConnectionLost.NoViablePath` (`TimeoutKind.PathValidation` exists in the API but is not produced in this version).
 
+## Network changes
+
+A phone moves between Wi-Fi and cellular; the connection can follow it instead of dying with the old network.
+`NetworkMigrator` (experimental) watches a `Flow` of the platform's network handles and migrates a client connection
+whenever the network changes:
+
+```kotlin
+// guide:quic:network-migrator
+val migrator = NetworkMigrator(connection, networks, { DatagramIo.open(InetSocketAddress("0.0.0.0", 0)) }, scope)
+val log = scope.launch { migrator.events.collect { println("network: $it") } }
+migrator.start()
+```
+
+The first network the flow reports is the one the connection is on already. Each different network gets a socket from
+`openIo` and a `migrate` (new path, `PATH_CHALLENGE`, switch); on success the previous path and its socket are closed and
+`events` reports `MigrationEvent.Migrated(old, new, path)`. When the new network never answers, `openIo` throws or the
+server advertised `disable_active_migration` (RFC 9000 section 18.2), the new socket is closed, the connection stays
+where it was and `events` reports `Failed(network, cause)`. A `null` means no network: `NetworkLost` is reported and the
+migrator waits; the connection is not closed (its idle timeout decides), and if the same network comes back nothing
+moves. Repeated values are ignored, and a change during a migration supersedes it: the unfinished path is closed and
+nothing is reported for it. `network` is the network the connection is on as far as the migrator knows. `close()`
+stops following (a migration in flight is abandoned and its socket closed) but leaves the connection open; the
+migrator also stops when the connection ends. Only a client migrates (RFC 9000 section 9): a server connection is
+refused with `IllegalArgumentException`.
+
 ## Glitch protection
 
 Every connection carries a token bucket (1000 tokens, 33 back per second) that pays for work the peer makes us do
