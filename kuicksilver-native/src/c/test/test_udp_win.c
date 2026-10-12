@@ -8,11 +8,13 @@
 #include "test_common.h"
 #include <windows.h>
 
-int ksl_udp_has_wake_for_test(ksl_udp *);
+int ksl_udp_has_wake_for_test(ksl_udp *); void ksl_udp_fail_next_recv_for_test(ksl_udp *, int err); void ksl_udp_fake_pollerr_for_test(ksl_udp *, int on); uint32_t ksl_udp_polls_for_test(ksl_udp *);
+uint32_t ksl_udp_split_for_test(ksl_udp *, const uint8_t *train, uint32_t len, uint32_t seg, uint8_t mark, uint16_t port, uint8_t *const *bufs, const uint32_t *caps, uint32_t *lens, uint8_t *addrs, uint8_t *ecnv, uint32_t n);
 
 #define W_WSAEOPNOTSUPP 10045
 #define W_WSAENETUNREACH 10051
 #define W_WSAENOBUFS 10055
+#define W_WSAENETDOWN 10050
 
 static void w4(uint8_t a[KSL_UDP_ADDR_LEN], uint16_t port) { memset(a, 0, KSL_UDP_ADDR_LEN); a[0] = 4; a[1] = (uint8_t)(port >> 8); a[2] = (uint8_t)port; a[3] = 127; a[6] = 1; }
 /* a plain Winsock socket with SO_REUSEADDR on 127.0.0.1:port: 1 when its bind is refused */
@@ -106,6 +108,34 @@ void run_udp_win(void) {
       CHECK((wcaps(a, NULL) & KSL_UDP_ECN) == before, "ECN kept after an error caused by the destination");
       uint32_t rl[4]; uint8_t re[4]; CHECK(wdrain(b, rl, re, 4) == 1 && rl[0] == 90 && (!before || re[0] == 2), "the valid slot arrived once, still marked where ECN is on");
       for (int i = 0; i < 2; i++) free(bufs[i]); }
+    /* udp_win_uro_split: a synthetic 3000-byte train with UDP_COALESCED_INFO = 1200 splits into 1200, 1200, 600 with the source and
+       the mark on each; a second train's slot too small for its segment drops that segment only; leftovers wait for the next call */
+    { uint8_t lc[KSL_UDP_ADDR_LEN]; ksl_udp *c = wopen_lo(0, lc); CHECK(c != NULL, "socket for the splitter");
+      if (c) { static uint8_t train[3000]; for (int i = 0; i < 3000; i++) train[i] = (uint8_t)(i / 1200 + 1);
+        uint8_t s0[1500], s1[1500], s2[1500]; uint8_t *sb[3] = { s0, s1, s2 }; uint32_t sc[3] = { 1500, 1500, 1500 }, sl[3] = { 0 }; uint8_t sa[3 * KSL_UDP_ADDR_LEN], se[3] = { 0 };
+        uint32_t got = ksl_udp_split_for_test(c, train, 3000, 1200, 2, 4433, sb, sc, sl, sa, se, 2);
+        CHECK(got == 2 && sl[0] == 1200 && sl[1] == 1200 && s0[0] == 1 && s0[1199] == 1 && s1[0] == 2 && s1[1199] == 2, "two slots: the first two 1200-byte segments, in order");
+        CHECK(sa[0] == 4 && wport(sa) == 4433 && sa[3] == 127 && sa[6] == 1 && wport(sa + KSL_UDP_ADDR_LEN) == 4433 && se[0] == 2 && se[1] == 2, "each segment carries the source and the ECN mark");
+        got = ksl_udp_split_for_test(c, NULL, 0, 0, 0, 0, sb, sc, sl, sa, se, 3);
+        CHECK(got == 1 && sl[0] == 600 && s0[0] == 3 && s0[599] == 3, "the 600-byte tail waited for the next call");
+        uint32_t small[3] = { 1000, 1500, 1500 }; got = ksl_udp_split_for_test(c, train, 3000, 1200, 0, 4433, sb, small, sl, sa, se, 3);
+        CHECK(got == 1 && sl[0] == 600 && s0[0] == 3, "segments larger than the slot are dropped; the tail that fits takes it");
+        got = ksl_udp_split_for_test(c, train, 1000, 0, 0, 4433, sb, sc, sl, sa, se, 3);
+        CHECK(got == 1 && sl[0] == 1000, "no UDP_COALESCED_INFO: one datagram");
+        ksl_udp_close(c); } }
+    /* udp_win_recv_transient_error: WSAENETDOWN on a receive is a slice without data, not a socket error; the socket keeps working */
+    { uint8_t *rb[1]; uint8_t r0[1500]; rb[0] = r0; uint32_t rc[1] = { 1500 }, rl[1], got = 9; uint8_t ra[KSL_UDP_ADDR_LEN], re[1];
+      uint8_t *sb1[1] = { r0 }; uint32_t sl1[1] = { 100 }, sent = 0; uint8_t se1[1] = { 0 }; memset(r0, 5, 100);
+      CHECK(ksl_udp_send(a, sb1, sl1, lb, se1, 1, &sent) == KSL_OK && sent == 1, "one datagram pending, so the receive reaches WSARecvMsg");
+      ksl_udp_fail_next_recv_for_test(b, W_WSAENETDOWN); int r = ksl_udp_recv(b, rb, rc, rl, ra, re, 1, &got, 200);
+      CHECK(r == KSL_WANT_READ && got == 0, "WSAENETDOWN: nothing received this slice, no KSL_ERROR");
+      uint32_t l2[4]; CHECK(wdrain(b, l2, NULL, 4) == 1 && l2[0] == 100, "the pending datagram still arrives after WSAENETDOWN"); }
+    /* udp_win_pollerr_does_not_spin: a socket that keeps reporting POLLERR with no SO_ERROR pending idles the slice */
+    { uint8_t *rb[1]; uint8_t r0[1500]; rb[0] = r0; uint32_t rc[1] = { 1500 }, rl[1], got = 9; uint8_t ra[KSL_UDP_ADDR_LEN], re[1];
+      uint32_t before = ksl_udp_polls_for_test(b); ksl_udp_fake_pollerr_for_test(b, 1); int r = ksl_udp_recv(b, rb, rc, rl, ra, re, 1, &got, 200); ksl_udp_fake_pollerr_for_test(b, 0);
+      uint32_t polls = ksl_udp_polls_for_test(b) - before;
+      CHECK(r == KSL_WANT_READ && got == 0, "POLLERR without a pending error: a timeout, not KSL_ERROR");
+      CHECK(polls <= 10, "POLLERR idles in 50 ms slices instead of spinning"); if (polls > 10) printf("udp(win): %u polls in 200 ms\n", polls); }
     /* udp_win_dual_stack: an IPv6 socket on [::] takes IPv4 traffic and reports and answers the peer as family 4 */
     { uint8_t any6[KSL_UDP_ADDR_LEN] = { 6 }, l6[KSL_UDP_ADDR_LEN]; ksl_udp *d = wopen(any6, KSL_UDP_ECN, l6);
       if (!d) printf("udp(win): no IPv6 stack, dual-stack case skipped\n");
