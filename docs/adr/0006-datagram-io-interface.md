@@ -83,7 +83,8 @@ cross-checked with msquic `src/platform/datapath_winuser.c`.
 - **Addresses and binding.** IPv6 sockets are dual-stack (`IPV6_V6ONLY = 0`, unlike Linux): a v4 peer of `[::]` is reported and
   addressed as family 4 (v4-mapped inside C), so the Kotlin side sees the same 20-byte addresses as on Linux. The bind is
   `SO_EXCLUSIVEADDRUSE`; `KSL_UDP_REUSEPORT` is never granted (Windows `SO_REUSEADDR` lets another socket take the port over),
-  so one loop per port (`loops > 1` throws as on Apple).
+  so one loop per port: `LoopGroup` checks the grant on the first socket and throws `UnsupportedOperationException` without it
+  (the same check covers Darwin and a Linux whose seccomp filter refuses `SO_REUSEPORT`).
 - **Winsock start.** `WSAStartup(2.2)` once per process (never `WSACleanup`). ktor-network starts Winsock only when it creates
   a socket, so `InetSocketAddress.resolveAddress()` (getaddrinfo) before that failed with `WSANOTINITIALISED` (10093): 295
   `kuicksilver-quic` tests on the first windows-2025 CI run, and any application that resolves an address before its first

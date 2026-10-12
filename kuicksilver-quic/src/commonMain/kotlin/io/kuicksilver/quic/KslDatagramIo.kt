@@ -182,6 +182,9 @@ internal class KslDatagramIo private constructor(
         socket.close()
     }
 
+    /** Whether the system granted SO_REUSEPORT on this socket (never on Windows; `loops > 1` needs it). */
+    val reusePortGranted: Boolean get() = socket.grantedFlags and KslUdpSocket.REUSEPORT != 0
+
     internal fun statsForTest(): KslUdpSocket.Stats = socket.stats
 
     companion object {

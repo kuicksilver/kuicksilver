@@ -25,13 +25,19 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 
-/** Several endpoint loops on one port with SO_REUSEPORT (threat-model 3.4); Linux only (the accelerated socket; elsewhere the tests report skipped and `loops > 1` is refused). */
+/** Several endpoint loops on one port with SO_REUSEPORT (threat-model 3.4); only where the accelerated socket is granted SO_REUSEPORT (Linux; elsewhere the tests report skipped and `loops > 1` is refused). */
 class MultiLoopTest {
     private val lo = InetSocketAddress("127.0.0.1", 0)
 
+    /** The tests need SO_REUSEPORT granted on the accelerated socket, not just the socket (Windows never grants it). */
     private fun ready(): Boolean {
         KslLoader.ensureLoaded()
-        return KslUdpSocket.supported
+        val probe = KslDatagramIo.open(lo, reusePort = true) ?: return false
+        try {
+            return probe.reusePortGranted
+        } finally {
+            probe.close()
+        }
     }
 
     private fun serverConfig(loops: Int) =
@@ -48,7 +54,7 @@ class MultiLoopTest {
 
     @Test fun fourLoopsShareOnePort() =
         runBlocking {
-            assumeTrue(ready(), "needs the accelerated socket (Linux)")
+            assumeTrue(ready(), "needs SO_REUSEPORT on the accelerated socket (Linux)")
             val server = QuicEndpoint.bind(lo, serverConfig(4))
             val group = server as LoopGroup
             val clients = List(20) { QuicEndpoint.bind(lo, QuicEndpointConfig.Builder().apply { crypto = KslQuicCrypto }.build()) }
@@ -101,7 +107,7 @@ class MultiLoopTest {
 
     @Test fun forwardedDatagramReachesOwner() =
         runBlocking {
-            assumeTrue(ready(), "needs the accelerated socket (Linux)")
+            assumeTrue(ready(), "needs SO_REUSEPORT on the accelerated socket (Linux)")
             val server = QuicEndpoint.bind(lo, serverConfig(2))
             val group = server as LoopGroup
             val client = QuicEndpoint.bind(lo, QuicEndpointConfig.Builder().apply { crypto = KslQuicCrypto }.build())
@@ -161,7 +167,7 @@ class MultiLoopTest {
                         io = { DatagramIo.open(it, IoPreference.Portable) }
                     }.build()
             assertFailsWith<UnsupportedOperationException> { QuicEndpoint.bind(lo, cfg) }
-            if (!KslUdpSocket.supported) assertFailsWith<UnsupportedOperationException> { QuicEndpoint.bind(lo, serverConfig(2)) }
+            if (!ready()) assertFailsWith<UnsupportedOperationException> { QuicEndpoint.bind(lo, serverConfig(2)) }
             // loops > 1 needs a server
             assertFailsWith<IllegalArgumentException> { QuicEndpointConfig.Builder().apply { loops = 2 }.build() }
             Unit
