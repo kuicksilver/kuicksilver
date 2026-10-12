@@ -275,7 +275,9 @@ unknown Initial (1200 bytes, a supported version, a DCID of at least 8 bytes, no
 123) and copies it into a bounded queue of `initialQueueCap` (1024) entries; the loop then calls `processPending` once
 per receive batch. That step checks the Retry token, the hard limits (`maxConnections`, `acceptQueue`,
 `maxConnectionsPerIp`, 256 per IP by default) and asks `ConnectionAdmission.admit(attempt)`, which answers `Allow`,
-`Retry`, `Drop` or `Close(code)`:
+`Retry`, `Drop` or `Close(code)`. `acceptQueue` counts the connections waiting for `accept()` plus the handshakes in
+flight, and the queue never holds more: a handshake that completes while `acceptQueue` connections wait is closed with
+CONNECTION_REFUSED (0x02).
 
 ```kotlin
 // guide:quic:admission
