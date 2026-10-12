@@ -24,6 +24,14 @@ public final class io/kuicksilver/quic/AdmissionDecision$Retry : io/kuicksilver/
 	public fun toString ()Ljava/lang/String;
 }
 
+public final class io/kuicksilver/quic/AndroidNetworks {
+	public static final fun defaultNetworks (Landroid/net/ConnectivityManager;)Lkotlinx/coroutines/flow/Flow;
+	public static final fun followDefaultNetwork (Lio/kuicksilver/quic/QuicConnection;Landroid/net/ConnectivityManager;Lkotlinx/coroutines/CoroutineScope;Lio/ktor/network/sockets/InetSocketAddress;Lio/kuicksilver/quic/IoPreference;)Lio/kuicksilver/quic/NetworkMigrator;
+	public static synthetic fun followDefaultNetwork$default (Lio/kuicksilver/quic/QuicConnection;Landroid/net/ConnectivityManager;Lkotlinx/coroutines/CoroutineScope;Lio/ktor/network/sockets/InetSocketAddress;Lio/kuicksilver/quic/IoPreference;ILjava/lang/Object;)Lio/kuicksilver/quic/NetworkMigrator;
+	public static final fun open (Lio/kuicksilver/quic/DatagramIo$Companion;Lio/ktor/network/sockets/InetSocketAddress;Landroid/net/Network;Lio/kuicksilver/quic/IoPreference;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static synthetic fun open$default (Lio/kuicksilver/quic/DatagramIo$Companion;Lio/ktor/network/sockets/InetSocketAddress;Landroid/net/Network;Lio/kuicksilver/quic/IoPreference;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+}
+
 public abstract interface class io/kuicksilver/quic/CongestionController {
 	public abstract fun getBytesInFlight ()J
 	public abstract fun getCwnd ()J

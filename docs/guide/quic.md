@@ -273,6 +273,26 @@ stops following (a migration in flight is abandoned and its socket closed) but l
 migrator also stops when the connection ends. Only a client migrates (RFC 9000 section 9): a server connection is
 refused with `IllegalArgumentException`.
 
+On Android, `followDefaultNetwork` does the wiring (API 24+):
+
+```kotlin
+val cm = context.getSystemService(ConnectivityManager::class.java)
+val migrator = connection.followDefaultNetwork(cm, lifecycleScope)   // started; migrator.close() stops it
+lifecycleScope.launch { migrator.events.collect { Log.i("quic", "$it") } }
+```
+
+It feeds `ConnectivityManager.registerDefaultNetworkCallback` into a started `NetworkMigrator` (`cm.defaultNetworks()`
+is the flow alone; the callback is unregistered when the migrator stops) and opens each new socket with
+`DatagramIo.open(local, network, prefer)`, which binds it to that network with `Network.bindSocket` before it carries a
+datagram: the portable socket before `bind`, the accelerated one through a duplicate of its descriptor that is closed
+again. The default network at the call is taken as the one the connection is on (a socket that is not bound to a
+network follows the default one). The AAR declares `ACCESS_NETWORK_STATE`, which the callback needs; nothing else is
+added to the manifest. What stays with the app: the callback only fires while the process runs, so a connection in a
+background process that Android froze or killed moves (or is lost) when the app is back; Doze and app standby cut
+network access whatever the default network is; and a server that advertised `disable_active_migration` is never moved
+(`Failed` events), so the app reconnects instead. As in Chromium's QUIC session pool, losing the network does not close
+the connection: if no network returns within the idle timeout, the connection closes as usual.
+
 ## Glitch protection
 
 Every connection carries a token bucket (1000 tokens, 33 back per second) that pays for work the peer makes us do

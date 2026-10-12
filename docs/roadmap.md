@@ -39,6 +39,8 @@ Known limits, stated on purpose:
 - `QuicConfig.initialRtt` (default 333 ms per RFC 9002; a lower value trades spurious retransmissions for a faster
   handshake under loss) validated in (0, 10 s] and the lossy-handshake behaviour documented in the guide (done on
   `k7/f1-core`).
+- Automatic migration on network changes: `NetworkMigrator` in common code and `followDefaultNetwork` on Android
+  (requested by the first external consumer; done on `k7/android-migration`).
 - QUIC server on Kotlin/Native macOS: `ksl_udp` over `sendmsg`/`recvmsg` and kqueue, the server test suites on
   `macosArm64`.
 - Coverage reports (Kover once it supports the `com.android.kotlin.multiplatform.library` plugin, or JaCoCo for the JVM only).

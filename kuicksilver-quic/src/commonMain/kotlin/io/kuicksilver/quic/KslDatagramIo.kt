@@ -189,9 +189,11 @@ internal class KslDatagramIo private constructor(
         private const val REFRESH = 256
 
         /** Opens the accelerated socket on [local]; null where `ksl_udp` is not available (Apple, Windows) or the address cannot be resolved. */
+        /** [configure] sees the bound socket's descriptor before any datagram (Android binds it to a network); if it throws, the socket is closed. */
         fun open(
             local: InetSocketAddress,
             reusePort: Boolean = false,
+            configure: (fd: Int) -> Unit = {},
         ): KslDatagramIo? {
             if (!KslUdpSocket.supported) return null
             val ip = local.resolveAddress() ?: return null
@@ -199,7 +201,14 @@ internal class KslDatagramIo private constructor(
                 KslUdpSocket.ECN or KslUdpSocket.GSO or KslUdpSocket.GRO or KslUdpSocket.DF or
                     (if (reusePort) KslUdpSocket.REUSEPORT else 0)
             // `supported` was true: a failure here is a real one (bind, limits)
-            return KslDatagramIo(KslUdpSocket.open(KslUdpSocket.encodeAddress(ip, local.port), flags))
+            val socket = KslUdpSocket.open(KslUdpSocket.encodeAddress(ip, local.port), flags)
+            try {
+                configure(socket.fd)
+            } catch (e: Throwable) {
+                socket.close()
+                throw e
+            }
+            return KslDatagramIo(socket)
         }
 
         /**
