@@ -139,7 +139,7 @@ new request, with `Http3Exception.RequestNotProcessed(retrySafe = true)`: they w
 again on a new connection (the Ktor engine does that by itself). A client's own `goAway()` sends GOAWAY(0) and stops
 issuing requests.
 
-A peer that keeps sending frames nobody needs (unknown frames on the control stream or on a request stream, empty
+A peer that keeps sending frames nobody needs (unknown frames on the control stream or on a request stream — reserved GREASE types on a request stream are free — empty
 unidirectional streams, PRIORITY_UPDATE floods) spends tokens of a glitch bucket (1000 tokens, 33 per second); an empty bucket closes the
 connection with `H3_EXCESSIVE_LOAD`. `Http3Settings.glitchProtection = false` turns this off.
 

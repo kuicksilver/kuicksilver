@@ -129,7 +129,8 @@ internal sealed interface RequestFrame {
 
 /**
  * Frame reader for a request stream (RFC 9114 section 4.1): reserved and unknown frames are skipped as they stream by
- * (section 7.2.8); [onSkipped] is called for each, so a flood of them can spend glitch tokens (section 8.1).
+ * (section 7.2.8); [onSkipped] is called for each unknown one, so a flood of them can spend glitch tokens (section 8.1).
+ * Reserved types (0x1f * N + 0x21) are GREASE a peer is meant to send and cost nothing.
  */
 internal class RequestFrames(
     val input: ByteReadChannel,
@@ -144,7 +145,7 @@ internal class RequestFrames(
             val len = input.readVarInt()
             when (FrameRules.checkRequest(type, isServerSide)) {
                 FrameAction.Skip -> {
-                    onSkipped()
+                    if (!FrameType.isGrease(type)) onSkipped()
                     input.skipExact(len)
                 }
 

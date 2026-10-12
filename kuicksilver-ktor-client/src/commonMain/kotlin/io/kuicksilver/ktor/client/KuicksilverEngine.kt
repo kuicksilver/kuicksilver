@@ -71,7 +71,7 @@ internal class KuicksilverEngine(
     /** Broken alternatives and networks where QUIC worked; internal for tests. */
     internal val brokenAltSvc = BrokenAltSvc { getTimeMillis() }
     private val race = ProtocolRace(config.http3.softDelay, config.http3.hardDelay)
-    private val srtt = HashMap<String, kotlin.time.Duration>() // per origin, from the last HTTP/3 connection
+    private val srtt = LinkedHashMap<String, kotlin.time.Duration>() // per origin, from the last HTTP/3 connection; LRU-bounded
     private var lastNetwork: String? = null
     private var networkSeen = false
 
@@ -192,8 +192,7 @@ internal class KuicksilverEngine(
                 altSvcLock.withLock {
                     brokenAltSvc.confirmQuic(network)
                     brokenAltSvc.markWorking(origin, alt)
-                    srtt[origin] =
-                        conn.quic.stats.smoothedRtt
+                    rememberSrtt(origin, conn.quic.stats.smoothedRtt)
                 }
                 h3WithFallback(t, data, callContext, extraHeaders)
             }
@@ -206,12 +205,7 @@ internal class KuicksilverEngine(
                                 null
                             ) {
                                 brokenAltSvc.confirmQuic(network)
-                                runCatching {
-                                    srtt[origin] =
-                                        h3Attempt
-                                            .getCompleted()
-                                            .quic.stats.smoothedRtt
-                                }
+                                runCatching { rememberSrtt(origin, h3Attempt.getCompleted().quic.stats.smoothedRtt) }
                             } // lost the race, but QUIC works here
                             else if (cause !is CancellationException) {
                                 brokenAltSvc.markBroken(origin, alt)
@@ -227,6 +221,19 @@ internal class KuicksilverEngine(
     /** The cached alternatives for the origin of [url] (tests). */
     internal suspend fun altSvcSnapshot(url: io.ktor.http.Url): List<AltSvcEntry> =
         altSvcLock.withLock { config.http3.altSvcStore.get(originKey(url)) }
+
+    /** Under [altSvcLock]: the smoothed RTT of [origin]'s last HTTP/3 connection; internal for tests. */
+    internal fun rememberSrtt(
+        origin: String,
+        rtt: kotlin.time.Duration,
+    ) {
+        srtt.remove(origin)
+        srtt[origin] = rtt
+        srtt.evictEldest(AltSvcCache.MAX_ORIGINS)
+    }
+
+    /** The origins with a remembered RTT (tests). */
+    internal val srttOrigins: Int get() = srtt.size
 
     /** Whether an HTTP/3 connection to the origin of [url] is open (tests). */
     internal suspend fun hasH3Connection(url: io.ktor.http.Url): Boolean = h3.existing(H3Target(url.host, url.host, url.port)) != null

@@ -75,7 +75,8 @@ K7 (0.2.0), HTTP/3 and the Ktor engines:
 - A QPACK encoder-stream instruction cut into many fragments by the transport was re-copied and re-parsed per
   fragment (quadratic in its length); it is now appended to once and parsed when its known length has arrived
   (RFC 9204 section 7.4).
-- Request-stream frame hygiene: a flood of unknown frames on a request stream spends glitch tokens and closes the
+- Request-stream frame hygiene: a flood of unknown frames on a request stream (reserved GREASE types excepted) spends
+  glitch tokens and closes the
   connection with `H3_EXCESSIVE_LOAD` like one on the control stream (RFC 9114 section 7.2.8); DATA on a response to
   HEAD or with status 204 or 304 is a malformed message (`Http3Exception.MessageError`) instead of a body; `te` is
   accepted in requests only — a response or trailers carrying it are malformed, the server engine drops it from
@@ -95,9 +96,9 @@ K7 (0.2.0), HTTP/3 and the Ktor engines:
   already closed for reading are dropped when taken from the pool.
 - Ktor client: the h3/h1 connection race makes one HTTP/1.1 attempt (a second TCP connection was opened when both
   setups failed), closes an HTTP/1.1 connection that lost the race instead of leaking it (also when the caller is
-  cancelled), and marks the alternative
-  broken when a request fell back to HTTP/1.1 after its HTTP/3 connection failed (not for a single stream error) (RFC 7838 section 2.4, RFC 8305 section 5).
-- Ktor client: the Alt-Svc stores and broken-alternative marks are bounded — 8 alternatives per origin (the first ones
+  cancelled), and marks the alternative broken when a request fell back to HTTP/1.1 after its HTTP/3 connection
+  failed — not for a single stream error (RFC 7838 section 2.4, RFC 8305 section 5).
+- Ktor client: the Alt-Svc stores, broken-alternative marks and per-origin RTTs are bounded — 8 alternatives per origin (the first ones
   of the header), 1000 origins with the least recently used dropped — so a server, or many origins, can no longer grow
   them without limit. `FileAltSvcStore` reads at most that many records, skips the rewrite when a repeated header only
   moves the expiry later by less than half its lifetime (a shorter `ma` always replaces the cached expiry), writes through a uniquely named temporary file, and, behind the

@@ -313,12 +313,35 @@ class RequestTest {
                 val raw = RawPeer(c)
                 raw.openControl()
                 val st = c.openBidi()
-                val one = raw.frame(0x21, ByteArray(0))
+                val one = raw.frame(0x22, ByteArray(0)) // unknown, not a reserved (GREASE) type
                 val flood = ByteArray(one.size * 1001)
                 for (i in 0 until 1001) one.copyInto(flood, i * one.size)
                 st.output.writeFully(flood)
                 st.output.flush()
                 assertEquals(Http3ErrorCode.EXCESSIVE_LOAD, peerSawClose(c))
+            }
+        }
+
+    /** Reserved frame types (0x1f * N + 0x21, RFC 9114 section 7.2.8) are GREASE a peer is meant to send: they cost no glitch token. */
+    @Test fun greaseFramesOnRequestStreamsAreFree() =
+        h3Test {
+            QuicPair.open().use { q ->
+                val (c, s) = q.connect()
+                val server = Http3Connection.server(s)
+                val raw = RawPeer(c)
+                raw.openControl()
+                val st = c.openBidi()
+                // twice the bucket, in one write: the flood test's 1001 unknown frames close the connection
+                val flood =
+                    (0 until 2002)
+                        .map { raw.frame(io.kuicksilver.http3.frame.FrameType.grease(it.toLong()), ByteArray(0)) }
+                        .reduce { a, b -> a + b }
+                st.output.writeFully(flood + raw.headers(st.id, GET))
+                st.output.flushAndClose()
+                val r = withTimeout(5.seconds) { server.acceptRequest() }
+                r.respond(204).finish()
+                assertTrue(st.input.readAllBytes().isNotEmpty())
+                assertTrue(!server.closed.isCompleted, "GREASE frames closed the connection")
             }
         }
 

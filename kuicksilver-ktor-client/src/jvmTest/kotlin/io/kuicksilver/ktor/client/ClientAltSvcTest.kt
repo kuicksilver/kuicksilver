@@ -15,6 +15,7 @@ import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
 class ClientAltSvcTest {
@@ -77,6 +78,16 @@ class ClientAltSvcTest {
             } finally {
                 server.stop(100, 500)
                 kotlinx.io.files.SystemFileSystem.delete(path, mustExist = false)
+            }
+        }
+
+    /** The per-origin RTT memory is bounded like the Alt-Svc cache (threat-model 3.18). */
+    @Test fun srttMapBounded() =
+        clientTest {
+            testClient(Http3DiscoveryMode.Auto).use { c ->
+                val engine = c.engine as KuicksilverEngine
+                repeat(AltSvcCache.MAX_ORIGINS + 50) { engine.rememberSrtt("https://o$it.test:443", 10.milliseconds) }
+                assertEquals(AltSvcCache.MAX_ORIGINS, engine.srttOrigins)
             }
         }
 
