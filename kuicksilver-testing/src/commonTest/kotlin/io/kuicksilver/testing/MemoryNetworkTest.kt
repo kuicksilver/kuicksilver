@@ -5,7 +5,9 @@ package io.kuicksilver.testing
 import io.ktor.network.sockets.InetSocketAddress
 import io.ktor.utils.io.readAvailable
 import io.ktor.utils.io.writeFully
+import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.native.KslLoader
+import io.kuicksilver.quic.PacketBatch
 import io.kuicksilver.quic.PathChangeReason
 import io.kuicksilver.quic.QuicConnection
 import io.kuicksilver.quic.QuicEndpoint
@@ -195,6 +197,40 @@ class MemoryNetworkTest {
                 server.close()
             }
         }
+
+    @OptIn(ExperimentalKuicksilverApi::class)
+    @Test fun fullReceiveBufferDropsAndCounts() {
+        // like a socket's receive buffer: what arrives while 256 datagrams wait unread is dropped and counted
+        val net = MemoryNetwork(receiveBuffer = 256)
+        val rx = net.open(serverAddr)
+        val tx = net.open(clientAddr)
+        val batch = PacketBatch(1)
+        try {
+            batch.buffer(0).copyFrom(ByteArray(100) { 7 }, 0, 0, 100)
+            batch.setLength(0, 100)
+            batch.setAddress(0, serverAddr)
+            repeat(300) { assertEquals(1, tx.trySend(batch)) }
+            assertEquals(44L, net.dropped)
+        } finally {
+            batch.close()
+            rx.close()
+            tx.close()
+        }
+    }
+
+    @Test fun ephemeralPortIsAssigned() {
+        val net = MemoryNetwork()
+        val a = net.open(InetSocketAddress("10.0.0.5", 0))
+        val b = net.open(InetSocketAddress("10.0.0.5", 0))
+        try {
+            assertTrue(a.localAddress.port != 0, "port 0 binds an ephemeral port: ${a.localAddress}")
+            assertTrue(a.localAddress.port != b.localAddress.port, "two sockets, two ports")
+            assertEquals("10.0.0.5", a.localAddress.hostname)
+        } finally {
+            a.close()
+            b.close()
+        }
+    }
 
     @Test fun openTwiceOnSameAddressFails() {
         val net = MemoryNetwork()

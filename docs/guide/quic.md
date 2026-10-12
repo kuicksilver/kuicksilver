@@ -333,7 +333,10 @@ connection discarded unprocessed).
 binds a `DatagramIo` there, and a datagram reaches the socket bound to its destination or vanishes. Give it to endpoints
 through `QuicEndpointConfig.io` and the whole stack runs unchanged, OpenSSL TLS included, on every platform and without
 ports. `cut(address)` makes an address go dark (and `restore` brings it back), `mtu` drops larger datagrams, `dropped`
-counts what vanished; it is safe to share between endpoint loops on different threads.
+counts what vanished; it is safe to share between endpoint loops on different threads. Like a UDP socket, each socket
+holds at most `receiveBuffer` unread datagrams (256 by default) and drops what arrives on top, a datagram larger than the
+receiver's slot is dropped rather than truncated, and `open` on port 0 binds a free ephemeral port (49152 and up) unless
+`assignEphemeralPorts = false`. Marks are always bleached: sockets report no ECN.
 
 ```kotlin
 // guide:quic:memory-network

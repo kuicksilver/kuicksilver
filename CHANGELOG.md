@@ -59,6 +59,9 @@ Nothing has been released yet. This section summarises the development of the fi
   architecture, layering, SPDX, ABI, symbol-export, glibc-floor, page-alignment and size checks.
 - Documentation: user guides, architecture overview, ADRs, RFC compliance matrix, threat model; the
   `samples/realtime-telemetry` application.
+- `MemoryNetwork(receiveBuffer, assignEphemeralPorts)` (`@ExperimentalKuicksilverApi`): sockets of the in-memory network
+  hold at most `receiveBuffer` unread datagrams (256 by default) and count what a full buffer drops, `open` on port 0 binds
+  an ephemeral port, oversized datagrams are dropped instead of truncated, and `trySend` counts only addressed datagrams.
 
 ### Changed
 
