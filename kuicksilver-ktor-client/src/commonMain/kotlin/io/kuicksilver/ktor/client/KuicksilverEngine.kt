@@ -26,6 +26,7 @@ import io.kuicksilver.ktor.client.h3.H3Pool.Companion.isReplayable
 import io.kuicksilver.ktor.client.h3.H3Target
 import io.kuicksilver.quic.QuicException
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineName
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.DelicateCoroutinesApi
@@ -78,6 +79,9 @@ internal class KuicksilverEngine(
     /** The cleanup that runs once every request finished after [close]; internal so a test can wait for it. */
     internal val cleanup: Job
 
+    /** Closes expired idle connections of both pools and prunes their bookkeeping; cancelled by [close]. */
+    private val reaper: Job = engineScope.launch(CoroutineName("kuicksilver-pool-reaper")) { reapIdleConnections(h1, h3, config) }
+
     init {
         val requests = coroutineContext[Job]!!
         cleanup =
@@ -94,6 +98,7 @@ internal class KuicksilverEngine(
     }
 
     override fun close() {
+        reaper.cancel()
         engineJob.complete()
         super.close()
     }
@@ -188,7 +193,7 @@ internal class KuicksilverEngine(
         val h3Attempt = engineScope.async { h3.connection(t, data) }
         val result =
             race.race<Any>({ h3Attempt.await() }, { h1.open(data) }, rtt, confirmed, onLoser = {
-                (it as? io.kuicksilver.ktor.client.h1.H1Connection)?.close()
+                (it as? io.kuicksilver.ktor.client.h1.H1Connection)?.let(h1::recycle) // unused: back to the pool
             })
         return when (result.winner) {
             Protocol.H3 -> {

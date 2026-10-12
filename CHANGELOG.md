@@ -33,6 +33,9 @@ Nothing has been released yet. This section summarises the development of the fi
 - `keylogFile(path)` refuses a symlink, a non-regular file, a file with more than one hard link, a file of another user or a file system without POSIX permissions, tightens an existing file to 0600 and reopens it without following links for every line (threat model section 3.7). On the JVM the sink keeps the one descriptor it checked for its lifetime (it is `java.io.Closeable`) instead of reopening the path for every line without re-checking the owner, so a file recreated at the path by another local user receives no secrets.
 
 ### Changed
+- Ktor client: `maxConnectionsPerHost` is documented as what it always was, the number of idle HTTP/1.1 connections kept
+  per route; it no longer stands in for a connection limit. The idle map of the HTTP/1.1 pool, which grew by one entry per
+  origin and was never pruned, is gone: a route is dropped with its last connection.
 - `QuicEndpointConfig.acceptQueue` defaults to 128 (was 32), and a client Initial that arrives while the accept queue is full is refused at once with a stateless Initial CONNECTION_CLOSE carrying CONNECTION_REFUSED (0x02), under the stateless rate limits, instead of being dropped: the client's `connect` fails with `ConnectionLost.TransportClosed(code = 0x02)` within a round trip rather than at its handshake timeout, and the server spends no TLS handshake on it (RFC 9000 section 5.2.2, as quic-go does). Handshakes in flight still do not count against the queue; one admitted earlier that completes into a full queue is still closed with CONNECTION_REFUSED.
 - The JVM on macOS uses the accelerated `ksl` socket (`KslDatagramIo`) by default instead of NIO, as Linux already did: DF is set (PMTUD can grow past 1200 bytes, up to 1452 on loopback), ECN marks are read per datagram so paths can validate ECN, receives run as 100 ms blocking slices on `Dispatchers.IO`, and a wildcard bind is dual-stack as with NIO. A refused socket falls back to NIO; `DatagramIo.open(local, IoPreference.Portable)` (or an endpoint built on it) keeps NIO.
 - `ksl` ABI 5: identity private keys stay in OpenSSL. `TlsIdentity.fromDer`/`fromPem` parse the key once into a native `ksl_pkey` (`ksl_pkey_new`, `ksl_pkey_free`, `ksl_ctx_set_identity_pkey`) and keep only its handle, so a heap dump no longer holds the key; `TlsIdentity.InMemory.close()` frees it once the contexts built from it are gone. A library of ABI 4 is refused (`AbiMismatch`).
@@ -49,6 +52,13 @@ Nothing has been released yet. This section summarises the development of the fi
 - The `macosX64` Kotlin/Native target (deprecated by Kotlin, never part of the test matrix). The JVM on Intel Macs keeps its `osx-x86_64` JNI library.
 
 ### Added
+- Ktor client connection limits and idle cleanup (`@ExperimentalKuicksilverApi`): `maxConnectionsCount` (1000) and
+  `maxConnectionsPerRoute` (100) bound the HTTP/1.1 connections of an engine and of one route, as in Ktor CIO; requests
+  beyond them wait in FIFO order within the connect timeout (`ConnectTimeoutException`), cancellation-safe. `idleTimeout`
+  (5 minutes, as OkHttp) closes idle keep-alive connections and HTTP/3 connections without requests, and
+  `maxConnectionLifetime` (infinite) retires connections by age; a background reaper does both and drops the bookkeeping of
+  origins without connections. HTTP/3 keeps one connection per origin and queues requests for the peer's MAX_STREAMS credit
+  (bounded by the request timeout) instead of failing or opening more connections.
 - QUIC server on Kotlin/Native Windows (`mingwX64`): `ksl_udp` over Winsock (`WSASendMsg`/`WSARecvMsg` with `WSAPoll` and a wake socket, ECN through `IP_ECN`/`IPV6_ECN` on Windows 10 2004+ / Server 2022, USO/URO where the system grants them, DF, dual-stack IPv6, `SO_EXCLUSIVEADDRUSE`); the JVM on Windows uses the same socket through JNI. Winsock is started when the Kotlin/Native runtime starts (not from a C constructor, which in a `sharedLib` would run under the loader lock), so address lookups before the first socket no longer fail with `WSANOTINITIALISED`. Verified by the CI windows job only. `loops > 1` without `SO_REUSEPORT` granted on the first socket (Windows always) throws the documented `UnsupportedOperationException` instead of failing the second bind with `KslException.Internal`.
 - 0-RTT, opt-in and experimental (ADR-0015, RFC 9001 section 4.6, RFC 8470): `QuicClientConfig.earlyData`,
   `QuicServerConfig.earlyData`/`earlyDataContext`, `QuicEndpoint.connectEarly`, `QuicConnection.awaitHandshake`/

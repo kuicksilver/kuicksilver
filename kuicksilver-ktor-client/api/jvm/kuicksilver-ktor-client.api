@@ -95,14 +95,22 @@ public final class io/kuicksilver/ktor/client/KuicksilverEngineConfig : io/ktor/
 	public final fun getConnectTimeout-UwyO8pc ()J
 	public final fun getHttp3 ()Lio/kuicksilver/ktor/client/Http3ClientConfig;
 	public final fun getIdentity ()Lio/kuicksilver/tls/TlsIdentity;
+	public final fun getIdleTimeout-UwyO8pc ()J
+	public final fun getMaxConnectionLifetime-UwyO8pc ()J
+	public final fun getMaxConnectionsCount ()I
 	public final fun getMaxConnectionsPerHost ()I
+	public final fun getMaxConnectionsPerRoute ()I
 	public final fun getQuic ()Lio/kuicksilver/quic/QuicConfig;
 	public final fun getTls ()Lkotlin/jvm/functions/Function1;
 	public final fun getTrust ()Lio/kuicksilver/tls/TrustConfig;
 	public final fun http3 (Lkotlin/jvm/functions/Function1;)V
 	public final fun setConnectTimeout-LRDsOJo (J)V
 	public final fun setIdentity (Lio/kuicksilver/tls/TlsIdentity;)V
+	public final fun setIdleTimeout-LRDsOJo (J)V
+	public final fun setMaxConnectionLifetime-LRDsOJo (J)V
+	public final fun setMaxConnectionsCount (I)V
 	public final fun setMaxConnectionsPerHost (I)V
+	public final fun setMaxConnectionsPerRoute (I)V
 	public final fun setQuic (Lio/kuicksilver/quic/QuicConfig;)V
 	public final fun setTls (Lkotlin/jvm/functions/Function1;)V
 	public final fun setTrust (Lio/kuicksilver/tls/TrustConfig;)V

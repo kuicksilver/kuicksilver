@@ -3,6 +3,7 @@
 package io.kuicksilver.ktor.client
 
 import io.ktor.client.engine.HttpClientEngineConfig
+import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.annotations.KuicksilverDsl
 import io.kuicksilver.http3.Http3Settings
 import io.kuicksilver.quic.QuicConfig
@@ -12,6 +13,7 @@ import io.kuicksilver.tls.TlsIdentity
 import io.kuicksilver.tls.TrustConfig
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 
 /** How the engine finds and uses HTTP/3 (after JDK 26 `Http3DiscoveryMode` and Cronet's QUIC hints). */
@@ -100,8 +102,43 @@ public class KuicksilverEngineConfig : HttpClientEngineConfig() {
     /** QUIC transport settings of HTTP/3 connections. */
     public var quic: QuicConfig = QuicConfig.Default
 
-    /** HTTP/1.1 connections kept per origin. */
+    /**
+     * Idle HTTP/1.1 keep-alive connections kept per route (origin and proxy) for reuse; it does not limit open
+     * connections, [maxConnectionsPerRoute] and [maxConnectionsCount] do. 0 keeps none.
+     */
     public var maxConnectionsPerHost: Int = 4
+
+    /**
+     * HTTP/1.1 connections open at once across all routes, idle ones included (CIO's `maxConnectionsCount`, the same
+     * default 1000). A request beyond it waits, in FIFO order, within the connect timeout; when other routes hold idle
+     * connections, the oldest one is closed to make room instead. HTTP/3 multiplexes and is limited per origin instead.
+     */
+    @ExperimentalKuicksilverApi
+    public var maxConnectionsCount: Int = 1000
+
+    /**
+     * HTTP/1.1 connections open at once to one route (scheme, host, port and proxy), idle ones included (CIO's
+     * `endpoint.maxConnectionsPerRoute`, the same default 100); further requests to it wait in FIFO order within the
+     * connect timeout, failing with `ConnectTimeoutException` when no connection frees up in time.
+     */
+    @ExperimentalKuicksilverApi
+    public var maxConnectionsPerRoute: Int = 100
+
+    /**
+     * How long a connection without requests is kept: an idle HTTP/1.1 keep-alive connection, or an HTTP/3 connection
+     * with no request in flight (5 minutes, as OkHttp's keep-alive; QUIC's own idle timeout may end it earlier). A
+     * background task closes expired connections and drops the bookkeeping of origins without connections.
+     */
+    @ExperimentalKuicksilverApi
+    public var idleTimeout: Duration = 5.minutes
+
+    /**
+     * Age after which a connection takes no new requests: a pooled HTTP/1.1 connection is closed instead of reused, and
+     * new HTTP/3 requests go to a new connection while the old one finishes its requests and then closes. Infinite by
+     * default, as in OkHttp and CIO; a finite value spreads load after DNS or load-balancer changes.
+     */
+    @ExperimentalKuicksilverApi
+    public var maxConnectionLifetime: Duration = Duration.INFINITE
 
     /** Connect timeout when `HttpTimeout` sets none (TCP + TLS, or the QUIC handshake). */
     public var connectTimeout: Duration = 10.seconds
