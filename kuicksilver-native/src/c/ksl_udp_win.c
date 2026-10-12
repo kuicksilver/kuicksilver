@@ -85,19 +85,21 @@ static void fail(uint32_t *err, uint32_t code, char *msg, size_t msglen, const c
 
 /* WSAStartup once per process (reference counted by Winsock; never undone, like the OpenSSL init). Kotlin/Native code reaches
    getaddrinfo (ktor-network's InetSocketAddress.resolveAddress) before any socket exists, and ktor-network starts Winsock only
-   when it creates a socket: every Winsock call before that failed with WSANOTINITIALISED (10093). So ksl starts it at program
-   start (the constructor below, static Kotlin/Native binaries), in ksl_init and in ksl_udp_open. */
-int ksl_win_sockets_init(void) {
-    static volatile LONG state = 0;   /* 0 not started, 1 starting, 2 ready, 3 failed */
-    LONG s = InterlockedCompareExchange(&state, 1, 0);
-    if (s == 0) { WSADATA d; LONG r = WSAStartup(MAKEWORD(2, 2), &d) == 0 ? 2 : 3; InterlockedExchange(&state, r); return r == 2; }
-    while ((s = InterlockedCompareExchange(&state, 1, 1)) == 1) Sleep(0);
+   when it creates a socket: every Winsock call before that failed with WSANOTINITIALISED (10093). The Kotlin/Native runtime
+   starts it before any Kotlin code runs (an eager property in kuicksilver-native's mingwMain, `who` 1); ksl_init (2) and
+   ksl_udp_open (3) start it too, for the JVM's dll and C callers. Never from a C constructor: in a DLL (a Kotlin/Native
+   sharedLib, the JNI dll) constructors run under the loader lock, where WSAStartup must not be called. */
+static volatile LONG wsa_state = 0;   /* 0 not started, 1 starting, 2 ready, 3 failed */
+static volatile LONG wsa_first = 0;   /* who started it first */
+int ksl_win_sockets_start(int who) {
+    LONG s = InterlockedCompareExchange(&wsa_state, 1, 0);
+    if (s == 0) { WSADATA d; LONG r = WSAStartup(MAKEWORD(2, 2), &d) == 0 ? 2 : 3; if (r == 2) InterlockedCompareExchange(&wsa_first, (LONG)who, 0); InterlockedExchange(&wsa_state, r); return r == 2; }
+    while ((s = InterlockedCompareExchange(&wsa_state, 1, 1)) == 1) Sleep(0);
     return s == 2;
 }
-#ifndef KSL_DLL   /* a DLL's constructors run under the loader lock, where WSAStartup must not be called: the JVM library starts Winsock in ksl_init */
-__attribute__((constructor)) static void ksl_win_sockets_at_start(void) { ksl_win_sockets_init(); }
-#endif
-static int wsa_ready(void) { return ksl_win_sockets_init(); }
+int ksl_win_sockets_started_by(void) { return (int)InterlockedCompareExchange(&wsa_first, 0, 0); }
+int ksl_win_sockets_init(void) { return ksl_win_sockets_start(2); }   /* ksl_init */
+static int wsa_ready(void) { return ksl_win_sockets_start(3); }
 
 static int is_mapped(const uint8_t *a16) { static const uint8_t pre[12] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff }; return memcmp(a16, pre, 12) == 0; }
 /* the 20-byte address as this socket's sockaddr: family 4 on an IPv6 (dual-stack) socket becomes v4-mapped; -1 when the socket cannot reach that family */

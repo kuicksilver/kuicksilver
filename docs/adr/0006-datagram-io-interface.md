@@ -84,13 +84,20 @@ cross-checked with msquic `src/platform/datapath_winuser.c`.
   addressed as family 4 (v4-mapped inside C), so the Kotlin side sees the same 20-byte addresses as on Linux. The bind is
   `SO_EXCLUSIVEADDRUSE`; `KSL_UDP_REUSEPORT` is never granted (Windows `SO_REUSEADDR` lets another socket take the port over),
   so one loop per port (`loops > 1` throws as on Apple).
-- **Winsock start.** `WSAStartup(2.2)` once per process (never `WSACleanup`): at program start (a C constructor in static
-  Kotlin/Native binaries — not in the JNI `.dll`, whose constructors run under the loader lock), in `ksl_init` and in
-  `ksl_udp_open`. ktor-network starts Winsock only when it creates a socket, so `InetSocketAddress.resolveAddress()` (getaddrinfo)
-  before that failed with `WSANOTINITIALISED` (10093): 295 `kuicksilver-quic` tests on the first windows-2025 CI run.
+- **Winsock start.** `WSAStartup(2.2)` once per process (never `WSACleanup`). ktor-network starts Winsock only when it creates
+  a socket, so `InetSocketAddress.resolveAddress()` (getaddrinfo) before that failed with `WSANOTINITIALISED` (10093): 295
+  `kuicksilver-quic` tests on the first windows-2025 CI run, and any application that resolves an address before its first
+  socket. The choke point is the Kotlin/Native runtime start: an `@EagerInitialization` property in kuicksilver-native's
+  `mingwMain` calls `ksl_win_sockets_start(1)` before any Kotlin code of the program runs, on every entry path, including a
+  caller's own resolution before it touches kuicksilver. `ksl_init` and `ksl_udp_open` start it too (the JVM's JNI `.dll`, C
+  callers). Not a C constructor: in a DLL — a Kotlin/Native `sharedLib` as well as the JNI `.dll` — constructors run under the
+  loader lock, where `WSAStartup` must not be called; the Kotlin/Native runtime starts on the first call into Kotlin, outside
+  it. `ksl_win_sockets_started_by` records the first starter, so `WinsockReadyTest` proves the order whatever ran before it.
+  `@EagerInitialization` is deprecated as a migration aid; should it go, the replacement is a documented call before the first
+  address lookup.
 - **Verification.** Cross-compiled on macOS with the Kotlin/Native llvm + mingw sysroot (`tools/c-test.sh mingw-x64`, `-Werror`)
   and with the Ubuntu mingw-w64 gcc 13 of the JNI build; run only by the CI windows job: `test_udp_win.c` (batch, USO in one call,
   two senders, ECN round trip when granted, DF probe, truncation, USO fallback, transient and destination errors, dual-stack,
-  exclusive bind, wake-up < 100 ms, shutdown), `WinsockReadyTest` (kuicksilver-native),
+  exclusive bind, wake-up < 100 ms, shutdown), `WinsockReadyTest` (kuicksilver-native: Winsock started by the runtime start),
   `NativeServerLoopbackTest.nativeServerServes10MiB` (kuicksilver-quic: a real Winsock server and client, 10 MiB) and every
   module's `test.exe` that resolves addresses before opening a socket.

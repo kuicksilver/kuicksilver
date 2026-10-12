@@ -228,6 +228,10 @@ int      ksl_udp_recv(ksl_udp *, uint8_t *const *bufs, const uint32_t *caps, uin
 int      ksl_udp_get(ksl_udp *, int what, uint8_t *out, size_t cap, size_t *len);
 void     ksl_udp_shutdown(ksl_udp *);   /* wakes a blocked ksl_udp_recv and closes the socket; later send/recv answer KSL_ERROR at once; the object stays until ksl_udp_close */
 void     ksl_udp_close(ksl_udp *);      /* shutdown (when not done yet), waits for a receiver still inside, frees; never while another thread may still call in */
+#ifdef _WIN32
+int      ksl_win_sockets_start(int who); /* WSAStartup 2.2 once per process (also run by ksl_init and ksl_udp_open); 1 when Winsock is ready. who: 1 the Kotlin/Native runtime start, 2 ksl_init, 3 ksl_udp_open */
+int      ksl_win_sockets_started_by(void); /* the `who` that started Winsock first; 0 not started */
+#endif
 void     ksl_key_free(ksl_key *);
 int      ksl_seal(ksl_key *, uint64_t pn, const uint8_t *hdr, size_t hdr_len, uint8_t *payload, size_t len, size_t cap);
 int      ksl_open(ksl_key *, uint64_t pn, const uint8_t *hdr, size_t hdr_len, uint8_t *payload, size_t len);
