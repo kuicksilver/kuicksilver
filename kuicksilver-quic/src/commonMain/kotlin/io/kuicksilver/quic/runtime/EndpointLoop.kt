@@ -71,6 +71,8 @@ internal class EndpointLoop private constructor(
     private val group: LoopGroup? = null,
     private val pendingAccept: AtomicInt = AtomicInt(0),
     private val acceptQueue: Channel<QuicConnection> = acceptChannel(pendingAccept),
+    /** The client's session tickets (per endpoint, single use; ADR-0015): a group's loops share one, `connect` picks any loop. */
+    internal val sessions: SessionCache = SessionCache(),
 ) : QuicEndpoint {
     /** Last-resort failures of coroutines the loop launched (none is expected to throw): counted, never handed to the thread's uncaught handler, which on Android kills the process. */
     internal val uncaughtFailures = AtomicLong(0)
@@ -516,9 +518,6 @@ internal class EndpointLoop private constructor(
         return rt
     }
 
-    /** The client's session tickets (per endpoint, single use; ADR-0015), cleared when the endpoint closes. */
-    internal val sessions = SessionCache()
-
     /** A client connection received a ticket: kept for a later 0-RTT connection with the same TLS configuration. */
     internal fun storeTicket(
         tls: TlsConfig,
@@ -752,7 +751,8 @@ internal class EndpointLoop private constructor(
             group: LoopGroup,
             acceptQueue: Channel<QuicConnection>,
             pendingAccept: AtomicInt,
-        ): EndpointLoop = EndpointLoop(config, io, ownDispatcher(), index, group, pendingAccept, acceptQueue)
+            sessions: SessionCache,
+        ): EndpointLoop = EndpointLoop(config, io, ownDispatcher(), index, group, pendingAccept, acceptQueue, sessions)
 
         /**
          * The accept queue, whose slots [pending] counts. A connection the queue cannot deliver (an `accept()` cancelled

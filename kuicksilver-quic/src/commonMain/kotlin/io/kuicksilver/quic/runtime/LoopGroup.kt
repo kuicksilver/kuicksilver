@@ -32,6 +32,9 @@ internal class LoopGroup private constructor(
     private lateinit var loops: List<EndpointLoop>
     private val pendingAccept = AtomicInt(0)
     private val acceptQueue = EndpointLoop.acceptChannel(pendingAccept)
+
+    /** The client's session tickets, shared by every loop: `connect` picks loops round-robin (ADR-0015). */
+    private val sessions = io.kuicksilver.tls.SessionCache()
     private val next = AtomicInt(0)
     override val localAddress: InetSocketAddress get() = loops[0].localAddress
 
@@ -144,7 +147,7 @@ internal class LoopGroup private constructor(
             afterBuild: suspend () -> Unit = {},
         ): LoopGroup {
             val g = LoopGroup(config)
-            val loops = ios.mapIndexed { i, io -> EndpointLoop.inGroup(config, io, i, g, g.acceptQueue, g.pendingAccept) }
+            val loops = ios.mapIndexed { i, io -> EndpointLoop.inGroup(config, io, i, g, g.acceptQueue, g.pendingAccept, g.sessions) }
             afterBuild()
             g.loops = loops
             for (l in loops) l.start()

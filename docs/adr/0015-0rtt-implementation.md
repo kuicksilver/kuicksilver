@@ -95,7 +95,8 @@ a connection whose handshake does not complete. A replayer cannot complete the h
   same session context as TCP, prefixed `quic|`. Early data with client authentication is a configuration error in
   0.2.0.
 - A QUIC client resumes only when `QuicClientConfig.earlyData` is not `Disabled`. Tickets live in the endpoint's own
-  `SessionCache`, which is per engine and cleared on close. The cache key is the same as for TCP plus the ALPN list,
+  `SessionCache`, which is per engine (shared by all loops of a `LoopGroup`, since `connect` picks loops round-robin)
+  and cleared on close. The cache key is the same as for TCP plus the ALPN list,
   and tickets are taken for single use. Before a cached ticket is used, the cached chain is verified again with the
   current trust (the TCP path does the same after the handshake). Each entry keeps the server's encoded transport
   parameters (RFC 9000 §7.4.1). The client does not store HTTP/3 SETTINGS: RFC 9114 §7.2.4.2 lets it use the defaults,

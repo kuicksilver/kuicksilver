@@ -17,6 +17,8 @@ import io.kuicksilver.quic.QuicEndpoint
 import io.kuicksilver.quic.QuicEndpointConfig
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.QuicServerConfig
+import io.kuicksilver.tls.EarlyDataState
+import io.kuicksilver.tls.KslQuicCrypto
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
@@ -159,6 +161,50 @@ class LoopGroupTest {
                     }
                 } finally {
                     group.close()
+                }
+            }
+        }
+
+    @Test fun ticketsAreSharedByTheGroupsLoops() =
+        runBlocking {
+            withTimeout(30.seconds) {
+                // connect picks loops round-robin: a ticket one loop received must serve a 0-RTT connect on another
+                val net = MemoryNetwork()
+                val server =
+                    QuicEndpoint.bind(
+                        serverAddr,
+                        QuicEndpointConfig
+                            .Builder()
+                            .apply {
+                                this.server = QuicServerConfig.Builder(CoreFixtures.server()).apply { earlyData = true }.build()
+                                crypto = KslQuicCrypto
+                                io = { net.open(serverAddr) }
+                            }.build(),
+                    )
+                val clients =
+                    LoopGroup.create(
+                        QuicEndpointConfig
+                            .Builder()
+                            .apply {
+                                this.server = QuicServerConfig.Builder(CoreFixtures.server()).build()
+                                crypto = KslQuicCrypto
+                                loops = 2
+                            }.build(),
+                        listOf(net.open(clientAddr), net.open(InetSocketAddress("10.0.0.1", 1112))),
+                    )
+                val early = QuicClientConfig.Builder(CoreFixtures.client()).apply { earlyData = EarlyDataState.Allowed }.build()
+                try {
+                    val accepted = async { repeat(2) { server.accept() } }
+                    val first = clients.connect(serverAddr, early)
+                    while (clients.loopForTest(0).sessions.size() + clients.loopForTest(1).sessions.size() == 0) kotlinx.coroutines.yield()
+                    first.close()
+                    val second = clients.connectEarly(serverAddr, early)
+                    second.awaitHandshake()
+                    kotlin.test.assertEquals(true, second.earlyDataAccepted, "the other loop found the ticket")
+                    accepted.await()
+                } finally {
+                    clients.close()
+                    server.close()
                 }
             }
         }
