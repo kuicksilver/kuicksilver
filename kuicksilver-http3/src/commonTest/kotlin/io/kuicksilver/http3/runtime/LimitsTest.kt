@@ -86,6 +86,46 @@ class LimitsTest {
             }
         }
 
+    /** Request trailers above the server's limit: the caller of `request` or of the response body sees FieldSectionTooLarge. */
+    @Test fun requestTrailersAbovePeerLimitReachTheCaller() =
+        h3Test {
+            H3Pair.open(serverSettings = http3Settings { maxFieldSectionSize = 1000 }).use { p ->
+                withTimeout(5.seconds) { p.client.peerSettings.first { it != null } }
+                fun post() =
+                    Http3Request("POST", authority = "server.test", path = "/", body = ByteReadChannel("ping"), trailers = {
+                        Http3Headers.of("x-big" to "v".repeat(2000))
+                    })
+                // the server waits for the whole request before it answers: `request` fails
+                val waits =
+                    launch {
+                        val r = p.server.acceptRequest()
+                        runCatching { r.body.readAllBytes() }
+                        runCatching { r.respond(200).finish() }
+                    }
+                val e1 = withTimeout(5.seconds) { runCatching { p.client.request(post()) }.exceptionOrNull() }
+                assertTrue(e1 is Http3Exception.FieldSectionTooLarge, "request() failed with $e1")
+                waits.join()
+                // the server answers first: the response body fails
+                val answers =
+                    launch {
+                        val r = p.server.acceptRequest()
+                        val w = r.respond(200)
+                        runCatching { r.body.readAllBytes() }
+                        runCatching { w.finish() }
+                    }
+                val e2 =
+                    withTimeout(5.seconds) {
+                        runCatching {
+                            val resp = p.client.request(post())
+                            resp.body.readAllBytes()
+                            resp.trailers.await()
+                        }.exceptionOrNull()
+                    }
+                assertTrue(e2 is Http3Exception.FieldSectionTooLarge, "the response failed with $e2")
+                answers.join()
+            }
+        }
+
     private val big = (0 until 7).map { "x-big-$it" to "v".repeat(10_000) } // 7 x 10039 = 70273 decoded bytes > 65536
 
     /** The response a raw client gets on [streamId]: status and the STOP_SENDING code if one came. */

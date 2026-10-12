@@ -27,6 +27,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.currentCoroutineContext
@@ -137,6 +138,8 @@ private suspend fun H3Session.exchange(
     callbacks: ContinuationInterceptor,
 ): ResponseImpl {
     var sender: Job? = null
+    // a request the sender had to abandon (trailers above the peer's limit): that failure is the exchange's result
+    val sendFailure = CompletableDeferred<Unit>()
     try {
         try {
             st.output.writeFrame(FrameType.HEADERS, qpack.encode(st.id, PseudoHeaders.buildRequest(r)))
@@ -146,7 +149,7 @@ private suspend fun H3Session.exchange(
                 st.output.flushAndClose()
             } else {
                 st.output.flush()
-                sender = scope.launch { sendBody(st, r, callbacks) }
+                sender = scope.launch { sendBody(st, r, callbacks, sendFailure) }
             }
         } catch (e: Throwable) {
             // a server that answered without the rest of the request may stop it with H3_NO_ERROR before our FIN left: the response still counts (RFC 9114 section 4.1)
@@ -213,6 +216,7 @@ private suspend fun H3Session.exchange(
                         r.onInformational?.let { cb -> withContext(callbacks) { cb(status, headers) } }
                         continue
                     }
+                    sendFailure.getFailureOrNull()?.let { throw it } // the request was abandoned before the response came
                     return ResponseImpl(
                         this,
                         st,
@@ -220,6 +224,7 @@ private suspend fun H3Session.exchange(
                         headers,
                         frames,
                         sender,
+                        sendFailure,
                         bodyLimit =
                             when {
                                 r.method == "CONNECT" && status in 200..299 -> null // a tunnel: no message framing
@@ -239,7 +244,7 @@ private suspend fun H3Session.exchange(
     } catch (e: StreamFailure) {
         sender?.cancel()
         abort(st, e.code)
-        throw e.error
+        throw sendFailure.failureOr(e.error)
     } catch (e: IncompleteFrame) {
         sender?.cancel()
         truncated(st, null, null)
@@ -254,12 +259,18 @@ private suspend fun H3Session.exchange(
         throw connectionError()
     } catch (e: StreamAbandoned) {
         sender?.cancel()
-        throw map(st.input.closedCause ?: e)
+        throw sendFailure.failureOr(map(st.input.closedCause ?: e))
     } catch (e: Throwable) {
         sender?.cancel()
-        throw map(e) // transport failures (possibly wrapped by ktor-io) become HTTP/3 exceptions
+        throw sendFailure.failureOr(map(e)) // transport failures (possibly wrapped by ktor-io) become HTTP/3 exceptions
     }
 }
+
+/** The sender's own failure when it abandoned the request, else [e]. */
+private fun CompletableDeferred<Unit>.failureOr(e: Throwable): Throwable = getFailureOrNull() ?: e
+
+@OptIn(ExperimentalCoroutinesApi::class)
+private fun CompletableDeferred<Unit>.getFailureOrNull(): Throwable? = if (isCompleted) getCompletionExceptionOrNull() else null
 
 private fun stoppedWithNoError(e: Throwable): Boolean =
     (H3Session.transportCause(e) as? QuicException.StreamError.Stopped)?.code == Http3ErrorCode.NO_ERROR
@@ -269,6 +280,7 @@ private suspend fun H3Session.sendBody(
     st: QuicStream,
     r: Http3Request,
     callbacks: ContinuationInterceptor,
+    sendFailure: CompletableDeferred<Unit>,
 ) {
     val buf = ByteArray(CHUNK)
     try {
@@ -295,7 +307,16 @@ private suspend fun H3Session.sendBody(
                     !n.startsWith(':') && FieldValidator.checkName(n) == null && FieldValidator.checkValue(v) == null,
                 ) { "invalid trailer field '$n'" }
             }
-            checkPeerFieldLimit(st.id, t.fields) // refused: the stream is reset with H3_REQUEST_CANCELLED below
+            try {
+                checkPeerFieldLimit(st.id, t.fields)
+            } catch (e: Http3Exception.FieldSectionTooLarge) {
+                // the request cannot be completed: the exchange is abandoned both ways and its caller gets this failure
+                sendFailure.completeExceptionally(e)
+                runCatching { st.reset(Http3ErrorCode.REQUEST_CANCELLED) }
+                runCatching { st.stopSending(Http3ErrorCode.REQUEST_CANCELLED) }
+                r.body?.cancel(e)
+                return
+            }
             st.output.writeFrame(FrameType.HEADERS, qpack.encode(st.id, t.fields))
         }
         st.output.flushAndClose()
@@ -322,6 +343,7 @@ internal class ResponseImpl(
     override val headers: Http3Headers,
     frames: RequestFrames,
     private val sender: Job?,
+    sendFailure: CompletableDeferred<Unit>? = null,
     bodyLimit: Long? = null,
 ) : Http3Response {
     private val st get() = stream
@@ -335,6 +357,17 @@ internal class ResponseImpl(
         session.scope.launch {
             session.pumpBody(st, frames, bodyChannel, trailersDeferred, bodyLimit) { f -> session.run { abortClient(f.code) } }
         }
+
+    init {
+        // the request was abandoned after the response began: the body and trailers end with the sender's failure
+        sendFailure?.invokeOnCompletion { cause ->
+            if (cause != null) {
+                pump.cancel()
+                bodyChannel.cancel(cause)
+                trailersDeferred.completeExceptionally(cause)
+            }
+        }
+    }
 
     private suspend fun abortClient(code: Long) {
         runCatching { st.stopSending(code) }
