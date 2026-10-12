@@ -180,6 +180,7 @@ public class KuicksilverApplicationEngine(
             }
         }
 
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     private fun initServerJob(): Job {
         val stopRequest = stopRequest
         val startupJob = startupJob
@@ -195,13 +196,17 @@ public class KuicksilverApplicationEngine(
                     val resolved =
                         listeners.zip(servers).map { (l, s) ->
                             val port = (s.socket.await().localAddress as? InetSocketAddress)?.port ?: l.config.port
-                            if (l.tls != null) startHttp3(this, l.tls, port)?.let { h3 += it }
+                            s.h3Endpoint.await()?.let { h3 += startHttp3(this, l.tls!!, it, port) }
                             if (l.tls != null) l.tls.withPort(port) else l.config.withPort(port)
                         }
                     h3Ready.complete()
                     resolvedConnectorsDeferred.complete(resolved)
                 } catch (cause: Throwable) {
                     servers.forEach { it.rootJob.cancel() }
+                    // an endpoint bound next to its TCP socket but not yet serving (another connector failed) is closed here
+                    servers.forEach { srv ->
+                        runCatching { srv.h3Endpoint.getCompleted() }.getOrNull()?.let { e -> if (h3.none { it.endpoint === e }) e.close() }
+                    }
                     h3.forEach {
                         it.acceptJob.cancel()
                         it.connections.cancel()

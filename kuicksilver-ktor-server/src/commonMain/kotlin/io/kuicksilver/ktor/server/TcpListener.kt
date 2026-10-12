@@ -26,9 +26,11 @@ import io.ktor.util.pipeline.execute
 import io.ktor.utils.io.ByteWriteChannel
 import io.ktor.utils.io.InternalAPI
 import io.ktor.utils.io.writeStringUtf8
+import io.kuicksilver.http3.Http3Endpoint
 import io.kuicksilver.ktor.network.tlsServer
 import io.kuicksilver.ktor.server.h1.H1Call
 import io.kuicksilver.tls.Certificate
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CompletableJob
 import kotlinx.coroutines.CoroutineName
@@ -45,7 +47,51 @@ internal class TcpServer(
     val rootJob: Job,
     val acceptJob: Job,
     val socket: CompletableDeferred<ServerSocket>,
+    /** The HTTP/3 endpoint bound on the same port as [socket], completed before it; null without HTTP/3. */
+    val h3Endpoint: CompletableDeferred<Http3Endpoint?>,
 )
+
+/** `port = 0`: TCP + UDP pairs tried before HTTP/3 is given up for the connector. */
+internal const val EPHEMERAL_PAIR_ATTEMPTS = 16
+
+/**
+ * Binds the TCP socket of [l] and, with [h3], its HTTP/3 endpoint on the same port number. With `port = 0` the OS picks
+ * a TCP port whose UDP twin may be taken: the pair is retried (the TCP socket closed) up to [EPHEMERAL_PAIR_ATTEMPTS]
+ * times, then HTTP/3 is skipped with a warning and HTTP/1.1 is served alone. A fixed port whose UDP side cannot be bound
+ * fails the start, as before. A platform without a QUIC server (UnsupportedOperationException) skips HTTP/3 at once.
+ */
+private suspend fun KuicksilverApplicationEngine.bindTcpAndUdp(
+    selector: SelectorManager,
+    l: KuicksilverApplicationEngine.Listener,
+    h3: (suspend (Int) -> Http3Endpoint)?,
+): Pair<ServerSocket, Http3Endpoint?> {
+    val ephemeral = l.config.port == 0
+    var last: Throwable? = null
+    repeat(if (h3 == null) 1 else if (ephemeral) EPHEMERAL_PAIR_ATTEMPTS else 1) {
+        val server = aSocket(selector).tcp().bind(l.config.host, l.config.port)
+        if (h3 == null) return server to null
+        val port = (server.localAddress as? InetSocketAddress)?.port ?: l.config.port
+        try {
+            return server to h3(port)
+        } catch (e: CancellationException) {
+            server.close()
+            throw e
+        } catch (e: UnsupportedOperationException) {
+            environment.log.warn("HTTP/3 is not served on port $port: ${e.message}")
+            return server to null
+        } catch (e: Throwable) {
+            if (!ephemeral) {
+                server.close()
+                throw e
+            }
+            environment.log.debug("UDP port $port is taken ($e); trying another TCP + UDP pair")
+            server.close()
+            last = e
+        }
+    }
+    environment.log.warn("HTTP/3 is not served: no free UDP port next to an ephemeral TCP one after $EPHEMERAL_PAIR_ATTEMPTS attempts ($last)")
+    return aSocket(selector).tcp().bind(l.config.host, l.config.port) to null
+}
 
 /** The accept loop of one TCP connector, after Ktor CIO's `httpServer`, with a TLS handshake per connection. */
 @OptIn(InternalAPI::class)
@@ -54,6 +100,8 @@ internal fun KuicksilverApplicationEngine.startTcp(
     l: KuicksilverApplicationEngine.Listener,
     h3Ready: Job,
 ): TcpServer {
+    val h3 = l.tls?.let { http3Binder(it) }
+    val h3Endpoint = CompletableDeferred<Http3Endpoint?>()
     with(scope) {
         val socket = CompletableDeferred<ServerSocket>()
         val latch: CompletableJob = Job()
@@ -65,7 +113,8 @@ internal fun KuicksilverApplicationEngine.startTcp(
         val scheme = if (l.tls != null) "https" else "http"
         val acceptJob =
             launch(rootJob + CoroutineName("accept-${l.config}")) {
-                val server = aSocket(selector).tcp().bind(l.config.host, l.config.port)
+                val (server, endpoint) = bindTcpAndUdp(selector, l, h3)
+                h3Endpoint.complete(endpoint)
                 server.use {
                     socket.complete(server)
                     h3Ready.join()
@@ -128,7 +177,7 @@ internal fun KuicksilverApplicationEngine.startTcp(
             latch.complete()
         }
         rootJob.invokeOnCompletion { selector.close() }
-        return TcpServer(rootJob, acceptJob, socket)
+        return TcpServer(rootJob, acceptJob, socket, h3Endpoint)
     }
 }
 

@@ -250,6 +250,35 @@ class ServerH3Test {
         return types
     }
 
+    /**
+     * `port = 0`: the UDP twin of the port the OS gave TCP may be taken. The hook occupies it before the first HTTP/3 bind,
+     * so that bind fails for real; the server retries the TCP + UDP pair and serves h3 and Alt-Svc on one new number.
+     */
+    @Test fun ephemeralPortRetriesWhenUdpTwinIsTaken() =
+        serverTest {
+            val taken = ArrayList<java.net.DatagramSocket>()
+            val tried = ArrayList<Int>()
+            val (server, port) =
+                tlsServer(configure = {
+                    http3Bind = { a, c, s ->
+                        tried += a.port
+                        if (tried.size == 1) taken += java.net.DatagramSocket(java.net.InetSocketAddress("127.0.0.1", a.port))
+                        Http3Endpoint.bind(a, c, s)
+                    }
+                }) { routing { get("/") { call.respondText("ok") } } }
+            try {
+                assertEquals(2, tried.size, "one retry after the taken UDP port ${tried.firstOrNull()}")
+                assertEquals(port, tried.last())
+                assertTrue(port != tried.first())
+                val resp = rawHttp(port, "GET / HTTP/1.1\r\nHost: server.test\r\nConnection: close\r\n\r\n")
+                assertTrue(resp.contains("Alt-Svc: h3=\":$port\""), resp)
+                h3(port) { c -> assertEquals(200, c.request(get()).status) }
+            } finally {
+                server.stop(100, 500)
+                taken.forEach { it.close() }
+            }
+        }
+
     @Test fun altSvcOnH1Responses() =
         serverTest {
             val (server, port) = tlsServer { routing { get("/") { call.respondText("ok") } } }

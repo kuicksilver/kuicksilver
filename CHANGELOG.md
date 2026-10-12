@@ -84,6 +84,9 @@ K7 (0.2.0), HTTP/3 and the Ktor engines:
 - HTTP/3 server: a request whose HEADERS were still arriving when the final GOAWAY went out counted as idle, so the
   connection could close under it; a request stream now counts as in flight from its first byte (RFC 9114 section 5.2), and is
   rejected with `H3_REQUEST_REJECTED` if its HEADERS are still incomplete 10 seconds after the final GOAWAY.
+- Ktor server: with `port = 0` the HTTP/3 endpoint bound the UDP twin of the port the OS gave TCP, and the start
+  failed with `BindException` when that UDP port was taken; the TCP + UDP pair is now retried on a new port up to 16
+  times, then HTTP/3 is skipped with a warning and HTTP/1.1 is served alone.
 - HTTP/3 server: a body the application wrote to a response to HEAD, or with status 204 or 304, went out as DATA
   (Ktor's `respondText` on a HEAD route did that), which a conforming client treats as a malformed message; it is now
   dropped and `content-length` is kept (RFC 9110 sections 9.3.2, 15.3.5, 15.4.5).

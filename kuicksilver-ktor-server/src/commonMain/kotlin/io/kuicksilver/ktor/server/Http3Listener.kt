@@ -8,6 +8,7 @@ import io.ktor.util.pipeline.execute
 import io.kuicksilver.http3.Http3Connection
 import io.kuicksilver.http3.Http3Endpoint
 import io.kuicksilver.http3.Http3ServerRequest
+import io.kuicksilver.http3.Http3Settings
 import io.kuicksilver.ktor.server.h3.H3Call
 import io.kuicksilver.ktor.server.h3.WebSocketOverH3
 import io.kuicksilver.quic.QuicConfig
@@ -43,60 +44,60 @@ internal class H3Listener(
 }
 
 /**
- * HTTP/3 on [port], opened after the TCP socket so `port = 0` resolves first. A platform without a QUIC
- * server (Apple and Windows Native, ADR-0006), or a connector with a `sniSelector` (QUIC cannot pick an identity per
- * SNI name in v1), keeps serving HTTP/1.1 only, with a warning.
+ * How a TLS connector binds its HTTP/3 endpoint on a given port, or null when it serves no HTTP/3: turned off, or a
+ * connector with a `sniSelector` (QUIC cannot pick an identity per SNI name in v1; logged as a warning). The bind runs
+ * right after the TCP bind ([bindTcpAndUdp]), so `port = 0` resolves first.
  */
+internal fun KuicksilverApplicationEngine.http3Binder(tls: KuicksilverTlsConnector): (suspend (Int) -> Http3Endpoint)? {
+    if (!configuration.http3) return null
+    if (tls.sniSelector != null) {
+        environment.log.warn("HTTP/3 is not served on ${tls.host}:${tls.port}: sniSelector is not supported by QUIC in v1")
+        return null
+    }
+    return { port -> configuration.http3Bind(InetSocketAddress(tls.host, port), http3EndpointConfig(tls), http3Settings()) }
+}
+
+private fun KuicksilverApplicationEngine.http3Settings(): Http3Settings =
+    configuration.http3Settings.let {
+        if (configuration.webSocketsOverHttp3 &&
+            !it.enableConnectProtocol
+        ) {
+            it.toBuilder().apply { enableConnectProtocol = true }.build()
+        } else {
+            it
+        }
+    }
+
+private fun KuicksilverApplicationEngine.http3EndpointConfig(tls: KuicksilverTlsConnector): QuicEndpointConfig {
+    val quic =
+        configuration.quicMaxIdleTimeout?.let { idle ->
+            if (configuration.quic ===
+                QuicConfig.Default
+            ) {
+                quicConfig { maxIdleTimeout = idle }
+            } else {
+                configuration.quic
+            }
+        }
+            ?: configuration.quic
+    return QuicEndpointConfig
+        .Builder()
+        .apply {
+            server = QuicServerConfig.Builder(tls.tlsConfig(listOf(Http3Endpoint.H3))).apply { this.quic = quic }.build()
+            connectionIdLength = quic.connectionIdLength
+            loops = configuration.udpSocketCount
+            configuration.quicAdmission?.let { admission = it }
+        }.build()
+}
+
+/** Serves HTTP/3 on [endpoint], already bound on [port] next to the TCP socket of [tls]. */
 internal suspend fun KuicksilverApplicationEngine.startHttp3(
     scope: CoroutineScope,
     tls: KuicksilverTlsConnector,
+    endpoint: Http3Endpoint,
     port: Int,
-): H3Listener? {
+): H3Listener {
     with(scope) {
-        if (!configuration.http3) return null
-        if (tls.sniSelector != null) {
-            environment.log.warn("HTTP/3 is not served on port $port: sniSelector is not supported by QUIC in v1")
-            return null
-        }
-        val quic =
-            configuration.quicMaxIdleTimeout?.let { idle ->
-                if (configuration.quic ===
-                    QuicConfig.Default
-                ) {
-                    quicConfig { maxIdleTimeout = idle }
-                } else {
-                    configuration.quic
-                }
-            }
-                ?: configuration.quic
-        val settings =
-            configuration.http3Settings.let {
-                if (configuration.webSocketsOverHttp3 &&
-                    !it.enableConnectProtocol
-                ) {
-                    it.toBuilder().apply { enableConnectProtocol = true }.build()
-                } else {
-                    it
-                }
-            }
-        val endpointConfig =
-            QuicEndpointConfig
-                .Builder()
-                .apply {
-                    server = QuicServerConfig.Builder(tls.tlsConfig(listOf(Http3Endpoint.H3))).apply { this.quic = quic }.build()
-                    connectionIdLength = quic.connectionIdLength
-                    loops = configuration.udpSocketCount
-                    configuration.quicAdmission?.let { admission = it }
-                }.build()
-        val endpoint =
-            try {
-                configuration.http3Bind(InetSocketAddress(tls.host, port), endpointConfig, settings)
-            } catch (
-                e: UnsupportedOperationException,
-            ) {
-                environment.log.warn("HTTP/3 is not served on port $port: ${e.message}")
-                return null
-            }
         h3Endpoints += endpoint
         h3Ports += port
         val local = InetSocketAddress(tls.host, port)

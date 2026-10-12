@@ -43,7 +43,9 @@ server.start(wait = true)
 ### HTTP/3 on the server
 
 Every TLS connector also serves HTTP/3 on UDP on the same port number; the UDP socket is opened after the TCP one, so
-`port = 0` resolves first and both share the resolved port (`resolvedConnectors()` lists the TCP connectors). HTTP/1.1
+`port = 0` resolves first and both share the resolved port (`resolvedConnectors()` lists the TCP connectors). The OS
+picks the TCP port only, so its UDP twin may be taken: the pair is then bound again on a new port, up to 16 times,
+after which the connector serves HTTP/1.1 alone with a warning. A fixed port whose UDP side is taken fails the start. HTTP/1.1
 responses then carry `Alt-Svc: h3=":<port>"; ma=86400` so clients can switch (RFC 7838) — unless the application set
 its own `Alt-Svc`, or the response is a 421; `altSvc = false` turns the header off.
 
