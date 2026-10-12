@@ -36,6 +36,14 @@ class TrustConfigTest {
         assertFailsWith<TlsException.Config> { TrustConfig.Pinned(setOf(pin), base = TrustConfig.Custom(noopVerifier)) }
     }
 
+    /** Pins check the chain a real validator built; a Custom verifier decides alone, so ExpectedName must not smuggle it under Pinned. */
+    @Test fun negative_pinnedOverExpectedNameCustomIsConfigError() {
+        assertFailsWith<TlsException.Config> {
+            TrustConfig.Pinned(setOf(pin), base = TrustConfig.ExpectedName("proxy.internal", base = TrustConfig.Custom(noopVerifier)))
+        }
+        TrustConfig.Pinned(setOf(pin), base = TrustConfig.ExpectedName("proxy.internal"))
+    }
+
     @Test fun pinnedNeedsPins() {
         assertFailsWith<IllegalArgumentException> { TrustConfig.Pinned(emptySet()) }
     }

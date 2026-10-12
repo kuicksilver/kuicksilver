@@ -30,7 +30,8 @@ public sealed interface TrustConfig {
 
     /**
      * Replaces the reference identifier: the certificate must match [name] (from configuration only) instead of the connection's host.
-     * [base] is [Platform], [AnchoredCa] or [Custom]; to pin as well, wrap this one: `Pinned(pins, base = ExpectedName(name, base))`.
+     * [base] is [Platform], [AnchoredCa] or [Custom]; to pin as well, wrap this one: `Pinned(pins, base = ExpectedName(name, base))`
+     * (not with a [Custom] base: pins never sit on top of a Custom verifier).
      *
      * @property name the DNS name or IP literal the certificate must match (RFC 9525); never blank, validated when the
      *   [TlsConfig] is built. SNI still carries [TlsConfig.serverName].
@@ -59,7 +60,8 @@ public sealed interface TrustConfig {
      *
      * @property scope which certificates of the validated chain may match; default [PinScope.Leaf], the strictest.
      * @property base the trust that must accept the chain as well (AND, never OR: ADR-0011); default [Platform]. [Tofu],
-     *   [Custom] and another [Pinned] throw [TlsException.Config]; to pin a [Custom] verifier wrap it in [ExpectedName].
+     *   [Custom] (also inside [ExpectedName]) and another [Pinned] throw [TlsException.Config]: a Custom verifier decides on
+     *   its own, so pins on top of it would only look like a second check.
      */
     public class Pinned(
         pins: Set<SpkiSha256>,
@@ -75,6 +77,7 @@ public sealed interface TrustConfig {
         init {
             require(pins.isNotEmpty()) { "Pinned needs at least one pin" }
             if (base is Tofu || base is Custom) throw TlsException.Config("Pinned cannot be combined with ${base::class.simpleName}")
+            if (base is ExpectedName && base.base is Custom) throw TlsException.Config("Pinned cannot be combined with Custom, even through ExpectedName")
             if (base is Pinned) throw TlsException.Config("Pinned cannot wrap Pinned")
         }
     }

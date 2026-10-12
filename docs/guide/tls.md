@@ -51,7 +51,8 @@ val server = tlsConfig(TlsRole.Server) {
 ## Trust
 
 Host names are always checked (RFC 9525) and the check cannot be disabled; it can be redirected with `ExpectedName`
-for proxies (`ExpectedName` wraps `Platform`, `AnchoredCa` or `Custom`; to pin as well, put it inside `Pinned`:
+for proxies (`ExpectedName` wraps `Platform`, `AnchoredCa` or `Custom`; to pin as well, put it inside `Pinned` — except
+around `Custom`, which `Pinned` refuses directly and through `ExpectedName`:
 `Pinned(pins, base = ExpectedName(name, base))`). Pins are an additional check against the validated chain, never a
 replacement for it.
 
