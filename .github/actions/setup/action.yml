@@ -48,7 +48,11 @@ runs:
         pin=$(sed -n 's/^ndk = "\(.*\)".*/\1/p' gradle/toolchains.toml)
         sdk="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"; sm="$sdk/cmdline-tools/latest/bin/sdkmanager"
         [ -x "$sm" ] || { echo "::error::no sdkmanager under ANDROID_HOME=$sdk"; exit 1; }
-        [ -d "$sdk/ndk/$pin" ] || yes | "$sm" --install "ndk;$pin" >/dev/null
+        # `yes` dies of SIGPIPE once sdkmanager exits; under pipefail that alone would fail the step, so its status is ignored
+        if [ ! -d "$sdk/ndk/$pin" ]; then
+          { yes || true; } | "$sm" --install "ndk;$pin" > "$RUNNER_TEMP/sdkmanager.log" 2>&1 \
+            || { tail -30 "$RUNNER_TEMP/sdkmanager.log"; echo "::error::sdkmanager could not install ndk;$pin"; exit 1; }
+        fi
         ndk="$sdk/ndk/$pin"; rev=$(sed -n 's/^Pkg.Revision *= *//p' "$ndk/source.properties")
         [ "$rev" = "$pin" ] || { echo "::error::NDK at $ndk is $rev, pinned $pin"; exit 1; }
         bin=$(ls -d "$ndk"/toolchains/llvm/prebuilt/*/bin)
