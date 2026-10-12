@@ -12,7 +12,8 @@
 #include <stdio.h>
 #include <string.h>
 
-#ifdef __linux__
+#if defined(__linux__) || defined(__APPLE__)
+#define KSL_UDP_ACCEL 1   /* Linux: GSO, GRO, ECN, DF probe mode; Apple: the same socket without GSO/GRO, DF through IP_DONTFRAG */
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <netinet/in.h>
@@ -24,6 +25,7 @@
 #include <poll.h>
 #include <pthread.h>
 #include <time.h>
+#ifdef __linux__
 #ifndef UDP_SEGMENT
 #define UDP_SEGMENT 103
 #endif
@@ -32,6 +34,7 @@
 #endif
 #ifndef SOL_UDP
 #define SOL_UDP 17
+#endif
 #endif
 #ifndef IPV6_DONTFRAG
 #define IPV6_DONTFRAG 62
@@ -60,13 +63,23 @@ static inline void set_err(ksl_udp *u, int e, const char *what) { u->last_errno 
 
 static inline socklen_t to_sockaddr(const uint8_t a[KSL_UDP_ADDR_LEN], struct sockaddr_storage *ss) {
     memset(ss, 0, sizeof *ss);
-    if (a[0] == 4) { struct sockaddr_in *in = (struct sockaddr_in *)ss; in->sin_family = AF_INET; memcpy(&in->sin_port, a + 1, 2); memcpy(&in->sin_addr, a + 3, 4); return sizeof *in; }
-    struct sockaddr_in6 *in6 = (struct sockaddr_in6 *)ss; in6->sin6_family = AF_INET6; memcpy(&in6->sin6_port, a + 1, 2); memcpy(&in6->sin6_addr, a + 3, 16); return sizeof *in6;
+    if (a[0] == 4) {
+        struct sockaddr_in *in = (struct sockaddr_in *)ss; in->sin_family = AF_INET; memcpy(&in->sin_port, a + 1, 2); memcpy(&in->sin_addr, a + 3, 4);
+#ifdef __APPLE__
+        in->sin_len = sizeof *in;   /* BSD sockaddr carries its own length */
+#endif
+        return sizeof *in;
+    }
+    struct sockaddr_in6 *in6 = (struct sockaddr_in6 *)ss; in6->sin6_family = AF_INET6; memcpy(&in6->sin6_port, a + 1, 2); memcpy(&in6->sin6_addr, a + 3, 16);
+#ifdef __APPLE__
+    in6->sin6_len = sizeof *in6;
+#endif
+    return sizeof *in6;
 }
 static inline void from_sockaddr(const struct sockaddr_storage *ss, uint8_t a[KSL_UDP_ADDR_LEN]) {
     memset(a, 0, KSL_UDP_ADDR_LEN);
     if (ss->ss_family == AF_INET) { const struct sockaddr_in *in = (const struct sockaddr_in *)ss; a[0] = 4; memcpy(a + 1, &in->sin_port, 2); memcpy(a + 3, &in->sin_addr, 4); }
     else { const struct sockaddr_in6 *in6 = (const struct sockaddr_in6 *)ss; a[0] = 6; memcpy(a + 1, &in6->sin6_port, 2); memcpy(a + 3, &in6->sin6_addr, 16); }
 }
-#endif /* __linux__ */
+#endif /* __linux__ || __APPLE__ */
 #endif

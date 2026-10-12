@@ -1,12 +1,13 @@
 /* Copyright 2026 The Kuicksilver Authors
  * SPDX-License-Identifier: Apache-2.0 */
-/* ksl_udp_*: batched UDP with GSO, GRO, ECN, DF probe mode and REUSEPORT (ADR-0006; threat-model 3.12, 3.16). Linux only; Apple answers KSL_E_NOT_SUPPORTED. */
+/* ksl_udp_*: batched UDP with GSO, GRO, ECN, DF and REUSEPORT (ADR-0006; threat-model 3.12, 3.16). Linux and Apple (no GSO/GRO there);
+ * elsewhere ksl_udp_open answers KSL_E_NOT_SUPPORTED. */
 #include "test_common.h"
 #include <errno.h>
 #include <pthread.h>
 
 static void v4(uint8_t a[KSL_UDP_ADDR_LEN], uint16_t port) { memset(a, 0, KSL_UDP_ADDR_LEN); a[0] = 4; a[1] = (uint8_t)(port >> 8); a[2] = (uint8_t)port; a[3] = 127; a[4] = 0; a[5] = 0; a[6] = 1; }
-#ifdef __linux__
+#if defined(__linux__) || defined(__APPLE__)
 static uint16_t port_of(const uint8_t a[KSL_UDP_ADDR_LEN]) { return (uint16_t)((a[1] << 8) | a[2]); }
 static ksl_udp *open_lo(int flags, uint8_t local[KSL_UDP_ADDR_LEN]) {
     uint8_t a[KSL_UDP_ADDR_LEN]; v4(a, 0); uint32_t err = 0; char msg[128] = {0};
@@ -37,13 +38,16 @@ static void *sender_thread(void *arg) {
 
 void run_udp(void) {
     SECTION("udp");
-#ifdef __linux__
+#if defined(__linux__) || defined(__APPLE__)
     uint8_t la[KSL_UDP_ADDR_LEN], lb[KSL_UDP_ADDR_LEN];
     ksl_udp *a = open_lo(KSL_UDP_ECN | KSL_UDP_GSO | KSL_UDP_GRO | KSL_UDP_DF, la); ksl_udp *b = open_lo(KSL_UDP_ECN | KSL_UDP_GSO | KSL_UDP_GRO | KSL_UDP_DF, lb);
     CHECK(a && b, "udp_open on loopback");
     if (a && b) {
         uint16_t gso_max = 0; uint32_t caps = caps_of(a, &gso_max);
-        CHECK((caps & KSL_UDP_ECN) && (caps & KSL_UDP_DF), "ECN and DF granted on Linux"); CHECK((caps & KSL_UDP_GSO) ? gso_max >= 2 : 1, "gso max segments when granted");
+        CHECK((caps & KSL_UDP_ECN) && (caps & KSL_UDP_DF), "ECN and DF granted"); CHECK((caps & KSL_UDP_GSO) ? gso_max >= 2 : 1, "gso max segments when granted");
+#ifdef __APPLE__
+        CHECK(!(caps & (KSL_UDP_GSO | KSL_UDP_GRO)) && gso_max == 0, "udp_apple_no_gso_gro: Darwin has no UDP_SEGMENT/UDP_GRO, the caps say so");
+#endif
         /* udp_loopback_send_recv_batch: 32 datagrams, distinct lengths, the sender's address on each */
         { uint32_t rl[64]; uint8_t ra[64 * KSL_UDP_ADDR_LEN]; uint8_t *bufs[32]; uint32_t lens[32]; uint8_t addrs[32 * KSL_UDP_ADDR_LEN]; uint8_t ecns[32];
           for (uint32_t i = 0; i < 32; i++) { lens[i] = 100 + i * 37; bufs[i] = malloc(lens[i]); memset(bufs[i], (int)i, lens[i]); memcpy(addrs + i * KSL_UDP_ADDR_LEN, lb, KSL_UDP_ADDR_LEN); ecns[i] = 0; }
@@ -64,7 +68,12 @@ void run_udp(void) {
         /* udp_ecn_roundtrip */
         { uint8_t re[64]; uint32_t got = ping(a, b, lb, 2, 100, 2 /* ECT(0) */, re, NULL, NULL); CHECK(got == 2 && re[0] == 2 && re[1] == 2, "ECT(0) arrives"); got = ping(a, b, lb, 1, 100, 3 /* CE */, re, NULL, NULL); CHECK(got == 1 && re[0] == 3, "CE arrives"); }
         /* udp_df_probe_mode: IP_MTU_DISCOVER == IP_PMTUDISC_PROBE (never _DO: quic-go CVE-2024-53259), IPV6_DONTFRAG where applicable */
-        { uint8_t fd8[4]; size_t n = 0; CHECK(ksl_udp_get(a, KSL_UDP_GET_FD, fd8, 4, &n) == KSL_OK && n == 4, "fd"); int fd = (int)(((uint32_t)fd8[0] << 24) | ((uint32_t)fd8[1] << 16) | ((uint32_t)fd8[2] << 8) | fd8[3]); CHECK(ksl_udp_df_mode_for_test(fd) == 3 /* IP_PMTUDISC_PROBE */, "probe mode, not DO"); }
+        { uint8_t fd8[4]; size_t n = 0; CHECK(ksl_udp_get(a, KSL_UDP_GET_FD, fd8, 4, &n) == KSL_OK && n == 4, "fd"); int fd = (int)(((uint32_t)fd8[0] << 24) | ((uint32_t)fd8[1] << 16) | ((uint32_t)fd8[2] << 8) | fd8[3]); 
+#ifdef __APPLE__
+          CHECK(ksl_udp_df_mode_for_test(fd) == 1, "IP_DONTFRAG set (Darwin has no PMTUDISC modes and no PMTU cache for UDP sends)"); }
+#else
+          CHECK(ksl_udp_df_mode_for_test(fd) == 3 /* IP_PMTUDISC_PROBE */, "probe mode, not DO"); }
+#endif
         /* udp_truncated_datagram_dropped: a 1400-byte datagram into a 1000-byte slot is dropped, not truncated */
         { uint8_t *bufs[1]; uint32_t lens[1] = {1400}; uint8_t addrs[KSL_UDP_ADDR_LEN]; uint8_t ecns[1] = {0}; bufs[0] = malloc(1400); memset(bufs[0], 7, 1400); memcpy(addrs, lb, KSL_UDP_ADDR_LEN); uint32_t sent = 0;
           CHECK(ksl_udp_send(a, bufs, lens, addrs, ecns, 1, &sent) == KSL_OK && sent == 1, "big one sent"); uint8_t *rb[1]; uint32_t rc[1] = {1000}; uint32_t rl[1]; uint8_t ra[KSL_UDP_ADDR_LEN]; uint8_t re[1]; uint32_t got = 0; rb[0] = malloc(1000);
@@ -135,6 +144,10 @@ void run_udp(void) {
             uint8_t d0[64], d1[64]; memset(d0, 1, 64); memset(d1, 2, 64); uint8_t *bufs[2] = { d0, d1 }; uint32_t lens[2] = { 64, 63 }; uint8_t ecns[2] = { 2, 2 }; uint32_t sent = 0;
             CHECK(ksl_udp_send(v6, bufs, lens, addrs, ecns, 2, &sent) == KSL_OK && sent == 2, "[fe80::1 without scope, own address]: the first is lost, no socket error");
             CHECK(caps_of(v6, NULL) & KSL_UDP_ECN, "ECN still granted after the link-local slot");
+            /* udp_ecn_roundtrip_ipv6: the valid slot reaches the socket itself with its IPV6_TCLASS mark */
+            { uint8_t rbuf[128]; uint8_t *rb[1] = { rbuf }; uint32_t rc[1] = { 128 }, rl[1] = { 0 }, got = 0; uint8_t ra[KSL_UDP_ADDR_LEN], re[1] = { 0 };
+              for (int tries = 0; tries < 10 && !got; tries++) ksl_udp_recv(v6, rb, rc, rl, ra, re, 1, &got, 100);
+              CHECK(got == 1 && rl[0] == 63 && re[0] == 2, "ECT(0) arrives over IPv6 loopback"); }
             ksl_udp_close(v6); } }
         /* udp_reuseport_two_sockets_one_port */
         { uint8_t l1[KSL_UDP_ADDR_LEN]; ksl_udp *r1 = open_lo(KSL_UDP_REUSEPORT, l1); CHECK(r1 != NULL, "reuseport socket 1"); if (r1) { uint32_t err = 0; char msg[128] = {0}; ksl_udp *r2 = ksl_udp_open(l1, KSL_UDP_REUSEPORT, &err, msg, sizeof msg); CHECK(r2 != NULL, "second socket on the same port with REUSEPORT"); if (r2) ksl_udp_close(r2); ksl_udp_close(r1); } }
@@ -147,8 +160,8 @@ void run_udp(void) {
         ksl_udp_close(a); ksl_udp_close(b);
     }
 #else
-    /* udp_open_unsupported_on_apple */
-    { uint8_t a[KSL_UDP_ADDR_LEN]; v4(a, 0); uint32_t err = 0; char msg[64] = {0}; CHECK(ksl_udp_open(a, 0, &err, msg, sizeof msg) == NULL && err == KSL_E_NOT_SUPPORTED, "ksl_udp_open is Linux-only"); }
+    /* udp_open_unsupported (Windows) */
+    { uint8_t a[KSL_UDP_ADDR_LEN]; v4(a, 0); uint32_t err = 0; char msg[64] = {0}; CHECK(ksl_udp_open(a, 0, &err, msg, sizeof msg) == NULL && err == KSL_E_NOT_SUPPORTED, "ksl_udp_open is Linux and Apple only"); }
 #endif
     END();
 }
