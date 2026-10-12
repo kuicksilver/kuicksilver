@@ -130,7 +130,7 @@ internal class LoopbackServer private constructor(
 class SocketTlsTest {
     @BeforeTest fun load() {
         KslLoader.ensureLoaded()
-        runBlocking { SessionCache.clear() }
+        runBlocking { SessionCache.Default.clear() }
     }
 
     @Test fun secondConnectionResumesOverSockets(): Unit =
@@ -161,8 +161,8 @@ class SocketTlsTest {
                     srv.close()
                 }
             }
-            withTimeout(5.seconds) { while (SessionCache.size() == 0) delay(10) } // the fresh ticket lands asynchronously
-            assertEquals(1, SessionCache.size())
+            withTimeout(5.seconds) { while (SessionCache.Default.size() == 0) delay(10) } // the fresh ticket lands asynchronously
+            assertEquals(1, SessionCache.Default.size())
         }
 
     @Test fun clientServerEchoOverRealSockets(): Unit =

@@ -18,7 +18,7 @@ import kotlin.test.assertTrue
 class KeylogTest {
     @BeforeTest fun load() {
         KslLoader.ensureLoaded()
-        runBlocking { SessionCache.clear() }
+        runBlocking { SessionCache.Default.clear() }
     }
 
     @Test fun explicitSinkReceivesRfc9850Lines() {

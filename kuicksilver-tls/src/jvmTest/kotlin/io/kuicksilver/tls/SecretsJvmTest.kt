@@ -36,7 +36,7 @@ import kotlin.time.Duration.Companion.seconds
 class SecretsJvmTest {
     @BeforeTest fun load() {
         KslLoader.ensureLoaded()
-        runBlocking { SessionCache.clear() }
+        runBlocking { SessionCache.Default.clear() }
     }
 
     @Test fun negative_keylogFileMode0600() {
@@ -155,7 +155,7 @@ class SecretsJvmTest {
                 }
             try {
                 assertEquals(TlsVersion.Tls12, client.protocolVersion)
-                withTimeout(5.seconds) { while (SessionCache.size() == 0) delay(10) } // the ticket is cached from the reader pump
+                withTimeout(5.seconds) { while (SessionCache.Default.size() == 0) delay(10) } // the ticket is cached from the reader pump
             } finally {
                 client.close()
                 server.cancel()
@@ -186,7 +186,7 @@ class SecretsJvmTest {
                     .map { it.toInt(16).toByte() }
                     .toByteArray()
             assertEquals(48, master.size)
-            assertEquals(1, SessionCache.size(), "the session is still cached when the heap is dumped")
+            assertEquals(1, SessionCache.Default.size(), "the session is still cached when the heap is dumped")
             val heap = dump.readBytes()
             assertFalse(contains(heap, master), "the cached TLS session's master secret was found in the heap dump")
             assertTrue(contains(heap, "kuicksilver".encodeToByteArray()), "sanity: the dump is searchable")
