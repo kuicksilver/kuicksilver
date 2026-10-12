@@ -49,7 +49,7 @@ extern "C" {
 
 /* ksl_ctx_set_option keys */
 #define KSL_OPT_VERIFY_MODE 1      /* KSL_VERIFY_* */
-#define KSL_OPT_CLIENT_CERT 2      /* KSL_CLIENT_CERT_* (server) */
+#define KSL_OPT_CLIENT_CERT 2      /* KSL_CLIENT_CERT_* (server only: KSL_E_BAD_ARG on a client context) */
 #define KSL_OPT_MIN_VERSION 3      /* KSL_TLS1_2 | KSL_TLS1_3; QUIC contexts are always TLS 1.3 */
 #define KSL_OPT_MAX_VERSION 4
 #define KSL_OPT_NUM_TICKETS 5      /* TLS 1.3 tickets sent automatically after the handshake (server); 0 also suppresses the in-handshake TLS 1.2 ticket (with ticket keys set) */

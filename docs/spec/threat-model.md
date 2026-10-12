@@ -66,7 +66,7 @@ K3 status: with `loops > 1` each loop answers with a stateless reset only for CI
 
 - **Threats:** someone else's certificate under the same name; "hostname check disabled + system trust"; TOFU substitution at first contact; a proxy with its own certificate instead of the end host's.
 - **Mitigations:** the name is always checked (replaceable through `ExpectedName`, cannot be disabled); the pin is always checked, regardless of the base trust; `Tofu` — the pin is remembered at first contact and is mandatory afterwards; `Custom` must check the name (contract + test).
-- **Verification:** **negative controls**: someone else's key under the same name → `Verify(HostnameMismatch|UnknownIssuer)`; a publicly valid certificate with a different SPKI under `Pinned` → `PinMismatch`; a key change under `Tofu` → `PinMismatch`.
+- **Verification:** **negative controls**: someone else's key under the same name → `Verify(HostnameMismatch|UnknownIssuer)`; a publicly valid certificate with a different SPKI under `Pinned` → `PinMismatch`; a key change under `Tofu` → `PinMismatch`. K7 (F4.4): `ksl_ctx_set_option(KSL_OPT_CLIENT_CERT)` on a client context is refused (`test_verify.c` `verify_client_cert_option_refused_on_client`): it used to rewrite `SSL_CTX_set_verify` and turn server verification off; both mode options reject values outside 0..2.
 
 ### 3.7 Key leakage
 

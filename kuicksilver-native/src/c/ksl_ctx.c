@@ -147,11 +147,14 @@ int ksl_ctx_set_option(ksl_ctx *c, int option, int value) {
     if (frozen(c)) return KSL_ERROR;
     switch (option) {
     case KSL_OPT_VERIFY_MODE:
+        if (value < KSL_VERIFY_NONE || value > KSL_VERIFY_OPENSSL) { ksl_ctx_set_error(c, KSL_E_BAD_ARG, "ksl: verify mode is 0..2"); return KSL_ERROR; }
         if (c->role == KSL_SERVER && value == KSL_VERIFY_PAUSE) { ksl_ctx_set_error(c, KSL_E_SERVER_PAUSE_FORBIDDEN, "ksl: verify pause is client-only (OpenSSL would accept silently)"); return KSL_ERROR; }
         c->verify_mode = value;
         if (c->role == KSL_CLIENT) SSL_CTX_set_verify(c->ctx, value == KSL_VERIFY_NONE ? SSL_VERIFY_NONE : SSL_VERIFY_PEER, NULL);
         return KSL_OK;
     case KSL_OPT_CLIENT_CERT:
+        /* on a client this would rewrite SSL_CTX_set_verify and switch server verification off */
+        if (c->role != KSL_SERVER || value < KSL_CLIENT_CERT_NONE || value > KSL_CLIENT_CERT_REQUIRED) { ksl_ctx_set_error(c, KSL_E_BAD_ARG, "ksl: client certificate mode is server-only (0..2)"); return KSL_ERROR; }
         c->client_cert_mode = value;
         SSL_CTX_set_verify(c->ctx, value == KSL_CLIENT_CERT_NONE ? SSL_VERIFY_NONE : value == KSL_CLIENT_CERT_OPTIONAL ? SSL_VERIFY_PEER : SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT, NULL);
         return KSL_OK;
