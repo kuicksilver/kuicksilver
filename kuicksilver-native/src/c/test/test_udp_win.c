@@ -12,6 +12,7 @@ int ksl_udp_has_wake_for_test(ksl_udp *);
 
 #define W_WSAEOPNOTSUPP 10045
 #define W_WSAENETUNREACH 10051
+#define W_WSAENOBUFS 10055
 
 static void w4(uint8_t a[KSL_UDP_ADDR_LEN], uint16_t port) { memset(a, 0, KSL_UDP_ADDR_LEN); a[0] = 4; a[1] = (uint8_t)(port >> 8); a[2] = (uint8_t)port; a[3] = 127; a[6] = 1; }
 /* a plain Winsock socket with SO_REUSEADDR on 127.0.0.1:port: 1 when its bind is refused */
@@ -85,6 +86,12 @@ void run_udp_win(void) {
       CHECK(ksl_udp_send(a, bufs, lens, lb, ecns, 1, &sent) == KSL_OK && sent == 1, "big one sent");
       uint8_t *rb[1]; uint32_t rc[1] = { 1000 }, rl[1], got = 0; uint8_t ra[KSL_UDP_ADDR_LEN], re[1]; rb[0] = malloc(1000);
       int r = ksl_udp_recv(b, rb, rc, rl, ra, re, 1, &got, 300); CHECK((r == KSL_OK && got == 0) || r == KSL_WANT_READ, "truncated datagram dropped"); free(bufs[0]); free(rb[0]); }
+    /* udp_win_uso_transient_error_keeps_uso: WSAENOBUFS on a USO send resends that run one by one and leaves USO on */
+    if (wcaps(a, NULL) & KSL_UDP_GSO) { uint32_t rl[64]; uint32_t before = ksl_udp_syscalls_for_test(a); ksl_udp_fail_next_gso_for_test(a, W_WSAENOBUFS);
+      CHECK(wping(a, b, lb, 6, 1000, 0, NULL, NULL, rl) == 6, "WSAENOBUFS on USO: all six delivered one by one");
+      CHECK(ksl_udp_syscalls_for_test(a) - before == 7, "the refused USO call, then six single sends");
+      CHECK(wcaps(a, NULL) & KSL_UDP_GSO, "USO still granted after a transient error");
+      before = ksl_udp_syscalls_for_test(a); CHECK(wping(a, b, lb, 6, 1000, 0, NULL, NULL, rl) == 6 && ksl_udp_syscalls_for_test(a) - before == 1, "the next run leaves in one USO call"); }
     /* udp_win_uso_refused_falls_back: WSAEOPNOTSUPP on a USO send turns USO off and resends every segment one by one */
     if (caps & KSL_UDP_GSO) { ksl_udp_fail_next_gso_for_test(a, W_WSAEOPNOTSUPP); uint32_t rl[64]; CHECK(wping(a, b, lb, 6, 1000, 0, NULL, NULL, rl) == 6, "all six delivered after the fallback"); CHECK(!(wcaps(a, NULL) & KSL_UDP_GSO), "USO withdrawn from the caps"); }
     /* udp_win_transient_error_skips_the_slot: WSAENETUNREACH loses that datagram only */

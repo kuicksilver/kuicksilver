@@ -217,22 +217,24 @@ static int slot_lost(int e) { return dest_error(e) || e == WSAEMSGSIZE || e == W
 int ksl_udp_send(ksl_udp *u, uint8_t *const *bufs, const uint32_t *lens, const uint8_t *addrs, const uint8_t *ecn, uint32_t n, uint32_t *sent) {
     if (!u || u->closed) { if (sent) *sent = 0; return KSL_ERROR; } *sent = 0; uint32_t i = 0;
     int gso_probe = 0;   /* a USO send failed with WSAEINVAL: the first datagram of that run, sent alone, tells USO's fault from the destination's */
+    uint32_t solo = 0;   /* datagrams of a refused USO run still to send one by one; USO itself stays on */
     while (i < n) {
         /* the same run rule as Linux: two equal lengths start it, the last segment may be shorter, one address, one mark */
         uint32_t run = 1;
-        if (u->gso_on && !gso_probe && i + 1 < n && lens[i + 1] == lens[i]) while (i + run < n && run < u->gso_max && lens[i + run] <= lens[i] && !memcmp(addrs + (i + run) * KSL_UDP_ADDR_LEN, addrs + i * KSL_UDP_ADDR_LEN, KSL_UDP_ADDR_LEN) && ecn[i + run] == ecn[i]) { run++; if (lens[i + run - 1] < lens[i]) break; }
+        if (u->gso_on && !gso_probe && !solo && i + 1 < n && lens[i + 1] == lens[i]) while (i + run < n && run < u->gso_max && lens[i + run] <= lens[i] && !memcmp(addrs + (i + run) * KSL_UDP_ADDR_LEN, addrs + i * KSL_UDP_ADDR_LEN, KSL_UDP_ADDR_LEN) && ecn[i + run] == ecn[i]) { run++; if (lens[i + run - 1] < lens[i]) break; }
         if (run > 1 && lens[i] > 0) {
             size_t total = 0; for (uint32_t k = 0; k < run; k++) { if (total + lens[i + k] > GRO_MAX) { run = k; break; } memcpy(u->tx + total, bufs[i + k], lens[i + k]); total += lens[i + k]; }
             int e = 0;
             if (run > 1 && send_one(u, u->tx, (uint32_t)total, addrs + i * KSL_UDP_ADDR_LEN, ecn[i], lens[i], &e) == 0) { i += run; *sent += run; continue; }
             if (run > 1) {
                 if (e == WSAEWOULDBLOCK) return KSL_OK;
-                if ((e == WSAEINVAL || e == WSAEMSGSIZE) && lens[i] > 1200) { /* the segment size, not USO, was refused: one by one, USO stays */ }
-                else if (e == WSAEINVAL) gso_probe = 1;
-                else if (e == WSAEOPNOTSUPP || e == WSAENOPROTOOPT || e == WSAEPROTONOSUPPORT) gso_off(u);
-                else { set_err(u, e, "WSASendMsg(uso)"); gso_off(u); }
+                if ((e == WSAEINVAL || e == WSAEMSGSIZE) && lens[i] > 1200) solo = run;   /* the segment size, not USO, was refused: this run one by one, USO stays */
+                else if (e == WSAEINVAL) gso_probe = 1;   /* the USO cmsg or the destination: the first datagram alone decides */
+                else if (e == WSAEOPNOTSUPP || e == WSAENOPROTOOPT || e == WSAEPROTONOSUPPORT) gso_off(u);   /* USO itself refused */
+                else solo = run;   /* transient (WSAENOBUFS, unreachable, WSAEACCES, a small WSAEMSGSIZE, ...): this run one by one, USO stays for the next */
             }
         }
+        if (solo) solo--;
         int e = 0;
         if (send_one(u, bufs[i], lens[i], addrs + i * KSL_UDP_ADDR_LEN, ecn[i], 0, &e) == 0) { if (gso_probe) gso_off(u); gso_probe = 0; i++; (*sent)++; continue; }
         if (e == WSAEWOULDBLOCK) return KSL_OK;
