@@ -80,7 +80,7 @@ class ClientH3Test {
 
     /** The client's endpoint binds 0.0.0.0:0; that socket is dual-stack, so an IPv6 server is reachable over h3 (review of k7/macos-server). */
     @Test fun h3ToIpv6Loopback() =
-        clientTest {
+        h3Test {
             val server =
                 io.ktor.server.engine.embeddedServer(io.kuicksilver.ktor.server.Kuicksilver, configure = {
                     tlsConnector(ClientFixtures.identity()) {
@@ -89,8 +89,10 @@ class ClientH3Test {
                     }
                 }) { routing { get("/") { call.respondText("v=${call.request.local.version}") } } }
             val started = runCatching { server.startSuspend(false) }
-            org.junit.jupiter.api.Assumptions
-                .assumeTrue(started.isSuccess, "needs an IPv6 loopback")
+            if (started.isFailure) {
+                println("h3ToIpv6Loopback skipped: needs an IPv6 loopback")
+                return@h3Test
+            }
             try {
                 val port =
                     server.engine
