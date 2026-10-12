@@ -151,7 +151,9 @@ origin's host. The rules:
 Entries live in `http3 { altSvcStore = ... }` — `InMemoryAltSvcStore` by default. `FileAltSvcStore(path)` keeps them
 in one tab-separated text file (loaded once, rewritten atomically after every change, expired records dropped on load)
 so the first request after a cold start can already use HTTP/3; implement `AltSvcStore` for any other backing store
-(one engine per file: two engines sharing a file overwrite each other). With `clearOnNetworkChange = true`,
+(one engine per file: two engines sharing a file overwrite each other). Both built-in stores keep at most 8 alternatives
+per origin (the first ones of the header) and 1000 origins, dropping the least recently used; `FileAltSvcStore` skips
+the rewrite when a repeated header only refreshes the expiry, and the engine writes it after releasing its lock. With `clearOnNetworkChange = true`,
 entries without `persist=1` are dropped when `networkId()` reports a new network.
 
 ### Racing and fallback

@@ -142,6 +142,20 @@ class BrokenAltSvcTest {
         assertFalse(broken.isBroken("o", "a"))
     }
 
+    /** A peer cycling origins (or networks) cannot grow the marks without bound: the oldest go past `MAX_ORIGINS` (threat-model 3.18). */
+    @Test fun negative_brokenMarksBounded() {
+        val n = AltSvcCache.MAX_ORIGINS + 500
+        for (i in 0 until n) {
+            broken.markBroken("o$i", "a")
+            broken.confirmQuic("net$i")
+        }
+        assertFalse(broken.isBroken("o0", "a"), "the oldest mark was evicted")
+        assertTrue(broken.isBroken("o${n - 1}", "a"))
+        assertEquals(AltSvcCache.MAX_ORIGINS, (0 until n).count { broken.isBroken("o$it", "a") })
+        assertFalse(broken.quicConfirmedOn("net0"))
+        assertEquals(AltSvcCache.MAX_ORIGINS, (0 until n).count { broken.quicConfirmedOn("net$it") })
+    }
+
     @Test fun networkChangeResets() {
         broken.markBroken("o", "a")
         broken.confirmQuic("wifi")

@@ -63,6 +63,9 @@ internal class KuicksilverEngine(
     private val altSvc = AltSvcCache(config.http3.altSvcStore) { getTimeMillis() }
     private val altSvcLock = Mutex()
 
+    /** Serializes [FileAltSvcStore] writes, which run after [altSvcLock] is released. */
+    private val altSvcWriteLock = Mutex()
+
     /** Broken alternatives and networks where QUIC worked; internal for tests. */
     internal val brokenAltSvc = BrokenAltSvc { getTimeMillis() }
     private val race = ProtocolRace(config.http3.softDelay, config.http3.hardDelay)
@@ -129,7 +132,7 @@ internal class KuicksilverEngine(
 
     /** A new network (`networkId`) forgets broken marks, QUIC confirmation and, if asked, non-persistent alternatives. */
     private suspend fun checkNetwork(): String? =
-        altSvcLock.withLock {
+        altSvcUpdate {
             val id = config.http3.networkId()
             if (networkSeen &&
                 id != lastNetwork
@@ -141,6 +144,13 @@ internal class KuicksilverEngine(
             lastNetwork = id
             id
         }
+
+    /** Runs [block] under [altSvcLock], then writes the store's new content, if any, outside it (threat-model 3.18). */
+    private suspend fun <T> altSvcUpdate(block: () -> T): T {
+        val (value, write) = altSvcLock.withLock { block() to altSvc.takePendingWrite() }
+        if (write != null) altSvcWriteLock.withLock { write() }
+        return value
+    }
 
     /**
      * HTTP/3 against HTTP/1.1 (docs/guide/ktor.md): connection setups race ([ProtocolRace]); the request runs once, on the winner.
@@ -236,7 +246,7 @@ internal class KuicksilverEngine(
                 if (r.version !=
                     HttpProtocolVersion.HTTP_3_0
                 ) {
-                    altSvcLock.withLock {
+                    altSvcUpdate {
                         altSvc.onResponse(
                             url,
                             r.statusCode.value,
@@ -246,7 +256,7 @@ internal class KuicksilverEngine(
                     }
                 }
                 if (r.statusCode.value != 421 || r.version != HttpProtocolVersion.HTTP_3_0) return r
-                altSvcLock.withLock { altSvc.remove(url) }
+                altSvcUpdate { altSvc.remove(url) }
                 if (!data.body.isReplayable()) {
                     throw H3BodyConsumed(
                         "421 Misdirected Request from the alternative, and the request body was already consumed",
@@ -255,7 +265,7 @@ internal class KuicksilverEngine(
             }
         }
         val r = h1.execute(data, callContext)
-        altSvcLock.withLock {
+        altSvcUpdate {
             altSvc.onResponse(url, r.statusCode.value, r.headers.getAll("Alt-Svc").orEmpty(), verifiedTls = url.protocol.isSecure())
         }
         return r

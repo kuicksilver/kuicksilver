@@ -8,14 +8,18 @@ import kotlinx.io.files.Path
 import kotlinx.io.files.SystemFileSystem
 import kotlinx.io.readLine
 import kotlinx.io.writeString
+import kotlin.random.Random
 
 /**
  * An [AltSvcStore] kept in one text file (alternatives survive a restart, so the first request after a cold
  * start can already use HTTP/3). One record per line, tab-separated: origin, protocol, host (empty when the origin's),
  * port, expiry in epoch milliseconds, `1` when `persist=1`. The file is read once at construction (expired and
- * malformed records are dropped) and rewritten after every change through a temporary file and an atomic move, so a
- * crash leaves either the old or the new content. Calls are serialized by the engine's lock; two engines sharing one
- * file would overwrite each other's changes.
+ * malformed records are dropped, at most 1000 origins of 8 alternatives are kept) and rewritten after every change
+ * through a uniquely named temporary file and an atomic move, so a crash leaves either the old or the new content.
+ * A repeated header that only moves the expiry by less than half the new lifetime is not written. The store keeps at
+ * most 1000 origins, dropping the least recently used (threat-model 3.18). Used by the engine, the file is written
+ * after the engine's lock is released. Calls are serialized by the engine's lock; two engines sharing one file would
+ * overwrite each other's changes.
  *
  * @param path the store file; it need not exist yet, and an unreadable file starts an empty store.
  * @param clock the current time in epoch milliseconds, used to drop expired records on load.
@@ -24,29 +28,36 @@ public class FileAltSvcStore(
     private val path: Path,
     private val clock: () -> Long = { getTimeMillis() },
 ) : AltSvcStore {
-    private val map = HashMap<String, List<AltSvcEntry>>()
+    private val map = LinkedHashMap<String, List<AltSvcEntry>>()
+
+    /** Set by [AltSvcCache]: changes leave a [takePendingWrite] for the engine to run after its lock. */
+    internal var deferWrites = false
+
+    private var pending: (() -> Unit)? = null
+    private var snapshots = 0L
+    private var written = -1L
 
     init {
         load()
     }
 
-    override fun get(origin: String): List<AltSvcEntry> = map[origin].orEmpty()
+    override fun get(origin: String): List<AltSvcEntry> = map.touch(origin).orEmpty()
 
     override fun put(
         origin: String,
         entries: List<AltSvcEntry>,
     ) {
-        if (entries.isEmpty()) {
-            map.remove(origin)
-        } else {
-            map[origin] =
-                entries.toList()
-        }
-        save()
+        if (entries.isEmpty()) return remove(origin)
+        val kept = entries.take(AltSvcCache.MAX_ENTRIES_PER_ORIGIN)
+        val old = map.touch(origin)
+        if (old != null && old == kept && kept.indices.all { fresh(old[it], kept[it]) }) return
+        map[origin] = kept
+        map.evictEldest(AltSvcCache.MAX_ORIGINS)
+        changed()
     }
 
     override fun remove(origin: String) {
-        if (map.remove(origin) != null) save()
+        if (map.remove(origin) != null) changed()
     }
 
     override fun clearNonPersistent() {
@@ -54,23 +65,45 @@ public class FileAltSvcStore(
         for (k in map.keys.toList()) {
             val all = map[k]!!
             val kept = all.filter { it.persist }
-            if (kept.size !=
-                all.size
-            ) {
+            if (kept.size != all.size) {
                 changed = true
                 if (kept.isEmpty()) map.remove(k) else map[k] = kept
             }
         }
-        if (changed) save()
+        if (changed) changed()
+    }
+
+    /** The stored [old] entry still stands for [new]: its expiry moved by less than half of [new]'s remaining lifetime. */
+    private fun fresh(
+        old: AltSvcEntry,
+        new: AltSvcEntry,
+    ): Boolean = new.expiresAtEpochMillis - old.expiresAtEpochMillis < (new.expiresAtEpochMillis - clock()) / 2
+
+    internal fun takePendingWrite(): (() -> Unit)? = pending.also { pending = null }
+
+    /** Snapshots the content now (under the caller's lock); the write itself runs now or, behind the engine, later. */
+    private fun changed() {
+        val seq = snapshots++
+        val text =
+            buildString {
+                for ((origin, entries) in map) {
+                    for (e in entries) {
+                        append("$origin\t${e.protocol}\t${e.host ?: ""}\t${e.port}\t${e.expiresAtEpochMillis}\t${if (e.persist) 1 else 0}\n")
+                    }
+                }
+            }
+        val write = { write(seq, text) }
+        if (deferWrites) pending = write else write()
     }
 
     private fun load() {
         if (!SystemFileSystem.exists(path)) return
         val now = clock()
         val lines = ArrayList<String>()
+        val maxLines = AltSvcCache.MAX_ORIGINS * AltSvcCache.MAX_ENTRIES_PER_ORIGIN
         try {
             SystemFileSystem.source(path).buffered().use { src ->
-                while (true) {
+                while (lines.size < maxLines) {
                     lines += src.readLine() ?: break
                 }
             }
@@ -84,22 +117,22 @@ public class FileAltSvcStore(
             val expires = f[4].toLongOrNull() ?: continue
             if (expires <= now) continue
             val e = AltSvcEntry(f[1], f[2].ifEmpty { null }, port, expires, f[5] == "1")
-            map[f[0]] = map[f[0]].orEmpty() + e
+            val had = map.remove(f[0]).orEmpty()
+            map[f[0]] = if (had.size < AltSvcCache.MAX_ENTRIES_PER_ORIGIN) had + e else had
         }
+        map.evictEldest(AltSvcCache.MAX_ORIGINS)
     }
 
-    private fun save() {
-        val tmp = Path(path.parent ?: Path("."), path.name + ".tmp")
+    /** Writes snapshot [seq] unless a newer one is already on disk; the engine runs these one at a time. */
+    private fun write(
+        seq: Long,
+        text: String,
+    ) {
+        if (seq <= written) return
+        written = seq
+        val tmp = Path(path.parent ?: Path("."), "${path.name}.${Random.nextLong().toULong()}.tmp")
         try {
-            SystemFileSystem.sink(tmp).buffered().use { sink ->
-                for ((origin, entries) in map) {
-                    for (e in entries) {
-                        sink.writeString(
-                            "$origin\t${e.protocol}\t${e.host ?: ""}\t${e.port}\t${e.expiresAtEpochMillis}\t${if (e.persist) 1 else 0}\n",
-                        )
-                    }
-                }
-            }
+            SystemFileSystem.sink(tmp).buffered().use { it.writeString(text) }
             SystemFileSystem.atomicMove(tmp, path)
         } catch (_: Exception) {
             runCatching { SystemFileSystem.delete(tmp, mustExist = false) }
