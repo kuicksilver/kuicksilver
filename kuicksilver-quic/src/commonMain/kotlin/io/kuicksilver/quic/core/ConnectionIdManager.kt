@@ -218,10 +218,24 @@ internal class ConnectionIdManager(
         return null
     }
 
-    /** NEW_CONNECTION_ID for [seq] was lost: it is sent again unless we have since asked the peer to retire it (RFC 9000 section 5.1.2). */
-    fun onNewCidLost(seq: Long) {
-        if (seq < issuedRetirePriorTo) return
-        local.firstOrNull { it.seq == seq }?.sent = false
+    /**
+     * NEW_CONNECTION_ID for [seq] was lost: it is sent again unless we have since asked the peer to retire it (RFC 9000 section 5.1.2).
+     * Such an ID may never reach the peer, which then never retires it: it keeps routing until [dropAt] (3 x PTO, in case the frame
+     * arrived after all) and then leaves the registry like an ID the peer retired.
+     */
+    fun onNewCidLost(
+        seq: Long,
+        dropAt: TimeMark,
+    ) {
+        val i = local.indexOfFirst { it.seq == seq }
+        if (i < 0) return
+        if (seq >= issuedRetirePriorTo) {
+            local[i].sent = false
+            return
+        }
+        retiredLocal += local.removeAt(i)
+        retiredUntil += dropAt
+        fill()
     }
 
     fun hasPendingFrames(): Boolean {
@@ -241,7 +255,11 @@ internal class ConnectionIdManager(
             throw QuicWireException(TransportError.PROTOCOL_VIOLATION, 0x19, "RETIRE_CONNECTION_ID for an unissued sequence")
         }
         val i = local.indexOfFirst { it.seq == seq }
-        if (i < 0) return false // already retired: nothing to do (a glitch when it is not a retransmission)
+        if (i < 0) {
+            // still in its grace period: a retransmission, or an ID we dropped after its NEW_CONNECTION_ID was declared lost
+            for (k in 0 until retiredLocal.size) if (retiredLocal[k].seq == seq) return true
+            return false // already gone: nothing to do (a glitch)
+        }
         retiredLocal += local.removeAt(i)
         retiredUntil += until
         retiredByPeer++

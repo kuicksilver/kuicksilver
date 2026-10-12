@@ -86,8 +86,8 @@ Hardening of the QUIC core for 0.2.0 (review of 2026-10-08, deferred items):
   that path's validation deadline passed without a Handshake packet (one forged Initial was enough).
 - QUIC: a packet buffered until its keys arrive is processed with the ECN mark, socket, source and length of its own
   datagram, not of the datagram that delivered the keys (RFC 9000 §13.4.1).
-- QUIC: a lost `NEW_CONNECTION_ID` whose sequence is below our own `retire_prior_to` is no longer retransmitted
-  (RFC 9000 §5.1.2, §19.15).
+- QUIC: a lost `NEW_CONNECTION_ID` whose sequence is below our own `retire_prior_to` is no longer retransmitted,
+  and that connection ID stops routing 3 x PTO after the loss instead of staying registered (RFC 9000 §5.1.2, §19.15).
 - QUIC server: a Retry token is bound to the Retry's Source Connection ID; an Initial presenting it under another DCID is
   refused with a stateless `INVALID_TOKEN` close instead of becoming a connection (RFC 9000 §8.1.2–§8.1.4). Tokens minted
   before this change are not accepted (they live 10 s).

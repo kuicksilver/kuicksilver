@@ -167,7 +167,7 @@ internal class ConnectionLossListener(
         for (i in 0 until f.idCount) {
             when (f.idKind[i]) {
                 SentFrames.ID_RETIRE_CONNECTION_ID -> core.cids.onRetireLost(f.idValue[i])
-                SentFrames.ID_NEW_CONNECTION_ID -> core.cids.onNewCidLost(f.idValue[i])
+                SentFrames.ID_NEW_CONNECTION_ID -> core.cids.onNewCidLost(f.idValue[i], core.now + core.pto() * 3)
             }
         }
         // RFC 9221 section 5: never retransmitted, only reported
