@@ -68,4 +68,20 @@ class ZeroRttReplayRegisterTest {
         for (i in 0 until 200) assertTrue(r.admit(id(1000 + i), t0 + (i * 500L).milliseconds, wall0 + i * 500L + (i % 3)))
         assertTrue(r.admit(id(1), t0 + 200.seconds, wall0 + 200_000), "wall and monotonic clocks advancing together never refuse")
     }
+
+    /**
+     * After an idle stretch of two halves or more (routine for a stripe of a lightly loaded server), the next rotation must
+     * still keep one half of history: a hello admitted after the idle stretch is refused right after the following rotation
+     * (re-review of the 0-RTT fixes: the no-keep rotation aliased `previous` and `current`, so every later rotation cleared
+     * the only table). One identity, so every step hits the same stripe.
+     */
+    @Test fun negative_replayAcrossRotationAfterIdleStripeRefused() {
+        val r = ZeroRttReplayRegister(Random(1))
+        val half = ZeroRttReplayRegister.HALF_SPAN
+        assertTrue(r.admit(id(1), t0))
+        // idle for more than two halves: this admission rotates without keeping history (nothing in it is fresh any more)
+        assertTrue(r.admit(id(1), t0 + half * 2 + 10.seconds), "forgotten after two idle halves (outside freshness)")
+        // the next rotation (one half later) must keep it: a replay 21 s after its admission is still inside the register
+        assertFalse(r.admit(id(1), t0 + half * 3 + 11.seconds), "a replay right after a rotation that followed an idle stretch")
+    }
 }
