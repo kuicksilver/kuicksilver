@@ -37,6 +37,7 @@ import io.kuicksilver.quic.core.idleDeadline
 import io.kuicksilver.quic.core.installInitialKeys
 import io.kuicksilver.quic.core.keepAliveDeadline
 import io.kuicksilver.quic.core.markClosed
+import io.kuicksilver.quic.core.nextChallengeDelay
 import io.kuicksilver.quic.core.onPathFailed
 import io.kuicksilver.quic.core.pmtudUpperBound
 import io.kuicksilver.quic.core.probeOtherHandshakeSpace
@@ -48,7 +49,6 @@ import io.kuicksilver.quic.core.requeueForProbe
 import io.kuicksilver.quic.core.setMtu
 import io.kuicksilver.quic.core.settleHandshakeValidated
 import io.kuicksilver.quic.core.silentClose
-import io.kuicksilver.quic.core.nextChallengeDelay
 import io.kuicksilver.quic.core.startValidation
 import io.kuicksilver.quic.core.switchPath
 import io.kuicksilver.quic.core.validationTimeout

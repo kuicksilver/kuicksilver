@@ -130,7 +130,10 @@ internal class RetryTokens(
         if (scidLen > 20 || plain.size != 10 + odcidLen + scidLen) return TokenCheck.Invalid
         if (now.nanos - issued > lifetime.inWholeNanoseconds || now.nanos < issued) return TokenCheck.Expired
         val scidOff = 10 + odcidLen
-        return TokenCheck.Valid(ConnectionId(plain.copyOfRange(9, 9 + odcidLen)), ConnectionId(plain.copyOfRange(scidOff, scidOff + scidLen)))
+        return TokenCheck.Valid(
+            ConnectionId(plain.copyOfRange(9, 9 + odcidLen)),
+            ConnectionId(plain.copyOfRange(scidOff, scidOff + scidLen)),
+        )
     }
 
     override fun close() {

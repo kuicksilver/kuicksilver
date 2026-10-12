@@ -3,27 +3,27 @@
 package io.kuicksilver.quic.api
 
 import io.ktor.network.sockets.InetSocketAddress
+import io.kuicksilver.annotations.DelicateKuicksilverApi
+import io.kuicksilver.annotations.ExperimentalKuicksilverApi
+import io.kuicksilver.native.KslLoader
+import io.kuicksilver.quic.CoreFixtures
 import io.kuicksilver.quic.DatagramIo
 import io.kuicksilver.quic.MemoryDatagramIo
 import io.kuicksilver.quic.MemoryNetwork
 import io.kuicksilver.quic.NullCryptoProvider
 import io.kuicksilver.quic.PacketBatch
+import io.kuicksilver.quic.QuicClientConfig
 import io.kuicksilver.quic.QuicConnection
 import io.kuicksilver.quic.QuicEndpoint
 import io.kuicksilver.quic.QuicEndpointConfig
+import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.QuicServerConfig
 import io.kuicksilver.quic.TransportError
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
-import io.kuicksilver.annotations.DelicateKuicksilverApi
-import io.kuicksilver.annotations.ExperimentalKuicksilverApi
-import io.kuicksilver.native.KslLoader
-import io.kuicksilver.quic.CoreFixtures
-import io.kuicksilver.quic.QuicClientConfig
-import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.quicConfig
 import io.kuicksilver.quic.runtime.EndpointLoop
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -171,6 +171,7 @@ class EndpointLifecycleTest {
                             }.build(),
                     )
                 val loop = server as EndpointLoop
+
                 suspend fun client(io: DatagramIo) =
                     QuicEndpoint.bind(
                         io.localAddress,
@@ -184,7 +185,9 @@ class EndpointLifecycleTest {
                 val spoofed = (1..2).map { i -> client(DeafIo(net.open(InetSocketAddress("10.0.9.$i", 4000 + i)))) }
                 val honest = client(net.open(InetSocketAddress("10.0.1.1", 1001)))
                 try {
-                    spoofed.forEach { ep -> launch { runCatching { ep.connect(serverAddr, QuicClientConfig.Builder(CoreFixtures.client()).build()) } } }
+                    spoofed.forEach { ep ->
+                        launch { runCatching { ep.connect(serverAddr, QuicClientConfig.Builder(CoreFixtures.client()).build()) } }
+                    }
                     while (loop.handshakingForTest < 2) delay(5)
                     val c =
                         withTimeoutOrNull(5.seconds) {
@@ -237,10 +240,18 @@ class EndpointLifecycleTest {
                             runCatching { client.connect(serverAddr, QuicClientConfig.Builder(CoreFixtures.client()).build()) }
                         }
                         // spin without suspending: the queue resumes the waiter, which cannot run on this thread before the cancel
-                        val spin = kotlin.time.TimeSource.Monotonic.markNow()
+                        val spin =
+                            kotlin.time.TimeSource.Monotonic
+                                .markNow()
                         while (loop.acceptHandOffsForTest == handed) {
                             // a leaked slot refuses the handshake instead: fail rather than spin past withTimeout
-                            if (spin.elapsedNow() > 10.seconds) kotlin.test.fail("handshake ${it + 1} never reached the accept queue (pending ${loop.pendingAcceptForTest})")
+                            if (spin.elapsedNow() >
+                                10.seconds
+                            ) {
+                                kotlin.test.fail(
+                                    "handshake ${it + 1} never reached the accept queue (pending ${loop.pendingAcceptForTest})",
+                                )
+                            }
                         }
                         waiter.cancel()
                         waiter.join()
@@ -353,7 +364,11 @@ class EndpointLifecycleTest {
                             .map { ep ->
                                 async {
                                     try {
-                                        val c: QuicConnection = ep.connect(serverAddr, QuicClientConfig.Builder(CoreFixtures.client()).build())
+                                        val c: QuicConnection =
+                                            ep.connect(
+                                                serverAddr,
+                                                QuicClientConfig.Builder(CoreFixtures.client()).build(),
+                                            )
                                         withTimeoutOrNull(3.seconds) { c.closed.await() }
                                     } catch (e: QuicException.ConnectionLost) {
                                         e

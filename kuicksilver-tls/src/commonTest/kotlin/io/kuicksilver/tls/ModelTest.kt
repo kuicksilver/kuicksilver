@@ -197,7 +197,13 @@ class TlsConfigTest {
             }
             assertFailsWith<TlsException.Config> { base.withOverride(ServerTlsOverride(id, clientAuth = ClientAuth.Required)) }
             assertFailsWith<TlsException.Config> { base.withOverride(ServerTlsOverride(id, alpn = listOf("\u00e9".repeat(200)))) }
-            base.withOverride(ServerTlsOverride(id, clientAuth = ClientAuth.Required, trust = TrustConfig.AnchoredCa(listOf(Certificate(TestCerts.testCa)))))
+            base.withOverride(
+                ServerTlsOverride(
+                    id,
+                    clientAuth = ClientAuth.Required,
+                    trust = TrustConfig.AnchoredCa(listOf(Certificate(TestCerts.testCa))),
+                ),
+            )
         } finally {
             id.close()
         }

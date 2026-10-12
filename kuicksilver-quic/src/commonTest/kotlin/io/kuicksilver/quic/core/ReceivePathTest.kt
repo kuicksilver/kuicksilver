@@ -111,13 +111,22 @@ class ReceivePathTest {
                         true
                     }
 
-                    else -> true
+                    else -> {
+                        true
+                    }
                 }
             }
         try {
             assertTrue(
                 p.runUntil {
-                    maxEct0 = maxOf(maxEct0, p.client.loss.space(SpaceId.Handshake).ack.ecnCounts?.get(0) ?: 0L)
+                    maxEct0 =
+                        maxOf(
+                            maxEct0,
+                            p.client.loss
+                                .space(SpaceId.Handshake)
+                                .ack.ecnCounts
+                                ?.get(0) ?: 0L,
+                        )
                     p.clientEvents.any { it is ConnectionEvent.HandshakeCompleted } &&
                         p.serverEvents.any { it is ConnectionEvent.HandshakeCompleted }
                 },

@@ -174,11 +174,19 @@ class SecretsJvmTest {
      */
     @Test fun negative_heapDumpNoIdentityPrivateKey() {
         val der = TestCerts.clientNoEkuKey // the lazily cached array itself: fromDer zeroes it
-        val at = (0 until der.size - 34).first { der[it] == 0x04.toByte() && der[it + 1] == 0x20.toByte() && der[it - 3] == 0x02.toByte() } + 2
+        val at =
+            (0 until der.size - 34).first { der[it] == 0x04.toByte() && der[it + 1] == 0x20.toByte() && der[it - 3] == 0x02.toByte() } + 2
         val masked = ByteArray(32) { (der[at + it].toInt() xor 0x5a).toByte() }
         val id = TlsIdentity.fromDer(listOf(TestCerts.clientNoEku), der)
         assertTrue(der.all { it == 0.toByte() }, "fromDer zeroes the caller's array")
-        val ctx = KslContext.create(tlsConfig(TlsRole.Server) { alpn = listOf("x"); identity = id }, quic = false)
+        val ctx =
+            KslContext.create(
+                tlsConfig(TlsRole.Server) {
+                    alpn = listOf("x")
+                    identity = id
+                },
+                quic = false,
+            )
         val dump =
             File.createTempFile("ksl-heap", ".hprof").also {
                 it.delete()
@@ -212,8 +220,12 @@ class SecretsJvmTest {
      * dump is written.
      */
     @Test fun negative_heapDumpNoIdentityPrivateKeyFromPem() {
-        val der = java.util.Base64.getDecoder().decode(PEM_TEST_KEY)
-        val at = (0 until der.size - 34).first { der[it] == 0x04.toByte() && der[it + 1] == 0x20.toByte() && der[it - 3] == 0x02.toByte() } + 2
+        val der =
+            java.util.Base64
+                .getDecoder()
+                .decode(PEM_TEST_KEY)
+        val at =
+            (0 until der.size - 34).first { der[it] == 0x04.toByte() && der[it + 1] == 0x20.toByte() && der[it - 3] == 0x02.toByte() } + 2
         val maskedScalar = ByteArray(32) { (der[at + it].toInt() xor 0x5a).toByte() }
         val pem = pemChars(der)
         der.fill(0)
@@ -221,7 +233,16 @@ class SecretsJvmTest {
         val body = nl + 1
         val maskedText = ByteArray(21) { (pem[body + 54 + it].code xor 0x5a).toByte() } // 10 chars, '\n', 10 chars
         assertEquals('\n'.code, maskedText[10].toInt() xor 0x5a)
-        val id = TlsIdentity.fromPem(TestCerts.toPem("CERTIFICATE", java.util.Base64.getDecoder().decode(PEM_TEST_CERT)), pem)
+        val id =
+            TlsIdentity.fromPem(
+                TestCerts.toPem(
+                    "CERTIFICATE",
+                    java.util.Base64
+                        .getDecoder()
+                        .decode(PEM_TEST_CERT),
+                ),
+                pem,
+            )
         assertTrue(pem.all { it == '\u0000' }, "fromPem zeroes the caller's array")
         val dump =
             File.createTempFile("ksl-heap", ".hprof").also {
