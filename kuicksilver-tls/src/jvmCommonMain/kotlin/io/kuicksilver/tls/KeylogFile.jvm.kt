@@ -92,7 +92,28 @@ private class KeylogFileSink(
     override fun close() = channel.close()
 }
 
-public actual fun keylogFile(path: String): KeylogSink {
+public actual fun keylogFile(path: String): KeylogSink = openKeylogFile(path, HAS_NIO)
+
+/** `java.nio.file`, which the checks need, is missing on Android API 24-25 (it arrived in API 26). */
+private val HAS_NIO: Boolean =
+    try {
+        Class.forName("java.nio.file.Files")
+        true
+    } catch (_: ClassNotFoundException) {
+        false
+    }
+
+/** [keylogFile] with the platform check as a parameter (tests); nothing below touches `java.nio.file` when [hasNio] is false. */
+internal fun openKeylogFile(
+    path: String,
+    hasNio: Boolean,
+): KeylogSink {
+    // without java.nio.file nothing can vouch for the file (owner, links, mode), and secrets do not go into an unchecked one
+    require(hasNio) { "keylog file $path: java.nio.file is unavailable (Android below API 26), refusing to log secrets there" }
+    return openNioKeylogFile(path)
+}
+
+private fun openNioKeylogFile(path: String): KeylogSink {
     val p = Paths.get(path)
     return KeylogFileSink(p, openKeylogChannel(p))
 }
