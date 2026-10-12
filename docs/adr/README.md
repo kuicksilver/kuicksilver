@@ -20,3 +20,4 @@ Documents and identifiers are in English.
 | [0012](0012-certificate-verify-pause.md) | Certificate verification with a handshake pause (`SSL_set_retry_verify`), without upcalls from C | accepted |
 | [0013](0013-0rtt-anti-replay-design.md) | Anti-replay design for 0-RTT: ticket freshness in `ksl`, a single-use window per loop, idempotency decided by the application | proposed (design only; implementation after v1, 0-RTT stays disabled in v1 per ADR-0008) |
 | [0014](0014-ktor-engines-via-http3-endpoint.md) | The Ktor engines see the transport only through `Http3Endpoint` | accepted |
+| [0015](0015-0rtt-implementation.md) | 0-RTT in 0.2.0: ksl ABI 6 early data, a per-server replay register keyed by ticket, configuration-bound tickets, HTTP/3 gating | accepted |
