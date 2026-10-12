@@ -38,16 +38,20 @@ Known limits, stated on purpose:
   `keylogFile` O_NOFOLLOW, `KslLoader` directory ownership, `SessionCache` across engines.
 - `QuicConfig.initialRtt` (default 333 ms per RFC 9002; a lower value trades spurious retransmissions for a faster
   handshake under loss) validated in (0, 10 s] and the lossy-handshake behaviour documented in the guide (done on
-  `k7/f1-core`).
+  K7 F1).
 - Automatic migration on network changes: `NetworkMigrator` in common code and `followDefaultNetwork` on Android
-  (requested by the first external consumer; done on `k7/android-migration`).
+  (requested by the first external consumer).
 - QUIC server on Kotlin/Native macOS: `ksl_udp` over `sendmsg`/`recvmsg` and `poll` (kqueue not needed, ADR-0006), the
-  server test suites on `macosArm64` (done on `k7/macos-server`).
-- Coverage reports (Kover once it supports the `com.android.kotlin.multiplatform.library` plugin, or JaCoCo for the JVM only).
-- The 0-RTT anti-replay design of ADR-0013 reviewed for implementation in a later minor.
+  server test suites on `macosArm64`.
+- Coverage reports of the JVM tests with Kover (`-Pkuicksilver.coverage :koverHtmlReportJvmTests`, no threshold).
+- 0-RTT (RFC 9001 §4.6), owner decision to ship it in 0.2.0: the ADR-0013 review (2026-10) keeps its three layers and
+  puts freshness on OpenSSL's check (the ticket lifetime and the 10 s allowance between reported and computed ticket
+  age, which is the replay window). It adds a per-server replay register keyed by ticket, single-use client tickets in
+  the per-engine session cache, and HTTP/3 safe-method gating with RFC 8470 `425`. About 14 tasks.
+- QUIC server on Kotlin/Native Windows (`ksl_udp` over Winsock).
+- The interop runner's `perf` protocol and throughput thresholds in CI.
 
 ## After 0.2.0
 
-- The interop runner's `perf` protocol and throughput thresholds in CI.
 - RFC 9460 HTTPS records as a source of h3, WebTransport, multipath and QUIC-LB (`PathId` and the CID layout are
   prepared), BBR.

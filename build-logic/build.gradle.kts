@@ -10,4 +10,5 @@ dependencies {
     implementation(libs.maven.publish.gradle.plugin)
     implementation(libs.kotlinx.benchmark.gradle.plugin)
     implementation(libs.kotlin.allopen.gradle.plugin)
+    implementation(libs.kover.gradle.plugin)
 }

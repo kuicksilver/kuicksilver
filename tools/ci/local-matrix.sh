@@ -29,6 +29,7 @@ step "openssl: no-sslkeylog (macos-arm64)"      bash tools/check/keylog-disabled
 step "c-tests: macos-arm64 (ASan/UBSan)"        bash tools/c-test.sh macos-arm64
 # shellcheck disable=SC2086
 step "jvm: all module tests"                   $G $KSL_JVM_TESTS
+step "jvm: coverage report"                     $G -Pkuicksilver.coverage :koverHtmlReportJvmTests :koverXmlReportJvmTests   # no threshold; build/reports/kover/htmlJvmTests
 step "sample: realtime-telemetry"               bash -c 'cd samples/realtime-telemetry && ../../gradlew --max-workers=2 -q jvmTest'
 step "fuzz: regression corpus"                  $G "${KSL_FUZZ_ARGS[@]}"
 step "sim: Monte-Carlo (KSL_SIM_RUNS=200)"      $G "${KSL_SIM_ARGS[@]}"
