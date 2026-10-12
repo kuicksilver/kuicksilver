@@ -38,10 +38,14 @@ internal class PacketReceiver(
     private var packetType = PacketType.Initial
     internal var level = 0
 
+    /** A packet held for its keys, with the context of the datagram it arrived in (restored when it is fed again). */
     private class Buffered(
         val level: Int,
         val bytes: ByteArray,
         val from: InetSocketAddress,
+        val socket: PathId,
+        val ecn: io.kuicksilver.quic.Ecn,
+        val datagramLength: Int,
     )
 
     private val buffered = ArrayList<Buffered>()
@@ -194,7 +198,7 @@ internal class PacketReceiver(
             val bytes = ByteArray(hv.packetEnd - hv.pnOffset + (hv.pnOffset - headerStart()))
             val start = headerStart()
             data.copyTo(bytes, start, 0, bytes.size)
-            buffered += Buffered(level, bytes, from)
+            buffered += Buffered(level, bytes, from, socket, datagramEcn, datagramLength)
             return false
         }
         val sp = c.loss.space(space)
@@ -368,31 +372,50 @@ internal class PacketReceiver(
 
     private fun headerStart(): Int = if (hv.type == PacketType.OneRtt) hv.dcidOff - 1 else hv.dcidOff - 6
 
-    /** Packets kept until their keys arrived are fed again (they already counted toward the amplification budget). */
+    /**
+     * Packets kept until their keys arrived are fed again (they already counted toward the amplification budget). Each one is processed
+     * under the socket, source, ECN mark and length of its own datagram, not of the datagram that brought the keys (RFC 9000 section
+     * 13.4.1: the ECN counts follow the datagram the packet arrived in); the current datagram's context is restored afterwards.
+     */
     fun replayBuffered(level: Int) {
         if (buffered.none { it.level == level }) return
         val again = buffered.filter { it.level == level }
         buffered.removeAll { it.level == level }
-        for (b in again) {
-            val buf = PacketBuffer.allocate(b.bytes.size)
-            try {
-                buf.copyFrom(b.bytes, 0, 0, b.bytes.size)
-                var off = 0
-                while (off <
-                    b.bytes.size
-                ) {
-                    if (!PacketHeaderCodec.parse(buf, off, b.bytes.size, c.localCid.length, hv)) break
-                    processPacket(buf, b.from)
-                    if (hv.packetEnd <=
-                        off
+        val savedSocket = socket
+        val savedFrom = from
+        val savedLength = datagramLength
+        val savedEcn = datagramEcn
+        try {
+            for (b in again) {
+                val buf = PacketBuffer.allocate(b.bytes.size)
+                try {
+                    buf.copyFrom(b.bytes, 0, 0, b.bytes.size)
+                    socket = b.socket
+                    from = b.from
+                    datagramLength = b.datagramLength
+                    datagramEcn = b.ecn
+                    var off = 0
+                    while (off <
+                        b.bytes.size
                     ) {
-                        break
+                        if (!PacketHeaderCodec.parse(buf, off, b.bytes.size, c.localCid.length, hv)) break
+                        processPacket(buf, b.from)
+                        if (hv.packetEnd <=
+                            off
+                        ) {
+                            break
+                        }
+                        off = hv.packetEnd
                     }
-                    off = hv.packetEnd
+                } finally {
+                    buf.close()
                 }
-            } finally {
-                buf.close()
             }
+        } finally {
+            socket = savedSocket
+            from = savedFrom
+            datagramLength = savedLength
+            datagramEcn = savedEcn
         }
     }
 

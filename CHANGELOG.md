@@ -74,6 +74,8 @@ Hardening of the QUIC core for 0.2.0 (review of 2026-10-08, deferred items):
 
 - QUIC: an unanswered `PATH_CHALLENGE` is repeated with an exponentially growing gap (1, 2, 4 ... x PTO) instead of
   once per PTO (RFC 9000 §8.2.1, RFC 9002 §6.2.1).
+- QUIC: a packet buffered until its keys arrive is processed with the ECN mark, socket, source and length of its own
+  datagram, not of the datagram that delivered the keys (RFC 9000 §13.4.1).
 
 Fixes from a full five-reviewer pass over the code before the first release, among them:
 
