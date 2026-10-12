@@ -81,6 +81,9 @@ Hardening of the QUIC core for 0.2.0 (review of 2026-10-08, deferred items):
 - QUIC server: a Retry token is bound to the Retry's Source Connection ID; an Initial presenting it under another DCID is
   refused with a stateless `INVALID_TOKEN` close instead of becoming a connection (RFC 9000 §8.1.2–§8.1.4). Tokens minted
   before this change are not accepted (they live 10 s).
+- QUIC: ECN validation looks only at ACKs that raise the largest acknowledged packet, keeps the peer's counts per packet
+  number space instead of per path, and counts newly acknowledged marked packets per path; a reordered ACK no longer
+  fails ECN on the path, and a new path no longer takes the first counts it sees for a CE signal (RFC 9000 §13.4.2.1).
 
 Fixes from a full five-reviewer pass over the code before the first release, among them:
 

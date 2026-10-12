@@ -209,14 +209,16 @@ internal class ConnectionLossListener(
 
     override fun onEcnAck(
         space: SpaceId,
-        ecn: LongArray?,
+        countsPresent: Boolean,
+        countsValid: Boolean,
         newlyAckedMarked: Int,
+        ceGrew: Boolean,
         now: TimeMark,
         largestSentTime: TimeMark,
         pathId: Int,
     ) {
         val p = core.paths.byId(PathId(pathId)) ?: return // the path is gone: its ECN state too
-        val ceGrew = p.ecn.onAck(space.ordinal, ecn, newlyAckedMarked)
+        p.ecn.onAck(countsPresent, countsValid, newlyAckedMarked)
         core.ecnPathFailed(p)
         if (ceGrew &&
             (core.ceRecoveryStart == TimeMark.NEVER || largestSentTime > core.ceRecoveryStart)

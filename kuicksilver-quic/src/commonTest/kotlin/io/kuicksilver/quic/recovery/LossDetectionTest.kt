@@ -40,6 +40,20 @@ class LossDetectionTest {
         val acked = ArrayList<Long>()
         val lost = ArrayList<Long>()
         val events = ArrayList<String>()
+        var ecnCalls = 0
+
+        override fun onEcnAck(
+            space: SpaceId,
+            countsPresent: Boolean,
+            countsValid: Boolean,
+            newlyAckedMarked: Int,
+            ceGrew: Boolean,
+            now: TimeMark,
+            largestSentTime: TimeMark,
+            pathId: Int,
+        ) {
+            ecnCalls++
+        }
 
         override fun onAcked(
             space: SpaceId,
@@ -78,12 +92,14 @@ class LossDetectionTest {
         at: TimeMark,
         size: Int = 1200,
         ackEliciting: Boolean = true,
+        marked: Boolean = false,
     ) {
         val p = ld.space(space).newSentPacket()
         p.pn = pn
         p.timeSent = at
         p.size = size
         p.ackEliciting = ackEliciting
+        p.ecnMarked = marked
         p.inFlight =
             ackEliciting
         ld.onPacketSent(space, p, at)
@@ -92,13 +108,26 @@ class LossDetectionTest {
     private fun ack(
         vararg ranges: Pair<Long, Long>,
         delay: Long = 0,
+        ecn: LongArray? = null,
     ): AckFrameView =
         AckFrameView().also { v ->
             v.largest =
                 ranges[0].second
             ; v.ackDelay = delay
             for ((s, l) in ranges) v.addRange(s, l)
+            if (ecn != null) v.setEcn(ecn[0], ecn[1], ecn[2])
         }
+
+    @Test fun staleAckDoesNotReachEcnValidation() {
+        // RFC 9000 section 13.4.2.1: an ACK that does not raise the largest acknowledged packet was reordered on the way; its counts
+        // are older than the ones already validated and must not be validated (or counted) again
+        val (ld, l) = ld()
+        for (pn in 0L..3L) send(ld, SpaceId.Application, pn, t0 + pn.toInt().milliseconds, marked = true)
+        ld.onAck(SpaceId.Application, ack(3L to 3L, ecn = longArrayOf(4, 0, 0)), t0 + 100.milliseconds)
+        assertEquals(1, l.ecnCalls)
+        ld.onAck(SpaceId.Application, ack(0L to 1L, ecn = longArrayOf(2, 0, 0)), t0 + 101.milliseconds)
+        assertEquals(1, l.ecnCalls, "a stale ACK does not reach ECN validation")
+    }
 
     private fun sample(
         ld: LossDetection,

@@ -190,7 +190,7 @@ public class ConnectionCore internal constructor(
 
     internal fun ecnReceivedForTest(): LongArray = loss.space(SpaceId.Application).ack.ecnCounts ?: LongArray(3)
 
-    internal fun ecnPeerCountsForTest(): LongArray = path.ecn.peerCountsForTest
+    internal fun ecnPeerCountsForTest(): LongArray = loss.space(SpaceId.Application).peerEcn
 
     // ---- DATAGRAM (RFC 9221) ----
 

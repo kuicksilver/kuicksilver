@@ -36,11 +36,18 @@ internal class PtoProbe(
 )
 
 internal interface LossListener {
-    /** One ACK frame processed: its ECN counts (null without), how many newly acknowledged packets were sent marked, the largest newly acknowledged packet's send time and path. */
+    /**
+     * One ACK frame that raised the largest acknowledged packet, for one path it newly acknowledged packets on: whether the frame
+     * carried ECN counts, whether the counts moved consistently with the last ones of the space ([countsValid]: no decrease, no ECT(1),
+     * growth of at least the newly acknowledged marked packets of all paths), how many newly acknowledged packets of [pathId] were sent
+     * marked, whether the CE count grew (reported once, to the path of the largest newly acknowledged packet), that packet's send time.
+     */
     fun onEcnAck(
         space: SpaceId,
-        ecn: LongArray?,
+        countsPresent: Boolean,
+        countsValid: Boolean,
         newlyAckedMarked: Int,
+        ceGrew: Boolean,
         now: TimeMark,
         largestSentTime: TimeMark,
         pathId: Int,
@@ -154,6 +161,7 @@ internal class LossDetection(
                 }
             }
         }
+        val prevLargestAcked = sp.largestAcked
         if (ack.largest > sp.largestAcked) sp.largestAcked = ack.largest
         acked.clear()
         // sent packets are in ascending order, ACK ranges in descending order: one pass over both (RFC 9002 appendix A.7 in linear time)
@@ -205,10 +213,8 @@ internal class LossDetection(
             rtt.onSample(now - largestNewlyAcked.timeSent, ackDelay, handshakeConfirmed, peerMaxAckDelay)
             listener.onRttSample(now, rtt.latest, rtt.min)
         }
-        var newlyAckedMarked = 0
-        for (k in acked.indices) if (acked[k].ecnMarked) newlyAckedMarked++
-        // RFC 9000 section 13.4.2: validate the counts, CE growth is a congestion signal
-        listener.onEcnAck(space, ack.ecn, newlyAckedMarked, now, largestNewlyAcked.timeSent, largestNewlyAcked.pathId)
+        // RFC 9000 section 13.4.2.1: only an ACK that raises the largest acknowledged packet carries counts newer than the last ones
+        if (ack.largest > prevLargestAcked) processEcn(sp, space, ack, now, largestNewlyAcked)
         detectLost(sp, now)
         for (k in acked.indices) {
             val p = acked[k]
@@ -230,6 +236,64 @@ internal class LossDetection(
         }
         if (peerCompletedAddressValidation()) ptoCount = 0
         timerBase = now
+    }
+
+    private var ecnPaths = IntArray(4)
+    private var ecnMarkedPerPath = IntArray(4)
+
+    /**
+     * The ECN part of an ACK that raised the largest acknowledged packet (RFC 9000 section 13.4.2): the counts are compared with the
+     * last ones of the space (kept in [PacketNumberSpace.peerEcn]) and must not decrease, must not show ECT(1) and must grow by at
+     * least the newly acknowledged marked packets; every path with newly acknowledged packets then learns the verdict with its own
+     * marked count, and CE growth is reported once, to the path of the largest newly acknowledged packet (as quic-go's ecn.go
+     * validates per path from the connection-wide counts).
+     */
+    private fun processEcn(
+        sp: PacketNumberSpace,
+        space: SpaceId,
+        ack: AckFrameView,
+        now: TimeMark,
+        largest: SentPacket,
+    ) {
+        var paths = 0
+        var totalMarked = 0
+        for (k in acked.indices) {
+            val p = acked[k]
+            var i = 0
+            while (i < paths && ecnPaths[i] != p.pathId) i++
+            if (i == paths) {
+                if (paths == ecnPaths.size) {
+                    ecnPaths = ecnPaths.copyOf(paths * 2)
+                    ecnMarkedPerPath = ecnMarkedPerPath.copyOf(paths * 2)
+                }
+                ecnPaths[paths] = p.pathId
+                ecnMarkedPerPath[paths] = 0
+                paths++
+            }
+            if (p.ecnMarked) {
+                ecnMarkedPerPath[i]++
+                totalMarked++
+            }
+        }
+        val counts = ack.ecn
+        var valid = false
+        var ceGrew = false
+        if (counts != null) {
+            val ect0 = counts[0] - (if (sp.peerEcnSeen) sp.peerEcn[0] else 0L)
+            val ect1 = counts[1] - (if (sp.peerEcnSeen) sp.peerEcn[1] else 0L)
+            val ce = counts[2] - (if (sp.peerEcnSeen) sp.peerEcn[2] else 0L)
+            valid = ect0 >= 0 && ect1 == 0L && ce >= 0 && ect0 + ect1 + ce >= totalMarked
+            ceGrew = ce > 0
+            sp.peerEcn[0] = counts[0]
+            sp.peerEcn[1] = counts[1]
+            sp.peerEcn[2] = counts[2]
+            sp.peerEcnSeen = true
+        }
+        for (i in 0 until paths) {
+            val pid = ecnPaths[i]
+            if (ecnMarkedPerPath[i] == 0 && pid != largest.pathId) continue // nothing of this path to validate
+            listener.onEcnAck(space, counts != null, valid, ecnMarkedPerPath[i], ceGrew && pid == largest.pathId, now, largest.timeSent, pid)
+        }
     }
 
     /** Removes the marked packets in one pass and clears their marks. */

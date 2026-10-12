@@ -25,6 +25,10 @@ internal class PacketNumberSpace(
     private var nextSkip: Long = -1
 
     internal val sent = ArrayList<SentPacket>()
+
+    /** The peer's last reported ECN counts for this space (ECT(0), ECT(1), CE), taken from ACKs that raised the largest acknowledged packet (RFC 9000 section 13.4.2.1). */
+    internal val peerEcn = LongArray(3)
+    internal var peerEcnSeen = false
     internal var lossTime: TimeMark = TimeMark.NEVER
     internal var lastAckElicitingTime: TimeMark = TimeMark.NEVER
     internal var ackElicitingInFlight = 0
