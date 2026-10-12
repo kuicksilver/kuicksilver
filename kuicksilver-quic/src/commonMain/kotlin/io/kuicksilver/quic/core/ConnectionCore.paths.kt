@@ -192,7 +192,14 @@ internal fun ConnectionCore.startValidation(p: Path) {
  */
 internal fun ConnectionCore.nextChallengeDelay(p: Path): Duration {
     val r = p.challengeRetries
-    val shift = if (r < 1) 0 else if (r < 7) r - 1 else 6
+    val shift =
+        if (r < 1) {
+            0
+        } else if (r < 7) {
+            r - 1
+        } else {
+            6
+        }
     p.challengeRetries++
     return pto() * (1 shl shift)
 }

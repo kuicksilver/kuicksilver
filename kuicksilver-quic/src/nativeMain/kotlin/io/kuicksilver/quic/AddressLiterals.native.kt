@@ -49,7 +49,7 @@ private fun parseIpv6(s: String): ByteArray? {
     val left = groups(head, allowV4 = gap < 0) ?: return null
     val right = if (gap >= 0) groups(tail, allowV4 = true) ?: return null else ArrayList()
     val total = left.size + right.size
-    if (gap < 0 && total != 16 || gap >= 0 && total > 14) return null
+    if ((gap < 0 && total != 16) || (gap >= 0 && total > 14)) return null
     val out = ByteArray(16)
     for (i in left.indices) out[i] = left[i]
     for (i in right.indices) out[16 - right.size + i] = right[i]
