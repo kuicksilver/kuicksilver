@@ -97,10 +97,32 @@ internal class LoopGroup private constructor(
         loops[from].testMisrouteTo = to
     }
 
+    /** One socket of the group and whether the system granted it SO_REUSEPORT (a test hook supplies its own). */
+    internal class SharedPortSocket(
+        val io: io.kuicksilver.quic.DatagramIo,
+        val reusePort: Boolean,
+    )
+
     companion object {
+        internal const val NO_REUSEPORT = "loops > 1 needs SO_REUSEPORT, which this platform/socket does not grant"
+
         suspend fun bind(
             local: InetSocketAddress,
             config: QuicEndpointConfig,
+        ): QuicEndpoint =
+            bindWith(local, config) { at ->
+                KslDatagramIo.open(at, reusePort = true)?.let { SharedPortSocket(it, it.reusePortGranted) }
+            }
+
+        /**
+         * [bind] over [open]. The first socket must come back with SO_REUSEPORT granted, else it is closed and `bind` throws
+         * [UnsupportedOperationException]: without the grant the second bind on the port fails with a socket error (Windows'
+         * exclusive bind, Darwin, Linux under a seccomp filter), which is not the documented refusal.
+         */
+        internal suspend fun bindWith(
+            local: InetSocketAddress,
+            config: QuicEndpointConfig,
+            open: (InetSocketAddress) -> SharedPortSocket?,
         ): QuicEndpoint {
             require(config.loops > 1 && config.server != null)
             EndpointLoop.checkPayloadSize(config.server.quic)
@@ -111,25 +133,19 @@ internal class LoopGroup private constructor(
                     "loops > 1 needs the accelerated transport with SO_REUSEPORT, not a caller-supplied DatagramIo",
                 )
             }
-            // One guard for every platform without kernel flow hashing over SO_REUSEPORT: no accelerated socket at all, Darwin
-            // (one socket gets all unicast datagrams) and Windows (exclusive bind): ksl_udp grants KSL_UDP_REUSEPORT on Linux only.
-            val first = KslDatagramIo.open(local, reusePort = true)
-            if (first == null || !first.reusePortGranted) {
-                first?.close()
-                throw UnsupportedOperationException(
-                    "loops > 1 needs the accelerated transport with SO_REUSEPORT flow hashing (Linux, Android); not on Apple or Windows",
-                )
+            val first = open(local) ?: throw UnsupportedOperationException("loops > 1 needs the accelerated transport")
+            if (!first.reusePort) {
+                first.io.close()
+                throw UnsupportedOperationException(NO_REUSEPORT)
             }
-            val ios = ArrayList<KslDatagramIo>(config.loops)
-            ios += first
+            val ios = ArrayList<io.kuicksilver.quic.DatagramIo>(config.loops)
+            ios += first.io
             try {
-                val port = first.localAddress.port
+                val port = first.io.localAddress.port
                 while (ios.size <
                     config.loops
                 ) {
-                    ios +=
-                        KslDatagramIo.open(local.withLiteralHost(port), reusePort = true)
-                            ?: throw UnsupportedOperationException("accelerated transport unavailable")
+                    ios += open(local.withLiteralHost(port))?.io ?: throw UnsupportedOperationException("accelerated transport unavailable")
                 }
             } catch (e: Throwable) {
                 for (io in ios) io.close()

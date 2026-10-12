@@ -26,6 +26,7 @@ import kotlinx.io.IOException
 import kotlin.concurrent.Volatile
 import kotlin.test.BeforeTest
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.milliseconds
@@ -75,6 +76,23 @@ class LoopGroupTest {
             }.build()
 
     private val clientConfig = QuicClientConfig.Builder(CoreFixtures.client()).build()
+
+    @Test fun loopsAboveOneWithoutReusePortGrantIsUnsupported() =
+        runBlocking {
+            val net = MemoryNetwork()
+            val first = net.open(serverAddr)
+            var opened = 0
+            val e =
+                assertFailsWith<UnsupportedOperationException> {
+                    LoopGroup.bindWith(serverAddr, config) { at ->
+                        opened++
+                        LoopGroup.SharedPortSocket(if (opened == 1) first else net.open(at), reusePort = false)
+                    }
+                }
+            assertEquals(LoopGroup.NO_REUSEPORT, e.message)
+            assertEquals(1, opened, "no second bind without the grant")
+            assertTrue(first.closed, "the first socket is closed")
+        }
 
     @Test fun aDatagramForAnotherLoopBeforeStartupDoesNotKillTheGroup() =
         runBlocking {
