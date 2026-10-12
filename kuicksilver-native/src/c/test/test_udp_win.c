@@ -3,13 +3,24 @@
 /* ksl_udp_* on Windows (ksl_udp_win.c, ADR-0006): batches over WSASendMsg/WSARecvMsg, USO/URO and ECN where the system grants
  * them, DF, dual-stack, exclusive bind, the wake socket. Called from run_udp (test_udp.c) on _WIN32 only. */
 #ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
 #include "test_common.h"
 #include <windows.h>
+
+int ksl_udp_has_wake_for_test(ksl_udp *);
 
 #define W_WSAEOPNOTSUPP 10045
 #define W_WSAENETUNREACH 10051
 
 static void w4(uint8_t a[KSL_UDP_ADDR_LEN], uint16_t port) { memset(a, 0, KSL_UDP_ADDR_LEN); a[0] = 4; a[1] = (uint8_t)(port >> 8); a[2] = (uint8_t)port; a[3] = 127; a[6] = 1; }
+/* a plain Winsock socket with SO_REUSEADDR on 127.0.0.1:port: 1 when its bind is refused */
+static int raw_reuseaddr_bind_fails(const uint8_t a[KSL_UDP_ADDR_LEN]) {
+    SOCKET s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP); if (s == INVALID_SOCKET) { printf("raw socket: %d\n", WSAGetLastError()); return 0; }
+    BOOL yes = TRUE; if (setsockopt(s, SOL_SOCKET, SO_REUSEADDR, (const char *)&yes, sizeof yes) != 0) { printf("SO_REUSEADDR: %d\n", WSAGetLastError()); closesocket(s); return 0; }
+    struct sockaddr_in sa; memset(&sa, 0, sizeof sa); sa.sin_family = AF_INET; memcpy(&sa.sin_port, a + 1, 2); memcpy(&sa.sin_addr, a + 3, 4);
+    int r = bind(s, (struct sockaddr *)&sa, sizeof sa); closesocket(s); return r != 0;
+}
 static uint16_t wport(const uint8_t a[KSL_UDP_ADDR_LEN]) { return (uint16_t)((a[1] << 8) | a[2]); }
 static ksl_udp *wopen(const uint8_t at[KSL_UDP_ADDR_LEN], int flags, uint8_t local[KSL_UDP_ADDR_LEN]) {
     uint32_t err = 0; char msg[128] = {0}; ksl_udp *u = ksl_udp_open(at, flags, &err, msg, sizeof msg); if (!u) { printf("open: %u %s\n", err, msg); return NULL; }
@@ -68,7 +79,7 @@ void run_udp_win(void) {
     else printf("udp(win): ECN not granted by this Windows, ECN roundtrip skipped\n");
     /* udp_win_df_probe_mode: IP_MTU_DISCOVER is PROBE where the system has the option, never DO */
     { uint8_t fd8[4]; size_t n = 0; CHECK(ksl_udp_get(a, KSL_UDP_GET_FD, fd8, 4, &n) == KSL_OK && n == 4, "fd"); int fd = (int)(((uint32_t)fd8[0] << 24) | ((uint32_t)fd8[1] << 16) | ((uint32_t)fd8[2] << 8) | fd8[3]);
-      int mode = ksl_udp_df_mode_for_test(fd); CHECK(mode == 3 || mode == -1, "PROBE (or no IP_MTU_DISCOVER on this system), never DO"); }
+      int mode = ksl_udp_df_mode_for_test(fd); CHECK(mode == 3, "IP_MTU_DISCOVER reads back PROBE (3); -1 (getsockopt failed) is a failure, never DO"); }
     /* udp_win_truncated_datagram_dropped: 1400 bytes into a 1000-byte slot are dropped, not truncated */
     { uint8_t *bufs[1]; uint32_t lens[1] = { 1400 }; uint8_t ecns[1] = { 0 }; bufs[0] = malloc(1400); memset(bufs[0], 7, 1400); uint32_t sent = 0;
       CHECK(ksl_udp_send(a, bufs, lens, lb, ecns, 1, &sent) == KSL_OK && sent == 1, "big one sent");
@@ -97,9 +108,12 @@ void run_udp_win(void) {
         CHECK(wping(d, a, la, 1, 150, 0, NULL, NULL, rl) == 1 && rl[0] == 150, "a family-4 destination leaves through the IPv6 socket (v4-mapped)");
         ksl_udp_close(d); } }
     /* udp_win_exclusive_bind: a second socket on a bound port is refused (SO_EXCLUSIVEADDRUSE), REUSEPORT or not */
-    { uint32_t err = 0; char msg[128] = {0}; ksl_udp *r2 = ksl_udp_open(la, KSL_UDP_REUSEPORT, &err, msg, sizeof msg); CHECK(r2 == NULL && err == KSL_E_BAD_ARG, "no second socket on the same port"); if (r2) ksl_udp_close(r2); }
+    { uint32_t err = 0; char msg[128] = {0}; ksl_udp *r2 = ksl_udp_open(la, KSL_UDP_REUSEPORT, &err, msg, sizeof msg); CHECK(r2 == NULL && err == KSL_E_BAD_ARG, "no second socket on the same port"); if (r2) ksl_udp_close(r2);
+      /* a foreign socket asking for SO_REUSEADDR: without SO_EXCLUSIVEADDRUSE on ours, Windows would let it bind the same port */
+      CHECK(raw_reuseaddr_bind_fails(la), "a raw SO_REUSEADDR socket cannot bind the exclusive port"); }
     /* udp_win_close_wakes_blocked_recv: the wake socket ends a 5 s receive within 100 ms of shutdown */
-    { uint8_t lc[KSL_UDP_ADDR_LEN]; ksl_udp *c = wopen_lo(0, lc); CHECK(c != NULL, "socket for close test"); if (c) CHECK(ksl_udp_close_wakes_for_test(c) <= 100, "shutdown wakes a blocked recv within 100 ms"); }
+    { uint8_t lc[KSL_UDP_ADDR_LEN]; ksl_udp *c = wopen_lo(0, lc); CHECK(c != NULL, "socket for close test");
+      if (c) { CHECK(ksl_udp_has_wake_for_test(c), "the wake socket exists (else the 50 ms slice, not the wake-up, would pass the timing)"); CHECK(ksl_udp_close_wakes_for_test(c) <= 100, "shutdown wakes a blocked recv within 100 ms"); } }
     /* udp_win_shutdown_then_calls_fail_fast */
     { uint8_t lc[KSL_UDP_ADDR_LEN]; ksl_udp *c = wopen_lo(0, lc); CHECK(c != NULL, "socket for shutdown test");
       if (c) { ksl_udp_shutdown(c); uint8_t buf[8] = {0}; uint8_t *bufs[1] = { buf }; uint32_t lens[1] = { 8 }, rc[1] = { 8 }, got = 0, sent = 0; uint8_t e[1] = { 0 };

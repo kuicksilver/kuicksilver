@@ -120,11 +120,12 @@ static void from_sockaddr(const struct sockaddr_storage *ss, uint8_t a[KSL_UDP_A
 }
 
 /* a UDP socket on 127.0.0.1 connected to itself: shutdown sends it one byte, WSAPoll sees it; connected, it takes datagrams
-   from itself only, so no other local process can fake a wake-up */
+   from itself only, and bound with SO_EXCLUSIVEADDRUSE, so no other local process can fake a wake-up */
 static SOCKET open_wake(struct sockaddr_in *sa) {
     SOCKET w = WSASocketW(AF_INET, SOCK_DGRAM, IPPROTO_UDP, NULL, 0, WSA_FLAG_NO_HANDLE_INHERIT); if (w == INVALID_SOCKET) return w;
-    memset(sa, 0, sizeof *sa); sa->sin_family = AF_INET; sa->sin_addr.s_addr = htonl(INADDR_LOOPBACK); int sl = (int)sizeof *sa; u_long nb = 1;
-    if (bind(w, (struct sockaddr *)sa, sl) != 0 || getsockname(w, (struct sockaddr *)sa, &sl) != 0 || connect(w, (struct sockaddr *)sa, sl) != 0 || ioctlsocket(w, FIONBIO, &nb) != 0) { closesocket(w); return INVALID_SOCKET; }
+    memset(sa, 0, sizeof *sa); sa->sin_family = AF_INET; sa->sin_addr.s_addr = htonl(INADDR_LOOPBACK); int sl = (int)sizeof *sa; u_long nb = 1; BOOL yes = TRUE;
+    /* exclusive, as the data socket: a local process binding the port with SO_REUSEADDR could otherwise share it */
+    if (setsockopt(w, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, (const char *)&yes, sizeof yes) != 0 || bind(w, (struct sockaddr *)sa, sl) != 0 || getsockname(w, (struct sockaddr *)sa, &sl) != 0 || connect(w, (struct sockaddr *)sa, sl) != 0 || ioctlsocket(w, FIONBIO, &nb) != 0) { closesocket(w); return INVALID_SOCKET; }
     return w;
 }
 
@@ -329,6 +330,7 @@ void ksl_udp_fail_next_send_for_test(ksl_udp *u, int err) { u->fail_next_send = 
 /* IP_MTU_DISCOVER of an IPv4 socket (3 = PROBE); -1 where the system has no such option (before Windows 10 1703) */
 int ksl_udp_df_mode_for_test(int fd) { DWORD v = 0; int l = (int)sizeof v; if (getsockopt((SOCKET)(UINT_PTR)(uint32_t)fd, IPPROTO_IP, IP_MTU_DISCOVER, (char *)&v, &l) != 0) return -1; return (int)v; }
 static DWORD WINAPI blocked_recv(LPVOID arg) { ksl_udp *u = arg; uint8_t buf[64]; uint8_t *bufs[1] = { buf }; uint32_t caps[1] = { 64 }, lens[1], got; uint8_t a[KSL_UDP_ADDR_LEN], e[1]; ksl_udp_recv(u, bufs, caps, lens, a, e, 1, &got, 5000); return 0; }
+int ksl_udp_has_wake_for_test(ksl_udp *u) { return u->wake != INVALID_SOCKET; }
 int ksl_udp_close_wakes_for_test(ksl_udp *u) {
     HANDLE t = CreateThread(NULL, 0, blocked_recv, u, 0, NULL); if (!t) return 100000;
     Sleep(20);
