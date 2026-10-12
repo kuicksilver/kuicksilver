@@ -1,6 +1,6 @@
 # Kuicksilver — threat model
 
-Date: 2026-10-02, updated 2026-10-08 (K1–K5 statuses and the full review). Status: current document (approved by the owner 2026-10-02, updated per milestone); revised after a cross-check against RFC 9000 §21, RFC 9001/9002/9114/9204/9308/8899 and the CVEs of quinn, quic-go, quiche, ngtcp2, msquic, s2n-quic, OpenSSL, Netty, picoquic, quicly. Related: docs/architecture.md, the resource limits in docs/guide/quic.md ("Glitch protection", "Admission and endpoint limits").
+Date: 2026-10-02, updated 2026-10-08 (K1–K5 statuses and the full review) and 2026-10-13 (K7 statuses, the 0.2.0 work). Status: current document (approved by the owner 2026-10-02, updated per milestone); revised after a cross-check against RFC 9000 §21, RFC 9001/9002/9114/9204/9308/8899 and the CVEs of quinn, quic-go, quiche, ngtcp2, msquic, s2n-quic, OpenSSL, Netty, picoquic, quicly. Related: docs/architecture.md, the resource limits in docs/guide/quic.md ("Glitch protection", "Admission and endpoint limits").
 
 ## 1. Assets
 
@@ -140,6 +140,8 @@ K3 status: the core has no ICMP PTB input — the path size is learned only from
 Final K3 review: a PMTUD pause on a path that is no longer active is lifted by a timer (`Pmtud.onTimeout`), otherwise the connection's deadline got stuck in the past and the endpoint loop never slept (`PmtudTest.pauseOnFormerPathDoesNotStallTimers`).
 
 K3 status: a `ksl_udp` socket with the `KSL_UDP_DF` flag sets `IP_PMTUDISC_PROBE` (and `IPV6_DONTFRAG` for v6), `test_udp.c` `udp_df_probe_mode` checks the option value (3, not `_DO`); `EMSGSIZE` on one datagram skips only its slot. native-tls review: destination errors (`EINVAL` for port 0 or link-local IPv6 without a scope id, `EAFNOSUPPORT`, `EADDRNOTAVAIL`, `EDESTADDRREQ`) also lose only the slot and no longer switch ECN/GSO off forever — a forged Initial from port 0 can neither disable ECN on the server nor abort sending a batch (`test_udp.c` `udp_bad_destination_keeps_ecn_and_gso`, Linux); `ksl_udp_recv` drops datagrams from link-local IPv6 (they cannot be answered). The portable NIO socket does not set DF, so PMTUD with real peers is enabled together with `KslDatagramIo`.
+
+K7 status (Apple, Windows; ADR-0006): Darwin has no `_PROBE` mode, so DF is `IP_DONTFRAG`/`IPV6_DONTFRAG` and Darwin may cache a path MTU from a forged ICMPv6 PTB (clamped to at least 1280): a datagram above it fails with `EMSGSIZE`, which loses only that slot, and the black-hole rule falls back to 1200, so sending never stops (not tested: no ICMP injection on the macOS host). Windows sets `IP_DONTFRAGMENT`/`IPV6_DONTFRAG` and `IP_MTU_DISCOVER`/`IPV6_MTU_DISCOVER = PROBE` where the system has it (Windows 10 1703+); its wake socket is bound with `SO_EXCLUSIVEADDRUSE` and connected to itself, so no other local process can fake a shutdown. The Windows tests (`test_udp_win.c`) need a Windows host; their verification for 0.2.0 is pending.
 
 ### 3.17 HTTP/3 and QPACK (RFC 9114 §10, RFC 9204 §7)
 

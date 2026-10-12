@@ -3,7 +3,8 @@
 Kuicksilver plugs into Ktor 3.6 as a server engine (`io.kuicksilver:kuicksilver-ktor-server`) and a client engine
 (`io.kuicksilver:kuicksilver-ktor-client`). Both speak HTTP/1.1 over TLS 1.3 (`kuicksilver-ktor-network`) and HTTP/3
 (`kuicksilver-http3`); HTTP/2 is not implemented (ADR-0009). The code blocks below compile and run as `GuideSamplesTest`
-(`kuicksilver-ktor-server/src/jvmTest` and `kuicksilver-ktor-client/src/jvmTest`).
+(`kuicksilver-ktor-server/src/jvmTest` and `kuicksilver-ktor-client/src/jvmTest`); the engines' other tests run on every
+target (see "Compatibility").
 
 ## Server
 
@@ -55,7 +56,7 @@ network. Responses never carry `Transfer-Encoding` or other connection-specific 
 simply a sequence of DATA frames.
 
 Knobs, named after Ktor's Netty engine where one exists: `http3` (on), `quic` (transport settings), `quicMaxIdleTimeout`
-(applies when `quic` is the default), `udpSocketCount` (endpoint loops on `SO_REUSEPORT`, Linux), `quicAdmission`
+(applies when `quic` is the default), `udpSocketCount` (endpoint loops on `SO_REUSEPORT`, Linux and Android), `quicAdmission`
 (Retry policy, Ktor-Netty's `quicTokenHandler`), `http3Settings`. UDP socket buffer sizes are not configurable yet.
 
 The engine serves HTTP/3 on every target, Kotlin/Native Linux, Apple and Windows included (the accelerated `ksl` socket,
@@ -197,8 +198,9 @@ default.
 Both engines run Ktor 3.6.0's own engine contract tests, vendored under `src/commonTest/kotlin/.../contract` (and
 `src/jvmTest` for the JVM-only `ContentTestSuite`; attribution in `NOTICE`), over HTTP/1.1 and over HTTP/3, on every target:
 the JVM, Android, Linux, macOS, iOS and Windows. The HTTP/3 runs, like the engines' own HTTP/3 tests in `commonTest`,
-need a QUIC server peer and run where one can bind (the JVM, Android, Linux; elsewhere they pass without running). The
-Linux test executables run the full set; macOS runs the HTTP/1.1 half.
+need a QUIC server peer and run where one can bind, which since 0.2.0 is every target with the accelerated socket: the
+JVM, Android, Linux, macOS and Windows (where a probe finds no server, they pass without running). iOS is compiled and
+linked, but its tests have not run; Windows runs are not yet verified (no passing CI run, local Windows VM pending).
 
 **Client** (`kuicksilver-ktor-client`): `ContentTest`, `PostTest`, `UploadTest`, `DownloadTest`, `HttpRedirectTest`,
 `HttpTimeoutTest` and `WebSocketTest` against Ktor's test-server routes hosted on the Kuicksilver server engine; every

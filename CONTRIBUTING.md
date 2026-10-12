@@ -96,7 +96,7 @@ To make the floors blocking, download the `perf-<peer>` result artifacts of a fe
   otherwise.
 - **Commits.** `<type>(<scope>): <what>` on the first line (`feat`, `fix`, `test`, `docs`, `build`, `ci`, `refactor`,
   `chore`; scope is the module or area, for example `quic`, `tls`, `http3`, `ksl`), then a body that says why.
-- **Documentation.** The code blocks of `docs/guide/tls.md`, `quic.md` and `http3.md` are compiled and run by
+- **Documentation.** The code blocks of `docs/guide/tls.md`, `quic.md`, `http3.md` and `ktor.md` are compiled and run by
   `GuideSamplesTest` (marked `// guide:<module>:<name>`); change both together. Behaviour that touches an RFC or a
   threat updates `docs/spec/rfc-compliance.md` or `docs/spec/threat-model.md` in the same pull request.
 
@@ -112,7 +112,8 @@ To make the floors blocking, download the `perf-<peer>` result artifacts of a fe
   a generous timeout. A test that is flaky is a bug; report the seed.
 - **Platforms.** Common behaviour is tested in `commonTest` so it runs on the JVM, Android and Native. Tests that need a
   Linux-only facility (GSO/GRO, `SO_REUSEPORT` flow hashing) skip themselves elsewhere and run in the Docker steps; the
-  accelerated UDP socket itself also runs on macOS.
+  accelerated UDP socket itself also runs on macOS and Windows (Windows tests need a Windows host: the CI `windows` jobs
+  or a local Windows VM).
 - **Coverage.** `./gradlew --max-workers=2 -Pkuicksilver.coverage :koverHtmlReportJvmTests` runs the JVM tests of the
   published modules under Kover and merges their line and branch coverage into `build/reports/kover/htmlJvmTests/index.html`.
   `:koverXmlReportJvmTests` writes the same data as XML to `build/reports/kover/reportJvmTests.xml`, and

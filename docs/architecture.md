@@ -95,7 +95,8 @@ and public API, its internal transitions are extension functions in `core/Connec
 `EndpointLoop` (one loop, one socket, a timer heap), `LoopGroup` (several loops on one port), `ConnectionRuntime`
 (`QuicConnection`: lifecycle, paths, datagrams), `StreamRuntime` with its ktor-io channels (`StreamChannels.kt`)
 and datagram queues. `DatagramIo` is the socket abstraction, with the accelerated `KslDatagramIo` (batched UDP with ECN and DF
-through `ksl`, GSO/GRO on Linux; Linux, Android, Apple) and the portable NIO or ktor-network sockets (ADR-0006).
+through `ksl`, GSO/GRO on Linux, USO/URO on Windows where granted; Linux, Android, Apple, Windows) and the portable NIO or
+ktor-network sockets as the fallback (ADR-0006).
 
 **Architecture Invariant:** the core packages import no coroutines, no sockets, no clocks and no default randomness;
 `tools/check/sans-io.sh` enforces it. Only `runtime` and the coroutine-level files know about them.
@@ -141,8 +142,8 @@ directly (ADR-0014).
 ### `kuicksilver-testing`
 
 The deterministic network simulator for the sans-IO core (`Simulator`, `SimLink`, `LinkParams`, invariants checked
-after every step) and `MemoryNetwork`, an in-memory UDP network that runs whole applications without sockets. Not
-published yet.
+after every step) and `MemoryNetwork`, an in-memory UDP network with bounded per-socket receive buffers that runs whole
+applications without sockets. Not published yet.
 
 ### `kuicksilver-interop`, `kuicksilver-bench`, `samples/`
 
