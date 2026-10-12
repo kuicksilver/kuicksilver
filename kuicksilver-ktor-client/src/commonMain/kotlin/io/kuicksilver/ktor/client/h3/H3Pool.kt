@@ -32,6 +32,7 @@ import io.kuicksilver.http3.Http3Response
 import io.kuicksilver.ktor.client.H3BodyConsumed
 import io.kuicksilver.ktor.client.KuicksilverEngineConfig
 import io.kuicksilver.ktor.client.connectTimeoutMillis
+import io.kuicksilver.ktor.client.socketHost
 import io.kuicksilver.ktor.client.socketTimeoutMillis
 import io.kuicksilver.ktor.client.tlsConfigFor
 import io.kuicksilver.ktor.client.withSocketTimeout
@@ -106,7 +107,7 @@ internal class H3Pool(
                 val c =
                     withTimeout(data.connectTimeoutMillis(config)) {
                         ep.connect(
-                            InetSocketAddress(t.host, t.port),
+                            InetSocketAddress(socketHost(t.host), t.port),
                             config.tlsConfigFor(t.originHost, listOf(Http3Endpoint.H3)),
                             config.quic,
                             config.http3.settings,

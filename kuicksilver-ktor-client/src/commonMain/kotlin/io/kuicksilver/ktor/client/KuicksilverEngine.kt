@@ -269,7 +269,7 @@ internal class KuicksilverEngine(
             val altHost = alt.host ?: url.host
             val t = H3Target(url.host, altHost, alt.port)
             if (!webSocket || h3.canConnectProtocol(t)) {
-                val r = raced(t, data, callContext, network, listOf("alt-used" to "$altHost:${alt.port}"))
+                val r = raced(t, data, callContext, network, listOf("alt-used" to "${uriHost(altHost)}:${alt.port}"))
                 // an HTTP/1.1 answer (broken alternative, lost race, fallback) still carries the origin's Alt-Svc: a new list or `clear` replaces the cached one (RFC 7838 section 3)
                 if (r.version !=
                     HttpProtocolVersion.HTTP_3_0
