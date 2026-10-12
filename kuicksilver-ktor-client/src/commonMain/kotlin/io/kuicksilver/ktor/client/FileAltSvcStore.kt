@@ -16,7 +16,8 @@ import kotlin.random.Random
  * port, expiry in epoch milliseconds, `1` when `persist=1`. The file is read once at construction (expired and
  * malformed records are dropped, at most 1000 origins of 8 alternatives are kept) and rewritten after every change
  * through a uniquely named temporary file and an atomic move, so a crash leaves either the old or the new content.
- * A repeated header that only moves the expiry by less than half the new lifetime is not written. The store keeps at
+ * A repeated header always replaces the alternatives in memory (RFC 7838 section 3); it is not
+ * written when it only moves the expiry later by less than half the new lifetime. The store keeps at
  * most 1000 origins, dropping the least recently used (threat-model 3.18). Used by the engine, the file is written
  * after the engine's lock is released. Calls are serialized by the engine's lock; two engines sharing one file would
  * overwrite each other's changes.
@@ -34,6 +35,9 @@ public class FileAltSvcStore(
     internal var deferWrites = false
 
     private var pending: (() -> Unit)? = null
+
+    /** The content of the last snapshot: what is (or is about to be) on disk. */
+    private var persisted: Map<String, List<AltSvcEntry>> = emptyMap()
     private var snapshots = 0L
     private var written = -1L
 
@@ -49,9 +53,11 @@ public class FileAltSvcStore(
     ) {
         if (entries.isEmpty()) return remove(origin)
         val kept = entries.take(AltSvcCache.MAX_ENTRIES_PER_ORIGIN)
-        val old = map.touch(origin)
-        if (old != null && old == kept && kept.indices.all { fresh(old[it], kept[it]) }) return
+        map.touch(origin)
+        val disk = persisted[origin]
+        // a new header replaces the cached alternatives (RFC 7838 section 3); only the disk write may be skipped
         map[origin] = kept
+        if (disk != null && disk == kept && kept.indices.all { fresh(disk[it], kept[it]) }) return
         map.evictEldest(AltSvcCache.MAX_ORIGINS)
         changed()
     }
@@ -73,17 +79,24 @@ public class FileAltSvcStore(
         if (changed) changed()
     }
 
-    /** The stored [old] entry still stands for [new]: its expiry moved by less than half of [new]'s remaining lifetime. */
+    /**
+     * The [old] entry on disk still stands for [new]: the expiry did not move earlier, and moved later by less than half of
+     * [new]'s remaining lifetime.
+     */
     private fun fresh(
         old: AltSvcEntry,
         new: AltSvcEntry,
-    ): Boolean = new.expiresAtEpochMillis - old.expiresAtEpochMillis < (new.expiresAtEpochMillis - clock()) / 2
+    ): Boolean {
+        val delta = new.expiresAtEpochMillis - old.expiresAtEpochMillis
+        return delta >= 0 && delta < (new.expiresAtEpochMillis - clock()) / 2
+    }
 
     internal fun takePendingWrite(): (() -> Unit)? = pending.also { pending = null }
 
     /** Snapshots the content now (under the caller's lock); the write itself runs now or, behind the engine, later. */
     private fun changed() {
         val seq = snapshots++
+        persisted = LinkedHashMap(map)
         val text =
             buildString {
                 for ((origin, entries) in map) {
@@ -121,6 +134,7 @@ public class FileAltSvcStore(
             map[f[0]] = if (had.size < AltSvcCache.MAX_ENTRIES_PER_ORIGIN) had + e else had
         }
         map.evictEldest(AltSvcCache.MAX_ORIGINS)
+        persisted = LinkedHashMap(map)
     }
 
     /** Writes snapshot [seq] unless a newer one is already on disk; the engine runs these one at a time. */

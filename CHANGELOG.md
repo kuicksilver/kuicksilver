@@ -97,7 +97,7 @@ K7 (0.2.0), HTTP/3 and the Ktor engines:
 - Ktor client: the Alt-Svc stores and broken-alternative marks are bounded — 8 alternatives per origin (the first ones
   of the header), 1000 origins with the least recently used dropped — so a server, or many origins, can no longer grow
   them without limit. `FileAltSvcStore` reads at most that many records, skips the rewrite when a repeated header only
-  refreshes the expiry by less than half its lifetime, writes through a uniquely named temporary file, and, behind the
+  moves the expiry later by less than half its lifetime (a shorter `ma` always replaces the cached expiry), writes through a uniquely named temporary file, and, behind the
   engine, writes after the engine's lock is released instead of blocking every request on disk I/O. `AltSvcEntry`
   equality compares the alternative, not its expiry (RFC 7838 sections 2.2, 3, 9.4).
 - Ktor server: a `tlsConnector` with a `sniSelector` and HTTP/3 on failed to start with `TlsException.Config`; it now

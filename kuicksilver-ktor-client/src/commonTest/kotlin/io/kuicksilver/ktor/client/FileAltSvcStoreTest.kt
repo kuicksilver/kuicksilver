@@ -106,6 +106,16 @@ class FileAltSvcStoreTest {
         assertEquals(now + 60_000, FileAltSvcStore(p) { now }.get("https://a:443").single().expiresAtEpochMillis)
     }
 
+    /** A new header replaces the cached alternatives (RFC 7838 section 3): a shorter `ma` shortens the expiry, in memory and on disk. */
+    @Test fun shorterMaxAgeReplacesCachedExpiry() {
+        val p = tmp()
+        val s = FileAltSvcStore(p) { now }
+        s.put("https://a:443", listOf(entry(8443, ttl = 86_400_000)))
+        s.put("https://a:443", listOf(entry(8443, ttl = 60_000)))
+        assertEquals(now + 60_000, s.get("https://a:443").single().expiresAtEpochMillis)
+        assertEquals(now + 60_000, FileAltSvcStore(p) { now }.get("https://a:443").single().expiresAtEpochMillis)
+    }
+
     /** Behind an [AltSvcCache] the store only snapshots under the engine's lock; the write runs later, and an older snapshot never overwrites a newer one. */
     @Test fun writesBehindTheCacheAreDeferredAndOrdered() {
         val p = tmp()
