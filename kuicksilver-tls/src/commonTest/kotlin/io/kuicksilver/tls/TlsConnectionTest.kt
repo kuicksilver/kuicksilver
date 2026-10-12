@@ -101,7 +101,7 @@ internal object TcpFixtures {
 class TlsConnectionTest {
     @BeforeTest fun load() {
         KslLoader.ensureLoaded()
-        runBlocking { SessionCache.clear() }
+        runBlocking { SessionCache.Default.clear() }
     }
 
     private fun both(
@@ -280,7 +280,7 @@ class TlsConnectionTest {
 class TlsServerTest {
     @BeforeTest fun load() {
         KslLoader.ensureLoaded()
-        runBlocking { SessionCache.clear() }
+        runBlocking { SessionCache.Default.clear() }
     }
 
     private val proxyIdentity get() = TlsIdentity.fromDer(listOf(TestCerts.proxy), TestCerts.proxyKey.copyOf())
@@ -457,7 +457,7 @@ class TlsServerTest {
             assertIs<VerifyReason.PinMismatch>(assertFailsWith<TlsException.Verify> { withTimeout(10.seconds) { sd.await() } }.reason)
             runCatching { withTimeout(10.seconds) { cd.await() }.close() }
             delay(200)
-            assertEquals(0, SessionCache.size(), "TLS 1.3: no ticket reached the rejected client")
+            assertEquals(0, SessionCache.Default.size(), "TLS 1.3: no ticket reached the rejected client")
 
             val pair = ChannelPair()
             val sd2 = testScope.async { TlsConnection.server(pair.serverIn, pair.serverOut, server) }
@@ -534,7 +534,7 @@ class TlsServerTest {
 class SessionResumptionTest {
     @BeforeTest fun load() {
         KslLoader.ensureLoaded()
-        runBlocking { SessionCache.clear() }
+        runBlocking { SessionCache.Default.clear() }
     }
 
     private fun once(
@@ -565,7 +565,7 @@ class SessionResumptionTest {
 
     private suspend fun awaitTicket(key: String): Boolean =
         withTimeoutOrNull(5.seconds) {
-            while (!SessionCache.peek(key)) delay(10)
+            while (!SessionCache.Default.peek(key)) delay(10)
             true
         } ?: false
 
@@ -595,7 +595,7 @@ class SessionResumptionTest {
         assertTrue(stored(key))
         val (_, r3) = once(client, server)
         assertTrue(r3, "every resumed connection leaves a fresh ticket behind")
-        runBlocking { SessionCache.clear() }
+        runBlocking { SessionCache.Default.clear() }
         val (_, r4) = once(client, server)
         assertTrue(!r4, "a consumed ticket is never replayed")
     }

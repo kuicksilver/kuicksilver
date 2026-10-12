@@ -90,15 +90,29 @@ int ksl_parse_chain(const uint8_t *framed, size_t len, STACK_OF(X509) **out) {
     if (off != len) { sk_X509_pop_free(sk, X509_free); return 0; }
     *out = sk; return 1;
 }
-int ksl_ctx_set_identity(ksl_ctx *c, const uint8_t *chain, size_t chain_len, const uint8_t *key_der, size_t key_len) {
+ksl_pkey *ksl_pkey_new(const uint8_t *der, size_t len) {
+    if (!der || len == 0 || len > 0x7fffffff) return NULL;
+    ERR_clear_error(); const unsigned char *p = der; EVP_PKEY *k = d2i_AutoPrivateKey(NULL, &p, (long)len);
+    if (k && p != der + len) { EVP_PKEY_free(k); k = NULL; }   /* trailing bytes: not exactly one key */
+    ERR_clear_error(); return (ksl_pkey *)k;
+}
+void ksl_pkey_free(ksl_pkey *k) { EVP_PKEY_free((EVP_PKEY *)k); }   /* the key types free their private part with BN_clear_free / OPENSSL_clear_free */
+int ksl_ctx_set_identity_pkey(ksl_ctx *c, const uint8_t *chain, size_t chain_len, ksl_pkey *key) {
     if (frozen(c)) return KSL_ERROR; ERR_clear_error();
+    if (!key) { ksl_ctx_set_error(c, KSL_E_BAD_ARG, "ksl: no private key"); return KSL_ERROR; }
     STACK_OF(X509) *sk = NULL; if (!ksl_parse_chain(chain, chain_len, &sk) || sk_X509_num(sk) == 0) { sk_X509_pop_free(sk, X509_free); ksl_ctx_set_error(c, KSL_E_BAD_ARG, "ksl: bad certificate chain framing"); return KSL_ERROR; }
-    const unsigned char *p = key_der; EVP_PKEY *k = d2i_AutoPrivateKey(NULL, &p, (long)key_len);
-    int ok = k && SSL_CTX_use_certificate(c->ctx, sk_X509_value(sk, 0)) == 1 && SSL_CTX_use_PrivateKey(c->ctx, k) == 1 && SSL_CTX_check_private_key(c->ctx) == 1;
+    /* SSL_CTX_use_PrivateKey takes its own reference to the EVP_PKEY: the caller's handle stays independent */
+    int ok = SSL_CTX_use_certificate(c->ctx, sk_X509_value(sk, 0)) == 1 && SSL_CTX_use_PrivateKey(c->ctx, (EVP_PKEY *)key) == 1 && SSL_CTX_check_private_key(c->ctx) == 1;
     for (int i = 1; ok && i < sk_X509_num(sk); i++) ok = SSL_CTX_add1_chain_cert(c->ctx, sk_X509_value(sk, i)) == 1;
-    EVP_PKEY_free(k); sk_X509_pop_free(sk, X509_free);
+    sk_X509_pop_free(sk, X509_free);
     if (!ok) { ksl_ctx_set_error(c, KSL_E_BAD_ARG, "ksl: identity rejected"); return KSL_ERROR; }
     return KSL_OK;
+}
+int ksl_ctx_set_identity(ksl_ctx *c, const uint8_t *chain, size_t chain_len, const uint8_t *key_der, size_t key_len) {
+    if (frozen(c)) return KSL_ERROR;
+    ksl_pkey *k = ksl_pkey_new(key_der, key_len);
+    if (!k) { ksl_ctx_set_error(c, KSL_E_BAD_ARG, "ksl: identity rejected"); return KSL_ERROR; }
+    int r = ksl_ctx_set_identity_pkey(c, chain, chain_len, k); ksl_pkey_free(k); return r;
 }
 int ksl_ctx_set_roots(ksl_ctx *c, const uint8_t *roots, size_t roots_len) {
     if (frozen(c)) return KSL_ERROR; ERR_clear_error();
@@ -147,11 +161,14 @@ int ksl_ctx_set_option(ksl_ctx *c, int option, int value) {
     if (frozen(c)) return KSL_ERROR;
     switch (option) {
     case KSL_OPT_VERIFY_MODE:
+        if (value < KSL_VERIFY_NONE || value > KSL_VERIFY_OPENSSL) { ksl_ctx_set_error(c, KSL_E_BAD_ARG, "ksl: verify mode is 0..2"); return KSL_ERROR; }
         if (c->role == KSL_SERVER && value == KSL_VERIFY_PAUSE) { ksl_ctx_set_error(c, KSL_E_SERVER_PAUSE_FORBIDDEN, "ksl: verify pause is client-only (OpenSSL would accept silently)"); return KSL_ERROR; }
         c->verify_mode = value;
         if (c->role == KSL_CLIENT) SSL_CTX_set_verify(c->ctx, value == KSL_VERIFY_NONE ? SSL_VERIFY_NONE : SSL_VERIFY_PEER, NULL);
         return KSL_OK;
     case KSL_OPT_CLIENT_CERT:
+        /* on a client this would rewrite SSL_CTX_set_verify and switch server verification off */
+        if (c->role != KSL_SERVER || value < KSL_CLIENT_CERT_NONE || value > KSL_CLIENT_CERT_REQUIRED) { ksl_ctx_set_error(c, KSL_E_BAD_ARG, "ksl: client certificate mode is server-only (0..2)"); return KSL_ERROR; }
         c->client_cert_mode = value;
         SSL_CTX_set_verify(c->ctx, value == KSL_CLIENT_CERT_NONE ? SSL_VERIFY_NONE : value == KSL_CLIENT_CERT_OPTIONAL ? SSL_VERIFY_PEER : SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT, NULL);
         return KSL_OK;

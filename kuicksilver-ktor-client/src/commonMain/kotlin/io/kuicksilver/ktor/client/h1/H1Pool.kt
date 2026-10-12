@@ -1,5 +1,7 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
+@file:OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+
 package io.kuicksilver.ktor.client.h1
 
 import io.ktor.client.engine.ProxyType
@@ -27,6 +29,7 @@ import io.kuicksilver.ktor.client.KuicksilverEngineConfig
 import io.kuicksilver.ktor.client.connectTimeoutMillis
 import io.kuicksilver.ktor.client.socketTimeoutMillis
 import io.kuicksilver.ktor.client.tlsConfigFor
+import io.kuicksilver.tls.SessionCache
 import io.kuicksilver.tls.TlsConnection
 import io.kuicksilver.tls.TlsException
 import kotlinx.coroutines.CancellationException
@@ -72,6 +75,9 @@ internal class H1Pool(
     private val idle = HashMap<String, ArrayDeque<H1Connection>>()
     private val lock = Mutex()
 
+    /** This engine's TLS session tickets (resumption secrets stay native); cleared by [closeAll], so closing the engine drops them. */
+    internal val sessions = SessionCache()
+
     private suspend fun take(key: String): H1Connection? = lock.withLock { idle[key]?.removeFirstOrNull() }
 
     private fun give(c: H1Connection) {
@@ -95,11 +101,13 @@ internal class H1Pool(
         }
     }
 
-    suspend fun closeAll() =
+    suspend fun closeAll() {
         lock.withLock {
             idle.values.forEach { q -> q.forEach { it.close() } }
             idle.clear()
         }
+        sessions.clear()
+    }
 
     private fun keyOf(data: HttpRequestData): String =
         data.url.let {
@@ -269,6 +277,7 @@ internal class H1Pool(
                                 rawOut,
                                 config.tlsConfigFor(url.host, listOf("http/1.1")),
                                 callContextOrEmpty(),
+                                sessions,
                             )
                         H1Connection(tcp, tls, tls.input, tls.output, key)
                     } else {

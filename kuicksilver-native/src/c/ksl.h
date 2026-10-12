@@ -20,10 +20,12 @@ extern "C" {
 #endif
 
 /* 2: ksl_ssl_set replaces ksl_ssl_set_sni/ksl_ssl_set_verify_name; QUIC version selector (K2) */
-#define KSL_ABI_VERSION 4u
+#define KSL_ABI_VERSION 5u
 /* 3 (K3): endpoint keys ksl_key_random / ksl_key_mac16 (and ksl_udp_*) */
 /* 4: client sessions stay native (the session holds resumption secrets) — ksl_ssl_get1_session / ksl_session_free, ksl_ssl_set_session takes a handle,
    KSL_GET_SESSION (serialized session bytes) removed; ksl_ctx_set_session_context (a ticket resumes only under the trust configuration that issued it) */
+/* 5: identity private keys stay native — ksl_pkey_new / ksl_pkey_free / ksl_ctx_set_identity_pkey (a parsed key shared by reference
+   between contexts, so the caller keeps no DER copy of it) */
 
 /* return codes */
 #define KSL_OK 0
@@ -49,7 +51,7 @@ extern "C" {
 
 /* ksl_ctx_set_option keys */
 #define KSL_OPT_VERIFY_MODE 1      /* KSL_VERIFY_* */
-#define KSL_OPT_CLIENT_CERT 2      /* KSL_CLIENT_CERT_* (server) */
+#define KSL_OPT_CLIENT_CERT 2      /* KSL_CLIENT_CERT_* (server only: KSL_E_BAD_ARG on a client context) */
 #define KSL_OPT_MIN_VERSION 3      /* KSL_TLS1_2 | KSL_TLS1_3; QUIC contexts are always TLS 1.3 */
 #define KSL_OPT_MAX_VERSION 4
 #define KSL_OPT_NUM_TICKETS 5      /* TLS 1.3 tickets sent automatically after the handshake (server); 0 also suppresses the in-handshake TLS 1.2 ticket (with ticket keys set) */
@@ -114,6 +116,7 @@ extern "C" {
 typedef struct ksl_ctx ksl_ctx;
 typedef struct ksl_ssl ksl_ssl;
 typedef struct ksl_key ksl_key;
+typedef struct ksl_pkey ksl_pkey;         /* a parsed private key (EVP_PKEY, reference counted); the key bytes never leave ksl */
 typedef struct ksl_session ksl_session;   /* a client's resumable TLS session (ticket + resumption secret); never serialized out of ksl */
 
 typedef struct ksl_event {
@@ -144,6 +147,10 @@ void     ksl_ctx_free(ksl_ctx *);
 int      ksl_ctx_set_alpn(ksl_ctx *, const uint8_t *wire, size_t len);
 /* chain: concatenation of (uint32 big-endian length || DER), leaf first; key: PKCS#8 DER */
 int      ksl_ctx_set_identity(ksl_ctx *, const uint8_t *chain, size_t chain_len, const uint8_t *key_der, size_t key_len);
+/* the same with a parsed key: the context takes its own reference, so the caller may free its handle right after */
+int      ksl_ctx_set_identity_pkey(ksl_ctx *, const uint8_t *chain, size_t chain_len, ksl_pkey *key);
+ksl_pkey *ksl_pkey_new(const uint8_t *der, size_t len);              /* PKCS#8 (or traditional) DER; NULL if it is not one key with nothing after it */
+void     ksl_pkey_free(ksl_pkey *);                                   /* drops one reference; the last one frees and cleanses the key */
 int      ksl_ctx_set_roots(ksl_ctx *, const uint8_t *roots, size_t roots_len);  /* same framing; empty = system store */
 int      ksl_ctx_set_ciphers(ksl_ctx *, const char *tls13_suites, const char *tls12_list);
 int      ksl_ctx_set_ticket_keys(ksl_ctx *, const uint8_t *keys, size_t n);     /* n x 80 bytes: name16 | aes32 | hmac32; first encrypts */

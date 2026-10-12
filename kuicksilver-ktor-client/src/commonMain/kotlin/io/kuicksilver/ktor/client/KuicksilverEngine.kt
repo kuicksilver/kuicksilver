@@ -58,7 +58,7 @@ internal class KuicksilverEngine(
 
     /** Background work that outlives a call (a QUIC setup that lost the race); completed by [close] so the cleanup can run. */
     private val engineScope = CoroutineScope(coroutineContext + engineJob)
-    private val h1 = H1Pool(config, selector)
+    internal val h1 = H1Pool(config, selector) // internal for tests (the engine's session cache)
     private val h3 = H3Pool(config)
     private val altSvc = AltSvcCache(config.http3.altSvcStore) { getTimeMillis() }
     private val altSvcLock = Mutex()
@@ -70,9 +70,12 @@ internal class KuicksilverEngine(
     private var lastNetwork: String? = null
     private var networkSeen = false
 
+    /** The cleanup that runs once every request finished after [close]; internal so a test can wait for it. */
+    internal val cleanup: Job
+
     init {
         val requests = coroutineContext[Job]!!
-        GlobalScope.launch(super.coroutineContext, start = CoroutineStart.ATOMIC) {
+        cleanup = GlobalScope.launch(super.coroutineContext, start = CoroutineStart.ATOMIC) {
             try {
                 requests.join()
             } finally {

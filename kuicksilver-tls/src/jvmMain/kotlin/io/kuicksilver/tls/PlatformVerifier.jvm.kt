@@ -76,7 +76,7 @@ internal object JvmTrust {
         }
     }
 
-    private fun reasonOf(e: CertificateException): VerifyReason {
+    internal fun reasonOf(e: CertificateException): VerifyReason {
         val cause =
             generateSequence<Throwable>(
                 e,
@@ -87,6 +87,8 @@ internal object JvmTrust {
             cause?.reason == CertPathValidatorException.BasicReason.NOT_YET_VALID -> VerifyReason.NotYetValid
 
             cause?.reason == CertPathValidatorException.BasicReason.REVOKED -> VerifyReason.Revoked
+
+            cause?.reason == CertPathValidatorException.BasicReason.UNDETERMINED_REVOCATION_STATUS -> VerifyReason.UnknownRevocationStatus
 
             cause?.reason == CertPathValidatorException.BasicReason.INVALID_SIGNATURE -> VerifyReason.BadSignature
 

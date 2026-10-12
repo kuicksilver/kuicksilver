@@ -38,6 +38,7 @@ public class TlsConnection private constructor(
     private val transportIn: ByteReadChannel,
     private val transportOut: ByteWriteChannel,
     context: CoroutineContext,
+    private val sessionCache: SessionCache,
 ) : AutoCloseable {
     private val config = ctx.config
     private var ssl: Long = Ksl.sslNew(ctx.handle, KslConst.MODE_TCP)
@@ -111,7 +112,7 @@ public class TlsConnection private constructor(
 
     private suspend fun handshake() {
         cacheKey?.let { key ->
-            SessionCache.take(key)?.let { e ->
+            sessionCache.take(key)?.let { e ->
                 cached = e
                 try {
                     lock.withLock { Ksl.sslSetSession(s(), e.session) }
@@ -415,7 +416,7 @@ public class TlsConnection private constructor(
             } catch (_: KslException.Internal) {
                 return
             }
-        SessionCache.put(key, entry)
+        sessionCache.put(key, entry)
         ticketStored = true
     }
 
@@ -426,12 +427,12 @@ public class TlsConnection private constructor(
 
     // ---- public operations ----
 
-    /** RFC 5705 / RFC 8446 section 7.5 exporter; only after the handshake. */
+    /** RFC 5705 / RFC 8446 section 7.5 exporter; only after the handshake. Throws [IllegalStateException] when the exporter is unavailable, [TlsException.Protocol] for other TLS errors. */
     public suspend fun exportKeyingMaterial(
         label: String,
         context: ByteArray?,
         length: Int,
-    ): ByteArray = lock.withLock { Ksl.sslExportKeyingMaterial(s(), label, context, length) }
+    ): ByteArray = lock.withLock { mapped { Ksl.sslExportKeyingMaterial(s(), label, context, length) } }
 
     /** RFC 9266 `tls-exporter` channel binding (32 bytes); TLS 1.2 without EMS throws. */
     public suspend fun channelBinding(): ByteArray =
@@ -515,9 +516,19 @@ public class TlsConnection private constructor(
             transportOut: ByteWriteChannel,
             config: TlsConfig,
             context: CoroutineContext = EmptyCoroutineContext,
+        ): TlsConnection = client(transportIn, transportOut, config, context, SessionCache.Default)
+
+        /** [client] with the session cache of the engine that owns the connection instead of [SessionCache.Default]. */
+        @InternalKuicksilverApi
+        public suspend fun client(
+            transportIn: ByteReadChannel,
+            transportOut: ByteWriteChannel,
+            config: TlsConfig,
+            context: CoroutineContext,
+            sessionCache: SessionCache,
         ): TlsConnection {
             if (config.role != TlsRole.Client) throw TlsException.Config("client() needs a client configuration")
-            return start(transportIn, transportOut, config, context)
+            return start(transportIn, transportOut, config, context, sessionCache)
         }
 
         /**
@@ -532,7 +543,7 @@ public class TlsConnection private constructor(
             context: CoroutineContext = EmptyCoroutineContext,
         ): TlsConnection {
             if (config.role != TlsRole.Server) throw TlsException.Config("server() needs a server configuration")
-            return start(transportIn, transportOut, config, context)
+            return start(transportIn, transportOut, config, context, SessionCache.Default)
         }
 
         private suspend fun start(
@@ -540,8 +551,9 @@ public class TlsConnection private constructor(
             transportOut: ByteWriteChannel,
             config: TlsConfig,
             context: CoroutineContext,
+            sessionCache: SessionCache,
         ): TlsConnection {
-            val c = TlsConnection(KslContext.create(config, quic = false), transportIn, transportOut, context)
+            val c = TlsConnection(KslContext.create(config, quic = false), transportIn, transportOut, context, sessionCache)
             try {
                 c.handshake()
             } catch (t: Throwable) {
@@ -590,11 +602,19 @@ public enum class TlsVersion {
 
 /**
  * Client session cache: keyed by SNI, reference identifier, trust configuration and client identity; tickets are single-use;
- * entries expire after 7 days. A session is a native `ksl_session` handle: the ticket and its resumption secret stay in native memory
- * and are cleansed when the last reference goes (threat model 3.7).
+ * entries expire after 7 days and the cache holds at most [maxEntries] sessions (the least recently stored one goes first).
+ * A session is a native `ksl_session` handle: the ticket and its resumption secret stay in native memory and are cleansed
+ * when the entry is used, replaced, evicted, expired or [clear]ed (threat model 3.7). Each engine owns an instance and clears
+ * it when it closes; [TlsConnection.client] without an explicit cache uses [Default].
  */
 @InternalKuicksilverApi
-public object SessionCache {
+public class SessionCache(
+    private val maxEntries: Int = DEFAULT_MAX_ENTRIES,
+) {
+    init {
+        require(maxEntries > 0) { "maxEntries must be positive" }
+    }
+
     /** Owns one reference to the native session [session] until [close]. */
     internal class Entry(
         session: Long,
@@ -605,7 +625,12 @@ public object SessionCache {
         var session: Long = session
             private set
 
+        /** True once [close] ran: the native reference is released (tests observe eviction through it). */
+        var closed: Boolean = false
+            private set
+
         fun close() {
+            closed = true
             val h = session
             if (h != 0L) {
                 session = 0L
@@ -614,16 +639,26 @@ public object SessionCache {
         }
     }
 
-    private val entries = HashMap<String, Entry>()
+    private val entries = LinkedHashMap<String, Entry>() // insertion order: the head is the least recently stored entry
     private val mutex = Mutex()
-    private const val TTL_SECONDS = 7L * 24 * 3600
 
-    internal fun key(
-        sni: String?,
-        reference: String,
-        trust: TrustConfig,
-        identity: TlsIdentity?,
-    ): String = "$sni|$reference|${trust.cacheKey()}|id:${identity?.chain?.firstOrNull()?.spkiSha256 ?: "none"}"
+    /** The process-wide cache, key derivation and the default bound. */
+    @InternalKuicksilverApi
+    public companion object {
+        /** Sessions a cache keeps before the oldest is evicted; one origin per entry, so this is also the number of resumable origins. */
+        public const val DEFAULT_MAX_ENTRIES: Int = 256
+        private const val TTL_SECONDS = 7L * 24 * 3600
+
+        /** The cache of connections opened without an engine (`TlsConnection.client`, `Socket.tls`). */
+        public val Default: SessionCache = SessionCache()
+
+        internal fun key(
+            sni: String?,
+            reference: String,
+            trust: TrustConfig,
+            identity: TlsIdentity?,
+        ): String = "$sni|$reference|${trust.cacheKey()}|id:${identity?.chain?.firstOrNull()?.spkiSha256 ?: "none"}"
+    }
 
     /** Removes and returns the entry: a ticket is used at most once (RFC 8446 appendix C.4). */
     internal suspend fun take(key: String): Entry? =
@@ -644,7 +679,8 @@ public object SessionCache {
         entry: Entry,
     ) {
         mutex.withLock {
-            entries.put(key, entry)?.close()
+            entries.remove(key)?.close() // re-inserted at the tail: a fresh ticket for an origin is the most recent entry
+            entries.put(key, entry)
             val now = nowSeconds()
             val it = entries.values.iterator()
             while (it.hasNext()) {
@@ -653,6 +689,12 @@ public object SessionCache {
                     e.close()
                     it.remove()
                 }
+            }
+            while (entries.size > maxEntries) {
+                val oldest = entries.entries.iterator()
+                val e = oldest.next()
+                e.value.close()
+                oldest.remove()
             }
         }
     }

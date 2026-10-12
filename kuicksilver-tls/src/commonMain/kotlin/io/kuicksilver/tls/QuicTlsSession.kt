@@ -142,7 +142,12 @@ public enum class EarlyDataState {
     Disabled,
 }
 
-/** The TLS handshake of one QUIC connection, driven by the transport without any I/O of its own (RFC 9001 section 4). */
+/**
+ * The TLS handshake of one QUIC connection, driven by the transport without any I/O of its own (RFC 9001 section 4).
+ *
+ * A call in the wrong state throws [IllegalStateException]; an error reported by TLS itself throws [TlsException] (most
+ * failures arrive as [DriveResult.Failed] instead). The native layer's exceptions never escape.
+ */
 public interface QuicTlsSession : AutoCloseable {
     /**
      * Sets the local transport parameters, already encoded (RFC 9000 section 18), carried in the
@@ -177,7 +182,8 @@ public interface QuicTlsSession : AutoCloseable {
 
     /**
      * Resumes a handshake paused at [DriveResult.WantVerify] with the verdict, usually from [verifyPeer]; then call [drive].
-     * A [VerifyResult.Rejected] makes TLS send its alert and the next [drive] return [DriveResult.Failed].
+     * A [VerifyResult.Rejected] makes TLS send its alert and the next [drive] return [DriveResult.Failed]. Throws
+     * [IllegalStateException] when no verification is pending.
      */
     public fun resumeVerify(result: VerifyResult)
 
@@ -197,7 +203,8 @@ public interface QuicTlsSession : AutoCloseable {
     public val earlyData: EarlyDataState
 
     /**
-     * The RFC 8446 section 7.5 exporter: [length] bytes for [label] and [context] (null for none); only after the handshake.
+     * The RFC 8446 section 7.5 exporter: [length] bytes for [label] and [context] (null for none); only after the handshake,
+     * before it [IllegalStateException].
      * The result is secret material on the heap by design (threat model 3.7); wipe it after use.
      */
     public fun exportKeyingMaterial(

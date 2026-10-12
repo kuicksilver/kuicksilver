@@ -101,13 +101,7 @@ internal class KslContext private constructor(
             Ksl.ctxSetCiphers(h, config.cipherSuites.openSslList, null)
             config.identity?.let { id ->
                 if (id is TlsIdentity.InMemory) {
-                    Ksl.ctxSetIdentity(
-                        h,
-                        id.chain.map {
-                            it.der
-                        },
-                        id.privateKeyDer,
-                    )
+                    id.withKey { k -> Ksl.ctxSetIdentityKey(h, id.chain.map { it.der }, k) }
                 } else {
                     throw TlsException.Config("unsupported identity ${id::class.simpleName}")
                 }

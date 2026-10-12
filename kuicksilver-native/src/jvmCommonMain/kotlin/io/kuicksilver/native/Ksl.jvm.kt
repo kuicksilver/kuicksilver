@@ -61,6 +61,16 @@ public actual object Ksl {
         keyDer: ByteArray,
     ): Unit = ctxCheck(ctx, KslNative.ctxSetIdentity(ctx, frameDerList(chainDer), keyDer))
 
+    public actual fun ctxSetIdentityKey(
+        ctx: Long,
+        chainDer: List<ByteArray>,
+        pkey: Long,
+    ): Unit = ctxCheck(ctx, KslNative.ctxSetIdentityPkey(ctx, frameDerList(chainDer), pkey))
+
+    public actual fun pkeyNew(der: ByteArray): Long = KslNative.pkeyNew(der).also { if (it == 0L) internal("not a private key") }
+
+    public actual fun pkeyFree(pkey: Long): Unit = KslNative.pkeyFree(pkey)
+
     public actual fun ctxSetRoots(
         ctx: Long,
         rootsDer: List<ByteArray>,

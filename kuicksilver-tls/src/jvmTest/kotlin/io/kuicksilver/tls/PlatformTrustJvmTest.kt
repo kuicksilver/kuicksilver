@@ -48,6 +48,19 @@ class PlatformTrustJvmTest {
         return p to rc
     }
 
+    /** PKIX could not decide revocation (no OCSP/CRL answer under a revocation-checking policy): that reason, not UnknownIssuer. */
+    @Test fun undeterminedRevocationMapsToUnknownRevocationStatus() {
+        val cause =
+            java.security.cert.CertPathValidatorException(
+                "Could not determine revocation status",
+                null,
+                null,
+                -1,
+                java.security.cert.CertPathValidatorException.BasicReason.UNDETERMINED_REVOCATION_STATUS,
+            )
+        assertEquals(VerifyReason.UnknownRevocationStatus, JvmTrust.reasonOf(java.security.cert.CertificateException(cause)))
+    }
+
     @Test fun platformAcceptsTrustStoreRoot() {
         val (p, _) = handshake(Fixtures.client(TrustConfig.Platform))
         try {

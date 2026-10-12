@@ -88,4 +88,28 @@ void run_key(void) {
     CHECK(ksl_key_mac16(t1, cid, 8, m2) == KSL_ERROR, "ekey_token_rejects_mac16");
     CHECK(ksl_key_random(7) == NULL, "ekey_unknown_kind_null");
     ksl_key_free(t1); ksl_key_free(t2); ksl_key_free(r1); ksl_key_free(r2); END(); }
+
+    /* ABI 5: an identity private key is parsed once into a ksl_pkey; a context takes its own reference, so the caller's
+       handle (and its DER copy) can go away while the context keeps serving the key. */
+    { SECTION("pkey_roundtrip_identity");
+    size_t kl; uint8_t *kd = key_of("server", &kl), *other = NULL; size_t ol; other = key_of("client", &ol);
+    ksl_pkey *pk = ksl_pkey_new(kd, kl), *wrong = ksl_pkey_new(other, ol);
+    CHECK(pk && wrong, "PKCS#8 DER parsed into a pkey handle");
+    uint8_t junk[16] = {0x30, 0x03, 0x02, 0x01, 0x00}; CHECK(ksl_pkey_new(junk, sizeof junk) == NULL, "negative: garbage is not a key");
+    CHECK(ksl_pkey_new(NULL, 0) == NULL, "negative: empty input");
+    blob ch = chain_of(1, "server");
+    ksl_ctx *bad = ksl_ctx_new(KSL_SERVER);
+    CHECK(ksl_ctx_set_identity_pkey(bad, ch.buf, ch.len, wrong) == KSL_ERROR, "negative: a key of another certificate is rejected");
+    CHECK(ksl_ctx_set_identity_pkey(bad, ch.buf, ch.len, NULL) == KSL_ERROR, "negative: no key");
+    ksl_ctx_free(bad);
+    ksl_ctx *sc = ksl_ctx_new(KSL_SERVER); ksl_ctx_set_alpn(sc, ALPN_H3, sizeof ALPN_H3);
+    CHECK(ksl_ctx_set_identity_pkey(sc, ch.buf, ch.len, pk) == KSL_OK, "identity from the pkey handle");
+    ksl_pkey_free(pk); ksl_pkey_free(wrong); ksl_pkey_free(NULL); free(ch.buf); free(kd); free(other);
+    ksl_ctx *cc = client_ctx("test-ca", KSL_VERIFY_OPENSSL);
+    ksl_ssl *c = ksl_ssl_new(cc, KSL_MODE_QUIC), *s = ksl_ssl_new(sc, KSL_MODE_QUIC);
+    ksl_ssl_set(c, KSL_SET_SNI, (const uint8_t *)"server.test", 11); ksl_ssl_set(c, KSL_SET_VERIFY_NAME, (const uint8_t *)"server.test", 11);
+    ksl_quic_set_transport_params(c, TP, sizeof TP); ksl_quic_set_transport_params(s, TP, sizeof TP);
+    side cs = {0}, ss = {0}; int rc = pump(c, s, &cs, &ss, 40, NULL, NULL);
+    CHECK((rc == KSL_OK || rc == KSL_WANT_READ) && cs.done && ss.done, "handshake signed with the key after the caller freed its handle");
+    ksl_ssl_free(c); ksl_ssl_free(s); ksl_ctx_free(cc); ksl_ctx_free(sc); END(); }
 }

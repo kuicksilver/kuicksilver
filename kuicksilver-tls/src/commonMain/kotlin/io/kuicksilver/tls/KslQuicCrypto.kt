@@ -229,7 +229,7 @@ internal class KslQuicTlsSession(
 
     private fun s(): Long = ssl.also { if (it == 0L) throw IllegalStateException("session closed") }
 
-    override fun setTransportParameters(encoded: ByteArray): Unit = Ksl.quicSetTransportParams(s(), encoded)
+    override fun setTransportParameters(encoded: ByteArray): Unit = mapped { Ksl.quicSetTransportParams(s(), encoded) }
 
     override fun setQuicVersion(version: Int) {
         try {
@@ -264,7 +264,7 @@ internal class KslQuicTlsSession(
         data: ByteArray,
         offset: Int,
         length: Int,
-    ): Unit = Ksl.quicProvide(s(), level.ksl, data, offset, length)
+    ): Unit = mapped { Ksl.quicProvide(s(), level.ksl, data, offset, length) }
 
     override fun drive(): DriveResult {
         failure?.let { return it }
@@ -325,12 +325,12 @@ internal class KslQuicTlsSession(
     override fun resumeVerify(result: VerifyResult) {
         when (result) {
             is VerifyResult.Accepted -> {
-                Ksl.sslVerifyResume(s(), true, 0)
+                mapped { Ksl.sslVerifyResume(s(), true, 0) }
             }
 
             is VerifyResult.Rejected -> {
+                mapped { Ksl.sslVerifyResume(s(), false, if (ctx.config.genericAlerts) 40 else result.reason.alertCode) }
                 rejection = result.reason
-                Ksl.sslVerifyResume(s(), false, if (ctx.config.genericAlerts) 40 else result.reason.alertCode)
             }
         }
     }
@@ -392,7 +392,7 @@ internal class KslQuicTlsSession(
         label: String,
         context: ByteArray?,
         length: Int,
-    ): ByteArray = Ksl.sslExportKeyingMaterial(s(), label, context, length)
+    ): ByteArray = mapped { Ksl.sslExportKeyingMaterial(s(), label, context, length) }
 
     internal fun drainKeylog(): String = if (ctx.config.keylog == null) "" else Ksl.sslGet(s(), KslConst.GET_KEYLOG).decodeToString()
 
@@ -414,3 +414,17 @@ internal class KslQuicTlsSession(
         ctx.close()
     }
 }
+
+/**
+ * Keeps the native layer's [KslException.Internal] behind the public TLS surface: a call in the wrong state (no verification
+ * pending, exporter before the handshake) is an [IllegalStateException], anything else a [TlsException.Protocol].
+ */
+internal inline fun <T> mapped(block: () -> T): T =
+    try {
+        block()
+    } catch (e: KslException.Internal) {
+        when (e.packed) {
+            KslConst.E_NOT_PAUSED, KslConst.E_NOT_SUPPORTED -> throw IllegalStateException(e.message, e)
+            else -> throw TlsException.Protocol(e.packed, e.message ?: "ksl error", e)
+        }
+    }

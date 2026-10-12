@@ -121,4 +121,40 @@ static void test_system_store(void) {
     CHECK(rc == KSL_OK, "system certificate store located on this host (SSL_CERT_FILE/DIR or distribution paths)"); if (rc != KSL_OK) printf("  %s\n", m);
     ksl_ctx_free(c); END();
 }
-void run_verify_review(void) { test_review_alerts(); test_system_store(); }
+/* KSL_SET_VERIFY_NAME may be called more than once (a config applied to a session, then a redirect): the previous identifier of the
+   other type must not linger in the X509_VERIFY_PARAM, or a host mismatch would be reported against the stale host. */
+static void test_name_switch(void) {
+    SECTION("verify_name_switch_clears_other_type");
+    const char *seq[2][2] = {{"wrong.test", "127.0.0.1"}, {"127.0.0.1", "server.test"}};
+    for (int i = 0; i < 2; i++) {
+        ksl_ctx *cc = client_ctx("test-ca", KSL_VERIFY_OPENSSL), *sc = server_ctx("server");
+        ksl_ssl *c = ksl_ssl_new(cc, KSL_MODE_QUIC), *s = ksl_ssl_new(sc, KSL_MODE_QUIC);
+        ksl_ssl_set(c, KSL_SET_SNI, (const uint8_t *)"server.test", sizeof "server.test" - 1);
+        CHECK(ksl_ssl_set(c, KSL_SET_VERIFY_NAME, (const uint8_t *)seq[i][0], strlen(seq[i][0])) == KSL_OK, "first verify name accepted");
+        CHECK(ksl_ssl_set(c, KSL_SET_VERIFY_NAME, (const uint8_t *)seq[i][1], strlen(seq[i][1])) == KSL_OK, "second verify name accepted");
+        ksl_quic_set_transport_params(c, TP, sizeof TP); ksl_quic_set_transport_params(s, TP, sizeof TP); side cs = {0}, ss = {0}; pump(c, s, &cs, &ss, 40, NULL, NULL);
+        CHECK(cs.done && ss.done, "only the last verify name is checked");
+        if (!(cs.done && ss.done)) { int al; last_code(c, &al); printf("  %s -> %s: alert=%d\n", seq[i][0], seq[i][1], al); }
+        ksl_ssl_free(c); ksl_ssl_free(s); ksl_ctx_free(cc); ksl_ctx_free(sc);
+    }
+    END();
+}
+/* KSL_OPT_CLIENT_CERT is a server option: on a client it would silently rewrite SSL_CTX_set_verify and switch peer verification off. */
+static void test_client_cert_option_on_client(void) {
+    SECTION("verify_client_cert_option_refused_on_client");
+    ksl_ctx *cc = client_ctx("test-ca", KSL_VERIFY_OPENSSL), *sc = server_ctx("server-other-ca");
+    CHECK(ksl_ctx_set_option(cc, KSL_OPT_CLIENT_CERT, KSL_CLIENT_CERT_NONE) == KSL_ERROR, "negative: client-cert mode refused on a client context");
+    ksl_ssl *c = ksl_ssl_new(cc, KSL_MODE_QUIC), *s = ksl_ssl_new(sc, KSL_MODE_QUIC);
+    ksl_ssl_set(c, KSL_SET_SNI, (const uint8_t *)"server.test", sizeof "server.test" - 1); ksl_ssl_set(c, KSL_SET_VERIFY_NAME, (const uint8_t *)"server.test", sizeof "server.test" - 1);
+    ksl_quic_set_transport_params(c, TP, sizeof TP); ksl_quic_set_transport_params(s, TP, sizeof TP); side cs = {0}, ss = {0}; int rc = pump(c, s, &cs, &ss, 40, NULL, NULL);
+    int al; last_code(c, &al); CHECK(rc == KSL_ERROR && !cs.done && al == 48, "negative: verification stays on -> unknown_ca"); if (!(rc == KSL_ERROR && al == 48)) printf("  got rc=%d done=%d alert=%d\n", rc, cs.done, al);
+    ksl_ssl_free(c); ksl_ssl_free(s); ksl_ctx_free(cc); ksl_ctx_free(sc);
+    /* out-of-range values are refused for both mode options */
+    ksl_ctx *sc2 = server_ctx("server"), *cc2 = client_ctx("test-ca", KSL_VERIFY_OPENSSL);
+    CHECK(ksl_ctx_set_option(sc2, KSL_OPT_CLIENT_CERT, 3) == KSL_ERROR && ksl_ctx_set_option(sc2, KSL_OPT_CLIENT_CERT, -1) == KSL_ERROR, "negative: client-cert mode out of 0..2");
+    CHECK(ksl_ctx_set_option(cc2, KSL_OPT_VERIFY_MODE, 3) == KSL_ERROR && ksl_ctx_set_option(cc2, KSL_OPT_VERIFY_MODE, -1) == KSL_ERROR, "negative: verify mode out of 0..2");
+    CHECK(ksl_ctx_set_option(sc2, KSL_OPT_CLIENT_CERT, KSL_CLIENT_CERT_OPTIONAL) == KSL_OK, "client-cert mode accepted on a server");
+    ksl_ctx_free(sc2); ksl_ctx_free(cc2);
+    END();
+}
+void run_verify_review(void) { test_review_alerts(); test_system_store(); test_name_switch(); test_client_cert_option_on_client(); }

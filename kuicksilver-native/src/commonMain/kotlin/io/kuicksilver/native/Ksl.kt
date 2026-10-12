@@ -33,6 +33,25 @@ public expect object Ksl {
         keyDer: ByteArray,
     )
 
+    /**
+     * Sets the identity from a key parsed by [pkeyNew]; the context takes its own reference, so [pkey] may be freed right
+     * after. The key bytes never come back to Kotlin.
+     */
+    public fun ctxSetIdentityKey(
+        ctx: Long,
+        chainDer: List<ByteArray>,
+        pkey: Long,
+    )
+
+    /**
+     * Parses a PKCS#8 DER private key into a native `ksl_pkey` handle (freed with [pkeyFree]); throws
+     * [KslException.Internal] if [der] is not exactly one key. The caller wipes [der]; the JNI copy is wiped here.
+     */
+    public fun pkeyNew(der: ByteArray): Long
+
+    /** Drops one reference to a `ksl_pkey`; the last one frees and cleanses the key. `0` is ignored. */
+    public fun pkeyFree(pkey: Long)
+
     public fun ctxSetRoots(
         ctx: Long,
         rootsDer: List<ByteArray>,
@@ -316,7 +335,7 @@ public expect object Ksl {
 }
 
 /** The ABI the Kotlin side was written against; checked against [Ksl.abiVersion] on load. */
-public const val KSL_ABI_VERSION: Int = 4
+public const val KSL_ABI_VERSION: Int = 5
 
 /**
  * Loads the native library once per process and checks the ABI. [availability] answers without throwing whether the

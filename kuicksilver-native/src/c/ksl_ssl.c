@@ -41,7 +41,9 @@ static int set_verify_name(ksl_ssl *s, const char *name) {
     X509_VERIFY_PARAM *p = SSL_get0_param(s->ssl);
     s->verify_flags = X509_CHECK_FLAG_NEVER_CHECK_SUBJECT | X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS;
     X509_VERIFY_PARAM_set_hostflags(p, s->verify_flags);
-    free(s->verify_host); free(s->verify_ip); s->verify_host = s->verify_ip = NULL;
+    free(s->verify_host); free(s->verify_ip); s->verify_host = s->verify_ip = NULL; s->verify_name_set = 0;
+    /* set1_host replaces only the host list and set1_ip only the address: a previous identifier of the other type would stay and be checked too */
+    X509_VERIFY_PARAM_set1_host(p, NULL, 0); X509_VERIFY_PARAM_set1_ip(p, NULL, 0);
     ERR_clear_error();
     if (X509_VERIFY_PARAM_set1_ip_asc(p, name) == 1) { s->verify_ip = dup_str(name); s->verify_name_set = 1; return KSL_OK; }   /* IP-ID: no SNI (RFC 6066 section 3) */
     ERR_clear_error();

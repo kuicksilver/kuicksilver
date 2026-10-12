@@ -14,6 +14,21 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 Nothing has been released yet. This section summarises the development of the first 0.x version.
 
+### Fixed
+- Platform trust reports `VerifyReason.UnknownRevocationStatus` when the JVM PKIX validator (`UNDETERMINED_REVOCATION_STATUS`) or Apple (`errSecIncompleteCertRevocationCheck`) could not determine revocation, and `VerifyReason.CertificateTransparency` when Android's CT policy rejects a chain, instead of `UnknownIssuer`.
+- `QuicTlsSession` (`setTransportParameters`, `provide`, `resumeVerify`, `exportKeyingMaterial`) and `TlsConnection.exportKeyingMaterial` no longer leak the native `KslException.Internal`: a call in the wrong state throws `IllegalStateException`, other TLS errors `TlsException.Protocol`.
+- `TrustConfig.Pinned` refuses a `Custom` base wrapped in `ExpectedName` as it already refused a bare `Custom` (the spec: pins are checked against a chain the library validated, a custom verifier decides alone).
+- `TlsConfig` counts ALPN names in UTF-8 bytes (a 200-character `é` name passed as 200) and refuses a list longer than 255 bytes on the wire; a server's `ServerTlsOverride` passes the same ALPN and client-certificate trust checks as `build()` instead of none. Both copy the ALPN list before validating it, so the stored list is the one that was checked.
+- The TCP client session cache holds at most 256 sessions (the least recently stored one is evicted and its native session freed) and each Ktor client engine owns its own cache, which it clears when it closes; before, one process-wide cache grew without bound and outlived every engine.
+- `KslLoader` (JVM) refuses a work directory that is a symbolic link, not a directory, owned by another user or not private to it (`IntegrityMismatch`), and no longer deletes the extracted, verified library on exit, so a second JVM that shares the directory is not pulled from under its own `System.load`. It creates the work directory owner-only in one call (not under the umask), reuses an extracted library only when this user owns it (otherwise it reinstalls it atomically) and refuses to load when the user of the process cannot be determined on a POSIX file system.
+- `ksl`: `KSL_OPT_CLIENT_CERT` is refused on a client context (it rewrote `SSL_CTX_set_verify` and switched server verification off); `KSL_OPT_VERIFY_MODE` and `KSL_OPT_CLIENT_CERT` reject values outside 0..2.
+- `ksl`: setting the verify name a second time with the other identifier type (host after IP literal or the reverse) clears the previous one instead of checking both.
+- `TlsIdentity.fromPem` decodes the key straight from its `CharArray` instead of turning it into `String`s (which stayed on the heap) and wipes every decoded key block, also when the import fails.
+- `keylogFile(path)` refuses a symlink, a non-regular file, a file with more than one hard link, a file of another user or a file system without POSIX permissions, tightens an existing file to 0600 and reopens it without following links for every line (threat model section 3.7). On the JVM the sink keeps the one descriptor it checked for its lifetime (it is `java.io.Closeable`) instead of reopening the path for every line without re-checking the owner, so a file recreated at the path by another local user receives no secrets.
+
+### Changed
+- `ksl` ABI 5: identity private keys stay in OpenSSL. `TlsIdentity.fromDer`/`fromPem` parse the key once into a native `ksl_pkey` (`ksl_pkey_new`, `ksl_pkey_free`, `ksl_ctx_set_identity_pkey`) and keep only its handle, so a heap dump no longer holds the key; `TlsIdentity.InMemory.close()` frees it once the contexts built from it are gone. A library of ABI 4 is refused (`AbiMismatch`).
+
 ### Changed (API freeze before 0.1.0)
 - `NullCryptoProvider` is `@InternalKuicksilverApi` (a test fixture, not a transport); `ConnectionStats` and `EndpointStats` are built by the library only.
 - `PathChanged` is nested as `PathEvent.Changed` beside `Validated` and `Failed`; the top-level name is a deprecated alias until 0.2.0.
@@ -33,7 +48,7 @@ Nothing has been released yet. This section summarises the development of the fi
 - `kuicksilver-bom`: a bill of materials that pins every module to one version (`implementation(platform("io.kuicksilver:kuicksilver-bom:<version>"))`).
 
 - **Native layer** (`kuicksilver-native`): the `ksl` C shim over OpenSSL 3.5 with one header for JNI and cinterop
-  (ABI version 4); OpenSSL 3.5.9 built from a pinned, PGP-verified tarball with a minimal configuration; OpenSSL
+  (ABI version 5); OpenSSL 3.5.9 built from a pinned, PGP-verified tarball with a minimal configuration; OpenSSL
   symbols prefixed with `ksl_ossl_` on Kotlin/Native; a JVM loader that checks the library's SHA-256 and ABI version;
   an Android AAR (arm64-v8a, armeabi-v7a, x86_64) aligned for 16 KiB pages; JVM jar manifest entries for the OpenSSL release.
 - **TLS** (`kuicksilver-tls`, `kuicksilver-ktor-network`): TLS 1.3 (and opt-in TLS 1.2) over any byte channel and over
