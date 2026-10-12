@@ -90,9 +90,10 @@ public class QuicEndpointConfig private constructor(
     /** New Initial packets are dropped silently beyond this many connections. */
     public val maxConnections: Int,
     /**
-     * Handshaken connections waiting for `accept()`, never more: while the waiting ones plus the handshakes in flight reach
-     * this many, a new client Initial is dropped, and a handshake that completes while this many wait is closed with
-     * CONNECTION_REFUSED (0x02) instead of joining the queue (several Initials admitted in one receive round can all complete).
+     * Handshaken connections waiting for `accept()`, never more: while this many wait, a new client Initial is dropped, and a
+     * handshake that completes while this many wait is closed with CONNECTION_REFUSED (0x02) instead of joining the queue.
+     * Handshakes in flight are not counted (unvalidated, possibly spoofed Initials must not lock real clients out); they
+     * are bounded by [maxConnections], [maxConnectionsPerIp] and the [ConnectionAdmission] policy.
      */
     public val acceptQueue: Int,
     /** The single-threaded dispatcher of the endpoint loop; null means `Dispatchers.Default.limitedParallelism(1)`. */

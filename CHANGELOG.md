@@ -101,8 +101,9 @@ Fixes from a full five-reviewer pass over the code before the first release, amo
 - A socket whose `capabilities` lose ECN marking or DF (for example the portable socket clearing IP_TOS after a failed
   ECN validation) now downgrades the connections already on it, the endpoint's socket and a migrating client's extra
   sockets alike, instead of only the connections that start afterwards.
-- The accept queue never holds more than `acceptQueue` connections: admission counts the handshakes in flight, and a
-  handshake that completes while the queue is full is closed with CONNECTION_REFUSED.
+- The accept queue never holds more than `acceptQueue` connections: a handshake that completes while the queue is full
+  is closed with CONNECTION_REFUSED. Admission counts only the connections waiting for `accept()`, so half-open
+  handshakes from spoofed sources cannot lock real clients out.
 - `samples/realtime-telemetry` reads control lines with a 1024-byte limit; a longer line closes the connection (code 2)
   instead of growing the server's buffer.
 

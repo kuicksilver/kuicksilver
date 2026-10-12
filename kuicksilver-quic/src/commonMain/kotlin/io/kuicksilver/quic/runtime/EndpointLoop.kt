@@ -114,16 +114,20 @@ internal class EndpointLoop private constructor(
     /** Datagrams the sockets did not take (failed or partial sends), stateless replies included. */
     internal var socketDrops = 0L
 
-    /** Server connections this loop adopted whose handshake has not completed yet (they may still join the accept queue). */
+    /** Server connections this loop adopted whose handshake has not completed yet (bookkeeping and tests; admission does not count them). */
     private var handshaking = 0
+
+    @Volatile internal var handshakingForTest: Int = 0
+        private set
 
     /** Handshakes that completed while the accept queue was full: refused with CONNECTION_REFUSED. */
     internal var acceptOverflows = 0L
 
     init {
-        // admission counts the handshakes in flight too: each may join the queue (connections admitted in the same round
-        // are not counted yet; those that complete above the limit are refused in onHandshakeCompleted)
-        core.acceptBacklog = { pendingAccept.load() + handshaking }
+        // admission counts only the connections waiting for accept(): counting unvalidated handshakes too would let
+        // acceptQueue spoofed-source Initials per handshakeTimeout lock every client out before the admission policy (and
+        // its Retry) could step in; the bound is enforced where a handshake completes (onHandshakeCompleted)
+        core.acceptBacklog = { pendingAccept.load() }
     }
 
     /** Starts the receive, timer and forward coroutines; a [LoopGroup] calls it only once every loop exists, so no datagram is forwarded to a loop not built yet. */
@@ -340,6 +344,7 @@ internal class EndpointLoop private constructor(
             rt.serverSide = true
             rt.handshaking = true
             handshaking++
+            handshakingForTest = handshaking
         } // new server connections leave the core's queue at once
         flush()
     }
@@ -507,6 +512,7 @@ internal class EndpointLoop private constructor(
         if (rt.handshaking) {
             rt.handshaking = false
             handshaking--
+            handshakingForTest = handshaking
         }
     }
 

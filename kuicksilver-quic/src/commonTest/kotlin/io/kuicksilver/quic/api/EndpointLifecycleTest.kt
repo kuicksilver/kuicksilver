@@ -145,11 +145,65 @@ class EndpointLifecycleTest {
         }
     }
 
+    /** A client socket that sends but never hears back: its Initials stand for spoofed-source ones (the server's replies go nowhere). */
+    private class DeafIo(
+        private val inner: MemoryDatagramIo,
+    ) : DatagramIo by inner {
+        override suspend fun receive(into: PacketBatch): Int = kotlinx.coroutines.awaitCancellation()
+    }
+
+    @Test fun negative_spoofedInitialsDoNotLockOutAdmission() =
+        runBlocking {
+            withTimeout(30.seconds) {
+                // acceptQueue half-open handshakes from sources that never answer must not refuse a real client until they time out
+                val net = MemoryNetwork()
+                val serverAddr = InetSocketAddress("10.0.0.2", 2222)
+                val server =
+                    QuicEndpoint.bind(
+                        serverAddr,
+                        QuicEndpointConfig
+                            .Builder()
+                            .apply {
+                                this.server = QuicServerConfig.Builder(CoreFixtures.server()).build()
+                                crypto = NullCryptoProvider
+                                acceptQueue = 2
+                                io = { net.open(serverAddr) }
+                            }.build(),
+                    )
+                val loop = server as EndpointLoop
+                suspend fun client(io: DatagramIo) =
+                    QuicEndpoint.bind(
+                        io.localAddress,
+                        QuicEndpointConfig
+                            .Builder()
+                            .apply {
+                                crypto = NullCryptoProvider
+                                this.io = { io }
+                            }.build(),
+                    )
+                val spoofed = (1..2).map { i -> client(DeafIo(net.open(InetSocketAddress("10.0.9.$i", 4000 + i)))) }
+                val honest = client(net.open(InetSocketAddress("10.0.1.1", 1001)))
+                try {
+                    spoofed.forEach { ep -> launch { runCatching { ep.connect(serverAddr, QuicClientConfig.Builder(CoreFixtures.client()).build()) } } }
+                    while (loop.handshakingForTest < 2) delay(5)
+                    val c =
+                        withTimeoutOrNull(5.seconds) {
+                            honest.connect(serverAddr, QuicClientConfig.Builder(CoreFixtures.client()).build())
+                        }
+                    assertTrue(c != null, "a real client is admitted while ${loop.handshakingForTest} spoofed handshakes are in flight")
+                } finally {
+                    spoofed.forEach { it.close() }
+                    honest.close()
+                    server.close()
+                }
+            }
+        }
+
     @Test fun acceptBacklogNeverExceedsAcceptQueue() =
         runBlocking {
             withTimeout(30.seconds) {
-                // nobody calls accept(): six handshakes admitted in one round must not leave more than acceptQueue waiting;
-                // the connections that complete above it are refused with CONNECTION_REFUSED
+                // nobody calls accept(): admission lets all six in (none waits yet), so this exercises the completion-time bound
+                // alone: no more than acceptQueue wait, the connections that complete above it are refused with CONNECTION_REFUSED
                 val net = MemoryNetwork()
                 val serverAddr = InetSocketAddress("10.0.0.2", 2222)
                 val sio = HoldIo(net.open(serverAddr), held = 6)
