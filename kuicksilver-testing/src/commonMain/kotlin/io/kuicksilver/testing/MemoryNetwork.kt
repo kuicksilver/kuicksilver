@@ -39,7 +39,9 @@ import kotlin.concurrent.atomics.incrementAndFetch
 public class MemoryNetwork
     @ExperimentalKuicksilverApi
     constructor(
+        @property:ExperimentalKuicksilverApi
         public val receiveBuffer: Int,
+        @property:ExperimentalKuicksilverApi
         public val assignEphemeralPorts: Boolean = true,
     ) {
     /** A network whose sockets hold 256 unread datagrams and assign ephemeral ports. */
