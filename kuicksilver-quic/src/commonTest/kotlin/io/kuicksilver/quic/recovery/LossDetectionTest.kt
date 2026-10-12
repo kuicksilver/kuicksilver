@@ -131,6 +131,26 @@ class LossDetectionTest {
         assertEquals(9_999, ld.storedPackets(SpaceId.Application))
     }
 
+    @Test fun ackOfTombstoneRangeIsSublinear() {
+        // review of k7/f1-core (RFC 9000 section 21.6): a peer repeating an ACK over a range already acknowledged must not make every
+        // frame walk the tombstones that range left behind. The packet threshold (RFC 9002 section 6.1.1) declares every packet more
+        // than 3 below the largest acknowledged lost on that same ACK, so the front skip removes the run below 999 at once and no
+        // tombstone run can sit under a live packet older than largest - 2.
+        val (ld, l) = ld()
+        for (pn in 0L until 1500L) send(ld, SpaceId.Application, pn, t0 + pn.toInt().microseconds)
+        ld.onAck(SpaceId.Application, ack(500L to 998L), t0 + 100.milliseconds)
+        assertEquals(499, l.acked.size)
+        assertEquals(500, l.lost.size, "0..499 are lost by the packet threshold")
+        assertEquals(501, ld.storedPackets(SpaceId.Application))
+        repeat(10) {
+            ld.visitedForTest = 0
+            ld.onAck(SpaceId.Application, ack(500L to 998L), t0 + 101.milliseconds)
+            assertTrue(ld.visitedForTest < 64, "slots visited for a repeated ACK of 499 tombstones: ${ld.visitedForTest}")
+        }
+        assertEquals(499, l.acked.size)
+        assertEquals(501, ld.storedPackets(SpaceId.Application))
+    }
+
     @Test fun staleAckDoesNotReachEcnValidation() {
         // RFC 9000 section 13.4.2.1: an ACK that does not raise the largest acknowledged packet was reordered on the way; its counts
         // are older than the ones already validated and must not be validated (or counted) again
