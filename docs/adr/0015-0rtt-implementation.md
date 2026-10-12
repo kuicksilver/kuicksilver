@@ -62,8 +62,14 @@ Facts of the pinned OpenSSL 3.5.9 that fix the design:
    of bounded parsing over CRYPTO data that ksl reads anyway. The register has 64 lock-striped buckets, each holding
    two rotating halves of 1024 64-bit fingerprints. A half spans 20 s, which is more than the 10 s allowance plus
    slack. The register uses at most 1 MiB. A full half fails closed: early data is rejected and the handshake goes
-   on in 1-RTT. A ClientHello whose early data TLS rejects after all (bad binder, stale age, context mismatch)
-   releases its reservation, so junk hellos cannot fill the register. A false positive only downgrades to 1-RTT.
+   on in 1-RTT. The scan runs before OpenSSL decrypts the ticket, so `admit` only reserves the identity (two concurrent
+   hellos with one ticket: the second finds the reservation and gets no early data). The reservation stays only if TLS
+   accepts the early data: OpenSSL 3.5 calls the allow-early-data callback in `final_early_data` only after the ticket
+   decrypted, the binder verified and the age passed, and `SSL_get_early_data_status` records the verdict. Any other
+   outcome (forged identity, bad binder, stale age, context mismatch, a session closed before the decision) releases the
+   reservation within the same `ksl` call. A released slot leaves the load count at once (live entries and tombstones are
+   counted apart; tombstones are compacted away), so forged hellos never fill the register: only tickets this process
+   issued and a client completed a resumption with take room. A false positive only downgrades to 1-RTT.
 3. **Configuration binding (RFC 9000 §7.4.1, RFC 9001 §4.6.3, RFC 9114 §7.2.4.2):** the early context is SHA-256 of
    the ALPN list, the server's §7.4.1 transport parameters (initial windows, stream limits, `active_connection_id_limit`,
    `max_datagram_frame_size`, idle timeout, `max_udp_payload_size`, `disable_active_migration`) and the application

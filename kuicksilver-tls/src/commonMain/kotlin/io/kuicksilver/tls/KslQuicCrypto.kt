@@ -338,7 +338,12 @@ internal class KslQuicTlsSession(
         }
     }
 
-    /** Server: a hello the register admitted keeps its reservation only if TLS accepted its early data. */
+    /**
+     * Server: a hello the register admitted keeps its reservation only if TLS accepted its early data. OpenSSL 3.5 decides in
+     * `final_early_data` after the ClientHello is processed: it calls the allow-early-data callback (our verdict) only when the
+     * ticket decrypted, the binder verified (`hit`) and the age is fresh (`early_data_ok`), and the status records the result,
+     * so a forged or stale identity is released in the same `ksl` call that saw it.
+     */
     private fun settleAdmission(failed: Boolean) {
         val id = admitted ?: return
         val st = if (failed) 1 else earlyStatus()
@@ -526,6 +531,9 @@ internal class KslQuicTlsSession(
     internal fun newSessionTicket(): Unit = Ksl.sslNewSessionTicket(s())
 
     override fun close() {
+        // a hello closed before TLS decided on its early data never got it: its reservation goes too
+        admitted?.let { admission?.release(it) }
+        admitted = null
         if (ssl != 0L) {
             Ksl.sslFree(ssl)
             ssl = 0L

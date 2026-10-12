@@ -16,7 +16,7 @@ import kotlin.time.Duration.Companion.seconds
  *
  * Layout: [STRIPES] lock-striped buckets, each with two halves of [SLOTS] open-addressed 64-bit fingerprints; a half covers
  * [HALF_SPAN], so an entry lives between one and two spans (20–40 s). A half at 3/4 load refuses further admissions (fails
- * closed) until it rotates. Memory: [CAPACITY] × 2 × 8 bytes = 1 MiB.
+ * closed) until it rotates; released slots do not count toward that load. Memory: [CAPACITY] × 2 × 8 bytes = 1 MiB.
  */
 @OptIn(ExperimentalAtomicApi::class)
 internal class ZeroRttReplayRegister(
@@ -29,7 +29,8 @@ internal class ZeroRttReplayRegister(
         val lock = AtomicInt(0)
         var current = LongArray(SLOTS)
         var previous = LongArray(SLOTS)
-        var used = 0 // live entries and tombstones of [current]
+        var live = 0 // fingerprints in [current]
+        var tombstones = 0 // released slots of [current]
         var start = TimeMark.NEVER
     }
 
@@ -70,7 +71,8 @@ internal class ZeroRttReplayRegister(
         val old = s.previous
         s.previous = if (keepPrevious) s.current else old.also { it.fill(EMPTY) }
         s.current = old.also { it.fill(EMPTY) }
-        s.used = 0
+        s.live = 0
+        s.tombstones = 0
         s.start = now
     }
 
@@ -88,7 +90,24 @@ internal class ZeroRttReplayRegister(
         return -1
     }
 
-    /** True when [id] was not seen within the window (and is remembered now); false for a replay or a full register. */
+    /** Rebuilds [Stripe.current] without its tombstones, so released slots do not lengthen probes or count as load. */
+    private fun compact(s: Stripe) {
+        val old = s.current.copyOf()
+        s.current.fill(EMPTY)
+        for (v in old) {
+            if (v == EMPTY || v == TOMBSTONE) continue
+            var i = (v.toInt() and (SLOTS - 1))
+            while (s.current[i] != EMPTY) i = (i + 1) and (SLOTS - 1)
+            s.current[i] = v
+        }
+        s.tombstones = 0
+    }
+
+    /**
+     * True when [id] was not seen within the window (and is reserved now); false for a replay or a full register. The
+     * reservation is what makes two concurrent hellos with one ticket get early data once; it stays only if TLS accepts the
+     * early data (ticket decrypted, binder verified, fresh, same configuration), otherwise [release] frees it at once.
+     */
     fun admit(
         id: ByteArray,
         now: TimeMark,
@@ -98,29 +117,41 @@ internal class ZeroRttReplayRegister(
         return locked(s) {
             rotate(s, now)
             if (find(s.current, fp) >= 0 || find(s.previous, fp) >= 0) return@locked false
-            if (s.used >= SLOTS * 3 / 4) return@locked false
+            if (s.live >= LIMIT) return@locked false
+            if (s.live + s.tombstones >= LIMIT) compact(s)
             var i = (fp.toInt() and (SLOTS - 1))
             while (s.current[i] != EMPTY && s.current[i] != TOMBSTONE) i = (i + 1) and (SLOTS - 1)
-            if (s.current[i] == EMPTY) s.used++
+            if (s.current[i] == TOMBSTONE) s.tombstones--
             s.current[i] = fp
+            s.live++
             true
         }
     }
 
-    /** Forgets [id]: TLS refused the early data it was admitted for. */
+    /** Forgets [id]: TLS refused the early data it was reserved for (a forged or stale ticket, another configuration). */
     fun release(id: ByteArray) {
         val fp = fingerprint(id)
         val s = stripeOf(fp)
         locked(s) {
             val i = find(s.current, fp)
-            if (i >= 0) s.current[i] = TOMBSTONE
+            if (i >= 0) {
+                s.current[i] = TOMBSTONE
+                s.live--
+                s.tombstones++
+            }
         }
     }
+
+    /** Fingerprints held (both halves); tests. */
+    internal fun liveForTest(): Int = stripes.sumOf { s -> locked(s) { s.live + s.previous.count { it != EMPTY && it != TOMBSTONE } } }
 
     companion object {
         const val STRIPES = 64
         const val SLOTS = 1024
         const val CAPACITY = STRIPES * SLOTS
+
+        /** Fingerprints (live plus tombstones) a half holds before it compacts or fails closed: 3/4 of [SLOTS]. */
+        private const val LIMIT = SLOTS * 3 / 4
         private const val EMPTY = 0L
         private const val TOMBSTONE = -1L
 

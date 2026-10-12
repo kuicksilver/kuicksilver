@@ -24,6 +24,8 @@ import io.kuicksilver.quic.serverWithKeys
 import io.kuicksilver.quic.wire.TransportParametersCodec
 import io.kuicksilver.tls.EarlyDataState
 import io.kuicksilver.tls.QuicSessionTicket
+import io.kuicksilver.tls.SessionTicketConfig
+import io.kuicksilver.tls.TlsConfig
 import io.kuicksilver.tls.TlsRole
 import kotlin.random.Random
 import kotlin.test.BeforeTest
@@ -49,8 +51,18 @@ class ZeroRttTest {
     ) = ServerEarlyData.of(quic, CoreFixtures.server().alpn, app, register)
 
     /** A full handshake that leaves the client a ticket. */
-    private fun ticket(serverQuic: QuicConfig = QuicConfig.Default): QuicSessionTicket {
-        val p = CorePair(crypto = ksl, clientEarly = EarlyDataState.Allowed, serverEarly = early(serverQuic), serverQuic = serverQuic)
+    private fun ticket(
+        serverQuic: QuicConfig = QuicConfig.Default,
+        serverTls: TlsConfig = CoreFixtures.server(),
+    ): QuicSessionTicket {
+        val p =
+            CorePair(
+                serverTls = serverTls,
+                crypto = ksl,
+                clientEarly = EarlyDataState.Allowed,
+                serverEarly = early(serverQuic),
+                serverQuic = serverQuic,
+            )
         assertTrue(
             p.handshake(),
             "handshake: ${p.closedReason(p.clientEvents)} / ${p.closedReason(p.serverEvents)} ${p.client.state} ${p.server?.state}",
@@ -259,5 +271,81 @@ class ZeroRttTest {
         assertEquals(false, p.client.earlyDataAccepted, "a server without 0-RTT refuses (and cannot resume: it has no ticket keys)")
         assertTrue(p.runUntil(limit = 2.seconds) { p.serverEvents.any { it is ConnectionEvent.StreamReadable && it.id == id } })
         p.close()
+    }
+
+    /** The client's first flight of a 0-RTT connection with [ticket], captured and kept from the server. */
+    private fun firstFlight(ticket: QuicSessionTicket): List<ByteArray> {
+        val (p, _) = resumed(ticket)
+        val captured = ArrayList<ByteArray>()
+        p.filterToServer = { _, b ->
+            captured += b
+            false
+        }
+        p.step()
+        p.close()
+        return captured
+    }
+
+    /** A new server connection fed [flight] (as an endpoint would create it) and the events it raised. */
+    private fun serverFor(
+        flight: List<ByteArray>,
+        early: ServerEarlyData,
+        now: TimeMark = TimeMark(1_000_000_000L),
+    ): Pair<ConnectionCore, List<ConnectionEvent>> {
+        val first = PacketBuffer.of(flight[0])
+        val s =
+            ConnectionCore.serverWithKeys(
+                QuicConfig.Default,
+                CoreFixtures.server(),
+                ksl,
+                CoreFixtures.clientAddr,
+                Random(9),
+                now,
+                first,
+                flight[0].size,
+                null,
+                null,
+                early = early,
+            )!!
+        first.close()
+        val events = ArrayList<ConnectionEvent>()
+        for (b in flight) {
+            val buf = PacketBuffer.of(b)
+            s.handleDatagram(buf, b.size, CoreFixtures.clientAddr, Ecn.NotEct, now)
+            buf.close()
+            while (true) events += s.nextEvent() ?: break
+        }
+        return s to events
+    }
+
+    @Test fun negative_forgedHellosDoNotFillTheRegister() {
+        // a hello whose ticket this server cannot decrypt (another key set: a forged identity) gets no early data and leaves no entry
+        val foreign = ticket(serverTls = CoreFixtures.server { sessionTickets = SessionTicketConfig(keys = listOf(ByteArray(80) { 7 })) })
+        val (forged, _) = serverFor(firstFlight(foreign), early())
+        assertEquals(false, forged.earlyDataAccepted)
+        assertEquals(0, register.liveForTest(), "the forged identity left the register when TLS refused its early data")
+        forged.close(0, "", TimeMark(1_000_000_000L))
+        // a flood of forged identities, each refused by TLS after the register saw it (the scan precedes ticket decryption)
+        val r = Random(11)
+        repeat(100_000) {
+            val id = r.nextBytes(32)
+            assertTrue(register.admit(id, TimeMark(1_000_000_000L)), "a fresh identity is admitted until TLS refuses it")
+            register.release(id)
+        }
+        // a legitimate 0-RTT connection still gets its early data
+        val (p, id) = resumed(ticket())
+        assertTrue(p.runUntil(limit = 3.seconds) { p.server?.streamReceivedEarly(id) == true || p.client.earlyDataAccepted != null })
+        assertEquals(true, p.server!!.earlyDataAccepted, "the register still has room for real tickets")
+        p.close()
+    }
+
+    @Test fun concurrentSameTicketGetsEarlyDataOnce() {
+        // two hellos with the same valid ticket (the original and a replay racing it to two loops or endpoints): one gets early data
+        val flight = firstFlight(ticket())
+        val (a, aEvents) = serverFor(flight, early())
+        val (b, bEvents) = serverFor(flight, early())
+        assertEquals(listOf(true, false), listOf(a.earlyDataAccepted, b.earlyDataAccepted), "exactly one connection gets early data")
+        assertTrue(aEvents.any { it is ConnectionEvent.StreamReadable }, "the admitted one reads its request")
+        assertTrue(bEvents.none { it is ConnectionEvent.StreamOpened || it is ConnectionEvent.StreamReadable }, "the other reads nothing")
     }
 }
