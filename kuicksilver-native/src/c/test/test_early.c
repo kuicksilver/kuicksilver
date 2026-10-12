@@ -73,6 +73,25 @@ static void test_resumption_renews_ticket(void) {
     CHECK(reused(c) == 1 && next != NULL && next != sess, "a resumed connection receives a new ticket (single-use tickets)");
     ksl_session_free(next); ksl_ssl_free(c); ksl_ssl_free(s); ksl_session_free(sess); ksl_ctx_free(cc); ksl_ctx_free(sc); END();
 }
+static int done_events(ksl_ssl *who, ksl_ssl *peer) {
+    int done = 0; ksl_event ev;
+    while (ksl_quic_next_event(who, &ev)) {
+        if (ev.type == KSL_EV_CRYPTO_SEND && peer) ksl_quic_provide(peer, ev.level, ev.buf, ev.len);
+        else if (ev.type == KSL_EV_KEY) ksl_key_free(ev.key);
+        else if (ev.type == KSL_EV_HANDSHAKE_DONE) done = 1;
+    }
+    return done;
+}
+static void test_server_done_waits_for_finished(void) {
+    SECTION("quic_early_server_done_waits_for_client_finished");
+    /* OpenSSL stops an early-data server at TLS_ST_EARLY_DATA (SSL_do_handshake returns 1) before the client's Finished */
+    ksl_ctx *cc = client_ctx("test-ca", KSL_VERIFY_OPENSSL), *sc = early_server_ctx(1);
+    ksl_ssl *c = qclient(cc), *s = qserver(sc, "cfg-1");
+    ksl_drive(c); done_events(c, s);
+    int rc = ksl_drive(s); int sdone = done_events(s, NULL);
+    CHECK(rc == KSL_WANT_READ && !sdone, "no HANDSHAKE_DONE before the client's Finished");
+    ksl_ssl_free(c); ksl_ssl_free(s); ksl_ctx_free(cc); ksl_ctx_free(sc); END();
+}
 static void test_early_context_mismatch(void) {
     SECTION("quic_early_data_context_mismatch_rejects");
     ksl_ctx *cc = client_ctx("test-ca", KSL_VERIFY_OPENSSL), *sc = early_server_ctx(1);
@@ -111,4 +130,4 @@ static void test_early_option_server_only(void) {
     ksl_ssl *s = ksl_ssl_new(cc, KSL_MODE_QUIC); CHECK(set_str(s, KSL_SET_EARLY_CONTEXT, "x") == KSL_ERROR, "client session refuses an early context");
     ksl_ssl_free(s); ksl_ctx_free(cc); END();
 }
-void run_early(void) { test_early_accepted(); test_resumption_renews_ticket(); test_early_context_mismatch(); test_early_verdict_refused(); test_ticket_without_early_data(); test_early_option_server_only(); }
+void run_early(void) { test_server_done_waits_for_finished(); test_early_accepted(); test_resumption_renews_ticket(); test_early_context_mismatch(); test_early_verdict_refused(); test_ticket_without_early_data(); test_early_option_server_only(); }

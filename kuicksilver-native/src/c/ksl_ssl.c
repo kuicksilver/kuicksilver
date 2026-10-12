@@ -170,6 +170,9 @@ int ksl_drive(ksl_ssl *s) {
     ERR_clear_error(); int r;
     if (!s->done) {
         r = SSL_do_handshake(s->ssl);
+        /* A server with early data enabled stops at TLS_ST_EARLY_DATA once its own Finished is out (SSL_do_handshake returns 1, as for
+           SSL_read_early_data over TCP); the handshake is complete only with the client's Finished: calling again re-enters it. */
+        if (r == 1 && s->owner->role == KSL_SERVER && SSL_get_state(s->ssl) == TLS_ST_EARLY_DATA) r = SSL_do_handshake(s->ssl);
         if (r == 1) {
             s->done = 1;
             if (s->mode == KSL_MODE_TCP && SSL_version(s->ssl) < TLS1_3_VERSION && !SSL_get_extms_support(s->ssl)) return ksl_ssl_fail(s, KSL_E_EMS_REQUIRED, "ksl: TLS 1.2 without extended master secret rejected");
