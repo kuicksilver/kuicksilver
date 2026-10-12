@@ -20,6 +20,7 @@ step() { # name command...
 export SIZE_LIMIT="${SIZE_LIMIT:-3000000}"
 aar=kuicksilver-native/build/outputs/aar/kuicksilver-native.aar
 step "lint: action/image pins"                 bash tools/check/pins.sh .
+step "lint: ktlint"                            $G lintKotlin
 # shellcheck disable=SC2086
 step "check: spdx, layers, abi"                $G $KSL_CHECKS
 # shellcheck disable=SC2086

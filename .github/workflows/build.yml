@@ -41,7 +41,7 @@ jobs:
   lint:
     runs-on: ubuntu-24.04
     permissions: { contents: read }
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { persist-credentials: false }
@@ -54,6 +54,10 @@ jobs:
           rc=0; while IFS= read -r f; do bash -n "$f" || rc=1; done < <(git ls-files '*.sh'); exit $rc
       - name: 'lint: shellcheck (errors)'
         run: git ls-files '*.sh' | xargs shellcheck -S error
+      - uses: ./.github/actions/setup
+      - name: 'lint: ktlint'
+        # kotlinter's lintKotlin only parses sources: no Kotlin/Native toolchain, OpenSSL or NDK is needed
+        run: ./gradlew --max-workers=2 lintKotlin
 
   openssl-docker:
     # The container-built OpenSSL targets, shared with the other jobs as artifacts (they reuse them through
