@@ -5,6 +5,9 @@ package io.kuicksilver.ktor.client
 import io.ktor.client.engine.HttpClientEngineConfig
 import io.kuicksilver.annotations.KuicksilverDsl
 import io.kuicksilver.http3.Http3Settings
+import io.kuicksilver.quic.ConnectionListener
+import io.kuicksilver.quic.KuicksilverLogger
+import io.kuicksilver.quic.QlogSink
 import io.kuicksilver.quic.QuicConfig
 import io.kuicksilver.quic.QuicEndpointConfig
 import io.kuicksilver.tls.TlsConfig
@@ -84,6 +87,18 @@ public class Http3ClientConfig {
      */
     @io.kuicksilver.annotations.ExperimentalKuicksilverApi
     public var earlyData: Boolean = false
+
+    /**
+     * A qlog trace per HTTP/3 connection (docs/guide/quic.md, "qlog"), added to [KuicksilverEngineConfig.quic]; null (the
+     * default) keeps that configuration's own. Wrap a file sink in `AsyncQlogSink` so a slow disk never stalls the endpoint:
+     * `qlog = AsyncQlogSink(DirectoryQlogSink(dir))`.
+     */
+    @io.kuicksilver.annotations.ExperimentalKuicksilverApi
+    public var qlog: QlogSink? = null
+
+    /** Hears the lifecycle of every QUIC connection of the engine (`QuicEndpointConfig.listener`); null keeps [endpoint]'s. */
+    @io.kuicksilver.annotations.ExperimentalKuicksilverApi
+    public var connectionListener: ConnectionListener? = null
 }
 
 /** Configuration of `HttpClient(Kuicksilver)`. */
@@ -108,6 +123,17 @@ public class KuicksilverEngineConfig : HttpClientEngineConfig() {
 
     /** HTTP/3 discovery, racing and connection settings; change it with [http3]. */
     public val http3: Http3ClientConfig = Http3ClientConfig()
+
+    /**
+     * Where the engine's diagnostics go, its QUIC endpoint's included (docs/guide/ktor.md, "Observability"); null (the
+     * default) keeps `http3.endpoint.logger`, which writes warnings to standard error.
+     */
+    @io.kuicksilver.annotations.ExperimentalKuicksilverApi
+    public var logger: KuicksilverLogger? = null
+
+    /** Hears every call: protocol choice, race, fallback, Alt-Svc, connection pool and retries; null (the default) for none. */
+    @io.kuicksilver.annotations.ExperimentalKuicksilverApi
+    public var eventListener: KuicksilverEventListener? = null
 
     /** Configures [http3] in place: `engine { http3 { discovery = Http3DiscoveryMode.Preferred } }`. */
     public fun http3(block: Http3ClientConfig.() -> Unit) {

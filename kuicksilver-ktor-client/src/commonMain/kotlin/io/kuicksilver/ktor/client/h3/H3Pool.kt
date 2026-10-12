@@ -29,6 +29,7 @@ import io.kuicksilver.http3.Http3Exception
 import io.kuicksilver.http3.Http3Headers
 import io.kuicksilver.http3.Http3Request
 import io.kuicksilver.http3.Http3Response
+import io.kuicksilver.ktor.client.EngineEvents
 import io.kuicksilver.ktor.client.H3BodyConsumed
 import io.kuicksilver.ktor.client.KuicksilverEngineConfig
 import io.kuicksilver.ktor.client.connectTimeoutMillis
@@ -65,15 +66,45 @@ internal class H3NotSent(
 @OptIn(InternalAPI::class)
 internal class H3Pool(
     private val config: KuicksilverEngineConfig,
+    private val events: EngineEvents = EngineEvents(null, io.kuicksilver.quic.KuicksilverLogger.None),
 ) {
     private val lock = Mutex()
+
+    /** The engine's endpoint with its logger and connection listener, when the engine sets them. */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    private val endpointConfig: io.kuicksilver.quic.QuicEndpointConfig =
+        config.http3.endpoint.let { e ->
+            if (config.logger == null && config.http3.connectionListener == null) {
+                e
+            } else {
+                e
+                    .toBuilder()
+                    .apply {
+                        config.logger?.let { logger = it }
+                        config.http3.connectionListener?.let { listener = it }
+                    }.build()
+            }
+        }
+
+    /** The engine's QUIC settings with its qlog sink, when the engine sets one. */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    private val quic: io.kuicksilver.quic.QuicConfig =
+        config.http3.qlog?.let { sink ->
+            config.quic
+                .toBuilder()
+                .apply { qlog = sink }
+                .build()
+        } ?: config.quic
     private var endpoint: Http3Endpoint? = null
     private val connections = HashMap<String, CompletableDeferred<Http3Connection>>()
+
+    /** Connections set up and not yet used by an exchange: the first one to use it reports it as new (under [lock]). */
+    private val fresh = HashSet<Http3Connection>()
 
     private suspend fun endpoint(): Http3Endpoint =
         lock.withLock {
             endpoint
-                ?: Http3Endpoint.bind(InetSocketAddress("0.0.0.0", 0), config.http3.endpoint, config.http3.settings).also { endpoint = it }
+                ?: Http3Endpoint.bind(InetSocketAddress("0.0.0.0", 0), endpointConfig, config.http3.settings).also { endpoint = it }
         }
 
     /** Test hook: the open connections, then forgets them so the next request connects again (a 0-RTT resumption). */
@@ -93,6 +124,7 @@ internal class H3Pool(
     fun close() {
         endpoint?.close()
         endpoint = null
+        fresh.clear()
     }
 
     /** An open connection to [t], connecting (once, shared by concurrent callers) when needed. */
@@ -125,18 +157,24 @@ internal class H3Pool(
                             ep.connectEarly(
                                 InetSocketAddress(socketHost(t.host), t.port),
                                 config.tlsConfigFor(t.originHost, listOf(Http3Endpoint.H3)),
-                                config.quic,
+                                quic,
                                 config.http3.settings,
                             )
                         } else {
                             ep.connect(
                                 InetSocketAddress(socketHost(t.host), t.port),
                                 config.tlsConfigFor(t.originHost, listOf(Http3Endpoint.H3)),
-                                config.quic,
+                                quic,
                                 config.http3.settings,
                             )
                         }
                     }
+                if (events.enabled) {
+                    lock.withLock {
+                        fresh.removeAll { it.closed.isCompleted } // closed before any exchange used them
+                        fresh += c
+                    }
+                }
                 d.complete(c)
             } catch (
                 e: TimeoutCancellationException,
@@ -204,6 +242,10 @@ internal class H3Pool(
                 } catch (e: Throwable) {
                     throw H3NotSent(e)
                 }
+            if (events.enabled) {
+                val reused = lock.withLock { !fresh.remove(conn) }
+                events.emit("connectionAcquired") { connectionAcquired(data, HttpProtocolVersion.HTTP_3_0, reused) }
+            }
             try {
                 return if (data.attributes.contains(
                         WEBSOCKETS_KEY,
@@ -226,6 +268,7 @@ internal class H3Pool(
                     )
                 }
                 if (++attempts > 2) throw H3NotSent(e)
+                events.emit("retry") { retry(data, attempts + 1, e) }
             }
         }
     }
@@ -258,6 +301,7 @@ internal class H3Pool(
             // (the request timeout, the caller's exception), not the stream's cancellation (found by the vendored contract)
             if (cause != null) response.body.cancel(cause) // as the HTTP/1.1 body: closed with the call's own cancellation
             response.cancel()
+            events.emit("connectionReleased") { connectionReleased(data, HttpProtocolVersion.HTTP_3_0, kept = !conn.closed.isCompleted) }
         }
         val status = HttpStatusCode.fromValue(response.status)
         val headers = HeadersBuilder().apply { for ((n, v) in response.headers.fields) append(n, v) }.build()
