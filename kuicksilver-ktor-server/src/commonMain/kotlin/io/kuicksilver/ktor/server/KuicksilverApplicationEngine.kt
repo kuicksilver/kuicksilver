@@ -17,6 +17,9 @@ import io.ktor.server.engine.withPort
 import io.kuicksilver.http3.Http3Endpoint
 import io.kuicksilver.http3.Http3Settings
 import io.kuicksilver.quic.ConnectionAdmission
+import io.kuicksilver.quic.ConnectionListener
+import io.kuicksilver.quic.KuicksilverLogger
+import io.kuicksilver.quic.QlogSink
 import io.kuicksilver.quic.QuicConfig
 import io.kuicksilver.quic.QuicEndpointConfig
 import io.kuicksilver.tls.TlsException
@@ -38,6 +41,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.concurrent.Volatile
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.milliseconds
 
 /**
  * The Kuicksilver server engine (docs/guide/ktor.md): HTTP/1.1 over TLS on TCP through the CIO connection pipeline of Ktor, and
@@ -91,6 +95,28 @@ public class KuicksilverApplicationEngine(
         @io.kuicksilver.annotations.ExperimentalKuicksilverApi
         public var quicEarlyData: Boolean = false
 
+        /**
+         * Where the HTTP/3 endpoints' diagnostics go (docs/guide/quic.md, "Observability"); warnings on standard error by
+         * default. The engine's own messages keep going to the application's log.
+         */
+        @io.kuicksilver.annotations.ExperimentalKuicksilverApi
+        public var logger: KuicksilverLogger = KuicksilverLogger.Stderr
+
+        /**
+         * A qlog trace per HTTP/3 connection, added to [quic]; null (the default) keeps that configuration's own. Wrap a file
+         * sink in `AsyncQlogSink` so a slow disk never stalls the endpoint: `qlog = AsyncQlogSink(DirectoryQlogSink(dir))`.
+         */
+        @io.kuicksilver.annotations.ExperimentalKuicksilverApi
+        public var qlog: QlogSink? = null
+
+        /** Hears the lifecycle of every QUIC connection of the HTTP/3 listeners (`QuicEndpointConfig.listener`); null for none. */
+        @io.kuicksilver.annotations.ExperimentalKuicksilverApi
+        public var connectionListener: ConnectionListener? = null
+
+        /** Hears connections and requests over HTTP/1.1 and HTTP/3 (docs/guide/ktor.md, "Observability"); null for none. */
+        @io.kuicksilver.annotations.ExperimentalKuicksilverApi
+        public var eventListener: KuicksilverServerEventListener? = null
+
         /** How the HTTP/3 listener binds (tests replace it to simulate platforms without a QUIC server). */
         internal var http3Bind: suspend (
             InetSocketAddress,
@@ -106,6 +132,14 @@ public class KuicksilverApplicationEngine(
             connectors.add(KuicksilverTlsConnector.Builder(identity).apply(block).build())
         }
     }
+
+    /** The configuration's [KuicksilverServerEventListener], behind a guard that logs its failures. */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    internal val events = ServerEvents(configuration.eventListener, environment.log)
+
+    /** The grace period of the stop in progress: each HTTP/3 endpoint gets it for `QuicEndpoint.shutdown`. */
+    @Volatile
+    private var stopGraceMillis = 0L
 
     internal val engineDispatcher = Dispatchers.IO
     internal val userDispatcher = Dispatchers.IO
@@ -137,6 +171,7 @@ public class KuicksilverApplicationEngine(
         gracePeriodMillis: Long,
         timeoutMillis: Long,
     ) {
+        stopGraceMillis = gracePeriodMillis
         stopRequest.complete()
         val result =
             withTimeoutOrNull(gracePeriodMillis) {
@@ -232,6 +267,12 @@ public class KuicksilverApplicationEngine(
                 // every connection at once: goAway() waits 2×RTT between its two frames, one after another the k-th would wait k×50 ms
                 h3.forEach { l ->
                     l.acceptJob.cancel()
+                    // the QUIC side of the grace period: new clients refused at their first Initial, the live connections get
+                    // the grace period to finish, then whatever is left closes with H3_NO_ERROR
+                    launch {
+                        @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+                        runCatching { l.endpoint.shutdown(stopGraceMillis.milliseconds) }
+                    }
                     for (c in l.live()) launch { runCatching { c.goAway() } }
                 }
                 withContext(userDispatcher) { monitor.raise(ApplicationStopPreparing, environment) }

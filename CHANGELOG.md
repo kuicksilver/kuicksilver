@@ -49,6 +49,25 @@ Nothing has been released yet. This section summarises the development of the fi
 - The `macosX64` Kotlin/Native target (deprecated by Kotlin, never part of the test matrix). The JVM on Intel Macs keeps its `osx-x86_64` JNI library.
 
 ### Added
+- Observability, experimental (docs/guide/quic.md "Observability", docs/guide/ktor.md "Observability"):
+  `QuicEndpoint.stats` sums `EndpointStats` over every loop and gains connection (active, accepted, refused by accept
+  queue, admission, limits or shutdown), handshake (completed, failed by timeout, TLS alert or other), 0-RTT (offered,
+  accepted, rejected), datagram (in, out, dropped at the socket, a queue, undecryptable, unanswered), path validation and
+  internal failure counters (`uncaughtFailures`, `sendFailures`, `listenerFailures`), all plain loop fields with no cost per
+  packet; `KuicksilverLogger` (`QuicEndpointConfig.logger`, default `KuicksilverLogger.Stderr`, which keeps the old
+  warning on standard error) with `Debug` connection lifecycle lines that never carry keys, secrets, tickets or tokens;
+  `ConnectionListener` (`QuicEndpointConfig.listener`: opened, handshake complete, 0-RTT outcome, path changed, closed
+  with its `ConnectionLost` reason); `AsyncQlogSink`, which runs any `QlogSink` on its own writer with a bounded queue
+  (drops counted) and 1-in-N sampling so a slow disk never stalls the endpoint loop; `QuicConfig.toBuilder()`;
+  `Http3Endpoint.stats`. Ktor client: `KuicksilverEventListener` (call start/end/failure, protocol chosen and why, race
+  outcome, Alt-Svc used and marked broken, fallback, retry, pool acquire/release), `logger`, `http3.qlog`,
+  `http3.connectionListener`. Ktor server: `KuicksilverServerEventListener` (connections and requests over HTTP/1.1 and
+  HTTP/3, failed TLS handshakes), `logger`, `qlog`, `connectionListener`.
+- Graceful shutdown, experimental: `QuicEndpoint.shutdown(grace, code, reason)` refuses new clients at their first
+  Initial with a stateless CONNECTION_REFUSED (the accept-queue refusal), lets live connections finish within `grace`,
+  then closes the rest with an application CONNECTION_CLOSE and the endpoint; `Http3Endpoint.shutdown` closes with
+  H3_NO_ERROR. The Ktor server's `stop(gracePeriod, timeout)` now shuts each HTTP/3 endpoint down this way next to its
+  GOAWAY, so a client arriving during the grace period is refused within a round trip instead of timing out.
 - QUIC server on Kotlin/Native Windows (`mingwX64`): `ksl_udp` over Winsock (`WSASendMsg`/`WSARecvMsg` with `WSAPoll` and a wake socket, ECN through `IP_ECN`/`IPV6_ECN` on Windows 10 2004+ / Server 2022, USO/URO where the system grants them, DF, dual-stack IPv6, `SO_EXCLUSIVEADDRUSE`); the JVM on Windows uses the same socket through JNI. Winsock is started when the Kotlin/Native runtime starts (not from a C constructor, which in a `sharedLib` would run under the loader lock), so address lookups before the first socket no longer fail with `WSANOTINITIALISED`. Verified by the CI windows job only. `loops > 1` without `SO_REUSEPORT` granted on the first socket (Windows always) throws the documented `UnsupportedOperationException` instead of failing the second bind with `KslException.Internal`.
 - 0-RTT, opt-in and experimental (ADR-0015, RFC 9001 section 4.6, RFC 8470): `QuicClientConfig.earlyData`,
   `QuicServerConfig.earlyData`/`earlyDataContext`, `QuicEndpoint.connectEarly`, `QuicConnection.awaitHandshake`/

@@ -176,6 +176,65 @@ single stream reset or a malformed response falls back for that request only) â€
 network. Broken alternatives are skipped (straight to HTTP/1.1). The curl-style `softDelay` ("no UDP datagram from the
 server yet") is accepted in the configuration but not acted on in v1: the QUIC API does not expose that signal.
 
+## Observability (experimental)
+
+Both engines report what they do without a logging dependency (the API is `@ExperimentalKuicksilverApi`). The QUIC side
+is the one described in [QUIC: Observability](quic.md#observability): counters, a `KuicksilverLogger`, a
+`ConnectionListener` and qlog.
+
+**Server.** In the engine configuration, `logger` receives the HTTP/3 endpoints' diagnostics (warnings on standard error by
+default; the engine's own messages keep going to the application's log), `connectionListener` hears every QUIC
+connection, `qlog` adds a trace per HTTP/3 connection to `quic`, and `eventListener` takes a
+`KuicksilverServerEventListener`: `connectionOpened` and `connectionClosed` with the protocol (`HTTP/1.1` after the TLS
+handshake, `HTTP/3.0` once accepted) and the peer's address, `tlsHandshakeFailed`, and `requestStarted` / `requestEnded`
+around the application's pipeline with the `ApplicationCall` (its response status) and the pipeline's failure, if any.
+
+```kotlin
+embeddedServer(Kuicksilver, configure = {
+    tlsConnector(identity) { port = 443 }
+    logger = KuicksilverLogger.stderr(LogLevel.Info)
+    qlog = AsyncQlogSink(DirectoryQlogSink("/var/log/qlog"), sampleEvery = 100)
+    eventListener = object : KuicksilverServerEventListener() {
+        override fun requestEnded(protocol: HttpProtocolVersion, call: ApplicationCall, cause: Throwable?) {
+            metrics.record(protocol, call.response.status()?.value)
+        }
+    }
+}, module = Application::module)
+```
+
+**Client.** `engine { eventListener = ... }` takes a `KuicksilverEventListener`, an abstract class with an empty method
+per event in the manner of OkHttp's `EventListener`: `callStart`, `callEnd` (protocol and status) or `callFailed`;
+`protocolSelected` with a `ProtocolReason` (`Configuration`, `NotSecure`, `ExistingConnection`, `Race`, `NoAlternative`,
+`BrokenAlternative`, `WebSocket`, `Fallback`); `raceEnded` (winner, head start, why HTTP/3 lost); `altSvcUsed` and
+`altSvcMarkedBroken`; `fallback` from HTTP/3 to HTTP/1.1; `retry` (a request the server did not process after GOAWAY, a
+stale pooled HTTP/1.1 connection); `connectionAcquired` (reused or new) and `connectionReleased` (kept for the next request
+or closed). `logger` (null keeps `http3.endpoint.logger`) also receives the listener's own failures, and
+`http3 { qlog = ...; connectionListener = ... }` reach the engine's QUIC endpoint.
+
+```kotlin
+HttpClient(Kuicksilver) {
+    engine {
+        eventListener = object : KuicksilverEventListener() {
+            override fun protocolSelected(request: HttpRequestData, protocol: HttpProtocolVersion, reason: ProtocolReason) {
+                println("${request.url}: $protocol ($reason)")
+            }
+        }
+        http3 { qlog = AsyncQlogSink(DirectoryQlogSink("qlog")) }
+    }
+}
+```
+
+Callbacks of both listeners run on the engines' coroutines and must return quickly; an exception out of one is logged and
+never fails a call.
+
+### Graceful stop
+
+`stop(gracePeriodMillis, timeoutMillis)` stops accepting TCP connections, sends GOAWAY on every live HTTP/3 connection at
+once (RFC 9114 section 5.2) and shuts each HTTP/3 endpoint down with the same grace period
+([QUIC: Graceful shutdown](quic.md#graceful-shutdown)): a new QUIC client is refused at its first Initial with
+CONNECTION_REFUSED instead of waiting for a handshake timeout, the calls in flight finish, and at the end of the grace
+period what is left is closed with H3_NO_ERROR. The engine then waits for the remaining calls up to `timeoutMillis`.
+
 ## 0-RTT (opt-in, experimental)
 
 Both engines can resume HTTP/3 connections with 0-RTT ([ADR-0015](../adr/0015-0rtt-implementation.md)). It is off by

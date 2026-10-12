@@ -141,12 +141,18 @@ internal fun KuicksilverApplicationEngine.startTcp(
                             connectionScope.launch {
                                 val sock: Socket
                                 val peer: List<Certificate>
+                                val remote = client.remoteAddress as? InetSocketAddress
                                 if (tlsConfig != null) {
                                     val t =
                                         try {
                                             client.tlsServer(tlsConfig)
                                         } catch (e: Throwable) {
                                             client.close()
+                                            if (e !is CancellationException) {
+                                                events.emit(
+                                                    "tlsHandshakeFailed",
+                                                ) { tlsHandshakeFailed(remote, e) }
+                                            }
                                             return@launch
                                         } // a failed handshake ends only this connection
                                     sock = t
@@ -156,6 +162,7 @@ internal fun KuicksilverApplicationEngine.startTcp(
                                     peer = emptyList()
                                 }
                                 val altSvc = if (l.tls != null && configuration.altSvc) http3AltSvc(port) else null
+                                events.emit("connectionOpened") { connectionOpened(HttpProtocolVersion.HTTP_1_1, remote) }
                                 try {
                                     val connection =
                                         ServerIncomingConnection(
@@ -170,6 +177,7 @@ internal fun KuicksilverApplicationEngine.startTcp(
                                     ) { request -> handleRequest(this, request, scheme, peer, altSvc) }.join()
                                 } finally {
                                     sock.close()
+                                    events.emit("connectionClosed") { connectionClosed(HttpProtocolVersion.HTTP_1_1, remote) }
                                 }
                             }
                         }
@@ -219,12 +227,16 @@ private suspend fun KuicksilverApplicationEngine.handleRequest(
                     peer,
                     altSvc,
                 )
+            events.emit("requestStarted") { requestStarted(HttpProtocolVersion.HTTP_1_1, call) }
+            var failure: Throwable? = null
             try {
                 addHandlerForExpectedHeader(output, call)
                 pipeline.execute(call)
             } catch (error: Throwable) {
+                failure = error
                 handleFailure(call, error)
             } finally {
+                events.emit("requestEnded") { requestEnded(HttpProtocolVersion.HTTP_1_1, call, failure) }
                 call.release()
             }
         }
