@@ -4,10 +4,13 @@ package io.kuicksilver.ktor.client
 
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.selects.onTimeout
 import kotlinx.coroutines.selects.select
+import kotlinx.coroutines.withContext
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
@@ -25,7 +28,7 @@ internal class RaceResult<T>(
  * HTTP/1.1 starts when HTTP/3 fails, or after the head start — [hardDelay] when set, else 1.5 x the host's smoothed RTT,
  * or 250 ms without history, clamped to 100 ms..2 s — and immediately on a network where QUIC was never seen working.
  * The first success wins; the loser is cancelled, and an h1 setup that completed just as h3 won is handed to `onLoser`
- * so the caller can close it (a connection must not be leaked, RFC 8305 section 5).
+ * so the caller can close it (a connection must not be leaked, RFC 8305 section 5) — also when the caller is cancelled.
  */
 internal class ProtocolRace(
     private val softDelay: Duration,
@@ -40,6 +43,7 @@ internal class ProtocolRace(
     }
 
     @Suppress("UNCHECKED_CAST")
+    @OptIn(ExperimentalCoroutinesApi::class)
     suspend fun <T> race(
         h3: suspend () -> T,
         h1: suspend () -> T,
@@ -78,29 +82,33 @@ internal class ProtocolRace(
                         },
                     )
                 }
-            var h3Result: Result<T>? = early
-            var h1Result: Result<T>? = null
-            while (true) {
-                if (h3Result?.isSuccess == true) {
+            var h1Won = false
+            try {
+                var h3Result: Result<T>? = early
+                var h1Result: Result<T>? = null
+                while (true) {
+                    if (h3Result?.isSuccess == true) return@coroutineScope RaceResult(h3Result.getOrThrow(), Protocol.H3, null)
+                    if (h1Result?.isSuccess == true) {
+                        h1Won = true
+                        h3Job.cancel()
+                        return@coroutineScope RaceResult(h1Result.getOrThrow(), Protocol.H1, h3Result?.exceptionOrNull())
+                    }
+                    if (h3Result != null && h1Result != null) throw h1Result.exceptionOrNull()!!
+                    select<Unit> {
+                        if (h3Result == null) h3Done.onAwait { h3Result = it }
+                        if (h1Result == null) h1Done.onAwait { h1Result = it }
+                    }
+                }
+                @Suppress("UNREACHABLE_CODE")
+                error("unreachable")
+            } finally {
+                // h3 won, both failed, or the caller was cancelled: an h1 connection that still got made goes to onLoser
+                if (!h1Won) {
                     h1Job.cancel()
-                    h1Job.join()
-                    if (h1Done.isCompleted && !h1Done.isCancelled) h1Done.await().getOrNull()?.let(onLoser)
-                    return@coroutineScope RaceResult(h3Result.getOrThrow(), Protocol.H3, null)
-                }
-                if (h1Result?.isSuccess ==
-                    true
-                ) {
-                    h3Job.cancel()
-                    return@coroutineScope RaceResult(h1Result.getOrThrow(), Protocol.H1, h3Result?.exceptionOrNull())
-                }
-                if (h3Result != null && h1Result != null) throw h1Result.exceptionOrNull()!!
-                select<Unit> {
-                    if (h3Result == null) h3Done.onAwait { h3Result = it }
-                    if (h1Result == null) h1Done.onAwait { h1Result = it }
+                    withContext(NonCancellable) { h1Job.join() }
+                    if (h1Done.isCompleted) h1Done.getCompleted().getOrNull()?.let(onLoser)
                 }
             }
-            @Suppress("UNREACHABLE_CODE")
-            error("unreachable")
         }
 
     /** The soft delay of curl ("no UDP datagram from the server yet") needs a transport signal the QUIC API does not expose; kept for configuration. */

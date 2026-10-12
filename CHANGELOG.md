@@ -92,7 +92,8 @@ K7 (0.2.0), HTTP/3 and the Ktor engines:
   longer sent again (RFC 9112 section 9.3.1); only idempotent requests get the transparent retry, and connections
   already closed for reading are dropped when taken from the pool.
 - Ktor client: the h3/h1 connection race makes one HTTP/1.1 attempt (a second TCP connection was opened when both
-  setups failed), closes an HTTP/1.1 connection that lost the race instead of leaking it, and marks the alternative
+  setups failed), closes an HTTP/1.1 connection that lost the race instead of leaking it (also when the caller is
+  cancelled), and marks the alternative
   broken when a request fell back to HTTP/1.1 after failing over HTTP/3 (RFC 7838 section 2.4, RFC 8305 section 5).
 - Ktor client: the Alt-Svc stores and broken-alternative marks are bounded — 8 alternatives per origin (the first ones
   of the header), 1000 origins with the least recently used dropped — so a server, or many origins, can no longer grow

@@ -2,10 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.kuicksilver.ktor.client
 
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.currentTime
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
 import kotlinx.io.IOException
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -94,6 +98,35 @@ class ProtocolRaceTest {
             val lost = ArrayList<String>()
             val r = race.race({ "h3" }, { "h1" }, null, quicConfirmed = false, onLoser = { lost += it })
             assertEquals(Protocol.H3, r.winner)
+            assertEquals(listOf("h1"), lost)
+        }
+
+    /** A caller cancelled while an h1 setup completes (it cannot be interrupted) still hands the connection to [onLoser]. */
+    @Test fun loserIsHandedOverWhenCallerIsCancelled() =
+        runTest {
+            val lost = ArrayList<String>()
+            val h1Started = CompletableDeferred<Unit>()
+            val gate = CompletableDeferred<Unit>()
+            val caller =
+                launch {
+                    race.race(
+                        { awaitCancellation() },
+                        {
+                            withContext(NonCancellable) {
+                                h1Started.complete(Unit)
+                                gate.await()
+                                "h1"
+                            }
+                        },
+                        null,
+                        quicConfirmed = false,
+                        onLoser = { lost += it },
+                    )
+                }
+            h1Started.await()
+            caller.cancel()
+            gate.complete(Unit)
+            caller.join()
             assertEquals(listOf("h1"), lost)
         }
 
