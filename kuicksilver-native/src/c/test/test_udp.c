@@ -5,6 +5,8 @@
 #include "test_common.h"
 #include <errno.h>
 #include <pthread.h>
+#include <sys/resource.h>
+#include <unistd.h>
 
 static void v4(uint8_t a[KSL_UDP_ADDR_LEN], uint16_t port) { memset(a, 0, KSL_UDP_ADDR_LEN); a[0] = 4; a[1] = (uint8_t)(port >> 8); a[2] = (uint8_t)port; a[3] = 127; a[4] = 0; a[5] = 0; a[6] = 1; }
 #if defined(__linux__) || defined(__APPLE__)
@@ -149,6 +151,19 @@ void run_udp(void) {
               for (int tries = 0; tries < 10 && !got; tries++) ksl_udp_recv(v6, rb, rc, rl, ra, re, 1, &got, 100);
               CHECK(got == 1 && rl[0] == 63 && re[0] == 2, "ECT(0) arrives over IPv6 loopback"); }
             ksl_udp_close(v6); } }
+        /* udp_open_without_wake_pipe: with one free descriptor below RLIMIT_NOFILE the socket opens but the wake pipe cannot.
+           Darwin: the pipe is the only way to wake a blocked receive, so open fails (KSL_E_NOT_SUPPORTED) and leaks no descriptor;
+           Linux: open goes on without the pipe */
+        { struct rlimit old; CHECK(getrlimit(RLIMIT_NOFILE, &old) == 0, "getrlimit"); int lowest = dup(0); CHECK(lowest >= 0, "dup"); close(lowest);
+          struct rlimit low = old; low.rlim_cur = (rlim_t)lowest + 2; CHECK(setrlimit(RLIMIT_NOFILE, &low) == 0, "setrlimit");
+          uint8_t a4[KSL_UDP_ADDR_LEN]; v4(a4, 0); uint32_t err = 0; char msg[128] = {0}; ksl_udp *p = ksl_udp_open(a4, 0, &err, msg, sizeof msg);
+          setrlimit(RLIMIT_NOFILE, &old);
+#ifdef __APPLE__
+          CHECK(p == NULL && err == KSL_E_NOT_SUPPORTED, "Darwin: no wake pipe, no socket");
+#else
+          CHECK(p != NULL, "Linux: the socket opens without the wake pipe");
+#endif
+          if (p) ksl_udp_close(p); int again = dup(0); CHECK(again == lowest, "no descriptor leaked"); if (again >= 0) close(again); }
         /* udp_reuseport_two_sockets_one_port (Linux); udp_reuseport_not_granted_on_apple: Darwin hands unicast UDP to one of the
            SO_REUSEPORT sockets only (no flow hashing), so the flag is never granted there and a second bind on the port fails */
         { uint8_t l1[KSL_UDP_ADDR_LEN]; ksl_udp *r1 = open_lo(KSL_UDP_REUSEPORT, l1); CHECK(r1 != NULL, "reuseport socket 1"); if (r1) { uint32_t err = 0; char msg[128] = {0}; ksl_udp *r2 = ksl_udp_open(l1, KSL_UDP_REUSEPORT, &err, msg, sizeof msg);

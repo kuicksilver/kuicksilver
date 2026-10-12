@@ -62,10 +62,14 @@ ksl_udp *ksl_udp_open(const uint8_t addr[KSL_UDP_ADDR_LEN], int flags, uint32_t 
 #ifdef __linux__
     if (pipe2(u->wake, O_CLOEXEC | O_NONBLOCK) != 0) { u->wake[0] = u->wake[1] = -1; }
 #else
-    if (pipe(u->wake) != 0) { u->wake[0] = u->wake[1] = -1; }
-    else if (cloexec_nonblock(u->wake[0]) != 0 || cloexec_nonblock(u->wake[1]) != 0) { close(u->wake[0]); close(u->wake[1]); u->wake[0] = u->wake[1] = -1; }
+    /* Darwin: shutdown(2) does not wake a poll on a UDP socket, the pipe is the only way to end a blocked receive: no pipe, no socket */
+    if (pipe(u->wake) != 0 || cloexec_nonblock(u->wake[0]) != 0 || cloexec_nonblock(u->wake[1]) != 0) {
+        int e = errno; if (err) *err = KSL_E_NOT_SUPPORTED; if (msg && msglen) snprintf(msg, msglen, "wake pipe: %s", strerror(e));
+        if (u->wake[0] >= 0) close(u->wake[0]); if (u->wake[1] >= 0) close(u->wake[1]); close(u->fd); free(u); return NULL;
+    }
 #endif
-    u->scratch = malloc(GRO_MAX); u->tx = malloc(GRO_MAX); if (!u->scratch || !u->tx) { if (err) *err = KSL_E_BAD_ARG; free(u->scratch); free(u->tx); close(u->fd); free(u); return NULL; }
+    u->scratch = malloc(GRO_MAX); u->tx = malloc(GRO_MAX);
+    if (!u->scratch || !u->tx) { if (err) *err = KSL_E_BAD_ARG; free(u->scratch); free(u->tx); close(u->fd); if (u->wake[0] >= 0) close(u->wake[0]); if (u->wake[1] >= 0) close(u->wake[1]); free(u); return NULL; }
     sl = sizeof ss; if (getsockname(u->fd, (struct sockaddr *)&ss, &sl) == 0) from_sockaddr(&ss, u->local);
     return u;
 }
