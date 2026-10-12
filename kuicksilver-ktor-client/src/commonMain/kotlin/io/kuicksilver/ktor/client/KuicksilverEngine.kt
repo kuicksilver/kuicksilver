@@ -61,7 +61,7 @@ internal class KuicksilverEngine(
     /** Background work that outlives a call (a QUIC setup that lost the race); completed by [close] so the cleanup can run. */
     private val engineScope = CoroutineScope(coroutineContext + engineJob)
     internal val h1 = H1Pool(config, selector) // internal for tests (the engine's session cache)
-    private val h3 = H3Pool(config)
+    internal val h3 = H3Pool(config) // internal for tests (0-RTT reconnects)
     private val altSvc = AltSvcCache(config.http3.altSvcStore) { getTimeMillis() }
     private val altSvcLock = Mutex()
 

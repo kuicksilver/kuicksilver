@@ -1,3 +1,7 @@
+public final class io/kuicksilver/ktor/server/EarlyDataKt {
+	public static final fun getReceivedEarly (Lio/ktor/server/request/ApplicationRequest;)Z
+}
+
 public final class io/kuicksilver/ktor/server/EngineMain {
 	public static final field INSTANCE Lio/kuicksilver/ktor/server/EngineMain;
 	public final fun createServer ([Ljava/lang/String;)Lio/ktor/server/engine/EmbeddedServer;
@@ -30,6 +34,7 @@ public final class io/kuicksilver/ktor/server/KuicksilverApplicationEngine$Confi
 	public final fun getIdentity ()Lio/kuicksilver/tls/TlsIdentity;
 	public final fun getQuic ()Lio/kuicksilver/quic/QuicConfig;
 	public final fun getQuicAdmission ()Lio/kuicksilver/quic/ConnectionAdmission;
+	public final fun getQuicEarlyData ()Z
 	public final fun getQuicMaxIdleTimeout-FghU774 ()Lkotlin/time/Duration;
 	public final fun getUdpSocketCount ()I
 	public final fun getWebSocketsOverHttp3 ()Z
@@ -40,6 +45,7 @@ public final class io/kuicksilver/ktor/server/KuicksilverApplicationEngine$Confi
 	public final fun setIdentity (Lio/kuicksilver/tls/TlsIdentity;)V
 	public final fun setQuic (Lio/kuicksilver/quic/QuicConfig;)V
 	public final fun setQuicAdmission (Lio/kuicksilver/quic/ConnectionAdmission;)V
+	public final fun setQuicEarlyData (Z)V
 	public final fun setQuicMaxIdleTimeout-BwNAW2A (Lkotlin/time/Duration;)V
 	public final fun setUdpSocketCount (I)V
 	public final fun setWebSocketsOverHttp3 (Z)V

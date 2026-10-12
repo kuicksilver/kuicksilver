@@ -50,11 +50,19 @@ Nothing has been released yet. This section summarises the development of the fi
 
 ### Added
 - QUIC server on Kotlin/Native Windows (`mingwX64`): `ksl_udp` over Winsock (`WSASendMsg`/`WSARecvMsg` with `WSAPoll` and a wake socket, ECN through `IP_ECN`/`IPV6_ECN` on Windows 10 2004+ / Server 2022, USO/URO where the system grants them, DF, dual-stack IPv6, `SO_EXCLUSIVEADDRUSE`); the JVM on Windows uses the same socket through JNI. Winsock is started when the Kotlin/Native runtime starts (not from a C constructor, which in a `sharedLib` would run under the loader lock), so address lookups before the first socket no longer fail with `WSANOTINITIALISED`. Verified by the CI windows job only. `loops > 1` without `SO_REUSEPORT` granted on the first socket (Windows always) throws the documented `UnsupportedOperationException` instead of failing the second bind with `KslException.Internal`.
-
+- 0-RTT, opt-in and experimental (ADR-0015, RFC 9001 section 4.6, RFC 8470): `QuicClientConfig.earlyData`,
+  `QuicServerConfig.earlyData`/`earlyDataContext`, `QuicEndpoint.connectEarly`, `QuicConnection.awaitHandshake`/
+  `earlyDataAccepted`/`isHandshakeComplete`, `QuicStream.receivedEarly`, `QuicException.ConnectionLost.ZeroRttRejected`;
+  HTTP/3 `Http3Endpoint.connectEarly`, `Http3Request.allowEarlyData`, `Http3Settings.earlyData`
+  (`Http3EarlyDataPolicy.WaitForHandshake`/`Reject425`), `Http3ServerRequest.receivedEarly`; Ktor client
+  `http3 { earlyData }`, server `quicEarlyData` and `ApplicationRequest.receivedEarly`. Anti-replay: OpenSSL ticket-age
+  freshness, a per-server replay register keyed by ticket, tickets bound to the server configuration, safe methods
+  only before the handshake. Off by default. `ksl` ABI 6 (`KSL_OPT_EARLY_DATA`, `KSL_SET_EARLY_CONTEXT`,
+  `KSL_SET_EARLY_DATA`, `KSL_GET_EARLY_DATA`); `EarlyDataState` gains `Allowed` and `Required`, and
+  `QuicTlsSession.earlyData` becomes `earlyDataAccepted`.
 - QUIC server on Kotlin/Native macOS: the accelerated `ksl` UDP socket (ADR-0006) now works on Apple platforms — ECN marks sent and read per datagram, DF set for PMTUD (`IP_DONTFRAG`), no GSO/GRO (Darwin has none). `QuicEndpoint.bind` with a server and the Ktor server engine over HTTP/3 run on `macosArm64` (iOS compiles and links the same code); the JVM on macOS uses the accelerated socket by default instead of NIO. `loops > 1` stays Linux/Android-only: Darwin has no `SO_REUSEPORT` flow hashing, so `bind` refuses it there.
 - `NetworkMigrator` (experimental): a client connection follows a `Flow` of networks, migrating to each new one (RFC 9000 section 9) and closing the path it left; a failed migration keeps the old path, `disable_active_migration` is respected, `MigrationEvent` reports `Migrated`, `Failed`, `NetworkLost` and `SourceFailed` (the network flow threw; the migrator stops without failing the caller's scope). `start()` and `close()` are thread-safe.
 - Android: `QuicConnection.followDefaultNetwork(connectivityManager, scope)` keeps a client connection on the device's default network (Wi-Fi ↔ cellular), `ConnectivityManager.defaultNetworks()` (one shared callback per manager, whatever the number of connections) and `DatagramIo.open(local, network, prefer)`, which binds a socket to an `android.net.Network`. The `kuicksilver-quic` AAR now declares `ACCESS_NETWORK_STATE`.
-- QUIC server on Kotlin/Native macOS: the accelerated `ksl` UDP socket (ADR-0006) now works on Apple platforms — ECN marks sent and read per datagram, DF set for PMTUD (`IP_DONTFRAG`), no GSO/GRO (Darwin has none). `QuicEndpoint.bind` with a server and the Ktor server engine over HTTP/3 run on `macosArm64` (iOS compiles and links the same code). `loops > 1` stays Linux/Android-only: Darwin has no `SO_REUSEPORT` flow hashing, so `bind` refuses it there.
 - CI/tools: throughput floors for the QUIC Interop Runner measurements — `tools/interop/perf-thresholds.json` (goodput and
   crosstraffic per peer and role, from the recorded runs minus 25 % / 40 %), `tools/interop/check-perf.sh` (table of
   measured vs floor, exit 1 on a regression or a missing cell, `--update` proposes new floors),

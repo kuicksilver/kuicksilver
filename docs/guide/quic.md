@@ -112,6 +112,42 @@ echoed.output.writeStringUtf8(echoed.input.readUTF8Line() ?: "")
 echoed.output.flushAndClose()
 ```
 
+## 0-RTT (opt-in, experimental)
+
+0-RTT lets a returning client send data with its first flight instead of one round trip later (RFC 9001 section 4.6;
+design in [ADR-0015](../adr/0015-0rtt-implementation.md)). It is off on both sides by default.
+
+> **Replay warning.** An attacker who sees the client's first flight can send it to the server again (RFC 8446
+> section 8). Write early only what is safe to execute twice, and act on anything else only after
+> `awaitHandshake()`. The server limits replays (OpenSSL's ±10 s ticket-age check, one use per ticket in a replay
+> register shared by the endpoint's loops, tickets bound to the configuration that issued them), but a replay into
+> another server process with shared ticket keys passes the age check alone.
+
+```kotlin
+val server = QuicEndpoint.bind(addr, quicEndpointConfig {
+    this.server = quicServerConfig(tlsServerConfig) { earlyData = true }   // tickets that allow 0-RTT
+})
+val client = QuicEndpoint.bind(InetSocketAddress("0.0.0.0", 0))
+val config = quicClientConfig(tlsClientConfig) { earlyData = EarlyDataState.Allowed }
+client.connect(addr, config).close()                 // a full handshake leaves a ticket in this endpoint
+val c = client.connectEarly(addr, config)            // returns once the 0-RTT keys exist
+val s = c.openBidi(); s.output.writeFully(safeRequest); s.output.flush()   // travels in 0-RTT
+c.awaitHandshake()                                   // from here the connection is authenticated
+```
+
+- **Tickets** are kept per client endpoint, used once, and checked against the current trust again before use. The
+  remembered transport parameters (RFC 9000 section 7.4.1) set the limits of 0-RTT. Closing the endpoint drops them.
+- **Rejection.** When the server refuses 0-RTT (a changed configuration, a stale or replayed ticket), the transport
+  sends the same stream data again in 1-RTT, and `earlyDataAccepted` is false. If the new limits cannot hold what was
+  already sent, or `EarlyDataState.Required` was asked for, the connection closes with
+  `QuicException.ConnectionLost.ZeroRttRejected`.
+- **Server side.** With `earlyData = true`, `accept()` returns a connection as soon as its 0-RTT is accepted, so the
+  application can answer in 0.5-RTT. `QuicStream.receivedEarly` marks streams whose data came in 0-RTT.
+  `earlyDataContext` binds application settings into tickets, and `Http3Endpoint` puts its SETTINGS there. 0-RTT
+  cannot be combined with client certificates.
+- **Keys.** The client drops its 0-RTT key when the 1-RTT key arrives. The server drops its 0-RTT key 3 PTO after the
+  first 1-RTT packet (RFC 9001 section 4.9.3).
+
 ## Serving many connections
 
 `incomingConnections()` turns `accept()` into a `Flow` that completes when the endpoint closes, and

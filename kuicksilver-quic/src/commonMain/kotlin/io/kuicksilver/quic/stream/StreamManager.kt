@@ -112,6 +112,64 @@ internal class StreamManager(
 
     fun isOpen(id: Long): Boolean = streams.containsKey(id)
 
+    // ---- 0-RTT (RFC 9000 section 7.4.1, ADR-0015) ----
+    private val early = HashSet<Long>()
+
+    fun markReceivedEarly(id: Long) {
+        if (streams.containsKey(id)) early += id
+    }
+
+    fun receivedEarly(id: Long): Boolean = id in early
+
+    /** After an accepted 0-RTT: streams we opened take the server's new initial limits (they only grow). */
+    fun raiseLocalSendLimits(
+        bidiRemote: Long,
+        uni: Long,
+    ) {
+        for ((id, limit) in sendLimit) {
+            if (!StreamIds.isLocal(id, role)) continue
+            if (limit.onMaxUpdate(
+                    if (StreamIds.isBidi(id)) bidiRemote else uni,
+                )
+            ) {
+                streams[id]?.send?.let { if (it.hasPending) scheduler.reschedule(it) }
+            }
+        }
+    }
+
+    /**
+     * After a rejected 0-RTT whose data fits ([localSendFits]): the server's new limits replace the remembered ones on every
+     * stream we opened and for the stream counts, also where they are lower (RFC 9000 section 7.4.1).
+     */
+    fun adoptLocalSendLimits(
+        bidiRemote: Long,
+        uni: Long,
+        maxStreamsBidi: Long,
+        maxStreamsUni: Long,
+    ) {
+        limits.resetPeerMaxStreams(true, maxStreamsBidi)
+        limits.resetPeerMaxStreams(false, maxStreamsUni)
+        for ((id, limit) in sendLimit) {
+            if (!StreamIds.isLocal(id, role)) continue
+            limit.resetLimit(if (StreamIds.isBidi(id)) bidiRemote else uni)
+        }
+    }
+
+    /** After a rejected 0-RTT: whether what our streams already used fits the server's new limits, so resending it is allowed. */
+    fun localSendFits(
+        bidiRemote: Long,
+        uni: Long,
+        maxStreamsBidi: Long,
+        maxStreamsUni: Long,
+    ): Boolean {
+        if (limits.localOpened(true) > maxStreamsBidi || limits.localOpened(false) > maxStreamsUni) return false
+        for ((id, limit) in sendLimit) {
+            if (!StreamIds.isLocal(id, role)) continue
+            if (limit.used > if (StreamIds.isBidi(id)) bidiRemote else uni) return false
+        }
+        return true
+    }
+
     fun takeOpenedStreams(): List<Long> {
         val l = opened.toList()
         opened.clear()

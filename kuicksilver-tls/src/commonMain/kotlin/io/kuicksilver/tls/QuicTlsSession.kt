@@ -1,7 +1,10 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
+@file:OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+
 package io.kuicksilver.tls
 
+import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.native.PacketBuffer
 import kotlinx.io.IOException
 
@@ -12,7 +15,7 @@ public enum class EncryptionLevel(
     /** Initial packets, protected with keys derived from the client's first Destination Connection ID (RFC 9001 section 5.2). */
     Initial(0),
 
-    /** 0-RTT packets; never used in v1, where 0-RTT is disabled (ADR-0008). */
+    /** 0-RTT packets (RFC 9001 section 4.6): written by a client resuming with early data, read by a server that accepted it (ADR-0015). */
     EarlyData(1),
 
     /** Handshake packets, protected with the handshake traffic secrets. */
@@ -134,12 +137,69 @@ public sealed interface TlsEvent {
      * yields [DriveResult.Failed] instead.
      */
     public object HandshakeDone : TlsEvent
+
+    /**
+     * Client: the server sent a NewSessionTicket (RFC 8446 section 4.6.1); only for sessions created with early data
+     * (`QuicCrypto.newSession(config, earlyData = true)`). The receiver owns [ticket] and closes it or stores it.
+     *
+     * @property ticket the resumable session.
+     */
+    @ExperimentalKuicksilverApi
+    public class SessionTicket(
+        public val ticket: QuicSessionTicket,
+    ) : TlsEvent
 }
 
-/** Whether 0-RTT data is used (RFC 9001 section 4.6); the enumeration is closed and grows in a later version (ADR-0013). */
+/**
+ * Whether a client uses 0-RTT (RFC 9001 section 4.6, ADR-0015). 0-RTT data can be replayed by an attacker (RFC 8446
+ * section 8): send early only what is safe to execute twice. Entries may be added; keep an `else` branch in `when`.
+ */
 public enum class EarlyDataState {
-    /** No 0-RTT: never sent, and received 0-RTT packets are dropped. The only state in v1 (ADR-0008). */
+    /** No resumption and no 0-RTT (the default). */
     Disabled,
+
+    /** Resume with a stored ticket and send 0-RTT when the ticket allows it; a rejection is repaired by sending again in 1-RTT. */
+    Allowed,
+
+    /** As [Allowed], but a missing ticket or a rejection fails the connection instead of falling back to 1-RTT. */
+    Required,
+}
+
+/**
+ * The server's replay register for 0-RTT (RFC 8446 section 8, ADR-0015): consulted once per ClientHello that offers
+ * early data, keyed by the identity of the ticket it resumes (`key_name ‖ iv`, 32 bytes). Implementations are called on
+ * connection loops and must be thread-safe when several loops share one.
+ */
+@ExperimentalKuicksilverApi
+public interface EarlyDataAdmission {
+    /** True to let this hello's early data through (and remember [ticketId]); false when it was seen within the window. */
+    public fun admit(ticketId: ByteArray): Boolean
+
+    /** The admitted hello did not get early data after all (bad binder, stale ticket, other configuration): forget it. */
+    public fun release(ticketId: ByteArray)
+}
+
+/**
+ * A client's resumable QUIC session (RFC 8446 section 4.6.1): the ticket and its resumption secret stay in native memory.
+ * Single use (RFC 8446 appendix C.4): [QuicTlsSession.resume] consumes it. [remembered] holds what the transport stores
+ * with it (the server's transport parameters, RFC 9000 section 7.4.1).
+ */
+@ExperimentalKuicksilverApi
+public class QuicSessionTicket internal constructor(
+    internal val entry: SessionCache.Entry,
+) : AutoCloseable {
+    /** Opaque bytes the transport keeps with the ticket; never secret. */
+    public var remembered: ByteArray?
+        get() = entry.remembered
+        set(value) {
+            entry.remembered = value
+        }
+
+    /** True once the native session was released (closed or consumed). */
+    public val closed: Boolean get() = entry.closed
+
+    /** Releases the native session; a consumed ticket is already released. */
+    override fun close(): Unit = entry.close()
 }
 
 /**
@@ -199,8 +259,35 @@ public interface QuicTlsSession : AutoCloseable {
     /** The application protocol agreed through ALPN (RFC 7301), or null before the handshake completes. */
     public val negotiatedAlpn: String?
 
-    /** Always [EarlyDataState.Disabled] in v1 (ADR-0008). */
-    public val earlyData: EarlyDataState
+    /**
+     * Client: true when the server accepted our 0-RTT, false when it rejected it, null when none was attempted or the
+     * answer has not arrived (RFC 9001 section 4.6.2). Server: true when 0-RTT of this connection was accepted, false
+     * when the client offered it and we refused, null otherwise.
+     */
+    @ExperimentalKuicksilverApi
+    public val earlyDataAccepted: Boolean? get() = null
+
+    /**
+     * Client: resume [ticket] (it is consumed and closed by this session); call before the first [drive]. False when TLS
+     * refused it (the handshake then is a full one).
+     */
+    @ExperimentalKuicksilverApi
+    public fun resume(ticket: QuicSessionTicket): Boolean {
+        ticket.close()
+        return false
+    }
+
+    /**
+     * Call before the first [drive]. Client ([context] and [admission] null): requests 0-RTT with the resumed ticket and
+     * returns false when there is none or it does not allow early data. Server (session created with early data):
+     * [context] (1..64 bytes, the configuration digest of RFC 9001 section 4.6.3) is bound into issued tickets and must
+     * match the resumed one, and [admission] decides each hello's early data; returns true.
+     */
+    @ExperimentalKuicksilverApi
+    public fun enableEarlyData(
+        context: ByteArray?,
+        admission: EarlyDataAdmission?,
+    ): Boolean = false
 
     /**
      * The RFC 8446 section 7.5 exporter: [length] bytes for [label] and [context] (null for none); only after the handshake,
@@ -314,6 +401,16 @@ public interface QuicCrypto {
      * TLS 1.3 only, a non-empty ALPN list, no CCM_8 suite and no `sniSelector` in v1 (RFC 9001 sections 4.2, 5.3, 8.1).
      */
     public fun newSession(config: TlsConfig): QuicTlsSession
+
+    /**
+     * As [newSession]; with [earlyData] a server issues tickets that allow 0-RTT and can accept it, and a client reports
+     * the tickets it receives as [TlsEvent.SessionTicket] (ADR-0015). A provider without 0-RTT ignores the flag.
+     */
+    @ExperimentalKuicksilverApi
+    public fun newSession(
+        config: TlsConfig,
+        earlyData: Boolean,
+    ): QuicTlsSession = newSession(config)
 
     /** A fresh random Retry-token key; the material never reaches Kotlin (ADR-0003). */
     public fun newTokenKey(): TokenKey

@@ -59,6 +59,18 @@ internal class ConnectionRuntime(
     private val openWaiters = ArrayList<Channel<Unit>>()
     internal var serverSide = false
 
+    /** Server: handed to the accept queue (at 0-RTT acceptance or at handshake completion). Loop dispatcher only. */
+    internal var handedOff = false
+
+    @Volatile private var earlyAccepted: Boolean? = null
+    override val earlyDataAccepted: Boolean? get() = earlyAccepted
+
+    override suspend fun awaitHandshake() {
+        handshake.await()
+    }
+
+    override val isHandshakeComplete: Boolean get() = handshake.isCompleted && !handshake.isCancelled
+
     /** A server connection still handshaking, counted by its loop against the accept queue. Loop dispatcher only. */
     internal var handshaking = false
 
@@ -310,6 +322,7 @@ internal class ConnectionRuntime(
             val e = core.nextEvent() ?: break
             when (e) {
                 ConnectionEvent.HandshakeCompleted -> {
+                    earlyAccepted = core.earlyDataAccepted
                     certificates = core.peerCertificates // read once, on the loop: the TLS object is not shared across threads
                     handshake.complete(Unit)
                     loop.onHandshakeCompleted(this)
@@ -319,8 +332,23 @@ internal class ConnectionRuntime(
                     loop.scope.launch(Dispatchers.Default) { verify(e) }
                 }
 
+                is ConnectionEvent.SessionTicket -> {
+                    loop.storeTicket(core.tlsConfig, e.ticket)
+                }
+
+                ConnectionEvent.EarlyDataAccepted -> {
+                    earlyAccepted = true
+                    alpn = core.negotiatedAlpn // read on the loop: an early-accepted connection reaches accept() before completion
+                    // a server hands the connection to accept() now: the application can answer in 0.5-RTT (ADR-0015)
+                    if (serverSide) loop.onHandshakeCompleted(this)
+                }
+
+                ConnectionEvent.EarlyDataRejected -> {
+                    earlyAccepted = false
+                }
+
                 is ConnectionEvent.StreamOpened -> {
-                    accepted.trySend(stream(e.id))
+                    accepted.trySend(stream(e.id).also { it.receivedEarly = core.streamReceivedEarly(e.id) })
                 }
 
                 is ConnectionEvent.StreamReadable -> {
@@ -485,7 +513,9 @@ internal class ConnectionRuntime(
 
     override val stats: ConnectionStats get() = core.stats
     override val peerCertificates: List<Certificate> get() = certificates
-    override val negotiatedAlpn: String? get() = core.negotiatedAlpn
+
+    @Volatile private var alpn: String? = null
+    override val negotiatedAlpn: String? get() = alpn ?: core.negotiatedAlpn
 
     override suspend fun exportKeyingMaterial(
         label: String,

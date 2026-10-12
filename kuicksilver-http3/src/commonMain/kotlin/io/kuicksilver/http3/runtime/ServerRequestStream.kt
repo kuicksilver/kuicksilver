@@ -1,5 +1,7 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
+@file:OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class, kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+
 package io.kuicksilver.http3.runtime
 
 import io.ktor.network.sockets.InetSocketAddress
@@ -7,6 +9,7 @@ import io.ktor.utils.io.ByteChannel
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.ByteWriteChannel
 import io.ktor.utils.io.readAvailable
+import io.kuicksilver.http3.Http3EarlyDataPolicy
 import io.kuicksilver.http3.Http3ErrorCode
 import io.kuicksilver.http3.Http3Exception
 import io.kuicksilver.http3.Http3Headers
@@ -31,6 +34,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlin.concurrent.atomics.incrementAndFetch
 
 /** A request stream accepted by a server: HEADERS first, then the body pump (RFC 9114 section 4.1). */
 internal suspend fun handleRequestStream(
@@ -111,6 +115,25 @@ internal suspend fun handleRequestStream(
             }
         pendingHeaders.remove(st.id)
         val req = ServerRequestImpl(this, st, parsed)
+        // RFC 8470: a request that came in 0-RTT and is not replayable runs only on a completed handshake (ADR-0015)
+        if (st.receivedEarly && !quic.isHandshakeComplete) {
+            val policy = settings.earlyData
+            if (policy.replayable(req)) {
+                req.receivedEarly = true
+            } else if (policy is Http3EarlyDataPolicy.Reject425) {
+                reject425(st)
+                return@with
+            } else {
+                earlyHeldForHandshake.incrementAndFetch()
+                try {
+                    quic.awaitHandshake()
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Throwable) {
+                    return@with // the handshake failed: a replayed request never runs
+                }
+            }
+        }
         handedOff = true // from here ServerRequestImpl.done() ends the request
         if (requests.trySend(req).isFailure) {
             abort(st, Http3ErrorCode.REQUEST_REJECTED)
@@ -129,6 +152,15 @@ internal suspend fun handleRequestStream(
 }
 
 /** 431 and STOP_SENDING H3_EXCESSIVE_LOAD (RFC 9114 section 4.2.2; quic-go CVE-2025-64702). */
+private suspend fun H3Session.reject425(st: QuicStream) {
+    runCatching {
+        st.stopSending(Http3ErrorCode.NO_ERROR)
+        st.output.writeFrame(FrameType.HEADERS, qpack.encode(st.id, PseudoHeaders.buildResponse(425, Http3Headers.Empty)))
+        st.output.flushAndClose()
+    }
+    runCatching { qpack.cancelStream(st.id) }
+}
+
 private suspend fun H3Session.reject431(st: QuicStream) {
     runCatching {
         st.stopSending(Http3ErrorCode.EXCESSIVE_LOAD)
@@ -144,6 +176,7 @@ internal class ServerRequestImpl(
     parsed: PseudoHeaders.Request,
 ) : Http3ServerRequest {
     override val streamId: Long get() = st.id
+    override var receivedEarly: Boolean = false
     override val method: String = parsed.method
     override val scheme: String? = parsed.scheme
     override val authority: String? = parsed.authority

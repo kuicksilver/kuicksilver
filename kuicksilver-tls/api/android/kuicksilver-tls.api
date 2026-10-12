@@ -89,8 +89,15 @@ public final class io/kuicksilver/tls/DriveResult$WantVerify : io/kuicksilver/tl
 	public final fun getChain ()Ljava/util/List;
 }
 
+public abstract interface class io/kuicksilver/tls/EarlyDataAdmission {
+	public abstract fun admit ([B)Z
+	public abstract fun release ([B)V
+}
+
 public final class io/kuicksilver/tls/EarlyDataState : java/lang/Enum {
+	public static final field Allowed Lio/kuicksilver/tls/EarlyDataState;
 	public static final field Disabled Lio/kuicksilver/tls/EarlyDataState;
+	public static final field Required Lio/kuicksilver/tls/EarlyDataState;
 	public static fun getEntries ()Lkotlin/enums/EnumEntries;
 	public static fun valueOf (Ljava/lang/String;)Lio/kuicksilver/tls/EarlyDataState;
 	public static fun values ()[Lio/kuicksilver/tls/EarlyDataState;
@@ -169,6 +176,7 @@ public final class io/kuicksilver/tls/KslQuicCrypto : io/kuicksilver/tls/QuicCry
 	public fun initialProtectors ([BILio/kuicksilver/tls/TlsRole;)Lkotlin/Pair;
 	public fun newResetKey ()Lio/kuicksilver/tls/ResetKey;
 	public fun newSession (Lio/kuicksilver/tls/TlsConfig;)Lio/kuicksilver/tls/QuicTlsSession;
+	public fun newSession (Lio/kuicksilver/tls/TlsConfig;Z)Lio/kuicksilver/tls/QuicTlsSession;
 	public fun newTokenKey ()Lio/kuicksilver/tls/TokenKey;
 	public fun retryIntegrityTag (I[B[B)[B
 }
@@ -227,19 +235,33 @@ public abstract interface class io/kuicksilver/tls/QuicCrypto {
 	public abstract fun initialProtectors ([BILio/kuicksilver/tls/TlsRole;)Lkotlin/Pair;
 	public abstract fun newResetKey ()Lio/kuicksilver/tls/ResetKey;
 	public abstract fun newSession (Lio/kuicksilver/tls/TlsConfig;)Lio/kuicksilver/tls/QuicTlsSession;
+	public fun newSession (Lio/kuicksilver/tls/TlsConfig;Z)Lio/kuicksilver/tls/QuicTlsSession;
 	public abstract fun newTokenKey ()Lio/kuicksilver/tls/TokenKey;
 	public abstract fun retryIntegrityTag (I[B[B)[B
 }
 
+public final class io/kuicksilver/tls/QuicCrypto$DefaultImpls {
+	public static fun newSession (Lio/kuicksilver/tls/QuicCrypto;Lio/kuicksilver/tls/TlsConfig;Z)Lio/kuicksilver/tls/QuicTlsSession;
+}
+
+public final class io/kuicksilver/tls/QuicSessionTicket : java/lang/AutoCloseable {
+	public fun close ()V
+	public final fun getClosed ()Z
+	public final fun getRemembered ()[B
+	public final fun setRemembered ([B)V
+}
+
 public abstract interface class io/kuicksilver/tls/QuicTlsSession : java/lang/AutoCloseable {
 	public abstract fun drive ()Lio/kuicksilver/tls/DriveResult;
+	public fun enableEarlyData ([BLio/kuicksilver/tls/EarlyDataAdmission;)Z
 	public abstract fun exportKeyingMaterial (Ljava/lang/String;[BI)[B
-	public abstract fun getEarlyData ()Lio/kuicksilver/tls/EarlyDataState;
+	public fun getEarlyDataAccepted ()Ljava/lang/Boolean;
 	public abstract fun getNegotiatedAlpn ()Ljava/lang/String;
 	public abstract fun getPeerCertificates ()Ljava/util/List;
 	public abstract fun nextEvent ()Lio/kuicksilver/tls/TlsEvent;
 	public abstract fun provide (Lio/kuicksilver/tls/EncryptionLevel;[BII)V
 	public static synthetic fun provide$default (Lio/kuicksilver/tls/QuicTlsSession;Lio/kuicksilver/tls/EncryptionLevel;[BIIILjava/lang/Object;)V
+	public fun resume (Lio/kuicksilver/tls/QuicSessionTicket;)Z
 	public abstract fun resumeVerify (Lio/kuicksilver/tls/VerifyResult;)V
 	public abstract fun setQuicVersion (I)V
 	public abstract fun setTransportParameters ([B)V
@@ -247,7 +269,10 @@ public abstract interface class io/kuicksilver/tls/QuicTlsSession : java/lang/Au
 }
 
 public final class io/kuicksilver/tls/QuicTlsSession$DefaultImpls {
+	public static fun enableEarlyData (Lio/kuicksilver/tls/QuicTlsSession;[BLio/kuicksilver/tls/EarlyDataAdmission;)Z
+	public static fun getEarlyDataAccepted (Lio/kuicksilver/tls/QuicTlsSession;)Ljava/lang/Boolean;
 	public static synthetic fun provide$default (Lio/kuicksilver/tls/QuicTlsSession;Lio/kuicksilver/tls/EncryptionLevel;[BIIILjava/lang/Object;)V
+	public static fun resume (Lio/kuicksilver/tls/QuicTlsSession;Lio/kuicksilver/tls/QuicSessionTicket;)Z
 }
 
 public abstract interface class io/kuicksilver/tls/ResetKey : java/lang/AutoCloseable {
@@ -395,6 +420,11 @@ public final class io/kuicksilver/tls/TlsEvent$PeerTransportParameters : io/kuic
 	public fun <init> ([BI)V
 	public final fun getEncoded ()[B
 	public final fun getNegotiatedVersion ()I
+}
+
+public final class io/kuicksilver/tls/TlsEvent$SessionTicket : io/kuicksilver/tls/TlsEvent {
+	public fun <init> (Lio/kuicksilver/tls/QuicSessionTicket;)V
+	public final fun getTicket ()Lio/kuicksilver/tls/QuicSessionTicket;
 }
 
 public abstract class io/kuicksilver/tls/TlsException : javax/net/ssl/SSLException {

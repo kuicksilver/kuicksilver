@@ -43,6 +43,33 @@ static int ticket_cb(SSL *ssl, unsigned char key_name[16], unsigned char iv[EVP_
     return enc ? 1 : (k == c->ticket_keys ? 1 : 2);   /* 2 = decrypted with a previous key: renew the ticket */
 }
 
+/* 0-RTT (ADR-0015). The ticket app data carries the server's early context; a resumed ticket whose context differs keeps the
+   resumption but gets no early data. The final decision also needs the transport's verdict for this hello (its replay register). */
+static int ticket_gen_cb(SSL *ssl, void *arg) {
+    (void)arg; ksl_ssl *s = SSL_get_ex_data(ssl, 1); SSL_SESSION *sess = SSL_get0_session(ssl);
+    if (!s || !sess) return 0;
+    return SSL_SESSION_set1_ticket_appdata(sess, s->early_ctx_len ? s->early_ctx : NULL, s->early_ctx_len);
+}
+static SSL_TICKET_RETURN ticket_dec_cb(SSL *ssl, SSL_SESSION *sess, const unsigned char *keyname, size_t keyname_len, SSL_TICKET_STATUS status, void *arg) {
+    (void)keyname; (void)keyname_len; (void)arg; ksl_ssl *s = SSL_get_ex_data(ssl, 1);
+    switch (status) {
+    case SSL_TICKET_SUCCESS: case SSL_TICKET_SUCCESS_RENEW: {
+        void *d = NULL; size_t l = 0;
+        if (s) s->early_ctx_match = SSL_SESSION_get0_ticket_appdata(sess, &d, &l) == 1 && l > 0 && l == s->early_ctx_len && !memcmp(d, s->early_ctx, l);
+        return SSL_TICKET_RETURN_USE_RENEW;   /* client tickets are single-use: every resumption gets a fresh one */
+    }
+    case SSL_TICKET_EMPTY: case SSL_TICKET_NO_DECRYPT: return SSL_TICKET_RETURN_IGNORE_RENEW;
+    default: return SSL_TICKET_RETURN_IGNORE;
+    }
+}
+static int allow_early_data_cb(SSL *ssl, void *arg) { (void)arg; ksl_ssl *s = SSL_get_ex_data(ssl, 1); return s && s->early_allow && s->early_ctx_match; }
+void ksl_ctx_enable_early_data(SSL_CTX *ctx) {
+    /* OpenSSL's own anti-replay makes tickets stateful in the server cache ksl keeps off: with it every early data would be refused */
+    SSL_CTX_set_options(ctx, SSL_OP_NO_ANTI_REPLAY);
+    SSL_CTX_set_allow_early_data_cb(ctx, allow_early_data_cb, NULL);
+    SSL_CTX_set_session_ticket_cb(ctx, ticket_gen_cb, ticket_dec_cb, NULL);
+}
+
 ksl_ctx *ksl_ctx_new(int role) {
     ksl_ctx *c = calloc(1, sizeof *c); if (!c) return NULL;
     c->role = role; c->verify_mode = KSL_VERIFY_OPENSSL;
@@ -178,6 +205,9 @@ int ksl_ctx_set_option(ksl_ctx *c, int option, int value) {
     case KSL_OPT_KEYLOG: c->keylog = value != 0; return KSL_OK;
     case KSL_OPT_GENERIC_ALERTS: c->generic_alerts = value != 0; return KSL_OK;
     case KSL_OPT_TICKET_LIFETIME: return SSL_CTX_set_timeout(c->ctx, value) >= 0 ? KSL_OK : KSL_ERROR;
+    case KSL_OPT_EARLY_DATA:
+        if (c->role != KSL_SERVER) { ksl_ctx_set_error(c, KSL_E_BAD_ARG, "ksl: early data option is server-only"); return KSL_ERROR; }
+        c->early_data = value != 0; if (c->early_data) ksl_ctx_enable_early_data(c->ctx); return KSL_OK;
     case KSL_OPT_SNI_PAUSE:
         c->sni_pause = value != 0; SSL_CTX_set_client_hello_cb(c->ctx, value ? ksl_client_hello_cb : NULL, c); return KSL_OK;
     default: ksl_ctx_set_error(c, KSL_E_BAD_ARG, "ksl: unknown option"); return KSL_ERROR;

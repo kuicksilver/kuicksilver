@@ -25,7 +25,7 @@ int main(int argc, char **argv) {
     (void)argc; (void)argv;
     if (ksl_init() != KSL_OK) { printf("ksl_init failed\n"); return 2; }
     printf("%s (abi %u)\n", ksl_version(), ksl_abi_version());
-    run_quic(); run_key(); run_crypto(); run_udp();
+    run_quic(); run_early(); run_key(); run_crypto(); run_udp();
 #ifdef KSL_TEST_TCP
     run_tcp(); run_verify();
 #endif

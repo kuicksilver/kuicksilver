@@ -11,6 +11,7 @@ import io.kuicksilver.quic.QuicStream
 import io.kuicksilver.quic.StreamPriority
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
+import kotlin.concurrent.Volatile
 
 /**
  * One stream of the core as two ktor-io channels. The input pulls from the core only when the application
@@ -27,6 +28,10 @@ internal class StreamRuntime(
     send: Boolean,
     initialPriority: StreamPriority = StreamPriority.Default,
 ) : QuicStream {
+    @Volatile
+    override var receivedEarly: Boolean = false
+        internal set
+
     private val inChannel: StreamInput? = if (recv) StreamInput(this) else null
     private val outChannel: StreamOutput? = if (send) StreamOutput(this) else null
     override val input: ByteReadChannel get() = inChannel ?: throw IllegalStateException("stream $id is send-only")

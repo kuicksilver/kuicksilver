@@ -176,6 +176,22 @@ single stream reset or a malformed response falls back for that request only) â€
 network. Broken alternatives are skipped (straight to HTTP/1.1). The curl-style `softDelay` ("no UDP datagram from the
 server yet") is accepted in the configuration but not acted on in v1: the QUIC API does not expose that signal.
 
+## 0-RTT (opt-in, experimental)
+
+Both engines can resume HTTP/3 connections with 0-RTT ([ADR-0015](../adr/0015-0rtt-implementation.md)). It is off by
+default.
+
+- **Server:** set `quicEarlyData = true` in the engine configuration. GET, HEAD and OPTIONS requests that arrive in
+  0-RTT run before the handshake completes, and `call.request.receivedEarly` is true for them. Every other request
+  waits for the handshake. `http3Settings { earlyData = Http3EarlyDataPolicy.Reject425() }` answers `425 Too Early`
+  instead.
+- **Client:** set `http3 { earlyData = true }`. The engine keeps the servers' session tickets for its lifetime, and
+  on a new connection to a server it has a ticket for, it sends GET, HEAD and OPTIONS requests without a body in 0-RTT.
+  Other requests wait for the handshake. A `425` is retried once.
+
+> **Replay warning.** An attacker can replay a 0-RTT request (RFC 8446 section 8). Turn this on only when the handlers
+> of GET, HEAD and OPTIONS have no side effects.
+
 ## Compatibility
 
 Both engines run Ktor 3.6.0's own engine contract tests, vendored under `src/commonTest/kotlin/.../contract` (and

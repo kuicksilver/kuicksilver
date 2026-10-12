@@ -66,7 +66,7 @@ public final class io/kuicksilver/quic/ConnectionAttempt {
 
 public final class io/kuicksilver/quic/ConnectionCore {
 	public static final field Companion Lio/kuicksilver/quic/ConnectionCore$Companion;
-	public synthetic fun <init> (Lio/kuicksilver/tls/TlsRole;Lio/kuicksilver/quic/QuicConfig;Lio/kuicksilver/tls/TlsConfig;Lio/kuicksilver/tls/QuicCrypto;Lio/ktor/network/sockets/InetSocketAddress;Lkotlin/random/Random;JLio/kuicksilver/quic/wire/ConnectionId;Lio/kuicksilver/quic/wire/ConnectionId;Lio/kuicksilver/quic/wire/ConnectionId;Lio/kuicksilver/quic/VersionProfile;Lio/kuicksilver/tls/ResetKey;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public synthetic fun <init> (Lio/kuicksilver/tls/TlsRole;Lio/kuicksilver/quic/QuicConfig;Lio/kuicksilver/tls/TlsConfig;Lio/kuicksilver/tls/QuicCrypto;Lio/ktor/network/sockets/InetSocketAddress;Lkotlin/random/Random;JLio/kuicksilver/quic/wire/ConnectionId;Lio/kuicksilver/quic/wire/ConnectionId;Lio/kuicksilver/quic/wire/ConnectionId;Lio/kuicksilver/quic/VersionProfile;Lio/kuicksilver/tls/ResetKey;Lio/kuicksilver/tls/EarlyDataState;Lio/kuicksilver/quic/core/ServerEarlyData;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public final fun addPath--BOkhLY (Lio/ktor/network/sockets/InetSocketAddress;JLio/kuicksilver/quic/PathId;)I
 	public static synthetic fun addPath--BOkhLY$default (Lio/kuicksilver/quic/ConnectionCore;Lio/ktor/network/sockets/InetSocketAddress;JLio/kuicksilver/quic/PathId;ILjava/lang/Object;)I
 	public final fun close-YkdGQLM (JLjava/lang/String;J)V
@@ -74,6 +74,7 @@ public final class io/kuicksilver/quic/ConnectionCore {
 	public final fun exportKeyingMaterial (Ljava/lang/String;[BI)[B
 	public final fun getAddressValidated ()Z
 	public final fun getDatagramSender ()Lio/kuicksilver/quic/DatagramSender;
+	public final fun getEarlyDataAccepted ()Ljava/lang/Boolean;
 	public final fun getGlitchByFrameType ()[J
 	public final fun getMaxDatagramPayload ()I
 	public final fun getNegotiatedAlpn ()Ljava/lang/String;
@@ -102,6 +103,7 @@ public final class io/kuicksilver/quic/ConnectionCore {
 	public final fun setPathCapabilities-pqKNJPU (ILio/kuicksilver/quic/IoCapabilities;)V
 	public final fun setPriority (JLio/kuicksilver/quic/StreamPriority;)V
 	public final fun stopSending (JJ)V
+	public final fun streamReceivedEarly (J)Z
 	public final fun switchPath-e8CJ3RU (IJ)V
 	public final fun writeStream (J[BIIZ)I
 }
@@ -125,6 +127,14 @@ public final class io/kuicksilver/quic/ConnectionEvent$Closed : io/kuicksilver/q
 
 public final class io/kuicksilver/quic/ConnectionEvent$DatagramsReadable : io/kuicksilver/quic/ConnectionEvent {
 	public static final field INSTANCE Lio/kuicksilver/quic/ConnectionEvent$DatagramsReadable;
+}
+
+public final class io/kuicksilver/quic/ConnectionEvent$EarlyDataAccepted : io/kuicksilver/quic/ConnectionEvent {
+	public static final field INSTANCE Lio/kuicksilver/quic/ConnectionEvent$EarlyDataAccepted;
+}
+
+public final class io/kuicksilver/quic/ConnectionEvent$EarlyDataRejected : io/kuicksilver/quic/ConnectionEvent {
+	public static final field INSTANCE Lio/kuicksilver/quic/ConnectionEvent$EarlyDataRejected;
 }
 
 public final class io/kuicksilver/quic/ConnectionEvent$HandshakeCompleted : io/kuicksilver/quic/ConnectionEvent {
@@ -152,6 +162,11 @@ public final class io/kuicksilver/quic/ConnectionEvent$PathFailed : io/kuicksilv
 public final class io/kuicksilver/quic/ConnectionEvent$PathValidated : io/kuicksilver/quic/ConnectionEvent {
 	public synthetic fun <init> (ILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public final fun getPath-ako8JRA ()I
+}
+
+public final class io/kuicksilver/quic/ConnectionEvent$SessionTicket : io/kuicksilver/quic/ConnectionEvent {
+	public fun <init> (Lio/kuicksilver/tls/QuicSessionTicket;)V
+	public final fun getTicket ()Lio/kuicksilver/tls/QuicSessionTicket;
 }
 
 public final class io/kuicksilver/quic/ConnectionEvent$StopSendingReceived : io/kuicksilver/quic/ConnectionEvent {
@@ -608,6 +623,7 @@ public abstract interface class io/kuicksilver/quic/QlogTrace : java/lang/AutoCl
 }
 
 public final class io/kuicksilver/quic/QuicClientConfig {
+	public final fun getEarlyData ()Lio/kuicksilver/tls/EarlyDataState;
 	public final fun getQuic ()Lio/kuicksilver/quic/QuicConfig;
 	public final fun getTls ()Lio/kuicksilver/tls/TlsConfig;
 }
@@ -615,8 +631,10 @@ public final class io/kuicksilver/quic/QuicClientConfig {
 public final class io/kuicksilver/quic/QuicClientConfig$Builder {
 	public fun <init> (Lio/kuicksilver/tls/TlsConfig;)V
 	public final fun build ()Lio/kuicksilver/quic/QuicClientConfig;
+	public final fun getEarlyData ()Lio/kuicksilver/tls/EarlyDataState;
 	public final fun getQuic ()Lio/kuicksilver/quic/QuicConfig;
 	public final fun getTls ()Lio/kuicksilver/tls/TlsConfig;
+	public final fun setEarlyData (Lio/kuicksilver/tls/EarlyDataState;)V
 	public final fun setQuic (Lio/kuicksilver/quic/QuicConfig;)V
 }
 
@@ -731,18 +749,21 @@ public final class io/kuicksilver/quic/QuicConfigKt {
 public abstract interface class io/kuicksilver/quic/QuicConnection : java/lang/AutoCloseable {
 	public abstract fun acceptStream (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun addPath (Lio/kuicksilver/quic/DatagramIo;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public fun awaitHandshake (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun close (JLjava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public static synthetic fun close$default (Lio/kuicksilver/quic/QuicConnection;JLjava/lang/String;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 	public abstract fun exportKeyingMaterial (Ljava/lang/String;[BILkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun getClosed ()Lkotlinx/coroutines/Deferred;
 	public abstract fun getCore ()Lio/kuicksilver/quic/ConnectionCore;
 	public abstract fun getDatagrams ()Lkotlinx/coroutines/flow/Flow;
+	public fun getEarlyDataAccepted ()Ljava/lang/Boolean;
 	public abstract fun getMaxDatagramSize ()Lkotlinx/coroutines/flow/StateFlow;
 	public abstract fun getNegotiatedAlpn ()Ljava/lang/String;
 	public abstract fun getPathEvents ()Lkotlinx/coroutines/flow/Flow;
 	public abstract fun getPaths ()Ljava/util/List;
 	public abstract fun getPeerCertificates ()Ljava/util/List;
 	public abstract fun getStats ()Lio/kuicksilver/quic/ConnectionStats;
+	public fun isHandshakeComplete ()Z
 	public abstract fun keyUpdate (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun migrate (Lio/kuicksilver/quic/DatagramIo;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun openBidi (Lio/kuicksilver/quic/StreamPriority;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
@@ -756,7 +777,10 @@ public abstract interface class io/kuicksilver/quic/QuicConnection : java/lang/A
 }
 
 public final class io/kuicksilver/quic/QuicConnection$DefaultImpls {
+	public static fun awaitHandshake (Lio/kuicksilver/quic/QuicConnection;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public static synthetic fun close$default (Lio/kuicksilver/quic/QuicConnection;JLjava/lang/String;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+	public static fun getEarlyDataAccepted (Lio/kuicksilver/quic/QuicConnection;)Ljava/lang/Boolean;
+	public static fun isHandshakeComplete (Lio/kuicksilver/quic/QuicConnection;)Z
 	public static synthetic fun openBidi$default (Lio/kuicksilver/quic/QuicConnection;Lio/kuicksilver/quic/StreamPriority;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 	public static synthetic fun openUni$default (Lio/kuicksilver/quic/QuicConnection;Lio/kuicksilver/quic/StreamPriority;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 	public static synthetic fun sendDatagram$default (Lio/kuicksilver/quic/QuicConnection;[BLio/kuicksilver/quic/DatagramPolicy;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
@@ -784,12 +808,17 @@ public abstract interface class io/kuicksilver/quic/QuicEndpoint : java/lang/Aut
 	public abstract fun accept (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun closeAndJoin (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun connect (Lio/ktor/network/sockets/InetSocketAddress;Lio/kuicksilver/quic/QuicClientConfig;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public fun connectEarly (Lio/ktor/network/sockets/InetSocketAddress;Lio/kuicksilver/quic/QuicClientConfig;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun getLocalAddress ()Lio/ktor/network/sockets/InetSocketAddress;
 }
 
 public final class io/kuicksilver/quic/QuicEndpoint$Companion {
 	public final fun bind (Lio/ktor/network/sockets/InetSocketAddress;Lio/kuicksilver/quic/QuicEndpointConfig;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public static synthetic fun bind$default (Lio/kuicksilver/quic/QuicEndpoint$Companion;Lio/ktor/network/sockets/InetSocketAddress;Lio/kuicksilver/quic/QuicEndpointConfig;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+}
+
+public final class io/kuicksilver/quic/QuicEndpoint$DefaultImpls {
+	public static fun connectEarly (Lio/kuicksilver/quic/QuicEndpoint;Lio/ktor/network/sockets/InetSocketAddress;Lio/kuicksilver/quic/QuicClientConfig;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 }
 
 public final class io/kuicksilver/quic/QuicEndpointConfig {
@@ -809,6 +838,7 @@ public final class io/kuicksilver/quic/QuicEndpointConfig {
 	public final fun getServer ()Lio/kuicksilver/quic/QuicServerConfig;
 	public final fun getStatelessPerAddressPerSecond ()I
 	public final fun getStatelessTotalPerSecond ()I
+	public final fun toBuilder ()Lio/kuicksilver/quic/QuicEndpointConfig$Builder;
 }
 
 public final class io/kuicksilver/quic/QuicEndpointConfig$Builder {
@@ -914,6 +944,12 @@ public final class io/kuicksilver/quic/QuicException$ConnectionLost$VersionNegot
 	public final fun getSupported ()Ljava/util/List;
 }
 
+public final class io/kuicksilver/quic/QuicException$ConnectionLost$ZeroRttRejected : io/kuicksilver/quic/QuicException$ConnectionLost {
+	public fun <init> ()V
+	public fun createCopy ()Lio/kuicksilver/quic/QuicException$ConnectionLost$ZeroRttRejected;
+	public synthetic fun createCopy ()Ljava/lang/Throwable;
+}
+
 public final class io/kuicksilver/quic/QuicException$DatagramTooLarge : io/kuicksilver/quic/QuicException {
 	public fun <init> (II)V
 	public fun createCopy ()Lio/kuicksilver/quic/QuicException$DatagramTooLarge;
@@ -968,6 +1004,7 @@ public abstract interface class io/kuicksilver/quic/QuicPath {
 }
 
 public final class io/kuicksilver/quic/QuicServerConfig {
+	public final fun getEarlyData ()Z
 	public final fun getQuic ()Lio/kuicksilver/quic/QuicConfig;
 	public final fun getTls ()Lio/kuicksilver/tls/TlsConfig;
 }
@@ -975,8 +1012,12 @@ public final class io/kuicksilver/quic/QuicServerConfig {
 public final class io/kuicksilver/quic/QuicServerConfig$Builder {
 	public fun <init> (Lio/kuicksilver/tls/TlsConfig;)V
 	public final fun build ()Lio/kuicksilver/quic/QuicServerConfig;
+	public final fun getEarlyData ()Z
+	public final fun getEarlyDataContext ()[B
 	public final fun getQuic ()Lio/kuicksilver/quic/QuicConfig;
 	public final fun getTls ()Lio/kuicksilver/tls/TlsConfig;
+	public final fun setEarlyData (Z)V
+	public final fun setEarlyDataContext ([B)V
 	public final fun setQuic (Lio/kuicksilver/quic/QuicConfig;)V
 }
 
@@ -985,9 +1026,14 @@ public abstract interface class io/kuicksilver/quic/QuicStream {
 	public abstract fun getInput ()Lio/ktor/utils/io/ByteReadChannel;
 	public abstract fun getOutput ()Lio/ktor/utils/io/ByteWriteChannel;
 	public abstract fun getPriority ()Lio/kuicksilver/quic/StreamPriority;
+	public fun getReceivedEarly ()Z
 	public abstract fun reset (J)V
 	public abstract fun setPriority (Lio/kuicksilver/quic/StreamPriority;)V
 	public abstract fun stopSending (J)V
+}
+
+public final class io/kuicksilver/quic/QuicStream$DefaultImpls {
+	public static fun getReceivedEarly (Lio/kuicksilver/quic/QuicStream;)Z
 }
 
 public final class io/kuicksilver/quic/StreamPriority {

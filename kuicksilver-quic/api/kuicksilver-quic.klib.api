@@ -208,6 +208,10 @@ abstract interface io.kuicksilver.quic/QuicConnection : kotlin/AutoCloseable { /
         abstract fun <get-peerCertificates>(): kotlin.collections/List<io.kuicksilver.tls/Certificate> // io.kuicksilver.quic/QuicConnection.peerCertificates.<get-peerCertificates>|<get-peerCertificates>(){}[0]
     abstract val stats // io.kuicksilver.quic/QuicConnection.stats|{}stats[0]
         abstract fun <get-stats>(): io.kuicksilver.quic/ConnectionStats // io.kuicksilver.quic/QuicConnection.stats.<get-stats>|<get-stats>(){}[0]
+    open val earlyDataAccepted // io.kuicksilver.quic/QuicConnection.earlyDataAccepted|{}earlyDataAccepted[0]
+        open fun <get-earlyDataAccepted>(): kotlin/Boolean? // io.kuicksilver.quic/QuicConnection.earlyDataAccepted.<get-earlyDataAccepted>|<get-earlyDataAccepted>(){}[0]
+    open val isHandshakeComplete // io.kuicksilver.quic/QuicConnection.isHandshakeComplete|{}isHandshakeComplete[0]
+        open fun <get-isHandshakeComplete>(): kotlin/Boolean // io.kuicksilver.quic/QuicConnection.isHandshakeComplete.<get-isHandshakeComplete>|<get-isHandshakeComplete>(){}[0]
 
     abstract fun trySendDatagram(kotlin/ByteArray, io.kuicksilver.quic/DatagramPolicy = ...): io.kuicksilver.quic/DatagramSendResult // io.kuicksilver.quic/QuicConnection.trySendDatagram|trySendDatagram(kotlin.ByteArray;io.kuicksilver.quic.DatagramPolicy){}[0]
     abstract suspend fun acceptStream(): io.kuicksilver.quic/QuicStream // io.kuicksilver.quic/QuicConnection.acceptStream|acceptStream(){}[0]
@@ -219,6 +223,7 @@ abstract interface io.kuicksilver.quic/QuicConnection : kotlin/AutoCloseable { /
     abstract suspend fun openBidi(io.kuicksilver.quic/StreamPriority = ...): io.kuicksilver.quic/QuicStream // io.kuicksilver.quic/QuicConnection.openBidi|openBidi(io.kuicksilver.quic.StreamPriority){}[0]
     abstract suspend fun openUni(io.kuicksilver.quic/StreamPriority = ...): io.kuicksilver.quic/QuicStream // io.kuicksilver.quic/QuicConnection.openUni|openUni(io.kuicksilver.quic.StreamPriority){}[0]
     abstract suspend fun sendDatagram(kotlin/ByteArray, io.kuicksilver.quic/DatagramPolicy = ...) // io.kuicksilver.quic/QuicConnection.sendDatagram|sendDatagram(kotlin.ByteArray;io.kuicksilver.quic.DatagramPolicy){}[0]
+    open suspend fun awaitHandshake() // io.kuicksilver.quic/QuicConnection.awaitHandshake|awaitHandshake(){}[0]
 }
 
 abstract interface io.kuicksilver.quic/QuicEndpoint : kotlin/AutoCloseable { // io.kuicksilver.quic/QuicEndpoint|null[0]
@@ -228,6 +233,7 @@ abstract interface io.kuicksilver.quic/QuicEndpoint : kotlin/AutoCloseable { // 
     abstract suspend fun accept(): io.kuicksilver.quic/QuicConnection // io.kuicksilver.quic/QuicEndpoint.accept|accept(){}[0]
     abstract suspend fun closeAndJoin() // io.kuicksilver.quic/QuicEndpoint.closeAndJoin|closeAndJoin(){}[0]
     abstract suspend fun connect(io.ktor.network.sockets/InetSocketAddress, io.kuicksilver.quic/QuicClientConfig): io.kuicksilver.quic/QuicConnection // io.kuicksilver.quic/QuicEndpoint.connect|connect(io.ktor.network.sockets.InetSocketAddress;io.kuicksilver.quic.QuicClientConfig){}[0]
+    open suspend fun connectEarly(io.ktor.network.sockets/InetSocketAddress, io.kuicksilver.quic/QuicClientConfig): io.kuicksilver.quic/QuicConnection // io.kuicksilver.quic/QuicEndpoint.connectEarly|connectEarly(io.ktor.network.sockets.InetSocketAddress;io.kuicksilver.quic.QuicClientConfig){}[0]
 
     final object Companion { // io.kuicksilver.quic/QuicEndpoint.Companion|null[0]
         final suspend fun bind(io.ktor.network.sockets/InetSocketAddress, io.kuicksilver.quic/QuicEndpointConfig = ...): io.kuicksilver.quic/QuicEndpoint // io.kuicksilver.quic/QuicEndpoint.Companion.bind|bind(io.ktor.network.sockets.InetSocketAddress;io.kuicksilver.quic.QuicEndpointConfig){}[0]
@@ -256,6 +262,8 @@ abstract interface io.kuicksilver.quic/QuicStream { // io.kuicksilver.quic/QuicS
         abstract fun <get-input>(): io.ktor.utils.io/ByteReadChannel // io.kuicksilver.quic/QuicStream.input.<get-input>|<get-input>(){}[0]
     abstract val output // io.kuicksilver.quic/QuicStream.output|{}output[0]
         abstract fun <get-output>(): io.ktor.utils.io/ByteWriteChannel // io.kuicksilver.quic/QuicStream.output.<get-output>|<get-output>(){}[0]
+    open val receivedEarly // io.kuicksilver.quic/QuicStream.receivedEarly|{}receivedEarly[0]
+        open fun <get-receivedEarly>(): kotlin/Boolean // io.kuicksilver.quic/QuicStream.receivedEarly.<get-receivedEarly>|<get-receivedEarly>(){}[0]
 
     abstract var priority // io.kuicksilver.quic/QuicStream.priority|{}priority[0]
         abstract fun <get-priority>(): io.kuicksilver.quic/StreamPriority // io.kuicksilver.quic/QuicStream.priority.<get-priority>|<get-priority>(){}[0]
@@ -373,6 +381,13 @@ sealed interface io.kuicksilver.quic/ConnectionEvent { // io.kuicksilver.quic/Co
             final fun <get-path>(): io.kuicksilver.quic/PathId // io.kuicksilver.quic/ConnectionEvent.PathValidated.path.<get-path>|<get-path>(){}[0]
     }
 
+    final class SessionTicket : io.kuicksilver.quic/ConnectionEvent { // io.kuicksilver.quic/ConnectionEvent.SessionTicket|null[0]
+        constructor <init>(io.kuicksilver.tls/QuicSessionTicket) // io.kuicksilver.quic/ConnectionEvent.SessionTicket.<init>|<init>(io.kuicksilver.tls.QuicSessionTicket){}[0]
+
+        final val ticket // io.kuicksilver.quic/ConnectionEvent.SessionTicket.ticket|{}ticket[0]
+            final fun <get-ticket>(): io.kuicksilver.tls/QuicSessionTicket // io.kuicksilver.quic/ConnectionEvent.SessionTicket.ticket.<get-ticket>|<get-ticket>(){}[0]
+    }
+
     final class StopSendingReceived : io.kuicksilver.quic/ConnectionEvent { // io.kuicksilver.quic/ConnectionEvent.StopSendingReceived|null[0]
         constructor <init>(kotlin/Long, kotlin/Long) // io.kuicksilver.quic/ConnectionEvent.StopSendingReceived.<init>|<init>(kotlin.Long;kotlin.Long){}[0]
 
@@ -436,6 +451,10 @@ sealed interface io.kuicksilver.quic/ConnectionEvent { // io.kuicksilver.quic/Co
     }
 
     final object DatagramsReadable : io.kuicksilver.quic/ConnectionEvent // io.kuicksilver.quic/ConnectionEvent.DatagramsReadable|null[0]
+
+    final object EarlyDataAccepted : io.kuicksilver.quic/ConnectionEvent // io.kuicksilver.quic/ConnectionEvent.EarlyDataAccepted|null[0]
+
+    final object EarlyDataRejected : io.kuicksilver.quic/ConnectionEvent // io.kuicksilver.quic/ConnectionEvent.EarlyDataRejected|null[0]
 
     final object HandshakeCompleted : io.kuicksilver.quic/ConnectionEvent // io.kuicksilver.quic/ConnectionEvent.HandshakeCompleted|null[0]
 }
@@ -562,6 +581,8 @@ final class io.kuicksilver.quic/ConnectionAttempt { // io.kuicksilver.quic/Conne
 final class io.kuicksilver.quic/ConnectionCore { // io.kuicksilver.quic/ConnectionCore|null[0]
     final val addressValidated // io.kuicksilver.quic/ConnectionCore.addressValidated|{}addressValidated[0]
         final fun <get-addressValidated>(): kotlin/Boolean // io.kuicksilver.quic/ConnectionCore.addressValidated.<get-addressValidated>|<get-addressValidated>(){}[0]
+    final val earlyDataAccepted // io.kuicksilver.quic/ConnectionCore.earlyDataAccepted|{}earlyDataAccepted[0]
+        final fun <get-earlyDataAccepted>(): kotlin/Boolean? // io.kuicksilver.quic/ConnectionCore.earlyDataAccepted.<get-earlyDataAccepted>|<get-earlyDataAccepted>(){}[0]
     final val glitchByFrameType // io.kuicksilver.quic/ConnectionCore.glitchByFrameType|{}glitchByFrameType[0]
         final fun <get-glitchByFrameType>(): kotlin/LongArray // io.kuicksilver.quic/ConnectionCore.glitchByFrameType.<get-glitchByFrameType>|<get-glitchByFrameType>(){}[0]
     final val maxDatagramPayload // io.kuicksilver.quic/ConnectionCore.maxDatagramPayload|{}maxDatagramPayload[0]
@@ -605,6 +626,7 @@ final class io.kuicksilver.quic/ConnectionCore { // io.kuicksilver.quic/Connecti
     final fun setPathCapabilities(io.kuicksilver.quic/PathId, io.kuicksilver.quic/IoCapabilities) // io.kuicksilver.quic/ConnectionCore.setPathCapabilities|setPathCapabilities(io.kuicksilver.quic.PathId;io.kuicksilver.quic.IoCapabilities){}[0]
     final fun setPriority(kotlin/Long, io.kuicksilver.quic/StreamPriority) // io.kuicksilver.quic/ConnectionCore.setPriority|setPriority(kotlin.Long;io.kuicksilver.quic.StreamPriority){}[0]
     final fun stopSending(kotlin/Long, kotlin/Long) // io.kuicksilver.quic/ConnectionCore.stopSending|stopSending(kotlin.Long;kotlin.Long){}[0]
+    final fun streamReceivedEarly(kotlin/Long): kotlin/Boolean // io.kuicksilver.quic/ConnectionCore.streamReceivedEarly|streamReceivedEarly(kotlin.Long){}[0]
     final fun switchPath(io.kuicksilver.quic/PathId, io.kuicksilver.quic/TimeMark) // io.kuicksilver.quic/ConnectionCore.switchPath|switchPath(io.kuicksilver.quic.PathId;io.kuicksilver.quic.TimeMark){}[0]
     final fun writeStream(kotlin/Long, kotlin/ByteArray, kotlin/Int, kotlin/Int, kotlin/Boolean): kotlin/Int // io.kuicksilver.quic/ConnectionCore.writeStream|writeStream(kotlin.Long;kotlin.ByteArray;kotlin.Int;kotlin.Int;kotlin.Boolean){}[0]
 
@@ -837,6 +859,8 @@ final class io.kuicksilver.quic/PacketBatch : kotlin/AutoCloseable { // io.kuick
 }
 
 final class io.kuicksilver.quic/QuicClientConfig { // io.kuicksilver.quic/QuicClientConfig|null[0]
+    final val earlyData // io.kuicksilver.quic/QuicClientConfig.earlyData|{}earlyData[0]
+        final fun <get-earlyData>(): io.kuicksilver.tls/EarlyDataState // io.kuicksilver.quic/QuicClientConfig.earlyData.<get-earlyData>|<get-earlyData>(){}[0]
     final val quic // io.kuicksilver.quic/QuicClientConfig.quic|{}quic[0]
         final fun <get-quic>(): io.kuicksilver.quic/QuicConfig // io.kuicksilver.quic/QuicClientConfig.quic.<get-quic>|<get-quic>(){}[0]
     final val tls // io.kuicksilver.quic/QuicClientConfig.tls|{}tls[0]
@@ -848,6 +872,9 @@ final class io.kuicksilver.quic/QuicClientConfig { // io.kuicksilver.quic/QuicCl
         final val tls // io.kuicksilver.quic/QuicClientConfig.Builder.tls|{}tls[0]
             final fun <get-tls>(): io.kuicksilver.tls/TlsConfig // io.kuicksilver.quic/QuicClientConfig.Builder.tls.<get-tls>|<get-tls>(){}[0]
 
+        final var earlyData // io.kuicksilver.quic/QuicClientConfig.Builder.earlyData|{}earlyData[0]
+            final fun <get-earlyData>(): io.kuicksilver.tls/EarlyDataState // io.kuicksilver.quic/QuicClientConfig.Builder.earlyData.<get-earlyData>|<get-earlyData>(){}[0]
+            final fun <set-earlyData>(io.kuicksilver.tls/EarlyDataState) // io.kuicksilver.quic/QuicClientConfig.Builder.earlyData.<set-earlyData>|<set-earlyData>(io.kuicksilver.tls.EarlyDataState){}[0]
         final var quic // io.kuicksilver.quic/QuicClientConfig.Builder.quic|{}quic[0]
             final fun <get-quic>(): io.kuicksilver.quic/QuicConfig // io.kuicksilver.quic/QuicClientConfig.Builder.quic.<get-quic>|<get-quic>(){}[0]
             final fun <set-quic>(io.kuicksilver.quic/QuicConfig) // io.kuicksilver.quic/QuicClientConfig.Builder.quic.<set-quic>|<set-quic>(io.kuicksilver.quic.QuicConfig){}[0]
@@ -1055,6 +1082,8 @@ final class io.kuicksilver.quic/QuicEndpointConfig { // io.kuicksilver.quic/Quic
     final val statelessTotalPerSecond // io.kuicksilver.quic/QuicEndpointConfig.statelessTotalPerSecond|{}statelessTotalPerSecond[0]
         final fun <get-statelessTotalPerSecond>(): kotlin/Int // io.kuicksilver.quic/QuicEndpointConfig.statelessTotalPerSecond.<get-statelessTotalPerSecond>|<get-statelessTotalPerSecond>(){}[0]
 
+    final fun toBuilder(): io.kuicksilver.quic/QuicEndpointConfig.Builder // io.kuicksilver.quic/QuicEndpointConfig.toBuilder|toBuilder(){}[0]
+
     final class Builder { // io.kuicksilver.quic/QuicEndpointConfig.Builder|null[0]
         constructor <init>() // io.kuicksilver.quic/QuicEndpointConfig.Builder.<init>|<init>(){}[0]
 
@@ -1114,6 +1143,8 @@ final class io.kuicksilver.quic/QuicEndpointConfig { // io.kuicksilver.quic/Quic
 }
 
 final class io.kuicksilver.quic/QuicServerConfig { // io.kuicksilver.quic/QuicServerConfig|null[0]
+    final val earlyData // io.kuicksilver.quic/QuicServerConfig.earlyData|{}earlyData[0]
+        final fun <get-earlyData>(): kotlin/Boolean // io.kuicksilver.quic/QuicServerConfig.earlyData.<get-earlyData>|<get-earlyData>(){}[0]
     final val quic // io.kuicksilver.quic/QuicServerConfig.quic|{}quic[0]
         final fun <get-quic>(): io.kuicksilver.quic/QuicConfig // io.kuicksilver.quic/QuicServerConfig.quic.<get-quic>|<get-quic>(){}[0]
     final val tls // io.kuicksilver.quic/QuicServerConfig.tls|{}tls[0]
@@ -1125,6 +1156,12 @@ final class io.kuicksilver.quic/QuicServerConfig { // io.kuicksilver.quic/QuicSe
         final val tls // io.kuicksilver.quic/QuicServerConfig.Builder.tls|{}tls[0]
             final fun <get-tls>(): io.kuicksilver.tls/TlsConfig // io.kuicksilver.quic/QuicServerConfig.Builder.tls.<get-tls>|<get-tls>(){}[0]
 
+        final var earlyData // io.kuicksilver.quic/QuicServerConfig.Builder.earlyData|{}earlyData[0]
+            final fun <get-earlyData>(): kotlin/Boolean // io.kuicksilver.quic/QuicServerConfig.Builder.earlyData.<get-earlyData>|<get-earlyData>(){}[0]
+            final fun <set-earlyData>(kotlin/Boolean) // io.kuicksilver.quic/QuicServerConfig.Builder.earlyData.<set-earlyData>|<set-earlyData>(kotlin.Boolean){}[0]
+        final var earlyDataContext // io.kuicksilver.quic/QuicServerConfig.Builder.earlyDataContext|{}earlyDataContext[0]
+            final fun <get-earlyDataContext>(): kotlin/ByteArray? // io.kuicksilver.quic/QuicServerConfig.Builder.earlyDataContext.<get-earlyDataContext>|<get-earlyDataContext>(){}[0]
+            final fun <set-earlyDataContext>(kotlin/ByteArray?) // io.kuicksilver.quic/QuicServerConfig.Builder.earlyDataContext.<set-earlyDataContext>|<set-earlyDataContext>(kotlin.ByteArray?){}[0]
         final var quic // io.kuicksilver.quic/QuicServerConfig.Builder.quic|{}quic[0]
             final fun <get-quic>(): io.kuicksilver.quic/QuicConfig // io.kuicksilver.quic/QuicServerConfig.Builder.quic.<get-quic>|<get-quic>(){}[0]
             final fun <set-quic>(io.kuicksilver.quic/QuicConfig) // io.kuicksilver.quic/QuicServerConfig.Builder.quic.<set-quic>|<set-quic>(io.kuicksilver.quic.QuicConfig){}[0]
@@ -1301,6 +1338,12 @@ sealed class io.kuicksilver.quic/QuicException : kotlinx.coroutines/CopyableThro
                 final fun <get-supported>(): kotlin.collections/List<kotlin/Int> // io.kuicksilver.quic/QuicException.ConnectionLost.VersionNegotiation.supported.<get-supported>|<get-supported>(){}[0]
 
             final fun createCopy(): io.kuicksilver.quic/QuicException.ConnectionLost.VersionNegotiation // io.kuicksilver.quic/QuicException.ConnectionLost.VersionNegotiation.createCopy|createCopy(){}[0]
+        }
+
+        final class ZeroRttRejected : io.kuicksilver.quic/QuicException.ConnectionLost { // io.kuicksilver.quic/QuicException.ConnectionLost.ZeroRttRejected|null[0]
+            constructor <init>() // io.kuicksilver.quic/QuicException.ConnectionLost.ZeroRttRejected.<init>|<init>(){}[0]
+
+            final fun createCopy(): io.kuicksilver.quic/QuicException.ConnectionLost.ZeroRttRejected // io.kuicksilver.quic/QuicException.ConnectionLost.ZeroRttRejected.createCopy|createCopy(){}[0]
         }
     }
 

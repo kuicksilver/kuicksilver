@@ -10,6 +10,7 @@ import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.api.readExactly
 import io.kuicksilver.quic.runtime.LoopGroup
+import io.kuicksilver.tls.EarlyDataState
 import io.kuicksilver.tls.KslQuicCrypto
 import io.kuicksilver.tls.KslUdpSocket
 import kotlinx.coroutines.async
@@ -178,5 +179,38 @@ class MultiLoopTest {
             // loops > 1 needs a server
             assertFailsWith<IllegalArgumentException> { QuicEndpointConfig.Builder().apply { loops = 2 }.build() }
             Unit
+        }
+
+    @Test fun zeroRttTicketsServeEveryLoop() =
+        runBlocking {
+            assumeTrue(ready(), "needs the accelerated socket (Linux)")
+            // a 0-RTT client on two loops: connect picks loops round-robin, the ticket one loop received serves the other
+            val server =
+                QuicEndpoint.bind(
+                    lo,
+                    QuicEndpointConfig
+                        .Builder()
+                        .apply {
+                            this.server = QuicServerConfig.Builder(CoreFixtures.server()).apply { earlyData = true }.build()
+                            crypto = KslQuicCrypto
+                        }.build(),
+                )
+            val clients = QuicEndpoint.bind(lo, serverConfig(2)) as LoopGroup
+            val early = QuicClientConfig.Builder(CoreFixtures.client()).apply { earlyData = EarlyDataState.Allowed }.build()
+            try {
+                withTimeout(30.seconds) {
+                    val accepted = async { repeat(2) { server.accept() } }
+                    val first = clients.connect(server.localAddress, early)
+                    while (clients.loopForTest(0).sessions.size() + clients.loopForTest(1).sessions.size() == 0) kotlinx.coroutines.yield()
+                    first.close()
+                    val second = clients.connectEarly(server.localAddress, early)
+                    second.awaitHandshake()
+                    assertEquals(true, second.earlyDataAccepted, "the other loop found the ticket")
+                    accepted.await()
+                }
+            } finally {
+                clients.close()
+                server.close()
+            }
         }
 }

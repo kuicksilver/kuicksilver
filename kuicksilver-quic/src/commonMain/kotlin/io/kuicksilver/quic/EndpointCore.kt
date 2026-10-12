@@ -5,6 +5,7 @@ package io.kuicksilver.quic
 import io.ktor.network.sockets.InetSocketAddress
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.native.PacketBuffer
+import io.kuicksilver.native.of
 import io.kuicksilver.quic.VersionProfile
 import io.kuicksilver.quic.core.AddressClass
 import io.kuicksilver.quic.core.CidRegistrar
@@ -12,6 +13,7 @@ import io.kuicksilver.quic.core.checkStatelessReset
 import io.kuicksilver.quic.core.failInternal
 import io.kuicksilver.quic.core.refreshLocalTp
 import io.kuicksilver.quic.core.release
+import io.kuicksilver.quic.core.useTicket
 import io.kuicksilver.quic.endpoint.AdmissionQueue
 import io.kuicksilver.quic.endpoint.ConnectionIdRegistry
 import io.kuicksilver.quic.endpoint.RetryTokens
@@ -69,6 +71,72 @@ public class EndpointCore(
     internal val limiter = StatelessRateLimiter(config.statelessPerAddressPerSecond, config.statelessTotalPerSecond)
     internal val retryTokens: RetryTokens? = if (config.server != null) RetryTokens(config.crypto, random) else null
     private val queue: AdmissionQueue? = if (config.server != null) AdmissionQueue(config.initialQueueCap) else null
+
+    /** The server's 0-RTT setup (configuration digest and the replay register shared by every loop), or null without 0-RTT. */
+    internal val serverEarly: io.kuicksilver.quic.core.ServerEarlyData? = config.server?.earlySetup(random)
+
+    /** 0-RTT datagrams that arrived before the Initial that creates their connection, by DCID (as quic-go: 100 ms, 32 IDs, 31 each). */
+    private class EarlyDatagram(
+        val bytes: ByteArray,
+        val from: InetSocketAddress,
+        val ecn: Ecn,
+        val at: TimeMark,
+    )
+
+    private val earlyPending = LinkedHashMap<String, ArrayList<EarlyDatagram>>()
+
+    private fun dcidKey(
+        data: PacketBuffer,
+        off: Int,
+        len: Int,
+    ): String {
+        val sb = StringBuilder(len * 2)
+        for (i in 0 until len) sb.append((data[off + i].toInt() and 0xff).toString(16).padStart(2, '0'))
+        return sb.toString()
+    }
+
+    private fun expireEarly(now: TimeMark) {
+        val it = earlyPending.entries.iterator()
+        while (it.hasNext()) if (now - it.next().value[0].at > EARLY_PENDING_TTL) it.remove()
+    }
+
+    private fun bufferEarly(
+        data: PacketBuffer,
+        length: Int,
+        from: InetSocketAddress,
+        ecn: Ecn,
+        now: TimeMark,
+    ) {
+        expireEarly(now)
+        val key = dcidKey(data, hv.dcidOff, hv.dcidLen)
+        val l =
+            earlyPending[key]
+                ?: if (earlyPending.size >= EARLY_PENDING_IDS) return else ArrayList<EarlyDatagram>().also { earlyPending[key] = it }
+        if (l.size >= EARLY_PENDING_PER_ID) return
+        l += EarlyDatagram(ByteArray(length).also { data.copyTo(it, 0, 0, length) }, from, ecn, now)
+    }
+
+    /** Feeds [core] the 0-RTT datagrams that waited for it under [dcid] (the DCID of the client's first Initial). */
+    internal fun replayEarly(
+        core: ConnectionCore,
+        dcid: ConnectionId,
+        now: TimeMark,
+    ) {
+        if (earlyPending.isEmpty()) return
+        val b = dcid.toByteArray()
+        val l = earlyPending.remove(b.joinToString("") { (it.toInt() and 0xff).toString(16).padStart(2, '0') }) ?: return
+        for (e in l) {
+            if (now - e.at > EARLY_PENDING_TTL) continue
+            val buf = PacketBuffer.of(e.bytes)
+            try {
+                deliver(core, buf, e.bytes.size, e.from, e.ecn, now)
+            } finally {
+                buf.close()
+            }
+        }
+    }
+
+    internal val earlyPendingForTest: Int get() = earlyPending.values.sumOf { it.size }
 
     /** Connections per client IP (ports ignored) for `maxConnectionsPerIp`. */
     internal val perIp = HashMap<Any, Int>()
@@ -133,8 +201,22 @@ public class EndpointCore(
             "QuicConfig.connectionIdLength (${client.quic.connectionIdLength}) must equal the endpoint's connectionIdLength ($cidLength)"
         }
         // the endpoint's CSPRNG itself: a child Random(seed) would let an observer recover the 64-bit seed from two cleartext CIDs
-        val core = ConnectionCore.client(client.quic, client.tls, config.crypto, remote, random, now, resetKey)
+        val core = ConnectionCore.client(client.quic, client.tls, config.crypto, remote, random, now, resetKey, client.earlyData)
         attach(core)
+        return core
+    }
+
+    /** [connect] resuming [ticket] (consumed) for 0-RTT when [client] allows early data. */
+    internal fun connect(
+        client: QuicClientConfig,
+        remote: InetSocketAddress,
+        now: TimeMark,
+        ticket: io.kuicksilver.tls.QuicSessionTicket?,
+    ): ConnectionCore {
+        val core = connect(client, remote, now)
+        if (ticket != null) {
+            if (client.earlyData == io.kuicksilver.tls.EarlyDataState.Disabled) ticket.close() else core.useTicket(ticket)
+        }
         return core
     }
 
@@ -270,6 +352,10 @@ public class EndpointCore(
             return null
         }
         val server = config.server ?: return null
+        if (hv.type == PacketType.ZeroRtt && serverEarly != null && !hv.unsupportedVersion) {
+            bufferEarly(data, length, from, ecn, now)
+            return null
+        } // its Initial may still wait in the admission queue, or be reordered behind it (RFC 9000 section 17.2.3)
         // ---- cheap checks before anything is remembered about this datagram (threat-model 3.2) ----
         if (length < 1200) return null
         if (hv.unsupportedVersion || VersionProfile.of(hv.version)?.let { it !in server.quic.versions } != false) {
@@ -351,6 +437,12 @@ public class EndpointCore(
             if (e is kotlinx.coroutines.CancellationException) throw e
             core.failInternal(e)
         }
+    }
+
+    private companion object {
+        val EARLY_PENDING_TTL = kotlin.time.Duration.parse("100ms")
+        const val EARLY_PENDING_IDS = 32
+        const val EARLY_PENDING_PER_ID = 31
     }
 
     /** Frees the queue, the stateless buffer and every connection's native resources. */

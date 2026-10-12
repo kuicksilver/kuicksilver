@@ -13,6 +13,8 @@ ksl_ssl *ksl_ssl_new(ksl_ctx *c, int mode) {
     if (c->role == KSL_CLIENT) SSL_set_connect_state(s->ssl); else SSL_set_accept_state(s->ssl);
     if (mode == KSL_MODE_QUIC) {
         if (!SSL_set_quic_tls_cbs(s->ssl, ksl_quic_dispatch, s)) { SSL_free(s->ssl); free(s); return NULL; }
+        /* max_early_data 0xffffffff (RFC 9001 section 4.6.1) on every server session, so each ticket it issues allows 0-RTT */
+        if (c->role == KSL_SERVER && c->early_data && !SSL_set_quic_tls_early_data_enabled(s->ssl, 1)) { SSL_free(s->ssl); free(s); return NULL; }
     } else {
         BIO *internal = NULL; if (!BIO_new_bio_pair(&internal, 0, &s->net, 0)) { SSL_free(s->ssl); free(s); return NULL; }
         SSL_set_bio(s->ssl, internal, internal);
@@ -65,6 +67,19 @@ int ksl_ssl_set(ksl_ssl *s, int what, const uint8_t *data, size_t len) {
         if (s->hs_keys) { ksl_ssl_set_error(s, KSL_E_TOO_LATE, "ksl: QUIC version is fixed once Handshake keys exist"); return KSL_ERROR; }
         s->quic_version = v; return KSL_OK;
     }
+    case KSL_SET_EARLY_CONTEXT:
+        if (s->owner->role != KSL_SERVER) { ksl_ssl_set_error(s, KSL_E_BAD_ARG, "ksl: early context is server-only"); return KSL_ERROR; }
+        if (!data || len == 0 || len > sizeof s->early_ctx) { ksl_ssl_set_error(s, KSL_E_BAD_ARG, "ksl: early context is 1..64 bytes"); return KSL_ERROR; }
+        memcpy(s->early_ctx, data, len); s->early_ctx_len = len; return KSL_OK;
+    case KSL_SET_EARLY_DATA:
+        if (!data || len != 1 || s->mode != KSL_MODE_QUIC) { ksl_ssl_set_error(s, KSL_E_BAD_ARG, "ksl: early data flag is 1 byte, QUIC only"); return KSL_ERROR; }
+        if (s->owner->role == KSL_SERVER) {
+            if (!s->owner->early_data) { ksl_ssl_set_error(s, KSL_E_NOT_SUPPORTED, "ksl: the context does not accept early data"); return KSL_ERROR; }
+            s->early_allow = data[0] != 0; return KSL_OK;
+        }
+        if (!data[0]) return KSL_OK;
+        if (!SSL_set_quic_tls_early_data_enabled(s->ssl, 1)) { ERR_clear_error(); ksl_ssl_set_error(s, KSL_E_NOT_SUPPORTED, "ksl: the session does not allow early data"); return KSL_ERROR; }
+        return KSL_OK;
     default: ksl_ssl_set_error(s, KSL_E_BAD_ARG, "ksl: unknown setter"); return KSL_ERROR;
     }
 }
@@ -87,6 +102,10 @@ int ksl_ssl_get(ksl_ssl *s, int what, uint8_t *out, size_t cap, size_t *len) {
     case KSL_GET_SESSION_REUSED: { uint8_t b = SSL_session_reused(s->ssl) ? 1 : 0; return copy_out(out, cap, len, &b, 1); }
     case KSL_GET_EMS: { uint8_t b = SSL_get_extms_support(s->ssl) == 1; return copy_out(out, cap, len, &b, 1); }
     case KSL_GET_QUIC_VERSION: { uint32_t v = s->quic_version; uint8_t b[4] = {(uint8_t)(v >> 24), (uint8_t)(v >> 16), (uint8_t)(v >> 8), (uint8_t)v}; return copy_out(out, cap, len, b, 4); }
+    case KSL_GET_EARLY_DATA: {
+        int st = SSL_get_early_data_status(s->ssl);
+        uint8_t b = st == SSL_EARLY_DATA_ACCEPTED ? 2 : st == SSL_EARLY_DATA_REJECTED ? 1 : 0; return copy_out(out, cap, len, &b, 1);
+    }
     default: ksl_ssl_set_error(s, KSL_E_BAD_ARG, "ksl: unknown getter"); return KSL_ERROR;
     }
 }
@@ -151,6 +170,9 @@ int ksl_drive(ksl_ssl *s) {
     ERR_clear_error(); int r;
     if (!s->done) {
         r = SSL_do_handshake(s->ssl);
+        /* A server with early data enabled stops at TLS_ST_EARLY_DATA once its own Finished is out (SSL_do_handshake returns 1, as for
+           SSL_read_early_data over TCP); the handshake is complete only with the client's Finished: calling again re-enters it. */
+        if (r == 1 && s->owner->role == KSL_SERVER && SSL_get_state(s->ssl) == TLS_ST_EARLY_DATA) r = SSL_do_handshake(s->ssl);
         if (r == 1) {
             s->done = 1;
             if (s->mode == KSL_MODE_TCP && SSL_version(s->ssl) < TLS1_3_VERSION && !SSL_get_extms_support(s->ssl)) return ksl_ssl_fail(s, KSL_E_EMS_REQUIRED, "ksl: TLS 1.2 without extended master secret rejected");

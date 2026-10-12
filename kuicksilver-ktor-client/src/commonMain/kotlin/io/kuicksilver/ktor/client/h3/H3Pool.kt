@@ -76,6 +76,20 @@ internal class H3Pool(
                 ?: Http3Endpoint.bind(InetSocketAddress("0.0.0.0", 0), config.http3.endpoint, config.http3.settings).also { endpoint = it }
         }
 
+    /** Test hook: the open connections, then forgets them so the next request connects again (a 0-RTT resumption). */
+    internal suspend fun dropConnectionsForTest(): List<Http3Connection> =
+        lock.withLock {
+            val l = connections.values.mapNotNull { it.getCompletedOrNull() }
+            connections.clear()
+            l
+        }
+
+    /** Test hook: the open connections. */
+    internal suspend fun connectionsForTest(): List<Http3Connection> =
+        lock.withLock {
+            connections.values.mapNotNull { it.getCompletedOrNull() }
+        }
+
     fun close() {
         endpoint?.close()
         endpoint = null
@@ -106,12 +120,22 @@ internal class H3Pool(
             try {
                 val c =
                     withTimeout(data.connectTimeoutMillis(config)) {
-                        ep.connect(
-                            InetSocketAddress(socketHost(t.host), t.port),
-                            config.tlsConfigFor(t.originHost, listOf(Http3Endpoint.H3)),
-                            config.quic,
-                            config.http3.settings,
-                        )
+                        @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+                        if (config.http3.earlyData) {
+                            ep.connectEarly(
+                                InetSocketAddress(socketHost(t.host), t.port),
+                                config.tlsConfigFor(t.originHost, listOf(Http3Endpoint.H3)),
+                                config.quic,
+                                config.http3.settings,
+                            )
+                        } else {
+                            ep.connect(
+                                InetSocketAddress(socketHost(t.host), t.port),
+                                config.tlsConfigFor(t.originHost, listOf(Http3Endpoint.H3)),
+                                config.quic,
+                                config.http3.settings,
+                            )
+                        }
                     }
                 d.complete(c)
             } catch (
@@ -225,6 +249,7 @@ internal class H3Pool(
                         data.url.fullPath.ifEmpty { "/" },
                         headersOf(data, body) + Http3Headers(extraHeaders),
                         bodyChannel(body, callContext),
+                        allowEarlyData = @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class) config.http3.earlyData,
                     ),
                 )
             }

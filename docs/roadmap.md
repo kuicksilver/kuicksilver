@@ -22,7 +22,7 @@ Known limits, stated on purpose:
 - A handshake under heavy loss with an ML-KEM peer: both flights span two datagrams and the RFC 9002 initial PTO
   (1 s, 2 s, 4 s before an RTT sample) gives three retransmissions before a 10 s peer timeout
   (`spec/rfc-compliance.md`, interop `handshakecorruption`); mitigated by `QuicConfig.initialRtt` (0.2.0, `guide/quic.md`).
-- No 0-RTT (ADR-0008), no HTTP/2 in the client engine (ADR-0009), no HTTP/3 server push, no certificate
+- 0-RTT is opt-in and experimental (ADR-0015); no HTTP/2 in the client engine (ADR-0009), no HTTP/3 server push, no certificate
   compression (RFC 8879), no OCSP/CRL checks of our own (the platform verifier decides under `TrustConfig.Platform`).
 - No macosX64 target.
 - The `kuicksilver-testing` module is not published.

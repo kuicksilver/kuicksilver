@@ -75,6 +75,15 @@ public class Http3ClientConfig {
 
     /** The client QUIC endpoint (dispatcher, crypto provider, socket factory). */
     public var endpoint: QuicEndpointConfig = QuicEndpointConfig.Default
+
+    /**
+     * Resume HTTP/3 connections with 0-RTT (off by default; ADR-0015): the engine keeps the servers' session tickets for
+     * its lifetime and sends GET, HEAD and OPTIONS requests without a body before the handshake completes; every other
+     * request waits for it, and a 425 Too Early is retried once. Early requests can be replayed by an attacker
+     * (RFC 8446 section 8): turn this on only for servers whose safe methods are free of side effects.
+     */
+    @io.kuicksilver.annotations.ExperimentalKuicksilverApi
+    public var earlyData: Boolean = false
 }
 
 /** Configuration of `HttpClient(Kuicksilver)`. */

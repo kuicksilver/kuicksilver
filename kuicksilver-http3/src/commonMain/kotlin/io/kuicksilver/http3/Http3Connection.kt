@@ -5,6 +5,7 @@ package io.kuicksilver.http3
 import io.ktor.network.sockets.InetSocketAddress
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.ByteWriteChannel
+import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.http3.runtime.H3Session
 import io.kuicksilver.http3.runtime.connect
 import io.kuicksilver.http3.runtime.request
@@ -130,6 +131,13 @@ public class Http3Connection private constructor(
 public interface Http3ServerRequest {
     /** The QUIC id of the request stream (a client-initiated bidirectional stream, RFC 9114 section 6.1). */
     public val streamId: Long
+
+    /**
+     * The request arrived in 0-RTT and reached the application before the handshake completed, so it may be a replay
+     * (RFC 8446 section 8); only requests the server's `Http3EarlyDataPolicy.replayable` admits are handed over this way.
+     */
+    @ExperimentalKuicksilverApi
+    public val receivedEarly: Boolean get() = false
 
     /** The `:method` pseudo-header, as sent (case-sensitive, RFC 9110 section 9.1). */
     public val method: String

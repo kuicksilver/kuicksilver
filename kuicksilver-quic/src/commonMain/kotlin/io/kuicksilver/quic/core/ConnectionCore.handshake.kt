@@ -25,7 +25,9 @@ import io.kuicksilver.quic.wire.localTransportParameters
 import io.kuicksilver.tls.Aead
 import io.kuicksilver.tls.Certificate
 import io.kuicksilver.tls.Direction
+import io.kuicksilver.tls.EarlyDataState
 import io.kuicksilver.tls.PacketProtector
+import io.kuicksilver.tls.QuicSessionTicket
 import io.kuicksilver.tls.TlsException
 import io.kuicksilver.tls.TlsRole
 import kotlin.time.Duration.Companion.milliseconds
@@ -91,6 +93,8 @@ internal fun ConnectionCore.onRetry(
         for (i in 0 until f.cryptoCount) cryptoStreams.send[f.cryptoLevel[i]].onLost(f.cryptoOffset[i], f.cryptoLength[i])
     }
     loss.discard(SpaceId.Initial)
+    // 0-RTT sent before the Retry reached a server that kept no state: send it again (RFC 9001 section 4.6.2 allows 0-RTT after a Retry)
+    loss.discardZeroRtt { p -> streams.onFramesLost(p.frames) }
     installInitialKeys(version)
     receiver.reset()
 }
@@ -204,6 +208,8 @@ internal fun ConnectionCore.onVersionNegotiation(offered: IntArray) {
         return
     }
     receivedVnVersions = offered
+    // the restarted handshake has no ticket left: 0-RTT data waits for 1-RTT, and the limits it used are checked at completion
+    loss.discardZeroRtt { p -> streams.onFramesLost(p.frames) }
     for (i in 0 until 4) {
         readKeys[i]?.close()
         writeKeys[i]?.close()
@@ -212,7 +218,7 @@ internal fun ConnectionCore.onVersionNegotiation(offered: IntArray) {
     }
     handshake.session.close()
     version = next
-    handshake = HandshakeDriver(crypto.newSession(tlsConfig), ConnectionHandshakeSink(this))
+    handshake = HandshakeDriver(crypto.newSession(tlsConfig, earlyMode != EarlyDataState.Disabled), ConnectionHandshakeSink(this))
     handshake.session.setTransportParameters(TransportParametersCodec.encode(buildLocalTp(), role, 27))
     handshake.session.setQuicVersion(next.version)
     loss = LossDetection(rtt, config, role, ConnectionLossListener(this))
@@ -263,6 +269,10 @@ internal class ConnectionHandshakeSink(
             protector.close()
             return
         }
+        if (level == 1 && (core.state != ConnectionState.Handshaking || (direction == Direction.Write) != (core.role == TlsRole.Client))) {
+            protector.close()
+            return
+        } // 0-RTT keys: written by a client, read by a server, only during the handshake
         if (direction ==
             Direction.Read
         ) {
@@ -282,8 +292,23 @@ internal class ConnectionHandshakeSink(
                     core.writeKeys[3] = w
                 }
         }
+        if (level == 3 && direction == Direction.Write && core.writeKeys[1] != null) {
+            core.writeKeys[1]?.close()
+            core.writeKeys[1] = null
+        } // RFC 9001 section 4.9.3: a client drops its 0-RTT key as soon as it has the 1-RTT one
+        if (level == 1 && core.role == TlsRole.Server) core.events += ConnectionEvent.EarlyDataAccepted
         if (direction == Direction.Read && (level != 3 || core.keyPhase != null)) core.receiver.replayBuffered(level)
         if (level == 2) core.loss.handshakeKeysAvailable = true
+    }
+
+    override fun onSessionTicket(ticket: QuicSessionTicket) {
+        val tp = core.peerTpEncoded
+        if (tp == null || core.role != TlsRole.Client) {
+            ticket.close()
+            return
+        }
+        ticket.remembered = rememberedBlob(core.negotiatedAlpn, tp)
+        core.events += ConnectionEvent.SessionTicket(ticket)
     }
 
     override fun onPeerTransportParameters(
@@ -351,6 +376,7 @@ internal class ConnectionHandshakeSink(
             if (chosen != core.version) core.switchServerVersion(chosen)
         }
         core.peerTp = tp
+        core.peerTpEncoded = encoded
         tp.statelessResetToken?.let { core.cids.setPeerResetToken(0, it) }
         core.streams.applyPeerParameters(
             tp.initialMaxStreamDataBidiLocal,
@@ -375,6 +401,14 @@ internal class ConnectionHandshakeSink(
 
     override fun onHandshakeDone() {
         if (core.state != ConnectionState.Handshaking) return
+        if (core.role == TlsRole.Client) {
+            core.settleZeroRtt()
+            if (core.state != ConnectionState.Handshaking) return
+            if (core.earlyAccepted == true) core.events += ConnectionEvent.EarlyDataAccepted
+        } else {
+            core.earlyAccepted = core.handshake.session.earlyDataAccepted
+            if (core.readKeys[1] == null) core.receiver.dropBufferedLevel(1) // refused 0-RTT is never processed (RFC 9001 section 4.6.2)
+        }
         core.state = ConnectionState.Established
         core.qlog?.connectionStateUpdated(core.state, core.now)
         core.events += ConnectionEvent.HandshakeCompleted

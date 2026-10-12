@@ -22,8 +22,13 @@ import io.kuicksilver.quic.TimeMark
 import io.kuicksilver.quic.TransportError
 import io.kuicksilver.quic.core.fail
 import io.kuicksilver.quic.core.failInternal
+import io.kuicksilver.quic.core.zeroRttWritable
 import io.kuicksilver.quic.ipLiteral
 import io.kuicksilver.quic.withLiteralHost
+import io.kuicksilver.tls.EarlyDataState
+import io.kuicksilver.tls.QuicSessionTicket
+import io.kuicksilver.tls.SessionCache
+import io.kuicksilver.tls.TlsConfig
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
@@ -66,6 +71,8 @@ internal class EndpointLoop private constructor(
     private val group: LoopGroup? = null,
     private val pendingAccept: AtomicInt = AtomicInt(0),
     private val acceptQueue: Channel<QuicConnection> = acceptChannel(pendingAccept),
+    /** The client's session tickets (per endpoint, single use; ADR-0015): a group's loops share one, `connect` picks any loop. */
+    internal val sessions: SessionCache = SessionCache(),
 ) : QuicEndpoint {
     /** Last-resort failures of coroutines the loop launched (none is expected to throw): counted, never handed to the thread's uncaught handler, which on Android kills the process. */
     internal val uncaughtFailures = AtomicLong(0)
@@ -511,8 +518,21 @@ internal class EndpointLoop private constructor(
         return rt
     }
 
+    /** A client connection received a ticket: kept for a later 0-RTT connection with the same TLS configuration. */
+    internal fun storeTicket(
+        tls: TlsConfig,
+        ticket: QuicSessionTicket,
+    ) {
+        if (closing) {
+            ticket.close()
+            return
+        }
+        scope.launch { sessions.putQuic(tls, ticket) }
+    }
+
     internal fun onHandshakeCompleted(rt: ConnectionRuntime) {
-        if (!rt.serverSide) return
+        if (!rt.serverSide || rt.handedOff) return
+        rt.handedOff = true
         handshakeEnded(rt)
         // the accept queue never holds more than acceptQueue (shared by a group's loops, hence the compare-and-set)
         while (true) {
@@ -551,7 +571,12 @@ internal class EndpointLoop private constructor(
     override suspend fun connect(
         remote: InetSocketAddress,
         config: QuicClientConfig,
-    ): QuicConnection = connectResolved(resolveOnce(remote), config)
+    ): QuicConnection = connectResolved(resolveOnce(remote), config, early = false)
+
+    override suspend fun connectEarly(
+        remote: InetSocketAddress,
+        config: QuicClientConfig,
+    ): QuicConnection = connectResolved(resolveOnce(remote), config, early = true)
 
     /**
      * The connect target as an IP literal, resolved once here: the socket reports peers as IP literals, Kotlin/Native's
@@ -570,20 +595,38 @@ internal class EndpointLoop private constructor(
     private suspend fun connectResolved(
         remote: InetSocketAddress,
         config: QuicClientConfig,
+        early: Boolean,
     ): QuicConnection {
         var adopted: ConnectionRuntime? = null // set on the loop; a cancellation at the withContext exit must not lose it
         try {
+            // a resumable ticket of this TLS configuration whose chain still passes the current trust (single use)
+            val ticket = if (config.earlyData == EarlyDataState.Disabled) null else sessions.takeQuic(config.tls)
+            if (early && ticket == null && config.earlyData == EarlyDataState.Required) {
+                throw QuicException.ConnectionLost.ZeroRttRejected()
+            }
+            var zeroRtt = false
             val rt =
-                withContext(dispatcher) {
-                    if (closing) throw QuicException.EndpointClosing()
-                    checkPayloadSize(config.quic)
-                    val c = core.connect(config, remote, now())
-                    val rt = adopt(c)
-                    adopted = rt
-                    flush()
-                    rt
+                try {
+                    withContext(dispatcher) {
+                        if (closing) throw QuicException.EndpointClosing()
+                        checkPayloadSize(config.quic)
+                        val c = core.connect(config, remote, now(), ticket)
+                        val rt = adopt(c)
+                        adopted = rt
+                        flush()
+                        zeroRtt = c.zeroRttWritable // the first poll drove TLS: the 0-RTT key exists when the ticket allowed it
+                        rt
+                    }
+                } catch (t: Throwable) {
+                    if (adopted == null) ticket?.close()
+                    throw t
                 }
+            if (early && zeroRtt) return rt
             rt.handshake.await() // ConnectionLost on failure; a cancelled caller sees its CancellationException
+            if (early && config.earlyData == EarlyDataState.Required && rt.earlyDataAccepted != true) {
+                rt.close()
+                throw QuicException.ConnectionLost.ZeroRttRejected()
+            }
             return rt
         } catch (e: CancellationException) {
             // a cancelled connect closes what it started: CONNECTION_CLOSE, then the closing period retires it
@@ -630,6 +673,7 @@ internal class EndpointLoop private constructor(
         closeJob =
             scope.launch {
                 try {
+                    sessions.clear()
                     val now = now()
                     for (c in core.connections().toList()) {
                         c.close(0, "endpoint closed", now)
@@ -707,7 +751,8 @@ internal class EndpointLoop private constructor(
             group: LoopGroup,
             acceptQueue: Channel<QuicConnection>,
             pendingAccept: AtomicInt,
-        ): EndpointLoop = EndpointLoop(config, io, ownDispatcher(), index, group, pendingAccept, acceptQueue)
+            sessions: SessionCache,
+        ): EndpointLoop = EndpointLoop(config, io, ownDispatcher(), index, group, pendingAccept, acceptQueue, sessions)
 
         /**
          * The accept queue, whose slots [pending] counts. A connection the queue cannot deliver (an `accept()` cancelled

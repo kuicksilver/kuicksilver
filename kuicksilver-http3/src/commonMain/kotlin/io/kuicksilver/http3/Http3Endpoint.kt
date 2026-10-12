@@ -3,10 +3,13 @@
 package io.kuicksilver.http3
 
 import io.ktor.network.sockets.InetSocketAddress
+import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.quic.QuicClientConfig
 import io.kuicksilver.quic.QuicConfig
 import io.kuicksilver.quic.QuicEndpoint
 import io.kuicksilver.quic.QuicEndpointConfig
+import io.kuicksilver.quic.QuicServerConfig
+import io.kuicksilver.tls.EarlyDataState
 import io.kuicksilver.tls.TlsConfig
 import kotlinx.coroutines.CancellationException
 
@@ -31,6 +34,40 @@ public class Http3Endpoint private constructor(
     ): Http3Connection {
         require(H3 in tls.alpn) { "the TLS configuration must offer ALPN \"h3\"" }
         val c = endpoint.connect(remote, QuicClientConfig.Builder(tls).apply { this.quic = quic }.build())
+        return try {
+            Http3Connection.client(c, settings.withTransport(quic))
+        } catch (e: Throwable) {
+            c.close()
+            throw e
+        }
+    }
+
+    /**
+     * As [connect] with 0-RTT (ADR-0015): resumes a ticket this endpoint kept from an earlier connection to the same
+     * server and returns as soon as 0-RTT keys exist. Requests with `allowEarlyData` (safe methods without a body) then
+     * go out in 0-RTT; every other request waits for the handshake. [earlyData] must not be [EarlyDataState.Disabled].
+     * Early requests can be replayed by an attacker (RFC 8446 section 8).
+     */
+    @ExperimentalKuicksilverApi
+    public suspend fun connectEarly(
+        remote: InetSocketAddress,
+        tls: TlsConfig,
+        quic: QuicConfig = QuicConfig.Default,
+        settings: Http3Settings = Http3Settings.Default,
+        earlyData: EarlyDataState = EarlyDataState.Allowed,
+    ): Http3Connection {
+        require(H3 in tls.alpn) { "the TLS configuration must offer ALPN \"h3\"" }
+        require(earlyData != EarlyDataState.Disabled) { "connectEarly needs earlyData Allowed or Required" }
+        val c =
+            endpoint.connectEarly(
+                remote,
+                QuicClientConfig
+                    .Builder(tls)
+                    .apply {
+                        this.quic = quic
+                        this.earlyData = earlyData
+                    }.build(),
+            )
         return try {
             Http3Connection.client(c, settings.withTransport(quic))
         } catch (e: Throwable) {
@@ -74,7 +111,25 @@ public class Http3Endpoint private constructor(
         ): Http3Endpoint {
             config.server?.let { require(H3 in it.tls.alpn) { "the server TLS configuration must offer ALPN \"h3\"" } }
             val server = config.server?.let { settings.withTransport(it.quic) } ?: settings
-            return Http3Endpoint(QuicEndpoint.bind(local, config), server)
+            return Http3Endpoint(QuicEndpoint.bind(local, config.withEarlyDataContext(server)), server)
+        }
+
+        /** A 0-RTT server binds its SETTINGS into its tickets (RFC 9114 section 7.2.4.2): changed SETTINGS refuse early data. */
+        @OptIn(ExperimentalKuicksilverApi::class)
+        private fun QuicEndpointConfig.withEarlyDataContext(settings: Http3Settings): QuicEndpointConfig {
+            val s = server ?: return this
+            if (!s.earlyData) return this
+            return toBuilder()
+                .apply {
+                    server =
+                        QuicServerConfig
+                            .Builder(s.tls)
+                            .apply {
+                                quic = s.quic
+                                earlyData = true
+                                earlyDataContext = settings.earlyDataContext()
+                            }.build()
+                }.build()
         }
 
         private fun Http3Settings.withTransport(q: QuicConfig): Http3Settings =

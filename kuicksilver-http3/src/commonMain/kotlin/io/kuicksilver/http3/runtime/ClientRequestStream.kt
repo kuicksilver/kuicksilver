@@ -1,10 +1,14 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
+@file:OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+
 package io.kuicksilver.http3.runtime
 
 import io.ktor.utils.io.ByteChannel
 import io.ktor.utils.io.ByteReadChannel
+import io.ktor.utils.io.cancel
 import io.ktor.utils.io.readAvailable
+import io.kuicksilver.http3.Http3EarlyDataPolicy
 import io.kuicksilver.http3.Http3ErrorCode
 import io.kuicksilver.http3.Http3Exception
 import io.kuicksilver.http3.Http3Headers
@@ -82,10 +86,31 @@ internal suspend fun H3Session.connect(
  */
 private suspend fun callerDispatcher(): ContinuationInterceptor = currentCoroutineContext()[ContinuationInterceptor] ?: Dispatchers.Default
 
+/**
+ * RFC 8470 and ADR-0015: before the handshake completed only a request that opted in, with a safe method and no body,
+ * goes out (in 0-RTT); every other one waits. A 425 to a request that went early is repeated once after the handshake.
+ */
 internal suspend fun H3Session.request(
     r: Http3Request,
     keepOpen: Boolean = false,
     caller: ContinuationInterceptor? = null,
+): Http3Response {
+    val mayGoEarly =
+        testSendUnsafeEarly || (r.allowEarlyData && !keepOpen && r.body == null && r.method in Http3EarlyDataPolicy.SAFE_METHODS)
+    if (!mayGoEarly) quic.awaitHandshake()
+    val early = !quic.isHandshakeComplete
+    val first = requestOnce(r, keepOpen, caller)
+    if (!early || first.status != 425) return first
+    runCatching { first.body.cancel() }
+    quic.awaitHandshake()
+    early425Retries++
+    return requestOnce(r, keepOpen, caller)
+}
+
+private suspend fun H3Session.requestOnce(
+    r: Http3Request,
+    keepOpen: Boolean,
+    caller: ContinuationInterceptor?,
 ): Http3Response {
     val callbacks = caller ?: callerDispatcher()
     return withContext(dispatcher) {

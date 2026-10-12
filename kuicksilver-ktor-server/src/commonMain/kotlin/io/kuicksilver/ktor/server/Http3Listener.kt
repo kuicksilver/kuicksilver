@@ -84,7 +84,14 @@ private fun KuicksilverApplicationEngine.http3EndpointConfig(tls: KuicksilverTls
     return QuicEndpointConfig
         .Builder()
         .apply {
-            server = QuicServerConfig.Builder(tls.tlsConfig(listOf(Http3Endpoint.H3))).apply { this.quic = quic }.build()
+            server =
+                QuicServerConfig
+                    .Builder(tls.tlsConfig(listOf(Http3Endpoint.H3)))
+                    .apply {
+                        this.quic = quic
+                        @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+                        earlyData = configuration.quicEarlyData
+                    }.build()
             connectionIdLength = quic.connectionIdLength
             loops = configuration.udpSocketCount
             configuration.quicAdmission?.let { admission = it }

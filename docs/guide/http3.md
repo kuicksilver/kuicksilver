@@ -96,6 +96,27 @@ connection's own single-threaded dispatcher, so a slow callback delays only its 
 `100-continue`. `Http3Response.cancel()` (or cancelling the calling
 coroutine) resets the stream with `H3_REQUEST_CANCELLED`; the connection keeps serving other requests.
 
+## 0-RTT (opt-in, experimental)
+
+`Http3Endpoint.connectEarly` resumes a ticket from an earlier connection and returns before the handshake completes
+(ADR-0015). A request goes out in 0-RTT only when it sets `allowEarlyData = true` **and** is a safe method (GET, HEAD,
+OPTIONS) without a body. Every other request waits for the handshake. If the server answers `425 Too Early`, the client
+repeats the request once after the handshake (RFC 8470 section 5.2).
+
+On the server, bind with `quicServerConfig(tls) { earlyData = true }`. The endpoint binds its SETTINGS into its tickets,
+so changed SETTINGS refuse 0-RTT (RFC 9114 section 7.2.4.2). A request that arrived in 0-RTT before the handshake
+completed is handled by `Http3Settings.earlyData`:
+
+- `Http3EarlyDataPolicy.WaitForHandshake()` (the default): requests that `replayable` admits (GET, HEAD and OPTIONS by
+  default) run at once with `receivedEarly = true`. Every other request reaches `acceptRequest()` only after the
+  handshake completed. A replayed flight never completes the handshake, so a replayed unsafe request never runs.
+- `Http3EarlyDataPolicy.Reject425()`: non-replayable early requests are answered with `425 Too Early` and never reach
+  the application.
+
+> **Replay warning.** An early request may be a copy an attacker sent again (RFC 8446 section 8). Handlers of requests
+> that run early, those with `receivedEarly = true`, must have no side effects. Narrow `replayable` if a GET handler
+> of yours changes state.
+
 ## Serving requests
 
 ```kotlin

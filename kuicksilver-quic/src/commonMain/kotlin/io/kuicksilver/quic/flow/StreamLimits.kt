@@ -47,6 +47,8 @@ internal class StreamLimits(
         if (index + 1 > peerOpened[idx(bidi)]) peerOpened[idx(bidi)] = index + 1
     }
 
+    fun localOpened(bidi: Boolean): Long = ourOpened[idx(bidi)]
+
     fun canOpenLocal(bidi: Boolean): Boolean = ourOpened[idx(bidi)] < ourLimit[idx(bidi)]
 
     fun onLocalOpened(bidi: Boolean) {
@@ -65,6 +67,15 @@ internal class StreamLimits(
         }
         ourLimit[idx(bidi)] = max
         return true
+    }
+
+    /** After a rejected 0-RTT: the server's new MAX_STREAMS replaces the remembered one, even when lower. */
+    fun resetPeerMaxStreams(
+        bidi: Boolean,
+        max: Long,
+    ) {
+        ourLimit[idx(bidi)] = max
+        blockedReportedAt[idx(bidi)] = -1
     }
 
     /** A peer-initiated stream closed; returns the new MAX_STREAMS value when it is time to send one, else -1. */

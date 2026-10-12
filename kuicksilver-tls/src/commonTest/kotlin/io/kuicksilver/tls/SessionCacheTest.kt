@@ -1,6 +1,6 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
-@file:OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+@file:OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class, io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
 
 package io.kuicksilver.tls
 
@@ -51,5 +51,21 @@ class SessionCacheTest {
             assertEquals(1, SessionCache.Default.size(), "the two week-old sessions are gone once a fresh one is stored")
             assertTrue(SessionCache.Default.peek("c"))
             SessionCache.Default.clear()
+        }
+
+    /** A QUIC ticket is taken once (RFC 8446 appendix C.4) and only while its cached chain still passes the current trust. */
+    @Test fun clientTicketIsSingleUse(): Unit =
+        runBlocking {
+            val cache = SessionCache()
+            val cfg = Fixtures.client()
+            cache.putQuic(cfg, QuicSessionTicket(SessionCache.Entry(0L, emptyList(), emptyList())).also { it.remembered = byteArrayOf(7) })
+            val t = cache.takeQuic(cfg)
+            assertTrue(t != null && t.remembered!!.contentEquals(byteArrayOf(7)), "the ticket and what the transport remembered")
+            assertEquals(null, cache.takeQuic(cfg), "single use")
+            val rejecting = Fixtures.client(trust = TrustConfig.Custom { _, _, _ -> VerifyResult.Rejected(VerifyReason.Custom("no")) })
+            val e = SessionCache.Entry(0L, listOf(Fixtures.testCa), emptyList())
+            cache.putQuic(rejecting, QuicSessionTicket(e))
+            assertEquals(null, cache.takeQuic(rejecting), "a chain the trust now rejects is not resumed")
+            assertTrue(e.closed)
         }
 }

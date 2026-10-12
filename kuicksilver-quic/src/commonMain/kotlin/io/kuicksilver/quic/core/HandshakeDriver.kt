@@ -1,5 +1,7 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
+@file:OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+
 package io.kuicksilver.quic.core
 
 import io.kuicksilver.tls.Certificate
@@ -31,6 +33,8 @@ internal interface HandshakeSink {
     )
 
     fun onHandshakeDone()
+
+    fun onSessionTicket(ticket: io.kuicksilver.tls.QuicSessionTicket)
 
     fun onVerifyRequested(chain: List<Certificate>)
 
@@ -104,6 +108,10 @@ internal class HandshakeDriver(
                 TlsEvent.HandshakeDone -> {
                     done = true
                     sink.onHandshakeDone()
+                }
+
+                is TlsEvent.SessionTicket -> {
+                    sink.onSessionTicket(ev.ticket)
                 }
             }
         }

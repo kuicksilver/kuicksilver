@@ -48,8 +48,8 @@ in-memory UDP), `kuicksilver-bench` and `kuicksilver-interop` live in this repos
 
 TLS over TCP (`TlsConnection`, `Socket.tls()`) works on every target above. JS and Wasm are not targets.
 
-Not in v1, by decision: 0-RTT (ADR-0008), HTTP/2 (ADR-0009), HTTP/3 server push, WebTransport, multipath, OpenSSL
-4.x.
+Not in v1, by decision: HTTP/2 (ADR-0009), HTTP/3 server push, WebTransport, multipath, OpenSSL 4.x. 0-RTT
+is available as an opt-in, experimental API and is off by default (ADR-0015).
 
 ## Quick start
 
@@ -133,8 +133,8 @@ with ALPN set. Datagrams, stream priorities, connection migration and the sans-I
 
 ## Security model in one line
 
-Host names are always verified and pins are checked on top of the validated chain, never instead of it; there is no
-0-RTT in v1; packet keys and TLS secrets stay in native memory; OpenSSL is a pinned, signature-checked 3.5 LTS release
+Host names are always verified and pins are checked on top of the validated chain, never instead of it; 0-RTT is off
+unless both sides opt in, and then guarded against replay (ADR-0015); packet keys and TLS secrets stay in native memory; OpenSSL is a pinned, signature-checked 3.5 LTS release
 built by this repository. The full model is in [docs/spec/threat-model.md](docs/spec/threat-model.md), and
 vulnerabilities are reported privately as described in [SECURITY.md](SECURITY.md).
 

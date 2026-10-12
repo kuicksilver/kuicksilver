@@ -3,6 +3,7 @@
 package io.kuicksilver.http3
 
 import io.ktor.utils.io.ByteReadChannel
+import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.quic.StreamPriority
 import kotlinx.coroutines.Deferred
 
@@ -38,6 +39,13 @@ public class Http3Request(
      * the coroutine that called `request` (not the connection's); the final response waits for it to return.
      */
     public val onInformational: (suspend (status: Int, headers: Http3Headers) -> Unit)? = null,
+    /**
+     * Send in 0-RTT on a connection from `Http3Endpoint.connectEarly` whose handshake is not complete yet; honoured only for a
+     * safe method (GET, HEAD, OPTIONS) without a body, every other request waits for the handshake. The request may be
+     * replayed by an attacker (RFC 8446 section 8); a `425 Too Early` answer is repeated once after the handshake (RFC 8470).
+     */
+    @property:ExperimentalKuicksilverApi
+    public val allowEarlyData: Boolean = false,
 )
 
 /** The final response to an [Http3Request]. Reading [body] to the end completes [trailers] (null without trailers). */

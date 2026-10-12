@@ -68,16 +68,26 @@ internal class KslContext private constructor(
                 else -> null
             }
 
+        /**
+         * [quicTickets]: a QUIC server issues session tickets (two per full handshake, one per resumption) and, with
+         * [earlyData], ones that allow 0-RTT (ADR-0015); a QUIC server without it issues none.
+         */
         fun create(
             config: TlsConfig,
             quic: Boolean,
+            quicTickets: Boolean = false,
+            earlyData: Boolean = false,
         ): KslContext {
             KslLoader.ensureLoaded()
             config.validateFor(quic)
+            if (earlyData && config.role == TlsRole.Server && config.clientAuth != ClientAuth.None) {
+                throw TlsException.Config("0-RTT with client certificates is not supported")
+            }
             val h = Ksl.ctxNew(if (config.role == TlsRole.Client) KslConst.CLIENT else KslConst.SERVER)
             try {
                 try {
                     configure(h, config, quic)
+                    if (quic && quicTickets && config.role == TlsRole.Server) quicServerTickets(h, config, earlyData)
                 } catch (
                     e: KslException.Internal,
                 ) {
@@ -155,6 +165,24 @@ internal class KslContext private constructor(
             }
             if (config.keylog != null) Ksl.ctxSetOption(h, KslConst.OPT_KEYLOG, 1)
             if (config.genericAlerts) Ksl.ctxSetOption(h, KslConst.OPT_GENERIC_ALERTS, 1)
+        }
+
+        private fun quicServerTickets(
+            h: Long,
+            config: TlsConfig,
+            earlyData: Boolean,
+        ) {
+            Ksl.ctxSetTicketKeys(h, config.sessionTickets.keys ?: DefaultTicketKeys.current(config.sessionTickets))
+            Ksl.ctxSetOption(
+                h,
+                KslConst.OPT_TICKET_LIFETIME,
+                config.sessionTickets.ticketLifetime.inWholeSeconds
+                    .toInt()
+                    .coerceAtLeast(1),
+            )
+            Ksl.ctxSetSessionContext(h, Ksl.sha2(256, "quic|server|${config.clientAuth}|${config.trust.cacheKey()}".encodeToByteArray()))
+            Ksl.ctxSetOption(h, KslConst.OPT_NUM_TICKETS, 2)
+            if (earlyData) Ksl.ctxSetOption(h, KslConst.OPT_EARLY_DATA, 1)
         }
 
         fun alpnWire(alpn: List<String>): ByteArray =

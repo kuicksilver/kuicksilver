@@ -41,6 +41,9 @@ final class io.kuicksilver.ktor.server/KuicksilverApplicationEngine : io.ktor.se
         final var quicAdmission // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration.quicAdmission|{}quicAdmission[0]
             final fun <get-quicAdmission>(): io.kuicksilver.quic/ConnectionAdmission? // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration.quicAdmission.<get-quicAdmission>|<get-quicAdmission>(){}[0]
             final fun <set-quicAdmission>(io.kuicksilver.quic/ConnectionAdmission?) // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration.quicAdmission.<set-quicAdmission>|<set-quicAdmission>(io.kuicksilver.quic.ConnectionAdmission?){}[0]
+        final var quicEarlyData // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration.quicEarlyData|{}quicEarlyData[0]
+            final fun <get-quicEarlyData>(): kotlin/Boolean // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration.quicEarlyData.<get-quicEarlyData>|<get-quicEarlyData>(){}[0]
+            final fun <set-quicEarlyData>(kotlin/Boolean) // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration.quicEarlyData.<set-quicEarlyData>|<set-quicEarlyData>(kotlin.Boolean){}[0]
         final var quicMaxIdleTimeout // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration.quicMaxIdleTimeout|{}quicMaxIdleTimeout[0]
             final fun <get-quicMaxIdleTimeout>(): kotlin.time/Duration? // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration.quicMaxIdleTimeout.<get-quicMaxIdleTimeout>|<get-quicMaxIdleTimeout>(){}[0]
             final fun <set-quicMaxIdleTimeout>(kotlin.time/Duration?) // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration.quicMaxIdleTimeout.<set-quicMaxIdleTimeout>|<set-quicMaxIdleTimeout>(kotlin.time.Duration?){}[0]
@@ -118,3 +121,5 @@ final object io.kuicksilver.ktor.server/Kuicksilver : io.ktor.server.engine/Appl
 
 final val io.kuicksilver.ktor.server/peerCertificates // io.kuicksilver.ktor.server/peerCertificates|@io.ktor.server.request.ApplicationRequest{}peerCertificates[0]
     final fun (io.ktor.server.request/ApplicationRequest).<get-peerCertificates>(): kotlin.collections/List<io.kuicksilver.tls/Certificate> // io.kuicksilver.ktor.server/peerCertificates.<get-peerCertificates>|<get-peerCertificates>@io.ktor.server.request.ApplicationRequest(){}[0]
+final val io.kuicksilver.ktor.server/receivedEarly // io.kuicksilver.ktor.server/receivedEarly|@io.ktor.server.request.ApplicationRequest{}receivedEarly[0]
+    final fun (io.ktor.server.request/ApplicationRequest).<get-receivedEarly>(): kotlin/Boolean // io.kuicksilver.ktor.server/receivedEarly.<get-receivedEarly>|<get-receivedEarly>@io.ktor.server.request.ApplicationRequest(){}[0]

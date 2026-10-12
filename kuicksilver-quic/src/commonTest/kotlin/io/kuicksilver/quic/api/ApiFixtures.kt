@@ -41,6 +41,7 @@ internal class ApiPair private constructor(
             crypto: QuicCrypto = NullCryptoProvider,
             serverAnswers: Boolean = true,
             df: Boolean = false,
+            serverEarlyData: Boolean = false,
         ): ApiPair {
             val net = MemoryNetwork()
             val a = net.open(InetSocketAddress("10.0.0.1", 1111), df = df)
@@ -52,7 +53,12 @@ internal class ApiPair private constructor(
                         .Builder()
                         .apply {
                             this.server =
-                                QuicServerConfig.Builder(CoreFixtures.server()).apply { quic = serverQuic }.build()
+                                QuicServerConfig
+                                    .Builder(CoreFixtures.server())
+                                    .apply {
+                                        quic = serverQuic
+                                        earlyData = serverEarlyData
+                                    }.build()
                             ; this.crypto = crypto
                             io = { b }
                         }.build(),
