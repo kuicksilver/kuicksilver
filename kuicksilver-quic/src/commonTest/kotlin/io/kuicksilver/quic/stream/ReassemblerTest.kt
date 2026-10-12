@@ -8,7 +8,6 @@ import io.kotest.property.arbitrary.long
 import io.kotest.property.checkAll
 import io.kuicksilver.native.PacketBuffer
 import io.kuicksilver.native.of
-import io.kuicksilver.quic.wire.QuicWireException
 import kotlinx.coroutines.test.runTest
 import kotlin.random.Random
 import kotlin.test.Test
@@ -77,21 +76,22 @@ class ReassemblerTest {
         val r = Reassembler(256, RangeBudget(4096))
         for (i in 0 until 256) insert(r, 2L * i + 2, byteArrayOf(1)) // gaps keep every fragment its own range
         assertEquals(256, r.rangeCount)
-        val e = assertFailsWith<QuicWireException> { insert(r, 2L * 256 + 2, byteArrayOf(1)) }
-        assertEquals(0x03L, e.code)
+        // refused without a connection error: loss alone can get a peer here (K7 F2.9); the packet goes unacknowledged
+        assertFailsWith<ReassemblyFull> { insert(r, 2L * 256 + 2, byteArrayOf(1)) }
+        assertEquals(256, r.rangeCount)
+        insert(r, 3, byteArrayOf(1)) // filling a hole merges and is always taken
+        assertEquals(255, r.rangeCount)
         val budget = RangeBudget(4096)
         val streams = List(17) { Reassembler(256, budget) }
         var n = 0
-        val e2 =
-            assertFailsWith<QuicWireException> {
-                for (s in streams) {
-                    for (i in 0 until 256) {
-                        insert(s, 2L * i + 2, byteArrayOf(1))
-                        n++
-                    }
+        assertFailsWith<ReassemblyFull> {
+            for (s in streams) {
+                for (i in 0 until 256) {
+                    insert(s, 2L * i + 2, byteArrayOf(1))
+                    n++
                 }
             }
-        assertEquals(0x03L, e2.code)
+        }
         assertEquals(4096, n, "the 4097th range on the connection is refused")
     }
 

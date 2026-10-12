@@ -3,8 +3,14 @@
 package io.kuicksilver.quic.stream
 
 import io.kuicksilver.native.PacketBuffer
-import io.kuicksilver.quic.TransportError
-import io.kuicksilver.quic.wire.QuicWireException
+
+/**
+ * Buffering a frame would exceed the range limits. Not a protocol error: a peer that stayed within flow control gets
+ * there through ordinary loss (every other packet lost within one round trip leaves one hole each), so the packet is
+ * dropped unacknowledged instead (the peer resends it; data that fills a hole always merges and is always taken), and
+ * memory stays bounded by the limits (RFC 9000 section 21.7; K7 F2.9).
+ */
+internal object ReassemblyFull : RuntimeException("too many reassembly ranges")
 
 /** Connection-wide count of reassembly ranges (4096 per connection). */
 internal class RangeBudget(
@@ -16,7 +22,7 @@ internal class RangeBudget(
 /**
  * Orders stream data (RFC 9000 section 2.2): bytes land in a window starting at the read offset, gaps are tracked as
  * sorted (start, end) ranges — at most [maxRanges] per stream and the connection [budget] — and only the contiguous
- * prefix is readable. Refusal happens before copying.
+ * prefix is readable. Refusal ([ReassemblyFull]) happens before copying.
  */
 internal class Reassembler(
     private val maxRanges: Int,
@@ -67,7 +73,7 @@ internal class Reassembler(
         if (!mergesIntoExisting &&
             (count >= maxRanges || budget.used >= budget.max)
         ) {
-            throw QuicWireException(TransportError.FLOW_CONTROL_ERROR, 0x08, "too many reassembly ranges")
+            throw ReassemblyFull
         }
         ensureCapacity(end)
         data.copyTo(window, srcOff, head + (start - base).toInt(), (end - start).toInt())
