@@ -3,14 +3,15 @@
 package io.kuicksilver.quic.core
 
 import io.ktor.network.sockets.InetSocketAddress
+import io.kuicksilver.quic.ipBytesNoDns
 
 /** Address classification for admission and path decisions (threat-model 3.1). */
 internal object AddressClass {
     /** Source ports of UDP services commonly abused for reflection (DNS, NTP, SSDP, mDNS, memcached); an Initial "from" one of them is answered with silence. */
     private val reflectivePorts = intArrayOf(53, 123, 1900, 5353, 11211)
 
-    /** The raw IPv4 (4) or IPv6 (16) address bytes; the hostname's bytes when the address is unresolved (a literal name in tests). */
-    fun ipBytes(a: InetSocketAddress): ByteArray = a.resolveAddress() ?: a.hostname.encodeToByteArray()
+    /** The raw IPv4 (4) or IPv6 (16) address bytes; the hostname's bytes for a host name (never a resolver call: see [ipBytesNoDns]). */
+    fun ipBytes(a: InetSocketAddress): ByteArray = a.ipBytesNoDns() ?: a.hostname.encodeToByteArray()
 
     fun isLoopback(a: InetSocketAddress): Boolean {
         val b = ipBytes(a)
@@ -81,4 +82,16 @@ internal object AddressClass {
     }
 
     fun ipKey(a: InetSocketAddress): IpKey = IpKey(ipBytes(a))
+
+    /** A hash key over the IP address bytes and the port: one peer however its address is spelled (Kotlin/Native's InetSocketAddress compares the text). */
+    class AddrKey(
+        private val bytes: ByteArray,
+        private val port: Int,
+    ) {
+        override fun equals(other: Any?): Boolean = other is AddrKey && other.port == port && other.bytes.contentEquals(bytes)
+
+        override fun hashCode(): Int = bytes.contentHashCode() * 31 + port
+    }
+
+    fun addrKey(a: InetSocketAddress): AddrKey = AddrKey(ipBytes(a), a.port)
 }

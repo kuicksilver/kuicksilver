@@ -142,23 +142,24 @@ public class EndpointCore(
         markDirty(core)
         // rotated IDs route and reset like the first one
         if (core.role == TlsRole.Server) core.cids.generator = { r -> ServerCidFormat.generate(loopIndex, cidLength, r) }
-        byRemote.getOrPut(core.remoteAddress) { ArrayList(1) } += core
+        byRemote.getOrPut(AddressClass.addrKey(core.remoteAddress)) { ArrayList(1) } += core
         core.onRemoteChanged =
             {
                 old,
                 new,
                 ->
-                byRemote[old]?.let { l ->
+                val oldKey = AddressClass.addrKey(old)
+                byRemote[oldKey]?.let { l ->
                     l.remove(core)
-                    if (l.isEmpty()) byRemote.remove(old)
+                    if (l.isEmpty()) byRemote.remove(oldKey)
                 }
-                byRemote.getOrPut(new) { ArrayList(1) } +=
+                byRemote.getOrPut(AddressClass.addrKey(new)) { ArrayList(1) } +=
                     core
             }
     }
 
     /** Connections by the remote address of their active path: Stateless Reset candidates for an unknown short header are only those at its source. */
-    private val byRemote = HashMap<InetSocketAddress, ArrayList<ConnectionCore>>()
+    private val byRemote = HashMap<AddressClass.AddrKey, ArrayList<ConnectionCore>>()
 
     // ---- dirty connections: the loop polls only connections something happened to since its last flush ----
     private val dirty = ArrayList<ConnectionCore>()
@@ -232,7 +233,7 @@ public class EndpointCore(
         if (hv.type == PacketType.OneRtt) {
             // RFC 9000 section 10.3: an unknown DCID in a short header is either a Stateless Reset for one of our connections to that peer, or a reason to send one
             resetCandidatesExaminedForTest = 0
-            byRemote[from]?.let { l ->
+            byRemote[AddressClass.addrKey(from)]?.let { l ->
                 for (i in l.indices) {
                     val c = l[i]
                     resetCandidatesExaminedForTest++
@@ -392,9 +393,10 @@ public class EndpointCore(
             dirty.remove(core)
             core.dirty = false
         }
-        byRemote[core.remoteAddress]?.let { l ->
+        val remoteKey = AddressClass.addrKey(core.remoteAddress)
+        byRemote[remoteKey]?.let { l ->
             l.remove(core)
-            if (l.isEmpty()) byRemote.remove(core.remoteAddress)
+            if (l.isEmpty()) byRemote.remove(remoteKey)
         }
         core.onRemoteChanged =
             null

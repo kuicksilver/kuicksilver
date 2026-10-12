@@ -113,6 +113,9 @@ class MigrationApiTest {
                         io2.sent > 0 && io2.received > 0,
                         "traffic moved to the new socket: sent ${io2.sent} received ${io2.received}",
                     )
+                    // the server probes the client's previous address once it moves (RFC 9000 section 9.3.3); that probe and its
+                    // retries are path validation, not traffic, so the count starts once the server has no path left to validate
+                    withTimeout(10.seconds) { while (s.paths.any { it.state.value == PathState.Validating }) delay(10) }
                     val oldIo = p.clientIo
                     val oldAfter = oldIo.received
                     delay(1.seconds)

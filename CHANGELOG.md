@@ -87,6 +87,9 @@ Fixes from a full five-reviewer pass over the code before the first release, amo
   from source port 0 are dropped; the certificate parser accepts the time formats OpenSSL accepts.
 - The endpoint's receive loop yields after 16 rounds or 2 ms of continuous traffic, so a socket that never runs dry
   (a flood) no longer starves the connection timers and queued application commands.
+- No resolver call on the endpoint loop: on Kotlin/Native the address bytes of a datagram's source are parsed from its IP
+  literal instead of `getaddrinfo`, and Stateless Reset candidates are keyed by address bytes and port, so a reset from
+  `0:0:0:0:0:0:0:1` matches a connection to `::1`.
 
 ### Security
 

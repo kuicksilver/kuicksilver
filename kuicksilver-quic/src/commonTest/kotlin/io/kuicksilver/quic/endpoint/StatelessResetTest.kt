@@ -53,6 +53,8 @@ class StatelessResetTest {
         crypto: QuicCrypto = NullCryptoProvider,
         serverSeed: Long = 5,
         loopIndex: Int = 0,
+        /** The server's address as the client dials it (and as the server's packets arrive). */
+        val serverAddr: InetSocketAddress = this@StatelessResetTest.serverAddr,
     ) {
         var now = TimeMark(1_000_000_000L)
         val server =
@@ -336,6 +338,47 @@ class StatelessResetTest {
                 assertEquals(ConnectionState.Draining, c.state)
                 p.batch.clear()
                 assertEquals(0, c.poll(p.batch, p.now), "draining: no CONNECTION_CLOSE, nothing at all")
+            } finally {
+                restarted.close()
+            }
+        } finally {
+            p.close()
+        }
+    }
+
+    @Test fun resetDetectedWhenPeerAddressTextDiffers() {
+        // the client dialled "::1"; the reset comes from the same address written out in full: one peer, so the reset is found
+        // (Kotlin/Native's InetSocketAddress compares the text, so the reset candidates are keyed by the address bytes)
+        val p = Pair(serverAddr = InetSocketAddress("::1", 443))
+        try {
+            val c = p.connect()
+            assertTrue(p.handshake(c))
+            repeat(5) { p.step() }
+            val restarted =
+                EndpointCore(
+                    QuicEndpointConfig
+                        .Builder()
+                        .apply {
+                            server = QuicServerConfig.Builder(CoreFixtures.server()).build()
+                            crypto = NullCryptoProvider
+                        }.build(),
+                    Random(99),
+                )
+            try {
+                val id = c.openStream(true)
+                c.writeStream(id, ByteArray(100), 0, 100, false)
+                p.batch.clear()
+                assertTrue(c.poll(p.batch, p.now) >= 1)
+                val dg = p.batch.buffer(0).toByteArray(p.batch.length(0))
+                assertNull(p.feed(restarted, dg, clientAddr))
+                val reset = p.stateless(restarted).single()
+                assertNotNull(p.feed(p.client, reset, InetSocketAddress("0:0:0:0:0:0:0:1", 443)), "the reset is matched by the address bytes")
+                val r =
+                    p.closed(c) ?: run {
+                        p.step()
+                        p.closed(c)
+                    }
+                assertIs<QuicException.ConnectionLost.StatelessReset>(r)
             } finally {
                 restarted.close()
             }
