@@ -9,19 +9,26 @@ import android.net.ConnectivityManager
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import io.ktor.network.sockets.InetSocketAddress
+import io.ktor.utils.io.writeFully
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.native.KslLoader
+import io.kuicksilver.quic.api.readExactly
 import io.kuicksilver.tls.KslQuicCrypto
 import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.Assume.assumeTrue
 import org.junit.Test
 import org.junit.runner.RunWith
+import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
+import kotlin.test.assertIs
+import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 
@@ -83,6 +90,67 @@ class NetworkMigrationAndroidTest {
                     m.close()
                     assertEquals(0, opened, "the same network twice is no change")
                     assertEquals(1, c.paths.size)
+                    c.close()
+                }
+            } finally {
+                client.close()
+                server.close()
+            }
+        }
+
+    /** A real migration between two sockets bound to the active network (different local ports: the key changes, the network not). */
+    @Test fun migratesBetweenTwoSocketsOnTheActiveNetwork() =
+        runBlocking {
+            KslLoader.ensureLoaded()
+            val network = connectivity.activeNetwork
+            assumeTrue("the device has a default network", network != null)
+            val lo = InetSocketAddress("127.0.0.1", 0)
+            val server =
+                QuicEndpoint.bind(
+                    lo,
+                    QuicEndpointConfig
+                        .Builder()
+                        .apply {
+                            this.server = QuicServerConfig.Builder(CoreFixtures.server()).build()
+                            ; crypto = KslQuicCrypto
+                        }.build(),
+                )
+            val client = QuicEndpoint.bind(lo, QuicEndpointConfig.Builder().apply { crypto = KslQuicCrypto }.build())
+            try {
+                withTimeout(60.seconds) {
+                    val accepted = async { server.accept() }
+                    val c = client.connect(server.localAddress, QuicClientConfig.Builder(CoreFixtures.client()).build())
+                    val s = accepted.await()
+                    val echo =
+                        launch {
+                            while (true) {
+                                val st = s.acceptStream()
+                                val got = st.input.readExactly(4)
+                                st.output.writeFully(got, 0, 4)
+                                st.output.flushAndClose()
+                            }
+                        }
+
+                    suspend fun roundTrip() {
+                        val st = c.openBidi()
+                        st.output.writeFully(byteArrayOf(1, 2, 3, 4), 0, 4)
+                        st.output.flushAndClose()
+                        assertContentEquals(byteArrayOf(1, 2, 3, 4), st.input.readExactly(4))
+                    }
+                    roundTrip()
+                    val keys = MutableStateFlow<Pair<android.net.Network, Int>?>(network!! to 1)
+                    val m = NetworkMigrator(c, keys, { (n, _) -> DatagramIo.open(lo, n) }, this)
+                    val migrated = async(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) { m.events.first() }
+                    m.start()
+                    m.network.first { it != null }
+                    val before = c.activePath!!.localAddress
+                    keys.value = network to 2 // same network, a new socket: a real path change
+                    val e = assertIs<MigrationEvent.Migrated<Pair<android.net.Network, Int>>>(migrated.await())
+                    assertEquals(2, e.new.second)
+                    assertNotEquals(before, c.activePath!!.localAddress, "the connection moved to the new socket")
+                    roundTrip() // traffic continues on the new path
+                    m.close()
+                    echo.cancel()
                     c.close()
                 }
             } finally {
