@@ -49,6 +49,11 @@ Nothing has been released yet. This section summarises the development of the fi
 - The `macosX64` Kotlin/Native target (deprecated by Kotlin, never part of the test matrix). The JVM on Intel Macs keeps its `osx-x86_64` JNI library.
 
 ### Added
+- BBR congestion control, opt-in and experimental: `quicConfig { congestionController = { Bbr() } }` (draft-ietf-ccwg-bbr-06,
+  BBRv3: delivery-rate sampling, windowed max bandwidth and min RTT, Startup/Drain/ProbeBW/ProbeRTT, `inflight_longterm` and
+  the short-term bounds from loss, ECN-CE treated as loss). CUBIC stays the default. On a simulated 50 Mbit/s, 40 ms link with
+  1 % random loss BBR moved 40 Mbit/s where CUBIC moved 2.7; on a clean link it used 93 % with a 2 ms mean queue where CUBIC
+  queued 111 ms. `LinkParams.queueLimitBytes` (tail drop) in the unpublished `kuicksilver-testing`.
 - QUIC server on Kotlin/Native Windows (`mingwX64`): `ksl_udp` over Winsock (`WSASendMsg`/`WSARecvMsg` with `WSAPoll` and a wake socket, ECN through `IP_ECN`/`IPV6_ECN` on Windows 10 2004+ / Server 2022, USO/URO where the system grants them, DF, dual-stack IPv6, `SO_EXCLUSIVEADDRUSE`); the JVM on Windows uses the same socket through JNI. Winsock is started when the Kotlin/Native runtime starts (not from a C constructor, which in a `sharedLib` would run under the loader lock), so address lookups before the first socket no longer fail with `WSANOTINITIALISED`. Verified by the CI windows job only. `loops > 1` without `SO_REUSEPORT` granted on the first socket (Windows always) throws the documented `UnsupportedOperationException` instead of failing the second bind with `KslException.Internal`.
 - 0-RTT, opt-in and experimental (ADR-0015, RFC 9001 section 4.6, RFC 8470): `QuicClientConfig.earlyData`,
   `QuicServerConfig.earlyData`/`earlyDataContext`, `QuicEndpoint.connectEarly`, `QuicConnection.awaitHandshake`/

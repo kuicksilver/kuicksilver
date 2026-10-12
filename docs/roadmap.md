@@ -51,7 +51,12 @@ Known limits, stated on purpose:
 - QUIC server on Kotlin/Native Windows (`ksl_udp` over Winsock).
 - The interop runner's `perf` protocol and throughput thresholds in CI.
 
+## Next
+
+- BBR congestion control (draft-ietf-ccwg-bbr, BBRv3), opt-in and experimental (`Bbr`; CUBIC stays the default): done on
+  `k7/bbr`, `guide/quic.md` "Choosing a congestion controller".
+
 ## After 0.2.0
 
 - RFC 9460 HTTPS records as a source of h3, WebTransport, multipath and QUIC-LB (`PathId` and the CID layout are
-  prepared), BBR.
+  prepared).

@@ -84,7 +84,7 @@ applications; `QuicTlsSession`, `PacketProtector` and the key types serve the tr
 ### `kuicksilver-quic`
 
 The QUIC transport (`io.kuicksilver.quic`). The core packages are `wire` (packet and frame codecs, transport
-parameters, version profiles), `crypto` (packet protection), `recovery` (ACK tracking, loss detection, RTT, pacing),
+parameters, version profiles), `crypto` (packet protection), `recovery` (ACK tracking, loss detection, RTT, pacing, BBR's delivery-rate sampling),
 `flow` (flow control), `stream` (stream state and reassembly), `core` (handshake driver, packet builder and receiver,
 paths, key phases, ECN, PMTUD, the glitch bucket) and `endpoint` (connection-ID routing, Retry tokens, stateless reset,
 admission). `ConnectionCore` and `EndpointCore` sit on top of them: `ConnectionCore.kt` holds the connection's state

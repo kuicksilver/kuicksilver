@@ -186,6 +186,32 @@ The controller sees packets sent, acknowledged and lost, ECN marks, MTU changes 
 answers with the window, the pacing rate and the burst size. A connection that migrates to a new IP starts the new path
 from the initial window; a NAT rebinding keeps the state.
 
+### Choosing a congestion controller
+
+| Controller | Select with | When |
+|---|---|---|
+| `Cubic` (default) | nothing | general use; shares a bottleneck predictably with TCP and other QUIC stacks |
+| `NewReno` | `congestionController = { NewReno() }` | reference behaviour, tests |
+| `Bbr` (experimental) | `congestionController = { Bbr() }` | lossy paths (radio, long-haul) and deep buffers where a loss-based controller collapses or bloats the queue |
+
+`Bbr` implements BBRv3 as specified by draft-ietf-ccwg-bbr-06: it paces at a windowed maximum of measured delivery rates and
+keeps about two bandwidth-delay products in flight, probes for more bandwidth every 2 to 3 seconds (or sooner on short
+paths), and drains the queue for 200 ms every 5 seconds (ProbeRTT) to refresh its minimum RTT. Loss counts only above 2 %
+of a probe's flight, and outside probes it trims the short-term model by 30 % per lossy round; an ECN-CE mark counts as a
+loss. On the simulator (`BbrSimulationTest`, 50 Mbit/s, 40 ms, a buffer of one BDP unless noted):
+
+| Scenario | BBR | CUBIC |
+|---|---|---|
+| 1 % random loss | 40.0 Mbit/s | 2.7 Mbit/s |
+| clean link, 4 BDP buffer | 46.7 Mbit/s, 2.2 ms mean queue | 48.1 Mbit/s, 111 ms mean queue |
+
+Caveats: BBR is experimental here (the draft is, too) and its API may change. Next to a loss-based flow it takes more or
+less than half depending on the buffer: on the simulator, sharing a one-BDP buffer with CUBIC, BBR took about 70 %. Two BBR
+flows converge slowly (over several probe cycles: on the simulator the late flow had 29 % of the leader's rate in its
+first 18 s and 54 % over the next 20 s) and keep about half a BDP queued between them. There is no undo after a
+spurious loss (the core has no such signal). Pass `Bbr(random = ...)` to seed the probe jitter; without it the jitter is
+derived from send and ACK times. Each path gets its own controller, so return a fresh `Bbr()` from the factory.
+
 When the socket refuses datagrams (a send that fails, or a full send buffer that takes only part of a batch; the portable
 JVM socket waits up to 5 ms once for room), the rest of the batch is lost: loss recovery repairs it and
 `stats.datagramsDroppedSocket` counts it per connection. A steady rise there means the socket, not the network, is the
