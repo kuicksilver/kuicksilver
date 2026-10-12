@@ -90,6 +90,8 @@ Fixes from a full five-reviewer pass over the code before the first release, amo
 - No resolver call on the endpoint loop: on Kotlin/Native the address bytes of a datagram's source are parsed from its IP
   literal instead of `getaddrinfo`, and Stateless Reset candidates are keyed by address bytes and port, so a reset from
   `0:0:0:0:0:0:0:1` matches a connection to `::1`.
+- A server whose peer keeps moving no longer keeps a path object per address it ever saw: paths the connection evicts
+  (at most four) leave `QuicConnection.paths` and their sockets are closed.
 
 ### Security
 

@@ -14,6 +14,7 @@ import io.kuicksilver.quic.PathState
 import io.kuicksilver.quic.QuicConnection
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.quicConfig
+import io.kuicksilver.quic.runtime.ConnectionRuntime
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
@@ -121,6 +122,29 @@ class MigrationApiTest {
                     delay(1.seconds)
                     assertEquals(oldAfter, oldIo.received, "the old socket receives nothing once the server moved")
                     assertEquals(2, c.paths.size)
+                    c.close()
+                    s.close()
+                }
+            }
+        }
+
+    @Test fun serverPathListStaysBoundedAcrossMigrations() =
+        runBlocking {
+            ApiPair.open().use { p ->
+                withTimeout(60.seconds) {
+                    // the core keeps at most four paths and evicts the oldest; the server's runtime must drop the evicted ones too (six moves: seven addresses)
+                    val (c, s) = p.connect()
+                    for (i in 1..6) {
+                        val change = c.migrate(p.net.open(InetSocketAddress("10.0.1.$i", 1000 + i)))
+                        change.old.close()
+                        assertTrue(echo(c, s, 4 shl 10), "echo after migration $i")
+                        // the server probes each previous address (RFC 9000 section 9.3.3) and never evicts a path under validation:
+                        // the next move waits until the probe of the closed address has failed
+                        withTimeout(10.seconds) { while (s.paths.any { it.state.value == PathState.Validating }) delay(10) }
+                    }
+                    val rt = s as ConnectionRuntime
+                    assertTrue(s.paths.size <= 4, "server paths: ${s.paths}")
+                    assertTrue(rt.pathCountForTest <= 4, "server path runtimes: ${rt.pathCountForTest}")
                     c.close()
                     s.close()
                 }

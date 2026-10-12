@@ -69,6 +69,7 @@ internal class ConnectionRuntime(
     /** Live stream wrappers (test hook): finished streams leave the map. */
     internal val streamCountForTest: Int get() = streams.size
     internal val tickerCountForTest: Int get() = tickers.size
+    internal val pathCountForTest: Int get() = pathList.size
     internal val streamIdsForTest: List<Long> get() = streams.keys.toList()
 
     private val role = core.role
@@ -178,8 +179,20 @@ internal class ConnectionRuntime(
                 pathEventFlow.tryEmit(PathEvent.Changed(o, n, e.reason))
             }
 
-            else -> {}
+            else -> {
+                return
+            }
         }
+        prunePaths()
+    }
+
+    /**
+     * Closes the runtimes of paths the core dropped to make room for a new one (at most four paths, the oldest that is
+     * neither active nor last validated nor under validation goes): without this a server whose peer keeps moving would
+     * keep one runtime per address it ever saw. Loop dispatcher only.
+     */
+    private fun prunePaths() {
+        for (p in pathList) if (p.id != activePathId && core.paths.byId(p.id) == null) closePath(p)
     }
 
     // ---- datagrams (RFC 9221) ----
