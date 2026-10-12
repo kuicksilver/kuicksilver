@@ -41,6 +41,16 @@ Nothing has been released yet. This section summarises the development of the fi
 - The `macosX64` Kotlin/Native target (deprecated by Kotlin, never part of the test matrix). The JVM on Intel Macs keeps its `osx-x86_64` JNI library.
 
 ### Added
+- 0-RTT, opt-in and experimental (ADR-0015, RFC 9001 section 4.6, RFC 8470): `QuicClientConfig.earlyData`,
+  `QuicServerConfig.earlyData`/`earlyDataContext`, `QuicEndpoint.connectEarly`, `QuicConnection.awaitHandshake`/
+  `earlyDataAccepted`/`isHandshakeComplete`, `QuicStream.receivedEarly`, `QuicException.ConnectionLost.ZeroRttRejected`;
+  HTTP/3 `Http3Endpoint.connectEarly`, `Http3Request.allowEarlyData`, `Http3Settings.earlyData`
+  (`Http3EarlyDataPolicy.WaitForHandshake`/`Reject425`), `Http3ServerRequest.receivedEarly`; Ktor client
+  `http3 { earlyData }`, server `quicEarlyData` and `ApplicationRequest.receivedEarly`. Anti-replay: OpenSSL ticket-age
+  freshness, a per-server replay register keyed by ticket, tickets bound to the server configuration, safe methods
+  only before the handshake. Off by default. `ksl` ABI 6 (`KSL_OPT_EARLY_DATA`, `KSL_SET_EARLY_CONTEXT`,
+  `KSL_SET_EARLY_DATA`, `KSL_GET_EARLY_DATA`); `EarlyDataState` gains `Allowed` and `Required`, and
+  `QuicTlsSession.earlyData` becomes `earlyDataAccepted`.
 
 - Android armeabi-v7a: the `kuicksilver-native` AAR ships `libksl.so` for arm64-v8a, armeabi-v7a and x86_64 (OpenSSL
   target `android-arm`, `minSdk` 24, 16 KiB pages); `-Pkuicksilver.android.armv7=false` leaves it out of a local build.

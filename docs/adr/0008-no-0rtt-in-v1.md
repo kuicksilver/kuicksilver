@@ -1,6 +1,6 @@
 # ADR-0008. 0-RTT is disabled in v1
 
-Date: 2026-10-02. Status: accepted (approved by the owner 2026-10-02).
+Date: 2026-10-02. Status: superseded by [ADR-0015](0015-0rtt-implementation.md) in 0.2.0 (0-RTT opt-in); accepted 2026-10-02.
 
 ## Context
 

@@ -78,9 +78,10 @@ K3 status: with `loops > 1` each loop answers with a stateless reset only for CI
 
 ### 3.8 0-RTT and replay
 
-- **Threat:** replay of early data.
-- **Mitigation:** 0-RTT is disabled in v1 (`SSL_set_quic_tls_early_data_enabled` is not called, the `early_data` TP is not sent; incoming 0-RTT packets are dropped).
-- **Verification:** the interop case `zerortt` is marked "not supported"; test: a 0-RTT packet from the peer is dropped without an error.
+- **Threat:** replay of early data: an attacker sends a client's first flight (ClientHello and 0-RTT packets) again, to the same server or another one that shares the ticket keys (RFC 8446 section 8, RFC 9001 section 9.2).
+- **Mitigation (K7, G; ADR-0015):** 0-RTT is off unless both sides opt in (`QuicClientConfig.earlyData`, `QuicServerConfig.earlyData`). Freshness: OpenSSL accepts early data only for an unexpired ticket whose claimed age is within ±10 s of the server's (`SSL_OP_NO_ANTI_REPLAY` is set because OpenSSL's own mode needs the server session cache `ksl` keeps off). Single use: the server's replay register admits each ticket identity (`key_name ‖ iv`) once while it could pass the freshness check; it is shared by all loops of the endpoint, bounded to 1 MiB and fails closed (no early data) when full. Binding: tickets carry a digest of the ALPN, transport limits and HTTP/3 SETTINGS; another configuration gets no early data. Application: HTTP/3 runs only replayable requests (GET, HEAD, OPTIONS by default) before the handshake; others wait for it (a replayer cannot complete it, it lacks the resumption secret) or get 425; clients send only opted-in safe requests early. Refused 0-RTT packets are never processed.
+- **Residue:** a replay into another server process that shares `SessionTicketConfig.keys` passes the freshness check only (the register is per process); a replayable request may run twice, once per process. Early data and client certificates cannot be combined.
+- **Verification:** `core.ZeroRttTest.negative_0rttReplayRejected`, `tls.QuicEarlyDataTest.negative_0rttReplayRejected`, `endpoint.ZeroRttReplayRegisterTest.negative_registerFailsClosedWhenFull`, `http3.runtime.EarlyDataTest.negative_unsafeMethodNotProcessedInEarlyData`, `core.ZeroRttTest.negative_0rttTransportParamsReduced`; C `quic_early_data_needs_transport_verdict`, `quic_early_data_context_mismatch_rejects`; the interop case `zerortt` stays "not supported" until the interop image turns the options on.
 
 ### 3.9 Version and protocol downgrade
 
