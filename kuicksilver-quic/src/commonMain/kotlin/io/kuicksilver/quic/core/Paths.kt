@@ -80,7 +80,6 @@ internal class Path(
 
     /** The peer connection ID this path's packets carry while it is not the active path (RFC 9000 section 9.5: never the active path's); null until it first sends. */
     var peerCid: ConnectionIdManager.Peer? = null
-    /** Copies the congestion state of [from]: a NAT rebinding keeps the same network (as quinn does). */
 
     /** Takes [from]'s congestion state and leaves [from] with [fresh]: probes to the old address never sit on the new path's window. */
     fun inheritFrom(
@@ -242,7 +241,6 @@ internal class Paths(
         }
         return null
     }
-    /** A path other than the active one that has something to probe with. */
 
     /** The next path owed a probe datagram of its own; the active path comes first when its PATH_CHALLENGE is pending, so the first datagram on a rebound path is the probe and not a coalesced flight or a PMTU probe (RFC 9000 section 9.1). */
     fun nextProbe(): Path? {

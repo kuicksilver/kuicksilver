@@ -526,11 +526,6 @@ internal class LossDetection(
         return PtoProbe(timerSpace, if (bytesInFlight > 0) 2 else 1)
     }
 
-    /** After a Retry the Initial space keeps going with new keys: nothing to undo beyond what [discard] left (the space object is reused). */
-    fun undiscard(space: SpaceId) {
-        timerBase = timerBase
-    }
-
     /** Drops the keys' space (RFC 9002 section 6.4): its packets leave the in-flight accounting and timers. */
     fun discard(space: SpaceId) {
         val sp = this.space(space)

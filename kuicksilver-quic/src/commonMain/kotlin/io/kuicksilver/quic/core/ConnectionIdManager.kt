@@ -139,7 +139,6 @@ internal class ConnectionIdManager(
 
     val localCount: Int get() = local.size
     val peerCount: Int get() = peer.size
-    val localSeqs: List<Long> get() = local.map { it.seq }
 
     /** The ID we used in the handshake (sequence 0), registered by whoever created the connection. */
     fun adoptInitialLocalCid(cid: ConnectionId) {
@@ -166,13 +165,12 @@ internal class ConnectionIdManager(
         }
     }
 
-    /** The peer's `active_connection_id_limit`: issue IDs up to min(limit, 8) in total. */
-
     /** How new local IDs are made; the endpoint sets the server CID format with its routing byte, clients keep random bytes. */
     var generator: ((Random) -> ConnectionId)? = null
 
     private fun newLocalCid(): ConnectionId = generator?.invoke(random) ?: ConnectionId(ByteArray(cidLength).also { random.nextBytes(it) })
 
+    /** The peer's `active_connection_id_limit`: issue IDs up to min(limit, 8) in total. */
     fun setPeerLimit(limit: Long) {
         target = minOf(limit, 8L).toInt()
         fill()
@@ -231,8 +229,6 @@ internal class ConnectionIdManager(
         for (i in local.indices) if (!local[i].sent) return true
         return false
     }
-
-    /** The peer retired one of our IDs: drop it and issue a replacement (RFC 9000 section 5.1.2). */
 
     /** The peer retired our ID [seq]: it keeps routing until [until] (3 x PTO), then leaves the registry; a replacement is issued at once. */
     fun onPeerRetired(

@@ -2,14 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.kuicksilver.quic.recovery
 
-import io.kuicksilver.quic.PathId
 import io.kuicksilver.quic.TimeMark
 import kotlin.random.Random
 
-/** Sending and receiving state of one packet number space on one path. */
+/** Sending and receiving state of one packet number space (shared by every path of the connection). */
 internal class PacketNumberSpace(
     val id: SpaceId,
-    val path: PathId = PathId.Initial,
     ackRanges: Int = 64,
 ) {
     var nextPn: Long = 0

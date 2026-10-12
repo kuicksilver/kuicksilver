@@ -204,10 +204,7 @@ internal class StreamManager(
      * was already closed and retired: frames for closed streams are ignored (section 3; a spurious retransmit must not
      * fail the connection). A locally initiated stream the application never opened is STREAM_STATE_ERROR.
      */
-    private fun peerStream(
-        id: Long,
-        forSend: Boolean,
-    ): Entry? {
+    private fun peerStream(id: Long): Entry? {
         streams[id]?.let { return it }
         val bidi = StreamIds.isBidi(id)
         val i = if (bidi) 0 else 1
@@ -256,7 +253,7 @@ internal class StreamManager(
         len: Int,
         fin: Boolean,
     ) {
-        val e = peerStream(id, false) ?: return
+        val e = peerStream(id) ?: return
         val r = e.recv ?: throw QuicWireException(TransportError.STREAM_STATE_ERROR, 0x08, "STREAM frame on our send-only stream $id")
         val before = r.readable
         val advanced = r.onData(offset, data, off, len, fin)
@@ -279,7 +276,7 @@ internal class StreamManager(
         finalSize: Long,
     ) {
         val e =
-            peerStream(id, false) ?: return
+            peerStream(id) ?: return
         val r =
             e.recv ?: throw QuicWireException(TransportError.STREAM_STATE_ERROR, 0x04, "RESET_STREAM on our send-only stream $id")
         val advanced = r.onReset(code, finalSize)
@@ -297,7 +294,7 @@ internal class StreamManager(
         code: Long,
     ) {
         val e =
-            peerStream(id, true) ?: return
+            peerStream(id) ?: return
         val s =
             e.send ?: throw QuicWireException(TransportError.STREAM_STATE_ERROR, 0x05, "STOP_SENDING on our receive-only stream $id")
         if (s.state == SendState.ResetSent || s.state == SendState.DataRecvd) return
@@ -315,7 +312,7 @@ internal class StreamManager(
         max: Long,
     ): Boolean {
         val e =
-            peerStream(id, true) ?: return true
+            peerStream(id) ?: return true
         val s =
             e.send ?: throw QuicWireException(TransportError.STREAM_STATE_ERROR, 0x11, "MAX_STREAM_DATA on our receive-only stream $id")
         val grew = sendLimit[id]!!.onMaxUpdate(max)
@@ -437,7 +434,7 @@ internal class StreamManager(
                 }
             } // connection window ≥ 1.5 × stream window
         }
-        if (n < 0) finishedRecv(id, r)
+        if (n < 0) maybeClose(id)
         return n
     }
 
@@ -452,13 +449,6 @@ internal class StreamManager(
                 queueControl(if (StreamIds.isBidi(e.id)) ControlKind.MaxStreamsBidi else ControlKind.MaxStreamsUni, 0, it)
             }
         }
-    }
-
-    private fun finishedRecv(
-        id: Long,
-        r: RecvStream,
-    ) {
-        maybeClose(id)
     }
 
     private fun maybeClose(id: Long) {

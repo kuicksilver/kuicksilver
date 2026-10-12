@@ -6,7 +6,6 @@ import io.ktor.network.sockets.InetSocketAddress
 import io.kuicksilver.annotations.DelicateKuicksilverApi
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.native.PacketBuffer
-import io.kuicksilver.quic.VersionProfile
 import io.kuicksilver.quic.core.AmplificationLimit
 import io.kuicksilver.quic.core.CidRegistrar
 import io.kuicksilver.quic.core.ConnectionHandshakeSink

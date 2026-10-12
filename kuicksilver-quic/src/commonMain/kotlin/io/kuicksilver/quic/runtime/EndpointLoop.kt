@@ -426,9 +426,11 @@ internal class EndpointLoop private constructor(
         remote: InetSocketAddress,
         config: QuicClientConfig,
     ): QuicConnection = connectResolved(resolveOnce(remote), config)
-    /** A host name is resolved once here: the socket reports peers as IP literals, and Kotlin/Native's InetSocketAddress compares strings. */
-
-    /** The connect target as an IP literal: the loop compares addresses by bytes, and `hostname` would do a reverse DNS lookup (see [ipLiteral]). */
+    /**
+     * The connect target as an IP literal, resolved once here: the socket reports peers as IP literals, Kotlin/Native's
+     * InetSocketAddress compares strings, the loop compares addresses by bytes, and `hostname` would do a reverse DNS lookup (see
+     * [ipLiteral]).
+     */
     private fun resolveOnce(remote: InetSocketAddress): InetSocketAddress =
         if (remote.resolveAddress() ==
             null

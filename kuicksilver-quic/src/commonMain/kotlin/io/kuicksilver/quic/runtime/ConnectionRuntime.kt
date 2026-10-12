@@ -61,12 +61,6 @@ internal class ConnectionRuntime(
 
     @Volatile private var finished = false
 
-    /** The reason a finished connection closed (the deferred is complete by then). */
-    private fun closedReasonNow(): QuicException.ConnectionLost =
-        closedDeferred.let {
-            if (it.isCompleted) it.getCompleted() else QuicException.ConnectionLost.Internal("connection closed", null)
-        }
-
     @Volatile private var certificates: List<Certificate> = emptyList()
 
     /** Live stream wrappers (test hook): finished streams leave the map. */
@@ -77,12 +71,12 @@ internal class ConnectionRuntime(
     private val role = core.role
 
     // ---- paths ----
-    /** Copy-on-write: mutated on the loop, read from application threads through [paths]. */
 
     /** The path the connection sends on, as last seen by the loop (any thread reads it; the loop re-checks before acting). */
     @Volatile internal var activePathId: PathId = PathId.Initial
         private set
 
+    /** Copy-on-write: mutated on the loop, read from application threads through [paths]. */
     @Volatile private var pathList: List<PathRuntime> = listOf(PathRuntime(this, loop, PathId.Initial, loop.localAddress, null))
     private val pathEventFlow = MutableSharedFlow<PathEvent>(extraBufferCapacity = 64)
     override val paths: List<QuicPath> get() = pathList.filter { it.stateFlow.value != PathState.Closed }

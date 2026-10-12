@@ -259,7 +259,6 @@ internal class PacketReceiver(
         reader.buf = data
         reader.pos = hv.pnOffset + pnLen
         reader.limit = hv.packetEnd - 16
-        if (type == PacketType.Initial && c.role == TlsRole.Server && c.remoteCid.length == 0) {}
         if (c.role == TlsRole.Client && type == PacketType.Initial &&
             !remoteCidSet
         ) {
@@ -327,7 +326,6 @@ internal class PacketReceiver(
             if (!c.spaceDiscarded[0]) c.discardInitialPending = true
         }
         if (type == PacketType.OneRtt) c.onPathPacket(socket, from, pn, !reader.probingOnly, datagramLength)
-        if (c.role == TlsRole.Client && type == PacketType.Handshake) c.loss.peerAddressValidated = c.loss.peerAddressValidated
         return true
     }
 
@@ -340,17 +338,6 @@ internal class PacketReceiver(
     internal var initialCryptoSeen = false
     private var lastPingOnly: TimeMark = TimeMark.NEVER
     private var pingOnlyInRtt = 0
-
-    /** A glitch found outside frame decoding (nothing to throw through): closes the connection directly when the bucket is empty. */
-    private fun glitchOutsideFrame() {
-        try {
-            c.glitch(0)
-        } catch (
-            e: QuicWireException,
-        ) {
-            c.fail(e.code, e.frameType, e.message ?: "", e)
-        }
-    }
 
     /** RFC 9000 section 17.2.5.2: a client takes exactly one Retry, before any other server packet, with a non-empty token, a new SCID and a valid tag (RFC 9001 section 5.8). */
     private fun onRetry(data: PacketBuffer) {
