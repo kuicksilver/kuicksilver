@@ -193,7 +193,9 @@ internal class KslDatagramIo private constructor(
 
         /**
          * Opens the accelerated socket on [local]; null where `ksl_udp` cannot open its socket or the address cannot be resolved.
-         * [configure] sees the bound socket's descriptor before any datagram (Android binds it to a network); if it throws, the socket is closed.
+         * A single socket (no [reusePort]) the kernel refuses (a sandbox, limits) also answers null: the caller takes the portable
+         * socket, said once on standard error. [configure] sees the bound socket's descriptor before any datagram (Android binds it
+         * to a network); if it throws, the socket is closed.
          */
         fun open(
             local: InetSocketAddress,
@@ -205,8 +207,19 @@ internal class KslDatagramIo private constructor(
             val flags =
                 KslUdpSocket.ECN or KslUdpSocket.GSO or KslUdpSocket.GRO or KslUdpSocket.DF or
                     (if (reusePort) KslUdpSocket.REUSEPORT else 0)
-            // `supported` was true: a failure here is a real one (bind, limits)
-            val socket = KslUdpSocket.open(KslUdpSocket.encodeAddress(ip, local.port), flags)
+            val addr = KslUdpSocket.encodeAddress(ip, local.port)
+            val socket =
+                if (reusePort) {
+                    // loops > 1 must see why the shared port failed
+                    KslUdpSocket.open(addr, flags)
+                } else {
+                    socketOpener(addr, flags) { e ->
+                        @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+                        if (fallbackWarned.compareAndSet(false, true)) {
+                            printWarning("kuicksilver: accelerated UDP socket refused on $local (${e.message}); using the portable socket")
+                        }
+                    } ?: return null
+                }
             try {
                 configure(socket.fd)
             } catch (e: Throwable) {
@@ -215,6 +228,16 @@ internal class KslDatagramIo private constructor(
             }
             return KslDatagramIo(socket)
         }
+
+        @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+        private val fallbackWarned = kotlin.concurrent.atomics.AtomicBoolean(false)
+
+        /** Opens the `ksl` socket or answers null with the reason; a test replaces it to inject a refusal. */
+        internal var socketOpener: (
+            ByteArray,
+            Int,
+            (Throwable) -> Unit,
+        ) -> KslUdpSocket? = { a, f, failed -> KslUdpSocket.openOrNull(a, f, failed) }
 
         /**
          * Runs blocking [slice]s (each waits at most ~100 ms and answers 0 when nothing arrived) on [blocking] until one returns

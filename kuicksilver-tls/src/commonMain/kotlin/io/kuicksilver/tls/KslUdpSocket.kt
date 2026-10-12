@@ -193,21 +193,17 @@ public class KslUdpSocket private constructor(
         /** True where `ksl_udp` works (Linux, Android, Apple, Windows): learned once by opening a loopback socket. */
         public val supported: Boolean by lazy {
             KslLoader.ensureLoaded()
-            try {
-                Ksl.udpClose(Ksl.udpOpen(encodeAddress(byteArrayOf(127, 0, 0, 1), 0), 0))
-                true
-            } catch (
-                e: KslException.Internal,
-            ) {
-                if (e.packed ==
-                    KslConst.E_NOT_SUPPORTED
-                ) {
-                    false
-                } else {
-                    throw e
-                }
-            }
+            probe { Ksl.udpClose(Ksl.udpOpen(encodeAddress(byteArrayOf(127, 0, 0, 1), 0), 0)) }
         }
+
+        /** Runs the loopback [open] of [supported]: any refusal (not built for the platform, a sandbox that refuses bind) means unsupported, so callers take the portable socket. */
+        internal fun probe(open: () -> Unit): Boolean =
+            try {
+                open()
+                true
+            } catch (_: KslException) {
+                false
+            }
 
         /** Opens and binds to [addr] (see [encodeAddress]) with the wanted [flags]; what the kernel granted is in [grantedFlags]. */
         public fun open(
@@ -217,6 +213,22 @@ public class KslUdpSocket private constructor(
             KslLoader.ensureLoaded()
             return KslUdpSocket(Ksl.udpOpen(addr, flags))
         }
+
+        /**
+         * [open], or null when `ksl` refuses the socket (bind refused, limits, a sandbox), with the reason passed to [failed]:
+         * the caller falls back to the portable socket. Programming errors (a malformed [addr]) still throw.
+         */
+        public fun openOrNull(
+            addr: ByteArray,
+            flags: Int,
+            failed: (Throwable) -> Unit = {},
+        ): KslUdpSocket? =
+            try {
+                open(addr, flags)
+            } catch (e: KslException) {
+                failed(e)
+                null
+            }
 
         /** Encodes an IPv4 (4 bytes) or IPv6 (16 bytes) address and port into the `ADDR_LEN`-byte wire form. */
         public fun encodeAddress(

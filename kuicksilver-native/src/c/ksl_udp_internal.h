@@ -44,7 +44,7 @@
 #define GSO_SEGMENTS 64
 
 struct ksl_udp {
-    int fd; int family; int wake[2];
+    int fd; int family; int dual; int wake[2];   /* dual: AF_INET6 on :: with IPV6_V6ONLY off, IPv4 peers as v4-mapped addresses */
     uint32_t requested, granted; uint16_t gso_max; uint16_t batch;
     int gso_on, tos_cmsg_on, eperm_retried;
     uint32_t last_errno; char last_msg[KSL_MSG];
@@ -79,7 +79,16 @@ static inline socklen_t to_sockaddr(const uint8_t a[KSL_UDP_ADDR_LEN], struct so
 static inline void from_sockaddr(const struct sockaddr_storage *ss, uint8_t a[KSL_UDP_ADDR_LEN]) {
     memset(a, 0, KSL_UDP_ADDR_LEN);
     if (ss->ss_family == AF_INET) { const struct sockaddr_in *in = (const struct sockaddr_in *)ss; a[0] = 4; memcpy(a + 1, &in->sin_port, 2); memcpy(a + 3, &in->sin_addr, 4); }
-    else { const struct sockaddr_in6 *in6 = (const struct sockaddr_in6 *)ss; a[0] = 6; memcpy(a + 1, &in6->sin6_port, 2); memcpy(a + 3, &in6->sin6_addr, 16); }
+    else {
+        static const uint8_t mapped[12] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff }; const struct sockaddr_in6 *in6 = (const struct sockaddr_in6 *)ss; const uint8_t *p = (const uint8_t *)&in6->sin6_addr;
+        if (!memcmp(p, mapped, 12)) { a[0] = 4; memcpy(a + 1, &in6->sin6_port, 2); memcpy(a + 3, p + 12, 4); }   /* a dual-stack socket's IPv4 peer: IPv4, as ksl_udp_win.c */
+        else { a[0] = 6; memcpy(a + 1, &in6->sin6_port, 2); memcpy(a + 3, p, 16); }
+    }
+}
+/* a destination as this socket's sockaddr: IPv4 on a dual-stack socket becomes v4-mapped */
+static inline socklen_t dest_sockaddr(const ksl_udp *u, const uint8_t a[KSL_UDP_ADDR_LEN], struct sockaddr_storage *ss) {
+    if (!u->dual || a[0] != 4) return to_sockaddr(a, ss);
+    uint8_t m[KSL_UDP_ADDR_LEN] = { 6 }; m[1] = a[1]; m[2] = a[2]; m[13] = 0xff; m[14] = 0xff; memcpy(m + 15, a + 3, 4); return to_sockaddr(m, ss);
 }
 #endif /* __linux__ || __APPLE__ */
 #endif
