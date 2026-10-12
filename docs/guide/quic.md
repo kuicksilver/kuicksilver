@@ -29,6 +29,19 @@ QUIC is stricter than TLS over TCP about the `TlsConfig` it accepts (RFC 9001 se
 `QuicServerConfig` from a config that breaks one of these throws `TlsException.Config` right away, not at the first
 `connect`.
 
+`initialRtt` is the round-trip time assumed before the first sample (default 333 ms, RFC 9002 §6.2.2; allowed range
+(0, 10 s]). Until an ACK gives a real sample, a lost flight is resent after a PTO of 3 x `initialRtt`, doubling each
+time: 1 s, 2 s, 4 s at the default, so a handshake under heavy loss gets three retransmissions within a peer's typical
+10 s handshake timeout. A lower value repairs a lost first flight sooner at the price of spurious retransmissions when
+the real RTT is longer (quic-go starts at 100 ms: 300 ms, 600 ms, 1.2 s ...). Consider lowering it when the peers use
+`X25519MLKEM768` (each first flight spans two datagrams, so a loss is twice as likely) or for mobile clients on lossy
+radio links with modest RTTs; keep the default for satellite or other long-RTT paths. It also sets the floor of a path
+validation, max(3 x PTO, 6 x `initialRtt`) (RFC 9000 §8.2.4).
+
+```kotlin
+val lossyMobile = quicConfig { initialRtt = 100.milliseconds }
+```
+
 A client that prefers v2 but must start in v1 (the widely deployed version) sets `initialVersion = VersionProfile.V1`
 with `versions = listOf(VersionProfile.V2, VersionProfile.V1)`: the first flight is v1, the server upgrades it through
 compatible version negotiation (RFC 9368 section 2.3).
