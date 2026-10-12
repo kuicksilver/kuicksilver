@@ -21,6 +21,10 @@ object Protocol {
     const val SERVER_NAME: String = "telemetry.test"
     /** CONNECTION_CLOSE application code for a normal goodbye. */
     const val CLOSE_OK: Long = 0
+    /** CONNECTION_CLOSE application code for a control line longer than [MAX_LINE]. */
+    const val CLOSE_LINE_TOO_LONG: Long = 2
+    /** Longest control line either side reads (bytes, without the line break): lines come from the network, never trust them. */
+    const val MAX_LINE: Long = 1024
 
     fun encodeReading(key: String, value: Double): ByteArray = "$key=$value".encodeToByteArray()
 

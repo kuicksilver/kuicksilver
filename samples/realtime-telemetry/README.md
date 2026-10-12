@@ -7,7 +7,8 @@ this repository's modules; with published artifacts you would drop `includeBuild
 It is the real-time shape the library was designed for:
 
 - a **control stream** (bidirectional, `StreamPriority(urgency = 0)`) carrying text lines: `HELLO <name>` → `WELCOME <name>`,
-  `BYE` → `BYE`;
+  `BYE` → `BYE`; both sides read lines with `readLineStrict(Protocol.MAX_LINE)` (1024 bytes), and the server closes a
+  connection whose control line runs past it with application code 2;
 - **sensor readings as QUIC datagrams** (RFC 9221) under `DatagramPolicy.LatestWins(key)`: a reading still queued is
   replaced by a newer one of the same key, so a congested network never delivers stale values;
 - **media on unidirectional streams** at a lower, incremental priority;

@@ -3,6 +3,7 @@
 package io.kuicksilver.sample.telemetry
 
 import io.kuicksilver.quic.QuicEndpoint
+import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.quicClientConfig
 import io.kuicksilver.quic.quicEndpointConfig
 import io.kuicksilver.quic.quicServerConfig
@@ -57,5 +58,23 @@ class TelemetryMemoryTest {
         }
         assertTrue(serving.isActive, "the server still runs")
         server.close(); serving.join(); polite.close()
+    }
+
+    /** A control line without an end must not grow the server's buffer: past [Protocol.MAX_LINE] the connection is closed with code 2. */
+    @Test fun oversizedControlLineClosesConnection() = runBlocking {
+        val network = MemoryNetwork()
+        val server = QuicEndpoint.bind(serverAddress, quicEndpointConfig { this.server = quicServerConfig(TelemetryTls.server()); io = { network.open(it) } })
+        val serving = launch { TelemetryServer(server).run() }
+        val client = QuicEndpoint.bind(InetSocketAddress("10.1.0.5", 50000), quicEndpointConfig { io = { network.open(it) } })
+        withTimeout(30.seconds) {
+            val connection = client.connect(serverAddress, quicClientConfig(TelemetryTls.client()))
+            val control = connection.openBidi()
+            control.output.writeFully(ByteArray(64 * 1024) { 'x'.code.toByte() })
+            control.output.flush()
+            val closed = connection.closed.await()
+            assertEquals(2L, (closed as QuicException.ConnectionLost.ApplicationClosed).code, "closed: $closed")
+        }
+        assertTrue(serving.isActive, "the server still runs")
+        client.close(); server.close(); serving.join()
     }
 }
