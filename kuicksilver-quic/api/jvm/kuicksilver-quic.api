@@ -212,6 +212,30 @@ public final class io/kuicksilver/quic/ConnectionEvent$VerifyRequested : io/kuic
 	public final fun getSession ()Lio/kuicksilver/tls/QuicTlsSession;
 }
 
+public final class io/kuicksilver/quic/ConnectionInfo {
+	public final fun getConnection ()Lio/kuicksilver/quic/QuicConnection;
+	public final fun getId ()Ljava/lang/String;
+	public final fun getRemoteAddress ()Lio/ktor/network/sockets/InetSocketAddress;
+	public final fun getRole ()Lio/kuicksilver/tls/TlsRole;
+	public fun toString ()Ljava/lang/String;
+}
+
+public abstract interface class io/kuicksilver/quic/ConnectionListener {
+	public fun onClosed (Lio/kuicksilver/quic/ConnectionInfo;Lio/kuicksilver/quic/QuicException$ConnectionLost;)V
+	public fun onHandshakeCompleted (Lio/kuicksilver/quic/ConnectionInfo;)V
+	public fun onOpened (Lio/kuicksilver/quic/ConnectionInfo;)V
+	public fun onPathChanged (Lio/kuicksilver/quic/ConnectionInfo;Lio/kuicksilver/quic/PathEvent$Changed;)V
+	public fun onZeroRtt (Lio/kuicksilver/quic/ConnectionInfo;Lio/kuicksilver/quic/ZeroRttOutcome;)V
+}
+
+public final class io/kuicksilver/quic/ConnectionListener$DefaultImpls {
+	public static fun onClosed (Lio/kuicksilver/quic/ConnectionListener;Lio/kuicksilver/quic/ConnectionInfo;Lio/kuicksilver/quic/QuicException$ConnectionLost;)V
+	public static fun onHandshakeCompleted (Lio/kuicksilver/quic/ConnectionListener;Lio/kuicksilver/quic/ConnectionInfo;)V
+	public static fun onOpened (Lio/kuicksilver/quic/ConnectionListener;Lio/kuicksilver/quic/ConnectionInfo;)V
+	public static fun onPathChanged (Lio/kuicksilver/quic/ConnectionListener;Lio/kuicksilver/quic/ConnectionInfo;Lio/kuicksilver/quic/PathEvent$Changed;)V
+	public static fun onZeroRtt (Lio/kuicksilver/quic/ConnectionListener;Lio/kuicksilver/quic/ConnectionInfo;Lio/kuicksilver/quic/ZeroRttOutcome;)V
+}
+
 public final class io/kuicksilver/quic/ConnectionState : java/lang/Enum {
 	public static final field Closed Lio/kuicksilver/quic/ConnectionState;
 	public static final field Closing Lio/kuicksilver/quic/ConnectionState;
@@ -436,13 +460,37 @@ public final class io/kuicksilver/quic/EndpointCore {
 
 public final class io/kuicksilver/quic/EndpointStats {
 	public final fun getAdmissionContractViolations ()J
+	public final fun getConnectionsAccepted ()J
+	public final fun getConnectionsActive ()J
 	public final fun getConnectionsCreated ()J
+	public final fun getConnectionsRefusedAcceptQueue ()J
+	public final fun getConnectionsRefusedAdmission ()J
+	public final fun getConnectionsRefusedLimits ()J
+	public final fun getConnectionsRefusedShutdown ()J
+	public final fun getDatagramsDroppedQueue ()J
+	public final fun getDatagramsDroppedSocket ()J
+	public final fun getDatagramsDroppedStateless ()J
+	public final fun getDatagramsDroppedUndecryptable ()J
+	public final fun getDatagramsReceived ()J
+	public final fun getDatagramsSent ()J
+	public final fun getHandshakesCompleted ()J
+	public final fun getHandshakesFailedOther ()J
+	public final fun getHandshakesFailedTimeout ()J
+	public final fun getHandshakesFailedTls ()J
 	public final fun getInitialsDropped ()J
 	public final fun getInvalidTokens ()J
+	public final fun getListenerFailures ()J
+	public final fun getPathValidationFailures ()J
+	public final fun getPathValidations ()J
 	public final fun getRetriesSent ()J
+	public final fun getSendFailures ()J
 	public final fun getStatelessRateLimited ()J
 	public final fun getStatelessResets ()J
+	public final fun getUncaughtFailures ()J
 	public final fun getVersionNegotiations ()J
+	public final fun getZeroRttAccepted ()J
+	public final fun getZeroRttOffered ()J
+	public final fun getZeroRttRejected ()J
 	public fun toString ()Ljava/lang/String;
 }
 
@@ -475,6 +523,33 @@ public final class io/kuicksilver/quic/IoPreference : java/lang/Enum {
 	public static fun getEntries ()Lkotlin/enums/EnumEntries;
 	public static fun valueOf (Ljava/lang/String;)Lio/kuicksilver/quic/IoPreference;
 	public static fun values ()[Lio/kuicksilver/quic/IoPreference;
+}
+
+public abstract interface class io/kuicksilver/quic/KuicksilverLogger {
+	public static final field Companion Lio/kuicksilver/quic/KuicksilverLogger$Companion;
+	public abstract fun isEnabled (Lio/kuicksilver/quic/LogLevel;)Z
+	public abstract fun log (Lio/kuicksilver/quic/LogLevel;Ljava/lang/String;Ljava/lang/Throwable;)V
+	public static synthetic fun log$default (Lio/kuicksilver/quic/KuicksilverLogger;Lio/kuicksilver/quic/LogLevel;Ljava/lang/String;Ljava/lang/Throwable;ILjava/lang/Object;)V
+}
+
+public final class io/kuicksilver/quic/KuicksilverLogger$Companion {
+	public final fun getNone ()Lio/kuicksilver/quic/KuicksilverLogger;
+	public final fun getStderr ()Lio/kuicksilver/quic/KuicksilverLogger;
+	public final fun stderr (Lio/kuicksilver/quic/LogLevel;)Lio/kuicksilver/quic/KuicksilverLogger;
+}
+
+public final class io/kuicksilver/quic/KuicksilverLogger$DefaultImpls {
+	public static synthetic fun log$default (Lio/kuicksilver/quic/KuicksilverLogger;Lio/kuicksilver/quic/LogLevel;Ljava/lang/String;Ljava/lang/Throwable;ILjava/lang/Object;)V
+}
+
+public final class io/kuicksilver/quic/LogLevel : java/lang/Enum {
+	public static final field Debug Lio/kuicksilver/quic/LogLevel;
+	public static final field Error Lio/kuicksilver/quic/LogLevel;
+	public static final field Info Lio/kuicksilver/quic/LogLevel;
+	public static final field Warn Lio/kuicksilver/quic/LogLevel;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lio/kuicksilver/quic/LogLevel;
+	public static fun values ()[Lio/kuicksilver/quic/LogLevel;
 }
 
 public abstract interface class io/kuicksilver/quic/MigrationEvent {
@@ -671,6 +746,7 @@ public final class io/kuicksilver/quic/QuicConfig {
 	public final fun getPmtud ()Z
 	public final fun getQlog ()Lio/kuicksilver/quic/QlogSink;
 	public final fun getVersions ()Ljava/util/List;
+	public final fun toBuilder ()Lio/kuicksilver/quic/QuicConfig$Builder;
 }
 
 public final class io/kuicksilver/quic/QuicConfig$Builder {
@@ -810,6 +886,9 @@ public abstract interface class io/kuicksilver/quic/QuicEndpoint : java/lang/Aut
 	public abstract fun connect (Lio/ktor/network/sockets/InetSocketAddress;Lio/kuicksilver/quic/QuicClientConfig;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public fun connectEarly (Lio/ktor/network/sockets/InetSocketAddress;Lio/kuicksilver/quic/QuicClientConfig;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun getLocalAddress ()Lio/ktor/network/sockets/InetSocketAddress;
+	public abstract fun getStats ()Lio/kuicksilver/quic/EndpointStats;
+	public fun shutdown-rnQQ1Ag (JJLjava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static synthetic fun shutdown-rnQQ1Ag$default (Lio/kuicksilver/quic/QuicEndpoint;JJLjava/lang/String;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 }
 
 public final class io/kuicksilver/quic/QuicEndpoint$Companion {
@@ -819,6 +898,8 @@ public final class io/kuicksilver/quic/QuicEndpoint$Companion {
 
 public final class io/kuicksilver/quic/QuicEndpoint$DefaultImpls {
 	public static fun connectEarly (Lio/kuicksilver/quic/QuicEndpoint;Lio/ktor/network/sockets/InetSocketAddress;Lio/kuicksilver/quic/QuicClientConfig;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static fun shutdown-rnQQ1Ag (Lio/kuicksilver/quic/QuicEndpoint;JJLjava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static synthetic fun shutdown-rnQQ1Ag$default (Lio/kuicksilver/quic/QuicEndpoint;JJLjava/lang/String;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 }
 
 public final class io/kuicksilver/quic/QuicEndpointConfig {
@@ -830,6 +911,8 @@ public final class io/kuicksilver/quic/QuicEndpointConfig {
 	public final fun getDispatcher ()Lkotlinx/coroutines/CoroutineDispatcher;
 	public final fun getInitialQueueCap ()I
 	public final fun getIo ()Lkotlin/jvm/functions/Function2;
+	public final fun getListener ()Lio/kuicksilver/quic/ConnectionListener;
+	public final fun getLogger ()Lio/kuicksilver/quic/KuicksilverLogger;
 	public final fun getLoops ()I
 	public final fun getMaxConnectionLifetime-FghU774 ()Lkotlin/time/Duration;
 	public final fun getMaxConnections ()I
@@ -851,6 +934,8 @@ public final class io/kuicksilver/quic/QuicEndpointConfig$Builder {
 	public final fun getDispatcher ()Lkotlinx/coroutines/CoroutineDispatcher;
 	public final fun getInitialQueueCap ()I
 	public final fun getIo ()Lkotlin/jvm/functions/Function2;
+	public final fun getListener ()Lio/kuicksilver/quic/ConnectionListener;
+	public final fun getLogger ()Lio/kuicksilver/quic/KuicksilverLogger;
 	public final fun getLoops ()I
 	public final fun getMaxConnectionLifetime-FghU774 ()Lkotlin/time/Duration;
 	public final fun getMaxConnections ()I
@@ -866,6 +951,8 @@ public final class io/kuicksilver/quic/QuicEndpointConfig$Builder {
 	public final fun setDispatcher (Lkotlinx/coroutines/CoroutineDispatcher;)V
 	public final fun setInitialQueueCap (I)V
 	public final fun setIo (Lkotlin/jvm/functions/Function2;)V
+	public final fun setListener (Lio/kuicksilver/quic/ConnectionListener;)V
+	public final fun setLogger (Lio/kuicksilver/quic/KuicksilverLogger;)V
 	public final fun setLoops (I)V
 	public final fun setMaxConnectionLifetime-BwNAW2A (Lkotlin/time/Duration;)V
 	public final fun setMaxConnections (I)V
@@ -1122,6 +1209,26 @@ public final class io/kuicksilver/quic/VersionProfile$Companion {
 	public final fun getV1 ()Lio/kuicksilver/quic/VersionProfile;
 	public final fun getV2 ()Lio/kuicksilver/quic/VersionProfile;
 	public final fun of (I)Lio/kuicksilver/quic/VersionProfile;
+}
+
+public final class io/kuicksilver/quic/ZeroRttOutcome : java/lang/Enum {
+	public static final field Accepted Lio/kuicksilver/quic/ZeroRttOutcome;
+	public static final field Rejected Lio/kuicksilver/quic/ZeroRttOutcome;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lio/kuicksilver/quic/ZeroRttOutcome;
+	public static fun values ()[Lio/kuicksilver/quic/ZeroRttOutcome;
+}
+
+public final class io/kuicksilver/quic/qlog/AsyncQlogSink : io/kuicksilver/quic/QlogSink, java/lang/AutoCloseable {
+	public fun <init> (Lio/kuicksilver/quic/QlogSink;IILkotlinx/coroutines/CoroutineDispatcher;)V
+	public synthetic fun <init> (Lio/kuicksilver/quic/QlogSink;IILkotlinx/coroutines/CoroutineDispatcher;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun close ()V
+	public final fun flush (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public final fun getDropped ()J
+	public final fun getFailures ()J
+	public final fun getQueueCapacity ()I
+	public final fun getSampleEvery ()I
+	public fun open (Ljava/lang/String;Lio/kuicksilver/tls/TlsRole;)Lio/kuicksilver/quic/QlogTrace;
 }
 
 public final class io/kuicksilver/quic/qlog/DirectoryQlogSink : io/kuicksilver/quic/QlogSink {

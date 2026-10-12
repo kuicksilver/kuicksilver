@@ -53,9 +53,16 @@ internal fun EndpointCore.admitOne(
         statelessInitialClose(data, profile, from, TransportError.INVALID_TOKEN, now)
         return false
     }
+    if (shuttingDown) {
+        // QuicEndpoint.shutdown: the refusal of a full accept queue (RFC 9000 section 5.2.2), for every new client
+        refusedShutdown++
+        statelessInitialClose(data, profile, from, TransportError.CONNECTION_REFUSED, now)
+        return false
+    }
     // ---- hard limits: no policy may lift them ----
     if (connections.size >= config.maxConnections) {
         initialsDropped++
+        refusedLimits++
         return false
     }
     if (acceptBacklog() >= config.acceptQueue) {
@@ -70,6 +77,7 @@ internal fun EndpointCore.admitOne(
     config.maxConnectionsPerIp?.let {
         if (fromIp >= it) {
             initialsDropped++
+            refusedLimits++
             return false
         }
     }
@@ -89,10 +97,12 @@ internal fun EndpointCore.admitOne(
 
         AdmissionDecision.Drop -> {
             initialsDropped++
+            refusedAdmission++
             return false
         }
 
         is AdmissionDecision.Close -> {
+            refusedAdmission++
             statelessInitialClose(data, profile, from, decision.code, now)
             return false
         }
@@ -105,6 +115,7 @@ internal fun EndpointCore.admitOne(
             } // RFC 9000 section 8.1.2: never a second Retry for a validated client (quinn CVE-2024-45311)
             if (!limiter.allow(from, now)) {
                 statelessRateLimited++
+                droppedStateless++
                 return false
             }
             val clientDcid = ConnectionId(ByteArray(hv.dcidLen).also { data.copyTo(it, hv.dcidOff, 0, hv.dcidLen) })
@@ -163,6 +174,7 @@ internal fun EndpointCore.admitOne(
     if (!core.anyPeerPacket) {
         remove(core)
         core.release()
+        droppedUndecryptable++
         return false
     } // the Initial did not decrypt: no state for a datagram anyone can forge (threat-model 3.2)
     core.admissionIpKey = ipKey
@@ -185,6 +197,7 @@ internal fun EndpointCore.statelessInitialClose(
 ) {
     if (!limiter.allow(from, now)) {
         statelessRateLimited++
+        droppedStateless++
         return
     }
     val clientDcid = ConnectionId(ByteArray(hv.dcidLen).also { data.copyTo(it, hv.dcidOff, 0, hv.dcidLen) })
@@ -203,6 +216,7 @@ internal fun EndpointCore.queueVersionNegotiation(
 ) {
     if (!limiter.allow(from, now)) {
         statelessRateLimited++
+        droppedStateless++
         return
     }
     val versions = IntArray(quic.versions.size) { quic.versions[it].version }

@@ -75,11 +75,20 @@ public interface DatagramIo : AutoCloseable {
         public suspend fun open(
             local: InetSocketAddress,
             prefer: IoPreference = IoPreference.Accelerated,
-        ): DatagramIo = (if (prefer == IoPreference.Accelerated) KslDatagramIo.open(local) else null) ?: openPortableDatagramIo(local)
+        ): DatagramIo = openDatagramIo(local, prefer, KuicksilverLogger.Stderr)
     }
 }
 
+/** [DatagramIo.open] reporting a fallback to the portable socket to [logger]. */
+@OptIn(ExperimentalKuicksilverApi::class)
+internal suspend fun openDatagramIo(
+    local: InetSocketAddress,
+    prefer: IoPreference,
+    logger: KuicksilverLogger,
+): DatagramIo =
+    (if (prefer == IoPreference.Accelerated) KslDatagramIo.open(local, logger = logger) else null) ?: openPortableDatagramIo(local)
+
 internal expect suspend fun openPortableDatagramIo(local: InetSocketAddress): DatagramIo
 
-/** One line to standard error: the library has no logger, and a silent fallback to the portable socket would hide lost ECN, DF and batching. */
+/** One line to standard error: what [KuicksilverLogger.Stderr], the default logger, writes. */
 internal expect fun printWarning(line: String)

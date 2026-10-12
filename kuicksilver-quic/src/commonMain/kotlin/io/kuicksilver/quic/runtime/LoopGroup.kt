@@ -60,9 +60,14 @@ internal class LoopGroup private constructor(
     private val closingFlag = AtomicInt(0)
 
     /** Closes every loop and then the shared accept queue; a loop whose socket fails calls it too, so the group never runs half dead. */
-    override fun close() {
+    override fun close() = closeWith(0, "endpoint closed")
+
+    private fun closeWith(
+        code: Long,
+        reason: String,
+    ) {
         if (!closingFlag.compareAndSet(0, 1)) return
-        for (l in loops) l.close()
+        for (l in loops) l.closeWith(code, reason)
         acceptQueue.close(
             io.kuicksilver.quic.QuicException
                 .EndpointClosing(),
@@ -71,6 +76,21 @@ internal class LoopGroup private constructor(
 
     override suspend fun closeAndJoin() {
         close()
+        for (l in loops) l.closeAndJoin()
+    }
+
+    /** Every loop's counters, summed. */
+    override val stats: EndpointStats get() = loops.map { it.stats }.reduce { a, b -> a + b }
+
+    /** Every loop stops taking connections at once; one deadline for the whole group, then the group closes as one. */
+    override suspend fun shutdown(
+        grace: kotlin.time.Duration,
+        code: Long,
+        reason: String,
+    ) {
+        for (l in loops) l.beginShutdown()
+        kotlinx.coroutines.withTimeoutOrNull(grace) { for (l in loops) l.awaitDrained() }
+        closeWith(code, reason)
         for (l in loops) l.closeAndJoin()
     }
 

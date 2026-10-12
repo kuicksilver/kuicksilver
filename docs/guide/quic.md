@@ -408,8 +408,8 @@ every unvalidated client prove its address first. A `Retry` for an attempt whose
 a contract violation: the endpoint drops the Initial and counts it in `EndpointStats.admissionContractViolations`
 instead of sending a second Retry. An exception out of `admit` is treated as `Drop` and counted the same way. Stateless
 answers (Retry, Version Negotiation, Stateless Reset, INVALID_TOKEN close) are rate limited per address
-(`statelessPerAddressPerSecond`, 8) and in total (`statelessTotalPerSecond`, 1000). `EndpointCore.stats` exposes every
-counter.
+(`statelessPerAddressPerSecond`, 8) and in total (`statelessTotalPerSecond`, 1000). `QuicEndpoint.stats` exposes every
+counter, summed over the loops (see [Observability](#observability)).
 
 ## Datagrams (RFC 9221)
 
@@ -488,6 +488,81 @@ returns, and `connect`/`accept` throw `EndpointClosing` from then on. `pathEvent
 collecting it before `migrate` or `probe`. `stats` can be read from any thread; it is a snapshot whose fields are read
 without a lock.
 
+## Observability
+
+Everything below is experimental (`@ExperimentalKuicksilverApi`). None of it costs anything per packet unless you turn
+it on: the counters are plain fields of the endpoint loop, and the logger and the listener are called per connection
+event, not per datagram.
+
+**Counters.** `QuicEndpoint.stats` is an `EndpointStats` snapshot summed over every loop, cheap enough to scrape every
+few seconds from any thread (fields are read without a lock and may lag the loop by a few events):
+
+| Group | Fields |
+|---|---|
+| Connections | `connectionsActive`, `connectionsCreated`, `connectionsAccepted` (handed to `accept()`) |
+| Refusals | `connectionsRefusedAcceptQueue`, `connectionsRefusedAdmission` (policy `Drop`/`Close`), `connectionsRefusedLimits` (`maxConnections`, `maxConnectionsPerIp`), `connectionsRefusedShutdown` |
+| Handshakes | `handshakesCompleted`, `handshakesFailedTimeout`, `handshakesFailedTls` (a TLS alert either way), `handshakesFailedOther` |
+| 0-RTT | `zeroRttOffered`, `zeroRttAccepted`, `zeroRttRejected` |
+| Datagrams | `datagramsReceived`, `datagramsSent`, `datagramsDroppedSocket`, `datagramsDroppedQueue`, `datagramsDroppedUndecryptable`, `datagramsDroppedStateless` |
+| Stateless work | `retriesSent`, `invalidTokens`, `versionNegotiations`, `statelessResets`, `statelessRateLimited` |
+| Paths | `pathValidations`, `pathValidationFailures` |
+| Internal failures | `uncaughtFailures`, `sendFailures`, `listenerFailures`, `admissionContractViolations` |
+
+```kotlin
+// guide:quic:stats
+val stats = server.stats
+println("${stats.connectionsActive} live, ${stats.handshakesCompleted} handshakes, ${stats.connectionsRefusedAcceptQueue} refused")
+```
+
+`QuicConnection.stats` has the per-connection view (RTT, congestion window, losses, path MTU).
+
+**Logger.** `QuicEndpointConfig.logger` takes a `KuicksilverLogger`: two methods, `isEnabled(level)` and
+`log(level, message, cause)`, so bridging it to SLF4J, Logcat or `os_log` is a few lines and the library depends on no
+logging framework. The default, `KuicksilverLogger.Stderr`, writes warnings and errors to standard error (what the
+library did before it had a logger); `KuicksilverLogger.None` drops everything and `KuicksilverLogger.stderr(level)`
+picks another threshold. `Debug` logs each connection's lifecycle (opened, handshake complete, path change, 0-RTT outcome,
+close with its reason), `Info` the endpoint's (shutting down, closing), `Warn` degradations (a fallback to the portable
+socket, a failing listener), `Error` a loop that died. A line is built only when its level is enabled. The library never
+logs secrets: keys, traffic secrets, session tickets, Retry and address-validation tokens and reset tokens stay out of
+every level; connection IDs and addresses are logged.
+
+**Connection listener.** `QuicEndpointConfig.listener` takes a `ConnectionListener` whose callbacks report
+`onOpened`, `onHandshakeCompleted`, `onZeroRtt` (accepted or rejected), `onPathChanged` and `onClosed` with the
+`ConnectionLost` reason: who closed (`initiator`), the code and, for a transport error, the frame type. They run on the
+loop that owns the connection, in order, exactly once each for opened and closed, so they must not block; an exception
+out of one is logged and counted in `listenerFailures`. `ConnectionInfo.id` is the original destination connection ID in
+hex, the same name the connection's qlog trace has.
+
+```kotlin
+// guide:quic:observability
+val observed = quicEndpointConfig {
+    this.server = quicServerConfig(tlsServerConfig)
+    logger = KuicksilverLogger.stderr(LogLevel.Info)
+    listener = object : ConnectionListener {
+        override fun onClosed(connection: ConnectionInfo, reason: QuicException.ConnectionLost) {
+            println("${connection.id} ${connection.remoteAddress}: ${reason.message}")
+        }
+    }
+}
+```
+
+## Graceful shutdown
+
+`QuicEndpoint.shutdown(grace)` takes an endpoint out of service without cutting connections short. From the call on, a
+new client's Initial is refused at once with a stateless CONNECTION_CLOSE carrying CONNECTION_REFUSED (the refusal of a
+full accept queue, under the same rate limits; counted in `connectionsRefusedShutdown`) and `connect` throws
+`EndpointClosing`; handshakes already in flight go on and still reach `accept()`. The live connections get `grace` to
+finish; QUIC itself has no "go away" signal, so tell your peers through your application protocol (HTTP/3 has GOAWAY:
+`Http3Endpoint.shutdown` and the Kuicksilver Ktor server's `stop(gracePeriod, timeout)` send it). Once the last
+connection has closed, or at the deadline, whatever is left is closed with an application CONNECTION_CLOSE (`code`, 0 by
+default) and the endpoint closes; `shutdown` returns when the socket is released, like `closeAndJoin`. Calling it again,
+or `close()`, ends the grace period at once.
+
+```kotlin
+// guide:quic:shutdown
+server.shutdown(grace = 30.seconds)
+```
+
 ## qlog
 
 `DirectoryQlogSink` writes one JSON-SEQ file per connection (schema `draft-ietf-quic-qlog-main-schema`/`quic-events`
@@ -497,6 +572,17 @@ without a lock.
 val qlogDir = "/var/log/kuicksilver/qlog"
 // guide:quic:qlog
 val quicWithQlog = quicConfig { qlog = DirectoryQlogSink(qlogDir) }
+```
+
+A sink is called on the endpoint loop, so a file sink on a slow disk would slow every connection of the loop. Wrap it in
+`AsyncQlogSink`: the loop only queues records, and one writer on `Dispatchers.IO` (one thread at a time) opens, writes and
+closes the files. Its queue holds `queueCapacity` records (8192) over all connections; a record that finds it full is
+dropped and counted in `dropped`, so a stalled disk loses trace lines, never throughput. `sampleEvery = n` traces one
+connection in n; `flush()` waits for what is queued and `close()` stops the writer after it.
+
+```kotlin
+// guide:quic:qlog-async
+val quicWithAsyncQlog = quicConfig { qlog = AsyncQlogSink(DirectoryQlogSink(qlogDir), sampleEvery = 10) }
 ```
 
 ## The sans-IO core directly

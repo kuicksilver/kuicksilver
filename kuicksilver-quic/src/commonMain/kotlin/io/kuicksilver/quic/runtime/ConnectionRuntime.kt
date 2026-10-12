@@ -84,7 +84,14 @@ internal class ConnectionRuntime(
     internal val pathCountForTest: Int get() = pathList.size
     internal val streamIdsForTest: List<Long> get() = streams.keys.toList()
 
-    private val role = core.role
+    internal val role = core.role
+
+    /** What a [io.kuicksilver.quic.ConnectionListener] and the logger know this connection by: its original DCID in hex (its qlog name). */
+    internal val info: io.kuicksilver.quic.ConnectionInfo =
+        io.kuicksilver.quic.ConnectionInfo(core.odcid.toString(), role, this) { core.remoteAddress }
+
+    /** The 0-RTT outcome went to the observer already (loop dispatcher only). */
+    internal var zeroRttReported = false
 
     // ---- paths ----
 
@@ -168,6 +175,7 @@ internal class ConnectionRuntime(
     private fun onPathEvent(e: ConnectionEvent) {
         when (e) {
             is ConnectionEvent.PathValidated -> {
+                loop.observer.pathValidated(this, true)
                 val p = pathRuntime(e.path)
                 p.stateFlow.value = PathState.Validated
                 if (!p.validation.isCompleted) p.validation.complete(true)
@@ -175,6 +183,7 @@ internal class ConnectionRuntime(
             }
 
             is ConnectionEvent.PathFailed -> {
+                loop.observer.pathValidated(this, false)
                 val p = pathRuntime(e.path)
                 p.stateFlow.value = PathState.Failed
                 if (!p.validation.isCompleted) p.validation.complete(false)
@@ -188,7 +197,9 @@ internal class ConnectionRuntime(
                 o.stateFlow.value =
                     core.pathState(e.old)
                 n.stateFlow.value = core.pathState(e.new)
-                pathEventFlow.tryEmit(PathEvent.Changed(o, n, e.reason))
+                val change = PathEvent.Changed(o, n, e.reason)
+                pathEventFlow.tryEmit(change)
+                loop.observer.pathChanged(this, change)
             }
 
             else -> {
@@ -325,6 +336,7 @@ internal class ConnectionRuntime(
                     earlyAccepted = core.earlyDataAccepted
                     certificates = core.peerCertificates // read once, on the loop: the TLS object is not shared across threads
                     handshake.complete(Unit)
+                    loop.observer.handshakeCompleted(this)
                     loop.onHandshakeCompleted(this)
                 }
 
@@ -338,6 +350,7 @@ internal class ConnectionRuntime(
 
                 ConnectionEvent.EarlyDataAccepted -> {
                     earlyAccepted = true
+                    loop.observer.zeroRtt(this, io.kuicksilver.quic.ZeroRttOutcome.Accepted)
                     alpn = core.negotiatedAlpn // read on the loop: an early-accepted connection reaches accept() before completion
                     // a server hands the connection to accept() now: the application can answer in 0.5-RTT (ADR-0015)
                     if (serverSide) loop.onHandshakeCompleted(this)
@@ -345,6 +358,7 @@ internal class ConnectionRuntime(
 
                 ConnectionEvent.EarlyDataRejected -> {
                     earlyAccepted = false
+                    loop.observer.zeroRtt(this, io.kuicksilver.quic.ZeroRttOutcome.Rejected)
                 }
 
                 is ConnectionEvent.StreamOpened -> {
@@ -440,6 +454,7 @@ internal class ConnectionRuntime(
     internal fun failed(reason: QuicException.ConnectionLost) {
         if (finished) return
         finished = true
+        loop.observer.closed(this, reason, handshakeDone = handshake.isCompleted && !handshake.isCancelled)
         closedDeferred.complete(reason)
         handshake.completeExceptionally(reason)
         accepted.close(reason)

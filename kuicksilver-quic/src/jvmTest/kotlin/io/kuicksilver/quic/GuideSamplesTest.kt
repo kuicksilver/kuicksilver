@@ -13,6 +13,7 @@ import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.native.PacketBuffer
 import io.kuicksilver.quic.VersionProfile
+import io.kuicksilver.quic.qlog.AsyncQlogSink
 import io.kuicksilver.quic.qlog.DirectoryQlogSink
 import io.kuicksilver.tls.KslQuicCrypto
 import kotlinx.coroutines.async
@@ -166,7 +167,53 @@ class GuideSamplesTest {
         // guide:quic:qlog
         val quicWithQlog = quicConfig { qlog = DirectoryQlogSink(qlogDir) }
         assertTrue(quicWithQlog.qlog is DirectoryQlogSink)
+        // guide:quic:qlog-async
+        val quicWithAsyncQlog = quicConfig { qlog = AsyncQlogSink(DirectoryQlogSink(qlogDir), sampleEvery = 10) }
+        val async = assertIs<AsyncQlogSink>(quicWithAsyncQlog.qlog)
+        assertEquals(10, async.sampleEvery)
+        async.close()
     }
+
+    @Test fun observabilityAndShutdownSamples(): Unit =
+        runBlocking {
+            // guide:quic:observability
+            val observed =
+                quicEndpointConfig {
+                    this.server = quicServerConfig(tlsServerConfig)
+                    logger = KuicksilverLogger.stderr(LogLevel.Info)
+                    listener =
+                        object : ConnectionListener {
+                            override fun onClosed(
+                                connection: ConnectionInfo,
+                                reason: QuicException.ConnectionLost,
+                            ) {
+                                println("${connection.id} ${connection.remoteAddress}: ${reason.message}")
+                            }
+                        }
+                }
+            val server = QuicEndpoint.bind(InetSocketAddress("127.0.0.1", 0), observed)
+            val client = QuicEndpoint.bind(InetSocketAddress("127.0.0.1", 0))
+            try {
+                withTimeout(60.seconds) {
+                    val accepted = async { server.accept() }
+                    val connection = client.connect(server.localAddress, quicClientConfig(tlsClientConfig))
+                    accepted.await()
+                    // guide:quic:stats
+                    val stats = server.stats
+                    println(
+                        "${stats.connectionsActive} live, ${stats.handshakesCompleted} handshakes, ${stats.connectionsRefusedAcceptQueue} refused",
+                    )
+                    assertEquals(1, stats.handshakesCompleted)
+                    connection.close(0, "done")
+                    // guide:quic:shutdown
+                    server.shutdown(grace = 30.seconds)
+                    assertEquals(0, server.stats.connectionsActive)
+                }
+            } finally {
+                client.close()
+                server.close()
+            }
+        }
 
     private class Datagram(
         val buffer: PacketBuffer,

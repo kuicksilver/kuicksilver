@@ -282,6 +282,43 @@ public class QuicConfig private constructor(
             )
     }
 
+    /** A builder pre-filled with these values, for a layer above that adjusts one setting (a Ktor engine adding its qlog sink). */
+    @ExperimentalKuicksilverApi
+    public fun toBuilder(): Builder =
+        Builder().also {
+            it.maxIdleTimeout = maxIdleTimeout
+            it.handshakeTimeout = handshakeTimeout
+            it.keepAlive = keepAlive
+            it.initialStreamWindow = initialStreamWindow
+            it.initialConnectionWindow = initialConnectionWindow
+            it.maxStreamWindow = maxStreamWindow
+            it.maxConnectionWindow = maxConnectionWindow
+            it.maxBidiStreams = maxBidiStreams
+            it.maxUniStreams = maxUniStreams
+            it.maxSendBuffer = maxSendBuffer
+            it.maxAckDelay = maxAckDelay
+            it.ackDelayExponent = ackDelayExponent
+            it.activeConnectionIdLimit = activeConnectionIdLimit
+            it.connectionIdLength = connectionIdLength
+            it.maxUdpPayloadSize = maxUdpPayloadSize
+            it.initialVersion = initialVersion
+            it.initialRtt = initialRtt
+            it.defaultStreamErrorCode = defaultStreamErrorCode
+            it.qlog = qlog
+            it.congestionController = congestionController
+            it.greaseQuicBit = greaseQuicBit
+            it.glitchProtection = glitchProtection
+            it.allowMigration = allowMigration
+            it.allowMigrationToLoopback = allowMigrationToLoopback
+            it.pmtud = pmtud
+            it.maxDatagramFrameSize = maxDatagramFrameSize
+            it.datagramReceiveQueue = datagramReceiveQueue
+            it.datagramSendQueue = datagramSendQueue
+            it.datagramSendQueueBytes = datagramSendQueueBytes
+            it.limits = limits
+            it.versions = versions.toList()
+        }
+
     /** Holds [Default]. */
     public companion object {
         /** The default ceilings. */
