@@ -43,7 +43,9 @@ server.start(wait = true)
 ### HTTP/3 on the server
 
 Every TLS connector also serves HTTP/3 on UDP on the same port number; the UDP socket is opened after the TCP one, so
-`port = 0` resolves first and both share the resolved port (`resolvedConnectors()` lists the TCP connectors). HTTP/1.1
+`port = 0` resolves first and both share the resolved port (`resolvedConnectors()` lists the TCP connectors). The OS
+picks the TCP port only, so its UDP twin may be taken: the pair is then bound again on a new port, up to 16 times,
+after which the connector serves HTTP/1.1 alone with a warning. A fixed port whose UDP side is taken fails the start. HTTP/1.1
 responses then carry `Alt-Svc: h3=":<port>"; ma=86400` so clients can switch (RFC 7838) — unless the application set
 its own `Alt-Svc`, or the response is a 421; `altSvc = false` turns the header off.
 
@@ -57,7 +59,8 @@ Knobs, named after Ktor's Netty engine where one exists: `http3` (on), `quic` (t
 (Retry policy, Ktor-Netty's `quicTokenHandler`), `http3Settings`. UDP socket buffer sizes are not configurable yet.
 
 Where a QUIC server cannot run — Apple and Windows Kotlin/Native (ADR-0006) — the engine logs a warning and serves
-HTTP/1.1 only, without `Alt-Svc`.
+HTTP/1.1 only, without `Alt-Svc`. The same applies to a `tlsConnector` with a `sniSelector`: QUIC cannot pick an
+identity per SNI name in v1, so that connector skips HTTP/3 with a warning instead of failing to start.
 
 ### WebSockets over HTTP/3
 
@@ -99,7 +102,8 @@ val client = HttpClient(Kuicksilver) {
   SNI and verification use the URL's host. `http://` and `ws://` are plain HTTP/1.1 over TCP.
 - HTTP/1.1 requests are written and responses parsed with Ktor's CIO code (vendored, see `docs/ktor-internal-api.md`):
   chunked bodies, `Expect: 100-continue`, keep-alive with at most `maxConnectionsPerHost` idle connections per origin
-  (a pooled connection the server already closed is replaced once, transparently). Requests on one connection are
+  (a pooled connection the server already closed is replaced once, transparently, for idempotent requests; a POST
+  that failed on one is reported, never sent again). Requests on one connection are
   sequential; `pipelining` is not used.
 - A proxy (`proxy = ProxyBuilder.http(...)`) is used for HTTP/1.1 only: `CONNECT` tunnels for `https`, absolute-form
   requests for `http`; SOCKS proxies are refused with `UnsupportedOperationException`. HTTP/3 never goes through a proxy.
@@ -150,7 +154,9 @@ origin's host. The rules:
 Entries live in `http3 { altSvcStore = ... }` — `InMemoryAltSvcStore` by default. `FileAltSvcStore(path)` keeps them
 in one tab-separated text file (loaded once, rewritten atomically after every change, expired records dropped on load)
 so the first request after a cold start can already use HTTP/3; implement `AltSvcStore` for any other backing store
-(one engine per file: two engines sharing a file overwrite each other). With `clearOnNetworkChange = true`,
+(one engine per file: two engines sharing a file overwrite each other). Both built-in stores keep at most 8 alternatives
+per origin (the first ones of the header) and 1000 origins, dropping the least recently used; `FileAltSvcStore` skips
+the rewrite when a repeated header only refreshes the expiry, and the engine writes it after releasing its lock. With `clearOnNetworkChange = true`,
 entries without `persist=1` are dropped when `networkId()` reports a new network.
 
 ### Racing and fallback
@@ -160,10 +166,12 @@ open yet, the engine races connection setups (RFC 8305 section 5, after Chromium
 TCP + TLS starts when QUIC fails, or after a head start of 1.5 x the host's smoothed RTT (250 ms without history,
 clamped to 100 ms..2 s; `hardDelay` overrides it) — and with no head start at all on a network where QUIC was never
 seen working. The request runs once, on the winner. A QUIC setup that loses the race keeps going in the background and
-serves the next requests once it is up.
+serves the next requests once it is up; a TCP connection that loses is closed. When both setups fail, the HTTP/1.1
+failure is reported — the race was the one HTTP/1.1 attempt, there is no second one.
 
-An alternative is marked broken only when HTTP/3 failed while HTTP/1.1 worked — per origin and alternative, never
-"UDP is blocked" for everything: 5 minutes, doubling up to 2 days, and forgotten when `networkId()` reports a new
+An alternative is marked broken only when HTTP/3 failed while HTTP/1.1 worked (a lost race, or a request that fell
+back to HTTP/1.1 after the HTTP/3 connection failed as a whole: setup, QUIC transport, an HTTP/3 connection error; a
+single stream reset or a malformed response falls back for that request only) — per origin and alternative, never "UDP is blocked" for everything: 5 minutes, doubling up to 2 days, and forgotten when `networkId()` reports a new
 network. Broken alternatives are skipped (straight to HTTP/1.1). The curl-style `softDelay` ("no UDP datagram from the
 server yet") is accepted in the configuration but not acted on in v1: the QUIC API does not expose that signal.
 
@@ -195,9 +203,9 @@ HTTP/3 did not reach the client.
 tests drive raw TCP sockets, so an HTTP/3 run would repeat them unchanged; WebSockets over HTTP/3 are covered by the
 engine's tests and by the client contract's `WebSocketTest` in `Kuicksilver-h3` mode. The test client is
 `HttpClient(Kuicksilver)` (a test-only dependency on `kuicksilver-ktor-client`), the plugins the suites install are
-Ktor 3.6.0's (test scope only). 143 tests, 134 pass, 9 skip: `@Http2Only` (server push, no HTTP/2 in Kuicksilver),
-`@Http1Only` over HTTP/3 (keep-alive tests, chunked encoding and the two multipart uploads that set
-`Transfer-Encoding`), and two tests `@Ignore`d upstream. Adapted: the test base (ports from the engine's resolved
+Ktor 3.6.0's (test scope only). 143 tests, 136 pass, 7 skip: `@Http2Only` (server push, no HTTP/2 in Kuicksilver),
+`@Http1Only` over HTTP/3 (the two keep-alive tests and chunked encoding), and two tests `@Ignore`d upstream. The
+multipart uploads (streamed bodies of unknown length, chunked over HTTP/1.1) run over HTTP/3 too. Adapted: the test base (ports from the engine's resolved
 connectors, the TLS identity from the test CA, real time instead of virtual time), the paths of the local-file and
 static-resource tests (this module's layout and package). Not vendored: `HttpServerJvmTestSuite`,
 `SustainabilityTestSuite`, `ClientCertTestSuite` and the other JVM suites — they rely on `HttpURLConnection`, JKS key

@@ -37,6 +37,8 @@ import io.ktor.server.routing.get
 import io.ktor.server.routing.post
 import io.ktor.server.routing.routing
 import io.ktor.sse.ServerSentEvent
+import io.ktor.utils.io.ByteReadChannel
+import io.ktor.utils.io.ByteWriteChannel
 import io.ktor.utils.io.readByteArray
 import io.ktor.utils.io.readUTF8Line
 import io.ktor.utils.io.writeStringUtf8
@@ -316,6 +318,86 @@ class ClientH1Test {
                 }
             }
         }
+
+    /** A pooled connection the server closed is replaced once for an idempotent request (RFC 9110 section 9.2.2). */
+    @Test fun staleConnectionRetriedOnceForGet() =
+        clientTest {
+            var getsSeen = 0
+            rawServerPerConnection({ index, input, output ->
+                readHead(input)
+                getsSeen++
+                output.writeStringUtf8("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok")
+                if (index == 0) {
+                    readHead(input) // the second request arrives on the pooled connection: close without answering
+                    getsSeen++
+                } else {
+                    readHead(input)
+                }
+            }) { port ->
+                testClient().use { c ->
+                    assertEquals("ok", c.get("http://127.0.0.1:$port/1").bodyAsText())
+                    assertEquals("ok", c.get("http://127.0.0.1:$port/2").bodyAsText())
+                }
+            }
+            assertEquals(3, getsSeen, "the second GET went out on the stale connection and once more on a fresh one")
+        }
+
+    /** A POST that failed on a stale pooled connection may have been processed: it is never sent again (RFC 9112 section 9.3.1). */
+    @Test fun negative_postNotRetriedOnStaleConnection() =
+        clientTest {
+            var postsSeen = 0
+            rawServerPerConnection({ index, input, output ->
+                val first = readHead(input)
+                if (first.startsWith("POST")) postsSeen++
+                if (index == 0) {
+                    output.writeStringUtf8("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok")
+                    if (readHead(input).startsWith("POST")) postsSeen++ // the POST on the pooled connection: close without answering
+                } else {
+                    output.writeStringUtf8("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
+                    readHead(input)
+                }
+            }) { port ->
+                testClient().use { c ->
+                    assertEquals("ok", c.get("http://127.0.0.1:$port/").bodyAsText())
+                    assertFailsWith<kotlinx.io.IOException> { c.post("http://127.0.0.1:$port/") { setBody("x") } }
+                }
+            }
+            assertEquals(1, postsSeen, "the POST reached the stale connection only")
+        }
+
+    /** Reads a request head; returns its request line ("" at end of stream). */
+    private suspend fun readHead(input: ByteReadChannel): String {
+        val line = input.readUTF8Line() ?: return ""
+        while (input.readUTF8Line()?.isNotEmpty() == true) Unit
+        return line
+    }
+
+    /** A plain TCP listener that runs [handler] once per accepted connection, with the connection's index. */
+    private suspend fun rawServerPerConnection(
+        handler: suspend (index: Int, input: ByteReadChannel, output: ByteWriteChannel) -> Unit,
+        block: suspend (Int) -> Unit,
+    ) {
+        val selector = SelectorManager(Dispatchers.Default)
+        val listener = aSocket(selector).tcp().bind("127.0.0.1", 0)
+        try {
+            coroutineScope {
+                val server =
+                    launch {
+                        var index = 0
+                        while (true) {
+                            val s = listener.accept()
+                            val i = index++
+                            launch { s.use { handler(i, it.openReadChannel(), it.openWriteChannel(autoFlush = true)) } }
+                        }
+                    }
+                block((listener.localAddress as InetSocketAddress).port)
+                server.cancel()
+            }
+        } finally {
+            listener.close()
+            selector.close()
+        }
+    }
 
     /** One plain TCP connection: per request, reads the head (and [bodyBytes]) and writes the canned [responses] in turn. */
     private suspend fun rawServer(

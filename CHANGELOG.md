@@ -123,6 +123,52 @@ Hardening of the QUIC core for 0.2.0 (review of 2026-10-08, deferred items):
   `MAX_STREAMS` raises a limit that refused an open; the coroutine API wakes the waiting writer or `openBidi`/`openUni`
   directly. The KDoc of `StreamFinished`, which was always raised, now says so (RFC 9000 §4.1, §4.6).
 
+K7 (0.2.0), HTTP/3 and the Ktor engines:
+
+- A QPACK encoder-stream instruction cut into many fragments by the transport was re-copied and re-parsed per
+  fragment (quadratic in its length); it is now appended to once and parsed when its known length has arrived
+  (RFC 9204 section 7.4).
+- Request-stream frame hygiene: a flood of unknown frames on a request stream (reserved GREASE types excepted) spends
+  glitch tokens and closes the
+  connection with `H3_EXCESSIVE_LOAD` like one on the control stream (RFC 9114 section 7.2.8); DATA on a response to
+  HEAD or with status 204 or 304 is a malformed message (`Http3Exception.MessageError`) instead of a body; `te` is
+  accepted in requests only — a response or trailers carrying it are malformed, the server engine drops it from
+  application responses (RFC 9110 section 10.1.4).
+- HTTP/3 server: a request whose HEADERS were still arriving when the final GOAWAY went out counted as idle, so the
+  connection could close under it; a request stream now counts as in flight from its first byte (RFC 9114 section 5.2), and is
+  rejected with `H3_REQUEST_REJECTED` if its HEADERS are still incomplete 10 seconds after the final GOAWAY.
+- Ktor server: with `port = 0` the HTTP/3 endpoint bound the UDP twin of the port the OS gave TCP, and the start
+  failed with `BindException` when that UDP port was taken; the TCP + UDP pair is now retried on a new port up to 16
+  times, then HTTP/3 is skipped with a warning and HTTP/1.1 is served alone.
+- HTTP/3 server: a body the application wrote to a response to HEAD, or with status 204 or 304, went out as DATA
+  (Ktor's `respondText` on a HEAD route did that), which a conforming client treats as a malformed message; it is now
+  dropped and `content-length` is kept (RFC 9110 sections 9.3.2, 15.3.5, 15.4.5).
+- HTTP/3 client: the `Http3Request.onInformational` and `trailers` callbacks ran on the connection's single-threaded
+  dispatcher, so a slow callback stalled every stream of the connection; they now run on the caller's dispatcher.
+- HTTP/3: the peer's `SETTINGS_MAX_FIELD_SECTION_SIZE` is honoured when sending (RFC 9114 section 4.2.2): a request
+  above it fails with `Http3Exception.FieldSectionTooLarge` before a stream is opened, response headers and trailers
+  above it fail `respond`/`finish` (refused trailers reset the stream with `H3_INTERNAL_ERROR` rather than
+  leaving it without FIN), request trailers reset the stream and fail the request or its response
+  body with `FieldSectionTooLarge` — instead of being sent for the peer to refuse.
+- Ktor client: a non-idempotent request that failed on a pooled HTTP/1.1 connection the server had closed is no
+  longer sent again (RFC 9112 section 9.3.1); only idempotent requests get the transparent retry, and connections
+  already closed for reading are dropped when taken from the pool.
+- Ktor client: the h3/h1 connection race makes one HTTP/1.1 attempt (a second TCP connection was opened when both
+  setups failed), closes an HTTP/1.1 connection that lost the race instead of leaking it (also when the caller is
+  cancelled), and marks the alternative broken when a request fell back to HTTP/1.1 after its HTTP/3 connection
+  failed — not for a single stream error (RFC 7838 section 2.4, RFC 8305 section 5).
+- Ktor client: the Alt-Svc stores, broken-alternative marks and per-origin RTTs are bounded — 8 alternatives per origin (the first ones
+  of the header), 1000 origins with the least recently used dropped — so a server, or many origins, can no longer grow
+  them without limit. `FileAltSvcStore` reads at most that many records, skips the rewrite when a repeated header only
+  moves the expiry later by less than half its lifetime (a shorter `ma` always replaces the cached expiry), writes through a uniquely named temporary file, and, behind the
+  when used by the engine, writes after the engine's lock is released instead of blocking every request on disk I/O (a write is not lost
+  when its request is cancelled, and a pending one is flushed when the engine closes). `AltSvcEntry`
+  equality compares the alternative, not its expiry (RFC 7838 sections 2.2, 3, 9.4).
+- Ktor server: a `tlsConnector` with a `sniSelector` and HTTP/3 on failed to start with `TlsException.Config`; it now
+  serves HTTP/1.1 and skips HTTP/3 with a warning (no `Alt-Svc`), as on a platform without a QUIC server.
+- Ktor server contract: the two multipart-upload tests run over HTTP/3 as well (they were marked HTTP/1.1-only;
+  they pass unchanged).
+
 Fixes from a full five-reviewer pass over the code before the first release, among them:
 
 - Streams reset or stopped by the peer, or stopped locally, are retired and return their stream credit; lost

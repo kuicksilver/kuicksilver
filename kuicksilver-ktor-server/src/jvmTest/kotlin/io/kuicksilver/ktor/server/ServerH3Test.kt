@@ -11,6 +11,7 @@ import io.ktor.server.response.respondBytesWriter
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
 import io.ktor.server.routing.post
+import io.ktor.server.routing.route
 import io.ktor.server.routing.routing
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.readAvailable
@@ -130,6 +131,151 @@ class ServerH3Test {
                 }
             } finally {
                 server.stop(100, 500)
+            }
+        }
+
+    /** `te` is a request-only field (RFC 9110 section 10.1.4): the engine drops it from an HTTP/3 response like the other hop-by-hop fields. */
+    @Test fun teStrippedFromH3Response() =
+        serverTest {
+            val (server, port) =
+                tlsServer {
+                    routing {
+                        get("/") {
+                            call.response.header("TE", "trailers")
+                            call.respondText("ok")
+                        }
+                    }
+                }
+            try {
+                h3(port) { c ->
+                    val r = c.request(get())
+                    assertEquals(200, r.status)
+                    assertNull(r.headers["te"])
+                    assertEquals("ok", r.body.readFullBody().decodeToString())
+                }
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
+    /** HEAD, 204 and 304 carry no content (RFC 9110 sections 9.3.2, 15.3.5, 15.4.5): no DATA frame leaves the server, HEAD keeps content-length. */
+    @Test fun headAnd204And304SendNoData() =
+        serverTest {
+            val (server, port) =
+                tlsServer {
+                    routing {
+                        route("/h", io.ktor.http.HttpMethod.Head) { handle { call.respondText("body") } }
+                        get("/204") { call.respondText("body", status = io.ktor.http.HttpStatusCode.NoContent) }
+                        get("/304") { call.respondText("body", status = io.ktor.http.HttpStatusCode.NotModified) }
+                    }
+                }
+            try {
+                h3(port) { c ->
+                    val head = c.request(Http3Request("HEAD", authority = "server.test", path = "/h"))
+                    assertEquals(200, head.status)
+                    assertEquals("4", head.headers["content-length"])
+                    assertEquals(0, head.body.readFullBody().size)
+                    for (status in listOf(204, 304)) {
+                        val r = c.request(get("/$status"))
+                        assertEquals(status, r.status)
+                        assertEquals(0, r.body.readFullBody().size)
+                    }
+                    // the raw stream: HEADERS, then FIN, no DATA frame
+                    for ((method, path) in listOf("HEAD" to "/h", "GET" to "/204", "GET" to "/304")) {
+                        val types = rawFrameTypes(c.quic, method, path)
+                        assertTrue(types.isNotEmpty() && 0L !in types, "$method $path sent frames $types")
+                    }
+                }
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
+    /** Sends [method] [path] on a fresh bidirectional stream with a hand-made static-free QPACK section; returns the response's frame types. */
+    private suspend fun rawFrameTypes(
+        quic: io.kuicksilver.quic.QuicConnection,
+        method: String,
+        path: String,
+    ): List<Long> {
+        fun int(
+            flags: Int,
+            prefix: Int,
+            v: Int,
+            out: java.io.ByteArrayOutputStream,
+        ) {
+            val max = (1 shl prefix) - 1
+            if (v < max) {
+                out.write(flags or v)
+                return
+            }
+            out.write(flags or max)
+            var r = v - max
+            while (r >= 128) {
+                out.write((r and 0x7f) or 0x80)
+                r = r shr 7
+            }
+            out.write(r)
+        }
+        val section = java.io.ByteArrayOutputStream()
+        section.write(0)
+        section.write(0) // Required Insert Count 0, Base 0
+        for ((n, v) in listOf(":method" to method, ":scheme" to "https", ":authority" to "server.test", ":path" to path)) {
+            int(0x20, 3, n.length, section) // literal field line with literal name, no Huffman (RFC 9204 section 4.5.6)
+            section.write(n.encodeToByteArray())
+            int(0x00, 7, v.length, section)
+            section.write(v.encodeToByteArray())
+        }
+        val block = section.toByteArray()
+        val st = quic.openBidi()
+        check(block.size < 16384)
+        // HEADERS with a two-byte varint length
+        st.output.writeFully(byteArrayOf(0x01, (0x40 or (block.size shr 8)).toByte(), block.size.toByte()) + block)
+        st.output.flushAndClose()
+        val resp = st.input.readFullBody()
+        val types = ArrayList<Long>()
+        var i = 0
+
+        fun varint(): Long {
+            val len = 1 shl ((resp[i].toInt() and 0xc0) shr 6)
+            var v = (resp[i].toLong() and 0x3f)
+            for (k in 1 until len) v = (v shl 8) or (resp[i + k].toLong() and 0xff)
+            i += len
+            return v
+        }
+        while (i < resp.size) {
+            types += varint()
+            val len = varint().toInt()
+            i += len
+        }
+        return types
+    }
+
+    /**
+     * `port = 0`: the UDP twin of the port the OS gave TCP may be taken. The hook occupies it before the first HTTP/3 bind,
+     * so that bind fails for real; the server retries the TCP + UDP pair and serves h3 and Alt-Svc on one new number.
+     */
+    @Test fun ephemeralPortRetriesWhenUdpTwinIsTaken() =
+        serverTest {
+            val taken = ArrayList<java.net.DatagramSocket>()
+            val tried = ArrayList<Int>()
+            val (server, port) =
+                tlsServer(configure = {
+                    http3Bind = { a, c, s ->
+                        tried += a.port
+                        if (tried.size == 1) taken += java.net.DatagramSocket(java.net.InetSocketAddress("127.0.0.1", a.port))
+                        Http3Endpoint.bind(a, c, s)
+                    }
+                }) { routing { get("/") { call.respondText("ok") } } }
+            try {
+                assertEquals(2, tried.size, "one retry after the taken UDP port ${tried.firstOrNull()}")
+                assertEquals(port, tried.last())
+                assertTrue(port != tried.first())
+                val resp = rawHttp(port, "GET / HTTP/1.1\r\nHost: server.test\r\nConnection: close\r\n\r\n")
+                assertTrue(resp.contains("Alt-Svc: h3=\":$port\""), resp)
+                h3(port) { c -> assertEquals(200, c.request(get()).status) }
+            } finally {
+                server.stop(100, 500)
+                taken.forEach { it.close() }
             }
         }
 

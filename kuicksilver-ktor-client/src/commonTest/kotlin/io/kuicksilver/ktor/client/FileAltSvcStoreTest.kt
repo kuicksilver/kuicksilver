@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.kuicksilver.ktor.client
 
+import io.ktor.http.Url
 import kotlinx.io.buffered
 import kotlinx.io.files.Path
 import kotlinx.io.files.SystemFileSystem
@@ -11,6 +12,7 @@ import kotlin.random.Random
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -74,6 +76,73 @@ class FileAltSvcStoreTest {
         assertTrue(again.get("https://b:443").isEmpty())
         again.remove("https://a:443")
         assertTrue(FileAltSvcStore(p) { now }.get("https://a:443").isEmpty())
+    }
+
+    /** The same alternatives again (the usual case: every response repeats the origin's `Alt-Svc`) do not rewrite the file. */
+    @Test fun identicalPutDoesNotRewrite() {
+        val p = tmp()
+        val s = FileAltSvcStore(p) { now }
+        val entries = listOf(entry(8443), entry(9443, host = "alt.example", persist = true))
+        s.put("https://a:443", entries)
+        SystemFileSystem.delete(p)
+        s.put("https://a:443", entries)
+        assertTrue(!SystemFileSystem.exists(p), "an identical put is not written")
+        s.put("https://a:443", listOf(entry(8443)))
+        assertTrue(SystemFileSystem.exists(p), "a different list is written")
+    }
+
+    /** A repeated header only moves the expiry; the file is rewritten once the shift reaches half the new lifetime. */
+    @Test fun refreshedExpiryRewrittenOnlyPastHalfLifetime() {
+        val p = tmp()
+        val s = FileAltSvcStore(p) { now }
+        s.put("https://a:443", listOf(entry(8443)))
+        SystemFileSystem.delete(p)
+        now += 10_000
+        s.put("https://a:443", listOf(entry(8443)))
+        assertTrue(!SystemFileSystem.exists(p), "a 10 s shift of a 60 s lifetime is not written")
+        now += 30_000
+        s.put("https://a:443", listOf(entry(8443)))
+        assertTrue(SystemFileSystem.exists(p), "a 40 s shift is written")
+        assertEquals(now + 60_000, FileAltSvcStore(p) { now }.get("https://a:443").single().expiresAtEpochMillis)
+    }
+
+    /** A new header replaces the cached alternatives (RFC 7838 section 3): a shorter `ma` shortens the expiry, in memory and on disk. */
+    @Test fun shorterMaxAgeReplacesCachedExpiry() {
+        val p = tmp()
+        val s = FileAltSvcStore(p) { now }
+        s.put("https://a:443", listOf(entry(8443, ttl = 86_400_000)))
+        s.put("https://a:443", listOf(entry(8443, ttl = 60_000)))
+        assertEquals(now + 60_000, s.get("https://a:443").single().expiresAtEpochMillis)
+        assertEquals(now + 60_000, FileAltSvcStore(p) { now }.get("https://a:443").single().expiresAtEpochMillis)
+    }
+
+    /** Behind an [AltSvcCache] the store only snapshots under the engine's lock; the write runs later, and an older snapshot never overwrites a newer one. */
+    @Test fun writesBehindTheCacheAreDeferredAndOrdered() {
+        val p = tmp()
+        val s = FileAltSvcStore(p) { now }
+        val cache = AltSvcCache(s) { now }
+        cache.onResponse(Url("https://a/"), 200, listOf("h3=\":443\""), verifiedTls = true)
+        assertTrue(!SystemFileSystem.exists(p), "nothing is written under the lock")
+        val first = assertNotNull(cache.takePendingWrite())
+        cache.onResponse(Url("https://b/"), 200, listOf("h3=\":443\""), verifiedTls = true)
+        val second = assertNotNull(cache.takePendingWrite())
+        assertNull(cache.takePendingWrite())
+        second()
+        first()
+        assertEquals(1, FileAltSvcStore(p) { now }.get("https://b:443").size, "the older snapshot did not overwrite the newer one")
+    }
+
+    /** The file never grows past `AltSvcCache.MAX_ORIGINS` origins: the least recently used ones go (threat-model 3.18). */
+    @Test fun negative_altSvcStoreBoundedOrigins() {
+        val p = tmp()
+        val s = FileAltSvcStore(p) { now }
+        for (i in 0 until 1500) s.put("https://o$i:443", listOf(entry(8443)))
+        assertTrue(s.get("https://o0:443").isEmpty(), "the oldest origin was evicted")
+        assertEquals(1, s.get("https://o1499:443").size)
+        val again = FileAltSvcStore(p) { now }
+        val kept = (0 until 1500).count { again.get("https://o$it:443").isNotEmpty() }
+        assertTrue(kept <= AltSvcCache.MAX_ORIGINS, "$kept origins reloaded")
+        assertEquals(AltSvcCache.MAX_ORIGINS, kept)
     }
 
     @Test fun expiredAndMalformedLinesAreDroppedOnLoad() {

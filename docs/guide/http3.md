@@ -23,6 +23,8 @@ Header compression uses the static table always and the dynamic table only when 
 - The decoder rejects, before allocating, integers longer than 62 bits and string literals above 64 KiB, and counts the
   decoded size of a field section as it goes (name + value + 32 per line, RFC 9114 section 4.2.2), stopping at
   `maxFieldSectionSize`.
+- An encoder-stream instruction the transport delivers in pieces is reassembled in linear time: once its length is
+  known the decoder only appends bytes until it is complete (at most 2 x 64 KiB + 64 bytes are held).
 - A field section that references entries still in flight on the peer's encoder stream waits for them (at most
   `qpackBlockedStreams` such streams; one more closes the connection with `QPACK_DECOMPRESSION_FAILED`). If the peer
   resets a stream while it waits, the decoder sends a Stream Cancellation.
@@ -37,8 +39,9 @@ val client = Http3Connection.client(quicConnection, settings)
 
 Requests and responses are validated as RFC 9114 sections 4.2-4.3 require. A malformed message (a field name that is
 not a lowercase token, CR, LF or NUL anywhere, whitespace at either end of a value, a connection-specific field such
-as `transfer-encoding`, a missing or duplicated pseudo-header, `:authority` and `host` that disagree) is a *stream*
-error: the stream is reset with `H3_MESSAGE_ERROR` and the connection keeps serving other requests.
+as `transfer-encoding`, `te` other than `trailers` or `te` in a response, a missing or duplicated pseudo-header,
+`:authority` and `host` that disagree, DATA on a response to HEAD or with status 204 or 304) is a *stream* error: the
+stream is reset with `H3_MESSAGE_ERROR` and the connection keeps serving other requests.
 
 Failures surface as `Http3Exception`:
 
@@ -48,7 +51,7 @@ Failures surface as `Http3Exception`:
 | `Http3Exception.Qpack(code)` | a QPACK error (0x200-0x202) |
 | `Http3Exception.RequestNotProcessed(retrySafe)` | the server did not process the request (`GOAWAY`, `H3_REQUEST_REJECTED`); safe to retry on a new connection |
 | `Http3Exception.MessageError(streamId, reason)` | the peer's message on this stream was malformed |
-| `Http3Exception.FieldSectionTooLarge(streamId, limit)` | headers or trailers above `maxFieldSectionSize` once decoded |
+| `Http3Exception.FieldSectionTooLarge(streamId, limit)` | headers or trailers above `maxFieldSectionSize` once decoded, or above the peer's limit when sending (`streamId` -1: no stream was opened) |
 | `Http3Exception.Settings(message)` | an operation needs a setting the peer did not send (Extended CONNECT) |
 | `Http3Exception.ConnectRejected(status, headers)` | Extended CONNECT answered with a non-2xx status |
 
@@ -88,7 +91,9 @@ val body = response.body            // a ByteReadChannel; reading it to the end 
 A request body is any `ByteReadChannel`; it is copied into DATA frames as the transport accepts it, so a slow peer
 slows the producer instead of filling memory. `trailers` is called after the body ends. Interim responses (1xx,
 103 Early Hints included) reach `onInformational`; more than `maxInformationalResponses` (5) fail the request with
-`H3_EXCESSIVE_LOAD`. There is no automatic `100-continue`. `Http3Response.cancel()` (or cancelling the calling
+`H3_EXCESSIVE_LOAD`. Both callbacks run on the dispatcher of the coroutine that called `request`, never on the
+connection's own single-threaded dispatcher, so a slow callback delays only its own request. There is no automatic
+`100-continue`. `Http3Response.cancel()` (or cancelling the calling
 coroutine) resets the stream with `H3_REQUEST_CANCELLED`; the connection keeps serving other requests.
 
 ## Serving requests
@@ -113,22 +118,30 @@ application has not finished reading when its response is complete is dropped wi
 client's upload then ends with `QuicException.StreamError.Stopped` (code `H3_NO_ERROR`) in its body channel, and the
 stream is retired as soon as the client's FIN or reset arrives, so unread uploads never exhaust the stream credit. Field
 names and values are octets: a character above U+00FF is rejected rather than truncated. A response to HEAD may carry
-a `content-length` without a body. A request whose header
+a `content-length` without a body; the server drops whatever the application writes to a HEAD, 204 or 304 response
+rather than sending DATA the client must treat as malformed. A request whose header
 section is above `maxFieldSectionSize` once decoded is answered with 431 and `STOP_SENDING H3_EXCESSIVE_LOAD` by the
-connection itself. `request.remoteAddress` follows the client's path when it migrates.
+connection itself. The other way round, a section above the peer's `SETTINGS_MAX_FIELD_SECTION_SIZE` is never sent:
+`request` fails with `FieldSectionTooLarge` before it opens a stream, `respond` and `finish(trailers)` fail before
+writing; refused trailers also reset the stream with `H3_INTERNAL_ERROR`, since the body already went out. Refused request
+trailers reset the stream with `H3_REQUEST_CANCELLED`, and `request` (or, once the response began, its body and
+`trailers`) fails with `FieldSectionTooLarge`. `request.remoteAddress` follows the client's path when it migrates.
 
 ## Shutdown and GOAWAY
 
 `connection.goAway()` shuts a connection down gracefully (RFC 9114 section 5.2). A server first announces
 2^62-4 ("no promises yet"), waits about two round trips so requests already in flight arrive, then announces the first
-request id it will not process; such requests are reset with `H3_REQUEST_REJECTED`. Once every accepted request is
-answered the server closes with `H3_NO_ERROR`. A client receiving GOAWAY fails the requests it did not cover, and every
+request id it will not process; such requests are reset with `H3_REQUEST_REJECTED`. Once every request below that id
+is answered — including one whose HEADERS were still arriving when GOAWAY went out — the server closes with
+`H3_NO_ERROR`. A stream gets 10 seconds after the final GOAWAY to complete its HEADERS; after that it is reset with
+`H3_REQUEST_REJECTED` (it was never processed) and no longer holds the connection open. (quic-go has no such
+per-stream deadline; it bounds the whole graceful shutdown with the caller's context.) A client receiving GOAWAY fails the requests it did not cover, and every
 new request, with `Http3Exception.RequestNotProcessed(retrySafe = true)`: they were never processed and can be sent
 again on a new connection (the Ktor engine does that by itself). A client's own `goAway()` sends GOAWAY(0) and stops
 issuing requests.
 
-A peer that keeps sending frames nobody needs (unknown frames on the control stream, empty unidirectional streams,
-PRIORITY_UPDATE floods) spends tokens of a glitch bucket (1000 tokens, 33 per second); an empty bucket closes the
+A peer that keeps sending frames nobody needs (unknown frames on the control stream or on a request stream — reserved GREASE types on a request stream are free — empty
+unidirectional streams, PRIORITY_UPDATE floods) spends tokens of a glitch bucket (1000 tokens, 33 per second); an empty bucket closes the
 connection with `H3_EXCESSIVE_LOAD`. `Http3Settings.glitchProtection = false` turns this off.
 
 ## Priorities

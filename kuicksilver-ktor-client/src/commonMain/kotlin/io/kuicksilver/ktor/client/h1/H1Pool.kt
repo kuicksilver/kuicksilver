@@ -27,6 +27,7 @@ import io.ktor.utils.io.ByteWriteChannel
 import io.ktor.utils.io.ClosedReadChannelException
 import io.kuicksilver.ktor.client.KuicksilverEngineConfig
 import io.kuicksilver.ktor.client.connectTimeoutMillis
+import io.kuicksilver.ktor.client.isIdempotent
 import io.kuicksilver.ktor.client.socketTimeoutMillis
 import io.kuicksilver.ktor.client.tlsConfigFor
 import io.kuicksilver.tls.SessionCache
@@ -66,7 +67,8 @@ internal class H1Connection(
 /**
  * HTTP/1.1 over TCP with TLS 1.3 (ADR-0009: no HTTP/2), with keep-alive: a connection whose response body ended
  * by its framing goes back to an idle list of at most `maxConnectionsPerHost` per origin; a stale idle connection is
- * replaced once, transparently.
+ * replaced once, transparently, for idempotent requests only (RFC 9110 section 9.2.2, RFC 9112 section 9.3.1): a
+ * request the server may have processed is never sent twice.
  */
 internal class H1Pool(
     private val config: KuicksilverEngineConfig,
@@ -78,7 +80,17 @@ internal class H1Pool(
     /** This engine's TLS session tickets (resumption secrets stay native); cleared by [closeAll], so closing the engine drops them. */
     internal val sessions = SessionCache()
 
-    private suspend fun take(key: String): H1Connection? = lock.withLock { idle[key]?.removeFirstOrNull() }
+    /** An idle connection the server has not closed yet (one it closed while idle is dropped here, not handed out). */
+    private suspend fun take(key: String): H1Connection? =
+        lock.withLock {
+            val q = idle[key]
+            var found: H1Connection? = null
+            while (q != null && found == null) {
+                val c = q.removeFirstOrNull() ?: break
+                if (!c.input.isClosedForRead && !c.closed) found = c else c.close()
+            }
+            found
+        }
 
     private fun give(c: H1Connection) {
         if (c.closed) return
@@ -140,9 +152,10 @@ internal class H1Pool(
         var first = true
         var given = preopened
         while (true) {
-            val reused = given ?: take(key)
+            // a connection the race just opened is fresh: it is not a pooled one and never earns the stale retry
+            val reused = if (given == null) take(key) else null
+            val conn = given ?: reused ?: connect(data, url, secure, proxy != null, key)
             given = null
-            val conn = reused ?: connect(data, url, secure, proxy != null, key)
             var bodyJob: BodySender? = null
             try {
                 val requestTime = GMTDate()
@@ -182,9 +195,10 @@ internal class H1Pool(
             } catch (e: Throwable) {
                 conn.close()
                 bodyJob?.failure?.let { throw it }
-                // a pooled connection the server already closed: one transparent retry on a fresh connection (not for a streamed body)
-                if (reused != null && first && bodyJob == null && (e is ClosedReadChannelException || e is kotlinx.io.IOException) &&
-                    e !is TlsException
+                // a pooled connection the server already closed: one transparent retry on a fresh connection, for an
+                // idempotent request with a replayable body only (a non-idempotent one may have been processed, RFC 9112 section 9.3.1)
+                if (reused != null && first && bodyJob == null && data.method.isIdempotent() &&
+                    (e is ClosedReadChannelException || e is kotlinx.io.IOException) && e !is TlsException
                 ) {
                     first = false
                     continue

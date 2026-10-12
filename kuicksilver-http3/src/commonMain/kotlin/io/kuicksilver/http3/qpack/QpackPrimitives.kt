@@ -10,9 +10,14 @@ internal open class QpackError(
     message: String,
 ) : Exception(message)
 
-/** The input ended inside an instruction: an error for a complete field section, "wait for more" on the encoder and decoder streams. */
+/**
+ * The input ended inside an instruction: an error for a complete field section, "wait for more" on the encoder and
+ * decoder streams. [needed] is the instruction's full length from its first byte when the string literal's length prefix
+ * was read (RFC 9204 section 4.1.2), else 0 ("unknown: parse again when more arrives").
+ */
 internal class QpackTruncated(
     code: Long,
+    val needed: Int = 0,
 ) : QpackError(code, "truncated")
 
 /** Ceilings checked before memory is allocated (threat-model 3.17). */
@@ -40,6 +45,9 @@ internal class QpackReader(
     private val errorCode: Long = Http3ErrorCode.QPACK_DECOMPRESSION_FAILED,
 ) {
     val remaining: Int get() = end - pos
+
+    /** Where the instruction being parsed started; [readString] reports the instruction's full length from here. */
+    var instructionStart: Int = pos
 
     fun fail(message: String): Nothing = throw QpackError(errorCode, message)
 
@@ -77,7 +85,7 @@ internal class QpackReader(
         val len = readInt(prefixBits, limits)
         // ceilings first (a Huffman literal decodes to at least 8/30 of its length), then "not all here yet"
         if (len > limits.maxStringLength.toLong() * (if (huffman) 4 else 1)) fail("string of $len bytes above ${limits.maxStringLength}")
-        if (len > remaining) throw QpackTruncated(errorCode)
+        if (len > remaining) throw QpackTruncated(errorCode, needed = (pos - instructionStart) + len.toInt())
         val n = len.toInt()
         val s =
             if (huffman) {

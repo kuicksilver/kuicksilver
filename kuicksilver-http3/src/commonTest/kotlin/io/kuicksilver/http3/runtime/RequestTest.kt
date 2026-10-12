@@ -19,9 +19,13 @@ import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.quicConfig
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.async
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.cancelChildren
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
@@ -32,8 +36,11 @@ import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
+import kotlin.test.assertNotNull
+import kotlin.test.assertNotSame
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlin.coroutines.ContinuationInterceptor
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
@@ -133,6 +140,54 @@ class RequestTest {
                 assertEquals(listOf<Pair<Int, String?>>(103 to "</style.css>; rel=preload"), hints)
                 assertEquals(204, resp.status)
                 server.join() // the 204 arrives before finish() returns: closing earlier races the server's FIN
+            }
+        }
+
+    /** A slow `onInformational` must not stall the connection: it runs on the caller's dispatcher, not the session's. */
+    @Test fun onInformationalRunsOffConnectionDispatcher() =
+        h3Test {
+            H3Pair.open().use { p ->
+                val server =
+                    launch {
+                        val r = p.server.acceptRequest()
+                        r.sendInformational(103, Http3Headers.of("link" to "</a.css>; rel=preload"))
+                        r.respond(204).finish()
+                    }
+                var seen: Any? = null
+                p.client.request(
+                    Http3Request("GET", authority = "server.test", path = "/", onInformational = { _, _ ->
+                        seen = currentCoroutineContext()[ContinuationInterceptor]
+                    }),
+                )
+                server.join()
+                assertNotNull(seen)
+                assertNotSame<Any?>(p.client.session.dispatcher, seen)
+            }
+        }
+
+    /** The request's `trailers` callback runs on the caller's dispatcher, not the session's. */
+    @Test fun trailersCallbackRunsOffConnectionDispatcher() =
+        h3Test {
+            H3Pair.open().use { p ->
+                val server =
+                    launch {
+                        val r = p.server.acceptRequest()
+                        r.body.readAllBytes()
+                        assertEquals("c1", r.trailers.await()?.get("x-checksum"))
+                        r.respond(204).finish()
+                    }
+                var seen: Any? = null
+                val resp =
+                    p.client.request(
+                        Http3Request("POST", authority = "server.test", path = "/", body = ByteReadChannel("ping"), trailers = {
+                            seen = currentCoroutineContext()[ContinuationInterceptor]
+                            Http3Headers.of("x-checksum" to "c1")
+                        }),
+                    )
+                assertEquals(204, resp.status)
+                server.join()
+                assertNotNull(seen)
+                assertNotSame<Any?>(p.client.session.dispatcher, seen)
             }
         }
 
@@ -248,6 +303,82 @@ class RequestTest {
                 assertEquals("abc", r.body.readAllBytes().decodeToString())
             }
         }
+
+    /** RFC 9114 section 7.2.8 / 8.1: unknown frames are skipped, but a flood of them is useless work that spends glitch tokens. */
+    @Test fun unknownFramesOnRequestStreamSpendGlitchTokens() =
+        h3Test {
+            QuicPair.open().use { q ->
+                val (c, s) = q.connect()
+                Http3Connection.server(s)
+                val raw = RawPeer(c)
+                raw.openControl()
+                val st = c.openBidi()
+                val one = raw.frame(0x22, ByteArray(0)) // unknown, not a reserved (GREASE) type
+                val flood = ByteArray(one.size * 1001)
+                for (i in 0 until 1001) one.copyInto(flood, i * one.size)
+                // the close may land while the flood is still being flushed: that is the outcome under test
+                runCatching {
+                    st.output.writeFully(flood)
+                    st.output.flush()
+                }
+                assertEquals(Http3ErrorCode.EXCESSIVE_LOAD, peerSawClose(c))
+            }
+        }
+
+    /** Reserved frame types (0x1f * N + 0x21, RFC 9114 section 7.2.8) are GREASE a peer is meant to send: they cost no glitch token. */
+    @Test fun greaseFramesOnRequestStreamsAreFree() =
+        h3Test {
+            QuicPair.open().use { q ->
+                val (c, s) = q.connect()
+                val server = Http3Connection.server(s)
+                val raw = RawPeer(c)
+                raw.openControl()
+                val st = c.openBidi()
+                // twice the bucket, in one write: the flood test's 1001 unknown frames close the connection
+                val flood =
+                    (0 until 2002)
+                        .map { raw.frame(io.kuicksilver.http3.frame.FrameType.grease(it.toLong()), ByteArray(0)) }
+                        .reduce { a, b -> a + b }
+                st.output.writeFully(flood + raw.headers(st.id, GET))
+                st.output.flushAndClose()
+                val r = withTimeout(5.seconds) { server.acceptRequest() }
+                r.respond(204).finish()
+                assertTrue(st.input.readAllBytes().isNotEmpty())
+                assertTrue(!server.closed.isCompleted, "GREASE frames closed the connection")
+            }
+        }
+
+    /** RFC 9114 section 4.1.2 / RFC 9110 sections 9.3.2, 15.3.5, 15.4.5: DATA on a response that has no content is malformed. */
+    private suspend fun CoroutineScope.dataOnBodilessResponseIsMessageError(
+        method: String,
+        status: Int,
+    ) {
+        QuicPair.open().use { q ->
+            val (c, s) = q.connect()
+            val client = Http3Connection.client(c)
+            val raw = RawPeer(s)
+            raw.openControl()
+            client.peerSettings.filterNotNull().first()
+            val served =
+                async {
+                    val st = s.acceptBidi()
+                    st.output.writeFully(raw.headers(st.id, listOf(":status" to status.toString())) + raw.data("hello".encodeToByteArray()))
+                    st.output.flushAndClose()
+                    st
+                }
+            val resp = client.request(Http3Request(method, authority = "server.test", path = "/"))
+            assertEquals(status, resp.status)
+            val e = assertFailsWith<Http3Exception.MessageError> { resp.body.readAllBytes() }
+            assertEquals(served.await().id, e.streamId)
+            assertTrue(!client.closed.isCompleted, "a stream error, not a connection error")
+        }
+    }
+
+    @Test fun dataInHeadResponseIsMessageError() = h3Test { dataOnBodilessResponseIsMessageError("HEAD", 200) }
+
+    @Test fun dataIn204ResponseIsMessageError() = h3Test { dataOnBodilessResponseIsMessageError("GET", 204) }
+
+    @Test fun dataIn304ResponseIsMessageError() = h3Test { dataOnBodilessResponseIsMessageError("GET", 304) }
 
     @Test fun cancelledRequestStopsStreamAndConnectionSurvives() =
         h3Test {

@@ -31,9 +31,11 @@ import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlin.coroutines.CoroutineContext
@@ -63,10 +65,13 @@ internal class KuicksilverEngine(
     private val altSvc = AltSvcCache(config.http3.altSvcStore) { getTimeMillis() }
     private val altSvcLock = Mutex()
 
+    /** Serializes [FileAltSvcStore] writes, which run after [altSvcLock] is released; internal for tests. */
+    internal val altSvcWriteLock = Mutex()
+
     /** Broken alternatives and networks where QUIC worked; internal for tests. */
     internal val brokenAltSvc = BrokenAltSvc { getTimeMillis() }
     private val race = ProtocolRace(config.http3.softDelay, config.http3.hardDelay)
-    private val srtt = HashMap<String, kotlin.time.Duration>() // per origin, from the last HTTP/3 connection
+    private val srtt = LinkedHashMap<String, kotlin.time.Duration>() // per origin, from the last HTTP/3 connection; LRU-bounded
     private var lastNetwork: String? = null
     private var networkSeen = false
 
@@ -79,6 +84,7 @@ internal class KuicksilverEngine(
             try {
                 requests.join()
             } finally {
+                withContext(NonCancellable) { altSvcUpdate {} } // a snapshot no request took (an expiry dropped on lookup)
                 h1.closeAll()
                 h3.close()
                 selector.close()
@@ -132,7 +138,7 @@ internal class KuicksilverEngine(
 
     /** A new network (`networkId`) forgets broken marks, QUIC confirmation and, if asked, non-persistent alternatives. */
     private suspend fun checkNetwork(): String? =
-        altSvcLock.withLock {
+        altSvcUpdate {
             val id = config.http3.networkId()
             if (networkSeen &&
                 id != lastNetwork
@@ -146,8 +152,20 @@ internal class KuicksilverEngine(
         }
 
     /**
+     * Runs [block] under [altSvcLock], then writes the store's new content, if any, outside it (threat-model 3.18). A
+     * snapshot taken under the lock is written even when the caller is cancelled meanwhile: nobody else would write it.
+     */
+    private suspend fun <T> altSvcUpdate(block: () -> T): T {
+        val (value, write) = altSvcLock.withLock { block() to altSvc.takePendingWrite() }
+        if (write != null) withContext(NonCancellable) { altSvcWriteLock.withLock { write() } }
+        return value
+    }
+
+    /**
      * HTTP/3 against HTTP/1.1 (docs/guide/ktor.md): connection setups race ([ProtocolRace]); the request runs once, on the winner.
-     * A broken alternative goes straight to HTTP/1.1; HTTP/3 failing while HTTP/1.1 works marks it broken.
+     * A broken alternative goes straight to HTTP/1.1; HTTP/3 failing while HTTP/1.1 works marks it broken. An HTTP/1.1
+     * connection that lost the race is closed; when both setups fail, the HTTP/1.1 failure is the result (the race already
+     * was the one HTTP/1.1 attempt, RFC 8305 section 5).
      */
     private suspend fun raced(
         t: H3Target,
@@ -168,21 +186,16 @@ internal class KuicksilverEngine(
         // the HTTP/3 attempt outlives a lost race: it fills the pool for the next request, or marks the alternative broken
         val h3Attempt = engineScope.async { h3.connection(t, data) }
         val result =
-            try {
-                race.race<Any>({ h3Attempt.await() }, { h1.open(data) }, rtt, confirmed)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Throwable) {
-                if (config.http3.discovery == Http3DiscoveryMode.Preferred) throw e else return h1.execute(data, callContext)
-            }
+            race.race<Any>({ h3Attempt.await() }, { h1.open(data) }, rtt, confirmed, onLoser = {
+                (it as? io.kuicksilver.ktor.client.h1.H1Connection)?.close()
+            })
         return when (result.winner) {
             Protocol.H3 -> {
                 val conn = result.value as io.kuicksilver.http3.Http3Connection
                 altSvcLock.withLock {
                     brokenAltSvc.confirmQuic(network)
                     brokenAltSvc.markWorking(origin, alt)
-                    srtt[origin] =
-                        conn.quic.stats.smoothedRtt
+                    rememberSrtt(origin, conn.quic.stats.smoothedRtt)
                 }
                 h3WithFallback(t, data, callContext, extraHeaders)
             }
@@ -195,12 +208,7 @@ internal class KuicksilverEngine(
                                 null
                             ) {
                                 brokenAltSvc.confirmQuic(network)
-                                runCatching {
-                                    srtt[origin] =
-                                        h3Attempt
-                                            .getCompleted()
-                                            .quic.stats.smoothedRtt
-                                }
+                                runCatching { rememberSrtt(origin, h3Attempt.getCompleted().quic.stats.smoothedRtt) }
                             } // lost the race, but QUIC works here
                             else if (cause !is CancellationException) {
                                 brokenAltSvc.markBroken(origin, alt)
@@ -212,6 +220,23 @@ internal class KuicksilverEngine(
             }
         }
     }
+
+    /** The cached alternatives for the origin of [url] (tests). */
+    internal suspend fun altSvcSnapshot(url: io.ktor.http.Url): List<AltSvcEntry> =
+        altSvcLock.withLock { config.http3.altSvcStore.get(originKey(url)) }
+
+    /** Under [altSvcLock]: the smoothed RTT of [origin]'s last HTTP/3 connection; internal for tests. */
+    internal fun rememberSrtt(
+        origin: String,
+        rtt: kotlin.time.Duration,
+    ) {
+        srtt.remove(origin)
+        srtt[origin] = rtt
+        srtt.evictEldest(AltSvcCache.MAX_ORIGINS)
+    }
+
+    /** The origins with a remembered RTT (tests). */
+    internal val srttOrigins: Int get() = srtt.size
 
     /** Whether an HTTP/3 connection to the origin of [url] is open (tests). */
     internal suspend fun hasH3Connection(url: io.ktor.http.Url): Boolean = h3.existing(H3Target(url.host, url.host, url.port)) != null
@@ -231,7 +256,7 @@ internal class KuicksilverEngine(
         network: String?,
     ): HttpResponseData {
         val url = data.url
-        val alt = altSvcLock.withLock { altSvc.h3For(url) }
+        val alt = altSvcUpdate { altSvc.h3For(url) }
         if (alt != null) {
             val altHost = alt.host ?: url.host
             val t = H3Target(url.host, altHost, alt.port)
@@ -241,7 +266,7 @@ internal class KuicksilverEngine(
                 if (r.version !=
                     HttpProtocolVersion.HTTP_3_0
                 ) {
-                    altSvcLock.withLock {
+                    altSvcUpdate {
                         altSvc.onResponse(
                             url,
                             r.statusCode.value,
@@ -251,7 +276,7 @@ internal class KuicksilverEngine(
                     }
                 }
                 if (r.statusCode.value != 421 || r.version != HttpProtocolVersion.HTTP_3_0) return r
-                altSvcLock.withLock { altSvc.remove(url) }
+                altSvcUpdate { altSvc.remove(url) }
                 if (!data.body.isReplayable()) {
                     throw H3BodyConsumed(
                         "421 Misdirected Request from the alternative, and the request body was already consumed",
@@ -260,7 +285,7 @@ internal class KuicksilverEngine(
             }
         }
         val r = h1.execute(data, callContext)
-        altSvcLock.withLock {
+        altSvcUpdate {
             altSvc.onResponse(url, r.statusCode.value, r.headers.getAll("Alt-Svc").orEmpty(), verifiedTls = url.protocol.isSecure())
         }
         return r
@@ -268,7 +293,8 @@ internal class KuicksilverEngine(
 
     /**
      * HTTP/3, falling back to HTTP/1.1 when it fails before the response headers: always if the request cannot have been
-     * sent, otherwise for idempotent methods only (as Chromium's `retry_without_alt_svc_on_quic_errors`).
+     * sent, otherwise for idempotent methods only (as Chromium's `retry_without_alt_svc_on_quic_errors`). A fallback that
+     * succeeds after a connection-level HTTP/3 failure marks the alternative broken (RFC 7838 section 2.4, [marksAlternativeBroken]).
      */
     private suspend fun h3WithFallback(
         target: H3Target,
@@ -285,21 +311,49 @@ internal class KuicksilverEngine(
         } catch (
             e: H3NotSent,
         ) {
-            h1.execute(data, callContext)
+            fallbackToH1(target, data, callContext, e)
         } catch (
             e: Throwable,
         ) {
             if (data.method.isIdempotent() && (e is QuicException || e is Http3Exception) &&
                 data.body.isReplayable()
             ) {
-                h1.execute(data, callContext)
+                fallbackToH1(target, data, callContext, e)
             } else {
                 throw e
             }
         } // a streamed body HTTP/3 consumed is never replayed
 
+    private suspend fun fallbackToH1(
+        target: H3Target,
+        data: HttpRequestData,
+        callContext: CoroutineContext,
+        h3Failure: Throwable,
+    ): HttpResponseData {
+        val r = h1.execute(data, callContext)
+        if (marksAlternativeBroken(h3Failure)) {
+            altSvcLock.withLock { brokenAltSvc.markBroken(originKey(data.url), "${target.host}:${target.port}") }
+        }
+        return r
+    }
+
     override fun toString(): String = "Kuicksilver"
 }
+
+/**
+ * Whether an HTTP/3 failure says the alternative itself does not work (RFC 7838 section 2.4): the connection could not be
+ * set up (handshake, transport) or failed as a whole. A single stream's reset, a malformed message, a refused request
+ * and a field section refused locally are about one exchange and leave the alternative usable.
+ */
+internal fun marksAlternativeBroken(e: Throwable): Boolean =
+    when (e) {
+        is H3NotSent -> e.cause !is Http3Exception.RequestNotProcessed
+        is QuicException.StreamError -> false
+        is QuicException -> true
+        is Http3Exception.Protocol -> e.streamId == null
+        is Http3Exception.Qpack, is Http3Exception.Settings -> true
+        else -> false
+    }
 
 /** RFC 9110 section 9.2.2. */
 internal fun HttpMethod.isIdempotent(): Boolean =

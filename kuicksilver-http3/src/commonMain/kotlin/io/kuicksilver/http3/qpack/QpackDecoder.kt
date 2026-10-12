@@ -32,7 +32,8 @@ internal class QpackDecoder(
     private val limits: QpackLimits = QpackLimits(),
 ) {
     private val table = DynamicTable(0)
-    private var pending = ByteArray(0) // an encoder-stream instruction cut by the transport
+    private val pend = QpackWriter(0) // an encoder-stream instruction cut by the transport, appended to as its bytes arrive
+    private var needed = 0 // the full length of the instruction in [pend] once known (0: parse again when more arrives)
     private val out = QpackWriter() // decoder-stream instructions not yet sent
     private val blocked = HashSet<Long>()
     private var knownReceived = 0L // inserts the encoder knows we have (acks + increments)
@@ -41,28 +42,56 @@ internal class QpackDecoder(
     val tableSize: Long get() = table.size
     val blockedCount: Int get() = blocked.size
 
+    /** Bytes the encoder-stream parser walked over plus bytes copied while reassembling (a test hook for the reassembly cost). */
+    internal var scannedBytes: Long = 0
+
+    /**
+     * Applies encoder-stream bytes as they arrive. An instruction cut by the transport is reassembled in linear time
+     * (RFC 9204 section 7.4): once its length is known from the string literal's prefix, bytes are only appended until it
+     * is complete; the parser never re-reads the accumulated prefix per fragment.
+     */
     fun onEncoderStream(
         bytes: ByteArray,
         off: Int,
         len: Int,
     ) {
-        val joined = pending.isNotEmpty()
-        val buf = if (joined) pending + bytes.copyOfRange(off, off + len) else bytes
-        val start = if (joined) 0 else off
-        val end = if (joined) buf.size else off + len
+        if (pend.size == 0) {
+            parseInstructions(bytes, off, off + len)
+            return
+        }
+        pend.writeBytes(bytes, off, len)
+        scannedBytes += len
+        if (pend.size < needed) return
+        val buf = pend.toByteArray()
+        pend.reset()
+        needed = 0
+        scannedBytes += buf.size
+        parseInstructions(buf, 0, buf.size)
+    }
+
+    private fun parseInstructions(
+        buf: ByteArray,
+        start: Int,
+        end: Int,
+    ) {
         val r = QpackReader(buf, start, end, Http3ErrorCode.QPACK_ENCODER_STREAM_ERROR)
         while (r.remaining > 0) {
             val mark = r.pos
+            r.instructionStart = mark
             try {
                 encoderInstruction(r)
+                scannedBytes += r.pos - mark
             } catch (t: QpackTruncated) {
+                scannedBytes += r.pos - mark
                 val rest = end - mark
-                if (rest > 2 * limits.maxStringLength + 64) r.fail("encoder-stream instruction above ${2 * limits.maxStringLength} bytes")
-                pending = buf.copyOfRange(mark, end)
+                val ceiling = 2 * limits.maxStringLength + 64
+                if (rest > ceiling || t.needed > ceiling) r.fail("encoder-stream instruction above ${2 * limits.maxStringLength} bytes")
+                pend.writeBytes(buf, mark, rest)
+                scannedBytes += rest
+                needed = t.needed
                 return
             }
         }
-        pending = ByteArray(0)
     }
 
     private fun encoderInstruction(r: QpackReader) {

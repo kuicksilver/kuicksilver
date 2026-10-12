@@ -98,8 +98,15 @@ class ClientFallbackTest {
             }
         }
 
-    /** A raw HTTP/3 server on the UDP side of [port] that fails every request after reading it (H3_INTERNAL_ERROR). */
-    private suspend fun CoroutineScope.failingH3(port: Int): Http3Endpoint {
+    /**
+     * A raw HTTP/3 server on the UDP side of [port] that fails every request after reading it (H3_INTERNAL_ERROR), except
+     * [okPaths] (200): by resetting the stream, or with [closeConnection] by closing the whole connection.
+     */
+    private suspend fun CoroutineScope.failingH3(
+        port: Int,
+        okPaths: Set<String> = emptySet(),
+        closeConnection: Boolean = false,
+    ): Http3Endpoint {
         val tls =
             tlsConfig(TlsRole.Server) {
                 alpn = listOf("h3")
@@ -123,7 +130,12 @@ class ClientFallbackTest {
                     launch {
                         runCatching {
                             while (true) {
-                                conn.acceptRequest().reset(Http3ErrorCode.INTERNAL_ERROR)
+                                val r = conn.acceptRequest()
+                                when {
+                                    r.path in okPaths -> r.respond(200).finish()
+                                    closeConnection -> conn.close(Http3ErrorCode.INTERNAL_ERROR, "failing")
+                                    else -> r.reset(Http3ErrorCode.INTERNAL_ERROR)
+                                }
                             }
                         }
                     }
@@ -132,6 +144,89 @@ class ClientFallbackTest {
         }
         return ep
     }
+
+    /** Both setups fail: the h1 failure of the race is the result; the engine does not open a second TCP connection. */
+    @Test fun raceFailureMakesOneH1Attempt() =
+        clientTest {
+            var accepts = 0
+            val selector = io.ktor.network.selector.SelectorManager(kotlinx.coroutines.Dispatchers.Default)
+            val listener = io.ktor.network.sockets.aSocket(selector).tcp().bind("127.0.0.1", 0)
+            val port = (listener.localAddress as InetSocketAddress).port
+            kotlinx.coroutines.coroutineScope {
+                val acceptor =
+                    launch {
+                        while (true) {
+                            val s = listener.accept() // nobody listens on UDP; TCP accepts and closes at once
+                            accepts++
+                            s.close()
+                        }
+                    }
+                try {
+                    testClient(Http3DiscoveryMode.Auto, engine = {
+                        http3 { quicHints = setOf(HostPort("127.0.0.1", port)) }
+                        quic = quicConfig { handshakeTimeout = 500.milliseconds }
+                    }).use { c ->
+                        assertFailsWith<Throwable> { c.get("https://127.0.0.1:$port/") }
+                    }
+                    delay(200) // a second attempt, if any, would arrive right after the failure
+                    assertEquals(1, accepts, "one h1 attempt: the race's")
+                } finally {
+                    acceptor.cancel()
+                    listener.close()
+                    selector.close()
+                }
+            }
+        }
+
+    /** HTTP/3 failed at connection level while HTTP/1.1 served the request: the alternative is marked broken (RFC 7838 section 2.4). */
+    @Test fun h3FailureWithH1SuccessMarksBroken() =
+        clientTest {
+            val (server, port) = testServer(configure = { http3 = false }) { routing { get("/") { call.respondText("h1") } } }
+            kotlinx.coroutines.coroutineScope {
+                val ep = failingH3(port, closeConnection = true)
+                try {
+                    testClient(Http3DiscoveryMode.Preferred).use { c ->
+                        // the first request may be won by HTTP/1.1 outright; the HTTP/3 setup outlives the race and serves the next one
+                        assertEquals(HttpProtocolVersion.HTTP_1_1, c.get("https://127.0.0.1:$port/").version)
+                        val engine = c.engine as KuicksilverEngine
+                        kotlinx.coroutines.withTimeout(
+                            5.seconds,
+                        ) { while (!engine.hasH3Connection(io.ktor.http.Url("https://127.0.0.1:$port/"))) delay(20) }
+                        assertEquals(HttpProtocolVersion.HTTP_1_1, c.get("https://127.0.0.1:$port/").version)
+                        assertTrue(engine.brokenAltSvc.isBroken("https://127.0.0.1:$port", "127.0.0.1:$port"))
+                    }
+                } finally {
+                    ep.close()
+                    server.stop(100, 500)
+                    coroutineContext[kotlinx.coroutines.Job]?.children?.forEach { it.cancel() }
+                }
+            }
+        }
+
+    /** A single stream reset on a working HTTP/3 connection falls back for that request but does not mark the alternative broken. */
+    @Test fun streamErrorDoesNotMarkAlternativeBroken() =
+        clientTest {
+            val (server, port) = testServer(configure = { http3 = false }) { routing { get("/") { call.respondText("h1") } } }
+            kotlinx.coroutines.coroutineScope {
+                val ep = failingH3(port, okPaths = setOf("/warmup"))
+                try {
+                    testClient(Http3DiscoveryMode.Preferred).use { c ->
+                        val engine = c.engine as KuicksilverEngine
+                        // the first request may be won by HTTP/1.1 outright; wait for the HTTP/3 connection the race left behind
+                        c.get("https://127.0.0.1:$port/warmup")
+                        kotlinx.coroutines.withTimeout(
+                            5.seconds,
+                        ) { while (!engine.hasH3Connection(io.ktor.http.Url("https://127.0.0.1:$port/"))) delay(20) }
+                        assertEquals(HttpProtocolVersion.HTTP_1_1, c.get("https://127.0.0.1:$port/").version)
+                        assertTrue(!engine.brokenAltSvc.isBroken("https://127.0.0.1:$port", "127.0.0.1:$port"), "a stream reset is no broken alternative")
+                    }
+                } finally {
+                    ep.close()
+                    server.stop(100, 500)
+                    coroutineContext[kotlinx.coroutines.Job]?.children?.forEach { it.cancel() }
+                }
+            }
+        }
 
     @Test fun idempotentRetriedOnH1() =
         clientTest {
@@ -174,10 +269,11 @@ class ClientFallbackTest {
                     }
                 }
             kotlinx.coroutines.coroutineScope {
-                val ep = failingH3(port)
+                val ep = failingH3(port, okPaths = setOf("/warmup"))
                 try {
                     testClient(Http3DiscoveryMode.Preferred).use { c ->
-                        // set up the HTTP/3 connection first (the first request may race to HTTP/1.1), so the POST goes over HTTP/3
+                        // set up the HTTP/3 connection first (the first request may race to HTTP/1.1), so the POST goes over HTTP/3;
+                        // the warm-up must succeed over HTTP/3: a fallback would mark the alternative broken and route the POST to HTTP/1.1
                         runCatching { c.get("https://127.0.0.1:$port/warmup") }
                         val engine = c.engine as KuicksilverEngine
                         kotlinx.coroutines.withTimeout(
@@ -233,6 +329,10 @@ class ClientFallbackTest {
                                 runCatching {
                                     while (true) {
                                         val r = conn.acceptRequest()
+                                        if (r.path == "/warmup") {
+                                            launch { runCatching { r.respond(200).finish() } }
+                                            continue
+                                        }
                                         launch {
                                             runCatching {
                                                 val b = ByteArray(65_536)

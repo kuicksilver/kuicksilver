@@ -13,19 +13,122 @@ import io.kuicksilver.http3.Http3Request
 import io.kuicksilver.http3.QuicPair
 import io.kuicksilver.http3.frame.FrameHeaders
 import io.kuicksilver.http3.frame.FrameType
+import io.kuicksilver.http3.http3Settings
 import io.kuicksilver.http3.readAllBytes
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.QuicException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.seconds
 
 class LimitsTest {
     @BeforeTest fun load() = KslLoader.ensureLoaded()
+
+    /** A field section above the peer's SETTINGS_MAX_FIELD_SECTION_SIZE fails locally, before a stream is opened (RFC 9114 section 4.2.2). */
+    @Test fun peerMaxFieldSectionSizeEnforcedOnSend() =
+        h3Test {
+            H3Pair.open(serverSettings = http3Settings { maxFieldSectionSize = 1000 }).use { p ->
+                withTimeout(5.seconds) { p.client.peerSettings.first { it != null } }
+                val e =
+                    assertFailsWith<Http3Exception.FieldSectionTooLarge> {
+                        p.client.request(get(headers = Http3Headers.of("x-big" to "v".repeat(2000))))
+                    }
+                assertEquals(1000L, e.limit)
+                val server = launch { p.server.acceptRequest().respond(204).finish() }
+                val ok = p.client.request(get())
+                assertEquals(204, ok.status)
+                assertEquals(0L, ok.streamId, "the refused request opened no stream")
+                server.join()
+            }
+        }
+
+    /** The server's response above the client's SETTINGS_MAX_FIELD_SECTION_SIZE fails `respond` instead of being sent. */
+    @Test fun responseAbovePeerLimitFailsRespond() =
+        h3Test {
+            H3Pair.open(clientSettings = http3Settings { maxFieldSectionSize = 1000 }).use { p ->
+                withTimeout(5.seconds) { p.server.peerSettings.first { it != null } }
+                val resp = async { runCatching { p.client.request(get()) } }
+                val r = p.server.acceptRequest()
+                val e =
+                    assertFailsWith<Http3Exception.FieldSectionTooLarge> {
+                        r.respond(200, Http3Headers.of("x-big" to "v".repeat(2000)))
+                    }
+                assertEquals(1000L, e.limit)
+                assertTrue(resp.await().isFailure, "the client never got the oversized response")
+            }
+        }
+
+    /** Server trailers above the client's limit reset the stream (H3_INTERNAL_ERROR) instead of leaving it half-open. */
+    @Test fun trailersAbovePeerLimitResetTheStream() =
+        h3Test {
+            H3Pair.open(clientSettings = http3Settings { maxFieldSectionSize = 1000 }).use { p ->
+                withTimeout(5.seconds) { p.server.peerSettings.first { it != null } }
+                val resp = async { p.client.request(get()) }
+                val r = p.server.acceptRequest()
+                val w = r.respond(200)
+                w.output.writeFully("hello".encodeToByteArray())
+                w.output.flush()
+                val e =
+                    assertFailsWith<Http3Exception.FieldSectionTooLarge> {
+                        w.finish(Http3Headers.of("x-big" to "v".repeat(2000)))
+                    }
+                assertEquals(1000L, e.limit)
+                val body = withTimeout(5.seconds) { runCatching { resp.await().body.readAllBytes() } }
+                assertTrue(body.isFailure, "the client saw a complete body ${body.getOrNull()?.decodeToString()}")
+            }
+        }
+
+    /** Request trailers above the server's limit: the caller of `request` or of the response body sees FieldSectionTooLarge. */
+    @Test fun requestTrailersAbovePeerLimitReachTheCaller() =
+        h3Test {
+            H3Pair.open(serverSettings = http3Settings { maxFieldSectionSize = 1000 }).use { p ->
+                withTimeout(5.seconds) { p.client.peerSettings.first { it != null } }
+                fun post(before: CompletableDeferred<Unit>? = null) =
+                    Http3Request("POST", authority = "server.test", path = "/", body = ByteReadChannel("ping"), trailers = {
+                        before?.await()
+                        Http3Headers.of("x-big" to "v".repeat(2000))
+                    })
+                // the server waits for the whole request before it answers: `request` fails
+                val waits =
+                    launch {
+                        val r = p.server.acceptRequest()
+                        runCatching { r.body.readAllBytes() }
+                        runCatching { r.respond(200).finish() }
+                    }
+                val e1 = withTimeout(5.seconds) { runCatching { p.client.request(post()) }.exceptionOrNull() }
+                assertTrue(e1 is Http3Exception.FieldSectionTooLarge, "request() failed with $e1")
+                waits.join()
+                // the server answers first (the trailers wait for it): the response body fails
+                val responded = CompletableDeferred<Unit>()
+                val answers =
+                    launch {
+                        val r = p.server.acceptRequest()
+                        val w = r.respond(200)
+                        responded.complete(Unit)
+                        runCatching { r.body.readAllBytes() }
+                        runCatching { w.finish() }
+                    }
+                val e2 =
+                    withTimeout(5.seconds) {
+                        runCatching {
+                            val resp = p.client.request(post(responded))
+                            resp.body.readAllBytes()
+                            resp.trailers.await()
+                        }.exceptionOrNull()
+                    }
+                assertTrue(e2 is Http3Exception.FieldSectionTooLarge, "the response failed with $e2")
+                answers.join()
+            }
+        }
 
     private val big = (0 until 7).map { "x-big-$it" to "v".repeat(10_000) } // 7 x 10039 = 70273 decoded bytes > 65536
 
@@ -70,41 +173,56 @@ class LimitsTest {
             }
         }
 
+    /** Receive side: a raw client (which ignores our SETTINGS) sends 70 KiB of trailers; a compliant sender refuses them first. */
     @Test fun negative_h3TrailersTooLarge() =
         h3Test {
-            H3Pair.open().use { p ->
-                launch {
-                    val r = p.server.acceptRequest()
-                    val e =
-                        runCatching {
-                            r.body.readAllBytes()
-                            r.trailers.await()
-                        }.exceptionOrNull()
-                    assertTrue(e is Http3Exception.FieldSectionTooLarge, "got $e")
-                }
-                val resp =
+            QuicPair.open().use { q ->
+                val (c, s) = q.connect()
+                val server = Http3Connection.server(s)
+                val raw = RawPeer(c)
+                raw.openControl()
+                val st = c.openBidi()
+                val post = listOf(":method" to "POST", ":scheme" to "https", ":authority" to "server.test", ":path" to "/")
+                st.output.writeFully(raw.headers(st.id, post) + raw.data("x".encodeToByteArray()) + raw.headers(st.id, big))
+                st.output.flushAndClose()
+                val r = server.acceptRequest()
+                val e =
                     runCatching {
-                        p.client.request(
-                            Http3Request("POST", authority = "server.test", path = "/", body = ByteReadChannel("x"), trailers = {
-                                Http3Headers(big)
-                            }),
-                        )
-                    }
+                        r.body.readAllBytes()
+                        r.trailers.await()
+                    }.exceptionOrNull()
+                assertTrue(e is Http3Exception.FieldSectionTooLarge, "got $e")
                 // the server answers 431 or stops the stream; either way the client does not see a 2xx
-                assertTrue(resp.isFailure || resp.getOrThrow().status == 431, "got $resp")
+                val resp = runCatching { st.input.readAllBytes() }.getOrNull()
+                if (resp != null && resp.isNotEmpty()) {
+                    val h = FrameHeaders.parse(resp, 0, resp.size)!!
+                    val fields =
+                        io.kuicksilver.http3.qpack.QpackDecoder(0, 0, 65_536).decode(
+                            st.id,
+                            resp.copyOfRange(h.headerSize, h.headerSize + h.length.toInt()),
+                        )
+                    assertEquals(":status" to "431", (fields as io.kuicksilver.http3.qpack.DecodeResult.Decoded).fields.first())
+                }
             }
         }
 
+    /** Receive side: a raw server (which ignores our SETTINGS) answers with 70 KiB of fields; a compliant sender refuses them first. */
     @Test fun responseHeadersTooLargeOnClient() =
         h3Test {
-            H3Pair.open().use { p ->
+            QuicPair.open().use { q ->
+                val (c, s) = q.connect()
+                val client = Http3Connection.client(c)
+                val raw = RawPeer(s)
+                raw.openControl()
                 launch {
-                    p.server
-                        .acceptRequest()
-                        .respond(200, Http3Headers(big))
-                        .finish()
+                    val st = s.acceptBidi()
+                    runCatching {
+                        st.input.readAllBytes()
+                        st.output.writeFully(raw.headers(st.id, listOf(":status" to "200") + big))
+                        st.output.flushAndClose()
+                    }
                 }
-                assertFailsWith<Http3Exception.FieldSectionTooLarge> { p.client.request(get()) }
+                assertFailsWith<Http3Exception.FieldSectionTooLarge> { client.request(get()) }
             }
         }
 
