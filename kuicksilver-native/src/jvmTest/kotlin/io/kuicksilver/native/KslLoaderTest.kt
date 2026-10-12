@@ -8,6 +8,7 @@ import io.kuicksilver.annotations.InternalKuicksilverApi
 import java.io.File
 import java.nio.file.Files
 import java.nio.file.attribute.PosixFilePermission
+import java.util.concurrent.TimeUnit
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -58,6 +59,52 @@ class KslLoaderTest {
         val dir = JvmLoader.privateWorkDir()
         val perms = Files.getPosixFilePermissions(dir.toPath())
         assertTrue(PosixFilePermission.GROUP_READ !in perms && PosixFilePermission.OTHERS_READ !in perms, perms.toString())
+    }
+
+    /** A symlink at the work directory (planted by another user of the shared temp directory) is refused, whatever it points to. */
+    @Test fun negative_workdirSymlinkRefused() {
+        val real = Files.createTempDirectory("ksl-workdir-real").toFile().apply { deleteOnExit() }
+        val link = File(real.parentFile, real.name + "-link").apply { deleteOnExit() }
+        Files.createSymbolicLink(link.toPath(), real.toPath())
+        val e = assertFailsWith<KslException.NativeLoad> { JvmLoader.privateWorkDir(mapOf("kuicksilver.native.workdir" to link.path)) }
+        assertTrue(e.reason.contains("symbolic link"), e.reason)
+    }
+
+    /** A directory owned by someone else is refused: its owner could swap the library between the hash check and System.load. */
+    @Test fun negative_workdirForeignOwnerRefused() {
+        val dir = Files.createTempDirectory("ksl-workdir-owner").toFile().apply { deleteOnExit() }
+        val root =
+            dir
+                .toPath()
+                .fileSystem.userPrincipalLookupService
+                .lookupPrincipalByName("root")
+        val e = assertFailsWith<KslException.NativeLoad> { JvmLoader.checkWorkDir(dir.toPath(), root) }
+        assertTrue(e.reason.contains("owned by"), e.reason)
+        JvmLoader.checkWorkDir(dir.toPath()) // our own directory passes
+    }
+
+    /** A file in the work directory is not deleted when a JVM exits: another JVM may have just verified it and be about to load it. */
+    @Test fun sharedLibrarySurvivesOtherJvmExit() {
+        val dir = Files.createTempDirectory("ksl-workdir-shared").toFile().apply { deleteOnExit() }
+        val javaBin =
+            ProcessHandle
+                .current()
+                .info()
+                .command()
+                .orElseThrow()
+        val p =
+            ProcessBuilder(
+                javaBin,
+                "-cp",
+                System.getProperty("java.class.path"),
+                "-Dkuicksilver.native.workdir=" + dir.path,
+                "io.kuicksilver.native.ChildLoadMain",
+            ).redirectErrorStream(true).start()
+        val out = p.inputStream.bufferedReader().readText()
+        assertTrue(p.waitFor(60, TimeUnit.SECONDS) && p.exitValue() == 0, "child JVM loaded the library: $out")
+        assertTrue(out.contains("loaded abi $KSL_ABI_VERSION"), out)
+        val lib = File(dir, JvmNativeNames.libraryFileName())
+        assertTrue(lib.isFile, "the shared library is still there after the other JVM exited: ${dir.list()?.toList()}")
     }
 
     @Test fun duplicateResourceWithDifferentHashIsRefused() {

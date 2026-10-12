@@ -19,6 +19,12 @@ if (!KslLoader.isAvailable()) fallBackToTcp()   // never throws; the outcome is 
 `AbiMismatch`, with the original exception as `cause`. The check makes the same single load attempt as
 `KslLoader.ensureLoaded()`; after a failure, `ensureLoaded()` throws that same exception without retrying.
 
+On the JVM the library is extracted once into `<java.io.tmpdir>/kuicksilver-native-<user>` (or
+`-Dkuicksilver.native.workdir=<dir>`, for a `noexec` temp directory) and verified against the jar's SHA-256 manifest on
+every start. The directory must be a real directory that you own and that nobody else can write (the loader applies
+`rwx------`); a symbolic link, another owner or permissions that cannot be removed give `IntegrityMismatch`. The file is
+kept between runs and shared between JVMs of the same user: its name carries the `ksl` ABI version.
+
 ## Configuration
 
 A `TlsConfig` is immutable; build it with the `tlsConfig` DSL. A client needs a server name (its reference identifier)

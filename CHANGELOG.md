@@ -15,6 +15,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 Nothing has been released yet. This section summarises the development of the first 0.x version.
 
 ### Fixed
+- `KslLoader` (JVM) refuses a work directory that is a symbolic link, not a directory, owned by another user or not private to it (`IntegrityMismatch`), and no longer deletes the extracted, verified library on exit, so a second JVM that shares the directory is not pulled from under its own `System.load`.
 - `ksl`: `KSL_OPT_CLIENT_CERT` is refused on a client context (it rewrote `SSL_CTX_set_verify` and switched server verification off); `KSL_OPT_VERIFY_MODE` and `KSL_OPT_CLIENT_CERT` reject values outside 0..2.
 - `ksl`: setting the verify name a second time with the other identifier type (host after IP literal or the reverse) clears the previous one instead of checking both.
 - `keylogFile(path)` refuses a symlink, a non-regular file, a file of another user or a file system without POSIX permissions, tightens an existing file to 0600 and reopens it without following links for every line (threat model section 3.7).
