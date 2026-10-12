@@ -290,8 +290,10 @@ internal class ServerRequestImpl(
         headers: Http3Headers,
     ) {
         validateFields(headers)
+        val fields = PseudoHeaders.buildResponse(status, headers)
+        session.checkPeerFieldLimit(st.id, fields)
         try {
-            st.output.writeFrame(FrameType.HEADERS, session.qpack.encode(st.id, PseudoHeaders.buildResponse(status, headers)))
+            st.output.writeFrame(FrameType.HEADERS, session.qpack.encode(st.id, fields))
         } catch (
             e: CancellationException,
         ) {
@@ -351,7 +353,10 @@ internal class ResponseWriterImpl(
         channel.closedCause?.let { throw session.map(it) }
         withContext(session.dispatcher) {
             try {
-                if (trailers != null) st.output.writeFrame(FrameType.HEADERS, session.qpack.encode(st.id, trailers.fields))
+                if (trailers != null) {
+                    session.checkPeerFieldLimit(st.id, trailers.fields)
+                    st.output.writeFrame(FrameType.HEADERS, session.qpack.encode(st.id, trailers.fields))
+                }
                 st.output.flushAndClose()
             } catch (
                 e: CancellationException,

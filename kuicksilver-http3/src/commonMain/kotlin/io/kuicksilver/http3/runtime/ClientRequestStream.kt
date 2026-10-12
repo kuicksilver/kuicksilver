@@ -98,6 +98,8 @@ internal suspend fun H3Session.request(
                     n !in FieldValidator.CONNECTION_SPECIFIC,
             ) { "invalid request field '$n'" }
         }
+        // before a stream is opened: a refused section costs no stream credit (the id is not known yet: -1)
+        checkPeerFieldLimit(-1, PseudoHeaders.buildRequest(r))
         val st =
             try {
                 quic.openBidi(r.priority ?: StreamPriority.Default)
@@ -293,6 +295,7 @@ private suspend fun H3Session.sendBody(
                     !n.startsWith(':') && FieldValidator.checkName(n) == null && FieldValidator.checkValue(v) == null,
                 ) { "invalid trailer field '$n'" }
             }
+            checkPeerFieldLimit(st.id, t.fields) // refused: the stream is reset with H3_REQUEST_CANCELLED below
             st.output.writeFrame(FrameType.HEADERS, qpack.encode(st.id, t.fields))
         }
         st.output.flushAndClose()

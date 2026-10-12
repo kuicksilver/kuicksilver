@@ -22,6 +22,7 @@ import io.kuicksilver.http3.frame.VarInt
 import io.kuicksilver.http3.message.GlitchLimiter
 import io.kuicksilver.http3.message.PriorityField
 import io.kuicksilver.http3.qpack.QpackError
+import io.kuicksilver.http3.qpack.entrySize
 import io.kuicksilver.quic.Initiator
 import io.kuicksilver.quic.PathEvent
 import io.kuicksilver.quic.QuicConnection
@@ -331,6 +332,23 @@ internal class H3Session(
             }
 
             else -> {}
+        }
+    }
+
+    /**
+     * Throws [Http3Exception.FieldSectionTooLarge] when [fields] (pseudo-headers included) exceed the peer's
+     * `SETTINGS_MAX_FIELD_SECTION_SIZE`, counted as name + value + 32 per field (RFC 9114 section 4.2.2): the peer would
+     * refuse it anyway. No limit is known before the peer's SETTINGS arrive.
+     */
+    fun checkPeerFieldLimit(
+        streamId: Long,
+        fields: List<Pair<String, String>>,
+    ) {
+        val limit = peerSettings.value?.maxFieldSectionSize ?: return
+        var size = 0L
+        for ((n, v) in fields) {
+            size += entrySize(n, v)
+            if (size > limit) throw Http3Exception.FieldSectionTooLarge(streamId, limit)
         }
     }
 

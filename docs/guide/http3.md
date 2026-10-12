@@ -51,7 +51,7 @@ Failures surface as `Http3Exception`:
 | `Http3Exception.Qpack(code)` | a QPACK error (0x200-0x202) |
 | `Http3Exception.RequestNotProcessed(retrySafe)` | the server did not process the request (`GOAWAY`, `H3_REQUEST_REJECTED`); safe to retry on a new connection |
 | `Http3Exception.MessageError(streamId, reason)` | the peer's message on this stream was malformed |
-| `Http3Exception.FieldSectionTooLarge(streamId, limit)` | headers or trailers above `maxFieldSectionSize` once decoded |
+| `Http3Exception.FieldSectionTooLarge(streamId, limit)` | headers or trailers above `maxFieldSectionSize` once decoded, or above the peer's limit when sending (`streamId` -1: no stream was opened) |
 | `Http3Exception.Settings(message)` | an operation needs a setting the peer did not send (Extended CONNECT) |
 | `Http3Exception.ConnectRejected(status, headers)` | Extended CONNECT answered with a non-2xx status |
 
@@ -120,7 +120,9 @@ stream is retired as soon as the client's FIN or reset arrives, so unread upload
 names and values are octets: a character above U+00FF is rejected rather than truncated. A response to HEAD may carry
 a `content-length` without a body. A request whose header
 section is above `maxFieldSectionSize` once decoded is answered with 431 and `STOP_SENDING H3_EXCESSIVE_LOAD` by the
-connection itself. `request.remoteAddress` follows the client's path when it migrates.
+connection itself. The other way round, a section above the peer's `SETTINGS_MAX_FIELD_SECTION_SIZE` is never sent:
+`request` fails with `FieldSectionTooLarge` before it opens a stream, `respond` and `finish(trailers)` fail before
+writing. `request.remoteAddress` follows the client's path when it migrates.
 
 ## Shutdown and GOAWAY
 

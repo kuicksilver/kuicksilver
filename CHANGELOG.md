@@ -88,6 +88,9 @@ K7 (0.2.0), HTTP/3 and the Ktor engines:
   they pass unchanged).
 - Ktor server: a `tlsConnector` with a `sniSelector` and HTTP/3 on failed to start with `TlsException.Config`; it now
   serves HTTP/1.1 and skips HTTP/3 with a warning (no `Alt-Svc`), as on a platform without a QUIC server.
+- HTTP/3: the peer's `SETTINGS_MAX_FIELD_SECTION_SIZE` is honoured when sending (RFC 9114 section 4.2.2): a request
+  above it fails with `Http3Exception.FieldSectionTooLarge` before a stream is opened, response headers and trailers
+  above it fail `respond`/`finish`, request trailers reset the stream — instead of being sent for the peer to refuse.
 - Ktor client: a non-idempotent request that failed on a pooled HTTP/1.1 connection the server had closed is no
   longer sent again (RFC 9112 section 9.3.1); only idempotent requests get the transparent retry, and connections
   already closed for reading are dropped when taken from the pool.
