@@ -3,7 +3,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // Adapted from Ktor 3.6.0 ktor-server/ktor-server-test-base (BaseTest, EngineTestBase, EngineTestBaseJvm): the server under test
 // is embeddedServer(Kuicksilver) with a cleartext and a TLS connector (HTTP/1.1 + HTTP/3 on the TLS port); the client is
-// HttpClient(Kuicksilver) with the test CA, over HTTP/1.1 (cleartext and TLS) or HTTP/3 depending on [protocol].
+// HttpClient(Kuicksilver) with the test CA, over HTTP/1.1 (cleartext and TLS) or HTTP/3 depending on [protocol]. Common code, so
+// the suites run on every target; the JVM reads Ktor's @Http1Only/@Http2Only markers by reflection (testMarkers).
 package io.kuicksilver.ktor.server.contract
 
 import io.ktor.client.HttpClient
@@ -28,19 +29,20 @@ import io.ktor.util.logging.Logger
 import io.kuicksilver.ktor.client.Http3DiscoveryMode
 import io.kuicksilver.ktor.server.KuicksilverApplicationEngine
 import io.kuicksilver.ktor.server.TestCerts
+import io.kuicksilver.ktor.server.quicServerSupported
 import io.kuicksilver.tls.Certificate
 import io.kuicksilver.tls.TlsIdentity
 import io.kuicksilver.tls.TrustConfig
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
-import org.junit.jupiter.api.Assumptions.assumeTrue
-import java.net.InetSocketAddress
-import java.net.Socket
-import java.util.Collections
+import kotlin.concurrent.atomics.AtomicReference
+import kotlin.concurrent.atomics.ExperimentalAtomicApi
+import kotlin.concurrent.atomics.update
 import kotlin.coroutines.CoroutineContext
 import kotlin.coroutines.EmptyCoroutineContext
 import kotlin.test.AfterTest
@@ -48,6 +50,12 @@ import kotlin.test.BeforeTest
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 import io.kuicksilver.ktor.client.Kuicksilver as KuicksilverClient
+
+/** The `@Http1Only`/`@Http2Only` markers of the running test method: read by reflection on the JVM, none elsewhere. */
+internal expect fun EngineTestBase<*, *>.testMarkers(): Set<String>
+
+/** Skips the running test: a JUnit assumption on the JVM (reported as skipped); elsewhere the test passes without running. */
+internal expect fun skipTest(reason: String)
 
 /** How the suite talks to the server. */
 enum class ContractProtocol { H1, H3 }
@@ -60,6 +68,7 @@ class ExpectedTestException(
 val DEFAULT_TEST_TIMEOUT: Duration = 1.seconds * 60
 const val DEFAULT_RETRIES: Int = 1
 
+@OptIn(ExperimentalAtomicApi::class)
 abstract class EngineTestBase<TEngine : ApplicationEngine, TConfiguration : ApplicationEngine.Configuration>(
     val applicationEngineFactory: ApplicationEngineFactory<TEngine, TConfiguration>,
 ) : CoroutineScope {
@@ -71,11 +80,11 @@ abstract class EngineTestBase<TEngine : ApplicationEngine, TConfiguration : Appl
 
     @Target(AnnotationTarget.FUNCTION)
     @Retention
-    protected annotation class Http2Only
+    annotation class Http2Only
 
     @Target(AnnotationTarget.FUNCTION)
     @Retention
-    protected annotation class Http1Only
+    annotation class Http1Only
 
     protected var port: Int = 0
     protected var sslPort: Int = 0
@@ -86,10 +95,10 @@ abstract class EngineTestBase<TEngine : ApplicationEngine, TConfiguration : Appl
     val testLog: Logger = KtorSimpleLogger("io.kuicksilver.test.EngineTestBase")
     open val timeout: Duration = DEFAULT_TEST_TIMEOUT
 
-    private val unhandled = Collections.synchronizedList(ArrayList<Throwable>())
+    private val unhandled = AtomicReference(emptyList<Throwable>())
 
     fun collectUnhandledException(error: Throwable) {
-        unhandled += error
+        unhandled.update { it + error }
     }
 
     @BeforeTest open fun beforeTest() {}
@@ -102,37 +111,32 @@ abstract class EngineTestBase<TEngine : ApplicationEngine, TConfiguration : Appl
         }
     }
 
-    /** Ktor's `runTest`: real time, a timeout, retries; skips `@Http2Only` and, over HTTP/3, `@Http1Only` tests. */
+    /**
+     * Ktor's `runTest`: real time, a timeout, retries. Skips `@Http2Only` tests ([http2Only] in common code), `@Http1Only`
+     * ones ([http1Only]) over HTTP/3, and the HTTP/3 suites where no QUIC server can run (Native without the accelerated
+     * UDP transport, ADR-0006).
+     */
     fun runTest(
         timeout: Duration = this.timeout,
         retries: Int = DEFAULT_RETRIES,
+        http1Only: Boolean = false,
+        http2Only: Boolean = false,
         block: suspend CoroutineScope.() -> Unit,
     ) {
-        val method = currentTestMethod()
-        if (method?.isAnnotationPresent(Http2Only::class.java) == true) assumeTrue(false, "HTTP/2 is not offered by Kuicksilver")
-        if (method?.isAnnotationPresent(Http1Only::class.java) == true) assumeTrue(protocol == ContractProtocol.H1, "HTTP/1.1-only test")
+        val markers = testMarkers()
+        if (http2Only || "Http2Only" in markers) return skipTest("HTTP/2 is not offered by Kuicksilver")
+        if ((http1Only || "Http1Only" in markers) && protocol != ContractProtocol.H1) return skipTest("HTTP/1.1-only test")
+        if (protocol == ContractProtocol.H3 && !runBlocking { quicServerSupported() }) return skipTest("no QUIC server here")
         var last: Throwable? = null
         for (attempt in 0..retries) {
-            unhandled.clear()
+            unhandled.store(emptyList())
             last = runCatching { runBlocking { withTimeout(timeout) { withContext(Dispatchers.IO) { block() } } } }.exceptionOrNull()
-                ?: unhandled.firstOrNull()?.let { AssertionError("unhandled server exception", it) }
+                ?: unhandled.load().firstOrNull()?.let { AssertionError("unhandled server exception", it) }
             if (last == null) return
             server?.stop(0, 500)
             server = null
         }
         throw last!!
-    }
-
-    private fun currentTestMethod(): java.lang.reflect.Method? {
-        val names =
-            Thread
-                .currentThread()
-                .stackTrace
-                .map { it.methodName }
-                .toSet()
-        return generateSequence<Class<*>>(javaClass) { it.superclass }
-            .flatMap { it.declaredMethods.asSequence() }
-            .firstOrNull { it.name in names && it.isAnnotationPresent(kotlin.test.Test::class.java) }
     }
 
     protected open fun createServer(
@@ -255,15 +259,6 @@ abstract class EngineTestBase<TEngine : ApplicationEngine, TConfiguration : Appl
                     this.url.takeFrom(url)
                     builder()
                 }.execute { block(it, port) }
-        }
-    }
-
-    protected inline fun socket(block: Socket.() -> Unit) {
-        Socket().use { socket ->
-            socket.tcpNoDelay = true
-            socket.soTimeout = timeout.inWholeMilliseconds.toInt()
-            socket.connect(InetSocketAddress("127.0.0.1", port))
-            block(socket)
         }
     }
 }

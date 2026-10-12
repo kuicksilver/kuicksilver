@@ -3,6 +3,7 @@
 package io.kuicksilver.ktor.server
 
 import io.ktor.network.selector.SelectorManager
+import io.ktor.network.sockets.InetSocketAddress
 import io.ktor.network.sockets.Socket
 import io.ktor.network.sockets.aSocket
 import io.ktor.network.sockets.openReadChannel
@@ -12,7 +13,11 @@ import io.ktor.server.engine.EmbeddedServer
 import io.ktor.server.engine.embeddedServer
 import io.ktor.utils.io.readAvailable
 import io.ktor.utils.io.writeStringUtf8
+import io.kuicksilver.http3.Http3Endpoint
 import io.kuicksilver.ktor.network.tls
+import io.kuicksilver.quic.QuicEndpoint
+import io.kuicksilver.quic.QuicEndpointConfig
+import io.kuicksilver.quic.QuicServerConfig
 import io.kuicksilver.tls.Certificate
 import io.kuicksilver.tls.TlsConfig
 import io.kuicksilver.tls.TlsIdentity
@@ -99,3 +104,36 @@ internal suspend fun rawHttp(
 }
 
 internal fun serverTest(block: suspend () -> Unit) = runBlocking { withTimeout(60.seconds) { block() } }
+
+private var quicServerProbe: Boolean? = null
+
+/**
+ * Whether a QUIC server can run here: the JVM and Android always, Kotlin/Native where the accelerated UDP transport exists
+ * (ADR-0006). Learned once by binding a server endpoint the way the engine does, so the HTTP/3 tests turn on by themselves
+ * on every platform that gains a QUIC server.
+ */
+internal suspend fun quicServerSupported(): Boolean =
+    quicServerProbe ?: run {
+        val config =
+            QuicEndpointConfig
+                .Builder()
+                .apply {
+                    server =
+                        QuicServerConfig
+                            .Builder(
+                                tlsConfig(TlsRole.Server) {
+                                    identity = ServerFixtures.identity()
+                                    alpn = listOf(Http3Endpoint.H3)
+                                },
+                            ).build()
+                }.build()
+        try {
+            QuicEndpoint.bind(InetSocketAddress("127.0.0.1", 0), config).closeAndJoin()
+            true
+        } catch (_: UnsupportedOperationException) {
+            false
+        }
+    }.also { quicServerProbe = it }
+
+/** A [serverTest] that needs the HTTP/3 listener: it passes without running where no QUIC server can run. */
+internal fun h3ServerTest(block: suspend () -> Unit) = serverTest { if (quicServerSupported()) block() }

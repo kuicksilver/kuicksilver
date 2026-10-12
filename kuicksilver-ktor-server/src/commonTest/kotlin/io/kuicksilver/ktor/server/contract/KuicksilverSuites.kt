@@ -22,11 +22,11 @@ class KuicksilverH3HttpServerCommonTest : HttpServerCommonTestSuite<E, C>(Kuicks
     @BeforeTest fun load() = KslLoader.ensureLoaded()
 }
 
-class KuicksilverH1ContentTest : ContentTestSuite<E, C>(Kuicksilver) {
+class KuicksilverH1PortableContentTest : PortableContentTestSuite<E, C>(Kuicksilver) {
     @BeforeTest fun load() = KslLoader.ensureLoaded()
 }
 
-class KuicksilverH3ContentTest : ContentTestSuite<E, C>(Kuicksilver) {
+class KuicksilverH3PortableContentTest : PortableContentTestSuite<E, C>(Kuicksilver) {
     override val protocol = ContractProtocol.H3
 
     @BeforeTest fun load() = KslLoader.ensureLoaded()

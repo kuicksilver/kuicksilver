@@ -28,6 +28,16 @@ import kotlin.test.*
 abstract class ContentTestSuite<TEngine : ApplicationEngine, TConfiguration : ApplicationEngine.Configuration>(
     hostFactory: ApplicationEngineFactory<TEngine, TConfiguration>,
 ) : EngineTestBase<TEngine, TConfiguration>(hostFactory) {
+    /** A raw blocking TCP socket to the cleartext connector (EngineTestBase's `socket`, kept here: the base is common code). */
+    protected inline fun socket(block: java.net.Socket.() -> Unit) {
+        java.net.Socket().use { socket ->
+            socket.tcpNoDelay = true
+            socket.soTimeout = timeout.inWholeMilliseconds.toInt()
+            socket.connect(java.net.InetSocketAddress("127.0.0.1", port))
+            block(socket)
+        }
+    }
+
     @Test
     fun testTextContent() =
         runTest {

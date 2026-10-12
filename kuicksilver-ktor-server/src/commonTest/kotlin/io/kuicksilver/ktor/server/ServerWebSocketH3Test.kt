@@ -60,7 +60,7 @@ class ServerWebSocketH3Test {
     }
 
     @Test fun echoOverExtendedConnect() =
-        serverTest {
+        h3ServerTest {
             val (server, port) =
                 tlsServer {
                     install(WebSockets)
@@ -85,7 +85,7 @@ class ServerWebSocketH3Test {
 
     /** Ktor's writer closes the output right after a server Close frame; the client's Close still arrives. */
     @Test fun serverInitiatedCloseReceivesClientReason() =
-        serverTest {
+        h3ServerTest {
             val reply = CompletableDeferred<CloseReason?>()
             val (server, port) =
                 tlsServer {
@@ -111,7 +111,7 @@ class ServerWebSocketH3Test {
         }
 
     @Test fun settingAdvertisedOnlyWhenEnabled() =
-        serverTest {
+        h3ServerTest {
             for (enabled in listOf(true, false)) {
                 val (server, port) = tlsServer(configure = { webSocketsOverHttp3 = enabled }) { }
                 try {
@@ -131,7 +131,7 @@ class ServerWebSocketH3Test {
         }
 
     @Test fun unknownProtocol501() =
-        serverTest {
+        h3ServerTest {
             val (server, port) =
                 tlsServer {
                     install(WebSockets)
@@ -152,7 +152,7 @@ class ServerWebSocketH3Test {
         }
 
     @Test fun nonWebSocketRouteAnswersItsStatus() =
-        serverTest {
+        h3ServerTest {
             val (server, port) =
                 tlsServer {
                     install(WebSockets)

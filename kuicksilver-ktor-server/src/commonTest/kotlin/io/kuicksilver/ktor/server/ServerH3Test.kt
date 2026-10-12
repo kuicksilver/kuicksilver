@@ -50,6 +50,7 @@ internal suspend fun ByteReadChannel.readFullBody(): ByteArray {
 }
 
 /** HTTP/3 on the TLS connector's port, checked with the kuicksilver-http3 client. */
+@OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
 class ServerH3Test {
     @BeforeTest fun load() = KslLoader.ensureLoaded()
 
@@ -73,7 +74,7 @@ class ServerH3Test {
     private fun get(path: String = "/") = Http3Request("GET", authority = "server.test", path = path)
 
     @Test fun getOverH3() =
-        serverTest {
+        h3ServerTest {
             val (server, port) =
                 tlsServer {
                     routing {
@@ -99,7 +100,7 @@ class ServerH3Test {
         }
 
     @Test fun postEchoLargeBody() =
-        serverTest {
+        h3ServerTest {
             val payload = ByteArray(4 shl 20) { (it * 31).toByte() }
             val (server, port) = tlsServer { routing { post("/echo") { call.respondBytes(call.receive<ByteArray>()) } } }
             try {
@@ -113,7 +114,7 @@ class ServerH3Test {
         }
 
     @Test fun unknownLengthBodyOverH3HasNoTransferEncoding() =
-        serverTest {
+        h3ServerTest {
             val (server, port) =
                 tlsServer {
                     routing {
@@ -136,7 +137,7 @@ class ServerH3Test {
 
     /** `te` is a request-only field (RFC 9110 section 10.1.4): the engine drops it from an HTTP/3 response like the other hop-by-hop fields. */
     @Test fun teStrippedFromH3Response() =
-        serverTest {
+        h3ServerTest {
             val (server, port) =
                 tlsServer {
                     routing {
@@ -160,7 +161,7 @@ class ServerH3Test {
 
     /** HEAD, 204 and 304 carry no content (RFC 9110 sections 9.3.2, 15.3.5, 15.4.5): no DATA frame leaves the server, HEAD keeps content-length. */
     @Test fun headAnd204And304SendNoData() =
-        serverTest {
+        h3ServerTest {
             val (server, port) =
                 tlsServer {
                     routing {
@@ -201,31 +202,31 @@ class ServerH3Test {
             flags: Int,
             prefix: Int,
             v: Int,
-            out: java.io.ByteArrayOutputStream,
+            out: kotlinx.io.Buffer,
         ) {
             val max = (1 shl prefix) - 1
             if (v < max) {
-                out.write(flags or v)
+                out.writeByte((flags or v).toByte())
                 return
             }
-            out.write(flags or max)
+            out.writeByte((flags or max).toByte())
             var r = v - max
             while (r >= 128) {
-                out.write((r and 0x7f) or 0x80)
+                out.writeByte(((r and 0x7f) or 0x80).toByte())
                 r = r shr 7
             }
-            out.write(r)
+            out.writeByte(r.toByte())
         }
-        val section = java.io.ByteArrayOutputStream()
-        section.write(0)
-        section.write(0) // Required Insert Count 0, Base 0
+        val section = kotlinx.io.Buffer()
+        section.writeByte(0)
+        section.writeByte(0) // Required Insert Count 0, Base 0
         for ((n, v) in listOf(":method" to method, ":scheme" to "https", ":authority" to "server.test", ":path" to path)) {
             int(0x20, 3, n.length, section) // literal field line with literal name, no Huffman (RFC 9204 section 4.5.6)
             section.write(n.encodeToByteArray())
             int(0x00, 7, v.length, section)
             section.write(v.encodeToByteArray())
         }
-        val block = section.toByteArray()
+        val block = section.readByteArray()
         val st = quic.openBidi()
         check(block.size < 16384)
         // HEADERS with a two-byte varint length
@@ -255,14 +256,18 @@ class ServerH3Test {
      * so that bind fails for real; the server retries the TCP + UDP pair and serves h3 and Alt-Svc on one new number.
      */
     @Test fun ephemeralPortRetriesWhenUdpTwinIsTaken() =
-        serverTest {
-            val taken = ArrayList<java.net.DatagramSocket>()
+        h3ServerTest {
+            val taken = ArrayList<io.kuicksilver.quic.DatagramIo>()
             val tried = ArrayList<Int>()
             val (server, port) =
                 tlsServer(configure = {
                     http3Bind = { a, c, s ->
                         tried += a.port
-                        if (tried.size == 1) taken += java.net.DatagramSocket(java.net.InetSocketAddress("127.0.0.1", a.port))
+                        if (tried.size == 1) {
+                            taken +=
+                                io.kuicksilver.quic.DatagramIo
+                                    .open(InetSocketAddress("127.0.0.1", a.port))
+                        }
                         Http3Endpoint.bind(a, c, s)
                     }
                 }) { routing { get("/") { call.respondText("ok") } } }
@@ -280,7 +285,7 @@ class ServerH3Test {
         }
 
     @Test fun altSvcOnH1Responses() =
-        serverTest {
+        h3ServerTest {
             val (server, port) = tlsServer { routing { get("/") { call.respondText("ok") } } }
             try {
                 val resp = rawHttp(port, "GET / HTTP/1.1\r\nHost: server.test\r\nConnection: close\r\n\r\n")
@@ -291,7 +296,7 @@ class ServerH3Test {
         }
 
     @Test fun altSvcDisabled() =
-        serverTest {
+        h3ServerTest {
             val (server, port) = tlsServer(configure = { altSvc = false }) { routing { get("/") { call.respondText("ok") } } }
             try {
                 val resp = rawHttp(port, "GET / HTTP/1.1\r\nHost: server.test\r\nConnection: close\r\n\r\n")
@@ -302,7 +307,7 @@ class ServerH3Test {
         }
 
     @Test fun appAltSvcNotOverwritten() =
-        serverTest {
+        h3ServerTest {
             val (server, port) =
                 tlsServer {
                     routing {
@@ -321,7 +326,7 @@ class ServerH3Test {
         }
 
     @Test fun hundredRequestsOneConnection() =
-        serverTest {
+        h3ServerTest {
             val (server, port) = tlsServer { routing { get("/{n}") { call.respondText("n=${call.parameters["n"]}") } } }
             try {
                 h3(port) { c ->
@@ -352,7 +357,7 @@ class ServerH3Test {
         }
 
     @Test fun h3ResponseHeadersAreLowercase() =
-        serverTest {
+        h3ServerTest {
             val (server, port) =
                 tlsServer {
                     routing {
@@ -371,7 +376,7 @@ class ServerH3Test {
 
     /** `stop(grace, timeout)` is honoured for HTTP/3 too — in-flight calls finish, the client sees GOAWAY. */
     @Test fun stopWaitsForInFlightH3Call() =
-        serverTest {
+        h3ServerTest {
             val (server, port) =
                 tlsServer {
                     routing {
@@ -421,15 +426,13 @@ class ServerH3Test {
 
     /** GOAWAY reaches every connection at once, not one per 2×RTT; the in-flight calls all finish within the grace period. */
     @Test fun stopSendsGoAwayToAllConnectionsAtOnce() =
-        serverTest {
-            val arrived =
-                java.util.concurrent.atomic
-                    .AtomicInteger()
+        h3ServerTest {
+            val arrived = kotlin.concurrent.atomics.AtomicInt(0)
             val (server, port) =
                 tlsServer {
                     routing {
                         get("/slow") {
-                            arrived.incrementAndGet()
+                            arrived.addAndFetch(1)
                             kotlinx.coroutines.delay(600)
                             call.respondText("done")
                         }
@@ -449,11 +452,11 @@ class ServerH3Test {
                                 }
                             }
                         }
-                    kotlinx.coroutines.withTimeout(5.seconds) { while (arrived.get() < 50) kotlinx.coroutines.delay(10) }
+                    kotlinx.coroutines.withTimeout(5.seconds) { while (arrived.load() < 50) kotlinx.coroutines.delay(10) }
                     val t0 =
                         kotlin.time.TimeSource.Monotonic
                             .markNow()
-                    val stop = async(kotlinx.coroutines.Dispatchers.IO) { server.stop(1000, 3000) }
+                    val stop = async(kotlinx.coroutines.Dispatchers.Default) { server.stop(1000, 3000) }
                     kotlinx.coroutines.withTimeout(
                         5.seconds,
                     ) { while (conns.any { it.goAwayReceived.value == null }) kotlinx.coroutines.delay(5) }
@@ -471,7 +474,7 @@ class ServerH3Test {
 
     /** Split `cookie` fields are one header for the application (RFC 9114 section 4.2.1). */
     @Test fun cookieCrumbsAreJoined() =
-        serverTest {
+        h3ServerTest {
             val (server, port) =
                 tlsServer {
                     routing { get("/") { call.respondText("${call.request.headers["Cookie"]}|${call.request.cookies["b"]}") } }
@@ -498,7 +501,7 @@ class ServerH3Test {
 
     /** Ktor allows optional whitespace around a header value; HTTP/3 does not carry it. The value is trimmed instead of hanging the stream. */
     @Test fun headerWithTrailingSpaceDoesNotHang() =
-        serverTest {
+        h3ServerTest {
             val (server, port) =
                 tlsServer {
                     routing {
