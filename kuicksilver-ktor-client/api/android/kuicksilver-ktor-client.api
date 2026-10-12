@@ -106,3 +106,10 @@ public final class io/kuicksilver/ktor/client/KuicksilverEngineConfig : io/ktor/
 	public final fun setTrust (Lio/kuicksilver/tls/TrustConfig;)V
 }
 
+public final class io/kuicksilver/ktor/client/KuicksilverEngineContainer : io/ktor/client/HttpClientEngineContainer {
+	public fun <init> ()V
+	public fun getFactory ()Lio/ktor/client/engine/HttpClientEngineFactory;
+	public fun getPriority ()D
+	public fun toString ()Ljava/lang/String;
+}
+
