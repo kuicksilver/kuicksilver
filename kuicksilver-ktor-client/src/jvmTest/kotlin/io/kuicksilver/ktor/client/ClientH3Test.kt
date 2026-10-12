@@ -88,9 +88,14 @@ class ClientH3Test {
                     }
                 }) { routing { get("/") { call.respondText("v=${call.request.local.version}") } } }
             val started = runCatching { server.startSuspend(false) }
-            org.junit.jupiter.api.Assumptions.assumeTrue(started.isSuccess, "needs an IPv6 loopback")
+            org.junit.jupiter.api.Assumptions
+                .assumeTrue(started.isSuccess, "needs an IPv6 loopback")
             try {
-                val port = server.engine.resolvedConnectors().first().port
+                val port =
+                    server.engine
+                        .resolvedConnectors()
+                        .first()
+                        .port
                 testClient(Http3DiscoveryMode.H3Only).use { c ->
                     val r = c.get("https://[::1]:$port/")
                     assertEquals(HttpProtocolVersion.HTTP_3_0, r.version)
