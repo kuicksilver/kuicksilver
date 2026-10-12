@@ -110,7 +110,9 @@ a connection whose handshake does not complete. A replayer cannot complete the h
 - Acceptance (`EncryptedExtensions` with `early_data`): new server values below the remembered ones close the
   connection with PROTOCOL_VIOLATION, as quic-go's client does.
 - Rejection: 0-RTT packets leave the bytes in flight without a congestion signal. If the ALPN did not change and the
-  new limits cover what was already sent, their stream frames are queued again and travel in 1-RTT. The stream state
+  new limits cover what was already sent, their stream frames are queued again and travel in 1-RTT, and the server's
+  new limits (connection and per-stream credit, stream counts) replace the remembered ones even where they are lower
+  (RFC 9000 section 7.4.1); this is the one place a send limit may shrink. The stream state
   stays because the server never saw those streams (RFC 9001 §4.6.2 retransmission, as msquic does). Otherwise the
   connection closes with `ZeroRttRejected`. `EarlyDataState.Required` also turns a rejection into `ZeroRttRejected`.
 - Server: 0-RTT packets that arrive before their keys are buffered with the other undecryptable packets. They are

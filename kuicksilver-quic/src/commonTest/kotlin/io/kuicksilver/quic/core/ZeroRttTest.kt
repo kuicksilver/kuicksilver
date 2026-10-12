@@ -348,4 +348,31 @@ class ZeroRttTest {
         assertTrue(aEvents.any { it is ConnectionEvent.StreamReadable }, "the admitted one reads its request")
         assertTrue(bEvents.none { it is ConnectionEvent.StreamOpened || it is ConnectionEvent.StreamReadable }, "the other reads nothing")
     }
+
+    @Test fun rejectedZeroRttAdoptsLowerLimits() {
+        // the server restarted with lower limits (so it also refuses the ticket's early data): the client must not keep the
+        // remembered ones (RFC 9000 section 7.4.1), or it would exceed the new limits (FLOW_CONTROL_ERROR / STREAM_LIMIT_ERROR)
+        val lower =
+            quicConfig {
+                initialConnectionWindow = 1000
+                initialStreamWindow = 1500
+                maxBidiStreams = 2
+            }
+        val (p, id) = resumed(ticket(), request = "GET /a", serverQuic = lower, serverEarly = early(lower))
+        assertTrue(p.handshake())
+        assertEquals(false, p.client.earlyDataAccepted)
+        // the application never reads: only the transport's limits hold the client back
+        val big = ByteArray(3000) { 'y'.code.toByte() }
+        val more = List(3) { p.client.openStream(bidi = true) }
+        assertEquals(listOf(true, false, false), more.map { it >= 0 }, "one more stream than the early one: the new limit is 2")
+        p.client.writeStream(more[0], big, 0, big.size, fin = false) // more than the new 1500-byte stream window
+        p.runUntil(limit = 2.seconds) { p.closedReason(p.serverEvents) != null || p.closedReason(p.clientEvents) != null }
+        assertNull(p.closedReason(p.serverEvents), "the server saw no limit violation")
+        assertNull(p.closedReason(p.clientEvents))
+        assertTrue(
+            p.serverEvents.any { it is ConnectionEvent.StreamReadable && it.id == more[0] },
+            "traffic continues within the new limits",
+        )
+        p.close()
+    }
 }

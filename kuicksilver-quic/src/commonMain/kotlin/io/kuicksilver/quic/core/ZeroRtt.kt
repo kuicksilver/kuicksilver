@@ -198,6 +198,14 @@ internal fun ConnectionCore.settleZeroRtt() {
         closeZeroRttRejected()
         return
     }
+    // the remembered limits no longer hold: the server's new ones replace them, also where lower (RFC 9000 section 7.4.1)
+    connSend.resetLimit(tp.initialMaxData)
+    streams.adoptLocalSendLimits(
+        tp.initialMaxStreamDataBidiRemote,
+        tp.initialMaxStreamDataUni,
+        tp.initialMaxStreamsBidi,
+        tp.initialMaxStreamsUni,
+    )
     events += ConnectionEvent.EarlyDataRejected
 }
 

@@ -137,6 +137,24 @@ internal class StreamManager(
         }
     }
 
+    /**
+     * After a rejected 0-RTT whose data fits ([localSendFits]): the server's new limits replace the remembered ones on every
+     * stream we opened and for the stream counts, also where they are lower (RFC 9000 section 7.4.1).
+     */
+    fun adoptLocalSendLimits(
+        bidiRemote: Long,
+        uni: Long,
+        maxStreamsBidi: Long,
+        maxStreamsUni: Long,
+    ) {
+        limits.resetPeerMaxStreams(true, maxStreamsBidi)
+        limits.resetPeerMaxStreams(false, maxStreamsUni)
+        for ((id, limit) in sendLimit) {
+            if (!StreamIds.isLocal(id, role)) continue
+            limit.resetLimit(if (StreamIds.isBidi(id)) bidiRemote else uni)
+        }
+    }
+
     /** After a rejected 0-RTT: whether what our streams already used fits the server's new limits, so resending it is allowed. */
     fun localSendFits(
         bidiRemote: Long,

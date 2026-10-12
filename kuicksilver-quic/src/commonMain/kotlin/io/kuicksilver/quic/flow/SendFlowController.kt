@@ -28,6 +28,15 @@ internal class SendFlowController(
         return true
     }
 
+    /**
+     * Sets the limit even when lower: only after a rejected 0-RTT, when the server's new transport parameters replace the
+     * remembered ones (RFC 9000 section 7.4.1); the caller has checked that [used] fits.
+     */
+    fun resetLimit(limit: Long) {
+        this.limit = limit
+        blockedReportedAt = -1
+    }
+
     /** The limit to report in DATA_BLOCKED / STREAM_DATA_BLOCKED when blocked at it for the first time, else -1. */
     fun takeBlocked(): Long {
         if (available > 0 || blockedReportedAt == limit) return -1
