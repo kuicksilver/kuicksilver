@@ -14,6 +14,7 @@ import platform.posix.O_WRONLY
 import platform.posix.chmod
 import platform.posix.close
 import platform.posix.getpid
+import platform.posix.link
 import platform.posix.open
 import platform.posix.stat
 import platform.posix.symlink
@@ -69,6 +70,22 @@ class KeylogFileAppleTest {
             assertEquals(0L, sizeOf(target), "nothing was written through the symlink")
         } finally {
             unlink(link)
+            unlink(target)
+        }
+    }
+
+    @Test fun negative_keylogFileRefusesHardlink() {
+        val target = tmp("hard-target")
+        val hard = tmp("hard-link")
+        val fd = open(target, O_WRONLY or O_CREAT, 0x180)
+        assertTrue(fd >= 0)
+        close(fd)
+        assertEquals(0, link(target, hard))
+        try {
+            assertFails { keylogFile(hard).log("X") }
+            assertEquals(0L, sizeOf(target), "nothing was written through the hard link")
+        } finally {
+            unlink(hard)
             unlink(target)
         }
     }

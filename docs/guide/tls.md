@@ -107,8 +107,8 @@ entry is used, replaced, evicted or expires, or when the engine that owns the ca
 keeps its own cache of at most 256 sessions (the least recently stored one is evicted first); `Socket.tls` and
 `TlsConnection.client` share one process-wide cache with the same bound (the cache itself is internal API). `TlsConfig.keylog` accepts a `KeylogSink` (RFC 9850 lines); the
 `SSLKEYLOGFILE` variable is ignored by the library and by the bundled OpenSSL. `keylogFile(path)` creates the file
-with mode 0600 and checks it before the first line: a symlink at the path, a file that is not a regular file or belongs to
-another user, or a file system without POSIX permissions is refused with an `IllegalArgumentException`, and an existing
+with mode 0600 and checks it before the first line: a symlink at the path, a file that is not a regular file, has more than one
+hard link or belongs to another user, or a file system without POSIX permissions is refused with an `IllegalArgumentException`, and an existing
 file that is readable by the group or others is tightened to 0600 (on the JVM, Linux and Apple; on Windows the file is
 only created, so keep it in a directory that only you can write). On the JVM the file is opened once, when the sink is
 created, and every line goes through that descriptor, so a file removed and recreated at the path later receives nothing;

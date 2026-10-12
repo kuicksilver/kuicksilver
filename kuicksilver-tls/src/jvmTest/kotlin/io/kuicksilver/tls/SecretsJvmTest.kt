@@ -97,6 +97,19 @@ class SecretsJvmTest {
         }
     }
 
+    /** A second hard link to a file is refused: the other name may sit where another user can read it. */
+    @Test fun negative_keylogFileRefusesHardlink() {
+        val target = File.createTempFile("ksl-keylog-target", ".txt").also { it.deleteOnExit() }
+        val link =
+            File.createTempFile("ksl-keylog-hard", ".txt").also {
+                it.delete()
+                it.deleteOnExit()
+            }
+        Files.createLink(link.toPath(), target.toPath())
+        assertFails { keylogFile(link.path).log("X") }
+        assertEquals(0L, target.length(), "nothing was written through the hard link")
+    }
+
     @Test fun negative_keylogDisabledInRelease() {
         // the Gradle test task sets SSLKEYLOGFILE; neither OpenSSL (no-sslkeylog) nor the library may touch it
         val env = System.getenv("SSLKEYLOGFILE")

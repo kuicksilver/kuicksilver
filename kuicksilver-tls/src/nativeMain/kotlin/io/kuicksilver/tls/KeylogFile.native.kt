@@ -15,7 +15,7 @@ import platform.posix.getenv
 
 /**
  * Opens [path] for appending as the key log and returns the descriptor, or -1 when the file is unfit: on POSIX targets the
- * open never follows a symlink, the file must be a regular one owned by the effective user, and lingering group/other bits
+ * open never follows a symlink, the file must be a regular one with a single hard link, owned by the effective user, and lingering group/other bits
  * are cleared (0600); mingw only creates the file. The caller closes the descriptor.
  */
 internal expect fun openKeylogFd(path: String): Int

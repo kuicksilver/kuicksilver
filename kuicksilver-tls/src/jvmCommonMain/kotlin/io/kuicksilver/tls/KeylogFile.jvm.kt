@@ -29,7 +29,7 @@ private val OPEN_APPEND =
 
 /**
  * Opens (creating it with mode 0600 when missing) the key log file once and checks it right after opening: a symlink, a
- * non-regular file or a file owned by another user is refused ([IllegalArgumentException]), lingering group/other bits of an
+ * non-regular file, a file with more than one hard link or a file owned by another user is refused ([IllegalArgumentException]), lingering group/other bits of an
  * existing file are cleared. The returned channel is the one every line is written through, so a file removed and recreated
  * at the path later (by anyone) never receives a line: the lines keep going to the inode that was checked.
  */
@@ -47,6 +47,11 @@ private fun openKeylogChannel(p: Path): SeekableByteChannel {
         if (!attrs.isRegularFile) throw IllegalArgumentException("keylog path $p is not a regular file")
         val me = p.fileSystem.userPrincipalLookupService.lookupPrincipalByName(System.getProperty("user.name"))
         if (attrs.owner() != me) throw IllegalArgumentException("keylog file $p is owned by ${attrs.owner().name}, not by this user")
+        if ("unix" in p.fileSystem.supportedFileAttributeViews() &&
+            (Files.getAttribute(p, "unix:nlink", LinkOption.NOFOLLOW_LINKS) as Number).toInt() != 1
+        ) {
+            throw IllegalArgumentException("keylog file $p has other hard links")
+        }
         val perms = attrs.permissions()
         if (perms.any { it !in OWNER_ONLY && it != PosixFilePermission.OWNER_EXECUTE }) Files.setPosixFilePermissions(p, OWNER_ONLY)
         return ch

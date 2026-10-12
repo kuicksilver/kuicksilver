@@ -23,7 +23,7 @@ import platform.posix.geteuid
 import platform.posix.open
 import platform.posix.stat
 
-/** POSIX: `O_NOFOLLOW`, then `fstat` on the descriptor itself (no window for a swap): regular, owned by the effective user, tightened to 0600. */
+/** POSIX: `O_NOFOLLOW`, then `fstat` on the descriptor itself (no window for a swap): regular, one hard link, owned by the effective user, tightened to 0600. */
 internal actual fun openKeylogFd(path: String): Int {
     val fd = open(path, O_WRONLY or O_CREAT or O_APPEND or O_NOFOLLOW or O_CLOEXEC, 0x180 /* 0600 */)
     if (fd < 0) return -1
@@ -34,6 +34,7 @@ internal actual fun openKeylogFd(path: String): Int {
             val mode = st.st_mode.toInt()
             if (mode and S_IFMT != S_IFREG) return@memScoped false
             if (st.st_uid != geteuid()) return@memScoped false
+            if (st.st_nlink.toInt() != 1) return@memScoped false // another name may sit where others can read it
             if (mode and 0x3F /* 077 */ != 0 && fchmod(fd, 0x180.convert()) != 0) return@memScoped false
             true
         }

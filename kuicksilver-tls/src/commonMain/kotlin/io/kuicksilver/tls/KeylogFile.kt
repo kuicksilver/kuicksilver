@@ -6,8 +6,8 @@ import io.kuicksilver.annotations.DelicateKuicksilverApi
 
 /**
  * A [KeylogSink] appending RFC 9850 lines to [path]; the file is created with mode 0600 (docs/guide/tls.md, Key logging).
- * The path is checked here, before any secret exists: a symlink, a file that is not a regular file or belongs to another
- * user, or a file system without POSIX permissions throws [IllegalArgumentException]; an existing file readable by the
+ * The path is checked here, before any secret exists: a symlink, a file that is not a regular file, has more than one hard
+ * link or belongs to another user, or a file system without POSIX permissions throws [IllegalArgumentException]; an existing file readable by the
  * group or others is tightened to 0600 (Windows only creates the file). On the JVM the file is opened once, here, and every
  * line goes through that descriptor, so a file removed and recreated at the path later receives nothing; the JVM sink is
  * also `java.io.Closeable` and keeps the descriptor until it is closed (or collected, or the process exits). Kotlin/Native
