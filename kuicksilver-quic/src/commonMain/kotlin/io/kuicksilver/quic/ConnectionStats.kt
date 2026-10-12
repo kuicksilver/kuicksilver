@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.kuicksilver.quic
 
+import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import kotlin.time.Duration
 
 /**
@@ -70,4 +71,12 @@ public class ConnectionStats internal constructor(
     public val ecnCeEvents: Long,
     /** Datagrams the send queue dropped because they no longer fit the path MTU (after a black hole) or by policy. */
     public val datagramsDroppedSend: Long,
+    /**
+     * UDP datagrams of this connection the socket did not take: a send that failed (a filter, an unreachable route) or took
+     * only part of a batch (a full send buffer). Loss recovery repairs them; a steady rise means the socket is the bottleneck.
+     * It may over-count when the socket fails mid-batch: a send that throws counts its whole batch, although the slots
+     * before the failing one may have left.
+     */
+    @property:ExperimentalKuicksilverApi
+    public val datagramsDroppedSocket: Long,
 )

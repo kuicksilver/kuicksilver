@@ -144,6 +144,11 @@ The controller sees packets sent, acknowledged and lost, ECN marks, MTU changes 
 answers with the window, the pacing rate and the burst size. A connection that migrates to a new IP starts the new path
 from the initial window; a NAT rebinding keeps the state.
 
+When the socket refuses datagrams (a send that fails, or a full send buffer that takes only part of a batch; the portable
+JVM socket waits up to 5 ms once for room), the rest of the batch is lost: loss recovery repairs it and
+`stats.datagramsDroppedSocket` counts it per connection. A steady rise there means the socket, not the network, is the
+bottleneck.
+
 ## Path MTU
 
 Datagrams start at 1200 bytes. On a socket that sets DF, DPLPMTUD (RFC 8899) probes upwards with PING+PADDING packets
@@ -165,7 +170,9 @@ number space only for datagrams whose packets were processed, and a CE increase 
 event per recovery period. The portable socket marks every datagram through IP_TOS (`ecnSend`) but cannot read marks, so
 with it the peer's validation of our direction needs an accelerated socket on the peer; the accelerated socket of Linux
 and Android marks and reads per datagram, and two of them validate both directions (`Capable`). Because the portable socket
-marks the whole socket, a failed validation on any of its paths clears IP_TOS for every connection on it; the accelerated
+marks the whole socket, a failed validation on any of its paths clears IP_TOS for every connection on it (they all
+show `Disabled` from then on: a socket's `capabilities` that lose `ecnSend` or `df` reach the paths already on it, which
+stop marking or stop PMTUD and fall back to 1200 bytes; a gain applies to new paths only); the accelerated
 socket keeps marking, and only the failed path sends NotEct, so one client whose path bleaches marks does not turn ECN off
 for the server's other clients. `stats.ecnState` (an `EcnState`) says
 where a connection stands: `Disabled`, `Testing`, `Unknown`, `Capable` or `Failed`.
@@ -281,7 +288,10 @@ unknown Initial (1200 bytes, a supported version, a DCID of at least 8 bytes, no
 123) and copies it into a bounded queue of `initialQueueCap` (1024) entries; the loop then calls `processPending` once
 per receive batch. That step checks the Retry token, the hard limits (`maxConnections`, `acceptQueue`,
 `maxConnectionsPerIp`, 256 per IP by default) and asks `ConnectionAdmission.admit(attempt)`, which answers `Allow`,
-`Retry`, `Drop` or `Close(code)`:
+`Retry`, `Drop` or `Close(code)`. `acceptQueue` counts only the connections waiting for `accept()`, not the handshakes
+in flight (unvalidated Initials from spoofed sources must not lock real clients out), and the queue never holds more: a
+handshake that completes while `acceptQueue` connections wait is closed with CONNECTION_REFUSED (0x02). Handshakes in
+flight are bounded by `maxConnections`, `maxConnectionsPerIp` and the admission policy (Retry).
 
 ```kotlin
 // guide:quic:admission
@@ -309,7 +319,8 @@ rejects DATAGRAM frames). On the sans-IO core, `maxDatagramPayload` says how man
 peer and MTU, less 32 bytes kept for a short ACK next to a full-size datagram (0 when the peer does not support datagrams); a `DatagramSender` set on the core is asked for frames while
 each 1-RTT packet is built with an open congestion window, and learns through `onAcked` / `onLost` what became of each
 id — datagrams are never retransmitted. Received payloads wait in a queue of 128 (`datagramReceiveQueue`); when it is
-full the oldest is dropped and counted in `stats.datagramsDropped`. The core raises `DatagramsReadable` and hands them out
+full the oldest is dropped and counted in `stats.datagramsDropped` (which also counts received UDP datagrams the connection
+discarded unprocessed: from an unknown server address, a late Initial, a full undecryptable-packet buffer). The core raises `DatagramsReadable` and hands them out
 with `readDatagram`.
 
 On a `QuicConnection`:
@@ -329,7 +340,8 @@ a burst that outruns the loop drops its oldest datagrams even on an idle network
 returns. `trySendDatagram` never enters the loop and allocates only the copy plus a small wrapper. A payload above
 `maxDatagramSize` (a `StateFlow`, following the path MTU) gives `TooLarge` / `DatagramTooLarge`; without datagram support
 on either side you get `Unsupported` / `DatagramUnsupported`. `datagrams` reads the core's 128-entry queue directly, so
-what nobody collected in time is dropped there and counted in `stats.datagramsDropped`.
+what nobody collected in time is dropped there and counted in `stats.datagramsDropped` (beside the UDP datagrams the
+connection discarded unprocessed).
 
 ## Testing your application
 
@@ -337,7 +349,10 @@ what nobody collected in time is dropped there and counted in `stats.datagramsDr
 binds a `DatagramIo` there, and a datagram reaches the socket bound to its destination or vanishes. Give it to endpoints
 through `QuicEndpointConfig.io` and the whole stack runs unchanged, OpenSSL TLS included, on every platform and without
 ports. `cut(address)` makes an address go dark (and `restore` brings it back), `mtu` drops larger datagrams, `dropped`
-counts what vanished; it is safe to share between endpoint loops on different threads.
+counts what vanished; it is safe to share between endpoint loops on different threads. Like a UDP socket, each socket
+holds at most `receiveBuffer` unread datagrams (256 by default) and drops what arrives on top, a datagram larger than the
+receiver's slot is dropped rather than truncated, and `open` on port 0 binds a free ephemeral port (49152 and up) unless
+`assignEphemeralPorts = false`. Marks are always bleached: sockets report no ECN.
 
 ```kotlin
 // guide:quic:memory-network

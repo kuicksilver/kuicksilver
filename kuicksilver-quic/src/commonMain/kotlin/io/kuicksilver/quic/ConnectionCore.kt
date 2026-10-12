@@ -155,6 +155,9 @@ public class ConnectionCore internal constructor(
 
     // ---- DPLPMTUD (RFC 8899) ----
     internal var datagramsDroppedSend = 0L
+
+    /** Datagrams of this connection the socket refused (counted by the runtime that sends them). */
+    internal var datagramsDroppedSocket = 0L
     internal val ccMtuUpdatesForTest = ArrayList<Int>()
     internal var pmtudProbesSentForTest = 0
     internal val pmtudSearchDoneForTest: Boolean get() = path.pmtud?.searchDone == true
@@ -180,6 +183,38 @@ public class ConnectionCore internal constructor(
         if (caps.ecnSend) p.ecn.enable() else p.ecn.disable()
         p.pmtud =
             if (caps.df && config.pmtud) Pmtud(upperBound = pmtudUpperBound()) else null
+    }
+
+    internal fun pathCapabilitiesForTest(id: PathId): IoCapabilities? = paths.byId(id)?.caps
+
+    /**
+     * The socket [socket] (a path id: the endpoint's socket is [PathId.Initial]) now reports [caps]. Only losses apply to the
+     * paths already on it: no ECN marking stops ECN on them, no DF ends PMTUD and drops back to 1200 bytes, fewer GSO segments
+     * or a smaller batch shrink theirs. A gain waits for the next path (validation would have to start over).
+     */
+    internal fun updateSocketCapabilities(
+        socket: PathId,
+        caps: IoCapabilities,
+    ) {
+        for (i in 0 until paths.all.size) {
+            val p = paths.all[i]
+            if (p.socket != socket) continue
+            val had = p.caps
+            if (had.ecnSend && !caps.ecnSend) p.ecn.socketStoppedMarking()
+            if (had.df && !caps.df) {
+                p.pmtud = null
+                if (p.mtu > 1200) setMtu(p, 1200)
+            }
+            p.caps =
+                IoCapabilities(
+                    ecnSend = had.ecnSend && caps.ecnSend,
+                    ecnReceive = had.ecnReceive && caps.ecnReceive,
+                    gsoMaxSegments = minOf(had.gsoMaxSegments, caps.gsoMaxSegments),
+                    gro = had.gro && caps.gro,
+                    df = had.df && caps.df,
+                    batch = minOf(had.batch, caps.batch),
+                )
+        }
     }
 
     /**
@@ -507,6 +542,7 @@ public class ConnectionCore internal constructor(
             ecnCeReceived(),
             ecnCeEvents,
             datagramsDroppedSend,
+            datagramsDroppedSocket,
         )
 
     private fun memoryCeiling(): Long =

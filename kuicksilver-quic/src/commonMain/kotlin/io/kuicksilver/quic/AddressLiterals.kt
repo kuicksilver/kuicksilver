@@ -68,3 +68,11 @@ public fun InetSocketAddress.ipLiteral(): String {
 /** The same host as an IP literal with [port] (the loop group's extra sockets, a resolved connect target). */
 @InternalKuicksilverApi
 public fun InetSocketAddress.withLiteralHost(port: Int = this.port): InetSocketAddress = InetSocketAddress(ipLiteral(), port)
+
+/**
+ * The raw IPv4 (4) or IPv6 (16) address bytes, or null when the address is a host name. Never a resolver call: the endpoint
+ * loop asks this for every datagram's source. On the JVM and Android a resolved address carries its bytes (a name was
+ * resolved when the address was built); on Kotlin/Native, where `resolveAddress()` calls `getaddrinfo`, an IP literal in
+ * `hostname` is parsed instead.
+ */
+internal expect fun InetSocketAddress.ipBytesNoDns(): ByteArray?

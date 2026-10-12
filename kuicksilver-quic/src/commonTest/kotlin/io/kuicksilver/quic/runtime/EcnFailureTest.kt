@@ -14,6 +14,7 @@ import io.kuicksilver.quic.IoCapabilities
 import io.kuicksilver.quic.MemoryDatagramIo
 import io.kuicksilver.quic.MemoryNetwork
 import io.kuicksilver.quic.NullCryptoProvider
+import io.kuicksilver.quic.PathId
 import io.kuicksilver.quic.QuicClientConfig
 import io.kuicksilver.quic.QuicEndpoint
 import io.kuicksilver.quic.QuicEndpointConfig
@@ -97,6 +98,67 @@ class EcnFailureTest {
                     assertEquals(1, second.disabled, "the failed path's socket stops marking")
                     assertEquals(0, first.disabled, "the endpoint's socket is left alone")
                     assertTrue(c.stats.ecnState == EcnState.Failed, "ecn ${c.stats.ecnState}")
+                    c.close()
+                    s.close()
+                } finally {
+                    client.close()
+                    server.close()
+                }
+            }
+        }
+
+    /** An in-memory socket whose capabilities the test changes while connections run on it. */
+    private class CapsIo(
+        private val inner: MemoryDatagramIo,
+    ) : DatagramIo by inner {
+        val caps = MutableStateFlow(IoCapabilities(ecnSend = true, ecnReceive = false, gsoMaxSegments = 1, gro = false, df = true, batch = 1))
+        override val capabilities: StateFlow<IoCapabilities> get() = caps
+    }
+
+    @Test fun capabilityLossReachesExistingConnections() =
+        runBlocking {
+            withTimeout(30.seconds) {
+                // a socket that stops marking (or loses DF) after connections started on it: they must stop relying on it too
+                val net = MemoryNetwork()
+                val serverAddr = InetSocketAddress("10.0.0.2", 2222)
+                val sio = net.open(serverAddr)
+                val first = CapsIo(net.open(InetSocketAddress("10.0.0.1", 1111)))
+                val second = CapsIo(net.open(InetSocketAddress("10.0.0.3", 3333)))
+                val server =
+                    QuicEndpoint.bind(
+                        serverAddr,
+                        QuicEndpointConfig
+                            .Builder()
+                            .apply {
+                                this.server = QuicServerConfig.Builder(CoreFixtures.server()).build()
+                                crypto = NullCryptoProvider
+                                io = { sio }
+                            }.build(),
+                    )
+                val client =
+                    QuicEndpoint.bind(
+                        first.localAddress,
+                        QuicEndpointConfig
+                            .Builder()
+                            .apply {
+                                crypto = NullCryptoProvider
+                                io = { first }
+                            }.build(),
+                    )
+                try {
+                    val accepted = async { server.accept() }
+                    val c = client.connect(serverAddr, QuicClientConfig.Builder(CoreFixtures.client()).build())
+                    val s = accepted.await()
+                    val core = (c as ConnectionRuntime).core
+                    assertEquals(true, core.pathCapabilitiesForTest(PathId.Initial)?.ecnSend)
+                    first.caps.value = IoCapabilities.Portable
+                    withTimeout(5.seconds) { while (core.pathCapabilitiesForTest(PathId.Initial)?.ecnSend != false) delay(10) }
+                    assertEquals(false, core.pathCapabilitiesForTest(PathId.Initial)?.df, "DF went with the socket's capabilities")
+                    // the same for a migrating client's extra socket
+                    val extra = c.addPath(second).id
+                    assertEquals(true, core.pathCapabilitiesForTest(extra)?.ecnSend)
+                    second.caps.value = IoCapabilities.Portable
+                    withTimeout(5.seconds) { while (core.pathCapabilitiesForTest(extra)?.ecnSend != false) delay(10) }
                     c.close()
                     s.close()
                 } finally {

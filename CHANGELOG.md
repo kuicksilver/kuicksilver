@@ -77,6 +77,9 @@ Nothing has been released yet. This section summarises the development of the fi
   architecture, layering, SPDX, ABI, symbol-export, glibc-floor, page-alignment and size checks.
 - Documentation: user guides, architecture overview, ADRs, RFC compliance matrix, threat model; the
   `samples/realtime-telemetry` application.
+- `MemoryNetwork(receiveBuffer, assignEphemeralPorts)` (`@ExperimentalKuicksilverApi`): sockets of the in-memory network
+  hold at most `receiveBuffer` unread datagrams (256 by default) and count what a full buffer drops, `open` on port 0 binds
+  an ephemeral port, oversized datagrams are dropped instead of truncated, and `trySend` counts only addressed datagrams.
 
 ### Changed
 
@@ -135,6 +138,26 @@ Fixes from a full five-reviewer pass over the code before the first release, amo
   graceful stop; cookie crumbs are joined; truncated frames and oversized `content-length` are rejected.
 - `ksl_udp` treats per-destination send errors as the loss of one datagram instead of a socket failure; Initials
   from source port 0 are dropped; the certificate parser accepts the time formats OpenSSL accepts.
+- The endpoint's receive loop yields after 16 rounds or 2 ms of continuous traffic, so a socket that never runs dry
+  (a flood) no longer starves the connection timers and queued application commands.
+- No resolver call on the endpoint loop: on Kotlin/Native the address bytes of a datagram's source are parsed from its IP
+  literal instead of `getaddrinfo`, and Stateless Reset candidates are keyed by address bytes and port, so a reset from
+  `0:0:0:0:0:0:0:1` matches a connection to `::1`.
+- A server whose peer keeps moving no longer keeps a path object per address it ever saw: paths the connection evicts
+  (at most four) leave `QuicConnection.paths` and their sockets are closed.
+- Datagrams the socket did not take (a failed send, or a full buffer that took part of a batch) are counted in the new
+  `ConnectionStats.datagramsDroppedSocket` (`@ExperimentalKuicksilverApi`); the portable JVM socket waits once, briefly,
+  for room instead of treating a refused datagram as sent.
+- A socket whose `capabilities` lose ECN marking or DF (for example the portable socket clearing IP_TOS after a failed
+  ECN validation) now downgrades the connections already on it, the endpoint's socket and a migrating client's extra
+  sockets alike, instead of only the connections that start afterwards.
+- The accept queue never holds more than `acceptQueue` connections: a handshake that completes while the queue is full
+  is closed with CONNECTION_REFUSED. Admission counts only the connections waiting for `accept()`, so half-open
+  handshakes from spoofed sources cannot lock real clients out.
+- An `accept()` cancelled just as the queue handed it a connection no longer keeps that queue slot and leaves the
+  connection open: the connection is closed and the slot released.
+- `samples/realtime-telemetry` reads control lines with a 1024-byte limit; a longer line closes the connection (code 2)
+  instead of growing the server's buffer.
 
 ### Security
 

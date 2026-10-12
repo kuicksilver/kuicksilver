@@ -11,7 +11,8 @@ import io.kuicksilver.quic.incomingConnections
 import io.kuicksilver.quic.incomingStreams
 import io.kuicksilver.quic.isUnidirectional
 import io.ktor.utils.io.readAvailable
-import io.ktor.utils.io.readLine
+import io.ktor.utils.io.charsets.TooLongLineException
+import io.ktor.utils.io.readLineStrict
 import io.ktor.utils.io.writeStringUtf8
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.supervisorScope
@@ -59,7 +60,11 @@ class TelemetryServer(private val endpoint: QuicEndpoint) {
 
     private suspend fun control(stream: QuicStream, connection: QuicConnection) {
         while (true) {
-            val line = stream.input.readLine() ?: break
+            val line = try {
+                stream.input.readLineStrict(Protocol.MAX_LINE) ?: break
+            } catch (e: TooLongLineException) {
+                connection.close(code = Protocol.CLOSE_LINE_TOO_LONG, reason = "line too long"); return
+            }
             when {
                 line.startsWith("HELLO ") -> {
                     val name = line.removePrefix("HELLO ").trim()

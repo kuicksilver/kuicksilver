@@ -9,7 +9,7 @@ import io.kuicksilver.quic.PathEvent
 import io.kuicksilver.quic.QuicConnection
 import io.kuicksilver.quic.QuicStream
 import io.kuicksilver.quic.StreamPriority
-import io.ktor.utils.io.readLine
+import io.ktor.utils.io.readLineStrict
 import io.ktor.utils.io.writeFully
 import io.ktor.utils.io.writeStringUtf8
 import kotlinx.coroutines.flow.first
@@ -22,7 +22,7 @@ class TelemetryClient(private val connection: QuicConnection) {
     suspend fun hello(name: String): String {
         val stream = connection.openBidi(StreamPriority(urgency = 0)); control = stream
         stream.output.writeStringUtf8("HELLO $name\n"); stream.output.flush()
-        return stream.input.readLine() ?: error("server closed the control stream")
+        return stream.input.readLineStrict(Protocol.MAX_LINE) ?: error("server closed the control stream")
     }
 
     /**
@@ -49,7 +49,7 @@ class TelemetryClient(private val connection: QuicConnection) {
     suspend fun bye(): String {
         val stream = control ?: error("hello first")
         stream.output.writeStringUtf8("BYE\n"); stream.output.flushAndClose()
-        val answer = stream.input.readLine() ?: error("server closed the control stream")
+        val answer = stream.input.readLineStrict(Protocol.MAX_LINE) ?: error("server closed the control stream")
         connection.close(code = Protocol.CLOSE_OK, reason = "bye")
         return answer
     }

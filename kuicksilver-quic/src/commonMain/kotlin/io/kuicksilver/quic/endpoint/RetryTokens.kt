@@ -5,6 +5,7 @@ package io.kuicksilver.quic.endpoint
 import io.ktor.network.sockets.InetSocketAddress
 import io.kuicksilver.native.PacketBuffer
 import io.kuicksilver.quic.TimeMark
+import io.kuicksilver.quic.core.AddressClass
 import io.kuicksilver.quic.wire.ConnectionId
 import io.kuicksilver.tls.QuicCrypto
 import io.kuicksilver.tls.TokenKey
@@ -64,7 +65,7 @@ internal class RetryTokens(
         client: InetSocketAddress,
         version: Int,
     ): ByteArray {
-        val ip = client.resolveAddress() ?: client.hostname.encodeToByteArray()
+        val ip = AddressClass.ipBytes(client)
         val out = ByteArray(1 + ip.size + 2 + 4)
         out[0] = TYPE
         ip.copyInto(out, 1)

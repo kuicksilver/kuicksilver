@@ -59,9 +59,14 @@ final class io.kuicksilver.testing/LinkParams { // io.kuicksilver.testing/LinkPa
 
 final class io.kuicksilver.testing/MemoryNetwork { // io.kuicksilver.testing/MemoryNetwork|null[0]
     constructor <init>() // io.kuicksilver.testing/MemoryNetwork.<init>|<init>(){}[0]
+    constructor <init>(kotlin/Int, kotlin/Boolean = ...) // io.kuicksilver.testing/MemoryNetwork.<init>|<init>(kotlin.Int;kotlin.Boolean){}[0]
 
+    final val assignEphemeralPorts // io.kuicksilver.testing/MemoryNetwork.assignEphemeralPorts|{}assignEphemeralPorts[0]
+        final fun <get-assignEphemeralPorts>(): kotlin/Boolean // io.kuicksilver.testing/MemoryNetwork.assignEphemeralPorts.<get-assignEphemeralPorts>|<get-assignEphemeralPorts>(){}[0]
     final val dropped // io.kuicksilver.testing/MemoryNetwork.dropped|{}dropped[0]
         final fun <get-dropped>(): kotlin/Long // io.kuicksilver.testing/MemoryNetwork.dropped.<get-dropped>|<get-dropped>(){}[0]
+    final val receiveBuffer // io.kuicksilver.testing/MemoryNetwork.receiveBuffer|{}receiveBuffer[0]
+        final fun <get-receiveBuffer>(): kotlin/Int // io.kuicksilver.testing/MemoryNetwork.receiveBuffer.<get-receiveBuffer>|<get-receiveBuffer>(){}[0]
 
     final var mtu // io.kuicksilver.testing/MemoryNetwork.mtu|{}mtu[0]
         final fun <get-mtu>(): kotlin/Int // io.kuicksilver.testing/MemoryNetwork.mtu.<get-mtu>|<get-mtu>(){}[0]
