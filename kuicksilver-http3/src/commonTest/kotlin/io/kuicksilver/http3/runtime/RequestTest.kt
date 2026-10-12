@@ -316,8 +316,11 @@ class RequestTest {
                 val one = raw.frame(0x22, ByteArray(0)) // unknown, not a reserved (GREASE) type
                 val flood = ByteArray(one.size * 1001)
                 for (i in 0 until 1001) one.copyInto(flood, i * one.size)
-                st.output.writeFully(flood)
-                st.output.flush()
+                // the close may land while the flood is still being flushed: that is the outcome under test
+                runCatching {
+                    st.output.writeFully(flood)
+                    st.output.flush()
+                }
                 assertEquals(Http3ErrorCode.EXCESSIVE_LOAD, peerSawClose(c))
             }
         }
