@@ -10,6 +10,7 @@ import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
 import io.ktor.server.routing.routing
 import io.kuicksilver.native.KslLoader
+import kotlinx.coroutines.launch
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -40,6 +41,42 @@ class ClientAltSvcTest {
                 }
             } finally {
                 server.stop(100, 500)
+            }
+        }
+
+    /** A request cancelled while its Alt-Svc write waits behind another still gets the write done (it is not lost with the caller). */
+    @Test fun deferredAltSvcWriteSurvivesCancellation() =
+        clientTest {
+            val (server, port) =
+                testServer(configure = { http3 = false }) {
+                    routing {
+                        get("/") {
+                            call.response.header("Alt-Svc", "h3=\":${call.request.local.localPort}\"")
+                            call.respondText("h1")
+                        }
+                    }
+                }
+            val path = kotlinx.io.files.Path(kotlinx.io.files.SystemTemporaryDirectory, "altsvc-${kotlin.random.Random.nextLong()}.tsv")
+            try {
+                val store = FileAltSvcStore(path)
+                val origin = "https://127.0.0.1:$port"
+                testClient(Http3DiscoveryMode.Auto, engine = { http3 { altSvcStore = store } }).use { c ->
+                    val engine = c.engine as KuicksilverEngine
+                    engine.altSvcWriteLock.lock() // the next write waits here
+                    val request = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Default).launch { c.get("$origin/") }
+                    kotlinx.coroutines.withTimeout(5.seconds) {
+                        while (engine.altSvcSnapshot(io.ktor.http.Url("$origin/")).isEmpty()) kotlinx.coroutines.delay(10)
+                    }
+                    request.cancel()
+                    request.join()
+                    engine.altSvcWriteLock.unlock()
+                    kotlinx.coroutines.withTimeout(5.seconds) {
+                        while (FileAltSvcStore(path).get(origin).isEmpty()) kotlinx.coroutines.delay(10)
+                    }
+                }
+            } finally {
+                server.stop(100, 500)
+                kotlinx.io.files.SystemFileSystem.delete(path, mustExist = false)
             }
         }
 

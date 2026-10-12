@@ -31,9 +31,11 @@ import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlin.coroutines.CoroutineContext
@@ -63,8 +65,8 @@ internal class KuicksilverEngine(
     private val altSvc = AltSvcCache(config.http3.altSvcStore) { getTimeMillis() }
     private val altSvcLock = Mutex()
 
-    /** Serializes [FileAltSvcStore] writes, which run after [altSvcLock] is released. */
-    private val altSvcWriteLock = Mutex()
+    /** Serializes [FileAltSvcStore] writes, which run after [altSvcLock] is released; internal for tests. */
+    internal val altSvcWriteLock = Mutex()
 
     /** Broken alternatives and networks where QUIC worked; internal for tests. */
     internal val brokenAltSvc = BrokenAltSvc { getTimeMillis() }
@@ -79,6 +81,7 @@ internal class KuicksilverEngine(
             try {
                 requests.join()
             } finally {
+                withContext(NonCancellable) { altSvcUpdate {} } // a snapshot no request took (an expiry dropped on lookup)
                 h1.closeAll()
                 h3.close()
                 selector.close()
@@ -145,10 +148,13 @@ internal class KuicksilverEngine(
             id
         }
 
-    /** Runs [block] under [altSvcLock], then writes the store's new content, if any, outside it (threat-model 3.18). */
+    /**
+     * Runs [block] under [altSvcLock], then writes the store's new content, if any, outside it (threat-model 3.18). A
+     * snapshot taken under the lock is written even when the caller is cancelled meanwhile: nobody else would write it.
+     */
     private suspend fun <T> altSvcUpdate(block: () -> T): T {
         val (value, write) = altSvcLock.withLock { block() to altSvc.takePendingWrite() }
-        if (write != null) altSvcWriteLock.withLock { write() }
+        if (write != null) withContext(NonCancellable) { altSvcWriteLock.withLock { write() } }
         return value
     }
 
@@ -218,6 +224,10 @@ internal class KuicksilverEngine(
         }
     }
 
+    /** The cached alternatives for the origin of [url] (tests). */
+    internal suspend fun altSvcSnapshot(url: io.ktor.http.Url): List<AltSvcEntry> =
+        altSvcLock.withLock { config.http3.altSvcStore.get(originKey(url)) }
+
     /** Whether an HTTP/3 connection to the origin of [url] is open (tests). */
     internal suspend fun hasH3Connection(url: io.ktor.http.Url): Boolean = h3.existing(H3Target(url.host, url.host, url.port)) != null
 
@@ -236,7 +246,7 @@ internal class KuicksilverEngine(
         network: String?,
     ): HttpResponseData {
         val url = data.url
-        val alt = altSvcLock.withLock { altSvc.h3For(url) }
+        val alt = altSvcUpdate { altSvc.h3For(url) }
         if (alt != null) {
             val altHost = alt.host ?: url.host
             val t = H3Target(url.host, altHost, alt.port)
