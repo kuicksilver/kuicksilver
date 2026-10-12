@@ -11,6 +11,7 @@ import io.kuicksilver.http3.frame.StreamType
 import io.kuicksilver.http3.frame.VarInt
 import io.kuicksilver.http3.qpack.QpackEncoder
 import io.kuicksilver.quic.QuicConnection
+import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.QuicStream
 
 /** A hand-driven HTTP/3 peer on a raw QUIC connection, for protocol-violation tests. */
@@ -27,7 +28,7 @@ internal class RawPeer(
         control = quic.openUni()
         control.output.writeFully(VarInt.encode(StreamType.CONTROL))
         if (sendSettings) control.output.writeFully(FrameHeaders.frame(FrameType.SETTINGS, SettingsCodec.encode(settings)))
-        control.output.flush()
+        peerMayHaveClosed { control.output.flush() }
         return control
     }
 
@@ -38,7 +39,7 @@ internal class RawPeer(
     ): QuicStream {
         val s = quic.openUni()
         s.output.writeFully(VarInt.encode(type) + body)
-        if (fin) s.output.flushAndClose() else s.output.flush()
+        peerMayHaveClosed { if (fin) s.output.flushAndClose() else s.output.flush() }
         return s
     }
 
@@ -53,6 +54,23 @@ internal class RawPeer(
         type: Long,
         payload: ByteArray,
     ): ByteArray = FrameHeaders.frame(type, payload)
+}
+
+/**
+ * Runs a write of a protocol-violation test, tolerating the peer's reaction arriving first: these tests provoke a
+ * STOP_SENDING or a connection close and assert it afterwards, and on a fast host it can land before the flush
+ * returns (seen on GitHub's Linux runners). Any other failure propagates.
+ */
+internal suspend fun peerMayHaveClosed(write: suspend () -> Unit) {
+    try {
+        write()
+    } catch (e: Throwable) {
+        val byPeer =
+            generateSequence(e) { it.cause }.any {
+                it is QuicException.StreamError.Stopped || it is QuicException.ConnectionLost
+            }
+        if (!byPeer) throw e
+    }
 }
 
 internal suspend fun QuicStream.readVarInt(): Long {

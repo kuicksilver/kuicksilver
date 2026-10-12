@@ -161,20 +161,21 @@ class ConnectionTest {
                 val server = Http3Connection.server(s)
                 val raw = RawPeer(c)
                 raw.openControl()
-                val u = raw.uni(0x54, ByteArray(100))
-                // the stream is stopped with H3_STREAM_CREATION_ERROR: writing more fails with Stopped
+                // the stream is stopped with H3_STREAM_CREATION_ERROR: writing more fails with Stopped. The stop can arrive
+                // before the first flush returns (seen on a Linux runner), so opening the stream is inside the same try.
                 val stopped =
                     withTimeout(5.seconds) {
-                        while (true) {
-                            try {
+                        try {
+                            val u = raw.uni(0x54, ByteArray(100))
+                            while (true) {
                                 u.output.writeFully(ByteArray(1000))
                                 u.output.flush()
                                 delay(20)
-                            } catch (
-                                e: Throwable,
-                            ) {
-                                return@withTimeout e
                             }
+                        } catch (
+                            e: Throwable,
+                        ) {
+                            return@withTimeout e
                         }
                         @Suppress("UNREACHABLE_CODE")
                         null
