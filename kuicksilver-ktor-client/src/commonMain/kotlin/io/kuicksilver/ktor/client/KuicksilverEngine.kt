@@ -144,7 +144,9 @@ internal class KuicksilverEngine(
 
     /**
      * HTTP/3 against HTTP/1.1 (docs/guide/ktor.md): connection setups race ([ProtocolRace]); the request runs once, on the winner.
-     * A broken alternative goes straight to HTTP/1.1; HTTP/3 failing while HTTP/1.1 works marks it broken.
+     * A broken alternative goes straight to HTTP/1.1; HTTP/3 failing while HTTP/1.1 works marks it broken. An HTTP/1.1
+     * connection that lost the race is closed; when both setups fail, the HTTP/1.1 failure is the result (the race already
+     * was the one HTTP/1.1 attempt, RFC 8305 section 5).
      */
     private suspend fun raced(
         t: H3Target,
@@ -165,13 +167,9 @@ internal class KuicksilverEngine(
         // the HTTP/3 attempt outlives a lost race: it fills the pool for the next request, or marks the alternative broken
         val h3Attempt = engineScope.async { h3.connection(t, data) }
         val result =
-            try {
-                race.race<Any>({ h3Attempt.await() }, { h1.open(data) }, rtt, confirmed)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Throwable) {
-                if (config.http3.discovery == Http3DiscoveryMode.Preferred) throw e else return h1.execute(data, callContext)
-            }
+            race.race<Any>({ h3Attempt.await() }, { h1.open(data) }, rtt, confirmed, onLoser = {
+                (it as? io.kuicksilver.ktor.client.h1.H1Connection)?.close()
+            })
         return when (result.winner) {
             Protocol.H3 -> {
                 val conn = result.value as io.kuicksilver.http3.Http3Connection
@@ -265,7 +263,8 @@ internal class KuicksilverEngine(
 
     /**
      * HTTP/3, falling back to HTTP/1.1 when it fails before the response headers: always if the request cannot have been
-     * sent, otherwise for idempotent methods only (as Chromium's `retry_without_alt_svc_on_quic_errors`).
+     * sent, otherwise for idempotent methods only (as Chromium's `retry_without_alt_svc_on_quic_errors`). A fallback that
+     * succeeds marks the alternative broken (RFC 7838 section 2.4): HTTP/3 failed where HTTP/1.1 worked.
      */
     private suspend fun h3WithFallback(
         target: H3Target,
@@ -282,18 +281,28 @@ internal class KuicksilverEngine(
         } catch (
             e: H3NotSent,
         ) {
-            h1.execute(data, callContext)
+            fallbackToH1(target, data, callContext)
         } catch (
             e: Throwable,
         ) {
             if (data.method.isIdempotent() && (e is QuicException || e is Http3Exception) &&
                 data.body.isReplayable()
             ) {
-                h1.execute(data, callContext)
+                fallbackToH1(target, data, callContext)
             } else {
                 throw e
             }
         } // a streamed body HTTP/3 consumed is never replayed
+
+    private suspend fun fallbackToH1(
+        target: H3Target,
+        data: HttpRequestData,
+        callContext: CoroutineContext,
+    ): HttpResponseData {
+        val r = h1.execute(data, callContext)
+        altSvcLock.withLock { brokenAltSvc.markBroken(originKey(data.url), "${target.host}:${target.port}") }
+        return r
+    }
 
     override fun toString(): String = "Kuicksilver"
 }

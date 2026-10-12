@@ -88,6 +88,15 @@ class ProtocolRaceTest {
             assertEquals(0L, startedAt)
         }
 
+    /** An h1 setup that completed just as h3 won is handed to [onLoser] (the engine closes it) instead of being leaked. */
+    @Test fun losingH1ResultIsHandedToOnLoser() =
+        runTest {
+            val lost = ArrayList<String>()
+            val r = race.race({ "h3" }, { "h1" }, null, quicConfirmed = false, onLoser = { lost += it })
+            assertEquals(Protocol.H3, r.winner)
+            assertEquals(listOf("h1"), lost)
+        }
+
     @Test fun bothFailThrowsH1Failure() =
         runTest {
             val e = assertFailsWith<IOException> { race.race<String>({ throw IOException("h3") }, { throw IOException("h1") }, null, true) }

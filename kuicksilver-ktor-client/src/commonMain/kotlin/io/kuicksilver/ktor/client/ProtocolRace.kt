@@ -24,7 +24,8 @@ internal class RaceResult<T>(
  * Racing HTTP/3 against HTTP/1.1 connection setup (RFC 8305 section 5, as in Chromium): HTTP/3 starts at once;
  * HTTP/1.1 starts when HTTP/3 fails, or after the head start — [hardDelay] when set, else 1.5 x the host's smoothed RTT,
  * or 250 ms without history, clamped to 100 ms..2 s — and immediately on a network where QUIC was never seen working.
- * The first success wins; the loser is cancelled.
+ * The first success wins; the loser is cancelled, and an h1 setup that completed just as h3 won is handed to `onLoser`
+ * so the caller can close it (a connection must not be leaked, RFC 8305 section 5).
  */
 internal class ProtocolRace(
     private val softDelay: Duration,
@@ -44,6 +45,7 @@ internal class ProtocolRace(
         h1: suspend () -> T,
         srtt: Duration?,
         quicConfirmed: Boolean,
+        onLoser: (T) -> Unit = {},
     ): RaceResult<T> =
         coroutineScope {
             val h3Done = CompletableDeferred<Result<T>>()
@@ -81,6 +83,8 @@ internal class ProtocolRace(
             while (true) {
                 if (h3Result?.isSuccess == true) {
                     h1Job.cancel()
+                    h1Job.join()
+                    if (h1Done.isCompleted && !h1Done.isCancelled) h1Done.await().getOrNull()?.let(onLoser)
                     return@coroutineScope RaceResult(h3Result.getOrThrow(), Protocol.H3, null)
                 }
                 if (h1Result?.isSuccess ==

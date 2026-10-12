@@ -161,10 +161,11 @@ open yet, the engine races connection setups (RFC 8305 section 5, after Chromium
 TCP + TLS starts when QUIC fails, or after a head start of 1.5 x the host's smoothed RTT (250 ms without history,
 clamped to 100 ms..2 s; `hardDelay` overrides it) — and with no head start at all on a network where QUIC was never
 seen working. The request runs once, on the winner. A QUIC setup that loses the race keeps going in the background and
-serves the next requests once it is up.
+serves the next requests once it is up; a TCP connection that loses is closed. When both setups fail, the HTTP/1.1
+failure is reported — the race was the one HTTP/1.1 attempt, there is no second one.
 
-An alternative is marked broken only when HTTP/3 failed while HTTP/1.1 worked — per origin and alternative, never
-"UDP is blocked" for everything: 5 minutes, doubling up to 2 days, and forgotten when `networkId()` reports a new
+An alternative is marked broken only when HTTP/3 failed while HTTP/1.1 worked (a lost race, or a request that fell
+back to HTTP/1.1 after failing on an HTTP/3 connection) — per origin and alternative, never "UDP is blocked" for everything: 5 minutes, doubling up to 2 days, and forgotten when `networkId()` reports a new
 network. Broken alternatives are skipped (straight to HTTP/1.1). The curl-style `softDelay` ("no UDP datagram from the
 server yet") is accepted in the configuration but not acted on in v1: the QUIC API does not expose that signal.
 
