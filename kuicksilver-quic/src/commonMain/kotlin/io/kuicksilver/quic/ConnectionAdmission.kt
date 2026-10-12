@@ -9,7 +9,7 @@ import io.ktor.network.sockets.InetSocketAddress
  *
  * The endpoint builds one per queued Initial that passed the cheap checks (1200 bytes, a supported version, a DCID of
  * at least 8 bytes, no reflective source port) and the hard limits (`maxConnections`, `acceptQueue`,
- * `maxConnectionsPerIp`); the policy never sees datagrams those checks dropped.
+ * `maxConnectionsPerIp`); the policy never sees datagrams those checks dropped or refused.
  */
 public class ConnectionAttempt(
     /** The client's address and port as seen on the socket. */

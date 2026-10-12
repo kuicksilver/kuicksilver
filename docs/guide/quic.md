@@ -345,11 +345,15 @@ val withLoops = QuicEndpointConfig.Builder().apply { this.server = serverConfig;
 A server decides per new client Initial whether to create a connection. `handleDatagram` runs only cheap checks on an
 unknown Initial (1200 bytes, a supported version, a DCID of at least 8 bytes, no reflective source port such as 53 or
 123) and copies it into a bounded queue of `initialQueueCap` (1024) entries; the loop then calls `processPending` once
-per receive batch. That step checks the Retry token, the hard limits (`maxConnections`, `acceptQueue`,
+per receive batch. That step checks the Retry token, the accept queue, the hard limits (`maxConnections`,
 `maxConnectionsPerIp`, 256 per IP by default) and asks `ConnectionAdmission.admit(attempt)`, which answers `Allow`,
-`Retry`, `Drop` or `Close(code)`. `acceptQueue` counts only the connections waiting for `accept()`, not the handshakes
-in flight (unvalidated Initials from spoofed sources must not lock real clients out), and the queue never holds more: a
-handshake that completes while `acceptQueue` connections wait is closed with CONNECTION_REFUSED (0x02). Handshakes in
+`Retry`, `Drop` or `Close(code)`. `acceptQueue` (128 by default, shared by all loops) counts only the connections
+waiting for `accept()`, not the handshakes in flight (unvalidated Initials from spoofed sources must not lock real
+clients out). While it is full, a new client Initial is answered statelessly with an Initial CONNECTION_CLOSE carrying
+CONNECTION_REFUSED (0x02), under the same rate limits as Retry and Version Negotiation: the client's `connect` fails
+at once with `ConnectionLost.TransportClosed(code = 0x02)` and no TLS handshake is spent on it. The queue never holds
+more: a handshake admitted earlier that completes while `acceptQueue` connections wait is closed with
+CONNECTION_REFUSED as well. An application whose `accept()` loop lags behind bursts raises `acceptQueue`. Handshakes in
 flight are bounded by `maxConnections`, `maxConnectionsPerIp` and the admission policy (Retry).
 
 ```kotlin

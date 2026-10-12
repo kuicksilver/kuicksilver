@@ -42,7 +42,7 @@ class MultiLoopTest {
 
     private fun serverConfig(
         loops: Int,
-        acceptQueue: Int = 32,
+        acceptQueue: Int = 128,
     ) = QuicEndpointConfig
         .Builder()
         .apply {
@@ -59,8 +59,9 @@ class MultiLoopTest {
         runBlocking {
             assumeTrue(ready(), "needs SO_REUSEPORT on the accelerated socket (Linux)")
             // all 100 handshakes may complete before the accept loop below (sharing this thread with the 100 transfers) gets
-            // to them: with the default acceptQueue of 32 the ones above it are refused with CONNECTION_REFUSED by design
-            // (run 38297127699; runtime.LoopGroupTest.burstAboveTheSharedAcceptQueueIsRefusedGroupWide)
+            // to them: with the old default acceptQueue of 32 the ones above it were refused with CONNECTION_REFUSED by design
+            // (run 38297127699; runtime.LoopGroupTest.burstAboveTheSharedAcceptQueueIsRefusedGroupWide). The default 128 covers
+            // the burst now; the explicit size keeps the test independent of the default
             val server = QuicEndpoint.bind(lo, serverConfig(4, acceptQueue = 100))
             val group = server as LoopGroup
             val clients = List(20) { QuicEndpoint.bind(lo, QuicEndpointConfig.Builder().apply { crypto = KslQuicCrypto }.build()) }

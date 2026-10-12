@@ -30,6 +30,7 @@ import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertIs
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
@@ -208,7 +209,7 @@ class LoopGroupTest {
     private suspend fun burst(
         acceptQueue: Int,
         perLoop: Int,
-        afterBurst: suspend (LoopGroup) -> Unit = {},
+        afterBurst: suspend (LoopGroup, MemoryNetwork) -> Unit = { _, _ -> },
     ): Pair<List<Any?>, Int> =
         kotlinx.coroutines.coroutineScope {
             val net = MemoryNetwork()
@@ -241,7 +242,7 @@ class LoopGroupTest {
                             }
                         }.awaitAll()
                 val waiting = group.loopForTest(0).pendingAcceptForTest
-                afterBurst(group)
+                afterBurst(group, net)
                 outcomes to waiting
             } finally {
                 clients.forEach { it.close() }
@@ -253,12 +254,59 @@ class LoopGroupTest {
         runBlocking {
             withTimeout(30.seconds) {
                 // run 38297127699 (MultiLoopTest.fourLoopsShareOnePort): 100 concurrent clients against the default acceptQueue
-                // of 32 got CONNECTION_REFUSED "accept queue full"; the bound is the group's, not each loop's
+                // of 32 got CONNECTION_REFUSED "accept queue full"; the bound is the group's, not each loop's. When one loop's
+                // handshakes fill the queue before the other loop admits its held Initials, those clients are refused at the
+                // Initial (once a silent drop that left them to the 10 s handshake timeout); otherwise at completion: either
+                // way every excess client learns CONNECTION_REFUSED promptly
                 val (outcomes, waiting) = burst(acceptQueue = 4, perLoop = 4)
                 val refused = outcomes.filterIsInstance<QuicException.ConnectionLost.TransportClosed>()
                 assertEquals(4, waiting, "connections waiting for accept() across both loops")
                 assertEquals(4, refused.size, "outcomes: $outcomes")
                 assertTrue(refused.all { it.code == TransportError.CONNECTION_REFUSED }, "refusals: $refused")
+            }
+        }
+
+    @Test fun initialWhileTheSharedAcceptQueueIsFullIsRefusedStatelessly() =
+        runBlocking {
+            withTimeout(30.seconds) {
+                // the group's queue is full (one connection waits on each loop): a new client of loop 1 is refused at its
+                // first Initial with CONNECTION_REFUSED, before any connection state or TLS handshake, and its connect fails
+                // within a round trip rather than at the handshake timeout
+                var lost: Any? = null
+                var created = -1L
+                var refusals = -1L
+                var overflows = -1L
+                val (outcomes, waiting) =
+                    burst(acceptQueue = 2, perLoop = 1) { g, net ->
+                        val before =
+                            g
+                                .loopForTest(1)
+                                .core.stats.connectionsCreated
+                        val io = net.open(InetSocketAddress("10.0.2.1", 2001))
+                        val ep = QuicEndpoint.bind(io.localAddress, client(io))
+                        try {
+                            lost =
+                                try {
+                                    withTimeout(2.seconds) { ep.connect(otherAddr, clientConfig) }
+                                } catch (e: QuicException.ConnectionLost) {
+                                    e
+                                }
+                        } finally {
+                            ep.close()
+                        }
+                        created = g
+                            .loopForTest(1)
+                            .core.stats.connectionsCreated - before
+                        refusals = g.loopForTest(0).core.acceptQueueRefusals + g.loopForTest(1).core.acceptQueueRefusals
+                        overflows = g.loopForTest(0).acceptOverflows + g.loopForTest(1).acceptOverflows
+                    }
+                assertEquals(2, waiting)
+                assertTrue(outcomes.none { it is QuicException }, "outcomes: $outcomes")
+                val refused = assertIs<QuicException.ConnectionLost.TransportClosed>(lost, "connect: $lost")
+                assertEquals(TransportError.CONNECTION_REFUSED, refused.code)
+                assertEquals(0L, created, "no connection state for the refused client")
+                assertEquals(1L, refusals)
+                assertEquals(0L, overflows, "refused at the Initial, not at handshake completion")
             }
         }
 
@@ -269,7 +317,7 @@ class LoopGroupTest {
                 // connection reaches accept() and each accept() returns its slot
                 var after = -1
                 val (outcomes, waiting) =
-                    burst(acceptQueue = 8, perLoop = 4) { g ->
+                    burst(acceptQueue = 8, perLoop = 4) { g, _ ->
                         repeat(8) { withTimeout(5.seconds) { g.accept() } }
                         after = g.loopForTest(0).pendingAcceptForTest
                     }
