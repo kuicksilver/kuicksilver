@@ -31,10 +31,10 @@ internal actual fun openKeylogFd(path: String): Int {
         memScoped {
             val st = alloc<stat>()
             if (fstat(fd, st.ptr) != 0) return@memScoped false
-            val mode = st.st_mode.toInt()
+            val mode: Int = st.st_mode.convert()
             if (mode and S_IFMT != S_IFREG) return@memScoped false
             if (st.st_uid != geteuid()) return@memScoped false
-            if (st.st_nlink.toInt() != 1) return@memScoped false // another name may sit where others can read it
+            if (fdLinkCount(fd) != 1L) return@memScoped false // another name may sit where others can read it
             if (mode and 0x3F /* 077 */ != 0 && fchmod(fd, 0x180.convert()) != 0) return@memScoped false
             true
         }
@@ -44,3 +44,9 @@ internal actual fun openKeylogFd(path: String): Int {
     }
     return fd
 }
+
+/**
+ * The hard-link count of an open file, or -1 if `fstat` fails. `st_nlink` is 64 bits on linuxX64 and 32 on linuxArm64,
+ * which shared Linux code may not touch, so each architecture reads it in its own source set.
+ */
+internal expect fun fdLinkCount(fd: Int): Long

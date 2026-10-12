@@ -927,7 +927,12 @@ class PathTest {
             p.rebindDuringHandshake(newPort)
             assertTrue(
                 p.runUntil(5.seconds) {
-                    p.server.connections().singleOrNull()?.paths?.active?.let { it.isRemote(newPort) && it.state == PathState.Validating } == true
+                    p.server.connections().singleOrNull()?.paths?.active?.let {
+                        it.isRemote(
+                            newPort,
+                        ) && it.state == PathState.Validating
+                    } ==
+                        true
                 },
                 "the server follows the Initial from the new address",
             )
@@ -1021,6 +1026,7 @@ class PathTest {
             .ConnectionId(datagram.copyOfRange(1, 9))
 
     /** RFC 9000 section 9.5: a probe on a new path never carries the connection ID the active path uses, on either side. */
+
     /**
      * K7 F1.10 (F2 trace of `MigrationApiTest.migrateMovesTrafficToNewIo`): after the client's active migration the server re-validates
      * the client's old address (RFC 9000 section 9.3.3); the client must answer the first PATH_CHALLENGE there, not only a repeat.

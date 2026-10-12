@@ -77,7 +77,11 @@ public sealed interface TrustConfig {
         init {
             require(pins.isNotEmpty()) { "Pinned needs at least one pin" }
             if (base is Tofu || base is Custom) throw TlsException.Config("Pinned cannot be combined with ${base::class.simpleName}")
-            if (base is ExpectedName && base.base is Custom) throw TlsException.Config("Pinned cannot be combined with Custom, even through ExpectedName")
+            if (base is ExpectedName &&
+                base.base is Custom
+            ) {
+                throw TlsException.Config("Pinned cannot be combined with Custom, even through ExpectedName")
+            }
             if (base is Pinned) throw TlsException.Config("Pinned cannot wrap Pinned")
         }
     }

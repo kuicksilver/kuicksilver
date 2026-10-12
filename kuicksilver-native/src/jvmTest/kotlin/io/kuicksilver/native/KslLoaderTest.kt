@@ -96,7 +96,11 @@ class KslLoaderTest {
         val dir = File(parent, "a/b/kuicksilver-native").toPath()
         JvmLoader.createWorkDir(dir)
         dir.toFile().deleteOnExit()
-        assertEquals("rwx------", java.nio.file.attribute.PosixFilePermissions.toString(Files.getPosixFilePermissions(dir)))
+        assertEquals(
+            "rwx------",
+            java.nio.file.attribute.PosixFilePermissions
+                .toString(Files.getPosixFilePermissions(dir)),
+        )
         JvmLoader.createWorkDir(dir) // an existing directory is left to checkWorkDir
     }
 
@@ -173,7 +177,11 @@ class LoaderInstallTest {
         val out = File(dir, lib.name).apply { deleteOnExit() }
         JvmLoader.installLibrary(out, lib.readBytes(), manifest)
         val before = Files.readAttributes(out.toPath(), java.nio.file.attribute.BasicFileAttributes::class.java).fileKey()
-        val root = dir.toPath().fileSystem.userPrincipalLookupService.lookupPrincipalByName("root")
+        val root =
+            dir
+                .toPath()
+                .fileSystem.userPrincipalLookupService
+                .lookupPrincipalByName("root")
         JvmLoader.installLibrary(out, lib.readBytes(), manifest, root)
         val after = Files.readAttributes(out.toPath(), java.nio.file.attribute.BasicFileAttributes::class.java).fileKey()
         kotlin.test.assertNotEquals(before, after, "a copy owned by another user was reused")
