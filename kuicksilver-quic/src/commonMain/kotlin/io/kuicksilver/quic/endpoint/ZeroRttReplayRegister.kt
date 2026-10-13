@@ -41,6 +41,9 @@ internal class ZeroRttReplayRegister(
 
     private val stripes = Array(STRIPES) { Stripe() }
 
+    /** Fingerprints held in the current halves of every stripe (the resource probe; storage itself is fixed). */
+    fun liveEntries(): Int = stripes.sumOf { s -> locked(s) { s.live } }
+
     /** Bytes of fingerprint storage. */
     val memoryBytes: Long get() = STRIPES.toLong() * SLOTS * 2 * 8
 

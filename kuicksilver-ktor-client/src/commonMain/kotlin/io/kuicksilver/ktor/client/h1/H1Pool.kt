@@ -114,6 +114,9 @@ internal class H1Pool(
         }
     }
 
+    /** Idle connections and the keys holding them (the resource probe). */
+    internal suspend fun idleForProbe(): Pair<Int, Int> = lock.withLock { idle.values.sumOf { it.size } to idle.size }
+
     suspend fun closeAll() {
         lock.withLock {
             idle.values.forEach { q -> q.forEach { it.close() } }

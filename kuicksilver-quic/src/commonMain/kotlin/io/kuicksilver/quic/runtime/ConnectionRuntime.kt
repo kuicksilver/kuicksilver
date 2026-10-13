@@ -50,7 +50,7 @@ internal class ConnectionRuntime(
     private val closedDeferred = CompletableDeferred<QuicException.ConnectionLost>()
     override val closed: Deferred<QuicException.ConnectionLost> get() = closedDeferred
     private val accepted = Channel<QuicStream>(Channel.UNLIMITED)
-    private val streams = HashMap<Long, StreamRuntime>()
+    internal val streams = HashMap<Long, StreamRuntime>() // internal for the resource probe
 
     /** Signalled after every poll: writers and stream openers retry. */
     private val tickers = ArrayList<Channel<Unit>>()
