@@ -94,8 +94,10 @@ shared RFC 9525 matcher afterwards on every platform, so a platform matcher can 
 | Linux (Native) | OpenSSL inside `ksl` with the system CA bundle (below) | none |
 
 Windows errors map to `VerifyReason`: `CERT_E_UNTRUSTEDROOT` and chaining failures to `UnknownIssuer`, `CERT_E_EXPIRED` to
-`Expired` or `NotYetValid`, `CERT_E_CN_NO_MATCH` to `HostnameMismatch`, `CRYPT_E_REVOKED` to `Revoked`,
-`CERT_E_WRONG_USAGE` to `InvalidPurpose`, a bad signature to `BadSignature`; anything else is `UnknownIssuer`.
+`Expired` or `NotYetValid`, `CERT_E_CN_NO_MATCH` to `HostnameMismatch`, `CRYPT_E_REVOKED` and `CERT_E_REVOKED` to `Revoked`,
+`CRYPT_E_NO_REVOCATION_CHECK`, `CRYPT_E_REVOCATION_OFFLINE` and `CERT_E_REVOCATION_FAILURE` to `UnknownRevocationStatus`,
+`CERT_E_WRONG_USAGE` and `CERT_E_PURPOSE` to `InvalidPurpose`, `TRUST_E_CERT_SIGNATURE` to `BadSignature`,
+`CERT_E_MALFORMED` to `BadEncoding`; anything else is `UnknownIssuer`.
 
 ### Linux trust store
 
