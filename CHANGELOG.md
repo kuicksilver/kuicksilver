@@ -12,9 +12,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
-Nothing has been published yet. This section lists the work for 0.2.0, made on top of the 0.1.0 candidate; the
-0.1.0 candidate itself, frozen on 2026-10-09 and awaiting publication on Maven Central, is summarised in the next
-section.
+Nothing has been published yet. This section lists the work for 0.2.0, the first version to be published on Maven
+Central, made on top of the 0.1.0 candidate. That candidate, frozen on 2026-10-09, was never published (no tag, no
+Central deployment); it is summarised in the last section, and its changes reach users with 0.2.0.
 
 ### Added
 
@@ -137,6 +137,15 @@ Testing (`kuicksilver-testing`, not published) and tooling:
 - Reproducible builds: base images pinned by digest, the Gradle wrapper by checksum, `-ffile-prefix-map` in the native
   builds, and `tools/check/double-build.sh` (builds the native libraries from two checkout paths and compares them) and
   `tools/check/pins.sh`; the CI scripts and OpenSSL tasks run on fresh GitHub runners.
+- Releases from the owner's Mac, no GitHub runner (`docs/release.md`): `tools/release/local-release.sh <version>`
+  builds the mingw-w64 OpenSSL and the five JVM JNI libraries (manylinux2014 `.so` for x86_64 and aarch64 in Docker,
+  `.dylib` for arm64 and x86_64, the mingw-w64 `.dll`), checks each as CI does (exports, imports, glibc floor, the
+  pinned OpenSSL inside, `manifest.sha256`), checks that the jar carries all five, counts the deployment against the
+  Central limits and runs `publishToMavenCentral` once; `--dry-run` stops before the upload and publishes into
+  `build/release/m2`. It refuses a version, branch, tree or toolchain that does not fit, and a commit without a
+  passing gate record: `tools/ci/local-matrix.sh` now writes `build/ci/gate/<commit>.stamp` and gains `--with-windows`
+  (the JVM suites in a Windows 11 VM). `tools/check/consumer-smoke.sh` reads another local repository from
+  `KSL_MAVEN_REPO`. The `release` workflow stays as an alternative and is not used for 0.2.0.
 - Soak and churn harness `kuicksilver-soak` (not published): a Ktor server (HTTP/1.1 + HTTP/3) and raw QUIC servers on
   real UDP under a weighted mix of client scenarios, with RSS, heap, descriptor, `ksl` live-object and library-table
   sampling, a Theil–Sen flatness verdict and a return-to-baseline check (CONTRIBUTING.md, "Soak and churn").
@@ -552,10 +561,10 @@ Samples and testing:
   shared by every endpoint, loop and configuration that can decrypt the process's tickets; forged ClientHellos no longer
   fill it; a wall clock stepped back cannot reopen a replay; an idle register stripe keeps a full half of history.
 
-## 0.1.0 candidate (not yet published)
+## 0.1.0 candidate (never published)
 
-The first 0.x version: the code frozen for the first public release. It has no release date or tag yet; when it is
-published this section becomes its version entry.
+The first 0.x candidate: the code frozen on 2026-10-09 for the first public release. It was never published: on
+2026-10-14 the owner made 0.2.0 the first Maven Central publication, and 0.2.0 contains everything below.
 
 ### Changed (API freeze before 0.1.0)
 - `NullCryptoProvider` is `@InternalKuicksilverApi` (a test fixture, not a transport); `ConnectionStats` and `EndpointStats` are built by the library only.
