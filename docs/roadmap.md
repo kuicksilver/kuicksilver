@@ -50,11 +50,9 @@ Known limits, stated on purpose:
   the per-engine session cache, and HTTP/3 safe-method gating with RFC 8470 `425`. About 14 tasks.
 - QUIC server on Kotlin/Native Windows (`ksl_udp` over Winsock).
 - The interop runner's `perf` protocol and throughput thresholds in CI.
-
-## Next
-
-- BBR congestion control (draft-ietf-ccwg-bbr, BBRv3), opt-in and experimental (`Bbr`; CUBIC stays the default): done on
-  `k7/bbr`, `guide/quic.md` "Choosing a congestion controller".
+- BBR congestion control (draft-ietf-ccwg-bbr-06, BBRv3), owner decision to ship it in 0.2.0: opt-in and experimental
+  (`Bbr`; CUBIC stays the default), with spurious-loss undo, restart from idle, PMTU changes, property tests, a Jazzer
+  target and harsh simulator scenarios against CUBIC (`guide/quic.md` "Choosing a congestion controller").
 
 ## After 0.2.0
 

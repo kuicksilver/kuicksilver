@@ -16,6 +16,7 @@ Nothing has been released yet. This section summarises the development of the fi
 
 ### Fixed
 
+- QUIC: the pacer stopped refilling after a long idle gap on a fast path (10 Gbit/s for 7.4 s, 1 Gbit/s for 74 s): the token arithmetic overflowed, the sender stalled and its timer spun. Affected CUBIC, NewReno and BBR.
 - QUIC: a burst of losses that left more than `maxReassemblyRanges` gaps in a stream (every other packet lost within one RTT, e.g. a full receive buffer) closed the connection with FLOW_CONTROL_ERROR although the peer stayed within flow control; the packet that would open one gap too many is now dropped unacknowledged and retransmitted by the peer, and the memory bound is unchanged (RFC 9000 §21.7).
 - `FileAltSvcStore` persists on Android API 24-25: kotlinx-io's `atomicMove` needs `java.nio.file` (API 26), so every write failed and the store silently kept alternatives in memory only; it now falls back to `java.io.File.renameTo`, and a store that cannot be written logs one warning.
 - `keylogFile` (and `keylogFile(context)`) on Android below API 26 throws `IllegalArgumentException` (the file cannot be checked without `java.nio.file`) instead of `NoClassDefFoundError`.
@@ -51,9 +52,12 @@ Nothing has been released yet. This section summarises the development of the fi
 ### Added
 - BBR congestion control, opt-in and experimental: `quicConfig { congestionController = { Bbr() } }` (draft-ietf-ccwg-bbr-06,
   BBRv3: delivery-rate sampling, windowed max bandwidth and min RTT, Startup/Drain/ProbeBW/ProbeRTT, `inflight_longterm` and
-  the short-term bounds from loss, ECN-CE treated as loss). CUBIC stays the default. On a simulated 50 Mbit/s, 40 ms link with
-  1 % random loss BBR moved 40 Mbit/s where CUBIC moved 2.7; on a clean link it used 93 % with a 2 ms mean queue where CUBIC
-  queued 111 ms. `LinkParams.queueLimitBytes` (tail drop) in the unpublished `kuicksilver-testing`.
+  the short-term bounds from loss, ECN-CE treated as loss, undo of a loss episode found spurious, pacing at the estimate after
+  an idle period, floors that follow PMTUD). CUBIC stays the default. On a simulated 50 Mbit/s, 40 ms link with 1 % random
+  loss BBR moved 37-40 Mbit/s where CUBIC moved 2.7-2.9; with 1 % of packets reordered by 8 ms 43 against 3.0; in an 8 BDP
+  buffer it kept a 2.3 ms mean queue where CUBIC queued 274 ms (`guide/quic.md`). Loss detection now reports a packet declared
+  lost and acknowledged later (RFC 9002 section 6.1). `LinkParams.queueLimitBytes` (tail drop) in the unpublished
+  `kuicksilver-testing`; the interop endpoint takes `KSL_CC=bbr`.
 - QUIC server on Kotlin/Native Windows (`mingwX64`): `ksl_udp` over Winsock (`WSASendMsg`/`WSARecvMsg` with `WSAPoll` and a wake socket, ECN through `IP_ECN`/`IPV6_ECN` on Windows 10 2004+ / Server 2022, USO/URO where the system grants them, DF, dual-stack IPv6, `SO_EXCLUSIVEADDRUSE`); the JVM on Windows uses the same socket through JNI. Winsock is started when the Kotlin/Native runtime starts (not from a C constructor, which in a `sharedLib` would run under the loader lock), so address lookups before the first socket no longer fail with `WSANOTINITIALISED`. Verified by the CI windows job only. `loops > 1` without `SO_REUSEPORT` granted on the first socket (Windows always) throws the documented `UnsupportedOperationException` instead of failing the second bind with `KslException.Internal`.
 - 0-RTT, opt-in and experimental (ADR-0015, RFC 9001 section 4.6, RFC 8470): `QuicClientConfig.earlyData`,
   `QuicServerConfig.earlyData`/`earlyDataContext`, `QuicEndpoint.connectEarly`, `QuicConnection.awaitHandshake`/

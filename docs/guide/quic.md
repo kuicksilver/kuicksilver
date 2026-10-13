@@ -198,19 +198,45 @@ from the initial window; a NAT rebinding keeps the state.
 keeps about two bandwidth-delay products in flight, probes for more bandwidth every 2 to 3 seconds (or sooner on short
 paths), and drains the queue for 200 ms every 5 seconds (ProbeRTT) to refresh its minimum RTT. Loss counts only above 2 %
 of a probe's flight, and outside probes it trims the short-term model by 30 % per lossy round; an ECN-CE mark counts as a
-loss. On the simulator (`BbrSimulationTest`, 50 Mbit/s, 40 ms, a buffer of one BDP unless noted):
+loss. When every packet of a loss episode is acknowledged after all (reordering, a delay spike), BBR undoes the episode:
+window, bounds and the interrupted probe or Startup come back. After an idle period it paces at its bandwidth estimate
+instead of bursting its window, and it is paced even on sub-millisecond paths. A new peer address starts a fresh model; a
+NAT rebinding keeps it. PMTUD changes keep the model in bytes and move the 4-datagram floor.
+
+When to use it: lossy paths (radio, long-haul) where a loss-based controller collapses, deep buffers where it bloats the
+queue, and paths with reordering. Keep CUBIC where the flow shares a bottleneck with TCP or other QUIC stacks and fairness
+matters more than throughput.
+
+On the simulator (virtual time; 50 Mbit/s, 40 ms, a buffer of one BDP unless noted; mean of 3 seeds; queue is the
+bottleneck's time-averaged queueing delay; `BbrSimulationTest`, `BbrHarshScenarioTest`, `BbrHighRateScenarioTest`):
 
 | Scenario | BBR | CUBIC |
 |---|---|---|
-| 1 % random loss | 40.0 Mbit/s | 2.7 Mbit/s |
-| clean link, 4 BDP buffer | 46.7 Mbit/s, 2.2 ms mean queue | 48.1 Mbit/s, 111 ms mean queue |
+| 1 % random loss | 37-40 Mbit/s | 2.7-2.9 Mbit/s |
+| 10 % random loss | 1.3 Mbit/s | 0.7 Mbit/s |
+| 1 % reordered by 8 ms | 43.5 Mbit/s | 3.0 Mbit/s |
+| clean, 4 BDP buffer | 46.7 Mbit/s, queue 2.2 ms, no loss | 48.1 Mbit/s, queue 111 ms |
+| clean, 8 BDP buffer | 46.7 Mbit/s, queue 2.3 ms | 48.0 Mbit/s, queue 274 ms |
+| 0.25 BDP buffer | 46.7 Mbit/s | 47.6 Mbit/s |
+| ACKs aggregated into 8 ms batches | 47.1 Mbit/s, queue 5.2 ms | 48.1 Mbit/s, queue 33.9 ms |
+| 3 of 4 ACKs lost | 43.5 Mbit/s, queue 3.2 ms | 43.7 Mbit/s, queue 26.9 ms |
+| 300 ms RTT | 44.9 Mbit/s, queue 76 ms | 47.4 Mbit/s, queue 211 ms |
+| 1 ms RTT | 47.6 Mbit/s | 48.3 Mbit/s |
+| 50 -> 5 -> 50 Mbit/s steps | 4.8 Mbit/s at 5, 46.7 after the rise | 4.8, 48.2 |
+| 2 s blackhole | half the link 0.4 s after it ends | 1.2 s |
+| ECN marking above 5 ms of queue | 46.5 Mbit/s, queue 0.3 ms | 43.3 Mbit/s, queue 1.5 ms |
+| 1 Gbit/s, 10 ms, after 8 s idle | 948 Mbit/s, no stall | 955 Mbit/s |
+| 1 Gbit/s, 0.2 ms RTT | 965 Mbit/s | 965 Mbit/s |
 
 Caveats: BBR is experimental here (the draft is, too) and its API may change. Next to a loss-based flow it takes more or
-less than half depending on the buffer: on the simulator, sharing a one-BDP buffer with CUBIC, BBR took about 70 %. Two BBR
-flows converge slowly (over several probe cycles: on the simulator the late flow had 29 % of the leader's rate in its
-first 18 s and 54 % over the next 20 s) and keep about half a BDP queued between them. There is no undo after a
-spurious loss (the core has no such signal). Pass `Bbr(random = ...)` to seed the probe jitter; without it the jitter is
-derived from send and ACK times. Each path gets its own controller, so return a fresh `Bbr()` from the factory.
+less than half depending on the buffer: sharing one BDP of buffer with CUBIC, BBR took 67-74 % (3 seeds); in an 8 BDP
+buffer the two split about evenly but CUBIC keeps the queue at 245 ms. Two BBR flows converge slowly: a flow starting 2 s after another had
+29-35 % of its rate over 5-10 s, 41-48 % over 15-20 s and 43-59 % over 20-40 s (3 seeds); with 40 ms against 100 ms RTT the
+longer flow got 55 % of the shorter one's rate. After the bottleneck rate drops, BBR keeps the old estimate for up to two
+probe cycles and fills the buffer as CUBIC does (400 ms of queue at 5 Mbit/s in the step scenario). Above about 2 % random loss BBRv3 backs off every lossy round by design and
+runs near its 4-datagram floor. At RTTs above about 1.5 s the 5 s ProbeRTT interrupts Startup's 3-round plateau test, so
+Startup ends only on loss (a finite buffer ends it). Pass `Bbr(random = ...)` to seed the probe jitter; without it the
+jitter is derived from send and ACK times. Each path gets its own controller, so return a fresh `Bbr()` from the factory.
 
 When the socket refuses datagrams (a send that fails, or a full send buffer that takes only part of a batch; the portable
 JVM socket waits up to 5 ms once for room), the rest of the batch is lost: loss recovery repairs it and
