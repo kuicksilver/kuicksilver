@@ -14,12 +14,7 @@ class SoakTest {
     /** `-Pkuicksilver.soak.attribute=N`: every scenario alone N times, with the change of each countable resource (leak attribution). */
     @Test fun attribute() {
         val n = ProcessResources.env("KSL_SOAK_ATTRIBUTE")?.toIntOrNull() ?: return
-        val only =
-            ProcessResources
-                .env("KSL_SOAK_SCENARIOS")
-                ?.split(',')
-                ?.map { Scenario.valueOf(it.trim()) }
-                ?.toSet() ?: Scenario.entries.toSet()
+        val only = Scenario.fromEnvironment()
         val result = runBlocking { Soak(SoakConfig(kotlin.time.Duration.ZERO)).attribute(n, only) }
         val text = result.entries.joinToString("\n") { (s, d) -> "$s: " + d.filterValues { it != 0L } }
         println(text)

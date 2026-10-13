@@ -91,14 +91,26 @@ internal enum class Scenario(
     companion object {
         private val total = entries.sumOf { it.weight }
 
-        fun pick(r: Random): Scenario {
-            var x = r.nextInt(total)
-            for (s in entries) {
+        fun pick(
+            r: Random,
+            only: Set<Scenario> = entries.toSet(),
+        ): Scenario {
+            val from = entries.filter { it in only }
+            var x = r.nextInt(if (from.size == entries.size) total else from.sumOf { it.weight })
+            for (s in from) {
                 x -= s.weight
                 if (x < 0) return s
             }
-            return entries.last()
+            return from.last()
         }
+
+        /** `KSL_SOAK_SCENARIOS` (`-Pkuicksilver.soak.scenarios=KtorH3,KtorAbort`), or every scenario. */
+        fun fromEnvironment(): Set<Scenario> =
+            ProcessResources
+                .env("KSL_SOAK_SCENARIOS")
+                ?.split(',')
+                ?.map { valueOf(it.trim()) }
+                ?.toSet() ?: entries.toSet()
     }
 }
 
@@ -243,9 +255,12 @@ internal class Workload(
             st.output.flushAndClose()
             delay(1500.milliseconds) // longer than the server's closing period (3 PTO on loopback)
             gate.dropInbound = false
-            val probe = c.openBidi()
-            probe.output.writeStringUtf8("GET 1\n")
-            probe.output.flushAndClose()
+            // the reset may answer a retransmission of the CLOSE stream first: then this write fails with it, which is the outcome
+            runCatching {
+                val probe = c.openBidi()
+                probe.output.writeStringUtf8("GET 1\n")
+                probe.output.flushAndClose()
+            }.onFailure { if (it is CancellationException) throw it }
             val why = withTimeoutOrNull(10.seconds) { c.closed.await() } ?: error("no stateless reset within 10 s")
             return when (why) {
                 is QuicException.ConnectionLost.StatelessReset -> {
@@ -377,12 +392,18 @@ internal class Workload(
     }
 }
 
+/** The failure-only qlog sink of the run (`-Pkuicksilver.soak.qlog=<dir>`, `KSL_SOAK_QLOG`), shared by the Ktor clients and server. */
+internal object SoakQlog {
+    val sink: FailureQlog? by lazy { ProcessResources.env("KSL_SOAK_QLOG")?.let { FailureQlog(it) } }
+}
+
 /** A Kuicksilver HttpClient that trusts the soak CA. */
 internal fun soakHttpClient(discovery: Http3DiscoveryMode): HttpClient =
     HttpClient(Kuicksilver) {
         engine {
             trust = SoakPki.trust
             http3 { this.discovery = discovery }
+            SoakQlog.sink?.let { sink -> quic = quicConfig { qlog = sink } }
         }
     }
 

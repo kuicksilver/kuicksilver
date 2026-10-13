@@ -138,7 +138,10 @@ To make the floors blocking, download the `perf-<peer>` result artifacts of a fe
 
   Options: `-Pkuicksilver.soak.clients=8`, `.rate=40` (iterations per second, a ceiling), `.sampleSeconds=15`,
   `.warmupMinutes` (default a fifth of the run, at least 2), `.label`, `.report=<dir>` (default
-  `kuicksilver-soak/build/soak`); the container takes the same as `KSL_SOAK_*` variables. A run **passes** when, after
+  `kuicksilver-soak/build/soak`), `.scenarios=KtorH3,KtorAbort` (only these scenarios of the mix, each with its weight),
+  `.qlog=<dir>` (every Ktor HTTP/3 connection keeps its last qlog records in memory; one that ends by a timeout or an
+  internal failure is written to `<dir>` with its peer's trace); the container takes the same as `KSL_SOAK_*` variables.
+  Each unexpected failure is printed with its time and scenario. A run **passes** when, after
   warm-up, every sampled series is flat — its Theil–Sen slope (the median of all pairwise slopes, robust to GC
   saw-teeth and in-flight bursts) times the window stays within `max(absolute, relative × median)` (32 MiB / 10% for RSS,
   16 MiB / 10% for heap, 8 / 10% for descriptors and threads, 5 / 25% for counts) — every countable resource (`ksl`

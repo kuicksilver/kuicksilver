@@ -24,6 +24,7 @@ import io.kuicksilver.quic.QuicConnection
 import io.kuicksilver.quic.QuicEndpoint
 import io.kuicksilver.quic.QuicServerConfig
 import io.kuicksilver.quic.QuicStream
+import io.kuicksilver.quic.quicConfig
 import io.kuicksilver.quic.quicEndpointConfig
 import io.kuicksilver.tls.Certificate
 import io.kuicksilver.tls.TlsConfig
@@ -180,6 +181,7 @@ internal object HttpServer {
                     host = "127.0.0.1"
                     port = 0
                 }
+                SoakQlog.sink?.let { sink -> quic = quicConfig { qlog = sink } }
             }) {
                 routing {
                     get("/bytes/{n}") {

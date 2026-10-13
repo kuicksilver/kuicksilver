@@ -46,6 +46,8 @@ internal class SoakConfig(
     val reportDir: String? = null,
     val label: String = "soak",
     val seed: Long = 1,
+    /** The scenarios of the mix (`-Pkuicksilver.soak.scenarios=…`), each with its usual weight; all by default. */
+    val scenarios: Set<Scenario> = Scenario.entries.toSet(),
 ) {
     companion object {
         fun fromEnvironment(): SoakConfig? {
@@ -64,6 +66,7 @@ internal class SoakConfig(
                         ?: d.warmup,
                 reportDir = ProcessResources.env("KSL_SOAK_REPORT") ?: ProcessResources.env("KSL_SOAK_DEFAULT_REPORT"),
                 label = ProcessResources.env("KSL_SOAK_LABEL") ?: d.label,
+                scenarios = Scenario.fromEnvironment(),
             )
         }
     }
@@ -123,7 +126,7 @@ internal class Soak(
                     val pace = (config.clients / config.rate * 1000).toLong().milliseconds
                     while (isActive && start.elapsedNow() < config.duration) {
                         val began = clock.markNow()
-                        val s = Scenario.pick(r)
+                        val s = Scenario.pick(r, config.scenarios)
                         val outcome =
                             try {
                                 withTimeout(ITERATION_TIMEOUT) { work.run(s, r) }
@@ -132,6 +135,9 @@ internal class Soak(
                                 e
                             }
                         iterations.incrementAndFetch()
+                        if (outcome is Throwable) {
+                            println("[soak ${config.label}] t=${start.elapsedNow().inWholeSeconds}s worker $w $s failed: $outcome")
+                        }
                         record(stats.getValue(s), outcome)
                         val left = pace - began.elapsedNow()
                         if (left > Duration.ZERO) delay(left) else yield()
