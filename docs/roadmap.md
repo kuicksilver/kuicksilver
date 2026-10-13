@@ -43,8 +43,8 @@ Implemented on the integration branch (2026-10-12/13); released after 0.1.0.
 | Kotlin/Native macOS arm64, iOS | yes | yes (macOS arm64 tested; iOS on the simulator, also against a host peer) | accelerated, without GSO/GRO (ADR-0006) |
 | Kotlin/Native Windows (mingw x64) | yes | yes | accelerated (Winsock) |
 
-Windows (Kotlin/Native and the JVM) is implemented and cross-built, but no CI run on Windows has passed on this code
-(GitHub Actions is paused); the owner's verification in a local Windows VM is pending for the release.
+Windows (Kotlin/Native and the JVM) is cross-built and was verified in a local Windows 11 VM (Parallels); there is no
+CI run on Windows while GitHub Actions is paused.
 
 What 0.2.0 brings:
 - Hardening from the 2026-10-08 full review (`docs/plans` F1–F4 in the owner's notes): PATH_CHALLENGE backoff
@@ -84,8 +84,7 @@ Known limits of 0.2.0, stated on purpose:
 - No HTTP/2 in the client engine (ADR-0009), no HTTP/3 server push, no certificate compression (RFC 8879), no OCSP/CRL
   checks of our own (the platform verifier decides under `TrustConfig.Platform`).
 - `loops > 1` only on Linux and Android (kernel `SO_REUSEPORT` flow hashing); macOS and Windows run one loop per port.
-- Windows: verification pending (above); `TrustConfig.Platform` is not available on Kotlin/Native Windows (use
-  `AnchoredCa`); a `0.0.0.0` bind there is IPv4-only (bind `::` for both families).
+- Windows: verified in a local VM only, no CI run (above).
 - iOS: the test suites run on the simulator, also against a peer on the host; not yet verified on a physical device.
 - No macosX64 target. The `kuicksilver-testing` module is not published.
 

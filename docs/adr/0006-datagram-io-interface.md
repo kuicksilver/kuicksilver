@@ -207,9 +207,12 @@ order were cross-checked with msquic `src/platform/datapath_winuser.c`.
 - **ECN** — `IP_ECN`/`IPV6_ECN` (value 50) as a socket option to read marks (cmsg on receive) and as a per-message cmsg to
   write them, as msquic does when DSCP is off. Windows 10 2004+ / Server 2022 grant it; older systems refuse the option,
   `KSL_UDP_ECN` is not granted and the core never validates ECN on that path. The granted capability is what QUIC sends,
-  ECT(0), written and read back. A CE a sender asks for is not carried over loopback by Windows 11 (it arrives Not-ECT,
-  `test_udp_win.c` prints it); that costs nothing: CE is set by routers, never by a QUIC sender (RFC 9000 section
-  13.4.1), and the core's ECN validation (section 13.4.2) still judges each path. The portable NIO socket on the Windows
+  ECT(0), written and read back. Windows 11 refuses the CE codepoint in the `IP_ECN`/`IPV6_ECN` cmsg of `WSASendMsg`
+  (`WSAEINVAL`); `ksl` then sends that datagram unmarked, sends every later CE unmarked too, and keeps ECT marking on
+  for the socket (a refused ECT mark still turns ECN off for it; `udp_win_ce_send_keeps_ecn`). Before 0.2.0 a refused
+  CE turned ECN off for the whole socket. That costs QUIC nothing: CE is set by routers, never by a QUIC sender (RFC 9000
+  section 13.4.1, msquic and quic-go never send it), and the core's ECN validation (section 13.4.2) still judges each
+  path; only a `DatagramIo` user that sends CE itself sees it leave unmarked. The portable NIO socket on the Windows
   JVM cannot mark at all: `DatagramChannel.setOption(IP_TOS)` throws `SocketException` there, so it reports
   `ecnSend = false` instead of claiming ECT(0) (`NioDatagramIoTest.portableCapabilities` and `nioSetsIpTosEct0` assert
   that pairing).
