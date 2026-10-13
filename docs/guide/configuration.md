@@ -136,7 +136,9 @@ client-only endpoint), `toBuilder()` (*experimental*). Guide: [Admission and end
 
 `SessionTicketConfig(keys, rotateEvery, ticketLifetime)`: `keys = null` (generated in the process), `rotateEvery = 1
 day` (positive, at most 7 days), `ticketLifetime = 12 hours` (at least 1 s, at most `rotateEvery / 2`); explicit keys
-are 80-byte entries.
+are 1 to 64 entries of 80 bytes. The keys stay in native memory: generated keys never reach Kotlin, explicit keys are
+copied there when the configuration is built and the given arrays are zeroed (keep the keys in your secret store, not
+in the arrays).
 
 Key exchange groups are not configurable: `X25519MLKEM768`, `X25519`, `secp256r1`, `X448`, `secp384r1`, `secp521r1`
 ([Key exchange groups](tls.md#key-exchange-groups)).

@@ -49,9 +49,16 @@ internal object KslNative {
         tls12: String?,
     ): Int
 
-    @JvmStatic external fun ctxSetTicketKeys(
+    @JvmStatic external fun ctxUseDefaultTicketKeys(
         ctx: Long,
-        keys: ByteArray,
+        rotateSeconds: Int,
+    ): Int
+
+    @JvmStatic external fun ticketKeysRegister(keys: ByteArray): Int
+
+    @JvmStatic external fun ctxUseTicketKeys(
+        ctx: Long,
+        id: Int,
     ): Int
 
     @JvmStatic external fun ctxSetSessionContext(

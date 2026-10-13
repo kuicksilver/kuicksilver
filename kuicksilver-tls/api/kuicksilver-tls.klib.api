@@ -553,8 +553,6 @@ final class io.kuicksilver.tls/ServerTlsOverride { // io.kuicksilver.tls/ServerT
 final class io.kuicksilver.tls/SessionTicketConfig { // io.kuicksilver.tls/SessionTicketConfig|null[0]
     constructor <init>(kotlin.collections/List<kotlin/ByteArray>? = ..., kotlin.time/Duration = ..., kotlin.time/Duration = ...) // io.kuicksilver.tls/SessionTicketConfig.<init>|<init>(kotlin.collections.List<kotlin.ByteArray>?;kotlin.time.Duration;kotlin.time.Duration){}[0]
 
-    final val keys // io.kuicksilver.tls/SessionTicketConfig.keys|{}keys[0]
-        final fun <get-keys>(): kotlin.collections/List<kotlin/ByteArray>? // io.kuicksilver.tls/SessionTicketConfig.keys.<get-keys>|<get-keys>(){}[0]
     final val rotateEvery // io.kuicksilver.tls/SessionTicketConfig.rotateEvery|{}rotateEvery[0]
         final fun <get-rotateEvery>(): kotlin.time/Duration // io.kuicksilver.tls/SessionTicketConfig.rotateEvery.<get-rotateEvery>|<get-rotateEvery>(){}[0]
     final val ticketLifetime // io.kuicksilver.tls/SessionTicketConfig.ticketLifetime|{}ticketLifetime[0]

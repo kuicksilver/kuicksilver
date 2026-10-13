@@ -636,6 +636,10 @@ Samples and testing:
 - 0-RTT replay protection, hardened before its first release (threat model section 3.8): one replay register per process,
   shared by every endpoint, loop and configuration that can decrypt the process's tickets; forged ClientHellos no longer
   fill it; a wall clock stepped back cannot reopen a replay; an idle register stripe keeps a full half of history.
+- Session ticket keys no longer live on the Kotlin heap (security review 2026-10-14, threat model sections 1 and 3.7): the
+  process-wide keys are generated and rotated inside `ksl`, and explicit `SessionTicketConfig(keys = …)` are copied into
+  native memory when the configuration is built. **Breaking:** the arrays passed as `keys` are zeroed by the constructor
+  (also when it throws), and the `SessionTicketConfig.keys` property is removed (the keys cannot be read back).
 
 ## 0.1.0 candidate (never published)
 
