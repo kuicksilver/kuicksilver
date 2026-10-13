@@ -103,6 +103,7 @@ internal fun rememberedTp(blob: ByteArray): ByteArray = blob.copyOfRange(1 + (bl
 
 /** The ALPN and the server's transport parameters a ticket remembers ([rememberedBlob]), or null when [blob] does not hold them. */
 internal fun rememberedParameters(blob: ByteArray): Pair<String, TransportParameters>? {
+    if (blob.isEmpty() || 1 + (blob[0].toInt() and 0xff) > blob.size) return null // the application can set the blob
     val tp =
         try {
             TransportParametersCodec.decode(rememberedTp(blob), TlsRole.Server)
