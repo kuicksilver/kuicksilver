@@ -564,7 +564,7 @@ internal class EndpointLoop private constructor(
     }
 
     private fun failAll(reason: QuicException.ConnectionLost) {
-        for (rt in runtimes.values) rt.failed(reason)
+        for (rt in runtimes.values) rt.retire(reason)
         runtimes.clear()
         handshaking = 0
     }
@@ -683,7 +683,7 @@ internal class EndpointLoop private constructor(
                     flush(signalTimer = false)
                 } finally {
                     for (rt in runtimes.values.toList()) {
-                        rt.failed(
+                        rt.retire(
                             QuicException.ConnectionLost.Internal("endpoint closed", QuicException.EndpointClosing()),
                         )
                     }
