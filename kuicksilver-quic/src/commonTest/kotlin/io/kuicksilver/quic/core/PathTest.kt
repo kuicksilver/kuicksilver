@@ -6,6 +6,7 @@ import io.ktor.network.sockets.InetSocketAddress
 import io.kuicksilver.annotations.DelicateKuicksilverApi
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.native.KslLoader
+import io.kuicksilver.quic.Bbr
 import io.kuicksilver.quic.ConnectionCore
 import io.kuicksilver.quic.ConnectionEvent
 import io.kuicksilver.quic.NewReno
@@ -22,7 +23,9 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
+import kotlin.test.assertNotSame
 import kotlin.test.assertNull
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
@@ -1238,5 +1241,61 @@ class PathTest {
         )
         assertNull(paths.byRemote(PathId.Initial, InetSocketAddress("::1", 4434)), "another port is another path")
         assertNull(paths.byRemote(PathId.Initial, InetSocketAddress("::2", 4433)), "another address is another path")
+    }
+
+    private val bbr = quicConfig { congestionController = { Bbr() } }
+
+    /** A server whose BBR has measured the path: the client uploads and reads back an echo of 30 kB. */
+    private fun bbrWithAModel(): Triple<EndpointPair, ConnectionCore, Bbr> {
+        val (p, c) = connected(serverQuic = bbr)
+        send(c, 20_000)
+        p.settle(40)
+        val s = p.server()
+        val sid = s.openStream(true)
+        s.writeStream(sid, ByteArray(30_000), 0, 30_000, true)
+        p.settle(60)
+        val model = s.path.cc as Bbr
+        assertTrue(model.minRttNanos < Long.MAX_VALUE && model.maxBw > 0, "the server's BBR measured the path")
+        return Triple(p, c, model)
+    }
+
+    @Test fun bbrStartsAFreshModelOnANewAddress() {
+        // RFC 9000 section 9.4: a new peer address resets congestion control; BBR's model, filters and rate sampler go with it
+        val (p, c, old) = bbrWithAModel()
+        try {
+            val s = p.server()
+            p.clientSource = other
+            p.clientListens += other
+            send(c)
+            p.step()
+            assertEquals(PathChangeReason.PeerMigration, p.changes(s).single().reason)
+            val fresh = s.path.cc as Bbr
+            assertNotSame(old, fresh)
+            assertEquals(Bbr.State.Startup, fresh.state)
+            assertEquals(0L, fresh.maxBw)
+            p.settle(40)
+            assertNull(p.closed(s))
+        } finally {
+            p.close()
+        }
+    }
+
+    @Test fun bbrKeepsItsModelAcrossANatRebinding() {
+        // RFC 9000 section 9.4: only the port changed, the network path is the same; CUBIC and NewReno keep their state here too
+        val (p, c, old) = bbrWithAModel()
+        try {
+            val s = p.server()
+            val maxBw = old.maxBw
+            p.clientSource = InetSocketAddress("10.0.0.1", 40001)
+            p.clientListens += p.clientSource
+            send(c)
+            p.settle(5)
+            assertEquals(PathChangeReason.NatRebinding, p.changes(s).single().reason)
+            assertSame(old, s.path.cc)
+            assertTrue(old.maxBw >= maxBw / 2, "max_bw kept: $maxBw then ${old.maxBw}")
+            assertTrue(s.paths.all.none { it !== s.path && it.cc === old }, "the old address probes on a controller of its own")
+        } finally {
+            p.close()
+        }
     }
 }

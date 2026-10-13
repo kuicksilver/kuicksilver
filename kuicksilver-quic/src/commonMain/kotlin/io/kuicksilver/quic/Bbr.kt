@@ -24,8 +24,9 @@ import kotlin.time.Duration.Companion.seconds
  *
  * Experimental and opt-in: `quicConfig { congestionController = { Bbr() } }`. BBR tolerates random loss far better than
  * [Cubic] and keeps the bottleneck queue short, but it shares a bottleneck with loss-based flows less predictably (it can take
- * more or less than its share depending on the buffer size). Not implemented: undo after a spurious loss (the core has no
- * spurious-loss signal). Nothing here allocates after construction.
+ * more or less than its share depending on the buffer size). A loss episode whose every lost packet is acknowledged later
+ * (reordering, a delay spike) is undone (section 5.5.11). Sizes are bytes, rates bytes per second, times nanoseconds; the
+ * arithmetic saturates instead of wrapping. Nothing here allocates after construction.
  *
  * [random] desynchronises the bandwidth probes of flows sharing a bottleneck (the 2-3 s probe wait); without one the jitter is
  * derived from the send and ACK times, which differ between flows.
@@ -41,8 +42,10 @@ public class Bbr(
     private enum class AckPhase { Init, Refilling, ProbeStarting, ProbeFeedback, ProbeStopping }
 
     internal val sampler = DeliveryRateSampler()
-    private var mss: Int = maxDatagramSize
-    private val initialCwnd: Long = minOf(10L * maxDatagramSize, maxOf(14720L, 2L * maxDatagramSize))
+    private var mss: Int = maxOf(maxDatagramSize, 1)
+
+    /** RFC 9002 section 7.2 but at least BBR.MinPipeCwnd (14 720 bytes is less than 4 datagrams above 3 680), recomputed with the size. */
+    private var initialCwnd: Long = initialWindow(mss)
 
     override var cwnd: Long = initialCwnd
         private set
@@ -51,7 +54,7 @@ public class Bbr(
 
     /** C.pacing_rate in bytes per second; 0 until the first ACK (then `2.77 x initial window / RTT`). */
     private var pacingRateBps: Long = 0
-    private var quantum: Int = minOf(65_536, 10 * maxDatagramSize)
+    private var quantum: Int = maxOf(minOf(65_536, 10 * mss), 2 * mss)
 
     internal var state: State = State.Startup
         private set
@@ -70,6 +73,8 @@ public class Bbr(
     private var fullBwNow = false
     private var fullBw: Long = 0
     private var fullBwCount = 0
+
+    /** Discontiguous lost ranges in the current loss round (CheckStartupHighLoss counts them over one round in recovery). */
     private var lossEventsInRound = 0
     private var lastLostId: Long = -2
 
@@ -110,6 +115,23 @@ public class Bbr(
     private var lossRoundDelivered: Long = 0
     private var lossRoundStart = false
 
+    // spurious-loss undo (section 5.5.11): the model saved at the first loss of a round, and the episode's lost packets the
+    // core still remembers ([lossesPending]); when every one of them was acknowledged after all, the episode was spurious
+    internal var undoState: State? = null
+        private set
+    private var undoBwShortterm: Long = Long.MAX_VALUE
+    private var undoInflightShortterm: Long = Long.MAX_VALUE
+    private var undoInflightLongterm: Long = Long.MAX_VALUE
+    internal var lossesPending: Long = 0
+        private set
+    private var spuriousInEpisode = false
+    private var realLossInEpisode = false
+    internal var spuriousUndos: Int = 0
+        private set
+
+    /** An ECN-CE report of the ACK being processed, acted on in [onAckProcessed] once the ACK's packets left the flight. */
+    private var cePending = false
+
     // ProbeBW (section 5.3.3)
     private var ackPhase = AckPhase.Init
     private var isBwProbeSample = false
@@ -140,8 +162,12 @@ public class Bbr(
     private var ackPending = false
     private var jitter: Long = 0x9E3779B97F4A7C15uL.toLong()
 
-    private val minPipeCwnd: Long get() = 4L * mss
-    private val isCwndLimited: Boolean get() = cwndLimitedThisRound || cwndLimitedLastRound
+    /** BBR.MinPipeCwnd: 4 datagrams (section 5.6.4.3). */
+    internal val minPipeCwnd: Long get() = 4L * mss
+    internal val isCwndLimited: Boolean get() = cwndLimitedThisRound || cwndLimitedLastRound
+
+    /** The current pacing rate in bytes per second (0 before the first ACK) and BBR.MaxPipeCwnd-style limits, for the tests. */
+    internal val pacingRateForTest: Long get() = pacingRateBps
     private val inProbeBw: Boolean
         get() = state == State.ProbeBwDown || state == State.ProbeBwCruise || state == State.ProbeBwRefill || state == State.ProbeBwUp
     private val isProbingBw: Boolean get() = state == State.Startup || state == State.ProbeBwRefill || state == State.ProbeBwUp
@@ -151,8 +177,10 @@ public class Bbr(
         bytes: Int,
     ) {
         if (bytesInFlight == 0L && sampler.appLimited != 0L) handleRestartFromIdle(now)
+        val before = bytesInFlight
         bytesInFlight += bytes
-        if (bytesInFlight >= cwnd) cwndLimitedThisRound = true
+        // C.is_cwnd_limited: this packet filled the window; a PTO probe sent past a full window is not the window's doing
+        if (before < cwnd && bytesInFlight >= cwnd) cwndLimitedThisRound = true
     }
 
     /** Stamps [p] (already counted by [onPacketSent]) with the delivery state for its later rate sample. */
@@ -163,7 +191,10 @@ public class Bbr(
         sampler.onSent(p, now, bytesInFlight)
     }
 
-    /** One packet of the ACK being processed; the model moves once per ACK, in [onAckProcessed]. */
+    /**
+     * One packet of the ACK being processed, reported before the ACK's loss detection (TCP's order: C.delivered first, so a loss
+     * round never closes on the ACK that opened it); the model moves once per ACK, in [onAckProcessed].
+     */
     internal fun onPacketAcked(
         p: SentPacket,
         now: TimeMark,
@@ -192,6 +223,11 @@ public class Bbr(
 
     /** The end of one ACK frame: UpdateOnACK (section 5.2.3) with the rate sample of the packets it acknowledged. */
     internal fun onAckProcessed(now: TimeMark) {
+        if (cePending) {
+            cePending = false
+            noteLoss()
+            if (isBwProbeSample) handleInflightTooHigh(if (ackPending) sampler.sampleTxInFlight else bytesInFlight, false, now)
+        } // ECN-CE as loss (section 5.5.10), measured against what was in flight when the newest acknowledged packet left
         if (!ackPending) return
         ackPending = false
         val rtt = sampler.sampleRttNanos
@@ -212,9 +248,11 @@ public class Bbr(
         p: SentPacket,
         now: TimeMark,
     ) {
+        if (lossesPending == 0L) saveStateUponLoss() // a new loss episode: what an undo would restore
+        lossesPending++ // the core remembers it until it is acknowledged after all ([onSpuriousLoss]) or settles ([onLossSettled])
         if (p.rsId < 0) return
         sampler.onLost(p)
-        if (p.rsId != lastLostId + 1) lossEventsInRound++ // a new discontiguous lost range
+        if (p.rsId != lastLostId + 1 && lossEventsInRound < Int.MAX_VALUE) lossEventsInRound++ // a new discontiguous lost range
         lastLostId = p.rsId
         noteLoss()
         if (!isBwProbeSample) return
@@ -237,7 +275,7 @@ public class Bbr(
         bytesInFlight -= lostBytes
         if (persistentCongestion) {
             saveCwnd()
-            cwnd = maxOf(bytesInFlight + mss, minPipeCwnd)
+            cwnd = maxOf(sat(bytesInFlight, mss.toLong()), minPipeCwnd)
             inRecovery = false
             recoveryStart = TimeMark.NEVER
             return
@@ -246,15 +284,62 @@ public class Bbr(
             saveCwnd()
             inRecovery = true
             recoveryStart = now
-        } // OnEnterFastRecovery: remember the last good window
+        } // OnEnterFastRecovery: remember the last good window (the model was saved when the loss episode began)
+    }
+
+    /** A packet declared lost was acknowledged after all (RFC 9002 section 6.1 reordering, a delay spike). */
+    internal fun onSpuriousLoss(now: TimeMark) {
+        if (lossesPending > 0) lossesPending--
+        spuriousInEpisode = true
+        settleEpisode(now)
+    }
+
+    /** A packet declared lost was not acknowledged within the time the core remembers it: the loss stands. */
+    internal fun onLossSettled(now: TimeMark) {
+        if (lossesPending > 0) lossesPending--
+        realLossInEpisode = true
+        settleEpisode(now)
+    }
+
+    private fun settleEpisode(now: TimeMark) {
+        if (lossesPending != 0L) return
+        if (spuriousInEpisode && !realLossInEpisode) handleSpuriousLossDetection(now)
+        spuriousInEpisode = false
+        realLossInEpisode = false
+    }
+
+    /** HandleSpuriousLossDetection (section 5.5.11.2): every loss of the episode was spurious, back to the state before it. */
+    private fun handleSpuriousLossDetection(now: TimeMark) {
+        spuriousUndos++
+        inRecovery = false
+        recoveryStart = TimeMark.NEVER
+        restoreCwnd()
+        isLossInRound = false
+        resetFullBw()
+        bwShortterm = maxOf(bwShortterm, undoBwShortterm)
+        inflightShortterm = maxOf(inflightShortterm, undoInflightShortterm)
+        inflightLongterm = maxOf(inflightLongterm, undoInflightLongterm)
+        if (undoState == State.Startup && state != State.Startup) {
+            fullBwReached = false
+            if (state != State.ProbeRtt) enterStartup()
+        } else if (undoState == State.ProbeBwUp && state != State.ProbeBwUp) {
+            if (state != State.ProbeRtt) startProbeBwRefill()
+        } // the loss ended a bandwidth probe: probe again
+        undoState = null
+    }
+
+    private fun enterStartup() {
+        state = State.Startup
+        pacingGain = STARTUP_PACING_GAIN
+        cwndGain = DEFAULT_CWND_GAIN
     }
 
     override fun onEcnCe(
         now: TimeMark,
         sentTime: TimeMark,
     ) {
-        noteLoss()
-        if (isBwProbeSample) handleInflightTooHigh(bytesInFlight, false, now)
+        cePending = true
+        if (!ackPending) onAckProcessed(now) // not inside an ACK (a caller other than the core): act now
     }
 
     /** The sender ran out of data with room in the window: what is in flight now is application-limited (section 4.1.2.4). */
@@ -266,8 +351,16 @@ public class Bbr(
         bytesInFlight -= bytes
     }
 
+    /**
+     * DPLPMTUD moved the datagram size (C.SMSS): the model stays in bytes, the floors in datagrams follow it: the 4-datagram
+     * pipelining minimum, the send quantum's 2 datagrams and, before the first ACK, the initial window (RFC 9002 section 7.2).
+     */
     override fun onMtuUpdate(maxDatagramSize: Int) {
-        mss = maxDatagramSize
+        mss = maxOf(maxDatagramSize, 1)
+        initialCwnd = initialWindow(mss)
+        if (sampler.delivered == 0L && pacingRateBps == 0L) cwnd = initialCwnd
+        cwnd = maxOf(cwnd, minPipeCwnd)
+        updateQuantum()
     }
 
     override fun pacingRate(smoothedRtt: Duration): Long {
@@ -294,8 +387,13 @@ public class Bbr(
 
     private fun updateControlParameters() {
         setPacingRateWithGain(pacingGain)
-        quantum = (pacingRateBps / 1000).coerceIn(2L * mss, 65_536L).toInt() // 1 ms at the pacing rate
+        updateQuantum()
         setCwnd()
+    }
+
+    /** SetSendQuantum (section 5.6.3): 1 ms at the pacing rate, at most 64 KiB, at least 2 datagrams (which wins for jumbo datagrams). */
+    private fun updateQuantum() {
+        quantum = maxOf(minOf(pacingRateBps / 1000, 65_536L), 2L * mss).toInt()
     }
 
     private fun updateLatestDeliverySignals() {
@@ -320,6 +418,8 @@ public class Bbr(
         val rate = sampler.deliveryRate
         if (rate > 0 && (rate >= maxBw || !sampler.sampleAppLimited)) maxBw = maxBwFilter.update(rate, cycleCount)
         if (!lossRoundStart) return
+        checkStartupHighLoss()
+        lossEventsInRound = 0
         if (!isProbingBw && isLossInRound) {
             if (bwShortterm == Long.MAX_VALUE) bwShortterm = maxBw
             if (inflightShortterm == Long.MAX_VALUE) inflightShortterm = cwnd
@@ -335,7 +435,6 @@ public class Bbr(
             roundCount++
             roundsSinceProbeUp++
             roundStart = true
-            lossEventsInRound = 0
             cwndLimitedLastRound = cwndLimitedThisRound
             cwndLimitedThisRound = false
         } else {
@@ -380,13 +479,20 @@ public class Bbr(
         fullBwNow = false
     }
 
+    /**
+     * CheckStartupHighLoss (section 5.3.1.3), at the end of a loss round (as Linux does): the round that just ended began with its
+     * first loss, so the flow was in recovery for that whole round; with at least 6 discontiguous lost ranges in it and more than
+     * 2 % lost, Startup ends at a safe inflight.
+     */
+    private fun checkStartupHighLoss() {
+        if (state != State.Startup || fullBwReached || !isLossInRound || lossEventsInRound < STARTUP_FULL_LOSS_COUNT) return
+        if (!isInflightTooHigh(sampler.sampleLost, sampler.sampleTxInFlight)) return
+        undoState = State.Startup
+        fullBwReached = true
+        inflightLongterm = maxOf(bdpMultiple(bw, 1.0), inflightLatest, minPipeCwnd)
+    }
+
     private fun checkStartupDone() {
-        if (state == State.Startup && !fullBwReached && lossEventsInRound >= STARTUP_FULL_LOSS_COUNT &&
-            isInflightTooHigh(sampler.sampleLost, sampler.sampleTxInFlight)
-        ) {
-            fullBwReached = true
-            inflightLongterm = maxOf(bdpMultiple(1.0), inflightLatest)
-        } // CheckStartupHighLoss (section 5.3.1.3): sustained loss above 2 % ends Startup too
         if (state == State.Startup && fullBwReached) {
             state = State.Drain
             pacingGain = DRAIN_PACING_GAIN
@@ -456,7 +562,7 @@ public class Bbr(
         when (state) {
             State.ProbeBwDown -> {
                 if (isTimeToProbeBw(now)) return
-                if (bytesInFlight <= minOf(inflightWithHeadroom(), inflight(1.0))) startProbeBwCruise()
+                if (bytesInFlight <= minOf(inflightWithHeadroom(), inflight(maxBw, 1.0))) startProbeBwCruise() // IsTimeToCruise
             }
 
             State.ProbeBwCruise -> {
@@ -549,7 +655,7 @@ public class Bbr(
         if (bwProbeUpAcked >= probeUpAckedPerInc) {
             val delta = bwProbeUpAcked / probeUpAckedPerInc
             bwProbeUpAcked -= delta * probeUpAckedPerInc
-            inflightLongterm += delta * mss
+            inflightLongterm = sat(inflightLongterm, delta * mss)
         }
         if (roundStart) raiseInflightLongtermSlope()
     }
@@ -563,7 +669,7 @@ public class Bbr(
     private fun isInflightTooHigh(
         lost: Long,
         txInFlight: Long,
-    ): Boolean = lost * LOSS_THRESH_DEN > txInFlight * LOSS_THRESH_NUM
+    ): Boolean = lost.toDouble() * LOSS_THRESH_DEN > txInFlight.toDouble() * LOSS_THRESH_NUM // in doubles: lost is cumulative
 
     private fun handleInflightTooHigh(
         txInFlight: Long,
@@ -572,8 +678,12 @@ public class Bbr(
     ) {
         prevProbeTooHigh = true
         isBwProbeSample = false // one reaction per probe
-        if (!appLimited) inflightLongterm = maxOf(txInFlight, (targetInflight() * BETA).toLong())
-        if (state == State.ProbeBwUp) startProbeBwDown(now)
+        // never below the pipelining minimum: with no BDP estimate yet (or nothing in flight on a CE report) the bound would be 0
+        if (!appLimited) inflightLongterm = maxOf(txInFlight, (targetInflight() * BETA).toLong(), minPipeCwnd)
+        if (state == State.ProbeBwUp) {
+            undoState = State.ProbeBwUp
+            startProbeBwDown(now)
+        }
     }
 
     /** The inflight at which the losses of [size]-byte packet crossed 2 % (InflightAtLoss, section 5.5.10.2). */
@@ -593,8 +703,22 @@ public class Bbr(
         if (!isLossInRound) {
             lossRoundDelivered = sampler.delivered
             saveCwnd()
-        } // SaveStateUponLoss: only the window is kept (no spurious-loss undo)
+        }
         isLossInRound = true
+    }
+
+    /**
+     * SaveStateUponLoss (section 5.5.11.1): what an undo restores if the episode turns out spurious. Taken when a loss episode
+     * begins (the first loss with none pending, as Linux's bbr_ssthresh does at recovery entry), not at the first loss of every
+     * round as the draft's NoteLoss does: a probe's later losses in the same episode come after StartProbeBW_DOWN cleared the
+     * round's loss flag and would overwrite the state the undo must restore.
+     */
+    private fun saveStateUponLoss() {
+        saveCwnd()
+        undoState = null
+        undoBwShortterm = bwShortterm
+        undoInflightShortterm = inflightShortterm
+        undoInflightLongterm = inflightLongterm
     }
 
     private fun targetInflight(): Long = minOf(bdp, cwnd)
@@ -647,9 +771,7 @@ public class Bbr(
                 startProbeBwDown(now)
                 startProbeBwCruise()
             } else {
-                state = State.Startup
-                pacingGain = STARTUP_PACING_GAIN
-                cwndGain = DEFAULT_CWND_GAIN
+                enterStartup()
             }
         }
     }
@@ -666,24 +788,35 @@ public class Bbr(
 
     private fun setPacingRateWithGain(gain: Double) {
         if (bw == 0L) return
-        val rate = (gain * bw * (100 - PACING_MARGIN_PERCENT) / 100).toLong()
+        val rate = maxOf((gain * bw * (100 - PACING_MARGIN_PERCENT) / 100).toLong(), 1L)
         if (fullBwReached || rate > pacingRateBps) pacingRateBps = rate
     }
 
-    private fun bdpMultiple(gain: Double): Long {
+    /** BDPMultiple (section 5.6.4.2) of [rate] (BBR.bw unless stated), in bytes; Double products saturate at Long.MAX_VALUE. */
+    private fun bdpMultiple(
+        rate: Long,
+        gain: Double,
+    ): Long {
         if (minRttNanos == Long.MAX_VALUE) return initialCwnd
-        bdp = (bw.toDouble() * minRttNanos / 1e9).toLong()
+        bdp = (rate.toDouble() * minRttNanos / 1e9).toLong()
         return (gain * bdp).toLong()
     }
+
+    private fun bdpMultiple(gain: Double): Long = bdpMultiple(bw, gain)
 
     /** QuantizationBudget (section 5.6.4.2): room for the offload bursts and pipelining, plus 2 datagrams while probing up. */
     private fun quantizationBudget(inflight: Long): Long {
         var v = maxOf(inflight, 3L * quantum, minPipeCwnd)
-        if (state == State.ProbeBwUp) v += 2L * mss
+        if (state == State.ProbeBwUp) v = sat(v, 2L * mss)
         return v
     }
 
     private fun inflight(gain: Double): Long = quantizationBudget(bdpMultiple(gain))
+
+    private fun inflight(
+        rate: Long,
+        gain: Double,
+    ): Long = quantizationBudget(bdpMultiple(rate, gain))
 
     private fun inflightWithHeadroom(): Long {
         if (inflightLongterm == Long.MAX_VALUE) return Long.MAX_VALUE
@@ -702,12 +835,12 @@ public class Bbr(
     }
 
     private fun setCwnd() {
-        maxInflight = quantizationBudget(bdpMultiple(cwndGain) + extraAcked)
+        maxInflight = quantizationBudget(sat(bdpMultiple(cwndGain), extraAcked))
         val acked = sampler.newlyAcked
         if (fullBwReached) {
-            cwnd = minOf(cwnd + acked, maxInflight)
+            cwnd = minOf(sat(cwnd, acked), maxInflight)
         } else if (cwnd < maxInflight || sampler.delivered < initialCwnd) {
-            cwnd += acked
+            cwnd = sat(cwnd, acked)
         }
         cwnd = maxOf(cwnd, minPipeCwnd)
         if (state == State.ProbeRtt) cwnd = minOf(cwnd, probeRttCwnd())
@@ -723,6 +856,15 @@ public class Bbr(
     }
 
     private companion object {
+        /** RFC 9002 section 7.2, min(10 datagrams, max(14 720 bytes, 2 datagrams)), raised to BBR.MinPipeCwnd. */
+        fun initialWindow(mss: Int): Long = maxOf(minOf(10L * mss, maxOf(14720L, 2L * mss)), 4L * mss)
+
+        /** [a] + [b] for non-negative [b], saturating at Long.MAX_VALUE. */
+        fun sat(
+            a: Long,
+            b: Long,
+        ): Long = if (b > 0 && a > Long.MAX_VALUE - b) Long.MAX_VALUE else a + b
+
         const val STARTUP_PACING_GAIN = 2.77 // 4 ln 2 (section 2.5)
         const val DRAIN_PACING_GAIN = 0.5
         const val DEFAULT_CWND_GAIN = 2.0

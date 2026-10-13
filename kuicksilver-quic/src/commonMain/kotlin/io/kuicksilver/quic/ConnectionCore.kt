@@ -427,6 +427,9 @@ public class ConnectionCore internal constructor(
 
     // ---- stats ----
     internal var lostPackets = 0L
+
+    /** Packets declared lost and acknowledged after all (RFC 9002 section 6.1). */
+    internal var spuriousLosses = 0L
     internal var datagramsDropped = 0L
     internal var packetsReceived = 0L
     internal var packetsSent = 0L

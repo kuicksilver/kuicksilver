@@ -65,6 +65,34 @@ internal interface LossListener {
         p: SentPacket,
     )
 
+    /**
+     * A packet newly acknowledged by the ACK frame being processed, reported before that frame's loss detection runs (TCP's order:
+     * delivery state first), for the delivery-rate sampler; [onAcked] follows after the losses.
+     */
+    fun onDelivered(
+        p: SentPacket,
+        now: TimeMark,
+    ) {}
+
+    /**
+     * A packet declared lost earlier was acknowledged after all (RFC 9002 section 6.1: the loss was spurious): [bytes] counted by
+     * [cc] on [pathId]. Reported once per packet, during the ACK frame that acknowledged it, before its loss detection.
+     */
+    fun onSpuriousLoss(
+        space: SpaceId,
+        pn: Long,
+        bytes: Int,
+        cc: io.kuicksilver.quic.CongestionController?,
+        pathId: Int,
+        now: TimeMark,
+    ) {}
+
+    /** A lost packet left the memory of spurious-loss detection unacknowledged (or its space was discarded): the loss stands. */
+    fun onLossSettled(
+        cc: io.kuicksilver.quic.CongestionController?,
+        now: TimeMark,
+    ) {}
+
     fun onLost(
         space: SpaceId,
         p: SentPacket,
@@ -188,6 +216,9 @@ internal class LossDetection(
                 i--
             }
         }
+        for (k in acked.indices) listener.onDelivered(acked[k], now)
+        settleLost(sp, now)
+        if (sp.lostCount > 0) findSpurious(sp, space, ack, now)
         if (acked.isEmpty()) return
         visitedForTest += sent.trim()
         val largestNewlyAcked = acked[0] // the walk goes downwards: the first match is the largest
@@ -240,6 +271,76 @@ internal class LossDetection(
         listener.onAckProcessed(now)
         if (peerCompletedAddressValidation()) ptoCount = 0
         timerBase = now
+    }
+
+    /** Lost packets of [sp] remembered longer than the persistent congestion period are settled: their loss stands. */
+    private fun settleLost(
+        sp: PacketNumberSpace,
+        now: TimeMark,
+    ) {
+        if (sp.lostCount == 0) return
+        val keepFrom = (now - persistentCongestionDuration()).nanos
+        while (sp.lostCount > 0 && sp.lostAt[sp.lostHead] < keepFrom) dropOldestLost(sp, now)
+    }
+
+    private fun dropOldestLost(
+        sp: PacketNumberSpace,
+        now: TimeMark,
+    ) {
+        val h = sp.lostHead
+        val cc = sp.lostCc[h]
+        val live = sp.lostSize[h] > 0
+        sp.lostCc[h] = null
+        sp.lostHead = (h + 1) % LOST_KEEP
+        sp.lostCount--
+        if (live) listener.onLossSettled(cc, now)
+    }
+
+    private fun rememberLost(
+        sp: PacketNumberSpace,
+        p: SentPacket,
+        now: TimeMark,
+    ) {
+        if (sp.lostCount == LOST_KEEP) dropOldestLost(sp, now)
+        val i = (sp.lostHead + sp.lostCount) % LOST_KEEP
+        sp.lostPn[i] = p.pn
+        sp.lostSize[i] = p.size
+        sp.lostAt[i] = now.nanos
+        sp.lostPath[i] = p.pathId
+        sp.lostCc[i] = p.cc
+        sp.lostCount++
+    }
+
+    /**
+     * Lost packets the ACK frame acknowledges: the ring ascends, the ranges descend, so one merge walk from the newest lost packet
+     * costs at most the ring plus the ranges.
+     */
+    private fun findSpurious(
+        sp: PacketNumberSpace,
+        space: SpaceId,
+        ack: AckFrameView,
+        now: TimeMark,
+    ) {
+        var r = 0
+        var k = sp.lostCount - 1
+        while (k >= 0 && r < ack.rangeCount) {
+            val i = (sp.lostHead + k) % LOST_KEEP
+            val pn = sp.lostPn[i]
+            if (pn > ack.largest(r)) {
+                k--
+                continue
+            } // above this range, so above every later (smaller) one: not acknowledged
+            if (pn < ack.smallest(r)) {
+                r++
+                continue
+            } // below this range: try the next (smaller) one
+            if (sp.lostSize[i] > 0) {
+                val bytes = sp.lostSize[i]
+                sp.lostSize[i] = 0
+                listener.onSpuriousLoss(space, pn, bytes, sp.lostCc[i], sp.lostPath[i], now)
+            }
+            k--
+        }
     }
 
     private var ecnPaths = IntArray(4)
@@ -357,9 +458,11 @@ internal class LossDetection(
         var earliest = TimeMark(Long.MAX_VALUE)
         var contiguous = true
         var prevPn = -1L
+        settleLost(sp, now)
         for (k in lost.indices) {
             val p = lost[k]
             if (p.inFlight) {
+                rememberLost(sp, p, now)
                 lostBytes += p.size
                 bytesInFlight -= p.size
                 if (p.timeSent >
@@ -564,8 +667,12 @@ internal class LossDetection(
         if (removed > 0) listener.onDiscarded(removed)
     }
 
-    fun discard(space: SpaceId) {
+    fun discard(
+        space: SpaceId,
+        now: TimeMark = TimeMark(0),
+    ) {
         val sp = this.space(space)
+        while (sp.lostCount > 0) dropOldestLost(sp, now)
         var removed = 0
         for (p in sp.sent) {
             if (p.inFlight) {

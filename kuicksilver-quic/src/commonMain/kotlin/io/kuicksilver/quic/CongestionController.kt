@@ -72,6 +72,6 @@ public interface CongestionController {
     /** Pacing rate in bytes per second for the current window. */
     public fun pacingRate(smoothedRtt: Duration): Long
 
-    /** Largest burst the sender hands to the socket at once, at most 65 536 bytes. */
+    /** Largest burst the sender hands to the socket at once: at most 65 536 bytes, or two datagrams when those are larger. */
     public val sendQuantum: Int
 }

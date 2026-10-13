@@ -130,7 +130,32 @@ internal class ConnectionLossListener(
             }
         }
         if (f.dgCount > 0) core.datagramSender?.let { s -> for (i in 0 until f.dgCount) if (f.dgId[i] >= 0) s.onAcked(f.dgId[i]) }
-        if (p.inFlight) (p.cc as? io.kuicksilver.quic.Bbr)?.onPacketAcked(p, core.now)
+    }
+
+    override fun onDelivered(
+        p: SentPacket,
+        now: TimeMark,
+    ) {
+        if (p.inFlight) (p.cc as? io.kuicksilver.quic.Bbr)?.onPacketAcked(p, now)
+    }
+
+    override fun onSpuriousLoss(
+        space: SpaceId,
+        pn: Long,
+        bytes: Int,
+        cc: io.kuicksilver.quic.CongestionController?,
+        pathId: Int,
+        now: TimeMark,
+    ) {
+        core.spuriousLosses++
+        (cc as? io.kuicksilver.quic.Bbr)?.onSpuriousLoss(now)
+    }
+
+    override fun onLossSettled(
+        cc: io.kuicksilver.quic.CongestionController?,
+        now: TimeMark,
+    ) {
+        (cc as? io.kuicksilver.quic.Bbr)?.onLossSettled(now)
     }
 
     override fun onLost(
@@ -227,7 +252,11 @@ internal class ConnectionLossListener(
         val p = core.paths.byId(PathId(pathId)) ?: return // the path is gone: its ECN state too
         p.ecn.onAck(countsPresent, countsValid, newlyAckedMarked)
         core.ecnPathFailed(p)
-        if (ceGrew &&
+        if (ceGrew && p.cc is io.kuicksilver.quic.Bbr) {
+            core.ecnCeEvents++
+            p.cc.onEcnCe(now, largestSentTime)
+        } // BBR treats CE like loss, once per round of its own path: every report counts
+        else if (ceGrew &&
             (core.ceRecoveryStart == TimeMark.NEVER || largestSentTime > core.ceRecoveryStart)
         ) {
             core.ceRecoveryStart = now
