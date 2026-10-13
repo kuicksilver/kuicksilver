@@ -456,14 +456,19 @@ class ServerH3Test {
                     val t0 =
                         kotlin.time.TimeSource.Monotonic
                             .markNow()
-                    val stop = async(kotlinx.coroutines.Dispatchers.Default) { server.stop(1000, 3000) }
+                    // the grace period covers the calls' 600 ms, the server's 50 ms between its two GOAWAYs and the ~200 ms it
+                    // gives the last responses before closing; on a coarse timer that is over 1 s (seen 1.02-1.25 s on a loaded
+                    // macOS host, every run), and the deadline then cuts responses still in flight
+                    val stop = async(kotlinx.coroutines.Dispatchers.Default) { server.stop(5000, 8000) }
                     kotlinx.coroutines.withTimeout(
                         5.seconds,
                     ) { while (conns.any { it.goAwayReceived.value == null }) kotlinx.coroutines.delay(5) }
                     val allSawGoAway = t0.elapsedNow()
                     assertEquals(List(50) { 200 to "done" }, responses.awaitAll())
                     stop.await()
-                    assertTrue(allSawGoAway < 400.milliseconds, "every client saw GOAWAY after $allSawGoAway")
+                    // at once is one round of the server's 50 ms wait between its two GOAWAYs (~200 ms on a coarse timer, up to
+                    // 406 ms seen); one connection after another would be 50 such rounds, 2.5 s even on an idle host
+                    assertTrue(allSawGoAway < 1.seconds, "every client saw GOAWAY after $allSawGoAway")
                 }
             } finally {
                 conns.forEach { it.close() }
