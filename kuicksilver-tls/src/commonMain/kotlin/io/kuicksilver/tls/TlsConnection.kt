@@ -382,7 +382,11 @@ public class TlsConnection private constructor(
         } catch (
             e: Throwable,
         ) {
-            inputChannel.cancel(e as? TlsException ?: TlsException.Protocol(null, e.message ?: "transport failure", e))
+            val failure = e as? TlsException ?: TlsException.Protocol(null, e.message ?: "transport failure", e)
+            inputChannel.cancel(failure)
+            // the application's writer too: with nobody draining the output channel any more, a writer of a long body would
+            // wait on a full buffer forever, holding its connection (a peer gone mid-response; found by the soak)
+            outputChannel.cancel(failure)
         }
     }
 
