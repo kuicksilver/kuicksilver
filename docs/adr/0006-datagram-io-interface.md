@@ -125,8 +125,9 @@ every IPv4 datagram for the port and ours none (with 4000 IPv4 ports in use, one
 whose handshake replies went to the other socket timed out). So on Apple `ksl_udp` asks the IPv4 side first: port 0 takes a
 port an `AF_INET` socket on `0.0.0.0:0` was given and releases, then binds `::` to it (an explicit bind is refused beside
 `127.0.0.1:P`; a port taken in between fails with `EADDRINUSE` and another one is tried), and an explicit port an IPv4 socket
-holds is refused (`udp_wildcard_port_free_on_ipv4_side`, `udp_wildcard_port_held_on_ipv4_refused`). Linux checks both sides
-itself.
+holds is refused (`udp_wildcard_port_free_on_ipv4_side`, `udp_wildcard_port_held_on_ipv4_refused`). Linux (arm64 kernel
+in Docker) and Windows 11 check both sides themselves; the same tests guard them (`udp_win_wildcard_port_free_on_ipv4_side`,
+`udp_win_wildcard_port_held_on_ipv4_refused`).
 
 ECN and DF cover both halves: the outgoing mark's cmsg follows the destination (`IP_TOS` for IPv4: Linux ignores
 `IPV6_TCLASS` for a v4-mapped peer); Linux sets `IP_RECVTOS` and `IP_MTU_DISCOVER = PROBE` on the `AF_INET6` socket for the
