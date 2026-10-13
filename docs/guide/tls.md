@@ -98,12 +98,16 @@ Windows errors map to `VerifyReason`: `CERT_E_UNTRUSTEDROOT` and chaining failur
 On Linux Native the bundled OpenSSL has no built-in certificate directory, so `ksl` looks for the system store when a
 client context with `TrustConfig.Platform` is built, in this order:
 
-1. `SSL_CERT_FILE` (a PEM bundle) and `SSL_CERT_DIR` (a directory of hashed certificates, `c_rehash`). When either variable
-   is set, only these are used, as in Go's `crypto/x509`: a configured store never silently becomes another one.
-2. Otherwise the first bundle that loads: `/etc/ssl/certs/ca-certificates.crt` (Debian, Ubuntu, Alpine),
-   `/etc/pki/tls/certs/ca-bundle.crt` (Fedora, RHEL), `/etc/ssl/ca-bundle.pem` (openSUSE), `/etc/pki/tls/cacert.pem`,
-   `/etc/ssl/cert.pem`, `/usr/local/etc/openssl/cert.pem`.
-3. Otherwise the first of `/etc/ssl/certs` and `/etc/pki/tls/certs` that exists.
+1. `SSL_CERT_FILE` (a PEM bundle) and `SSL_CERT_DIR` (a directory of PEM certificates, hashed with `c_rehash` or not). When
+   either variable is set, only these are used, as in Go's `crypto/x509`: a configured store never silently becomes another
+   one.
+2. Otherwise the first bundle that loads, from Go's list: `/etc/ssl/certs/ca-certificates.crt` (Debian, Ubuntu, Gentoo),
+   `/etc/pki/tls/certs/ca-bundle.crt` (Fedora, RHEL 6), `/etc/ssl/ca-bundle.pem` (openSUSE), `/etc/pki/tls/cacert.pem`,
+   `/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem` (CentOS, RHEL 7 and later), `/etc/ssl/cert.pem` (Alpine), and
+   `/usr/local/etc/openssl/cert.pem`.
+3. Otherwise the first of `/etc/ssl/certs` and `/etc/pki/tls/certs` that holds certificates. A directory with `c_rehash`
+   links is searched by OpenSSL's hash lookup; any other directory is read like Go reads it: every PEM file in it loads.
+   A directory without either does not count.
 
 When nothing is found (a distroless or `scratch` image without `ca-certificates`), building the configuration fails with
 `TlsException.Config` naming every path searched:

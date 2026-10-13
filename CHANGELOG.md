@@ -629,6 +629,10 @@ Pre-release API and operations review (2026-10-14):
   for Initials that did not decrypt (forged or corrupted; they count in `datagramsDroppedUndecryptable`).
 - TLS: a `TlsConnection` that failed while being built (a client configuration without a reference identifier, a
   native error setting SNI) leaked its `SSL*` and its `SSL_CTX`; both are freed now.
+- Linux Native trust store: a certificate directory without `c_rehash` links (`SSL_CERT_DIR`, `/etc/ssl/certs`) was
+  accepted and then found no issuer at every handshake (`UnknownIssuer`); such a directory is now read file by file as Go
+  does, and one without certificates fails with `TlsException.Config` naming the paths. The RHEL 7+ bundle
+  `/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem` joins the searched files (Go's list).
 
 ### Security
 
