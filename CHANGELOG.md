@@ -264,16 +264,23 @@ QUIC core (review of 2026-10-08, deferred items):
 
 Flow control (`kuicksilver-quic`; found with the BBR simulations, 2026-10-13):
 
-- An upload no longer stalls for 10+ s when the window update that would let it continue is lost: the sender had
-  nothing in flight and the receiver's only copy of its `MAX_DATA` / `MAX_STREAM_DATA` waited behind its PTO backoff
-  (64 x PTO, about 11 s, with 75 % loss on the return path). A PTO probe now carries the stream control frames of the
-  packet it stands in for (it was a bare PING when that packet held only `MAX_DATA` / `MAX_STREAM_DATA`); a blocked
-  sender repeats `DATA_BLOCKED` / `STREAM_DATA_BLOCKED` / `STREAMS_BLOCKED` when the report is lost and, while it stays
-  blocked, again one PTO later and then at gaps of 2, 4 and 8 PTOs; a receiver that already granted more answers a stale
-  `DATA_BLOCKED` / `STREAM_DATA_BLOCKED` with its current limit at once (RFC 9000 §4.1, §13.3, §19.12–§19.14). One
-  answer per smoothed RTT per connection or stream; a faster repeat is not answered and spends a glitch token (it used
-  to be a repeat of the same limit). Simulated 50 Mbit/s, 40 ms upload with 75 % ACK-path loss, 20 seeds: mean goodput
-  7.2 → 18.5 Mbit/s (CUBIC) and 7.3 → 21.0 Mbit/s (BBR), longest stall after the handshake at most 7.5 s instead of 13.6 s.
+- An upload no longer stalls for 10+ s when the window update that would let it continue is lost: the sender had nothing
+  in flight and the receiver's only copy of its `MAX_DATA` / `MAX_STREAM_DATA` waited behind its PTO backoff (64 x PTO,
+  about 11 s, with 75 % loss on the return path). A PTO probe now carries the stream control frames of the packet it
+  stands in for (it was a bare PING when that packet held only `MAX_DATA` / `MAX_STREAM_DATA`); a blocked sender repeats
+  `DATA_BLOCKED` / `STREAM_DATA_BLOCKED` / `STREAMS_BLOCKED` when the report is lost and, while it stays blocked,
+  repeats `DATA_BLOCKED` / `STREAM_DATA_BLOCKED` one PTO later, then at gaps of 2, 4 and 8 PTOs through the 32nd repeat,
+  then at doubling gaps up to a third of the idle timeout (the smaller of both sides' `max_idle_timeout`; 10 s when
+  neither has one), so a receiver that stops reading costs about 95 reports in 10 minutes (30 s idle timeout, 36 ms PTO)
+  instead of about 2 000 (a report every 1–3 s on a WAN path), and the reports still keep a blocked connection from
+  idling out (with a short idle timeout the old 8 PTO gap let it idle out); a report at a new limit goes out at once and
+  starts the fast gaps again. A receiver that already granted more answers a stale `DATA_BLOCKED` /
+  `STREAM_DATA_BLOCKED` with its current limit at once (RFC 9000 §4.1, §13.3, §19.12–§19.14). One answer per smoothed
+  RTT per connection or stream; a faster repeat is not answered and spends a glitch token (it used to be a repeat of the
+  same limit). Simulated 50 Mbit/s, 40 ms upload with 75 % ACK-path loss, 20 seeds: mean goodput 7.2 → 18.5 Mbit/s
+  (CUBIC) and 7.3 → 21.0 Mbit/s (BBR), longest stall after the handshake at most 7.5 s instead of 13.6 s. quic-go,
+  quiche, ngtcp2 and msquic send each report once per limit and at most retransmit it on loss (msquic also re-sends
+  `STREAM_DATA_BLOCKED` on every acknowledgement); `docs/spec/rfc-compliance.md` compares them.
 - Receive-window auto-tuning works: the stream manager's clock was never set, so every window update looked
   instantaneous and doubled the window, and every connection that moved more than a few MB grew to the ceilings
   (6 MiB per stream, 15 MiB per connection) whatever its application read. The core now hands its clock and smoothed RTT
