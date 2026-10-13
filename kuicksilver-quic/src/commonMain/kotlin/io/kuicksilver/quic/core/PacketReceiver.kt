@@ -29,6 +29,14 @@ import io.kuicksilver.tls.TlsRole
 internal class PacketReceiver(
     private val c: ConnectionCore,
 ) {
+    internal companion object {
+        /**
+         * The largest Retry token a client takes (RFC 9000 section 17.2.5.2): with 20-byte connection IDs its Initial still
+         * leaves room for CRYPTO in 1200 bytes. A larger token cannot be sent, so its Retry is dropped.
+         */
+        const val MAX_RETRY_TOKEN = 1024
+    }
+
     private val hv = PacketHeaderView()
     private val mask = ByteArray(5)
     private val ackView = AckFrameView()
@@ -356,6 +364,8 @@ internal class PacketReceiver(
     private fun onRetry(data: PacketBuffer) {
         if (c.role != TlsRole.Client || c.anyPeerPacket || c.retryScid != null || c.state != ConnectionState.Handshaking) return
         if (!c.localCid.contentEquals(data, hv.dcidOff, hv.dcidLen) || hv.tokenLen == 0) return
+        // the token rides in every later Initial: one that cannot fit a 1200-byte Initial with room for CRYPTO is unusable
+        if (hv.tokenLen > MAX_RETRY_TOKEN) return
         if (c.odcid.contentEquals(data, hv.scidOff, hv.scidLen)) return
         if (!io.kuicksilver.quic.wire.RetryPacket
                 .verify(data, headerStart(), hv.packetEnd, c.odcid, c.crypto)
