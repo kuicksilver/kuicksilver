@@ -138,6 +138,16 @@ socket.close()   // sends close_notify, then closes the TCP socket
 
 The same works on the server side with `Socket.tlsServer(config)` after `ServerSocket.accept()`.
 
+### Resumption and trust
+
+A resumed handshake carries no certificates, so the client checks the chain it cached from the full handshake again
+before it offers the ticket (ADR-0011): under `AnchoredCa` and the Linux `Platform` store `ksl` verifies it again
+against the trust store, the current time, the name and the purpose; under the other platform verifiers and `Custom`
+the verifier runs again on it. Pins are then checked against the cached validated chain. A chain that no longer passes
+(an expired leaf, for example) means a full handshake, not a failure. A server holds only the client's leaf of a
+resumed session: its verdict travels with the ticket, which resumes only under the same trust configuration and lives
+at most `SessionTicketConfig.ticketLifetime`.
+
 ## TLS over any channel
 
 `TlsConnection.client(transportIn, transportOut, config)` and `TlsConnection.server(...)` run TLS over any pair of

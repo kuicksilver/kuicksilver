@@ -454,6 +454,11 @@ QUIC runtime and sockets:
 
 TLS and native layer (`kuicksilver-tls`, `kuicksilver-native`):
 
+- A client resuming under the OpenSSL verifier (`AnchoredCa`, `Platform` on Linux, and `Pinned`/`ExpectedName` over them)
+  re-checked only the pins, so a chain that expired after the full handshake kept resuming, and sending 0-RTT, for the
+  ticket's lifetime (ADR-0011). The cached chain is now verified again (`ksl_ctx_verify_chain`: trust store, time, name,
+  purpose) before the ticket is offered; a chain that no longer passes runs a full handshake
+  (`negative_resumptionRechecksCachedChainOnOpenSslPath`, `negative_resumeRechecksCachedChain`, C `verify_cached_chain_again`).
 - `TrustConfig.AnchoredCa` with an intermediate CA among its roots rejected the chains through it with `UnknownIssuer`,
   although each listed certificate is documented as trusted as a root: OpenSSL accepted only chains up to a self-signed
   certificate. Every anchor now ends a chain (`X509_V_FLAG_PARTIAL_CHAIN`) (`anchoredAtIntermediateAccepts`, C

@@ -95,3 +95,27 @@ int ksl_client_hello_cb(SSL *ssl, int *al, void *arg) {
     }
     return SSL_CLIENT_HELLO_SUCCESS;
 }
+/* Resumption (ADR-0011): a resumed handshake carries no Certificate, so the chain cached from the full handshake is verified again with
+   the current trust store, time, name and purpose; X509_STORE is safe to share between threads for verification. */
+int ksl_ctx_verify_chain(ksl_ctx *c, const uint8_t *chain, size_t chain_len, const char *name, int64_t at, int *x509_err) {
+    ERR_clear_error(); if (x509_err) *x509_err = 0;
+    if (c->role == KSL_CLIENT && (!name || !*name)) return KSL_ERROR;   /* no error is written into the shared context: *x509_err says it all */
+    STACK_OF(X509) *sk = NULL;
+    if (!ksl_parse_chain(chain, chain_len, &sk) || sk_X509_num(sk) == 0) { sk_X509_pop_free(sk, X509_free); return KSL_ERROR; }
+    X509_STORE_CTX *x = X509_STORE_CTX_new(); int ok = 0, err = 0;
+    if (x && X509_STORE_CTX_init(x, SSL_CTX_get_cert_store(c->ctx), sk_X509_value(sk, 0), sk) == 1
+        && X509_STORE_CTX_set_default(x, c->role == KSL_CLIENT ? "ssl_server" : "ssl_client") == 1) {
+        X509_VERIFY_PARAM *p = X509_STORE_CTX_get0_param(x); int named = 1;
+        X509_VERIFY_PARAM_set1(p, SSL_CTX_get0_param(c->ctx));   /* the context's flags (PARTIAL_CHAIN for AnchoredCa) and depth */
+        if (at > 0) X509_VERIFY_PARAM_set_time(p, (time_t)at);
+        if (c->role == KSL_CLIENT) {
+            X509_VERIFY_PARAM_set_hostflags(p, X509_CHECK_FLAG_NEVER_CHECK_SUBJECT | X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS);
+            if (X509_VERIFY_PARAM_set1_ip_asc(p, name) != 1) { ERR_clear_error(); named = X509_VERIFY_PARAM_set1_host(p, name, 0) == 1; }
+        }
+        if (named) { ok = X509_verify_cert(x) == 1; err = ok ? X509_V_OK : X509_STORE_CTX_get_error(x); }
+    }
+    X509_STORE_CTX_free(x); sk_X509_pop_free(sk, X509_free); ERR_clear_error();
+    if (ok) return KSL_OK;
+    if (x509_err) *x509_err = err;
+    return KSL_ERROR;
+}

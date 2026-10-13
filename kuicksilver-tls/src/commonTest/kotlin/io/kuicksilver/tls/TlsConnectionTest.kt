@@ -702,6 +702,25 @@ class SessionResumptionTest {
 
     private fun stored(key: String): Boolean = runBlocking { awaitTicket(key) }
 
+    /**
+     * ADR-0011 (review T4): on the OpenSSL verifier's path (AnchoredCa here, Platform on Linux) a resumption verifies the cached
+     * chain again; a chain that expired since the full handshake is not resumed, the client runs a full handshake instead.
+     */
+    @Test fun negative_resumptionRechecksCachedChainOnOpenSslPath() {
+        val client = TcpFixtures.client()
+        val server = TcpFixtures.server()
+        once(client, server)
+        resumptionClockSkewForTest = 101L * 366 * 24 * 3600 // past the test certificates' notAfter (2126)
+        try {
+            val (_, r) = once(client, server)
+            assertTrue(!r, "an expired cached chain is never resumed")
+        } finally {
+            resumptionClockSkewForTest = 0
+        }
+        val (_, r2) = once(client, server)
+        assertTrue(r2, "control: the fresh ticket of that full handshake resumes")
+    }
+
     @Test fun secondConnectionResumes() {
         val client = TcpFixtures.client()
         val server = TcpFixtures.server()

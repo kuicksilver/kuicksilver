@@ -115,6 +115,11 @@ public class TlsConnection private constructor(
     private suspend fun handshake() {
         cacheKey?.let { key ->
             sessionCache.take(key)?.let { e ->
+                // ADR-0011: the OpenSSL verifier's verdict is not taken from the cache: an expired leaf or a withdrawn anchor runs a full handshake
+                if (ctx.verifyMode == KslConst.VERIFY_OPENSSL && !ctx.cachedChainStillTrusted(e.chain, reference!!)) {
+                    e.close()
+                    return@let
+                }
                 cached = e
                 try {
                     lock.withLock { Ksl.sslSetSession(s(), e.session) }
@@ -232,7 +237,8 @@ public class TlsConnection private constructor(
         val effective = overrideCtx?.config ?: config
         if (effective.role == TlsRole.Client) {
             if (reused) {
-                // no Certificate on a resumed handshake: trust is re-established from the cached chain (ADR-0011: resumption never bypasses verification)
+                // no Certificate on a resumed handshake: trust is re-established from the cached chain (ADR-0011: resumption never bypasses
+                // verification); on the OpenSSL path the chain itself was verified again before the ticket was offered (handshake())
                 val cached = cached ?: throw TlsException.Protocol(null, "resumed session without a cached chain", null)
                 presented = cached.chain
                 val r =
@@ -800,6 +806,20 @@ public class SessionCache(
 }
 
 internal expect fun nowSeconds(): Long
+
+/** Test hook: seconds added to the clock of a resumption's re-verification, to age a cached chain without waiting. */
+@kotlin.concurrent.Volatile
+internal var resumptionClockSkewForTest: Long = 0L
+
+/**
+ * Verifies a chain cached from a full handshake again with this context's OpenSSL verifier (AnchoredCa, Platform on Linux, Pinned or
+ * ExpectedName over them): validity at the current time, the anchors, the name and the purpose, as the handshake did (ADR-0011:
+ * resumption never bypasses verification). The platform and custom verifiers re-run through [Verification.verify] instead.
+ */
+internal fun KslContext.cachedChainStillTrusted(
+    chain: List<Certificate>,
+    reference: HostName,
+): Boolean = chain.isNotEmpty() && Ksl.ctxVerifyChain(handle, chain.map { it.der }, reference.value, nowSeconds() + resumptionClockSkewForTest) == 0
 
 internal fun TrustConfig.cacheKey(): String =
     when (this) {
