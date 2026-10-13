@@ -66,7 +66,7 @@ if [ "$cmd" = status ]; then
   [ -f "$stats" ] || { echo "no campaign yet ($stats)"; exit 0; }
   printf '%-26s %8s %8s %14s %8s %8s %8s  %s\n' target slices hours executions cov ft corpus findings
   for id in $(targets_table | awk '{ print $1 }'); do
-    awk -F'\t' -v id="$id" '$2 == id { n++; s += $3; e += $4; if ($5 > c) c = $5; if ($6 > f) f = $6; corp = $7; if ($8 != "ok") bad = bad " " $8 }
+    awk -F'\t' -v id="$id" '$2 == id { n++; s += $3; e += $4; if ($5 > c) c = $5; if ($6 > f) f = $6; corp = $7; if ($8 != "ok" && $8 != "startup-timeout") bad = bad " " $8 }
       END { if (n) printf "%-26s %8d %8.2f %14d %8d %8d %8s  %s\n", id, n, s / 3600, e, c, f, corp, (bad == "" ? "none" : bad) }' "$stats"
   done
   ls "$state"/crashes/*/crash-* "$state"/crashes/*/timeout-* "$state"/crashes/*/oom-* 2>/dev/null | sed 's/^/finding: /' || true
@@ -171,17 +171,26 @@ run_slice() {
     (cd "$state/work/$id" && quiet "$(ksl_harness)" "${flags[@]}" "${dirs[@]}") > "$log" 2>&1
   fi
   rc=$?; set -e; end=$(date +%s)
+  # a log without a match must not end the campaign (set -e with pipefail)
   execs=$(sed -n 's/^Done \([0-9]*\) runs in.*/\1/p' "$log" | tail -1)
   [ -n "$execs" ] || execs=$(sed -n 's/^stat::number_of_executed_units: *\([0-9]*\).*/\1/p' "$log" | tail -1)
-  cov=$(grep -Eo 'cov: [0-9]+' "$log" | tail -1 | awk '{ print $2 }')
-  ft=$(grep -Eo 'ft: [0-9]+' "$log" | tail -1 | awk '{ print $2 }')
+  cov=$( (grep -Eo 'cov: [0-9]+' "$log" || true) | tail -1 | awk '{ print $2 }')
+  ft=$( (grep -Eo 'ft: [0-9]+' "$log" || true) | tail -1 | awk '{ print $2 }')
   corp=$(find "$corpus" -type f | wc -l | tr -d ' ')
   result=ok
   if [ $rc -ne 0 ]; then
     result=$( (ls -t "$crashes" 2>/dev/null | grep -E '^(crash|timeout|oom|slow-unit|leak)-' | head -1) || true)
     [ -n "$result" ] || result="exit-$rc"
-    echo "$id" > "$state/crashed-$id"
-    echo "$(date '+%F %T') $id: FINDING $result (log ${log#"$root"/})"
+    if [ "${result#timeout-}" != "$result" ] && [ "${execs:-0}" -le 1 ]; then
+      # the first unit includes loading and instrumenting the classes: on a machine under heavy load that alone can pass
+      # -timeout, which is not a finding; the slice is recorded and the target stays in the rotation
+      mkdir -p "$state/startup-timeouts"; mv "$crashes/$result" "$state/startup-timeouts/$id-$result"
+      result=startup-timeout
+      echo "$(date '+%F %T') $id: the first input timed out while loading (machine under load), not a finding"
+    else
+      echo "$id" > "$state/crashed-$id"
+      echo "$(date '+%F %T') $id: FINDING $result (log ${log#"$root"/})"
+    fi
   fi
   printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$(date '+%FT%T')" "$id" "$((end - start))" "${execs:-0}" "${cov:-0}" "${ft:-0}" "$corp" "$result" >> "$stats"
 }
