@@ -339,7 +339,7 @@ datagram ahead of everything else, and no PMTU probe goes to an address still un
 reports `PathEvent.Changed(old, new, reason)`, `PathEvent.Validated(path)` and `PathEvent.Failed(path)` events, and `pathState(id)`
 answers for any path (`Closed` once a path was closed or evicted, `Unknown` for an id never issued). Every migration and every 10 000 packets the connection switches to an unused connection ID of the
 peer and retires the old one; a connection ID the peer retired keeps routing for 3 × PTO so packets in flight still
-arrive. `allowMigration = false` advertises `disable_active_migration` and drops datagrams from other addresses; a
+arrive (at most 32 retired IDs per connection route at once; beyond that the oldest stops early). `allowMigration = false` advertises `disable_active_migration` and drops datagrams from other addresses; a
 move to a loopback or link-local address from a connection that did not start on one is refused unless
 `allowMigrationToLoopback` is set.
 

@@ -100,6 +100,39 @@ class ConnectionIdTest {
         assertTrue(removed.any { it == cid }, "the registrar entry is removed")
     }
 
+    /**
+     * Found by the stateful connection fuzzer (`connectionNull`): every ID the peer retired stayed registered for 3 x PTO and was
+     * replaced at once, so a peer retiring each new ID as it arrived grew the retired set (and the endpoint's routing table)
+     * without a fixed bound. At most `retiredCap` retired IDs keep routing; the oldest leaves early (a stateless reset for a
+     * retired ID is ignored by the peer, RFC 9000 section 10.3.1).
+     */
+    @Test fun negative_retiredLocalIdsStayBounded() {
+        val removed = ArrayList<ConnectionId>()
+        val registrar =
+            object : CidRegistrar {
+                override fun add(
+                    cid: ConnectionId,
+                    core: io.kuicksilver.quic.ConnectionCore,
+                ) {}
+
+                override fun remove(cid: ConnectionId) {
+                    removed += cid
+                }
+            }
+        val m = ConnectionIdManager(localLimit = 4, retiredCap = 32, cidLength = 8, random = Random(1), registrar = registrar)
+        m.setPeerLimit(3)
+        val until = TimeMark(1_000_000_000L)
+        var seq = 0L
+        repeat(100) {
+            while (true) m.nextNewCidToSend()?.let { it.sent = true } ?: break
+            m.onPeerRetired(seq++, until)
+        }
+        val sizes = m.sizesForTest()
+        assertTrue(sizes[2] <= 32 && sizes[3] <= 32, "retired IDs still routing: ${sizes[2]} (deadlines ${sizes[3]})")
+        assertEquals(100 - 32, removed.size, "the oldest retired IDs left the registry early")
+        assertEquals(3, m.localCount, "every retired ID was replaced")
+    }
+
     @Test fun lostNewCidRetiredByPeerIsNotResent() {
         val m = manager()
         m.setPeerLimit(3)

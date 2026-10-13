@@ -10,6 +10,7 @@ import io.kuicksilver.quic.PacketBatch
 import io.kuicksilver.quic.PathState
 import io.kuicksilver.quic.TimeMark
 import io.kuicksilver.quic.crypto.PacketProtection
+import io.kuicksilver.quic.recordForTest
 import io.kuicksilver.quic.recovery.SentFrames
 import io.kuicksilver.quic.recovery.SpaceId
 import io.kuicksilver.quic.stream.ControlKind
@@ -202,6 +203,7 @@ internal class PacketBuilder(
         if (c.cryptoStreams.send[level].hasPending || c.probePending[space.ordinal] > 0) return true
         if (level == 2 && c.testInjectDatagramInHandshake) return true
         c.testInjectCrypto?.let { if (it.first == level) return true }
+        if (c.testInjectFrames.firstOrNull()?.first == level) return true
         if (space != SpaceId.Application) return false
         return c.sendHandshakeDone || c.path.challengePending || c.paths.hasResponseFor(c.path) || c.testInjectPathChallenges > 0 ||
             c.testInjectPathResponse != null ||
@@ -225,7 +227,9 @@ internal class PacketBuilder(
     ): Boolean {
         if (c.spaceDiscarded[space.ordinal] || c.writeKeys[spaceLevel(space)] == null) return false
         if (c.closeFrame != null) return spaceLevel(space) != 1 && !c.closeSentIn[space.ordinal] // no CONNECTION_CLOSE (0x1c) in 0-RTT
-        if (spaceLevel(space) == 1) return !congested && (c.streams.hasControlFrames() || c.streams.hasStreamData())
+        if (spaceLevel(space) == 1) {
+            return !congested && (c.streams.hasControlFrames() || c.streams.hasStreamData() || c.testInjectFrames.firstOrNull()?.first == 1)
+        }
         if (hasAckToSend(space, now)) return true
         // path validation is not congestion controlled (RFC 9000 section 9.1): a rebind while the window is full must still be challenged
         if (space == SpaceId.Application && (c.path.challengePending || c.paths.hasResponseFor(c.path))) return true
@@ -389,7 +393,8 @@ internal class PacketBuilder(
                 target.challengePending = false
                 ackEliciting =
                     true
-                c.challengedAddressesForTest += target.remote
+                c.challengedAddressesForTest.recordForTest(target.remote)
+                c.pathChallengesSentForTest++
             }
             while (w.remaining >=
                 9
@@ -434,7 +439,8 @@ internal class PacketBuilder(
                         false
                     ackEliciting = true
                     padToEnd = true
-                    c.challengedAddressesForTest += target.remote
+                    c.challengedAddressesForTest.recordForTest(target.remote)
+                    c.pathChallengesSentForTest++
                 } // RFC 9000 section 8.2.1: expanded to 1200 bytes
                 while (w.remaining >=
                     9
@@ -487,6 +493,13 @@ internal class PacketBuilder(
                             true
                         c.testInjectCrypto = if (n == len) null else Triple(l, off + n, len - n)
                     }
+                }
+                while (true) {
+                    val inject = c.testInjectFrames.firstOrNull() ?: break
+                    if (inject.first != level || inject.second.size > w.remaining) break
+                    w.bytes(inject.second, 0, inject.second.size)
+                    c.testInjectFrames.removeFirst()
+                    ackEliciting = true
                 }
                 if (type == PacketType.Handshake && c.testInjectDatagramInHandshake &&
                     w.remaining >= 4

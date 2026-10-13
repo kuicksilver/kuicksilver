@@ -113,6 +113,17 @@ class ZeroRttTest {
         return p to id
     }
 
+    /**
+     * Fuzzing finding (rememberedTicket): `QuicSessionTicket.remembered` is a public property, and a blob whose ALPN length
+     * runs past its end (or an empty one) threw out of the ticket's use instead of giving no 0-RTT.
+     */
+    @Test fun negative_malformedRememberedBlobGivesNoEarlyData() {
+        assertNull(rememberedParameters(ByteArray(0)))
+        assertNull(rememberedParameters(byteArrayOf(5, 'h'.code.toByte(), '3'.code.toByte())))
+        assertNull(rememberedParameters(byteArrayOf(0xff.toByte())))
+        assertNotNull(rememberedParameters(rememberedBlob("h3", ByteArray(0))))
+    }
+
     @Test fun zeroRttDataAnsweredBeforeHandshakeCompletes() {
         val (p, id) = resumed(ticket())
         var answeredWhile: ConnectionState? = null

@@ -17,6 +17,7 @@ import io.kuicksilver.quic.Rfc9001Packets
 import io.kuicksilver.quic.Rfc9369Packets
 import io.kuicksilver.quic.TimeMark
 import io.kuicksilver.quic.VersionProfile
+import io.kuicksilver.quic.core.PacketReceiver
 import io.kuicksilver.quic.wire.ConnectionId
 import io.kuicksilver.quic.wire.PacketHeaderCodec
 import io.kuicksilver.quic.wire.PacketHeaderView
@@ -193,6 +194,42 @@ class RetryTest {
             assertNull(p.closed(c))
         } finally {
             p.close()
+        }
+    }
+
+    /**
+     * Fuzzing finding (packetRecvClient): a Retry whose token cannot fit the client's next 1200-byte Initial made the packet
+     * builder throw out of poll. Such a Retry is dropped; the largest token that fits is still taken and sent.
+     */
+    @Test fun negative_retryOversizedTokenDropped() {
+        for ((size, taken) in listOf(1150 to false, 1060 to false, PacketReceiver.MAX_RETRY_TOKEN to true)) {
+            val p = EndpointPair()
+            try {
+                val c = p.connect() // the Retry arrives before any server packet
+                val b = PacketBuffer.allocate(1500)
+                try {
+                    val n =
+                        RetryPacket.write(
+                            b,
+                            VersionProfile.V1,
+                            c.localCid,
+                            ConnectionId(ByteArray(20) { 5 }),
+                            ByteArray(size) { 3 },
+                            c.odcid,
+                            NullCryptoProvider,
+                            0,
+                        )
+                    p.feed(p.client, b.toByteArray(n), p.serverAddr)
+                } finally {
+                    b.close()
+                }
+                assertEquals(taken, c.retryReceivedForTest, "a Retry with a $size-byte token")
+                repeat(3) { p.step() } // the next Initials carry the token (or none): polling must not throw
+                // a forged Retry the server never sent ends in a transport-parameter mismatch; a dropped one changes nothing
+                if (!taken) assertNull(p.closed(c), "the client keeps its handshake going after a $size-byte Retry token")
+            } finally {
+                p.close()
+            }
         }
     }
 

@@ -96,6 +96,75 @@ K3 status: with `loops > 1` each loop answers with a stateless reset only for CI
 - **Mitigations:** `ksl` — minimal code, all buffers with lengths, no `strlen`; Kotlin — bounds checks; fuzzing with Jazzer and libFuzzer; size limits.
 - **Verification:** fuzzing corpus in CI, an ASan/UBSan build of `ksl` in CI.
 
+K7 status (fuzzing campaigns, 2026-10-13/14): local campaigns replace ClusterFuzzLite (`tools/fuzz/campaign.sh`,
+CONTRIBUTING "Fuzzing"): every target runs in slices of at most 20 minutes at background priority, one at a time, and the
+grown corpora are minimized into `tools/fuzz/corpus/<target>/`. New targets: `ConnectionFuzzTest.connectionNull` and
+`.connectionTls` — a stateful fuzzer of a client/server `ConnectionCore` pair (frames sealed by either side into
+Initial/Handshake/0-RTT/1-RTT packets, raw or structured — STREAM, RESET_STREAM, STOP_SENDING, MAX_*, *_BLOCKED,
+NEW/RETIRE_CONNECTION_ID, PATH_CHALLENGE/RESPONSE, DATAGRAM, ACK with ECN counts, HANDSHAKE_DONE, NEW_TOKEN, CRYPTO,
+CONNECTION_CLOSE, unknown types — plus application actions, loss, duplication, reordering, ECN marks, NAT rebinding and
+timers; `connectionTls` after a real TLS 1.3 handshake through ksl), checking after every step crash isolation, a Closed
+event for every closing connection, flow-control and stream-state invariants (`StreamManager.invariantViolationForTest`)
+and bounds on every per-connection collection (`ConnectionCore.sizesForTest`); `ZeroRttFuzzTest.replayRegister` (the
+register against a model of what it must refuse, monotonic and wall clock, small layouts so that full halves and
+rotation are reached) and `.rememberedTicket`; `ZeroRttHelloFuzzTest.clientHelloScan` (fragmented equals whole) and
+`.zeroRttHello` (real server sessions: accepted early data was admitted and kept, refused early data holds no admission,
+a replay gets early data at most once); `tools/fuzz/ksl` — the ksl parsing paths under ASan/UBSan (transport parameters
+and version negotiation, certificate framing, keys, ClientHello with the SNI pause and with 0-RTT, ServerHello; Apple
+clang has no libFuzzer, so a trace-pc-guard driver guides it, coverage of ksl only, not OpenSSL).
+
+Findings, each fixed test-first with a `crash-*` regression input: (1) a stateless reset answering a short-header
+datagram over 1500 bytes overflowed the endpoint's answer buffer (`endpointRoute`, `packetRecvServer`;
+`StatelessResetTest.negative_resetForJumboDatagramFitsItsBuffer`); (2) a Retry token too large for the client's next
+Initial made `poll` throw — Retry integrity keys are public, so an on-path attacker could forge one (`packetRecvClient`;
+`RetryTest.negative_retryOversizedTokenDropped`, tokens above 1024 bytes are dropped with their Retry, a local limit:
+RFC 9000 sets none); (3) a RESET_STREAM final size was checked against the connection window only (RFC 9000 §4.1, §4.5, §19.10),
+and a flow-control error left the received total above the limit (`connectionNull`, `connectionTls`;
+`StreamStateTest.negative_resetFinalSizeBeyondStreamWindowIsFlowControlError`, `.negative_flowControlErrorKeepsReceivedWithinLimit`);
+(4) the early-data verdict of a failed TLS session leaked `KslException` (`zeroRttHello`;
+`QuicEarlyDataTest.negative_earlyDataVerdictAfterFailedHandshake`); (5) a malformed `QuicSessionTicket.remembered` blob threw
+(`rememberedTicket`; `ZeroRttTest.negative_malformedRememberedBlobGivesNoEarlyData`); (6) two test-only records of a
+connection (the addresses it sent PATH_CHALLENGE to, its MTU updates) grew with every challenge, so forged copies of a
+client packet from ever new addresses grew the connection's memory without bound (`connectionNull`;
+`PathTest.negative_challengeRecordStaysBoundedUnderForgedAddresses`; the records keep their latest 64 entries); (7) every
+connection ID the peer retired kept routing for 3 x PTO and was replaced at once, so a peer retiring each new ID as it
+arrived grew the retired set and the endpoint's routing table without a fixed bound (`connectionNull`;
+`ConnectionIdTest.negative_retiredLocalIdsStayBounded`; at most `retiredConnectionIds` (32) keep routing, the oldest
+leaves early — the peer ignores a stateless reset for a retired ID, RFC 9000 §10.3.1); (8) transport parameters with a
+long version_information list (the decoder takes any multiple of 4 bytes) overflowed the encoder's fixed 1024-byte buffer
+when encoded again — not reachable from a peer, since only our own parameters are encoded, but the encoder now sizes its
+buffer to the list (`rememberedTicket`; `TransportParametersTest.negative_manyAvailableVersionsEncodeAgain`).
+
+Campaign of 2026-10-13 03:41 to 2026-10-14 03:29 (74 slices, 19.5 h of fuzzing, 1.03 billion executions, one target at
+a time at background priority while other builds ran). The goal of 2 h per target was not reached: 20 targets in one
+~24 h window gave each about 1 h; later campaigns continue from the committed corpora. Hours and executions per target
+(`tools/fuzz/campaign.sh status`); coverage is libFuzzer's edge (cov) and feature (ft) counts at the last slice;
+"Committed corpus" is the minimized set in `tools/fuzz/corpus/<target>/`; findings count crash inputs, all fixed above
+(two timeouts that did not reproduce under replay, caused by load, are not counted).
+
+| Target | Slices | Hours | Executions | Coverage (cov / ft) | Committed corpus | Findings |
+|---|---:|---:|---:|---:|---:|---|
+| `quic.frameDecode` | 4 | 1.03 | 62,775,362 | 540 / 2391 | 264 | none |
+| `quic.packetHeader` | 4 | 1.03 | 180,699,013 | 407 / 1059 | 68 | none |
+| `quic.transportParameters` | 4 | 1.03 | 91,086,401 | 548 / 1038 | 88 | none |
+| `quic.streamReassembler` | 3 | 0.95 | 880,944 | 161 / 1077 | 215 | none |
+| `quic.retryPacket` | 4 | 1.03 | 1,808,314 | 3482 / 5447 | 73 | none |
+| `quic.endpointRoute` | 4 | 1.02 | 1,191,705 | 4891 / 12726 | 610 | 1 (fixed) |
+| `quic.packetRecvServer` | 4 | 1.27 | 3,010,252 | 3315 / 5505 | 219 | 1 (fixed) |
+| `quic.packetRecvClient` | 4 | 1.03 | 12,135,150 | 4166 / 12282 | 777 | 1 (fixed) |
+| `quic.multiPacket` | 3 | 0.71 | 1,254,025 | 4983 / 19031 | 830 | none |
+| `quic.postHandshake` | 4 | 0.99 | 1,491,820 | 5016 / 14099 | 760 | none |
+| `quic.connectionNull` | 4 | 0.86 | 849,437 | 6638 / 36422 | 2339 | 3 (fixed) |
+| `quic.connectionTls` | 3 | 0.71 | 367,032 | 6944 / 34525 | 1894 | 1 (fixed) |
+| `quic.replayRegister` | 3 | 1.01 | 217,519 | 208 / 1398 | 162 | none |
+| `quic.rememberedTicket` | 4 | 0.94 | 67,544,088 | 337 / 726 | 86 | 2 (fixed) |
+| `tls.clientHelloScan` | 3 | 1.01 | 316,747,674 | 87 / 227 | 44 | none |
+| `tls.zeroRttHello` | 4 | 1.02 | 403,659 | 1253 / 2163 | 74 | 1 (fixed) |
+| `http3.h3Frames` | 4 | 1.03 | 11,773,176 | 297 / 1583 | 287 | none |
+| `http3.capsules` | 4 | 1.03 | 224,716,906 | 64 / 297 | 68 | none |
+| `http3.qpackDecode` | 4 | 0.80 | 52,966,184 | 436 / 1631 | 249 | none |
+| `ksl.parsers` | 3 | 1.01 | 2,365,952 | 257 / 257 | 26 | none |
+
 ### 3.11 Supply chain
 
 - **Threats:** tampered OpenSSL sources; a tampered native artifact in the JAR; an OpenSSL vulnerability without an update.

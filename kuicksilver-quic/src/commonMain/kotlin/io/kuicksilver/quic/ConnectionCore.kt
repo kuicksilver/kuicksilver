@@ -160,6 +160,7 @@ public class ConnectionCore internal constructor(
     internal var testInjectPathResponse: Long? = null
     internal var pathResponsesSentForTest = 0
     internal val challengedAddressesForTest = ArrayList<InetSocketAddress>()
+    internal var pathChallengesSentForTest = 0
     internal val pathCountForTest: Int get() = paths.all.size
 
     // ---- DPLPMTUD (RFC 8899) ----
@@ -456,6 +457,43 @@ public class ConnectionCore internal constructor(
     internal var bytesSent = 0L
     internal var duplicatesDropped = 0L
 
+    /**
+     * Fuzzing probe: the sizes of the per-connection collections a peer can make grow, by name (the stateful fuzzer checks
+     * them against bounds derived from the configuration).
+     */
+    internal fun sizesForTest(): Map<String, Long> {
+        val m = LinkedHashMap<String, Long>()
+        m["events"] = events.size.toLong()
+        val st = streams.sizesForTest()
+        m["streams"] = st[0].toLong()
+        m["streamControlFrames"] = st[1].toLong()
+        m["streamEvents"] = st[2].toLong()
+        m["streamSendLimits"] = st[3].toLong()
+        m["streamsEarly"] = st[4].toLong()
+        m["reassemblyRanges"] = streams.reassemblyRanges.toLong()
+        m["sendBufferedBytes"] = streams.sendBufferedBytes
+        val ci = cids.sizesForTest()
+        m["cidsLocal"] = ci[0].toLong()
+        m["cidsPeer"] = ci[1].toLong()
+        m["cidsRetiredLocal"] = ci[2].toLong()
+        m["cidsRetiredUntil"] = ci[3].toLong()
+        m["cidsPendingRetire"] = ci[4].toLong()
+        m["cidsUnackedRetire"] = ci[5].toLong()
+        m["paths"] = paths.all.size.toLong()
+        m["pathResponses"] = paths.responses.toLong()
+        for (space in io.kuicksilver.quic.recovery.SpaceId.entries) {
+            val sp = loss.space(space)
+            m["sent${space.name}"] = sp.sent.size.toLong()
+            m["ackRanges${space.name}"] = sp.ack.rangeCount.toLong()
+        }
+        m["receiverBufferedBytes"] = receiver.bufferedBytes
+        m["cryptoBufferedBytes"] = cryptoStreams.bufferedBytes
+        m["datagramsQueued"] = datagramQueue.size.toLong()
+        m["challengedAddresses"] = challengedAddressesForTest.size.toLong()
+        m["mtuUpdates"] = ccMtuUpdatesForTest.size.toLong()
+        return m
+    }
+
     // ---- test hooks (internal, used by the module's tests only) ----
     internal var testForgeInitialSourceCid = false
         set(v) {
@@ -471,6 +509,12 @@ public class ConnectionCore internal constructor(
     internal var testInjectDatagramFrame = false
     internal var testInjectDatagramInHandshake = false
     internal var testInjectDatagramBytes = 0
+
+    /**
+     * (level, frames): raw frame bytes written verbatim into the next packet of that level (0 Initial, 1 0-RTT, 2 Handshake,
+     * 3 1-RTT), so the stateful fuzzer can make a peer seal arbitrary frames under real keys.
+     */
+    internal val testInjectFrames = ArrayDeque<Pair<Int, ByteArray>>()
 
     /** (level, offset, length): inject one CRYPTO frame of zeros into the next packet of that level. */
     internal var testInjectCrypto: Triple<Int, Long, Int>? = null
@@ -1060,6 +1104,9 @@ public class ConnectionCore internal constructor(
 
     /** Holds [client]; the server-side factory is the `ConnectionCore.Companion.server` extension. */
     public companion object {
+        /** The most entries a test-only record of this connection keeps (the latest ones): a peer must not grow it. */
+        internal const val TEST_RECORD_LIMIT = 64
+
         /** A client connection to [remote]; the first [poll] produces the Initial datagrams. [random] supplies its connection IDs, PATH_CHALLENGE data and skipped packet numbers: a CSPRNG outside tests (predictable IDs would let an off-path attacker forge them). */
         public fun client(
             config: QuicConfig,
@@ -1179,4 +1226,10 @@ internal fun ConnectionCore.Companion.serverWithKeys(
     }
     core.installInitialKeys(profile)
     return core
+}
+
+/** Appends to a test-only record of a connection, dropping the oldest entry beyond [ConnectionCore.TEST_RECORD_LIMIT]. */
+internal fun <T> MutableList<T>.recordForTest(value: T) {
+    if (size >= ConnectionCore.TEST_RECORD_LIMIT) removeAt(0)
+    add(value)
 }

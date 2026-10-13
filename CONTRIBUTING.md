@@ -152,9 +152,20 @@ To make the floors blocking, download the `perf-<peer>` result artifacts of a fe
   scenario alone (`.scenarios=QuicMigration,KtorH3` for some only) and prints what it left behind. Run it on an otherwise
   idle machine: a starved process misses the scenarios' timeouts (a 1 s idle timeout checked within 10 s) and fails on
   unexpected failures, not on resources. Before a beta: 2 h nightly; before a release: 24–72 h.
-- **Fuzzing.** Jazzer targets live in `kuicksilver-quic` and `kuicksilver-http3` under `src/jvmTest/.../fuzz`; their
-  committed inputs run as regression tests in `jvmTest`. `tools/fuzz/gen-seeds.sh` regenerates the QUIC seed corpus. A
-  crash you find becomes a `crash-*` input next to the seeds.
+- **Fuzzing.** Jazzer targets live in `kuicksilver-tls`, `kuicksilver-quic` and `kuicksilver-http3` under
+  `src/jvmTest/.../fuzz` (among them `ConnectionFuzzTest`, a stateful fuzzer of a client/server `ConnectionCore` pair, and
+  the 0-RTT targets); `tools/fuzz/ksl/` holds the libFuzzer harness of the `ksl` parsing code. Their committed inputs run
+  as regression tests in `jvmTest`. `tools/fuzz/gen-seeds.sh` regenerates the seed corpora, `tools/fuzz/ksl/build.sh
+  --seeds` the ksl seeds. Long runs use `tools/fuzz/campaign.sh` (this project does not use ClusterFuzzLite): it fuzzes
+  every target in slices of at most 20 minutes at background priority (`taskpolicy -b`, `nice 19`, one thread), pauses
+  between slices, resumes where it stopped (state in `build/fuzz-campaign/`) and gives each slice to the target with the
+  least time so far. `tools/fuzz/campaign.sh status` prints hours, executions and coverage per target;
+  `tools/fuzz/campaign.sh minimize` merges the grown corpora into `tools/fuzz/corpus/<target>/`, which is committed and
+  seeds later campaigns. Options: `--slice MIN`, `--goal HOURS` per target, `--hours HOURS` of wall clock, `--targets
+  id,...` (`tools/fuzz/campaign.sh list`). A crash you find becomes a `crash-*` input next to the seeds, a unit test that
+  reproduces it and a fix; delete `build/fuzz-campaign/crashed-<target>` so the campaign takes the target again. A timeout
+  is replayed first: one whose input runs in time alone (a slice starved on a busy machine) is recorded as `load-timeout`
+  in `build/fuzz-campaign/load-timeouts/` and is not a finding.
 
 ## Proposing a change
 

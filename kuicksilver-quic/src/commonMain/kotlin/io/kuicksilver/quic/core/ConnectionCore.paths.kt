@@ -16,6 +16,7 @@ import io.kuicksilver.quic.PathId
 import io.kuicksilver.quic.PathState
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.TimeMark
+import io.kuicksilver.quic.recordForTest
 import io.kuicksilver.quic.recovery.SentFrames
 import io.kuicksilver.quic.recovery.SpaceId
 import io.kuicksilver.quic.wire.ConnectionId
@@ -40,7 +41,7 @@ internal fun ConnectionCore.setMtu(
     }
     p.mtu = mtu
     p.cc.onMtuUpdate(mtu)
-    ccMtuUpdatesForTest += mtu
+    ccMtuUpdatesForTest.recordForTest(mtu)
     events += ConnectionEvent.MtuUpdated(p.id, mtu)
     qlog?.metricsUpdated(stats, now)
 }

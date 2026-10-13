@@ -132,6 +132,26 @@ class StreamStateTest {
         assertEquals(0x06L, code { m.onResetStream(0, 1, 50) })
     }
 
+    /**
+     * Fuzzing finding (connectionNull): RESET_STREAM's final size was checked against the connection window only, so a peer
+     * could claim more than the stream window allowed (RFC 9000 sections 4.1, 4.5, 19.10: FLOW_CONTROL_ERROR).
+     */
+    @Test fun negative_resetFinalSizeBeyondStreamWindowIsFlowControlError() {
+        val m = manager(TlsRole.Server)
+        assertEquals(0x03L, code { m.onResetStream(0, 1, QuicConfig.Default.initialStreamWindow + 1) })
+        assertNull(m.invariantViolationForTest())
+    }
+
+    /** Fuzzing finding (connectionNull): a flow-control error left the connection's received total above the advertised limit. */
+    @Test fun negative_flowControlErrorKeepsReceivedWithinLimit() {
+        val m = manager(TlsRole.Server)
+        assertEquals(0x03L, code { m.onResetStream(0, 1, 1L shl 48) })
+        assertNull(m.invariantViolationForTest())
+        recv(m, 4, 0, ByteArray(500_000))
+        assertEquals(0x03L, code { recv(m, 8, 0, ByteArray(500_000)) })
+        assertNull(m.invariantViolationForTest())
+    }
+
     @Test fun streamFrameOnLocalSendOnlyUniIsStreamStateError() {
         val m = manager(TlsRole.Client)
         val id = m.open(bidi = false, StreamPriority.Default)

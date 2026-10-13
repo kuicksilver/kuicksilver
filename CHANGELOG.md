@@ -278,6 +278,18 @@ API that was never published (0.1.0 was not released), removed before 0.2.0 bind
 
 ### Fixed
 
+Found by the fuzzing campaigns (threat model section 3.10):
+
+- `QuicTlsSession.earlyDataAccepted` (and `ConnectionCore.earlyDataAccepted`) of a session whose handshake failed
+  threw the native `KslException.Internal`; it now reports the last verdict (found by the `zeroRttHello` fuzz target).
+- QUIC client: a `QuicSessionTicket.remembered` blob whose ALPN length runs past its end (the property is public) threw
+  out of the ticket's use; it now gives no 0-RTT (found by the `rememberedTicket` fuzz target).
+- QUIC: a flow-control error no longer leaves the connection's received-bytes total above the advertised limit (the
+  total is checked before it is updated).
+- QUIC: transport parameters listing more than about 250 versions in version_information could not be encoded (the
+  encoder's buffer was a fixed 1024 bytes); the buffer now grows with the list (found by the `rememberedTicket` fuzz
+  target; only our own parameters are encoded, so a peer could not trigger it).
+
 QUIC migration right after the handshake (0.2.0 bug 1, iOS library report):
 
 - A network change in the first moments of a connection no longer fails with "path validation failed" and leaves the
@@ -590,6 +602,17 @@ Samples and testing:
 
 ### Security
 
+- Findings of the local fuzzing campaigns (`tools/fuzz/campaign.sh`, threat model §3.10), each with a regression input
+  and a test: a server endpoint answering a short-header datagram over 1500 bytes to an unknown connection ID with a
+  stateless reset overflowed its answer buffer and threw out of `EndpointCore.handleDatagram`; a client that received a
+  Retry with a token too large for its next Initial (Retry integrity keys are public, so an on-path attacker can forge
+  one) threw out of `poll` — such a Retry is now dropped (tokens up to 1024 bytes are taken); a peer's RESET_STREAM final
+  size was checked against the connection window only, so it could exceed the stream window without FLOW_CONTROL_ERROR
+  (RFC 9000 §4.1, §4.5, §19.10); every PATH_CHALLENGE a connection sent was appended to a test-only record that was never
+  trimmed (as was every MTU update), so an attacker who forged copies of a peer's packets from ever new addresses grew the
+  connection's memory without bound — the records now keep their latest 64 entries; a connection ID the peer retired
+  keeps routing for 3 × PTO and is replaced at once, so a peer that retired every new ID grew the retired set and the
+  endpoint's routing table without a fixed bound — at most 32 retired IDs route at once, the oldest stops early.
 - Kotlin/Native: a Ktor server connector bound to a specific IPv6 address (for example a loopback-only `::1` endpoint) no
   longer listens on every interface and on IPv4, and a client request to an IPv6 address no longer reaches a local
   process on the same port instead of the intended host (threat model section 3.19,

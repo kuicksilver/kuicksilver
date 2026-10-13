@@ -213,6 +213,46 @@ internal class StreamManager(
 
     fun hasStreamData(): Boolean = scheduler.next() != null
 
+    /**
+     * Fuzzing probe (stateful connection fuzzer): the first broken flow-control or stream-state invariant, or null. Data
+     * received on the connection and on each stream stays within what we advertised, data we sent within what the peer
+     * allowed, a final size bounds what was received, and the peer opened no more streams than we granted.
+     */
+    internal fun invariantViolationForTest(): String? {
+        if (connReceived > connFlow.limit) return "connection received $connReceived beyond the advertised ${connFlow.limit}"
+        if (connSend.used > connSend.maxLimit) return "connection sent ${connSend.used} beyond the peer's ${connSend.maxLimit}"
+        if (budget.used < 0 || budget.used > budget.max) return "reassembly ranges ${budget.used} outside 0..${budget.max}"
+        if (sendBufferedBytes < 0) return "negative send buffer $sendBufferedBytes"
+        for ((id, e) in streams) {
+            e.recv?.let { r ->
+                if (r.highest > r.flow.limit) return "stream $id received ${r.highest} beyond the advertised ${r.flow.limit}"
+                if (r.finalSize >= 0 &&
+                    r.highest > r.finalSize
+                ) {
+                    return "stream $id received ${r.highest} beyond its final size ${r.finalSize}"
+                }
+            }
+            e.send?.let { snd ->
+                val limit = sendLimit[id]
+                if (limit != null &&
+                    snd.sentEnd > limit.maxLimit
+                ) {
+                    return "stream $id sent ${snd.sentEnd} beyond the peer's ${limit.maxLimit}"
+                }
+                if (snd.sentEnd > snd.written) return "stream $id sent ${snd.sentEnd} beyond what was written (${snd.written})"
+            }
+        }
+        for (bidi in booleanArrayOf(true, false)) {
+            val opened = limits.peerStreamsOpened(bidi)
+            val granted = limits.peerMaxStreamsGranted(bidi)
+            if (opened > granted) return "peer opened $opened ${if (bidi) "bidi" else "uni"} streams, granted $granted"
+        }
+        return null
+    }
+
+    /** Fuzzing probe: (streams, queued control frames, pending events) held by this manager. */
+    internal fun sizesForTest(): IntArray = intArrayOf(streams.size, control.size, events.size, sendLimit.size, early.size)
+
     /** How often a stream was handed to the scheduler, for the complexity tests. */
     internal val schedulerTouchesForTest: Long get() = scheduler.addsForTest
 
@@ -338,8 +378,8 @@ internal class StreamManager(
         val before = r.readable
         val advanced = r.onData(offset, data, off, len, fin)
         if (advanced > 0) {
+            connFlow.onData(connReceived + advanced) // checked first: a FLOW_CONTROL_ERROR leaves the total within the limit
             connReceived += advanced
-            connFlow.onData(connReceived)
         }
         if (r.stopped) {
             creditConnection(r.abandon())
@@ -361,8 +401,8 @@ internal class StreamManager(
             e.recv ?: throw QuicWireException(TransportError.STREAM_STATE_ERROR, 0x04, "RESET_STREAM on our send-only stream $id")
         val advanced = r.onReset(code, finalSize)
         if (advanced > 0) {
+            connFlow.onData(connReceived + advanced) // checked first: a FLOW_CONTROL_ERROR leaves the total within the limit
             connReceived += advanced
-            connFlow.onData(connReceived)
         }
         creditConnection(r.abandon())
         events += ConnectionEvent.StreamReset(id, code)

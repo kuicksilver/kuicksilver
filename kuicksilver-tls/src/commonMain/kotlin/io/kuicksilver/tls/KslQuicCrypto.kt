@@ -326,7 +326,12 @@ internal class KslQuicTlsSession(
         return true
     }
 
-    private fun earlyStatus(): Int = if (ssl == 0L) 0 else Ksl.sslGet(ssl, KslConst.GET_EARLY_DATA)[0].toInt()
+    private var earlySeen = 0 // the last early-data status read, kept for a session that failed since (ksl refuses queries then)
+
+    private fun earlyStatus(): Int {
+        if (ssl == 0L || failure != null) return earlySeen
+        return Ksl.sslGet(ssl, KslConst.GET_EARLY_DATA)[0].toInt().also { earlySeen = it }
+    }
 
     override val earlyDataAccepted: Boolean? get() {
         // the client counts early data as rejected until EncryptedExtensions says otherwise

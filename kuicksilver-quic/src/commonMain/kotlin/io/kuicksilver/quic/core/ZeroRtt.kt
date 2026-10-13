@@ -14,6 +14,7 @@ import io.kuicksilver.quic.TransportError
 import io.kuicksilver.quic.endpoint.SipHash
 import io.kuicksilver.quic.endpoint.ZeroRttReplayRegister
 import io.kuicksilver.quic.wire.QuicWireException
+import io.kuicksilver.quic.wire.TransportParameters
 import io.kuicksilver.quic.wire.TransportParametersCodec
 import io.kuicksilver.quic.wire.WireWriter
 import io.kuicksilver.tls.EarlyDataAdmission
@@ -100,6 +101,18 @@ internal fun rememberedAlpn(blob: ByteArray): String = blob.decodeToString(1, 1 
 
 internal fun rememberedTp(blob: ByteArray): ByteArray = blob.copyOfRange(1 + (blob[0].toInt() and 0xff), blob.size)
 
+/** The ALPN and the server's transport parameters a ticket remembers ([rememberedBlob]), or null when [blob] does not hold them. */
+internal fun rememberedParameters(blob: ByteArray): Pair<String, TransportParameters>? {
+    if (blob.isEmpty() || 1 + (blob[0].toInt() and 0xff) > blob.size) return null // the application can set the blob
+    val tp =
+        try {
+            TransportParametersCodec.decode(rememberedTp(blob), TlsRole.Server)
+        } catch (_: QuicWireException) {
+            return null
+        }
+    return rememberedAlpn(blob) to tp
+}
+
 internal fun withTp(
     blob: ByteArray,
     tp: ByteArray,
@@ -129,15 +142,10 @@ internal fun ConnectionCore.useTicket(ticket: QuicSessionTicket): Boolean {
     check(role == TlsRole.Client && earlyMode != EarlyDataState.Disabled) { "0-RTT needs a client core with early data" }
     val blob = ticket.remembered
     if (!handshake.session.resume(ticket) || blob == null) return false
-    val tp =
-        try {
-            TransportParametersCodec.decode(rememberedTp(blob), TlsRole.Server)
-        } catch (_: QuicWireException) {
-            return false
-        }
+    val (alpn, tp) = rememberedParameters(blob) ?: return false
     if (!handshake.session.enableEarlyData(null, null)) return false
     remembered = tp
-    rememberedAlpn = rememberedAlpn(blob)
+    rememberedAlpn = alpn
     // section 7.4.1: never the remembered ack_delay_exponent, max_ack_delay, connection IDs, preferred_address or reset token
     streams.applyPeerParameters(
         tp.initialMaxStreamDataBidiLocal,
