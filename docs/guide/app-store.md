@@ -125,7 +125,7 @@ non-exempt encryption, no French declaration, no OpenSSL in the binary. Choose K
   - [ ] Privacy manifest included; `ios-private-api.py` on the Release binary reports no non-public symbols and no
         required-reason API missing from the manifest.
   - [ ] `tools/check/ios-symbols.sh` passes (no symbol clash with another OpenSSL/BoringSSL in the app).
-  - [ ] Size impact measured (`tools/check/ios-size.sh`: about 3.3 MB for OpenSSL + Kuicksilver, about 5.4 MB with
+  - [ ] Size impact measured (`tools/check/ios-size.sh`: about 3.4 MB for OpenSSL + Kuicksilver, about 5.6 MB with
         the Kotlin runtime in an app that has no other Kotlin).
   - [ ] Tested on a device, Wi-Fi and cellular, and on NAT64.
   - [ ] `NSLocalNetworkUsageDescription`/`NSBonjourServices` present if and only if the app uses the LAN.

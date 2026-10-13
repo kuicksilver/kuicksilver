@@ -7,7 +7,8 @@ SPDX-License-Identifier: Apache-2.0
 
 **Status: 0.x, experimental.** The API can change between any two 0.x releases, nothing is published to Maven Central
 yet, and the CI described below runs on the maintainers' machines until the repository's first public build. Do not
-use it in production yet; do try it, and tell us what breaks.
+use it in production yet; do try it, and tell us what breaks. [docs/stability.md](docs/stability.md) says which API is
+stable and which is experimental.
 
 Kuicksilver is a Kotlin Multiplatform network stack: QUIC v1 and v2 (RFC 9000/9001/9002/9369, datagrams of RFC 9221,
 path MTU discovery of RFC 8899), HTTP/3 with QPACK (RFC 9114/9204, priorities of RFC 9218, Extended CONNECT and
@@ -40,11 +41,11 @@ in-memory UDP), `kuicksilver-bench` and `kuicksilver-interop` live in this repos
 
 | Platform | Targets | QUIC client | QUIC server | Limits |
 |---|---|---|---|---|
-| JVM 17+ | Linux x86_64 / aarch64, macOS arm64 / x86_64, Windows x86_64 | yes | yes | Linux: glibc 2.17 or newer (the native library is built in manylinux2014); musl (Alpine) is not supported in v1. macOS 11 or newer. Accelerated UDP everywhere: on Linux (GSO/GRO, ECN, DF), macOS (ECN, DF; no GSO/GRO) and Windows (USO/URO and ECN where the Windows version grants them, DF). `loops > 1` needs Linux. The Windows JNI library is cross-built with mingw-w64; on Windows the JVM suites have no passing CI run yet (GitHub Actions is paused) and their verification in a local Windows VM is pending. |
+| JVM 17+ | Linux x86_64 / aarch64, macOS arm64 / x86_64, Windows x86_64 | yes | yes | Linux: glibc 2.17 or newer (the native library is built in manylinux2014); musl (Alpine) is not supported in v1. macOS 11 or newer. Accelerated UDP everywhere: on Linux (GSO/GRO, ECN, DF), macOS (ECN, DF; no GSO/GRO) and Windows (USO/URO and ECN where the Windows version grants them, DF). `loops > 1` needs Linux. The Windows JNI library is cross-built with mingw-w64; the JVM suites on Windows were verified in a local Windows 11 VM (Parallels); there is no CI run on Windows while GitHub Actions is paused. |
 | Android | `minSdk` 24; arm64-v8a, armeabi-v7a, x86_64 | yes | yes | Native libraries are aligned for 16 KiB pages; accelerated UDP as on Linux. |
 | Kotlin/Native Linux | `linuxX64`, `linuxArm64` | yes | yes | glibc of the Kotlin/Native sysroot (2.19 on x64, 2.25 on arm64). |
 | Kotlin/Native Apple | `macosArm64`, `iosArm64`, `iosSimulatorArm64` (no `macosX64`: deprecated by Kotlin; the JVM on Intel Macs is served by the JNI library) | yes | yes | The server runs on the accelerated `ksl` socket (ADR-0006): ECN and DF, no GSO/GRO (Darwin has none), `loops = 1` only (Darwin has no `SO_REUSEPORT` flow hashing). The test suites of every module run on the iOS simulator (`iosSimulatorArm64Test`), and `:kuicksilver-ktor-client:iosHostInteropTest` runs the simulator against a peer on the host (Ktor HTTP/3 and HTTP/1.1, raw QUIC in both directions, IPv4 and IPv6); network following through `NWPathMonitor` (`followDefaultNetwork`) is in `appleMain`. Not yet verified on a physical device. |
-| Kotlin/Native Windows | `mingwX64` | yes | yes | The server runs on the accelerated Winsock socket (`WSASendMsg`/`WSARecvMsg`; ECN on Windows 10 2004+ / Server 2022, USO/URO where granted), `loops = 1` only (exclusive bind, no `SO_REUSEPORT`). A `0.0.0.0` bind is IPv4-only there (bind `::` for both families). `TrustConfig.Platform` is not available yet: use `AnchoredCa` (optionally under `Pinned`). Cross-built on macOS/Linux; no passing CI run on Windows yet (GitHub Actions is paused), verification in a local Windows VM is pending. |
+| Kotlin/Native Windows | `mingwX64` | yes | yes | The server runs on the accelerated Winsock socket (`WSASendMsg`/`WSARecvMsg`; ECN on Windows 10 2004+ / Server 2022, USO/URO where granted), `loops = 1` only (exclusive bind, no `SO_REUSEPORT`). A `0.0.0.0` bind opens a dual-stack socket, as on Linux and Apple. `TrustConfig.Platform` verifies with CryptoAPI (the Windows root store, AIA, soft-fail revocation of the leaf). Cross-built on macOS/Linux and verified in a local Windows 11 VM (Parallels); no CI run on Windows while GitHub Actions is paused. |
 
 TLS over TCP (`TlsConnection`, `Socket.tls()`) works on every target above. JS and Wasm are not targets.
 
@@ -165,7 +166,10 @@ stay green. RFC coverage, section by section, with the tests behind each row, is
 - [docs/roadmap.md](docs/roadmap.md) — what 0.1.0 ships, its stated limits, and what 0.2.0 and later bring.
 - [docs/guide/](docs/guide/quic.md) — user guides: [TLS](docs/guide/tls.md), [QUIC](docs/guide/quic.md),
   [HTTP/3](docs/guide/http3.md), [Ktor engines](docs/guide/ktor.md), [iOS](docs/guide/ios.md),
-  [publishing on the App Store](docs/guide/app-store.md).
+  [publishing on the App Store](docs/guide/app-store.md), the [configuration reference](docs/guide/configuration.md)
+  (every option with its default) and [troubleshooting](docs/guide/troubleshooting.md).
+- [docs/stability.md](docs/stability.md) — what 0.2.0 promises: stable and experimental API, the ABI checks, the `ksl`
+  ABI, the Ktor and OpenSSL version policies, supported platforms.
 - [docs/spec/rfc-compliance.md](docs/spec/rfc-compliance.md) — RFC coverage and the interop matrix.
 - [docs/spec/threat-model.md](docs/spec/threat-model.md) — threat model and the `negative_*` security controls.
 - [docs/adr/](docs/adr/README.md) — architecture decision records.

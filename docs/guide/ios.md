@@ -152,9 +152,11 @@ therefore sets `ITSAppUsesNonExemptEncryption` to `true`:
 - **IPv6-only networks.** App Review tests on a NAT64 network. Bind `::` and connect by host name: the endpoint
   resolves the name once, and on NAT64 the system resolver synthesises an IPv6 address for an IPv4-only host. Do not
   hard-code IPv4 literals.
-- **Network changes.** A QUIC connection survives a move to another socket (`QuicConnection.migrate`). Following the
-  default network automatically (Wi-Fi to cellular) needs an Apple path monitor, which is in progress; the sample's
-  echo screen has a toggle that enables itself once it lands and a manual Rebind button meanwhile.
+- **Network changes.** A QUIC connection survives a move to another socket (`QuicConnection.migrate`, `rebind`).
+  `QuicConnection.followDefaultNetwork(scope)` (experimental) follows the default network automatically (Wi-Fi to
+  cellular and back) through one shared `NWPathMonitor`, and also replaces a socket iOS reclaimed while the app was
+  suspended ([QUIC: Network changes](quic.md#network-changes)). The sample's echo screen has a "Follow the default
+  network" toggle for it and a manual Rebind button.
 
 ## Checks
 
@@ -165,8 +167,9 @@ therefore sets `ITSAppUsesNonExemptEncryption` to `true`:
 | `tools/check/ios-private-api.py <sdk> <binary>` | every undefined symbol is exported by a public `.tbd` of the SDK (no private API), plus the required-reason report |
 | `tools/check/ios-size.sh` | the size budget below, from the linker map of a Release arm64 build |
 
-Results of 2026-10-13 (Xcode 27.0, iOS 27.0 SDK and simulator): all pass. The Release arm64 app imports 604 symbols,
-all from public SDK libraries; the Release Kotlin framework 339, likewise.
+Results of 2026-10-13 (Xcode 27.0, iOS 27.0 SDK and simulator): all pass. Size and imports re-measured on 2026-10-14
+after the 0.2.0 merges (`ios-size.sh`, `ios-private-api.py`): the Release arm64 app imports 647 symbols, all from
+public SDK libraries; the Release Kotlin framework 354, likewise.
 
 ## Size
 
@@ -175,19 +178,20 @@ Linked bytes of `samples/ios` (Release, arm64, `-dead_strip`), from the linker m
 | Part | MB |
 |---|---|
 | OpenSSL (libssl + libcrypto, prefixed) | 1.98 |
-| `ksl` C shim | 0.02 |
-| Kotlin: Kuicksilver | 1.27 |
+| `ksl` C shim | 0.03 |
+| Kotlin: Kuicksilver | 1.43 |
 | Kotlin: stdlib | 0.73 |
-| Kotlin/Native runtime, glue and data | 0.69 |
-| kotlinx-coroutines | 0.43 |
+| Kotlin/Native runtime, glue and data | 0.72 |
+| kotlinx-coroutines | 0.48 |
 | ktor-io / ktor-network | 0.18 |
 | kotlinx-io, atomicfu, platform interop | 0.06 |
-| **Kuicksilver's contribution** | **5.35** |
-| the sample's Swift code | 0.09 |
+| **Kuicksilver's contribution** | **5.60** |
+| the sample's Swift code and the rest | 0.10 |
 
-The whole executable is 7.7 MiB before stripping and 5.5 MiB after (`strip -x`, as an App Store build does). A KMP app
-that already ships Kotlin pays only for the OpenSSL, `ksl` and Kuicksilver rows (about 3.3 MB); the runtime, stdlib and
-coroutines are shared with the rest of its Kotlin code. The App Store applies app thinning and compression on top.
+Measured on 2026-10-14 (the 0.2.0 code, Xcode 27.0). The whole executable is 8316 KiB (8.1 MiB) before stripping and
+5955 KiB (5.8 MiB) after (`strip -x`, as an App Store build does). A KMP app that already ships Kotlin pays only for the
+OpenSSL, `ksl` and Kuicksilver rows (about 3.4 MB); the runtime, stdlib and coroutines are shared with the rest of its
+Kotlin code. The App Store applies app thinning and compression on top.
 
 ## Device checklist
 

@@ -161,6 +161,24 @@ Testing (`kuicksilver-testing`, not published) and tooling:
   `ios-private-api.py`. Guides: `docs/guide/ios.md` (consumption, privacy manifest, export compliance, size, device
   checklist) and `docs/guide/app-store.md` (App Store and Mac App Store publishing, with templates).
 
+Documentation:
+
+- `docs/stability.md`: what 0.2.0 promises per stability level (stable, `@ExperimentalKuicksilverApi`,
+  `@DelicateKuicksilverApi`, `@InternalKuicksilverApi`, unpublished modules) across patch and minor releases, the
+  deprecation cycle, how `checkKotlinAbi` and the ABI dumps guard it, the `ksl` ABI (6) and its loader check, the Ktor
+  3.6.x version check, the OpenSSL 3.5 policy, the platforms and how each was verified, and the experimental API of
+  every published module.
+- `docs/guide/configuration.md`: every option of `QuicConfig`, `QuicClientConfig`, `QuicServerConfig`,
+  `QuicEndpointConfig`, `TlsConfig`, `TrustConfig`, `Http3Settings` and both Ktor engines with its type, default and
+  range, the system properties and environment variables, and the limits that are not configurable.
+- `docs/guide/troubleshooting.md`: symptom, cause and fix for handshake timeouts, refusals, certificate errors,
+  idle timeouts, migration failures, MTU black holes, the portable-socket fallback, Windows and Apple specifics,
+  native loader errors, the Ktor version check and HTTP/3 discovery, with the logger, counters and qlog for diagnosis.
+- Stale statements corrected: Windows (Kotlin/Native and the JVM) was verified in a Windows 11 VM, binds `0.0.0.0`
+  dual-stack and has `TrustConfig.Platform` (README, roadmap, QUIC and Ktor guides); the iOS guide's size and import
+  figures are re-measured (stripped app 5955 KiB, 647 imports) and it names `followDefaultNetwork`; ADR-0006 says how
+  Windows 11 treats a CE mark.
+
 ### Changed
 
 QUIC (`kuicksilver-quic`):
