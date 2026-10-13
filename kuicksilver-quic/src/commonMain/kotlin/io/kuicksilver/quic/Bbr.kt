@@ -131,6 +131,7 @@ public class Bbr(
 
     /** An ECN-CE report of the ACK being processed, acted on in [onAckProcessed] once the ACK's packets left the flight. */
     private var cePending = false
+    private var ceInRound = false
 
     // ProbeBW (section 5.3.3)
     private var ackPhase = AckPhase.Init
@@ -226,6 +227,10 @@ public class Bbr(
         if (cePending) {
             cePending = false
             noteLoss()
+            // draft-06 section 3.7: CE marks are congestion. One report is one congestion event of the round, like a discontiguous
+            // lost range, and it stands for queueing the loss rate cannot measure: CheckStartupHighLoss counts it without the 2 % test
+            if (lossEventsInRound < Int.MAX_VALUE) lossEventsInRound++
+            ceInRound = true
             if (isBwProbeSample) handleInflightTooHigh(if (ackPending) sampler.sampleTxInFlight else bytesInFlight, false, now)
         } // ECN-CE as loss (section 5.5.10), measured against what was in flight when the newest acknowledged packet left
         if (!ackPending) return
@@ -420,6 +425,7 @@ public class Bbr(
         if (!lossRoundStart) return
         checkStartupHighLoss()
         lossEventsInRound = 0
+        ceInRound = false
         if (!isProbingBw && isLossInRound) {
             if (bwShortterm == Long.MAX_VALUE) bwShortterm = maxBw
             if (inflightShortterm == Long.MAX_VALUE) inflightShortterm = cwnd
@@ -486,7 +492,7 @@ public class Bbr(
      */
     private fun checkStartupHighLoss() {
         if (state != State.Startup || fullBwReached || !isLossInRound || lossEventsInRound < STARTUP_FULL_LOSS_COUNT) return
-        if (!isInflightTooHigh(sampler.sampleLost, sampler.sampleTxInFlight)) return
+        if (!ceInRound && !isInflightTooHigh(sampler.sampleLost, sampler.sampleTxInFlight)) return
         undoState = State.Startup
         fullBwReached = true
         inflightLongterm = maxOf(bdpMultiple(bw, 1.0), inflightLatest, minPipeCwnd)

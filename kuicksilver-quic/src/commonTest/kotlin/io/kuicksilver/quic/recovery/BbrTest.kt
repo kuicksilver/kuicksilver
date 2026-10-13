@@ -450,4 +450,17 @@ class BbrTest {
         b.run(1.milliseconds)
         assertTrue(stateAtFirstSend != null && stateAtFirstSend != Bbr.State.ProbeRtt, "restart left ProbeRTT: $stateAtFirstSend")
     }
+
+    @Test fun startupEndsOnSustainedCeMarks() {
+        // draft-ietf-ccwg-bbr-06 section 3.7: "the congestion controller response MUST treat any CE marks as congestion"; in Startup the
+        // response to congestion is CheckStartupHighLoss, so CE reports in as many ACKs of a round as discontiguous losses end it too
+        val control = Bottleneck(bbr(), rate * 1000, rtt) // a 50 MB pipe: Startup takes far longer than 400 ms to fill it
+        control.run(400.milliseconds)
+        assertEquals(Bbr.State.Startup, control.cc.state)
+        val b = Bottleneck(bbr(), rate * 1000, rtt)
+        b.ce = { it > 200 && it % 15 == 0L }
+        b.run(400.milliseconds)
+        assertTrue(b.cc.fullBwReached, "states ${b.states}")
+        assertTrue(b.seen(Bbr.State.Drain))
+    }
 }
