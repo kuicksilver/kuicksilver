@@ -63,7 +63,8 @@ class BbrPropertyTest {
                     seen += d.cc.state
                 }
             }
-            assertTrue(seen.containsAll(listOf(Bbr.State.Startup, Bbr.State.Drain, Bbr.State.ProbeBwDown)), "states seen $seen")
+            // Drain can pass within one ACK (Startup -> Drain -> ProbeBW_DOWN), so only states that persist are required
+            assertTrue(seen.containsAll(listOf(Bbr.State.Startup, Bbr.State.ProbeBwDown, Bbr.State.ProbeBwUp)), "states seen $seen")
         }
 
     @Test fun aCleanBottleneckFrom10To100GbitAnd100usTo2sIsMeasuredWithoutOverflow() =
