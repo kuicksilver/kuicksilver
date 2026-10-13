@@ -22,6 +22,8 @@ import io.ktor.network.sockets.Socket
 import io.ktor.network.sockets.openReadChannel
 import io.ktor.network.sockets.openWriteChannel
 import io.ktor.util.date.GMTDate
+import io.ktor.util.network.address
+import io.ktor.util.network.port
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.ByteWriteChannel
 import io.ktor.utils.io.ClosedReadChannelException
@@ -163,7 +165,7 @@ internal class H1Pool(
             var bodyJob: BodySender? = null
             try {
                 val requestTime = GMTDate()
-                writeHeaders(data, conn.output, overProxy = proxy != null && !secure)
+                writeHeaders(data, conn.output, overProxy = proxy != null && !secure, tunneled = proxy != null && secure)
                 // a streamed body is sent while the response is read (as the CIO engine): the server may answer first
                 if (data.body.isStreamed()) {
                     bodyJob =
@@ -280,7 +282,8 @@ internal class H1Pool(
     ): H1Connection {
         val target =
             if (viaProxy) {
-                config.proxy!!.resolveAddress().let { it as InetSocketAddress }
+                // a NetworkAddress (java.net's on the JVM, ktor-utils' on Native), not ktor-network's InetSocketAddress
+                config.proxy!!.resolveAddress().let { InetSocketAddress(socketHost(it.address), it.port) }
             } else {
                 InetSocketAddress(
                     socketHost(url.host),

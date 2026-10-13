@@ -619,6 +619,10 @@ Ktor client (`kuicksilver-ktor-client`):
   `engine { dispatcher = Dispatchers.Unconfined }` the waiter resumed inside the lock, and one whose connection failed at
   once (or whose connect failed before suspending) spun forever on the lock its own thread held. A waiter cancelled
   while the engine closes now ends with `CancellationException`, not `IllegalStateException`.
+- HTTPS through an HTTP proxy failed on every platform with `ClassCastException`: the proxy's address was cast to
+  `ktor-network`'s `InetSocketAddress`, which `ProxyConfig.resolveAddress()` never returns. A `2xx` answer to the CONNECT
+  that carried `Content-Length` made the client wait for that many bytes before its ClientHello, until the connect
+  timeout; Content-Length and Transfer-Encoding of a successful CONNECT response are now ignored (RFC 9110 §9.3.6).
 
 Ktor server (`kuicksilver-ktor-server`):
 
@@ -693,6 +697,9 @@ Samples and testing:
   range, options, verify mode and parameters, suites, groups, session context and early-data settings; a ticket is issued
   under such a configuration only after the pin verdict, and only such tickets resume there (`ksl` stamps each ticket)
   (`negative_sniOverridePinnedClientsNoTicketBeforeVerdict`, C `tcp_sni_override_settings_effective`).
+- Ktor client: `Proxy-Authorization` (and `Proxy-Connection`) set on a request went to the proxy on the CONNECT and then,
+  inside the TLS tunnel, to the origin server as well, which received the proxy credentials; they now stay on the
+  CONNECT (RFC 9110 §11.7.2, threat model section 3.20, `negative_proxyCredentialsStayOnTheConnect`).
 
 ## 0.1.0 candidate (never published)
 

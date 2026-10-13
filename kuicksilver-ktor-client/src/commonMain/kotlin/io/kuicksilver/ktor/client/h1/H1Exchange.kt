@@ -36,7 +36,6 @@ import io.ktor.utils.io.ByteWriteChannel
 import io.ktor.utils.io.ClosedReadChannelException
 import io.ktor.utils.io.InternalAPI
 import io.ktor.utils.io.copyTo
-import io.ktor.utils.io.discard
 import io.ktor.utils.io.writeFully
 import io.ktor.utils.io.writePacket
 import io.ktor.utils.io.writer
@@ -51,12 +50,17 @@ import kotlinx.io.EOFException
 import kotlinx.io.IOException
 import kotlin.coroutines.CoroutineContext
 
-/** Request line and headers (absolute-form through an HTTP proxy, RFC 9112 section 3.2.2). */
+/**
+ * Request line and headers (absolute-form through an HTTP proxy, RFC 9112 section 3.2.2). Inside a CONNECT [tunneled]
+ * connection the proxy's fields stay out: Proxy-Authorization applies only to the proxy that asked for it (RFC 9110
+ * section 11.7.2) and went on the CONNECT ([startTunnel]); the origin must not receive the proxy's credentials.
+ */
 @OptIn(InternalAPI::class)
 internal suspend fun writeHeaders(
     request: HttpRequestData,
     output: ByteWriteChannel,
     overProxy: Boolean,
+    tunneled: Boolean = false,
 ) {
     val builder = RequestResponseBuilder()
     val method = request.method
@@ -87,6 +91,7 @@ internal suspend fun writeHeaders(
 
         mergeHeaders(headers, body) { key, value ->
             if (key == HttpHeaders.ContentLength || key == HttpHeaders.Expect) return@mergeHeaders
+            if (tunneled && (key.equals(HttpHeaders.ProxyAuthorization, true) || key.equals("Proxy-Connection", true))) return@mergeHeaders
             builder.headerLine(key, value)
         }
 
@@ -304,8 +309,9 @@ internal suspend fun startTunnel(
         val rawResponse =
             parseResponse(input) ?: throw ClosedReadChannelException(EOFException("Failed to parse CONNECT response: unexpected EOF"))
         rawResponse.use {
+            // a 2xx makes the connection a tunnel at the end of the head: Content-Length and Transfer-Encoding are ignored
+            // (RFC 9110 section 9.3.6), the bytes that follow are the origin's
             if (rawResponse.status / 100 != 2) throw IOException("Can not establish tunnel connection: ${rawResponse.status}")
-            rawResponse.headers[HttpHeaders.ContentLength]?.let { input.discard(it.toString().toLong()) }
         }
     } finally {
         builder.release()
