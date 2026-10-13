@@ -286,7 +286,11 @@ class VerificationNegativeTest {
     @Test fun anchoredAtIntermediateAccepts() {
         val atIntermediate = TrustConfig.AnchoredCa(listOf(Certificate(TestCerts.intermediate)))
         expectAccept(
-            run(Fixtures.client(atIntermediate), listOf(TestCerts.serverViaIntermediate, TestCerts.intermediate), TestCerts.serverViaIntermediateKey),
+            run(
+                Fixtures.client(atIntermediate),
+                listOf(TestCerts.serverViaIntermediate, TestCerts.intermediate),
+                TestCerts.serverViaIntermediateKey,
+            ),
             "chain ending at the anchored intermediate",
         )
         expectAccept(

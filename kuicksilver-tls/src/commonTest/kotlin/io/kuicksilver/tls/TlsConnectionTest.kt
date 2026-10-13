@@ -481,7 +481,14 @@ class TlsServerTest {
                 c.close()
                 s.close()
             }
-            val (_, sd) = connect(TcpFixtures.client { identity = TlsIdentity.fromDer(listOf(TestCerts.client), TestCerts.clientKey.copyOf()) }, server)
+            val (_, sd) =
+                connect(
+                    TcpFixtures.client {
+                        identity =
+                            TlsIdentity.fromDer(listOf(TestCerts.client), TestCerts.clientKey.copyOf())
+                    },
+                    server,
+                )
             assertIs<VerifyReason.PinMismatch>(assertFailsWith<TlsException.Verify> { withTimeout(10.seconds) { sd.await() } }.reason)
         }
 
