@@ -32,6 +32,19 @@ internal class PacketNumberSpace(
     internal var ackElicitingInFlight = 0
     private val pool = ArrayList<SentPacket>()
 
+    /**
+     * In-flight packets declared lost, remembered for a while so an acknowledgement that arrives after all shows the loss was
+     * spurious (RFC 9002 section 6.1: reordering or a delay spike, not congestion). A ring of [LOST_KEEP] in ascending packet
+     * number order (later losses are always of later packets); a size of 0 marks one acknowledged since.
+     */
+    internal val lostPn = LongArray(LOST_KEEP)
+    internal val lostSize = IntArray(LOST_KEEP)
+    internal val lostAt = LongArray(LOST_KEEP)
+    internal val lostPath = IntArray(LOST_KEEP)
+    internal val lostCc = arrayOfNulls<io.kuicksilver.quic.CongestionController>(LOST_KEEP)
+    internal var lostHead = 0
+    internal var lostCount = 0
+
     /** The next packet number; now and then one is skipped so an optimistic ACK is detectable (RFC 9000 section 21.4; one in every [128, 1024) packets). */
     fun takePn(random: Random): Long {
         if (id == SpaceId.Application) {
@@ -52,3 +65,6 @@ internal class PacketNumberSpace(
         pool += p
     }
 }
+
+/** Lost packets each space remembers for spurious-loss detection; more within the retention time settle the oldest early. */
+internal const val LOST_KEEP = 64

@@ -4,6 +4,8 @@
 
 package io.kuicksilver.bench
 
+import io.kuicksilver.quic.Bbr
+import io.kuicksilver.quic.quicConfig
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.quic.DatagramIo
 import io.kuicksilver.quic.IoPreference
@@ -45,6 +47,9 @@ import kotlinx.coroutines.runBlocking
 @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
 public class UdpThroughputBenchmark {
     @Param("accelerated", "portable") public var io: String = "accelerated"
+
+    /** The congestion controller of both ends: the default CUBIC or the experimental BBR. */
+    @Param("cubic", "bbr") public var cc: String = "cubic"
     private lateinit var server: QuicEndpoint
     private lateinit var client: QuicEndpoint
     private lateinit var connection: QuicConnection
@@ -57,11 +62,12 @@ public class UdpThroughputBenchmark {
         val prefer = if (io == "accelerated") IoPreference.Accelerated else IoPreference.Portable
         val serverTls = tlsConfig(TlsRole.Server) { alpn = listOf("bench"); identity = TlsIdentity.fromDer(listOf(TestCerts.server), TestCerts.serverKey.copyOf()) }
         val clientTls = tlsConfig(TlsRole.Client) { alpn = listOf("bench"); serverName = "server.test"; trust = TrustConfig.Custom { chain, _, _ -> VerifyResult.Accepted(chain) } }
+        val quic = quicConfig { if (cc == "bbr") congestionController = { Bbr() } }
         val lo = InetSocketAddress("127.0.0.1", 0)
-        server = QuicEndpoint.bind(lo, QuicEndpointConfig.Builder().apply { this.server = QuicServerConfig.Builder(serverTls).build(); crypto = NullCryptoProvider; this.io = { DatagramIo.open(it, prefer) } }.build())
+        server = QuicEndpoint.bind(lo, QuicEndpointConfig.Builder().apply { this.server = QuicServerConfig.Builder(serverTls).apply { this.quic = quic }.build(); crypto = NullCryptoProvider; this.io = { DatagramIo.open(it, prefer) } }.build())
         client = QuicEndpoint.bind(lo, QuicEndpointConfig.Builder().apply { crypto = NullCryptoProvider; this.io = { DatagramIo.open(it, prefer) } }.build())
         val accepted = async { server.accept() }
-        connection = client.connect(server.localAddress, QuicClientConfig.Builder(clientTls).build())
+        connection = client.connect(server.localAddress, QuicClientConfig.Builder(clientTls).apply { this.quic = quic }.build())
         val serverConnection = accepted.await()
         stream = connection.openBidi()
         val opened = async { serverConnection.acceptStream() }

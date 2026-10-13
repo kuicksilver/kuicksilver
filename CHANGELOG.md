@@ -46,6 +46,16 @@ QUIC (`kuicksilver-quic`, `kuicksilver-native`):
   the number of connections) and `DatagramIo.open(local, network, prefer)`, which binds a socket to an
   `android.net.Network`. The `kuicksilver-quic` AAR now declares `ACCESS_NETWORK_STATE`.
 
+- BBR congestion control, opt-in and experimental: `quicConfig { congestionController = { Bbr() } }`
+  (draft-ietf-ccwg-bbr-06, BBRv3: delivery-rate sampling, windowed max bandwidth and min RTT,
+  Startup/Drain/ProbeBW/ProbeRTT, `inflight_longterm` and the short-term bounds from loss, ECN-CE treated as loss, undo
+  of a loss episode found spurious, pacing at the estimate after an idle period, floors that follow PMTUD). CUBIC stays
+  the default. BBR is paced even when the smoothed RTT is below 1 ms (its pacing rate is its main control); window-based
+  controllers keep the sub-millisecond exemption. On a simulated 50 Mbit/s, 40 ms link with 1 % random loss BBR moved
+  37-40 Mbit/s where CUBIC moved 2.7-2.9; with 1 % of packets reordered by 8 ms 43 against 3.0; in an 8 BDP buffer it
+  kept a 2.3 ms mean queue where CUBIC queued 274 ms (`guide/quic.md`). Loss detection now reports a packet declared
+  lost and acknowledged later (RFC 9002 section 6.1).
+
 Testing (`kuicksilver-testing`, not published) and tooling:
 
 - `MemoryNetwork(receiveBuffer, assignEphemeralPorts)` (`@ExperimentalKuicksilverApi`): sockets of the in-memory network
@@ -77,6 +87,9 @@ Testing (`kuicksilver-testing`, not published) and tooling:
   against quic-go, ngtcp2, quiche, picoquic, quinn and msquic in both roles with the JVM and native images; the K7
   matrix and its analysis are in `docs/spec/rfc-compliance.md` ("Interop matrix K7"), including BBR vs CUBIC
   measurements against quic-go and ngtcp2.
+- `LinkParams.queueLimitBytes` (tail drop) and a shared bottleneck for several simulated connections; BBR property
+  tests, a Jazzer target (`bbrInvariants`) and harsh BBR-versus-CUBIC simulator scenarios. The interop endpoint takes
+  `KSL_CC=bbr` (or `newreno`, `cubic`) to select its congestion controller.
 
 ### Changed
 
@@ -245,8 +258,9 @@ QUIC runtime and sockets:
   (unpaced) for minutes and then reached it got a negative refill, which was dropped without moving the refill time, so
   the pacer answered "a moment later" forever and the connection sent nothing until its idle timeout. On Linux loopback,
   where the RTT hovers around 1 ms, the Ktor client's pooled HTTP/3 connection hit it about twice per 30 min soak (every
-  request in flight failed with "Idle timeout after 30s"). A bucket whose fill time has passed is now simply full (found
-  by the soak harness).
+  request in flight failed with "Idle timeout after 30s"). The same overflow stalled any controller after a short idle
+  gap on a fast path (10 Gbit/s for 7.4 s, 1 Gbit/s for 74 s). A bucket whose fill time has passed is now simply full
+  (found by the soak harness and by the review of BBR).
 - A client endpoint starts a new connection to a server address it already measured from that address's last smoothed
   RTT (RFC 9002 section 6.2.2) instead of `QuicConfig.initialRtt`, so a lost first flight is probed after about three
   RTTs rather than after 1 s, 2 s, 4 s. Under heavy loss the old schedule left quic-go servers more than their 5 s

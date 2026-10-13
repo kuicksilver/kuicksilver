@@ -442,6 +442,68 @@ class SeedCorpusTest {
             cat(ins(50, 100), ins(0, 120), ins(140, 60), bytes(2, 4), bytes(3, 0), ins(0, 10), bytes(2, 1)),
         )
 
+        // bbrInvariants: [u16 seed][u8 datagram size / 256], then [u8 op][3-byte arguments] (BbrDriver: 0 send, 1 ack, 2 time,
+        // 3 app-limited, 4 MTU, 5 timeout loss, 6 settle, 7 CE, 8 probe, 9 discard)
+        fun a(v: Int) = bytes(v ushr 16, v ushr 8, v)
+
+        fun send(n: Int) = cat(bytes(0), a(n - 1))
+
+        fun time(
+            scale: Int,
+            v: Int,
+        ) = cat(bytes(2), a(scale), a(v))
+
+        fun ackOp(
+            skip: Int,
+            count: Int,
+            flags: Int,
+        ) = cat(bytes(1), a(skip), a(count - 1), a(flags))
+        val bulk = cat(*Array(300) { cat(send(32), time(1, 2000), ackOp(0, 16, 0), time(1, 1000), ackOp(0, 16, 0)) })
+        put("BbrInvariantFuzzTest", "bbrInvariants", "bulk", cat(bytes(0, 7, 0), bulk))
+        put(
+            "BbrInvariantFuzzTest",
+            "bbrInvariants",
+            "loss-reorder-ce",
+            cat(
+                bytes(0, 9, 0),
+                bulk,
+                *Array(200) {
+                    cat(
+                        send(24),
+                        time(1, 3000),
+                        ackOp(3, 12, if (it % 3 == 0) 0x30 else 0x01),
+                        bytes(5),
+                        a(2),
+                        a(if (it % 50 == 0) 0 else 1),
+                        bytes(6),
+                        a(1),
+                        bytes(7),
+                    )
+                },
+            ),
+        )
+        put(
+            "BbrInvariantFuzzTest",
+            "bbrInvariants",
+            "idle-mtu-probe",
+            cat(
+                bytes(0, 5, 0),
+                bulk,
+                bytes(3),
+                time(3, 0xffff),
+                bytes(4),
+                a(252),
+                bytes(8),
+                a(3),
+                send(10),
+                time(0, 0),
+                ackOp(0, 5, 0),
+                bytes(9),
+                a(4),
+                bulk,
+            ),
+        )
+
         // packetRecvServer: one client datagram to a fresh server endpoint
         put("PacketReceiveFuzzTest", "packetRecvServer", "empty-datagram", ByteArray(0))
         put("PacketReceiveFuzzTest", "packetRecvServer", "handshake-initial", hs.clientToServer[0])

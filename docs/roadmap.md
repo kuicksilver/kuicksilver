@@ -72,6 +72,9 @@ What 0.2.0 brings:
 - Coverage reports of the JVM tests with Kover (`-Pkuicksilver.coverage :koverHtmlReportJvmTests`, no threshold).
 - The interop runner's `perf` protocol and throughput thresholds (`.github/workflows/perf.yml`; the floors warn until
   re-measured on GitHub-hosted runners).
+- BBR congestion control (draft-ietf-ccwg-bbr-06, BBRv3), owner decision to ship it in 0.2.0: opt-in and experimental
+  (`Bbr`; CUBIC stays the default), with spurious-loss undo, restart from idle, PMTU changes, property tests, a Jazzer
+  target and harsh simulator scenarios against CUBIC (`guide/quic.md` "Choosing a congestion controller").
 
 Known limits of 0.2.0, stated on purpose:
 - A handshake under heavy loss with an ML-KEM peer, as in 0.1.0; mitigated by `QuicConfig.initialRtt`
@@ -88,7 +91,6 @@ Known limits of 0.2.0, stated on purpose:
 
 ## After 0.2.0
 
-- BBR.
 - RFC 9460 HTTPS records as a source of h3.
 - WebTransport.
 - Multipath.

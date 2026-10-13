@@ -9,6 +9,8 @@ import io.kuicksilver.quic.ConnectionAdmission
 import io.kuicksilver.quic.QlogSink
 import io.kuicksilver.quic.QuicConnection
 import io.kuicksilver.quic.QuicEndpoint
+import io.kuicksilver.quic.CongestionController
+import io.kuicksilver.quic.Cubic
 import io.kuicksilver.quic.QuicEndpointConfig
 import io.kuicksilver.quic.QuicServerConfig
 import io.kuicksilver.quic.QuicStream
@@ -71,9 +73,9 @@ internal class HqInteropServer private constructor(private val endpoints: List<Q
     override fun close() { scope.cancel(); for (ep in endpoints) ep.close() }
 
     companion object {
-        suspend fun start(identity: TlsIdentity, port: Int, www: String, versions: List<VersionProfile>, host: String = "0.0.0.0", admission: ConnectionAdmission = ConnectionAdmission.default(), cipherSuites: CipherSuites = CipherSuites.Default, handshakeTimeout: Duration = 10.seconds, qlog: QlogSink? = null, ipv6: Boolean = true, earlyData: Boolean = false): HqInteropServer {
+        suspend fun start(identity: TlsIdentity, port: Int, www: String, versions: List<VersionProfile>, host: String = "0.0.0.0", admission: ConnectionAdmission = ConnectionAdmission.default(), cipherSuites: CipherSuites = CipherSuites.Default, handshakeTimeout: Duration = 10.seconds, qlog: QlogSink? = null, ipv6: Boolean = true, congestionController: () -> CongestionController = { Cubic() }, earlyData: Boolean = false): HqInteropServer {
             val tls = tlsConfig(TlsRole.Server) { alpn = listOf("hq-interop"); this.identity = identity; this.cipherSuites = cipherSuites }
-            val quic = quicConfig { this.versions = versions; maxBidiStreams = 1000; this.qlog = qlog; this.handshakeTimeout = handshakeTimeout }
+            val quic = quicConfig { this.versions = versions; maxBidiStreams = 1000; this.qlog = qlog; this.handshakeTimeout = handshakeTimeout; this.congestionController = congestionController }
             val config = QuicEndpointConfig.Builder().apply { server = QuicServerConfig.Builder(tls).apply { this.quic = quic; this.earlyData = earlyData }.build(); this.admission = admission }.build()
             val v4 = QuicEndpoint.bind(InetSocketAddress(host, port), config)
             val endpoints = ArrayList<QuicEndpoint>(2); endpoints += v4

@@ -19,6 +19,7 @@ import kotlin.test.assertTrue
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.microseconds
 import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
 
 class LossDetectionTest {
     @Test fun hugeAckDelayDoesNotOverflow() {
@@ -41,7 +42,35 @@ class LossDetectionTest {
         val acked = ArrayList<Long>()
         val lost = ArrayList<Long>()
         val events = ArrayList<String>()
+        val spurious = ArrayList<Long>()
+        var settled = 0
+        val delivered = ArrayList<String>()
         var ecnCalls = 0
+
+        override fun onDelivered(
+            p: SentPacket,
+            now: TimeMark,
+        ) {
+            delivered += "${p.pn}:lost=${lost.size}"
+        }
+
+        override fun onSpuriousLoss(
+            space: SpaceId,
+            pn: Long,
+            bytes: Int,
+            cc: io.kuicksilver.quic.CongestionController?,
+            pathId: Int,
+            now: TimeMark,
+        ) {
+            spurious += pn
+        }
+
+        override fun onLossSettled(
+            cc: io.kuicksilver.quic.CongestionController?,
+            now: TimeMark,
+        ) {
+            settled++
+        }
 
         override fun onEcnAck(
             space: SpaceId,
@@ -387,6 +416,79 @@ class LossDetectionTest {
         ld.onAck(SpaceId.Application, ack(*ranges), t0 + 500.milliseconds)
         assertEquals((1L..399L step 2).toList().sorted(), l.acked.sorted())
         assertTrue(l.lost.all { it % 2 == 0L }, "only unacknowledged even packets can be lost")
+    }
+
+    @Test fun aLostPacketAcknowledgedLaterIsASpuriousLoss() {
+        // RFC 9002 section 6.1: packet 1 is reordered behind 2..5, the packet threshold declares it lost, then its ACK arrives
+        val (ld, l) = ld()
+        ld.handshakeConfirmed = true
+        for (pn in 0L..5L) send(ld, SpaceId.Application, pn, t0 + pn.toInt().milliseconds)
+        ld.onAck(SpaceId.Application, ack(2L to 5L, 0L to 0L), t0 + 50.milliseconds)
+        assertEquals(listOf(1L), l.lost)
+        assertTrue(l.spurious.isEmpty())
+        ld.onAck(SpaceId.Application, ack(0L to 5L), t0 + 52.milliseconds)
+        assertEquals(listOf(1L), l.spurious, "the late ACK of packet 1")
+        ld.onAck(SpaceId.Application, ack(0L to 5L), t0 + 53.milliseconds)
+        assertEquals(listOf(1L), l.spurious, "reported once")
+        assertEquals(0, l.settled)
+    }
+
+    @Test fun aTimeThresholdLossAcknowledgedLaterIsSpuriousToo() {
+        val (ld, l) = ld()
+        ld.handshakeConfirmed = true
+        for (pn in 0L..2L) send(ld, SpaceId.Application, pn, t0)
+        ld.onAck(SpaceId.Application, ack(1L to 2L), t0 + 40.milliseconds) // 0 is below the largest, within the packet threshold
+        assertTrue(l.lost.isEmpty())
+        val timer = ld.timeout()
+        ld.onTimeout(timer) // 9/8 RTT later: lost by the time threshold
+        assertEquals(listOf(0L), l.lost)
+        ld.onAck(SpaceId.Application, ack(0L to 2L), timer + 1.milliseconds)
+        assertEquals(listOf(0L), l.spurious)
+    }
+
+    @Test fun aLostPacketNeverAcknowledgedSettlesAfterThePersistentCongestionPeriod() {
+        val (ld, l) = ld()
+        ld.handshakeConfirmed = true
+        for (pn in 0L..5L) send(ld, SpaceId.Application, pn, t0 + pn.toInt().milliseconds)
+        ld.onAck(SpaceId.Application, ack(2L to 5L, 0L to 0L), t0 + 50.milliseconds)
+        assertEquals(listOf(1L), l.lost)
+        send(ld, SpaceId.Application, 6, t0 + 60.milliseconds)
+        ld.onAck(SpaceId.Application, ack(6L to 6L), t0 + 60.milliseconds + ld.persistentCongestionDuration() * 2)
+        assertEquals(1, l.settled)
+        assertTrue(l.spurious.isEmpty())
+        ld.onAck(SpaceId.Application, ack(0L to 6L), t0 + 10.seconds)
+        assertTrue(l.spurious.isEmpty(), "forgotten: no longer reported")
+    }
+
+    @Test fun moreLostPacketsThanRememberedSettleTheOldest() {
+        val (ld, l) = ld()
+        ld.handshakeConfirmed = true
+        val n = LOST_KEEP + 10L
+        for (pn in 0L..n + 2) send(ld, SpaceId.Application, pn, t0)
+        ld.onAck(SpaceId.Application, ack(n + 2 to n + 2), t0 + 30.milliseconds) // everything below n is lost
+        assertEquals(n.toInt(), l.lost.size)
+        assertEquals(10, l.settled)
+        ld.onAck(SpaceId.Application, ack(0L to n + 2), t0 + 31.milliseconds)
+        assertEquals((10L until n).toList(), l.spurious.sorted())
+    }
+
+    @Test fun anAckReportsItsPacketsDeliveredBeforeItsLosses() {
+        // review of k7/bbr: the rate sampler sees C.delivered of this ACK before the losses it reveals (TCP's order)
+        val (ld, l) = ld()
+        ld.handshakeConfirmed = true
+        for (pn in 0L..5L) send(ld, SpaceId.Application, pn, t0)
+        ld.onAck(SpaceId.Application, ack(2L to 5L), t0 + 30.milliseconds)
+        assertEquals(listOf(0L, 1L), l.lost)
+        assertEquals(listOf("5:lost=0", "4:lost=0", "3:lost=0", "2:lost=0"), l.delivered)
+    }
+
+    @Test fun discardingASpaceSettlesItsLostPackets() {
+        val (ld, l) = ld()
+        for (pn in 0L..5L) send(ld, SpaceId.Initial, pn, t0)
+        ld.onAck(SpaceId.Initial, ack(5L to 5L), t0 + 30.milliseconds)
+        assertEquals(3, l.lost.size)
+        ld.discard(SpaceId.Initial, t0 + 31.milliseconds)
+        assertEquals(3, l.settled)
     }
 }
 

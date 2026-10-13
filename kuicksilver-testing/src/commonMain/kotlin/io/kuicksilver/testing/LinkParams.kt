@@ -37,9 +37,14 @@ public class LinkParams(
     /** Datagrams longer than this are dropped silently (an MTU black hole); null — no limit. */
     public val mtu: Int? = null,
     public val ecn: EcnMarking = EcnMarking.Pass,
+    /**
+     * Bottleneck buffer in bytes when [bandwidthBitsPerSecond] is set: a datagram that finds this many bytes waiting for the
+     * link is dropped (tail drop); null — an unbounded buffer.
+     */
+    public val queueLimitBytes: Long? = null,
 ) {
     override fun toString(): String =
         "LinkParams(delay=$delay, jitter=$jitter, bw=$bandwidthBitsPerSecond, loss=$lossRate, mask=$lossMask, burst=${burstLoss?.let {
             "${it.startIndex}+${it.length}"
-        }}, reorder=$reorderRate, dup=$duplicateRate, corrupt=$corruptRate, mtu=$mtu, ecn=$ecn)"
+        }}, reorder=$reorderRate, dup=$duplicateRate, corrupt=$corruptRate, mtu=$mtu, ecn=$ecn, queue=$queueLimitBytes)"
 }

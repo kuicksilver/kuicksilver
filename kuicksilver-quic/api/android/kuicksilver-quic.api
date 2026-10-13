@@ -32,6 +32,23 @@ public final class io/kuicksilver/quic/AndroidNetworks {
 	public static synthetic fun open$default (Lio/kuicksilver/quic/DatagramIo$Companion;Lio/ktor/network/sockets/InetSocketAddress;Landroid/net/Network;Lio/kuicksilver/quic/IoPreference;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 }
 
+public final class io/kuicksilver/quic/Bbr : io/kuicksilver/quic/CongestionController {
+	public fun <init> ()V
+	public fun <init> (ILkotlin/random/Random;)V
+	public synthetic fun <init> (ILkotlin/random/Random;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun getBytesInFlight ()J
+	public fun getCwnd ()J
+	public fun getSendQuantum ()I
+	public fun onAck-HrzWYto (JJIJZ)V
+	public fun onDiscarded (I)V
+	public fun onEcnCe-SjdbmrA (JJ)V
+	public fun onLoss-jgHmG_U (JIJZ)V
+	public fun onMtuUpdate (I)V
+	public fun onPacketSent-YpuUXL8 (JI)V
+	public fun onRttSample-9Cppdw0 (JJJ)V
+	public fun pacingRate-LRDsOJo (J)J
+}
+
 public abstract interface class io/kuicksilver/quic/CongestionController {
 	public abstract fun getBytesInFlight ()J
 	public abstract fun getCwnd ()J

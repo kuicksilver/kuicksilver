@@ -1,8 +1,14 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
+@file:OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+
 package io.kuicksilver.interop
 
+import io.kuicksilver.quic.Bbr
+import io.kuicksilver.quic.CongestionController
 import io.kuicksilver.quic.ConnectionAdmission
+import io.kuicksilver.quic.Cubic
+import io.kuicksilver.quic.NewReno
 import io.kuicksilver.quic.QuicConfig
 import io.kuicksilver.quic.quicConfig
 import io.kuicksilver.quic.VersionProfile
@@ -24,6 +30,19 @@ import kotlin.time.Duration.Companion.seconds
 internal object Testcases {
     val v1: List<VersionProfile> = listOf(VersionProfile.V1)
     private val v2first: List<VersionProfile> = listOf(VersionProfile.V2, VersionProfile.V1)
+    /**
+     * The congestion controller the endpoint runs, from `KSL_CC` (not a runner variable: set it in the image, e.g.
+     * `KSL_CC=bbr tools/interop/build-image.sh`, to measure `goodput` and `crosstraffic` with BBR): `cubic` (the default), `newreno`
+     * or `bbr`; anything else is null and the endpoint exits 127.
+     */
+    fun congestionController(name: String?): (() -> CongestionController)? =
+        when (name?.lowercase()) {
+            null, "", "cubic" -> { { Cubic() } }
+            "newreno" -> { { NewReno() } }
+            "bbr" -> { { Bbr() } }
+            else -> null
+        }
+
     val supported: Set<String> = setOf("handshake", "transfer", "chacha20", "multiconnect", "keyupdate", "retry", "v2", "ecn", "http3", "resumption", "zerortt")
     private val resuming = setOf("resumption", "zerortt")
 
@@ -38,19 +57,19 @@ internal object Testcases {
      * first flight and, per RFC 9002 section 6.2.2.1, arms no PTO; the client's PTO backoff after the six dropped datagrams reaches
      * the server only after 8 to 14 s with ngtcp2, depending on its RTT sample.
      */
-    class ServerPlan(val versions: List<VersionProfile>, val admission: ConnectionAdmission, val cipherSuites: CipherSuites, val http3: Boolean = false, val handshakeTimeout: Duration = 30.seconds, val earlyData: Boolean = false)
+    class ServerPlan(val versions: List<VersionProfile>, val admission: ConnectionAdmission, val cipherSuites: CipherSuites, val http3: Boolean = false, val handshakeTimeout: Duration = 30.seconds, val earlyData: Boolean = false, val congestionController: () -> CongestionController = { Cubic() })
 
-    fun client(testcase: String): ClientPlan? {
+    fun client(testcase: String, cc: () -> CongestionController = { Cubic() }): ClientPlan? {
         if (testcase !in supported) return null
         // v2: both sides prefer v2; the client's first flight is v1 and the server upgrades it (RFC 9368 section 2.3)
         // 30 s like the server plan: under handshakecorruption a two-datagram ClientHello (ML-KEM key share) can need more than four PTO rounds
-        val quic = quicConfig { handshakeTimeout = 30.seconds; if (testcase == "v2") { versions = v2first; initialVersion = VersionProfile.V1 } }
+        val quic = quicConfig { handshakeTimeout = 30.seconds; congestionController = cc; if (testcase == "v2") { versions = v2first; initialVersion = VersionProfile.V1 } }
         return ClientPlan(quic, suites(testcase), keyUpdateAfterBytes = if (testcase == "keyupdate") 1L shl 18 else null, connectionPerRequest = testcase == "multiconnect", http3 = testcase == "http3",
             earlyData = if (testcase in resuming) EarlyDataState.Allowed else EarlyDataState.Disabled, zeroRtt = testcase == "zerortt")
     }
-    fun server(testcase: String): ServerPlan? {
+    fun server(testcase: String, cc: () -> CongestionController = { Cubic() }): ServerPlan? {
         if (testcase !in supported) return null
-        return ServerPlan(if (testcase == "v2") v2first else v1, if (testcase == "retry") ConnectionAdmission.AlwaysRetry else ConnectionAdmission.default(), suites(testcase), http3 = testcase == "http3", earlyData = testcase in resuming)
+        return ServerPlan(if (testcase == "v2") v2first else v1, if (testcase == "retry") ConnectionAdmission.AlwaysRetry else ConnectionAdmission.default(), suites(testcase), http3 = testcase == "http3", earlyData = testcase in resuming, congestionController = cc)
     }
     private fun suites(testcase: String): CipherSuites = if (testcase == "chacha20") CipherSuites(listOf(CipherSuites.CHACHA20_POLY1305)) else CipherSuites.Default
 }

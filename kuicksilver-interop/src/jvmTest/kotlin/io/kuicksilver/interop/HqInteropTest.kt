@@ -38,6 +38,18 @@ class HqInteropTest {
             assertEquals(0, code); for ((n, b) in files) assertContentEquals(b, File(downloads, n).readBytes()); assertEquals(1, srv.connectionsAccepted, "one connection for all requests")
         }
     }
+    @Test @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    fun bbrModeTransfersAFile() = runBlocking {
+        // KSL_CC=bbr: the endpoint mode the interop agent runs the runner's goodput and crosstraffic measurements with
+        val data = ByteArray(2 shl 20) { (it * 13).toByte() }; val root = www("bbr.bin" to data); val downloads = Files.createTempDirectory("dl").toFile()
+        HqInteropServer.start(identity(), port = 0, www = root.path, versions = Interop.v1, congestionController = { io.kuicksilver.quic.Bbr() }).use { srv ->
+            val code = Interop.run(mapOf("ROLE" to "client", "TESTCASE" to "transfer", "KSL_CC" to "bbr", "REQUESTS" to "https://127.0.0.1:${srv.port}/bbr.bin", "DOWNLOADS" to downloads.path))
+            assertEquals(0, code); assertContentEquals(data, File(downloads, "bbr.bin").readBytes())
+        }
+        assertTrue(Testcases.client("transfer", Testcases.congestionController("bbr")!!)!!.quic.congestionController() is io.kuicksilver.quic.Bbr)
+        assertTrue(Testcases.client("transfer", Testcases.congestionController(null)!!)!!.quic.congestionController() is io.kuicksilver.quic.Cubic)
+        assertEquals(127, Interop.run(mapOf("ROLE" to "client", "TESTCASE" to "transfer", "KSL_CC" to "vegas", "REQUESTS" to "")))
+    }
     @Test fun unknownTestcaseExits127() { assertEquals(127, Interop.run(mapOf("ROLE" to "client", "TESTCASE" to "connectionmigration", "REQUESTS" to ""))); assertEquals(127, Interop.run(mapOf("ROLE" to "server", "TESTCASE" to "foo"))) }
     @Test fun keylogWrittenWhenEnvSet() = runBlocking {
         val root = www("k" to ByteArray(100)); val downloads = Files.createTempDirectory("dl").toFile(); val keylog = File(downloads, "keys.log")

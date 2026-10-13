@@ -8,5 +8,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends openjdk-21-jre-
 COPY kuicksilver-interop/build/install/kuicksilver-interop /app
 COPY kuicksilver-native/build/jni/ /app/native/
 COPY tools/interop/run_endpoint.sh /run_endpoint.sh
+# KSL_CC picks the congestion controller (cubic, newreno, bbr); build-image.sh passes it through, empty means CUBIC
+ARG KSL_CC=
+ENV KSL_CC=${KSL_CC}
 RUN chmod +x /run_endpoint.sh
 ENTRYPOINT ["/run_endpoint.sh"]
