@@ -20,7 +20,10 @@ public sealed interface TrustConfig {
     public class AnchoredCa(
         roots: List<Certificate>,
     ) : TrustConfig {
-        /** The trust anchors, never empty (often from [Certificate.parsePem]); each is trusted as a root; the OS store is not used. */
+        /**
+         * The trust anchors, never empty (often from [Certificate.parsePem]); each is trusted as a root, also one that is not
+         * self-signed (an intermediate CA: a chain that reaches it is accepted without its issuers); the OS store is not used.
+         */
         public val roots: List<Certificate> = roots.toList()
 
         init {

@@ -24,6 +24,8 @@ static void test_openssl_verifier(void) {
     scenario wild = {"server", "test-ca", "a.wild.test", KSL_VERIFY_OPENSSL, 0, 0}; EXPECT_OK(wild, "*.wild.test matches a.wild.test");
     scenario ip = {"server", "test-ca", "127.0.0.1", KSL_VERIFY_OPENSSL, 0, 0}; EXPECT_OK(ip, "IP literal against iPAddress SAN");
     scenario ca = {"server-other-ca", "test-ca", "server.test", KSL_VERIFY_OPENSSL, 0, 0}; EXPECT_ALERT(ca, 48, "negative: unknown CA -> unknown_ca");
+    scenario mid = {"server-via-intermediate", "intermediate", "server.test", KSL_VERIFY_OPENSSL, 0, 0}; EXPECT_OK(mid, "an anchored intermediate is a trust anchor (AnchoredCa: each is trusted as a root)");
+    scenario midother = {"server", "intermediate", "server.test", KSL_VERIFY_OPENSSL, 0, 0}; EXPECT_ALERT(midother, 48, "negative: a chain outside the anchored intermediate -> unknown_ca");
     scenario name = {"server", "test-ca", "wrong.test", KSL_VERIFY_OPENSSL, 0, 0}; EXPECT_ALERT(name, 42, "negative: name mismatch -> bad_certificate");
     scenario cn = {"server-cn-only", "test-ca", "cn.test", KSL_VERIFY_OPENSSL, 0, 0}; EXPECT_ALERT(cn, 42, "negative: CN without SAN rejected");
     scenario pw = {"server-partial-wildcard", "test-ca", "foo.wild.test", KSL_VERIFY_OPENSSL, 0, 0}; EXPECT_ALERT(pw, 42, "negative: partial wildcard f*.wild.test rejected");

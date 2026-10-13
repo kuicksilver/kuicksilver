@@ -221,6 +221,9 @@ int ksl_ctx_set_roots(ksl_ctx *c, const uint8_t *roots, size_t roots_len) {
     STACK_OF(X509) *sk = NULL; if (!ksl_parse_chain(roots, roots_len, &sk)) { ksl_ctx_set_error(c, KSL_E_BAD_ARG, "ksl: bad roots framing"); return KSL_ERROR; }
     int ok = 1; for (int i = 0; ok && i < sk_X509_num(sk); i++) ok = X509_STORE_add_cert(st, sk_X509_value(sk, i)) == 1;
     sk_X509_pop_free(sk, X509_free);
+    /* AnchoredCa: every listed certificate is a trust anchor, also one that is not self-signed (an intermediate), as a JDK TrustAnchor,
+       an Apple anchor certificate or Go's root pool; without PARTIAL_CHAIN OpenSSL accepts a chain only up to a self-signed root */
+    if (ok) ok = X509_VERIFY_PARAM_set_flags(SSL_CTX_get0_param(c->ctx), X509_V_FLAG_PARTIAL_CHAIN) == 1;
     if (!ok) { ksl_ctx_set_error(c, KSL_E_BAD_ARG, "ksl: root rejected"); return KSL_ERROR; }
     return KSL_OK;
 }

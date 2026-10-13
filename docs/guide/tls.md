@@ -75,6 +75,10 @@ val roots = Certificate.parsePem(caPem)   // every CERTIFICATE block, in order; 
 val trust = TrustConfig.AnchoredCa(roots)
 ```
 
+Every certificate given to `AnchoredCa` is a trust anchor, also one that is not self-signed: anchoring at an
+intermediate CA accepts the chains that reach it, without its issuers (OpenSSL `X509_V_FLAG_PARTIAL_CHAIN`, as JDK
+`TrustAnchor`s, Apple anchor certificates and Go's root pools behave).
+
 ### Platform trust
 
 `TrustConfig.Platform` hands the chain to the platform's own verifier. `ksl` checks the reference identifier with the

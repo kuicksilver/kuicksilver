@@ -454,6 +454,10 @@ QUIC runtime and sockets:
 
 TLS and native layer (`kuicksilver-tls`, `kuicksilver-native`):
 
+- `TrustConfig.AnchoredCa` with an intermediate CA among its roots rejected the chains through it with `UnknownIssuer`,
+  although each listed certificate is documented as trusted as a root: OpenSSL accepted only chains up to a self-signed
+  certificate. Every anchor now ends a chain (`X509_V_FLAG_PARTIAL_CHAIN`) (`anchoredAtIntermediateAccepts`, C
+  `verify_openssl_verifier`).
 - QUIC handshakes without ALPN completed: a server accepted a ClientHello without the extension and a client a server
   that negotiated none. Both now close with `no_application_protocol` (CRYPTO_ERROR 0x0178, RFC 9001 section 8.1), and
   `Http3Endpoint.connect`/`connectEarly` fail with H3_GENERAL_PROTOCOL_ERROR when a client that offered more than `h3`

@@ -282,6 +282,25 @@ class VerificationNegativeTest {
         assertTrue(!o.serverDone, "a presented certificate is still checked")
     }
 
+    /** AnchoredCa trusts each listed certificate as an anchor (TrustConfig.AnchoredCa.roots), an intermediate as well (review T5). */
+    @Test fun anchoredAtIntermediateAccepts() {
+        val atIntermediate = TrustConfig.AnchoredCa(listOf(Certificate(TestCerts.intermediate)))
+        expectAccept(
+            run(Fixtures.client(atIntermediate), listOf(TestCerts.serverViaIntermediate, TestCerts.intermediate), TestCerts.serverViaIntermediateKey),
+            "chain ending at the anchored intermediate",
+        )
+        expectAccept(
+            run(Fixtures.client(atIntermediate), listOf(TestCerts.serverViaIntermediate), TestCerts.serverViaIntermediateKey),
+            "leaf only: the anchor completes the chain",
+        )
+        expectReject(
+            run(Fixtures.client(atIntermediate)),
+            48,
+            { it is VerifyReason.UnknownIssuer },
+            "negative: a chain from the root's other branch is not anchored at the intermediate",
+        )
+    }
+
     @Test fun clientCertificateRequiredAnchoredCa() {
         val clientId = TlsIdentity.fromDer(listOf(TestCerts.client), TestCerts.clientKey.copyOf())
         expectAccept(
