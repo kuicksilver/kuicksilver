@@ -93,10 +93,14 @@ void run_udp_win(void) {
         int ok = g1 == 4 && g2 == 4; for (uint32_t i = 0; i < g1; i++) if (wport(ra + i * KSL_UDP_ADDR_LEN) != wport(la)) ok = 0; for (uint32_t i = 0; i < g2; i++) if (wport(rc2 + i * KSL_UDP_ADDR_LEN) != wport(lc)) ok = 0;
         CHECK(ok, "each sender's datagrams carry its own address"); ksl_udp_close(c); } }
     /* udp_win_ecn_roundtrip: where ECN is granted (Windows 10 2004+ / Server 2022) the mark QUIC sends, ECT(0), is written and read
-       back. CE is set by routers, never by a QUIC sender (RFC 9000 section 13.4.1, RFC 3168 section 6.1); some Windows builds do not
-       carry a CE a sender asks for over loopback, so that leg only checks the datagram still arrives with a valid codepoint */
+       back. CE is set by routers, never by a QUIC sender (RFC 9000 section 13.4.1, RFC 3168 section 6.1); Windows 11 refuses CE in
+       the IP_ECN cmsg (WSAEINVAL) and ksl then sends it unmarked, so that leg only checks the datagram still arrives with a valid codepoint */
     if (caps & KSL_UDP_ECN) { uint8_t re[64]; uint32_t got = wping(a, b, lb, 2, 100, 2, re, NULL, NULL); CHECK(got == 2 && re[0] == 2 && re[1] == 2, "ECT(0) arrives");
-      got = wping(a, b, lb, 1, 100, 3, re, NULL, NULL); CHECK(got == 1 && re[0] <= 3, "a datagram sent with CE arrives"); if (got == 1) printf("udp(win): CE sent over loopback arrived as codepoint %u\n", re[0]); }
+      got = wping(a, b, lb, 1, 100, 3, re, NULL, NULL); CHECK(got == 1 && re[0] <= 3, "a datagram sent with CE arrives"); if (got == 1) printf("udp(win): CE sent over loopback arrived as codepoint %u\n", re[0]);
+      /* udp_win_ce_send_keeps_ecn: a refused CE does not turn ECN off: it stays granted and the next ECT(0) datagram arrives as
+         ECT(0) (it arrived Not-ECT before; KslDatagramIoTest.ecnSurvivesLoopback on Windows) */
+      CHECK(wcaps(a, NULL) & KSL_UDP_ECN, "ECN still granted after a CE send");
+      got = wping(a, b, lb, 1, 100, 2, re, NULL, NULL); CHECK(got == 1 && re[0] == 2, "ECT(0) still arrives after a CE send"); }
     else printf("udp(win): ECN not granted by this Windows, ECN roundtrip skipped\n");
     /* udp_win_df_probe_mode: DF granted means IP_DONTFRAGMENT reads back set; where ksl took IP_MTU_DISCOVER it reads back PROBE, never
        DO; where the system refused the option (some Windows 11 builds; msquic never sets it) DF alone is what was granted */
