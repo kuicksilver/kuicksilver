@@ -4,6 +4,7 @@ package io.kuicksilver.quic.runtime
 
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.annotations.InternalKuicksilverApi
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.withContext
 import kotlin.concurrent.Volatile
 import kotlin.concurrent.atomics.AtomicReference
@@ -71,6 +72,7 @@ public object QuicResourceProbe {
                         c.limiter.addresses.toLong(),
                         c.earlyPendingForTest.toLong(),
                         (c.serverEarly?.register?.liveEntries() ?: 0).toLong(),
+                        activeJobs(loop.scope.coroutineContext[Job]!!),
                     )
                 }
             val sessions = loop.sessions.size().toLong()
@@ -79,6 +81,9 @@ public object QuicResourceProbe {
         }
         return out
     }
+
+    /** Coroutines still active below [root] ([root] excluded): a receiver or a pump that never ends shows here. */
+    private fun activeJobs(root: Job): Long = root.children.sumOf { (if (it.isActive) 1L else 0L) + activeJobs(it) }
 
     private val keys =
         listOf(
@@ -97,6 +102,7 @@ public object QuicResourceProbe {
             "quic.statelessLimiter",
             "quic.earlyPending",
             "quic.replayLive",
+            "quic.loopJobs",
             "quic.sessionCache",
         )
 }

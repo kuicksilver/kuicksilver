@@ -174,9 +174,13 @@ internal class Soak(
 
     /**
      * Leak attribution: each scenario alone, [iterations] times in a row, then a wait until no connection is left; the
-     * change of every countable resource is that scenario's. Run it when the soak reports a leak (`-Pkuicksilver.soak.attribute=N`).
+     * change of every countable resource is that scenario's. Run it when the soak reports a leak (`-Pkuicksilver.soak.attribute=N`,
+     * `-Pkuicksilver.soak.scenarios=QuicMigration,KtorH3` for some scenarios only).
      */
-    suspend fun attribute(iterations: Int): Map<Scenario, Map<String, Long>> {
+    suspend fun attribute(
+        iterations: Int,
+        only: Set<Scenario> = Scenario.entries.toSet(),
+    ): Map<Scenario, Map<String, Long>> {
         KslLoader.ensureLoaded()
         QuicResourceProbe.enabled = true
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -202,14 +206,18 @@ internal class Soak(
             }
             return m
         }
-        for (s in Scenario.entries) {
+        for (s in Scenario.entries.filter { it in only }) {
             repeat(2) { runCatching { withTimeout(ITERATION_TIMEOUT) { work.run(s, r) } } } // first-use allocations (tickets, pools)
             val before = quiet()
             var failed = 0
             repeat(iterations) { if (runCatching { withTimeout(ITERATION_TIMEOUT) { work.run(s, r) } }.isFailure) failed++ }
             val after = quiet()
             out[s] =
-                COUNTABLE.keys.filter { it in before && it in after }.associateWith { after.getValue(it) - before.getValue(it) } +
+                (COUNTABLE.keys + MEMORY).filter { it in before && it in after }.associateWith {
+                    after.getValue(
+                        it,
+                    ) - before.getValue(it)
+                } +
                 ("failed" to failed.toLong())
             println("[soak attribute] $s: " + out.getValue(s).filterValues { it != 0L })
         }
@@ -261,6 +269,9 @@ internal class Soak(
         val ITERATION_TIMEOUT: Duration = 60.seconds
         val QUIET_LIMIT: Duration = 90.seconds
 
+        /** Memory series the attribution reports per scenario (informational: allocators and collectors keep some). */
+        val MEMORY: List<String> = listOf("proc.rssKiB", "jvm.heapAfterGcKiB", "kn.heapAfterGcKiB", "jvm.directKiB")
+
         /** Countable resources must be back at their idle level after the load; `tolerance` absorbs what the platform keeps by itself. */
         val COUNTABLE: Map<String, Long> =
             linkedMapOf(
@@ -283,6 +294,7 @@ internal class Soak(
                 "quic.pendingAccept" to 0,
                 "quic.handshaking" to 0,
                 "quic.sessionCache" to 0,
+                "quic.loopJobs" to 0,
                 "server.h3Connections" to 0,
                 "server.h3Jobs" to 0,
                 "server.tcpJobs" to 0,

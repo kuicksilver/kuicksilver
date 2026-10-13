@@ -131,3 +131,13 @@ internal class SoakResult(
         }
     }
 }
+
+/** Writes [text] to [dir]/[name], creating [dir]. */
+internal fun writeText(
+    dir: String,
+    name: String,
+    text: String,
+) {
+    SystemFileSystem.createDirectories(Path(dir))
+    SystemFileSystem.sink(Path("$dir/$name")).buffered().use { it.writeString(text) }
+}

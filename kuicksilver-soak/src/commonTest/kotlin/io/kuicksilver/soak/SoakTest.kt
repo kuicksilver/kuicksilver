@@ -14,8 +14,17 @@ class SoakTest {
     /** `-Pkuicksilver.soak.attribute=N`: every scenario alone N times, with the change of each countable resource (leak attribution). */
     @Test fun attribute() {
         val n = ProcessResources.env("KSL_SOAK_ATTRIBUTE")?.toIntOrNull() ?: return
-        val result = runBlocking { Soak(SoakConfig(kotlin.time.Duration.ZERO)).attribute(n) }
-        val leaking = result.filterValues { d -> d.any { (k, v) -> k != "failed" && v > (Soak.COUNTABLE[k] ?: 0) } }
+        val only =
+            ProcessResources
+                .env("KSL_SOAK_SCENARIOS")
+                ?.split(',')
+                ?.map { Scenario.valueOf(it.trim()) }
+                ?.toSet() ?: Scenario.entries.toSet()
+        val result = runBlocking { Soak(SoakConfig(kotlin.time.Duration.ZERO)).attribute(n, only) }
+        val text = result.entries.joinToString("\n") { (s, d) -> "$s: " + d.filterValues { it != 0L } }
+        println(text)
+        ProcessResources.env("KSL_SOAK_DEFAULT_REPORT")?.let { dir -> writeText(dir, "attribution.txt", text) }
+        val leaking = result.filterValues { d -> d.any { (k, v) -> k in Soak.COUNTABLE && v > Soak.COUNTABLE.getValue(k) } }
         assertTrue(leaking.isEmpty(), "scenarios leaving resources behind: $leaking")
     }
 

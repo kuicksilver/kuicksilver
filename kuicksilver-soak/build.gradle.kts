@@ -30,7 +30,7 @@ kotlin {
 }
 val soak = mapOf(
     "minutes" to "KSL_SOAK_MINUTES", "clients" to "KSL_SOAK_CLIENTS", "rate" to "KSL_SOAK_RATE", "sampleSeconds" to "KSL_SOAK_SAMPLE_SECONDS",
-    "warmupMinutes" to "KSL_SOAK_WARMUP_MINUTES", "attribute" to "KSL_SOAK_ATTRIBUTE", "report" to "KSL_SOAK_REPORT", "label" to "KSL_SOAK_LABEL",
+    "warmupMinutes" to "KSL_SOAK_WARMUP_MINUTES", "attribute" to "KSL_SOAK_ATTRIBUTE", "scenarios" to "KSL_SOAK_SCENARIOS", "report" to "KSL_SOAK_REPORT", "label" to "KSL_SOAK_LABEL",
 )
 val soakRequested = providers.gradleProperty("kuicksilver.soak.minutes").isPresent || providers.gradleProperty("kuicksilver.soak.attribute").isPresent
 tasks.named<Test>("jvmTest") {
