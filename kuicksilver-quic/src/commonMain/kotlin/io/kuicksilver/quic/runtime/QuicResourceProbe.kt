@@ -71,7 +71,7 @@ public object QuicResourceProbe {
                         c.stateless.size.toLong(),
                         c.limiter.addresses.toLong(),
                         c.earlyPendingForTest.toLong(),
-                        (c.serverEarly?.register?.liveEntries() ?: 0).toLong(),
+                        (c.serverEarly?.register?.liveEntries(io.kuicksilver.quic.ProcessReplayRegister.now()) ?: 0).toLong(),
                         activeJobs(loop.scope.coroutineContext[Job]!!),
                     )
                 }

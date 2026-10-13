@@ -31,6 +31,16 @@ class ZeroRttReplayRegisterTest {
         assertTrue(r.admit(id(1), t0 + ZeroRttReplayRegister.HALF_SPAN * 3), "forgotten after two rotations")
     }
 
+    @Test fun liveEntriesExpireInStripesNoAdmissionTouches() {
+        // stripes rotate only on an admission: the probe must not count entries a quiet stripe still holds past the window
+        // (the soak saw the count creep up at a low 0-RTT rate while the fixed storage stayed the same)
+        val r = ZeroRttReplayRegister(Random(5))
+        for (i in 0 until 500) assertTrue(r.admit(id(i + 1000), t0))
+        assertEquals(500, r.liveEntries(t0 + 1.seconds))
+        assertEquals(500, r.liveEntries(t0 + ZeroRttReplayRegister.HALF_SPAN), "still fresh one half later")
+        assertEquals(0, r.liveEntries(t0 + ZeroRttReplayRegister.HALF_SPAN * 2), "nothing is fresh after two halves")
+    }
+
     @Test fun releaseForgets() {
         val r = ZeroRttReplayRegister(Random(3))
         assertTrue(r.admit(id(7), t0))
