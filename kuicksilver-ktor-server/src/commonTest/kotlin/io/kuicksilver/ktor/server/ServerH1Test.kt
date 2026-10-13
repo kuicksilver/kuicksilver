@@ -193,6 +193,37 @@ class ServerH1Test {
             assertFailsWith<Throwable> { rawHttp(port, get) }
         }
 
+    /**
+     * A connector on `::1` listens on `::1` only. Ktor 3.6.0's Kotlin/Native bind never copied the address into `sockaddr_in6`,
+     * so this connector listened on `::`: every IPv6 interface and, dual-stack on Linux and Apple, IPv4 too. An IPv4 connect
+     * to its port (another address of this host) must be refused (docs/upstream/ktor-native-ipv6.md).
+     */
+    @Test fun negative_ipv6ConnectorListensOnItsAddressOnly() =
+        serverTest {
+            val server =
+                embeddedServer(Kuicksilver, configure = {
+                    connector {
+                        host = "::1"
+                        port = 0
+                    }
+                }) { routing { get("/") { call.respondText("reached") } } }
+            if (runCatching { server.startSuspend(false) }.isFailure) {
+                println("negative_ipv6ConnectorListensOnItsAddressOnly skipped: needs an IPv6 loopback")
+                return@serverTest
+            }
+            try {
+                val port =
+                    server.engine
+                        .resolvedConnectors()
+                        .first()
+                        .port
+                val v4 = runCatching { rawHttp(port, get, tls = null) }
+                assertTrue(v4.isFailure, "127.0.0.1:$port reached the connector bound to ::1: ${v4.getOrNull()}")
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
     @Test fun unsupportedConnectorFailsWithConfig() =
         serverTest {
             val server =
