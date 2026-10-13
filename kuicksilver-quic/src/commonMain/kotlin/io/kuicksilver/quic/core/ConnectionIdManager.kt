@@ -53,7 +53,16 @@ internal class ConnectionIdManager(
         val cid: ConnectionId,
         val token: ByteArray,
     ) {
+        /** The NEW_CONNECTION_ID frame is out (false again while a lost one waits to be resent). */
         var sent = false
+            set(value) {
+                field = value
+                if (value) everSent = true
+            }
+
+        /** The peer may know this ID: a RETIRE_CONNECTION_ID for one never sent is a PROTOCOL_VIOLATION (RFC 9000 section 19.16). */
+        var everSent = false
+            private set
         var retirePriorTo = 0L
     }
 
@@ -272,6 +281,9 @@ internal class ConnectionIdManager(
             throw QuicWireException(TransportError.PROTOCOL_VIOLATION, 0x19, "RETIRE_CONNECTION_ID for an unissued sequence")
         }
         val i = local.indexOfFirst { it.seq == seq }
+        if (i >= 0 && !local[i].everSent) {
+            throw QuicWireException(TransportError.PROTOCOL_VIOLATION, 0x19, "RETIRE_CONNECTION_ID for an unsent sequence")
+        }
         if (i < 0) {
             // still in its grace period: a retransmission, or an ID we dropped after its NEW_CONNECTION_ID was declared lost
             for (k in 0 until retiredLocal.size) if (retiredLocal[k].seq == seq) return true

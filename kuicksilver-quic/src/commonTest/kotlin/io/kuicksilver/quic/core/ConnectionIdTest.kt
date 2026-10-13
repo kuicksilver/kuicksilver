@@ -269,6 +269,27 @@ class ConnectionIdTest {
         assertEquals(0x18L, e.frameType)
     }
 
+    /**
+     * Review finding 22, RFC 9000 section 19.16: "Receipt of a RETIRE_CONNECTION_ID frame containing a sequence number greater than
+     * any previously sent to the peer MUST be treated as a connection error of type PROTOCOL_VIOLATION." An ID we issued but whose
+     * NEW_CONNECTION_ID has not gone out yet was accepted.
+     */
+    @Test fun negative_retireOfIssuedButUnsentId() {
+        val m = manager()
+        m.adoptInitialLocalCid(ConnectionId(ByteArray(8)))
+        m.setPeerLimit(3)
+        m.nextNewCidToSend()!!.sent = true // sequence 1 goes out, 2 waits
+        val e = assertFailsWith<QuicWireException> { m.onPeerRetired(2, TimeMark(1_000_000_000L)) }
+        assertEquals(0x0aL, e.code)
+        assertTrue(m.onPeerRetired(1, TimeMark(1_000_000_000L)), "sequence 1 was sent")
+        m.nextNewCidToSend()!!.sent = true // sequence 2
+        m.nextNewCidToSend()!!.let { // sequence 3, the replacement of 1, is lost after it was sent once
+            it.sent = true
+            m.onNewCidLost(it.seq, TimeMark(1_000_000_000L))
+        }
+        assertTrue(m.onPeerRetired(3, TimeMark(1_000_000_000L)), "a sequence sent once may be retired while its frame is resent")
+    }
+
     @Test fun retiredBacklogAbove32IsCidLimitError() {
         val m = manager(limit = 2)
         m.adoptInitialPeerCid(ConnectionId(ByteArray(8)))
