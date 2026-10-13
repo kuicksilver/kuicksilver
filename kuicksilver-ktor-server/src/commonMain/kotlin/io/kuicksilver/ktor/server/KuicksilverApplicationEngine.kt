@@ -104,7 +104,8 @@ public class KuicksilverApplicationEngine(
         /**
          * Accept 0-RTT on HTTP/3 (off by default; ADR-0015). Early requests can be replayed by an attacker: by default only
          * GET, HEAD and OPTIONS run before the handshake completes (`http3Settings.earlyData` decides), every other request
-         * waits for it. Handlers of early requests must be free of side effects; see `ApplicationRequest.receivedEarly`.
+         * waits for it. Handlers of early requests must be free of side effects; see `ApplicationRequest.receivedEarly`. A
+         * request a gateway marked `Early-Data` (RFC 8470 section 5.1) is treated as early whatever this setting.
          */
         @io.kuicksilver.annotations.ExperimentalKuicksilverApi
         public var quicEarlyData: Boolean = false

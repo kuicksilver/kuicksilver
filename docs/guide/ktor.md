@@ -292,6 +292,12 @@ default.
   0-RTT run before the handshake completes, and `call.request.receivedEarly` is true for them. Every other request
   waits for the handshake. `http3Settings { earlyData = Http3EarlyDataPolicy.Reject425() }` answers `425 Too Early`
   instead.
+- **Behind a gateway** (with or without `quicEarlyData`): a CDN or reverse proxy that forwards a request it received in
+  early data marks it `Early-Data: 1` (RFC 8470 section 5.1), and such a request may be a replay whatever the state of
+  the connection it arrives on. Over HTTP/1.1 and HTTP/3 the server engine sets `call.request.receivedEarly` for it and
+  answers `425 Too Early` to any such request the early-data policy does not declare replayable (over HTTP/1.1: anything
+  but GET, HEAD and OPTIONS), without running the handler; the gateway forwards the 425 and its client retries after
+  its handshake. Gate side effects on `receivedEarly`, not on the TLS state of your own connection.
 - **Client:** set `http3 { earlyData = true }`. The engine keeps the servers' session tickets for its lifetime, and
   on a new connection to a server it has a ticket for, it sends GET, HEAD and OPTIONS requests without a body in 0-RTT.
   Other requests wait for the handshake. A `425` is retried once.

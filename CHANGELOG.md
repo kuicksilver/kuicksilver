@@ -652,6 +652,10 @@ Ktor server (`kuicksilver-ktor-server`):
   half-close the client never sends); a chunked body with a trailer section is accepted (it failed with "Expected CR"),
   the trailer fields discarded. The connection pipeline is now a copy of Ktor CIO's in `h1/ServerPipeline.kt`, and
   `ktor-server-cio` is no longer a dependency.
+- A request a gateway forwarded from early data, marked `Early-Data: 1` (RFC 8470 §5.1), was processed as an ordinary
+  request: `receivedEarly` was false and an unsafe method ran although it may be a replay. Over HTTP/1.1 and HTTP/3,
+  such a request now has `receivedEarly` true, and one the early-data policy does not declare replayable gets
+  `425 Too Early` without reaching the application.
 - The startup Ktor version check also covers `ktor-network`, `ktor-io` and (client) `ktor-websockets`, whose internals
   the engines use: a build that pinned one of them to another minor passed the check and failed later with
   `NoSuchMethodError`.

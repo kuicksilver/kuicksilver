@@ -234,7 +234,14 @@ private suspend fun KuicksilverApplicationEngine.handleRequest(
             var failure: Throwable? = null
             try {
                 addHandlerForExpectedHeader(output, call)
-                pipeline.execute(call)
+                // forwarded from early data by a gateway and not replayable: 425, it cannot be made safe by waiting (RFC 8470 section 5.1)
+                if (request.headers[EARLY_DATA_FIELD] != null &&
+                    request.method.value !in io.kuicksilver.http3.Http3EarlyDataPolicy.SAFE_METHODS
+                ) {
+                    call.respond(HttpStatusCode.TooEarly)
+                } else {
+                    pipeline.execute(call)
+                }
             } catch (error: Throwable) {
                 failure = error
                 handleFailure(call, error)
