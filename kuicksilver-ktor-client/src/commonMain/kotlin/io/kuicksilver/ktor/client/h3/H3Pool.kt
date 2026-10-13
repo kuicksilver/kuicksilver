@@ -43,9 +43,11 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineName
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlin.coroutines.CoroutineContext
 
@@ -213,6 +215,28 @@ internal class H3Pool(
         t: H3Target,
         data: HttpRequestData,
     ): Pair<H3Entry, Http3Connection> {
+        while (true) {
+            try {
+                return connectionEntryOnce(t, data)
+            } catch (_: SetupAbandoned) {
+                // the caller that was setting the connection up was cancelled: not a failure of the origin, so this caller
+                // starts (or joins) a new setup instead of failing or falling back
+            }
+        }
+    }
+
+    /** Test hook: runs in the caller that sets up a connection, before it connects. */
+    internal var beforeSetupForTest: (suspend () -> Unit)? = null
+
+    /** Test hook: callers that waited for a setup another caller started. */
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    internal val setupWaitersForTest = kotlin.concurrent.atomics.AtomicInt(0)
+
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    private suspend fun connectionEntryOnce(
+        t: H3Target,
+        data: HttpRequestData,
+    ): Pair<H3Entry, Http3Connection> {
         val ep = endpoint()
         val (e, connect) =
             lock.withLock {
@@ -234,6 +258,7 @@ internal class H3Pool(
         val d = e.deferred
         if (connect) {
             try {
+                beforeSetupForTest?.invoke()
                 val c =
                     withTimeout(data.connectTimeoutMillis(config)) {
                         @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
@@ -269,16 +294,24 @@ internal class H3Pool(
             } catch (
                 x: CancellationException,
             ) {
-                d.cancel(x)
-                forget(t, e)
+                // only this caller is cancelled: the others waiting on d start a new setup (cancelling d would cancel them too)
+                d.completeExceptionally(SetupAbandoned(x))
+                withContext(NonCancellable) { forget(t, e) }
                 throw x
             } catch (x: Throwable) {
                 d.completeExceptionally(x)
                 forget(t, e)
             }
+        } else {
+            setupWaitersForTest.addAndFetch(1)
         }
         return e to d.await()
     }
+
+    /** The caller setting up a shared connection was cancelled; the callers waiting for it try again. */
+    private class SetupAbandoned(
+        cause: CancellationException,
+    ) : Exception("the connection setup was abandoned by the cancelled caller that started it", cause)
 
     /**
      * [connection] counted as in use until [H3Entry.release]: [evictExpired] never closes a connection a request was

@@ -614,6 +614,9 @@ Pre-release API and operations review (2026-10-14):
 - HTTP/3: `Http3Connection.goAway()` runs on the connection's session dispatcher whatever thread calls it (the Ktor
   server calls it from `Dispatchers.IO`); it read and wrote the GOAWAY state unsynchronised, so a request racing the
   final GOAWAY could be processed above the announced id while the client retried it elsewhere.
+- Ktor client: when the call setting up a shared HTTP/3 connection was cancelled, every other call waiting for that
+  connection failed with a `CancellationException` (no retry, no HTTP/1.1 fallback); they now set up a connection of
+  their own.
 
 ### Security
 

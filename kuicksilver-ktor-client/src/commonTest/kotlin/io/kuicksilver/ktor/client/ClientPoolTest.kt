@@ -263,6 +263,36 @@ class ClientPoolTest {
             }
         }
 
+    /** The call setting up a shared HTTP/3 connection is cancelled: the calls waiting for that setup start their own (H3Only: no fallback). */
+    @Test fun aCancelledSetupLeavesTheWaitingCallsToSetUpAgain() =
+        h3Test {
+            val (server, port) = testServer { routing { get("/") { call.respondText("ok") } } }
+            try {
+                testClient(Http3DiscoveryMode.H3Only).use { client ->
+                    val engine = client.engine as KuicksilverEngine
+                    val inSetup = CompletableDeferred<Unit>()
+                    val setups = AtomicInt(0)
+                    engine.h3.beforeSetupForTest = {
+                        if (setups.addAndFetch(1) == 1) {
+                            inSetup.complete(Unit)
+                            CompletableDeferred<Unit>().await() // the first setup hangs until its caller is cancelled
+                        }
+                    }
+                    coroutineScope {
+                        val first = async { client.get("https://127.0.0.1:$port/").bodyAsText() }
+                        inSetup.await()
+                        val second = async { client.get("https://127.0.0.1:$port/").bodyAsText() }
+                        eventually { engine.h3.setupWaitersForTest.load() == 1 } // the second call waits for the first's setup
+                        first.cancel()
+                        assertEquals("ok", withTimeout(10.seconds) { second.await() })
+                    }
+                    assertEquals(2, setups.load(), "the waiting call set up its own connection")
+                }
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
     @Test fun idleH3ConnectionIsClosedAndForgotten() =
         h3Test {
             val (server, port) = testServer { routing { get("/") { call.respondText("ok") } } }
