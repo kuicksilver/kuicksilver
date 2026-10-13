@@ -107,9 +107,10 @@ smaller of our `QuicConfig.maxIdleTimeout` (30 s) and the peer's, never below 3 
 CONNECTION_CLOSE is sent.
 
 - **A quiet but wanted connection** (a push channel waiting for events): set `QuicConfig.keepAlive` to a PING interval
-  of at most 3/4 of `maxIdleTimeout`, for example `keepAlive = 10.seconds`. A NAT on the path may forget an idle UDP
-  mapping sooner than 30 s; keep-alive covers that too.
-- **The peer's timeout is shorter**: the effective value is the minimum; raise it on both sides. The Ktor server takes
+  of at most 3/4 of `maxIdleTimeout`, for example `keepAlive = 10.seconds`; PINGs then go out at least every half of the
+  effective idle timeout, also when the peer's is shorter. A NAT on the path may forget an idle UDP mapping sooner than
+  30 s; keep-alive covers that too.
+- **The peer's timeout is shorter**: the effective value is the minimum; raise it on both sides, or keep the connection busy with `keepAlive`. The Ktor server takes
   `quicMaxIdleTimeout` (when `quic` is not assigned; otherwise set `maxIdleTimeout` in `quic`).
 - **The peer vanished** (a server restarted without a Stateless Reset, a phone lost coverage): the timeout is the
   intended outcome. A client that follows networks ([Network changes](quic.md#network-changes)) survives a change of

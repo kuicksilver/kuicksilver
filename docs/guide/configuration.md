@@ -27,16 +27,16 @@ Transport settings of a connection: `quicConfig { }` (`QuicConfig.Builder`), `Qu
 
 | Option | Type | Default | Range | What it does |
 |---|---|---|---|---|
-| `maxIdleTimeout` | `Duration` | 30 s | `keepAlive` must stay within 3/4 of it | our `max_idle_timeout`; the connection closes silently after the smaller of both peers' values (never below 3 x PTO) without traffic, with `ConnectionLost.Timeout(TimeoutKind.Idle)`. `Duration.ZERO` advertises none and leaves the timeout to the peer |
-| `handshakeTimeout` | `Duration` | 10 s | not checked | a connection whose handshake has not completed by then closes with `TimeoutKind.Handshake` |
-| `keepAlive` | `Duration?` | `null` (off) | at most 3/4 of `maxIdleTimeout` (so none with `maxIdleTimeout = ZERO`) | PING interval while the application is quiet |
+| `maxIdleTimeout` | `Duration` | 30 s | zero or positive and finite | our `max_idle_timeout`; the connection closes silently after the smaller of both peers' values (never below 3 x PTO) without traffic, with `ConnectionLost.Timeout(TimeoutKind.Idle)`. `Duration.ZERO` advertises none and leaves the timeout to the peer |
+| `handshakeTimeout` | `Duration` | 10 s | positive (`Duration.INFINITE` leaves only the idle timeout) | a connection whose handshake has not completed by then closes with `TimeoutKind.Handshake` |
+| `keepAlive` | `Duration?` | `null` (off) | positive and finite; at most 3/4 of `maxIdleTimeout` unless that is `ZERO` | PING interval while the application is quiet; PINGs go out at least every half of the effective idle timeout, so a peer with a shorter timeout does not close the connection (as quic-go). With `maxIdleTimeout = ZERO` it holds the connection against the peer's timeout |
 | `initialStreamWindow` | `Long` (bytes) | 524 288 (512 KiB) | 1..`maxStreamWindow` | receive window of each stream at its start (`initial_max_stream_data_*`); doubles while the application reads a whole window in under four RTTs |
 | `initialConnectionWindow` | `Long` (bytes) | 786 432 (768 KiB) | 1..`maxConnectionWindow` | receive window of the connection at its start (`initial_max_data`); kept at least 1.5 x the largest stream window |
 | `maxStreamWindow` | `Long` (bytes) | 6 291 456 (6 MiB) | at least `initialStreamWindow` | ceiling of a stream's receive window: the most unread data one stream holds |
 | `maxConnectionWindow` | `Long` (bytes) | 15 728 640 (15 MiB) | at least `initialConnectionWindow` | ceiling of the connection's receive window |
 | `maxBidiStreams` | `Long` | 100 | 0..2^60 | bidirectional streams the peer may have open at once (`initial_max_streams_bidi`); raised by MAX_STREAMS as streams close |
 | `maxUniStreams` | `Long` | 100 | 0..2^60 | the same for unidirectional streams |
-| `maxSendBuffer` | `Long` (bytes) | 4 194 304 (4 MiB) | not checked | unacknowledged send data the connection buffers over all streams; writers wait beyond it |
+| `maxSendBuffer` | `Long` (bytes) | 4 194 304 (4 MiB) | 1..2^62 | unacknowledged send data the connection buffers over all streams; writers wait beyond it |
 | `maxAckDelay` | `Duration` | 25 ms | below 2^14 ms | our `max_ack_delay` |
 | `ackDelayExponent` | `Int` | 3 | 0..20 | our `ack_delay_exponent` |
 | `activeConnectionIdLimit` | `Int` | 4 | at least 2 | our `active_connection_id_limit`: connection IDs of the peer kept for migration and rotation |
@@ -129,13 +129,14 @@ client-only endpoint), `toBuilder()` (*experimental*). Guide: [Admission and end
 | `trust` | `TrustConfig` | `TrustConfig.Platform` | with `clientAuth` other than `None`: `AnchoredCa`, optionally under `Pinned` | how the peer is verified ([below](#trustconfig)) |
 | `clientAuth` | `ClientAuth` | `None` | servers only | `None`, `Optional` or `Required` client certificates |
 | `sniSelector` | `(suspend (ClientHelloInfo) -> ServerTlsOverride?)?` | `null` | servers, TCP only (QUIC refuses it) | picks a `ServerTlsOverride(identity, alpn, clientAuth, trust)` per ClientHello |
-| `sessionTickets` | `SessionTicketConfig` | `SessionTicketConfig.Default` | see below | TLS-over-TCP server tickets, and the tickets of a QUIC server with `earlyData` |
+| `sessionTickets` | `SessionTicketConfig` | `SessionTicketConfig.Default` | see below | the keys and lifetime of a TLS-over-TCP server's tickets and of a QUIC server with `earlyData` (the only QUIC servers that issue tickets) |
 | `keylog` (*delicate*) | `KeylogSink?` | `null` | | TLS secrets as RFC 9850 key log lines ([Key logging](tls.md#key-logging)) |
-| `handshakeTimeout` | `Duration` | 10 s | not checked | TLS over TCP only (QUIC uses `QuicConfig.handshakeTimeout`) |
+| `handshakeTimeout` | `Duration` | 10 s | positive (`Duration.INFINITE`: no deadline) | TLS over TCP only (QUIC uses `QuicConfig.handshakeTimeout`) |
 | `genericAlerts` | `Boolean` | `false` | | send `handshake_failure` instead of the specific alert |
 
 `SessionTicketConfig(keys, rotateEvery, ticketLifetime)`: `keys = null` (generated in the process), `rotateEvery = 1
-day` (at most 7 days), `ticketLifetime = 12 hours` (at most `rotateEvery / 2`); explicit keys are 80-byte entries.
+day` (positive, at most 7 days), `ticketLifetime = 12 hours` (at least 1 s, at most `rotateEvery / 2`); explicit keys
+are 80-byte entries.
 
 Key exchange groups are not configurable: `X25519MLKEM768`, `X25519`, `secp256r1`, `X448`, `secp384r1`, `secp521r1`
 ([Key exchange groups](tls.md#key-exchange-groups)).

@@ -183,6 +183,15 @@ Documentation:
 
 QUIC (`kuicksilver-quic`):
 
+- Configuration validation: `QuicConfig.handshakeTimeout` must be positive, `maxSendBuffer` 1..2^62, `maxIdleTimeout`
+  zero or positive and finite, `keepAlive` positive and finite; `TlsConfig.handshakeTimeout` must be positive,
+  `SessionTicketConfig.rotateEvery` positive and `ticketLifetime` at least 1 s. Zero, negative or infinite values were
+  accepted and misbehaved later (a zero `keepAlive` sent a PING in every packet). `QuicEndpointConfig` names
+  `maxConnections` and `acceptQueue` in its refusals instead of "Failed requirement.", as does
+  `ConnectionAdmission.default`.
+- `keepAlive` is allowed with `maxIdleTimeout = ZERO` (only the peer's idle timeout applies then, and keep-alive is what
+  holds the connection), and PINGs go out at least every half of the effective idle timeout, so a peer whose timeout is
+  shorter than the interval no longer closes the connection (quic-go's `KeepAlivePeriod` semantics).
 - `NetworkMigrator` also migrates when the active path's socket is lost (`PathEvent.SocketLost`), to a fresh socket on
   the current network.
 - `QuicConnection.pathEvents` may report the new `PathEvent.SocketLost`; an exhaustive `when` over `PathEvent` needs a

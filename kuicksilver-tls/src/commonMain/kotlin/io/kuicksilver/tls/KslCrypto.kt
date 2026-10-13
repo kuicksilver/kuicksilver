@@ -43,7 +43,7 @@ public object KslCrypto {
     /** [n] bytes from OpenSSL's CSPRNG (`RAND_bytes`), fit for keys, nonces and connection IDs; thread-safe. [n] must not be negative. */
     public fun randomBytes(n: Int): ByteArray {
         ready()
-        require(n >= 0)
+        require(n >= 0) { "randomBytes: n must not be negative, was $n" }
         return Ksl.rand(n)
     }
 

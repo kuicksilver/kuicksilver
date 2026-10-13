@@ -270,6 +270,24 @@ class TlsConfigTest {
             SessionTicketConfig(rotateEvery = kotlin.time.Duration.parse("1d"), ticketLifetime = kotlin.time.Duration.parse("13h"))
         }
         assertFailsWith<TlsException.Config> { SessionTicketConfig(keys = listOf(ByteArray(10))) }
+        val zero = kotlin.time.Duration.ZERO
+        assertEquals(
+            "rotateEvery must be positive",
+            assertFailsWith<TlsException.Config> { SessionTicketConfig(rotateEvery = zero, ticketLifetime = zero) }.message,
+        )
+        assertEquals(
+            "ticketLifetime must be at least 1 second",
+            assertFailsWith<TlsException.Config> { SessionTicketConfig(ticketLifetime = kotlin.time.Duration.parse("500ms")) }.message,
+        )
+    }
+
+    @Test fun negative_handshakeTimeoutMustBePositive() {
+        for (bad in listOf(kotlin.time.Duration.ZERO, kotlin.time.Duration.parse("-1s"))) {
+            val e = assertFailsWith<TlsException.Config>("handshakeTimeout = $bad") { tlsConfig(TlsRole.Client) { handshakeTimeout = bad } }
+            assertEquals("handshakeTimeout must be positive", e.message)
+        }
+        val unbounded = tlsConfig(TlsRole.Client) { handshakeTimeout = kotlin.time.Duration.INFINITE }
+        assertEquals(kotlin.time.Duration.INFINITE, unbounded.handshakeTimeout)
     }
 
     @Test fun clientServerNameIsValidated() {

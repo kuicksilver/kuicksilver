@@ -74,6 +74,22 @@ class QuicDslTest {
         assertFailsWith<IllegalArgumentException> { quicEndpointConfig { connectionIdLength = 3 } }
     }
 
+    /** Every refusal names the option and its range (maxConnections and acceptQueue said only "Failed requirement."). */
+    @Test fun endpointDslNamesTheValueOutOfRange() {
+        assertEquals(
+            "maxConnections must be positive",
+            assertFailsWith<IllegalArgumentException> { quicEndpointConfig { maxConnections = 0 } }.message,
+        )
+        assertEquals(
+            "acceptQueue must be positive",
+            assertFailsWith<IllegalArgumentException> { quicEndpointConfig { acceptQueue = 0 } }.message,
+        )
+        assertEquals(
+            "maxInflightHandshakes and maxHandshakeBufferBytes must not be negative",
+            assertFailsWith<IllegalArgumentException> { ConnectionAdmission.default(maxInflightHandshakes = -1) }.message,
+        )
+    }
+
     @Test fun clientDslRejectsServerTls() {
         assertFailsWith<IllegalArgumentException> { quicClientConfig(CoreFixtures.server()) }
     }

@@ -76,6 +76,53 @@ class QuicConfigTest {
         assertEquals(22.seconds, quicConfig { keepAlive = 22.seconds }.keepAlive)
     }
 
+    @Test fun negative_handshakeTimeoutMustBePositive() {
+        for (bad in listOf(Duration.ZERO, (-1).milliseconds)) {
+            val e = assertFailsWith<IllegalArgumentException>("handshakeTimeout = $bad") { quicConfig { handshakeTimeout = bad } }
+            assertEquals("handshakeTimeout must be positive", e.message)
+        }
+        assertEquals(1.milliseconds, quicConfig { handshakeTimeout = 1.milliseconds }.handshakeTimeout)
+        assertEquals(Duration.INFINITE, quicConfig { handshakeTimeout = Duration.INFINITE }.handshakeTimeout)
+    }
+
+    @Test fun negative_maxSendBufferMustBePositive() {
+        for (bad in listOf(0L, -1L, (1L shl 62) + 1)) {
+            val e = assertFailsWith<IllegalArgumentException>("maxSendBuffer = $bad") { quicConfig { maxSendBuffer = bad } }
+            assertEquals("maxSendBuffer must be 1..2^62", e.message)
+        }
+        assertEquals(1L, quicConfig { maxSendBuffer = 1 }.maxSendBuffer)
+    }
+
+    @Test fun negative_maxIdleTimeoutMustBeZeroOrFinite() {
+        for (bad in listOf((-1).milliseconds, Duration.INFINITE)) {
+            val e = assertFailsWith<IllegalArgumentException>("maxIdleTimeout = $bad") { quicConfig { maxIdleTimeout = bad } }
+            assertEquals("maxIdleTimeout must be zero (none) or a positive finite duration", e.message)
+        }
+    }
+
+    @Test fun negative_keepAliveMustBePositiveAndFinite() {
+        for (bad in listOf(Duration.ZERO, (-1).seconds, Duration.INFINITE)) {
+            val e =
+                assertFailsWith<IllegalArgumentException>("keepAlive = $bad") {
+                    quicConfig {
+                        maxIdleTimeout = Duration.ZERO
+                        keepAlive = bad
+                    }
+                }
+            assertEquals("keepAlive must be positive and finite, or null", e.message)
+        }
+    }
+
+    /** Our idle timeout off still leaves the peer's (RFC 9000 section 10.1): keep-alive is what holds the connection then. */
+    @Test fun keepAliveWithIdleTimeoutDisabledIsAllowed() {
+        val c =
+            quicConfig {
+                maxIdleTimeout = Duration.ZERO
+                keepAlive = 15.seconds
+            }
+        assertEquals(15.seconds, c.keepAlive)
+    }
+
     @Test fun localTransportParametersFromDefaults() {
         val scid = ConnectionId(ByteArray(8) { 1 })
         val tp = QuicConfig.Default.localTransportParameters(TlsRole.Client, scid, null)

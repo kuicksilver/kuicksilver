@@ -1136,7 +1136,7 @@ internal fun ConnectionCore.Companion.serverWithKeys(
     retryScid: ConnectionId? = null,
     early: io.kuicksilver.quic.core.ServerEarlyData? = null,
 ): ConnectionCore? {
-    require(tls.role == TlsRole.Server)
+    require(tls.role == TlsRole.Server) { "a server connection needs a server TlsConfig" }
     val hv = PacketHeaderView()
     if (length < 1200 || !PacketHeaderCodec.parse(data, 0, length, config.connectionIdLength, hv) ||
         hv.type != PacketType.Initial
