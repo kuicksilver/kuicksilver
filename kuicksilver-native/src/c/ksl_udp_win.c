@@ -136,7 +136,7 @@ static void from_sockaddr(const struct sockaddr_storage *ss, uint8_t a[KSL_UDP_A
 /* a UDP socket on 127.0.0.1 connected to itself: shutdown sends it one byte, WSAPoll sees it; connected, it takes datagrams
    from itself only, and bound with SO_EXCLUSIVEADDRUSE, so no other local process can fake a wake-up */
 static SOCKET open_wake(struct sockaddr_in *sa) {
-    SOCKET w = WSASocketW(AF_INET, SOCK_DGRAM, IPPROTO_UDP, NULL, 0, WSA_FLAG_NO_HANDLE_INHERIT); if (w == INVALID_SOCKET) return w;
+    SOCKET w = WSASocketW(AF_INET, SOCK_DGRAM, IPPROTO_UDP, NULL, 0, WSA_FLAG_OVERLAPPED | WSA_FLAG_NO_HANDLE_INHERIT); if (w == INVALID_SOCKET) return w;
     memset(sa, 0, sizeof *sa); sa->sin_family = AF_INET; sa->sin_addr.s_addr = htonl(INADDR_LOOPBACK); int sl = (int)sizeof *sa; u_long nb = 1; BOOL yes = TRUE;
     /* exclusive, as the data socket: a local process binding the port with SO_REUSEADDR could otherwise share it */
     if (setsockopt(w, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, (const char *)&yes, sizeof yes) != 0 || bind(w, (struct sockaddr *)sa, sl) != 0 || getsockname(w, (struct sockaddr *)sa, &sl) != 0 || connect(w, (struct sockaddr *)sa, sl) != 0 || ioctlsocket(w, FIONBIO, &nb) != 0) { closesocket(w); return INVALID_SOCKET; }
@@ -150,8 +150,10 @@ static SOCKET open_bound(ksl_udp *u, const uint8_t addr[KSL_UDP_ADDR_LEN], int d
 #ifdef KSL_TEST
     if (u->family == AF_INET6 && no_ipv6_for_test) { *wsa = WSAEAFNOSUPPORT; return INVALID_SOCKET; }
 #endif
-    SOCKET fd = WSASocketW(u->family, SOCK_DGRAM, IPPROTO_UDP, NULL, 0, WSA_FLAG_NO_HANDLE_INHERIT);
-    if (fd == INVALID_SOCKET && WSAGetLastError() == WSANOTINITIALISED && wsa_restart()) fd = WSASocketW(u->family, SOCK_DGRAM, IPPROTO_UDP, NULL, 0, WSA_FLAG_NO_HANDLE_INHERIT);   /* once */
+    /* overlapped, as socket() makes it: a synchronous socket handle serialises its operations, so a send waited for the receiving
+       thread's WSAPoll to return (up to a whole receive slice per send) */
+    SOCKET fd = WSASocketW(u->family, SOCK_DGRAM, IPPROTO_UDP, NULL, 0, WSA_FLAG_OVERLAPPED | WSA_FLAG_NO_HANDLE_INHERIT);
+    if (fd == INVALID_SOCKET && WSAGetLastError() == WSANOTINITIALISED && wsa_restart()) fd = WSASocketW(u->family, SOCK_DGRAM, IPPROTO_UDP, NULL, 0, WSA_FLAG_OVERLAPPED | WSA_FLAG_NO_HANDLE_INHERIT);   /* once */
     if (fd == INVALID_SOCKET) { *wsa = WSAGetLastError(); return fd; }
     GUID rg = WSAID_WSARECVMSG, sg = WSAID_WSASENDMSG; DWORD got = 0;
     if (WSAIoctl(fd, SIO_GET_EXTENSION_FUNCTION_POINTER, &rg, sizeof rg, &u->recv_msg, sizeof u->recv_msg, &got, NULL, NULL) != 0 ||

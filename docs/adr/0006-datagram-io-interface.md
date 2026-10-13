@@ -123,7 +123,12 @@ cross-checked with msquic `src/platform/datapath_winuser.c`.
   returns, the receiver sees `closed` and leaves. Being connected, the wake socket accepts datagrams only from itself, so no
   other local process can fake a shutdown; a readiness without `closed` set is drained and ignored. Without a wake socket the
   receive waits in 50 ms slices.
-- **Send/receive.** `WSASendMsg`/`WSARecvMsg` from `SIO_GET_EXTENSION_FUNCTION_POINTER`; the socket is non-blocking,
+- **Send/receive.** `WSASendMsg`/`WSARecvMsg` from `SIO_GET_EXTENSION_FUNCTION_POINTER`; the socket is created with
+  `WSA_FLAG_OVERLAPPED` (as `socket()` and msquic do; the WSASocket documentation: "most sockets should be created with this
+  flag set"). Without it the handle is synchronous and Windows serialises every operation on it: a `WSASendMsg` waited until
+  the receiving thread's `WSAPoll` returned, so each send from the endpoint loop sat out up to one 100 ms receive slice. That
+  made every QUIC flight on Windows (JVM and Native) cost up to ~100 ms: an HTTP/3 request took ~500 ms and an 8 MiB echo ~55 s
+  in the 4-core Windows 11 VM (`udp_win_send_while_recv_blocks`: the send now leaves in 0 ms instead of 1992 ms). The socket is non-blocking,
   `SIO_UDP_CONNRESET`/`SIO_UDP_NETRESET` are off (an ICMP unreachable must not fail the next receive; `WSAECONNRESET` is skipped
   anyway); `WSAEMSGSIZE`/`MSG_TRUNC` drop the datagram whole. `POLLERR`/`POLLHUP` without data read and clear `SO_ERROR`; with
   nothing pending the rest of the slice is waited out on the wake socket (no spin). `WSAENETDOWN`/`WSAENOBUFS` on a receive

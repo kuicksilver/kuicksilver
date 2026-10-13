@@ -50,6 +50,20 @@ static uint32_t wdrain(ksl_udp *b, uint32_t *lens, uint8_t *ecns, uint32_t max) 
     for (int i = 0; i < 8; i++) free(rb[i]); return total;
 }
 
+static DWORD WINAPI blocked_recv_2s(LPVOID p) { ksl_udp *u = p; uint8_t b0[1500]; uint8_t *b[1] = { b0 }; uint32_t cap[1] = { 1500 }, l[1], got = 0; uint8_t a[KSL_UDP_ADDR_LEN], e[1]; ksl_udp_recv(u, b, cap, l, a, e, 1, &got, 2000); return 0; }
+struct arrival { ksl_udp *d; uint8_t to[KSL_UDP_ADDR_LEN]; LARGE_INTEGER sent_at; };
+static DWORD WINAPI send_later(LPVOID p) { struct arrival *a = p; Sleep(30); uint8_t buf[64] = {0}; uint8_t *bufs[1] = { buf }; uint32_t lens[1] = { 64 }, sent = 0; uint8_t e[1] = { 0 }; QueryPerformanceCounter(&a->sent_at); ksl_udp_send(a->d, bufs, lens, a->to, e, 1, &sent); return 0; }
+/* ms from the send to the return of a receive that was already blocked (2 s timeout) */
+static int arrival_wake_ms(ksl_udp *c, ksl_udp *d, const uint8_t lc[KSL_UDP_ADDR_LEN]) {
+    struct arrival a; a.d = d; memcpy(a.to, lc, KSL_UDP_ADDR_LEN);
+    LARGE_INTEGER f, t0, t1; QueryPerformanceFrequency(&f); HANDLE th = CreateThread(NULL, 0, send_later, &a, 0, NULL); if (!th) return 100000;
+    QueryPerformanceCounter(&t0);
+    uint8_t rb0[1500]; uint8_t *rb[1] = { rb0 }; uint32_t rc[1] = { 1500 }, rl[1], got = 0; uint8_t ra[KSL_UDP_ADDR_LEN], re[1];
+    int r = ksl_udp_recv(c, rb, rc, rl, ra, re, 1, &got, 2000); QueryPerformanceCounter(&t1); WaitForSingleObject(th, INFINITE); CloseHandle(th);
+    if (r != KSL_OK || got != 1) { got = 0; ksl_udp_recv(c, rb, rc, rl, ra, re, 1, &got, 200); return 5000; }   /* never woke */
+    return (int)((t1.QuadPart - a.sent_at.QuadPart) * 1000 / f.QuadPart);
+}
+
 void run_udp_win(void) {
     uint8_t la[KSL_UDP_ADDR_LEN], lb[KSL_UDP_ADDR_LEN];
     ksl_udp *a = wopen_lo(KSL_UDP_ECN | KSL_UDP_GSO | KSL_UDP_GRO | KSL_UDP_DF | KSL_UDP_REUSEPORT, la), *b = wopen_lo(KSL_UDP_ECN | KSL_UDP_GSO | KSL_UDP_GRO | KSL_UDP_DF, lb);
@@ -181,6 +195,24 @@ void run_udp_win(void) {
     { uint32_t err = 0; char msg[128] = {0}; ksl_udp *r2 = ksl_udp_open(la, KSL_UDP_REUSEPORT, &err, msg, sizeof msg); CHECK(r2 == NULL && err == KSL_E_BAD_ARG, "no second socket on the same port"); if (r2) ksl_udp_close(r2);
       /* a foreign socket asking for SO_REUSEADDR: without SO_EXCLUSIVEADDRUSE on ours, Windows would let it bind the same port */
       CHECK(raw_reuseaddr_bind_fails(la), "a raw SO_REUSEADDR socket cannot bind the exclusive port"); }
+    /* udp_win_arrival_wakes_blocked_recv: a datagram arriving while ksl_udp_recv waits in WSAPoll ends the wait at once, not at the
+       end of the slice: QUIC's request/response latency is one such wake-up per flight */
+    { uint8_t lc[KSL_UDP_ADDR_LEN], ld[KSL_UDP_ADDR_LEN]; ksl_udp *c = wopen_lo(KSL_UDP_ECN | KSL_UDP_GRO, lc), *d = wopen_lo(KSL_UDP_ECN | KSL_UDP_GSO, ld); CHECK(c && d, "sockets for the arrival test");
+      if (c && d) { int worst = 0; printf("udp(win): arrival wake-ups (ms):"); for (int i = 0; i < 5; i++) { int ms = arrival_wake_ms(c, d, lc); printf(" %d", ms); if (ms > worst) worst = ms; } printf("\n"); CHECK(worst <= 20, "an arriving datagram wakes a blocked recv at once, not at the end of its slice"); }
+      if (c) ksl_udp_close(c); if (d) ksl_udp_close(d); }
+    /* udp_win_send_while_recv_blocks: a send on a socket whose receive is blocked in WSAPoll (another thread) leaves at once; a
+       socket without WSA_FLAG_OVERLAPPED is synchronous and Windows held the send until the poll returned (1992 ms of a 2 s wait) */
+    { uint8_t lc[KSL_UDP_ADDR_LEN], ld[KSL_UDP_ADDR_LEN]; ksl_udp *c = wopen_lo(KSL_UDP_ECN | KSL_UDP_GRO | KSL_UDP_GSO, lc), *d = wopen_lo(0, ld); CHECK(c && d, "sockets for the send-while-receiving test");
+      if (c && d) { HANDLE th = CreateThread(NULL, 0, blocked_recv_2s, c, 0, NULL); Sleep(50);
+        LARGE_INTEGER f, t0, t1; QueryPerformanceFrequency(&f); uint8_t buf[64] = {0}; uint8_t *bufs[1] = { buf }; uint32_t lens[1] = { 64 }, sent = 0; uint8_t e[1] = { 2 };
+        QueryPerformanceCounter(&t0); int r = ksl_udp_send(c, bufs, lens, ld, e, 1, &sent); QueryPerformanceCounter(&t1);
+        int send_ms = (int)((t1.QuadPart - t0.QuadPart) * 1000 / f.QuadPart);
+        uint8_t rb0[1500]; uint8_t *rb[1] = { rb0 }; uint32_t rc[1] = { 1500 }, rl[1], got = 0; uint8_t ra[KSL_UDP_ADDR_LEN], re[1];
+        int rr = ksl_udp_recv(d, rb, rc, rl, ra, re, 1, &got, 2000); QueryPerformanceCounter(&t1); int arrive_ms = (int)((t1.QuadPart - t0.QuadPart) * 1000 / f.QuadPart);
+        printf("udp(win): send while the same socket's recv blocks: send %d ms, arrival %d ms\n", send_ms, arrive_ms);
+        CHECK(r == KSL_OK && sent == 1 && send_ms <= 20 && rr == KSL_OK && got == 1 && arrive_ms <= 20, "a send is not held up by a receive blocked on the same socket");
+        ksl_udp_shutdown(c); WaitForSingleObject(th, INFINITE); CloseHandle(th); }
+      if (c) ksl_udp_close(c); if (d) ksl_udp_close(d); }
     /* udp_win_close_wakes_blocked_recv: the wake socket ends a 5 s receive within 100 ms of shutdown */
     { uint8_t lc[KSL_UDP_ADDR_LEN]; ksl_udp *c = wopen_lo(0, lc); CHECK(c != NULL, "socket for close test");
       if (c) { CHECK(ksl_udp_has_wake_for_test(c), "the wake socket exists (else the 50 ms slice, not the wake-up, would pass the timing)"); CHECK(ksl_udp_close_wakes_for_test(c) <= 100, "shutdown wakes a blocked recv within 100 ms"); } }
