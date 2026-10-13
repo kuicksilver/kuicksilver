@@ -11,6 +11,7 @@ import io.kuicksilver.quic.ConnectionCore
 import io.kuicksilver.quic.ConnectionEvent
 import io.kuicksilver.quic.EcnState
 import io.kuicksilver.quic.PathChangeReason
+import io.kuicksilver.quic.PathFailureReason
 import io.kuicksilver.quic.PathId
 import io.kuicksilver.quic.PathState
 import io.kuicksilver.quic.QuicException
@@ -87,6 +88,31 @@ internal fun ConnectionCore.onNewConnectionId(
     remoteCid =
         cids.activePeerCid()
     if (dup) glitch(0x18)
+    resumeCidWaiters()
+}
+
+/** Paths that waited for a peer connection ID start their validation now that one may be spare (RFC 9000 section 9.5). */
+private fun ConnectionCore.resumeCidWaiters() {
+    for (i in 0 until paths.all.size) {
+        val p = paths.all[i]
+        if (p.awaitingCid && p.state == PathState.Validating && p !== paths.active && dcidFor(p) != null) startValidation(p)
+    }
+}
+
+/**
+ * Client: [p] has no peer connection ID of its own and the peer gave us none spare (typically right after the handshake, before its
+ * NEW_CONNECTION_ID frames arrived). Reusing the active path's ID would let an observer link the paths (RFC 9000 section 9.5), so
+ * no PATH_CHALLENGE goes out: the path waits up to the validation timeout for a NEW_CONNECTION_ID ([resumeCidWaiters]) and then
+ * fails with [PathFailureReason.NoSpareConnectionId]. quic-go keeps such a path queued for probing until an ID arrives
+ * (path_manager_outgoing.go NextPathToProbe); ngtcp2 and quiche refuse at once (NGTCP2_ERR_CONN_ID_BLOCKED, OutOfIdentifiers).
+ */
+internal fun ConnectionCore.awaitPeerCid(p: Path) {
+    if (!p.awaitingCid) {
+        p.awaitingCid = true
+        p.challengeDeadline = now + validationTimeout()
+    }
+    p.challengePending = false
+    p.nextChallengeAt = TimeMark.NEVER
 }
 
 /** RETIRE_CONNECTION_ID: the ID keeps routing for 3 x PTO (RFC 9000 section 5.1.2); one for an ID already gone costs a glitch token. */
@@ -179,9 +205,13 @@ internal fun ConnectionCore.startValidation(p: Path) {
     p.challengePending = true
     p.state = PathState.Validating
     p.handshakeValidated = false
+    p.awaitingCid = false
     p.challengeRetries = 0
     p.challengeDeadline = now + validationTimeout()
     p.nextChallengeAt = now + nextChallengeDelay(p)
+    // a client probe reserves its peer ID now; without a spare one it waits for a NEW_CONNECTION_ID instead of spending its
+    // validation period on challenges that cannot be sent
+    if (role == TlsRole.Client && p !== paths.active && dcidFor(p) == null) awaitPeerCid(p)
 }
 
 /**
@@ -271,15 +301,19 @@ internal fun ConnectionCore.releasePathCid(p: Path) {
     if (p !== paths.active) cids.releasePathPeer(peer)
 }
 
-internal fun ConnectionCore.onPathFailed(p: Path) {
+internal fun ConnectionCore.onPathFailed(
+    p: Path,
+    reason: PathFailureReason = PathFailureReason.ValidationTimeout,
+) {
     p.state = PathState.Failed
+    p.awaitingCid = false
     p.challengePending = false
     p.challengeDeadline = TimeMark.NEVER
     p.nextChallengeAt = TimeMark.NEVER
     p.standbyUntil =
         now + validationTimeout()
     releasePathCid(p)
-    events += ConnectionEvent.PathFailed(p.id)
+    events += ConnectionEvent.PathFailed(p.id, reason)
     if (p !== paths.active) return
     val back = paths.fallback(p)
     if (back != null) {

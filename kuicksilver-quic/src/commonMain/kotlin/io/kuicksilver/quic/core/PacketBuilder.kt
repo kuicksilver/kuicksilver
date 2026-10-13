@@ -73,9 +73,10 @@ internal class PacketBuilder(
                 if (dcid == null) {
                     target.challengePending = false
                     while (c.paths.takeResponseFor(target) != null) {}
+                    // no unused peer ID for this path: sending would link it to the active one (RFC 9000 section 9.5); a client probe
+                    // waits for a NEW_CONNECTION_ID
+                    if (c.role == TlsRole.Client && target.state == PathState.Validating) c.awaitPeerCid(target)
                     continue
-                    // no unused peer ID for this path: sending would link it to the active one (RFC 9000 section 9.5); the challenge timer
-                    // tries again
                 }
                 probeTarget = target
                 currentMark = target.ecn.markFor()

@@ -287,8 +287,17 @@ println("now on ${change.new.localAddress} (${change.reason})")
 `addPath(io)` opens a path through another socket, `probe()` validates it with a `PATH_CHALLENGE` (and re-validates a path
 already validated), `switchTo()` moves the connection, `close()` forgets the path and closes its socket on the loop (on the active path it
 throws `IllegalStateException` and changes nothing). `migrate` does the
-three in a row and throws `IllegalStateException("path validation failed")` when the new socket never hears back, leaving the
-connection where it was. `paths` lists the live paths (the first is the one the connection started on), `activePath` is the one it sends on now,
+three in a row and throws `PathValidationException` (an `IllegalStateException`, "path validation failed") when the new
+socket never hears back, leaving the connection where it was.
+
+Migration timing: a probe on a new path must carry a connection ID of the server that no other path used, so an
+observer cannot link the two networks (RFC 9000 section 9.5). The server issues its spare IDs, up to the client's
+`active_connection_id_limit` (default 4), in its first 1-RTT flight (section 5.1.1), so they normally arrive with the
+handshake. If the network changes before they did (a lost datagram, a peer that issues late), `probe()` does not
+reuse the active path's ID: it waits up to max(3 × PTO, 6 × initial RTT) for a `NEW_CONNECTION_ID`, probes as soon as
+one arrives, and otherwise fails with `PathFailureReason.NoSpareConnectionId` (`PathEvent.Failed.reason`,
+`PathValidationException.reason`) rather than as a silent path. Migrating right after `connect()` therefore needs no
+wait of its own. `paths` lists the live paths (the first is the one the connection started on), `activePath` is the one it sends on now,
 and `pathEvents` reports `Validated`, `Failed` and `Changed`, for
 the peer's moves too. Migration needs a confirmed handshake and a server that did not advertise `disable_active_migration`;
 when the active path fails validation and no other validated path remains, the connection closes with
@@ -311,7 +320,9 @@ The first network the flow reports is the one the connection is on already. Each
 `openIo` and a `migrate` (new path, `PATH_CHALLENGE`, switch); on success the previous path and its socket are closed and
 `events` reports `MigrationEvent.Migrated(old, new, path)`. When the new network never answers, `openIo` throws or the
 server advertised `disable_active_migration` (RFC 9000 section 18.2), the new socket is closed, the connection stays
-where it was and `events` reports `Failed(network, cause)`. A `null` means no network: `NetworkLost` is reported and the
+where it was and `events` reports `Failed(network, cause)`. When the cause is a `PathValidationException` with
+`NoSpareConnectionId` (the network changed before the server's spare connection IDs arrived and none came in time),
+the migrator tries the same network again as soon as one arrives, unless the network changed meanwhile. A `null` means no network: `NetworkLost` is reported and the
 migrator waits; the connection is not closed (its idle timeout decides), and if the same network comes back nothing
 moves. Repeated values are ignored, and a change during a migration supersedes it: the unfinished path is closed and
 nothing is reported for it (`openIo` itself is not cancelled, so keep it short: the socket it returns is closed). The

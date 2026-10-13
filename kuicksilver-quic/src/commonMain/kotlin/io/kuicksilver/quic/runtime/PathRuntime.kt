@@ -5,6 +5,7 @@ package io.kuicksilver.quic.runtime
 import io.ktor.network.sockets.InetSocketAddress
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.quic.DatagramIo
+import io.kuicksilver.quic.PathFailureReason
 import io.kuicksilver.quic.PathId
 import io.kuicksilver.quic.PathState
 import io.kuicksilver.quic.QuicPath
@@ -31,6 +32,9 @@ internal class PathRuntime(
     /** Completed by the next PathValidated / PathFailed event for this path. */
     internal var validation = CompletableDeferred<Boolean>()
 
+    /** Why the last validation failed (set with the PathFailed event); null while none did. Loop dispatcher only. */
+    internal var failureReason: PathFailureReason? = null
+
     /** The receive coroutine of [io]; null for the endpoint's own socket. */
     internal var receiver: Job? = null
 
@@ -38,6 +42,7 @@ internal class PathRuntime(
         val d =
             withContext(loop.dispatcher) {
                 if (validation.isCompleted) validation = CompletableDeferred()
+                failureReason = null
                 stateFlow.value =
                     PathState.Validating
                 conn.core.probePath(id, loop.now())

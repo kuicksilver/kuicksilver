@@ -110,6 +110,18 @@ Native layer and TLS (`kuicksilver-native`, `kuicksilver-tls`):
 
 ### Fixed
 
+QUIC migration right after the handshake (0.2.0 bug 1, iOS library report):
+
+- A network change in the first moments of a connection no longer fails with "path validation failed" and leaves the
+  connection on a dead path. A client that received the server's 0.5-RTT flight (its NEW_CONNECTION_ID frames) before
+  it held both directions of the 1-RTT keys kept those packets buffered until the server's loss recovery resent them;
+  it now replays them once the keys are complete, so the spare IDs arrive with the handshake (RFC 9000 §5.1.1). A
+  probe that still finds no unused server connection ID waits up to max(3 x PTO, 6 x initial RTT) for one and probes
+  when it arrives, never reusing the active path's ID (§9.5), and otherwise fails with the new, experimental
+  `PathFailureReason.NoSpareConnectionId` (`ConnectionEvent.PathFailed.reason`, `PathEvent.Failed.reason`;
+  `QuicConnection.migrate` throws `PathValidationException`, an `IllegalStateException`). `NetworkMigrator` reports
+  that failure and migrates to the same network again as soon as a spare ID arrives.
+
 QUIC core (review of 2026-10-08, deferred items):
 
 - An unanswered `PATH_CHALLENGE` is repeated with an exponentially growing gap (1, 1, 2, 4 ... x PTO, so three

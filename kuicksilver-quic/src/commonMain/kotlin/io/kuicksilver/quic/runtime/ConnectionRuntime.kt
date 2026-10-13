@@ -14,8 +14,10 @@ import io.kuicksilver.quic.DatagramSendResult
 import io.kuicksilver.quic.DatagramUnsupportedReason
 import io.kuicksilver.quic.PathChangeReason
 import io.kuicksilver.quic.PathEvent
+import io.kuicksilver.quic.PathFailureReason
 import io.kuicksilver.quic.PathId
 import io.kuicksilver.quic.PathState
+import io.kuicksilver.quic.PathValidationException
 import io.kuicksilver.quic.QuicConnection
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.QuicPath
@@ -142,12 +144,36 @@ internal class ConnectionRuntime(
     override suspend fun migrate(newIo: DatagramIo): PathEvent.Changed {
         val p = addPath(newIo)
         if (!p.probe()) {
-            withContext(loop.dispatcher) { closePath(p as PathRuntime) }
-            throw IllegalStateException("path validation failed")
+            val reason =
+                withContext(loop.dispatcher) {
+                    closePath(p as PathRuntime)
+                    p.failureReason
+                }
+            throw PathValidationException(reason ?: PathFailureReason.ValidationTimeout)
         }
         val old = withContext(loop.dispatcher) { pathRuntime(core.path.id) }
         p.switchTo()
         return PathEvent.Changed(old, p, PathChangeReason.ActiveMigration)
+    }
+
+    /**
+     * Suspends until the peer gave us a connection ID no path used yet (RFC 9000 section 9.5), so a new path can be probed; throws the
+     * connection's [QuicException.ConnectionLost] once it is gone. [NetworkMigrator] waits here after a
+     * [PathFailureReason.NoSpareConnectionId] failure, then migrates again.
+     */
+    internal suspend fun awaitSpareConnectionId() {
+        withContext(loop.dispatcher) {
+            val ticker = newTicker()
+            try {
+                while (true) {
+                    if (finished) throw closedDeferred.await()
+                    if (core.cids.hasSparePeer()) return@withContext
+                    ticker.receive()
+                }
+            } finally {
+                removeTicker(ticker)
+            }
+        }
     }
 
     /** Loop dispatcher only; never called for the active path. */
@@ -177,8 +203,9 @@ internal class ConnectionRuntime(
             is ConnectionEvent.PathFailed -> {
                 val p = pathRuntime(e.path)
                 p.stateFlow.value = PathState.Failed
+                p.failureReason = e.reason
                 if (!p.validation.isCompleted) p.validation.complete(false)
-                pathEventFlow.tryEmit(PathEvent.Failed(p))
+                pathEventFlow.tryEmit(PathEvent.Failed(p, e.reason))
             }
 
             is ConnectionEvent.PathChanged -> {

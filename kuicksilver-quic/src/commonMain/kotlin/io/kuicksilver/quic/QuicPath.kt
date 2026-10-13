@@ -3,6 +3,7 @@
 package io.kuicksilver.quic
 
 import io.ktor.network.sockets.InetSocketAddress
+import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import kotlinx.coroutines.flow.StateFlow
 
 /**
@@ -23,7 +24,12 @@ public interface QuicPath {
     /** Unknown, Validating, Validated, Failed or Closed (RFC 9000 section 8.2). */
     public val state: StateFlow<PathState>
 
-    /** Sends a PATH_CHALLENGE and suspends until the path is validated (true) or gives up after max(3 x PTO, 6 x initial RTT) (false). */
+    /**
+     * Sends a PATH_CHALLENGE and suspends until the path is validated (true) or gives up after max(3 x PTO, 6 x initial RTT) (false).
+     * A probe needs a connection ID from the peer that no other path used (RFC 9000 section 9.5): right after the handshake the peer's
+     * NEW_CONNECTION_ID frames may still be on their way, so the probe first waits up to max(3 x PTO, 6 x initial RTT) for one, and
+     * fails with [PathFailureReason.NoSpareConnectionId] ([PathEvent.Failed.reason]) if none comes.
+     */
     public suspend fun probe(): Boolean
 
     /** Moves the connection to this validated path; the previous path stays as a fallback until it is closed. IllegalStateException when the path is not validated. */
@@ -40,10 +46,21 @@ public sealed interface PathEvent {
         public val path: QuicPath,
     ) : PathEvent
 
-    /** [path] never answered within the validation timeout, max(3 x PTO, 6 x initial RTT) (RFC 9000 section 8.2.4). */
-    public class Failed(
-        public val path: QuicPath,
-    ) : PathEvent
+    /**
+     * [path] never answered within the validation timeout, max(3 x PTO, 6 x initial RTT) (RFC 9000 section 8.2.4), or [reason] says
+     * why it could not be probed.
+     */
+    public class Failed
+        @ExperimentalKuicksilverApi
+        constructor(
+            public val path: QuicPath,
+            /** Why the validation failed. */
+            @property:ExperimentalKuicksilverApi public val reason: PathFailureReason,
+        ) : PathEvent {
+            /** A validation that timed out ([PathFailureReason.ValidationTimeout]). */
+            @OptIn(ExperimentalKuicksilverApi::class)
+            public constructor(path: QuicPath) : this(path, PathFailureReason.ValidationTimeout)
+        }
 
     /**
      * The connection now sends on [new] instead of [old]: our own migration, the peer's, a NAT rebinding or a fallback after a failed

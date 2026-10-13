@@ -220,8 +220,12 @@ public class EndpointCore(
         return core
     }
 
+    /** Test hook: server connections hold their NEW_CONNECTION_ID frames (ConnectionIdManager.holdNewCidsForTest). */
+    internal var testHoldNewConnectionIds = false
+
     internal fun attach(core: ConnectionCore) {
         core.registrar = registrar
+        if (testHoldNewConnectionIds && core.role == TlsRole.Server) core.cids.holdNewCidsForTest = true
         registry.add(core.localCid, core)
         connections += core
         connectionsCreated++

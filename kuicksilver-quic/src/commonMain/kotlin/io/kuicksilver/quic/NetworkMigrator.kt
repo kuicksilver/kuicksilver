@@ -3,6 +3,8 @@
 package io.kuicksilver.quic
 
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
+import io.kuicksilver.quic.runtime.ConnectionRuntime
+import io.kuicksilver.quic.runtime.PathRuntime
 import io.kuicksilver.tls.TlsRole
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -40,6 +42,10 @@ import kotlin.concurrent.atomics.ExperimentalAtomicApi
  *   On success the previous path is closed (its socket too, unless it is the endpoint's own) and [MigrationEvent.Migrated]
  *   follows. On failure (the new network never answers, [openIo] throws, the server sent `disable_active_migration`) the new
  *   path and its socket are closed, the connection stays where it was and [MigrationEvent.Failed] follows.
+ * - Right after the handshake the server may not have given the client a spare connection ID yet (its NEW_CONNECTION_ID frames
+ *   are on their way): the probe waits for one ([QuicPath.probe]). If none comes in time, [MigrationEvent.Failed] reports a
+ *   [PathValidationException] with [PathFailureReason.NoSpareConnectionId], and the migrator tries the same network again as
+ *   soon as an ID arrives (unless the network changed meanwhile).
  * - `null` (no network) emits [MigrationEvent.NetworkLost] and waits: the next network is migrated to, unless it is the one the
  *   connection is still on. Like Chromium's QUIC session pool, the connection is not closed on a network loss; its idle timeout
  *   decides if no network comes back.
@@ -146,18 +152,25 @@ public class NetworkMigrator<N : Any>(
                 }
 
                 n != current -> {
-                    // the path the connection is on now: the core may have fallen back (or the peer moved) since the last migration
-                    val from = connection.activePath ?: path
-                    migrateTo(n) { p ->
-                        // runs once the connection switched, even if this migration is being superseded right now
-                        onNetwork.value = n
-                        path = p
-                        try {
-                            from?.takeIf { it.id != p.id }?.close()
-                        } catch (_: IllegalStateException) {
-                            // the peer's own move made it active again: it stays
-                        }
-                        eventFlow.tryEmit(MigrationEvent.Migrated(current, n, p))
+                    while (true) {
+                        // the path the connection is on now: the core may have fallen back (or the peer moved) since the last migration
+                        val from = connection.activePath ?: path
+                        val retry =
+                            migrateTo(n) { p ->
+                                // runs once the connection switched, even if this migration is being superseded right now
+                                onNetwork.value = n
+                                path = p
+                                try {
+                                    from?.takeIf { it.id != p.id }?.close()
+                                } catch (_: IllegalStateException) {
+                                    // the peer's own move made it active again: it stays
+                                }
+                                eventFlow.tryEmit(MigrationEvent.Migrated(current, n, p))
+                            }
+                        if (!retry) break
+                        // no spare connection ID from the server yet: try again once one arrives instead of leaving the connection
+                        // on the network it is leaving (a new network value or close() cancels the wait)
+                        (connection as? ConnectionRuntime)?.awaitSpareConnectionId() ?: break
                     }
                 }
             }
@@ -173,7 +186,7 @@ public class NetworkMigrator<N : Any>(
     private suspend fun migrateTo(
         n: N,
         switched: (QuicPath) -> Unit,
-    ) {
+    ): Boolean {
         var p: QuicPath? = null
         var done = false
         try {
@@ -187,8 +200,9 @@ public class NetworkMigrator<N : Any>(
             withContext(NonCancellable) { p = connection.addPath(io) }
             val path = p!!
             if (!path.probe()) {
-                fail(n, IllegalStateException("path validation failed"))
-                return
+                val reason = (path as? PathRuntime)?.failureReason ?: PathFailureReason.ValidationTimeout
+                fail(n, PathValidationException(reason))
+                return reason == PathFailureReason.NoSpareConnectionId
             }
             beforeSwitch()
             val self = currentCoroutineContext().job
@@ -212,6 +226,7 @@ public class NetworkMigrator<N : Any>(
                 }
             }
         }
+        return false
     }
 
     /** Reports a failed migration, unless the connection is gone: a dead connection has nothing left to migrate, the watcher ends the migrator. */
@@ -244,7 +259,10 @@ public sealed interface MigrationEvent<out N> {
     public class Failed<out N>(
         /** The network that could not be used. */
         public val network: N,
-        /** Why: path validation failed (IllegalStateException), the peer disabled migration, or opening the socket threw. */
+        /**
+         * Why: path validation failed ([PathValidationException], an IllegalStateException, whose reason tells a silent network from a
+         * missing spare connection ID), the peer disabled migration, or opening the socket threw.
+         */
         public val cause: Throwable,
     ) : MigrationEvent<N> {
         /** For logs. */
