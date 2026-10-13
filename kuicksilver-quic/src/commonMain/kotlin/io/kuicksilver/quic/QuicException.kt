@@ -16,16 +16,16 @@ public enum class Initiator {
     Peer,
 }
 
-/** The timer whose expiry closed the connection. `PathValidation` is not produced in v1: a path whose validation fails closes the connection with [ConnectionLost.NoViablePath] when no other path remains. */
+/**
+ * The timer whose expiry closed the connection. A failed path validation is not a timeout of the connection: the path is
+ * dropped, and when no validated path remains the connection ends with [QuicException.ConnectionLost.NoViablePath].
+ */
 public enum class TimeoutKind {
     /** Nothing was received for the idle timeout both peers agreed on (RFC 9000 section 10.1); see `QuicConfig.maxIdleTimeout`. */
     Idle,
 
     /** The handshake did not complete within `QuicConfig.handshakeTimeout`. */
     Handshake,
-
-    /** Reserved: not produced in this version; a failed validation leads to [ConnectionLost.NoViablePath]. */
-    PathValidation,
 }
 
 private const val MAX_CODE: Long = (1L shl 62) - 1
@@ -96,7 +96,7 @@ public sealed class QuicException(
         }
 
         /**
-         * A local timer expired (idle, handshake, path validation or disconnect); the connection closed without a CONNECTION_CLOSE.
+         * A local timer expired ([TimeoutKind.Idle] or [TimeoutKind.Handshake]); the connection closed without a CONNECTION_CLOSE.
          *
          * @property kind Which timer expired.
          * @property duration The timeout that ran out: the effective idle timeout or `QuicConfig.handshakeTimeout`.

@@ -4,8 +4,6 @@
 
 package io.kuicksilver.tls
 
-import io.kuicksilver.annotations.DelicateKuicksilverApi
-import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.annotations.InternalKuicksilverApi
 import io.kuicksilver.native.Ksl
 import io.kuicksilver.native.KslConst
@@ -15,7 +13,10 @@ import kotlin.concurrent.atomics.AtomicInt
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.io.encoding.Base64
 
-/** A certificate chain (leaf first, RFC 8446 section 4.4.2) and the matching private key. */
+/**
+ * A certificate chain (leaf first, RFC 8446 section 4.4.2) and the matching private key. Sealed: the one kind in 0.2.0 is
+ * [InMemory]; identities whose key stays in a keystore or HSM may be added later, so do not match on it exhaustively.
+ */
 public sealed interface TlsIdentity {
     /** The certificates sent to the peer, leaf first; the leaf's public key matches the private key. */
     public val chain: List<Certificate>
@@ -62,24 +63,6 @@ public sealed interface TlsIdentity {
 
         override fun close() {
             if (closed.compareAndSet(0, 1)) release()
-        }
-    }
-
-    /**
-     * Planned for v2: the key stays in a keystore or HSM. Not available in v1.
-     *
-     * @property signer signs handshake messages with the key; the constructor throws [UnsupportedOperationException] in v1.
-     */
-    @ExperimentalKuicksilverApi
-    @DelicateKuicksilverApi
-    public class Signer(
-        chain: List<Certificate>,
-        public val signer: PrivateKeySigner,
-    ) : TlsIdentity {
-        override val chain: List<Certificate> = chain.toList()
-
-        init {
-            throw UnsupportedOperationException("TlsIdentity.Signer is planned for v2")
         }
     }
 
@@ -154,22 +137,6 @@ public sealed interface TlsIdentity {
             }
         }
     }
-}
-
-/** Planned for v2: signs with a key that never leaves its store. */
-@DelicateKuicksilverApi
-public interface PrivateKeySigner {
-    /** The public half of the key as a DER SubjectPublicKeyInfo; it must match the leaf certificate. */
-    public val publicKey: ByteArray
-
-    /** Picks a SignatureScheme (RFC 8446 section 4.2.3) from those the peer [offered], or null when the key can use none. */
-    public fun chooseScheme(offered: List<Int>): Int?
-
-    /** Signs [message] with [scheme]; may suspend while a remote store or HSM answers. */
-    public suspend fun sign(
-        scheme: Int,
-        message: ByteArray,
-    ): ByteArray
 }
 
 internal object Pem {

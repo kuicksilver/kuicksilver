@@ -15,7 +15,6 @@ import io.kuicksilver.tls.TlsConfig
 import io.kuicksilver.tls.TlsIdentity
 import io.kuicksilver.tls.TrustConfig
 import kotlin.time.Duration
-import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 
@@ -65,9 +64,6 @@ public class Http3ClientConfig {
 
     /** Forget alternatives without `persist=1` when the network changes (RFC 7838 section 2.2; off like browsers). */
     public var clearOnNetworkChange: Boolean = false
-
-    /** Curl's soft timeout: start HTTP/1.1 when no UDP datagram came back within this delay. Accepted but not acted on in v1 (the race uses the head start only); see docs/guide/ktor.md. */
-    public var softDelay: Duration = 100.milliseconds
 
     /** Head start of HTTP/3 over HTTP/1.1; null: 1.5 x the host's smoothed RTT, or 250 ms without history, clamped to 100 ms..2 s. */
     public var hardDelay: Duration? = null

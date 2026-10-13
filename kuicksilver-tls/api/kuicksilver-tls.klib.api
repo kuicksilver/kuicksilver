@@ -165,14 +165,6 @@ abstract interface io.kuicksilver.tls/PacketProtector : kotlin/AutoCloseable { /
     open fun seal(kotlin/Long, io.kuicksilver.native/PacketBuffer, kotlin/Int, io.kuicksilver.native/PacketBuffer, kotlin/Int): kotlin/Int // io.kuicksilver.tls/PacketProtector.seal|seal(kotlin.Long;io.kuicksilver.native.PacketBuffer;kotlin.Int;io.kuicksilver.native.PacketBuffer;kotlin.Int){}[0]
 }
 
-abstract interface io.kuicksilver.tls/PrivateKeySigner { // io.kuicksilver.tls/PrivateKeySigner|null[0]
-    abstract val publicKey // io.kuicksilver.tls/PrivateKeySigner.publicKey|{}publicKey[0]
-        abstract fun <get-publicKey>(): kotlin/ByteArray // io.kuicksilver.tls/PrivateKeySigner.publicKey.<get-publicKey>|<get-publicKey>(){}[0]
-
-    abstract fun chooseScheme(kotlin.collections/List<kotlin/Int>): kotlin/Int? // io.kuicksilver.tls/PrivateKeySigner.chooseScheme|chooseScheme(kotlin.collections.List<kotlin.Int>){}[0]
-    abstract suspend fun sign(kotlin/Int, kotlin/ByteArray): kotlin/ByteArray // io.kuicksilver.tls/PrivateKeySigner.sign|sign(kotlin.Int;kotlin.ByteArray){}[0]
-}
-
 abstract interface io.kuicksilver.tls/QuicCrypto { // io.kuicksilver.tls/QuicCrypto|null[0]
     abstract fun initialProtectors(kotlin/ByteArray, kotlin/Int, io.kuicksilver.tls/TlsRole): kotlin/Pair<io.kuicksilver.tls/PacketProtector, io.kuicksilver.tls/PacketProtector> // io.kuicksilver.tls/QuicCrypto.initialProtectors|initialProtectors(kotlin.ByteArray;kotlin.Int;io.kuicksilver.tls.TlsRole){}[0]
     abstract fun newResetKey(): io.kuicksilver.tls/ResetKey // io.kuicksilver.tls/QuicCrypto.newResetKey|newResetKey(){}[0]
@@ -287,15 +279,6 @@ sealed interface io.kuicksilver.tls/TlsIdentity { // io.kuicksilver.tls/TlsIdent
             final fun <get-chain>(): kotlin.collections/List<io.kuicksilver.tls/Certificate> // io.kuicksilver.tls/TlsIdentity.InMemory.chain.<get-chain>|<get-chain>(){}[0]
 
         final fun close() // io.kuicksilver.tls/TlsIdentity.InMemory.close|close(){}[0]
-    }
-
-    final class Signer : io.kuicksilver.tls/TlsIdentity { // io.kuicksilver.tls/TlsIdentity.Signer|null[0]
-        constructor <init>(kotlin.collections/List<io.kuicksilver.tls/Certificate>, io.kuicksilver.tls/PrivateKeySigner) // io.kuicksilver.tls/TlsIdentity.Signer.<init>|<init>(kotlin.collections.List<io.kuicksilver.tls.Certificate>;io.kuicksilver.tls.PrivateKeySigner){}[0]
-
-        final val chain // io.kuicksilver.tls/TlsIdentity.Signer.chain|{}chain[0]
-            final fun <get-chain>(): kotlin.collections/List<io.kuicksilver.tls/Certificate> // io.kuicksilver.tls/TlsIdentity.Signer.chain.<get-chain>|<get-chain>(){}[0]
-        final val signer // io.kuicksilver.tls/TlsIdentity.Signer.signer|{}signer[0]
-            final fun <get-signer>(): io.kuicksilver.tls/PrivateKeySigner // io.kuicksilver.tls/TlsIdentity.Signer.signer.<get-signer>|<get-signer>(){}[0]
     }
 
     final object Companion { // io.kuicksilver.tls/TlsIdentity.Companion|null[0]

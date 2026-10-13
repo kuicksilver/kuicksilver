@@ -110,10 +110,8 @@ internal class KslContext private constructor(
             if (!quic && config.versions == TlsVersions.Tls12And13) Ksl.ctxSetOption(h, KslConst.OPT_MIN_VERSION, KslConst.TLS1_2)
             Ksl.ctxSetCiphers(h, config.cipherSuites.openSslList, null)
             config.identity?.let { id ->
-                if (id is TlsIdentity.InMemory) {
-                    id.withKey { k -> Ksl.ctxSetIdentityKey(h, id.chain.map { it.der }, k) }
-                } else {
-                    throw TlsException.Config("unsupported identity ${id::class.simpleName}")
+                when (id) {
+                    is TlsIdentity.InMemory -> id.withKey { k -> Ksl.ctxSetIdentityKey(h, id.chain.map { it.der }, k) }
                 }
             }
             if (config.role ==

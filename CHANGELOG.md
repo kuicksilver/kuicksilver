@@ -248,6 +248,10 @@ API that was never published (0.1.0 was not released), removed before 0.2.0 bind
 
 - The deprecated type aliases `io.kuicksilver.quic.PathChanged` (use `PathEvent.Changed`) and
   `io.kuicksilver.quic.wire.VersionProfile` (use `io.kuicksilver.quic.VersionProfile`).
+- `TimeoutKind.PathValidation`, which was never produced (a failed path validation ends in `ConnectionLost.NoViablePath`).
+- Ktor client `http3 { softDelay }`, which was accepted but never acted on (the race uses `hardDelay` or the RTT-based
+  head start).
+- `TlsIdentity.Signer`, whose constructor always threw, and `PrivateKeySigner`: external signers are not implemented.
 - `kuicksilver-native`: `JvmLoader` and `JvmNativeNames`, the loader's pieces made public for its tests, and the
   constant `KSL_ABI_VERSION` are internal; a mismatch still reports both versions in `KslException.AbiMismatch`.
 

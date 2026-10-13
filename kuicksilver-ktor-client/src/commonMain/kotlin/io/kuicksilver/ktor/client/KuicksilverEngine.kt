@@ -75,7 +75,7 @@ internal class KuicksilverEngine(
 
     /** Broken alternatives and networks where QUIC worked; internal for tests. */
     internal val brokenAltSvc = BrokenAltSvc { getTimeMillis() }
-    private val race = ProtocolRace(config.http3.softDelay, config.http3.hardDelay)
+    private val race = ProtocolRace(config.http3.hardDelay)
     private val srtt = LinkedHashMap<String, kotlin.time.Duration>() // per origin, from the last HTTP/3 connection; LRU-bounded
     private var lastNetwork: String? = null
     private var networkSeen = false

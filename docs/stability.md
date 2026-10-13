@@ -32,8 +32,8 @@ above it).
   stable to *use* but experimental to *implement* (`@SubclassOptInRequired`): `DatagramIo`, `CongestionController`,
   `DatagramSender`.
 - **Delicate** is not a stability level of its own: it marks API that can weaken security when misused (a custom
-  verifier, key logging, external signers). It combines with the others: `keylogFile` and `TrustConfig.Custom` are
-  stable and delicate, `TlsIdentity.Signer` is experimental and delicate.
+  verifier, key logging, a live internal array). It combines with the others: `keylogFile` and `TrustConfig.Custom` are
+  stable and delicate, `ConnectionCore.glitchByFrameType` is experimental and delicate.
 - **Internal** declarations are public only because another Kuicksilver module needs them (the `Ksl` FFI facade,
   `KslUdpSocket`, the TCP session cache, `KtorVersionPolicy`, the soak probes). The opt-in is an error, they are left
   out of the ABI dumps, and they can change in any release.
@@ -166,7 +166,6 @@ type is experimental, so are its members.
 | API | Feature |
 |---|---|
 | `QuicSessionTicket`, `EarlyDataAdmission`, `TlsEvent.SessionTicket`, `QuicTlsSession.earlyDataAccepted`, `resume`, `enableEarlyData`, `QuicCrypto.newSession(config, earlyData)` | 0-RTT plumbing between TLS and QUIC (ADR-0015) |
-| `TlsIdentity.Signer` (also delicate) | external signers; **not available in 0.2.0**: its constructor throws `UnsupportedOperationException` |
 
 `EarlyDataState` (`Disabled`, `Allowed`, `Required`) is stable.
 
@@ -218,8 +217,5 @@ No experimental API. `TlsSocket`, `Socket.tls()` and `Socket.tlsServer()` are st
 
 These are stable, but read their KDoc before relying on them:
 
-- `TimeoutKind.PathValidation` is reserved and not produced: a failed path validation ends in
-  `ConnectionLost.NoViablePath`.
-- `Http3ClientConfig.softDelay` is accepted but not acted on ([ktor.md, Racing and fallback](guide/ktor.md#racing-and-fallback)).
 - `QuicEndpointConfig.loops > 1` throws `UnsupportedOperationException` outside Linux and Android, and a QUIC server on
   Kotlin/Native needs the accelerated socket.

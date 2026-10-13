@@ -165,7 +165,6 @@ DER.
 | `TlsIdentity.fromPem(chainPem, keyPem, password)` | `password = null` (encrypted keys are refused) | chain plus one PKCS#8 key; `keyPem` is zeroed and the key lives in OpenSSL only |
 | `TlsIdentity.fromDer(chain, keyDer)` | | the same from DER; `keyDer` is zeroed |
 | `TlsIdentity.fromKeyStore(keyStore, alias, password)`, `fromPkcs12(bytes, password)` | | JVM only |
-| `TlsIdentity.Signer` (*experimental, delicate*) | | not available in 0.2.0: the constructor throws `UnsupportedOperationException` |
 | `keylogFile(path)` (*delicate*) | | a 0600 key log file, refused for links, foreign owners and file systems without POSIX permissions |
 | `keylogFile(context, name)` (Android, *delicate*) | `name = "kuicksilver-keylog.txt"` | in the app's files; `null` in a non-debuggable build |
 | `keylogFromEnvironment()` (*delicate*) | | `SSLKEYLOGFILE`, read only when called |
@@ -231,7 +230,6 @@ Guide: [Ktor: Client](ktor.md#client).
 | `quicHints` | `Set<HostPort>` | empty | origins treated as `Preferred` in `Auto` mode; `HostPort(host, port)` compares the host exactly as in URLs |
 | `altSvcStore` | `AltSvcStore` | `InMemoryAltSvcStore()` | where alternatives live; `FileAltSvcStore(path)` keeps them across restarts |
 | `clearOnNetworkChange` | `Boolean` | `false` | drop alternatives without `persist=1` when `networkId` changes |
-| `softDelay` | `Duration` | 100 ms | accepted but not acted on in 0.2.0 |
 | `hardDelay` | `Duration?` | `null` (1.5 x the origin's smoothed RTT, 250 ms without history, clamped to 100 ms..2 s) | head start of HTTP/3 over HTTP/1.1 in a race; an explicit value is used as is |
 | `networkId` | `() -> String?` | `{ null }` (one network) | identifies the current network; a change forgets broken marks and QUIC confirmation |
 | `settings` | `Http3Settings` | `Http3Settings.Default` | HTTP/3 settings of the engine's connections |

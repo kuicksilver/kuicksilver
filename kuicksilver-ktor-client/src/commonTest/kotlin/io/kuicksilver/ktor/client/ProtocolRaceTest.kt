@@ -23,7 +23,7 @@ import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 
 class ProtocolRaceTest {
-    private val race = ProtocolRace(softDelay = 100.milliseconds, hardDelay = null)
+    private val race = ProtocolRace(hardDelay = null)
 
     @Test fun h3WinsWithoutStartingH1() =
         runTest {
@@ -59,7 +59,7 @@ class ProtocolRaceTest {
         assertEquals(2.seconds, race.headStart(5.seconds, true))
         assertEquals(600.milliseconds, race.headStart(400.milliseconds, true))
         assertEquals(250.milliseconds, race.headStart(null, true))
-        assertEquals(700.milliseconds, ProtocolRace(100.milliseconds, 700.milliseconds).headStart(10.milliseconds, true))
+        assertEquals(700.milliseconds, ProtocolRace(700.milliseconds).headStart(10.milliseconds, true))
     }
 
     @Test fun h1StartsImmediatelyOnH3Failure() =

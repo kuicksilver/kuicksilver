@@ -1219,7 +1219,6 @@ public final class io/kuicksilver/quic/TimeMark$Companion {
 public final class io/kuicksilver/quic/TimeoutKind : java/lang/Enum {
 	public static final field Handshake Lio/kuicksilver/quic/TimeoutKind;
 	public static final field Idle Lio/kuicksilver/quic/TimeoutKind;
-	public static final field PathValidation Lio/kuicksilver/quic/TimeoutKind;
 	public static fun getEntries ()Lkotlin/enums/EnumEntries;
 	public static fun valueOf (Ljava/lang/String;)Lio/kuicksilver/quic/TimeoutKind;
 	public static fun values ()[Lio/kuicksilver/quic/TimeoutKind;

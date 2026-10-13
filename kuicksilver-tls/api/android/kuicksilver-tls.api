@@ -227,12 +227,6 @@ public final class io/kuicksilver/tls/PinScope : java/lang/Enum {
 	public static fun values ()[Lio/kuicksilver/tls/PinScope;
 }
 
-public abstract interface class io/kuicksilver/tls/PrivateKeySigner {
-	public abstract fun chooseScheme (Ljava/util/List;)Ljava/lang/Integer;
-	public abstract fun getPublicKey ()[B
-	public abstract fun sign (I[BLkotlin/coroutines/Continuation;)Ljava/lang/Object;
-}
-
 public abstract interface class io/kuicksilver/tls/QuicCrypto {
 	public abstract fun initialProtectors ([BILio/kuicksilver/tls/TlsRole;)Lkotlin/Pair;
 	public abstract fun newResetKey ()Lio/kuicksilver/tls/ResetKey;
@@ -472,12 +466,6 @@ public final class io/kuicksilver/tls/TlsIdentity$Companion {
 public final class io/kuicksilver/tls/TlsIdentity$InMemory : io/kuicksilver/tls/TlsIdentity, java/lang/AutoCloseable {
 	public fun close ()V
 	public fun getChain ()Ljava/util/List;
-}
-
-public final class io/kuicksilver/tls/TlsIdentity$Signer : io/kuicksilver/tls/TlsIdentity {
-	public fun <init> (Ljava/util/List;Lio/kuicksilver/tls/PrivateKeySigner;)V
-	public fun getChain ()Ljava/util/List;
-	public final fun getSigner ()Lio/kuicksilver/tls/PrivateKeySigner;
 }
 
 public final class io/kuicksilver/tls/TlsRole : java/lang/Enum {
