@@ -165,9 +165,7 @@ type is experimental, so are its members.
 
 | API | Feature |
 |---|---|
-| `QuicSessionTicket`, `EarlyDataAdmission`, `TlsEvent.SessionTicket`, `QuicTlsSession.earlyDataAccepted`, `resume`, `enableEarlyData`, `QuicCrypto.newSession(config, earlyData)` | 0-RTT plumbing between TLS and QUIC (ADR-0015) |
-
-`EarlyDataState` (`Disabled`, `Allowed`, `Required`) is stable.
+| `EarlyDataState`, `QuicSessionTicket`, `EarlyDataAdmission`, `TlsEvent.SessionTicket`, `QuicTlsSession.earlyDataAccepted`, `resume`, `enableEarlyData`, `QuicCrypto.newSession(config, earlyData)` | 0-RTT: the client's mode and the plumbing between TLS and QUIC (ADR-0015) |
 
 ### `kuicksilver-quic`
 
