@@ -1292,6 +1292,9 @@ public final class io/kuicksilver/quic/qlog/AsyncQlogSink : io/kuicksilver/quic/
 
 public final class io/kuicksilver/quic/qlog/DirectoryQlogSink : io/kuicksilver/quic/QlogSink {
 	public fun <init> (Ljava/lang/String;)V
+	public fun <init> (Ljava/lang/String;IJ)V
+	public final fun getMaxOpenTraces ()I
+	public final fun getMaxTotalBytes ()J
 	public fun open (Ljava/lang/String;Lio/kuicksilver/tls/TlsRole;)Lio/kuicksilver/quic/QlogTrace;
 }
 

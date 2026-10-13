@@ -640,6 +640,12 @@ Samples and testing:
   process-wide keys are generated and rotated inside `ksl`, and explicit `SessionTicketConfig(keys = …)` are copied into
   native memory when the configuration is built. **Breaking:** the arrays passed as `keys` are zeroed by the constructor
   (also when it throws), and the `SessionTicketConfig.keys` property is removed (the keys cannot be read back).
+- `DirectoryQlogSink` no longer trusts the client-chosen connection ID it names files after (security review 2026-10-14,
+  threat model section 3.2): files are created exclusively and never through a symbolic link (a planted link, FIFO or
+  file is never followed, truncated or blocked on), named `<odcid>_<role>_<random>.sqlog`; the directory is created
+  owner-only and refused when it is a link, another user's, or writable by others without the sticky bit; at most 256
+  traces are open at once and 1 GiB is written over the sink's lifetime (experimental constructor
+  `DirectoryQlogSink(directory, maxOpenTraces, maxTotalBytes)`).
 
 ## 0.1.0 candidate (never published)
 
