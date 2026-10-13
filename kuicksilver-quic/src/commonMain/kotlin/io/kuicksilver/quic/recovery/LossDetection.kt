@@ -128,6 +128,9 @@ internal class LossDetection(
 
     var handshakeConfirmed: Boolean = false
 
+    /** When the connection took its first RTT sample (or the newest one after persistent congestion), [TimeMark.NEVER] before. */
+    private var firstRttSampleTime: TimeMark = TimeMark.NEVER
+
     /** Client: the server has received a Handshake packet from us (our address is validated); server: always relevant through [handshakeConfirmed]. */
     var peerAddressValidated: Boolean = false
     var ptoCount: Int = 0
@@ -206,6 +209,7 @@ internal class LossDetection(
             if (sent.isEmpty() || ack.largest(r) < sent.pnAt(sent.start)) break // this and every later range lie below the oldest packet
             var i = sent.lowerBound(ack.largest(r) + 1) - 1
             val lo = sent.lowerBound(smallest)
+            val before = acked.size
             while (i >= lo) {
                 visitedForTest++
                 val p = sent.at(i)
@@ -215,12 +219,14 @@ internal class LossDetection(
                 }
                 i--
             }
+            if (acked.size > before) sp.recordAcked(smallest, ack.largest(r))
         }
         for (k in acked.indices) listener.onDelivered(acked[k], now)
         settleLost(sp, now)
         if (sp.lostCount > 0) findSpurious(sp, space, ack, now)
         if (acked.isEmpty()) return
         visitedForTest += sent.trim()
+        pruneAcked(sp)
         val largestNewlyAcked = acked[0] // the walk goes downwards: the first match is the largest
         if (largestNewlyAcked.pn == ack.largest && largestNewlyAcked.ackEliciting && largestNewlyAcked.pathId == activePath) {
             val maxMicros = Long.MAX_VALUE / 1000 shr peerAckDelayExponent
@@ -245,6 +251,7 @@ internal class LossDetection(
                     }
                 } // saturate: a peer-chosen value must not wrap
             rtt.onSample(now - largestNewlyAcked.timeSent, ackDelay, handshakeConfirmed, peerMaxAckDelay)
+            if (firstRttSampleTime == TimeMark.NEVER) firstRttSampleTime = now
             listener.onRttSample(now, rtt.latest, rtt.min)
         }
         // RFC 9000 section 13.4.2.1: only an ACK that raises the largest acknowledged packet carries counts newer than the last ones
@@ -454,10 +461,6 @@ internal class LossDetection(
         if (lost.isEmpty()) return
         sent.trim()
         var lostBytes = 0
-        var largestSent = TimeMark(Long.MIN_VALUE)
-        var earliest = TimeMark(Long.MAX_VALUE)
-        var contiguous = true
-        var prevPn = -1L
         settleLost(sp, now)
         for (k in lost.indices) {
             val p = lost[k]
@@ -465,19 +468,11 @@ internal class LossDetection(
                 rememberLost(sp, p, now)
                 lostBytes += p.size
                 bytesInFlight -= p.size
-                if (p.timeSent >
-                    largestSent
-                ) {
-                    largestSent = p.timeSent
-                }
-                if (p.timeSent < earliest) earliest = p.timeSent
             }
             if (p.ackEliciting) sp.ackElicitingInFlight--
-            if (prevPn >= 0 && p.pn != prevPn + 1) contiguous = false
-            prevPn = p.pn
             listener.onLost(sp.id, p)
         }
-        val persistent = rtt.hasSample && contiguous && lostBytes > 0 && (largestSent - earliest) > persistentCongestionDuration()
+        val pcDuration = persistentCongestionDuration()
         // one loss event per path the lost packets travelled on: a migration must not charge the new path for the old one's losses (RFC 9000 section 9.4)
         if (lostBytes > 0) {
             var done = 0
@@ -518,6 +513,7 @@ internal class LossDetection(
                         if (p.timeSent > largest) largest = p.timeSent
                     }
                 }
+                val persistent = persistentCongestion(sp, pid, pcc, pcDuration)
                 event.kind = CongestionKind.Lost
                 event.bytes = bytes
                 event.sentTime = largest
@@ -538,6 +534,38 @@ internal class LossDetection(
         }
         for (k in lost.indices) sp.release(lost[k])
         lost.clear()
+    }
+
+    /**
+     * RFC 9002 section 7.6.2 for the lost packets of one path ([pid], counted by [pcc]): two ack-eliciting packets declared lost, no
+     * packet sent between them acknowledged (packet numbers never stored, such as ACK-only packets, or skipped do not count), more
+     * than [duration] apart, and both sent after the first RTT sample ("The persistent congestion period SHOULD NOT start until
+     * there is at least one RTT sample"; ngtcp2 filters by first_rtt_sample_ts the same way).
+     */
+    private fun persistentCongestion(
+        sp: PacketNumberSpace,
+        pid: Int,
+        pcc: io.kuicksilver.quic.CongestionController?,
+        duration: Duration,
+    ): Boolean {
+        if (!rtt.hasSample || firstRttSampleTime == TimeMark.NEVER) return false
+        var runStart = TimeMark.NEVER
+        var prevPn = -1L
+        for (k in lost.indices) {
+            val p = lost[k]
+            if (!p.ackEliciting || !p.inFlight || p.pathId != pid || p.cc !== pcc) continue
+            if (p.timeSent < firstRttSampleTime) continue
+            if (runStart == TimeMark.NEVER || sp.anyAckedBetween(prevPn, p.pn)) runStart = p.timeSent
+            prevPn = p.pn
+            if (p.timeSent - runStart > duration) return true
+        }
+        return false
+    }
+
+    /** The acknowledged ranges below the oldest packet still held can never separate two lost packets. */
+    private fun pruneAcked(sp: PacketNumberSpace) {
+        val sent = sp.sent
+        if (sent.isEmpty()) sp.clearAcked() else sp.pruneAckedBelow(sent.pnAt(sent.start))
     }
 
     private fun peerCompletedAddressValidation(): Boolean = role == TlsRole.Server || peerAddressValidated || handshakeConfirmed
@@ -683,6 +711,7 @@ internal class LossDetection(
         }
         if (removed > 0) listener.onDiscarded(removed)
         sp.sent.clear()
+        sp.clearAcked()
         sp.lossTime = TimeMark.NEVER
         sp.lastAckElicitingTime = TimeMark.NEVER
         sp.ackElicitingInFlight = 0

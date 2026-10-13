@@ -99,8 +99,11 @@ class LossDetectionTest {
             lost += p.pn
         }
 
+        val lossByPath = ArrayList<String>()
+
         override fun onCongestion(event: CongestionEvent) {
             events += "${event.kind}:${event.bytes}:${event.persistentCongestion}"
+            if (event.kind == CongestionKind.Lost) lossByPath += "${event.pathId}:${event.persistentCongestion}"
         }
 
         override fun onDiscarded(bytes: Int) {}
@@ -123,6 +126,8 @@ class LossDetectionTest {
         size: Int = 1200,
         ackEliciting: Boolean = true,
         marked: Boolean = false,
+        inFlight: Boolean = ackEliciting,
+        pathId: Int = 0,
     ) {
         val p = ld.space(space).newSentPacket()
         p.pn = pn
@@ -130,8 +135,8 @@ class LossDetectionTest {
         p.size = size
         p.ackEliciting = ackEliciting
         p.ecnMarked = marked
-        p.inFlight =
-            ackEliciting
+        p.inFlight = inFlight
+        p.pathId = pathId
         ld.onPacketSent(space, p, at)
     }
 
@@ -389,12 +394,23 @@ class LossDetectionTest {
         assertEquals(-1L, init.lastSkipped, "no skipping outside the Application space")
     }
 
+    /** An RTT sample of [rtt] taken through an ACK of packet [pn] sent at [at] (the time of the first sample matters, RFC 9002 section 7.6.2). */
+    private fun sampleByAck(
+        ld: LossDetection,
+        pn: Long,
+        at: TimeMark,
+        rtt: Duration = 100.milliseconds,
+    ) {
+        send(ld, SpaceId.Application, pn, at)
+        ld.onAck(SpaceId.Application, ack(pn to pn), at + rtt)
+    }
+
     @Test fun persistentCongestionDetected() {
         val (ld, l) = ld()
-        sample(ld, 100.milliseconds)
         ld.handshakeConfirmed = true
         ld.peerAddressValidated = true
-        for (pn in 0L..20L) send(ld, SpaceId.Application, pn, t0 + (pn.toInt() * 100).milliseconds)
+        sampleByAck(ld, 0, t0 - 200.milliseconds)
+        for (pn in 1L..20L) send(ld, SpaceId.Application, pn, t0 + (pn.toInt() * 100).milliseconds)
         ld.onAck(SpaceId.Application, ack(20L to 20L), t0 + 2100.milliseconds)
         assertTrue(
             l.events.any { it.startsWith("Lost") && it.endsWith("true") },
@@ -489,6 +505,75 @@ class LossDetectionTest {
         assertEquals(3, l.lost.size)
         ld.discard(SpaceId.Initial, t0 + 31.milliseconds)
         assertEquals(3, l.settled)
+    }
+
+    @Test fun persistentCongestionIgnoresPacketsSentBeforeTheFirstRttSample() {
+        // RFC 9002 section 7.6.2: "The persistent congestion period SHOULD NOT start until there is at least one RTT sample." A lost
+        // first Initial and two lost PTO probes, then an ACK of the third probe: the sample comes from that ACK, so none of the lost
+        // packets was sent with an RTT sample in hand (ngtcp2 filters by first_rtt_sample_ts)
+        val (ld, l) = ld()
+        send(ld, SpaceId.Initial, 0, t0)
+        send(ld, SpaceId.Initial, 1, t0 + 1.seconds)
+        send(ld, SpaceId.Initial, 2, t0 + 3.seconds)
+        send(ld, SpaceId.Initial, 3, t0 + 7.seconds)
+        ld.onAck(SpaceId.Initial, ack(3L to 3L), t0 + 7.seconds + 30.milliseconds)
+        assertEquals(listOf(0L, 1L, 2L), l.lost)
+        assertEquals(listOf("0:false"), l.lossByPath, "no RTT sample existed when the lost packets were sent")
+    }
+
+    @Test fun persistentCongestionSpansAckOnlyAndSkippedPacketNumbers() {
+        // RFC 9002 section 7.6.2: what breaks the period is an acknowledged packet between the two lost ones, not a packet number
+        // that loss detection never stored (ACK-only packets) or never used (a skipped number, RFC 9000 section 21.4)
+        val (ld, l) = ld()
+        ld.handshakeConfirmed = true
+        ld.peerAddressValidated = true
+        sampleByAck(ld, 0, t0 - 200.milliseconds)
+        var pn = 1L
+        for (k in 0 until 20) {
+            send(ld, SpaceId.Application, pn, t0 + (k * 100).milliseconds)
+            pn += if (k % 3 == 0) 2 else 1 // every third gap is an ACK-only or skipped packet number
+        }
+        send(ld, SpaceId.Application, pn, t0 + 2100.milliseconds)
+        ld.onAck(SpaceId.Application, ack(pn to pn), t0 + 2200.milliseconds)
+        assertTrue(l.lossByPath.single().endsWith("true"), "2 s of contiguous loss: ${l.lossByPath}")
+    }
+
+    @Test fun anAcknowledgedPacketBetweenTheLostOnesBreaksPersistentCongestion() {
+        val (ld, l) = ld()
+        ld.handshakeConfirmed = true
+        ld.peerAddressValidated = true
+        sampleByAck(ld, 0, t0 - 200.milliseconds)
+        for (pn in 1L..20L) send(ld, SpaceId.Application, pn, t0 + (pn.toInt() * 100).milliseconds)
+        ld.onAck(SpaceId.Application, ack(10L to 10L), t0 + 1050.milliseconds) // 1..7 lost now (packet threshold), 10 delivered
+        ld.onAck(SpaceId.Application, ack(20L to 20L), t0 + 2100.milliseconds) // 8, 9 and 11..17: a delivered packet splits them
+        assertTrue(l.lossByPath.none { it.endsWith("true") }, "10 was delivered in between: ${l.lossByPath}")
+    }
+
+    @Test fun persistentCongestionSpanIsBetweenAckElicitingPackets() {
+        // RFC 9002 section 7.6.2: "two ack-eliciting packets are declared lost"; a padding-only packet counts in flight but cannot end
+        // the period
+        val (ld, l) = ld()
+        ld.handshakeConfirmed = true
+        ld.peerAddressValidated = true
+        sampleByAck(ld, 0, t0 - 200.milliseconds)
+        for (pn in 1L..5L) send(ld, SpaceId.Application, pn, t0 + (pn.toInt() * 100).milliseconds)
+        send(ld, SpaceId.Application, 6, t0 + 2000.milliseconds, ackEliciting = false, inFlight = true)
+        for (pn in 7L..9L) send(ld, SpaceId.Application, pn, t0 + 2001.milliseconds)
+        ld.onAck(SpaceId.Application, ack(9L to 9L), t0 + 2100.milliseconds)
+        assertEquals(listOf(1L, 2L, 3L, 4L, 5L, 6L), l.lost)
+        assertEquals(listOf("0:false"), l.lossByPath, "ack-eliciting losses span 400 ms only")
+    }
+
+    @Test fun persistentCongestionIsJudgedPerPath() {
+        // RFC 9000 section 9.4: each path has its own congestion controller; a long loss period on one path does not collapse the
+        // window of another whose single packet was lost
+        val (ld, l) = ld()
+        ld.handshakeConfirmed = true
+        ld.peerAddressValidated = true
+        sampleByAck(ld, 0, t0 - 200.milliseconds)
+        for (pn in 1L..20L) send(ld, SpaceId.Application, pn, t0 + (pn.toInt() * 100).milliseconds, pathId = if (pn == 5L) 1 else 0)
+        ld.onAck(SpaceId.Application, ack(20L to 20L), t0 + 2100.milliseconds)
+        assertEquals(listOf("0:true", "1:false"), l.lossByPath)
     }
 }
 
