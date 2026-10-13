@@ -180,6 +180,7 @@ public final class io/kuicksilver/tls/KslUdpSocket$Companion {
 	public final fun encodeAddress ([BI)[B
 	public final fun errnoOf (Ljava/lang/Throwable;)Ljava/lang/Integer;
 	public final fun getSupported ()Z
+	public final fun getUnsupportedReason ()Ljava/lang/String;
 	public final fun ipOf ([B)[B
 	public final fun open ([BI)Lio/kuicksilver/tls/KslUdpSocket;
 	public final fun openOrNull ([BILkotlin/jvm/functions/Function1;)Lio/kuicksilver/tls/KslUdpSocket;

@@ -306,6 +306,9 @@ Flow control (`kuicksilver-quic`; found with the BBR simulations, 2026-10-13):
 
 QUIC runtime and sockets:
 
+- The fallback to the portable socket when the accelerated socket's one-time loopback probe fails (a sandbox that
+  refuses every bind) was silent; it is now logged once per process at `Warn`, like a refused bind: "accelerated UDP
+  socket unavailable (<reason>); using the portable socket".
 - Windows: a datagram sent with the CE codepoint no longer turns ECN off for its socket. Windows 11 refuses CE in the
   `IP_ECN` / `IPV6_ECN` control message (`WSAEINVAL`); `ksl` took that for a refusal of ECN itself, so every later
   ECT(0) datagram of the socket left unmarked. CE is now sent unmarked and ECT stays on. The QUIC core never sends CE

@@ -167,6 +167,49 @@ class KslDatagramIoTest {
             }
         }
 
+    /**
+     * A failed loopback probe ([KslUdpSocket.supported] false: a sandbox that refuses every bind) falls back to the portable
+     * socket with one warning, as a refused bind does; it was silent (docs review before 0.2.0).
+     */
+    @Test fun failedProbeIsReportedOnce() =
+        runBlocking {
+            val real = KslDatagramIo.unsupportedReason
+            val lines = mutableListOf<Pair<LogLevel, String>>()
+            val logger =
+                object : KuicksilverLogger {
+                    override fun isEnabled(level: LogLevel): Boolean = true
+
+                    override fun log(
+                        level: LogLevel,
+                        message: String,
+                        cause: Throwable?,
+                    ) {
+                        synchronized(lines) { lines += level to message }
+                    }
+                }
+            KslDatagramIo.unsupportedReason = { "ksl: udp bind: Operation not permitted" }
+            KslDatagramIo.resetFallbackWarningForTest()
+            try {
+                repeat(2) {
+                    val io = openDatagramIo(lo, IoPreference.Accelerated, logger)
+                    try {
+                        assertTrue(io !is KslDatagramIo, "portable socket expected, got $io")
+                    } finally {
+                        io.close()
+                    }
+                }
+                assertEquals(1, lines.size, "$lines")
+                assertEquals(LogLevel.Warn, lines[0].first)
+                assertEquals(
+                    "accelerated UDP socket unavailable (ksl: udp bind: Operation not permitted); using the portable socket",
+                    lines[0].second,
+                )
+            } finally {
+                KslDatagramIo.unsupportedReason = real
+                KslDatagramIo.resetFallbackWarningForTest()
+            }
+        }
+
     @Test fun capabilitiesReportAccelerated() =
         runBlocking {
             assumeTrue(ready(), "needs the accelerated socket (Linux, macOS, Windows)")

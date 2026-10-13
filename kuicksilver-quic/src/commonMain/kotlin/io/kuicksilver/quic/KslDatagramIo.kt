@@ -218,8 +218,9 @@ internal class KslDatagramIo private constructor(
 
         /**
          * Opens the accelerated socket on [local]; null where `ksl_udp` cannot open its socket or the address cannot be resolved.
-         * A single socket (no [reusePort]) the kernel refuses (a sandbox, limits) also answers null: the caller takes the portable
-         * socket, said once on standard error. [configure] sees the bound socket's descriptor before any datagram (Android binds it
+         * A single socket (no [reusePort]) the kernel refuses (a sandbox, limits), or a process whose loopback probe failed
+         * ([KslUdpSocket.unsupportedReason]), also answers null: the caller takes the portable socket, said once per process to
+         * [logger] at [LogLevel.Warn]. [configure] sees the bound socket's descriptor before any datagram (Android binds it
          * to a network); if it throws, the socket is closed.
          */
         fun open(
@@ -228,7 +229,12 @@ internal class KslDatagramIo private constructor(
             logger: KuicksilverLogger = KuicksilverLogger.Stderr,
             configure: (fd: Int) -> Unit = {},
         ): KslDatagramIo? {
-            if (!KslUdpSocket.supported) return null
+            val unsupported = unsupportedReason()
+            if (unsupported != null) {
+                // the loopback probe failed (a sandbox refusing every bind): the portable socket, said once like a refused bind
+                if (!reusePort) warnFallback(logger) { "accelerated UDP socket unavailable ($unsupported); using the portable socket" }
+                return null
+            }
             val ip = local.resolveAddress() ?: return null
             val flags =
                 KslUdpSocket.ECN or KslUdpSocket.GSO or KslUdpSocket.GRO or KslUdpSocket.DF or
@@ -240,12 +246,7 @@ internal class KslDatagramIo private constructor(
                     KslUdpSocket.open(addr, flags)
                 } else {
                     socketOpener(addr, flags) { e ->
-                        @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
-                        if (fallbackWarned.compareAndSet(false, true)) {
-                            logger.emit(
-                                LogLevel.Warn,
-                            ) { "accelerated UDP socket refused on $local (${e.message}); using the portable socket" }
-                        }
+                        warnFallback(logger) { "accelerated UDP socket refused on $local (${e.message}); using the portable socket" }
                     } ?: return null
                 }
             try {
@@ -259,6 +260,24 @@ internal class KslDatagramIo private constructor(
 
         @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
         private val fallbackWarned = kotlin.concurrent.atomics.AtomicBoolean(false)
+
+        /** The fallback to the portable socket, said once per process at [LogLevel.Warn]. */
+        @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+        private inline fun warnFallback(
+            logger: KuicksilverLogger,
+            line: () -> String,
+        ) {
+            if (fallbackWarned.compareAndSet(false, true)) logger.emit(LogLevel.Warn, message = line)
+        }
+
+        /** Lets a test see the once-per-process warning again. */
+        @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+        internal fun resetFallbackWarningForTest() {
+            fallbackWarned.store(false)
+        }
+
+        /** Why the accelerated socket cannot work in this process ([KslUdpSocket.unsupportedReason]); a test replaces it. */
+        internal var unsupportedReason: () -> String? = { KslUdpSocket.unsupportedReason }
 
         /** Opens the `ksl` socket or answers null with the reason; a test replaces it to inject a refusal. */
         internal var socketOpener: (

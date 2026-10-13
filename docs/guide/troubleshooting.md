@@ -234,9 +234,10 @@ datagram per call.
 - When a bind of the accelerated socket is refused, the logger says once per process at `Warn`: "accelerated UDP socket
   refused on <address> (<reason>); using the portable socket". The reason is the failing system call and its error
   ("<step>: <strerror>", on Windows "<step>: WSA error <n>").
-- When the one-time loopback probe (`KslUdpSocket.supported`) fails, for example because a sandbox refuses `bind`,
-  the portable socket is used **without a log line**. Tell by `QuicConnection.stats.pathMtu` staying at 1200 and
-  `ecnState` never reaching `Capable`.
+- When the one-time loopback probe fails, for example because a sandbox refuses every `bind`, the same once-per-process
+  warning reads "accelerated UDP socket unavailable (<reason>); using the portable socket". Without a logger line (a
+  `KuicksilverLogger.None` endpoint), tell by `QuicConnection.stats.pathMtu` staying at 1200 and `ecnState` never
+  reaching `Capable`.
 - A QUIC server on Kotlin/Native needs the accelerated socket; without it `bind` with a `server` throws
   `UnsupportedOperationException`, and the Ktor server serves HTTP/1.1 only, logging "HTTP/3 is not served on port
   <port>: <reason>".

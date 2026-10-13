@@ -40,6 +40,9 @@ class KslUdpSocketTest {
         val unassigned = KslUdpSocket.encodeAddress(byteArrayOf(192.toByte(), 0, 2, 1), 0) // TEST-NET-1: bind fails with EADDRNOTAVAIL
         assertEquals(false, KslUdpSocket.probe { KslUdpSocket.open(unassigned, 0).close() })
         assertEquals(true, KslUdpSocket.probe { KslUdpSocket.open(loopback(), 0).close() })
+        val why = KslUdpSocket.probeFailure { KslUdpSocket.open(unassigned, 0).close() }
+        assertTrue(!why.isNullOrBlank(), "the refusal's reason is kept for the fallback warning")
+        assertEquals(null, KslUdpSocket.unsupportedReason, "this host's loopback probe succeeds")
     }
 
     /** [KslUdpSocket.openOrNull] answers null for a socket the kernel refuses and reports why. */
