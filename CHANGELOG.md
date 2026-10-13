@@ -647,6 +647,11 @@ Ktor server (`kuicksilver-ktor-server`):
   and skips HTTP/3 with a warning (no `Alt-Svc`), as on a platform without a QUIC server.
 - A failed HTTP/3 request (for example a client resetting a WebSocket CONNECT stream) no longer cancels the
   connection's handler and aborts the Kotlin/Native process; each request contains its own failure.
+- HTTP/1.1 request framing follows RFC 9112 §6: a request without Content-Length or Transfer-Encoding has no body, also
+  a POST with `Connection: close` (Ktor CIO's pipeline read the connection to its end, so `receiveText()` waited for a
+  half-close the client never sends); a chunked body with a trailer section is accepted (it failed with "Expected CR"),
+  the trailer fields discarded. The connection pipeline is now a copy of Ktor CIO's in `h1/ServerPipeline.kt`, and
+  `ktor-server-cio` is no longer a dependency.
 
 Both Ktor engines on Kotlin/Native (`kuicksilver-ktor-network`, `kuicksilver-ktor-client`, `kuicksilver-ktor-server`):
 
@@ -717,6 +722,10 @@ Samples and testing:
   (response splitting); it now fails and the connection is closed (RFC 9112 §6.3 item 5). A response with both
   Content-Length and Transfer-Encoding is framed by the coding and its connection is not reused (item 3)
   (`negative_conflictingContentLengthFailsAndClosesConnection`, `negative_contentLengthWithTransferEncodingIsNotReused`).
+- Ktor server: a request with both Content-Length and Transfer-Encoding was framed by the chunked coding and the
+  connection kept open, so behind a front proxy that frames by Content-Length the rest of the bytes became a second,
+  smuggled request; such a request is now refused with 400 and the connection closed (RFC 9112 §6.1, threat model
+  section 3.20, `negative_contentLengthWithTransferEncodingIsRejectedAndClosed`).
 
 ## 0.1.0 candidate (never published)
 

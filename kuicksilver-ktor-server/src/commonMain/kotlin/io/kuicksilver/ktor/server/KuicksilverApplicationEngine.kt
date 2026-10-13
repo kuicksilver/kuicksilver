@@ -175,7 +175,7 @@ public class KuicksilverApplicationEngine(
         @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class, io.ktor.utils.io.InternalAPI::class)
         io.kuicksilver.ktor.network.KtorVersionPolicy.check(
             "ktor-server-core" to io.ktor.server.engine.BaseApplicationEngine::class,
-            "ktor-server-cio" to io.ktor.server.cio.backend.ServerIncomingConnection::class,
+            "ktor-http-cio" to io.ktor.http.cio.Request::class,
         ) // docs/guide/ktor.md, "Supported Ktor versions"
         serverJob.start()
         startupJob.await()

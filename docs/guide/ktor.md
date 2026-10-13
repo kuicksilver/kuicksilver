@@ -25,9 +25,12 @@ val server = embeddedServer(Kuicksilver, configure = {
 server.start(wait = true)
 ```
 
-- A `tlsConnector` serves HTTP/1.1 over TLS on TCP; Ktor's HTTP/1.1 connection pipeline (from `ktor-server-cio`) parses
-  requests, so keep-alive, pipelining, chunked bodies and `100-continue` behave as in the CIO engine. ALPN on TCP is
-  `http/1.1`.
+- A `tlsConnector` serves HTTP/1.1 over TLS on TCP; Ktor's HTTP/1.1 parser (`ktor-http-cio`) and a copy of the CIO
+  engine's connection pipeline handle requests, so keep-alive, pipelining, chunked bodies and `100-continue` behave as
+  in the CIO engine. Request framing follows RFC 9112 section 6 more strictly than CIO: a request with both
+  Content-Length and Transfer-Encoding is refused with 400 and the connection closed, a request with neither has no
+  body (also with `Connection: close`), and a chunked trailer section is accepted (its fields are discarded). ALPN on
+  TCP is `http/1.1`.
 - `configuration.identity = ...` turns plain connectors into TLS ones, so `embeddedServer(Kuicksilver, port = 443,
   configure = { identity = ... })` works as expected. Without an identity a plain `connector { port = ... }` serves
   cleartext HTTP/1.1 (behind a TLS-terminating proxy, for tests).
@@ -303,7 +306,7 @@ vendor parts of Ktor CIO (`docs/ktor-internal-api.md`), which Ktor may change in
 major.minor is not supported even when it happens to link.
 
 - **At startup.** Creating a client engine (`HttpClient(Kuicksilver)`, also through `ServiceLoader`) checks
-  `ktor-client-core` and `ktor-http-cio`; starting a server engine checks `ktor-server-core` and `ktor-server-cio`. On the
+  `ktor-client-core` and `ktor-http-cio`; starting a server engine checks `ktor-server-core` and `ktor-http-cio`. On the
   JVM and Android the version is the `Implementation-Version` in the manifest of the jar that holds each class; when the
   major.minor is not 3.6, the engine fails with an `IllegalStateException` naming the artifact, its version and the
   fix. Where no version can be read (Android after dexing, shaded or repackaged jars, classes from a directory) the check
