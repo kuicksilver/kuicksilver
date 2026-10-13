@@ -11,7 +11,8 @@ run as `GuideSamplesTest` (`kuicksilver-quic/src/jvmTest`).
 A `QuicConfig` is immutable; build it with the `quicConfig` DSL. It carries the transport settings
 (windows, idle timeout, versions, congestion controller, migration, resource limits); TLS identity and trust come from the usual `TlsConfig`
 (`docs/guide/tls.md`). The configs that wrap it have DSL entry points of their own: `quicClientConfig(tls) { }`,
-`quicServerConfig(tls) { }` and `quicEndpointConfig { }` (each `Builder` stays available).
+`quicServerConfig(tls) { }` and `quicEndpointConfig { }` (each `Builder` stays available). Every option with its default
+and range is in the [configuration reference](configuration.md).
 
 ```kotlin
 // guide:quic:config
@@ -78,8 +79,8 @@ On Linux, Android and Apple a wildcard address (`0.0.0.0` or `::`) gives a dual-
 bound to `::` sends to and receives from IPv4 and IPv6 peers, and IPv4 peers appear as IPv4 addresses. A specific address
 keeps its own family. On Windows (Kotlin/Native and the JVM) the `ksl` socket is Winsock: `WSASendMsg`/`WSARecvMsg`,
 USO/URO and ECN where the Windows version grants them (`io.capabilities` tells), DF, an exclusive bind and no
-`SO_REUSEPORT` (one loop per port); every IPv6 socket there is dual-stack, but `0.0.0.0` opens an IPv4-only socket, so
-bind `::` to reach both families.
+`SO_REUSEPORT` (one loop per port); a wildcard address gives a dual-stack socket there too (on a host without IPv6,
+`0.0.0.0` falls back to an IPv4 socket).
 With `IoPreference.Portable`, or where `ksl` cannot open its socket, the portable socket is used (NIO on the JVM,
 `ktor-network` on Native); `io.capabilities` says what the socket can do and the core adapts (ECN validation, PMTUD) per
 path. A QUIC server on Kotlin/Native needs the accelerated socket (Linux, Apple, Windows): without it `bind` with a `server` throws
@@ -615,8 +616,9 @@ without a lock.
 
 ## Observability
 
-Everything below is experimental (`@ExperimentalKuicksilverApi`). None of it costs anything per packet unless you turn
-it on: the counters are plain fields of the endpoint loop, and the logger and the listener are called per connection
+Everything below is experimental (`@ExperimentalKuicksilverApi`) except `QuicConnection.stats`, the first `EndpointStats`
+counters (`initialsDropped` to `connectionsCreated`) and `DirectoryQlogSink`, which are stable
+([stability](../stability.md)). None of it costs anything per packet unless you turn it on: the counters are plain fields of the endpoint loop, and the logger and the listener are called per connection
 event, not per datagram.
 
 **Counters.** `QuicEndpoint.stats` is an `EndpointStats` snapshot summed over every loop, cheap enough to scrape every
@@ -629,7 +631,7 @@ few seconds from any thread (fields are read without a lock and may lag the loop
 | Handshakes | `handshakesCompleted`, `handshakesFailedTimeout`, `handshakesFailedTls` (a TLS alert either way), `handshakesFailedOther` |
 | 0-RTT | `zeroRttOffered`, `zeroRttAccepted`, `zeroRttRejected` |
 | Datagrams | `datagramsReceived`, `datagramsSent`, `datagramsDroppedSocket`, `datagramsDroppedQueue`, `datagramsDroppedUndecryptable`, `datagramsDroppedStateless` |
-| Stateless work | `retriesSent`, `invalidTokens`, `versionNegotiations`, `statelessResets`, `statelessRateLimited` |
+| Stateless work | `initialsDropped` (new Initials discarded: a full Initial queue, `maxConnections`, `maxConnectionsPerIp`, reflective source ports, admission `Drop`), `retriesSent`, `invalidTokens`, `versionNegotiations`, `statelessResets`, `statelessRateLimited` |
 | Paths | `pathValidations`, `pathValidationFailures` |
 | Internal failures | `uncaughtFailures`, `sendFailures`, `listenerFailures`, `admissionContractViolations` |
 
