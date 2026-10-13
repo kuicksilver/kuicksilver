@@ -43,8 +43,8 @@ public actual object KslLoader {
     public actual fun isAvailable(): Boolean = availability() is NativeAvailability.Available
 }
 
-/** Testable pieces of the loader. */
-public object JvmLoader {
+/** Testable pieces of the loader; internal, reached by this module's tests. */
+internal object JvmLoader {
     /** The whole load sequence of [KslLoader] (load, ABI, init) with resources looked up in [classLoader]; never throws. */
     internal fun attempt(
         props: Map<String, String>,
@@ -66,7 +66,7 @@ public object JvmLoader {
      * extracted to [privateWorkDir] and checked against the SHA-256 manifest. Throws [KslException.NativeLoad]; the ABI is
      * checked separately by [checkAbi].
      */
-    public fun load(props: Map<String, String>) {
+    fun load(props: Map<String, String>) {
         load(props, KslLoader::class.java.classLoader)
     }
 
@@ -92,7 +92,7 @@ public object JvmLoader {
     }
 
     /** The file named by `kuicksilver.native.path` in [props], or null without it; [KslException.NativeLoad] when it is no regular file. */
-    public fun resolveExplicitPath(props: Map<String, String>): File? {
+    fun resolveExplicitPath(props: Map<String, String>): File? {
         val p = props[PATH] ?: return null
         val f = File(p)
         if (!f.isFile) throw KslException.NativeLoad(JvmNativeNames.os, JvmNativeNames.classifier, "$PATH=$p does not exist")
@@ -100,7 +100,7 @@ public object JvmLoader {
     }
 
     /** Maps ksl_init codes (system-OpenSSL builds, Linux only) to exceptions. */
-    public fun checkInit(code: Int) {
+    fun checkInit(code: Int) {
         when (code) {
             0 -> return
 
@@ -119,7 +119,7 @@ public object JvmLoader {
     }
 
     /** Throws [KslException.AbiMismatch] unless the loaded library reports ABI [expected]; call it after [load]. */
-    public fun checkAbi(expected: Int) {
+    fun checkAbi(expected: Int) {
         val native = KslNative.abiVersion()
         if (native != expected) throw KslException.AbiMismatch(native, expected)
     }
@@ -131,7 +131,7 @@ public object JvmLoader {
      * permissions after `rwx------` is applied fails with [KslException.NativeLoad] (`IntegrityMismatch`). Set the property
      * when the temporary directory is mounted `noexec`.
      */
-    public fun privateWorkDir(props: Map<String, String> = emptyMap()): File {
+    fun privateWorkDir(props: Map<String, String> = emptyMap()): File {
         val base =
             props[WORKDIR]?.let(::File)
                 ?: File(System.getProperty("java.io.tmpdir"), "kuicksilver-native-" + System.getProperty("user.name"))
@@ -219,7 +219,7 @@ public object JvmLoader {
      * Throws [KslException.NativeLoad] unless the SHA-256 of [file] equals the hash on the [manifest] line (`<hex> <path>`)
      * whose path ends with [entryName]; a file without an entry fails too, so a tampered or unlisted library never loads.
      */
-    public fun verifyAgainstManifest(
+    fun verifyAgainstManifest(
         file: File,
         manifest: String,
         entryName: String = file.name,
@@ -257,7 +257,7 @@ public object JvmLoader {
      * atomic rename. On a POSIX file system an undeterminable current user fails with [KslException.NativeLoad]; without a
      * POSIX view (Windows) ownership is not checked.
      */
-    public fun installLibrary(
+    fun installLibrary(
         out: File,
         content: ByteArray,
         manifest: String,
@@ -310,7 +310,7 @@ public object JvmLoader {
      * Throws [KslException.NativeLoad] when the classpath carries several copies of the library resource with different
      * content (two Kuicksilver versions, a shaded copy), since which one loads would be an accident; identical copies pass.
      */
-    public fun checkDuplicates(contents: List<ByteArray>) {
+    fun checkDuplicates(contents: List<ByteArray>) {
         val hashes = contents.map { MessageDigest.getInstance("SHA-256").digest(it).toList() }.toSet()
         if (hashes.size >
             1

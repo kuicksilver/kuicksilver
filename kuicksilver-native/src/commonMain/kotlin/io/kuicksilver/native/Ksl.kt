@@ -341,8 +341,11 @@ public expect object Ksl {
     public fun liveObjects(): LongArray
 }
 
-/** The ABI the Kotlin side was written against; checked against [Ksl.abiVersion] on load. */
-public const val KSL_ABI_VERSION: Int = 6
+/**
+ * The ABI the Kotlin side was written against (`KSL_ABI_VERSION` in `ksl.h`); checked against [Ksl.abiVersion] on load.
+ * Internal: an application sees it as [KslException.AbiMismatch.kotlin] when the check fails.
+ */
+internal const val KSL_ABI_VERSION: Int = 6
 
 /**
  * Loads the native library once per process and checks the ABI. [availability] answers without throwing whether the
@@ -350,7 +353,7 @@ public const val KSL_ABI_VERSION: Int = 6
  */
 public expect object KslLoader {
     /**
-     * Loads and initializes `libksl` unless this process already tried, then checks [KSL_ABI_VERSION]. The TLS layer calls it
+     * Loads and initializes `libksl` unless this process already tried, then checks its `ksl` ABI version. The TLS layer calls it
      * before its first native call; an application may call it at startup to fail fast on a missing or tampered library
      * (threat model, supply chain). Thread-safe and cheap after the first attempt. A failure throws [KslException]
      * ([KslException.NativeLoad], [KslException.AbiMismatch], or on system-OpenSSL builds [KslException.Version] and

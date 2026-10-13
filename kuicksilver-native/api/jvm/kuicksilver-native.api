@@ -10,30 +10,6 @@ public abstract interface annotation class io/kuicksilver/annotations/InternalKu
 public abstract interface annotation class io/kuicksilver/annotations/KuicksilverDsl : java/lang/annotation/Annotation {
 }
 
-public final class io/kuicksilver/native/JvmLoader {
-	public static final field INSTANCE Lio/kuicksilver/native/JvmLoader;
-	public final fun checkAbi (I)V
-	public final fun checkDuplicates (Ljava/util/List;)V
-	public final fun checkInit (I)V
-	public final fun installLibrary (Ljava/io/File;[BLjava/lang/String;)V
-	public final fun load (Ljava/util/Map;)V
-	public final fun privateWorkDir (Ljava/util/Map;)Ljava/io/File;
-	public static synthetic fun privateWorkDir$default (Lio/kuicksilver/native/JvmLoader;Ljava/util/Map;ILjava/lang/Object;)Ljava/io/File;
-	public final fun resolveExplicitPath (Ljava/util/Map;)Ljava/io/File;
-	public final fun verifyAgainstManifest (Ljava/io/File;Ljava/lang/String;Ljava/lang/String;)V
-	public static synthetic fun verifyAgainstManifest$default (Lio/kuicksilver/native/JvmLoader;Ljava/io/File;Ljava/lang/String;Ljava/lang/String;ILjava/lang/Object;)V
-}
-
-public final class io/kuicksilver/native/JvmNativeNames {
-	public static final field INSTANCE Lio/kuicksilver/native/JvmNativeNames;
-	public static final field RESOURCE_DIR Ljava/lang/String;
-	public final fun getArch ()Ljava/lang/String;
-	public final fun getClassifier ()Ljava/lang/String;
-	public final fun getOs ()Ljava/lang/String;
-	public final fun libraryFileName (I)Ljava/lang/String;
-	public static synthetic fun libraryFileName$default (Lio/kuicksilver/native/JvmNativeNames;IILjava/lang/Object;)Ljava/lang/String;
-}
-
 public abstract class io/kuicksilver/native/KslException : java/lang/RuntimeException {
 	public synthetic fun <init> (Ljava/lang/String;Ljava/lang/Throwable;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
 }
@@ -70,10 +46,6 @@ public final class io/kuicksilver/native/KslException$Version : io/kuicksilver/n
 	public fun <init> (Ljava/lang/String;Ljava/lang/String;)V
 	public final fun getFound ()Ljava/lang/String;
 	public final fun getRequired ()Ljava/lang/String;
-}
-
-public final class io/kuicksilver/native/KslKt {
-	public static final field KSL_ABI_VERSION I
 }
 
 public final class io/kuicksilver/native/KslLoader {

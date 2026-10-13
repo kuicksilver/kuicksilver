@@ -74,9 +74,9 @@ Nothing is deprecated in 0.2.0. The two type aliases deprecated before 0.1.0, wh
 
 The C shim `ksl` (`kuicksilver-native/src/c/ksl.h`) has its own version, `KSL_ABI_VERSION`, **6 in 0.2.0** (ABI 5 kept
 identity keys in OpenSSL, ABI 6 added the early-data controls for 0-RTT and the live-object counters). It is bumped on
-any incompatible change of the C interface. The Kotlin side expects one exact value (`KSL_ABI_VERSION` in
-`io.kuicksilver.native`), and the loader refuses any other: `KslException.AbiMismatch(native, kotlin)` with the message
-"ksl ABI <n> in the native library, <m> expected", older or newer alike. On the JVM the check runs right after the
+any incompatible change of the C interface. The Kotlin side expects one exact value (an internal constant
+of `kuicksilver-native`), and the loader refuses any other: `KslException.AbiMismatch(native, kotlin)` with the
+message "ksl ABI <n> in the native library, <m> expected", older or newer alike. On the JVM the check runs right after the
 library is loaded and before `ksl_init`; on Android after `System.loadLibrary("ksl")`; on Kotlin/Native `ksl` is linked
 statically, so a mismatch cannot normally happen. The outcome is cached for the process: `KslLoader.ensureLoaded()`
 throws the same exception again and `KslLoader.availability()` reports
