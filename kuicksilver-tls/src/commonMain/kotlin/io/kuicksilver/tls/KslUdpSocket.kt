@@ -230,6 +230,12 @@ public class KslUdpSocket private constructor(
                 null
             }
 
+        /**
+         * The system error number of a failed [send] or [receive] ([KslException.Internal.alert]), or null for any other
+         * exception: callers above this module classify socket errors without importing `kuicksilver-native`.
+         */
+        public fun errnoOf(e: Throwable): Int? = (e as? KslException.Internal)?.alert
+
         /** Encodes an IPv4 (4 bytes) or IPv6 (16 bytes) address and port into the `ADDR_LEN`-byte wire form. */
         public fun encodeAddress(
             ip: ByteArray,
