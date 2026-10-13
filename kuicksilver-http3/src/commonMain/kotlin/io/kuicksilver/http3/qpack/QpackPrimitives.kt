@@ -68,6 +68,8 @@ internal class QpackReader(
         for (i in 0 until 10) {
             val b = peek()
             pos++
+            // bits shifted past bit 62 would be lost (a 10th byte at shift 63): an overflow, RFC 7541 section 5.1
+            if ((b and 0x7f).toLong() > (Long.MAX_VALUE ushr shift)) fail("integer above ${limits.maxInteger}")
             v += (b and 0x7f).toLong() shl shift
             if (v > limits.maxInteger || v < 0) fail("integer above ${limits.maxInteger}")
             if (b and 0x80 == 0) return v

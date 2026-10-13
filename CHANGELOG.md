@@ -541,6 +541,8 @@ HTTP/3 (`kuicksilver-http3`):
   `respond`/`finish` (refused trailers reset the stream with `H3_INTERNAL_ERROR` rather than leaving it without FIN),
   request trailers reset the stream and fail the request or its response body with `FieldSectionTooLarge` — instead of
   being sent for the peer to refuse.
+- QPACK: a prefixed integer whose 10th continuation byte carried bits above bit 62 lost them silently (an even byte
+  read 2^64 + n as n); such an encoding is now a decoding error (RFC 7541 section 5.1, RFC 9204 section 4.1.1).
 
 Ktor client (`kuicksilver-ktor-client`):
 
