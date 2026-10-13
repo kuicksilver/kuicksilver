@@ -249,7 +249,8 @@ public class TlsConfig private constructor(
 
         /**
          * Receives the handshake secrets as RFC 9850 key log lines, so that a capture can be decrypted; default null, and
-         * keep it null in production: anyone who reads the sink can decrypt the traffic. `SSLKEYLOGFILE` is never read.
+         * keep it null in production: anyone who reads the sink can decrypt the traffic. `SSLKEYLOGFILE` is not read unless
+         * the application calls [keylogFromEnvironment] and assigns its sink here.
          */
         @DelicateKuicksilverApi public var keylog: KeylogSink? = null
 

@@ -147,7 +147,10 @@ resumption is a handle to a native OpenSSL session, never its serialized bytes, 
 entry is used, replaced, evicted or expires, or when the engine that owns the cache closes. Each Ktor client engine
 keeps its own cache of at most 256 sessions (the least recently stored one is evicted first); `Socket.tls` and
 `TlsConnection.client` share one process-wide cache with the same bound (the cache itself is internal API). `TlsConfig.keylog` accepts a `KeylogSink` (RFC 9850 lines); the
-`SSLKEYLOGFILE` variable is ignored by the library and by the bundled OpenSSL. `keylogFile(path)` creates the file
+`SSLKEYLOGFILE` variable is not read on the library's own and is ignored by the bundled OpenSSL; only
+`keylogFromEnvironment()`, called by the application, turns it into a sink. A `libksl` built against the system
+OpenSSL (Linux only, loaded with `-Dkuicksilver.native.path` or `-Dkuicksilver.native.system=true`) refuses to load while
+it is set, since that libssl might honour it (`KslException.NativeLoad` "SSLKEYLOGFILE is set and the system libssl may honour it; unset it (keylog)"). `keylogFile(path)` creates the file
 with mode 0600 and checks it before the first line: a symlink at the path, a file that is not a regular file, has more than one
 hard link or belongs to another user, or a file system without POSIX permissions is refused with an `IllegalArgumentException`, and an existing
 file that is readable by the group or others is tightened to 0600 (on the JVM, Linux and Apple). The JVM on Windows has
@@ -157,7 +160,6 @@ created, and every line goes through that descriptor, so a file removed and recr
 the JVM sink is also `java.io.Closeable` (close it when you are done, otherwise the descriptor stays open until the
 channel is collected or the process exits). Kotlin/Native reopens the file without following links for every line and
 repeats the checks on the new descriptor.
-`keylogFromEnvironment()` reads the variable explicitly.
 
 ```kotlin
 val path = "/tmp/kuicksilver-keys.txt"

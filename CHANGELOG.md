@@ -225,6 +225,10 @@ QUIC (`kuicksilver-quic`):
 
 Native layer and TLS (`kuicksilver-native`, `kuicksilver-tls`):
 
+- KDoc corrections: `SessionTicketConfig` and `TlsConfig.sessionTickets` also apply to a QUIC server with `earlyData`
+  (they said QUIC ignores them); `KeylogSink`, `keylogFile` and `TlsConfig.keylog` say that `keylogFromEnvironment()`
+  reads `SSLKEYLOGFILE` when called and that a system-OpenSSL Linux build refuses to load while it is set (they said it
+  is never read).
 - `EarlyDataState` is `@ExperimentalKuicksilverApi`, like every other part of the 0-RTT API it belongs to.
 - Apple platform trust (`TrustConfig.Platform`, also under `Pinned` and `ExpectedName`) evaluates with
   `SecTrustEvaluateAsyncWithError` on a global dispatch queue and suspends the caller: an evaluation waiting on OCSP or

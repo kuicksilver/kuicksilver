@@ -298,7 +298,7 @@ keep their defaults and are not configurable from the engine in 0.2.0. Ktor's `c
 | `kuicksilver.native.path` | JVM system property | unset | load `libksl` from this file, without the hash check |
 | `kuicksilver.native.system` | JVM system property | unset | `true` loads `ksl` with `System.loadLibrary`, without the hash check |
 | `SSL_CERT_FILE`, `SSL_CERT_DIR` | environment, Linux Kotlin/Native | unset | the CA store of `TrustConfig.Platform`; when set, they replace the distribution paths ([Linux trust store](tls.md#linux-trust-store)) |
-| `SSLKEYLOGFILE` | environment | | never read implicitly; `keylogFromEnvironment()` reads it on request |
+| `SSLKEYLOGFILE` | environment | | never read implicitly; `keylogFromEnvironment()` reads it on request. A `libksl` built against the system OpenSSL (Linux) refuses to load while it is set |
 
 ## Fixed limits
 

@@ -296,7 +296,8 @@ exception from the first connection. `NativeUnavailableReason`:
 | `AbiMismatch` | `KslException.AbiMismatch` "ksl ABI <n> in the native library, <m> expected" | the native library belongs to another Kuicksilver release, usually through `-Dkuicksilver.native.path` or `-Dkuicksilver.native.system=true`; use the library of the same version ([stability](../stability.md#the-native-library-abi-ksl)) |
 
 `KslException.Version` ("OpenSSL <found> found, OpenSSL 3.5+ (not 4.x) required") and `KslException.MissingSymbol`
-appear only with a library built against a system OpenSSL. The outcome of the first load attempt is cached for the
+appear only with a library built against a system OpenSSL, as does `KslException.NativeLoad` "SSLKEYLOGFILE is set and
+the system libssl may honour it; unset it (keylog)": such a library refuses to load while `SSLKEYLOGFILE` is set. The outcome of the first load attempt is cached for the
 process: fix the cause and restart.
 
 ## Ktor engines

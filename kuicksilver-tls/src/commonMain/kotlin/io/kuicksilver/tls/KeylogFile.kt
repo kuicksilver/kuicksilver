@@ -12,12 +12,15 @@ import io.kuicksilver.annotations.DelicateKuicksilverApi
  * line goes through that descriptor, so a file removed and recreated at the path later receives nothing; the JVM sink is
  * also `java.io.Closeable` and keeps the descriptor until it is closed (or collected, or the process exits). Kotlin/Native
  * reopens the file for every line without following links and repeats the checks on the new descriptor.
- * A line that cannot be written is dropped, not retried. `SSLKEYLOGFILE` is never consulted by the library;
- * [keylogFromEnvironment] reads it explicitly when you ask.
+ * A line that cannot be written is dropped, not retried. The library never consults `SSLKEYLOGFILE` on its own;
+ * [keylogFromEnvironment] reads it when the application calls it.
  */
 @DelicateKuicksilverApi
 public expect fun keylogFile(path: String): KeylogSink
 
-/** The value of `SSLKEYLOGFILE` in this process, or null. Only for explicit, deliberate use in debug builds. */
+/**
+ * A [keylogFile] sink for the path in `SSLKEYLOGFILE`, read when this is called; null when the variable is unset or blank.
+ * Only for explicit, deliberate use in debug builds. Throws as [keylogFile] for a path it refuses.
+ */
 @DelicateKuicksilverApi
 public expect fun keylogFromEnvironment(): KeylogSink?

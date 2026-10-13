@@ -5,8 +5,11 @@ package io.kuicksilver.tls
 import io.kuicksilver.annotations.DelicateKuicksilverApi
 
 /**
- * Receives RFC 9850 key log lines. The only way to obtain TLS secrets; `SSLKEYLOGFILE` is never read by the library
- * (docs/guide/tls.md, Key logging). Attaching a sink is a deliberate decision of the application (the library logs nothing). Lines are delivered as the handshake produces them.
+ * Receives RFC 9850 key log lines. The only way to obtain TLS secrets (docs/guide/tls.md, Key logging). The library never
+ * reads `SSLKEYLOGFILE` on its own: only [keylogFromEnvironment], called by the application, turns it into a sink, and a
+ * Linux build against the system OpenSSL refuses to load while it is set (that libssl might honour it behind the
+ * library's back; `KslException.NativeLoad`). Attaching a sink is a deliberate decision of the application (the library
+ * logs nothing). Lines are delivered as the handshake produces them.
  */
 @DelicateKuicksilverApi
 public fun interface KeylogSink {
