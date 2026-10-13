@@ -249,11 +249,13 @@ Ktor client (`kuicksilver-ktor-client`):
 
 ### Removed
 
-API that was never published (0.1.0 was not released), removed before 0.2.0 binds the API ([stability](docs/stability.md)):
+API that was never published (0.1.0 was not released), removed before 0.2.0 binds the API
+([stability](docs/stability.md)):
 
 - The deprecated type aliases `io.kuicksilver.quic.PathChanged` (use `PathEvent.Changed`) and
   `io.kuicksilver.quic.wire.VersionProfile` (use `io.kuicksilver.quic.VersionProfile`).
-- `TimeoutKind.PathValidation`, which was never produced (a failed path validation ends in `ConnectionLost.NoViablePath`).
+- `TimeoutKind.PathValidation`, which was never produced (a failed path validation ends in
+  `ConnectionLost.NoViablePath`).
 - Ktor client `http3 { softDelay }`, which was accepted but never acted on (the race uses `hardDelay` or the RTT-based
   head start).
 - `TlsIdentity.Signer`, whose constructor always threw, and `PrivateKeySigner`: external signers are not implemented.
@@ -333,9 +335,9 @@ Flow control (`kuicksilver-quic`; found with the BBR simulations, 2026-10-13):
 
 QUIC runtime and sockets:
 
-- The `UnsupportedOperationException` of a Kotlin/Native QUIC server without the accelerated socket named Linux and Apple
-  only; Windows has the socket too. `ConnectionLost.Timeout`'s KDoc no longer lists the removed path-validation and
-  disconnect timers, and the Ktor server's `udpSocketCount` KDoc says Linux and Android (it said Linux).
+- The `UnsupportedOperationException` of a Kotlin/Native QUIC server without the accelerated socket named Linux and
+  Apple only; Windows has the socket too. `ConnectionLost.Timeout`'s KDoc no longer lists the removed path-validation
+  and disconnect timers, and the Ktor server's `udpSocketCount` KDoc says Linux and Android (it said Linux).
 - The fallback to the portable socket when the accelerated socket's one-time loopback probe fails (a sandbox that
   refuses every bind) was silent; it is now logged once per process at `Warn`, like a refused bind: "accelerated UDP
   socket unavailable (<reason>); using the portable socket".
@@ -464,9 +466,10 @@ TLS and native layer (`kuicksilver-tls`, `kuicksilver-native`):
 
 HTTP/3 (`kuicksilver-http3`):
 
-- `Http3Settings` KDoc gave the defaults of `encoderMaxTableCapacity`, `maxFieldSectionSize`, `maxInformationalResponses`
-  and `maxEarlyPriorityUpdates` in a form that read as ceilings ("32 at most"); it now states default and range, and a
-  negative `maxInformationalResponses` or `maxEarlyPriorityUpdates` is refused with a message naming it.
+- `Http3Settings` KDoc gave the defaults of `encoderMaxTableCapacity`, `maxFieldSectionSize`,
+  `maxInformationalResponses` and `maxEarlyPriorityUpdates` in a form that read as ceilings ("32 at most"); it now
+  states default and range, and a negative `maxInformationalResponses` or `maxEarlyPriorityUpdates` is refused with a
+  message naming it.
 - A QPACK encoder-stream instruction cut into many fragments by the transport was re-copied and re-parsed per fragment
   (quadratic in its length); it is now appended to once and parsed when its known length has arrived (RFC 9204 section
   7.4).
