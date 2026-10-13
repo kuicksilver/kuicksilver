@@ -70,6 +70,7 @@ struct ksl_udp {
     LPFN_WSARECVMSG recv_msg; LPFN_WSASENDMSG send_msg;
     uint32_t requested, granted; uint16_t gso_max; uint16_t batch;
     int gso_on, ecn_cmsg_on, df_probe, dual;   /* df_probe: IP_MTU_DISCOVER = PROBE taken; dual: AF_INET6 on :: for a 0.0.0.0 bind */
+    int ce_refused;   /* Windows refused the CE codepoint in the IP_ECN / IPV6_ECN cmsg (WSAEINVAL): CE leaves unmarked, ECT stays on */
     uint32_t last_errno; char last_msg[KSL_MSG];
     uint8_t local[KSL_UDP_ADDR_LEN];
     /* the receiver thread owns scratch (a URO train and its segments not yet handed out), the sender thread owns tx (a joined USO run) */
@@ -232,7 +233,7 @@ static int send_one(ksl_udp *u, const uint8_t *buf, uint32_t len, const uint8_t 
     union { WSACMSGHDR align; char b[WSA_CMSG_SPACE(sizeof(INT)) + WSA_CMSG_SPACE(sizeof(DWORD))]; } cb; memset(&cb, 0, sizeof cb);   /* zeroed: NXTHDR reads the next header's length */
     WSAMSG m; memset(&m, 0, sizeof m); m.name = (LPSOCKADDR)&ss; m.namelen = sl; m.lpBuffers = &wb; m.dwBufferCount = 1; m.Control.buf = cb.b; m.Control.len = sizeof cb.b;
     WSACMSGHDR *c = WSA_CMSG_FIRSTHDR(&m); ULONG used = 0;
-    if (ecn && u->ecn_cmsg_on && c) {   /* the level follows the destination: a v4-mapped peer of a dual-stack socket takes IP_ECN (as msquic) */
+    if (ecn && u->ecn_cmsg_on && !(ecn == 3 && u->ce_refused) && c) {   /* the level follows the destination: a v4-mapped peer of a dual-stack socket takes IP_ECN (as msquic) */
         INT v = ecn & 3; c->cmsg_level = addr[0] == 4 ? IPPROTO_IP : IPPROTO_IPV6; c->cmsg_type = addr[0] == 4 ? IP_ECN : IPV6_ECN; c->cmsg_len = WSA_CMSG_LEN(sizeof(INT));
         memcpy(WSA_CMSG_DATA(c), &v, sizeof v); used += WSA_CMSG_SPACE(sizeof(INT)); c = WSA_CMSG_NXTHDR(&m, c);
     }
@@ -275,8 +276,13 @@ int ksl_udp_send(ksl_udp *u, uint8_t *const *bufs, const uint32_t *lens, const u
         int e = 0;
         if (send_one(u, bufs[i], lens[i], addrs + i * KSL_UDP_ADDR_LEN, ecn[i], 0, &e) == 0) { if (gso_probe) gso_off(u); gso_probe = 0; i++; (*sent)++; continue; }
         if (e == WSAEWOULDBLOCK) return KSL_OK;
-        if (e == WSAEINVAL && u->ecn_cmsg_on && ecn[i]) {   /* the ECN cmsg or the destination: the same datagram without the mark decides */
-            if (send_one(u, bufs[i], lens[i], addrs + i * KSL_UDP_ADDR_LEN, 0, 0, &e) == 0) { u->ecn_cmsg_on = 0; u->granted &= ~(uint32_t)KSL_UDP_ECN; gso_probe = 0; i++; (*sent)++; continue; }
+        if (e == WSAEINVAL && u->ecn_cmsg_on && ecn[i] && !(ecn[i] == 3 && u->ce_refused)) {   /* the ECN cmsg or the destination: the same datagram without the mark decides */
+            if (send_one(u, bufs[i], lens[i], addrs + i * KSL_UDP_ADDR_LEN, 0, 0, &e) == 0) {
+                /* Windows 11 refuses CE in the cmsg (a sender never sets it, RFC 9000 section 13.4.1; msquic and quic-go never send it): only
+                   CE goes unmarked from now on. Before, this refusal turned ECN off for the whole socket, so every later ECT(0) left Not-ECT */
+                if (ecn[i] == 3) u->ce_refused = 1; else { u->ecn_cmsg_on = 0; u->granted &= ~(uint32_t)KSL_UDP_ECN; }
+                gso_probe = 0; i++; (*sent)++; continue;
+            }
             if (e == WSAEWOULDBLOCK) return KSL_OK;
         }
         gso_probe = 0;

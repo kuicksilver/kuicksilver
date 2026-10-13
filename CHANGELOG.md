@@ -288,6 +288,11 @@ Flow control (`kuicksilver-quic`; found with the BBR simulations, 2026-10-13):
 
 QUIC runtime and sockets:
 
+- Windows: a datagram sent with the CE codepoint no longer turns ECN off for its socket. Windows 11 refuses CE in the
+  `IP_ECN` / `IPV6_ECN` control message (`WSAEINVAL`); `ksl` took that for a refusal of ECN itself, so every later
+  ECT(0) datagram of the socket left unmarked. CE is now sent unmarked and ECT stays on. The QUIC core never sends CE
+  (RFC 9000 section 13.4.1), so connections were not affected; a `DatagramIo` user sending CE was, and so was the JVM
+  test that does (`KslDatagramIoTest.ecnSurvivesLoopback`, which failed on Windows).
 - A lost path socket (`PathEvent.SocketLost`) is forgotten when its connection ends: the loop's list of lost sockets,
   which keeps them from being written again, dropped an entry only when the path itself was closed, so every connection
   that ended on a lost migrated socket left one behind for the life of the endpoint.

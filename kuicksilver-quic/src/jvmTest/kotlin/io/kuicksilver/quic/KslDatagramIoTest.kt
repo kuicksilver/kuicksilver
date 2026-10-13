@@ -244,7 +244,7 @@ class KslDatagramIoTest {
                 withTimeout(5.seconds) { while (inb.count < 3) b.receive(inb) }
                 val got = (0 until 3).map { inb.ecn(it) }
                 if (windows) {
-                    // Windows 11 does not carry a CE the sender asks for over loopback (it arrives Not-ECT); a QUIC sender never
+                    // Windows 11 refuses CE in the IP_ECN cmsg (WSAEINVAL) and ksl sends that datagram unmarked; a QUIC sender never
                     // sets CE (RFC 9000 section 13.4.1), routers do, so the granted capability is ECT(0) written and read back
                     assertEquals(listOf(Ecn.Ect0, Ecn.NotEct), listOf(got[0], got[2]))
                     assertTrue(got[1] == Ecn.Ce || got[1] == Ecn.NotEct, "CE sent over Windows loopback arrived as ${got[1]}")
