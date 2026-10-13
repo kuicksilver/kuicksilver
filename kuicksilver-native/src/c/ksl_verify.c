@@ -80,8 +80,7 @@ int ksl_client_hello_cb(SSL *ssl, int *al, void *arg) {
     if (s->sni_decision_alert) { *al = s->sni_decision_alert; return SSL_CLIENT_HELLO_ERROR; }
     if (s->sni_override) {
         ksl_ctx *o = s->sni_override;
-        if (!SSL_set_SSL_CTX(ssl, o->ctx)) { *al = SSL_AD_INTERNAL_ERROR; return SSL_CLIENT_HELLO_ERROR; }
-        SSL_set_verify(ssl, SSL_CTX_get_verify_mode(o->ctx), NULL);
+        if (!SSL_set_SSL_CTX(ssl, o->ctx) || !ksl_ctx_apply_to_ssl(o, ssl)) { *al = SSL_AD_INTERNAL_ERROR; return SSL_CLIENT_HELLO_ERROR; }
         /* ALPN: the override's SSL_CTX carries its own select callback (arg = o); the frozen base context, shared by other sessions, is never written */
         s->owner = o;   /* ownership of the session's settings moves to the override context */
         SSL_set_ex_data(ssl, 1, s);

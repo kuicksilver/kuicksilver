@@ -636,6 +636,13 @@ Samples and testing:
 - 0-RTT replay protection, hardened before its first release (threat model section 3.8): one replay register per process,
   shared by every endpoint, loop and configuration that can decrypt the process's tickets; forged ClientHellos no longer
   fill it; a wall clock stepped back cannot reopen a replay; an idle register stripe keeps a full half of history.
+- TLS server with an `sniSelector`: the override's settings are now fully in effect. OpenSSL copies per-connection
+  settings out of the base context when the session is created and an SNI context switch moved only the certificate, so
+  an override that pins client certificates over a base that does not still sent a TLS 1.3 ticket before its pin verdict,
+  and the client resumed with it past the pin (ADR-0011 rule 2). `ksl` now applies the override's ticket count, version
+  range, options, verify mode and parameters, suites, groups, session context and early-data settings; a ticket is issued
+  under such a configuration only after the pin verdict, and only such tickets resume there (`ksl` stamps each ticket)
+  (`negative_sniOverridePinnedClientsNoTicketBeforeVerdict`, C `tcp_sni_override_settings_effective`).
 
 ## 0.1.0 candidate (never published)
 

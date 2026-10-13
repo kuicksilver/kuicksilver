@@ -251,7 +251,8 @@ public class TlsConnection private constructor(
         } else {
             val pinnedClients = effective.clientAuth != ClientAuth.None && effective.trust is TrustConfig.Pinned
             // a resumed session carries only the client's leaf, so a CA pin cannot be re-checked; it resumed under this trust configuration's
-            // session context, and with pinned clients its ticket was issued only after this check passed: the verdict travels with it
+            // session context, and with pinned clients ksl encrypts a ticket only on the explicit request below and resumes only tickets
+            // stamped that way (ksl_ctx.c ticket callbacks): the verdict travels with it
             if (pinnedClients &&
                 !reused
             ) {

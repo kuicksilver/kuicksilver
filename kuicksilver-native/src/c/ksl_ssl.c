@@ -144,7 +144,7 @@ int ksl_ssl_set_session(ksl_ssl *s, ksl_session *session) {
     return KSL_OK;
 }
 void ksl_session_free(ksl_session *session) { if (session) ksl_live_add(KSL_LIVE_SESSION, -1); SSL_SESSION_free((SSL_SESSION *)session); }
-int ksl_ssl_new_session_ticket(ksl_ssl *s) { ERR_clear_error(); if (SSL_new_session_ticket(s->ssl) != 1) { ksl_ssl_set_error(s, KSL_E_NOT_SUPPORTED, "ksl: ticket request failed"); return KSL_ERROR; } return KSL_OK; }
+int ksl_ssl_new_session_ticket(ksl_ssl *s) { ERR_clear_error(); s->ticket_authorized = 1; if (SSL_new_session_ticket(s->ssl) != 1) { ksl_ssl_set_error(s, KSL_E_NOT_SUPPORTED, "ksl: ticket request failed"); return KSL_ERROR; } return KSL_OK; }
 int ksl_ssl_key_update(ksl_ssl *s, int request_peer) {
     ERR_clear_error();
     if (SSL_key_update(s->ssl, request_peer ? SSL_KEY_UPDATE_REQUESTED : SSL_KEY_UPDATE_NOT_REQUESTED) != 1) { ksl_ssl_set_error(s, KSL_E_NOT_SUPPORTED, "ksl: key update failed"); return KSL_ERROR; }

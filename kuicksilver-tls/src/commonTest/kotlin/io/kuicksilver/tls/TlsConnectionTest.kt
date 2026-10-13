@@ -7,6 +7,7 @@ package io.kuicksilver.tls
 import io.ktor.utils.io.ByteChannel
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.ByteWriteChannel
+import io.ktor.utils.io.discard
 import io.ktor.utils.io.readAvailable
 import io.ktor.utils.io.writeFully
 import io.kuicksilver.annotations.DelicateKuicksilverApi
@@ -565,6 +566,39 @@ class TlsServerTest {
                 }
             } finally {
                 Ksl.ctxFree(ctx)
+            }
+        }
+
+    /**
+     * Threat model 5, item 2, through an SNI override (review T1): the base configuration asks for no client certificate and
+     * issues tickets in the handshake, the selector's override pins client certificates. The override's settings must be in
+     * effect: no ticket before its pin verdict, so a client whose CA-issued certificate is not pinned can never resume past the pin.
+     */
+    @Test fun negative_sniOverridePinnedClientsNoTicketBeforeVerdict(): Unit =
+        runBlocking {
+            val pinned =
+                TrustConfig.Pinned(setOf(Certificate(TestCerts.proxy).spkiSha256), base = TrustConfig.AnchoredCa(listOf(Fixtures.testCa)))
+            val server =
+                TcpFixtures.server {
+                    sniSelector = { ServerTlsOverride(serverIdentity, clientAuth = ClientAuth.Required, trust = pinned) }
+                }
+            val client = TcpFixtures.client { identity = TlsIdentity.fromDer(listOf(TestCerts.client), TestCerts.clientKey.copyOf()) }
+            repeat(2) { attempt ->
+                val (cd, sd) = connect(client, server)
+                val e = assertFailsWith<TlsException.Verify>("attempt $attempt") { withTimeout(10.seconds) { sd.await() } }
+                assertIs<VerifyReason.PinMismatch>(e.reason, "attempt $attempt: the pin is checked")
+                // the server's close_notify follows anything it sent: reading to the end has processed a ticket, if one came
+                runCatching {
+                    withTimeout(10.seconds) {
+                        val c = cd.await()
+                        try {
+                            c.input.discard()
+                        } finally {
+                            c.close()
+                        }
+                    }
+                }
+                assertEquals(0, SessionCache.Default.size(), "attempt $attempt: no ticket reached the rejected client")
             }
         }
 
