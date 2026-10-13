@@ -629,6 +629,8 @@ Ktor client (`kuicksilver-ktor-client`):
   it failed with "Expected CR"), and one cut before its last chunk fails instead of arriving short; a transfer coding
   other than a final `chunked` is read until close. A request that sends `Connection: close` is the last one on its
   connection even when the server does not echo the option (§9.6).
+- An idle pooled HTTP/1.1 connection that won the h3/h1 race was treated as a new one, so an idempotent request on it
+  failed when the server had closed it, without the one transparent retry the plain HTTP/1.1 path gives (RFC 9112 §9.3.1).
 
 Ktor server (`kuicksilver-ktor-server`):
 

@@ -236,7 +236,7 @@ internal class KuicksilverEngine(
         val h3Attempt = engineScope.async { h3.connection(t, data) }
         val result =
             race.race<Any>({ h3Attempt.await() }, { h1.open(data) }, rtt, confirmed, onLoser = {
-                (it as? io.kuicksilver.ktor.client.h1.H1Connection)?.let(h1::recycle) // unused: back to the pool
+                (it as? H1Pool.Opened)?.let { o -> h1.recycle(o.connection) } // unused: back to the pool
             })
         val winner = if (result.winner == Protocol.H3) HttpProtocolVersion.HTTP_3_0 else HttpProtocolVersion.HTTP_1_1
         events.emit("raceEnded") { raceEnded(data, winner, race.headStart(rtt, confirmed), result.h3Failure) }
@@ -276,7 +276,7 @@ internal class KuicksilverEngine(
                         }
                     }
                 }
-                h1.execute(data, callContext, result.value as io.kuicksilver.ktor.client.h1.H1Connection)
+                h1.execute(data, callContext, result.value as H1Pool.Opened)
             }
         }
     }

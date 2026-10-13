@@ -101,8 +101,17 @@ internal class H1Pool(
             "${it.protocol.name}://${it.host}:${it.port}|${config.proxy?.resolveAddress()}"
         }
 
-    /** A connection for [data]: an idle pooled one, else a new one (the HTTP/1.1 side of the h3/h1 race). */
-    suspend fun open(data: HttpRequestData): H1Connection = obtain(data, keyOf(data)).first
+    /**
+     * A connection for [data]: an idle pooled one, else a new one (the HTTP/1.1 side of the h3/h1 race). [Opened.reused]
+     * travels with it to [execute], so a pooled connection the server closed still earns the stale-connection retry.
+     */
+    suspend fun open(data: HttpRequestData): Opened = obtain(data, keyOf(data)).let { Opened(it.first, it.second) }
+
+    /** A connection [open] handed out and whether it came from the idle pool. */
+    class Opened(
+        val connection: H1Connection,
+        val reused: Boolean,
+    )
 
     /**
      * An idle connection for [key] (second: true), else a new one once the limits allow; waiting for room and connecting
@@ -138,11 +147,11 @@ internal class H1Pool(
         return conn!! to reused
     }
 
-    /** One exchange; [preopened] is a connection the race already set up. */
+    /** One exchange; [preopened] is a connection the race already obtained ([open]). */
     suspend fun execute(
         data: HttpRequestData,
         callContext: CoroutineContext,
-        preopened: H1Connection? = null,
+        preopened: Opened? = null,
     ): HttpResponseData {
         val url = data.url
         val secure = url.protocol.isSecure()
@@ -158,8 +167,8 @@ internal class H1Pool(
         var first = true
         var given = preopened
         while (true) {
-            // a connection the race just opened is fresh: it is not a pooled one and never earns the stale retry
-            val (conn, reused) = given?.let { it to false } ?: obtain(data, key)
+            // a connection the race just opened is fresh and never earns the stale retry; an idle one it took from the pool does
+            val (conn, reused) = given?.let { it.connection to it.reused } ?: obtain(data, key)
             given = null
             events.emit("connectionAcquired") { connectionAcquired(data, HttpProtocolVersion.HTTP_1_1, reused) }
             var bodyJob: BodySender? = null
