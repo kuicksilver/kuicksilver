@@ -194,6 +194,31 @@ class StreamBridgeTest {
             }
         }
 
+    /**
+     * Requests closed together on many streams share packets: each `flushAndClose` hands its data and FIN to the core and
+     * lets the closes already queued on the loop do the same before the packet is built (interop `zerortt`: one 303-byte
+     * packet per request filled the initial window before the last 0-RTT requests left, and the runner counts what then
+     * went in 1-RTT).
+     */
+    @OptIn(io.ktor.utils.io.InternalAPI::class)
+    @Test
+    fun concurrentClosesShareAPacket() =
+        runBlocking {
+            ApiPair.open().use { p ->
+                withTimeout(20.seconds) {
+                    val sink = PacketsWithStreamFrames()
+                    val (c, s) = p.connect(quicConfig { qlog = sink })
+                    val req = "GET /a-file-name-of-some-length\r\n".encodeToByteArray()
+                    val streams = List(10) { c.openBidi().also { it.output.writeBuffer.write(req, 0, req.size) } }
+                    streams.map { st -> async { st.output.flushAndClose() } }.forEach { it.await() }
+                    repeat(10) { assertContentEquals(req, s.acceptStream().input.readExactly(req.size)) }
+                    assertTrue(sink.count <= 2, "10 requests in ${sink.count} packets")
+                    c.close()
+                    s.close()
+                }
+            }
+        }
+
     /** Counts the client's sent packets that carry a STREAM frame. */
     private class PacketsWithStreamFrames : QlogSink {
         @Volatile var count = 0

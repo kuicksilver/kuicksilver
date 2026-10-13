@@ -9,8 +9,10 @@ import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.quic.Initiator
 import io.kuicksilver.quic.QuicException
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.yield
 import kotlinx.io.Buffer
 import kotlinx.io.IOException
 import kotlinx.io.Sink
@@ -178,7 +180,13 @@ internal class StreamOutput(
             isClosedForWrite = true
             closedCause?.let { throw ClosedWriteChannelException(it) }
             writeToCore(tmp, 0, 0, fin = true)
-            stream.loop.flush(stream.conn.core)
+            // the data and the FIN are the core's now: the send must not be lost to a cancellation. Yielding first lets the
+            // closes already queued on the loop hand over theirs, so concurrent requests share packets instead of taking one
+            // each (interop zerortt: one packet per request filled the initial window before the last 0-RTT requests left)
+            withContext(NonCancellable) {
+                yield()
+                stream.loop.flush(stream.conn.core)
+            }
         }
     }
 

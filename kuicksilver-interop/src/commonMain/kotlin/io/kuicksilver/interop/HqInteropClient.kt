@@ -10,6 +10,7 @@ import io.kuicksilver.quic.QuicClientConfig
 import io.kuicksilver.quic.QuicConnection
 import io.kuicksilver.quic.QuicEndpoint
 import io.kuicksilver.quic.QuicEndpointConfig
+import io.kuicksilver.quic.QuicStream
 import io.kuicksilver.quic.quicConfig
 import io.kuicksilver.tls.TlsRole
 import io.kuicksilver.tls.TrustConfig
@@ -62,7 +63,8 @@ internal object HqInteropClient {
                     val rest = requests.drop(1)
                     if (rest.isNotEmpty()) {
                         val second = if (plan.zeroRtt) endpoint.connectEarly(remote, client) else endpoint.connect(remote, client)
-                        // zerortt: connectEarly returned at the 0-RTT keys, so these requests leave in 0-RTT packets
+                        // zerortt: connectEarly returned at the 0-RTT keys, so these requests leave in 0-RTT packets; the concurrent
+                        // closes share packets (flushAndClose yields to the closes queued on the loop), so they fit the initial window
                         ok = coroutineScope { rest.map { url -> async { fetch(second, url, downloads, null) } }.awaitAll().all { it } } && ok
                         second.close(0, "done")
                     }
@@ -83,10 +85,16 @@ internal object HqInteropClient {
     /** The `keyupdate` case: one key update once this many response bytes arrived (the runner wants it within the first MB). */
     private class KeyUpdateOnce(val after: Long) { var received = 0L; var done = false }
     private suspend fun fetch(conn: QuicConnection, url: String, downloads: String, progress: KeyUpdateOnce?): Boolean {
+        val st = conn.openBidi(); request(st, url); st.output.flushAndClose()
+        return receive(conn, st, url, downloads, progress)
+    }
+    /**
+     * Writes the request into the channel's buffer, not through the auto-flushing writeFully, so flushAndClose sends it and
+     * the FIN in one STREAM frame (quiche's hq server leaves 0-RTT requests whose FIN arrives in a frame of its own unanswered).
+     */
+    private fun request(st: QuicStream, url: String) { val req = "GET ${Url.parse(url).path}\r\n".encodeToByteArray(); st.output.writeBuffer.write(req, 0, req.size) }
+    private suspend fun receive(conn: QuicConnection, st: QuicStream, url: String, downloads: String, progress: KeyUpdateOnce?): Boolean {
         val path = Url.parse(url).path
-        // the request goes into the channel's buffer, not through the auto-flushing writeFully, so flushAndClose sends it and
-        // the FIN in one STREAM frame (quiche's hq server leaves 0-RTT requests whose FIN arrives in a frame of its own unanswered)
-        val st = conn.openBidi(); val req = "GET $path\r\n".encodeToByteArray(); st.output.writeBuffer.write(req, 0, req.size); st.output.flushAndClose()
         val out = Buffer(); val buf = ByteArray(65536)
         while (true) {
             val n = st.input.readAvailable(buf, 0, buf.size); if (n < 0) break; out.write(buf, 0, n)
