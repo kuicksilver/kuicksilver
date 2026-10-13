@@ -148,7 +148,7 @@ typedef struct ksl_client_hello {
 #define KSL_INIT_MISSING_SYMBOL (-3)  /* no SSL_set_quic_tls_cbs */
 #define KSL_INIT_KEYLOG_ENV (-4)      /* SSLKEYLOGFILE set with a system libssl: refused */
 int         ksl_init(void);                         /* idempotent */
-const char *ksl_version(void);                      /* "ksl 0.1.0 / OpenSSL 3.5.9 ..." */
+const char *ksl_version(void);                      /* "ksl abi 6 / OpenSSL 3.5.9 ..." */
 uint32_t    ksl_abi_version(void);
 /* Live-object counters, process-wide (soak and churn tests; additive in ABI 6, see ADR-0003): objects ksl made and has not
  * freed yet. A handle-reference counter (pkey, session) counts the references ksl handed out and the caller has not dropped;

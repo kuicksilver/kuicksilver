@@ -4,8 +4,6 @@
 #include "ksl_internal.h"
 #include <stdio.h>
 
-#define KSL_VERSION_STRING "ksl 0.1.0"
-
 #ifdef KSL_SYSTEM_OPENSSL
 #include <dlfcn.h>
 /* System libssl (Linux only): version floor 3.5, the QUIC TLS API must exist, and a keylog environment is refused outright
@@ -29,9 +27,11 @@ int ksl_init(void) {
 #endif
     return OPENSSL_init_ssl(OPENSSL_INIT_NO_LOAD_CONFIG | OPENSSL_INIT_NO_ATEXIT, NULL) ? KSL_OK : KSL_ERROR;
 }
+/* The shim is versioned by its ABI (as the JVM library file names are), not by the Maven version it ships in: the same
+ * libksl serves every release of one ABI and stays byte-identical across them (tools/check/double-build.sh). */
 const char *ksl_version(void) {
     static char buf[128];
-    snprintf(buf, sizeof buf, "%s / %s", KSL_VERSION_STRING, OpenSSL_version(OPENSSL_VERSION));
+    snprintf(buf, sizeof buf, "ksl abi %u / %s", (unsigned)KSL_ABI_VERSION, OpenSSL_version(OPENSSL_VERSION));
     return buf;
 }
 uint32_t ksl_abi_version(void) { return KSL_ABI_VERSION; }

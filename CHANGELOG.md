@@ -228,6 +228,8 @@ Native layer and TLS (`kuicksilver-native`, `kuicksilver-tls`):
 - Apple platform trust (`TrustConfig.Platform`, also under `Pinned` and `ExpectedName`) evaluates with
   `SecTrustEvaluateAsyncWithError` on a global dispatch queue and suspends the caller: an evaluation waiting on OCSP or
   AIA fetches no longer holds a `Dispatchers.Default` thread, so slow servers cannot stall other connections' handshakes.
+- `Ksl.version()` (`ksl_version()`) reads `ksl abi 6 / OpenSSL 3.5.9 …` instead of `ksl 0.1.0 / …`: the shim is
+  named by its ABI, as its library files are, so one native build serves every release of that ABI unchanged.
 - `ksl` ABI 4 → 5 → 6; a library of an older ABI is refused (`AbiMismatch`).
   ABI 5: identity private keys stay in OpenSSL. `TlsIdentity.fromDer`/`fromPem` parse the key once into a native
   `ksl_pkey` (`ksl_pkey_new`, `ksl_pkey_free`, `ksl_ctx_set_identity_pkey`) and keep only its handle, so a heap dump no
