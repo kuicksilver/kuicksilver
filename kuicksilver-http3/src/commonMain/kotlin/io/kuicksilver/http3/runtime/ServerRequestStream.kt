@@ -397,13 +397,21 @@ internal class ResponseWriterImpl(
         withContext(session.dispatcher) {
             if (trailers != null) {
                 // checked before anything is closed: refused trailers reset the stream instead of leaving it without FIN
-                try {
-                    session.checkPeerFieldLimit(st.id, trailers.fields)
-                } catch (e: Http3Exception.FieldSectionTooLarge) {
+                val refused =
+                    try {
+                        PseudoHeaders.requireValidTrailers(trailers.fields)
+                        session.checkPeerFieldLimit(st.id, trailers.fields)
+                        null
+                    } catch (e: IllegalArgumentException) {
+                        e
+                    } catch (e: Http3Exception.FieldSectionTooLarge) {
+                        e
+                    }
+                if (refused != null) {
                     runCatching { st.reset(Http3ErrorCode.INTERNAL_ERROR) }
                     runCatching { st.stopSending(Http3ErrorCode.INTERNAL_ERROR) }
                     request?.done()
-                    throw e
+                    throw refused
                 }
             }
             try {

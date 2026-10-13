@@ -551,6 +551,15 @@ HTTP/3 (`kuicksilver-http3`):
 - QPACK with the dynamic table on: a request or response stream that the peer reset, or whose body the reader
   abandoned, after its first HEADERS sent no Stream Cancellation, so the peer's encoder kept references to entries
   that trailers still in flight might use (they could never be evicted); one is now sent (RFC 9204 section 2.2.2.2).
+- Request pseudo-headers are validated like quic-go does (RFC 9114 section 4.3.1): a `:method` that is not a token
+  (`GET /admin X`), a `:path` that does not start with `/` (or is `*` for OPTIONS) or holds whitespace, userinfo in
+  `:authority` (or in the `host` standing in for it) and a second `host` field make the request malformed
+  (`H3_MESSAGE_ERROR`); before, such values reached the application, and a proxy could copy them into an HTTP/1.1
+  request line.
+- What we send is checked the same way: `Http3Connection.request` throws `IllegalArgumentException` for a request the
+  peer would reject (`te` other than `trailers`, a bad method, path or authority, a `host` differing from the
+  authority) before it opens a stream, and request trailers or response trailers (`finish`) with a pseudo-header, a
+  connection-specific field or `te` throw it too and reset the stream — instead of being sent for the peer to reset.
 
 Ktor client (`kuicksilver-ktor-client`):
 

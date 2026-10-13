@@ -277,7 +277,6 @@ class QpackStreamCancellationTest {
         }
 }
 
-
 internal suspend fun io.ktor.utils.io.ByteReadChannel.readAllBytesQuietly() {
     val b = ByteArray(4096)
     while (readAvailable(b, 0, b.size) >=
