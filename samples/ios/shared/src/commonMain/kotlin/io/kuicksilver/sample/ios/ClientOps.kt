@@ -91,8 +91,9 @@ internal suspend fun http3Get(url: String, mode: TrustMode, tofu: TofuStore): Ht
 /**
  * A raw QUIC echo session: [rounds] round trips of [message] on fresh bidirectional streams, [intervalMs] apart, logging
  * each round's time, QUIC's RTT estimate and every path event. [onConnected] gets the live connection so the screen can
- * migrate it to a new socket or, once the library has it, let it follow the default network.
+ * migrate it to a new socket or let it follow the default network.
  */
+@OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class) // PathEvent.SocketLost and its failure reasons
 internal suspend fun quicEcho(
     host: String,
     port: Int,
@@ -117,7 +118,9 @@ internal suspend fun quicEcho(
                 when (e) {
                     is PathEvent.Changed -> { changes++; log("path changed (${e.reason}): ${e.old.localAddress.show()} -> ${e.new.localAddress.show()}") }
                     is PathEvent.Validated -> log("path validated: ${e.path.localAddress.show()} -> ${e.path.remoteAddress.show()}")
-                    is PathEvent.Failed -> log("path failed: ${e.path.localAddress.show()} -> ${e.path.remoteAddress.show()}")
+                    is PathEvent.Failed -> log("path failed (${e.reason}): ${e.path.localAddress.show()} -> ${e.path.remoteAddress.show()}")
+                    // iOS reclaimed the socket while the app was suspended: Rebind (or network following) moves the session
+                    is PathEvent.SocketLost -> log("socket lost (errno ${e.cause.errno}): ${e.path.localAddress.show()}")
                 }
             }
         }
