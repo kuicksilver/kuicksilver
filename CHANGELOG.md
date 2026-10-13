@@ -145,6 +145,12 @@ QUIC core (review of 2026-10-08, deferred items):
 
 QUIC runtime and sockets:
 
+- macOS and iOS: a socket bound to a wildcard address (the Ktor client's endpoint, `0.0.0.0:0`) no longer gets a port an IPv4
+  socket of another process or endpoint already holds. Darwin picks a dual-stack socket's port among the IPv6 ports only and
+  bound an explicit `::` port beside `0.0.0.0` on it; that IPv4 socket then kept every IPv4 datagram for the port, so a client's
+  handshake replies went elsewhere and the connection timed out (about one connect in five with 4000 IPv4 ports in use on the
+  host; the rare 10 s `ConnectTimeoutException` of the contract suite on busy hosts). `ksl_udp` now takes a port free on the
+  IPv4 side for a dual-stack socket and refuses an explicit one an IPv4 socket holds (ADR-0006).
 - The endpoint's receive loop yields after 16 rounds or 2 ms of continuous traffic, so a socket that never runs dry (a
   flood) no longer starves the connection timers and queued application commands.
 - No resolver call on the endpoint loop: on Kotlin/Native the address bytes of a datagram's source are parsed from its IP
