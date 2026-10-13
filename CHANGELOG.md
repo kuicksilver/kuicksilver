@@ -248,6 +248,11 @@ Ktor client (`kuicksilver-ktor-client`):
   section 5).
 - `HttpClient()` without an explicit engine finds the Kuicksilver engine on Android: the engine container and its
   `META-INF/services` entry were missing from the AAR.
+- An HTTP/3 WebSocket on Kotlin/Native ends once Close frames were exchanged, as on the JVM, instead of waiting for the
+  peer's FIN: Ktor's common WebSocket reader reads to the end of the stream, so a peer whose FIN trailed its Close frame
+  delayed `webSocket {}` and one that never sent it kept the session open until the caller gave up. The engine now ends
+  the input it hands to that reader after the peer's Close frame and abandons the rest of the stream with STOP_SENDING
+  (RFC 6455 §7.1.1, RFC 9220).
 
 Ktor server (`kuicksilver-ktor-server`):
 
