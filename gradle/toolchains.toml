@@ -7,8 +7,10 @@
 ndk = "28.2.13676358"
 
 [apple]
-# Xcode for Kotlin 2.4.20; CI selects /Applications/Xcode_<xcode>.app and fails if the runner image lacks it
-xcode = "26.4"
+# Xcode the 0.2.0 release is built and tested with (owner, 2026-10-14). Kotlin 2.4.20 documents 26.4; 27.0 is what every
+# Apple suite, the simulator runs and the iOS sample passed on. Revisit when Kotlin lists Xcode 27. CI selects
+# /Applications/Xcode_<xcode>.app and fails if the runner image lacks it.
+xcode = "27.0"
 
 [windows]
 # Temurin JDK 21 for Windows x64, used only for its JNI headers (include/, include/win32) by tools/ci/jni-windows.sh, which
