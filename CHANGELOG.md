@@ -281,6 +281,9 @@ Flow control (`kuicksilver-quic`; found with the BBR simulations, 2026-10-13):
 
 QUIC runtime and sockets:
 
+- A lost path socket (`PathEvent.SocketLost`) is forgotten when its connection ends: the loop's list of lost sockets,
+  which keeps them from being written again, dropped an entry only when the path itself was closed, so every connection
+  that ended on a lost migrated socket left one behind for the life of the endpoint.
 - Windows: `0.0.0.0:P` binds port P again. The dual-stack socket that `0.0.0.0` opens since the Windows fixes was bound to
   `::` on port 0, so an explicit port was silently replaced by a random one (a server on `0.0.0.0:4433` listened elsewhere,
   and a port an IPv4 socket held was not refused). Found by the port guard tests in the Windows 11 VM

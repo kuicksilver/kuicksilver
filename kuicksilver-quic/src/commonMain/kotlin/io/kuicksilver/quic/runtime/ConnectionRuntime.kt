@@ -529,7 +529,10 @@ internal class ConnectionRuntime(
     private fun releasePaths() {
         for (p in pathList) {
             p.receiver?.cancel()
-            p.io?.close()
+            p.io?.let {
+                it.close()
+                loop.forgetDefunct(it) // a lost path socket is not remembered past its connection
+            }
             if (!p.validation.isCompleted) p.validation.complete(false)
         }
     }

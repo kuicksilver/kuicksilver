@@ -397,6 +397,9 @@ internal class EndpointLoop private constructor(
         for (rt in runtimes.values.toList()) rt.onSocketLost(if (socket === io) null else socket, cause)
     }
 
+    /** Lost sockets still remembered (tests). */
+    internal suspend fun defunctCountForTest(): Int = withContext(dispatcher) { defunct.size }
+
     /** A lost path socket was closed (its path is gone): it no longer needs remembering. Loop dispatcher only. */
     internal fun forgetDefunct(socket: DatagramIo) {
         if (socket !== io) defunct.removeAll { it === socket }
