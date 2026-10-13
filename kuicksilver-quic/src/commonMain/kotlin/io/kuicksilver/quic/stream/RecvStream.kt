@@ -88,7 +88,7 @@ internal class RecvStream(
             throw QuicWireException(TransportError.FINAL_SIZE_ERROR, 0x04, "stream $id: reset final size conflicts with received data")
         }
         if (state == RecvState.ResetRecvd || state == RecvState.ResetRead || state == RecvState.DataRead) return 0
-        flow.onData(size) // a final size beyond the stream window is FLOW_CONTROL_ERROR (RFC 9000 sections 4.1, 4.5)
+        flow.onData(size) // a final size beyond the stream window is FLOW_CONTROL_ERROR (RFC 9000 sections 4.1, 4.5, 19.10)
         val advanced = size - highest
         finalSize = size
         highest = size

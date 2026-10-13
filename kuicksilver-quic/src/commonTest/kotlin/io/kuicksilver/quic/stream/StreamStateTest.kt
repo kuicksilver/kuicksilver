@@ -134,7 +134,7 @@ class StreamStateTest {
 
     /**
      * Fuzzing finding (connectionNull): RESET_STREAM's final size was checked against the connection window only, so a peer
-     * could claim more than the stream window allowed (RFC 9000 sections 4.1, 4.5: FLOW_CONTROL_ERROR).
+     * could claim more than the stream window allowed (RFC 9000 sections 4.1, 4.5, 19.10: FLOW_CONTROL_ERROR).
      */
     @Test fun negative_resetFinalSizeBeyondStreamWindowIsFlowControlError() {
         val m = manager(TlsRole.Server)

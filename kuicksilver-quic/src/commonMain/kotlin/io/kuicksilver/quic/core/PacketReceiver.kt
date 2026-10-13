@@ -31,7 +31,7 @@ internal class PacketReceiver(
 ) {
     internal companion object {
         /**
-         * The largest Retry token a client takes (RFC 9000 section 17.2.5.2): with 20-byte connection IDs its Initial still
+         * The largest Retry token a client takes (RFC 9000 sections 17.2.5.2, 14.1): with 20-byte connection IDs its Initial still
          * leaves room for CRYPTO in 1200 bytes. A larger token cannot be sent, so its Retry is dropped.
          */
         const val MAX_RETRY_TOKEN = 1024
