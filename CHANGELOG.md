@@ -136,6 +136,12 @@ QUIC core (review of 2026-10-08, deferred items):
   a refused write once acknowledgements free buffer room or new flow-control credit reaches waiting data, and after
   `MAX_STREAMS` raises a limit that refused an open; the coroutine API wakes the waiting writer or `openBidi`/`openUni`
   directly. The KDoc of `StreamFinished`, which was always raised, now says so (RFC 9000 §4.1, §4.6).
+- DPLPMTUD no longer drops to 1200 bytes because the peer merely stalled. Two PTOs in a row above the base size count
+  as a black hole only while a packet above 1200 bytes is among the unanswered ones (a receiver's small ACK and
+  flow-control packets cannot be lost to the MTU), and a black-hole verdict is undone — MTU and search state back, no
+  60 s pause — when a full-size packet sent after the packets it rested on is acknowledged afterwards. On a loaded host a
+  50 MiB loopback upload ended at 1200 bytes on the client or the server in 12 of 33 runs, each time with no packet lost
+  (RFC 8899 §4.1, §4.3).
 
 QUIC runtime and sockets:
 

@@ -124,8 +124,8 @@ internal class ConnectionLossListener(
                 ) {
                     m.onProbeAcked(p.size, core.now)
                     if (p.size > path.mtu) core.setMtu(path, p.size)
-                } else {
-                    m.onPacketAcked(p.size, p.pn)
+                } else if (m.onPacketAcked(p.size, p.pn)) {
+                    core.setMtu(path, m.current) // a black-hole verdict the late ACK disproved
                 }
             }
         }
