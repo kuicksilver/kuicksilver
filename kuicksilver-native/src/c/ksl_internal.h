@@ -24,6 +24,7 @@ struct ksl_ctx {
     size_t num_tickets;
     uint8_t alpn[256]; size_t alpn_len;
     uint8_t *ticket_keys; size_t ticket_key_count;   /* 80-byte entries, first encrypts */
+    int shared_roots;                                /* the cert store is the process-wide system store: never modified */
     uint32_t last_err; char last_msg[KSL_MSG];
 };
 
@@ -77,6 +78,12 @@ ksl_event *ksl_push_event(ksl_ssl *s, int type, const uint8_t *copy_from, size_t
 /* verification (ksl_verify.c) */
 int ksl_cert_verify_cb(X509_STORE_CTX *xctx, void *arg);
 int ksl_client_hello_cb(SSL *ssl, int *al, void *arg);
+
+/* the system CA store (ksl_ctx.c, ksl_trust_cache.c) */
+void ksl_trust_paths(const char *const **files, const char *const **dirs);
+int ksl_load_system_roots(ksl_ctx *c, X509_STORE *st);
+int ksl_ctx_use_system_store(ksl_ctx *c);
+X509_STORE *ksl_ctx_private_store(ksl_ctx *c);
 
 /* 0-RTT (ksl_ctx.c) */
 void ksl_ctx_enable_early_data(SSL_CTX *ctx);

@@ -167,7 +167,8 @@ void ksl_trust_paths_for_test(const char *const *files, const char *const *dirs)
 #endif
 static int is_dir(const char *path) { struct stat sb; return stat(path, &sb) == 0 && S_ISDIR(sb.st_mode); }
 static void append(char *out, size_t cap, const char *text) { size_t n = strlen(out); if (n < cap) snprintf(out + n, cap - n, "%s", text); }
-static int load_system_roots(ksl_ctx *c, X509_STORE *st) {
+void ksl_trust_paths(const char *const **files, const char *const **dirs) { *files = trust_files; *dirs = trust_dirs; }
+int ksl_load_system_roots(ksl_ctx *c, X509_STORE *st) {
     const char *ef = getenv("SSL_CERT_FILE"), *ed = getenv("SSL_CERT_DIR"); int from_env = (ef && *ef) || (ed && *ed), loaded = 0;
     if (from_env) {
         if (ef && *ef && X509_STORE_load_file(st, ef) == 1) loaded = 1;
@@ -192,8 +193,8 @@ static int load_system_roots(ksl_ctx *c, X509_STORE *st) {
 }
 int ksl_ctx_set_roots(ksl_ctx *c, const uint8_t *roots, size_t roots_len) {
     if (frozen(c)) return KSL_ERROR; ERR_clear_error();
-    X509_STORE *st = SSL_CTX_get_cert_store(c->ctx);
-    if (roots_len == 0) return load_system_roots(c, st);
+    if (roots_len == 0) return ksl_ctx_use_system_store(c);   /* parsed once, shared (ksl_trust_cache.c) */
+    X509_STORE *st = ksl_ctx_private_store(c); if (!st) { ksl_ctx_set_error(c, KSL_E_BAD_ARG, "ksl: no certificate store"); return KSL_ERROR; }
     STACK_OF(X509) *sk = NULL; if (!ksl_parse_chain(roots, roots_len, &sk)) { ksl_ctx_set_error(c, KSL_E_BAD_ARG, "ksl: bad roots framing"); return KSL_ERROR; }
     int ok = 1; for (int i = 0; ok && i < sk_X509_num(sk); i++) ok = X509_STORE_add_cert(st, sk_X509_value(sk, i)) == 1;
     sk_X509_pop_free(sk, X509_free);

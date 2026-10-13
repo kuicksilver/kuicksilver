@@ -157,7 +157,69 @@ static void test_default_keys_concurrent_first_use(void) {
 static void test_default_keys_concurrent_first_use(void) {}
 #endif
 
+/* --- review finding 12: the system CA bundle is parsed once and shared, reloaded when it changes --- */
+#include <openssl/pem.h>
+void ksl_trust_paths_for_test(const char *const *files, const char *const *dirs);
+X509_STORE *ksl_system_store_for_test(void);
+static int write_pem(const char *path, const char *const *names, int n) {
+    FILE *f = fopen(path, "w"); if (!f) return 0;
+    for (int i = 0; i < n; i++) {
+        char p[256]; snprintf(p, sizeof p, TESTDATA "%s.der", names[i]); size_t l; uint8_t *d = read_file(p, &l);
+        const unsigned char *q = d; X509 *x = d2i_X509(NULL, &q, (long)l); free(d); if (!x) { fclose(f); return 0; }
+        PEM_write_X509(f, x); X509_free(x);
+    }
+    fclose(f); return 1;
+}
+static int verifies_server(ksl_ctx *cc) {   /* a QUIC handshake against the test server: the store holds test-ca */
+    ksl_ctx *sc = server_ctx("server"); ksl_ctx_freeze(sc); ksl_ssl *c = tclient(cc), *s = ksl_ssl_new(sc, KSL_MODE_QUIC); int done[2];
+    ksl_quic_set_transport_params(s, TP, sizeof TP); tpump(c, s, done); ksl_ssl_free(c); ksl_ssl_free(s); ksl_ctx_free(sc); return done[0] && done[1];
+}
+static ksl_ctx *platform_client(void) {
+    ksl_ctx *c = ksl_ctx_new(KSL_CLIENT); ksl_ctx_set_alpn(c, ALPN_H3, sizeof ALPN_H3);
+    if (ksl_ctx_set_roots(c, NULL, 0) != KSL_OK) { ksl_ctx_free(c); return NULL; }
+    ksl_ctx_set_option(c, KSL_OPT_VERIFY_MODE, KSL_VERIFY_OPENSSL); return c;
+}
+static void test_system_store_parsed_once(void) {
+    SECTION("trust_system_store_shared_and_reloaded_on_change");
+    const char *of = getenv("SSL_CERT_FILE"), *od = getenv("SSL_CERT_DIR"); char *sf = of ? strdup(of) : NULL, *sd = od ? strdup(od) : NULL;
+#ifdef _WIN32
+    _putenv_s("SSL_CERT_FILE", ""); _putenv_s("SSL_CERT_DIR", "");
+#else
+    unsetenv("SSL_CERT_FILE"); unsetenv("SSL_CERT_DIR");
+#endif
+    static const char *const files[] = {"build/ksl-trust-cache-test.pem", NULL}; static const char *const dirs[] = {NULL};
+    const char *ca[] = {"test-ca"}, *both[] = {"other-ca", "test-ca"};
+    CHECK(write_pem(files[0], ca, 1), "bundle written");
+    ksl_trust_paths_for_test(files, dirs);
+    ksl_ctx *a = platform_client(), *b = platform_client();
+    CHECK(a && b, "system store loads from the bundle");
+    if (a && b) {
+        X509_STORE *shared = ksl_system_store_for_test();
+        CHECK(shared && SSL_CTX_get_cert_store(a->ctx) == shared && SSL_CTX_get_cert_store(b->ctx) == shared, "both contexts share one parsed store");
+        CHECK(verifies_server(a) && verifies_server(b), "the shared store verifies the server");
+        int before = sk_X509_OBJECT_num(X509_STORE_get0_objects(shared));
+        blob extra = chain_of(1, "other-ca"); CHECK(ksl_ctx_set_roots(b, extra.buf, extra.len) == KSL_OK, "explicit roots on a context that used the shared store"); free(extra.buf);
+        CHECK(SSL_CTX_get_cert_store(b->ctx) != shared && sk_X509_OBJECT_num(X509_STORE_get0_objects(shared)) == before, "negative: explicit roots never land in the shared store");
+        CHECK(write_pem(files[0], both, 2), "bundle rewritten (a CA update)");
+        ksl_ctx *c = platform_client(); X509_STORE *now = ksl_system_store_for_test();
+        CHECK(c && now != shared && sk_X509_OBJECT_num(X509_STORE_get0_objects(now)) == 2, "a changed bundle is parsed again for new contexts");
+        CHECK(verifies_server(a), "a context keeps the store it was built with");
+        ksl_ctx_free(c);
+        remove(files[0]);
+        ksl_ctx *gone = platform_client(); CHECK(gone == NULL, "negative: a bundle that disappeared is reported, not served from the cache");
+    }
+    ksl_ctx_free(a); ksl_ctx_free(b);
+    ksl_trust_paths_for_test(NULL, NULL);
+#ifdef _WIN32
+    _putenv_s("SSL_CERT_FILE", sf ? sf : ""); _putenv_s("SSL_CERT_DIR", sd ? sd : "");
+#else
+    if (sf) setenv("SSL_CERT_FILE", sf, 1); if (sd) setenv("SSL_CERT_DIR", sd, 1);
+#endif
+    free(sf); free(sd); END();
+}
+
 void run_security(void) {
     test_span_fits_never_wraps(); test_secret_buffer_growth_wipes_old_block();
     test_default_ticket_keys_rotate_in_ksl(); test_registered_ticket_keys(); test_default_keys_concurrent_first_use();
+    test_system_store_parsed_once();
 }
