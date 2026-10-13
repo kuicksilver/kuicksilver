@@ -631,6 +631,10 @@ Ktor client (`kuicksilver-ktor-client`):
   connection even when the server does not echo the option (§9.6).
 - An idle pooled HTTP/1.1 connection that won the h3/h1 race was treated as a new one, so an idempotent request on it
   failed when the server had closed it, without the one transparent retry the plain HTTP/1.1 path gives (RFC 9112 §9.3.1).
+- `Alt-Svc` on HTTP/3 responses is processed (RFC 7838 §3): a `clear`, or a new list, sent over the alternative in use
+  replaced nothing, so clients already on HTTP/3 kept a retired alternative until its `ma` ran out (24 h by default).
+  The `Alt-Svc` parser resolves quoted-pairs (`\"` no longer ends a quoted string or lets a comma inside it split the
+  list).
 
 Ktor server (`kuicksilver-ktor-server`):
 

@@ -96,4 +96,14 @@ class AltSvcTest {
         assertNull(cache.h3For(origin))
         assertNotNull(cache.h3For(Url("https://other.example/")))
     }
+
+    /**
+     * Quoted strings are processed as RFC 9110 section 5.6.4 says (RFC 7838 section 3): a quoted-pair stands for its
+     * character, so an escaped quote neither ends the string nor lets a comma inside it split the list.
+     */
+    @Test fun quotedPairsAreProcessed() {
+        assertEquals(listOf(443, 8443), AltSvcParser.parse("h3=\":443\"; foo=\"a\\\",b\", h3=\":8443\"", now)!!.map { it.port })
+        assertEquals("alt.example.com", AltSvcParser.parse("h3=\"alt.exam\\ple.com:8443\"", now)!!.single().host)
+        assertEquals(listOf(8443), AltSvcParser.parse("h3=\":443\\\"\", h3=\":8443\"", now)!!.map { it.port })
+    }
 }

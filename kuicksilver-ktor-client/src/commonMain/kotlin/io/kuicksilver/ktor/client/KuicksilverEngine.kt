@@ -340,18 +340,15 @@ internal class KuicksilverEngine(
             if (!webSocket || h3.canConnectProtocol(t)) {
                 events.emit("altSvcUsed") { altSvcUsed(data, "${uriHost(altHost)}:${alt.port}") }
                 val r = raced(t, data, callContext, network, listOf("alt-used" to "${uriHost(altHost)}:${alt.port}"))
-                // an HTTP/1.1 answer (broken alternative, lost race, fallback) still carries the origin's Alt-Svc: a new list or `clear` replaces the cached one (RFC 7838 section 3)
-                if (r.version !=
-                    HttpProtocolVersion.HTTP_3_0
-                ) {
-                    altSvcUpdate {
-                        altSvc.onResponse(
-                            url,
-                            r.statusCode.value,
-                            r.headers.getAll("Alt-Svc").orEmpty(),
-                            verifiedTls = url.protocol.isSecure(),
-                        )
-                    }
+                // the origin's Alt-Svc on any answer, over HTTP/3 as over HTTP/1.1 (broken alternative, lost race, fallback): a
+                // new list or `clear` replaces the cached one (RFC 7838 section 3); a 421 removes it
+                altSvcUpdate {
+                    altSvc.onResponse(
+                        url,
+                        r.statusCode.value,
+                        r.headers.getAll("Alt-Svc").orEmpty(),
+                        verifiedTls = url.protocol.isSecure(),
+                    )
                 }
                 if (r.statusCode.value != 421 || r.version != HttpProtocolVersion.HTTP_3_0) return r
                 altSvcUpdate { altSvc.remove(url) }
