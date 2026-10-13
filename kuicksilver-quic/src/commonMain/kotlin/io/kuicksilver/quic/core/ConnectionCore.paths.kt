@@ -134,10 +134,13 @@ internal fun ConnectionCore.onRetireConnectionId(seq: Long) {
     if (!cids.onPeerRetired(seq, now + pto() * 3)) glitch(0x19)
 }
 
-/** The validation timeout of RFC 9000 section 8.2.4: max(3 x PTO, 6 x initial RTT). */
+/**
+ * The validation timeout of RFC 9000 section 8.2.4: max(3 x PTO, 6 x initial RTT), as ngtcp2. The new-path term uses the configured
+ * initial RTT (kInitialRtt), never an RTT remembered for the first path: "the new path could have a longer round-trip time".
+ */
 internal fun ConnectionCore.validationTimeout(): Duration {
     val p3 = pto() * 3
-    val r6 = config.initialRtt * 6
+    val r6 = config.newPathInitialRtt * 6
     return if (p3 > r6) p3 else r6
 }
 
@@ -181,7 +184,7 @@ internal fun ConnectionCore.onPathPacket(
             socket,
             from,
             config.congestionController(),
-            config.initialRtt,
+            config.newPathInitialRtt,
             now = now,
             abandonValidatingHeardBefore = if (migrating) TimeMark.NEVER else now - idle,
         ) ?: return
@@ -357,7 +360,7 @@ internal fun ConnectionCore.onPathChallenge(
     if (p ==
         null
     ) {
-        p = paths.add(socket, from, config.congestionController(), config.initialRtt)
+        p = paths.add(socket, from, config.congestionController(), config.newPathInitialRtt)
         if (p ==
             null
         ) {

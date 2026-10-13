@@ -1054,7 +1054,7 @@ public class ConnectionCore internal constructor(
         check(peerTp?.disableActiveMigration != true) { "the peer advertised disable_active_migration" }
         this.now = now
         val p =
-            paths.add(socket, remote, config.congestionController(), config.initialRtt, evict = false)
+            paths.add(socket, remote, config.congestionController(), config.newPathInitialRtt, evict = false)
                 ?: throw IllegalStateException("at most 4 paths")
         p.amplification.validated = true // our own address: nothing to amplify against
         return p.id

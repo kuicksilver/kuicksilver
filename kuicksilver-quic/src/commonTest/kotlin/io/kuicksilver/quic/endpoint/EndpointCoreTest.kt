@@ -22,6 +22,7 @@ import io.kuicksilver.quic.QuicEndpointConfig
 import io.kuicksilver.quic.QuicServerConfig
 import io.kuicksilver.quic.TimeMark
 import io.kuicksilver.quic.VersionProfile
+import io.kuicksilver.quic.core.validationTimeout
 import io.kuicksilver.quic.quicConfig
 import io.kuicksilver.tls.QuicCrypto
 import kotlin.random.Random
@@ -146,6 +147,22 @@ class EndpointCoreTest {
         cep.remove(second) // no sample of its own: the remembered 40 ms stays
         val third = cep.connect(clientConfig(), a2, now)
         assertEquals(40.milliseconds, startRtt(third).smoothed)
+    }
+
+    /**
+     * Review finding 9, RFC 9000 section 8.2.4: the validation timeout is three times "the larger of the current PTO or the PTO for the
+     * new path (using kInitialRtt ...)". A remembered 4 ms RTT of the first path (a Wi-Fi measurement) used to shrink it to about
+     * 24 ms, so a migration to a 150 ms cellular path failed with ValidationTimeout; the memory now only seeds the first path.
+     */
+    @Test fun rememberedRttDoesNotShrinkPathValidation() {
+        val cep = clientEndpoint()
+        val first = cep.connect(clientConfig(), a2, now)
+        startRtt(first).onSample(4.milliseconds, Duration.ZERO, false, 25.milliseconds)
+        cep.remove(first)
+        val second = cep.connect(clientConfig(), a2, now)
+        assertEquals(4.milliseconds, startRtt(second).smoothed, "the first path still starts from the remembered RTT")
+        // the current PTO is about 3 x 4 ms here: the new path's 6 x kInitialRtt decides
+        assertEquals(333.milliseconds * 6, second.validationTimeout())
     }
 
     /** The memory is bounded (256 server addresses, the least recently stored dropped first) and a server endpoint stores nothing. */
