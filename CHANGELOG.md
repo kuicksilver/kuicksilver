@@ -149,6 +149,30 @@ QUIC core (review of 2026-10-08, deferred items):
   `MAX_STREAMS` raises a limit that refused an open; the coroutine API wakes the waiting writer or `openBidi`/`openUni`
   directly. The KDoc of `StreamFinished`, which was always raised, now says so (RFC 9000 §4.1, §4.6).
 
+Flow control (`kuicksilver-quic`; found with the BBR simulations, 2026-10-13):
+
+- An upload no longer stalls for 10+ s when the window update that would let it continue is lost: the sender had
+  nothing in flight and the receiver's only copy of its `MAX_DATA` / `MAX_STREAM_DATA` waited behind its PTO backoff
+  (64 x PTO, about 11 s, with 75 % loss on the return path). A PTO probe now carries the stream control frames of the
+  packet it stands in for (it was a bare PING when that packet held only `MAX_DATA` / `MAX_STREAM_DATA`); a blocked
+  sender repeats `DATA_BLOCKED` / `STREAM_DATA_BLOCKED` / `STREAMS_BLOCKED` when the report is lost and, while it stays
+  blocked, again one PTO later and then at gaps of 2, 4 and 8 PTOs; a receiver that already granted more answers a stale
+  `DATA_BLOCKED` / `STREAM_DATA_BLOCKED` with its current limit at once (RFC 9000 §4.1, §13.3, §19.12–§19.14). One
+  answer per smoothed RTT per connection or stream; a faster repeat is not answered and spends a glitch token (it used
+  to be a repeat of the same limit). Simulated 50 Mbit/s, 40 ms upload with 75 % ACK-path loss, 20 seeds: mean goodput
+  7.2 → 18.5 Mbit/s (CUBIC) and 7.3 → 21.0 Mbit/s (BBR), longest stall after the handshake at most 7.5 s instead of 13.6 s.
+- Receive-window auto-tuning works: the stream manager's clock was never set, so every window update looked
+  instantaneous and doubled the window, and every connection that moved more than a few MB grew to the ceilings
+  (6 MiB per stream, 15 MiB per connection) whatever its application read. The core now hands its clock and smoothed RTT
+  to the stream manager with each datagram and timer, and the rule is quic-go's (`maybeAdjustWindowSize`): a window
+  doubles only while the application reads a whole window in under four RTTs (it doubled when a quarter took under two,
+  which settled at 8–16 x the bandwidth-delay product). A slow reader keeps its initial window. Defaults unchanged
+  (quic-go's: 512 KiB → 6 MiB per stream, 768 KiB → 15 MiB per connection). Simulated 50 Mbit/s, 40 ms upload,
+  greedy reader, seeds 31–35: goodput unchanged (clean: CUBIC 48.2, BBR 46.7 Mbit/s; 1 % loss: CUBIC 2.8, BBR 38.3
+  Mbit/s), final receive windows 6 / 15 MiB before, now 2–4 / 3–6 MiB on the clean link and 0.5–2 / 0.75–3 MiB at 1 %
+  loss. Lost `MAX_DATA` / `MAX_STREAM_DATA` / `RESET_STREAM` / `STOP_SENDING` are queued once per stream instead of
+  once per loss report.
+
 QUIC runtime and sockets:
 
 - The endpoint's receive loop yields after 16 rounds or 2 ms of continuous traffic, so a socket that never runs dry (a

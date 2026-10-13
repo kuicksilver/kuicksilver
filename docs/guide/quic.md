@@ -42,6 +42,16 @@ validation, max(3 x PTO, 6 x `initialRtt`) (RFC 9000 §8.2.4).
 val lossyMobile = quicConfig { initialRtt = 100.milliseconds }
 ```
 
+Flow control: each stream starts with a receive window of `initialStreamWindow` (default 512 KiB) and the connection
+with `initialConnectionWindow` (768 KiB). A window is updated each time the application has read a quarter of it and
+doubles, up to `maxStreamWindow` (6 MiB) / `maxConnectionWindow` (15 MiB), only while the application reads a whole
+window in less than four smoothed RTTs, that is faster than the window lets the peer send (quic-go's auto-tuning rule);
+the connection window stays at least 1.5 x the largest stream window. A busy reader's window settles at 4–8 x the
+bandwidth-delay product, a slow reader keeps the initial window, and the ceilings bound the unread data one connection
+can hold. The defaults are quic-go's. A sender blocked by a window repeats `DATA_BLOCKED` / `STREAM_DATA_BLOCKED` while
+it stays blocked, and the receiver answers a stale report with its current limit, so a lost window update costs a few
+PTOs, not a stall.
+
 A client that prefers v2 but must start in v1 (the widely deployed version) sets `initialVersion = VersionProfile.V1`
 with `versions = listOf(VersionProfile.V2, VersionProfile.V1)`: the first flight is v1, the server upgrades it through
 compatible version negotiation (RFC 9368 section 2.3).
@@ -359,7 +369,9 @@ the connection: if no network returns within the idle timeout, the connection cl
 ## Glitch protection
 
 Every connection carries a token bucket (1000 tokens, 33 back per second) that pays for work the peer makes us do
-without moving anything forward: a `*_BLOCKED` frame repeating the same limit, a `NEW_CONNECTION_ID` for a sequence
+without moving anything forward: a `DATA_BLOCKED` or `STREAM_DATA_BLOCKED` (per stream) less than one RTT after the
+previous one (a stale one that comes later is answered with the current `MAX_DATA` / `MAX_STREAM_DATA` at once), a
+`STREAMS_BLOCKED` repeating the same limit, a `NEW_CONNECTION_ID` for a sequence
 number we already hold, a `RETIRE_CONNECTION_ID` for an ID that is already retired (one for a sequence number we never issued is a
 `PROTOCOL_VIOLATION`), a third PING-only packet within one
 RTT (the two probes of a PTO may both be PING-only, so a pair is free). A 1-RTT packet that fails to decrypt is discarded silently and spends nothing: anyone who has seen a connection ID

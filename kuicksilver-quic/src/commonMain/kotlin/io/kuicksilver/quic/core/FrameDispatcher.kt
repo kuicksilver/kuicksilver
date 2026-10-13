@@ -17,9 +17,6 @@ internal class FrameDispatcher(
     private val c: ConnectionCore,
     private val r: PacketReceiver,
 ) : FrameHandler {
-    private var lastDataBlocked = -1L
-    private var lastStreamDataBlockedId = -1L
-    private var lastStreamDataBlockedLimit = -1L
     private val lastStreamsBlocked = longArrayOf(-1L, -1L)
 
     private fun violation(msg: String): Nothing = throw QuicWireException(TransportError.PROTOCOL_VIOLATION, r.reader.frameType, msg)
@@ -103,22 +100,17 @@ internal class FrameDispatcher(
         c.streams.onMaxStreams(bidi, max)
     }
 
+    // a stale DATA_BLOCKED / STREAM_DATA_BLOCKED is answered with the current limit at once; one repeated within an RTT is not
+    // answered and spends a token, so a flood buys at most one small frame per RTT
     override fun dataBlocked(limit: Long) {
-        if (limit == lastDataBlocked) c.glitch(0x14)
-        lastDataBlocked = limit
+        if (!c.streams.onDataBlocked(limit, r.now, c.rtt.smoothed)) c.glitch(0x14)
     }
 
     override fun streamDataBlocked(
         id: Long,
         limit: Long,
     ) {
-        if (id == lastStreamDataBlockedId &&
-            limit == lastStreamDataBlockedLimit
-        ) {
-            c.glitch(0x15)
-        }
-        lastStreamDataBlockedId = id
-        lastStreamDataBlockedLimit = limit
+        if (!c.streams.onStreamDataBlocked(id, limit, r.now, c.rtt.smoothed)) c.glitch(0x15)
     }
 
     override fun streamsBlocked(

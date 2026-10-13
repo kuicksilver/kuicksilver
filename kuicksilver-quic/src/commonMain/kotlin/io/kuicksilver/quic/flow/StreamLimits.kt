@@ -89,6 +89,12 @@ internal class StreamLimits(
         return peerLimit[i]
     }
 
+    /** The reported limit while still blocked at it (a lost STREAMS_BLOCKED goes out again), else -1. */
+    fun stillStreamsBlocked(bidi: Boolean): Long {
+        val i = idx(bidi)
+        return if (!canOpenLocal(bidi) && blockedReportedAt[i] == ourLimit[i]) ourLimit[i] else -1
+    }
+
     /** The limit to report in STREAMS_BLOCKED the first time we are blocked at it, else -1. */
     fun takeStreamsBlocked(bidi: Boolean): Long {
         val i = idx(bidi)

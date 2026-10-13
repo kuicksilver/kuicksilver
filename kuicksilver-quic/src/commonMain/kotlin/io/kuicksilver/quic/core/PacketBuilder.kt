@@ -209,6 +209,7 @@ internal class PacketBuilder(
             c.testInjectDatagramFrame ||
             c.testInjectNewCids > 0 ||
             c.testInjectMaxData > 0 ||
+            c.testInjectDataBlocked > 0 ||
             c.testInjectRepeatNewCid > 0 ||
             c.testInjectDatagramBytes > 0 ||
             (c.datagramSender?.hasPending() == true && c.maxDatagramPayload > 0)
@@ -577,6 +578,13 @@ internal class PacketBuilder(
                     ) {
                         FrameEncoder.maxData(w, 0)
                         c.testInjectMaxData--
+                        ackEliciting = true
+                    }
+                    while (c.testInjectDataBlocked > 0 &&
+                        w.remaining >= 9
+                    ) {
+                        FrameEncoder.dataBlocked(w, c.testInjectDataBlocked.toLong())
+                        c.testInjectDataBlocked--
                         ackEliciting = true
                     }
                     while (c.testInjectNewCids > 0 &&

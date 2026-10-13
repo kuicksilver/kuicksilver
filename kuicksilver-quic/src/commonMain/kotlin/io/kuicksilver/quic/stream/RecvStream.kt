@@ -3,6 +3,7 @@
 package io.kuicksilver.quic.stream
 
 import io.kuicksilver.native.PacketBuffer
+import io.kuicksilver.quic.TimeMark
 import io.kuicksilver.quic.TransportError
 import io.kuicksilver.quic.flow.RecvFlowController
 import io.kuicksilver.quic.wire.QuicWireException
@@ -25,6 +26,9 @@ internal class RecvStream(
     var resetCode: Long = 0
         private set
     var stopped: Boolean = false // we sent STOP_SENDING
+
+    /** When the peer's last STREAM_DATA_BLOCKED for this stream arrived; one per RTT is answered (RFC 9000 section 4.1). */
+    var blockedSeenAt: TimeMark = TimeMark.NEVER
 
     /** Bytes of this stream already credited back to the connection window (read by the application or abandoned). */
     var connCredited: Long = 0

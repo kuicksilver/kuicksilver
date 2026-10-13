@@ -37,6 +37,9 @@ internal class SendFlowController(
         blockedReportedAt = -1
     }
 
+    /** True while still blocked at [limit] and that limit was reported: a lost DATA_BLOCKED / STREAM_DATA_BLOCKED for it goes out again. */
+    fun stillBlockedAt(limit: Long): Boolean = available <= 0 && this.limit == limit && blockedReportedAt == limit
+
     /** The limit to report in DATA_BLOCKED / STREAM_DATA_BLOCKED when blocked at it for the first time, else -1. */
     fun takeBlocked(): Long {
         if (available > 0 || blockedReportedAt == limit) return -1

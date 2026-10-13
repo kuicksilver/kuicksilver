@@ -15,6 +15,11 @@ internal class Timers {
     var lastCloseSent: TimeMark? = null
     var keepAlivePending: Boolean = false
 
+    /** When a sender blocked by flow control repeats its DATA_BLOCKED / STREAM_DATA_BLOCKED; NEVER while not blocked. */
+    var blockedRepeatAt: TimeMark = TimeMark.NEVER
+    var blockedRepeats: Int = 0
+    var blockedEpochSeen: Int = 0
+
     /** Set by the first ack-eliciting send after a receipt; RFC 9000 section 10.1 lets only that send restart the idle timer. */
     var ackElicitingSentSinceReceive: Boolean = false
 
