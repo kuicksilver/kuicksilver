@@ -110,7 +110,7 @@ CONNECTION_CLOSE is sent.
   of at most 3/4 of `maxIdleTimeout`, for example `keepAlive = 10.seconds`. A NAT on the path may forget an idle UDP
   mapping sooner than 30 s; keep-alive covers that too.
 - **The peer's timeout is shorter**: the effective value is the minimum; raise it on both sides. The Ktor server takes
-  `quicMaxIdleTimeout` (when `quic` is left at its default).
+  `quicMaxIdleTimeout` (when `quic` is not assigned; otherwise set `maxIdleTimeout` in `quic`).
 - **The peer vanished** (a server restarted without a Stateless Reset, a phone lost coverage): the timeout is the
   intended outcome. A client that follows networks ([Network changes](quic.md#network-changes)) survives a change of
   network instead.

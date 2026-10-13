@@ -252,7 +252,7 @@ Guide: [Ktor: Client](ktor.md#client).
 | `http3` | `Boolean` | `true` | serve HTTP/3 on every TLS connector |
 | `altSvc` | `Boolean` | `true` | add `Alt-Svc: h3=":<port>"; ma=86400` to HTTP/1.1 responses over TLS (not when the application set its own, not on 421) |
 | `quic` | `QuicConfig` | `QuicConfig.Default` | QUIC transport of the HTTP/3 listeners |
-| `quicMaxIdleTimeout` | `Duration?` | `null` | `quic.maxIdleTimeout`, applied only while `quic` is the default instance |
+| `quicMaxIdleTimeout` | `Duration?` | `null` | `quic.maxIdleTimeout`, applied only while `quic` is not assigned (assigning any `QuicConfig`, `QuicConfig.Default` included, uses that config's own timeout) |
 | `udpSocketCount` | `Int` | 1 | endpoint loops per UDP port (`QuicEndpointConfig.loops`; more than 1 needs Linux or Android) |
 | `quicAdmission` | `ConnectionAdmission?` | `null` (`ConnectionAdmission.default()`) | Retry policy |
 | `http3Settings` | `Http3Settings` | `Http3Settings.Default` | HTTP/3 settings |

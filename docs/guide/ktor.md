@@ -57,7 +57,7 @@ network. Responses never carry `Transfer-Encoding` or other connection-specific 
 simply a sequence of DATA frames.
 
 Knobs, named after Ktor's Netty engine where one exists: `http3` (on), `quic` (transport settings), `quicMaxIdleTimeout`
-(applies when `quic` is the default), `udpSocketCount` (endpoint loops on `SO_REUSEPORT`, Linux and Android), `quicAdmission`
+(applies while `quic` is not assigned), `udpSocketCount` (endpoint loops on `SO_REUSEPORT`, Linux and Android), `quicAdmission`
 (Retry policy, Ktor-Netty's `quicTokenHandler`), `http3Settings`. UDP socket buffer sizes are not configurable yet.
 
 The engine serves HTTP/3 on every target, Kotlin/Native Linux, Apple and Windows included (the accelerated `ksl` socket,

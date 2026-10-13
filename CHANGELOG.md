@@ -501,6 +501,8 @@ Ktor client (`kuicksilver-ktor-client`):
 
 Ktor server (`kuicksilver-ktor-server`):
 
+- `quicMaxIdleTimeout` applied whenever `quic` was the `QuicConfig.Default` instance, so `quic = QuicConfig.Default`
+  counted as unset; it now applies only while `quic` was never assigned, whatever the value assigned.
 - With `port = 0` the HTTP/3 endpoint bound the UDP twin of the port the OS gave TCP, and the start failed with
   `BindException` when that UDP port was taken; the TCP + UDP pair is now retried on a new port up to 16 times, then
   HTTP/3 is skipped with a warning and HTTP/1.1 is served alone.
