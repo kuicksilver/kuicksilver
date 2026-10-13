@@ -237,8 +237,7 @@ internal class ConnectionIdManager(
             local[i].sent = false
             return
         }
-        retiredLocal += local.removeAt(i)
-        retiredUntil += dropAt
+        retireLocal(local.removeAt(i), dropAt)
         fill()
     }
 
@@ -264,11 +263,27 @@ internal class ConnectionIdManager(
             for (k in 0 until retiredLocal.size) if (retiredLocal[k].seq == seq) return true
             return false // already gone: nothing to do (a glitch)
         }
-        retiredLocal += local.removeAt(i)
-        retiredUntil += until
+        retireLocal(local.removeAt(i), until)
         retiredByPeer++
         fill()
         return true
+    }
+
+    /**
+     * Keeps a retired ID routing until [until]. Each one is replaced at once, so a peer that retires every new ID could grow this
+     * set for 3 x PTO: at most [retiredCap] keep routing, and the oldest leaves the registry early (a stateless reset for a retired
+     * ID is ignored by the peer, RFC 9000 section 10.3.1).
+     */
+    private fun retireLocal(
+        l: Local,
+        until: TimeMark,
+    ) {
+        if (retiredLocal.size >= retiredCap) {
+            registrar.remove(retiredLocal.removeAt(0).cid)
+            retiredUntil.removeAt(0)
+        }
+        retiredLocal += l
+        retiredUntil += until
     }
 
     /** Earliest deadline of a retired ID, or NEVER. */

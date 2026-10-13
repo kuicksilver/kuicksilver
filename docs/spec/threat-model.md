@@ -125,7 +125,11 @@ and a flow-control error left the received total above the limit (`connectionNul
 (`rememberedTicket`; `ZeroRttTest.negative_malformedRememberedBlobGivesNoEarlyData`); (6) two test-only records of a
 connection (the addresses it sent PATH_CHALLENGE to, its MTU updates) grew with every challenge, so forged copies of a
 client packet from ever new addresses grew the connection's memory without bound (`connectionNull`;
-`PathTest.negative_challengeRecordStaysBoundedUnderForgedAddresses`; the records keep their latest 64 entries).
+`PathTest.negative_challengeRecordStaysBoundedUnderForgedAddresses`; the records keep their latest 64 entries); (7) every
+connection ID the peer retired kept routing for 3 x PTO and was replaced at once, so a peer retiring each new ID as it
+arrived grew the retired set and the endpoint's routing table without a fixed bound (`connectionNull`;
+`ConnectionIdTest.negative_retiredLocalIdsStayBounded`; at most `retiredConnectionIds` (32) keep routing, the oldest
+leaves early — the peer ignores a stateless reset for a retired ID, RFC 9000 §10.3.1).
 
 <!-- campaign-table -->
 

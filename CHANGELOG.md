@@ -247,7 +247,9 @@ Fixes from a full five-reviewer pass over the code before the first release, amo
   size was checked against the connection window only, so it could exceed the stream window without FLOW_CONTROL_ERROR
   (RFC 9000 §4.1, §4.5, §19.10); every PATH_CHALLENGE a connection sent was appended to a test-only record that was never
   trimmed (as was every MTU update), so an attacker who forged copies of a peer's packets from ever new addresses grew the
-  connection's memory without bound — the records now keep their latest 64 entries.
+  connection's memory without bound — the records now keep their latest 64 entries; a connection ID the peer retired
+  keeps routing for 3 × PTO and is replaced at once, so a peer that retired every new ID grew the retired set and the
+  endpoint's routing table without a fixed bound — at most 32 retired IDs route at once, the oldest stops early.
 - Connection IDs, tokens, path challenges and packet-number skips come from OpenSSL's `RAND_bytes` through a
   thread-safe per-loop source; a non-cryptographic generator is no longer used on production paths.
 - HTTP/3 header frames are read incrementally instead of allocating their declared length up front.
