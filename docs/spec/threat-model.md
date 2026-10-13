@@ -262,8 +262,8 @@ K5 status (fallback): the fallback from HTTP/3 to HTTP/1.1 uses the same `TlsCon
 ### 3.20 HTTP/1.1 framing and proxies (RFC 9112 §6, §11; RFC 9110 §9.3.6, §11.7.2)
 
 - **Threats:** request smuggling and response splitting through ambiguous message framing (a front proxy and the engine disagreeing on where a message ends); credentials meant for a proxy reaching the origin server.
-- **Mitigations:** the client sends `Proxy-Authorization` and `Proxy-Connection` only on the CONNECT to the proxy, never inside the tunnel to the origin, and takes the bytes after a `2xx` CONNECT head as the tunnel's whatever its `Content-Length` says.
-- **Verification:** `ClientProxyTest.negative_proxyCredentialsStayOnTheConnect`, `ClientProxyTest.contentLengthOnConnectResponseIsIgnored`.
+- **Mitigations:** the client sends `Proxy-Authorization` and `Proxy-Connection` only on the CONNECT to the proxy, never inside the tunnel to the origin, and takes the bytes after a `2xx` CONNECT head as the tunnel's whatever its `Content-Length` says. A response whose Content-Length values conflict or are not `1*DIGIT` fails and its connection is closed (RFC 9112 §6.3 item 5); a response with Content-Length and Transfer-Encoding is framed by the coding and its connection is not reused (item 3); a chunked trailer section is capped at 16 KiB; a body cut before its framing ends fails instead of arriving short.
+- **Verification:** `ClientProxyTest.negative_proxyCredentialsStayOnTheConnect`, `ClientProxyTest.contentLengthOnConnectResponseIsIgnored`, `ClientH1FramingTest.negative_conflictingContentLengthFailsAndClosesConnection`, `.negative_signedContentLengthRejected`, `.negative_contentLengthWithTransferEncodingIsNotReused`, `.negative_hugeTrailerSectionFails`, `.negative_chunkedBodyCutBeforeLastChunkFails`.
 
 ## 4. What we do not protect against
 
@@ -299,7 +299,7 @@ HTTP/3:
 K5 status (2026-10-08): item 9 is fully covered on JVM and macOS Native (`kuicksilver-http3`, `kuicksilver-ktor-client`): `negative_h3FieldCrLfNul` — `message.FieldValidatorTest`; `negative_h3DecodedFieldSectionTooLarge` — `qpack.QpackDecoderTest` (decoder) and `runtime.LimitsTest` (431 + `H3_EXCESSIVE_LOAD` on the connection); `negative_h3TrailersTooLarge` — `runtime.LimitsTest`; `negative_h3ReservedFrameHugeLength` — `frame.FrameHeaderTest` (header) and `runtime.LimitsTest` (streaming skip on a request stream); `negative_qpackBlockedStreams` — `qpack.QpackDecoderTest` and `runtime.QpackDynamicTest`; `negative_qpackHugeIntegerOrLiteral` — `qpack.PrimitivesTest`; `negative_priorityUpdateBufferCap` — `runtime.PriorityTest`; `negative_fallbackKeepsPins` — `ClientFallbackTest` (JVM, real UDP/TCP); `negative_altSvcFromUnverifiedTls` — `AltSvcTest`. Fuzzing of frames, capsules and QPACK — §3.17, "K5 status (fuzzing)". The K5 modules (`kuicksilver-http3`, `kuicksilver-ktor-client`, `kuicksilver-ktor-server`) were also run on Linux (JVM and the arm64 test binaries) and on Android (API 34 emulator); only the Windows run remains.
 
 HTTP/1.1 (§3.20):
-12. `negative_proxyCredentialsStayOnTheConnect`
+12. `negative_proxyCredentialsStayOnTheConnect`, `negative_conflictingContentLengthFailsAndClosesConnection`, `negative_signedContentLengthRejected`, `negative_contentLengthWithTransferEncodingIsNotReused`, `negative_hugeTrailerSectionFails`, `negative_chunkedBodyCutBeforeLastChunkFails`
 
 Supply chain:
 10. `negative_tamperedNativeArtifact` (JVM), `negative_nativeAbiVersionMismatch`, `negative_exportedOpenSslSymbols` (nm/dumpbin on all platforms, including Android)

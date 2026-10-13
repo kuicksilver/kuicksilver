@@ -19,9 +19,9 @@ import io.ktor.http.URLBuilder
 import io.ktor.http.Url
 import io.ktor.http.cio.ConnectionOptions
 import io.ktor.http.cio.HttpHeadersMap
+import io.ktor.http.cio.ParserException
 import io.ktor.http.cio.RequestResponseBuilder
 import io.ktor.http.cio.encodeChunked
-import io.ktor.http.cio.parseHttpBody
 import io.ktor.http.cio.parseResponse
 import io.ktor.http.content.OutgoingContent
 import io.ktor.http.encodedPath
@@ -218,12 +218,20 @@ internal suspend fun readResponse(
 
         rawResponse.use {
             val status = HttpStatusCode(rawResponse.status, rawResponse.statusText.toString())
-            val contentLength = rawResponse.headers[HttpHeaders.ContentLength]?.toString()?.toLongOrNull() ?: -1L
-            val transferEncoding = rawResponse.headers[HttpHeaders.TransferEncoding]?.toString()
-            val connectionType = ConnectionOptions.parse(rawResponse.headers[HttpHeaders.Connection])
-            val headers = HeadersImpl(rawResponse.headers.toMap())
+            val framing = ResponseFraming.of(rawResponse.headers)
+            val connectionType = ConnectionOptions.parse(rawResponse.headers.joined(HttpHeaders.Connection))
+            // Transfer-Encoding overrides Content-Length (RFC 9112 section 6.3 item 3): the stale length is not shown to Ktor,
+            // which would check the body against it
+            val headers =
+                HeadersImpl(
+                    rawResponse.headers.toMap().let { if (framing.transferEncoding != null) it - HttpHeaders.ContentLength else it },
+                )
             val version = HttpProtocolVersion.parse(rawResponse.version)
-            val keepAlive = version == HttpProtocolVersion.HTTP_1_1 && connectionType?.close != true
+            // a request that said `Connection: close` is the last one on the connection (RFC 9112 section 9.6); a response
+            // with both Content-Length and Transfer-Encoding may be a smuggling or splitting attempt (section 6.3 item 3)
+            val keepAlive =
+                version == HttpProtocolVersion.HTTP_1_1 && connectionType?.close != true &&
+                    ConnectionOptions.parse(request.headers[HttpHeaders.Connection])?.close != true && !framing.lengthAndEncoding
 
             if (status == HttpStatusCode.SwitchingProtocols) {
                 onBodyDone(AfterResponse.HandOver)
@@ -242,8 +250,17 @@ internal suspend fun readResponse(
             val body =
                 when {
                     request.method == HttpMethod.Head || status == HttpStatusCode.NotModified || status == HttpStatusCode.NoContent -> {
-                        onBodyDone(if (keepAlive) AfterResponse.Reuse else AfterResponse.Close)
+                        onBodyDone(if (keepAlive && !framing.invalidLength) AfterResponse.Reuse else AfterResponse.Close)
                         ByteReadChannel.Empty
+                    }
+
+                    // an invalid Content-Length: the framing is unknown, the response is discarded and the connection
+                    // closed (RFC 9112 section 6.3 item 5); not an IOException, so a pooled connection is not retried
+                    framing.invalidLength -> {
+                        throw ParserException(
+                            "Invalid or conflicting Content-Length in the response: " +
+                                rawResponse.headers.getAll(HttpHeaders.ContentLength).joinToString(),
+                        )
                     }
 
                     else -> {
@@ -253,22 +270,13 @@ internal suspend fun readResponse(
                         var bodyComplete = false
                         val parser =
                             scope.writer(autoFlush = true) {
-                                parseHttpBody(
-                                    version,
-                                    contentLength,
-                                    transferEncoding,
-                                    connectionType,
-                                    input.withSocketTimeout(request),
-                                    channel,
-                                )
+                                framing.readBody(input.withSocketTimeout(request), channel)
                                 bodyComplete = true
                             }
                         // reusable only when the body ended by its framing (length or chunks), not by connection close
                         parser.job.invokeOnCompletion { cause ->
                             onBodyDone(
-                                if (cause == null && bodyComplete && keepAlive &&
-                                    (contentLength >= 0 || transferEncoding != null)
-                                ) {
+                                if (cause == null && bodyComplete && keepAlive && framing.delimited) {
                                     AfterResponse.Reuse
                                 } else {
                                     AfterResponse.Close
@@ -315,6 +323,85 @@ internal suspend fun startTunnel(
         }
     } finally {
         builder.release()
+    }
+}
+
+/** All values of [name], comma-joined (RFC 9110 section 5.3), or null when absent. */
+private fun HttpHeadersMap.joined(name: String): String? = getAll(name).toList().takeIf { it.isNotEmpty() }?.joinToString(",")
+
+/**
+ * How a response body ends (RFC 9112 section 6.3), for a response that has one: by the chunked coding when it is the final
+ * transfer coding (item 4), by the connection's close for another transfer coding (item 4) or without any framing (item 8),
+ * else by Content-Length (item 6). Content-Length is 1*DIGIT, and several values (repeated fields or a list) must be
+ * identical (RFC 9110 section 8.6); anything else is [invalidLength] (item 5).
+ */
+internal class ResponseFraming private constructor(
+    val transferEncoding: String?,
+    val contentLength: Long,
+    val invalidLength: Boolean,
+    /** Content-Length and Transfer-Encoding together: framed by the coding, the connection is not reused (item 3). */
+    val lengthAndEncoding: Boolean,
+) {
+    private val chunked: Boolean =
+        transferEncoding
+            ?.split(',')
+            ?.lastOrNull { it.isNotBlank() }
+            ?.trim()
+            .equals("chunked", ignoreCase = true)
+
+    /** Whether the body ends by its own framing, so the connection can carry the next response. */
+    val delimited: Boolean get() = chunked || (transferEncoding == null && contentLength >= 0)
+
+    /** Copies the body from [input] to [out]; a body that ends before its framing says is incomplete (RFC 9112 section 8). */
+    suspend fun readBody(
+        input: ByteReadChannel,
+        out: ByteWriteChannel,
+    ) {
+        when {
+            chunked -> {
+                decodeChunkedBody(input, out)
+            }
+
+            transferEncoding == null && contentLength >= 0 -> {
+                val copied = input.copyTo(out, contentLength)
+                if (copied < contentLength) {
+                    throw EOFException("The connection closed after $copied of $contentLength body bytes")
+                }
+            }
+
+            else -> {
+                input.copyTo(out, Long.MAX_VALUE)
+            }
+        }
+    }
+
+    companion object {
+        fun of(headers: HttpHeadersMap): ResponseFraming {
+            val te = headers.joined(HttpHeaders.TransferEncoding)
+            val values = headers.getAll(HttpHeaders.ContentLength).toList()
+            val length = if (values.isEmpty()) -1L else contentLengthOf(values)
+            return ResponseFraming(
+                transferEncoding = te,
+                contentLength = length ?: -1L,
+                invalidLength = te == null && length == null,
+                lengthAndEncoding = te != null && values.isNotEmpty(),
+            )
+        }
+
+        /** The one length that every value states, or null when one is not 1*DIGIT or they differ. */
+        fun contentLengthOf(values: List<CharSequence>): Long? {
+            var result: Long? = null
+            for (v in values) {
+                for (part in v.split(',')) {
+                    val t = part.trim()
+                    if (t.isEmpty() || t.length > 18 || t.any { it !in '0'..'9' }) return null
+                    val n = t.toLong()
+                    if (result != null && result != n) return null
+                    result = n
+                }
+            }
+            return result
+        }
     }
 }
 

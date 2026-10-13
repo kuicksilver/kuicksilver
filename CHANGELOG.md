@@ -623,6 +623,12 @@ Ktor client (`kuicksilver-ktor-client`):
   `ktor-network`'s `InetSocketAddress`, which `ProxyConfig.resolveAddress()` never returns. A `2xx` answer to the CONNECT
   that carried `Content-Length` made the client wait for that many bytes before its ClientHello, until the connect
   timeout; Content-Length and Transfer-Encoding of a successful CONNECT response are now ignored (RFC 9110 §9.3.6).
+- HTTP/1.1 responses are framed as RFC 9112 §6.3 says, where the vendored Ktor CIO code did not: a response without
+  Content-Length or Transfer-Encoding is read until the server closes the connection (it failed with "Failed to parse
+  request body"); a chunked body with a trailer section is accepted (the trailer fields, at most 16 KiB, are discarded;
+  it failed with "Expected CR"), and one cut before its last chunk fails instead of arriving short; a transfer coding
+  other than a final `chunked` is read until close. A request that sends `Connection: close` is the last one on its
+  connection even when the server does not echo the option (§9.6).
 
 Ktor server (`kuicksilver-ktor-server`):
 
@@ -700,6 +706,11 @@ Samples and testing:
 - Ktor client: `Proxy-Authorization` (and `Proxy-Connection`) set on a request went to the proxy on the CONNECT and then,
   inside the TLS tunnel, to the origin server as well, which received the proxy credentials; they now stay on the
   CONNECT (RFC 9110 §11.7.2, threat model section 3.20, `negative_proxyCredentialsStayOnTheConnect`).
+- Ktor client: a response with conflicting or invalid Content-Length values (`5` and `42`, `+5`) was framed by the first
+  one and its connection returned to the pool, so the rest of its bytes became the response to the next request on it
+  (response splitting); it now fails and the connection is closed (RFC 9112 §6.3 item 5). A response with both
+  Content-Length and Transfer-Encoding is framed by the coding and its connection is not reused (item 3)
+  (`negative_conflictingContentLengthFailsAndClosesConnection`, `negative_contentLengthWithTransferEncodingIsNotReused`).
 
 ## 0.1.0 candidate (never published)
 
