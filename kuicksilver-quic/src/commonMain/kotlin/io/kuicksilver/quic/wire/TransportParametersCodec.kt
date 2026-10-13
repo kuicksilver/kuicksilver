@@ -39,7 +39,9 @@ internal object TransportParametersCodec {
         sender: TlsRole,
         reservedId: Long,
     ): ByteArray {
-        val b = PacketBuffer.allocate(1024)
+        // fixed parameters take well under 1024 bytes; version_information grows with the versions listed (a decoded peer's
+        // list is as long as the peer made it)
+        val b = PacketBuffer.allocate(1024 + 4 * (tp.availableVersions?.size ?: 0))
         try {
             val w = WireWriter(b, 0, b.capacity)
 

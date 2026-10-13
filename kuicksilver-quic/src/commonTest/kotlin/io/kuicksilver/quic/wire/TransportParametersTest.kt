@@ -129,6 +129,18 @@ class TransportParametersTest {
             }
         }
 
+    /**
+     * Found by the `rememberedTicket` fuzz target: a server may list many versions in version_information (the decoder takes
+     * any multiple of 4 bytes), and encoding such parameters again overflowed the encoder's fixed 1024-byte buffer.
+     */
+    @Test fun negative_manyAvailableVersionsEncodeAgain() {
+        val tp = TransportParameters()
+        tp.chosenVersion = 1
+        tp.availableVersions = IntArray(300) { it + 1 }
+        val back = TransportParametersCodec.decode(TransportParametersCodec.encode(tp, TlsRole.Server, 27), TlsRole.Server)
+        assertEquals(tp.availableVersions?.toList(), back.availableVersions?.toList())
+    }
+
     @Test fun negative_duplicateTransportParameter() = expect(0x08, raw(0x01L to vi(10), 0x01L to vi(20)))
 
     @Test fun serverOnlyParametersFromClientRejected() {

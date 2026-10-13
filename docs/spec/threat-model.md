@@ -130,7 +130,10 @@ client packet from ever new addresses grew the connection's memory without bound
 connection ID the peer retired kept routing for 3 x PTO and was replaced at once, so a peer retiring each new ID as it
 arrived grew the retired set and the endpoint's routing table without a fixed bound (`connectionNull`;
 `ConnectionIdTest.negative_retiredLocalIdsStayBounded`; at most `retiredConnectionIds` (32) keep routing, the oldest
-leaves early — the peer ignores a stateless reset for a retired ID, RFC 9000 §10.3.1).
+leaves early — the peer ignores a stateless reset for a retired ID, RFC 9000 §10.3.1); (8) transport parameters with a
+long version_information list (the decoder takes any multiple of 4 bytes) overflowed the encoder's fixed 1024-byte buffer
+when encoded again — not reachable from a peer, since only our own parameters are encoded, but the encoder now sizes its
+buffer to the list (`rememberedTicket`; `TransportParametersTest.negative_manyAvailableVersionsEncodeAgain`).
 
 <!-- campaign-table -->
 

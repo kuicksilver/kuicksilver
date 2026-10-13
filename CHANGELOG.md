@@ -125,6 +125,9 @@ Found by the fuzzing campaigns (threat model section 3.10):
   out of the ticket's use; it now gives no 0-RTT (found by the `rememberedTicket` fuzz target).
 - QUIC: a flow-control error no longer leaves the connection's received-bytes total above the advertised limit (the
   total is checked before it is updated).
+- QUIC: transport parameters listing more than about 250 versions in version_information could not be encoded (the
+  encoder's buffer was a fixed 1024 bytes); the buffer now grows with the list (found by the `rememberedTicket` fuzz
+  target; only our own parameters are encoded, so a peer could not trigger it).
 
 QUIC migration right after the handshake (0.2.0 bug 1, iOS library report):
 
