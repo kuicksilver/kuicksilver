@@ -81,6 +81,23 @@ internal class StreamManager(
         control += c
     }
 
+    /** Queues [kind] for [id] unless one is already waiting, which then carries the larger value: one frame says the latest. */
+    private fun queueOnce(
+        kind: ControlKind,
+        id: Long,
+        a: Long,
+        b: Long = 0,
+    ) {
+        for (i in 0 until control.size) {
+            val c = control[i]
+            if (c.kind == kind && c.id == id) {
+                if (a > c.a) c.a = a
+                return
+            }
+        }
+        queueControl(kind, id, a, b)
+    }
+
     val events: ArrayDeque<ConnectionEvent> = ArrayDeque()
     private val opened = ArrayList<Long>()
     private val nextIndex = longArrayOf(0, 0) // [bidi, uni]
@@ -175,6 +192,11 @@ internal class StreamManager(
         opened.clear()
         return l
     }
+
+    /** Receive window of stream [id] and of the connection (test hooks: auto-tuning). */
+    internal fun recvWindowForTest(id: Long): Long = streams[id]?.recv?.flow?.window ?: -1
+
+    internal val connWindowForTest: Long get() = connFlow.window
 
     fun takeControlFrame(): ControlFrame? = control.removeFirstOrNull()
 
@@ -384,7 +406,7 @@ internal class StreamManager(
         if (bytes >
             0
         ) {
-            connFlow.onConsumed(bytes, now, smoothedRtt).let { if (it >= 0) queueControl(ControlKind.MaxData, 0, it) }
+            connFlow.onConsumed(bytes, now, smoothedRtt).let { if (it >= 0) queueOnce(ControlKind.MaxData, 0, it) }
         }
     }
 
@@ -439,6 +461,48 @@ internal class StreamManager(
         if (limits.peerMaxStreamsGranted(bidi) > limit) queueMaxStreams(bidi)
     }
 
+    /** When the peer's last DATA_BLOCKED arrived. */
+    private var dataBlockedSeenAt = TimeMark.NEVER
+
+    /**
+     * DATA_BLOCKED from the peer (RFC 9000 sections 4.1 and 19.12). Below the limit we granted, our MAX_DATA was lost or is still in
+     * flight: the current one goes out at once rather than after our PTO backoff. False when it repeats one from less than an RTT
+     * ago: an honest peer reports a limit once and again only after a loss, so a faster repeat is not answered and is a glitch.
+     */
+    fun onDataBlocked(
+        limit: Long,
+        now: TimeMark,
+        smoothedRtt: Duration,
+    ): Boolean {
+        if (!blockedReportDue(dataBlockedSeenAt, now, smoothedRtt)) return false
+        dataBlockedSeenAt = now
+        if (limit < connFlow.limit) queueOnce(ControlKind.MaxData, 0, connFlow.limit)
+        return true
+    }
+
+    /** STREAM_DATA_BLOCKED from the peer (RFC 9000 sections 4.1 and 19.13), answered like [onDataBlocked] with the stream's MAX_STREAM_DATA. */
+    fun onStreamDataBlocked(
+        id: Long,
+        limit: Long,
+        now: TimeMark,
+        smoothedRtt: Duration,
+    ): Boolean {
+        val e = peerStream(id) ?: return true
+        val r =
+            e.recv ?: throw QuicWireException(TransportError.STREAM_STATE_ERROR, 0x15, "STREAM_DATA_BLOCKED on our send-only stream $id")
+        if (!blockedReportDue(r.blockedSeenAt, now, smoothedRtt)) return false
+        r.blockedSeenAt = now
+        // once the final size is known no more credit is needed (RFC 9000 section 13.3)
+        if (limit < r.flow.limit && r.finalSize < 0) queueOnce(ControlKind.MaxStreamData, id, r.flow.limit)
+        return true
+    }
+
+    private fun blockedReportDue(
+        last: TimeMark,
+        now: TimeMark,
+        smoothedRtt: Duration,
+    ): Boolean = last == TimeMark.NEVER || now - last >= smoothedRtt
+
     private fun queueMaxStreams(bidi: Boolean) {
         val kind = if (bidi) ControlKind.MaxStreamsBidi else ControlKind.MaxStreamsUni
         for (i in 0 until control.size) {
@@ -487,8 +551,8 @@ internal class StreamManager(
                 if (it >=
                     0
                 ) {
-                    queueControl(ControlKind.MaxStreamData, id, it)
-                    if (connFlow.ensureWindowAtLeast(r.flow.window * 3 / 2)) queueControl(ControlKind.MaxData, 0, connFlow.limit)
+                    queueOnce(ControlKind.MaxStreamData, id, it)
+                    if (connFlow.ensureWindowAtLeast(r.flow.window * 3 / 2)) queueOnce(ControlKind.MaxData, 0, connFlow.limit)
                 }
             } // connection window ≥ 1.5 × stream window
         }
@@ -589,6 +653,11 @@ internal class StreamManager(
                             0
                         ) {
                             queueControl(ControlKind.StreamDataBlocked, s.id, it)
+                            blockedEpoch++
+                            if (!s.streamBlockedListed) {
+                                s.streamBlockedListed = true
+                                streamBlocked += s
+                            }
                         }
                     }
                     if (connSend.available <= 0) blockedOnConnection(s)
@@ -597,6 +666,7 @@ internal class StreamManager(
                             0
                         ) {
                             queueControl(ControlKind.DataBlocked, 0, it)
+                            blockedEpoch++
                         }
                     }
                 }
@@ -620,6 +690,52 @@ internal class StreamManager(
                 scheduler.rotate(s)
             }
             return true
+        }
+    }
+
+    /** Bumped whenever a new DATA_BLOCKED / STREAM_DATA_BLOCKED limit is reported: the core restarts its repeat timer. */
+    var blockedEpoch: Int = 0
+        private set
+
+    /** Streams that reported STREAM_DATA_BLOCKED; pruned by [flowBlocked] once they are no longer blocked. */
+    private val streamBlocked = ArrayList<SendStream>()
+
+    private fun stillStreamBlocked(s: SendStream): Boolean {
+        val e = streams[s.id] ?: return false
+        if (e.send !== s || s.sentEnd >= s.written) return false
+        val limit = sendLimit[s.id] ?: return false
+        return limit.stillBlockedAt(limit.maxLimit)
+    }
+
+    private fun stillConnBlocked(): Boolean = connBlocked.isNotEmpty() && connSend.stillBlockedAt(connSend.maxLimit)
+
+    /** True while some data waits for credit the peer has not given: a reported DATA_BLOCKED or STREAM_DATA_BLOCKED still holds. */
+    fun flowBlocked(): Boolean {
+        var i = 0
+        while (i < streamBlocked.size) {
+            val s = streamBlocked[i]
+            if (stillStreamBlocked(s)) {
+                i++
+            } else {
+                s.streamBlockedListed = false
+                streamBlocked[i] = streamBlocked[streamBlocked.size - 1]
+                streamBlocked.removeAt(streamBlocked.size - 1)
+            }
+        }
+        return streamBlocked.isNotEmpty() || stillConnBlocked()
+    }
+
+    /**
+     * Queues every report that still holds again (RFC 9000 section 4.1): a sender with nothing in flight cannot learn that the
+     * receiver's MAX_DATA / MAX_STREAM_DATA was lost, so it asks again rather than wait on the receiver's PTO backoff.
+     */
+    fun repeatBlockedReports() {
+        if (flowBlocked()) {
+            for (i in streamBlocked.indices) {
+                val s = streamBlocked[i]
+                queueOnce(ControlKind.StreamDataBlocked, s.id, sendLimit[s.id]!!.maxLimit)
+            }
+            if (stillConnBlocked()) queueOnce(ControlKind.DataBlocked, 0, connSend.maxLimit)
         }
     }
 
@@ -665,22 +781,44 @@ internal class StreamManager(
         for (i in 0 until f.idCount) {
             when (f.idKind[i]) {
                 SentFrames.ID_MAX_STREAM_DATA -> {
-                    streams[f.idValue[i]]?.recv?.let { queueControl(ControlKind.MaxStreamData, f.idValue[i], it.flow.limit) }
+                    streams[f.idValue[i]]?.recv?.let {
+                        if (it.finalSize <
+                            0
+                        ) {
+                            queueOnce(ControlKind.MaxStreamData, f.idValue[i], it.flow.limit)
+                        }
+                    }
                 }
 
                 SentFrames.ID_RESET_STREAM -> {
-                    queueControl(ControlKind.ResetStream, f.idValue[i], f.idExtra[i], f.idExtra2[i])
+                    queueOnce(ControlKind.ResetStream, f.idValue[i], f.idExtra[i], f.idExtra2[i])
                 }
 
                 // final size travels with the frame: the stream may be retired by now
                 SentFrames.ID_STOP_SENDING -> {
-                    queueControl(ControlKind.StopSending, f.idValue[i], f.idExtra[i])
+                    queueOnce(ControlKind.StopSending, f.idValue[i], f.idExtra[i])
                 }
 
-                SentFrames.ID_STREAM_DATA_BLOCKED -> {}
+                // still blocked at the reported limit with data waiting: the report goes again (RFC 9000 section 13.3 lets it be
+                // dropped, but a lost one leaves a sender with nothing in flight waiting on the receiver's PTO backoff)
+                SentFrames.ID_STREAM_DATA_BLOCKED -> {
+                    val s = streams[f.idValue[i]]?.send
+                    if (s != null && s.sentEnd < s.written && sendLimit[f.idValue[i]]?.stillBlockedAt(f.idExtra[i]) == true) {
+                        queueOnce(ControlKind.StreamDataBlocked, f.idValue[i], f.idExtra[i])
+                    }
+                }
             }
         }
-        if (f.flags and SentFrames.MAX_DATA != 0) queueControl(ControlKind.MaxData, 0, connFlow.limit)
+        if (f.flags and SentFrames.DATA_BLOCKED != 0 && connBlocked.isNotEmpty() && connSend.stillBlockedAt(connSend.maxLimit)) {
+            queueOnce(ControlKind.DataBlocked, 0, connSend.maxLimit)
+        }
+        if (f.flags and SentFrames.STREAMS_BLOCKED_BIDI != 0) {
+            limits.stillStreamsBlocked(true).let { if (it >= 0) queueOnce(ControlKind.StreamsBlockedBidi, 0, it) }
+        }
+        if (f.flags and SentFrames.STREAMS_BLOCKED_UNI != 0) {
+            limits.stillStreamsBlocked(false).let { if (it >= 0) queueOnce(ControlKind.StreamsBlockedUni, 0, it) }
+        }
+        if (f.flags and SentFrames.MAX_DATA != 0) queueOnce(ControlKind.MaxData, 0, connFlow.limit)
         if (f.flags and SentFrames.MAX_STREAMS_BIDI != 0) queueMaxStreams(true) // with the current limit, which may have grown since
         if (f.flags and SentFrames.MAX_STREAMS_UNI != 0) queueMaxStreams(false)
     }

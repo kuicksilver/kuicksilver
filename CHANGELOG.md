@@ -35,9 +35,8 @@ QUIC (`kuicksilver-quic`, `kuicksilver-native`):
   a wake socket, ECN through `IP_ECN`/`IPV6_ECN` on Windows 10 2004+ / Server 2022, USO/URO where the system grants them,
   DF, dual-stack IPv6 sockets, `SO_EXCLUSIVEADDRUSE`); the JVM on Windows uses the same socket through JNI. Winsock is
   started when the Kotlin/Native runtime starts (not from a C constructor, which in a `sharedLib` would run under the
-  loader lock), so address lookups before the first socket do not fail with `WSANOTINITIALISED`. Cross-built on
-  macOS/Linux; not yet verified by a passing CI run (GitHub Actions is paused), verification in a local Windows VM is
-  pending.
+  loader lock), so address lookups before the first socket do not fail with `WSANOTINITIALISED`. Verified in a local
+  Windows 11 VM (Kotlin/Native and the JVM); GitHub Actions is not used.
 - `NetworkMigrator` (experimental): a client connection follows a `Flow` of networks, migrating to each new one (RFC 9000
   section 9) and closing the path it left; a failed migration keeps the old path, `disable_active_migration` is
   respected, `MigrationEvent` reports `Migrated`, `Failed`, `NetworkLost` and `SourceFailed` (the network flow threw; the
@@ -53,6 +52,9 @@ Testing (`kuicksilver-testing`, not published) and tooling:
   hold at most `receiveBuffer` unread datagrams (256 by default) and count what a full buffer drops, `open` on port 0
   binds an ephemeral port, oversized datagrams are dropped instead of truncated, and `trySend` counts only addressed
   datagrams.
+- Windows Native platform trust tests against the Internet (`www.google.com`, badssl.com's broken certificates), run
+  only with `KUICKSILVER_NETWORK_TESTS=1`; the TLS guide gains a per-platform table of what `TrustConfig.Platform`
+  verifies with and checks for revocation.
 - The Ktor server's HTTP/3 tests and the vendored Ktor 3.6.0 engine contract suites run from `commonTest` on every
   target (HTTP/3 where a QUIC server can bind); the two multipart-upload contract tests run over HTTP/3 as well (they
   were marked HTTP/1.1-only and pass unchanged).
@@ -110,6 +112,18 @@ Native layer and TLS (`kuicksilver-native`, `kuicksilver-tls`):
 
 ### Fixed
 
+QUIC migration right after the handshake (0.2.0 bug 1, iOS library report):
+
+- A network change in the first moments of a connection no longer fails with "path validation failed" and leaves the
+  connection on a dead path. A client that received the server's 0.5-RTT flight (its NEW_CONNECTION_ID frames) before
+  it held both directions of the 1-RTT keys kept those packets buffered until the server's loss recovery resent them;
+  it now replays them once the keys are complete, so the spare IDs arrive with the handshake (RFC 9000 §5.1.1). A
+  probe that still finds no unused server connection ID waits up to max(3 x PTO, 6 x initial RTT) for one and probes
+  when it arrives, never reusing the active path's ID (§9.5), and otherwise fails with the new, experimental
+  `PathFailureReason.NoSpareConnectionId` (`ConnectionEvent.PathFailed.reason`, `PathEvent.Failed.reason`;
+  `QuicConnection.migrate` throws `PathValidationException`, an `IllegalStateException`). `NetworkMigrator` reports
+  that failure and migrates to the same network again as soon as a spare ID arrives.
+
 QUIC core (review of 2026-10-08, deferred items):
 
 - An unanswered `PATH_CHALLENGE` is repeated with an exponentially growing gap (1, 1, 2, 4 ... x PTO, so three
@@ -143,6 +157,30 @@ QUIC core (review of 2026-10-08, deferred items):
   50 MiB loopback upload ended at 1200 bytes on the client or the server in 12 of 33 runs, each time with no packet lost
   (RFC 8899 §4.1, §4.3).
 
+Flow control (`kuicksilver-quic`; found with the BBR simulations, 2026-10-13):
+
+- An upload no longer stalls for 10+ s when the window update that would let it continue is lost: the sender had
+  nothing in flight and the receiver's only copy of its `MAX_DATA` / `MAX_STREAM_DATA` waited behind its PTO backoff
+  (64 x PTO, about 11 s, with 75 % loss on the return path). A PTO probe now carries the stream control frames of the
+  packet it stands in for (it was a bare PING when that packet held only `MAX_DATA` / `MAX_STREAM_DATA`); a blocked
+  sender repeats `DATA_BLOCKED` / `STREAM_DATA_BLOCKED` / `STREAMS_BLOCKED` when the report is lost and, while it stays
+  blocked, again one PTO later and then at gaps of 2, 4 and 8 PTOs; a receiver that already granted more answers a stale
+  `DATA_BLOCKED` / `STREAM_DATA_BLOCKED` with its current limit at once (RFC 9000 §4.1, §13.3, §19.12–§19.14). One
+  answer per smoothed RTT per connection or stream; a faster repeat is not answered and spends a glitch token (it used
+  to be a repeat of the same limit). Simulated 50 Mbit/s, 40 ms upload with 75 % ACK-path loss, 20 seeds: mean goodput
+  7.2 → 18.5 Mbit/s (CUBIC) and 7.3 → 21.0 Mbit/s (BBR), longest stall after the handshake at most 7.5 s instead of 13.6 s.
+- Receive-window auto-tuning works: the stream manager's clock was never set, so every window update looked
+  instantaneous and doubled the window, and every connection that moved more than a few MB grew to the ceilings
+  (6 MiB per stream, 15 MiB per connection) whatever its application read. The core now hands its clock and smoothed RTT
+  to the stream manager with each datagram and timer, and the rule is quic-go's (`maybeAdjustWindowSize`): a window
+  doubles only while the application reads a whole window in under four RTTs (it doubled when a quarter took under two,
+  which settled at 8–16 x the bandwidth-delay product). A slow reader keeps its initial window. Defaults unchanged
+  (quic-go's: 512 KiB → 6 MiB per stream, 768 KiB → 15 MiB per connection). Simulated 50 Mbit/s, 40 ms upload,
+  greedy reader, seeds 31–35: goodput unchanged (clean: CUBIC 48.2, BBR 46.7 Mbit/s; 1 % loss: CUBIC 2.8, BBR 38.3
+  Mbit/s), final receive windows 6 / 15 MiB before, now 2–4 / 3–6 MiB on the clean link and 0.5–2 / 0.75–3 MiB at 1 %
+  loss. Lost `MAX_DATA` / `MAX_STREAM_DATA` / `RESET_STREAM` / `STOP_SENDING` are queued once per stream instead of
+  once per loss report.
+
 QUIC runtime and sockets:
 
 - macOS and iOS: a socket bound to a wildcard address (the Ktor client's endpoint, `0.0.0.0:0`) no longer gets a port an IPv4
@@ -175,11 +213,28 @@ QUIC runtime and sockets:
 - The accelerated UDP socket (Linux, Apple) opens a dual-stack IPv6 socket for a wildcard address (`0.0.0.0` or `::`), as
   NIO did: the Ktor client (whose endpoint binds `0.0.0.0:0`) reaches IPv6 HTTP/3 servers, and a Ktor server on the
   default host serves HTTP/3 to IPv6 clients. Before, `0.0.0.0` gave an IPv4-only socket, so datagrams to IPv6 peers were
-  dropped and the handshake timed out. ECN and DF cover both address families; IPv4 peers are reported as IPv4. On
-  Windows every IPv6 socket is dual-stack, but `0.0.0.0` still opens an IPv4-only socket (bind `::` there).
+  dropped and the handshake timed out. ECN and DF cover both address families; IPv4 peers are reported as IPv4.
+- Windows: the accelerated UDP socket opens a dual-stack IPv6 socket for `0.0.0.0` too, as on Linux and Apple, so the
+  Ktor client (which binds `0.0.0.0:0`) reaches IPv6 HTTP/3 servers on Windows; without IPv6 it falls back to IPv4. DF
+  stays on where Windows refuses `IP_MTU_DISCOVER = PROBE` (some Windows 11 builds), as msquic runs.
+- Windows (JVM and Native): HTTP/3 and QUIC no longer stall up to 100 ms per flight. `ksl_udp_win.c` created its
+  sockets without `WSA_FLAG_OVERLAPPED`, so Windows serialised a send behind the receiving thread's `WSAPoll` on the
+  same socket; a small request took ~500 ms, an 8 MiB upload timed out after 60 s, and Ktor's redirect test with a 1 s
+  budget failed. Sockets are now overlapped, as `socket()` and msquic create them.
 
 TLS and native layer (`kuicksilver-tls`, `kuicksilver-native`):
 
+- `TrustConfig.Platform` works on Windows Native (mingwX64): it rejected every peer, so the default
+  `HttpClient(Kuicksilver)` could not open any public HTTPS site. It now verifies with CryptoAPI
+  (`CertGetCertificateChain` with the presented intermediates and AIA, `CertVerifyCertificateChainPolicy` with the SSL
+  policy and the host name) and maps Windows errors to `VerifyReason` (`UnknownIssuer`, `Expired`, `NotYetValid`,
+  `HostnameMismatch`, `Revoked`, `InvalidPurpose`, `BadSignature`); pins and `ExpectedName` apply as on the other
+  platforms. Revocation of the leaf is checked, soft fail; verification runs on `Dispatchers.IO`.
+- Linux Native: a host without a CA store (distroless, `scratch`) fails when a `TrustConfig.Platform` client
+  configuration is built, with a `TlsException.Config` that names every path searched and `SSL_CERT_FILE`/
+  `SSL_CERT_DIR`; before, a missing `/etc/ssl/certs` was accepted and every handshake failed with `UnknownIssuer`. When
+  `SSL_CERT_FILE` or `SSL_CERT_DIR` is set, only they are used (as in Go), instead of falling back to the distribution
+  paths. The search order is documented in the TLS guide.
 - Platform trust reports `VerifyReason.UnknownRevocationStatus` when the JVM PKIX validator
   (`UNDETERMINED_REVOCATION_STATUS`) or Apple (`errSecIncompleteCertRevocationCheck`) could not determine revocation, and
   `VerifyReason.CertificateTransparency` when Android's CT policy rejects a chain, instead of `UnknownIssuer`.
@@ -264,6 +319,17 @@ Ktor server (`kuicksilver-ktor-server`):
 - A failed HTTP/3 request (for example a client resetting a WebSocket CONNECT stream) no longer cancels the
   connection's handler and aborts the Kotlin/Native process; each request contains its own failure.
 
+Both Ktor engines on Kotlin/Native (`kuicksilver-ktor-network`, `kuicksilver-ktor-client`, `kuicksilver-ktor-server`):
+
+- HTTP/1.1 over IPv6 binds and connects the address it is given on Linux, Apple and Windows Native. The engines opened
+  their TCP sockets with Ktor 3.6.0's `ktor-network`, whose native sockets never copy the IPv6 address into
+  `sockaddr_in6` and so use `::` for every IPv6 bind and connect: a server connector on `::1` listened on every interface
+  (and on IPv4), a request to an IPv6 address went to the local host on Linux and Apple, and Windows Native refused it
+  with `WSAEADDRNOTAVAIL` (10049). The engines now use `kuicksilver-ktor-network`'s own native TCP sockets (`bindTcp`,
+  `connectTcp`; `ktor-network` as before on the JVM and Android). The portable Native UDP socket, which still uses
+  `ktor-network`, refuses a specific IPv6 bind address and IPv6 destinations instead. An upstream report is drafted in
+  `docs/upstream/ktor-native-ipv6.md`.
+
 Samples and testing:
 
 - `samples/realtime-telemetry` reads control lines with a 1024-byte limit; a longer line closes the connection (code 2)
@@ -273,6 +339,10 @@ Samples and testing:
 
 ### Security
 
+- Kotlin/Native: a Ktor server connector bound to a specific IPv6 address (for example a loopback-only `::1` endpoint) no
+  longer listens on every interface and on IPv4, and a client request to an IPv6 address no longer reaches a local
+  process on the same port instead of the intended host (threat model section 3.19,
+  `negative_ipv6ConnectorListensOnItsAddressOnly`, `negative_h1ToIpv6LiteralReachesThatAddressOnly`).
 - `ksl`: `KSL_OPT_CLIENT_CERT` is refused on a client context (it rewrote `SSL_CTX_set_verify` and switched server
   verification off); `KSL_OPT_VERIFY_MODE` and `KSL_OPT_CLIENT_CERT` reject values outside 0..2.
 - `TrustConfig.Pinned` refuses a `Custom` base wrapped in `ExpectedName` as it already refused a bare `Custom` (the spec:

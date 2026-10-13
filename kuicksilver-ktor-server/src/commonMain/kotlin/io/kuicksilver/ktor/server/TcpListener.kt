@@ -1,5 +1,7 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
+@file:OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+
 package io.kuicksilver.ktor.server
 
 import io.ktor.http.HttpHeaders
@@ -11,7 +13,6 @@ import io.ktor.network.sockets.InetSocketAddress
 import io.ktor.network.sockets.ServerSocket
 import io.ktor.network.sockets.Socket
 import io.ktor.network.sockets.SocketAddress
-import io.ktor.network.sockets.aSocket
 import io.ktor.network.sockets.openReadChannel
 import io.ktor.network.sockets.openWriteChannel
 import io.ktor.server.cio.backend.ServerIncomingConnection
@@ -27,6 +28,7 @@ import io.ktor.utils.io.ByteWriteChannel
 import io.ktor.utils.io.InternalAPI
 import io.ktor.utils.io.writeStringUtf8
 import io.kuicksilver.http3.Http3Endpoint
+import io.kuicksilver.ktor.network.bindTcp
 import io.kuicksilver.ktor.network.tlsServer
 import io.kuicksilver.ktor.server.h1.H1Call
 import io.kuicksilver.tls.Certificate
@@ -76,7 +78,7 @@ private suspend fun KuicksilverApplicationEngine.bindTcpAndUdp(
             1
         },
     ) {
-        val server = aSocket(selector).tcp().bind(l.config.host, l.config.port)
+        val server = bindTcp(selector, l.config.host, l.config.port)
         if (h3 == null) return server to null
         val port = (server.localAddress as? InetSocketAddress)?.port ?: l.config.port
         try {
@@ -100,7 +102,7 @@ private suspend fun KuicksilverApplicationEngine.bindTcpAndUdp(
     environment.log.warn(
         "HTTP/3 is not served: no free UDP port next to an ephemeral TCP one after $EPHEMERAL_PAIR_ATTEMPTS attempts ($last)",
     )
-    return aSocket(selector).tcp().bind(l.config.host, l.config.port) to null
+    return bindTcp(selector, l.config.host, l.config.port) to null
 }
 
 /** The accept loop of one TCP connector, after Ktor CIO's `httpServer`, with a TLS handshake per connection. */

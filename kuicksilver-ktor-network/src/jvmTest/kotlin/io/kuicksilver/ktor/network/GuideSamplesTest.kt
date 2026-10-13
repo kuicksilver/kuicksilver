@@ -28,6 +28,7 @@ import java.io.File
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 
@@ -115,6 +116,13 @@ class GuideSamplesTest {
                     it.delete()
                     it.deleteOnExit()
                 }.path
+        if (System.getProperty("os.name").orEmpty().startsWith("Windows")) {
+            // documented in docs/guide/tls.md (Key logging): without POSIX permissions nothing can vouch for the file, so the
+            // sample's call is refused there rather than writing secrets into an unchecked file
+            val e = assertFailsWith<IllegalArgumentException> { keylogFile(path) }
+            assertTrue("POSIX" in e.message.orEmpty(), e.message)
+            return
+        }
         // guide:tls:keylog
         val debugClient =
             tlsConfig(TlsRole.Client) {

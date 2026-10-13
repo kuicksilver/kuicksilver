@@ -41,6 +41,22 @@ class PathTest {
         repeat(steps) { step() }
     }
 
+    /**
+     * Starts a [bytes] download from [s] and loses one of its first datagrams, so the server's controller leaves slow start with a
+     * window that one pacing burst fills: this harness acknowledges within a step, so without a loss the burst (ten datagrams),
+     * not the window, limits the sender. (The server's 0.5-RTT flight used to be lost the same way before the client replayed it.)
+     */
+    private fun EndpointPair.windowLimitedDownload(
+        s: ConnectionCore,
+        bytes: Int,
+    ) {
+        val lost = sentToClient + 1
+        filterToClient = { i, _ -> i != lost }
+        send(s, bytes)
+        settle(20)
+        filterToClient = { _, _ -> true }
+    }
+
     private fun EndpointPair.changes(c: ConnectionCore) = events[c]!!.filterIsInstance<ConnectionEvent.PathChanged>()
 
     /** A connected pair with a few idle rounds behind it, so no ACK is pending when a test injects a frame. */
@@ -761,8 +777,7 @@ class PathTest {
         val (p, c) = connected()
         try {
             val s = p.server()
-            send(s, 400_000)
-            p.settle(20) // below the client's stream window: nothing but the network limits the transfer
+            p.windowLimitedDownload(s, 400_000) // below the client's stream window: nothing but the network limits the transfer
             val inFlightBefore = s.stats.bytesInFlight
             assertTrue(inFlightBefore >= s.stats.cwnd * 3 / 4, "window-limited before the rebind: $inFlightBefore of ${s.stats.cwnd}")
             // a real NAT rebinding: the old mapping dies, so every packet in flight to the old port is lost, and the client's next packets come from the new port
@@ -795,8 +810,7 @@ class PathTest {
         val (p, c) = connected()
         try {
             val s = p.server()
-            send(s, 600_000)
-            p.settle(20)
+            p.windowLimitedDownload(s, 600_000)
             assertTrue(
                 s.stats.bytesInFlight >= s.stats.cwnd * 3 / 4,
                 "the server is window-limited: in flight ${s.stats.bytesInFlight} of cwnd ${s.stats.cwnd}",

@@ -163,8 +163,10 @@ public final class io/kuicksilver/quic/ConnectionEvent$PathChanged : io/kuicksil
 }
 
 public final class io/kuicksilver/quic/ConnectionEvent$PathFailed : io/kuicksilver/quic/ConnectionEvent {
+	public synthetic fun <init> (ILio/kuicksilver/quic/PathFailureReason;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public synthetic fun <init> (ILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public final fun getPath-ako8JRA ()I
+	public final fun getReason ()Lio/kuicksilver/quic/PathFailureReason;
 }
 
 public final class io/kuicksilver/quic/ConnectionEvent$PathValidated : io/kuicksilver/quic/ConnectionEvent {
@@ -584,12 +586,22 @@ public final class io/kuicksilver/quic/PathEvent$Changed : io/kuicksilver/quic/P
 
 public final class io/kuicksilver/quic/PathEvent$Failed : io/kuicksilver/quic/PathEvent {
 	public fun <init> (Lio/kuicksilver/quic/QuicPath;)V
+	public fun <init> (Lio/kuicksilver/quic/QuicPath;Lio/kuicksilver/quic/PathFailureReason;)V
 	public final fun getPath ()Lio/kuicksilver/quic/QuicPath;
+	public final fun getReason ()Lio/kuicksilver/quic/PathFailureReason;
 }
 
 public final class io/kuicksilver/quic/PathEvent$Validated : io/kuicksilver/quic/PathEvent {
 	public fun <init> (Lio/kuicksilver/quic/QuicPath;)V
 	public final fun getPath ()Lio/kuicksilver/quic/QuicPath;
+}
+
+public final class io/kuicksilver/quic/PathFailureReason : java/lang/Enum {
+	public static final field NoSpareConnectionId Lio/kuicksilver/quic/PathFailureReason;
+	public static final field ValidationTimeout Lio/kuicksilver/quic/PathFailureReason;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lio/kuicksilver/quic/PathFailureReason;
+	public static fun values ()[Lio/kuicksilver/quic/PathFailureReason;
 }
 
 public final class io/kuicksilver/quic/PathId {
@@ -620,6 +632,11 @@ public final class io/kuicksilver/quic/PathState : java/lang/Enum {
 	public static fun getEntries ()Lkotlin/enums/EnumEntries;
 	public static fun valueOf (Ljava/lang/String;)Lio/kuicksilver/quic/PathState;
 	public static fun values ()[Lio/kuicksilver/quic/PathState;
+}
+
+public final class io/kuicksilver/quic/PathValidationException : java/lang/IllegalStateException {
+	public fun <init> (Lio/kuicksilver/quic/PathFailureReason;)V
+	public final fun getReason ()Lio/kuicksilver/quic/PathFailureReason;
 }
 
 public abstract interface class io/kuicksilver/quic/QlogSink {

@@ -81,6 +81,12 @@ internal class Path(
     /** The address was validated by a client Handshake packet (RFC 9000 section 8.1) while a PATH_CHALLENGE sent during the handshake is still unanswered: its deadline settles the path instead of failing it. */
     var handshakeValidated: Boolean = false
 
+    /**
+     * A client path under validation that has no peer connection ID of its own and found none spare (RFC 9000 section 9.5): no
+     * PATH_CHALLENGE goes out, and [challengeDeadline] is when the wait for a NEW_CONNECTION_ID gives up.
+     */
+    var awaitingCid: Boolean = false
+
     /** The peer connection ID this path's packets carry while it is not the active path (RFC 9000 section 9.5: never the active path's); null until it first sends. */
     var peerCid: ConnectionIdManager.Peer? = null
 

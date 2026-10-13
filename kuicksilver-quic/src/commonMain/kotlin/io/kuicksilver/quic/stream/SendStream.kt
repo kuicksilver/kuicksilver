@@ -25,6 +25,9 @@ internal class SendStream(
     /** Queued in [StreamManager]'s list of streams waiting for connection-level credit. */
     internal var connBlocked = false
 
+    /** In the manager's list of streams blocked at their own flow-control limit (STREAM_DATA_BLOCKED reported). */
+    internal var streamBlockedListed = false
+
     /** Queued in [StreamManager]'s list of streams whose last write did not fit the send buffer. */
     internal var writeRefused = false
 

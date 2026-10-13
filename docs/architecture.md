@@ -114,6 +114,10 @@ stable surface; `ConnectionCore`, `EndpointCore`, `CongestionController` and `Da
 ### `kuicksilver-ktor-network`
 
 `Socket.tls(config)` and `Socket.tlsServer(config)` for ktor-network sockets. It depends on `kuicksilver-tls` only.
+`connectTcp`/`bindTcp` (`@InternalKuicksilverApi`) open the engines' TCP sockets: ktor-network's on the JVM and Android, on
+Kotlin/Native a socket of this module on ktor-network's selector (`TcpSockets.native.kt` over the system calls of
+`TcpSys.kt`: `posixMain` for Linux and Apple, `mingwMain`), because Ktor 3.6.0's native sockets bind and connect every
+IPv6 address as `::` ([ktor-native-ipv6.md](upstream/ktor-native-ipv6.md)).
 
 ### `kuicksilver-http3`
 

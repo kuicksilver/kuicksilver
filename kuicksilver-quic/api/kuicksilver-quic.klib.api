@@ -94,6 +94,17 @@ final enum class io.kuicksilver.quic/PathChangeReason : kotlin/Enum<io.kuicksilv
     final fun values(): kotlin/Array<io.kuicksilver.quic/PathChangeReason> // io.kuicksilver.quic/PathChangeReason.values|values#static(){}[0]
 }
 
+final enum class io.kuicksilver.quic/PathFailureReason : kotlin/Enum<io.kuicksilver.quic/PathFailureReason> { // io.kuicksilver.quic/PathFailureReason|null[0]
+    enum entry NoSpareConnectionId // io.kuicksilver.quic/PathFailureReason.NoSpareConnectionId|null[0]
+    enum entry ValidationTimeout // io.kuicksilver.quic/PathFailureReason.ValidationTimeout|null[0]
+
+    final val entries // io.kuicksilver.quic/PathFailureReason.entries|#static{}entries[0]
+        final fun <get-entries>(): kotlin.enums/EnumEntries<io.kuicksilver.quic/PathFailureReason> // io.kuicksilver.quic/PathFailureReason.entries.<get-entries>|<get-entries>#static(){}[0]
+
+    final fun valueOf(kotlin/String): io.kuicksilver.quic/PathFailureReason // io.kuicksilver.quic/PathFailureReason.valueOf|valueOf#static(kotlin.String){}[0]
+    final fun values(): kotlin/Array<io.kuicksilver.quic/PathFailureReason> // io.kuicksilver.quic/PathFailureReason.values|values#static(){}[0]
+}
+
 final enum class io.kuicksilver.quic/PathState : kotlin/Enum<io.kuicksilver.quic/PathState> { // io.kuicksilver.quic/PathState|null[0]
     enum entry Closed // io.kuicksilver.quic/PathState.Closed|null[0]
     enum entry Failed // io.kuicksilver.quic/PathState.Failed|null[0]
@@ -369,9 +380,12 @@ sealed interface io.kuicksilver.quic/ConnectionEvent { // io.kuicksilver.quic/Co
 
     final class PathFailed : io.kuicksilver.quic/ConnectionEvent { // io.kuicksilver.quic/ConnectionEvent.PathFailed|null[0]
         constructor <init>(io.kuicksilver.quic/PathId) // io.kuicksilver.quic/ConnectionEvent.PathFailed.<init>|<init>(io.kuicksilver.quic.PathId){}[0]
+        constructor <init>(io.kuicksilver.quic/PathId, io.kuicksilver.quic/PathFailureReason) // io.kuicksilver.quic/ConnectionEvent.PathFailed.<init>|<init>(io.kuicksilver.quic.PathId;io.kuicksilver.quic.PathFailureReason){}[0]
 
         final val path // io.kuicksilver.quic/ConnectionEvent.PathFailed.path|{}path[0]
             final fun <get-path>(): io.kuicksilver.quic/PathId // io.kuicksilver.quic/ConnectionEvent.PathFailed.path.<get-path>|<get-path>(){}[0]
+        final val reason // io.kuicksilver.quic/ConnectionEvent.PathFailed.reason|{}reason[0]
+            final fun <get-reason>(): io.kuicksilver.quic/PathFailureReason // io.kuicksilver.quic/ConnectionEvent.PathFailed.reason.<get-reason>|<get-reason>(){}[0]
     }
 
     final class PathValidated : io.kuicksilver.quic/ConnectionEvent { // io.kuicksilver.quic/ConnectionEvent.PathValidated|null[0]
@@ -528,9 +542,12 @@ sealed interface io.kuicksilver.quic/PathEvent { // io.kuicksilver.quic/PathEven
 
     final class Failed : io.kuicksilver.quic/PathEvent { // io.kuicksilver.quic/PathEvent.Failed|null[0]
         constructor <init>(io.kuicksilver.quic/QuicPath) // io.kuicksilver.quic/PathEvent.Failed.<init>|<init>(io.kuicksilver.quic.QuicPath){}[0]
+        constructor <init>(io.kuicksilver.quic/QuicPath, io.kuicksilver.quic/PathFailureReason) // io.kuicksilver.quic/PathEvent.Failed.<init>|<init>(io.kuicksilver.quic.QuicPath;io.kuicksilver.quic.PathFailureReason){}[0]
 
         final val path // io.kuicksilver.quic/PathEvent.Failed.path|{}path[0]
             final fun <get-path>(): io.kuicksilver.quic/QuicPath // io.kuicksilver.quic/PathEvent.Failed.path.<get-path>|<get-path>(){}[0]
+        final val reason // io.kuicksilver.quic/PathEvent.Failed.reason|{}reason[0]
+            final fun <get-reason>(): io.kuicksilver.quic/PathFailureReason // io.kuicksilver.quic/PathEvent.Failed.reason.<get-reason>|<get-reason>(){}[0]
     }
 
     final class Validated : io.kuicksilver.quic/PathEvent { // io.kuicksilver.quic/PathEvent.Validated|null[0]
@@ -856,6 +873,13 @@ final class io.kuicksilver.quic/PacketBatch : kotlin/AutoCloseable { // io.kuick
     final fun setEcn(kotlin/Int, io.kuicksilver.quic/Ecn) // io.kuicksilver.quic/PacketBatch.setEcn|setEcn(kotlin.Int;io.kuicksilver.quic.Ecn){}[0]
     final fun setLength(kotlin/Int, kotlin/Int) // io.kuicksilver.quic/PacketBatch.setLength|setLength(kotlin.Int;kotlin.Int){}[0]
     final fun setPath(kotlin/Int, io.kuicksilver.quic/PathId) // io.kuicksilver.quic/PacketBatch.setPath|setPath(kotlin.Int;io.kuicksilver.quic.PathId){}[0]
+}
+
+final class io.kuicksilver.quic/PathValidationException : kotlin/IllegalStateException { // io.kuicksilver.quic/PathValidationException|null[0]
+    constructor <init>(io.kuicksilver.quic/PathFailureReason) // io.kuicksilver.quic/PathValidationException.<init>|<init>(io.kuicksilver.quic.PathFailureReason){}[0]
+
+    final val reason // io.kuicksilver.quic/PathValidationException.reason|{}reason[0]
+        final fun <get-reason>(): io.kuicksilver.quic/PathFailureReason // io.kuicksilver.quic/PathValidationException.reason.<get-reason>|<get-reason>(){}[0]
 }
 
 final class io.kuicksilver.quic/QuicClientConfig { // io.kuicksilver.quic/QuicClientConfig|null[0]

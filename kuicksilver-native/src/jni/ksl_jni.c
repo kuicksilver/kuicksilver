@@ -42,7 +42,7 @@ static jint j_ctx_set_ticket_keys(JNIEnv *e, jclass c, jlong h, jbyteArray a) { 
 static jint j_ctx_set_session_context(JNIEnv *e, jclass c, jlong h, jbyteArray a) { (void)c; bytes b = get_bytes(e, a); int r = ksl_ctx_set_session_context(CTX(h), b.p, b.n); drop(&b); return r; }
 static jint j_ctx_set_option(JNIEnv *e, jclass c, jlong h, jint o, jint v) { (void)e; (void)c; return ksl_ctx_set_option(CTX(h), o, v); }
 static jint j_ctx_freeze(JNIEnv *e, jclass c, jlong h) { (void)e; (void)c; return ksl_ctx_freeze(CTX(h)); }
-static jstring j_ctx_last_error(JNIEnv *e, jclass c, jlong h, jintArray out) { (void)c; uint32_t code; char m[256]; ksl_ctx_last_error(CTX(h), &code, m, sizeof m); jint v = (jint)code; (*e)->SetIntArrayRegion(e, out, 0, 1, &v); return (*e)->NewStringUTF(e, m); }
+static jstring j_ctx_last_error(JNIEnv *e, jclass c, jlong h, jintArray out) { (void)c; uint32_t code; char m[512]; ksl_ctx_last_error(CTX(h), &code, m, sizeof m); jint v = (jint)code; (*e)->SetIntArrayRegion(e, out, 0, 1, &v); return (*e)->NewStringUTF(e, m); }
 
 static jlong j_ssl_new(JNIEnv *e, jclass c, jlong h, jint mode) { (void)e; (void)c; return H(ksl_ssl_new(CTX(h), mode)); }
 static void j_ssl_free(JNIEnv *e, jclass c, jlong h) { (void)e; (void)c; ksl_ssl_free(SSLP(h)); }
@@ -80,7 +80,7 @@ static jint j_ssl_set_session(JNIEnv *e, jclass c, jlong h, jlong sess) { (void)
 static void j_session_free(JNIEnv *e, jclass c, jlong sess) { (void)e; (void)c; ksl_session_free(P(ksl_session, sess)); }
 static jint j_ssl_new_ticket(JNIEnv *e, jclass c, jlong h) { (void)e; (void)c; return ksl_ssl_new_session_ticket(SSLP(h)); }
 static jint j_ssl_key_update(JNIEnv *e, jclass c, jlong h, jint req) { (void)e; (void)c; return ksl_ssl_key_update(SSLP(h), req); }
-static jstring j_ssl_last_error(JNIEnv *e, jclass c, jlong h, jintArray out) { (void)c; uint32_t code; int alert; char m[256]; ksl_ssl_last_error(SSLP(h), &code, &alert, m, sizeof m); jint v[2] = {(jint)code, alert}; (*e)->SetIntArrayRegion(e, out, 0, 2, v); return (*e)->NewStringUTF(e, m); }
+static jstring j_ssl_last_error(JNIEnv *e, jclass c, jlong h, jintArray out) { (void)c; uint32_t code; int alert; char m[512]; ksl_ssl_last_error(SSLP(h), &code, &alert, m, sizeof m); jint v[2] = {(jint)code, alert}; (*e)->SetIntArrayRegion(e, out, 0, 2, v); return (*e)->NewStringUTF(e, m); }
 static jint j_drive(JNIEnv *e, jclass c, jlong h) { (void)e; (void)c; return ksl_drive(SSLP(h)); }
 
 static jint j_quic_set_tp(JNIEnv *e, jclass c, jlong h, jbyteArray a) { (void)c; bytes b = get_bytes(e, a); int r = ksl_quic_set_transport_params(SSLP(h), b.p, b.n); drop(&b); return r; }

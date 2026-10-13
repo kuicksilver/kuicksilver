@@ -239,3 +239,29 @@ and the HTTP/1.1 client sent a streamed request body completely before reading t
 first, then reads the body, deadlocked). On Linux Native the client contract found that a failed HTTP/3 request (a peer
 resetting a WebSocket stream) escaped as an uncaught coroutine exception, which aborts a Kotlin/Native process; each
 request now contains its own failure.
+
+### IPv6 over TCP on Kotlin/Native
+
+Ktor 3.6.0's `ktor-network` sockets on Kotlin/Native (Linux, Apple, Windows) never copy the IPv6 address into the
+`sockaddr_in6` they bind or connect with (`NativeIPv6SocketAddress.nativeAddress` sets family, port, flow label and scope
+only), so every IPv6 bind and connect uses `::`. A connector on `::1` listened on every interface (and, dual-stack, on
+IPv4); a request to an IPv6 address went to `::`, which Linux and Apple route to the local host and Windows refuses
+(`WSAEADDRNOTAVAIL`, 10049). Details and the upstream report draft: [ktor-native-ipv6.md](../upstream/ktor-native-ipv6.md).
+
+Both engines therefore open their HTTP/1.1 TCP sockets through `kuicksilver-ktor-network` (`bindTcp`, `connectTcp`): on
+the JVM and Android that is `ktor-network` as before; on Kotlin/Native it is a TCP socket of Kuicksilver on Ktor's selector
+that binds and connects the address `getaddrinfo` returned. So on every platform:
+
+- a server connector with a specific `host` (`::1`, `127.0.0.1`, a global address) listens on that address only; `::` and
+  `0.0.0.0` stay the wildcards;
+- the client's HTTP/1.1 connection (and its connection to an HTTP proxy) goes to the address in the URL, trying each
+  address a host name resolves to in turn; an IPv4-mapped literal (`[::ffff:127.0.0.1]`) is connected over IPv4, as the
+  JVM does.
+
+HTTP/3 uses the accelerated `ksl` UDP socket, which carries the full address on every platform (the Ktor client's endpoint
+is dual-stack, ADR-0006). The portable Kotlin/Native UDP socket (`IoPreference.Portable`, or a sandbox that refuses the
+accelerated one) still uses `ktor-network`: it refuses to bind a specific IPv6 address (`UnsupportedOperationException`)
+and to send to an IPv6 address (`IOException`), instead of
+using `::`. Tests: `ServerH1Test.negative_ipv6ConnectorListensOnItsAddressOnly`,
+`ClientH1Test.negative_h1ToIpv6LiteralReachesThatAddressOnly`, `ClientH1Test.plainHttpToIpv6Literal`,
+`ClientH3Test.h1ToIpv6Loopback`, `TcpSocketsTest`, `KtorDatagramIoTest`.

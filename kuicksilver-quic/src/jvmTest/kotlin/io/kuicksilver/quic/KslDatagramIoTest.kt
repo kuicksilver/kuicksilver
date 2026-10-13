@@ -242,7 +242,15 @@ class KslDatagramIoTest {
                 assertEquals(3, a.send(out))
                 val inb = PacketBatch(3)
                 withTimeout(5.seconds) { while (inb.count < 3) b.receive(inb) }
-                assertEquals(marks, (0 until 3).map { inb.ecn(it) })
+                val got = (0 until 3).map { inb.ecn(it) }
+                if (windows) {
+                    // Windows 11 does not carry a CE the sender asks for over loopback (it arrives Not-ECT); a QUIC sender never
+                    // sets CE (RFC 9000 section 13.4.1), routers do, so the granted capability is ECT(0) written and read back
+                    assertEquals(listOf(Ecn.Ect0, Ecn.NotEct), listOf(got[0], got[2]))
+                    assertTrue(got[1] == Ecn.Ce || got[1] == Ecn.NotEct, "CE sent over Windows loopback arrived as ${got[1]}")
+                } else {
+                    assertEquals(marks, got)
+                }
                 a.disableEcnMarking()
                 out.clear()
                 out.buffer(0).copyFrom(byteArrayOf(9), 0, 0, 1)

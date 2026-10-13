@@ -82,7 +82,9 @@ class NioDatagramIoTest {
             val (a, _) = pair()
             try {
                 val c = a.capabilities.value
-                assertTrue(c.ecnSend)
+                // ECT(0) through IP_TOS where the JDK can set it; Windows refuses IP_TOS on a DatagramChannel (SocketException), so
+                // there the socket reports no ECN rather than claiming marks it cannot send
+                assertEquals(!onWindows, c.ecnSend, "ecnSend on ${System.getProperty("os.name")}")
                 assertFalse(c.ecnReceive)
                 assertEquals(1, c.gsoMaxSegments)
                 assertFalse(c.gro)
@@ -95,12 +97,19 @@ class NioDatagramIoTest {
 
     @Test fun nioSetsIpTosEct0() =
         runBlocking {
-            // ADR-0006: the portable socket marks everything it sends ECT(0) through IP_TOS; it cannot read marks, so ecnReceive stays false
+            // ADR-0006: the portable socket marks everything it sends ECT(0) through IP_TOS where the platform lets it set the option;
+            // it cannot read marks, so ecnReceive stays false. Capability-consistent: ecnSend is reported exactly when IP_TOS holds ECT(0)
             val (a, _) = pair()
             try {
-                assertTrue(a.capabilities.value.ecnSend)
-                assertFalse(a.capabilities.value.ecnReceive)
-                assertEquals(2, (a as io.kuicksilver.quic.NioDatagramIo).ipTosForTest())
+                val c = a.capabilities.value
+                assertFalse(c.ecnReceive)
+                if (c.ecnSend) {
+                    assertEquals(2, (a as io.kuicksilver.quic.NioDatagramIo).ipTosForTest())
+                } else {
+                    assertTrue(onWindows, "only Windows refuses IP_TOS on a DatagramChannel")
+                    val tos = runCatching { (a as io.kuicksilver.quic.NioDatagramIo).ipTosForTest() }.getOrDefault(0)
+                    assertEquals(0, tos and 3, "no ECN codepoint when ecnSend is off")
+                }
             } finally {
                 a.close()
             }
@@ -193,3 +202,5 @@ class NioDatagramIoTest {
             }
         }
 }
+
+private val onWindows: Boolean = System.getProperty("os.name").orEmpty().startsWith("Windows")

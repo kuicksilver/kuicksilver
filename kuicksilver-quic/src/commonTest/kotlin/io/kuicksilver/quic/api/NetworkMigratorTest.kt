@@ -10,10 +10,13 @@ import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.MemoryDatagramIo
 import io.kuicksilver.quic.MigrationEvent
 import io.kuicksilver.quic.NetworkMigrator
+import io.kuicksilver.quic.PathFailureReason
 import io.kuicksilver.quic.PathState
+import io.kuicksilver.quic.PathValidationException
 import io.kuicksilver.quic.QuicConnection
 import io.kuicksilver.quic.activePath
 import io.kuicksilver.quic.quicConfig
+import io.kuicksilver.quic.runtime.EndpointLoop
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
@@ -27,6 +30,7 @@ import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.yield
 import kotlin.test.BeforeTest
@@ -36,6 +40,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
 /** [NetworkMigrator] over the in-memory network: network `n` is the local address 10.0.n.1 (all platforms). */
@@ -439,6 +444,97 @@ class NetworkMigratorTest {
                             this,
                         )
                     }
+                    c.close()
+                }
+            }
+        }
+
+    /** Holds (or with [hold] false, releases) the server's NEW_CONNECTION_ID frames, on its loop; a release sends them at once. */
+    private suspend fun holdServerCids(
+        p: ApiPair,
+        s: QuicConnection,
+        hold: Boolean,
+    ) {
+        val loop = p.server as EndpointLoop
+        withContext(loop.dispatcher) {
+            s.core.cids.holdNewCidsForTest = hold
+            loop.flush(s.core)
+        }
+    }
+
+    @Test fun networkChangeRightAfterConnectMigrates() =
+        runBlocking {
+            // the network changes 0 ms after connect(): the server's spare connection IDs may still be in flight (its first 1-RTT
+            // flight, RFC 9000 section 5.1.1), and the probe waits for one instead of failing (iOS library report, 0.2.0 bug 1)
+            ApiPair.open().use { p ->
+                withTimeout(60.seconds) {
+                    (p.server as EndpointLoop).core.testHoldNewConnectionIds = true
+                    val (c, s) = p.connect()
+                    val nets = MutableStateFlow<Int?>(1)
+                    val o = Opener(p)
+                    val m = NetworkMigrator(c, nets, { o.open(it) }, this)
+                    val (events, collector) = eventsOf(m)
+                    m.start()
+                    m.network.first { it == 1 }
+                    nets.value = 2
+                    // the new path exists and waits for an ID; then the server's NEW_CONNECTION_ID frames arrive
+                    while (c.paths.size < 2) yield()
+                    holdServerCids(p, s, hold = false)
+                    val e = assertIs<MigrationEvent.Migrated<Int>>(events.receive())
+                    assertEquals(1 to 2, e.old to e.new)
+                    assertEquals(addr(2), c.activePath!!.localAddress)
+                    ping(c, s)
+                    m.close()
+                    collector.cancel()
+                    c.close()
+                }
+            }
+        }
+
+    @Test fun noSpareConnectionIdFailsDistinctlyAndRetriesWhenOneArrives() =
+        runBlocking {
+            ApiPair.open().use { p ->
+                withTimeout(60.seconds) {
+                    (p.server as EndpointLoop).core.testHoldNewConnectionIds = true
+                    // a short initial RTT keeps the validation timeout, max(3 x PTO, 6 x initial RTT), short in real time
+                    val (c, s) = p.connect(quicConfig { initialRtt = 10.milliseconds })
+                    val nets = MutableStateFlow<Int?>(1)
+                    val o = Opener(p)
+                    val m = NetworkMigrator(c, nets, { o.open(it) }, this)
+                    val (events, collector) = eventsOf(m)
+                    val original = c.activePath!!
+                    m.start()
+                    m.network.first { it == 1 }
+                    nets.value = 2
+                    val f = assertIs<MigrationEvent.Failed<Int>>(events.receive())
+                    assertEquals(2, f.network)
+                    val cause = assertIs<PathValidationException>(f.cause)
+                    assertEquals(PathFailureReason.NoSpareConnectionId, cause.reason)
+                    assertEquals(original.id, c.activePath!!.id, "the connection stays where it was meanwhile")
+                    // the migrator did not give up on network 2: the next spare ID moves the connection there
+                    holdServerCids(p, s, hold = false)
+                    val e = assertIs<MigrationEvent.Migrated<Int>>(events.receive())
+                    assertEquals(1 to 2, e.old to e.new)
+                    assertEquals(addr(2), c.activePath!!.localAddress)
+                    ping(c, s)
+                    m.close()
+                    collector.cancel()
+                    c.close()
+                }
+            }
+        }
+
+    @Test fun migrateWithoutSpareConnectionIdThrowsNoSpareConnectionId() =
+        runBlocking {
+            ApiPair.open().use { p ->
+                withTimeout(60.seconds) {
+                    (p.server as EndpointLoop).core.testHoldNewConnectionIds = true
+                    val (c, s) = p.connect(quicConfig { initialRtt = 10.milliseconds })
+                    val io = p.net.open(addr(2))
+                    val e = assertFailsWith<PathValidationException> { c.migrate(io) }
+                    assertEquals(PathFailureReason.NoSpareConnectionId, e.reason)
+                    assertTrue(io.closed, "the new socket is closed")
+                    ping(c, s)
                     c.close()
                 }
             }

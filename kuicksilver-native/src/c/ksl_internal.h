@@ -14,7 +14,7 @@
 
 #define KSL_EVQ 32
 #define KSL_NLEVELS 4
-#define KSL_MSG 256
+#define KSL_MSG 512
 
 typedef struct { uint8_t *buf; size_t len, cap, consumed; } ksl_inbuf;
 
