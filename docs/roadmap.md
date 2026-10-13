@@ -3,13 +3,15 @@
 # Roadmap
 
 Owner decisions of 2026-10-09, with the 0.2.0 scope widened on 2026-10-12 (0-RTT, the Windows QUIC server and the
-interop throughput thresholds moved in while the 0.1.0 publication waits on Maven Central). The compliance status per
+interop throughput thresholds moved in) and, on 2026-10-14, 0.2.0 made the first public release: the 0.1.0 candidate
+is never published. The compliance status per
 RFC section is in `spec/rfc-compliance.md`; the design in `spec/2026-10-02-kuicksilver-design.md`; the changes in
 `../CHANGELOG.md`.
 
-## 0.1.0 — first public release
+## 0.1.0 — candidate, never published
 
-Frozen on 2026-10-09, not yet published (the Maven Central quota is pending). What ships: QUIC v1 (RFC 9000/9001/9002,
+Frozen on 2026-10-09 as the first public release, then superseded by 0.2.0 before it was published; it has no tag and
+no Maven Central deployment. What it contains ships with 0.2.0: QUIC v1 (RFC 9000/9001/9002,
 v2 by RFC 9369), HTTP/3 with QPACK, the Ktor client engine (HTTP/1.1 + HTTP/3 with Alt-Svc discovery) and the Ktor
 server engine, TLS 1.3 over OpenSSL 3.5 through the `ksl` shim.
 
@@ -31,9 +33,10 @@ Known limits of 0.1.0, stated on purpose:
 - The `kuicksilver-testing` module is not published.
 - The deferred review findings listed under 0.2.0 (none affects correctness on a healthy network).
 
-## 0.2.0
+## 0.2.0 — first public release
 
-Implemented on the integration branch (2026-10-12/13); released after 0.1.0.
+Implemented on the integration branch (2026-10-12/13); the first version published on Maven Central, released from the
+owner's Mac (`release.md`). It contains the 0.1.0 candidate above.
 
 | Platform | Client | Server | UDP path |
 |---|---|---|---|
