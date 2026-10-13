@@ -314,6 +314,12 @@ class ReceivePathTest {
             assertTrue(p.handshake())
             assertEquals(PathId.Initial, p.client.stats.currentPath)
             assertNull(p.closedReason(p.clientEvents))
+            // review finding 14, RFC 9000 sections 5.1.1 and 5.1.2: the preferred_address ID is the server's sequence 1; it is kept
+            // (and later retired), not forgotten
+            p.runUntil(limit = 300.milliseconds) { p.client.peerCidCount >= 4 }
+            assertTrue(1L in p.client.cids.peerSeqsForTest(), "peer IDs ${p.client.cids.peerSeqsForTest()}")
+            assertNull(p.closedReason(p.clientEvents))
+            assertNull(p.closedReason(p.serverEvents))
         } finally {
             p.close()
         }

@@ -187,6 +187,31 @@ internal class ConnectionIdManager(
         }
     }
 
+    /**
+     * The peer's `preferred_address` carries its sequence-1 ID (RFC 9000 section 5.1.1): it is kept like one from NEW_CONNECTION_ID,
+     * so it can serve a migration and is retired, not forgotten, when the peer asks (section 5.1.2).
+     */
+    fun adoptPreferredAddressCid(
+        cid: ConnectionId,
+        token: ByteArray,
+    ) {
+        if (peer.any { it.seq == 1L } || peer.size + 1 > localLimit) return
+        peer += Peer(1, cid, token.copyOf())
+        if (largestPeerSeq < 1) largestPeerSeq = 1
+    }
+
+    /** Test hook for a server that advertises `preferred_address`: its sequence-1 ID, issued and sent with the transport parameters. */
+    fun preferredAddressLocalForTest(): Local {
+        local.firstOrNull { it.seq == 1L }?.let { return it }
+        check(nextLocalSeq == 1L) { "preferred_address needs sequence 1" }
+        val cid = newLocalCid()
+        val l = Local(nextLocalSeq++, cid, tokenFor(cid))
+        l.sent = true
+        local += l
+        core?.let { registrar.add(cid, it) }
+        return l
+    }
+
     /** How new local IDs are made; the endpoint sets the server CID format with its routing byte, clients keep random bytes. */
     var generator: ((Random) -> ConnectionId)? = null
 

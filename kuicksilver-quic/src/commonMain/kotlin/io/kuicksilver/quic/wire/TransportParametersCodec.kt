@@ -76,12 +76,13 @@ internal object TransportParametersCodec {
                 }
                 tp.retrySourceConnectionId?.let { bytes(RETRY_SCID, it.toByteArray()) }
                 if (tp.preferredAddressPresent) {
-                    bytes(
-                        PREFERRED_ADDRESS,
-                        ByteArray(4 + 2 + 16 + 2 + 1 + 8 + 16).also {
-                            it[24] = 8
-                        },
-                    ) // zero addresses, 8-byte CID, zero token (tests only: the server never advertises one)
+                    // zero addresses (tests only: the server never advertises one)
+                    val cid = tp.preferredAddressCid?.toByteArray() ?: ByteArray(8)
+                    val v = ByteArray(4 + 2 + 16 + 2 + 1 + cid.size + 16)
+                    v[24] = cid.size.toByte()
+                    cid.copyInto(v, 25)
+                    tp.preferredAddressToken?.copyInto(v, 25 + cid.size)
+                    bytes(PREFERRED_ADDRESS, v)
                 }
             }
             if (tp.maxIdleTimeoutMs != 0L) vi(MAX_IDLE_TIMEOUT, tp.maxIdleTimeoutMs)
@@ -234,11 +235,19 @@ internal object TransportParametersCodec {
                     }
 
                     PREFERRED_ADDRESS -> {
+                        // IPv4 address and port, IPv6 address and port, CID length, CID, reset token (RFC 9000 section 18.2)
                         if (len <
                             41
                         ) {
                             fail("preferred_address too short")
                         }
+                        r.skip(4 + 2 + 16 + 2)
+                        val cidLen = r.u8()
+                        if (cidLen == 0) fail("preferred_address with a zero-length connection ID")
+                        if (cidLen > 20) fail("preferred_address connection ID longer than 20 bytes")
+                        if (len != 4 + 2 + 16 + 2 + 1 + cidLen + 16) fail("preferred_address length $len")
+                        tp.preferredAddressCid = ConnectionId(ByteArray(cidLen).also { b.copyTo(it, r.pos, 0, cidLen) })
+                        tp.preferredAddressToken = ByteArray(16).also { b.copyTo(it, r.pos + cidLen, 0, 16) }
                         tp.preferredAddressPresent = true
                         r.pos = end
                     }
@@ -283,6 +292,10 @@ internal object TransportParametersCodec {
                         r.pos = end
                     } // reserved (31 x N + 27) and unknown parameters are ignored (RFC 9000 section 18.1)
                 }
+            }
+            // RFC 9000 section 18.2: "A server that chooses a zero-length connection ID MUST NOT provide a preferred address."
+            if (tp.preferredAddressPresent && tp.initialSourceConnectionId?.length == 0) {
+                fail("preferred_address from a server with a zero-length connection ID")
             }
             return tp
         } catch (e: QuicWireException) {

@@ -53,7 +53,12 @@ internal fun ConnectionCore.buildLocalTp(): TransportParameters {
     ) {
         tp.chosenVersion = tp.availableVersions!!.first { it != tp.chosenVersion }
     }
-    if (testAdvertisePreferredAddress) tp.preferredAddressPresent = true
+    if (testAdvertisePreferredAddress) {
+        val l = cids.preferredAddressLocalForTest()
+        tp.preferredAddressPresent = true
+        tp.preferredAddressCid = l.cid
+        tp.preferredAddressToken = l.token
+    }
     // client: Chosen Version is the one in use (after a Version Negotiation restart it differs from the configured head); server: ksl rewrites it to the negotiated one
     if (role == TlsRole.Client && tp.availableVersions != null && !testForgeChosenVersion) tp.chosenVersion = version.version
     return tp
@@ -382,6 +387,7 @@ internal class ConnectionHandshakeSink(
         core.peerTp = tp
         core.peerTpEncoded = encoded
         tp.statelessResetToken?.let { core.cids.setPeerResetToken(0, it) }
+        tp.preferredAddressCid?.let { core.cids.adoptPreferredAddressCid(it, tp.preferredAddressToken!!) }
         core.streams.applyPeerParameters(
             tp.initialMaxStreamDataBidiLocal,
             tp.initialMaxStreamDataBidiRemote,

@@ -290,6 +290,16 @@ class ConnectionIdTest {
         assertTrue(m.onPeerRetired(3, TimeMark(1_000_000_000L)), "a sequence sent once may be retired while its frame is resent")
     }
 
+    /** Review finding 14, RFC 9000 section 5.1.2: the preferred_address ID (sequence 1) is retired by retire_prior_to, not forgotten. */
+    @Test fun preferredAddressIdIsRetiredNotForgotten() {
+        val m = manager()
+        m.adoptInitialPeerCid(ConnectionId(ByteArray(8)))
+        m.adoptPreferredAddressCid(ConnectionId(ByteArray(8) { 1 }), ByteArray(16))
+        newCid(m, 2, retire = 2)
+        assertEquals(listOf(0L, 1L), m.takeRetireFrames())
+        assertEquals(listOf(2L), m.peerSeqsForTest())
+    }
+
     @Test fun retiredBacklogAbove32IsCidLimitError() {
         val m = manager(limit = 2)
         m.adoptInitialPeerCid(ConnectionId(ByteArray(8)))
