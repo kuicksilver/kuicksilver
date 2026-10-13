@@ -104,6 +104,12 @@ internal class RecvStream(
 
     val readable: Int get() = reassembler.readable
 
+    /**
+     * STOP_SENDING still has a purpose: no RESET_STREAM arrived ("any state where it has not received a RESET_STREAM frame",
+     * RFC 9000 section 3.2) and the data is not all here (section 3.2: "little value ... in the Data Recvd state").
+     */
+    val wantsStopSending: Boolean get() = state == RecvState.Recv || state == RecvState.SizeKnown
+
     /** -1 at the end of the stream (all data read and FIN seen), 0 when nothing is available yet. */
     fun read(
         into: ByteArray,

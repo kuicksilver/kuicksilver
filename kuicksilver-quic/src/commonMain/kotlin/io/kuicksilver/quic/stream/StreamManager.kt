@@ -606,7 +606,8 @@ internal class StreamManager(
                 if (it >=
                     0
                 ) {
-                    queueOnce(ControlKind.MaxStreamData, id, it)
+                    // RFC 9000 section 13.3: no more stream credit once the final size is known
+                    if (r.finalSize < 0) queueOnce(ControlKind.MaxStreamData, id, it)
                     if (connFlow.ensureWindowAtLeast(r.flow.window * 3 / 2)) queueOnce(ControlKind.MaxData, 0, connFlow.limit)
                 }
             } // connection window ≥ 1.5 × stream window
@@ -672,7 +673,7 @@ internal class StreamManager(
         r.stopped = true
         r.discardBuffered()
         creditConnection(r.abandon())
-        queueControl(ControlKind.StopSending, id, code)
+        if (r.wantsStopSending) queueControl(ControlKind.StopSending, id, code)
         if (r.finished) maybeClose(id)
     }
 
@@ -851,7 +852,9 @@ internal class StreamManager(
 
                 // final size travels with the frame: the stream may be retired by now
                 SentFrames.ID_STOP_SENDING -> {
-                    queueOnce(ControlKind.StopSending, f.idValue[i], f.idExtra[i])
+                    if (streams[f.idValue[i]]?.recv?.wantsStopSending == true) {
+                        queueOnce(ControlKind.StopSending, f.idValue[i], f.idExtra[i])
+                    }
                 }
 
                 // still blocked at the reported limit with data waiting: the report goes again (RFC 9000 section 13.3 lets it be

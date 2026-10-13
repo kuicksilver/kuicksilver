@@ -337,6 +337,54 @@ class StreamStateTest {
         assertEquals(0x04L, assertFailsWith<QuicWireException> { m.onResetStream(4, 1, 0) }.frameType)
     }
 
+    private fun controlKinds(m: StreamManager): List<ControlKind> = generateSequence { m.takeControlFrame() }.map { it.kind }.toList()
+
+    /**
+     * Review finding 20, RFC 9000 section 13.3: "An endpoint SHOULD stop sending MAX_STREAM_DATA frames when the receiving part of
+     * the stream enters a "Size Known" or "Reset Recvd" state." Reading a stream whose FIN had arrived still raised its window.
+     */
+    @Test fun noMaxStreamDataOnceFinalSizeIsKnown() {
+        val size = QuicConfig.Default.initialStreamWindow.toInt()
+        for (fin in listOf(false, true)) {
+            val m = manager(TlsRole.Server)
+            recv(m, 0, 0, ByteArray(size), fin = fin)
+            val buf = ByteArray(size)
+            var n = 0
+            while (n < size) n += m.read(0, buf, n, size - n).also { check(it > 0) }
+            val kinds = controlKinds(m)
+            if (fin) {
+                assertTrue(ControlKind.MaxStreamData !in kinds, "FIN received: no MAX_STREAM_DATA, got $kinds")
+            } else {
+                assertTrue(ControlKind.MaxStreamData in kinds, "control: an open stream gets more credit, got $kinds")
+            }
+        }
+    }
+
+    /**
+     * Review finding 20, RFC 9000 section 3.2: STOP_SENDING may be sent "in any state where it has not received a RESET_STREAM
+     * frame", and has little value once all data arrived; nor is a lost one resent then.
+     */
+    @Test fun noStopSendingAfterResetOrAllData() {
+        val reset = manager(TlsRole.Server)
+        recv(reset, 0, 0, ByteArray(10))
+        reset.onResetStream(0, 1, 10)
+        reset.stopSending(0, 5)
+        assertTrue(ControlKind.StopSending !in controlKinds(reset), "after RESET_STREAM")
+
+        val all = manager(TlsRole.Server)
+        recv(all, 0, 0, ByteArray(10), fin = true)
+        all.stopSending(0, 5)
+        assertTrue(ControlKind.StopSending !in controlKinds(all), "after all data arrived")
+
+        val lost = manager(TlsRole.Server)
+        recv(lost, 0, 0, ByteArray(10))
+        lost.stopSending(0, 5)
+        assertTrue(ControlKind.StopSending in controlKinds(lost))
+        lost.onResetStream(0, 5, 10) // the peer answers before our STOP_SENDING is declared lost
+        lost.onFramesLost(SentFrames().apply { addId(SentFrames.ID_STOP_SENDING, 0, 5) })
+        assertTrue(ControlKind.StopSending !in controlKinds(lost), "a lost STOP_SENDING is not resent after RESET_STREAM")
+    }
+
     @Test fun resetByPeerReturnsConnectionCredit() {
         val m = manager(TlsRole.Server)
         recv(m, 0, 0, ByteArray(400_000))
