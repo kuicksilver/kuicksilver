@@ -174,6 +174,8 @@ internal suspend fun H3Session.pumpBody(
             out.cancel(mapped)
         }
         trailers.completeExceptionally(mapped)
+        // trailers may still have been on the way: the peer's encoder must not wait for their acknowledgment (RFC 9204 section 2.2.2.2)
+        runCatching { qpack.cancelStream(st.id) }
     }
 }
 

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.kuicksilver.http3.runtime
 
+import io.ktor.utils.io.cancel
 import io.ktor.utils.io.readAvailable
 import io.ktor.utils.io.writeFully
 import io.kuicksilver.http3.H3Pair
@@ -15,6 +16,7 @@ import io.kuicksilver.http3.frame.StreamType
 import io.kuicksilver.http3.frame.VarInt
 import io.kuicksilver.http3.http3Settings
 import io.kuicksilver.http3.qpack.QpackEncoder
+import io.kuicksilver.http3.readAllBytes
 import io.kuicksilver.http3.useScoped
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.QuicConnection
@@ -220,6 +222,61 @@ class QpackDynamicTest {
             }
         }
 }
+
+/**
+ * RFC 9204 section 2.2.2.2: a stream reset by the peer before its end, or one whose reading we abandon, gets a Stream
+ * Cancellation on our decoder stream (with the dynamic table on), also once its first HEADERS were decoded.
+ */
+class QpackStreamCancellationTest {
+    @BeforeTest fun load() = KslLoader.ensureLoaded()
+
+    @Test fun bodyEndedByResetOrConsumerCancelSendsCancellation() =
+        h3Test {
+            QuicPair.open().use { q ->
+                val (c, s) = q.connect()
+                val server = Http3Connection.server(s, http3Settings { enableQpackDynamicTable() })
+                val raw = RawPeer(c)
+                raw.openControl()
+                val decoderBytes = MutableStateFlow(ByteArray(0))
+                launch {
+                    runCatching {
+                        while (true) {
+                            val st = c.acceptStream()
+                            if (st.readVarInt() != StreamType.QPACK_DECODER) continue
+                            val b = ByteArray(256)
+                            while (true) {
+                                val n = st.input.readAvailable(b, 0, b.size)
+                                if (n < 0) break
+                                decoderBytes.update { it + b.copyOf(n) }
+                            }
+                        }
+                    }
+                }
+                val post = listOf(":method" to "POST", ":scheme" to "https", ":authority" to "server.test", ":path" to "/")
+                // the peer resets the stream while the body is being read
+                val a = c.openBidi()
+                a.output.writeFully(raw.headers(a.id, post) + raw.data("x".encodeToByteArray()))
+                a.output.flush()
+                val ra = server.acceptRequest()
+                a.reset(Http3ErrorCode.REQUEST_CANCELLED)
+                runCatching { ra.body.readAllBytes() }
+                withTimeout(5.seconds) { while (!decoderBytes.value.contains((0x40 or a.id.toInt()).toByte())) delay(20) }
+                // the application abandons the body (the server stops reading)
+                val b = c.openBidi()
+                b.output.writeFully(raw.headers(b.id, post) + raw.data("y".encodeToByteArray()))
+                b.output.flush()
+                val rb = server.acceptRequest()
+                rb.body.cancel(kotlinx.io.IOException("not interested"))
+                peerMayHaveClosed {
+                    b.output.writeFully(raw.data(ByteArray(100)))
+                    b.output.flush()
+                }
+                withTimeout(5.seconds) { while (!decoderBytes.value.contains((0x40 or b.id.toInt()).toByte())) delay(20) }
+                c.close()
+            }
+        }
+}
+
 
 internal suspend fun io.ktor.utils.io.ByteReadChannel.readAllBytesQuietly() {
     val b = ByteArray(4096)

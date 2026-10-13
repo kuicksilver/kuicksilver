@@ -548,6 +548,9 @@ HTTP/3 (`kuicksilver-http3`):
   `maxFieldSectionSize`, and a longer string makes the section too large — the server answers 431 with
   `STOP_SENDING H3_EXCESSIVE_LOAD`, the client fails that request with `FieldSectionTooLarge`, other requests on the
   connection go on (RFC 9204 section 7.4). Encoder-stream strings keep the 64 KiB ceiling and the connection error.
+- QPACK with the dynamic table on: a request or response stream that the peer reset, or whose body the reader
+  abandoned, after its first HEADERS sent no Stream Cancellation, so the peer's encoder kept references to entries
+  that trailers still in flight might use (they could never be evicted); one is now sent (RFC 9204 section 2.2.2.2).
 
 Ktor client (`kuicksilver-ktor-client`):
 
