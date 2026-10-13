@@ -2,11 +2,22 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.kuicksilver.ktor.client
 
+import io.ktor.client.HttpClient
 import io.ktor.client.engine.HttpClientEngine
 import io.ktor.client.engine.HttpClientEngineFactory
+import io.ktor.http.cio.HttpHeadersMap
+import io.kuicksilver.annotations.InternalKuicksilverApi
+import io.kuicksilver.ktor.network.KtorVersionPolicy
 
-/** `HttpClient(Kuicksilver) { engine { ... } }`: HTTP/3 with Alt-Svc discovery and HTTP/1.1 over TLS 1.3 on every platform (docs/guide/ktor.md). */
+/**
+ * `HttpClient(Kuicksilver) { engine { ... } }`: HTTP/3 with Alt-Svc discovery and HTTP/1.1 over TLS 1.3 on every platform (docs/guide/ktor.md).
+ * Creating the engine fails with [IllegalStateException] when the Ktor on the classpath is not the supported 3.6.x
+ * (docs/guide/ktor.md, "Supported Ktor versions").
+ */
 public data object Kuicksilver : HttpClientEngineFactory<KuicksilverEngineConfig> {
-    override fun create(block: KuicksilverEngineConfig.() -> Unit): HttpClientEngine =
-        KuicksilverEngine(KuicksilverEngineConfig().apply(block))
+    @OptIn(InternalKuicksilverApi::class)
+    override fun create(block: KuicksilverEngineConfig.() -> Unit): HttpClientEngine {
+        KtorVersionPolicy.check("ktor-client-core" to HttpClient::class, "ktor-http-cio" to HttpHeadersMap::class)
+        return KuicksilverEngine(KuicksilverEngineConfig().apply(block))
+    }
 }

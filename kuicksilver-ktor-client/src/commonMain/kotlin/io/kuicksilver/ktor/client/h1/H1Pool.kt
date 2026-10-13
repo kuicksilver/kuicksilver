@@ -43,91 +43,54 @@ import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeout
 import kotlin.coroutines.CoroutineContext
 
-/** One HTTP/1.1 connection: TCP, optionally a CONNECT tunnel, optionally TLS. */
+/** One HTTP/1.1 connection: TCP, optionally a CONNECT tunnel, optionally TLS; its pool slot comes back when it closes. */
 internal class H1Connection(
     private val socket: Socket,
     private val tls: TlsConnection?,
     val input: ByteReadChannel,
     val output: ByteWriteChannel,
     val key: String,
-) {
-    var closed = false
-        private set
+    createdAt: Long = 0,
+) : PooledConnection(key, createdAt) {
+    override val isOpen: Boolean get() = !closed && !input.isClosedForRead
 
-    fun close() {
-        if (closed) return
-        closed = true
+    override fun closeTransport() {
         tls?.close()
         socket.close()
     }
 }
 
 /**
- * HTTP/1.1 over TCP with TLS 1.3 (ADR-0009: no HTTP/2), with keep-alive: a connection whose response body ended
- * by its framing goes back to an idle list of at most `maxConnectionsPerHost` per origin; a stale idle connection is
- * replaced once, transparently, for idempotent requests only (RFC 9110 section 9.2.2, RFC 9112 section 9.3.1): a
- * request the server may have processed is never sent twice.
+ * HTTP/1.1 over TCP with TLS 1.3 (ADR-0009: no HTTP/2), with keep-alive and connection limits ([ConnectionPool]): at most
+ * `maxConnectionsCount` connections and `maxConnectionsPerRoute` per route, requests beyond that wait in FIFO order
+ * within the connect timeout; a connection whose response body ended by its framing goes back to an idle list of at most
+ * `maxConnectionsPerHost` per route, kept for `idleTimeout`. A stale idle connection is replaced once, transparently,
+ * for idempotent requests only (RFC 9110 section 9.2.2, RFC 9112 section 9.3.1): a request the server may have processed
+ * is never sent twice.
  */
 internal class H1Pool(
     private val config: KuicksilverEngineConfig,
     private val selector: SelectorManager,
     private val events: EngineEvents = EngineEvents(null, io.kuicksilver.quic.KuicksilverLogger.None),
+    private val clock: () -> Long = monotonicMillis(),
 ) {
-    private val idle = HashMap<String, ArrayDeque<H1Connection>>()
-    private val lock = Mutex()
+    /** Limits, keep-alive and idle expiry; internal for tests. */
+    internal val pool = ConnectionPool<H1Connection>(config.poolLimits(), clock)
 
     /** This engine's TLS session tickets (resumption secrets stay native); cleared by [closeAll], so closing the engine drops them. */
     internal val sessions = SessionCache()
 
-    /** An idle connection the server has not closed yet (one it closed while idle is dropped here, not handed out). */
-    private suspend fun take(key: String): H1Connection? =
-        lock.withLock {
-            val q = idle[key]
-            var found: H1Connection? = null
-            while (q != null && found == null) {
-                val c = q.removeFirstOrNull() ?: break
-                if (!c.input.isClosedForRead && !c.closed) found = c else c.close()
-            }
-            found
-        }
+    /** Returns a connection that finished its exchange, or one that lost the protocol race unused. */
+    fun recycle(c: H1Connection) = pool.release(c)
 
-    /** Back to the idle list; false when it was closed instead (closed already, the lock contended, the list full). */
-    private fun give(c: H1Connection): Boolean {
-        if (c.closed) return false
-        // released from a body reader's completion handler: no suspension there, so tryLock and close if contended
-        if (!lock.tryLock()) {
-            c.close()
-            return false
-        }
-        try {
-            val q = idle.getOrPut(c.key) { ArrayDeque() }
-            if (q.size <
-                config.maxConnectionsPerHost
-            ) {
-                q.addLast(c)
-                return true
-            } else {
-                c.close()
-                return false
-            }
-        } finally {
-            lock.unlock()
-        }
-    }
-
-    /** Idle connections and the keys holding them (the resource probe). */
-    internal suspend fun idleForProbe(): Pair<Int, Int> = lock.withLock { idle.values.sumOf { it.size } to idle.size }
+    /** Closes idle connections past their idle timeout or lifetime; the milliseconds until the next expiry, null when none is idle. */
+    fun evictExpired(): Long? = pool.evictExpired()
 
     suspend fun closeAll() {
-        lock.withLock {
-            idle.values.forEach { q -> q.forEach { it.close() } }
-            idle.clear()
-        }
+        pool.shutdown()
         sessions.clear()
     }
 
@@ -137,9 +100,40 @@ internal class H1Pool(
         }
 
     /** A connection for [data]: an idle pooled one, else a new one (the HTTP/1.1 side of the h3/h1 race). */
-    suspend fun open(data: HttpRequestData): H1Connection {
-        val key = keyOf(data)
-        return take(key) ?: connect(data, data.url, data.url.protocol.isSecure(), config.proxy != null, key)
+    suspend fun open(data: HttpRequestData): H1Connection = obtain(data, keyOf(data)).first
+
+    /**
+     * An idle connection for [key] (second: true), else a new one once the limits allow; waiting for room and connecting
+     * share the connect timeout, as in the CIO engine ([ConnectTimeoutException]).
+     */
+    private suspend fun obtain(
+        data: HttpRequestData,
+        key: String,
+    ): Pair<H1Connection, Boolean> {
+        var conn: H1Connection? = null
+        var reused = false
+        try {
+            withTimeout(data.connectTimeoutMillis(config)) {
+                val idle = pool.acquire(key)
+                if (idle != null) {
+                    conn = idle
+                    reused = true
+                } else {
+                    try {
+                        conn = connect(data, data.url, data.url.protocol.isSecure(), config.proxy != null, key).also { pool.adopt(it) }
+                    } catch (e: Throwable) {
+                        pool.releasePermit(key)
+                        throw e
+                    }
+                }
+            }
+        } catch (e: CancellationException) {
+            // a timeout that fired as the block returned: the connection is not handed out, so its slot comes back here
+            conn?.let { if (reused) pool.release(it) else it.close() }
+            if (e is TimeoutCancellationException) throw ConnectTimeoutException(data, e)
+            throw e
+        }
+        return conn!! to reused
     }
 
     /** One exchange; [preopened] is a connection the race already set up. */
@@ -163,10 +157,9 @@ internal class H1Pool(
         var given = preopened
         while (true) {
             // a connection the race just opened is fresh: it is not a pooled one and never earns the stale retry
-            val reused = if (given == null) take(key) else null
-            val conn = given ?: reused ?: connect(data, url, secure, proxy != null, key)
+            val (conn, reused) = given?.let { it to false } ?: obtain(data, key)
             given = null
-            events.emit("connectionAcquired") { connectionAcquired(data, HttpProtocolVersion.HTTP_1_1, reused = reused != null) }
+            events.emit("connectionAcquired") { connectionAcquired(data, HttpProtocolVersion.HTTP_1_1, reused) }
             var bodyJob: BodySender? = null
             try {
                 val requestTime = GMTDate()
@@ -191,7 +184,7 @@ internal class H1Pool(
                         fun settle(a: AfterResponse) {
                             when (a) {
                                 AfterResponse.Reuse -> {
-                                    released(give(conn))
+                                    released(pool.release(conn))
                                 }
 
                                 AfterResponse.Close -> {
@@ -223,7 +216,7 @@ internal class H1Pool(
                 bodyJob?.failure?.let { throw it }
                 // a pooled connection the server already closed: one transparent retry on a fresh connection, for an
                 // idempotent request with a replayable body only (a non-idempotent one may have been processed, RFC 9112 section 9.3.1)
-                if (reused != null && first && bodyJob == null && data.method.isIdempotent() &&
+                if (reused && first && bodyJob == null && data.method.isIdempotent() &&
                     (e is ClosedReadChannelException || e is kotlinx.io.IOException) && e !is TlsException
                 ) {
                     first = false
@@ -277,6 +270,7 @@ internal class H1Pool(
         }
     }
 
+    /** TCP, the proxy tunnel and TLS; runs under [obtain]'s connect timeout. */
     private suspend fun connect(
         data: HttpRequestData,
         url: Url,
@@ -284,60 +278,74 @@ internal class H1Pool(
         viaProxy: Boolean,
         key: String,
     ): H1Connection {
-        val timeout = data.connectTimeoutMillis(config)
-        return try {
-            withTimeout(timeout) {
-                val target =
-                    if (viaProxy) {
-                        config.proxy!!.resolveAddress().let { it as InetSocketAddress }
-                    } else {
-                        InetSocketAddress(
-                            socketHost(url.host),
-                            url.port,
-                        )
-                    }
-                // the address itself, not `hostname`: on the JVM that is a reverse lookup (::1 -> "localhost" -> 127.0.0.1);
-                // connectTcp, not ktor-network's native connect, which sends every IPv6 address as :: (docs/upstream/ktor-native-ipv6.md)
-                val tcp = connectTcp(selector, target)
-                try {
-                    val rawIn = tcp.openReadChannel()
-                    val rawOut = tcp.openWriteChannel(autoFlush = true)
-                    if (viaProxy &&
-                        secure
-                    ) {
-                        startTunnel(
-                            url,
-                            data.headers[HttpHeaders.UserAgent],
-                            data.headers[HttpHeaders.ProxyAuthorization],
-                            rawOut,
-                            rawIn,
-                        )
-                    }
-                    if (secure) {
-                        val tls =
-                            TlsConnection.client(
-                                rawIn,
-                                rawOut,
-                                config.tlsConfigFor(url.host, listOf("http/1.1")),
-                                callContextOrEmpty(),
-                                sessions,
-                            )
-                        H1Connection(tcp, tls, tls.input, tls.output, key)
-                    } else {
-                        H1Connection(tcp, null, rawIn, rawOut, key)
-                    }
-                } catch (e: Throwable) {
-                    tcp.close()
-                    throw e
-                }
+        val target =
+            if (viaProxy) {
+                config.proxy!!.resolveAddress().let { it as InetSocketAddress }
+            } else {
+                InetSocketAddress(
+                    socketHost(url.host),
+                    url.port,
+                )
             }
-        } catch (e: TimeoutCancellationException) {
-            throw ConnectTimeoutException(data, e)
+        // the address itself, not `hostname`: on the JVM that is a reverse lookup (::1 -> "localhost" -> 127.0.0.1);
+        // connectTcp, not ktor-network's native connect, which sends every IPv6 address as :: (docs/upstream/ktor-native-ipv6.md)
+        val tcp = connectTcp(selector, target)
+        try {
+            val rawIn = tcp.openReadChannel()
+            val rawOut = tcp.openWriteChannel(autoFlush = true)
+            if (viaProxy &&
+                secure
+            ) {
+                startTunnel(
+                    url,
+                    data.headers[HttpHeaders.UserAgent],
+                    data.headers[HttpHeaders.ProxyAuthorization],
+                    rawOut,
+                    rawIn,
+                )
+            }
+            return if (secure) {
+                val tls =
+                    TlsConnection.client(
+                        rawIn,
+                        rawOut,
+                        config.tlsConfigFor(url.host, listOf("http/1.1")),
+                        callContextOrEmpty(),
+                        sessions,
+                    )
+                H1Connection(tcp, tls, tls.input, tls.output, key, clock())
+            } else {
+                H1Connection(tcp, null, rawIn, rawOut, key, clock())
+            }
+        } catch (e: Throwable) {
+            tcp.close()
+            throw e
         }
     }
 
     private fun callContextOrEmpty(): CoroutineContext = selector.coroutineContext
 }
+
+/** Milliseconds on a monotonic clock, for idle and lifetime expiry. */
+internal fun monotonicMillis(): () -> Long {
+    val start =
+        kotlin.time.TimeSource.Monotonic
+            .markNow()
+    return { start.elapsedNow().inWholeMilliseconds }
+}
+
+/** The pool limits of this configuration; validates them. */
+@OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+internal fun KuicksilverEngineConfig.poolLimits(): PoolLimits =
+    PoolLimits(
+        maxTotal = maxConnectionsCount,
+        maxPerRoute = maxConnectionsPerRoute,
+        maxIdlePerRoute = maxConnectionsPerHost,
+        idleTimeoutMillis = idleTimeout.toMillisOrMax(),
+        maxLifetimeMillis = maxConnectionLifetime.toMillisOrMax(),
+    )
+
+internal fun kotlin.time.Duration.toMillisOrMax(): Long = if (isInfinite()) Long.MAX_VALUE else inWholeMilliseconds
 
 /** A body that streams (its end is not known up front): sent concurrently with reading the response. */
 private fun OutgoingContent.isStreamed(): Boolean =

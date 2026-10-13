@@ -33,6 +33,7 @@ import io.kuicksilver.ktor.client.EngineEvents
 import io.kuicksilver.ktor.client.H3BodyConsumed
 import io.kuicksilver.ktor.client.KuicksilverEngineConfig
 import io.kuicksilver.ktor.client.connectTimeoutMillis
+import io.kuicksilver.ktor.client.h1.toMillisOrMax
 import io.kuicksilver.ktor.client.socketHost
 import io.kuicksilver.ktor.client.socketTimeoutMillis
 import io.kuicksilver.ktor.client.tlsConfigFor
@@ -62,11 +63,52 @@ internal class H3NotSent(
     cause: Throwable,
 ) : Exception(cause.message, cause)
 
-/** HTTP/3 connections of one engine: one client endpoint, one connection per (origin, alternative) reused while it is open. */
-@OptIn(InternalAPI::class)
+/**
+ * One pooled HTTP/3 connection (or the attempt to set it up) and its use: requests in flight, and since when it has none.
+ * [active] changes under [H3Pool]'s lock when it rises and from a call's completion handler when it falls.
+ */
+@OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+internal class H3Entry(
+    val deferred: CompletableDeferred<Http3Connection>,
+    val createdAt: Long,
+) {
+    val active = kotlin.concurrent.atomics.AtomicInt(0)
+    val idleSince = kotlin.concurrent.atomics.AtomicLong(createdAt)
+    private val retiredFlag = kotlin.concurrent.atomics.AtomicInt(0)
+
+    fun release(now: Long) {
+        if (active.addAndFetch(-1) == 0) {
+            idleSince.store(now)
+            if (retiredFlag.load() != 0) closeConnection()
+        }
+    }
+
+    /** Past its lifetime: no new requests; closed as soon as it has none (now, or at the last [release]). */
+    fun retire() {
+        retiredFlag.store(1)
+        if (active.load() == 0) closeConnection()
+    }
+
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    private fun closeConnection() {
+        if (deferred.isCompleted && deferred.getCompletionExceptionOrNull() == null) deferred.getCompleted().close()
+    }
+}
+
+/**
+ * HTTP/3 connections of one engine: one client endpoint, one connection per (origin, alternative) reused while it is open.
+ * That is the per-origin cap: requests multiplex on it, and when the peer's MAX_STREAMS credit is used up a request waits
+ * for the next StreamsAvailable inside `openBidi` (bounded by the request timeout) instead of opening another
+ * connection or failing. A connection without requests for `idleTimeout`, or past `maxConnectionLifetime` once its
+ * requests finished, is closed by [evictExpired], which also drops entries of connections that ended.
+ */
+@OptIn(InternalAPI::class, kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
 internal class H3Pool(
     private val config: KuicksilverEngineConfig,
     private val events: EngineEvents = EngineEvents(null, io.kuicksilver.quic.KuicksilverLogger.None),
+    private val clock: () -> Long =
+        io.kuicksilver.ktor.client.h1
+            .monotonicMillis(),
 ) {
     private val lock = Mutex()
 
@@ -96,7 +138,16 @@ internal class H3Pool(
                 .build()
         } ?: config.quic
     private var endpoint: Http3Endpoint? = null
-    private val connections = HashMap<String, CompletableDeferred<Http3Connection>>()
+    private val connections = HashMap<String, H3Entry>()
+
+    /** Connections past their lifetime that still carry requests: closed once they have none. */
+    private val retired = ArrayList<H3Entry>()
+
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    private val idleTimeoutMillis = config.idleTimeout.toMillisOrMax()
+
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    private val maxLifetimeMillis = config.maxConnectionLifetime.toMillisOrMax()
 
     /** Connections set up and not yet used by an exchange: the first one to use it reports it as new (under [lock]). */
     private val fresh = HashSet<Http3Connection>()
@@ -110,7 +161,7 @@ internal class H3Pool(
     /** Test hook: the open connections, then forgets them so the next request connects again (a 0-RTT resumption). */
     internal suspend fun dropConnectionsForTest(): List<Http3Connection> =
         lock.withLock {
-            val l = connections.values.mapNotNull { it.getCompletedOrNull() }
+            val l = connections.values.mapNotNull { it.deferred.getCompletedOrNull() }
             connections.clear()
             l
         }
@@ -118,11 +169,14 @@ internal class H3Pool(
     /** Test hook: the open connections. */
     internal suspend fun connectionsForTest(): List<Http3Connection> =
         lock.withLock {
-            connections.values.mapNotNull { it.getCompletedOrNull() }
+            connections.values.mapNotNull { it.deferred.getCompletedOrNull() }
         }
 
-    /** Entries of the connection map, open or not (the resource probe). */
-    internal suspend fun connectionsForProbe(): Int = lock.withLock { connections.size }
+    /** Entries of the connection map, retired ones included, open or not (the resource probe). */
+    internal suspend fun connectionsForProbe(): Int = lock.withLock { connections.size + retired.size }
+
+    /** Test hook: the (origin, alternative) entries tracked, retired ones included. */
+    internal suspend fun entryCountForTest(): Int = lock.withLock { connections.size + retired.size }
 
     fun close() {
         endpoint?.close()
@@ -130,27 +184,39 @@ internal class H3Pool(
         fresh.clear()
     }
 
+    private fun Http3Connection.usable(): Boolean = !closed.isCompleted && goAwayReceived.value == null
+
+    private fun H3Entry.pastLifetime(now: Long): Boolean = now - createdAt >= maxLifetimeMillis
+
     /** An open connection to [t], connecting (once, shared by concurrent callers) when needed. */
     suspend fun connection(
         t: H3Target,
         data: HttpRequestData,
-    ): Http3Connection {
+    ): Http3Connection = connectionEntry(t, data).second
+
+    private suspend fun connectionEntry(
+        t: H3Target,
+        data: HttpRequestData,
+    ): Pair<H3Entry, Http3Connection> {
         val ep = endpoint()
-        val (d, connect) =
+        val (e, connect) =
             lock.withLock {
                 val existing = connections[t.key]
+                val done = existing?.deferred?.takeIf { it.isCompleted }?.getCompletedOrNull()
                 if (existing != null &&
-                    !(
-                        existing.isCompleted &&
-                            existing.getCompletedOrNull()?.let { it.closed.isCompleted || it.goAwayReceived.value != null } == true
-                    )
+                    (!existing.deferred.isCompleted || (done != null && done.usable() && !existing.pastLifetime(clock())))
                 ) {
-                    existing to
-                        false
+                    existing to false
                 } else {
-                    CompletableDeferred<Http3Connection>().also { connections[t.key] = it } to true
+                    // past its lifetime with requests in flight: it finishes them first ([evictExpired] closes it)
+                    if (existing != null && done != null && done.usable()) {
+                        retired += existing
+                        existing.retire()
+                    }
+                    H3Entry(CompletableDeferred(), clock()).also { connections[t.key] = it } to true
                 }
             }
+        val d = e.deferred
         if (connect) {
             try {
                 val c =
@@ -172,6 +238,7 @@ internal class H3Pool(
                             )
                         }
                     }
+                e.idleSince.store(clock())
                 if (events.enabled) {
                     lock.withLock {
                         fresh.removeAll { it.closed.isCompleted } // closed before any exchange used them
@@ -180,35 +247,107 @@ internal class H3Pool(
                 }
                 d.complete(c)
             } catch (
-                e: TimeoutCancellationException,
+                x: TimeoutCancellationException,
             ) {
-                val x = ConnectTimeoutException(data, e)
-                d.completeExceptionally(x)
-                forget(t, d)
+                d.completeExceptionally(ConnectTimeoutException(data, x))
+                forget(t, e)
             } catch (
-                e: CancellationException,
+                x: CancellationException,
             ) {
-                d.cancel(e)
-                forget(t, d)
-                throw e
-            } catch (e: Throwable) {
-                d.completeExceptionally(e)
-                forget(t, d)
+                d.cancel(x)
+                forget(t, e)
+                throw x
+            } catch (x: Throwable) {
+                d.completeExceptionally(x)
+                forget(t, e)
             }
         }
-        return d.await()
+        return e to d.await()
+    }
+
+    /**
+     * [connection] counted as in use until [H3Entry.release]: [evictExpired] never closes a connection a request was
+     * handed. A connection that ended or was replaced between the two steps is looked up again.
+     */
+    private suspend fun acquire(
+        t: H3Target,
+        data: HttpRequestData,
+    ): Pair<H3Entry, Http3Connection> {
+        while (true) {
+            val (e, c) = connectionEntry(t, data)
+            val counted =
+                lock.withLock {
+                    if ((connections[t.key] === e || e in retired) && !c.closed.isCompleted) {
+                        e.active.addAndFetch(1)
+                        true
+                    } else {
+                        false
+                    }
+                }
+            if (counted) return e to c
+        }
+    }
+
+    /**
+     * Closes connections idle for `idleTimeout`, retired ones without requests, and drops entries of connections that
+     * ended; returns the milliseconds until the next connection may expire, or null when none is idle.
+     */
+    suspend fun evictExpired(): Long? {
+        val toClose = ArrayList<Http3Connection>()
+        var next: Long? = null
+        lock.withLock {
+            val now = clock()
+            val it = connections.values.iterator()
+            while (it.hasNext()) {
+                val e = it.next()
+                if (!e.deferred.isCompleted) continue
+                val c = e.deferred.getCompletedOrNull()
+                if (c == null || c.closed.isCompleted) {
+                    it.remove()
+                    continue
+                }
+                if (e.active.load() > 0) continue
+                val idleEnd = saturatedAdd(e.idleSince.load(), idleTimeoutMillis)
+                if (now >= idleEnd) {
+                    it.remove()
+                    toClose += c
+                } else {
+                    val d = idleEnd - now
+                    next = next?.let { n -> minOf(n, d) } ?: d
+                }
+            }
+            retired.removeAll { e ->
+                val c = e.deferred.getCompletedOrNull()
+                when {
+                    c == null || c.closed.isCompleted -> {
+                        true
+                    }
+
+                    e.active.load() == 0 -> {
+                        toClose += c
+                        true
+                    }
+
+                    else -> {
+                        false
+                    }
+                }
+            }
+        }
+        toClose.forEach { it.close() }
+        return next
     }
 
     /** The open, usable connection to [t], if one exists (no connection attempt). */
     suspend fun existing(t: H3Target): Http3Connection? =
-        lock.withLock { connections[t.key] }?.getCompletedOrNull()?.takeIf {
+        lock.withLock { connections[t.key] }?.deferred?.getCompletedOrNull()?.takeIf {
             !it.closed.isCompleted &&
                 it.goAwayReceived.value == null
         }
 
     /** Whether an open connection to [t] exists and its peer accepts Extended CONNECT (WebSockets over HTTP/3, RFC 9220). */
     suspend fun canConnectProtocol(t: H3Target): Boolean =
-        lock.withLock { connections[t.key] }?.getCompletedOrNull()?.let {
+        lock.withLock { connections[t.key] }?.deferred?.getCompletedOrNull()?.let {
             !it.closed.isCompleted &&
                 it.peerSettings.value?.enableConnectProtocol == true
         } ==
@@ -216,10 +355,10 @@ internal class H3Pool(
 
     private suspend fun forget(
         t: H3Target,
-        d: CompletableDeferred<Http3Connection>,
+        e: H3Entry,
     ) = lock.withLock {
         if (connections[t.key] ===
-            d
+            e
         ) {
             connections.remove(t.key)
         }
@@ -237,31 +376,39 @@ internal class H3Pool(
     ): HttpResponseData {
         var attempts = 0
         while (true) {
-            val conn =
+            val (entry, conn) =
                 try {
-                    connection(t, data)
+                    acquire(t, data)
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Throwable) {
                     throw H3NotSent(e)
                 }
-            if (events.enabled) {
-                val reused = lock.withLock { !fresh.remove(conn) }
-                events.emit("connectionAcquired") { connectionAcquired(data, HttpProtocolVersion.HTTP_3_0, reused) }
-            }
             try {
-                return if (data.attributes.contains(
-                        WEBSOCKETS_KEY,
-                    )
-                ) {
-                    webSocket(conn, data, callContext, extraHeaders)
-                } else {
-                    exchange(conn, data, callContext, extraHeaders)
+                // inside the try: a cancellation while taking the lock must still release the entry's count
+                if (events.enabled) {
+                    val reused = lock.withLock { !fresh.remove(conn) }
+                    events.emit("connectionAcquired") { connectionAcquired(data, HttpProtocolVersion.HTTP_3_0, reused) }
                 }
-            } catch (e: Http3Exception.RequestNotProcessed) {
+                val r =
+                    if (data.attributes.contains(
+                            WEBSOCKETS_KEY,
+                        )
+                    ) {
+                        webSocket(conn, data, callContext, extraHeaders)
+                    } else {
+                        exchange(conn, data, callContext, extraHeaders)
+                    }
+                // in use until the call ends (its body read or abandoned), not just until the response head
+                val job = callContext[Job]
+                if (job == null) entry.release(clock()) else job.invokeOnCompletion { entry.release(clock()) }
+                return r
+            } catch (e: Throwable) {
+                entry.release(clock())
+                if (e !is Http3Exception.RequestNotProcessed) throw e
                 lock.withLock {
                     connections[t.key]?.let {
-                        if (it.getCompletedOrNull() === conn) connections.remove(t.key)
+                        if (it === entry) connections.remove(t.key)
                     }
                 } // a new connection for the retry (RFC 9114 section 5.2)
                 if (!data.body.isReplayable()) {
@@ -436,6 +583,11 @@ internal class H3Pool(
                     bodyChannel(body.delegate(), callContext)
                 }
             }
+
+        fun saturatedAdd(
+            a: Long,
+            b: Long,
+        ): Long = if (b > Long.MAX_VALUE - a) Long.MAX_VALUE else a + b
 
         @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
         fun <T> CompletableDeferred<T>.getCompletedOrNull(): T? =

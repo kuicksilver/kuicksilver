@@ -10,6 +10,8 @@ import java.io.File
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.minutes
 
 /** The client code blocks of docs/guide/ktor.md, kept compiling and running (block markers `guide:ktor:client*`). */
 class GuideSamplesTest {
@@ -19,6 +21,28 @@ class GuideSamplesTest {
                 it.parentFile
             }.map { File(it, "docs/guide/ktor.md") }.first { it.exists() }.readText()
         assertTrue("guide:ktor:client" in guide, "marker client")
+        assertTrue("guide:ktor:pool" in guide, "marker pool")
+    }
+
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    @Test
+    fun poolSample() {
+        // guide:ktor:pool
+        val client =
+            HttpClient(Kuicksilver) {
+                engine {
+                    maxConnectionsCount = 1000 // HTTP/1.1 connections of the engine, idle ones included
+                    maxConnectionsPerRoute = 100 // ... to one route (scheme, host, port, proxy)
+                    maxConnectionsPerHost = 4 // idle keep-alive connections kept per route
+                    idleTimeout = 5.minutes // idle HTTP/1.1 and HTTP/3 connections are closed after this
+                    maxConnectionLifetime = Duration.INFINITE // age after which a connection takes no new requests
+                }
+            }
+        client.use {
+            val config = it.engine.config as KuicksilverEngineConfig
+            assertEquals(1000, config.maxConnectionsCount)
+            assertEquals(5.minutes, config.idleTimeout)
+        }
     }
 
     @Test fun clientSample() {

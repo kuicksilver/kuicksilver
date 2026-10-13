@@ -87,6 +87,11 @@ val client = HttpClient(Kuicksilver) {
 `Preferred` tries HTTP/3 first and falls back to HTTP/1.1, `H3Only` never uses TCP, `H1Only` never uses QUIC. The
 fallback keeps the same trust and pins. Details: [docs/guide/ktor.md](docs/guide/ktor.md).
 
+**Supported Ktor: 3.6.x.** The engines use a few Ktor internals, so they check the Ktor version when a client engine is
+created or a server engine starts (JVM and Android) and fail with a clear message on another major.minor;
+`-Dkuicksilver.ktor.versionCheck=false` skips the check. On Kotlin/Native a mismatch fails at link time. New Ktor minors
+are adopted in Kuicksilver releases; see [Supported Ktor versions](docs/guide/ktor.md#supported-ktor-versions).
+
 ### Ktor server
 
 ```kotlin

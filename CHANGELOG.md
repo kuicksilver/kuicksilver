@@ -80,6 +80,20 @@ Ktor client (`kuicksilver-ktor-client`):
 - Observability, experimental (docs/guide/ktor.md "Observability"): `KuicksilverEventListener` (call start/end/failure,
   protocol chosen and why, race outcome, Alt-Svc used and marked broken, fallback, retry, pool acquire/release),
   `logger`, `http3.qlog`, `http3.connectionListener`.
+- Connection limits and idle cleanup (`@ExperimentalKuicksilverApi`): `maxConnectionsCount` (1000) and
+  `maxConnectionsPerRoute` (100) bound the HTTP/1.1 connections of an engine and of one route, as in Ktor CIO; requests
+  beyond them wait in FIFO order within the connect timeout (`ConnectTimeoutException`), cancellation-safe.
+  `idleTimeout` (5 minutes, as OkHttp) closes idle keep-alive connections and HTTP/3 connections without requests, and
+  `maxConnectionLifetime` (infinite) retires connections by age; a background reaper does both and drops the bookkeeping
+  of origins without connections. HTTP/3 keeps one connection per origin and queues requests for the peer's MAX_STREAMS
+  credit (bounded by the request timeout) instead of failing or opening more connections.
+
+Both Ktor engines (`kuicksilver-ktor-network`, `kuicksilver-ktor-client`, `kuicksilver-ktor-server`):
+
+- Ktor version policy: the engines support Ktor 3.6.x. Creating a client engine and starting a server engine on the JVM
+  or Android read the Ktor jars' manifest versions and fail with an `IllegalStateException` that says what to do when
+  the major.minor differs; `-Dkuicksilver.ktor.versionCheck=false` turns the check off. Kotlin/Native fails at link time
+  instead.
 
 Ktor server (`kuicksilver-ktor-server`):
 
@@ -163,6 +177,12 @@ Native layer and TLS (`kuicksilver-native`, `kuicksilver-tls`):
   ABI 6: early-data controls for 0-RTT (`KSL_OPT_EARLY_DATA`, `KSL_SET_EARLY_CONTEXT`, `KSL_SET_EARLY_DATA`,
   `KSL_GET_EARLY_DATA`); `EarlyDataState` gains `Allowed` and `Required`, and `QuicTlsSession.earlyData` becomes
   `earlyDataAccepted`.
+
+Ktor client (`kuicksilver-ktor-client`):
+
+- `maxConnectionsPerHost` is documented as what it always was, the number of idle HTTP/1.1 connections kept per route;
+  it no longer stands in for a connection limit. The idle map of the HTTP/1.1 pool, which grew by one entry per origin
+  and was never pruned, is gone: a route is dropped with its last connection.
 
 ### Fixed
 

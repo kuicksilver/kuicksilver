@@ -103,10 +103,10 @@ val client = HttpClient(Kuicksilver) {
 - `https://` and `wss://` go over TLS 1.3 with the same `trust`, `identity` and `tls {}` settings whatever the protocol;
   SNI and verification use the URL's host. `http://` and `ws://` are plain HTTP/1.1 over TCP.
 - HTTP/1.1 requests are written and responses parsed with Ktor's CIO code (vendored, see `docs/ktor-internal-api.md`):
-  chunked bodies, `Expect: 100-continue`, keep-alive with at most `maxConnectionsPerHost` idle connections per origin
+  chunked bodies, `Expect: 100-continue`, keep-alive with at most `maxConnectionsPerHost` idle connections per route
   (a pooled connection the server already closed is replaced once, transparently, for idempotent requests; a POST
   that failed on one is reported, never sent again). Requests on one connection are
-  sequential; `pipelining` is not used.
+  sequential; `pipelining` is not used. Limits and idle cleanup: see "Connection pool" below.
 - A proxy (`proxy = ProxyBuilder.http(...)`) is used for HTTP/1.1 only: `CONNECT` tunnels for `https`, absolute-form
   requests for `http`; SOCKS proxies are refused with `UnsupportedOperationException`. HTTP/3 never goes through a proxy.
 - Timeouts come from `HttpTimeout`: the connect timeout (TCP + TLS, or the QUIC handshake) fails with Ktor's
@@ -116,6 +116,50 @@ val client = HttpClient(Kuicksilver) {
   declared (no extension negotiation in v1), nor Unix sockets.
 - `HttpClient()` without an engine finds Kuicksilver through `ServiceLoader` on the JVM with priority 0.5 (below OkHttp
   and the platform engines at 1.0, above CIO at 0.0) and through Ktor's engine list on Kotlin/Native.
+
+### Connection pool
+
+```kotlin
+// guide:ktor:pool
+val client = HttpClient(Kuicksilver) {
+    engine {
+        maxConnectionsCount = 1000                 // HTTP/1.1 connections of the engine, idle ones included
+        maxConnectionsPerRoute = 100               // ... to one route (scheme, host, port, proxy)
+        maxConnectionsPerHost = 4                  // idle keep-alive connections kept per route
+        idleTimeout = 5.minutes                    // idle HTTP/1.1 and HTTP/3 connections are closed after this
+        maxConnectionLifetime = Duration.INFINITE  // age after which a connection takes no new requests
+    }
+}
+```
+
+| Setting | Default | Compared with |
+|---|---|---|
+| `maxConnectionsCount` | 1000 | CIO `maxConnectionsCount` 1000; OkHttp `Dispatcher.maxRequests` 64 (requests, not sockets) |
+| `maxConnectionsPerRoute` | 100 | CIO `endpoint.maxConnectionsPerRoute` 100; OkHttp `maxRequestsPerHost` 5 |
+| `maxConnectionsPerHost` (idle per route) | 4 | OkHttp `ConnectionPool` 5 idle in all |
+| `idleTimeout` | 5 min | OkHttp keep-alive 5 min; CIO `keepAliveTime` 5 s |
+| `maxConnectionLifetime` | infinite | neither OkHttp nor CIO has one |
+
+The limits are CIO's, so moving from CIO changes nothing; they guard against a runaway caller rather than shape traffic
+(OkHttp's lower numbers limit requests, and HTTP/2 multiplexes behind them). The idle timeout is OkHttp's: long enough
+to reuse a connection across bursts, short enough that a forgotten client does not hold sockets for long. A connection
+the server closed meanwhile is detected when it is taken from the pool and replaced.
+
+- **HTTP/1.1.** A request beyond `maxConnectionsPerRoute` or `maxConnectionsCount` waits, in arrival order, for a
+  connection to come back or close; waiting and connecting share the connect timeout, so a request that waits too long
+  fails with `ConnectTimeoutException`, as with CIO (`HttpTimeout`'s request timeout, if shorter, ends it first with
+  `HttpRequestTimeoutException`). A full route does not hold up requests to other routes, and when only the total is
+  exhausted the oldest idle connection of another route is closed to make room. A cancelled or timed-out waiter leaves
+  the queue without taking or losing a slot. WebSocket connections hold their slot while open.
+- **HTTP/3.** One QUIC connection per origin (and alternative) carries all requests. When the server's MAX_STREAMS
+  credit is used up, a request waits for the next credit on that connection instead of failing or opening another
+  connection; the request timeout bounds the wait (`HttpRequestTimeoutException`), and so does the socket timeout,
+  which covers every wait until the response head. A connection without requests for `idleTimeout` is closed (QUIC's
+  own idle timeout, `quic { idleTimeout }` and the server's, may end it first); one past `maxConnectionLifetime` takes
+  no new requests and closes once its requests are done.
+- **Cleanup.** A background task of the engine closes expired connections; it sleeps until the next expiry, at most
+  `idleTimeout` and at most a minute, and stops when the client closes. Per-origin bookkeeping lives only while an
+  origin has connections or waiting requests, so a client that talks to many origins does not grow without bound.
 
 ### HTTP/3 on the client
 
@@ -251,6 +295,28 @@ default.
 
 > **Replay warning.** An attacker can replay a 0-RTT request (RFC 8446 section 8). Turn this on only when the handlers
 > of GET, HEAD and OPTIONS have no side effects.
+
+## Supported Ktor versions
+
+Kuicksilver 0.x supports **Ktor 3.6.x** (built and tested against 3.6.0). The engines use a few Ktor internals and
+vendor parts of Ktor CIO (`docs/ktor-internal-api.md`), which Ktor may change in any minor release, so another
+major.minor is not supported even when it happens to link.
+
+- **At startup.** Creating a client engine (`HttpClient(Kuicksilver)`, also through `ServiceLoader`) checks
+  `ktor-client-core` and `ktor-http-cio`; starting a server engine checks `ktor-server-core` and `ktor-server-cio`. On the
+  JVM and Android the version is the `Implementation-Version` in the manifest of the jar that holds each class; when the
+  major.minor is not 3.6, the engine fails with an `IllegalStateException` naming the artifact, its version and the
+  fix. Where no version can be read (Android after dexing, shaded or repackaged jars, classes from a directory) the check
+  passes silently.
+- **Opting out.** `-Dkuicksilver.ktor.versionCheck=false` (or `System.setProperty` before the engine is created) skips
+  the check, for experts who verified their Ktor themselves; a mismatch then fails later, if at all, with
+  `NoSuchMethodError` or `AbstractMethodError`.
+- **Kotlin/Native.** klibs are resolved when the binary is linked: a Ktor whose ABI differs fails the link (unresolved
+  symbols), so there is no runtime check. Keep every `io.ktor` dependency on the same 3.6.x, best with
+  `platform("io.ktor:ktor-bom:3.6.0")`.
+- **Upgrades.** A new Ktor minor is adopted in a Kuicksilver release: the version catalog moves, every entry of
+  `docs/ktor-internal-api.md` is re-checked, the vendored CIO code and contract tests are re-vendored from the new tag,
+  and `KtorVersionPolicy.SUPPORTED` moves with them. Ktor patch releases (3.6.x) need nothing and are accepted at once.
 
 ## Compatibility
 
