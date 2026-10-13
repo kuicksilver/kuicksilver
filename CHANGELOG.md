@@ -615,6 +615,10 @@ Ktor client (`kuicksilver-ktor-client`):
   the `HttpClient` closes (found as a 60 s hang of `AbandonedBodyTest` under load).
 - Over HTTP/3 a URL with a query but no path (`https://host?a=1`) went out as `:path ?a=1`, which RFC 9114 section 4.3.1
   makes malformed (strict servers such as quic-go reset it, and the HTTP/3 layer now refuses it); it is sent as `/?a=1`.
+- HTTP/1.1 connection pool: a request waiting for a connection is resumed after the pool's lock is released. With
+  `engine { dispatcher = Dispatchers.Unconfined }` the waiter resumed inside the lock, and one whose connection failed at
+  once (or whose connect failed before suspending) spun forever on the lock its own thread held. A waiter cancelled
+  while the engine closes now ends with `CancellationException`, not `IllegalStateException`.
 
 Ktor server (`kuicksilver-ktor-server`):
 
