@@ -391,6 +391,37 @@ class PathTest {
         }
     }
 
+    /**
+     * Review finding 10, RFC 9000 section 8.2.1: "The endpoint MUST use unpredictable data in every PATH_CHALLENGE frame", and section
+     * 13.3: "PATH_CHALLENGE frames include a different payload each time they are sent." Repeats carried the first data again; a
+     * late PATH_RESPONSE to an earlier challenge of the same validation still validates the path.
+     */
+    @Test fun everyPathChallengeRepeatCarriesFreshData() {
+        val (p, c) = connected()
+        val batch = io.kuicksilver.quic.PacketBatch(16)
+        try {
+            val id = c.addPath(p.serverAddr, p.now)
+            c.probePath(id, p.now)
+            val path = c.paths.byId(id)!!
+            c.poll(batch, p.now)
+            repeat(3) {
+                val t = path.nextChallengeAt
+                c.onTimeout(t)
+                batch.clear()
+                c.poll(batch, t)
+            }
+            val sent = c.challengeDataSentForTest.toList()
+            assertEquals(4, sent.size, "four PATH_CHALLENGEs: $sent")
+            assertEquals(sent.size, sent.toSet().size, "each one carries new data: $sent")
+            assertEquals(PathState.Validating, path.state)
+            c.onPathResponse(sent.first())
+            assertEquals(PathState.Validated, path.state, "a response to the first challenge of the validation is accepted")
+        } finally {
+            batch.close()
+            p.close()
+        }
+    }
+
     @Test fun newPathGetsThreeChallengesBeforeDeadline() {
         // RFC 9000 section 8.2.4: three PATH_CHALLENGEs (at 0, 1 and 2 PTO) go out before the 3 x PTO validation timeout
         // a 1 ms initialRtt keeps the 6 x initialRtt floor out of the way: the deadline is 3 x PTO

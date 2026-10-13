@@ -386,7 +386,7 @@ internal class PacketBuilder(
             if (target.challengePending &&
                 w.remaining >= 9
             ) {
-                FrameEncoder.pathChallenge(w, target.challenge)
+                FrameEncoder.pathChallenge(w, c.newChallengeData(target))
                 frames.flags =
                     frames.flags or SentFrames.PATH_CHALLENGE
                 frames.pathChallenge = target.challenge
@@ -395,6 +395,7 @@ internal class PacketBuilder(
                     true
                 c.challengedAddressesForTest.recordForTest(target.remote)
                 c.pathChallengesSentForTest++
+                c.challengeDataSentForTest.recordForTest(target.challenge)
             }
             while (w.remaining >=
                 9
@@ -431,7 +432,7 @@ internal class PacketBuilder(
                 if (target.challengePending &&
                     w.remaining >= 9
                 ) {
-                    FrameEncoder.pathChallenge(w, target.challenge)
+                    FrameEncoder.pathChallenge(w, c.newChallengeData(target))
                     frames.flags =
                         frames.flags or SentFrames.PATH_CHALLENGE
                     frames.pathChallenge = target.challenge
@@ -441,6 +442,7 @@ internal class PacketBuilder(
                     padToEnd = true
                     c.challengedAddressesForTest.recordForTest(target.remote)
                     c.pathChallengesSentForTest++
+                    c.challengeDataSentForTest.recordForTest(target.challenge)
                 } // RFC 9000 section 8.2.1: expanded to 1200 bytes
                 while (w.remaining >=
                     9

@@ -161,6 +161,9 @@ public class ConnectionCore internal constructor(
     internal var pathResponsesSentForTest = 0
     internal val challengedAddressesForTest = ArrayList<InetSocketAddress>()
     internal var pathChallengesSentForTest = 0
+
+    /** The data of every PATH_CHALLENGE sent, in order (bounded). */
+    internal val challengeDataSentForTest = ArrayList<Long>()
     internal val pathCountForTest: Int get() = paths.all.size
 
     // ---- DPLPMTUD (RFC 8899) ----

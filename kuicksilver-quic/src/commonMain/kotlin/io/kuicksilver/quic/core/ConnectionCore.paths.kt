@@ -215,7 +215,7 @@ internal fun ConnectionCore.onPathPacket(
 internal val PATH_IDLE_TIMEOUT: Duration = 5.seconds
 
 internal fun ConnectionCore.startValidation(p: Path) {
-    p.challenge = random.nextLong()
+    p.forgetChallenges()
     p.challengePending = true
     p.state = PathState.Validating
     p.handshakeValidated = false
@@ -307,6 +307,14 @@ internal fun ConnectionCore.dcidFor(p: Path): ConnectionId? {
     return if (role == TlsRole.Server && p.socket == paths.active.socket) remoteCid else null
 }
 
+/** Fresh unpredictable data for the PATH_CHALLENGE about to go out on [p] (RFC 9000 sections 8.2.1 and 13.3). */
+internal fun ConnectionCore.newChallengeData(p: Path): Long {
+    var d = random.nextLong()
+    while (d == 0L || p.answers(d)) d = random.nextLong()
+    p.onChallengeSent(d)
+    return d
+}
+
 /** A path that stopped probing gives its peer ID back (retired: it was used, RFC 9000 section 9.5). */
 internal fun ConnectionCore.releasePathCid(p: Path) {
     val peer =
@@ -365,7 +373,7 @@ internal fun ConnectionCore.onPathChallenge(
 internal fun ConnectionCore.onPathResponse(data: Long) {
     for (i in 0 until paths.all.size) {
         val p = paths.all[i]
-        if (p.state == PathState.Validating && p.challenge == data) {
+        if (p.state == PathState.Validating && p.answers(data)) {
             p.state = PathState.Validated
             p.amplification.validated = true
             p.challengePending = false
