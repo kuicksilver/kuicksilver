@@ -44,6 +44,27 @@ internal class SimLink(
     var tailDropped = 0L
         private set
 
+    /** The bottleneck rate, changeable mid-run (a link rate step); starts at the parameters' rate. */
+    var bandwidth: Long? = params.bandwidthBitsPerSecond
+
+    /** Everything sent is dropped while set (a blackhole, both directions when the scenario sets both links). */
+    var blackhole = false
+
+    /** A reordered datagram (with [LinkParams.reorderRate]) is held back this long instead of swapping places with its predecessor. */
+    var reorderDelay: Duration = Duration.ZERO
+
+    /** Arrivals are released in batches at multiples of this interval (Wi-Fi-like aggregation of ACKs); zero: no batching. */
+    var aggregation: Duration = Duration.ZERO
+
+    /** Extra one-way delay per flow tag (RTT unfairness on a shared bottleneck); null: none. */
+    var extraDelayByTag: ((Int) -> Duration)? = null
+
+    /** ECT datagrams that wait longer than this for the link are marked CE (a step-marking AQM); null: no marking. */
+    var ceMarkAbove: Duration? = null
+
+    /** When the bottleneck finishes what it holds; the scenario integrates the queueing delay over time from it. */
+    val busyUntil: TimeMark get() = linkFree
+
     fun send(
         bytes: ByteArray,
         ecn: Ecn,
@@ -53,7 +74,7 @@ internal class SimLink(
         val i = index++
         val tooBig = mtu?.let { bytes.size > it } ?: false
         val drop =
-            dropNext || tooBig || i in params.lossMask ||
+            blackhole || dropNext || tooBig || i in params.lossMask ||
                 (params.burstLoss?.let { i >= it.startIndex && i < it.startIndex + it.length } ?: false) ||
                 (params.lossRate > 0 && random.nextDouble() < params.lossRate)
         dropNext = false
@@ -73,8 +94,10 @@ internal class SimLink(
         var arrival =
             now + params.delay +
                 (if (params.jitter.isPositive()) (random.nextLong(params.jitter.inWholeNanoseconds)).nanoseconds else 0.nanoseconds)
-        params.bandwidthBitsPerSecond?.let { bw ->
-            val waiting = if (linkFree > now) (linkFree - now).inWholeNanoseconds * bw / 8_000_000_000L else 0L
+        extraDelayByTag?.let { arrival += it(tag) }
+        var aqmMark = false
+        bandwidth?.let { bw ->
+            val waiting = if (linkFree > now) ((linkFree - now).inWholeNanoseconds.toDouble() * bw / 8e9).toLong() else 0L
             val limit = params.queueLimitBytes
             if (limit != null && waiting + payload.size > limit) {
                 dropped++
@@ -82,6 +105,7 @@ internal class SimLink(
                 return
             } // the bottleneck buffer is full
             lastQueueDelay = if (linkFree > now) linkFree - now else Duration.ZERO
+            ceMarkAbove?.let { if (lastQueueDelay > it) aqmMark = true }
             val start =
                 if (linkFree >
                     now
@@ -93,34 +117,45 @@ internal class SimLink(
             ; val tx = (payload.size * 8L * 1_000_000_000L / bw).nanoseconds
             linkFree = start + tx
             arrival =
-                linkFree + params.delay
+                linkFree + params.delay + (extraDelayByTag?.invoke(tag) ?: Duration.ZERO)
+        }
+        if (aggregation.isPositive()) {
+            val q = aggregation.inWholeNanoseconds
+            arrival = TimeMark((arrival.nanos + q - 1) / q * q)
         }
         val marked =
-            when (val m = params.ecn) {
-                EcnMarking.Pass -> {
-                    ecn
-                }
-
-                EcnMarking.Bleach -> {
-                    Ecn.NotEct
-                }
-
-                is EcnMarking.CeRate -> {
-                    if ((
-                            ecn ==
-                                Ecn.Ect0 ||
-                                ecn == Ecn.Ect1
-                        ) &&
-                        random.nextDouble() < m.rate
-                    ) {
-                        Ecn.Ce
-                    } else {
+            if (aqmMark && (ecn == Ecn.Ect0 || ecn == Ecn.Ect1)) {
+                Ecn.Ce
+            } else {
+                when (val m = params.ecn) {
+                    EcnMarking.Pass -> {
                         ecn
+                    }
+
+                    EcnMarking.Bleach -> {
+                        Ecn.NotEct
+                    }
+
+                    is EcnMarking.CeRate -> {
+                        if ((
+                                ecn ==
+                                    Ecn.Ect0 ||
+                                    ecn == Ecn.Ect1
+                            ) &&
+                            random.nextDouble() < m.rate
+                        ) {
+                            Ecn.Ce
+                        } else {
+                            ecn
+                        }
                     }
                 }
             }
+        if (reorderDelay.isPositive() && params.reorderRate > 0 && random.nextDouble() < params.reorderRate) {
+            arrival += reorderDelay
+        }
         queue += InFlight(payload, arrival, marked, tag)
-        if (params.reorderRate > 0 && queue.size >= 2 &&
+        if (!reorderDelay.isPositive() && params.reorderRate > 0 && queue.size >= 2 &&
             random.nextDouble() < params.reorderRate
         ) {
             val a = queue[queue.size - 1]

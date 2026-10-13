@@ -10,8 +10,10 @@ import io.kuicksilver.native.toByteArray
 import io.kuicksilver.quic.ConnectionCore
 import io.kuicksilver.quic.ConnectionEvent
 import io.kuicksilver.quic.EndpointCore
+import io.kuicksilver.quic.IoCapabilities
 import io.kuicksilver.quic.NullCryptoProvider
 import io.kuicksilver.quic.PacketBatch
+import io.kuicksilver.quic.PathId
 import io.kuicksilver.quic.QuicClientConfig
 import io.kuicksilver.quic.QuicConfig
 import io.kuicksilver.quic.QuicEndpointConfig
@@ -36,11 +38,15 @@ internal class SharedBottleneck(
     seed: Long,
     data: LinkParams,
     acks: LinkParams = LinkParams(delay = data.delay),
+    /** What both endpoints' sockets can do (ECN, DF for PMTUD); null: the portable socket (no ECN, the MTU stays 1200). */
+    private val caps: IoCapabilities? = null,
 ) {
     var now: TimeMark = TimeMark(1_000_000_000L)
         private set
-    private val c2s = SimLink(data, Random(seed * 31 + 1), "c2s")
-    private val s2c = SimLink(acks, Random(seed * 31 + 2), "s2c")
+
+    /** The data direction (the bottleneck) and the ACK direction, for scenarios that change them mid-run. */
+    val c2s = SimLink(data, Random(seed * 31 + 1), "c2s")
+    val s2c = SimLink(acks, Random(seed * 31 + 2), "s2c")
     private val batch = PacketBatch(32)
     private val identity = TlsIdentity.fromDer(listOf(TestCerts.server), TestCerts.serverKey.copyOf())
     private val tls = SimScenario.nullTls(identity)
@@ -55,6 +61,10 @@ internal class SharedBottleneck(
     private var queueDelayCount = 0L
     var maxQueueDelay: Duration = Duration.ZERO
         private set
+
+    // the queueing delay integrated over time (what a packet arriving at a random instant would wait), inside the window
+    private var queueAreaNanos2 = 0.0
+    private var markedAt = now
 
     val tailDrops: Long get() = c2s.tailDropped
 
@@ -87,8 +97,14 @@ internal class SharedBottleneck(
         var clientReady = false
         var serverReady = false
 
+        /** The application has nothing to send while set (an on/off flow); the stream stays open. */
+        var paused = false
+
         fun begin() {
-            client = clientEp.connect(QuicClientConfig.Builder(tls.first).apply { this.quic = quicConfig }.build(), serverAddr, now)
+            client =
+                clientEp.connect(QuicClientConfig.Builder(tls.first).apply { this.quic = quicConfig }.build(), serverAddr, now).also { c ->
+                    caps?.let { c.setPathCapabilities(PathId.Initial, it) }
+                }
         }
     }
 
@@ -101,12 +117,39 @@ internal class SharedBottleneck(
     fun mark() {
         for (f in flows) f.readAtMark = f.read
         measuring = true
+        queueAreaNanos2 = 0.0
+        markedAt = now
         queueDelaySum = 0
         queueDelayCount = 0
         maxQueueDelay = Duration.ZERO
     }
 
     val meanQueueDelay: Duration get() = if (queueDelayCount == 0L) Duration.ZERO else (queueDelaySum / queueDelayCount).nanoseconds
+
+    /** The bottleneck's queueing delay averaged over time since [mark] (idle time counts as an empty queue). */
+    val timeMeanQueueDelay: Duration
+        get() {
+            val span = (now - markedAt).inWholeNanoseconds
+            return if (span <= 0) Duration.ZERO else (queueAreaNanos2 / span).toLong().nanoseconds
+        }
+
+    /** Adds the area under the queueing delay from [a] to [b]: it falls with slope 1 until the link is idle. */
+    private fun integrateQueue(
+        a: TimeMark,
+        b: TimeMark,
+    ) {
+        if (!measuring || b <= a) return
+        val busy = c2s.busyUntil
+        if (busy <= a) return
+        val qa = (busy - a).inWholeNanoseconds.toDouble()
+        queueAreaNanos2 +=
+            if (busy >= b) {
+                val qb = (busy - b).inWholeNanoseconds.toDouble()
+                (qa + qb) / 2 * (b - a).inWholeNanoseconds
+            } else {
+                qa * qa / 2
+            }
+    }
 
     fun run(limit: Duration) {
         val end = now + limit
@@ -125,8 +168,10 @@ internal class SharedBottleneck(
             consider(c2s.nextArrival())
             consider(s2c.nextArrival())
             val n = next
-            now = if (n == null || n > now + 50.milliseconds) now + 50.milliseconds else n
-            if (now > end) now = end
+            var to = if (n == null || n > now + 50.milliseconds) now + 50.milliseconds else n
+            if (to > end) to = end
+            integrateQueue(now, to)
+            now = to
         }
     }
 
@@ -143,7 +188,11 @@ internal class SharedBottleneck(
         for (f in flows) {
             val before = f.serverEp.connectionCount
             if (f.serverEp.processPending(now) > 0 && f.server == null && f.serverEp.connectionCount > before) {
-                f.server = f.serverEp.connections().last()
+                f.server =
+                    f.serverEp
+                        .connections()
+                        .last()
+                        .also { sv -> caps?.let { sv.setPathCapabilities(PathId.Initial, it) } }
             }
         }
         for (d in s2c.due(now)) {
@@ -157,7 +206,7 @@ internal class SharedBottleneck(
             f.server?.let { if (drain(it)) f.serverReady = true }
             if (f.clientReady && f.serverReady) {
                 if (f.stream < 0) f.stream = c.openStream(true, StreamPriority.Default)
-                if (f.stream >= 0) {
+                if (f.stream >= 0 && !f.paused) {
                     while (c.writeStream(f.stream, chunk, 0, chunk.size, false) > 0) {}
                 }
             }
