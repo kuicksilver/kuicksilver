@@ -25,6 +25,9 @@ public class NewReno(
         private set
     private var recoveryStart: TimeMark? = null
 
+    /** Bytes acknowledged in congestion avoidance not yet turned into growth: max_datagram_size x bytes / cwnd in whole bytes. */
+    private var caAcked: Long = 0
+
     private fun initialWindow(mtu: Int): Long = minOf(10L * mtu, maxOf(14720L, 2L * mtu))
 
     override fun onPacketSent(
@@ -48,7 +51,14 @@ public class NewReno(
         if (cwnd < ssthresh) {
             cwnd += bytes
         } else {
-            cwnd += maxDatagramSize.toLong() * bytes / cwnd
+            // RFC 9002 section 7.3.3 (appendix B.5: max_datagram_size x acked / cwnd) with the remainder carried over: in integer bytes
+            // the quotient alone is 0 for every packet once cwnd exceeds max_datagram_size squared (1.44 MB at 1200)
+            caAcked += maxDatagramSize.toLong() * bytes
+            if (caAcked >= cwnd) {
+                val grow = caAcked / cwnd
+                caAcked -= grow * cwnd
+                cwnd += grow
+            }
         }
     }
 
@@ -59,6 +69,7 @@ public class NewReno(
         val rs = recoveryStart
         if (rs != null && sentTime <= rs) return
         recoveryStart = now
+        caAcked = 0
         cwnd = maxOf(cwnd / 2, minWindow)
         ssthresh = cwnd
     }
