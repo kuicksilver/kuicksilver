@@ -9,8 +9,10 @@ import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.quic.Initiator
 import io.kuicksilver.quic.QuicException
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.yield
 import kotlinx.io.Buffer
 import kotlinx.io.IOException
 import kotlinx.io.Sink
@@ -129,44 +131,62 @@ internal class StreamOutput(
             return
         }
         withContext(stream.loop.dispatcher) {
-            while (!buffer.exhausted()) {
-                closedCause?.let { throw ClosedWriteChannelException(it) }
-                // copied, not consumed: only what the core accepted leaves the buffer, so a flush cancelled while waiting loses nothing
-                val n = buffer.peek().readAtMostTo(tmp, 0, tmp.size)
-                val w = writeToCore(tmp, 0, n, false)
-                if (w >
-                    0
-                ) {
-                    buffer.skip(w.toLong())
+            drain()
+            stream.loop.flush(stream.conn.core) // drain handed the data to the core; this sends it now
+        }
+    }
+
+    /**
+     * Hands every buffered byte to the core, on the loop. The loop is flushed only when the core's send buffer is full (to
+     * make room by sending), so a caller can still add the FIN to the last frame before the packet is built.
+     */
+    private suspend fun drain() {
+        var unsent = false
+        while (!buffer.exhausted()) {
+            closedCause?.let { throw ClosedWriteChannelException(it) }
+            // copied, not consumed: only what the core accepted leaves the buffer, so a flush cancelled while waiting loses nothing
+            val n = buffer.peek().readAtMostTo(tmp, 0, tmp.size)
+            val w = writeToCore(tmp, 0, n, false)
+            if (w > 0) {
+                buffer.skip(w.toLong())
+                unsent = true
+            } else {
+                // only a flush that sends what was handed over since the last one: every flush ticks every stream's ticker, so
+                // flushing on each wake would wake this loop again at once and spin while the peer's credit stays at zero
+                if (unsent) {
                     stream.loop.flush(stream.conn.core)
-                } else {
-                    try {
-                        stream.ticker.receive()
-                    } catch (
-                        e: CancellationException,
-                    ) {
-                        throw e
-                    } catch (e: Throwable) {
-                        throw ClosedWriteChannelException(closedCause ?: e)
-                        // the core's 4 MiB send buffer is full: wait for ACKs; a lost connection surfaces as a closed channel with its
-                        // reason
-                    }
+                    unsent = false
+                }
+                try {
+                    stream.ticker.receive()
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Throwable) {
+                    // the core's 4 MiB send buffer is full: wait for ACKs; a lost connection surfaces as a closed channel with its reason
+                    throw ClosedWriteChannelException(closedCause ?: e)
                 }
             }
         }
     }
 
+    /** Sends what is buffered and the FIN together: the last data and the FIN share one STREAM frame when they fit one packet. */
     override suspend fun flushAndClose() {
         closedCause?.let {
             throw ClosedWriteChannelException(it)
         } // the peer's STOP_SENDING or a reset: the writer learns it here, not from a silent return
         if (isClosedForWrite) return
-        flush()
-        isClosedForWrite = true
         withContext(stream.loop.dispatcher) {
+            drain()
+            isClosedForWrite = true
             closedCause?.let { throw ClosedWriteChannelException(it) }
             writeToCore(tmp, 0, 0, fin = true)
-            stream.loop.flush(stream.conn.core)
+            // the data and the FIN are the core's now: the send must not be lost to a cancellation. Yielding first lets the
+            // closes already queued on the loop hand over theirs, so concurrent requests share packets instead of taking one
+            // each (interop zerortt: one packet per request filled the initial window before the last 0-RTT requests left)
+            withContext(NonCancellable) {
+                yield()
+                stream.loop.flush(stream.conn.core)
+            }
         }
     }
 

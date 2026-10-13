@@ -1,9 +1,10 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
-@file:OptIn(ExperimentalAtomicApi::class)
+@file:OptIn(ExperimentalAtomicApi::class, ExperimentalKuicksilverApi::class)
 
 package io.kuicksilver.interop
 
+import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.quic.ConnectionAdmission
 import io.kuicksilver.quic.QlogSink
 import io.kuicksilver.quic.QuicConnection
@@ -34,22 +35,30 @@ import kotlin.time.Duration.Companion.seconds
 
 /**
  * HTTP/0.9 over QUIC (`hq-interop`): `GET /path\r\n` on a bidirectional stream, the file, FIN. Listens on IPv4 and, when
- * the host has it, on IPv6 as a second endpoint on the same port (the runner's `ipv6` case talks to `server6`).
+ * the host has it, on IPv6 as a second endpoint on the same port (the runner's `ipv6` case talks to `server6`). With
+ * `earlyData` (the `resumption` and `zerortt` cases) it issues session tickets and accepts 0-RTT: a GET only reads a file,
+ * so a request that arrived early is answered at once (0.5-RTT), replay or not.
  */
 internal class HqInteropServer private constructor(private val endpoints: List<QuicEndpoint>, private val www: String) : AutoCloseable {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val accepted = AtomicInt(0)
+    private val early = AtomicInt(0)
+    private val earlyStreamCount = AtomicInt(0)
     val port: Int get() = endpoints[0].localAddress.port
     /** The IPv6 endpoint's port, null when IPv6 could not be bound. */
     val port6: Int? get() = endpoints.getOrNull(1)?.localAddress?.port
     val connectionsAccepted: Int get() = accepted.load()
+    /** Connections whose 0-RTT the server accepted, which only a resumed (PSK) handshake can have (tests). */
+    val earlyAcceptedConnections: Int get() = early.load()
+    /** Request streams whose data arrived in 0-RTT packets (tests). */
+    val earlyStreams: Int get() = earlyStreamCount.load()
     private val connections = AtomicReference<List<QuicConnection>>(emptyList())
     /** Key updates observed over all accepted connections (the `keyupdate` interop case). */
     val keyUpdatesSeen: Long get() = connections.load().sumOf { it.stats.keyUpdates }
 
-    private fun run() { for (ep in endpoints) scope.launch { while (true) { val c = ep.accept(); accepted.incrementAndFetch(); while (true) { val l = connections.load(); if (connections.compareAndSet(l, l + c)) break }; launch { serve(c) } } } }
+    private fun run() { for (ep in endpoints) scope.launch { while (true) { val c = ep.accept(); accepted.incrementAndFetch(); if (c.earlyDataAccepted == true) early.incrementAndFetch(); while (true) { val l = connections.load(); if (connections.compareAndSet(l, l + c)) break }; launch { serve(c) } } } }
     private suspend fun serve(c: QuicConnection) {
-        try { while (true) { val st = c.acceptStream(); scope.launch { runCatching { handle(st) } } } } catch (_: Exception) { }
+        try { while (true) { val st = c.acceptStream(); if (st.receivedEarly) earlyStreamCount.incrementAndFetch(); scope.launch { runCatching { handle(st) } } } } catch (_: Exception) { }
     }
     private suspend fun handle(st: QuicStream) {
         val line = StringBuilder(); val one = ByteArray(1)
@@ -62,10 +71,10 @@ internal class HqInteropServer private constructor(private val endpoints: List<Q
     override fun close() { scope.cancel(); for (ep in endpoints) ep.close() }
 
     companion object {
-        suspend fun start(identity: TlsIdentity, port: Int, www: String, versions: List<VersionProfile>, host: String = "0.0.0.0", admission: ConnectionAdmission = ConnectionAdmission.default(), cipherSuites: CipherSuites = CipherSuites.Default, handshakeTimeout: Duration = 10.seconds, qlog: QlogSink? = null, ipv6: Boolean = true): HqInteropServer {
+        suspend fun start(identity: TlsIdentity, port: Int, www: String, versions: List<VersionProfile>, host: String = "0.0.0.0", admission: ConnectionAdmission = ConnectionAdmission.default(), cipherSuites: CipherSuites = CipherSuites.Default, handshakeTimeout: Duration = 10.seconds, qlog: QlogSink? = null, ipv6: Boolean = true, earlyData: Boolean = false): HqInteropServer {
             val tls = tlsConfig(TlsRole.Server) { alpn = listOf("hq-interop"); this.identity = identity; this.cipherSuites = cipherSuites }
             val quic = quicConfig { this.versions = versions; maxBidiStreams = 1000; this.qlog = qlog; this.handshakeTimeout = handshakeTimeout }
-            val config = QuicEndpointConfig.Builder().apply { server = QuicServerConfig.Builder(tls).apply { this.quic = quic }.build(); this.admission = admission }.build()
+            val config = QuicEndpointConfig.Builder().apply { server = QuicServerConfig.Builder(tls).apply { this.quic = quic; this.earlyData = earlyData }.build(); this.admission = admission }.build()
             val v4 = QuicEndpoint.bind(InetSocketAddress(host, port), config)
             val endpoints = ArrayList<QuicEndpoint>(2); endpoints += v4
             if (ipv6 && host == "0.0.0.0") try { endpoints += QuicEndpoint.bind(InetSocketAddress("::", port), config) } catch (e: Exception) { Files.log("IPv6 endpoint not bound: ${e.message}") }

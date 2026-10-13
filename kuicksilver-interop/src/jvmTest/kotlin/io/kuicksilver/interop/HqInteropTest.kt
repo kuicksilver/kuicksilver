@@ -5,6 +5,7 @@ package io.kuicksilver.interop
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.ConnectionAdmission
 import io.kuicksilver.tls.CipherSuites
+import io.kuicksilver.tls.EarlyDataState
 import io.kuicksilver.tls.TlsIdentity
 import kotlinx.coroutines.runBlocking
 import java.io.File
@@ -37,7 +38,7 @@ class HqInteropTest {
             assertEquals(0, code); for ((n, b) in files) assertContentEquals(b, File(downloads, n).readBytes()); assertEquals(1, srv.connectionsAccepted, "one connection for all requests")
         }
     }
-    @Test fun unknownTestcaseExits127() { assertEquals(127, Interop.run(mapOf("ROLE" to "client", "TESTCASE" to "zerortt", "REQUESTS" to ""))); assertEquals(127, Interop.run(mapOf("ROLE" to "server", "TESTCASE" to "foo"))) }
+    @Test fun unknownTestcaseExits127() { assertEquals(127, Interop.run(mapOf("ROLE" to "client", "TESTCASE" to "connectionmigration", "REQUESTS" to ""))); assertEquals(127, Interop.run(mapOf("ROLE" to "server", "TESTCASE" to "foo"))) }
     @Test fun keylogWrittenWhenEnvSet() = runBlocking {
         val root = www("k" to ByteArray(100)); val downloads = Files.createTempDirectory("dl").toFile(); val keylog = File(downloads, "keys.log")
         HqInteropServer.start(identity(), port = 0, www = root.path, versions = Interop.v1).use { srv ->
@@ -95,7 +96,7 @@ class HqInteropTest {
             assertEquals(0, Interop.run(mapOf("ROLE" to "client", "TESTCASE" to "transfer", "REQUESTS" to "https://127.0.0.1:${srv.port}/six.bin", "DOWNLOADS" to downloads.path)))
         }
     }
-    @Test fun unsupportedCasesExit127() { for (t in listOf("zerortt", "resumption", "connectionmigration", "foo")) { assertEquals(127, Interop.run(mapOf("ROLE" to "client", "TESTCASE" to t, "REQUESTS" to "")), t); assertEquals(127, Interop.run(mapOf("ROLE" to "server", "TESTCASE" to t)), t) } }
+    @Test fun unsupportedCasesExit127() { for (t in listOf("connectionmigration", "versionnegotiation", "foo")) { assertEquals(127, Interop.run(mapOf("ROLE" to "client", "TESTCASE" to t, "REQUESTS" to "")), t); assertEquals(127, Interop.run(mapOf("ROLE" to "server", "TESTCASE" to t)), t) } }
 
     // ---- K5 tail: the runner's `http3` case (an H3 transaction per file, one connection, ALPN h3)
     @Test fun http3CaseDownloadsOverH3() = runBlocking {
@@ -108,4 +109,33 @@ class HqInteropTest {
         }
     }
     @Test fun http3IsASupportedTestcase() { assertTrue("http3" in Testcases.supported); assertTrue(Testcases.client("http3")!!.http3); assertTrue(Testcases.server("http3")!!.http3); assertTrue(!Testcases.client("transfer")!!.http3) }
+
+    // ---- 0.2.0: the runner's `resumption` and `zerortt` cases (ADR-0015; 0-RTT is opt-in, so only these two plans turn it on)
+    @Test fun onlyResumptionAndZeroRttPlansEnableEarlyData() {
+        for (t in listOf("resumption", "zerortt")) { assertTrue(t in Testcases.supported, t); assertTrue(Testcases.server(t)!!.earlyData, t); assertEquals(EarlyDataState.Allowed, Testcases.client(t)!!.earlyData, t) }
+        for (t in Testcases.supported - setOf("resumption", "zerortt")) { assertTrue(!Testcases.server(t)!!.earlyData, t); assertEquals(EarlyDataState.Disabled, Testcases.client(t)!!.earlyData, t) }
+        assertTrue(Testcases.client("zerortt")!!.zeroRtt); assertTrue(!Testcases.client("resumption")!!.zeroRtt)
+    }
+    @Test fun resumptionCaseResumesTheFirstConnectionsTicket() = runBlocking {
+        val files = listOf("r1.bin" to ByteArray(5_000) { (it * 3).toByte() }, "r2.bin" to ByteArray(10_000) { (it * 5).toByte() }); val root = www(*files.toTypedArray()); val downloads = Files.createTempDirectory("dl").toFile()
+        val plan = Testcases.server("resumption")!!
+        HqInteropServer.start(identity(), port = 0, www = root.path, versions = plan.versions, earlyData = plan.earlyData).use { srv ->
+            val code = Interop.run(mapOf("ROLE" to "client", "TESTCASE" to "resumption", "REQUESTS" to files.joinToString(" ") { "https://127.0.0.1:${srv.port}/${it.first}" }, "DOWNLOADS" to downloads.path))
+            assertEquals(0, code); for ((n, b) in files) assertContentEquals(b, File(downloads, n).readBytes())
+            assertEquals(2, srv.connectionsAccepted, "the first file on one connection, the rest on a second")
+            assertEquals(1, srv.earlyAcceptedConnections, "the second connection resumed the first one's ticket (a server accepts early data only on a PSK resumption)")
+            assertEquals(0, srv.earlyStreams, "resumption sends no request in 0-RTT")
+        }
+    }
+    @Test fun zerorttCaseSendsTheRemainingRequestsIn0Rtt() = runBlocking {
+        val files = (1..6).map { "z$it-" + "x".repeat(200) to ByteArray(32) { b -> (b + it).toByte() } }; val root = www(*files.toTypedArray()); val downloads = Files.createTempDirectory("dl").toFile(); val keylog = File(downloads, "keys.log")
+        val plan = Testcases.server("zerortt")!!
+        HqInteropServer.start(identity(), port = 0, www = root.path, versions = plan.versions, earlyData = plan.earlyData).use { srv ->
+            val code = Interop.run(mapOf("ROLE" to "client", "TESTCASE" to "zerortt", "REQUESTS" to files.joinToString(" ") { "https://127.0.0.1:${srv.port}/${it.first}" }, "DOWNLOADS" to downloads.path, "SSLKEYLOGFILE" to keylog.path))
+            assertEquals(0, code); for ((n, b) in files) assertContentEquals(b, File(downloads, n).readBytes())
+            assertEquals(2, srv.connectionsAccepted); assertEquals(1, srv.earlyAcceptedConnections)
+            assertEquals(files.size - 1, srv.earlyStreams, "every request after the first arrived in 0-RTT")
+            assertTrue(keylog.readText().contains("CLIENT_EARLY_TRAFFIC_SECRET"), "the runner decrypts 0-RTT with the client's key log")
+        }
+    }
 }

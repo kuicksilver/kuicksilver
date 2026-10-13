@@ -90,7 +90,9 @@ public class QuicConfig private constructor(
     /**
      * RTT assumed before the first sample (RFC 9002 section 6.2.2), in (0, 10 s]: the first PTO is 3 x this (999 ms at the 333 ms
      * default, then 2 s, 4 s ...), and a path validation lasts at least 6 x this (RFC 9000 section 8.2.4). Lower recovers a lost
-     * first flight sooner at the price of spurious retransmissions on slow links; see docs/guide/quic.md, "Configuration".
+     * first flight sooner at the price of spurious retransmissions on slow links; see docs/guide/quic.md, "Configuration". A client
+     * endpoint that already finished a connection to the same server address on its own socket starts from that connection's final
+     * smoothed RTT instead (RFC 9002 section 6.2.2).
      */
     public val initialRtt: Duration,
     /** Error code sent in STOP_SENDING / RESET_STREAM when a channel is cancelled or closed with a cause. */
@@ -140,6 +142,42 @@ public class QuicConfig private constructor(
         require(datagramSendQueue >= 1 && datagramSendQueueBytes >= 1) { "datagram send queue limits must be positive" }
         require(defaultStreamErrorCode in 0..((1L shl 62) - 1)) { "error code must be 0..2^62-1" }
     }
+
+    /** This configuration with another [initialRtt] (a client endpoint's remembered RTT to the same server, RFC 9002 section 6.2.2). */
+    internal fun withInitialRtt(rtt: Duration): QuicConfig =
+        QuicConfig(
+            maxIdleTimeout,
+            handshakeTimeout,
+            keepAlive,
+            initialStreamWindow,
+            initialConnectionWindow,
+            maxStreamWindow,
+            maxConnectionWindow,
+            maxBidiStreams,
+            maxUniStreams,
+            maxSendBuffer,
+            maxAckDelay,
+            ackDelayExponent,
+            activeConnectionIdLimit,
+            connectionIdLength,
+            maxUdpPayloadSize,
+            versions,
+            initialVersion,
+            rtt,
+            defaultStreamErrorCode,
+            qlog,
+            congestionController,
+            greaseQuicBit,
+            glitchProtection,
+            allowMigration,
+            allowMigrationToLoopback,
+            pmtud,
+            maxDatagramFrameSize,
+            datagramReceiveQueue,
+            datagramSendQueue,
+            datagramSendQueueBytes,
+            limits,
+        )
 
     /** The version a client starts with: [initialVersion] or the first of [versions]. */
     public val firstVersion: VersionProfile get() = initialVersion ?: versions[0]

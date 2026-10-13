@@ -33,6 +33,7 @@ import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 
 @OptIn(ExperimentalKuicksilverApi::class, DelicateKuicksilverApi::class)
@@ -124,6 +125,50 @@ class EndpointCoreTest {
             b.close()
         }
     }
+
+    /**
+     * RFC 9002 section 6.2.2: the next client connection to a server the endpoint already measured starts from the last smoothed RTT,
+     * so its first PTO is about 3 x that RTT instead of 999 ms (interop handshakecorruption against quic-go: probes at 1, 3, 7 s left
+     * quic-go's 5 s handshake idle timeout room to drop the half-open connection); another address and a connection without a
+     * sample keep the configured value.
+     */
+    @Test fun nextClientConnectionStartsFromTheLastMeasuredRtt() {
+        val cep = clientEndpoint()
+        val first = cep.connect(clientConfig(), a2, now)
+        assertEquals(333.milliseconds, startRtt(first).smoothed)
+        startRtt(first).onSample(40.milliseconds, Duration.ZERO, false, 25.milliseconds)
+        cep.remove(first)
+        val second = cep.connect(clientConfig(), a2, now)
+        assertEquals(40.milliseconds, startRtt(second).smoothed)
+        assertTrue(!startRtt(second).hasSample, "a starting value, not a sample")
+        val other = cep.connect(clientConfig(), InetSocketAddress("10.0.0.3", 2222), now)
+        assertEquals(333.milliseconds, startRtt(other).smoothed)
+        cep.remove(second) // no sample of its own: the remembered 40 ms stays
+        val third = cep.connect(clientConfig(), a2, now)
+        assertEquals(40.milliseconds, startRtt(third).smoothed)
+    }
+
+    /** The memory is bounded (256 server addresses, the least recently stored dropped first) and a server endpoint stores nothing. */
+    @Test fun negative_rttMemoryBoundedAndClientOnly() {
+        val cep = clientEndpoint()
+        for (i in 0..256) {
+            val c = cep.connect(clientConfig(), InetSocketAddress("10.1.${i / 200}.${i % 200 + 1}", 443), now)
+            startRtt(c).onSample(50.milliseconds, Duration.ZERO, false, 25.milliseconds)
+            cep.remove(c)
+        }
+        val oldest = cep.connect(clientConfig(), InetSocketAddress("10.1.0.1", 443), now)
+        assertEquals(333.milliseconds, startRtt(oldest).smoothed, "the first address was evicted")
+        val newest = cep.connect(clientConfig(), InetSocketAddress("10.1.1.57", 443), now)
+        assertEquals(50.milliseconds, startRtt(newest).smoothed)
+        val srv = server()
+        val s = assertNotNull(feed(srv, firstInitial(cep.connect(clientConfig(), a2, now)), a1))
+        startRtt(s).onSample(50.milliseconds, Duration.ZERO, false, 25.milliseconds)
+        srv.remove(s)
+        val c = srv.connect(clientConfig(), a1, now) // a server endpoint's own client connections do not learn from its server side
+        assertEquals(333.milliseconds, startRtt(c).smoothed)
+    }
+
+    private fun startRtt(c: ConnectionCore) = c.paths.active.rtt
 
     @Test fun routesByDcid() {
         val srv = server()

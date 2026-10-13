@@ -73,6 +73,10 @@ Testing (`kuicksilver-testing`, not published) and tooling:
   sampling, a Theil–Sen flatness verdict and a return-to-baseline check (CONTRIBUTING.md, "Soak and churn").
   `ksl_live_objects` (additive in `ksl` ABI 6) counts live native contexts, sessions, keys, key and session handles, UDP
   sockets and wake descriptors.
+- Interop endpoint: the runner's `resumption` and `zerortt` cases (session tickets and opt-in 0-RTT, ADR-0015), green
+  against quic-go, ngtcp2, quiche, picoquic, quinn and msquic in both roles with the JVM and native images; the K7
+  matrix and its analysis are in `docs/spec/rfc-compliance.md` ("Interop matrix K7"), including BBR vs CUBIC
+  measurements against quic-go and ngtcp2.
 
 ### Changed
 
@@ -243,6 +247,19 @@ QUIC runtime and sockets:
   where the RTT hovers around 1 ms, the Ktor client's pooled HTTP/3 connection hit it about twice per 30 min soak (every
   request in flight failed with "Idle timeout after 30s"). A bucket whose fill time has passed is now simply full (found
   by the soak harness).
+- A client endpoint starts a new connection to a server address it already measured from that address's last smoothed
+  RTT (RFC 9002 section 6.2.2) instead of `QuicConfig.initialRtt`, so a lost first flight is probed after about three
+  RTTs rather than after 1 s, 2 s, 4 s. Under heavy loss the old schedule left quic-go servers more than their 5 s
+  handshake idle timeout without a packet, and they restarted the half-open connection (interop `handshakecorruption`).
+  At most 256 addresses are kept (the least recently stored is dropped), only from connections that ended on the
+  endpoint's own socket, and only on client endpoints.
+- `QuicStream.output.flushAndClose()` hands the data still buffered in the channel to the core together with the FIN, so
+  they leave in one STREAM frame when they fit a packet; before, it flushed the data first and sent the FIN in a packet
+  of its own. Found by the interop case `zerortt` against quiche, whose hq server left 0-RTT requests whose FIN came
+  alone unanswered; the interop client now writes its request into the channel's buffer and closes it in one step.
+  `flushAndClose` also yields to the closes already queued on the endpoint loop before the packet is built, so requests
+  closed concurrently share packets instead of taking one each (the interop `zerortt` client spent its initial window on
+  one 303-byte packet per request and sent the last 0-RTT requests in 1-RTT).
 
 TLS and native layer (`kuicksilver-tls`, `kuicksilver-native`):
 

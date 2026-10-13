@@ -32,6 +32,9 @@ import io.kuicksilver.tls.ResetKey
 import io.kuicksilver.tls.TlsRole
 import kotlin.concurrent.Volatile
 import kotlin.random.Random
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
 
 /**
  * The sans-IO endpoint (ADR-0004): routes datagrams to connections by keyed connection ID, queues client Initials for
@@ -200,8 +203,11 @@ public class EndpointCore(
         require(client.quic.connectionIdLength == cidLength) {
             "QuicConfig.connectionIdLength (${client.quic.connectionIdLength}) must equal the endpoint's connectionIdLength ($cidLength)"
         }
+        // RFC 9002 section 6.2.2: a connection to a server this endpoint already measured starts from that RTT, so a lost first flight
+        // is probed at about 3 x that RTT instead of 1 s, 2 s, 4 s ... (a peer like quic-go drops a half-open connection after 5 s of silence)
+        val quic = rttMemory[AddressClass.addrKey(remote)]?.let { client.quic.withInitialRtt(it) } ?: client.quic
         // the endpoint's CSPRNG itself: a child Random(seed) would let an observer recover the 64-bit seed from two cleartext CIDs
-        val core = ConnectionCore.client(client.quic, client.tls, config.crypto, remote, random, now, resetKey, client.earlyData)
+        val core = ConnectionCore.client(quic, client.tls, config.crypto, remote, random, now, resetKey, client.earlyData)
         attach(core)
         return core
     }
@@ -447,6 +453,9 @@ public class EndpointCore(
         val EARLY_PENDING_TTL = kotlin.time.Duration.parse("100ms")
         const val EARLY_PENDING_IDS = 32
         const val EARLY_PENDING_PER_ID = 31
+
+        /** Server addresses whose last RTT a client endpoint remembers. */
+        const val RTT_MEMORY = 256
     }
 
     /** Frees the queue, the stateless buffer and every connection's native resources. */
@@ -484,8 +493,27 @@ public class EndpointCore(
         return i
     }
 
+    /**
+     * The final smoothed RTT of the last client connection to each server address that ended on this endpoint's socket (RFC 9002
+     * section 6.2.2: a connection over the same network MAY start from the previous connection's smoothed RTT), used by [connect] as
+     * the next connection's initial RTT; at most [RTT_MEMORY] addresses, the least recently stored dropped first.
+     */
+    private val rttMemory = LinkedHashMap<AddressClass.AddrKey, Duration>()
+
+    private fun rememberRtt(core: ConnectionCore) {
+        if (core.role != TlsRole.Client) return
+        val p = core.paths.active
+        // a migrated connection measured another network (a socket of its own): its RTT says nothing about this endpoint's path
+        if (!p.rtt.hasSample || p.socket != PathId.Initial) return
+        val key = AddressClass.addrKey(p.remote)
+        rttMemory.remove(key)
+        rttMemory[key] = p.rtt.smoothed.coerceIn(1.milliseconds, 10.seconds)
+        if (rttMemory.size > RTT_MEMORY) rttMemory.remove(rttMemory.keys.first())
+    }
+
     /** Forgets a closed connection, every ID that routed to it and its per-IP slot. */
     public fun remove(core: ConnectionCore) {
+        rememberRtt(core)
         registry.removeAll(core)
         connections.remove(core)
         accepted.remove(core)
