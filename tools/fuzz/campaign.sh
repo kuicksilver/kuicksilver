@@ -193,7 +193,7 @@ run_slice() {
   corp=$(find "$corpus" -type f | wc -l | tr -d ' ')
   result=ok
   if [ $rc -ne 0 ]; then
-    result=$( (ls -t "$crashes" 2>/dev/null | grep -E '^(crash|timeout|oom|slow-unit|leak)-' | head -1) || true)
+    result=$( (ls -t "$crashes" 2>/dev/null | grep -E '^(crash|timeout|oom|leak)-' | head -1) || true)
     [ -n "$result" ] || result="exit-$rc"
     if [ "${result#timeout-}" != "$result" ] && ! replay_times_out "$id" "$crashes/$result"; then
       # at background priority on a machine under heavy load a unit can be starved past -timeout (the first one also loads
