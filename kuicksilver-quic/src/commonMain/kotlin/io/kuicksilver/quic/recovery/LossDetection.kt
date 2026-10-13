@@ -100,6 +100,9 @@ internal interface LossListener {
 
     fun onCongestion(event: CongestionEvent)
 
+    /** An ACK frame is about to be processed: what the controllers have in flight now is their state "before the ACK". */
+    fun onAckFrameStart() {}
+
     /** One ACK frame newly acknowledged packets and every one of them was reported: per-ACK controllers (BBR) update their model now. */
     fun onAckProcessed(now: TimeMark) {}
 
@@ -198,6 +201,7 @@ internal class LossDetection(
                 }
             }
         }
+        listener.onAckFrameStart()
         val prevLargestAcked = sp.largestAcked
         if (ack.largest > sp.largestAcked) sp.largestAcked = ack.largest
         acked.clear()

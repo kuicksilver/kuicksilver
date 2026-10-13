@@ -68,6 +68,12 @@ private fun ConnectionCore.blockedRepeatGap(done: Int): Duration =
  */
 internal const val BLOCKED_FAST_REPEATS = 32
 
+/** Unused window, in datagrams, that still counts as a window in use (quic-go's maxBurstPackets, RFC 9002 section 7.8). */
+private const val BURST_DATAGRAMS = 3
+
+/** The datagram size assumed for a path that is gone. */
+private const val MIN_DATAGRAM = 1200
+
 /**
  * The longest gap between repeats when neither side has an idle timeout (both sent max_idle_timeout 0). Nothing has to be kept
  * alive then; the reports only find a lost update late in a long block. 10 s is the gap the default 30 s idle timeout gives, so
@@ -281,6 +287,7 @@ internal class ConnectionLossListener(
         // the controller that counted the packets: after a NAT rebinding it lives on the new path (`inheritFrom`); without one, the
         // path's controller, or nothing for a path that is gone
         val target = event.cc ?: core.paths.byId(PathId(event.pathId))?.cc ?: return
+        val prior = priorInFlight(target)
         if (event.kind ==
             CongestionKind.Acked
         ) {
@@ -289,13 +296,50 @@ internal class ConnectionLossListener(
                 event.sentTime,
                 event.bytes,
                 core.rtt.smoothed,
-                appLimited =
-                    target.bytesInFlight < target.cwnd / 2,
+                appLimited = !cwndLimited(target, prior, core.paths.byId(PathId(event.pathId))?.mtu ?: MIN_DATAGRAM),
             )
         } else {
             target.onLoss(event.now, event.bytes, event.sentTime, event.persistentCongestion)
         }
         core.qlog?.metricsUpdated(core.stats, event.now)
+    }
+
+    /** Controllers seen in the ACK frame being processed and their bytes in flight before it (the frame's losses included). */
+    private val priorCcs = ArrayList<io.kuicksilver.quic.CongestionController>(4)
+    private var priorBytes = LongArray(4)
+
+    override fun onAckFrameStart() {
+        priorCcs.clear()
+    }
+
+    private fun priorInFlight(cc: io.kuicksilver.quic.CongestionController): Long {
+        for (i in priorCcs.indices) if (priorCcs[i] === cc) return priorBytes[i]
+        if (priorCcs.size == priorBytes.size) priorBytes = priorBytes.copyOf(priorBytes.size * 2)
+        priorBytes[priorCcs.size] = cc.bytesInFlight
+        priorCcs += cc
+        return cc.bytesInFlight
+    }
+
+    /**
+     * RFC 9002 section 7.8: the window grows only while the sender uses it. Judged on the bytes in flight before the ACK frame (an
+     * ACK of a whole window otherwise looks application-limited halfway through), with quic-go's isCwndLimited margins: at most
+     * three datagrams unused, or more than half the window in flight during slow start (where the window doubles each RTT). A
+     * pacer that keeps a burst back stays within that margin, so pacing delay is not taken for application limitation.
+     */
+    private fun cwndLimited(
+        cc: io.kuicksilver.quic.CongestionController,
+        prior: Long,
+        mss: Int,
+    ): Boolean {
+        val cwnd = cc.cwnd
+        if (prior >= cwnd) return true
+        val slowStart =
+            when (cc) {
+                is io.kuicksilver.quic.Cubic -> cwnd < cc.ssthresh
+                is io.kuicksilver.quic.NewReno -> cwnd < cc.ssthresh
+                else -> false
+            }
+        return (slowStart && prior > cwnd / 2) || cwnd - prior <= BURST_DATAGRAMS * mss
     }
 
     override fun onAckProcessed(now: TimeMark) {
