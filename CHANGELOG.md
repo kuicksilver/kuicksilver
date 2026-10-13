@@ -153,6 +153,13 @@ Testing (`kuicksilver-testing`, not published) and tooling:
   stops, its control port passed as `SIMCTL_CHILD_KSL_PEER_PORT`; Ktor HTTP/3 and HTTP/1.1 to the host, raw QUIC echo to
   the host and from a host JVM client to a server on iOS, over 127.0.0.1 and ::1. Without the variable the tests pass
   without running.
+- iOS sample (`samples/ios`, not published): a SwiftUI app over a Kotlin Multiplatform `shared` module (HTTP/3 GET,
+  a QUIC echo session with path events, a QUIC/HTTP/3 server advertised over Bonjour, trust choices), the
+  `kuicksilver-swift` umbrella that builds `Kuicksilver.xcframework` with its privacy manifest
+  (`kuicksilver-native/apple/PrivacyInfo.xcprivacy`), and the checks `tools/check/ios-sample-smoke.sh` (simulator build,
+  `-smoke` launch, XCTest), `ios-symbols.sh` (no clash with an unprefixed OpenSSL in the same app), `ios-size.sh` and
+  `ios-private-api.py`. Guides: `docs/guide/ios.md` (consumption, privacy manifest, export compliance, size, device
+  checklist) and `docs/guide/app-store.md` (App Store and Mac App Store publishing, with templates).
 
 ### Changed
 

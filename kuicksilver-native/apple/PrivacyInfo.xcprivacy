@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+Copyright 2026 The Kuicksilver Authors
+SPDX-License-Identifier: Apache-2.0
+
+Privacy manifest of Kuicksilver on Apple platforms (iOS, iPadOS). Kuicksilver collects no data and does no tracking.
+Kuicksilver.xcframework carries this file in each framework; an app that links Kuicksilver statically (a Kotlin
+Multiplatform framework, the usual case) copies these entries into its own PrivacyInfo.xcprivacy (docs/guide/ios.md).
+
+Required-reason API audit (tools/check/ios-private-api.py over a Release arm64 link of samples/ios, 2026-10-13):
+- File timestamp APIs: stat, fstat, lstat. Callers are OpenSSL's file loaders, linked because libksl can load a trust
+  store from files (X509_STORE_load_file/path: by_dir.c, file_store.c, ssl_cert.c, conf_def.c), its /dev/urandom
+  fallback (rand_unix.c; Apple's CCRandomGenerateBytes comes first), and, when the app enables a key log file,
+  KeylogFile.apple.kt (fstat on the file the app named, to refuse a link or another owner's file). They read the type,
+  owner and link count of files the app points Kuicksilver at, inside its container; timestamps are never read or sent.
+  Reason C617.1.
+- System boot time (mach_absolute_time, systemUptime): not imported. Kotlin/Native measures time with libc++
+  steady_clock and gettimeofday, which are not on Apple's list.
+- Disk space, active keyboards, user defaults: not used.
+- sysctlbyname (OpenSSL armcap.c reads hw.optional.arm.* CPU features) is not a required-reason API.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>NSPrivacyTracking</key>
+	<false/>
+	<key>NSPrivacyTrackingDomains</key>
+	<array/>
+	<key>NSPrivacyCollectedDataTypes</key>
+	<array/>
+	<key>NSPrivacyAccessedAPITypes</key>
+	<array>
+		<dict>
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategoryFileTimestamp</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<string>C617.1</string>
+			</array>
+		</dict>
+	</array>
+</dict>
+</plist>

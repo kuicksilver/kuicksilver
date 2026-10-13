@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+Copyright 2026 The Kuicksilver Authors
+SPDX-License-Identifier: Apache-2.0
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDisplayName</key>
+	<string>Kuicksilver</string>
+	<!-- Server mode and LAN echo: iOS asks the user before the app talks to devices on the local network. -->
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Kuicksilver serves a page over HTTP/3 and answers QUIC echo requests from devices on your local network, and connects to other phones running this sample.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_kuicksilver._udp</string>
+	</array>
+	<!--
+	Export compliance. The app uses encryption beyond the exemptions of Apple's form: Kuicksilver embeds OpenSSL
+	(TLS 1.3 for QUIC and HTTP/3). For mass-market software that only secures its own communication this is commonly
+	classified 5D992.c under EAR 740.17(b)(1), which needs no export documents but must be declared: true here.
+	The decision is the app owner's, not the library's; see docs/guide/ios.md, "Export compliance".
+	-->
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<true/>
+</dict>
+</plist>
