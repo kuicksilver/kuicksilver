@@ -15,7 +15,7 @@ with Alt-Svc discovery) and the Ktor server engine, TLS 1.3 over OpenSSL 3.5 thr
 | JVM (Linux, macOS, Windows) | yes | yes | accelerated `KslDatagramIo` (GSO/GRO on Linux, USO/URO on Windows where granted) |
 | Android (arm64-v8a, armeabi-v7a, x86_64) | yes | yes | accelerated |
 | Kotlin/Native Linux x64 / arm64 | yes | yes | accelerated |
-| Kotlin/Native macOS arm64, iOS | yes | yes (macOS arm64 tested; iOS compiled and linked) | accelerated, without GSO/GRO (ADR-0006) |
+| Kotlin/Native macOS arm64, iOS | yes | yes (macOS arm64 tested; iOS on the simulator, also against a host peer) | accelerated, without GSO/GRO (ADR-0006) |
 | Kotlin/Native Windows (mingw x64) | yes | yes (0.2.0; verified only by the CI windows job) | accelerated (Winsock) |
 
 Known limits, stated on purpose:
