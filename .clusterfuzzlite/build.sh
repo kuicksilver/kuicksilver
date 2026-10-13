@@ -13,7 +13,8 @@
 #    Docker), and prints the test runtime classpath of both modules (an init script, below).
 # 4. The classpath is copied into $OUT and one Jazzer launcher is written per @FuzzTest method (--target_class and
 #    --target_method), with the committed inputs of that method as its seed corpus.
-# Status: prepared, not run yet.
+# Status: prepared, never run; superseded for this project by local campaigns (tools/fuzz/campaign.sh). The target list
+# below does not include the targets added since (ConnectionFuzzTest, ZeroRttFuzzTest, kuicksilver-tls, the ksl harness).
 
 cd "$SRC/kuicksilver"
 export JOBS="$(nproc)"

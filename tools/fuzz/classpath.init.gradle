@@ -1,0 +1,18 @@
+// Copyright 2026 The Kuicksilver Authors
+// SPDX-License-Identifier: Apache-2.0
+// Gradle init script for tools/fuzz/campaign.sh: compiles the jvmTest classes of kuicksilver-tls, kuicksilver-quic and kuicksilver-http3 and
+// prints their test runtime classpath as one line per module, `FUZZ_CP <module>=<entries separated by ':'>`.
+allprojects {
+    if (name in ['kuicksilver-tls', 'kuicksilver-quic', 'kuicksilver-http3']) {
+        afterEvaluate {
+            def module = name
+            tasks.register('printFuzzClasspath') {
+                def cp = configurations.getByName('jvmTestRuntimeClasspath')
+                dependsOn 'jvmTestClasses', 'jvmTestProcessResources', cp   // cp: builds the jars of the project dependencies
+                def out = layout.buildDirectory.get().asFile
+                def own = files("$out/classes/kotlin/jvm/test", "$out/processedResources/jvm/test")
+                doLast { println("FUZZ_CP ${module}=" + (own.files + cp.files).join(':')) }
+            }
+        }
+    }
+}
