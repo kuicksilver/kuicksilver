@@ -183,6 +183,10 @@ Flow control (`kuicksilver-quic`; found with the BBR simulations, 2026-10-13):
 
 QUIC runtime and sockets:
 
+- Windows: `0.0.0.0:P` binds port P again. The dual-stack socket that `0.0.0.0` opens since the Windows fixes was bound to
+  `::` on port 0, so an explicit port was silently replaced by a random one (a server on `0.0.0.0:4433` listened elsewhere,
+  and a port an IPv4 socket held was not refused). Found by the port guard tests in the Windows 11 VM
+  (`udp_win_wildcard_explicit_port_kept`, ADR-0006).
 - macOS and iOS: a socket bound to a wildcard address (the Ktor client's endpoint, `0.0.0.0:0`) no longer gets a port an IPv4
   socket of another process or endpoint already holds. Darwin picks a dual-stack socket's port among the IPv6 ports only and
   bound an explicit `::` port beside `0.0.0.0` on it; that IPv4 socket then kept every IPv4 datagram for the port, so a client's
