@@ -25,6 +25,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.concurrent.Volatile
 import kotlin.coroutines.CoroutineContext
 import kotlin.coroutines.EmptyCoroutineContext
 import kotlin.time.Duration.Companion.seconds
@@ -290,15 +291,42 @@ public class TlsConnection private constructor(
         }
     }
 
-    private suspend fun drainToTransport() {
-        val buf = ByteArray(16 * 1024)
-        while (true) {
-            val n = lock.withLock { if (ssl == 0L) 0 else Ksl.tcpDrain(ssl, buf, 0, buf.size) }
-            if (n <= 0) break
-            transportOut.writeFully(buf, 0, n)
+    /**
+     * Ciphertext goes out under [drainLock]: the reader and the writer pump both drain, and two drains interleaving between
+     * `tcpDrain` and the write would reorder records on the wire (the peer fails with bad_record_mac) or write the transport
+     * concurrently. Order: [drainLock], then [lock]. The reader pump does not wait ([wait] false): blocked behind a writer
+     * whose drain waits for room on the transport, it would stop reading, and two peers writing at once would stall each
+     * other. It leaves [drainAgain] instead, and the drain in progress, or the next one, takes its bytes.
+     */
+    private suspend fun drainToTransport(wait: Boolean = true) {
+        if (wait) {
+            drainLock.lock()
+        } else {
+            drainAgain = true
+            if (!drainLock.tryLock()) return
         }
-        transportOut.flush()
+        while (true) {
+            try {
+                drainAgain = false
+                val buf = drainBuffer
+                while (true) {
+                    val n = lock.withLock { if (ssl == 0L) 0 else Ksl.tcpDrain(ssl, buf, 0, buf.size) }
+                    if (n <= 0) break
+                    transportOut.writeFully(buf, 0, n)
+                }
+                transportOut.flush()
+            } finally {
+                drainLock.unlock()
+            }
+            // a reader that found the lock taken after this drain's last tcpDrain: its bytes are still in ksl
+            if (!drainAgain || !drainLock.tryLock()) return
+        }
     }
+
+    @Volatile private var drainAgain = false
+
+    private val drainLock = Mutex()
+    private val drainBuffer = ByteArray(16 * 1024)
 
     private suspend fun readerPump() {
         val cipher = ByteArray(16 * 1024)
@@ -324,7 +352,7 @@ public class TlsConnection private constructor(
                         }
 
                         r == -KslConst.EOF -> {
-                            drainToTransport()
+                            drainToTransport(wait = false)
                             inputChannel.flushAndClose()
                             return
                         }
@@ -334,7 +362,7 @@ public class TlsConnection private constructor(
                         } // WANT_READ
                     }
                 }
-                drainToTransport()
+                drainToTransport(wait = false)
                 rememberSession()
                 val n = transportIn.readAvailable(cipher, 0, cipher.size)
                 if (n < 0) throw TlsException.Protocol(null, "transport closed without close_notify (truncation)", null)
