@@ -181,7 +181,8 @@ of them); one that arrives after the field replaces it.
 
 A server that accepts Extended CONNECT (RFC 9220) sets `enableConnectProtocol = true`; a client calls `connect`, which
 waits for the server's SETTINGS and fails with `Http3Exception.Settings` if the server did not opt in. The result is an
-`Http3Stream`: a byte stream both ways (WebSocket frames for `:protocol = websocket`, capsules for other protocols)
+`Http3Stream`: a byte stream both ways (WebSocket frames for `:protocol = websocket`, the protocol's own framing otherwise:
+Kuicksilver does not implement the Capsule Protocol of RFC 9297 section 3, so capsules are bytes the application writes and parses)
 plus HTTP datagrams bound to the stream (RFC 9297). `Http3Stream.headers` holds the peer's fields: the CONNECT request's on
 the server, the 2xx response's on the client (for example `sec-websocket-protocol`, RFC 9220 section 3). Each
 direction ends on its own: closing `output` sends FIN and leaves `input` readable until the peer's FIN (a TCP-style

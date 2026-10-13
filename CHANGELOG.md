@@ -729,7 +729,7 @@ The first 0.x candidate: the code frozen on 2026-10-09 for the first public rele
   accelerated UDP socket on Linux and Android (GSO, GRO, ECN, batches) and portable sockets elsewhere; several
   endpoint loops on one port (`SO_REUSEPORT`); a glitch budget against abusive peers; qlog output.
 - **HTTP/3** (`kuicksilver-http3`): RFC 9114 with QPACK (RFC 9204, dynamic table), extensible priorities (RFC 9218),
-  Extended CONNECT (RFC 9220), HTTP datagrams and capsules (RFC 9297), trailers, 1xx responses, GOAWAY.
+  Extended CONNECT (RFC 9220), HTTP datagrams (RFC 9297; the Capsule Protocol of its section 3 is not implemented, a correction of the 0.2.0 review), trailers, 1xx responses, GOAWAY.
 - **Ktor engines**: `HttpClient(Kuicksilver)` with HTTP/1.1 over TLS and HTTP/3, `Alt-Svc` discovery, connection
   racing and fallback that keeps pins, WebSockets and SSE; `embeddedServer(Kuicksilver)` serving HTTP/1.1 over TLS and
   HTTP/3 on one port, `Alt-Svc`, WebSockets over HTTP/3, graceful stop with GOAWAY, `EngineMain`. Both run Ktor 3.6.0's

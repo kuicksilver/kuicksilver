@@ -239,7 +239,7 @@ K5 status (glitch limiter): the glitch limiter (1000 tokens, 33/s, `Http3Setting
 
 K5 status (priorities): early `PRIORITY_UPDATE`s (for streams not yet opened) are buffered up to `maxEarlyPriorityUpdates` = 32, excess ones are dropped and spend a glitch token (`runtime.PriorityTest.negative_priorityUpdateBufferCap`); a frame longer than 256 bytes is not applied (`oversizedPriorityUpdateIgnored`); every `PRIORITY_UPDATE` spends a glitch token.
 
-K5 status (fuzzing): Jazzer targets `h3Frames` (control and request stream frames through `FrameRules`/`SettingsCodec`/QPACK), `capsules` (`CapsuleParser`, buffer ceiling) and `qpackDecode` (encoder stream + field section + pseudo-headers) in `kuicksilver-http3/src/jvmTest/…/fuzz`, seeds from `tools/http3/gen-fuzz-seeds.py` (RFC 9204 appendix B); a 60 s run each (≈ 1.0 million, 16.3 million and 8.0 million inputs respectively, 2026-10-08) — no findings; `jvmTest` runs a regression mode on the seeds.
+K5 status (fuzzing): Jazzer targets `h3Frames` (control and request stream frames through `FrameRules`/`SettingsCodec`/QPACK), `capsules` (`CapsuleParser`, buffer ceiling; the parser is not wired to CONNECT streams yet, the Capsule Protocol is not implemented) and `qpackDecode` (encoder stream + field section + pseudo-headers) in `kuicksilver-http3/src/jvmTest/…/fuzz`, seeds from `tools/http3/gen-fuzz-seeds.py` (RFC 9204 appendix B); a 60 s run each (≈ 1.0 million, 16.3 million and 8.0 million inputs respectively, 2026-10-08) — no findings; `jvmTest` runs a regression mode on the seeds.
 
 ### 3.18 Fallback to TCP and protocol confusion (RFC 9308 §2, §17; RFC 9114 §10.2)
 
