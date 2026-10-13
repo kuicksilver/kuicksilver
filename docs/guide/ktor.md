@@ -237,3 +237,20 @@ and the HTTP/1.1 client sent a streamed request body completely before reading t
 first, then reads the body, deadlocked). On Linux Native the client contract found that a failed HTTP/3 request (a peer
 resetting a WebSocket stream) escaped as an uncaught coroutine exception, which aborts a Kotlin/Native process; each
 request now contains its own failure.
+
+### IPv6 over TCP on Kotlin/Native
+
+Both engines open their HTTP/1.1 TCP sockets with Ktor's `ktor-network`. On Kotlin/Native (Linux, Apple, Windows) Ktor 3.6.0
+never copies the IPv6 address into the `sockaddr_in6` it binds or connects with (`NativeIPv6SocketAddress.nativeAddress`
+sets family, port, flow label and scope only), so every IPv6 TCP socket uses `::`:
+
+- a server connector with a specific IPv6 `host` (`::1`, a global address) listens on **all** IPv6 interfaces; a
+  `macosArm64` probe binding `::1` reports `:::<port>`. Bind such a server to `127.0.0.1` or put a firewall in front of it;
+- the client's HTTP/1.1 connect to an IPv6 address goes to `::`, which Linux and Apple treat as the local host and
+  Windows refuses (`WSAEADDRNOTAVAIL`, 10049). A host name that resolves to IPv4 as well falls through to the IPv4 address
+  on Windows. On Linux and Apple a local listener on the same port answers instead: TLS host verification rejects it
+  for `https://`, but a cleartext `http://` request to an IPv6 address reaches that local process.
+
+HTTP/3 is not affected: its UDP sockets come from `ksl` and carry the full address on every platform (the Ktor client's
+endpoint is dual-stack, ADR-0006). The JVM and Android use the JDK's sockets and are not affected either.
+`ClientH3Test.h1ToIpv6Loopback` pins the Windows Native refusal and starts failing once Ktor copies the address.

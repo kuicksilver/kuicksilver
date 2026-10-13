@@ -35,6 +35,8 @@ import io.ktor.websocket.readText
 import io.kuicksilver.http3.Http3Endpoint
 import io.kuicksilver.http3.Http3ErrorCode
 import io.kuicksilver.http3.Http3Headers
+import io.kuicksilver.ktor.client.contract.contractOnWindows
+import io.kuicksilver.ktor.client.contract.contractPlatform
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.QuicEndpointConfig
 import io.kuicksilver.quic.QuicServerConfig
@@ -55,6 +57,7 @@ import kotlinx.io.readByteArray
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFails
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
@@ -112,6 +115,11 @@ class ClientH3Test {
     /**
      * The same IPv6 server over HTTP/1.1 (TCP only). Ktor keeps the brackets in `Url.host` ("[::1]"); the JVM resolver accepts
      * them, Kotlin/Native's `getaddrinfo` does not (EAI_NONAME, reported as "POSIX error 0").
+     *
+     * Ktor 3.6.0's Kotlin/Native TCP sockets never copy the address into `sockaddr_in6` (`NativeIPv6SocketAddress.nativeAddress`
+     * sets family, port, flow and scope only), so every IPv6 TCP bind and connect goes to `::`: the server above listens on
+     * all IPv6 interfaces, and Linux and Apple treat a connect to `::` as loopback, which is why this test passes there.
+     * Windows refuses the connect with WSAEADDRNOTAVAIL (10049); the test pins that until Ktor fixes it (docs/guide/ktor.md).
      */
     @Test fun h1ToIpv6Loopback() =
         h3Test {
@@ -133,6 +141,12 @@ class ClientH3Test {
                         .first()
                         .port
                 testClient(Http3DiscoveryMode.H1Only).use { c ->
+                    if (contractPlatform == "native" && contractOnWindows) {
+                        val e = assertFails { c.get("https://[::1]:$port/") }
+                        val chain = generateSequence(e) { it.cause }.joinToString(" <- ") { it.toString() }
+                        assertTrue("10049" in chain, "expected Ktor's IPv6 connect to :: refused with WSAEADDRNOTAVAIL: $chain")
+                        return@use
+                    }
                     val r = c.get("https://[::1]:$port/")
                     assertEquals(HttpProtocolVersion.HTTP_1_1, r.version)
                     assertEquals("v=HTTP/1.1", r.bodyAsText())
