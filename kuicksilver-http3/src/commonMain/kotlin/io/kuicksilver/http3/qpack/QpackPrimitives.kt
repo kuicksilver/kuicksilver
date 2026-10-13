@@ -20,7 +20,21 @@ internal class QpackTruncated(
     val needed: Int = 0,
 ) : QpackError(code, "truncated")
 
-/** Ceilings checked before memory is allocated (threat-model 3.17). */
+/**
+ * A string literal longer than the reader's ceiling ([QpackLimits.maxStringLength]). In a field section this is "larger
+ * than we decode" (RFC 9204 section 7.4): the section is too large, a stream error; on the encoder stream it stays a
+ * connection error of [code].
+ */
+internal class QpackStringTooLong(
+    code: Long,
+    message: String,
+) : QpackError(code, message)
+
+/**
+ * Ceilings checked before memory is allocated (threat-model 3.17). The decoder reads field sections with
+ * [maxStringLength] = our SETTINGS_MAX_FIELD_SECTION_SIZE (no single string can fit a larger section) and the encoder
+ * stream with the 64 KiB default.
+ */
 internal class QpackLimits(
     val maxInteger: Long = (1L shl 62) - 1,
     val maxStringLength: Int = 65_536,
@@ -78,7 +92,12 @@ internal class QpackReader(
         fail("integer longer than 10 continuation bytes")
     }
 
-    /** A string literal whose H bit sits just above a [prefixBits]-bit length. */
+    private fun tooLong(
+        len: Long,
+        limits: QpackLimits,
+    ): Nothing = throw QpackStringTooLong(errorCode, "string of $len bytes above ${limits.maxStringLength}")
+
+    /** A string literal whose H bit sits just above a [prefixBits]-bit length; [QpackStringTooLong] above the ceiling. */
     fun readString(
         prefixBits: Int,
         limits: QpackLimits,
@@ -86,14 +105,14 @@ internal class QpackReader(
         val huffman = (peek() shr prefixBits) and 1 == 1
         val len = readInt(prefixBits, limits)
         // ceilings first (a Huffman literal decodes to at least 8/30 of its length), then "not all here yet"
-        if (len > limits.maxStringLength.toLong() * (if (huffman) 4 else 1)) fail("string of $len bytes above ${limits.maxStringLength}")
+        if (len > limits.maxStringLength.toLong() * (if (huffman) 4 else 1)) tooLong(len, limits)
         if (len > remaining) throw QpackTruncated(errorCode, needed = (pos - instructionStart) + len.toInt())
         val n = len.toInt()
         val s =
             if (huffman) {
                 Huffman.decode(buf, pos, n, limits.maxStringLength, errorCode).latin1()
             } else {
-                if (n > limits.maxStringLength) fail("string of $n bytes above ${limits.maxStringLength}")
+                if (n > limits.maxStringLength) tooLong(n.toLong(), limits)
                 buf.latin1(pos, n)
             }
         pos += n

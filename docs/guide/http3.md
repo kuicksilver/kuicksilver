@@ -20,9 +20,11 @@ Header compression uses the static table always and the dynamic table only when 
   literals until the peer catches up, so a peer that never acknowledges sections cannot grow the encoder's state.
 - `authorization`, `proxy-authorization`, `cookie` and `set-cookie` are never inserted into the dynamic table and are
   sent with the never-index bit (RFC 9204 section 7.1); neither are values longer than a quarter of the table.
-- The decoder rejects, before allocating, integers longer than 62 bits and string literals above 64 KiB, and counts the
-  decoded size of a field section as it goes (name + value + 32 per line, RFC 9114 section 4.2.2), stopping at
-  `maxFieldSectionSize`.
+- The decoder rejects, before allocating, integers longer than 62 bits and string literals above a ceiling, and counts
+  the decoded size of a field section as it goes (name + value + 32 per line, RFC 9114 section 4.2.2), stopping at
+  `maxFieldSectionSize`. In a field section the ceiling is `maxFieldSectionSize` itself and a longer string makes the
+  section too large (431 on the server, `FieldSectionTooLarge` on the client; the connection lives, RFC 9204 section
+  7.4); on the encoder stream it is 64 KiB and a longer string closes the connection with `QPACK_ENCODER_STREAM_ERROR`.
 - An encoder-stream instruction the transport delivers in pieces is reassembled in linear time: once its length is
   known the decoder only appends bytes until it is complete (at most 2 x 64 KiB + 64 bytes are held).
 - A field section that references entries still in flight on the peer's encoder stream waits for them (at most

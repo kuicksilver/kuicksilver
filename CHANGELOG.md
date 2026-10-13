@@ -543,6 +543,11 @@ HTTP/3 (`kuicksilver-http3`):
   being sent for the peer to refuse.
 - QPACK: a prefixed integer whose 10th continuation byte carried bits above bit 62 lost them silently (an even byte
   read 2^64 + n as n); such an encoding is now a decoding error (RFC 7541 section 5.1, RFC 9204 section 4.1.1).
+- QPACK: one field longer than 64 KiB closed the whole connection with `QPACK_DECOMPRESSION_FAILED` (the decoder's
+  string ceiling was fixed), even below a raised `maxFieldSectionSize`; the ceiling in field sections is now
+  `maxFieldSectionSize`, and a longer string makes the section too large — the server answers 431 with
+  `STOP_SENDING H3_EXCESSIVE_LOAD`, the client fails that request with `FieldSectionTooLarge`, other requests on the
+  connection go on (RFC 9204 section 7.4). Encoder-stream strings keep the 64 KiB ceiling and the connection error.
 
 Ktor client (`kuicksilver-ktor-client`):
 
