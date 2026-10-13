@@ -461,6 +461,9 @@ TLS and native layer (`kuicksilver-tls`, `kuicksilver-native`):
 
 HTTP/3 (`kuicksilver-http3`):
 
+- `Http3Settings` KDoc gave the defaults of `encoderMaxTableCapacity`, `maxFieldSectionSize`, `maxInformationalResponses`
+  and `maxEarlyPriorityUpdates` in a form that read as ceilings ("32 at most"); it now states default and range, and a
+  negative `maxInformationalResponses` or `maxEarlyPriorityUpdates` is refused with a message naming it.
 - A QPACK encoder-stream instruction cut into many fragments by the transport was re-copied and re-parsed per fragment
   (quadratic in its length); it is now appended to once and parsed when its known length has arrived (RFC 9204 section
   7.4).
