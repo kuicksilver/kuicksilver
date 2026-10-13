@@ -66,7 +66,7 @@ if [ "$cmd" = status ]; then
   [ -f "$stats" ] || { echo "no campaign yet ($stats)"; exit 0; }
   printf '%-26s %8s %8s %14s %8s %8s %8s  %s\n' target slices hours executions cov ft corpus findings
   for id in $(targets_table | awk '{ print $1 }'); do
-    awk -F'\t' -v id="$id" '$2 == id { n++; s += $3; e += $4; if ($5 > c) c = $5; if ($6 > f) f = $6; corp = $7; if ($8 != "ok" && $8 != "startup-timeout") bad = bad " " $8 }
+    awk -F'\t' -v id="$id" '$2 == id { n++; s += $3; e += $4; if ($5 > c) c = $5; if ($6 > f) f = $6; corp = $7; if ($8 != "ok" && $8 != "load-timeout") bad = bad " " $8 }
       END { if (n) printf "%-26s %8d %8.2f %14d %8d %8d %8s  %s\n", id, n, s / 3600, e, c, f, corp, (bad == "" ? "none" : bad) }' "$stats"
   done
   ls "$state"/crashes/*/crash-* "$state"/crashes/*/timeout-* "$state"/crashes/*/oom-* 2>/dev/null | sed 's/^/finding: /' || true
@@ -151,6 +151,20 @@ ksl_harness() { # the ksl harness binary (built by tools/fuzz/ksl/build.sh)
   echo "$bin"
 }
 
+# True when [input] of target [id] still passes -timeout when run alone (a real hang, not a starved slice).
+replay_times_out() {
+  local id=$1 input=$2 kind module cls method
+  kind=$(field "$id" 2); module=$(field "$id" 3); cls=$(field "$id" 4); method=$(field "$id" 5)
+  if [ "$kind" = jvm ]; then
+    (cd "$state/work/$id" && quiet java -Xmx1536m -Xss4m -XX:+UseSerialGC -cp "$(cat "$state/cp/$module.cp")" \
+      com.code_intelligence.jazzer.Jazzer --target_class="$cls" --target_method="$method" \
+      --instrumentation_includes='io.kuicksilver.**' -timeout=60 -runs=3 "$input") > /dev/null 2>&1 && return 1
+  else
+    (cd "$state/work/$id" && quiet "$(ksl_harness)" -timeout=60 -runs=3 "$input") > /dev/null 2>&1 && return 1
+  fi
+  return 0
+}
+
 # One slice of [seconds] on target [id]; appends a line to stats.tsv.
 run_slice() {
   local id=$1 secs=$2 kind module cls method corpus seeds committed crashes log start end rc execs cov ft corp result
@@ -181,12 +195,14 @@ run_slice() {
   if [ $rc -ne 0 ]; then
     result=$( (ls -t "$crashes" 2>/dev/null | grep -E '^(crash|timeout|oom|slow-unit|leak)-' | head -1) || true)
     [ -n "$result" ] || result="exit-$rc"
-    if [ "${result#timeout-}" != "$result" ] && [ "${execs:-0}" -le 1 ]; then
-      # the first unit includes loading and instrumenting the classes: on a machine under heavy load that alone can pass
-      # -timeout, which is not a finding; the slice is recorded and the target stays in the rotation
-      mkdir -p "$state/startup-timeouts"; mv "$crashes/$result" "$state/startup-timeouts/$id-$result"
-      result=startup-timeout
-      echo "$(date '+%F %T') $id: the first input timed out while loading (machine under load), not a finding"
+    if [ "${result#timeout-}" != "$result" ] && ! replay_times_out "$id" "$crashes/$result"; then
+      # at background priority on a machine under heavy load a unit can be starved past -timeout (the first one also loads
+      # and instruments the classes): a timeout whose input runs in time when replayed is not a finding; the slice is
+      # recorded and the target stays in the rotation
+      mkdir -p "$state/load-timeouts"; mv "$crashes/$result" "$state/load-timeouts/$id-$result"
+      rm -f "$crashes/slow-unit-${result#timeout-}"
+      result=load-timeout
+      echo "$(date '+%F %T') $id: a timeout that does not reproduce (machine under load), not a finding"
     else
       echo "$id" > "$state/crashed-$id"
       echo "$(date '+%F %T') $id: FINDING $result (log ${log#"$root"/})"
