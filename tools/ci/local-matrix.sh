@@ -3,19 +3,34 @@
 # SPDX-License-Identifier: Apache-2.0
 # The CI matrix on the owner's macOS host: the same steps as .github/workflows/build.yml, with the same names and
 # the same module and interop case lists (tools/ci/matrix.sh), so moving to GitHub Actions is a change of runner, not of scripts. Docker provides Linux and mingw; the Android
-# emulator must be running for the device steps. Usage: tools/ci/local-matrix.sh [--dry-run] [--skip-android] [--skip-docker] [--with-interop]
+# emulator must be running for the device steps.
+# Usage: tools/ci/local-matrix.sh [--dry-run] [--skip-android] [--skip-docker] [--with-interop] [--with-windows]
 # --with-interop also runs the QUIC Interop Runner against every peer with both images (tools/interop/run-local.sh --check-required): hours, needs the peer images.
+# --with-windows also runs the JVM suites in the owner's Windows 11 VM against the mingw-w64 dll (CI's windows-jvm job) with
+#   $KSL_WIN_JVM_TEST (default ~/.kuicksilver-tools/win-jvm-test, Parallels; outside the repository).
+# Gate record: every run but a dry run writes build/ci/gate/<commit>.stamp (commit, options, each step's result, result=pass
+# only when every step passed and the tree was clean and on the same commit from start to end). tools/release/local-release.sh
+# releases only a commit whose stamp says pass with no --skip-* and with --with-interop --with-windows.
 set -uo pipefail
 root="$(cd "$(dirname "$0")/../.." && pwd)"; cd "$root"
 . tools/ci/matrix.sh
-dry=0; skip_android=0; skip_docker=0; with_interop=0
-for a in "$@"; do case "$a" in --dry-run) dry=1 ;; --skip-android) skip_android=1 ;; --skip-docker) skip_docker=1 ;; --with-interop) with_interop=1 ;; esac; done
-G="./gradlew --max-workers=2 -q"; failed=0; n=0
+dry=0; skip_android=0; skip_docker=0; with_interop=0; with_windows=0
+for a in "$@"; do case "$a" in --dry-run) dry=1 ;; --skip-android) skip_android=1 ;; --skip-docker) skip_docker=1 ;; --with-interop) with_interop=1 ;; --with-windows) with_windows=1 ;; esac; done
+G="./gradlew --max-workers=2 -q"; failed=0; n=0; results=""
+head0=$(git rev-parse HEAD 2>/dev/null || echo unknown); dirty0=$(git status --porcelain 2>/dev/null | head -5); started=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 step() { # name command...
   local name="$1"; shift; n=$((n+1)); printf '[%2d] %-44s' "$n" "$name"
   if [ "$dry" = 1 ]; then echo "(dry run)"; return; fi
   local log="build/ci/$n.log"; mkdir -p build/ci
-  if "$@" > "$log" 2>&1; then echo "ok"; else echo "FAIL (see $log)"; failed=$((failed+1)); fi
+  if "$@" > "$log" 2>&1; then echo "ok"; results="${results}step.$n=ok $name"$'\n'; else echo "FAIL (see $log)"; failed=$((failed+1)); results="${results}step.$n=FAIL $name"$'\n'; fi
+}
+win_jvm() { # CI's windows-jvm on the Windows 11 VM; win-jvm-test's summary does not set its exit code, so it is read here
+  local tool="${KSL_WIN_JVM_TEST:-$HOME/.kuicksilver-tools/win-jvm-test}" log rc summary
+  [ -x "$tool" ] || { echo "no $tool (the Windows VM runner)"; return 2; }
+  log=$("$tool" -w "$root" 2>&1); rc=$?; printf '%s\n' "$log"; [ "$rc" = 0 ] || return "$rc"
+  summary=$(printf '%s\n' "$log" | sed -n '/^== summary/,$p')
+  printf '%s\n' "$summary" | grep -Eq 'tests +[1-9]' || { echo "FAIL: no tests ran"; return 1; }
+  ! printf '%s\n' "$summary" | grep -Eq 'NO REPORT|failed +[1-9]|errors +[1-9]'
 }
 export SIZE_LIMIT="${SIZE_LIMIT:-3000000}"
 aar=kuicksilver-native/build/outputs/aar/kuicksilver-native.aar
@@ -75,5 +90,18 @@ step "interop: native image"                    bash tools/interop/build-image.s
 step "interop: jvm image vs all peers, required cells"    bash tools/interop/run-local.sh --check-required -t "$KSL_INTEROP_CASES" $KSL_INTEROP_PEERS
 # shellcheck disable=SC2086
 step "interop: native image vs all peers, required cells" bash tools/interop/run-local.sh --check-required --image native -t "$KSL_INTEROP_NATIVE_CASES" $KSL_INTEROP_PEERS
+fi
+if [ "$with_windows" = 1 ]; then
+step "windows: jvm module tests (VM, mingw dll)"  win_jvm
+fi
+if [ "$dry" = 0 ]; then   # the gate record (see the header)
+  head1=$(git rev-parse HEAD 2>/dev/null || echo unknown); dirty1=$(git status --porcelain 2>/dev/null | head -5)
+  tree=clean; [ -z "$dirty0$dirty1" ] || tree=dirty; [ "$head0" = "$head1" ] || tree="moved to $head1"
+  result=fail; [ "$failed" = 0 ] && [ "$tree" = clean ] && result=pass
+  mkdir -p build/ci/gate
+  { echo "commit=$head0"; echo "result=$result"; echo "tree=$tree"; echo "started=$started"; echo "finished=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    echo "host=$(uname -sm)"; echo "skip_android=$skip_android"; echo "skip_docker=$skip_docker"; echo "with_interop=$with_interop"
+    echo "with_windows=$with_windows"; echo "steps=$n"; echo "failed=$failed"; printf '%s' "$results"; } > "build/ci/gate/$head0.stamp"
+  echo "gate record: build/ci/gate/$head0.stamp (result=$result, tree $tree)"
 fi
 echo; if [ "$failed" = 0 ]; then echo "local matrix: all $n steps passed"; else echo "local matrix: $failed of $n steps failed"; exit 1; fi
