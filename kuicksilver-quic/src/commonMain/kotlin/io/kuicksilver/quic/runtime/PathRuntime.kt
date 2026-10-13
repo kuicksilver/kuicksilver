@@ -31,6 +31,9 @@ internal class PathRuntime(
     /** Completed by the next PathValidated / PathFailed event for this path. */
     internal var validation = CompletableDeferred<Boolean>()
 
+    /** Set once [PathEvent.SocketLost][io.kuicksilver.quic.PathEvent.SocketLost] was reported for this path. Loop dispatcher only. */
+    internal var socketLost = false
+
     /** The receive coroutine of [io]; null for the endpoint's own socket. */
     internal var receiver: Job? = null
 

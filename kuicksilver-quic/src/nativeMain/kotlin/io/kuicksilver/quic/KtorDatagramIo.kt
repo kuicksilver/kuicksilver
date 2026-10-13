@@ -7,6 +7,7 @@ import io.ktor.network.sockets.BoundDatagramSocket
 import io.ktor.network.sockets.Datagram
 import io.ktor.network.sockets.InetSocketAddress
 import io.ktor.network.sockets.aSocket
+import io.ktor.utils.io.errors.PosixException
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.native.toByteArray
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -30,7 +31,7 @@ internal class KtorDatagramIo private constructor(
 
     override suspend fun receive(into: PacketBatch): Int {
         if (into.count >= into.capacity) return 0
-        val d = socket.receive()
+        val d = defunctAware { socket.receive() }
         val i = into.count
         val bytes = d.packet.readByteArray()
         val n = minOf(bytes.size, into.segmentSize)
@@ -57,7 +58,7 @@ internal class KtorDatagramIo private constructor(
         for (i in 0 until batch.count) {
             val a =
                 batch.address(i) ?: continue
-            socket.send(Datagram(Buffer().also { it.write(batch.buffer(i).toByteArray(batch.length(i))) }, a))
+            defunctAware { socket.send(Datagram(Buffer().also { it.write(batch.buffer(i).toByteArray(batch.length(i))) }, a)) }
             sent++
         }
         return sent
@@ -86,12 +87,34 @@ internal class KtorDatagramIo private constructor(
         return sent
     }
 
+    /** A ktor failure whose errno says the socket is gone (see [SocketDefunctException]) is reported as such; others pass unchanged. */
+    private inline fun <R> defunctAware(call: () -> R): R =
+        try {
+            call()
+        } catch (e: Exception) {
+            throw defunctOrNull(e) ?: e
+        }
+
     override fun close() {
         socket.close()
         selector.close()
     }
 
     companion object {
+        /** The [SocketDefunctException] for [e] when a [PosixException] in its cause chain carries a defunct errno, else null. */
+        internal fun defunctOrNull(e: Throwable): SocketDefunctException? {
+            var c: Throwable? = e
+            while (c != null) {
+                if (c is PosixException &&
+                    isDefunctErrno(c.errno)
+                ) {
+                    return SocketDefunctException("socket defunct: ${c.message}", c.errno, e)
+                }
+                c = c.cause?.takeIf { it !== c }
+            }
+            return null
+        }
+
         suspend fun open(local: InetSocketAddress): KtorDatagramIo {
             val selector = SelectorManager()
             val s = aSocket(selector).udp().bind(local)

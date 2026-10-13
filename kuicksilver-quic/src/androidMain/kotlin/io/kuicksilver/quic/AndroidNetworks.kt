@@ -77,19 +77,6 @@ public fun QuicConnection.followDefaultNetwork(
     local: InetSocketAddress? = null,
     prefer: IoPreference = IoPreference.Accelerated,
 ): NetworkMigrator<Network> {
-    val bindTo =
-        local ?: InetSocketAddress(
-            if (paths
-                    .firstOrNull()
-                    ?.remoteAddress
-                    ?.resolveAddress()
-                    ?.size == 16
-            ) {
-                "::"
-            } else {
-                "0.0.0.0"
-            },
-            0,
-        )
+    val bindTo = local ?: wildcardLocal()
     return NetworkMigrator(this, connectivity.defaultNetworks(), { n -> DatagramIo.open(bindTo, n, prefer) }, scope).also { it.start() }
 }

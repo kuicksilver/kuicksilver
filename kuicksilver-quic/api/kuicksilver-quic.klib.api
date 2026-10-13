@@ -1,5 +1,6 @@
 // Klib ABI Dump
 // Targets: [iosArm64, iosSimulatorArm64, linuxArm64, linuxX64, macosArm64, mingwX64]
+// Alias: apple => [iosArm64, iosSimulatorArm64, macosArm64]
 // Rendering settings:
 // - Signature version: 2
 // - Show manifest properties: true
@@ -531,6 +532,17 @@ sealed interface io.kuicksilver.quic/PathEvent { // io.kuicksilver.quic/PathEven
 
         final val path // io.kuicksilver.quic/PathEvent.Failed.path|{}path[0]
             final fun <get-path>(): io.kuicksilver.quic/QuicPath // io.kuicksilver.quic/PathEvent.Failed.path.<get-path>|<get-path>(){}[0]
+    }
+
+    final class SocketLost : io.kuicksilver.quic/PathEvent { // io.kuicksilver.quic/PathEvent.SocketLost|null[0]
+        constructor <init>(io.kuicksilver.quic/QuicPath, io.kuicksilver.quic/SocketDefunctException) // io.kuicksilver.quic/PathEvent.SocketLost.<init>|<init>(io.kuicksilver.quic.QuicPath;io.kuicksilver.quic.SocketDefunctException){}[0]
+
+        final val cause // io.kuicksilver.quic/PathEvent.SocketLost.cause|{}cause[0]
+            final fun <get-cause>(): io.kuicksilver.quic/SocketDefunctException // io.kuicksilver.quic/PathEvent.SocketLost.cause.<get-cause>|<get-cause>(){}[0]
+        final val path // io.kuicksilver.quic/PathEvent.SocketLost.path|{}path[0]
+            final fun <get-path>(): io.kuicksilver.quic/QuicPath // io.kuicksilver.quic/PathEvent.SocketLost.path.<get-path>|<get-path>(){}[0]
+
+        final fun toString(): kotlin/String // io.kuicksilver.quic/PathEvent.SocketLost.toString|toString(){}[0]
     }
 
     final class Validated : io.kuicksilver.quic/PathEvent { // io.kuicksilver.quic/PathEvent.Validated|null[0]
@@ -1170,6 +1182,13 @@ final class io.kuicksilver.quic/QuicServerConfig { // io.kuicksilver.quic/QuicSe
     }
 }
 
+final class io.kuicksilver.quic/SocketDefunctException : kotlinx.io/IOException { // io.kuicksilver.quic/SocketDefunctException|null[0]
+    constructor <init>(kotlin/String, kotlin/Int = ..., kotlin/Throwable? = ...) // io.kuicksilver.quic/SocketDefunctException.<init>|<init>(kotlin.String;kotlin.Int;kotlin.Throwable?){}[0]
+
+    final val errno // io.kuicksilver.quic/SocketDefunctException.errno|{}errno[0]
+        final fun <get-errno>(): kotlin/Int // io.kuicksilver.quic/SocketDefunctException.errno.<get-errno>|<get-errno>(){}[0]
+}
+
 final class io.kuicksilver.quic/StreamPriority { // io.kuicksilver.quic/StreamPriority|null[0]
     constructor <init>(kotlin/Int = ..., kotlin/Boolean = ...) // io.kuicksilver.quic/StreamPriority.<init>|<init>(kotlin.Int;kotlin.Boolean){}[0]
 
@@ -1433,3 +1452,44 @@ final inline fun io.kuicksilver.quic/quicClientConfig(io.kuicksilver.tls/TlsConf
 final inline fun io.kuicksilver.quic/quicConfig(kotlin/Function1<io.kuicksilver.quic/QuicConfig.Builder, kotlin/Unit>): io.kuicksilver.quic/QuicConfig // io.kuicksilver.quic/quicConfig|quicConfig(kotlin.Function1<io.kuicksilver.quic.QuicConfig.Builder,kotlin.Unit>){}[0]
 final inline fun io.kuicksilver.quic/quicEndpointConfig(kotlin/Function1<io.kuicksilver.quic/QuicEndpointConfig.Builder, kotlin/Unit>): io.kuicksilver.quic/QuicEndpointConfig // io.kuicksilver.quic/quicEndpointConfig|quicEndpointConfig(kotlin.Function1<io.kuicksilver.quic.QuicEndpointConfig.Builder,kotlin.Unit>){}[0]
 final inline fun io.kuicksilver.quic/quicServerConfig(io.kuicksilver.tls/TlsConfig, kotlin/Function1<io.kuicksilver.quic/QuicServerConfig.Builder, kotlin/Unit> = ...): io.kuicksilver.quic/QuicServerConfig // io.kuicksilver.quic/quicServerConfig|quicServerConfig(io.kuicksilver.tls.TlsConfig;kotlin.Function1<io.kuicksilver.quic.QuicServerConfig.Builder,kotlin.Unit>){}[0]
+final suspend fun (io.kuicksilver.quic/QuicConnection).io.kuicksilver.quic/rebind(io.ktor.network.sockets/InetSocketAddress? = ..., io.kuicksilver.quic/IoPreference = ...): io.kuicksilver.quic/PathEvent.Changed // io.kuicksilver.quic/rebind|rebind@io.kuicksilver.quic.QuicConnection(io.ktor.network.sockets.InetSocketAddress?;io.kuicksilver.quic.IoPreference){}[0]
+
+// Targets: [apple]
+final enum class io.kuicksilver.quic/NwInterfaceType : kotlin/Enum<io.kuicksilver.quic/NwInterfaceType> { // io.kuicksilver.quic/NwInterfaceType|null[0]
+    enum entry Cellular // io.kuicksilver.quic/NwInterfaceType.Cellular|null[0]
+    enum entry Loopback // io.kuicksilver.quic/NwInterfaceType.Loopback|null[0]
+    enum entry Other // io.kuicksilver.quic/NwInterfaceType.Other|null[0]
+    enum entry Wifi // io.kuicksilver.quic/NwInterfaceType.Wifi|null[0]
+    enum entry Wired // io.kuicksilver.quic/NwInterfaceType.Wired|null[0]
+
+    final val entries // io.kuicksilver.quic/NwInterfaceType.entries|#static{}entries[0]
+        final fun <get-entries>(): kotlin.enums/EnumEntries<io.kuicksilver.quic/NwInterfaceType> // io.kuicksilver.quic/NwInterfaceType.entries.<get-entries>|<get-entries>#static(){}[0]
+
+    final fun valueOf(kotlin/String): io.kuicksilver.quic/NwInterfaceType // io.kuicksilver.quic/NwInterfaceType.valueOf|valueOf#static(kotlin.String){}[0]
+    final fun values(): kotlin/Array<io.kuicksilver.quic/NwInterfaceType> // io.kuicksilver.quic/NwInterfaceType.values|values#static(){}[0]
+}
+
+// Targets: [apple]
+final class io.kuicksilver.quic/NwPathKey { // io.kuicksilver.quic/NwPathKey|null[0]
+    constructor <init>(kotlin/Int, io.kuicksilver.quic/NwInterfaceType, kotlin/String) // io.kuicksilver.quic/NwPathKey.<init>|<init>(kotlin.Int;io.kuicksilver.quic.NwInterfaceType;kotlin.String){}[0]
+
+    final val interfaceIndex // io.kuicksilver.quic/NwPathKey.interfaceIndex|{}interfaceIndex[0]
+        final fun <get-interfaceIndex>(): kotlin/Int // io.kuicksilver.quic/NwPathKey.interfaceIndex.<get-interfaceIndex>|<get-interfaceIndex>(){}[0]
+    final val interfaceName // io.kuicksilver.quic/NwPathKey.interfaceName|{}interfaceName[0]
+        final fun <get-interfaceName>(): kotlin/String // io.kuicksilver.quic/NwPathKey.interfaceName.<get-interfaceName>|<get-interfaceName>(){}[0]
+    final val interfaceType // io.kuicksilver.quic/NwPathKey.interfaceType|{}interfaceType[0]
+        final fun <get-interfaceType>(): io.kuicksilver.quic/NwInterfaceType // io.kuicksilver.quic/NwPathKey.interfaceType.<get-interfaceType>|<get-interfaceType>(){}[0]
+
+    final fun equals(kotlin/Any?): kotlin/Boolean // io.kuicksilver.quic/NwPathKey.equals|equals(kotlin.Any?){}[0]
+    final fun hashCode(): kotlin/Int // io.kuicksilver.quic/NwPathKey.hashCode|hashCode(){}[0]
+    final fun toString(): kotlin/String // io.kuicksilver.quic/NwPathKey.toString|toString(){}[0]
+}
+
+// Targets: [apple]
+final fun (io.kuicksilver.quic/QuicConnection).io.kuicksilver.quic/followDefaultNetwork(kotlinx.coroutines/CoroutineScope, io.ktor.network.sockets/InetSocketAddress? = ..., io.kuicksilver.quic/IoPreference = ...): io.kuicksilver.quic/NetworkMigrator<io.kuicksilver.quic/NwPathKey> // io.kuicksilver.quic/followDefaultNetwork|followDefaultNetwork@io.kuicksilver.quic.QuicConnection(kotlinx.coroutines.CoroutineScope;io.ktor.network.sockets.InetSocketAddress?;io.kuicksilver.quic.IoPreference){}[0]
+
+// Targets: [apple]
+final fun io.kuicksilver.quic/nwPathUpdates(): kotlinx.coroutines.flow/Flow<io.kuicksilver.quic/NwPathKey?> // io.kuicksilver.quic/nwPathUpdates|nwPathUpdates(){}[0]
+
+// Targets: [apple]
+final suspend fun (io.kuicksilver.quic/DatagramIo.Companion).io.kuicksilver.quic/open(io.ktor.network.sockets/InetSocketAddress, kotlin/Int, io.kuicksilver.quic/IoPreference = ...): io.kuicksilver.quic/DatagramIo // io.kuicksilver.quic/open|open@io.kuicksilver.quic.DatagramIo.Companion(io.ktor.network.sockets.InetSocketAddress;kotlin.Int;io.kuicksilver.quic.IoPreference){}[0]

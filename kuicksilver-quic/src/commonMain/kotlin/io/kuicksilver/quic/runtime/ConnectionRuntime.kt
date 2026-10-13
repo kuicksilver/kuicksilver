@@ -20,6 +20,7 @@ import io.kuicksilver.quic.QuicConnection
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.QuicPath
 import io.kuicksilver.quic.QuicStream
+import io.kuicksilver.quic.SocketDefunctException
 import io.kuicksilver.quic.StreamPriority
 import io.kuicksilver.quic.core.failInternal
 import io.kuicksilver.tls.Certificate
@@ -150,6 +151,22 @@ internal class ConnectionRuntime(
         return PathEvent.Changed(old, p, PathChangeReason.ActiveMigration)
     }
 
+    /**
+     * The socket [io] is gone (null: the endpoint's own): each live path on it reports [PathEvent.SocketLost] once. The paths
+     * stay (the active one cannot go before a move); the loop no longer touches the socket. Loop dispatcher only.
+     */
+    internal fun onSocketLost(
+        io: DatagramIo?,
+        cause: SocketDefunctException,
+    ) {
+        if (finished) return
+        for (p in pathList) {
+            if (p.io !== io || p.socketLost || p.stateFlow.value == PathState.Closed) continue
+            p.socketLost = true
+            pathEventFlow.tryEmit(PathEvent.SocketLost(p, cause))
+        }
+    }
+
     /** Loop dispatcher only; never called for the active path. */
     internal fun closePath(p: PathRuntime) {
         if (core.pathState(p.id) != PathState.Closed &&
@@ -158,7 +175,10 @@ internal class ConnectionRuntime(
             core.closePath(p.id)
         }
         p.receiver?.cancel()
-        p.io?.close()
+        p.io?.let {
+            it.close()
+            loop.forgetDefunct(it)
+        }
         p.stateFlow.value = PathState.Closed
         pathList =
             pathList - p

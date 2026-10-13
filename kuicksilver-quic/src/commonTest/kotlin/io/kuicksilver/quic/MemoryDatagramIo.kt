@@ -100,7 +100,16 @@ internal class MemoryDatagramIo internal constructor(
     var closed: Boolean = false
         private set
 
+    private var failure: SocketDefunctException? = null
+
+    /** Fault injection: from now on receive and send throw [e], as a socket iOS reclaimed in the background (a waiting receive wakes with it). */
+    fun failWith(e: SocketDefunctException) {
+        failure = e
+        inbox.close(e)
+    }
+
     override suspend fun receive(into: PacketBatch): Int {
+        failure?.let { throw it }
         if (into.count >= into.capacity) return 0
         // like a socket: a non-empty buffer answers at once, after a yield (taken before the datagram, so a cancelled receiver loses nothing)
         @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
@@ -116,6 +125,7 @@ internal class MemoryDatagramIo internal constructor(
     override suspend fun send(batch: PacketBatch): Int = trySend(batch)
 
     override fun trySend(batch: PacketBatch): Int {
+        failure?.let { throw it }
         for (i in 0 until batch.count) {
             net.deliver(localAddress, batch.address(i) ?: continue, batch.buffer(i).toByteArray(batch.length(i)))
             sent++

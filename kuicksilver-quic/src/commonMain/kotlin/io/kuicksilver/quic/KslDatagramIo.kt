@@ -146,7 +146,11 @@ internal class KslDatagramIo private constructor(
     override suspend fun receive(into: PacketBatch): Int {
         if (into.count >= into.capacity) return 0
         val s = rxSlots(into)
-        val n = receiveInSlices(Dispatchers.IO, { socket.isClosed }) { socket.receive(s.bufs, s.lens, s.addrs, s.ecn, s.n, 100) }
+        val n =
+            receiveInSlices(
+                Dispatchers.IO,
+                { socket.isClosed },
+            ) { defunctAware { socket.receive(s.bufs, s.lens, s.addrs, s.ecn, s.n, 100) } }
         val from = s.from
         for (i in 0 until n) {
             into.setLength(from + i, s.lens[i])
@@ -170,10 +174,28 @@ internal class KslDatagramIo private constructor(
             s.ecn[i] =
                 batch.ecn(i).ordinalCode().toByte()
         }
-        val sent = socket.send(s.bufs, s.lens, s.addrs, s.ecn, n)
+        val sent = defunctAware { socket.send(s.bufs, s.lens, s.addrs, s.ecn, n) }
         if (++sends and (REFRESH - 1) == 0 || sent < n) refreshCaps()
         return sent
     }
+
+    /**
+     * Runs a socket call; a failure whose errno means the socket is gone (iOS takes the sockets of a suspended app, an interface
+     * went down) becomes [SocketDefunctException], so the loop reports a lost path instead of failing the endpoint or retrying
+     * a dead socket. Other failures pass unchanged.
+     */
+    private inline fun <R> defunctAware(call: () -> R): R =
+        try {
+            call()
+        } catch (e: Exception) {
+            val errno = KslUdpSocket.errnoOf(e)
+            if (errno != null && !socket.isClosed &&
+                isDefunctErrno(errno)
+            ) {
+                throw SocketDefunctException("socket defunct: ${e.message}", errno, e)
+            }
+            throw e
+        }
 
     /** Marks are per datagram: the core stops marking the failed path itself, so one peer that bleaches ECN does not turn it off for every connection on this socket. */
     override fun disableEcnMarking() {}
@@ -183,6 +205,9 @@ internal class KslDatagramIo private constructor(
     }
 
     internal fun statsForTest(): KslUdpSocket.Stats = socket.stats
+
+    /** The kernel descriptor (tests: socket options, fault injection). */
+    internal val fdForTest: Int get() = socket.fd
 
     /** True when the kernel granted SO_REUSEPORT with flow hashing (Linux, Android; never Apple or Windows): several loops may share the port. */
     internal val reusePortGranted: Boolean get() = socket.grantedFlags and KslUdpSocket.REUSEPORT != 0
