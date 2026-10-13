@@ -115,21 +115,37 @@ class ZeroRttHelloFuzzTest {
         }
     }
 
-    /** Remembers each admission per hello: what it was asked, what it answered, what was released. */
+    /**
+     * Remembers each admission per hello: what it was asked, what it answered and which session holds each reservation (the
+     * session being driven when the admission was called), so one session's release is not mistaken for another's.
+     */
     private class RecordingAdmission : EarlyDataAdmission {
-        val held = ArrayList<ByteArray>()
+        class Hold(
+            val id: ByteArray,
+            val owner: Any,
+        )
+
+        val held = ArrayList<Hold>()
         var current: MutableList<Pair<ByteArray, Boolean>> = ArrayList()
+        var owner: Any = Unit
 
         override fun admit(ticketId: ByteArray): Boolean {
-            val ok = held.none { it.contentEquals(ticketId) }
-            if (ok) held += ticketId.copyOf()
+            val ok = held.none { it.id.contentEquals(ticketId) }
+            if (ok) held += Hold(ticketId.copyOf(), owner)
             current += ticketId.copyOf() to ok
             return ok
         }
 
         override fun release(ticketId: ByteArray) {
-            held.removeAll { it.contentEquals(ticketId) }
+            check(
+                held.removeAll { it.id.contentEquals(ticketId) && it.owner === owner },
+            ) { "a release of a reservation this session does not hold" }
         }
+
+        fun holds(
+            id: ByteArray,
+            who: Any,
+        ) = held.any { it.id.contentEquals(id) && it.owner === who }
     }
 
     private class Server(
@@ -153,6 +169,7 @@ class ZeroRttHelloFuzzTest {
             while (off < hello.size && !failed) {
                 val n = minOf(step, hello.size - off)
                 admission.current = asked
+                admission.owner = this
                 try {
                     session.provide(EncryptionLevel.Initial, hello, off, n)
                     if (session.drive() is DriveResult.Failed) failed = true
@@ -173,15 +190,18 @@ class ZeroRttHelloFuzzTest {
             val admitted = asked.firstOrNull()?.takeIf { it.second }?.first
             if (accepted) {
                 check(admitted != null) { "early data accepted without an admission by the replay register" }
-                check(admission.held.any { it.contentEquals(admitted) }) { "early data accepted, its admission released" }
+                check(admission.holds(admitted, this)) { "early data accepted, its admission released" }
             } else if (admitted != null) {
-                check(admission.held.none { it.contentEquals(admitted) }) {
+                check(!admission.holds(admitted, this)) {
                     "early data not accepted (${session.earlyDataAccepted}, failed: $failed), its admission still held"
                 }
             }
         }
 
-        fun close() = session.close()
+        fun close() {
+            admission.owner = this
+            session.close()
+        }
     }
 
     private companion object {
