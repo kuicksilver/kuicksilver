@@ -48,6 +48,9 @@ import io.kuicksilver.ktor.server.Kuicksilver as KuicksilverServer
 /** The platform part of Ktor's engine selection patterns (`"jvm:CIO"`, `"native:*"`). */
 internal expect val contractPlatform: String
 
+/** True on Windows, whose default timer tick (15.6 ms; ~60 ms for Kotlin/Native's delay) turns a test's own `delay(1.milliseconds)` into a tick. */
+internal expect val contractOnWindows: Boolean
+
 /** One way of running the contract: the protocol and the URLs the tests see. */
 internal enum class ContractMode(
     val engineName: String,

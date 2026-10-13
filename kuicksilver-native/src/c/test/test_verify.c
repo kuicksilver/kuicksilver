@@ -3,6 +3,7 @@
 /* Verification contract (ADR-0011, ADR-0012): OpenSSL verifier, client pause, matcher on every path, EKU, chains. */
 #include "test_common.h"
 #include <openssl/x509_vfy.h>
+#include <openssl/pem.h>
 
 typedef struct { const char *cert; const char *root; const char *name; int mode; int accept; int alert_on_reject; } scenario;
 static int on_verify(ksl_ssl *s, int rc, void *a) { scenario *x = a; if (rc != KSL_WANT_VERIFY) return 1; return ksl_ssl_verify_resume(s, x->accept, x->alert_on_reject) == KSL_OK; }
@@ -121,6 +122,40 @@ static void test_system_store(void) {
     CHECK(rc == KSL_OK, "system certificate store located on this host (SSL_CERT_FILE/DIR or distribution paths)"); if (rc != KSL_OK) printf("  %s\n", m);
     ksl_ctx_free(c); END();
 }
+static void env_set(const char *k, const char *v) {
+#ifdef _WIN32
+    _putenv_s(k, v ? v : "");
+#else
+    if (v) setenv(k, v, 1); else unsetenv(k);
+#endif
+}
+static int roots_from(const char *file, const char *dir, char *m, size_t cap) {
+    env_set("SSL_CERT_FILE", file); env_set("SSL_CERT_DIR", dir);
+    ksl_ctx *c = ksl_ctx_new(KSL_CLIENT); uint32_t e; m[0] = 0; int rc = ksl_ctx_set_roots(c, NULL, 0); if (rc != KSL_OK) ksl_ctx_last_error(c, &e, m, cap); ksl_ctx_free(c); return rc;
+}
+/* verify_system_store_missing_names_the_paths: a host without any CA bundle (distroless, scratch) fails when the context is built,
+   with every path searched and the variables that override them in the message; SSL_CERT_FILE / SSL_CERT_DIR replace the system
+   paths instead of falling back to them; a directory counts only when it exists */
+static void test_system_store_missing(void) {
+    SECTION("verify_system_store_missing_names_the_paths");
+    const char *of = getenv("SSL_CERT_FILE"), *od = getenv("SSL_CERT_DIR"); char *sf = of ? strdup(of) : NULL, *sd = od ? strdup(od) : NULL;
+    static const char *const files[] = {"/nonexistent/ksl/ca-certificates.crt", "/nonexistent/ksl/cert.pem", NULL};
+    static const char *const dirs[] = {"/nonexistent/ksl/certs", NULL};
+    char m[512];
+    ksl_trust_paths_for_test(files, dirs);
+    CHECK(roots_from(NULL, NULL, m, sizeof m) == KSL_ERROR, "no bundle and no directory: the context is refused");
+    CHECK(strstr(m, "/nonexistent/ksl/ca-certificates.crt") && strstr(m, "/nonexistent/ksl/cert.pem") && strstr(m, "/nonexistent/ksl/certs/"), "the message lists every path searched");
+    CHECK(strstr(m, "SSL_CERT_FILE") && strstr(m, "SSL_CERT_DIR") && strstr(m, "AnchoredCa"), "the message names SSL_CERT_FILE, SSL_CERT_DIR and AnchoredCa"); printf("  %s\n", m);
+    ksl_trust_paths_for_test(NULL, NULL);   /* the real distribution paths: the env variables must still replace them */
+    CHECK(roots_from("/nonexistent/ksl/env.pem", NULL, m, sizeof m) == KSL_ERROR && strstr(m, "SSL_CERT_FILE=/nonexistent/ksl/env.pem"), "SSL_CERT_FILE that does not load: refused, named, no fallback");
+    CHECK(roots_from(NULL, "/nonexistent/ksl/envdir", m, sizeof m) == KSL_ERROR && strstr(m, "SSL_CERT_DIR=/nonexistent/ksl/envdir"), "SSL_CERT_DIR that does not exist: refused, named");
+    { size_t l = 0; uint8_t *d = read_file(TESTDATA "test-ca.der", &l); const unsigned char *p = d; X509 *x = d ? d2i_X509(NULL, &p, (long)l) : NULL; FILE *f = x ? fopen("ksl_test_ca_bundle.pem", "w") : NULL;
+      int w = f && PEM_write_X509(f, x) == 1; if (f) fclose(f); X509_free(x); free(d);
+      CHECK(w && roots_from("ksl_test_ca_bundle.pem", NULL, m, sizeof m) == KSL_OK, "SSL_CERT_FILE with a PEM bundle loads"); remove("ksl_test_ca_bundle.pem"); }
+    CHECK(roots_from(NULL, TESTDATA, m, sizeof m) == KSL_OK, "SSL_CERT_DIR naming an existing directory loads");
+    env_set("SSL_CERT_FILE", sf); env_set("SSL_CERT_DIR", sd); free(sf); free(sd);
+    END();
+}
 /* KSL_SET_VERIFY_NAME may be called more than once (a config applied to a session, then a redirect): the previous identifier of the
    other type must not linger in the X509_VERIFY_PARAM, or a host mismatch would be reported against the stale host. */
 static void test_name_switch(void) {
@@ -157,4 +192,4 @@ static void test_client_cert_option_on_client(void) {
     ksl_ctx_free(sc2); ksl_ctx_free(cc2);
     END();
 }
-void run_verify_review(void) { test_review_alerts(); test_system_store(); test_name_switch(); test_client_cert_option_on_client(); }
+void run_verify_review(void) { test_review_alerts(); test_system_store(); test_system_store_missing(); test_name_switch(); test_client_cert_option_on_client(); }

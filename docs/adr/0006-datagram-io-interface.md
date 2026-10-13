@@ -125,9 +125,11 @@ v4-mapped half beside `IPV6_RECVTCLASS`/`IPV6_MTU_DISCOVER`; Darwin refuses `IP_
 but `IPV6_RECVTCLASS` reports v4-mapped marks and `IPV6_DONTFRAG` sets DF on v4-mapped datagrams (a 20000-byte datagram to
 `127.0.0.1` over `lo0`, MTU 16384, fails with `EMSGSIZE`).
 
-Windows differs: every IPv6 socket is dual-stack (`IPV6_V6ONLY = 0`, also for a specific IPv6 address), with v4 peers
-reported and addressed as family 4 (v4-mapped inside C), but a `0.0.0.0` bind opens an `AF_INET` socket that reaches IPv4
-peers only. A Windows endpoint that must reach both families binds `::`.
+Windows differs in one point: every IPv6 socket is dual-stack (`IPV6_V6ONLY = 0`, also for a specific IPv6 address), with
+v4 peers reported and addressed as family 4 (v4-mapped inside C). A wildcard `0.0.0.0` opens the dual-stack socket on `::`
+and reports `0.0.0.0` with the chosen port, as on Linux and Apple, so the Ktor client's `0.0.0.0:0` endpoint reaches IPv6
+servers; without IPv6 it falls back to `AF_INET` (before the 0.2.0 Windows fixes, `0.0.0.0` gave an IPv4-only socket
+there).
 
 ### `SO_REUSEPORT` grant and `loops > 1`
 
@@ -184,16 +186,32 @@ platform, so it covers:
 `ksl_udp_win.c` implements the same contract for Kotlin/Native `mingwX64` and for the JVM on Windows. Options and their
 order were cross-checked with msquic `src/platform/datapath_winuser.c`.
 
-- **Send/receive.** `WSASendMsg`/`WSARecvMsg` from `SIO_GET_EXTENSION_FUNCTION_POINTER`; the socket is non-blocking.
+- **Send/receive.** `WSASendMsg`/`WSARecvMsg` from `SIO_GET_EXTENSION_FUNCTION_POINTER`; the socket is non-blocking and
+  created with `WSA_FLAG_OVERLAPPED`, as `socket()` and msquic create theirs (the WSASocket documentation: "most sockets
+  should be created with this flag set"). Without it the handle is synchronous and Windows serialises every operation on
+  it: a `WSASendMsg` waited until the receiving thread's `WSAPoll` returned, so each send from the endpoint loop sat out
+  up to one 100 ms receive slice. Every QUIC flight on Windows (JVM and Native) cost up to ~100 ms: an HTTP/3 request
+  took ~500 ms and an 8 MiB echo ~55 s in the 4-core Windows 11 VM (`udp_win_send_while_recv_blocks`: the send now
+  leaves in 0 ms instead of 1992 ms).
 - **ECN** — `IP_ECN`/`IPV6_ECN` (value 50) as a socket option to read marks (cmsg on receive) and as a per-message cmsg to
   write them, as msquic does when DSCP is off. Windows 10 2004+ / Server 2022 grant it; older systems refuse the option,
-  `KSL_UDP_ECN` is not granted and the core never validates ECN on that path.
+  `KSL_UDP_ECN` is not granted and the core never validates ECN on that path. The granted capability is what QUIC sends,
+  ECT(0), written and read back. A CE a sender asks for is not carried over loopback by Windows 11 (it arrives Not-ECT,
+  `test_udp_win.c` prints it); that costs nothing: CE is set by routers, never by a QUIC sender (RFC 9000 section
+  13.4.1), and the core's ECN validation (section 13.4.2) still judges each path. The portable NIO socket on the Windows
+  JVM cannot mark at all: `DatagramChannel.setOption(IP_TOS)` throws `SocketException` there, so it reports
+  `ecnSend = false` instead of claiming ECT(0) (`NioDatagramIoTest.portableCapabilities` and `nioSetsIpTosEct0` assert
+  that pairing).
 - **USO/URO** — granted only when the probe answers: `getsockopt(UDP_SEND_MSG_SIZE)` for USO (runs leave as one
   `WSASendMsg` with a `UDP_SEND_MSG_SIZE` cmsg; the run rule is Linux's), `setsockopt(UDP_RECV_MAX_COALESCED_SIZE)` for URO
   (segment size from the `UDP_COALESCED_INFO` cmsg, split into slots in C). Fallbacks: see the send-error classes.
 - **DF** — `IP_DONTFRAGMENT`/`IPV6_DONTFRAG` (grants `KSL_UDP_DF`), plus `IP_MTU_DISCOVER`/`IPV6_MTU_DISCOVER = PROBE` where
-  the system has it (Windows 10 1703+), so no path MTU cache drives sizes (quic-go CVE-2024-53259).
-- **Binding** — `SO_EXCLUSIVEADDRUSE`; addresses as in "Dual-stack binds"; one loop per port.
+  the system takes it, so no path MTU cache drives sizes (quic-go CVE-2024-53259). Windows 11 (24H2 on ARM64, x64
+  emulation) refuses PROBE; msquic never sets it and runs on DF alone, and `WSAEMSGSIZE` on a send loses only that slot,
+  so DF alone is safe. The test checks the pairing: DF granted means `IP_DONTFRAGMENT` reads back set, and PROBE is
+  required only where `ksl` recorded that the option was taken.
+- **Binding** — `SO_EXCLUSIVEADDRUSE`; addresses as in "Dual-stack binds" (a wildcard `0.0.0.0` is dual-stack, as on Linux
+  and Apple: `udp_win_wildcard_dual_stack`, `udp_win_wildcard_without_ipv6_falls_back`); one loop per port.
 - **Winsock start.** `WSAStartup(2.2)` once per process, never `WSACleanup`. ktor-network starts Winsock only when it
   creates a socket, so `InetSocketAddress.resolveAddress()` (getaddrinfo) before that failed with `WSANOTINITIALISED`
   (10093): 295 `kuicksilver-quic` tests on the first windows-2025 CI run, and any application that resolves an address
@@ -235,16 +253,16 @@ Android the server also worked on NIO; `AndroidServerTest.serverOnDeviceServesLo
   `NativeServerGuardTest` and the Ktor engine's `NativeServerH3Test` on `macosArm64`.
 - **Dual stack:** `udp_wildcard_is_dual_stack` (both families in and out, ECT(0)/CE, DF; macOS and Linux arm64 in Docker),
   `udp_wildcard_without_ipv6_falls_back` (a test hook fails `socket(AF_INET6)`), `KslDatagramIoTest.wildcardBindReachesBothFamilies`,
-  `ClientH3Test.h3ToIpv6Loopback`; on Windows `udp_win_dual_stack`.
+  `ClientH3Test.h3ToIpv6Loopback`; on Windows `udp_win_dual_stack`, `udp_win_wildcard_dual_stack` and
+  `udp_win_wildcard_without_ipv6_falls_back`.
 - **Windows:** cross-compiled on macOS with the Kotlin/Native llvm + mingw sysroot (`tools/c-test.sh mingw-x64`, `-Werror`)
-  and with the Ubuntu mingw-w64 gcc 13 of the JNI build. The tests that need a Windows host — `test_udp_win.c` (batch, USO
-  in one call, two senders, ECN round trip when granted, DF probe, truncation, USO fallback, transient and destination
-  errors, dual-stack, exclusive bind, wake-up < 100 ms, shutdown), `WinsockReadyTest` (kuicksilver-native: Winsock started
-  by the runtime start), `NativeServerLoopbackTest.nativeServerServes10MiB` (a real Winsock server and client, 10 MiB), every
-  module's `test.exe` and the JVM suites against the JNI `.dll` — belong to the CI `windows` and `windows-jvm` jobs and to
-  the owner's runs in a local Windows VM. Early CI runs found the Winsock start defect fixed above; no CI run on Windows has
-  passed on the 0.2.0 code (GitHub Actions is paused), and the verification in the local Windows VM is pending for the
-  release.
+  and with the Ubuntu mingw-w64 gcc 13 of the JNI build, and verified on the owner's local Windows 11 VM (4 cores):
+  `test_udp_win.c` (batch, USO in one call, two senders, ECN round trip when granted, DF probe, truncation, USO fallback,
+  transient and destination errors, dual-stack, wildcard dual-stack and its IPv4 fallback, exclusive bind, wake-up
+  < 100 ms, shutdown, `udp_win_send_while_recv_blocks`), kuicksilver-quic native 628/628 (with `WinsockReadyTest` and
+  `NativeServerLoopbackTest.nativeServerServes10MiB`, a real Winsock server and client), kuicksilver-ktor-server native
+  146/146, kuicksilver-ktor-client `ClientH3Test` 15/15 on Native and on the JVM against the JNI `.dll`. Early CI runs
+  found the Winsock start defect fixed above; GitHub Actions is not used for Windows.
 
 ## History
 
@@ -274,5 +292,9 @@ Android the server also worked on NIO; `AndroidServerTest.serverOnDeviceServesLo
   exclusive, kept USO on transient errors, idled the receive on `POLLERR` and transient errors, and moved the Winsock start
   from a C constructor (which ran in static binaries only) to the Kotlin/Native runtime start, with a restart after a
   host's extra `WSACleanup`.
+- **K7, Windows trust and sockets (win-trust, 2026-10-13).** The first runs in the local Windows 11 VM found a send that
+  waited behind the receiver's `WSAPoll` (sockets are now `WSA_FLAG_OVERLAPPED`), a `0.0.0.0` bind that was IPv4-only
+  (now dual-stack as on Linux and Apple), a PROBE that Windows 11 refuses (DF alone, as msquic), and a NIO socket on the
+  Windows JVM that claimed ECT(0) it could not send (`ecnSend = false`).
 - **K7, both platforms.** The `loops > 1` check moved from the platform to the `KSL_UDP_REUSEPORT` grant; a refused
   accelerated socket falls back to the portable one instead of failing the bind.

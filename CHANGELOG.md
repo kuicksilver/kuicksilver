@@ -35,9 +35,8 @@ QUIC (`kuicksilver-quic`, `kuicksilver-native`):
   a wake socket, ECN through `IP_ECN`/`IPV6_ECN` on Windows 10 2004+ / Server 2022, USO/URO where the system grants them,
   DF, dual-stack IPv6 sockets, `SO_EXCLUSIVEADDRUSE`); the JVM on Windows uses the same socket through JNI. Winsock is
   started when the Kotlin/Native runtime starts (not from a C constructor, which in a `sharedLib` would run under the
-  loader lock), so address lookups before the first socket do not fail with `WSANOTINITIALISED`. Cross-built on
-  macOS/Linux; not yet verified by a passing CI run (GitHub Actions is paused), verification in a local Windows VM is
-  pending.
+  loader lock), so address lookups before the first socket do not fail with `WSANOTINITIALISED`. Verified in a local
+  Windows 11 VM (Kotlin/Native and the JVM); GitHub Actions is not used.
 - `NetworkMigrator` (experimental): a client connection follows a `Flow` of networks, migrating to each new one (RFC 9000
   section 9) and closing the path it left; a failed migration keeps the old path, `disable_active_migration` is
   respected, `MigrationEvent` reports `Migrated`, `Failed`, `NetworkLost` and `SourceFailed` (the network flow threw; the
@@ -53,6 +52,9 @@ Testing (`kuicksilver-testing`, not published) and tooling:
   hold at most `receiveBuffer` unread datagrams (256 by default) and count what a full buffer drops, `open` on port 0
   binds an ephemeral port, oversized datagrams are dropped instead of truncated, and `trySend` counts only addressed
   datagrams.
+- Windows Native platform trust tests against the Internet (`www.google.com`, badssl.com's broken certificates), run
+  only with `KUICKSILVER_NETWORK_TESTS=1`; the TLS guide gains a per-platform table of what `TrustConfig.Platform`
+  verifies with and checks for revocation.
 - The Ktor server's HTTP/3 tests and the vendored Ktor 3.6.0 engine contract suites run from `commonTest` on every
   target (HTTP/3 where a QUIC server can bind); the two multipart-upload contract tests run over HTTP/3 as well (they
   were marked HTTP/1.1-only and pass unchanged).
@@ -199,11 +201,28 @@ QUIC runtime and sockets:
 - The accelerated UDP socket (Linux, Apple) opens a dual-stack IPv6 socket for a wildcard address (`0.0.0.0` or `::`), as
   NIO did: the Ktor client (whose endpoint binds `0.0.0.0:0`) reaches IPv6 HTTP/3 servers, and a Ktor server on the
   default host serves HTTP/3 to IPv6 clients. Before, `0.0.0.0` gave an IPv4-only socket, so datagrams to IPv6 peers were
-  dropped and the handshake timed out. ECN and DF cover both address families; IPv4 peers are reported as IPv4. On
-  Windows every IPv6 socket is dual-stack, but `0.0.0.0` still opens an IPv4-only socket (bind `::` there).
+  dropped and the handshake timed out. ECN and DF cover both address families; IPv4 peers are reported as IPv4.
+- Windows: the accelerated UDP socket opens a dual-stack IPv6 socket for `0.0.0.0` too, as on Linux and Apple, so the
+  Ktor client (which binds `0.0.0.0:0`) reaches IPv6 HTTP/3 servers on Windows; without IPv6 it falls back to IPv4. DF
+  stays on where Windows refuses `IP_MTU_DISCOVER = PROBE` (some Windows 11 builds), as msquic runs.
+- Windows (JVM and Native): HTTP/3 and QUIC no longer stall up to 100 ms per flight. `ksl_udp_win.c` created its
+  sockets without `WSA_FLAG_OVERLAPPED`, so Windows serialised a send behind the receiving thread's `WSAPoll` on the
+  same socket; a small request took ~500 ms, an 8 MiB upload timed out after 60 s, and Ktor's redirect test with a 1 s
+  budget failed. Sockets are now overlapped, as `socket()` and msquic create them.
 
 TLS and native layer (`kuicksilver-tls`, `kuicksilver-native`):
 
+- `TrustConfig.Platform` works on Windows Native (mingwX64): it rejected every peer, so the default
+  `HttpClient(Kuicksilver)` could not open any public HTTPS site. It now verifies with CryptoAPI
+  (`CertGetCertificateChain` with the presented intermediates and AIA, `CertVerifyCertificateChainPolicy` with the SSL
+  policy and the host name) and maps Windows errors to `VerifyReason` (`UnknownIssuer`, `Expired`, `NotYetValid`,
+  `HostnameMismatch`, `Revoked`, `InvalidPurpose`, `BadSignature`); pins and `ExpectedName` apply as on the other
+  platforms. Revocation of the leaf is checked, soft fail; verification runs on `Dispatchers.IO`.
+- Linux Native: a host without a CA store (distroless, `scratch`) fails when a `TrustConfig.Platform` client
+  configuration is built, with a `TlsException.Config` that names every path searched and `SSL_CERT_FILE`/
+  `SSL_CERT_DIR`; before, a missing `/etc/ssl/certs` was accepted and every handshake failed with `UnknownIssuer`. When
+  `SSL_CERT_FILE` or `SSL_CERT_DIR` is set, only they are used (as in Go), instead of falling back to the distribution
+  paths. The search order is documented in the TLS guide.
 - Platform trust reports `VerifyReason.UnknownRevocationStatus` when the JVM PKIX validator
   (`UNDETERMINED_REVOCATION_STATUS`) or Apple (`errSecIncompleteCertRevocationCheck`) could not determine revocation, and
   `VerifyReason.CertificateTransparency` when Android's CT policy rejects a chain, instead of `UnknownIssuer`.

@@ -5,6 +5,7 @@
 #include <openssl/hmac.h>
 #include <openssl/rand.h>
 #include <openssl/core_names.h>
+#include <sys/stat.h>
 
 #define TLS12_PROFILE "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305"
 #define TLS13_DEFAULT "TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256"
@@ -141,22 +142,47 @@ int ksl_ctx_set_identity(ksl_ctx *c, const uint8_t *chain, size_t chain_len, con
     if (!k) { ksl_ctx_set_error(c, KSL_E_BAD_ARG, "ksl: identity rejected"); return KSL_ERROR; }
     int r = ksl_ctx_set_identity_pkey(c, chain, chain_len, k); ksl_pkey_free(k); return r;
 }
+/* The system store for TrustConfig.Platform on Linux Native (docs/guide/tls.md, "Linux trust store"). The bundled OpenSSL has
+   --openssldir=/nonexistent, so the store is located explicitly. SSL_CERT_FILE / SSL_CERT_DIR, when either is set, replace the
+   distribution paths (as Go's crypto/x509 does), so a configured store never silently becomes another one. Otherwise the first
+   bundle file that loads wins, then the first hashed directory that exists. X509_STORE_load_path accepts any string without
+   looking, so a directory counts only when it exists: in a distroless or scratch image the failure is reported here, with the
+   paths searched, instead of as an unknown issuer at every handshake. */
+static const char *const default_files[] = {"/etc/ssl/certs/ca-certificates.crt", "/etc/pki/tls/certs/ca-bundle.crt", "/etc/ssl/ca-bundle.pem", "/etc/pki/tls/cacert.pem", "/etc/ssl/cert.pem", "/usr/local/etc/openssl/cert.pem", NULL};
+static const char *const default_dirs[] = {"/etc/ssl/certs", "/etc/pki/tls/certs", NULL};
+static const char *const *trust_files = default_files, *const *trust_dirs = default_dirs;
+#ifdef KSL_TEST
+void ksl_trust_paths_for_test(const char *const *files, const char *const *dirs) { trust_files = files ? files : default_files; trust_dirs = dirs ? dirs : default_dirs; }
+#endif
+static int is_dir(const char *path) { struct stat sb; return stat(path, &sb) == 0 && S_ISDIR(sb.st_mode); }
+static void append(char *out, size_t cap, const char *text) { size_t n = strlen(out); if (n < cap) snprintf(out + n, cap - n, "%s", text); }
+static int load_system_roots(ksl_ctx *c, X509_STORE *st) {
+    const char *ef = getenv("SSL_CERT_FILE"), *ed = getenv("SSL_CERT_DIR"); int from_env = (ef && *ef) || (ed && *ed), loaded = 0;
+    if (from_env) {
+        if (ef && *ef && X509_STORE_load_file(st, ef) == 1) loaded = 1;
+        if (ed && *ed && is_dir(ed) && X509_STORE_load_path(st, ed) == 1) loaded = 1;
+    } else {
+        for (int i = 0; !loaded && trust_files[i]; i++) if (X509_STORE_load_file(st, trust_files[i]) == 1) loaded = 1;
+        for (int i = 0; !loaded && trust_dirs[i]; i++) if (is_dir(trust_dirs[i]) && X509_STORE_load_path(st, trust_dirs[i]) == 1) loaded = 1;
+    }
+    ERR_clear_error();
+    if (loaded) return KSL_OK;
+    char m[KSL_MSG] = "ksl: no CA certificates for TrustConfig.Platform; searched ";
+    if (from_env) {
+        if (ef && *ef) { append(m, sizeof m, "SSL_CERT_FILE="); append(m, sizeof m, ef); append(m, sizeof m, ed && *ed ? ", " : ""); }
+        if (ed && *ed) { append(m, sizeof m, "SSL_CERT_DIR="); append(m, sizeof m, ed); }
+        append(m, sizeof m, " (these replace the system paths); point them at a PEM bundle or a hashed directory");
+    } else {
+        for (int i = 0; trust_files[i]; i++) { append(m, sizeof m, trust_files[i]); append(m, sizeof m, ", "); }
+        for (int i = 0; trust_dirs[i]; i++) { append(m, sizeof m, trust_dirs[i]); append(m, sizeof m, trust_dirs[i + 1] ? "/, " : "/"); }
+        append(m, sizeof m, "; install ca-certificates, set SSL_CERT_FILE or SSL_CERT_DIR, or use AnchoredCa");
+    }
+    ksl_ctx_set_error(c, KSL_E_BAD_ARG, m); return KSL_ERROR;
+}
 int ksl_ctx_set_roots(ksl_ctx *c, const uint8_t *roots, size_t roots_len) {
     if (frozen(c)) return KSL_ERROR; ERR_clear_error();
     X509_STORE *st = SSL_CTX_get_cert_store(c->ctx);
-    if (roots_len == 0) {
-        /* The bundled OpenSSL has --openssldir=/nonexistent: the system store is located explicitly (SSL_CERT_FILE / SSL_CERT_DIR, then the usual distribution paths). */
-        static const char *files[] = {"/etc/ssl/certs/ca-certificates.crt", "/etc/pki/tls/certs/ca-bundle.crt", "/etc/ssl/ca-bundle.pem", "/etc/pki/tls/cacert.pem", "/etc/ssl/cert.pem", "/usr/local/etc/openssl/cert.pem", NULL};
-        static const char *dirs[] = {"/etc/ssl/certs", "/etc/pki/tls/certs", NULL};
-        int loaded = 0; const char *ef = getenv("SSL_CERT_FILE"), *ed = getenv("SSL_CERT_DIR");
-        if (ef && *ef && X509_STORE_load_file(st, ef) == 1) loaded = 1;
-        if (ed && *ed && X509_STORE_load_path(st, ed) == 1) loaded = 1;
-        for (int i = 0; !loaded && files[i]; i++) if (X509_STORE_load_file(st, files[i]) == 1) loaded = 1;
-        for (int i = 0; !loaded && dirs[i]; i++) if (X509_STORE_load_path(st, dirs[i]) == 1) loaded = 1;
-        ERR_clear_error();
-        if (!loaded) { ksl_ctx_set_error(c, KSL_E_BAD_ARG, "ksl: no system certificate store found (set SSL_CERT_FILE or SSL_CERT_DIR)"); return KSL_ERROR; }
-        return KSL_OK;
-    }
+    if (roots_len == 0) return load_system_roots(c, st);
     STACK_OF(X509) *sk = NULL; if (!ksl_parse_chain(roots, roots_len, &sk)) { ksl_ctx_set_error(c, KSL_E_BAD_ARG, "ksl: bad roots framing"); return KSL_ERROR; }
     int ok = 1; for (int i = 0; ok && i < sk_X509_num(sk); i++) ok = X509_STORE_add_cert(st, sk_X509_value(sk, i)) == 1;
     sk_X509_pop_free(sk, X509_free);
