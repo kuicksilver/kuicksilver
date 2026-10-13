@@ -1,0 +1,368 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		A10000000000000000042001 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = A10000000000000000046001 /* PrivacyInfo.xcprivacy */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		A10000000000000000043001 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A10000000000000000050001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A10000000000000000054001;
+			remoteInfo = KuicksilverSample;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		A10000000000000000046001 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; name = PrivacyInfo.xcprivacy; path = ../../kuicksilver-native/apple/PrivacyInfo.xcprivacy; sourceTree = SOURCE_ROOT; };
+		A10000000000000000046002 /* KuicksilverSample-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "KuicksilverSample-Info.plist"; sourceTree = "<group>"; };
+		A10000000000000000046003 /* CollisionProbe-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "CollisionProbe-Info.plist"; sourceTree = "<group>"; };
+		A10000000000000000046004 /* Project.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Project.xcconfig; sourceTree = "<group>"; };
+		A10000000000000000046005 /* CollisionProbe.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = CollisionProbe.xcconfig; sourceTree = "<group>"; };
+		A10000000000000000046006 /* build-kotlin-framework.sh */ = {isa = PBXFileReference; lastKnownFileType = text.script.sh; path = "build-kotlin-framework.sh"; sourceTree = "<group>"; };
+		A10000000000000000046101 /* KuicksilverSample.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = KuicksilverSample.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A10000000000000000046102 /* KuicksilverSampleTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = KuicksilverSampleTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		A10000000000000000046103 /* CollisionProbe.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = CollisionProbe.app; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+		A10000000000000000053001 /* KuicksilverSample */ = {isa = PBXFileSystemSynchronizedRootGroup; path = KuicksilverSample; sourceTree = "<group>"; };
+		A10000000000000000053002 /* KuicksilverSampleTests */ = {isa = PBXFileSystemSynchronizedRootGroup; path = KuicksilverSampleTests; sourceTree = "<group>"; };
+		A10000000000000000053003 /* CollisionProbe */ = {isa = PBXFileSystemSynchronizedRootGroup; path = CollisionProbe; sourceTree = "<group>"; };
+/* End PBXFileSystemSynchronizedRootGroup section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		A10000000000000000042101 /* Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+		A10000000000000000042102 /* Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+		A10000000000000000042103 /* Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		A10000000000000000047001 = {
+			isa = PBXGroup;
+			children = (
+				A10000000000000000053001 /* KuicksilverSample */,
+				A10000000000000000053002 /* KuicksilverSampleTests */,
+				A10000000000000000053003 /* CollisionProbe */,
+				A10000000000000000047003 /* Config */,
+				A10000000000000000047002 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		A10000000000000000047002 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				A10000000000000000046101 /* KuicksilverSample.app */,
+				A10000000000000000046102 /* KuicksilverSampleTests.xctest */,
+				A10000000000000000046103 /* CollisionProbe.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		A10000000000000000047003 /* Config */ = {
+			isa = PBXGroup;
+			children = (
+				A10000000000000000046001 /* PrivacyInfo.xcprivacy */,
+				A10000000000000000046002 /* KuicksilverSample-Info.plist */,
+				A10000000000000000046003 /* CollisionProbe-Info.plist */,
+				A10000000000000000046004 /* Project.xcconfig */,
+				A10000000000000000046005 /* CollisionProbe.xcconfig */,
+				A10000000000000000046006 /* build-kotlin-framework.sh */,
+			);
+			path = Config;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		A10000000000000000054001 /* KuicksilverSample */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A1000000000000000004C002 /* Build configuration list for PBXNativeTarget "KuicksilverSample" */;
+			buildPhases = (
+				A10000000000000000042201 /* Build Kotlin framework */,
+				A10000000000000000042301 /* Sources */,
+				A10000000000000000042101 /* Frameworks */,
+				A10000000000000000042401 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				A10000000000000000053001 /* KuicksilverSample */,
+			);
+			name = KuicksilverSample;
+			productName = KuicksilverSample;
+			productReference = A10000000000000000046101 /* KuicksilverSample.app */;
+			productType = "com.apple.product-type.application";
+		};
+		A10000000000000000054002 /* KuicksilverSampleTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A1000000000000000004C003 /* Build configuration list for PBXNativeTarget "KuicksilverSampleTests" */;
+			buildPhases = (
+				A10000000000000000042302 /* Sources */,
+				A10000000000000000042102 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				A10000000000000000044001 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				A10000000000000000053002 /* KuicksilverSampleTests */,
+			);
+			name = KuicksilverSampleTests;
+			productName = KuicksilverSampleTests;
+			productReference = A10000000000000000046102 /* KuicksilverSampleTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		A10000000000000000054003 /* CollisionProbe */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A1000000000000000004C004 /* Build configuration list for PBXNativeTarget "CollisionProbe" */;
+			buildPhases = (
+				A10000000000000000042202 /* Build Kotlin framework */,
+				A10000000000000000042303 /* Sources */,
+				A10000000000000000042103 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				A10000000000000000053003 /* CollisionProbe */,
+			);
+			name = CollisionProbe;
+			productName = CollisionProbe;
+			productReference = A10000000000000000046103 /* CollisionProbe.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		A10000000000000000050001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2700;
+				LastUpgradeCheck = 2700;
+				TargetAttributes = {
+					A10000000000000000054001 = {CreatedOnToolsVersion = 27.0; };
+					A10000000000000000054002 = {CreatedOnToolsVersion = 27.0; TestTargetID = A10000000000000000054001; };
+					A10000000000000000054003 = {CreatedOnToolsVersion = 27.0; };
+				};
+			};
+			buildConfigurationList = A1000000000000000004C001 /* Build configuration list for PBXProject "KuicksilverSample" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = A10000000000000000047001;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = A10000000000000000047002 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				A10000000000000000054001 /* KuicksilverSample */,
+				A10000000000000000054002 /* KuicksilverSampleTests */,
+				A10000000000000000054003 /* CollisionProbe */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		A10000000000000000042401 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A10000000000000000042001 /* PrivacyInfo.xcprivacy in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		A10000000000000000042201 /* Build Kotlin framework */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputPaths = (
+			);
+			name = "Build Kotlin framework";
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "exec \"$SRCROOT/Config/build-kotlin-framework.sh\"\n";
+		};
+		A10000000000000000042202 /* Build Kotlin framework */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputPaths = (
+			);
+			name = "Build Kotlin framework";
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "exec \"$SRCROOT/Config/build-kotlin-framework.sh\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		A10000000000000000042301 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+		A10000000000000000042302 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+		A10000000000000000042303 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		A10000000000000000044001 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A10000000000000000054001 /* KuicksilverSample */;
+			targetProxy = A10000000000000000043001 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		A10000000000000000058001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = A10000000000000000046004 /* Project.xcconfig */;
+			buildSettings = {
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_TESTABILITY = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				ONLY_ACTIVE_ARCH = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		A10000000000000000058002 /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = A10000000000000000046004 /* Project.xcconfig */;
+			buildSettings = {
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				SWIFT_COMPILATION_MODE = wholemodule;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		A10000000000000000058011 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				INFOPLIST_FILE = "Config/KuicksilverSample-Info.plist";
+				PRODUCT_BUNDLE_IDENTIFIER = "$(KUICKSILVER_BUNDLE_PREFIX).KuicksilverSample";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+			};
+			name = Debug;
+		};
+		A10000000000000000058012 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				INFOPLIST_FILE = "Config/KuicksilverSample-Info.plist";
+				PRODUCT_BUNDLE_IDENTIFIER = "$(KUICKSILVER_BUNDLE_PREFIX).KuicksilverSample";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+			};
+			name = Release;
+		};
+		A10000000000000000058021 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				OTHER_LDFLAGS = "";
+				PRODUCT_BUNDLE_IDENTIFIER = "$(KUICKSILVER_BUNDLE_PREFIX).KuicksilverSampleTests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/KuicksilverSample.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/KuicksilverSample";
+			};
+			name = Debug;
+		};
+		A10000000000000000058022 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				OTHER_LDFLAGS = "";
+				PRODUCT_BUNDLE_IDENTIFIER = "$(KUICKSILVER_BUNDLE_PREFIX).KuicksilverSampleTests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/KuicksilverSample.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/KuicksilverSample";
+			};
+			name = Release;
+		};
+		A10000000000000000058031 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = A10000000000000000046005 /* CollisionProbe.xcconfig */;
+			buildSettings = {
+				INFOPLIST_FILE = "Config/CollisionProbe-Info.plist";
+				PRODUCT_BUNDLE_IDENTIFIER = "$(KUICKSILVER_BUNDLE_PREFIX).CollisionProbe";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+			};
+			name = Debug;
+		};
+		A10000000000000000058032 /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = A10000000000000000046005 /* CollisionProbe.xcconfig */;
+			buildSettings = {
+				INFOPLIST_FILE = "Config/CollisionProbe-Info.plist";
+				PRODUCT_BUNDLE_IDENTIFIER = "$(KUICKSILVER_BUNDLE_PREFIX).CollisionProbe";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		A1000000000000000004C001 /* Build configuration list for PBXProject "KuicksilverSample" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A10000000000000000058001 /* Debug */,
+				A10000000000000000058002 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A1000000000000000004C002 /* Build configuration list for PBXNativeTarget "KuicksilverSample" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A10000000000000000058011 /* Debug */,
+				A10000000000000000058012 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A1000000000000000004C003 /* Build configuration list for PBXNativeTarget "KuicksilverSampleTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A10000000000000000058021 /* Debug */,
+				A10000000000000000058022 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A1000000000000000004C004 /* Build configuration list for PBXNativeTarget "CollisionProbe" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A10000000000000000058031 /* Debug */,
+				A10000000000000000058032 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = A10000000000000000050001 /* Project object */;
+}

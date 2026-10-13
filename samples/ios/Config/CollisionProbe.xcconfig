@@ -1,0 +1,14 @@
+// Copyright 2026 The Kuicksilver Authors
+// SPDX-License-Identifier: Apache-2.0
+
+// The symbol-collision probe links an UNPREFIXED OpenSSL (the same 3.5 release Kuicksilver embeds, before
+// tools/prefix/prefix.sh renamed it) into the same executable as the Kotlin framework. Without the ksl_ossl_ prefix
+// (ADR-0007) every libssl/libcrypto symbol would be defined twice. Built by tools/check/ios-symbols.sh.
+KSL_OSSL_SLICE[sdk=iphonesimulator*] = ios-sim-arm64
+KSL_OSSL_SLICE[sdk=iphoneos*] = ios-arm64
+UNPREFIXED_OPENSSL = $(SRCROOT)/../../build/openssl/$(KSL_OSSL_SLICE)
+HEADER_SEARCH_PATHS = $(inherited) $(UNPREFIXED_OPENSSL)/include
+OTHER_LDFLAGS = $(inherited) $(UNPREFIXED_OPENSSL)/lib/libssl.a $(UNPREFIXED_OPENSSL)/lib/libcrypto.a
+SWIFT_OBJC_BRIDGING_HEADER = CollisionProbe/Probe.h
+// one executable, so both copies meet in the same link (no Debug dylib split)
+ENABLE_DEBUG_DYLIB = NO

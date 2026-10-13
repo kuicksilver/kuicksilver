@@ -1,0 +1,37 @@
+// Copyright 2026 The Kuicksilver Authors
+// SPDX-License-Identifier: Apache-2.0
+
+// Settings shared by every target of KuicksilverSample.xcodeproj.
+
+// Device run: select your team in Signing & Capabilities (a free Apple ID works). Bundle IDs must be unique per team:
+// if Xcode says the ID is taken, change this prefix (for example to com.<yourname>.kuicksilver).
+KUICKSILVER_BUNDLE_PREFIX = io.kuicksilver.sample
+CODE_SIGN_STYLE = Automatic
+DEVELOPMENT_TEAM =
+
+SDKROOT = iphoneos
+SUPPORTED_PLATFORMS = iphoneos iphonesimulator
+SUPPORTS_MACCATALYST = NO
+TARGETED_DEVICE_FAMILY = 1,2
+IPHONEOS_DEPLOYMENT_TARGET = 17.0
+// Kotlin/Native builds iosArm64 and iosSimulatorArm64 only
+ARCHS = arm64
+EXCLUDED_ARCHS[sdk=iphonesimulator*] = x86_64
+SWIFT_VERSION = 5.0
+MARKETING_VERSION = 0.1.0
+CURRENT_PROJECT_VERSION = 1
+GENERATE_INFOPLIST_FILE = YES
+INFOPLIST_KEY_UILaunchScreen_Generation = YES
+INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES
+INFOPLIST_KEY_UISupportedInterfaceOrientations = UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight
+
+// The Kotlin framework (Run Script "Build Kotlin framework" -> :shared:embedAndSignAppleFrameworkForXcode). The script
+// runs Gradle, which reads and writes outside the sandbox Xcode gives scripts by default.
+ENABLE_USER_SCRIPT_SANDBOXING = NO
+FRAMEWORK_SEARCH_PATHS = $(inherited) $(SRCROOT)/shared/build/xcode-frameworks/$(CONFIGURATION)/$(SDK_NAME)
+OTHER_LDFLAGS = $(inherited) -framework Shared
+
+// The linker map behind the size budget in docs/guide/ios.md (tools/check/ios-size.sh reads it)
+LD_GENERATE_MAP_FILE = YES
+DEAD_CODE_STRIPPING = YES
+ALWAYS_SEARCH_USER_PATHS = NO

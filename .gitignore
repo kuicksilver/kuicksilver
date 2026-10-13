@@ -25,3 +25,7 @@ kuicksilver-native/src/androidMain/jniLibs/
 
 # macOS
 .DS_Store
+
+# Xcode per-user state
+xcuserdata/
+*.xcuserstate
