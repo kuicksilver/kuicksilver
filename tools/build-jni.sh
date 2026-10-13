@@ -32,8 +32,10 @@ case "$os" in
     strip --strip-unneeded "$dir/$lib" ;;
   windows)
     JH="${JAVA_HOME:?JAVA_HOME with win32 headers}"; printf 'EXPORTS\nJNI_OnLoad\nJNI_OnLoad_ksl\n' > "$dir/exports.def"
-    x86_64-w64-mingw32-gcc $cflags -DKSL_DLL -I"$JH/include" -I"$JH/include/win32" -shared -static-libgcc "$dir/exports.def" $src "$O/lib/libssl.a" "$O/lib/libcrypto.a" -lcrypt32 -lws2_32 -lbcrypt -o "$dir/$lib"
-    x86_64-w64-mingw32-strip "$dir/$lib" ;;
+    # reproducible PE: no link timestamp (strip below likewise), and the linker's default image base instead of one hashed from the output path
+    # (the loader relocates the dll anyway: --dynamicbase is the default)
+    x86_64-w64-mingw32-gcc $cflags -DKSL_DLL -I"$JH/include" -I"$JH/include/win32" -shared -static-libgcc -Wl,--no-insert-timestamp -Wl,--disable-auto-image-base "$dir/exports.def" $src "$O/lib/libssl.a" "$O/lib/libcrypto.a" -lcrypt32 -lws2_32 -lbcrypt -o "$dir/$lib"
+    SOURCE_DATE_EPOCH=0 x86_64-w64-mingw32-strip "$dir/$lib" ;;   # strip stamps the PE header with the current time otherwise
 esac
 find "$out/resources/META-INF/native" -name 'libksl_*' ! -name "libksl_${abi}_*" -delete   # a shared output directory never ships a stale ABI
 cp "$dir/$lib" "$out/resources/META-INF/native/$lib"
