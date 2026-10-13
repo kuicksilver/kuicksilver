@@ -605,6 +605,8 @@ Ktor client (`kuicksilver-ktor-client`):
   and joins the call, which waits for the copier. A body cancelled while still open now cancels its call, over HTTP/1.1
   and HTTP/3, so `execute` returns. The suspended copier itself belongs to Ktor's client scope and is released only when
   the `HttpClient` closes (found as a 60 s hang of `AbandonedBodyTest` under load).
+- Over HTTP/3 a URL with a query but no path (`https://host?a=1`) went out as `:path ?a=1`, which RFC 9114 section 4.3.1
+  makes malformed (strict servers such as quic-go reset it, and the HTTP/3 layer now refuses it); it is sent as `/?a=1`.
 
 Ktor server (`kuicksilver-ktor-server`):
 

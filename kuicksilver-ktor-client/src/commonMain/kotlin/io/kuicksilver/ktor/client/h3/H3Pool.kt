@@ -454,7 +454,7 @@ internal class H3Pool(
                         data.method.value,
                         "https",
                         data.url.authority(),
-                        data.url.fullPath.ifEmpty { "/" },
+                        data.url.h3Path(),
                         headersOf(data, body) + Http3Headers(extraHeaders),
                         bodyChannel(body, callContext),
                         allowEarlyData = @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class) config.http3.earlyData,
@@ -490,7 +490,7 @@ internal class H3Pool(
         val headers = Http3Headers(headersOf(data, data.body.unwrap()).fields.filter { it.first !in WS_HOP_BY_HOP } + extraHeaders)
         val stream =
             conn.connect(
-                Http3Request("CONNECT", "https", data.url.authority(), data.url.fullPath.ifEmpty { "/" }, headers),
+                Http3Request("CONNECT", "https", data.url.authority(), data.url.h3Path(), headers),
                 "websocket",
             )
         // each direction on its own when the call is over. A send side the session closed cleanly ends with its FIN (the Close
@@ -560,6 +560,9 @@ internal class H3Pool(
         val WS_HOP_BY_HOP = setOf("sec-websocket-key", "sec-websocket-accept")
 
         fun io.ktor.http.Url.authority(): String = if (port == protocol.defaultPort) host else hostWithPort
+
+        /** `:path`: an http(s) URI without a path is sent as "/" (RFC 9114 section 4.3.1), also before a query (`?a=1` -> `/?a=1`). */
+        fun io.ktor.http.Url.h3Path(): String = fullPath.let { if (it.startsWith('/')) it else "/$it" }
 
         fun OutgoingContent.unwrap(): OutgoingContent = if (this is OutgoingContent.ContentWrapper) delegate().unwrap() else this
 
