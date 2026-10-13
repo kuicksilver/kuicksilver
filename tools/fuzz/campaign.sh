@@ -6,8 +6,8 @@
 # every run is a slice of at most 20 minutes at background priority (taskpolicy -b, nice 19, one fuzzing thread, the
 # serial collector), with a pause between slices so other builds get the machine. Progress is resumable: the growing
 # corpora, per-slice statistics and crash reproducers live in build/fuzz-campaign/ (KSL_FUZZ_STATE), and the next run
-# picks the target with the least accumulated time. A target that crashed is skipped until its crash-* file in the
-# state directory is removed (after the fix).
+# picks the target with the least accumulated time; when HEAD moves (a fix was committed) the classes are rebuilt before
+# the next slice. A target that crashed is skipped until build/fuzz-campaign/crashed-<target> is removed (after the fix).
 #
 # Usage: tools/fuzz/campaign.sh [run] [options]   fuzz in slices
 #        tools/fuzz/campaign.sh status            per-target time, executions, coverage, findings
@@ -107,6 +107,7 @@ quiet() { if command -v taskpolicy >/dev/null 2>&1; then taskpolicy -b nice -n 1
 
 # Classpath snapshot: the project's own class directories and jars are copied, so a rebuild during the campaign does not
 # change the classes under a running fuzzer; dependency jars from the Gradle cache are used in place.
+head_rev() { git -C "$root" rev-parse HEAD 2>/dev/null || echo none; }
 snapshot_classpath() {
   local out="$state/cp" tmp line module entries i dest new
   if [ "$build" = 1 ]; then
@@ -138,6 +139,8 @@ snapshot_classpath() {
     rm -rf "$out"; mv "$out.new" "$out"
     # rewrite the copied paths (they were recorded under cp.new)
     for f in "$out"/*.cp; do sed -i '' -e "s|$out.new/|$out/|g" "$f" 2>/dev/null || sed -i -e "s|$out.new/|$out/|g" "$f"; done
+    head_rev > "$out/HEAD"
+    [ -x "$root/build/fuzz-ksl/ksl_fuzz" ] && quiet bash "$root/tools/fuzz/ksl/build.sh" >/dev/null || true
   fi
   [ -s "$out/kuicksilver-quic.cp" ] || die "no classpath snapshot: run without --no-build"
 }
@@ -226,6 +229,10 @@ while :; do
   [ "$secs" -ge 30 ] || secs=30
   [ "$first" = 1 ] || sleep "$gap"
   first=0
+  # new commits (fixes) since the snapshot: rebuild, so a fixed target is not fuzzed on old classes
+  if [ "$build" = 1 ] && [ "$(head_rev)" != "$(cat "$state/cp/HEAD" 2>/dev/null)" ]; then
+    echo "$(date '+%F %T') HEAD moved: refreshing the classpath snapshot"; snapshot_classpath
+  fi
   run_slice "$next" "$secs"
 done
 "$0" status
