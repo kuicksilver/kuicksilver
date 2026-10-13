@@ -4,6 +4,7 @@ package io.kuicksilver.quic
 
 import io.ktor.network.sockets.InetSocketAddress
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
+import io.kuicksilver.annotations.InternalKuicksilverApi
 import io.kuicksilver.quic.runtime.EndpointLoop
 import io.kuicksilver.quic.runtime.LoopGroup
 import kotlin.time.Duration
@@ -87,5 +88,22 @@ public interface QuicEndpoint : AutoCloseable {
             } else {
                 EndpointLoop.bind(local, config)
             }
+    }
+}
+
+/**
+ * [QuicEndpoint.close] with the application [code] and [reason] of the CONNECTION_CLOSE every live connection gets: an
+ * application protocol closes with its own "no error" code (HTTP/3: H3_NO_ERROR, RFC 9114 section 5.2), where `close()`
+ * sends 0. Asynchronous like `close()`.
+ */
+@InternalKuicksilverApi
+public fun QuicEndpoint.closeWith(
+    code: Long,
+    reason: String,
+) {
+    when (this) {
+        is EndpointLoop -> closeWith(code, reason)
+        is LoopGroup -> closeWith(code, reason)
+        else -> close()
     }
 }

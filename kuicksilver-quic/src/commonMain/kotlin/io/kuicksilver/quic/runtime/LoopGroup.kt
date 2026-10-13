@@ -62,7 +62,7 @@ internal class LoopGroup private constructor(
     /** Closes every loop and then the shared accept queue; a loop whose socket fails calls it too, so the group never runs half dead. */
     override fun close() = closeWith(0, "endpoint closed")
 
-    private fun closeWith(
+    internal fun closeWith(
         code: Long,
         reason: String,
     ) {
