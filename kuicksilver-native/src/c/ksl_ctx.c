@@ -22,10 +22,19 @@ static void info_cb(const SSL *ssl, int where, int ret) {
     int code = ret & 0xff; if ((ret >> 8) != SSL3_AL_FATAL && code != SSL_AD_CLOSE_NOTIFY) return;
     s->last_alert = (where & SSL_CB_READ) ? (code | 0x100) : code;
 }
+/* Moves a buffer of secrets into a larger one and zeroes the whole old block before the caller frees it: realloc would free
+   (or leave behind) a copy of the TLS secrets uncleansed (threat model 3.7). */
+void ksl_secret_move(void *dst, void *old, size_t used, size_t old_cap) {
+    if (!old) return;
+    memcpy(dst, old, used); OPENSSL_cleanse(old, old_cap);
+}
 static void keylog_cb(const SSL *ssl, const char *line) {
     ksl_ssl *s = SSL_get_ex_data(ssl, 1); if (!s || !s->owner->keylog) return;
     size_t l = strlen(line);
-    if (s->keylog_len + l + 2 > s->keylog_cap) { size_t nc = (s->keylog_len + l + 2) * 2; char *nb = realloc(s->keylog, nc); if (!nb) return; s->keylog = nb; s->keylog_cap = nc; }
+    if (s->keylog_len + l + 2 > s->keylog_cap) {
+        size_t nc = (s->keylog_len + l + 2) * 2; char *nb = malloc(nc); if (!nb) return;
+        ksl_secret_move(nb, s->keylog, s->keylog_len, s->keylog_cap); free(s->keylog); s->keylog = nb; s->keylog_cap = nc;
+    }
     memcpy(s->keylog + s->keylog_len, line, l); s->keylog_len += l; s->keylog[s->keylog_len++] = '\n'; s->keylog[s->keylog_len] = 0;
 }
 /* RFC 8446 section 4.6.1 tickets: name16 | aes-256 key 32 | hmac-sha256 key 32; current key encrypts, all keys decrypt. */
