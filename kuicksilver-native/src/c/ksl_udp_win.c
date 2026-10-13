@@ -163,7 +163,7 @@ static SOCKET open_bound(ksl_udp *u, const uint8_t addr[KSL_UDP_ADDR_LEN], int d
     BOOL yes = TRUE, no = FALSE;
     setsockopt(fd, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, (const char *)&yes, sizeof yes);   /* nobody binds over this port (msquic does the same) */
     if (u->family == AF_INET6 && setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, (const char *)&no, sizeof no) != 0 && dual) { *wsa = WSAGetLastError(); *step = "IPV6_V6ONLY"; closesocket(fd); return INVALID_SOCKET; }
-    static const uint8_t any6[KSL_UDP_ADDR_LEN] = { 6 };
+    uint8_t any6[KSL_UDP_ADDR_LEN] = { 6 }; any6[1] = addr[1]; any6[2] = addr[2];   /* :: on the requested port (0.0.0.0:P binds P) */
     struct sockaddr_storage ss; int sl = to_sockaddr(u, dual ? any6 : addr, &ss);
     if (bind(fd, (struct sockaddr *)&ss, sl) != 0) { *wsa = WSAGetLastError(); *step = "bind"; closesocket(fd); return INVALID_SOCKET; }
     return fd;

@@ -178,11 +178,21 @@ void run_udp_win(void) {
       printf("udp(win): %d wildcard opens beside %d held IPv4 ports, %d on a held port\n", opened, held, collided);
       CHECK(opened == 128 && collided == 0, "a wildcard socket's port is free on the IPv4 side too");
       for (int i = 0; i < held; i++) closesocket(fds[i]); free(fds); free(taken); }
-    /* udp_win_wildcard_port_held_on_ipv4_refused: :: on a port an IPv4 socket holds on 0.0.0.0 is refused */
+    /* udp_win_wildcard_explicit_port_kept: 0.0.0.0:P binds port P (the dual-stack socket took :: with port 0, a random port, so a
+       server on 0.0.0.0:4433 listened elsewhere) */
+    { uint8_t lf[KSL_UDP_ADDR_LEN]; ksl_udp *f = wopen_lo(0, lf); uint16_t p = f ? wport(lf) : 0; if (f) ksl_udp_close(f);
+      uint8_t at4[KSL_UDP_ADDR_LEN], lw[KSL_UDP_ADDR_LEN]; w4(at4, p); memset(at4 + 3, 0, 4); ksl_udp *w = p ? wopen(at4, 0, lw) : NULL;
+      CHECK(w != NULL && wport(lw) == p, "0.0.0.0 with an explicit port binds that port");
+      if (w && wport(lw) != p) printf("udp(win): asked 0.0.0.0:%u, got port %u\n", p, wport(lw));
+      if (w) { uint8_t to4[KSL_UDP_ADDR_LEN]; uint32_t rl[4]; w4(to4, p); CHECK(wping(a, w, to4, 1, 100, 0, NULL, NULL, rl) == 1, "datagrams to 127.0.0.1:P arrive"); ksl_udp_close(w); } }
+    /* udp_win_wildcard_port_held_on_ipv4_refused: :: or 0.0.0.0 on a port an IPv4 socket holds on 0.0.0.0 is refused */
     { SOCKET f = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP); struct sockaddr_in sa; memset(&sa, 0, sizeof sa); sa.sin_family = AF_INET; sa.sin_addr.s_addr = htonl(INADDR_ANY); int l = (int)sizeof sa;
       CHECK(f != INVALID_SOCKET && bind(f, (struct sockaddr *)&sa, sizeof sa) == 0 && getsockname(f, (struct sockaddr *)&sa, &l) == 0, "an IPv4 socket on 0.0.0.0");
       uint8_t at[KSL_UDP_ADDR_LEN] = { 6 }; at[1] = (uint8_t)(ntohs(sa.sin_port) >> 8); at[2] = (uint8_t)ntohs(sa.sin_port); uint32_t err = 0; char msg[128] = {0};
       ksl_udp *w = ksl_udp_open(at, 0, &err, msg, sizeof msg); CHECK(w == NULL && err == KSL_E_BAD_ARG, ":: on a port an IPv4 socket holds is refused");
+      if (w) ksl_udp_close(w);
+      uint8_t at4[KSL_UDP_ADDR_LEN]; w4(at4, ntohs(sa.sin_port)); memset(at4 + 3, 0, 4); err = 0; w = ksl_udp_open(at4, 0, &err, msg, sizeof msg);
+      CHECK(w == NULL && err == KSL_E_BAD_ARG, "0.0.0.0 on a port an IPv4 socket holds is refused");
       if (w) ksl_udp_close(w); if (f != INVALID_SOCKET) closesocket(f); }
     /* udp_win_wildcard_dual_stack: 0.0.0.0 opens one dual-stack socket on ::, as on Linux and Apple: 0.0.0.0 and the chosen port are
        reported, IPv4 peers arrive as family 4, and IPv6 destinations are reachable (the Ktor client binds 0.0.0.0:0) */
