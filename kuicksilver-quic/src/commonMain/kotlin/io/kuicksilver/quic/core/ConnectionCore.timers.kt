@@ -195,7 +195,7 @@ internal class ConnectionLossListener(
         if (f.streamCount > 0 || f.idCount > 0) core.streams.onFramesAcked(f)
         if (space == SpaceId.Handshake) core.loss.peerAddressValidated = true
         if (f.flags and SentFrames.HANDSHAKE_DONE != 0) core.sendHandshakeDone = false
-        if (space == SpaceId.Application) core.keyPhase?.onPacketAcked(p.pn)
+        if (space == SpaceId.Application) core.keyPhase?.onPacketAcked(p.pn, core.now)
         for (i in 0 until f.idCount) if (f.idKind[i] == SentFrames.ID_RETIRE_CONNECTION_ID) core.cids.onRetireAcked(f.idValue[i])
         core.paths.byId(PathId(p.pathId))?.let { path ->
             path.pmtud?.let { m ->

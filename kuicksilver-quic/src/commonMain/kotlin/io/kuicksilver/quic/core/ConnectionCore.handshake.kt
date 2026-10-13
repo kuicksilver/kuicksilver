@@ -158,7 +158,7 @@ internal fun ConnectionCore.onOneRttPacketSealed(pn: Long) {
         fail(TransportError.AEAD_LIMIT_REACHED, 0, "AEAD confidentiality limit reached without a possible key update", null)
         return
     }
-    if (kp.packetsProtected >= limit - limit / 8 && kp.canInitiate(state == ConnectionState.Confirmed)) kp.initiate(now, pto())
+    if (kp.packetsProtected >= limit - limit / 8 && kp.canInitiate(state == ConnectionState.Confirmed, now, pto())) kp.initiate(now, pto())
 }
 
 internal fun ConnectionCore.discardSpace(space: SpaceId) {
