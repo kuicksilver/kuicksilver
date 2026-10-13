@@ -6,6 +6,7 @@ package io.kuicksilver.ktor.network
 
 import io.ktor.utils.io.errors.PosixException
 import kotlinx.cinterop.ByteVar
+import kotlinx.cinterop.CPointed
 import kotlinx.cinterop.CPointerVar
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.IntVar
@@ -19,6 +20,7 @@ import kotlinx.cinterop.ptr
 import kotlinx.cinterop.readBytes
 import kotlinx.cinterop.reinterpret
 import kotlinx.cinterop.sizeOf
+import kotlinx.cinterop.toCPointer
 import kotlinx.cinterop.usePinned
 import kotlinx.cinterop.value
 import kotlinx.io.IOException
@@ -27,15 +29,18 @@ import platform.posix.AF_INET6
 import platform.posix.AF_UNSPEC
 import platform.posix.FIONBIO
 import platform.posix.INVALID_SOCKET
+import platform.posix.IPPROTO_TCP
 import platform.posix.SOCK_STREAM
 import platform.posix.SOL_SOCKET
 import platform.posix.SO_ERROR
+import platform.posix.SO_EXCLUSIVEADDRUSE
 import platform.posix.WSADATA
 import platform.posix.WSAECONNRESET
 import platform.posix.WSAEINPROGRESS
 import platform.posix.WSAEINTR
 import platform.posix.WSAEWOULDBLOCK
 import platform.posix.WSAGetLastError
+import platform.posix.WSASocketW
 import platform.posix.WSAStartup
 import platform.posix.accept
 import platform.posix.bind
@@ -48,9 +53,12 @@ import platform.posix.ioctlsocket
 import platform.posix.listen
 import platform.posix.recv
 import platform.posix.send
+import platform.posix.setsockopt
 import platform.posix.shutdown
-import platform.posix.socket
 import platform.windows.AI_NUMERICSERV
+import platform.windows.GetHandleInformation
+import platform.windows.HANDLE_FLAG_INHERIT
+import platform.windows.SetHandleInformation
 import platform.windows.addrinfo
 import platform.windows.freeaddrinfo
 import platform.windows.getaddrinfo
@@ -107,8 +115,28 @@ private fun nonBlocking(fd: Int): Int =
         ioctlsocket(fd.convert(), FIONBIO.convert(), on.ptr)
     }
 
+/** WSASocketW flag (winsock2.h; not in the platform klib): the handle is not inherited by child processes. */
+private const val WSA_FLAG_NO_HANDLE_INHERIT: UInt = 0x80u
+
+/**
+ * Children started with handle inheritance (CreateProcess with bInheritHandles) must not get our sockets: an inherited
+ * listener keeps the port bound after we close it, an inherited connection keeps the peer's connection open (Go and msquic
+ * create every socket with WSA_FLAG_NO_HANDLE_INHERIT). Accepted sockets are cleared explicitly as well.
+ */
+private fun noInherit(s: ULong) {
+    SetHandleInformation(s.toLong().toCPointer<CPointed>(), HANDLE_FLAG_INHERIT.convert(), 0u)
+}
+
+/** Test hook: whether [fd]'s handle would be inherited by a child process. */
+internal fun tcpInheritableForTest(fd: Int): Boolean =
+    memScoped {
+        val flags = alloc<UIntVar>()
+        check(GetHandleInformation(fd.toLong().toCPointer<CPointed>(), flags.ptr) != 0) { "GetHandleInformation" }
+        flags.value and HANDLE_FLAG_INHERIT.convert<UInt>() != 0u
+    }
+
 internal actual fun tcpOpen(family: Int): Int {
-    val s = socket(family, SOCK_STREAM, 0)
+    val s = WSASocketW(family, SOCK_STREAM, IPPROTO_TCP.convert(), null, 0u, WSA_FLAG_NO_HANDLE_INHERIT)
     if (s == INVALID_SOCKET) throw PosixException.forErrno(WSAGetLastError(), "socket")
     val fd = s.toInt()
     if (nonBlocking(fd) != 0) {
@@ -148,6 +176,15 @@ internal actual fun tcpBindListen(
     to: TcpAddress,
     backlog: Int,
 ) {
+    // nobody else binds this port while we listen, SO_REUSEADDR or not: without it another process could take over the
+    // connections to it (Windows lets a SO_REUSEADDR socket bind a port in use; msquic and the UDP sockets here do the same)
+    val exclusive =
+        memScoped {
+            val one = alloc<IntVar>()
+            one.value = 1
+            setsockopt(fd.convert(), SOL_SOCKET, SO_EXCLUSIVEADDRUSE, one.ptr.reinterpret(), sizeOf<IntVar>().toInt())
+        }
+    if (exclusive != 0) throw PosixException.forErrno(WSAGetLastError(), "setsockopt(SO_EXCLUSIVEADDRUSE)")
     if (to.bytes.usePinned { bind(fd.convert(), it.addressOf(0).reinterpret(), to.bytes.size) } != 0) {
         throw PosixException.forErrno(WSAGetLastError(), "bind")
     }
@@ -170,6 +207,7 @@ internal actual fun tcpAccept(
         if (tcpWouldBlock(e) || e == WSAEINTR || e == WSAECONNRESET) return null
         throw PosixException.forErrno(e, "accept")
     }
+    noInherit(client.convert())
     val c = client.toInt()
     if (nonBlocking(c) != 0) {
         val e = WSAGetLastError()

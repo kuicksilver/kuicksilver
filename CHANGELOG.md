@@ -633,6 +633,10 @@ Pre-release API and operations review (2026-10-14):
   accepted and then found no issuer at every handshake (`UnknownIssuer`); such a directory is now read file by file as Go
   does, and one without certificates fails with `TlsException.Config` naming the paths. The RHEL 7+ bundle
   `/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem` joins the searched files (Go's list).
+- Windows Native TCP sockets (`kuicksilver-ktor-network`, used by both engines): every socket is created without
+  handle inheritance (`WSA_FLAG_NO_HANDLE_INHERIT`; accepted ones are cleared too), so a child process no longer keeps
+  a listener's port or a connection open, and listeners bind with `SO_EXCLUSIVEADDRUSE`, so no `SO_REUSEADDR` socket
+  of another process can bind over them, as the UDP sockets, msquic and Go already did.
 
 ### Security
 
