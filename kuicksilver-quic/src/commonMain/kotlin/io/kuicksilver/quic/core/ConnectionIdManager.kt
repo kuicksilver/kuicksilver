@@ -140,6 +140,10 @@ internal class ConnectionIdManager(
     val localCount: Int get() = local.size
     val peerCount: Int get() = peer.size
 
+    /** Fuzzing probe: (local, peer, retired local, retired-until marks, pending RETIRE, unacked RETIRE) list sizes. */
+    internal fun sizesForTest(): IntArray =
+        intArrayOf(local.size, peer.size, retiredLocal.size, retiredUntil.size, pendingRetire.size, unackedRetire.size)
+
     /** The ID we used in the handshake (sequence 0), registered by whoever created the connection. */
     fun adoptInitialLocalCid(cid: ConnectionId) {
         if (local.isEmpty()) {

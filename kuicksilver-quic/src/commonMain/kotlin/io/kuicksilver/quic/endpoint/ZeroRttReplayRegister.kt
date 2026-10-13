@@ -21,14 +21,28 @@ import kotlin.time.Duration.Companion.seconds
 @OptIn(ExperimentalAtomicApi::class)
 internal class ZeroRttReplayRegister(
     random: Random,
+    /** Stripes (a power of two); tests and the fuzzer shrink the layout so that fills and rotations are cheap to reach. */
+    private val stripeCount: Int = STRIPES,
+    /** Slots per half (a power of two). */
+    private val slots: Int = SLOTS,
 ) {
+    init {
+        require(stripeCount > 0 && stripeCount and (stripeCount - 1) == 0 && stripeCount <= 64) { "stripes: a power of two up to 64" }
+        require(slots >= 4 && slots and (slots - 1) == 0) { "slots: a power of two of at least 4" }
+    }
+
+    /** Fingerprints (live plus tombstones) a half holds before it compacts or fails closed: 3/4 of [slots]. */
+    private val limit = slots * 3 / 4
+
     private val k0 = random.nextLong()
     private val k1 = random.nextLong()
 
-    private class Stripe {
+    private class Stripe(
+        slots: Int,
+    ) {
         val lock = AtomicInt(0)
-        var current = LongArray(SLOTS)
-        var previous = LongArray(SLOTS)
+        var current = LongArray(slots)
+        var previous = LongArray(slots)
         var live = 0 // fingerprints in [current]
         var tombstones = 0 // released slots of [current]
         var start = TimeMark.NEVER
@@ -39,10 +53,10 @@ internal class ZeroRttReplayRegister(
         var wallHigh = 0L // latest wall clock of an admission
     }
 
-    private val stripes = Array(STRIPES) { Stripe() }
+    private val stripes = Array(stripeCount) { Stripe(slots) }
 
     /** Bytes of fingerprint storage. */
-    val memoryBytes: Long get() = STRIPES.toLong() * SLOTS * 2 * 8
+    val memoryBytes: Long get() = stripeCount.toLong() * slots * 2 * 8
 
     private fun fingerprint(id: ByteArray): Long {
         val h = SipHash.hash24(k0, k1, id)
@@ -61,7 +75,7 @@ internal class ZeroRttReplayRegister(
         }
     }
 
-    private fun stripeOf(fp: Long) = stripes[((fp ushr 58).toInt()) and (STRIPES - 1)]
+    private fun stripeOf(fp: Long) = stripes[((fp ushr 58).toInt()) and (stripeCount - 1)]
 
     private fun rotate(
         s: Stripe,
@@ -92,12 +106,12 @@ internal class ZeroRttReplayRegister(
         table: LongArray,
         fp: Long,
     ): Int {
-        var i = (fp.toInt() and (SLOTS - 1))
-        repeat(SLOTS) {
+        var i = (fp.toInt() and (slots - 1))
+        repeat(slots) {
             val v = table[i]
             if (v == EMPTY) return -1
             if (v == fp) return i
-            i = (i + 1) and (SLOTS - 1)
+            i = (i + 1) and (slots - 1)
         }
         return -1
     }
@@ -136,8 +150,8 @@ internal class ZeroRttReplayRegister(
         s.current.fill(EMPTY)
         for (v in old) {
             if (v == EMPTY || v == TOMBSTONE) continue
-            var i = (v.toInt() and (SLOTS - 1))
-            while (s.current[i] != EMPTY) i = (i + 1) and (SLOTS - 1)
+            var i = (v.toInt() and (slots - 1))
+            while (s.current[i] != EMPTY) i = (i + 1) and (slots - 1)
             s.current[i] = v
         }
         s.tombstones = 0
@@ -160,10 +174,10 @@ internal class ZeroRttReplayRegister(
             if (wallClockStepped(s, now, wallMillis)) return@locked false
             rotate(s, now)
             if (find(s.current, fp) >= 0 || find(s.previous, fp) >= 0) return@locked false
-            if (s.live >= LIMIT) return@locked false
-            if (s.live + s.tombstones >= LIMIT) compact(s)
-            var i = (fp.toInt() and (SLOTS - 1))
-            while (s.current[i] != EMPTY && s.current[i] != TOMBSTONE) i = (i + 1) and (SLOTS - 1)
+            if (s.live >= limit) return@locked false
+            if (s.live + s.tombstones >= limit) compact(s)
+            var i = (fp.toInt() and (slots - 1))
+            while (s.current[i] != EMPTY && s.current[i] != TOMBSTONE) i = (i + 1) and (slots - 1)
             if (s.current[i] == TOMBSTONE) s.tombstones--
             s.current[i] = fp
             s.live++
@@ -194,8 +208,6 @@ internal class ZeroRttReplayRegister(
         const val SLOTS = 1024
         const val CAPACITY = STRIPES * SLOTS
 
-        /** Fingerprints (live plus tombstones) a half holds before it compacts or fails closed: 3/4 of [SLOTS]. */
-        private const val LIMIT = SLOTS * 3 / 4
         private const val EMPTY = 0L
         private const val TOMBSTONE = -1L
 

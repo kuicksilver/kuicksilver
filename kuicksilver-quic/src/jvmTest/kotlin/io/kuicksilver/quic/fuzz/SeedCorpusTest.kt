@@ -616,6 +616,201 @@ class SeedCorpusTest {
             "stream-max-offset",
             cat(bytes(0), Framing.join(listOf(oneRtt(c1, cat(bytes(0x0e, 0x00), varint8(maxOffset), bytes(0x01, 0x41)), 50)))),
         )
+        connectionSeeds(::put)
+        zeroRttSeeds(::put, serverTp)
         return seeds
+    }
+
+    /** Programs of the stateful connection fuzzer ([ConnProgram]); connectionNull and connectionTls share them. */
+    private fun connectionSeeds(put: (String, String, String, ByteArray) -> Unit) {
+        val programs = LinkedHashMap<String, ByteArray>()
+        val kinds = ConnProgram.FRAME_KINDS
+        // every frame kind, sealed by either side into 1-RTT packets after the handshake, with typical field values
+        val fields =
+            mapOf(
+                "PADDING" to longArrayOf(3),
+                "PING" to longArrayOf(),
+                "ACK" to longArrayOf(3, 10, 1, 0, 0, 1),
+                "ACK_ECN" to longArrayOf(3, 10, 0, 2, 3, 0, 1),
+                "RESET_STREAM" to longArrayOf(0, 7, 100),
+                "STOP_SENDING" to longArrayOf(0, 7),
+                "CRYPTO" to longArrayOf(0, 20),
+                "NEW_TOKEN" to longArrayOf(16),
+                "MAX_DATA" to longArrayOf(1_000_000),
+                "MAX_STREAM_DATA" to longArrayOf(0, 100_000),
+                "MAX_STREAMS_BIDI" to longArrayOf(200),
+                "MAX_STREAMS_UNI" to longArrayOf(200),
+                "DATA_BLOCKED" to longArrayOf(1000),
+                "STREAM_DATA_BLOCKED" to longArrayOf(0, 1000),
+                "STREAMS_BLOCKED_BIDI" to longArrayOf(10),
+                "STREAMS_BLOCKED_UNI" to longArrayOf(10),
+                "RETIRE_CONNECTION_ID" to longArrayOf(1),
+                "CONNECTION_CLOSE" to longArrayOf(10, 6, 4),
+                "CONNECTION_CLOSE_APP" to longArrayOf(1, 3),
+                "HANDSHAKE_DONE" to longArrayOf(),
+                "DATAGRAM" to longArrayOf(50),
+                "DATAGRAM_LEN" to longArrayOf(50),
+                "UNKNOWN" to longArrayOf(0x21, 4),
+            )
+        for (kind in kinds) {
+            for (side in 0..1) {
+                val b = ConnProgram.Builder(0).app(0, 0, ConnProgram.num(300), byteArrayOf(0))
+                b.steps(2)
+                val k = kinds.indexOf(kind)
+                when (kind) {
+                    "STREAM" -> {
+                        b.frameRaw(
+                            side,
+                            3,
+                            k,
+                            byteArrayOf(0x07),
+                            ConnProgram.num(side.toLong()),
+                            ConnProgram.num(0),
+                            ConnProgram.num(100),
+                        )
+                    }
+
+                    "NEW_CONNECTION_ID" -> {
+                        b.frameRaw(side, 3, k, ConnProgram.num(4), ConnProgram.num(0), byteArrayOf(8, 0x33))
+                    }
+
+                    "PATH_CHALLENGE", "PATH_RESPONSE" -> {
+                        b.frameRaw(side, 3, k, byteArrayOf(0x44))
+                    }
+
+                    else -> {
+                        b.frame(side, 3, kind, *fields.getValue(kind))
+                    }
+                }
+                programs["frame-${kind.lowercase()}-${if (side == 0) "to-server" else "to-client"}"] = b.steps(4).build()
+            }
+        }
+        // a STREAM frame: [selector][bits OFF|LEN|FIN][id][offset][length]; NEW_CONNECTION_ID: [seq][retire][len][seed]
+        programs["stream-frames"] =
+            ConnProgram
+                .Builder(0)
+                .frameRaw(0, 3, kinds.indexOf("STREAM"), byteArrayOf(0x07), ConnProgram.num(0), ConnProgram.num(0), ConnProgram.num(100))
+                .frameRaw(0, 3, kinds.indexOf("STREAM"), byteArrayOf(0x06), ConnProgram.num(0), ConnProgram.num(100), ConnProgram.num(50))
+                .frameRaw(1, 3, kinds.indexOf("STREAM"), byteArrayOf(0x02), ConnProgram.num(1), ConnProgram.num(200))
+                .steps(4)
+                .build()
+        programs["new-connection-ids"] =
+            ConnProgram
+                .Builder(0)
+                .frameRaw(1, 3, kinds.indexOf("NEW_CONNECTION_ID"), ConnProgram.num(2), ConnProgram.num(0), byteArrayOf(8, 0x40))
+                .frameRaw(1, 3, kinds.indexOf("NEW_CONNECTION_ID"), ConnProgram.num(3), ConnProgram.num(2), byteArrayOf(8, 0x50))
+                .frame(1, 3, "RETIRE_CONNECTION_ID", 1)
+                .frameRaw(0, 3, kinds.indexOf("NEW_CONNECTION_ID"), ConnProgram.num(9), ConnProgram.num(8), byteArrayOf(20, 0x60))
+                .steps(6)
+                .build()
+        programs["path-challenge-response"] =
+            ConnProgram
+                .Builder(0)
+                .frameRaw(0, 3, kinds.indexOf("PATH_CHALLENGE"), byteArrayOf(0x11))
+                .frameRaw(1, 3, kinds.indexOf("PATH_RESPONSE"), byteArrayOf(0x22))
+                .steps(3)
+                .build()
+        // application traffic both ways with resets, STOP_SENDING, reads, datagrams, a key update
+        programs["streams-and-resets"] =
+            ConnProgram
+                .Builder(0)
+                .app(0, 0, ConnProgram.num(5000), byteArrayOf(0))
+                .app(0, 0, ConnProgram.num(2000), byteArrayOf(1), uni = true)
+                .steps(3)
+                .app(1, 2, byteArrayOf(0), ConnProgram.num(4000))
+                .app(1, 1, byteArrayOf(0), ConnProgram.num(3000))
+                .steps(3)
+                .app(0, 3, byteArrayOf(0), ConnProgram.num(9))
+                .app(1, 4, byteArrayOf(1), ConnProgram.num(8))
+                .app(0, 6, ConnProgram.num(200))
+                .app(1, 6, ConnProgram.num(300))
+                .steps(3)
+                .step(readDatagrams = true)
+                .app(0, 5)
+                .steps(4)
+                .app(1, 7, ConnProgram.num(0))
+                .steps(3)
+                .build()
+        // small limits: windows and stream counts are reachable
+        programs["small-limits"] =
+            ConnProgram
+                .Builder(2)
+                .app(0, 0, ConnProgram.num(3000), byteArrayOf(0))
+                .app(0, 0, ConnProgram.num(3000), byteArrayOf(0))
+                .steps(3)
+                .app(1, 2, byteArrayOf(0), ConnProgram.num(3000))
+                .steps(2)
+                .frame(0, 3, "MAX_STREAMS_BIDI", 6)
+                .frame(0, 3, "MAX_STREAM_DATA", 1, 100)
+                .frame(1, 3, "MAX_DATA", 100)
+                .steps(4)
+                .build()
+        // network effects: loss, duplication, reordering, ECN marks, a NAT rebinding, timers
+        programs["network"] =
+            ConnProgram
+                .Builder(4)
+                .app(0, 0, ConnProgram.num(4000), byteArrayOf(1))
+                .step()
+                .net(0, 0)
+                .net(1, 1)
+                .net(0, 2)
+                .net(0, 3)
+                .net(1, 7)
+                .step()
+                .net(0, 8)
+                .steps(3)
+                .tick(3)
+                .tick(15)
+                .steps(2)
+                .build()
+        // frames of every level while the handshake runs (Initial, Handshake, 0-RTT injection points)
+        programs["handshake-levels"] =
+            ConnProgram
+                .Builder(1)
+                .frame(0, 0, "PING")
+                .frame(0, 0, "ACK", 0, 0, 0, 0)
+                .step()
+                .frame(1, 0, "CRYPTO", 1000, 10)
+                .frame(1, 2, "PING")
+                .steps(2)
+                .frame(0, 2, "ACK", 1, 0, 0, 1)
+                .frame(1, 3, "HANDSHAKE_DONE")
+                .steps(6)
+                .build()
+        programs["raw-1rtt"] =
+            ConnProgram
+                .Builder(0)
+                .raw(0, 3, byteArrayOf(0x01, 0x00, 0x00, 0x1e))
+                .raw(1, 3, byteArrayOf(0x07, 0x04, 1, 2, 3, 4))
+                .steps(3)
+                .build()
+        for ((name, program) in programs) {
+            put("ConnectionFuzzTest", "connectionNull", name, program)
+            put("ConnectionFuzzTest", "connectionTls", name, program)
+        }
+    }
+
+    private fun zeroRttSeeds(
+        put: (String, String, String, ByteArray) -> Unit,
+        serverTp: ByteArray,
+    ) {
+        // replayRegister: [layout][op][args] (see ZeroRttFuzzTest.replayRegister); layouts 0..3 from tiny to the production one
+        for (layout in 0..3) {
+            put("ZeroRttFuzzTest", "replayRegister", "replay-$layout", bytes(layout, 0, 1, 0, 1, 2, 0x13, 0x88, 0, 1, 2, 0x4e, 0x20, 0, 1))
+            put("ZeroRttFuzzTest", "replayRegister", "release-then-admit-$layout", bytes(layout, 0, 5, 1, 5, 0, 5, 0, 5))
+            put(
+                "ZeroRttFuzzTest",
+                "replayRegister",
+                "wall-clock-steps-$layout",
+                bytes(layout, 0, 2, 2, 0x61, 0xa8, 3, 0xf6, 0x3c, 0, 2, 2, 0x4e, 0x20, 0, 2),
+            )
+            put("ZeroRttFuzzTest", "replayRegister", "fill-$layout", bytes(layout, 4, 0x01, 0x00, 0, 3, 4, 0x01, 0x00, 2, 0x75, 0x30, 0, 3))
+        }
+        put("ZeroRttFuzzTest", "replayRegister", "explicit-id", cat(bytes(1, 5), ByteArray(32) { 1 }, bytes(5), ByteArray(32) { 1 }))
+        // rememberedTicket: [flags][blob] or [flags][alpn length][alpn][tp]
+        val h3 = "h3".encodeToByteArray()
+        put("ZeroRttFuzzTest", "rememberedTicket", "h3-server-tp", cat(bytes(0, h3.size), h3, serverTp))
+        put("ZeroRttFuzzTest", "rememberedTicket", "blob", cat(bytes(1, h3.size), h3, serverTp))
+        put("ZeroRttFuzzTest", "rememberedTicket", "empty-alpn", cat(bytes(1, 0), serverTp))
     }
 }
