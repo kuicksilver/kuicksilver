@@ -38,12 +38,14 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlin.random.Random
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
@@ -471,7 +473,13 @@ internal class H3Session(
      * flight, then GOAWAY with the first id it will not process, and closes with H3_NO_ERROR once its accepted requests
      * are answered. A client sends GOAWAY(0) (no push) and stops issuing requests.
      */
-    suspend fun goAway() {
+    suspend fun goAway(): Unit = withContext(dispatcher) { goAwayConfined() }
+
+    /** The context [goAway] ran in (test hook). */
+    internal var goAwayContextForTest: ((kotlin.coroutines.CoroutineContext) -> Unit)? = null
+
+    private suspend fun goAwayConfined() {
+        goAwayContextForTest?.invoke(currentCoroutineContext())
         if (goAwayPhase != 0 || closed.isCompleted) return
         if (!isServer) {
             goAwayPhase = 2

@@ -611,6 +611,9 @@ Pre-release API and operations review (2026-10-14):
 - Ktor engines: a `KuicksilverEventListener` or `KuicksilverServerEventListener` callback that throws a
   `CancellationException` no longer fails the call (client) or ends HTTP/3 accepting and the connection's handler
   (server); it is logged like any other listener failure.
+- HTTP/3: `Http3Connection.goAway()` runs on the connection's session dispatcher whatever thread calls it (the Ktor
+  server calls it from `Dispatchers.IO`); it read and wrote the GOAWAY state unsynchronised, so a request racing the
+  final GOAWAY could be processed above the announced id while the client retried it elsewhere.
 
 ### Security
 
