@@ -240,7 +240,8 @@ datagram per call.
   `KuicksilverLogger.None` endpoint), tell by `QuicConnection.stats.pathMtu` staying at 1200 and `ecnState` never
   reaching `Capable`.
 - A QUIC server on Kotlin/Native needs the accelerated socket; without it `bind` with a `server` throws
-  `UnsupportedOperationException`, and the Ktor server serves HTTP/1.1 only, logging "HTTP/3 is not served on port
+  `UnsupportedOperationException` ("a QUIC server on Kotlin/Native needs the accelerated ksl socket (Linux, Apple,
+  Windows), which is unavailable here"), and the Ktor server serves HTTP/1.1 only, logging "HTTP/3 is not served on port
   <port>: <reason>".
 
 ### `UnsupportedOperationException` for `loops > 1`

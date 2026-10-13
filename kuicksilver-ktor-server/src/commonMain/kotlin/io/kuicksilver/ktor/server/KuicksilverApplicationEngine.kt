@@ -86,7 +86,10 @@ public class KuicksilverApplicationEngine(
          */
         public var quicMaxIdleTimeout: Duration? = null
 
-        /** Endpoint loops on the UDP port (SO_REUSEPORT, Linux), as Ktor-Netty's `udpSocketCount`. */
+        /**
+         * Endpoint loops on the UDP port, as Ktor-Netty's `udpSocketCount`; more than 1 needs kernel `SO_REUSEPORT` flow
+         * hashing, so Linux and Android; elsewhere the engine logs why and serves HTTP/1.1 only on that connector.
+         */
         public var udpSocketCount: Int = 1
 
         /** Admission of new QUIC connections (Retry above a handshake threshold by default); Ktor-Netty's `quicTokenHandler`. */

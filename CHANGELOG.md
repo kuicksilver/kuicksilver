@@ -333,6 +333,9 @@ Flow control (`kuicksilver-quic`; found with the BBR simulations, 2026-10-13):
 
 QUIC runtime and sockets:
 
+- The `UnsupportedOperationException` of a Kotlin/Native QUIC server without the accelerated socket named Linux and Apple
+  only; Windows has the socket too. `ConnectionLost.Timeout`'s KDoc no longer lists the removed path-validation and
+  disconnect timers, and the Ktor server's `udpSocketCount` KDoc says Linux and Android (it said Linux).
 - The fallback to the portable socket when the accelerated socket's one-time loopback probe fails (a sandbox that
   refuses every bind) was silent; it is now logged once per process at `Warn`, like a refused bind: "accelerated UDP
   socket unavailable (<reason>); using the portable socket".
