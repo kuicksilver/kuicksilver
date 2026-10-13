@@ -348,7 +348,9 @@ the connection: if no network returns within the idle timeout, the connection cl
 ## Glitch protection
 
 Every connection carries a token bucket (1000 tokens, 33 back per second) that pays for work the peer makes us do
-without moving anything forward: a `*_BLOCKED` frame repeating the same limit, a `NEW_CONNECTION_ID` for a sequence
+without moving anything forward: a `DATA_BLOCKED` or `STREAM_DATA_BLOCKED` (per stream) less than one RTT after the
+previous one (a stale one that comes later is answered with the current `MAX_DATA` / `MAX_STREAM_DATA` at once), a
+`STREAMS_BLOCKED` repeating the same limit, a `NEW_CONNECTION_ID` for a sequence
 number we already hold, a `RETIRE_CONNECTION_ID` for an ID that is already retired (one for a sequence number we never issued is a
 `PROTOCOL_VIOLATION`), a third PING-only packet within one
 RTT (the two probes of a PTO may both be PING-only, so a pair is free). A 1-RTT packet that fails to decrypt is discarded silently and spends nothing: anyone who has seen a connection ID
