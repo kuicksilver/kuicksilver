@@ -44,6 +44,26 @@ internal class MemoryNetwork {
         cut -= addr
     }
 
+    // copied on write: the loops read it while the test thread changes it
+    @kotlin.concurrent.Volatile
+    private var held: Map<InetSocketAddress, Channel<Pair<InetSocketAddress, ByteArray>>> = emptyMap()
+
+    /** From now on datagrams to [addr] wait (none lost) until [release]: a stalled return path that orders a test's steps. */
+    fun hold(addr: InetSocketAddress) {
+        held = held + (addr to Channel(Channel.UNLIMITED))
+    }
+
+    /** Delivers what [hold] kept for [addr], in order, and lets later datagrams through again. */
+    fun release(addr: InetSocketAddress) {
+        val q = held[addr] ?: return
+        held = held - addr
+        q.close()
+        while (true) {
+            val (from, bytes) = q.tryReceive().getOrNull() ?: break
+            deliver(from, addr, bytes)
+        }
+    }
+
     internal fun deliver(
         from: InetSocketAddress,
         to: InetSocketAddress,
@@ -53,6 +73,7 @@ internal class MemoryNetwork {
             dropped++
             return
         }
+        held[to]?.let { if (it.trySend(from to bytes).isSuccess) return } // closed by release: delivered directly
         val target = sockets[to]
         if (target == null || target.closed || target.deaf) {
             dropped++
