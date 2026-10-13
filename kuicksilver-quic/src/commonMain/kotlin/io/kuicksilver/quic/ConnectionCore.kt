@@ -39,6 +39,7 @@ import io.kuicksilver.quic.core.glitch
 import io.kuicksilver.quic.core.idleDeadline
 import io.kuicksilver.quic.core.installInitialKeys
 import io.kuicksilver.quic.core.keepAliveDeadline
+import io.kuicksilver.quic.core.largePacketUnanswered
 import io.kuicksilver.quic.core.markClosed
 import io.kuicksilver.quic.core.nextChallengeDelay
 import io.kuicksilver.quic.core.onBlockedRepeatTimer
@@ -846,7 +847,8 @@ public class ConnectionCore internal constructor(
                         }
                         ; p.pmtud?.let { m ->
                             if (loss.ptoCount >= 2 &&
-                                m.current > 1200
+                                m.current > 1200 &&
+                                largePacketUnanswered(p)
                             ) {
                                 m.onBlackHole(now)
                                 setMtu(p, 1200)

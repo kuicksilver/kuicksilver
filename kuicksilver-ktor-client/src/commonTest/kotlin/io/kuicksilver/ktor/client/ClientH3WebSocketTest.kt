@@ -24,16 +24,16 @@ import kotlin.test.Test
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 
-/** HTTP/3 WebSocket behaviour that depends on Ktor's JVM WebSocket reader. */
-class ClientH3WebSocketJvmTest {
+/** How an HTTP/3 WebSocket session ends (RFC 9220), the same with Ktor's JVM and common (Native) WebSocket readers. */
+class ClientH3WebSocketTest {
     @BeforeTest fun load() = KslLoader.ensureLoaded()
 
     /**
      * The server's FIN can trail its Close frame (the core sends a flushed frame at once, the FIN with the close): a client
      * whose closing handshake ends before that FIN arrives still delivers its Close reply and FIN, and abandons only the
      * read side (STOP_SENDING), never its own finished send side (RESET_STREAM). Ordered here by holding the FIN back.
-     * JVM and Android only: Ktor's JVM WebSocket reader stops at the Close frame, while its common (Native) reader reads to
-     * the end of the stream, so there the session cannot end before the FIN and the race does not exist.
+     * On every platform: Ktor's JVM WebSocket reader stops at the Close frame, and the engine ends the stream it hands to the
+     * common (Native) reader after the peer's Close frame too, so a session never waits for a FIN that does not come.
      */
     @Test fun webSocketClosedBeforeThePeersFinKeepsItsCloseReply() =
         h3Test {

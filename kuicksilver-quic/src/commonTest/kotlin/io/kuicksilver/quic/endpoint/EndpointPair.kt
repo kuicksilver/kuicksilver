@@ -84,6 +84,13 @@ internal class EndpointPair(
     var linkMtuToServer: Int = 1500
     var linkMtuToClient: Int = 1500
 
+    /**
+     * A starved server process: while set, the server runs no timers, sends nothing and the datagrams for it wait in its socket
+     * (none lost); they are handled in order on the first step after it is cleared.
+     */
+    var serverStalled: Boolean = false
+    private val stalledToServer = ArrayList<Triple<ByteArray, InetSocketAddress, Ecn>>()
+
     /** Size of every datagram the client sent, in order. */
     val clientDatagramSizes: MutableList<Int> = ArrayList()
 
@@ -165,6 +172,10 @@ internal class EndpointPair(
             clientEcnSent += ecns
             for ((_, b) in pending) clientDatagramSizes += b.size
         }
+        if (toServer && !serverStalled && stalledToServer.isNotEmpty()) {
+            for ((bytes, src, ecn) in stalledToServer) deliver(to, bytes, src, ecn, PathId.Initial)
+            stalledToServer.clear()
+        }
         for (k in pending.indices) {
             val (dest, bytes) = pending[k]
             val keep = if (toServer) filterToServer(sentToServer++, bytes) else filterToClient(sentToClient++, bytes)
@@ -202,23 +213,39 @@ internal class EndpointPair(
                 } else {
                     (if (clientEcnReceive) ecnToClient(ecns[k]) else Ecn.NotEct)
                 }
-            val b = PacketBuffer.of(bytes)
-            try {
-                to.handleDatagram(b, bytes.size, src, ecn, now, socket)
-            } finally {
-                b.close()
+            if (toServer && serverStalled) {
+                stalledToServer += Triple(bytes, src, ecn)
+                continue
             }
+            deliver(to, bytes, src, ecn, socket)
         }
+        if (toServer && serverStalled) return
         to.processPending(now)
         if (toServer) for (c in to.connections()) if (seenServerCores.add(c)) onServerCreated(c)
     }
 
+    private fun deliver(
+        to: EndpointCore,
+        bytes: ByteArray,
+        src: InetSocketAddress,
+        ecn: Ecn,
+        socket: PathId,
+    ) {
+        val b = PacketBuffer.of(bytes)
+        try {
+            to.handleDatagram(b, bytes.size, src, ecn, now, socket)
+        } finally {
+            b.close()
+        }
+    }
+
     fun step() {
         now += 10.milliseconds
-        for (c in client.connections().toList() + server.connections().toList()) if (c.nextTimeoutOrNever() <= now) c.onTimeout(now)
+        val running = if (serverStalled) client.connections().toList() else client.connections().toList() + server.connections().toList()
+        for (c in running) if (c.nextTimeoutOrNever() <= now) c.onTimeout(now)
         move(client, server, clientSource, toServer = true)
         for (c in server.connections()) drain(c)
-        move(server, client, serverAddr, toServer = false)
+        if (!serverStalled) move(server, client, serverAddr, toServer = false)
         for (c in client.connections()) drain(c)
         for (c in server.connections()) drain(c)
     }

@@ -16,6 +16,7 @@ import io.kuicksilver.quic.PathId
 import io.kuicksilver.quic.PathState
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.TimeMark
+import io.kuicksilver.quic.recovery.SentFrames
 import io.kuicksilver.quic.recovery.SpaceId
 import io.kuicksilver.quic.wire.ConnectionId
 import io.kuicksilver.tls.TlsRole
@@ -63,6 +64,18 @@ internal fun ConnectionCore.ecnPathFailed(p: Path) {
         p.ecnFailureReported = true
         onEcnFailed?.invoke(p.id)
     }
+}
+
+/**
+ * Whether an ack-eliciting packet above the 1200-byte base (not a PMTU probe) sent on [p] awaits acknowledgement: only such
+ * packets can vanish in an MTU black hole, so repeated PTOs over small packets alone (the receiving side of a transfer whose
+ * peer stalls) say nothing about the MTU.
+ */
+internal fun ConnectionCore.largePacketUnanswered(p: Path): Boolean {
+    for (s in loss.space(SpaceId.Application).sent) {
+        if (s.ackEliciting && s.pathId == p.id.value && s.size > 1200 && s.frames.flags and SentFrames.PMTU_PROBE == 0) return true
+    }
+    return false
 }
 
 /** After an ACK frame or a loss timer: a path whose large packets vanished while nothing full-size got through falls back to 1200 (decided once all of the ACK's losses and acknowledgements are in). */

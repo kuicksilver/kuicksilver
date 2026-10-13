@@ -150,6 +150,12 @@ QUIC core (review of 2026-10-08, deferred items):
   a refused write once acknowledgements free buffer room or new flow-control credit reaches waiting data, and after
   `MAX_STREAMS` raises a limit that refused an open; the coroutine API wakes the waiting writer or `openBidi`/`openUni`
   directly. The KDoc of `StreamFinished`, which was always raised, now says so (RFC 9000 §4.1, §4.6).
+- DPLPMTUD no longer drops to 1200 bytes because the peer merely stalled. Two PTOs in a row above the base size count
+  as a black hole only while a packet above 1200 bytes is among the unanswered ones (a receiver's small ACK and
+  flow-control packets cannot be lost to the MTU), and a black-hole verdict is undone — MTU and search state back, no
+  60 s pause — when a full-size packet sent after the packets it rested on is acknowledged afterwards. On a loaded host a
+  50 MiB loopback upload ended at 1200 bytes on the client or the server in 12 of 33 runs, each time with no packet lost
+  (RFC 8899 §4.1, §4.3).
 
 Flow control (`kuicksilver-quic`; found with the BBR simulations, 2026-10-13):
 
@@ -177,6 +183,12 @@ Flow control (`kuicksilver-quic`; found with the BBR simulations, 2026-10-13):
 
 QUIC runtime and sockets:
 
+- macOS and iOS: a socket bound to a wildcard address (the Ktor client's endpoint, `0.0.0.0:0`) no longer gets a port an IPv4
+  socket of another process or endpoint already holds. Darwin picks a dual-stack socket's port among the IPv6 ports only and
+  bound an explicit `::` port beside `0.0.0.0` on it; that IPv4 socket then kept every IPv4 datagram for the port, so a client's
+  handshake replies went elsewhere and the connection timed out (about one connect in five with 4000 IPv4 ports in use on the
+  host; the rare 10 s `ConnectTimeoutException` of the contract suite on busy hosts). `ksl_udp` now takes a port free on the
+  IPv4 side for a dual-stack socket and refuses an explicit one an IPv4 socket holds (ADR-0006).
 - The endpoint's receive loop yields after 16 rounds or 2 ms of continuous traffic, so a socket that never runs dry (a
   flood) no longer starves the connection timers and queued application commands.
 - No resolver call on the endpoint loop: on Kotlin/Native the address bytes of a datagram's source are parsed from its IP
@@ -291,6 +303,11 @@ Ktor client (`kuicksilver-ktor-client`):
   section 5).
 - `HttpClient()` without an explicit engine finds the Kuicksilver engine on Android: the engine container and its
   `META-INF/services` entry were missing from the AAR.
+- An HTTP/3 WebSocket on Kotlin/Native ends once Close frames were exchanged, as on the JVM, instead of waiting for the
+  peer's FIN: Ktor's common WebSocket reader reads to the end of the stream, so a peer whose FIN trailed its Close frame
+  delayed `webSocket {}` and one that never sent it kept the session open until the caller gave up. The engine now ends
+  the input it hands to that reader after the peer's Close frame and abandons the rest of the stream with STOP_SENDING
+  (RFC 6455 §7.1.1, RFC 9220).
 
 Ktor server (`kuicksilver-ktor-server`):
 

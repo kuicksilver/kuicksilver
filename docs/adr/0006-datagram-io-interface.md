@@ -119,6 +119,15 @@ k7/macos-server). On Linux and Apple a wildcard (`0.0.0.0` or `::`) opens one `A
 lost, the handshake timed out) and a Ktor server on the default host answered HTTP/3 over IPv4 only while its TCP
 listener took IPv6.
 
+Darwin binds the dual-stack socket without looking at the IPv4 sockets: port 0 can come back as a port an `AF_INET` socket
+holds (`127.0.0.1:P` or `0.0.0.0:P`), and an explicit `::` port succeeds beside `0.0.0.0:P`; that IPv4 socket then receives
+every IPv4 datagram for the port and ours none (with 4000 IPv4 ports in use, one wildcard open in five collided, and a client
+whose handshake replies went to the other socket timed out). So on Apple `ksl_udp` asks the IPv4 side first: port 0 takes a
+port an `AF_INET` socket on `0.0.0.0:0` was given and releases, then binds `::` to it (an explicit bind is refused beside
+`127.0.0.1:P`; a port taken in between fails with `EADDRINUSE` and another one is tried), and an explicit port an IPv4 socket
+holds is refused (`udp_wildcard_port_free_on_ipv4_side`, `udp_wildcard_port_held_on_ipv4_refused`). Linux checks both sides
+itself.
+
 ECN and DF cover both halves: the outgoing mark's cmsg follows the destination (`IP_TOS` for IPv4: Linux ignores
 `IPV6_TCLASS` for a v4-mapped peer); Linux sets `IP_RECVTOS` and `IP_MTU_DISCOVER = PROBE` on the `AF_INET6` socket for the
 v4-mapped half beside `IPV6_RECVTCLASS`/`IPV6_MTU_DISCOVER`; Darwin refuses `IP_RECVTOS` and `IP_DONTFRAG` there (`EINVAL`),

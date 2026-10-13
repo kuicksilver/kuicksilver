@@ -295,7 +295,7 @@ internal class H3Pool(
         }
         val session =
             RawWebSocket(
-                stream.input,
+                webSocketInputUntilClose(stream.input, callContext),
                 stream.output,
                 masking = true,
                 coroutineContext = callContext,

@@ -19,6 +19,7 @@ import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
 /** RFC 8899 / RFC 9000 section 14: DPLPMTUD — binary search with PING+PADDING probes, probe accounting, black-hole fallback, re-search. */
@@ -367,6 +368,89 @@ class PmtudTest {
                 },
                 "no fallback to 1200: ${c.ccMtuUpdatesForTest}",
             )
+        } finally {
+            p.close()
+        }
+    }
+
+    /**
+     * A peer that stops answering for a while (a starved process: its datagrams wait in the socket, none is lost) draws
+     * repeated PTOs, the black-hole answer for a path where nothing comes back. Once it answers, its ACKs cover the
+     * full-size packets sent before the fallback: the path carried them, so the fallback was wrong and is undone, without
+     * the 60 s pause and a new search (the 1200-byte MTU that KslDatagramIoTest saw after a 50 MiB transfer on a loaded host).
+     */
+    @Test fun stalledPeerIsNotABlackHole() {
+        val (p, c) = pair(clientQuic = noIdle, serverQuic = noIdle)
+        try {
+            transfer(p, c)
+            assertTrue(p.runUntil(20.seconds) { c.pmtudSearchDoneForTest && c.stats.pathMtu == 1452 }, "initial search: ${c.stats.pathMtu}")
+            val id = c.openStream(true)
+            val bytes = 400_000
+            var w = 0
+            val write = {
+                if (w < bytes) {
+                    val n = minOf(16384, bytes - w)
+                    w += c.writeStream(id, ByteArray(n), 0, n, w + n == bytes)
+                }
+            }
+            p.runUntil(100.milliseconds) {
+                write()
+                false
+            }
+            p.serverStalled = true
+            var maxPto = 0
+            p.runUntil(1.seconds) {
+                write()
+                maxPto = maxOf(maxPto, c.stats.ptoCount)
+                false
+            }
+            assertTrue(maxPto >= 2, "the stall drew repeated PTOs: $maxPto")
+            assertEquals(1200, c.stats.pathMtu, "nothing came back: the sender assumed a black hole")
+            p.serverStalled = false
+            assertTrue(
+                p.runUntil(30.seconds) {
+                    write()
+                    w == bytes && c.stats.bytesInFlight == 0L
+                },
+                "the transfer completes (state ${c.state})",
+            )
+            assertEquals(1452, c.stats.pathMtu, "the late ACKs of full-size packets undo the fallback: ${c.ccMtuUpdatesForTest}")
+            assertTrue(c.pmtudSearchDoneForTest, "the search result stands, no pause and no new search")
+        } finally {
+            p.close()
+        }
+    }
+
+    /**
+     * Repeated PTOs mean a black hole only when packets above the base size are among the unanswered ones: a sender of
+     * small packets alone (the receiving side of a transfer: ACKs, flow-control credit) whose peer stalls has lost nothing
+     * to the MTU. The server of KslDatagramIoTest's upload ended at 1200 this way on a loaded host.
+     */
+    @Test fun unansweredSmallPacketsAreNotABlackHole() {
+        val (p, c) = pair(clientQuic = noIdle, serverQuic = noIdle)
+        try {
+            transfer(p, c)
+            assertTrue(p.runUntil(20.seconds) { c.pmtudSearchDoneForTest && c.stats.pathMtu == 1452 }, "initial search: ${c.stats.pathMtu}")
+            p.runUntil(2.seconds) { false } // the transfer's paced tail is sent and acknowledged
+            assertEquals(0L, c.stats.bytesInFlight)
+            p.serverStalled = true
+            val mark = p.clientDatagramSizes.size
+            val id = c.openStream(true)
+            c.writeStream(id, ByteArray(100), 0, 100, true) // one small ack-eliciting packet the stalled peer does not answer
+            var maxPto = 0
+            p.runUntil(1.seconds) {
+                maxPto = maxOf(maxPto, c.stats.ptoCount)
+                false
+            }
+            assertTrue(maxPto >= 2, "the stall drew repeated PTOs: $maxPto")
+            assertEquals(
+                1452,
+                c.stats.pathMtu,
+                "no packet above 1200 went unanswered: ${c.ccMtuUpdatesForTest} sent ${p.clientDatagramSizes.drop(mark)}",
+            )
+            p.serverStalled = false
+            assertTrue(p.runUntil(10.seconds) { c.stats.bytesInFlight == 0L })
+            assertTrue(c.pmtudSearchDoneForTest, "no pause, no new search")
         } finally {
             p.close()
         }
