@@ -113,6 +113,9 @@ internal class KeyPhase(
         pto: Duration,
     ): Boolean = handshakeConfirmed && (generation == 0L || (ackedInCurrent && now >= confirmedAt + pto * 3))
 
+    /** When [canInitiate] turns true for a confirmed connection, or [TimeMark.NEVER] while it waits for an acknowledgment. */
+    fun initiateAllowedAt(pto: Duration): TimeMark = if (generation == 0L || !ackedInCurrent) TimeMark.NEVER else confirmedAt + pto * 3
+
     fun initiate(
         now: TimeMark,
         pto: Duration,

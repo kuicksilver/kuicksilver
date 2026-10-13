@@ -293,8 +293,9 @@ where a connection stands: `Disabled`, `Testing`, `Unknown`, `Capable` or `Faile
 ## Key update
 
 The core rotates 1-RTT keys as RFC 9001 section 6 describes: the next generation is derived when the current one is
-installed, a peer's update is followed automatically, and packets of the previous phase still decrypt for three PTOs.
-A caller driving `ConnectionCore` directly can start an update once the handshake is confirmed:
+installed, a peer's update is followed automatically, and packets of the previous phase still decrypt until three PTOs
+after the first packet of the new phase arrived. A caller driving `ConnectionCore` directly can start an update once the
+handshake is confirmed and, for a later update, three PTOs after the peer acknowledged the current phase (section 6.5):
 
 ```kotlin
 // guide:quic:key-update

@@ -768,6 +768,7 @@ public class ConnectionCore internal constructor(
         if (timers.blockedRepeatAt < t) t = timers.blockedRepeatAt
         if (lifetimeDeadline < t) t = lifetimeDeadline
         keyPhase?.let { if (it.discardAt < t) t = it.discardAt }
+        if (keyUpdateRetryAt < t) t = keyUpdateRetryAt
         if (zeroRttReadDiscardAt < t) t = zeroRttReadDiscardAt
         for (i in 0 until paths.all.size) {
             val p = paths.all[i]
@@ -914,15 +915,27 @@ public class ConnectionCore internal constructor(
         }
         if (builder.pacerWakeup <= now) builder.pacerWakeup = TimeMark.NEVER
         keyPhase?.onTimeout(now)
+        if (now >= keyUpdateRetryAt) keyUpdateRetryAt = TimeMark.NEVER // a wake-up for a caller retrying initiateKeyUpdate, nothing more
     }
 
-    /** Starts a key update (RFC 9001 section 6.1); false while one is not allowed yet: handshake not confirmed, or no packet of the current phase acknowledged. */
+    /**
+     * Starts a key update (RFC 9001 section 6.1); false while one is not allowed yet: handshake not confirmed, no packet of the
+     * current phase acknowledged, or less than 3 x PTO since that acknowledgment (section 6.5; the next [nextTimeout] wakes the caller then).
+     */
     public fun initiateKeyUpdate(now: TimeMark): Boolean {
         if (state != ConnectionState.Confirmed) return false
         val kp = keyPhase ?: return false
         this.now = now
-        return kp.initiate(now, pto())
+        if (kp.initiate(now, pto())) {
+            keyUpdateRetryAt = TimeMark.NEVER
+            return true
+        }
+        keyUpdateRetryAt = kp.initiateAllowedAt(pto())
+        return false
     }
+
+    /** When a refused [initiateKeyUpdate] may succeed (3 x PTO after the confirming ACK): a timer, so a retrying caller is woken. */
+    private var keyUpdateRetryAt = TimeMark.NEVER
 
     internal val probeScratch = ArrayList<SentPacket>()
 
