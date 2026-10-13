@@ -27,6 +27,7 @@ import io.kuicksilver.quic.core.Timers
 import io.kuicksilver.quic.core.armBlockedRepeat
 import io.kuicksilver.quic.core.buildLocalTp
 import io.kuicksilver.quic.core.checkPmtuBlackHoles
+import io.kuicksilver.quic.core.checkTlsInput
 import io.kuicksilver.quic.core.discardSpace
 import io.kuicksilver.quic.core.discardZeroRttKeys
 import io.kuicksilver.quic.core.driveTls
@@ -71,6 +72,7 @@ import io.kuicksilver.quic.wire.ConnectionId
 import io.kuicksilver.quic.wire.PacketHeaderCodec
 import io.kuicksilver.quic.wire.PacketHeaderView
 import io.kuicksilver.quic.wire.PacketType
+import io.kuicksilver.quic.wire.QuicWireException
 import io.kuicksilver.quic.wire.TransportParameters
 import io.kuicksilver.quic.wire.TransportParametersCodec
 import io.kuicksilver.quic.wire.VarInt
@@ -291,7 +293,7 @@ public class ConnectionCore internal constructor(
     internal val connFlow = RecvFlowController(config.initialConnectionWindow, config.maxConnectionWindow)
     internal val connSend = SendFlowController(0)
     internal val streams = StreamManager(role, config, connFlow, connSend, StreamLimits(role, config.maxBidiStreams, config.maxUniStreams))
-    internal var cryptoStreams = CryptoStreams(config.limits.cryptoOutOfOrderPerLevel, config.limits.cryptoPostHandshake)
+    internal var cryptoStreams = CryptoStreams(config.limits)
 
     /** The active path's anti-amplification budget (RFC 9000 sections 8.1 and 9.3.1). */
     internal val amplification: AmplificationLimit get() = paths.active.amplification
@@ -439,8 +441,11 @@ public class ConnectionCore internal constructor(
     /** The per-IP counting key the endpoint registered this connection under (null for client connections). */
     internal var admissionIpKey: Any? = null
 
-    /** Bytes this unfinished handshake holds: undecryptable packets waiting for keys plus out-of-order CRYPTO data (`ConnectionAttempt.handshakeBufferBytes` for admission). */
-    internal val handshakeBufferBytes: Long get() = receiver.bufferedBytes + cryptoStreams.bufferedBytes
+    /** Bytes this unfinished handshake holds: undecryptable packets waiting for keys, out-of-order CRYPTO data and CRYPTO data TLS has not read (`ConnectionAttempt.handshakeBufferBytes` for admission). */
+    internal val handshakeBufferBytes: Long get() = receiver.bufferedBytes + cryptoStreams.bufferedBytes + tlsPendingBytes
+
+    /** CRYPTO bytes TLS held unread after it last ran, while the handshake keys are live (`checkTlsInput`). */
+    internal var tlsPendingBytes = 0L
     internal val createdAtForTest: TimeMark get() = createdAt
     internal val remoteAddressForTest: InetSocketAddress get() = path.remote
     internal var lastActivity: TimeMark = now
@@ -939,7 +944,13 @@ public class ConnectionCore internal constructor(
      * connection with the TLS alert (CRYPTO_ERROR).
      */
     public fun resumeVerify(result: VerifyResult) {
-        handshake.resumeVerify(result)
+        try {
+            handshake.resumeVerify(result)
+            checkTlsInput()
+        } catch (e: QuicWireException) {
+            fail(e.code, e.frameType, e.message ?: "", null)
+            return
+        }
         if (handshake.failed) return
         drainStreamEvents()
     }

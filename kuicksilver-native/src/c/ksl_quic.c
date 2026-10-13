@@ -114,8 +114,13 @@ int ksl_quic_set_transport_params(ksl_ssl *s, const uint8_t *tp, size_t len) {
     free(s->tp); s->tp = copy; s->tp_len = len;
     return KSL_OK;
 }
+size_t ksl_quic_pending(const ksl_ssl *s, int level) { return s->in[level].len - s->in[level].consumed + s->stash[level].len; }
 int ksl_quic_provide(ksl_ssl *s, int level, const uint8_t *data, size_t len) {
     if (level < 0 || level >= KSL_NLEVELS) { ksl_ssl_set_error(s, KSL_E_BAD_ARG, "ksl: bad level"); return KSL_ERROR; }
+    /* RFC 9001 section 4.1.3: TLS never reads a level below its current one again, so such bytes would only sit here until the
+       connection ends; the transport closes with PROTOCOL_VIOLATION before this, the check is the backstop of the memory bound */
+    if (level < s->read_level) { ksl_ssl_set_error(s, KSL_E_CRYPTO_LEVEL, "ksl: CRYPTO data at a level TLS no longer reads"); return KSL_ERROR; }
+    if (len > KSL_QUIC_LEVEL_MAX - ksl_quic_pending(s, level)) { ksl_ssl_set_error(s, KSL_E_CRYPTO_LEVEL, "ksl: too much unread CRYPTO data at one level"); return KSL_ERROR; }
     ksl_inbuf *b = s->rcd_level == level ? &s->stash[level] : &s->in[level];
     return inbuf_append(b, data, len) ? KSL_OK : KSL_ERROR;
 }

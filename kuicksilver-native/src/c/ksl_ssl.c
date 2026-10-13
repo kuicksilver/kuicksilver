@@ -90,7 +90,7 @@ static int copy_out(uint8_t *out, size_t cap, size_t *len, const void *src, size
 }
 int ksl_ssl_get(ksl_ssl *s, int what, uint8_t *out, size_t cap, size_t *len) {
     ERR_clear_error();
-    if (s->fatal && what != KSL_GET_VERSION && what != KSL_GET_KEYLOG) { ksl_ssl_set_error(s, KSL_E_NOT_SUPPORTED, "ksl: session failed"); return KSL_ERROR; }
+    if (s->fatal && what != KSL_GET_VERSION && what != KSL_GET_KEYLOG && what != KSL_GET_QUIC_PENDING) { ksl_ssl_set_error(s, KSL_E_NOT_SUPPORTED, "ksl: session failed"); return KSL_ERROR; }
     switch (what) {
     case KSL_GET_ALPN: { const unsigned char *a; unsigned l; SSL_get0_alpn_selected(s->ssl, &a, &l); return copy_out(out, cap, len, a, l); }
     case KSL_GET_VERSION: { int v = SSL_version(s->ssl); uint8_t b[2] = {(uint8_t)(v >> 8), (uint8_t)v}; return copy_out(out, cap, len, b, 2); }
@@ -103,6 +103,11 @@ int ksl_ssl_get(ksl_ssl *s, int what, uint8_t *out, size_t cap, size_t *len) {
     case KSL_GET_KEYLOG: { int rc = copy_out(out, cap, len, s->keylog, s->keylog_len); if (rc == KSL_OK && s->keylog) { OPENSSL_cleanse(s->keylog, s->keylog_len); s->keylog_len = 0; } return rc; }
     case KSL_GET_SESSION_REUSED: { uint8_t b = SSL_session_reused(s->ssl) ? 1 : 0; return copy_out(out, cap, len, &b, 1); }
     case KSL_GET_EMS: { uint8_t b = SSL_get_extms_support(s->ssl) == 1; return copy_out(out, cap, len, &b, 1); }
+    case KSL_GET_QUIC_PENDING: {
+        uint8_t b[4 * KSL_NLEVELS];
+        for (int l = 0; l < KSL_NLEVELS; l++) { uint32_t v = (uint32_t)ksl_quic_pending(s, l); b[4 * l] = (uint8_t)(v >> 24); b[4 * l + 1] = (uint8_t)(v >> 16); b[4 * l + 2] = (uint8_t)(v >> 8); b[4 * l + 3] = (uint8_t)v; }
+        return copy_out(out, cap, len, b, sizeof b);
+    }
     case KSL_GET_QUIC_VERSION: { uint32_t v = s->quic_version; uint8_t b[4] = {(uint8_t)(v >> 24), (uint8_t)(v >> 16), (uint8_t)(v >> 8), (uint8_t)v}; return copy_out(out, cap, len, b, 4); }
     case KSL_GET_EARLY_DATA: {
         int st = SSL_get_early_data_status(s->ssl);

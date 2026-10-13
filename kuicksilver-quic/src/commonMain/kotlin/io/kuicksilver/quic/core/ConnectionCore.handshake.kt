@@ -26,6 +26,7 @@ import io.kuicksilver.tls.Aead
 import io.kuicksilver.tls.Certificate
 import io.kuicksilver.tls.Direction
 import io.kuicksilver.tls.EarlyDataState
+import io.kuicksilver.tls.EncryptionLevel
 import io.kuicksilver.tls.PacketProtector
 import io.kuicksilver.tls.QuicSessionTicket
 import io.kuicksilver.tls.TlsException
@@ -103,10 +104,34 @@ internal fun ConnectionCore.driveTls(now: TimeMark) {
     if (state == ConnectionState.Closing || state == ConnectionState.Draining || state == ConnectionState.Closed) return
     try {
         handshake.drive()
+        checkTlsInput()
     } catch (e: QuicWireException) {
         fail(e.code, e.frameType, e.message ?: "", null)
     }
 }
+
+/**
+ * After TLS ran: CRYPTO bytes it holds unread count toward the handshake's memory (admission), and any left at a level TLS has
+ * moved past will never be read, a PROTOCOL_VIOLATION (RFC 9001 section 4.1.3). Only levels whose space is still live are asked.
+ */
+internal fun ConnectionCore.checkTlsInput() {
+    if (handshake.failed || spaceDiscarded[1]) {
+        tlsPendingBytes = 0
+        return
+    }
+    var pending = 0L
+    for (level in CRYPTO_LEVELS) {
+        if (level != 3 && spaceDiscarded[if (level == 0) 0 else 1]) continue
+        val n = handshake.session.pendingCryptoBytes(EncryptionLevel.entries[level])
+        if (n > 0 && cryptoStreams.isSealed(level)) {
+            throw QuicWireException(TransportError.PROTOCOL_VIOLATION, 0x06, "CRYPTO data left unconsumed at a previous encryption level")
+        }
+        pending += n
+    }
+    tlsPendingBytes = pending
+}
+
+private val CRYPTO_LEVELS = intArrayOf(0, 2, 3)
 
 /** Counts one AEAD failure of [aead]; closes with AEAD_LIMIT_REACHED at the integrity limit. */
 internal fun ConnectionCore.onAuthenticationFailure(aead: Aead) {
@@ -226,7 +251,7 @@ internal fun ConnectionCore.onVersionNegotiation(offered: IntArray) {
     path.pacer = Pacer()
     cryptoStreams =
         // the abandoned version's flight leaves the congestion state too
-        CryptoStreams(config.limits.cryptoOutOfOrderPerLevel, config.limits.cryptoPostHandshake)
+        CryptoStreams(config.limits)
     for (i in 0 until 3) spaceDiscarded[i] = false
     receiver.reset()
     installInitialKeys(next)
@@ -278,6 +303,8 @@ internal class ConnectionHandshakeSink(
         ) {
             core.readKeys[level]?.close()
             core.readKeys[level] = protector
+            // RFC 9001 section 4.1.3: TLS reads Handshake after Initial and never Initial again
+            if (level == 2) core.cryptoStreams.seal(0)
         } else {
             core.writeKeys[level]?.close()
             core.writeKeys[level] =
@@ -405,6 +432,9 @@ internal class ConnectionHandshakeSink(
 
     override fun onHandshakeDone() {
         if (core.state != ConnectionState.Handshaking) return
+        // the Handshake level ends with the peer's Finished; sealed only now, since a TLS stack may hand a server its 1-RTT
+        // read key before that Finished arrives (BoringSSL's QUIC API and NullTlsSession do)
+        core.cryptoStreams.seal(2)
         if (core.role == TlsRole.Client) {
             core.settleZeroRtt()
             if (core.state != ConnectionState.Handshaking) return

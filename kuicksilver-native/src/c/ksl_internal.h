@@ -14,6 +14,7 @@
 
 #define KSL_EVQ 32
 #define KSL_NLEVELS 4
+#define KSL_QUIC_LEVEL_MAX (256u * 1024u)   /* unread CRYPTO bytes ksl holds per level (ksl_quic_provide) */
 #define KSL_MSG 512
 
 typedef struct { uint8_t *buf; size_t len, cap, consumed; } ksl_inbuf;
@@ -73,6 +74,7 @@ int ksl_ssl_fail(ksl_ssl *s, uint32_t code, const char *msg);   /* records, mark
 
 /* event queue (ksl_quic.c) */
 ksl_event *ksl_push_event(ksl_ssl *s, int type, const uint8_t *copy_from, size_t len);
+size_t ksl_quic_pending(const ksl_ssl *s, int level);   /* CRYPTO bytes provided at level and not yet read by TLS */
 
 /* verification (ksl_verify.c) */
 int ksl_cert_verify_cb(X509_STORE_CTX *xctx, void *arg);

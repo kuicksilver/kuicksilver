@@ -74,6 +74,7 @@ extern "C" {
 #define KSL_GET_EMS 7              /* 1 byte: 1 if extended master secret was used (TLS 1.2) */
 #define KSL_GET_QUIC_VERSION 8     /* 4 bytes big-endian: negotiated (server, RFC 9368) or set (client) QUIC version */
 #define KSL_GET_EARLY_DATA 9       /* 1 byte: 0 not attempted, 1 rejected, 2 accepted (final once EncryptedExtensions is sent / received) */
+#define KSL_GET_QUIC_PENDING 10    /* 16 bytes: per level 0..3, 4 bytes big-endian, CRYPTO bytes provided and not yet read by TLS */
 
 /* ksl_ssl_set keys */
 #define KSL_SET_SNI 1              /* data = host name, ASCII */
@@ -122,6 +123,8 @@ extern "C" {
 #define KSL_E_NOT_SUPPORTED 0xff0008u
 #define KSL_E_TRUNCATED 0xff0009u
 #define KSL_E_TOO_LATE 0xff000au      /* the setting cannot change at this stage of the handshake */
+#define KSL_E_CRYPTO_LEVEL 0xff000bu  /* ksl_quic_provide: a level TLS no longer reads (RFC 9001 4.1.3) or more than
+                                         KSL_QUIC_LEVEL_MAX unread bytes at one level */
 
 typedef struct ksl_ctx ksl_ctx;
 typedef struct ksl_ssl ksl_ssl;
