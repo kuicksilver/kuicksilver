@@ -91,6 +91,45 @@ class ClientH1Test {
             }
         }
 
+    /** Cleartext HTTP/1.1 to an IPv6 literal on every platform (Windows Native refused it with WSAEADDRNOTAVAIL under Ktor 3.6.0's sockets). */
+    @Test fun plainHttpToIpv6Literal() =
+        clientTest {
+            val (server, port) =
+                runCatching { testServer(plain = true, host = "::1") { routing { get("/") { call.respondText("v6") } } } }
+                    .getOrElse {
+                        println("plainHttpToIpv6Literal skipped: needs an IPv6 loopback ($it)")
+                        return@clientTest
+                    }
+            try {
+                testClient().use { c -> assertEquals("v6", c.get("http://[::1]:$port/").bodyAsText()) }
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
+    /**
+     * The client connects to the address in the URL and nowhere else. Ktor 3.6.0's Kotlin/Native connect sent every IPv6
+     * address as `::`, which Linux and Apple route to the local host: a request to `[::ffff:127.0.0.1]` (where nothing
+     * listens) reached the server on `::1` instead (docs/upstream/ktor-native-ipv6.md).
+     */
+    @Test fun negative_h1ToIpv6LiteralReachesThatAddressOnly() =
+        clientTest {
+            val (server, port) =
+                runCatching { testServer(plain = true, host = "::1") { routing { get("/") { call.respondText("decoy") } } } }
+                    .getOrElse {
+                        println("negative_h1ToIpv6LiteralReachesThatAddressOnly skipped: needs an IPv6 loopback ($it)")
+                        return@clientTest
+                    }
+            try {
+                testClient().use { c ->
+                    val r = runCatching { c.get("http://[::ffff:127.0.0.1]:$port/").bodyAsText() }
+                    assertTrue(r.isFailure, "a request to [::ffff:127.0.0.1]:$port reached the server on [::1]: ${r.getOrNull()}")
+                }
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
     @Test fun postAndChunked() =
         clientTest {
             val (server, port) =

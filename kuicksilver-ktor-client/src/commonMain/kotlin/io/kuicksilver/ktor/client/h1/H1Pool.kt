@@ -18,7 +18,6 @@ import io.ktor.http.isSecure
 import io.ktor.network.selector.SelectorManager
 import io.ktor.network.sockets.InetSocketAddress
 import io.ktor.network.sockets.Socket
-import io.ktor.network.sockets.aSocket
 import io.ktor.network.sockets.openReadChannel
 import io.ktor.network.sockets.openWriteChannel
 import io.ktor.util.date.GMTDate
@@ -31,6 +30,7 @@ import io.kuicksilver.ktor.client.isIdempotent
 import io.kuicksilver.ktor.client.socketHost
 import io.kuicksilver.ktor.client.socketTimeoutMillis
 import io.kuicksilver.ktor.client.tlsConfigFor
+import io.kuicksilver.ktor.network.connectTcp
 import io.kuicksilver.tls.SessionCache
 import io.kuicksilver.tls.TlsConnection
 import io.kuicksilver.tls.TlsException
@@ -270,8 +270,9 @@ internal class H1Pool(
                             url.port,
                         )
                     }
-                // the address itself, not `hostname`: on the JVM that is a reverse lookup (::1 -> "localhost" -> 127.0.0.1)
-                val tcp = aSocket(selector).tcp().connect(target)
+                // the address itself, not `hostname`: on the JVM that is a reverse lookup (::1 -> "localhost" -> 127.0.0.1);
+                // connectTcp, not ktor-network's native connect, which sends every IPv6 address as :: (docs/upstream/ktor-native-ipv6.md)
+                val tcp = connectTcp(selector, target)
                 try {
                     val rawIn = tcp.openReadChannel()
                     val rawOut = tcp.openWriteChannel(autoFlush = true)

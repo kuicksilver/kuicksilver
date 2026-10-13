@@ -7,9 +7,12 @@ import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.native.toByteArray
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import kotlinx.io.IOException
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 
 @OptIn(ExperimentalKuicksilverApi::class)
@@ -34,5 +37,40 @@ class KtorDatagramIoTest {
                 a.close()
                 b.close()
             }
+        }
+
+    /**
+     * ktor-network 3.6.0's Native sockets put `::` into every IPv6 sockaddr (docs/upstream/ktor-native-ipv6.md): the portable
+     * socket would bind `::` (every interface, IPv4 too) for `::1`. It refuses instead of binding somewhere else.
+     */
+    @Test fun negative_portableRefusesASpecificIpv6Address() =
+        runBlocking {
+            assertFailsWith<UnsupportedOperationException> { DatagramIo.open(InetSocketAddress("::1", 0), IoPreference.Portable).close() }
+            Unit
+        }
+
+    /** ... and refuses to send to an IPv6 address, which ktor-network would send to `::` (the local host) instead. */
+    @Test fun negative_portableRefusesIpv6Destinations() =
+        runBlocking {
+            val a = DatagramIo.open(InetSocketAddress("0.0.0.0", 0), IoPreference.Portable)
+            val out = PacketBatch(1)
+            try {
+                out.buffer(0).copyFrom(byteArrayOf(1), 0, 0, 1)
+                out.setLength(0, 1)
+                out.setAddress(0, InetSocketAddress("2001:db8::1", 4433))
+                assertFailsWith<IOException> { a.send(out) }
+                assertFailsWith<IOException> { a.trySend(out) }
+                Unit
+            } finally {
+                out.close()
+                a.close()
+            }
+        }
+
+    /** `::` is what ktor-network binds anyway: allowed (a host without IPv6 fails with its own error). */
+    @Test fun portableBindsTheIpv6Wildcard() =
+        runBlocking {
+            val r = runCatching { DatagramIo.open(InetSocketAddress("::", 0), IoPreference.Portable).close() }
+            assertTrue(r.exceptionOrNull() !is UnsupportedOperationException, "$r")
         }
 }

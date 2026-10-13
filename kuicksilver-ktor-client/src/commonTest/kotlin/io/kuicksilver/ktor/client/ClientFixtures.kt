@@ -33,9 +33,10 @@ internal object ClientFixtures {
 
 internal typealias TestServer = EmbeddedServer<KuicksilverApplicationEngine, KuicksilverApplicationEngine.Configuration>
 
-/** A Kuicksilver server engine on loopback: TLS (HTTP/1.1 + HTTP/3) unless [plain]; returns it and its port. */
+/** A Kuicksilver server engine on [host] (IPv4 loopback): TLS (HTTP/1.1 + HTTP/3) unless [plain]; returns it and its port. */
 internal suspend fun testServer(
     plain: Boolean = false,
+    host: String = "127.0.0.1",
     configure: KuicksilverApplicationEngine.Configuration.() -> Unit = {},
     module: Application.() -> Unit,
 ): Pair<TestServer, Int> {
@@ -43,12 +44,12 @@ internal suspend fun testServer(
         embeddedServer(KuicksilverServer, configure = {
             if (plain) {
                 connector {
-                    host = "127.0.0.1"
+                    this.host = host
                     port = 0
                 }
             } else {
                 tlsConnector(ClientFixtures.identity()) {
-                    host = "127.0.0.1"
+                    this.host = host
                     port = 0
                 }
             }

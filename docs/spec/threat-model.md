@@ -183,6 +183,12 @@ K7 status (Alt-Svc state bounds, RFC 7838 §9.4): what servers can make the clie
 
 K5 status (fallback): the fallback from HTTP/3 to HTTP/1.1 uses the same `TlsConfig` (trust, pins, TLS 1.3): with h3 unavailable and a pin that does not match the server key, the request ends with `TlsException` rather than succeeding over TCP (`ClientFallbackTest.negative_fallbackKeepsPins`); ALPN on TCP is strictly `http/1.1`, on QUIC `h3` (a mismatch — `no_application_protocol`, `negative_alpnMismatchClosesConnection` — K1); a non-idempotent request that went out over h3 is not retried over h1.1 (`nonIdempotentNotRetriedAfterHeadersSent`).
 
+### 3.19 Bind and connect misdirection on Kotlin/Native TCP
+
+- **Threats:** a server connector meant for one address (a loopback-only admin endpoint on `::1`) listens on every interface; a client request meant for a remote IPv6 host is delivered to a local process that holds the same port (cleartext `http://` is answered by it; with TLS, host-name verification fails). Ktor 3.6.0's Kotlin/Native `ktor-network` did both: it binds and connects every IPv6 address as `::` (`NativeIPv6SocketAddress.nativeAddress` never copies the address, [ktor-native-ipv6.md](../upstream/ktor-native-ipv6.md)); dual-stack on Linux and Apple, a `::1` connector also accepted IPv4.
+- **Mitigations:** the engines' TCP sockets come from `kuicksilver-ktor-network` (`bindTcp`, `connectTcp`): on Kotlin/Native they pass the `sockaddr` from `getaddrinfo` to `bind`/`connect` unchanged (on the JVM and Android `ktor-network` is correct and used as it is). The portable Native UDP socket, still on `ktor-network`, fails closed: it refuses a specific IPv6 bind address and IPv6 destinations instead of using `::`.
+- **Verification:** `ServerH1Test.negative_ipv6ConnectorListensOnItsAddressOnly` (an IPv4 connect to a `::1` connector's port is refused), `ClientH1Test.negative_h1ToIpv6LiteralReachesThatAddressOnly` (a request to `[::ffff:127.0.0.1]`, where nothing listens, does not reach the `::1` server), `TcpSocketsTest.negative_ipv6ListenerDoesNotAcceptIpv4`, `TcpSocketsTest.negative_connectToAnotherIpv6AddressDoesNotReachTheListener`, `KtorDatagramIoTest.negative_portableRefusesASpecificIpv6Address`, `.negative_portableRefusesIpv6Destinations`; positive: `ClientH1Test.plainHttpToIpv6Literal`, `ClientH3Test.h1ToIpv6Loopback` (also on Windows Native, where the connect to `::` was refused), `TcpSocketsNativeTest`.
+
 ## 4. What we do not protect against
 
 - Traffic analysis by sizes/timings (no padding in v1 except Initial); DATAGRAM frames are distinguishable by their reaction to loss.
@@ -218,6 +224,9 @@ K5 status (2026-10-08): item 9 is fully covered on JVM and macOS Native (`kuicks
 
 Supply chain:
 10. `negative_tamperedNativeArtifact` (JVM), `negative_nativeAbiVersionMismatch`, `negative_exportedOpenSslSymbols` (nm/dumpbin on all platforms, including Android)
+
+Sockets:
+11. `negative_ipv6ConnectorListensOnItsAddressOnly`, `negative_h1ToIpv6LiteralReachesThatAddressOnly`, `negative_ipv6ListenerDoesNotAcceptIpv4`, `negative_connectToAnotherIpv6AddressDoesNotReachTheListener`, `negative_portableRefusesASpecificIpv6Address`, `negative_portableRefusesIpv6Destinations` (§3.19; the TCP ones on the JVM and every Native target, the portable UDP ones on Native)
 
 K2 status (2026-10-02): items 4 (partly), 7 (partly), 8 (partly) are covered in `kuicksilver-quic` (`core.HandshakeLimitsTest`, `flow.StreamLimitsTest`, `core.ConnectionIdTest`, `stream.ReassemblerTest`, `flow.FlowControlTest`, `recovery.LossDetectionTest`, `core.ClientVersionNegotiationTest`, `endpoint.EndpointCoreTest`, `core.ReceivePathTest`, `wire.TransportParametersTest`, `wire.FrameCodecTest`, `wire.PacketHeaderTest`) on JVM, macOS Native and Linux x64 (Docker):
 

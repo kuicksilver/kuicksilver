@@ -242,17 +242,26 @@ request now contains its own failure.
 
 ### IPv6 over TCP on Kotlin/Native
 
-Both engines open their HTTP/1.1 TCP sockets with Ktor's `ktor-network`. On Kotlin/Native (Linux, Apple, Windows) Ktor 3.6.0
-never copies the IPv6 address into the `sockaddr_in6` it binds or connects with (`NativeIPv6SocketAddress.nativeAddress`
-sets family, port, flow label and scope only), so every IPv6 TCP socket uses `::`:
+Ktor 3.6.0's `ktor-network` sockets on Kotlin/Native (Linux, Apple, Windows) never copy the IPv6 address into the
+`sockaddr_in6` they bind or connect with (`NativeIPv6SocketAddress.nativeAddress` sets family, port, flow label and scope
+only), so every IPv6 bind and connect uses `::`. A connector on `::1` listened on every interface (and, dual-stack, on
+IPv4); a request to an IPv6 address went to `::`, which Linux and Apple route to the local host and Windows refuses
+(`WSAEADDRNOTAVAIL`, 10049). Details and the upstream report draft: [ktor-native-ipv6.md](../upstream/ktor-native-ipv6.md).
 
-- a server connector with a specific IPv6 `host` (`::1`, a global address) listens on **all** IPv6 interfaces; a
-  `macosArm64` probe binding `::1` reports `:::<port>`. Bind such a server to `127.0.0.1` or put a firewall in front of it;
-- the client's HTTP/1.1 connect to an IPv6 address goes to `::`, which Linux and Apple treat as the local host and
-  Windows refuses (`WSAEADDRNOTAVAIL`, 10049). A host name that resolves to IPv4 as well falls through to the IPv4 address
-  on Windows. On Linux and Apple a local listener on the same port answers instead: TLS host verification rejects it
-  for `https://`, but a cleartext `http://` request to an IPv6 address reaches that local process.
+Both engines therefore open their HTTP/1.1 TCP sockets through `kuicksilver-ktor-network` (`bindTcp`, `connectTcp`): on
+the JVM and Android that is `ktor-network` as before; on Kotlin/Native it is a TCP socket of Kuicksilver on Ktor's selector
+that binds and connects the address `getaddrinfo` returned. So on every platform:
 
-HTTP/3 is not affected: its UDP sockets come from `ksl` and carry the full address on every platform (the Ktor client's
-endpoint is dual-stack, ADR-0006). The JVM and Android use the JDK's sockets and are not affected either.
-`ClientH3Test.h1ToIpv6Loopback` pins the Windows Native refusal and starts failing once Ktor copies the address.
+- a server connector with a specific `host` (`::1`, `127.0.0.1`, a global address) listens on that address only; `::` and
+  `0.0.0.0` stay the wildcards;
+- the client's HTTP/1.1 connection (and its connection to an HTTP proxy) goes to the address in the URL, trying each
+  address a host name resolves to in turn; an IPv4-mapped literal (`[::ffff:127.0.0.1]`) is connected over IPv4, as the
+  JVM does.
+
+HTTP/3 uses the accelerated `ksl` UDP socket, which carries the full address on every platform (the Ktor client's endpoint
+is dual-stack, ADR-0006). The portable Kotlin/Native UDP socket (`IoPreference.Portable`, or a sandbox that refuses the
+accelerated one) still uses `ktor-network`: it refuses to bind a specific IPv6 address (`UnsupportedOperationException`)
+and to send to an IPv6 address (`IOException`), instead of
+using `::`. Tests: `ServerH1Test.negative_ipv6ConnectorListensOnItsAddressOnly`,
+`ClientH1Test.negative_h1ToIpv6LiteralReachesThatAddressOnly`, `ClientH1Test.plainHttpToIpv6Literal`,
+`ClientH3Test.h1ToIpv6Loopback`, `TcpSocketsTest`, `KtorDatagramIoTest`.
