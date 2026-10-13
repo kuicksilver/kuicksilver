@@ -290,7 +290,7 @@ class MigrationApiTest {
                     val l = events.await()
                     assertIs<PathEvent.Validated>(l[0])
                     assertIs<PathEvent.Changed>(l[1])
-                    assertEquals(l[0].let { (it as PathEvent.Validated).path.id }, (l[1] as io.kuicksilver.quic.PathChanged).new.id)
+                    assertEquals(l[0].let { (it as PathEvent.Validated).path.id }, (l[1] as PathEvent.Changed).new.id)
                     c.close()
                     s.close()
                 }

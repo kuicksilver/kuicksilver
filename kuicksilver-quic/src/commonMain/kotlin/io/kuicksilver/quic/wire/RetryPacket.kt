@@ -3,6 +3,7 @@
 package io.kuicksilver.quic.wire
 
 import io.kuicksilver.native.PacketBuffer
+import io.kuicksilver.quic.VersionProfile
 import io.kuicksilver.quic.endpoint.ConstantTime
 import io.kuicksilver.tls.QuicCrypto
 

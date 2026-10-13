@@ -89,7 +89,3 @@ public sealed interface PathEvent {
         override fun toString(): String = "SocketLost($path, ${cause.message})"
     }
 }
-
-/** Nested into [PathEvent] before 0.1.0 (K6 D1); this alias goes away in 0.2.0. */
-@Deprecated("Nested as PathEvent.Changed", ReplaceWith("PathEvent.Changed"))
-public typealias PathChanged = PathEvent.Changed

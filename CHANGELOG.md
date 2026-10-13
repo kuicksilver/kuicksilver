@@ -242,6 +242,13 @@ Ktor client (`kuicksilver-ktor-client`):
   it no longer stands in for a connection limit. The idle map of the HTTP/1.1 pool, which grew by one entry per origin
   and was never pruned, is gone: a route is dropped with its last connection.
 
+### Removed
+
+API that was never published (0.1.0 was not released), removed before 0.2.0 binds the API ([stability](docs/stability.md)):
+
+- The deprecated type aliases `io.kuicksilver.quic.PathChanged` (use `PathEvent.Changed`) and
+  `io.kuicksilver.quic.wire.VersionProfile` (use `io.kuicksilver.quic.VersionProfile`).
+
 ### Fixed
 
 QUIC migration right after the handshake (0.2.0 bug 1, iOS library report):

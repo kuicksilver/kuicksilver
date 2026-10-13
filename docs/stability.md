@@ -47,8 +47,9 @@ member) is made in a minor release and listed under **Changed** in the CHANGELOG
 changes; see the CHANGELOG's "QUIC API (breaking, before 1.0)" entry and the new `PathEvent.SocketLost`, which an
 exhaustive `when` over `PathEvent` must now handle.
 
-Deprecated in 0.2.0 and still present: the type aliases `io.kuicksilver.quic.PathChanged` (use `PathEvent.Changed`)
-and `io.kuicksilver.quic.wire.VersionProfile` (use `io.kuicksilver.quic.VersionProfile`), both at level `WARNING`.
+Nothing is deprecated in 0.2.0. The two type aliases deprecated before 0.1.0, which was never published,
+`io.kuicksilver.quic.PathChanged` (use `PathEvent.Changed`) and `io.kuicksilver.quic.wire.VersionProfile` (use
+`io.kuicksilver.quic.VersionProfile`), are removed; 0.2.0 is the first release whose API this page binds.
 
 **Security fixes** go to the latest 0.x release only ([SECURITY](../SECURITY.md), "Supported versions").
 
