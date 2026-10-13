@@ -295,8 +295,12 @@ class TlsConnectionTest {
         }
     }
 
-    @Test fun negative_tls12WithoutEmsRejected() {
-        // our side never disables EMS; a TLS 1.2 handshake with EMS succeeds and reports Tls12
+    /**
+     * Tls12And13 on both sides still negotiates TLS 1.3. The negative control for a TLS 1.2 peer without EMS
+     * (`negative_tls12WithoutEmsRejected`, threat model section 5) lives in the C suite (`tcp_tls12_profile_and_ems`): the Kotlin
+     * API cannot build a peer without extended master secret.
+     */
+    @Test fun tls12And13PeersNegotiateTls13() {
         val (c, s) =
             both(
                 TcpFixtures.client {
