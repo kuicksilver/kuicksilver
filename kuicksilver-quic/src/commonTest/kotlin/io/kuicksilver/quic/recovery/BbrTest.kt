@@ -381,11 +381,11 @@ class BbrTest {
         assertTrue(d.isCwndLimited, "the 10th datagram filled the window")
     }
 
-    @Test fun theInitialWindowFollowsTheDatagramSizeBeforeTheFirstAck() {
+    @Test fun theInitialWindowFollowsASmallerDatagramSizeBeforeTheFirstAck() {
         val cc = bbr()
-        cc.onMtuUpdate(1452)
-        assertEquals(14_520L, cc.cwnd) // min(10 x 1452, max(14 720, 2 x 1452))
-        assertEquals(4L * 1452, cc.minPipeCwnd)
+        cc.onMtuUpdate(1000)
+        assertEquals(10_000L, cc.cwnd) // min(10 x 1000, max(14 720, 2 x 1000)); a larger size never raises it (RFC 8899)
+        assertEquals(4L * 1000, cc.minPipeCwnd)
     }
 
     @Test fun jumboDatagramsKeepTwoInTheSendQuantum() {
@@ -462,5 +462,19 @@ class BbrTest {
         b.run(400.milliseconds)
         assertTrue(b.cc.fullBwReached, "states ${b.states}")
         assertTrue(b.seen(Bbr.State.Drain))
+    }
+
+    @Test fun aLargerDatagramSizeNeverRaisesTheWindow() {
+        // RFC 8899 section 3 item 7: "An update to the PLPMTU (or MPS) MUST NOT increase the congestion window measured in bytes"
+        val cc = bbr()
+        val t = TimeMark(1_000_000_000L)
+        repeat(10) { cc.onPacketSent(t, 1200) }
+        cc.onLoss(t + 1.seconds, 9 * 1200, t, persistentCongestion = true)
+        assertEquals(4800L, cc.cwnd)
+        cc.onMtuUpdate(1452)
+        assertEquals(4800L, cc.cwnd, "the 4-datagram floor in the new size is not a reason to grow")
+        val fresh = bbr()
+        fresh.onMtuUpdate(1452)
+        assertEquals(12_000L, fresh.cwnd, "before the first ACK either: the initial window stays in bytes")
     }
 }

@@ -358,13 +358,14 @@ public class Bbr(
 
     /**
      * DPLPMTUD moved the datagram size (C.SMSS): the model stays in bytes, the floors in datagrams follow it: the 4-datagram
-     * pipelining minimum, the send quantum's 2 datagrams and, before the first ACK, the initial window (RFC 9002 section 7.2).
+     * pipelining minimum, the send quantum's 2 datagrams and, before the first ACK, the initial window (RFC 9002 section 7.2)
+     * when that shrinks. RFC 8899 section 3 item 7: "An update to the PLPMTU (or MPS) MUST NOT increase the congestion window
+     * measured in bytes", so the window itself only ever comes down here.
      */
     override fun onMtuUpdate(maxDatagramSize: Int) {
         mss = maxOf(maxDatagramSize, 1)
         initialCwnd = initialWindow(mss)
-        if (sampler.delivered == 0L && pacingRateBps == 0L) cwnd = initialCwnd
-        cwnd = maxOf(cwnd, minPipeCwnd)
+        if (sampler.delivered == 0L && pacingRateBps == 0L && initialCwnd < cwnd) cwnd = initialCwnd
         updateQuantum()
     }
 
