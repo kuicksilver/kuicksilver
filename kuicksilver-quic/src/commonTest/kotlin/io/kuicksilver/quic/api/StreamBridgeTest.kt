@@ -11,12 +11,17 @@ import io.kuicksilver.annotations.DelicateKuicksilverApi
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.Initiator
+import io.kuicksilver.quic.QlogSink
+import io.kuicksilver.quic.QlogTrace
 import io.kuicksilver.quic.QuicException
+import io.kuicksilver.quic.quicConfig
+import io.kuicksilver.tls.TlsRole
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import kotlin.concurrent.Volatile
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
@@ -160,6 +165,55 @@ class StreamBridgeTest {
                 }
             }
         }
+
+    /**
+     * Data still buffered in the channel (written without a flush: `output` is auto-flushing, so `writeFully` sends at once)
+     * leaves with the FIN in one STREAM frame on `flushAndClose`: no FIN-only frame in a packet of its own after the data
+     * (interop `zerortt` with quiche: its hq server handled one FIN-only read per pass and left the last nine 0-RTT requests
+     * unanswered).
+     */
+    @OptIn(io.ktor.utils.io.InternalAPI::class)
+    @Test
+    fun flushAndCloseSendsDataAndFinInOnePacket() =
+        runBlocking {
+            ApiPair.open().use { p ->
+                withTimeout(20.seconds) {
+                    val sink = PacketsWithStreamFrames()
+                    val (c, s) = p.connect(quicConfig { qlog = sink })
+                    val st = c.openBidi()
+                    val req = "GET /a-file-name\r\n".encodeToByteArray()
+                    st.output.writeBuffer.write(req, 0, req.size)
+                    st.output.flushAndClose()
+                    val ss = s.acceptStream()
+                    assertContentEquals(req, ss.input.readExactly(req.size))
+                    assertTrue(ss.input.readAvailable(ByteArray(4), 0, 4) < 0, "EOF after FIN")
+                    assertEquals(1, sink.count, "data and FIN in one packet")
+                    c.close()
+                    s.close()
+                }
+            }
+        }
+
+    /** Counts the client's sent packets that carry a STREAM frame. */
+    private class PacketsWithStreamFrames : QlogSink {
+        @Volatile var count = 0
+
+        override fun open(
+            odcidHex: String,
+            role: TlsRole,
+        ): QlogTrace? =
+            if (role != TlsRole.Client) {
+                null
+            } else {
+                object : QlogTrace {
+                    override fun write(record: String) {
+                        if (record.contains("packet_sent") && record.contains("\"frame_type\":\"stream\"")) count++
+                    }
+
+                    override fun close() {}
+                }
+            }
+    }
 
     @Test fun cancelledFlushLosesNoBytes() =
         runBlocking {

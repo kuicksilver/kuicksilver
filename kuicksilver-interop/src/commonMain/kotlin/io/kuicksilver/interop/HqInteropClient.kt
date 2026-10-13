@@ -17,7 +17,6 @@ import io.kuicksilver.tls.keylogFile
 import io.kuicksilver.tls.tlsConfig
 import io.ktor.network.sockets.InetSocketAddress
 import io.ktor.utils.io.readAvailable
-import io.ktor.utils.io.writeFully
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -44,7 +43,7 @@ internal class Url(val host: String, val port: Int, val path: String) {
  * (`multiconnect`), or the first over one connection and the rest over a second that resumes its ticket (`resumption`;
  * `zerortt` sends them in 0-RTT through `connectEarly`).
  */
-@OptIn(DelicateKuicksilverApi::class, ExperimentalKuicksilverApi::class)
+@OptIn(DelicateKuicksilverApi::class, ExperimentalKuicksilverApi::class, io.ktor.utils.io.InternalAPI::class)
 internal object HqInteropClient {
     suspend fun download(requests: List<String>, downloads: String, plan: Testcases.ClientPlan, trust: TrustConfig, keylog: String?, qlog: QlogSink?): Boolean {
         if (requests.isEmpty()) return false
@@ -85,7 +84,9 @@ internal object HqInteropClient {
     private class KeyUpdateOnce(val after: Long) { var received = 0L; var done = false }
     private suspend fun fetch(conn: QuicConnection, url: String, downloads: String, progress: KeyUpdateOnce?): Boolean {
         val path = Url.parse(url).path
-        val st = conn.openBidi(); val req = "GET $path\r\n".encodeToByteArray(); st.output.writeFully(req, 0, req.size); st.output.flushAndClose()
+        // the request goes into the channel's buffer, not through the auto-flushing writeFully, so flushAndClose sends it and
+        // the FIN in one STREAM frame (quiche's hq server leaves 0-RTT requests whose FIN arrives in a frame of its own unanswered)
+        val st = conn.openBidi(); val req = "GET $path\r\n".encodeToByteArray(); st.output.writeBuffer.write(req, 0, req.size); st.output.flushAndClose()
         val out = Buffer(); val buf = ByteArray(65536)
         while (true) {
             val n = st.input.readAvailable(buf, 0, buf.size); if (n < 0) break; out.write(buf, 0, n)
