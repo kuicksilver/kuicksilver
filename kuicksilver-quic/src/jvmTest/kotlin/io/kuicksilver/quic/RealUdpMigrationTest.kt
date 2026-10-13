@@ -74,4 +74,62 @@ class RealUdpMigrationTest {
                 server.close()
             }
         }
+
+    @Test fun closeAfterMigrationReachesTheServer() =
+        runBlocking {
+            KslLoader.ensureLoaded()
+            val server =
+                QuicEndpoint.bind(
+                    InetSocketAddress("127.0.0.1", 0),
+                    QuicEndpointConfig
+                        .Builder()
+                        .apply {
+                            this.server = QuicServerConfig.Builder(CoreFixtures.server()).build()
+                            crypto = KslQuicCrypto
+                        }.build(),
+                )
+            val client =
+                QuicEndpoint.bind(
+                    InetSocketAddress("127.0.0.1", 0),
+                    QuicEndpointConfig.Builder().apply { crypto = KslQuicCrypto }.build(),
+                )
+            try {
+                withTimeout(30.seconds) {
+                    // the soak found server connections that outlived a migrated client's close until their idle timeout
+                    val accepted = async { server.accept() }
+                    val c = client.connect(server.localAddress, QuicClientConfig.Builder(CoreFixtures.client()).build())
+                    val s = accepted.await()
+                    val echo =
+                        launch {
+                            try {
+                                while (true) {
+                                    val st = s.acceptStream()
+                                    val got = st.input.readExactly(1000)
+                                    st.output.writeFully(got, 0, got.size)
+                                    st.output.flushAndClose()
+                                }
+                            } catch (_: QuicException.ConnectionLost) {
+                                // the client's close ends the accept loop
+                            }
+                        }
+
+                    suspend fun roundTrip() {
+                        val st = c.openBidi()
+                        st.output.writeFully(ByteArray(1000), 0, 1000)
+                        st.output.flushAndClose()
+                        st.input.readExactly(1000)
+                    }
+                    roundTrip()
+                    c.migrate(DatagramIo.open(InetSocketAddress("127.0.0.1", 0)))
+                    roundTrip()
+                    c.close(7, "moved")
+                    val r = withTimeout(5.seconds) { s.closed.await() }
+                    assertEquals(7L, (r as QuicException.ConnectionLost.ApplicationClosed).code)
+                    echo.cancel()
+                }
+            } finally {
+                client.close()
+                server.close()
+            }
+        }
 }

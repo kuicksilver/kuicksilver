@@ -178,6 +178,13 @@ static jint j_udp_recv(JNIEnv *e, jclass c, jlong h, jobjectArray bufs, jintArra
 static jbyteArray j_udp_get(JNIEnv *e, jclass c, jlong h, jint what) { (void)c; uint8_t out[300]; size_t n = 0; if (ksl_udp_get(P(ksl_udp, h), what, out, sizeof out, &n) != KSL_OK) return NULL; return new_bytes(e, out, n); }
 static void j_udp_shutdown(JNIEnv *e, jclass c, jlong h) { (void)e; (void)c; ksl_udp_shutdown(P(ksl_udp, h)); }
 static void j_udp_close(JNIEnv *e, jclass c, jlong h) { (void)e; (void)c; ksl_udp_close(P(ksl_udp, h)); }
+static jint j_live_objects(JNIEnv *e, jclass c, jlongArray out) {
+    (void)c; int64_t v[KSL_LIVE_COUNT]; int n = ksl_live_objects(v, KSL_LIVE_COUNT); jlong j[KSL_LIVE_COUNT];
+    jsize len = out ? (*e)->GetArrayLength(e, out) : 0; if (len > KSL_LIVE_COUNT) len = KSL_LIVE_COUNT;
+    for (jsize i = 0; i < len; i++) j[i] = (jlong)v[i];
+    if (len) (*e)->SetLongArrayRegion(e, out, 0, len, j);
+    return n;
+}
 
 #define S_BB "Ljava/nio/ByteBuffer;"
 #define S_STR "Ljava/lang/String;"
@@ -199,6 +206,7 @@ static const JNINativeMethod methods[] = {
     {"rand", "(I)[B", (void *)j_rand}, {"sha2", "(I[B)[B", (void *)j_sha2}, {"hkdfExpandLabel", "(I[B" S_STR "[BI)[B", (void *)j_hkdf}, {"sign", "(I[B[B)[B", (void *)j_sign}, {"verify", "(I[B[B[B)I", (void *)j_verify}, {"spkiSha256", "([B)[B", (void *)j_spki},
     {"udpOpen", "([BI[I[Ljava/lang/String;)J", (void *)j_udp_open}, {"udpSend", "(J[Lio/kuicksilver/native/PacketBuffer;[I[B[BI)I", (void *)j_udp_send}, {"udpRecv", "(J[Lio/kuicksilver/native/PacketBuffer;[I[B[BII)I", (void *)j_udp_recv},
     {"udpGet", "(JI)[B", (void *)j_udp_get}, {"udpShutdown", "(J)V", (void *)j_udp_shutdown}, {"udpClose", "(J)V", (void *)j_udp_close},
+    {"liveObjects", "([J)I", (void *)j_live_objects},
 };
 
 static jint on_load(JavaVM *vm, jint version) {

@@ -143,6 +143,7 @@ ksl_udp *ksl_udp_open(const uint8_t addr[KSL_UDP_ADDR_LEN], int flags, uint32_t 
     struct sockaddr_storage ss; socklen_t sl = sizeof ss;
     if (getsockname(u->fd, (struct sockaddr *)&ss, &sl) == 0) from_sockaddr(&ss, u->local);
     if (u->dual && addr[0] == 4) { memset(u->local + 3, 0, KSL_UDP_ADDR_LEN - 3); u->local[0] = 4; }   /* 0.0.0.0 asked: 0.0.0.0 reported, the port the kernel chose */
+    ksl_live_add(KSL_LIVE_UDP, 1); ksl_live_add(KSL_LIVE_WAKE, (u->wake[0] >= 0) + (u->wake[1] >= 0));
     return u;
 }
 
@@ -167,6 +168,7 @@ void ksl_udp_close(ksl_udp *u) {
     if (!u) return;
     ksl_udp_shutdown(u);
     for (int i = 0; i < 1000 && __atomic_load_n(&u->in_recv, __ATOMIC_SEQ_CST) > 0; i++) { struct timespec ts = { 0, 1000000 }; nanosleep(&ts, NULL); }   /* a receiver woke up and leaves the object */
+    ksl_live_add(KSL_LIVE_UDP, -1); ksl_live_add(KSL_LIVE_WAKE, -((u->wake[0] >= 0) + (u->wake[1] >= 0)));
     if (u->fd >= 0) close(u->fd); if (u->wake[0] >= 0) close(u->wake[0]); if (u->wake[1] >= 0) close(u->wake[1]);
     free(u->scratch); free(u->tx); memset(u, 0, sizeof *u); free(u);
 }

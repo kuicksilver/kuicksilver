@@ -121,6 +121,7 @@ internal fun KuicksilverApplicationEngine.startTcp(
         val selector = SelectorManager(coroutineContext)
         val timeout = configuration.connectionIdleTimeoutSeconds.seconds
         val connections = SupervisorJob(rootJob)
+        tcpConnectionsForProbe += connections
         val tlsConfig = l.tls?.tlsConfig(listOf("http/1.1"))
         val scheme = if (l.tls != null) "https" else "http"
         val acceptJob =

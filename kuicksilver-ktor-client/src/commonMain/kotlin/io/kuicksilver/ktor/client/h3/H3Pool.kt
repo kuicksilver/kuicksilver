@@ -90,6 +90,9 @@ internal class H3Pool(
             connections.values.mapNotNull { it.getCompletedOrNull() }
         }
 
+    /** Entries of the connection map, open or not (the resource probe). */
+    internal suspend fun connectionsForProbe(): Int = lock.withLock { connections.size }
+
     fun close() {
         endpoint?.close()
         endpoint = null

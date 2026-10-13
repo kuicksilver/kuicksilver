@@ -243,6 +243,21 @@ internal class KuicksilverEngine(
         srtt.evictEldest(AltSvcCache.MAX_ORIGINS)
     }
 
+    /** The engine's table sizes (the resource probe, [KuicksilverClientProbe]). */
+    @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+    internal suspend fun probeSizes(): Map<String, Long> {
+        val (idle, idleKeys) = h1.idleForProbe()
+        val (broken, rtts) = altSvcLock.withLock { brokenAltSvc.size to srtt.size }
+        return linkedMapOf(
+            "client.h1Idle" to idle.toLong(),
+            "client.h1IdleKeys" to idleKeys.toLong(),
+            "client.h1Sessions" to h1.sessions.size().toLong(),
+            "client.h3Connections" to h3.connectionsForProbe().toLong(),
+            "client.brokenAltSvc" to broken.toLong(),
+            "client.srtt" to rtts.toLong(),
+        )
+    }
+
     /** The origins with a remembered RTT (tests). */
     internal val srttOrigins: Int get() = srtt.size
 

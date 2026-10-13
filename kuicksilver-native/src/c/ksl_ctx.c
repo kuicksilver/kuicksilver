@@ -90,10 +90,11 @@ ksl_ctx *ksl_ctx_new(int role) {
     SSL_CTX_set_session_cache_mode(c->ctx, SSL_SESS_CACHE_OFF);
     /* required by OpenSSL to resume a session whose handshake verified a client certificate */
     SSL_CTX_set_session_id_context(c->ctx, (const unsigned char *)"ksl", 3);
+    ksl_live_add(KSL_LIVE_CTX, 1);
     return c;
 }
 void ksl_ctx_free(ksl_ctx *c) {
-    if (!c) return; SSL_CTX_free(c->ctx);
+    if (!c) return; ksl_live_add(KSL_LIVE_CTX, -1); SSL_CTX_free(c->ctx);
     if (c->ticket_keys) { OPENSSL_cleanse(c->ticket_keys, c->ticket_key_count * 80); free(c->ticket_keys); }
     free(c);
 }
@@ -122,9 +123,9 @@ ksl_pkey *ksl_pkey_new(const uint8_t *der, size_t len) {
     if (!der || len == 0 || len > 0x7fffffff) return NULL;
     ERR_clear_error(); const unsigned char *p = der; EVP_PKEY *k = d2i_AutoPrivateKey(NULL, &p, (long)len);
     if (k && p != der + len) { EVP_PKEY_free(k); k = NULL; }   /* trailing bytes: not exactly one key */
-    ERR_clear_error(); return (ksl_pkey *)k;
+    ERR_clear_error(); if (k) ksl_live_add(KSL_LIVE_PKEY, 1); return (ksl_pkey *)k;
 }
-void ksl_pkey_free(ksl_pkey *k) { EVP_PKEY_free((EVP_PKEY *)k); }   /* the key types free their private part with BN_clear_free / OPENSSL_clear_free */
+void ksl_pkey_free(ksl_pkey *k) { if (k) ksl_live_add(KSL_LIVE_PKEY, -1); EVP_PKEY_free((EVP_PKEY *)k); }   /* the key types free their private part with BN_clear_free / OPENSSL_clear_free */
 int ksl_ctx_set_identity_pkey(ksl_ctx *c, const uint8_t *chain, size_t chain_len, ksl_pkey *key) {
     if (frozen(c)) return KSL_ERROR; ERR_clear_error();
     if (!key) { ksl_ctx_set_error(c, KSL_E_BAD_ARG, "ksl: no private key"); return KSL_ERROR; }

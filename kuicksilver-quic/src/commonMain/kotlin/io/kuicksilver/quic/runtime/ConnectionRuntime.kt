@@ -52,7 +52,7 @@ internal class ConnectionRuntime(
     private val closedDeferred = CompletableDeferred<QuicException.ConnectionLost>()
     override val closed: Deferred<QuicException.ConnectionLost> get() = closedDeferred
     private val accepted = Channel<QuicStream>(Channel.UNLIMITED)
-    private val streams = HashMap<Long, StreamRuntime>()
+    internal val streams = HashMap<Long, StreamRuntime>() // internal for the resource probe
 
     /** Signalled after every poll: writers and stream openers retry. */
     private val tickers = ArrayList<Channel<Unit>>()
@@ -460,10 +460,22 @@ internal class ConnectionRuntime(
         for (t in tickers) t.trySend(Unit)
     }
 
+    /** The connection reached Closed and leaves the loop: everything, its path sockets included, is released. */
     internal fun finish() {
-        if (!finished) failed(QuicException.ConnectionLost.Internal("connection finished", null))
+        retire(QuicException.ConnectionLost.Internal("connection finished", null))
     }
 
+    /** [failed], and the path sockets are closed even when the core is still closing (the loop or the endpoint goes away). */
+    internal fun retire(reason: QuicException.ConnectionLost) {
+        failed(reason)
+        releasePaths()
+    }
+
+    /**
+     * The application side ends with [reason]. A connection still closing or draining keeps its path sockets and receivers until
+     * [finish]: its CONNECTION_CLOSE goes out on the active path's socket, which after a migration is not the endpoint's, and is
+     * repeated there for the peer's late packets (RFC 9000 section 10.2.1).
+     */
     internal fun failed(reason: QuicException.ConnectionLost) {
         if (finished) return
         finished = true
@@ -471,16 +483,20 @@ internal class ConnectionRuntime(
         handshake.completeExceptionally(reason)
         accepted.close(reason)
         for (s in streams.values) s.connectionLost(reason)
-        for (p in pathList) {
-            p.receiver?.cancel()
-            p.io?.close()
-            if (!p.validation.isCompleted) p.validation.complete(false)
-        }
+        if (core.state == ConnectionState.Closed) releasePaths()
         datagramDrainer.cancel()
         sendQueue.close()
         datagramSignal.close()
         // every waiter (open, flush, keyUpdate, addPath, sendDatagram) wakes with the connection's own reason
         for (t in tickers) t.close(reason)
+    }
+
+    private fun releasePaths() {
+        for (p in pathList) {
+            p.receiver?.cancel()
+            p.io?.close()
+            if (!p.validation.isCompleted) p.validation.complete(false)
+        }
     }
 
     private fun stream(

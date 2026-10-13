@@ -19,6 +19,9 @@ internal class BrokenAltSvc(
     private val marks = LinkedHashMap<String, Mark>()
     private val confirmed = LinkedHashSet<String?>()
 
+    /** Broken marks plus networks where QUIC was confirmed (the resource probe). */
+    val size: Int get() = marks.size + confirmed.size
+
     private fun key(
         origin: String,
         alt: String,

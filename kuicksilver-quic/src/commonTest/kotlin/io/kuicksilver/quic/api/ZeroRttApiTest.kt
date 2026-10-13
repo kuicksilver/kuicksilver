@@ -5,6 +5,8 @@ package io.kuicksilver.quic.api
 import io.ktor.utils.io.readAvailable
 import io.ktor.utils.io.writeFully
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
+import io.kuicksilver.native.Ksl
+import io.kuicksilver.native.KslConst
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.CoreFixtures
 import io.kuicksilver.quic.QuicClientConfig
@@ -88,6 +90,50 @@ class ZeroRttApiTest {
                     assertEquals(true, second.earlyDataAccepted)
                     server.await()
                 }
+            }
+        }
+
+    /** Every native key a 1-RTT and a 0-RTT connection made is freed by the time both endpoints closed (found by the soak harness). */
+    @Test fun keysOfResumedConnectionsAreFreed(): Unit =
+        runBlocking {
+            for (early in listOf(false, true)) {
+                val before = Ksl.liveObjects()[KslConst.LIVE_KEY]
+                val p = ApiPair.open(crypto = KslQuicCrypto, serverEarlyData = true)
+                withTimeout(20.seconds) {
+                    val server =
+                        async {
+                            repeat(4) {
+                                val c = p.server.accept()
+                                val s = c.acceptStream()
+                                val got = s.input.readAll()
+                                s.output.writeFully(got.encodeToByteArray())
+                                s.output.flushAndClose()
+                                c.closed.await()
+                            }
+                        }
+                    val sessions = (p.client as EndpointLoop).sessions
+                    repeat(4) {
+                        val c =
+                            if (early) {
+                                p.client.connectEarly(p.server.localAddress, clientConfig())
+                            } else {
+                                p.client.connect(p.server.localAddress, QuicClientConfig.Builder(CoreFixtures.client()).build())
+                            }
+                        assertEquals("x$it", c.echo("x$it"))
+                        c.awaitHandshake()
+                        if (early) while (sessions.size() == 0) yield()
+                        c.close()
+                    }
+                    server.await()
+                }
+                p.client.closeAndJoin()
+                p.server.closeAndJoin()
+                // other tests' endpoints may still be finishing their close (they only free keys): never more than before
+                val after = Ksl.liveObjects()[KslConst.LIVE_KEY]
+                assertTrue(
+                    after <= before,
+                    "native keys left after ${if (early) "0-RTT" else "1-RTT"} connections: $before before, $after after",
+                )
             }
         }
 

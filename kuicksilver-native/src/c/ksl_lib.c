@@ -36,6 +36,14 @@ const char *ksl_version(void) {
 }
 uint32_t ksl_abi_version(void) { return KSL_ABI_VERSION; }
 
+/* 32-bit cells: 64-bit atomics would need libatomic on some 32-bit Android ABIs; no build holds 2^31 live objects */
+static int32_t live[KSL_LIVE_COUNT];
+void ksl_live_add(int which, int delta) { if (which >= 0 && which < KSL_LIVE_COUNT) __atomic_add_fetch(&live[which], delta, __ATOMIC_RELAXED); }
+int ksl_live_objects(int64_t *out, size_t n) {
+    for (size_t i = 0; out && i < n && i < KSL_LIVE_COUNT; i++) out[i] = __atomic_load_n(&live[i], __ATOMIC_RELAXED);
+    return KSL_LIVE_COUNT;
+}
+
 uint32_t ksl_pack_openssl_error(unsigned long e) {
     return ((uint32_t)ERR_GET_LIB(e) << 16) | (uint32_t)(ERR_GET_REASON(e) & 0xffff);
 }

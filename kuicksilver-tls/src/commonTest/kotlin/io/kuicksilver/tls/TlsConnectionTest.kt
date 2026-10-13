@@ -143,6 +143,41 @@ class TlsConnectionTest {
             }
         }
 
+    @Test fun fullDuplexKeepsRecordOrder(): Unit =
+        runBlocking(Dispatchers.Default) {
+            // both pumps drain ciphertext to the transport: the reader after each read, the writer after each write. Two drains
+            // racing reordered records on the wire (the peer answered bad_record_mac; found by the soak)
+            repeat(4) { round ->
+                val (c, s) = both()
+                try {
+                    val size = 4 shl 20
+                    val up = ByteArray(size) { (it * 7 + round).toByte() }
+                    val down = ByteArray(size) { (it * 13 + round).toByte() }
+                    withTimeout(60.seconds) {
+                        val sw =
+                            async {
+                                s.output.writeFully(down, 0, size)
+                                s.output.flush()
+                            }
+                        val cw =
+                            async {
+                                c.output.writeFully(up, 0, size)
+                                c.output.flush()
+                            }
+                        val sr = async { s.input.readExactly(size) }
+                        val cr = async { c.input.readExactly(size) }
+                        assertContentEquals(up, sr.await(), "client to server, round $round")
+                        assertContentEquals(down, cr.await(), "server to client, round $round")
+                        sw.await()
+                        cw.await()
+                    }
+                } finally {
+                    c.close()
+                    s.close()
+                }
+            }
+        }
+
     @Test fun shutdownDeliversEofToPeer(): Unit =
         runBlocking {
             val (c, s) = both()

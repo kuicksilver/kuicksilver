@@ -62,6 +62,9 @@ struct ksl_key {
     uint8_t key[32], iv[12], hp[32]; size_t key_len;
 };
 
+/* live-object counters (ksl_lib.c): which = KSL_LIVE_*, relaxed atomic add */
+void ksl_live_add(int which, int delta);
+
 /* error helpers (ksl_lib.c) */
 uint32_t ksl_pack_openssl_error(unsigned long e);
 void ksl_ctx_set_error(ksl_ctx *c, uint32_t fallback, const char *msg);

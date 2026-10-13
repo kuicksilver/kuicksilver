@@ -128,6 +128,23 @@ class MigrationApiTest {
             }
         }
 
+    @Test fun closeAfterMigrationReachesThePeer() =
+        runBlocking {
+            ApiPair.open().use { p ->
+                withTimeout(30.seconds) {
+                    // the CONNECTION_CLOSE goes out on the new path; without it the server keeps the connection until its idle timeout
+                    val (c, s) = p.connect()
+                    assertTrue(echo(c, s, 4 shl 10))
+                    c.migrate(p.net.open(newAddr))
+                    assertTrue(echo(c, s, 4 shl 10))
+                    c.close(7, "moved")
+                    val sr = withTimeout(5.seconds) { s.closed.await() }
+                    assertIs<QuicException.ConnectionLost.ApplicationClosed>(sr)
+                    assertEquals(7L, sr.code)
+                }
+            }
+        }
+
     @Test fun serverPathListStaysBoundedAcrossMigrations() =
         runBlocking {
             ApiPair.open().use { p ->
