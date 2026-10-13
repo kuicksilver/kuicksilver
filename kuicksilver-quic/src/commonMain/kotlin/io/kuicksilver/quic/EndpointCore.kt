@@ -228,6 +228,7 @@ public class EndpointCore(
         // the endpoint's CSPRNG itself: a child Random(seed) would let an observer recover the 64-bit seed from two cleartext CIDs
         val core = ConnectionCore.client(quic, client.tls, config.crypto, remote, random, now, resetKey, client.earlyData)
         attach(core)
+        connectionsCreated++
         return core
     }
 
@@ -253,7 +254,6 @@ public class EndpointCore(
         if (testHoldNewConnectionIds && core.role == TlsRole.Server) core.cids.holdNewCidsForTest = true
         registry.add(core.localCid, core)
         connections += core
-        connectionsCreated++
         markDirty(core)
         // rotated IDs route and reset like the first one
         if (core.role == TlsRole.Server) core.cids.generator = { r -> ServerCidFormat.generate(loopIndex, cidLength, r) }

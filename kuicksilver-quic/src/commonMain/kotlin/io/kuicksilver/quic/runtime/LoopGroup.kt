@@ -94,7 +94,10 @@ internal class LoopGroup private constructor(
         for (l in loops) l.closeAndJoin()
     }
 
-    /** Copies one datagram of loop `from`'s socket to loop [to]; a full queue drops it (the peer retransmits). */
+    /**
+     * Copies one datagram of loop `from`'s socket to loop [to]; false when it was dropped because [to]'s queue is full or
+     * closed (the peer retransmits; the caller counts it in `datagramsDroppedQueue`).
+     */
     internal fun forward(
         to: Int,
         buf: PacketBuffer,
@@ -102,11 +105,11 @@ internal class LoopGroup private constructor(
         from: InetSocketAddress,
         ecn: Ecn,
         asReceived: Boolean,
-    ) {
-        if (to >= loops.size || length > EndpointLoop.FORWARD_MAX) return
+    ): Boolean {
+        if (to >= loops.size || length > EndpointLoop.FORWARD_MAX) return true // not a queue drop: no loop takes it
         val bytes = ByteArray(length)
         buf.copyTo(bytes, 0, 0, length)
-        loops[to].forwarded.trySend(EndpointLoop.Forwarded(bytes, from, ecn, asReceived))
+        return loops[to].forwarded.trySend(EndpointLoop.Forwarded(bytes, from, ecn, asReceived)).isSuccess
     }
 
     internal fun loopForTest(i: Int): EndpointLoop = loops[i]

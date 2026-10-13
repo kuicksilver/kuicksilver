@@ -338,12 +338,12 @@ internal class EndpointLoop private constructor(
     ) {
         val misroute = testMisrouteTo
         if (misroute >= 0 && group != null) {
-            group.forward(misroute, buf, length, from, ecn, asReceived = true)
+            if (!group.forward(misroute, buf, length, from, ecn, asReceived = true)) core.droppedQueue++
             return
         }
         if (core.handleDatagram(buf, length, from, ecn, now) != null || group == null) return
         val owner = core.ownerLoop(buf, length)
-        if (owner >= 0 && owner != index) group.forward(owner, buf, length, from, ecn, asReceived = false)
+        if (owner >= 0 && owner != index && !group.forward(owner, buf, length, from, ecn, asReceived = false)) core.droppedQueue++
     }
 
     /** Receive rounds (this socket's and the forwarded ones) between two yields: timers and commands share the dispatcher with the receivers. */
