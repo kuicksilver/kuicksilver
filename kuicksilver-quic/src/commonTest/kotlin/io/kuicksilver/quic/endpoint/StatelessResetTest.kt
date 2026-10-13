@@ -256,6 +256,27 @@ class StatelessResetTest {
         }
     }
 
+    /**
+     * Review finding 19, RFC 9000 section 10.3: "An endpoint that sends a Stateless Reset in response to a packet that is 43 bytes or
+     * shorter SHOULD send a Stateless Reset that is one byte shorter than the packet it responds to." A random length down to 21
+     * bytes made small resets stand out (section 10.3.3); longer triggers get at least 43 bytes.
+     */
+    @Test fun resetForSmallTriggerIsOneByteShorter() {
+        val out = PacketBuffer.allocate(1500)
+        try {
+            val token = ByteArray(16) { 1 }
+            for (seed in 0 until 50) {
+                for (size in 22..43) assertEquals(size - 1, StatelessReset.write(out, token, size, Random(seed)), "trigger of $size bytes")
+                for (size in 44..120) {
+                    val n = StatelessReset.write(out, token, size, Random(seed))
+                    assertTrue(n in 43 until size, "trigger of $size bytes: reset of $n")
+                }
+            }
+        } finally {
+            out.close()
+        }
+    }
+
     /** Fuzzing finding (endpointRoute, packetRecvServer): a trigger larger than the 1500-byte answer buffer overflowed it. */
     @Test fun negative_resetForJumboDatagramFitsItsBuffer() {
         val p = Pair()
