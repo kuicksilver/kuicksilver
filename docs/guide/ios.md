@@ -199,7 +199,8 @@ client, run the app on two devices, or point the echo screen at `samples/realtim
 1. **Wi-Fi and cellular, separately**: HTTP/3 GET of a public site with System trust; echo to a server on the LAN
    (Wi-Fi only).
 2. **Handover under load**: an echo session with 300 rounds every 250 ms, then walk out of Wi-Fi range (or turn Wi-Fi
-   off). Today use Rebind; with network following, the log must show `path changed` without a new handshake.
+   off), once with "Follow the default network" on and once with Rebind by hand; the log must show `path changed`
+   without a new handshake.
 3. **Backgrounding**: start an echo session, background the app for 5 s, 60 s and 5 min, return; note whether the
    session survives (the idle timeout is 30 s) and that a new one works.
 4. **Low Power Mode**: repeat 1 and 2.

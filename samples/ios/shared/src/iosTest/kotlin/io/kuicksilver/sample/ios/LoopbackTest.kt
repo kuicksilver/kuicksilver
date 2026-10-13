@@ -30,6 +30,23 @@ class LoopbackTest {
         }
     }
 
+    @Test fun echoWhileFollowingTheDefaultNetwork() = runBlocking {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        val server = SampleServer.start(0, scope) { println(it) }
+        var following: AutoCloseable? = null
+        try {
+            // the simulator's default path does not change: the migrator starts on NWPathMonitor and stays out of the way
+            val echo =
+                quicEcho("::1", server.port, "ping", rounds = 3, intervalMs = 0, mode = TrustMode.SAMPLE_CA, tofu = MemoryTofuStore(), log = { println(it) }) { c ->
+                    following = followDefaultNetwork(c, scope)
+                }
+            assertEquals(3, echo.rounds)
+        } finally {
+            following?.close()
+            server.close(); scope.cancel()
+        }
+    }
+
     @Test fun parsesUrls() {
         assertEquals(ParsedUrl("example.com", 443, "/"), parseHttpsUrl("https://example.com"))
         assertEquals(ParsedUrl("::1", 4433, "/x?y"), parseHttpsUrl("https://[::1]:4433/x?y"))

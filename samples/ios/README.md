@@ -12,13 +12,13 @@ guide for iOS users is [docs/guide/ios.md](../../docs/guide/ios.md).
 | Screen | What it does |
 |---|---|
 | HTTP/3 | GET of any `https://` URL over HTTP/3 (default `https://cloudflare-quic.com/`): status, headers, body, RTT |
-| QUIC echo | a raw QUIC session (ALPN `kuicksilver-echo`) with a line per round (time, smoothed and min RTT) and per path event; Rebind moves it to a new socket; "Follow the default network" switches itself on once the library has it |
+| QUIC echo | a raw QUIC session (ALPN `kuicksilver-echo`) with a line per round (time, smoothed and min RTT) and per path event; Rebind moves it to a new socket; "Follow the default network" keeps it on the system's default network (`followDefaultNetwork`, `NWPathMonitor`) |
 | Server | QUIC on `[::]:4433` serving an HTTP/3 page and the echo protocol on one port, advertised over Bonjour as `_kuicksilver._udp` |
 | Trust | System (SecTrust), the sample CA (`certs/gen.sh`), or trust on first use |
 
 | Path | What |
 |---|---|
-| `shared/` | the Kotlin side: `SampleFacade` (callbacks to Swift, no SKIE), `ClientOps.kt`, `SampleServer.kt`, `NetworkFollowing.kt` (the hook for `followDefaultNetwork`), a simulator test of the operations |
+| `shared/` | the Kotlin side: `SampleFacade` (callbacks to Swift, no SKIE), `ClientOps.kt`, `SampleServer.kt`, `NetworkFollowing.kt` (`followDefaultNetwork`), a simulator test of the operations |
 | `kuicksilver-swift/` | the umbrella that produces `Kuicksilver.xcframework` (+ dSYMs, privacy manifest) and its SwiftPM zip for Swift-only apps |
 | `KuicksilverSample.xcodeproj`, `KuicksilverSample/` | the app; `Config/` holds the xcconfigs, Info.plists and the Run Script |
 | `KuicksilverSampleTests/` | XCTest calling the facade from Swift on the simulator |

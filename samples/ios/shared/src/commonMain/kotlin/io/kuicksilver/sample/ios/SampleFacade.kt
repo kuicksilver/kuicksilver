@@ -32,7 +32,7 @@ class SampleFacade internal constructor(private val callbacks: CoroutineDispatch
     private var server: SampleServer? = null
     private var echoConnection: QuicConnection? = null
 
-    /** True once the library can follow the default network (k7/ios-lib); the echo screen enables its toggle then. */
+    /** True when the library can follow the default network; the echo screen enables its toggle then. */
     val followDefaultNetworkAvailable: Boolean get() = FOLLOW_DEFAULT_NETWORK_AVAILABLE
 
     /** HTTP/3 GET of an `https://` [url]. */
@@ -56,10 +56,19 @@ class SampleFacade internal constructor(private val callbacks: CoroutineDispatch
     ): SampleTask {
         val log = logger(onLog)
         return launchOp({
-            quicEcho(host, port, message, rounds, intervalMs, trust, tofu, log) { c ->
-                echoConnection = c
-                if (followNetwork) log(if (followDefaultNetwork(c, scope)) "following the default network" else "following the default network is not available in this build (k7/ios-lib)")
-            }.also { echoConnection = null }
+            var following: AutoCloseable? = null
+            try {
+                quicEcho(host, port, message, rounds, intervalMs, trust, tofu, log) { c ->
+                    echoConnection = c
+                    if (followNetwork) {
+                        following = followDefaultNetwork(c, scope)
+                        log("following the default network")
+                    }
+                }
+            } finally {
+                following?.close() // the migrator ends with its session, not with the app-wide scope
+                echoConnection = null
+            }
         }, onResult)
     }
 

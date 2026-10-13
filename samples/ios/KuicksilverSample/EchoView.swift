@@ -25,8 +25,7 @@ struct EchoView: View {
                     Stepper("Every \(intervalMs) ms", value: $intervalMs, in: 0...10_000, step: 250)
                 }
                 Section {
-                    // Wired to SampleFacade.followDefaultNetworkAvailable: enabled once the library ships
-                    // QuicConnection.followDefaultNetwork for Apple (k7/ios-lib), with no change here.
+                    // SampleFacade.followDefaultNetworkAvailable: QuicConnection.followDefaultNetwork (NWPathMonitor).
                     Toggle("Follow the default network", isOn: $followNetwork)
                         .disabled(!model.facade.followDefaultNetworkAvailable)
                     if !model.facade.followDefaultNetworkAvailable {
