@@ -324,13 +324,28 @@ internal class StreamManager(
      * was already closed and retired: frames for closed streams are ignored (section 3; a spurious retransmit must not
      * fail the connection). A locally initiated stream the application never opened is STREAM_STATE_ERROR.
      */
-    private fun peerStream(id: Long): Entry? {
-        streams[id]?.let { return it }
+    private fun peerStream(
+        id: Long,
+        frameType: Long,
+        receiving: Boolean,
+    ): Entry? {
         val bidi = StreamIds.isBidi(id)
+        val local = StreamIds.isLocal(id, role)
+        // the missing half of a unidirectional stream, live, retired or not yet opened (RFC 9000 sections 19.4, 19.5, 19.8, 19.10,
+        // 19.13): STREAM, RESET_STREAM and STREAM_DATA_BLOCKED on our send-only stream, MAX_STREAM_DATA and STOP_SENDING on our
+        // receive-only one
+        if (!bidi && receiving == local) {
+            throw QuicWireException(
+                TransportError.STREAM_STATE_ERROR,
+                frameType,
+                "frame 0x${frameType.toString(16)} on our ${if (local) "send" else "receive"}-only stream $id",
+            )
+        }
+        streams[id]?.let { return it }
         val i = if (bidi) 0 else 1
-        if (StreamIds.isLocal(id, role)) {
+        if (local) {
             if (StreamIds.index(id) < nextIndex[i]) return null
-            throw QuicWireException(TransportError.STREAM_STATE_ERROR, 0x08, "stream $id was not opened by us")
+            throw QuicWireException(TransportError.STREAM_STATE_ERROR, frameType, "stream $id was not opened by us")
         }
         if (StreamIds.index(id) < nextPeerIndex[i]) return null
         limits.onPeerStream(id)
@@ -373,7 +388,7 @@ internal class StreamManager(
         len: Int,
         fin: Boolean,
     ) {
-        val e = peerStream(id) ?: return
+        val e = peerStream(id, 0x08, receiving = true) ?: return
         val r = e.recv ?: throw QuicWireException(TransportError.STREAM_STATE_ERROR, 0x08, "STREAM frame on our send-only stream $id")
         val before = r.readable
         val advanced = r.onData(offset, data, off, len, fin)
@@ -396,7 +411,7 @@ internal class StreamManager(
         finalSize: Long,
     ) {
         val e =
-            peerStream(id) ?: return
+            peerStream(id, 0x04, receiving = true) ?: return
         val r =
             e.recv ?: throw QuicWireException(TransportError.STREAM_STATE_ERROR, 0x04, "RESET_STREAM on our send-only stream $id")
         val advanced = r.onReset(code, finalSize)
@@ -414,7 +429,7 @@ internal class StreamManager(
         code: Long,
     ) {
         val e =
-            peerStream(id) ?: return
+            peerStream(id, 0x05, receiving = false) ?: return
         val s =
             e.send ?: throw QuicWireException(TransportError.STREAM_STATE_ERROR, 0x05, "STOP_SENDING on our receive-only stream $id")
         if (s.state == SendState.ResetSent || s.state == SendState.DataRecvd) return
@@ -432,7 +447,7 @@ internal class StreamManager(
         max: Long,
     ): Boolean {
         val e =
-            peerStream(id) ?: return true
+            peerStream(id, 0x11, receiving = false) ?: return true
         val s =
             e.send ?: throw QuicWireException(TransportError.STREAM_STATE_ERROR, 0x11, "MAX_STREAM_DATA on our receive-only stream $id")
         val grew = sendLimit[id]!!.onMaxUpdate(max)
@@ -527,7 +542,7 @@ internal class StreamManager(
         now: TimeMark,
         smoothedRtt: Duration,
     ): Boolean {
-        val e = peerStream(id) ?: return true
+        val e = peerStream(id, 0x15, receiving = true) ?: return true
         val r =
             e.recv ?: throw QuicWireException(TransportError.STREAM_STATE_ERROR, 0x15, "STREAM_DATA_BLOCKED on our send-only stream $id")
         if (!blockedReportDue(r.blockedSeenAt, now, smoothedRtt)) return false

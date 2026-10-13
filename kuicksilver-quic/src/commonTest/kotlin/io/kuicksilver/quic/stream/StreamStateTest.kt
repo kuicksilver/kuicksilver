@@ -298,6 +298,45 @@ class StreamStateTest {
         assertEquals(0x05L, code { m.onMaxStreamData(id + 4, 5000) }) // a local stream we never opened is still STREAM_STATE_ERROR
     }
 
+    /**
+     * Review finding 12, RFC 9000 sections 19.4, 19.5, 19.8, 19.10 and 19.13: a frame for the missing half of a unidirectional stream
+     * is STREAM_STATE_ERROR also after the stream was closed and retired (it used to be ignored like a late retransmission).
+     */
+    @Test fun wrongDirectionFrameOnRetiredUniStreamIsStreamStateError() {
+        val server = manager(TlsRole.Server)
+        recv(server, 2, 0, ByteArray(10), fin = true)
+        assertEquals(10, server.read(2, ByteArray(10), 0, 10))
+        assertEquals(-1, server.read(2, ByteArray(10), 0, 10))
+        assertTrue(!server.isOpen(2), "the client's uni stream is retired")
+        val e1 = assertFailsWith<QuicWireException> { server.onMaxStreamData(2, 5000) }
+        assertEquals(0x05L, e1.code)
+        assertEquals(0x11L, e1.frameType)
+        val e2 = assertFailsWith<QuicWireException> { server.onStopSending(2, 7) }
+        assertEquals(0x05L, e2.code)
+        assertEquals(0x05L, e2.frameType)
+
+        val client = manager(TlsRole.Client)
+        val id = client.open(bidi = false, StreamPriority.Default)
+        client.write(id, ByteArray(10), 0, 10, fin = true)
+        client.onFramesAcked(sendOnce(client)!!)
+        assertTrue(!client.isOpen(id), "our uni stream is retired")
+        assertEquals(0x05L, code { recv(client, id, 0, ByteArray(1)) })
+        val e3 = assertFailsWith<QuicWireException> { client.onResetStream(id, 1, 10) }
+        assertEquals(0x05L, e3.code)
+        assertEquals(0x04L, e3.frameType)
+        val e4 = assertFailsWith<QuicWireException> { client.onStreamDataBlocked(id, 10, client.now, client.smoothedRtt) }
+        assertEquals(0x05L, e4.code)
+        assertEquals(0x15L, e4.frameType)
+    }
+
+    /** Review finding 21, RFC 9000 section 19.19: the Frame Type of a stream error names the frame that caused it. */
+    @Test fun unopenedLocalStreamErrorNamesItsFrame() {
+        val m = manager(TlsRole.Client)
+        assertEquals(0x11L, assertFailsWith<QuicWireException> { m.onMaxStreamData(4, 5000) }.frameType)
+        assertEquals(0x05L, assertFailsWith<QuicWireException> { m.onStopSending(4, 1) }.frameType)
+        assertEquals(0x04L, assertFailsWith<QuicWireException> { m.onResetStream(4, 1, 0) }.frameType)
+    }
+
     @Test fun resetByPeerReturnsConnectionCredit() {
         val m = manager(TlsRole.Server)
         recv(m, 0, 0, ByteArray(400_000))
