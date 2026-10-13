@@ -3,3 +3,5 @@
 package io.kuicksilver.ktor.client.contract
 
 internal actual val contractPlatform: String = "jvm"
+
+internal actual val contractOnWindows: Boolean = System.getProperty("os.name").orEmpty().startsWith("Windows")

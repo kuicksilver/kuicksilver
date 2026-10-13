@@ -31,7 +31,11 @@ class DownloadTest : ClientLoader() {
 
     @Test
     fun testDownloadWithSlowConsumer() =
-        clientTests(timeout = 10.seconds) {
+        // Kuicksilver: the consumer's own delay(1 ms) per read is one timer tick on Windows (>= 15.6 ms on the JVM, 56-92 ms
+        // measured for Kotlin/Native in the Windows 11 VM), so 512 reads of 8 KiB spend 8-47 s in delay alone, over the 10 s
+        // budget for h1 and h3 alike, while the transfer itself takes < 0.1 s (h1) and ~0.7 s (h3) there. The budget scales
+        // on Windows only; the test is otherwise Ktor's.
+        clientTests(timeout = if (contractOnWindows) 90.seconds else 10.seconds) {
             test { client ->
                 val size = 4 * 1024 * 1024
                 client.prepareGet("$TEST_SERVER/download?size=$size").body<ByteReadChannel, Unit> { channel ->
