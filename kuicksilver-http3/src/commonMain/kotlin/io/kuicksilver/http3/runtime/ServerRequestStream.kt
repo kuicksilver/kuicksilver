@@ -140,7 +140,7 @@ internal suspend fun handleRequestStream(
             req.done()
             return@with
         }
-        pumpBody(st, frames, req.bodyChannel, req.trailersDeferred, contentLength(parsed.regular)) { f ->
+        pumpBody(st, frames, req.bodyChannel, req.trailersDeferred, contentLength(parsed.regular), tunnel = { req.tunnel }) { f ->
             if (f.code == Http3ErrorCode.EXCESSIVE_LOAD && !req.responseStarted) reject431(st) else abort(st, f.code)
             req.done()
         }
@@ -229,8 +229,9 @@ internal class ServerRequestImpl(
 
     private val datagramChannel = if (method == "CONNECT") session.datagrams.register(st.id) else null
 
-    /** A CONNECT answered with 2xx: each direction ends on its own, the exchange is over when both did. */
-    private var tunnel = false
+    /** A CONNECT answered with 2xx: each direction ends on its own, the exchange is over when both did; only DATA may arrive (RFC 9114 section 4.4). */
+    var tunnel = false
+        private set
     private var sendEnded = false
     private var receiveEnded = false
 

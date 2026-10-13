@@ -3,6 +3,7 @@
 package io.kuicksilver.http3.runtime
 
 import io.ktor.utils.io.copyTo
+import io.ktor.utils.io.readAvailable
 import io.ktor.utils.io.writeFully
 import io.kuicksilver.http3.H3Pair
 import io.kuicksilver.http3.Http3Connection
@@ -233,6 +234,64 @@ class ExtendedConnectTest {
                     Http3ErrorCode.MESSAGE_ERROR,
                     assertFailsWith<QuicException.StreamError.Reset> { st.input.readAllBytes() }.code,
                 )
+            }
+        }
+
+    /**
+     * RFC 9114 section 4.4: once CONNECT completed only DATA may follow; any other known frame (HEADERS) is a connection
+     * error H3_FRAME_UNEXPECTED. Before, the server took it as the request's trailers and ended the tunnel's input.
+     */
+    @Test fun headersOnEstablishedTunnelIsFrameUnexpectedOnServer() =
+        h3Test {
+            QuicPair.open().useScoped { q ->
+                val (c, s) = q.connect()
+                val server = Http3Connection.server(s, connectOn)
+                val raw = RawPeer(c)
+                raw.openControl()
+                val st = c.openBidi()
+                val req =
+                    listOf(
+                        ":method" to "CONNECT",
+                        ":protocol" to "websocket",
+                        ":scheme" to "https",
+                        ":authority" to "a",
+                        ":path" to "/ws",
+                    )
+                st.output.writeFully(raw.headers(st.id, req) + raw.data("hello".encodeToByteArray()))
+                st.output.flush()
+                val tunnel = server.acceptRequest().acceptConnect()
+                launch { runCatching { tunnel.input.readAllBytes() } }
+                // the 2xx arrived: the tunnel is established
+                val head = ByteArray(1)
+                st.input.readAvailable(head, 0, 1)
+                peerMayHaveClosed {
+                    st.output.writeFully(raw.headers(st.id, listOf("x-after" to "tunnel")))
+                    st.output.flush()
+                }
+                assertEquals(Http3ErrorCode.FRAME_UNEXPECTED, withTimeout(5.seconds) { peerSawClose(c) })
+            }
+        }
+
+    /** The client side of the same rule: HEADERS from the server after its 2xx closes the connection with H3_FRAME_UNEXPECTED. */
+    @Test fun headersOnEstablishedTunnelIsFrameUnexpectedOnClient() =
+        h3Test {
+            QuicPair.open().useScoped { q ->
+                val (c, s) = q.connect()
+                val client = Http3Connection.client(c)
+                val raw = RawPeer(s)
+                raw.openControl(listOf(SettingsId.ENABLE_CONNECT_PROTOCOL to 1L))
+                launch {
+                    val st = s.acceptBidi()
+                    peerMayHaveClosed {
+                        st.output.writeFully(raw.headers(st.id, listOf(":status" to "200")) + raw.data("hi".encodeToByteArray()))
+                        st.output.flush()
+                        st.output.writeFully(raw.headers(st.id, listOf("x-after" to "tunnel")))
+                        st.output.flush()
+                    }
+                }
+                val stream = client.connect(connectReq(), "websocket")
+                runCatching { stream.input.readAllBytes() }
+                assertEquals(Http3ErrorCode.FRAME_UNEXPECTED, withTimeout(5.seconds) { peerSawClose(s) })
             }
         }
 

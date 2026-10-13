@@ -244,6 +244,7 @@ private suspend fun H3Session.exchange(
                         frames,
                         sender,
                         sendFailure,
+                        tunnel = r.method == "CONNECT" && status in 200..299,
                         bodyLimit =
                             when {
                                 r.method == "CONNECT" && status in 200..299 -> null
@@ -370,6 +371,7 @@ internal class ResponseImpl(
     frames: RequestFrames,
     private val sender: Job?,
     sendFailure: CompletableDeferred<Unit>? = null,
+    tunnel: Boolean = false,
     bodyLimit: Long? = null,
 ) : Http3Response {
     private val st get() = stream
@@ -381,7 +383,14 @@ internal class ResponseImpl(
     override val trailers: Deferred<Http3Headers?> get() = trailersDeferred
     internal val pump: Job =
         session.scope.launch {
-            session.pumpBody(st, frames, bodyChannel, trailersDeferred, bodyLimit) { f -> session.run { abortClient(f.code) } }
+            session.pumpBody(
+                st,
+                frames,
+                bodyChannel,
+                trailersDeferred,
+                bodyLimit,
+                tunnel = { tunnel },
+            ) { f -> session.run { abortClient(f.code) } }
         }
 
     init {

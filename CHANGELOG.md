@@ -560,6 +560,9 @@ HTTP/3 (`kuicksilver-http3`):
   peer would reject (`te` other than `trailers`, a bad method, path or authority, a `host` differing from the
   authority) before it opens a stream, and request trailers or response trailers (`finish`) with a pseudo-header, a
   connection-specific field or `te` throw it too and reset the stream — instead of being sent for the peer to reset.
+- A HEADERS frame on an established CONNECT tunnel (a 2xx was sent or received, Extended CONNECT and WebSockets
+  included) was taken as trailers and silently ended the tunnel's input; it is now a connection error
+  `H3_FRAME_UNEXPECTED`, on the server and on the client (RFC 9114 section 4.4).
 
 Ktor client (`kuicksilver-ktor-client`):
 

@@ -63,7 +63,8 @@ internal suspend fun H3Session.abort(
 
 /**
  * Reads the rest of a message after its first HEADERS: DATA into [out], optional trailers into [trailers], nothing after
- * them (RFC 9114 section 4.1). `content-length` must match the DATA total (section 4.1.2).
+ * them (RFC 9114 section 4.1). `content-length` must match the DATA total (section 4.1.2). While [tunnel] is true (a
+ * CONNECT answered with 2xx) only DATA may come: a HEADERS frame is a connection error H3_FRAME_UNEXPECTED (section 4.4).
  */
 internal suspend fun H3Session.pumpBody(
     st: QuicStream,
@@ -71,6 +72,7 @@ internal suspend fun H3Session.pumpBody(
     out: ByteChannel,
     trailers: CompletableDeferred<Http3Headers?>,
     contentLength: Long?,
+    tunnel: () -> Boolean = { false },
     onStreamFailure: suspend (StreamFailure) -> Unit,
 ) {
     val buf = ByteArray(CHUNK)
@@ -96,6 +98,12 @@ internal suspend fun H3Session.pumpBody(
                 }
 
                 is RequestFrame.Headers -> {
+                    if (tunnel()) {
+                        throw H3ProtocolError(
+                            Http3ErrorCode.FRAME_UNEXPECTED,
+                            "HEADERS on the established CONNECT stream ${st.id}",
+                        )
+                    }
                     if (trailerFields != null) throw H3ProtocolError(Http3ErrorCode.FRAME_UNEXPECTED, "HEADERS after trailers")
                     trailerFields =
                         try {
@@ -108,6 +116,12 @@ internal suspend fun H3Session.pumpBody(
                 }
 
                 is RequestFrame.HeadersTooLarge -> {
+                    if (tunnel()) {
+                        throw H3ProtocolError(
+                            Http3ErrorCode.FRAME_UNEXPECTED,
+                            "HEADERS on the established CONNECT stream ${st.id}",
+                        )
+                    }
                     throw StreamFailure(
                         Http3ErrorCode.EXCESSIVE_LOAD,
                         Http3Exception.FieldSectionTooLarge(st.id, settings.maxFieldSectionSize),
