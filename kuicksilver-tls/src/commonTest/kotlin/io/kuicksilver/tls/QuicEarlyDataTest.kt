@@ -11,6 +11,7 @@ import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -168,6 +169,23 @@ class QuicEarlyDataTest {
         assertFalse(c.enableEarlyData(null, null), "the ticket carries no early_data")
         assertNull(c.earlyDataAccepted)
         c.close()
+    }
+
+    /**
+     * Fuzzing finding (zeroRttHello): reading the early-data verdict of a session whose handshake failed threw the native
+     * layer's KslException, which the session contract keeps inside. It reads as "no early data".
+     */
+    @Test fun negative_earlyDataVerdictAfterFailedHandshake() {
+        val s = KslQuicCrypto.newSession(Fixtures.server(), earlyData = true)
+        try {
+            assertTrue(s.enableEarlyData(byteArrayOf(1), SetAdmission()))
+            s.setTransportParameters(Fixtures.tp)
+            s.provide(EncryptionLevel.Initial, byteArrayOf(1, 0, 0, 4, 3, 3, 0, 0))
+            assertIs<DriveResult.Failed>(s.drive())
+            assertNull(s.earlyDataAccepted, "a failed hello got no early data")
+        } finally {
+            s.close()
+        }
     }
 
     @Test fun noTicketsWithoutEarlyDataOption() {
