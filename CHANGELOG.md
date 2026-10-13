@@ -481,6 +481,8 @@ HTTP/3 (`kuicksilver-http3`):
 
 Ktor client (`kuicksilver-ktor-client`):
 
+- An `engine { tls { } }` block that set `alpn` or `serverName` replaced the request's: every HTTP/3 handshake failed on
+  ALPN, or the certificate was verified against another name. Both are now set from the request after the block.
 - Setting `quic = quicConfig { connectionIdLength = … }` alone made every HTTP/3 connect fail: the engine's endpoint
   kept its default length of 8. The endpoint and the connections now share one length (the one left at the default
   follows the other); two different explicit values fail the engine's creation with `IllegalArgumentException`.

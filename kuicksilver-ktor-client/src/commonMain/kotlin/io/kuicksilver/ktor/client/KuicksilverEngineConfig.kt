@@ -111,7 +111,11 @@ public class KuicksilverEngineConfig : HttpClientEngineConfig() {
     /** Client certificate, when servers ask for one. */
     public var identity: TlsIdentity? = null
 
-    /** Further TLS settings applied after the engine's (ALPN and server name come from the request). */
+    /**
+     * Further TLS settings, applied after [trust] and [identity] (so the block may replace them). ALPN and the server name
+     * come from the request (`h3` or `http/1.1`, the URL's host) and are set after the block: values the block gives them
+     * are not used. Verify another name with `TrustConfig.ExpectedName` instead.
+     */
     public var tls: TlsConfig.Builder.() -> Unit = {}
 
     /**

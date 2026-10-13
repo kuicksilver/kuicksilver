@@ -34,11 +34,12 @@ internal fun KuicksilverEngineConfig.tlsConfigFor(
     alpn: List<String>,
 ): TlsConfig =
     tlsConfig(TlsRole.Client) {
-        this.alpn = alpn
-        serverName = host
         trust = this@tlsConfigFor.trust
         identity = this@tlsConfigFor.identity
         tls()
+        // the request decides these: another ALPN fails every handshake, another name verifies the wrong certificate
+        this.alpn = alpn
+        serverName = host
     }
 
 /**
