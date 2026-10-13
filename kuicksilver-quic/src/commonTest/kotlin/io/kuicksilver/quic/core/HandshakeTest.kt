@@ -15,7 +15,12 @@ import io.kuicksilver.quic.StreamPriority
 import io.kuicksilver.quic.TestCerts
 import io.kuicksilver.quic.ksl
 import io.kuicksilver.tls.Certificate
+import io.kuicksilver.tls.QuicCrypto
+import io.kuicksilver.tls.QuicTlsSession
+import io.kuicksilver.tls.TlsConfig
+import io.kuicksilver.tls.TlsEvent
 import io.kuicksilver.tls.TlsException
+import io.kuicksilver.tls.TlsRole
 import io.kuicksilver.tls.TrustConfig
 import io.kuicksilver.tls.VerifyResult
 import kotlin.test.BeforeTest
@@ -26,10 +31,31 @@ import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.seconds
 
 @OptIn(ExperimentalKuicksilverApi::class, DelicateKuicksilverApi::class)
 class HandshakeTest {
     @BeforeTest fun load() = KslLoader.ensureLoaded()
+
+    /** RFC 9001 section 8.2: a peer without the quic_transport_parameters extension is closed with 0x016d (missing_extension). */
+    @Test fun negative_missingTransportParametersIsMissingExtension() {
+        for (role in listOf(TlsRole.Server, TlsRole.Client)) {
+            // the session of [role] never reports the peer's transport parameters, as if the extension were absent
+            val p = CorePair(crypto = WithoutPeerTransportParameters(ksl, role))
+            try {
+                p.runUntil(limit = 2.seconds) {
+                    (if (role == TlsRole.Server) p.closedReason(p.serverEvents) else p.closedReason(p.clientEvents)) != null
+                }
+                val events = if (role == TlsRole.Server) p.serverEvents else p.clientEvents
+                val r = p.closedReason(events)
+                assertIs<QuicException.ConnectionLost.TransportClosed>(r, "$role")
+                assertEquals(0x16dL, r.code, "$role")
+                assertFalse(events.any { it is ConnectionEvent.HandshakeCompleted }, "$role")
+            } finally {
+                p.close()
+            }
+        }
+    }
 
     @Test fun nullHandshakeCompletesBothSides() {
         val p = CorePair()
@@ -280,3 +306,33 @@ class HandshakeTest {
 }
 
 private fun Int.milliseconds() = kotlin.time.Duration.parse("${this}ms")
+
+/** Hides the peer's transport parameters from the sessions of [role] (a peer that sent no quic_transport_parameters). */
+private class WithoutPeerTransportParameters(
+    private val inner: QuicCrypto,
+    private val role: TlsRole,
+) : QuicCrypto by inner {
+    override fun newSession(config: TlsConfig): QuicTlsSession = wrap(config, inner.newSession(config))
+
+    override fun newSession(
+        config: TlsConfig,
+        earlyData: Boolean,
+    ): QuicTlsSession = wrap(config, inner.newSession(config, earlyData))
+
+    private fun wrap(
+        config: TlsConfig,
+        s: QuicTlsSession,
+    ): QuicTlsSession =
+        if (config.role != role) {
+            s
+        } else {
+            object : QuicTlsSession by s {
+                override fun nextEvent(): TlsEvent? {
+                    while (true) {
+                        val e = s.nextEvent() ?: return null
+                        if (e !is TlsEvent.PeerTransportParameters) return e
+                    }
+                }
+            }
+        }
+}

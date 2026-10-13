@@ -294,6 +294,7 @@ internal class ConnectionHandshakeSink(
             protector.close()
             return
         }
+        if (level == 3) requirePeerTransportParameters()
         if (level == 1 && (core.state != ConnectionState.Handshaking || (direction == Direction.Write) != (core.role == TlsRole.Client))) {
             protector.close()
             return
@@ -430,8 +431,20 @@ internal class ConnectionHandshakeSink(
         }
     }
 
+    /**
+     * RFC 9001 section 8.2: by the time TLS has 1-RTT keys the peer's quic_transport_parameters extension (ClientHello or
+     * EncryptedExtensions) has been processed; without it the connection closes with missing_extension (0x016d), before the
+     * transport parameter checks of RFC 9000 section 7.3 could be skipped.
+     */
+    private fun requirePeerTransportParameters() {
+        if (core.peerTp == null) {
+            throw QuicWireException(TransportError.crypto(109), 0, "no quic_transport_parameters extension from the peer")
+        }
+    }
+
     override fun onHandshakeDone() {
         if (core.state != ConnectionState.Handshaking) return
+        requirePeerTransportParameters()
         // the Handshake level ends with the peer's Finished; sealed only now, since a TLS stack may hand a server its 1-RTT
         // read key before that Finished arrives (BoringSSL's QUIC API and NullTlsSession do)
         core.cryptoStreams.seal(2)
