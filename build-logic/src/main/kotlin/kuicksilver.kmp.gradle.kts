@@ -14,6 +14,10 @@ plugins {
 group = "io.kuicksilver"
 version = providers.gradleProperty("kuicksilver.version").getOrElse("0.1.0-SNAPSHOT")
 
+// `<package>.<Class>.**` of the top-level @InternalKuicksilverApi classes in the main sources (see the ABI filter below)
+val internalAbiPatterns: Provider<List<String>> =
+    providers.provider { internalClassPatterns(kotlin.sourceSets.filterNot { it.name.endsWith("Test") }.flatMap { it.kotlin.srcDirs }) }
+
 kotlin {
     explicitApi()
     applyDefaultHierarchyTemplate {
@@ -39,8 +43,18 @@ kotlin {
     iosArm64(); iosSimulatorArm64()
     mingwX64()
 
+    // internal API is not part of the public ABI, so it stays out of the ABI dumps. annotatedWith drops the annotated
+    // declarations; in the JVM dumps it keeps their companions and nested classes, so the top-level internal classes are
+    // also excluded by name with everything inside them (checkInternalAbi below verifies the result)
     @OptIn(ExperimentalAbiValidation::class)
-    abiValidation { filters { exclude { annotatedWith.add("io.kuicksilver.annotations.InternalKuicksilverApi") } } }   // internal API is not part of the public ABI, so it stays out of the ABI dumps
+    abiValidation {
+        filters {
+            exclude {
+                annotatedWith.add(INTERNAL_API_ANNOTATION)
+                byNames.addAll(internalAbiPatterns)
+            }
+        }
+    }
 
     // test source sets may use the internal API (NullCryptoProvider, address literals); production code opts in per use site
     sourceSets.matching { it.name.endsWith("Test") }.configureEach { languageSettings.optIn("io.kuicksilver.annotations.InternalKuicksilverApi") }
@@ -87,3 +101,15 @@ tasks.withType<Test>().matching { it.name == "jvmTest" }.configureEach {
     }
     providers.gradleProperty("kuicksilver.test.jvmArgs").orNull?.let { a -> jvmArgs(a.split(' ').filter { it.isNotBlank() }) }
 }
+
+// The JVM and Android dumps must not list a class nested in an @InternalKuicksilverApi class (its companion, a nested
+// type): checked from the compiled classes, independently of the dump filter above.
+val checkInternalAbi = tasks.register<CheckInternalAbiTask>("checkInternalAbi") {
+    group = "verification"
+    description = "Fails when an ABI dump lists a class annotated, or nested in a class annotated, with @InternalKuicksilverApi"
+    dumps.from(layout.projectDirectory.file("api/jvm/${project.name}.api"), layout.projectDirectory.file("api/android/${project.name}.api"))
+    for (compile in listOf("compileKotlinJvm", "compileAndroidMain")) {
+        classDirs.from(tasks.named<org.jetbrains.kotlin.gradle.tasks.KotlinJvmCompile>(compile).flatMap { it.destinationDirectory })
+    }
+}
+tasks.matching { it.name == "check" || it.name == "checkKotlinAbi" }.configureEach { if (name == "check") dependsOn(checkInternalAbi) else finalizedBy(checkInternalAbi) }
