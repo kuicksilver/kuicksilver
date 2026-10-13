@@ -130,4 +130,34 @@ class QuicConfigTest {
         ) // default: the preferred one
         assertFailsWith<IllegalArgumentException> { quicConfig { initialVersion = VersionProfile.V2 } } // not among versions
     }
+
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    @Test
+    fun toBuilderKeepsEverySetting() {
+        val sink =
+            object : QlogSink {
+                override fun open(
+                    odcidHex: String,
+                    role: TlsRole,
+                ): QlogTrace? = null
+            }
+        val c =
+            quicConfig {
+                maxIdleTimeout = 5.seconds
+                keepAlive = 1.seconds
+                maxBidiStreams = 7
+                versions = listOf(VersionProfile.V2, VersionProfile.V1)
+                maxDatagramFrameSize = 0
+                greaseQuicBit = false
+            }
+        val copy = c.toBuilder().apply { qlog = sink }.build()
+        assertEquals(5.seconds, copy.maxIdleTimeout)
+        assertEquals(1.seconds, copy.keepAlive)
+        assertEquals(7L, copy.maxBidiStreams)
+        assertEquals(c.versions, copy.versions)
+        assertEquals(0L, copy.maxDatagramFrameSize)
+        assertFalse(copy.greaseQuicBit)
+        assertTrue(copy.qlog === sink && c.qlog == null)
+        assertTrue(copy.limits === c.limits)
+    }
 }

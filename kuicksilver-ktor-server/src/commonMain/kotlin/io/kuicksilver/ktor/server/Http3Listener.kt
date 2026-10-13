@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.kuicksilver.ktor.server
 
+import io.ktor.http.HttpProtocolVersion
 import io.ktor.network.sockets.InetSocketAddress
 import io.ktor.server.engine.handleFailure
 import io.ktor.util.pipeline.execute
@@ -71,8 +72,9 @@ private fun KuicksilverApplicationEngine.http3Settings(): Http3Settings =
         }
     }
 
+@OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
 private fun KuicksilverApplicationEngine.http3EndpointConfig(tls: KuicksilverTlsConnector): QuicEndpointConfig {
-    val quic =
+    val base =
         configuration.quicMaxIdleTimeout?.let { idle ->
             if (configuration.quic ===
                 QuicConfig.Default
@@ -83,6 +85,7 @@ private fun KuicksilverApplicationEngine.http3EndpointConfig(tls: KuicksilverTls
             }
         }
             ?: configuration.quic
+    val quic = configuration.qlog?.let { sink -> base.toBuilder().apply { qlog = sink }.build() } ?: base
     return QuicEndpointConfig
         .Builder()
         .apply {
@@ -97,6 +100,8 @@ private fun KuicksilverApplicationEngine.http3EndpointConfig(tls: KuicksilverTls
             connectionIdLength = quic.connectionIdLength
             loops = configuration.udpSocketCount
             configuration.quicAdmission?.let { admission = it }
+            logger = configuration.logger
+            listener = configuration.connectionListener
         }.build()
 }
 
@@ -129,6 +134,11 @@ internal suspend fun KuicksilverApplicationEngine.startHttp3(
                             break
                         }
                     listener.add(conn)
+                    val remote =
+                        conn.quic.paths
+                            .firstOrNull()
+                            ?.remoteAddress
+                    events.emit("connectionOpened") { connectionOpened(HttpProtocolVersion.HTTP_3_0, remote) }
                     // the last resort: a failure that still reaches this coroutine is logged, not left uncaught (Native aborts on those)
                     launch(
                         connections +
@@ -161,6 +171,7 @@ internal suspend fun KuicksilverApplicationEngine.startHttp3(
                         } finally {
                             listener.remove(conn)
                             conn.close()
+                            events.emit("connectionClosed") { connectionClosed(HttpProtocolVersion.HTTP_3_0, remote) }
                         }
                     }
                 }
@@ -194,10 +205,15 @@ private suspend fun KuicksilverApplicationEngine.handleHttp3(
                 userDispatcher,
                 webSocket,
             )
+        events.emit("requestStarted") { requestStarted(HttpProtocolVersion.HTTP_3_0, call) }
+        var failure: Throwable? = null
         try {
             pipeline.execute(call)
         } catch (error: Throwable) {
+            failure = error
             handleFailure(call, error)
+        } finally {
+            events.emit("requestEnded") { requestEnded(HttpProtocolVersion.HTTP_3_0, call, failure) }
         }
     }
 }

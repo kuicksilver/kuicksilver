@@ -6,6 +6,16 @@
 // - Show declarations: true
 
 // Library unique name: <io.kuicksilver:kuicksilver-ktor-server>
+abstract class io.kuicksilver.ktor.server/KuicksilverServerEventListener { // io.kuicksilver.ktor.server/KuicksilverServerEventListener|null[0]
+    constructor <init>() // io.kuicksilver.ktor.server/KuicksilverServerEventListener.<init>|<init>(){}[0]
+
+    open fun connectionClosed(io.ktor.http/HttpProtocolVersion, io.ktor.network.sockets/InetSocketAddress?) // io.kuicksilver.ktor.server/KuicksilverServerEventListener.connectionClosed|connectionClosed(io.ktor.http.HttpProtocolVersion;io.ktor.network.sockets.InetSocketAddress?){}[0]
+    open fun connectionOpened(io.ktor.http/HttpProtocolVersion, io.ktor.network.sockets/InetSocketAddress?) // io.kuicksilver.ktor.server/KuicksilverServerEventListener.connectionOpened|connectionOpened(io.ktor.http.HttpProtocolVersion;io.ktor.network.sockets.InetSocketAddress?){}[0]
+    open fun requestEnded(io.ktor.http/HttpProtocolVersion, io.ktor.server.application/ApplicationCall, kotlin/Throwable?) // io.kuicksilver.ktor.server/KuicksilverServerEventListener.requestEnded|requestEnded(io.ktor.http.HttpProtocolVersion;io.ktor.server.application.ApplicationCall;kotlin.Throwable?){}[0]
+    open fun requestStarted(io.ktor.http/HttpProtocolVersion, io.ktor.server.application/ApplicationCall) // io.kuicksilver.ktor.server/KuicksilverServerEventListener.requestStarted|requestStarted(io.ktor.http.HttpProtocolVersion;io.ktor.server.application.ApplicationCall){}[0]
+    open fun tlsHandshakeFailed(io.ktor.network.sockets/InetSocketAddress?, kotlin/Throwable) // io.kuicksilver.ktor.server/KuicksilverServerEventListener.tlsHandshakeFailed|tlsHandshakeFailed(io.ktor.network.sockets.InetSocketAddress?;kotlin.Throwable){}[0]
+}
+
 final class io.kuicksilver.ktor.server/KuicksilverApplicationEngine : io.ktor.server.engine/BaseApplicationEngine { // io.kuicksilver.ktor.server/KuicksilverApplicationEngine|null[0]
     constructor <init>(io.ktor.server.application/ApplicationEnvironment, io.ktor.events/Events, kotlin/Boolean, io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration, kotlin/Function0<io.ktor.server.application/Application>) // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.<init>|<init>(io.ktor.server.application.ApplicationEnvironment;io.ktor.events.Events;kotlin.Boolean;io.kuicksilver.ktor.server.KuicksilverApplicationEngine.Configuration;kotlin.Function0<io.ktor.server.application.Application>){}[0]
 
@@ -26,6 +36,12 @@ final class io.kuicksilver.ktor.server/KuicksilverApplicationEngine : io.ktor.se
         final var connectionIdleTimeoutSeconds // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration.connectionIdleTimeoutSeconds|{}connectionIdleTimeoutSeconds[0]
             final fun <get-connectionIdleTimeoutSeconds>(): kotlin/Int // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration.connectionIdleTimeoutSeconds.<get-connectionIdleTimeoutSeconds>|<get-connectionIdleTimeoutSeconds>(){}[0]
             final fun <set-connectionIdleTimeoutSeconds>(kotlin/Int) // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration.connectionIdleTimeoutSeconds.<set-connectionIdleTimeoutSeconds>|<set-connectionIdleTimeoutSeconds>(kotlin.Int){}[0]
+        final var connectionListener // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration.connectionListener|{}connectionListener[0]
+            final fun <get-connectionListener>(): io.kuicksilver.quic/ConnectionListener? // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration.connectionListener.<get-connectionListener>|<get-connectionListener>(){}[0]
+            final fun <set-connectionListener>(io.kuicksilver.quic/ConnectionListener?) // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration.connectionListener.<set-connectionListener>|<set-connectionListener>(io.kuicksilver.quic.ConnectionListener?){}[0]
+        final var eventListener // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration.eventListener|{}eventListener[0]
+            final fun <get-eventListener>(): io.kuicksilver.ktor.server/KuicksilverServerEventListener? // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration.eventListener.<get-eventListener>|<get-eventListener>(){}[0]
+            final fun <set-eventListener>(io.kuicksilver.ktor.server/KuicksilverServerEventListener?) // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration.eventListener.<set-eventListener>|<set-eventListener>(io.kuicksilver.ktor.server.KuicksilverServerEventListener?){}[0]
         final var http3 // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration.http3|{}http3[0]
             final fun <get-http3>(): kotlin/Boolean // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration.http3.<get-http3>|<get-http3>(){}[0]
             final fun <set-http3>(kotlin/Boolean) // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration.http3.<set-http3>|<set-http3>(kotlin.Boolean){}[0]
@@ -35,6 +51,12 @@ final class io.kuicksilver.ktor.server/KuicksilverApplicationEngine : io.ktor.se
         final var identity // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration.identity|{}identity[0]
             final fun <get-identity>(): io.kuicksilver.tls/TlsIdentity? // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration.identity.<get-identity>|<get-identity>(){}[0]
             final fun <set-identity>(io.kuicksilver.tls/TlsIdentity?) // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration.identity.<set-identity>|<set-identity>(io.kuicksilver.tls.TlsIdentity?){}[0]
+        final var logger // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration.logger|{}logger[0]
+            final fun <get-logger>(): io.kuicksilver.quic/KuicksilverLogger // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration.logger.<get-logger>|<get-logger>(){}[0]
+            final fun <set-logger>(io.kuicksilver.quic/KuicksilverLogger) // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration.logger.<set-logger>|<set-logger>(io.kuicksilver.quic.KuicksilverLogger){}[0]
+        final var qlog // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration.qlog|{}qlog[0]
+            final fun <get-qlog>(): io.kuicksilver.quic/QlogSink? // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration.qlog.<get-qlog>|<get-qlog>(){}[0]
+            final fun <set-qlog>(io.kuicksilver.quic/QlogSink?) // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration.qlog.<set-qlog>|<set-qlog>(io.kuicksilver.quic.QlogSink?){}[0]
         final var quic // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration.quic|{}quic[0]
             final fun <get-quic>(): io.kuicksilver.quic/QuicConfig // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration.quic.<get-quic>|<get-quic>(){}[0]
             final fun <set-quic>(io.kuicksilver.quic/QuicConfig) // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration.quic.<set-quic>|<set-quic>(io.kuicksilver.quic.QuicConfig){}[0]

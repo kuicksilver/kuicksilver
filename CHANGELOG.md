@@ -56,6 +56,38 @@ QUIC (`kuicksilver-quic`, `kuicksilver-native`):
   kept a 2.3 ms mean queue where CUBIC queued 274 ms (`guide/quic.md`). Loss detection now reports a packet declared
   lost and acknowledged later (RFC 9002 section 6.1).
 
+- Observability, experimental (docs/guide/quic.md "Observability"): `QuicEndpoint.stats` sums `EndpointStats` over every
+  loop and gains connection (active, accepted, refused by accept queue, admission, limits or shutdown), handshake
+  (completed, failed by timeout, TLS alert or other), 0-RTT (offered, accepted, rejected), datagram (in, out, dropped at
+  the socket, a queue, undecryptable, unanswered), path validation and internal failure counters (`uncaughtFailures`,
+  `sendFailures`, `listenerFailures`), all plain loop fields with no cost per packet; `KuicksilverLogger`
+  (`QuicEndpointConfig.logger`, default `KuicksilverLogger.Stderr`, which keeps the old warning on standard error) with
+  `Debug` connection lifecycle lines that never carry keys, secrets, tickets or tokens; `ConnectionListener`
+  (`QuicEndpointConfig.listener`: opened, handshake complete, 0-RTT outcome, path changed, closed with its
+  `ConnectionLost` reason); `AsyncQlogSink`, which runs any `QlogSink` on its own writer with a bounded queue (drops
+  counted) and 1-in-N sampling so a slow disk never stalls the endpoint loop; `QuicConfig.toBuilder()`.
+- Graceful shutdown, experimental: `QuicEndpoint.shutdown(grace, code, reason)` refuses new clients at their first
+  Initial with a stateless CONNECTION_REFUSED (the accept-queue refusal), lets live connections finish within `grace`,
+  then closes the rest with an application CONNECTION_CLOSE and the endpoint.
+
+HTTP/3 (`kuicksilver-http3`):
+
+- `Http3Endpoint.stats` (the endpoint's `EndpointStats`) and `Http3Endpoint.shutdown`, which shuts the QUIC endpoint
+  down gracefully and closes what is left with H3_NO_ERROR (experimental).
+
+Ktor client (`kuicksilver-ktor-client`):
+
+- Observability, experimental (docs/guide/ktor.md "Observability"): `KuicksilverEventListener` (call start/end/failure,
+  protocol chosen and why, race outcome, Alt-Svc used and marked broken, fallback, retry, pool acquire/release),
+  `logger`, `http3.qlog`, `http3.connectionListener`.
+
+Ktor server (`kuicksilver-ktor-server`):
+
+- Observability, experimental: `KuicksilverServerEventListener` (connections and requests over HTTP/1.1 and HTTP/3,
+  failed TLS handshakes), `logger`, `qlog`, `connectionListener`. The server's `stop(gracePeriod, timeout)` now shuts
+  each HTTP/3 endpoint down with `QuicEndpoint.shutdown` next to its GOAWAY, so a client arriving during the grace
+  period is refused within a round trip instead of timing out.
+
 Testing (`kuicksilver-testing`, not published) and tooling:
 
 - `MemoryNetwork(receiveBuffer, assignEphemeralPorts)` (`@ExperimentalKuicksilverApi`): sockets of the in-memory network

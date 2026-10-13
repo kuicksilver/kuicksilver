@@ -12,6 +12,7 @@ import io.ktor.client.plugins.SocketTimeoutException
 import io.ktor.client.request.HttpRequestData
 import io.ktor.client.request.HttpResponseData
 import io.ktor.http.HttpHeaders
+import io.ktor.http.HttpProtocolVersion
 import io.ktor.http.Url
 import io.ktor.http.content.OutgoingContent
 import io.ktor.http.isSecure
@@ -24,6 +25,7 @@ import io.ktor.util.date.GMTDate
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.ByteWriteChannel
 import io.ktor.utils.io.ClosedReadChannelException
+import io.kuicksilver.ktor.client.EngineEvents
 import io.kuicksilver.ktor.client.KuicksilverEngineConfig
 import io.kuicksilver.ktor.client.connectTimeoutMillis
 import io.kuicksilver.ktor.client.isIdempotent
@@ -74,6 +76,7 @@ internal class H1Connection(
 internal class H1Pool(
     private val config: KuicksilverEngineConfig,
     private val selector: SelectorManager,
+    private val events: EngineEvents = EngineEvents(null, io.kuicksilver.quic.KuicksilverLogger.None),
 ) {
     private val idle = HashMap<String, ArrayDeque<H1Connection>>()
     private val lock = Mutex()
@@ -93,12 +96,13 @@ internal class H1Pool(
             found
         }
 
-    private fun give(c: H1Connection) {
-        if (c.closed) return
+    /** Back to the idle list; false when it was closed instead (closed already, the lock contended, the list full). */
+    private fun give(c: H1Connection): Boolean {
+        if (c.closed) return false
         // released from a body reader's completion handler: no suspension there, so tryLock and close if contended
         if (!lock.tryLock()) {
             c.close()
-            return
+            return false
         }
         try {
             val q = idle.getOrPut(c.key) { ArrayDeque() }
@@ -106,8 +110,10 @@ internal class H1Pool(
                 config.maxConnectionsPerHost
             ) {
                 q.addLast(c)
+                return true
             } else {
                 c.close()
+                return false
             }
         } finally {
             lock.unlock()
@@ -160,6 +166,7 @@ internal class H1Pool(
             val reused = if (given == null) take(key) else null
             val conn = given ?: reused ?: connect(data, url, secure, proxy != null, key)
             given = null
+            events.emit("connectionAcquired") { connectionAcquired(data, HttpProtocolVersion.HTTP_1_1, reused = reused != null) }
             var bodyJob: BodySender? = null
             try {
                 val requestTime = GMTDate()
@@ -178,11 +185,26 @@ internal class H1Pool(
                 val job = bodyJob
                 return withSocketTimeout(data) {
                     readResponse(requestTime, data, conn.input, conn.output, callContext) { after ->
+                        fun released(kept: Boolean) =
+                            events.emit("connectionReleased") { connectionReleased(data, HttpProtocolVersion.HTTP_1_1, kept) }
+
                         fun settle(a: AfterResponse) {
                             when (a) {
-                                AfterResponse.Reuse -> give(conn)
-                                AfterResponse.Close -> conn.close()
-                                AfterResponse.HandOver -> callContext[Job]?.invokeOnCompletion { conn.close() }
+                                AfterResponse.Reuse -> {
+                                    released(give(conn))
+                                }
+
+                                AfterResponse.Close -> {
+                                    conn.close()
+                                    released(false)
+                                }
+
+                                AfterResponse.HandOver -> {
+                                    callContext[Job]?.invokeOnCompletion {
+                                        conn.close()
+                                        released(false)
+                                    }
+                                }
                             }
                         }
                         if (job == null || after != AfterResponse.Reuse) {
@@ -205,6 +227,7 @@ internal class H1Pool(
                     (e is ClosedReadChannelException || e is kotlinx.io.IOException) && e !is TlsException
                 ) {
                     first = false
+                    events.emit("retry") { retry(data, 2, e) }
                     continue
                 }
                 throw e

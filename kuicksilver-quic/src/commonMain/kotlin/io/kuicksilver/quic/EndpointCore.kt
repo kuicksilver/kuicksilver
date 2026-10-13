@@ -154,6 +154,17 @@ public class EndpointCore(
     internal var versionNegotiations = 0L
     internal var admissionContractViolations = 0L
     internal var connectionsCreated = 0L
+
+    // ---- observability (EndpointStats): plain counters, the loop's thread only ----
+    internal var refusedAdmission = 0L
+    internal var refusedLimits = 0L
+    internal var refusedShutdown = 0L
+    internal var droppedQueue = 0L
+    internal var droppedUndecryptable = 0L
+    internal var droppedStateless = 0L
+
+    /** Set by `QuicEndpoint.shutdown`: every new client Initial is refused with CONNECTION_REFUSED, statelessly (RFC 9000 section 10.2.3). */
+    @Volatile internal var shuttingDown = false
     internal var testForgeRetryScidInTp = false
 
     /** Test hook: connections examined as Stateless Reset candidates by the last unknown short header. */
@@ -184,14 +195,22 @@ public class EndpointCore(
     /** Counters since the endpoint started. */
     public val stats: EndpointStats get() =
         EndpointStats(
-            initialsDropped,
-            retriesSent,
-            invalidTokens,
-            versionNegotiations,
-            statelessResets,
-            statelessRateLimited,
-            admissionContractViolations,
-            connectionsCreated,
+            initialsDropped = initialsDropped,
+            retriesSent = retriesSent,
+            invalidTokens = invalidTokens,
+            versionNegotiations = versionNegotiations,
+            statelessResets = statelessResets,
+            statelessRateLimited = statelessRateLimited,
+            admissionContractViolations = admissionContractViolations,
+            connectionsCreated = connectionsCreated,
+            connectionsActive = connections.size.toLong(),
+            connectionsRefusedAcceptQueue = acceptQueueRefusals,
+            connectionsRefusedAdmission = refusedAdmission,
+            connectionsRefusedLimits = refusedLimits,
+            connectionsRefusedShutdown = refusedShutdown,
+            datagramsDroppedQueue = droppedQueue,
+            datagramsDroppedUndecryptable = droppedUndecryptable,
+            datagramsDroppedStateless = droppedStateless,
         )
 
     /** A new client connection to [remote]; its first [ConnectionCore.poll] produces the Initial datagrams. */
@@ -313,8 +332,14 @@ public class EndpointCore(
         now: TimeMark,
         socket: PathId,
     ): ConnectionCore? {
-        if (!PacketHeaderCodec.parse(data, 0, length, cidLength, hv)) return null
-        if (hv.isVersionNegotiation && config.server != null) return null // a server never acts on Version Negotiation
+        if (!PacketHeaderCodec.parse(data, 0, length, cidLength, hv)) {
+            droppedUndecryptable++
+            return null
+        }
+        if (hv.isVersionNegotiation && config.server != null) {
+            droppedStateless++
+            return null
+        } // a server never acts on Version Negotiation
         registry.lookup(data, hv.dcidOff, hv.dcidLen)?.let {
             deliver(it, data, length, from, ecn, now, socket)
             return it
@@ -324,6 +349,7 @@ public class EndpointCore(
                 deliver(it, data, length, from, ecn, now)
                 return it
             }
+            droppedStateless++
             return null
         }
         if (hv.type == PacketType.OneRtt) {
@@ -345,6 +371,7 @@ public class EndpointCore(
             ) {
                 if (!limiter.allow(from, now)) {
                     statelessRateLimited++
+                    droppedStateless++
                     return null
                 }
                 val token = ByteArray(16)
@@ -357,32 +384,54 @@ public class EndpointCore(
                     vnBuffer.copyTo(bytes, 0, 0, n)
                     stateless += Stateless(bytes, from)
                     statelessResets++
+                    return null
                 }
             }
+            if (!foreignCid(data)) droppedStateless++
             return null
         }
-        val server = config.server ?: return null
+        val server =
+            config.server ?: run {
+                droppedStateless++
+                return null
+            }
         if (hv.type == PacketType.ZeroRtt && serverEarly != null && !hv.unsupportedVersion) {
             bufferEarly(data, length, from, ecn, now)
             return null
         } // its Initial may still wait in the admission queue, or be reordered behind it (RFC 9000 section 17.2.3)
         // ---- cheap checks before anything is remembered about this datagram (threat-model 3.2) ----
-        if (length < 1200) return null
-        if (hv.unsupportedVersion || VersionProfile.of(hv.version)?.let { it !in server.quic.versions } != false) {
-            if (hv.type == PacketType.Initial || hv.unsupportedVersion) queueVersionNegotiation(data, length, from, server.quic, now)
+        if (length < 1200) {
+            droppedStateless++
             return null
         }
-        if (hv.type != PacketType.Initial) return null
-        if (hv.dcidLen < 8) return null
+        if (hv.unsupportedVersion || VersionProfile.of(hv.version)?.let { it !in server.quic.versions } != false) {
+            if (hv.type == PacketType.Initial ||
+                hv.unsupportedVersion
+            ) {
+                queueVersionNegotiation(data, length, from, server.quic, now)
+            } else {
+                droppedStateless++
+            }
+            return null
+        }
+        if (hv.type != PacketType.Initial || hv.dcidLen < 8) {
+            if (!foreignCid(data)) droppedStateless++
+            return null
+        }
         if (from.port == 0) {
             initialsDropped++
+            droppedStateless++
             return null
         } // no socket answers port 0 and the kernel refuses the reply (EINVAL): a spoofed Initial must not cost a send
         if (config.rejectInitialFromReflectivePorts && AddressClass.isReflectivePort(from.port)) {
             initialsDropped++
+            droppedStateless++
             return null
         } // threat-model 3.1: silence to a reflection source
-        if (!queue!!.offer(data, length, from, ecn, now)) initialsDropped++ // the queue is bounded; overflow is a drop
+        if (!queue!!.offer(data, length, from, ecn, now)) {
+            initialsDropped++
+            droppedQueue++
+        } // the queue is bounded; overflow is a drop
         return null
     }
 
@@ -427,6 +476,11 @@ public class EndpointCore(
         }
         return created
     }
+
+    /** The parsed DCID is in our server format with another loop's routing byte: a group forwards it there, it is not dropped. */
+    private fun foreignCid(data: PacketBuffer): Boolean =
+        config.server != null && hv.dcidLen == cidLength && data[hv.dcidOff].toInt() == ServerCidFormat.FORMAT_VERSION &&
+            (data[hv.dcidOff + 1].toInt() and 0xff) != loopIndex
 
     /** One connection's failure stays its own: an exception out of the core closes that connection, never the endpoint. */
     internal fun deliver(

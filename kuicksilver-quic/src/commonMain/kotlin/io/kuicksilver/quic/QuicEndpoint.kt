@@ -6,6 +6,7 @@ import io.ktor.network.sockets.InetSocketAddress
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.quic.runtime.EndpointLoop
 import io.kuicksilver.quic.runtime.LoopGroup
+import kotlin.time.Duration
 
 /**
  * A bound UDP endpoint hosting QUIC connections: one endpoint loop, or `QuicEndpointConfig.loops` of them on one port (docs/architecture.md, `kuicksilver-quic`).
@@ -42,6 +43,35 @@ public interface QuicEndpoint : AutoCloseable {
 
     /** [close] and then waits until every connection is closed and the socket released: a port can be rebound right after. */
     public suspend fun closeAndJoin()
+
+    /**
+     * The endpoint's counters summed over all its loops (docs/guide/quic.md, "Observability"): admission outcomes,
+     * handshakes, 0-RTT, datagrams and their drops, internal failures. A cheap snapshot that any thread may take.
+     */
+    @ExperimentalKuicksilverApi
+    public val stats: EndpointStats
+
+    /**
+     * Graceful shutdown (docs/guide/quic.md, "Graceful shutdown"): stops taking new connections, lets the existing ones
+     * finish within [grace], then closes what is left and the endpoint itself; returns once the socket is released, like
+     * [closeAndJoin].
+     *
+     * From the call on, a new client's Initial is refused at once with a stateless CONNECTION_CLOSE carrying
+     * CONNECTION_REFUSED (under the stateless rate limits), as when the accept queue is full, and `connect` throws
+     * [QuicException.EndpointClosing]. Handshakes already in flight go on, and `accept()` still hands out the connections
+     * that complete. Nothing is sent to the existing connections: an application protocol tells its peers to go away on
+     * its own (HTTP/3 sends GOAWAY, which the Kuicksilver Ktor server does when it stops). Once every connection has
+     * closed, or at the deadline, the remaining ones are closed with an application CONNECTION_CLOSE carrying [code] and
+     * [reason]. A second call, or [close] meanwhile, ends the grace period at once.
+     */
+    @ExperimentalKuicksilverApi
+    public suspend fun shutdown(
+        grace: Duration,
+        code: Long = 0,
+        reason: String = "shutdown",
+    ) {
+        closeAndJoin()
+    }
 
     /** Holds [bind], the way to create an endpoint. */
     public companion object {

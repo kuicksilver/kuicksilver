@@ -81,6 +81,19 @@ final enum class io.kuicksilver.quic/IoPreference : kotlin/Enum<io.kuicksilver.q
     final fun values(): kotlin/Array<io.kuicksilver.quic/IoPreference> // io.kuicksilver.quic/IoPreference.values|values#static(){}[0]
 }
 
+final enum class io.kuicksilver.quic/LogLevel : kotlin/Enum<io.kuicksilver.quic/LogLevel> { // io.kuicksilver.quic/LogLevel|null[0]
+    enum entry Debug // io.kuicksilver.quic/LogLevel.Debug|null[0]
+    enum entry Error // io.kuicksilver.quic/LogLevel.Error|null[0]
+    enum entry Info // io.kuicksilver.quic/LogLevel.Info|null[0]
+    enum entry Warn // io.kuicksilver.quic/LogLevel.Warn|null[0]
+
+    final val entries // io.kuicksilver.quic/LogLevel.entries|#static{}entries[0]
+        final fun <get-entries>(): kotlin.enums/EnumEntries<io.kuicksilver.quic/LogLevel> // io.kuicksilver.quic/LogLevel.entries.<get-entries>|<get-entries>#static(){}[0]
+
+    final fun valueOf(kotlin/String): io.kuicksilver.quic/LogLevel // io.kuicksilver.quic/LogLevel.valueOf|valueOf#static(kotlin.String){}[0]
+    final fun values(): kotlin/Array<io.kuicksilver.quic/LogLevel> // io.kuicksilver.quic/LogLevel.values|values#static(){}[0]
+}
+
 final enum class io.kuicksilver.quic/PathChangeReason : kotlin/Enum<io.kuicksilver.quic/PathChangeReason> { // io.kuicksilver.quic/PathChangeReason|null[0]
     enum entry ActiveMigration // io.kuicksilver.quic/PathChangeReason.ActiveMigration|null[0]
     enum entry NatRebinding // io.kuicksilver.quic/PathChangeReason.NatRebinding|null[0]
@@ -131,6 +144,17 @@ final enum class io.kuicksilver.quic/TimeoutKind : kotlin/Enum<io.kuicksilver.qu
     final fun values(): kotlin/Array<io.kuicksilver.quic/TimeoutKind> // io.kuicksilver.quic/TimeoutKind.values|values#static(){}[0]
 }
 
+final enum class io.kuicksilver.quic/ZeroRttOutcome : kotlin/Enum<io.kuicksilver.quic/ZeroRttOutcome> { // io.kuicksilver.quic/ZeroRttOutcome|null[0]
+    enum entry Accepted // io.kuicksilver.quic/ZeroRttOutcome.Accepted|null[0]
+    enum entry Rejected // io.kuicksilver.quic/ZeroRttOutcome.Rejected|null[0]
+
+    final val entries // io.kuicksilver.quic/ZeroRttOutcome.entries|#static{}entries[0]
+        final fun <get-entries>(): kotlin.enums/EnumEntries<io.kuicksilver.quic/ZeroRttOutcome> // io.kuicksilver.quic/ZeroRttOutcome.entries.<get-entries>|<get-entries>#static(){}[0]
+
+    final fun valueOf(kotlin/String): io.kuicksilver.quic/ZeroRttOutcome // io.kuicksilver.quic/ZeroRttOutcome.valueOf|valueOf#static(kotlin.String){}[0]
+    final fun values(): kotlin/Array<io.kuicksilver.quic/ZeroRttOutcome> // io.kuicksilver.quic/ZeroRttOutcome.values|values#static(){}[0]
+}
+
 abstract fun interface io.kuicksilver.quic/ConnectionAdmission { // io.kuicksilver.quic/ConnectionAdmission|null[0]
     abstract fun admit(io.kuicksilver.quic/ConnectionAttempt): io.kuicksilver.quic/AdmissionDecision // io.kuicksilver.quic/ConnectionAdmission.admit|admit(io.kuicksilver.quic.ConnectionAttempt){}[0]
 
@@ -158,6 +182,14 @@ abstract interface io.kuicksilver.quic/CongestionController { // io.kuicksilver.
     abstract fun onPacketSent(io.kuicksilver.quic/TimeMark, kotlin/Int) // io.kuicksilver.quic/CongestionController.onPacketSent|onPacketSent(io.kuicksilver.quic.TimeMark;kotlin.Int){}[0]
     abstract fun pacingRate(kotlin.time/Duration): kotlin/Long // io.kuicksilver.quic/CongestionController.pacingRate|pacingRate(kotlin.time.Duration){}[0]
     open fun onRttSample(io.kuicksilver.quic/TimeMark, kotlin.time/Duration, kotlin.time/Duration) // io.kuicksilver.quic/CongestionController.onRttSample|onRttSample(io.kuicksilver.quic.TimeMark;kotlin.time.Duration;kotlin.time.Duration){}[0]
+}
+
+abstract interface io.kuicksilver.quic/ConnectionListener { // io.kuicksilver.quic/ConnectionListener|null[0]
+    open fun onClosed(io.kuicksilver.quic/ConnectionInfo, io.kuicksilver.quic/QuicException.ConnectionLost) // io.kuicksilver.quic/ConnectionListener.onClosed|onClosed(io.kuicksilver.quic.ConnectionInfo;io.kuicksilver.quic.QuicException.ConnectionLost){}[0]
+    open fun onHandshakeCompleted(io.kuicksilver.quic/ConnectionInfo) // io.kuicksilver.quic/ConnectionListener.onHandshakeCompleted|onHandshakeCompleted(io.kuicksilver.quic.ConnectionInfo){}[0]
+    open fun onOpened(io.kuicksilver.quic/ConnectionInfo) // io.kuicksilver.quic/ConnectionListener.onOpened|onOpened(io.kuicksilver.quic.ConnectionInfo){}[0]
+    open fun onPathChanged(io.kuicksilver.quic/ConnectionInfo, io.kuicksilver.quic/PathEvent.Changed) // io.kuicksilver.quic/ConnectionListener.onPathChanged|onPathChanged(io.kuicksilver.quic.ConnectionInfo;io.kuicksilver.quic.PathEvent.Changed){}[0]
+    open fun onZeroRtt(io.kuicksilver.quic/ConnectionInfo, io.kuicksilver.quic/ZeroRttOutcome) // io.kuicksilver.quic/ConnectionListener.onZeroRtt|onZeroRtt(io.kuicksilver.quic.ConnectionInfo;io.kuicksilver.quic.ZeroRttOutcome){}[0]
 }
 
 abstract interface io.kuicksilver.quic/DatagramIo : kotlin/AutoCloseable { // io.kuicksilver.quic/DatagramIo|null[0]
@@ -190,6 +222,20 @@ abstract interface io.kuicksilver.quic/DatagramSender { // io.kuicksilver.quic/D
     open fun hasPending(): kotlin/Boolean // io.kuicksilver.quic/DatagramSender.hasPending|hasPending(){}[0]
     open fun onAcked(kotlin/Long) // io.kuicksilver.quic/DatagramSender.onAcked|onAcked(kotlin.Long){}[0]
     open fun onLost(kotlin/Long) // io.kuicksilver.quic/DatagramSender.onLost|onLost(kotlin.Long){}[0]
+}
+
+abstract interface io.kuicksilver.quic/KuicksilverLogger { // io.kuicksilver.quic/KuicksilverLogger|null[0]
+    abstract fun isEnabled(io.kuicksilver.quic/LogLevel): kotlin/Boolean // io.kuicksilver.quic/KuicksilverLogger.isEnabled|isEnabled(io.kuicksilver.quic.LogLevel){}[0]
+    abstract fun log(io.kuicksilver.quic/LogLevel, kotlin/String, kotlin/Throwable? = ...) // io.kuicksilver.quic/KuicksilverLogger.log|log(io.kuicksilver.quic.LogLevel;kotlin.String;kotlin.Throwable?){}[0]
+
+    final object Companion { // io.kuicksilver.quic/KuicksilverLogger.Companion|null[0]
+        final val None // io.kuicksilver.quic/KuicksilverLogger.Companion.None|{}None[0]
+            final fun <get-None>(): io.kuicksilver.quic/KuicksilverLogger // io.kuicksilver.quic/KuicksilverLogger.Companion.None.<get-None>|<get-None>(){}[0]
+        final val Stderr // io.kuicksilver.quic/KuicksilverLogger.Companion.Stderr|{}Stderr[0]
+            final fun <get-Stderr>(): io.kuicksilver.quic/KuicksilverLogger // io.kuicksilver.quic/KuicksilverLogger.Companion.Stderr.<get-Stderr>|<get-Stderr>(){}[0]
+
+        final fun stderr(io.kuicksilver.quic/LogLevel): io.kuicksilver.quic/KuicksilverLogger // io.kuicksilver.quic/KuicksilverLogger.Companion.stderr|stderr(io.kuicksilver.quic.LogLevel){}[0]
+    }
 }
 
 abstract interface io.kuicksilver.quic/QlogSink { // io.kuicksilver.quic/QlogSink|null[0]
@@ -240,11 +286,14 @@ abstract interface io.kuicksilver.quic/QuicConnection : kotlin/AutoCloseable { /
 abstract interface io.kuicksilver.quic/QuicEndpoint : kotlin/AutoCloseable { // io.kuicksilver.quic/QuicEndpoint|null[0]
     abstract val localAddress // io.kuicksilver.quic/QuicEndpoint.localAddress|{}localAddress[0]
         abstract fun <get-localAddress>(): io.ktor.network.sockets/InetSocketAddress // io.kuicksilver.quic/QuicEndpoint.localAddress.<get-localAddress>|<get-localAddress>(){}[0]
+    abstract val stats // io.kuicksilver.quic/QuicEndpoint.stats|{}stats[0]
+        abstract fun <get-stats>(): io.kuicksilver.quic/EndpointStats // io.kuicksilver.quic/QuicEndpoint.stats.<get-stats>|<get-stats>(){}[0]
 
     abstract suspend fun accept(): io.kuicksilver.quic/QuicConnection // io.kuicksilver.quic/QuicEndpoint.accept|accept(){}[0]
     abstract suspend fun closeAndJoin() // io.kuicksilver.quic/QuicEndpoint.closeAndJoin|closeAndJoin(){}[0]
     abstract suspend fun connect(io.ktor.network.sockets/InetSocketAddress, io.kuicksilver.quic/QuicClientConfig): io.kuicksilver.quic/QuicConnection // io.kuicksilver.quic/QuicEndpoint.connect|connect(io.ktor.network.sockets.InetSocketAddress;io.kuicksilver.quic.QuicClientConfig){}[0]
     open suspend fun connectEarly(io.ktor.network.sockets/InetSocketAddress, io.kuicksilver.quic/QuicClientConfig): io.kuicksilver.quic/QuicConnection // io.kuicksilver.quic/QuicEndpoint.connectEarly|connectEarly(io.ktor.network.sockets.InetSocketAddress;io.kuicksilver.quic.QuicClientConfig){}[0]
+    open suspend fun shutdown(kotlin.time/Duration, kotlin/Long = ..., kotlin/String = ...) // io.kuicksilver.quic/QuicEndpoint.shutdown|shutdown(kotlin.time.Duration;kotlin.Long;kotlin.String){}[0]
 
     final object Companion { // io.kuicksilver.quic/QuicEndpoint.Companion|null[0]
         final suspend fun bind(io.ktor.network.sockets/InetSocketAddress, io.kuicksilver.quic/QuicEndpointConfig = ...): io.kuicksilver.quic/QuicEndpoint // io.kuicksilver.quic/QuicEndpoint.Companion.bind|bind(io.ktor.network.sockets.InetSocketAddress;io.kuicksilver.quic.QuicEndpointConfig){}[0]
@@ -570,6 +619,23 @@ final class <#A: kotlin/Any> io.kuicksilver.quic/NetworkMigrator : kotlin/AutoCl
     final fun start(): kotlinx.coroutines/Job // io.kuicksilver.quic/NetworkMigrator.start|start(){}[0]
 }
 
+final class io.kuicksilver.quic.qlog/AsyncQlogSink : io.kuicksilver.quic/QlogSink, kotlin/AutoCloseable { // io.kuicksilver.quic.qlog/AsyncQlogSink|null[0]
+    constructor <init>(io.kuicksilver.quic/QlogSink, kotlin/Int = ..., kotlin/Int = ..., kotlinx.coroutines/CoroutineDispatcher = ...) // io.kuicksilver.quic.qlog/AsyncQlogSink.<init>|<init>(io.kuicksilver.quic.QlogSink;kotlin.Int;kotlin.Int;kotlinx.coroutines.CoroutineDispatcher){}[0]
+
+    final val dropped // io.kuicksilver.quic.qlog/AsyncQlogSink.dropped|{}dropped[0]
+        final fun <get-dropped>(): kotlin/Long // io.kuicksilver.quic.qlog/AsyncQlogSink.dropped.<get-dropped>|<get-dropped>(){}[0]
+    final val failures // io.kuicksilver.quic.qlog/AsyncQlogSink.failures|{}failures[0]
+        final fun <get-failures>(): kotlin/Long // io.kuicksilver.quic.qlog/AsyncQlogSink.failures.<get-failures>|<get-failures>(){}[0]
+    final val queueCapacity // io.kuicksilver.quic.qlog/AsyncQlogSink.queueCapacity|{}queueCapacity[0]
+        final fun <get-queueCapacity>(): kotlin/Int // io.kuicksilver.quic.qlog/AsyncQlogSink.queueCapacity.<get-queueCapacity>|<get-queueCapacity>(){}[0]
+    final val sampleEvery // io.kuicksilver.quic.qlog/AsyncQlogSink.sampleEvery|{}sampleEvery[0]
+        final fun <get-sampleEvery>(): kotlin/Int // io.kuicksilver.quic.qlog/AsyncQlogSink.sampleEvery.<get-sampleEvery>|<get-sampleEvery>(){}[0]
+
+    final fun close() // io.kuicksilver.quic.qlog/AsyncQlogSink.close|close(){}[0]
+    final fun open(kotlin/String, io.kuicksilver.tls/TlsRole): io.kuicksilver.quic/QlogTrace? // io.kuicksilver.quic.qlog/AsyncQlogSink.open|open(kotlin.String;io.kuicksilver.tls.TlsRole){}[0]
+    final suspend fun flush() // io.kuicksilver.quic.qlog/AsyncQlogSink.flush|flush(){}[0]
+}
+
 final class io.kuicksilver.quic.qlog/DirectoryQlogSink : io.kuicksilver.quic/QlogSink { // io.kuicksilver.quic.qlog/DirectoryQlogSink|null[0]
     constructor <init>(kotlin/String) // io.kuicksilver.quic.qlog/DirectoryQlogSink.<init>|<init>(kotlin.String){}[0]
 
@@ -670,6 +736,19 @@ final class io.kuicksilver.quic/ConnectionCore { // io.kuicksilver.quic/Connecti
     final object Companion { // io.kuicksilver.quic/ConnectionCore.Companion|null[0]
         final fun client(io.kuicksilver.quic/QuicConfig, io.kuicksilver.tls/TlsConfig, io.kuicksilver.tls/QuicCrypto, io.ktor.network.sockets/InetSocketAddress, kotlin.random/Random, io.kuicksilver.quic/TimeMark): io.kuicksilver.quic/ConnectionCore // io.kuicksilver.quic/ConnectionCore.Companion.client|client(io.kuicksilver.quic.QuicConfig;io.kuicksilver.tls.TlsConfig;io.kuicksilver.tls.QuicCrypto;io.ktor.network.sockets.InetSocketAddress;kotlin.random.Random;io.kuicksilver.quic.TimeMark){}[0]
     }
+}
+
+final class io.kuicksilver.quic/ConnectionInfo { // io.kuicksilver.quic/ConnectionInfo|null[0]
+    final val connection // io.kuicksilver.quic/ConnectionInfo.connection|{}connection[0]
+        final fun <get-connection>(): io.kuicksilver.quic/QuicConnection // io.kuicksilver.quic/ConnectionInfo.connection.<get-connection>|<get-connection>(){}[0]
+    final val id // io.kuicksilver.quic/ConnectionInfo.id|{}id[0]
+        final fun <get-id>(): kotlin/String // io.kuicksilver.quic/ConnectionInfo.id.<get-id>|<get-id>(){}[0]
+    final val remoteAddress // io.kuicksilver.quic/ConnectionInfo.remoteAddress|{}remoteAddress[0]
+        final fun <get-remoteAddress>(): io.ktor.network.sockets/InetSocketAddress // io.kuicksilver.quic/ConnectionInfo.remoteAddress.<get-remoteAddress>|<get-remoteAddress>(){}[0]
+    final val role // io.kuicksilver.quic/ConnectionInfo.role|{}role[0]
+        final fun <get-role>(): io.kuicksilver.tls/TlsRole // io.kuicksilver.quic/ConnectionInfo.role.<get-role>|<get-role>(){}[0]
+
+    final fun toString(): kotlin/String // io.kuicksilver.quic/ConnectionInfo.toString|toString(){}[0]
 }
 
 final class io.kuicksilver.quic/ConnectionStats { // io.kuicksilver.quic/ConnectionStats|null[0]
@@ -808,20 +887,68 @@ final class io.kuicksilver.quic/EndpointCore { // io.kuicksilver.quic/EndpointCo
 final class io.kuicksilver.quic/EndpointStats { // io.kuicksilver.quic/EndpointStats|null[0]
     final val admissionContractViolations // io.kuicksilver.quic/EndpointStats.admissionContractViolations|{}admissionContractViolations[0]
         final fun <get-admissionContractViolations>(): kotlin/Long // io.kuicksilver.quic/EndpointStats.admissionContractViolations.<get-admissionContractViolations>|<get-admissionContractViolations>(){}[0]
+    final val connectionsAccepted // io.kuicksilver.quic/EndpointStats.connectionsAccepted|{}connectionsAccepted[0]
+        final fun <get-connectionsAccepted>(): kotlin/Long // io.kuicksilver.quic/EndpointStats.connectionsAccepted.<get-connectionsAccepted>|<get-connectionsAccepted>(){}[0]
+    final val connectionsActive // io.kuicksilver.quic/EndpointStats.connectionsActive|{}connectionsActive[0]
+        final fun <get-connectionsActive>(): kotlin/Long // io.kuicksilver.quic/EndpointStats.connectionsActive.<get-connectionsActive>|<get-connectionsActive>(){}[0]
     final val connectionsCreated // io.kuicksilver.quic/EndpointStats.connectionsCreated|{}connectionsCreated[0]
         final fun <get-connectionsCreated>(): kotlin/Long // io.kuicksilver.quic/EndpointStats.connectionsCreated.<get-connectionsCreated>|<get-connectionsCreated>(){}[0]
+    final val connectionsRefusedAcceptQueue // io.kuicksilver.quic/EndpointStats.connectionsRefusedAcceptQueue|{}connectionsRefusedAcceptQueue[0]
+        final fun <get-connectionsRefusedAcceptQueue>(): kotlin/Long // io.kuicksilver.quic/EndpointStats.connectionsRefusedAcceptQueue.<get-connectionsRefusedAcceptQueue>|<get-connectionsRefusedAcceptQueue>(){}[0]
+    final val connectionsRefusedAdmission // io.kuicksilver.quic/EndpointStats.connectionsRefusedAdmission|{}connectionsRefusedAdmission[0]
+        final fun <get-connectionsRefusedAdmission>(): kotlin/Long // io.kuicksilver.quic/EndpointStats.connectionsRefusedAdmission.<get-connectionsRefusedAdmission>|<get-connectionsRefusedAdmission>(){}[0]
+    final val connectionsRefusedLimits // io.kuicksilver.quic/EndpointStats.connectionsRefusedLimits|{}connectionsRefusedLimits[0]
+        final fun <get-connectionsRefusedLimits>(): kotlin/Long // io.kuicksilver.quic/EndpointStats.connectionsRefusedLimits.<get-connectionsRefusedLimits>|<get-connectionsRefusedLimits>(){}[0]
+    final val connectionsRefusedShutdown // io.kuicksilver.quic/EndpointStats.connectionsRefusedShutdown|{}connectionsRefusedShutdown[0]
+        final fun <get-connectionsRefusedShutdown>(): kotlin/Long // io.kuicksilver.quic/EndpointStats.connectionsRefusedShutdown.<get-connectionsRefusedShutdown>|<get-connectionsRefusedShutdown>(){}[0]
+    final val datagramsDroppedQueue // io.kuicksilver.quic/EndpointStats.datagramsDroppedQueue|{}datagramsDroppedQueue[0]
+        final fun <get-datagramsDroppedQueue>(): kotlin/Long // io.kuicksilver.quic/EndpointStats.datagramsDroppedQueue.<get-datagramsDroppedQueue>|<get-datagramsDroppedQueue>(){}[0]
+    final val datagramsDroppedSocket // io.kuicksilver.quic/EndpointStats.datagramsDroppedSocket|{}datagramsDroppedSocket[0]
+        final fun <get-datagramsDroppedSocket>(): kotlin/Long // io.kuicksilver.quic/EndpointStats.datagramsDroppedSocket.<get-datagramsDroppedSocket>|<get-datagramsDroppedSocket>(){}[0]
+    final val datagramsDroppedStateless // io.kuicksilver.quic/EndpointStats.datagramsDroppedStateless|{}datagramsDroppedStateless[0]
+        final fun <get-datagramsDroppedStateless>(): kotlin/Long // io.kuicksilver.quic/EndpointStats.datagramsDroppedStateless.<get-datagramsDroppedStateless>|<get-datagramsDroppedStateless>(){}[0]
+    final val datagramsDroppedUndecryptable // io.kuicksilver.quic/EndpointStats.datagramsDroppedUndecryptable|{}datagramsDroppedUndecryptable[0]
+        final fun <get-datagramsDroppedUndecryptable>(): kotlin/Long // io.kuicksilver.quic/EndpointStats.datagramsDroppedUndecryptable.<get-datagramsDroppedUndecryptable>|<get-datagramsDroppedUndecryptable>(){}[0]
+    final val datagramsReceived // io.kuicksilver.quic/EndpointStats.datagramsReceived|{}datagramsReceived[0]
+        final fun <get-datagramsReceived>(): kotlin/Long // io.kuicksilver.quic/EndpointStats.datagramsReceived.<get-datagramsReceived>|<get-datagramsReceived>(){}[0]
+    final val datagramsSent // io.kuicksilver.quic/EndpointStats.datagramsSent|{}datagramsSent[0]
+        final fun <get-datagramsSent>(): kotlin/Long // io.kuicksilver.quic/EndpointStats.datagramsSent.<get-datagramsSent>|<get-datagramsSent>(){}[0]
+    final val handshakesCompleted // io.kuicksilver.quic/EndpointStats.handshakesCompleted|{}handshakesCompleted[0]
+        final fun <get-handshakesCompleted>(): kotlin/Long // io.kuicksilver.quic/EndpointStats.handshakesCompleted.<get-handshakesCompleted>|<get-handshakesCompleted>(){}[0]
+    final val handshakesFailedOther // io.kuicksilver.quic/EndpointStats.handshakesFailedOther|{}handshakesFailedOther[0]
+        final fun <get-handshakesFailedOther>(): kotlin/Long // io.kuicksilver.quic/EndpointStats.handshakesFailedOther.<get-handshakesFailedOther>|<get-handshakesFailedOther>(){}[0]
+    final val handshakesFailedTimeout // io.kuicksilver.quic/EndpointStats.handshakesFailedTimeout|{}handshakesFailedTimeout[0]
+        final fun <get-handshakesFailedTimeout>(): kotlin/Long // io.kuicksilver.quic/EndpointStats.handshakesFailedTimeout.<get-handshakesFailedTimeout>|<get-handshakesFailedTimeout>(){}[0]
+    final val handshakesFailedTls // io.kuicksilver.quic/EndpointStats.handshakesFailedTls|{}handshakesFailedTls[0]
+        final fun <get-handshakesFailedTls>(): kotlin/Long // io.kuicksilver.quic/EndpointStats.handshakesFailedTls.<get-handshakesFailedTls>|<get-handshakesFailedTls>(){}[0]
     final val initialsDropped // io.kuicksilver.quic/EndpointStats.initialsDropped|{}initialsDropped[0]
         final fun <get-initialsDropped>(): kotlin/Long // io.kuicksilver.quic/EndpointStats.initialsDropped.<get-initialsDropped>|<get-initialsDropped>(){}[0]
     final val invalidTokens // io.kuicksilver.quic/EndpointStats.invalidTokens|{}invalidTokens[0]
         final fun <get-invalidTokens>(): kotlin/Long // io.kuicksilver.quic/EndpointStats.invalidTokens.<get-invalidTokens>|<get-invalidTokens>(){}[0]
+    final val listenerFailures // io.kuicksilver.quic/EndpointStats.listenerFailures|{}listenerFailures[0]
+        final fun <get-listenerFailures>(): kotlin/Long // io.kuicksilver.quic/EndpointStats.listenerFailures.<get-listenerFailures>|<get-listenerFailures>(){}[0]
+    final val pathValidationFailures // io.kuicksilver.quic/EndpointStats.pathValidationFailures|{}pathValidationFailures[0]
+        final fun <get-pathValidationFailures>(): kotlin/Long // io.kuicksilver.quic/EndpointStats.pathValidationFailures.<get-pathValidationFailures>|<get-pathValidationFailures>(){}[0]
+    final val pathValidations // io.kuicksilver.quic/EndpointStats.pathValidations|{}pathValidations[0]
+        final fun <get-pathValidations>(): kotlin/Long // io.kuicksilver.quic/EndpointStats.pathValidations.<get-pathValidations>|<get-pathValidations>(){}[0]
     final val retriesSent // io.kuicksilver.quic/EndpointStats.retriesSent|{}retriesSent[0]
         final fun <get-retriesSent>(): kotlin/Long // io.kuicksilver.quic/EndpointStats.retriesSent.<get-retriesSent>|<get-retriesSent>(){}[0]
+    final val sendFailures // io.kuicksilver.quic/EndpointStats.sendFailures|{}sendFailures[0]
+        final fun <get-sendFailures>(): kotlin/Long // io.kuicksilver.quic/EndpointStats.sendFailures.<get-sendFailures>|<get-sendFailures>(){}[0]
     final val statelessRateLimited // io.kuicksilver.quic/EndpointStats.statelessRateLimited|{}statelessRateLimited[0]
         final fun <get-statelessRateLimited>(): kotlin/Long // io.kuicksilver.quic/EndpointStats.statelessRateLimited.<get-statelessRateLimited>|<get-statelessRateLimited>(){}[0]
     final val statelessResets // io.kuicksilver.quic/EndpointStats.statelessResets|{}statelessResets[0]
         final fun <get-statelessResets>(): kotlin/Long // io.kuicksilver.quic/EndpointStats.statelessResets.<get-statelessResets>|<get-statelessResets>(){}[0]
+    final val uncaughtFailures // io.kuicksilver.quic/EndpointStats.uncaughtFailures|{}uncaughtFailures[0]
+        final fun <get-uncaughtFailures>(): kotlin/Long // io.kuicksilver.quic/EndpointStats.uncaughtFailures.<get-uncaughtFailures>|<get-uncaughtFailures>(){}[0]
     final val versionNegotiations // io.kuicksilver.quic/EndpointStats.versionNegotiations|{}versionNegotiations[0]
         final fun <get-versionNegotiations>(): kotlin/Long // io.kuicksilver.quic/EndpointStats.versionNegotiations.<get-versionNegotiations>|<get-versionNegotiations>(){}[0]
+    final val zeroRttAccepted // io.kuicksilver.quic/EndpointStats.zeroRttAccepted|{}zeroRttAccepted[0]
+        final fun <get-zeroRttAccepted>(): kotlin/Long // io.kuicksilver.quic/EndpointStats.zeroRttAccepted.<get-zeroRttAccepted>|<get-zeroRttAccepted>(){}[0]
+    final val zeroRttOffered // io.kuicksilver.quic/EndpointStats.zeroRttOffered|{}zeroRttOffered[0]
+        final fun <get-zeroRttOffered>(): kotlin/Long // io.kuicksilver.quic/EndpointStats.zeroRttOffered.<get-zeroRttOffered>|<get-zeroRttOffered>(){}[0]
+    final val zeroRttRejected // io.kuicksilver.quic/EndpointStats.zeroRttRejected|{}zeroRttRejected[0]
+        final fun <get-zeroRttRejected>(): kotlin/Long // io.kuicksilver.quic/EndpointStats.zeroRttRejected.<get-zeroRttRejected>|<get-zeroRttRejected>(){}[0]
 
     final fun toString(): kotlin/String // io.kuicksilver.quic/EndpointStats.toString|toString(){}[0]
 }
@@ -991,6 +1118,8 @@ final class io.kuicksilver.quic/QuicConfig { // io.kuicksilver.quic/QuicConfig|n
     final val versions // io.kuicksilver.quic/QuicConfig.versions|{}versions[0]
         final fun <get-versions>(): kotlin.collections/List<io.kuicksilver.quic/VersionProfile> // io.kuicksilver.quic/QuicConfig.versions.<get-versions>|<get-versions>(){}[0]
 
+    final fun toBuilder(): io.kuicksilver.quic/QuicConfig.Builder // io.kuicksilver.quic/QuicConfig.toBuilder|toBuilder(){}[0]
+
     final class Builder { // io.kuicksilver.quic/QuicConfig.Builder|null[0]
         constructor <init>() // io.kuicksilver.quic/QuicConfig.Builder.<init>|<init>(){}[0]
 
@@ -1109,6 +1238,10 @@ final class io.kuicksilver.quic/QuicEndpointConfig { // io.kuicksilver.quic/Quic
         final fun <get-initialQueueCap>(): kotlin/Int // io.kuicksilver.quic/QuicEndpointConfig.initialQueueCap.<get-initialQueueCap>|<get-initialQueueCap>(){}[0]
     final val io // io.kuicksilver.quic/QuicEndpointConfig.io|{}io[0]
         final fun <get-io>(): kotlin.coroutines/SuspendFunction1<io.ktor.network.sockets/InetSocketAddress, io.kuicksilver.quic/DatagramIo>? // io.kuicksilver.quic/QuicEndpointConfig.io.<get-io>|<get-io>(){}[0]
+    final val listener // io.kuicksilver.quic/QuicEndpointConfig.listener|{}listener[0]
+        final fun <get-listener>(): io.kuicksilver.quic/ConnectionListener? // io.kuicksilver.quic/QuicEndpointConfig.listener.<get-listener>|<get-listener>(){}[0]
+    final val logger // io.kuicksilver.quic/QuicEndpointConfig.logger|{}logger[0]
+        final fun <get-logger>(): io.kuicksilver.quic/KuicksilverLogger // io.kuicksilver.quic/QuicEndpointConfig.logger.<get-logger>|<get-logger>(){}[0]
     final val loops // io.kuicksilver.quic/QuicEndpointConfig.loops|{}loops[0]
         final fun <get-loops>(): kotlin/Int // io.kuicksilver.quic/QuicEndpointConfig.loops.<get-loops>|<get-loops>(){}[0]
     final val maxConnectionLifetime // io.kuicksilver.quic/QuicEndpointConfig.maxConnectionLifetime|{}maxConnectionLifetime[0]
@@ -1152,6 +1285,12 @@ final class io.kuicksilver.quic/QuicEndpointConfig { // io.kuicksilver.quic/Quic
         final var io // io.kuicksilver.quic/QuicEndpointConfig.Builder.io|{}io[0]
             final fun <get-io>(): kotlin.coroutines/SuspendFunction1<io.ktor.network.sockets/InetSocketAddress, io.kuicksilver.quic/DatagramIo>? // io.kuicksilver.quic/QuicEndpointConfig.Builder.io.<get-io>|<get-io>(){}[0]
             final fun <set-io>(kotlin.coroutines/SuspendFunction1<io.ktor.network.sockets/InetSocketAddress, io.kuicksilver.quic/DatagramIo>?) // io.kuicksilver.quic/QuicEndpointConfig.Builder.io.<set-io>|<set-io>(kotlin.coroutines.SuspendFunction1<io.ktor.network.sockets.InetSocketAddress,io.kuicksilver.quic.DatagramIo>?){}[0]
+        final var listener // io.kuicksilver.quic/QuicEndpointConfig.Builder.listener|{}listener[0]
+            final fun <get-listener>(): io.kuicksilver.quic/ConnectionListener? // io.kuicksilver.quic/QuicEndpointConfig.Builder.listener.<get-listener>|<get-listener>(){}[0]
+            final fun <set-listener>(io.kuicksilver.quic/ConnectionListener?) // io.kuicksilver.quic/QuicEndpointConfig.Builder.listener.<set-listener>|<set-listener>(io.kuicksilver.quic.ConnectionListener?){}[0]
+        final var logger // io.kuicksilver.quic/QuicEndpointConfig.Builder.logger|{}logger[0]
+            final fun <get-logger>(): io.kuicksilver.quic/KuicksilverLogger // io.kuicksilver.quic/QuicEndpointConfig.Builder.logger.<get-logger>|<get-logger>(){}[0]
+            final fun <set-logger>(io.kuicksilver.quic/KuicksilverLogger) // io.kuicksilver.quic/QuicEndpointConfig.Builder.logger.<set-logger>|<set-logger>(io.kuicksilver.quic.KuicksilverLogger){}[0]
         final var loops // io.kuicksilver.quic/QuicEndpointConfig.Builder.loops|{}loops[0]
             final fun <get-loops>(): kotlin/Int // io.kuicksilver.quic/QuicEndpointConfig.Builder.loops.<get-loops>|<get-loops>(){}[0]
             final fun <set-loops>(kotlin/Int) // io.kuicksilver.quic/QuicEndpointConfig.Builder.loops.<set-loops>|<set-loops>(kotlin.Int){}[0]

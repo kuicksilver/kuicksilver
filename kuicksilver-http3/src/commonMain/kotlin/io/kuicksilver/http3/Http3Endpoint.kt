@@ -4,6 +4,7 @@ package io.kuicksilver.http3
 
 import io.ktor.network.sockets.InetSocketAddress
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
+import io.kuicksilver.quic.EndpointStats
 import io.kuicksilver.quic.QuicClientConfig
 import io.kuicksilver.quic.QuicConfig
 import io.kuicksilver.quic.QuicEndpoint
@@ -12,6 +13,7 @@ import io.kuicksilver.quic.QuicServerConfig
 import io.kuicksilver.tls.EarlyDataState
 import io.kuicksilver.tls.TlsConfig
 import kotlinx.coroutines.CancellationException
+import kotlin.time.Duration
 
 /**
  * HTTP/3 over a bound QUIC endpoint: the transport surface the Ktor engines use (layer rule, ADR-0005). TLS
@@ -97,6 +99,22 @@ public class Http3Endpoint private constructor(
     }
 
     override fun close(): Unit = endpoint.close()
+
+    /** The QUIC endpoint's counters (`QuicEndpoint.stats`): admission, handshakes, 0-RTT, datagrams, failures. */
+    @ExperimentalKuicksilverApi
+    public val stats: EndpointStats get() = endpoint.stats
+
+    /**
+     * Graceful shutdown of the QUIC endpoint (`QuicEndpoint.shutdown`): new clients are refused at once, live connections
+     * get [grace] to finish, then the rest close with [code] (H3_NO_ERROR by default). Send GOAWAY on every live connection
+     * ([Http3Connection.goAway]) first or meanwhile, so clients stop sending new requests and finish the ones in flight.
+     */
+    @ExperimentalKuicksilverApi
+    public suspend fun shutdown(
+        grace: Duration,
+        code: Long = Http3ErrorCode.NO_ERROR,
+        reason: String = "shutdown",
+    ): Unit = endpoint.shutdown(grace, code, reason)
 
     /** The ALPN token and the factory. */
     public companion object {

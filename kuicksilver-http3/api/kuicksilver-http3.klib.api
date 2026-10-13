@@ -124,11 +124,14 @@ final class io.kuicksilver.http3/Http3Connection : kotlin/AutoCloseable { // io.
 final class io.kuicksilver.http3/Http3Endpoint : kotlin/AutoCloseable { // io.kuicksilver.http3/Http3Endpoint|null[0]
     final val localAddress // io.kuicksilver.http3/Http3Endpoint.localAddress|{}localAddress[0]
         final fun <get-localAddress>(): io.ktor.network.sockets/InetSocketAddress // io.kuicksilver.http3/Http3Endpoint.localAddress.<get-localAddress>|<get-localAddress>(){}[0]
+    final val stats // io.kuicksilver.http3/Http3Endpoint.stats|{}stats[0]
+        final fun <get-stats>(): io.kuicksilver.quic/EndpointStats // io.kuicksilver.http3/Http3Endpoint.stats.<get-stats>|<get-stats>(){}[0]
 
     final fun close() // io.kuicksilver.http3/Http3Endpoint.close|close(){}[0]
     final suspend fun accept(): io.kuicksilver.http3/Http3Connection // io.kuicksilver.http3/Http3Endpoint.accept|accept(){}[0]
     final suspend fun connect(io.ktor.network.sockets/InetSocketAddress, io.kuicksilver.tls/TlsConfig, io.kuicksilver.quic/QuicConfig = ..., io.kuicksilver.http3/Http3Settings = ...): io.kuicksilver.http3/Http3Connection // io.kuicksilver.http3/Http3Endpoint.connect|connect(io.ktor.network.sockets.InetSocketAddress;io.kuicksilver.tls.TlsConfig;io.kuicksilver.quic.QuicConfig;io.kuicksilver.http3.Http3Settings){}[0]
     final suspend fun connectEarly(io.ktor.network.sockets/InetSocketAddress, io.kuicksilver.tls/TlsConfig, io.kuicksilver.quic/QuicConfig = ..., io.kuicksilver.http3/Http3Settings = ..., io.kuicksilver.tls/EarlyDataState = ...): io.kuicksilver.http3/Http3Connection // io.kuicksilver.http3/Http3Endpoint.connectEarly|connectEarly(io.ktor.network.sockets.InetSocketAddress;io.kuicksilver.tls.TlsConfig;io.kuicksilver.quic.QuicConfig;io.kuicksilver.http3.Http3Settings;io.kuicksilver.tls.EarlyDataState){}[0]
+    final suspend fun shutdown(kotlin.time/Duration, kotlin/Long = ..., kotlin/String = ...) // io.kuicksilver.http3/Http3Endpoint.shutdown|shutdown(kotlin.time.Duration;kotlin.Long;kotlin.String){}[0]
 
     final object Companion { // io.kuicksilver.http3/Http3Endpoint.Companion|null[0]
         final const val H3 // io.kuicksilver.http3/Http3Endpoint.Companion.H3|{}H3[0]

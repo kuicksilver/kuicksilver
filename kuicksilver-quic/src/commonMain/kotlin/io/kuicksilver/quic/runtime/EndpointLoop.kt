@@ -11,6 +11,8 @@ import io.kuicksilver.quic.ConnectionState
 import io.kuicksilver.quic.DatagramIo
 import io.kuicksilver.quic.Ecn
 import io.kuicksilver.quic.EndpointCore
+import io.kuicksilver.quic.EndpointStats
+import io.kuicksilver.quic.LogLevel
 import io.kuicksilver.quic.PacketBatch
 import io.kuicksilver.quic.PathId
 import io.kuicksilver.quic.QuicClientConfig
@@ -23,6 +25,7 @@ import io.kuicksilver.quic.TransportError
 import io.kuicksilver.quic.core.fail
 import io.kuicksilver.quic.core.failInternal
 import io.kuicksilver.quic.core.zeroRttWritable
+import io.kuicksilver.quic.emit
 import io.kuicksilver.quic.ipLiteral
 import io.kuicksilver.quic.withLiteralHost
 import io.kuicksilver.tls.EarlyDataState
@@ -83,6 +86,9 @@ internal class EndpointLoop private constructor(
 
     // one unsynchronised CSPRNG stream per loop: every call into the core stays on this loop's thread
     internal val core = EndpointCore(config, KslRandom.newSource(), index)
+
+    /** Lifecycle counters, the connection listener and the logger of this loop (docs/guide/quic.md, "Observability"). */
+    internal val observer = LoopObserver(config.logger, config.listener)
     private val inBatch = PacketBatch(16, SLOT_SIZE)
     private val outBatch = PacketBatch(32, SLOT_SIZE)
     private val wake = Channel<Unit>(Channel.CONFLATED)
@@ -155,6 +161,7 @@ internal class EndpointLoop private constructor(
         what: String,
         e: Throwable,
     ) {
+        observer.logger.emit(LogLevel.Error, e) { "endpoint ${io.localAddress} loop $index: $what; closing the endpoint" }
         failAll(QuicException.ConnectionLost.Internal("$what: ${e.message}", e))
         if (group !=
             null
@@ -180,6 +187,7 @@ internal class EndpointLoop private constructor(
                 while (true) {
                     batch.clear()
                     io.receive(batch)
+                    observer.datagramsReceived += batch.count
                     val now = now()
                     for (i in 0 until batch.count) {
                         this@EndpointLoop.core.handleDatagram(
@@ -289,6 +297,7 @@ internal class EndpointLoop private constructor(
                 val full = fullThisFlush.any { it === target }
                 val sent = (if (full) target.trySend(batch) else target.send(batch)).coerceIn(0, batch.count)
                 if (sent < batch.count && !full) fullThisFlush.add(target)
+                observer.datagramsSent += sent
                 batch.count - sent
             } catch (e: CancellationException) {
                 throw e
@@ -329,6 +338,7 @@ internal class EndpointLoop private constructor(
             while (true) {
                 inBatch.clear()
                 io.receive(inBatch)
+                observer.datagramsReceived += inBatch.count
                 val now = now()
                 for (i in 0 until inBatch.count) onDatagram(inBatch.buffer(i), inBatch.length(i), inBatch.address(i)!!, inBatch.ecn(i), now)
                 afterReceive(now)
@@ -492,6 +502,7 @@ internal class EndpointLoop private constructor(
                         timers.remove(c)
                         core.remove(c)
                         runtimes.remove(c)
+                        if (shuttingDown && runtimes.isEmpty()) drained.complete(Unit)
                     } else {
                         timers.update(c, c.nextTimeoutOrNever())
                     }
@@ -509,6 +520,7 @@ internal class EndpointLoop private constructor(
     private fun adopt(c: ConnectionCore): ConnectionRuntime {
         val rt = ConnectionRuntime(this, c)
         runtimes[c] = rt
+        observer.opened(rt)
         c.setPathCapabilities(PathId.Initial, io.capabilities.value)
         c.onEcnFailed =
             { path ->
@@ -547,6 +559,7 @@ internal class EndpointLoop private constructor(
             if (pendingAccept.compareAndSet(n, n + 1)) break
         }
         acceptQueue.trySend(rt)
+        observer.accepted++
         acceptHandOffsForTest++
     }
 
@@ -609,13 +622,14 @@ internal class EndpointLoop private constructor(
             val rt =
                 try {
                     withContext(dispatcher) {
-                        if (closing) throw QuicException.EndpointClosing()
+                        if (closing || shuttingDown) throw QuicException.EndpointClosing()
                         checkPayloadSize(config.quic)
                         val c = core.connect(config, remote, now(), ticket)
                         val rt = adopt(c)
                         adopted = rt
                         flush()
                         zeroRtt = c.zeroRttWritable // the first poll drove TLS: the 0-RTT key exists when the ticket allowed it
+                        if (zeroRtt) observer.zeroRttOffered++
                         rt
                     }
                 } catch (t: Throwable) {
@@ -667,8 +681,63 @@ internal class EndpointLoop private constructor(
         closeJob?.join()
     }
 
-    override fun close() {
+    // ---- observability and graceful shutdown ----
+
+    override val stats: EndpointStats get() =
+        core.stats + observer.snapshot(acceptOverflows, uncaughtFailures.load(), sendFailures, socketDrops)
+
+    /** Set once on the loop by [beginShutdown]: `connect` refuses, the core refuses new clients. */
+    @Volatile private var shuttingDown = false
+
+    /** Completes once no connection is left after [beginShutdown], or when the endpoint closes. */
+    private val drained = kotlinx.coroutines.CompletableDeferred<Unit>()
+
+    override suspend fun shutdown(
+        grace: Duration,
+        code: Long,
+        reason: String,
+    ) {
+        beginShutdown()
+        withTimeoutOrNull(grace) { drained.await() }
+        closeWith(code, reason)
+        closeJob?.join()
+    }
+
+    /** Stops taking new connections (a second call ends the grace period at once); a [LoopGroup] calls it on every loop. */
+    internal suspend fun beginShutdown() {
+        if (closing) return
+        try {
+            withContext(dispatcher) {
+                if (shuttingDown) {
+                    drained.complete(Unit)
+                    return@withContext
+                }
+                observer.logger.emit(
+                    LogLevel.Info,
+                ) { "endpoint ${io.localAddress} loop $index shutting down with ${runtimes.size} connections" }
+                shuttingDown = true
+                core.shuttingDown = true
+                if (runtimes.isEmpty()) drained.complete(Unit)
+            }
+        } catch (e: CancellationException) {
+            if (closing) return // the loop's scope went away under a concurrent close
+            throw e
+        }
+    }
+
+    /** Waits until [beginShutdown] has no connection left to wait for. */
+    internal suspend fun awaitDrained() = drained.await()
+
+    override fun close() = closeWith(0, "endpoint closed")
+
+    /** [close] with the application [code] and [reason] of the CONNECTION_CLOSE every live connection gets. */
+    internal fun closeWith(
+        code: Long,
+        reason: String,
+    ) {
         if (!closingFlag.compareAndSet(0, 1)) return
+        drained.complete(Unit) // a shutdown waiting for its grace period ends now
+        observer.logger.emit(LogLevel.Info) { "endpoint ${io.localAddress} loop $index closing" }
         if (group == null) acceptQueue.close(QuicException.EndpointClosing()) // a group's queue is shared: only LoopGroup.close() closes it
         forwarded.close()
         closeJob =
@@ -677,7 +746,7 @@ internal class EndpointLoop private constructor(
                     sessions.clear()
                     val now = now()
                     for (c in core.connections().toList()) {
-                        c.close(0, "endpoint closed", now)
+                        c.close(code, reason, now)
                         core.markDirty(c)
                     }
                     flush(signalTimer = false)
@@ -734,7 +803,9 @@ internal class EndpointLoop private constructor(
             config: QuicEndpointConfig,
         ): QuicEndpoint {
             config.server?.let { checkPayloadSize(it.quic) }
-            val io = config.io?.invoke(local) ?: DatagramIo.open(local)
+            val io =
+                config.io?.invoke(local)
+                    ?: io.kuicksilver.quic.openDatagramIo(local, io.kuicksilver.quic.IoPreference.Accelerated, config.logger)
             // a Native server needs the accelerated transport (the portable Native io is client-only, ADR-0006); a caller-supplied io is trusted
             if (config.server != null && config.io == null && !portableServerSupported &&
                 io !is io.kuicksilver.quic.KslDatagramIo

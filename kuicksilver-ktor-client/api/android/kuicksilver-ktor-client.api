@@ -44,21 +44,25 @@ public final class io/kuicksilver/ktor/client/Http3ClientConfig {
 	public fun <init> ()V
 	public final fun getAltSvcStore ()Lio/kuicksilver/ktor/client/AltSvcStore;
 	public final fun getClearOnNetworkChange ()Z
+	public final fun getConnectionListener ()Lio/kuicksilver/quic/ConnectionListener;
 	public final fun getDiscovery ()Lio/kuicksilver/ktor/client/Http3DiscoveryMode;
 	public final fun getEarlyData ()Z
 	public final fun getEndpoint ()Lio/kuicksilver/quic/QuicEndpointConfig;
 	public final fun getHardDelay-FghU774 ()Lkotlin/time/Duration;
 	public final fun getNetworkId ()Lkotlin/jvm/functions/Function0;
+	public final fun getQlog ()Lio/kuicksilver/quic/QlogSink;
 	public final fun getQuicHints ()Ljava/util/Set;
 	public final fun getSettings ()Lio/kuicksilver/http3/Http3Settings;
 	public final fun getSoftDelay-UwyO8pc ()J
 	public final fun setAltSvcStore (Lio/kuicksilver/ktor/client/AltSvcStore;)V
 	public final fun setClearOnNetworkChange (Z)V
+	public final fun setConnectionListener (Lio/kuicksilver/quic/ConnectionListener;)V
 	public final fun setDiscovery (Lio/kuicksilver/ktor/client/Http3DiscoveryMode;)V
 	public final fun setEarlyData (Z)V
 	public final fun setEndpoint (Lio/kuicksilver/quic/QuicEndpointConfig;)V
 	public final fun setHardDelay-BwNAW2A (Lkotlin/time/Duration;)V
 	public final fun setNetworkId (Lkotlin/jvm/functions/Function0;)V
+	public final fun setQlog (Lio/kuicksilver/quic/QlogSink;)V
 	public final fun setQuicHints (Ljava/util/Set;)V
 	public final fun setSettings (Lio/kuicksilver/http3/Http3Settings;)V
 	public final fun setSoftDelay-LRDsOJo (J)V
@@ -93,15 +97,19 @@ public final class io/kuicksilver/ktor/client/Kuicksilver : io/ktor/client/engin
 public final class io/kuicksilver/ktor/client/KuicksilverEngineConfig : io/ktor/client/engine/HttpClientEngineConfig {
 	public fun <init> ()V
 	public final fun getConnectTimeout-UwyO8pc ()J
+	public final fun getEventListener ()Lio/kuicksilver/ktor/client/KuicksilverEventListener;
 	public final fun getHttp3 ()Lio/kuicksilver/ktor/client/Http3ClientConfig;
 	public final fun getIdentity ()Lio/kuicksilver/tls/TlsIdentity;
+	public final fun getLogger ()Lio/kuicksilver/quic/KuicksilverLogger;
 	public final fun getMaxConnectionsPerHost ()I
 	public final fun getQuic ()Lio/kuicksilver/quic/QuicConfig;
 	public final fun getTls ()Lkotlin/jvm/functions/Function1;
 	public final fun getTrust ()Lio/kuicksilver/tls/TrustConfig;
 	public final fun http3 (Lkotlin/jvm/functions/Function1;)V
 	public final fun setConnectTimeout-LRDsOJo (J)V
+	public final fun setEventListener (Lio/kuicksilver/ktor/client/KuicksilverEventListener;)V
 	public final fun setIdentity (Lio/kuicksilver/tls/TlsIdentity;)V
+	public final fun setLogger (Lio/kuicksilver/quic/KuicksilverLogger;)V
 	public final fun setMaxConnectionsPerHost (I)V
 	public final fun setQuic (Lio/kuicksilver/quic/QuicConfig;)V
 	public final fun setTls (Lkotlin/jvm/functions/Function1;)V
@@ -113,5 +121,34 @@ public final class io/kuicksilver/ktor/client/KuicksilverEngineContainer : io/kt
 	public fun getFactory ()Lio/ktor/client/engine/HttpClientEngineFactory;
 	public fun getPriority ()D
 	public fun toString ()Ljava/lang/String;
+}
+
+public abstract class io/kuicksilver/ktor/client/KuicksilverEventListener {
+	public fun <init> ()V
+	public fun altSvcMarkedBroken (Ljava/lang/String;Ljava/lang/String;)V
+	public fun altSvcUsed (Lio/ktor/client/request/HttpRequestData;Ljava/lang/String;)V
+	public fun callEnd (Lio/ktor/client/request/HttpRequestData;Lio/ktor/http/HttpProtocolVersion;I)V
+	public fun callFailed (Lio/ktor/client/request/HttpRequestData;Ljava/lang/Throwable;)V
+	public fun callStart (Lio/ktor/client/request/HttpRequestData;)V
+	public fun connectionAcquired (Lio/ktor/client/request/HttpRequestData;Lio/ktor/http/HttpProtocolVersion;Z)V
+	public fun connectionReleased (Lio/ktor/client/request/HttpRequestData;Lio/ktor/http/HttpProtocolVersion;Z)V
+	public fun fallback (Lio/ktor/client/request/HttpRequestData;Ljava/lang/Throwable;)V
+	public fun protocolSelected (Lio/ktor/client/request/HttpRequestData;Lio/ktor/http/HttpProtocolVersion;Lio/kuicksilver/ktor/client/ProtocolReason;)V
+	public fun raceEnded-exY8QGI (Lio/ktor/client/request/HttpRequestData;Lio/ktor/http/HttpProtocolVersion;JLjava/lang/Throwable;)V
+	public fun retry (Lio/ktor/client/request/HttpRequestData;ILjava/lang/Throwable;)V
+}
+
+public final class io/kuicksilver/ktor/client/ProtocolReason : java/lang/Enum {
+	public static final field BrokenAlternative Lio/kuicksilver/ktor/client/ProtocolReason;
+	public static final field Configuration Lio/kuicksilver/ktor/client/ProtocolReason;
+	public static final field ExistingConnection Lio/kuicksilver/ktor/client/ProtocolReason;
+	public static final field Fallback Lio/kuicksilver/ktor/client/ProtocolReason;
+	public static final field NoAlternative Lio/kuicksilver/ktor/client/ProtocolReason;
+	public static final field NotSecure Lio/kuicksilver/ktor/client/ProtocolReason;
+	public static final field Race Lio/kuicksilver/ktor/client/ProtocolReason;
+	public static final field WebSocket Lio/kuicksilver/ktor/client/ProtocolReason;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lio/kuicksilver/ktor/client/ProtocolReason;
+	public static fun values ()[Lio/kuicksilver/ktor/client/ProtocolReason;
 }
 

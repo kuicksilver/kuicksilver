@@ -200,6 +200,7 @@ internal class KslDatagramIo private constructor(
         fun open(
             local: InetSocketAddress,
             reusePort: Boolean = false,
+            logger: KuicksilverLogger = KuicksilverLogger.Stderr,
             configure: (fd: Int) -> Unit = {},
         ): KslDatagramIo? {
             if (!KslUdpSocket.supported) return null
@@ -216,7 +217,9 @@ internal class KslDatagramIo private constructor(
                     socketOpener(addr, flags) { e ->
                         @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
                         if (fallbackWarned.compareAndSet(false, true)) {
-                            printWarning("kuicksilver: accelerated UDP socket refused on $local (${e.message}); using the portable socket")
+                            logger.emit(
+                                LogLevel.Warn,
+                            ) { "accelerated UDP socket refused on $local (${e.message}); using the portable socket" }
                         }
                     } ?: return null
                 }

@@ -183,6 +183,12 @@ public class QuicEndpointConfig private constructor(
     public val statelessTotalPerSecond: Int,
     /** Endpoint loops sharing the port with SO_REUSEPORT (docs/guide/quic.md, "Several loops on one port"): more than one needs a server and the accelerated transport with SO_REUSEPORT flow hashing (Linux, Android; not Apple or Windows), else `bind` throws `UnsupportedOperationException`. */
     public val loops: Int,
+    /** Where the endpoint's diagnostics go (docs/guide/quic.md, "Observability"); [KuicksilverLogger.Stderr] (warnings on standard error) by default. */
+    @property:ExperimentalKuicksilverApi
+    public val logger: KuicksilverLogger,
+    /** Hears every connection's lifecycle on the endpoint loop; null (the default) for none. */
+    @property:ExperimentalKuicksilverApi
+    public val listener: ConnectionListener?,
 ) {
     /** The mutable side of [QuicEndpointConfig] behind `quicEndpointConfig { }`; [build] validates the values together. */
     @KuicksilverDsl
@@ -237,6 +243,14 @@ public class QuicEndpointConfig private constructor(
         /** Default 1 (1..255); more needs a [server] and no [dispatcher]. See [QuicEndpointConfig.loops]. */
         public var loops: Int = 1
 
+        /** Default [KuicksilverLogger.Stderr]; see [QuicEndpointConfig.logger]. */
+        @ExperimentalKuicksilverApi
+        public var logger: KuicksilverLogger = KuicksilverLogger.Stderr
+
+        /** Default null; see [QuicEndpointConfig.listener]. */
+        @ExperimentalKuicksilverApi
+        public var listener: ConnectionListener? = null
+
         /**
          * An immutable [QuicEndpointConfig]; IllegalArgumentException for a value out of range or a combination that cannot work
          * (connection ID lengths that differ, loops without a server).
@@ -272,6 +286,8 @@ public class QuicEndpointConfig private constructor(
                 statelessPerAddressPerSecond,
                 statelessTotalPerSecond,
                 loops,
+                logger,
+                listener,
             )
         }
     }
@@ -295,6 +311,8 @@ public class QuicEndpointConfig private constructor(
             it.statelessPerAddressPerSecond = statelessPerAddressPerSecond
             it.statelessTotalPerSecond = statelessTotalPerSecond
             it.loops = loops
+            it.logger = logger
+            it.listener = listener
         }
 
     /** Holds [Default]. */
