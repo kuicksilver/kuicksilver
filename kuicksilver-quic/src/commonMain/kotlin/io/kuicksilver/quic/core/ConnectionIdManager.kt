@@ -132,6 +132,15 @@ internal class ConnectionIdManager(
     private var retirePriorTo = 0L
     private var largestPeerSeq = -1L
     private val pendingRetire = ArrayList<Long>()
+
+    /**
+     * Peer sequence numbers we retired, at most [retiredCap]: a retransmitted NEW_CONNECTION_ID for one of them is ignored instead
+     * of bringing the ID back (RFC 9000 section 19.15; quic-go retires anything below its highest retired number at once). When the
+     * memory is full the lowest number is forgotten and [retiredPeerFloor] rises above it: an unknown ID below the floor is retired
+     * again on arrival, never added.
+     */
+    private val retiredPeerSeqs = ArrayList<Long>()
+    private var retiredPeerFloor = 0L
     private val unackedRetire = ArrayList<Long>()
     var core: ConnectionCore? = null
     var retiredByPeer: Int = 0
@@ -384,6 +393,7 @@ internal class ConnectionIdManager(
         if (p === current || !isActive(p) || pendingRetire.size + unackedRetire.size + 1 > retiredCap) return
         peer.remove(p)
         pendingRetire += p.seq
+        rememberRetired(p.seq)
     }
 
     /** True when the frame was a repeat of a known sequence number (a glitch when it is not a retransmission). */
@@ -409,10 +419,6 @@ internal class ConnectionIdManager(
             }
             return true
         }
-        if (seq <= largestPeerSeq && seq < retirePriorTo) {
-            queueRetire(seq)
-            return false
-        } // already retired by a later frame
         if (retire > retirePriorTo) {
             retirePriorTo = retire
             val it = peer.iterator()
@@ -424,7 +430,8 @@ internal class ConnectionIdManager(
                 }
             }
         }
-        if (seq < retirePriorTo) {
+        if (retiredPeerSeqs.contains(seq)) return true // we retired it already: a retransmission that crossed our RETIRE
+        if (seq < retirePriorTo || seq < retiredPeerFloor) {
             queueRetire(seq)
             return false
         }
@@ -447,13 +454,27 @@ internal class ConnectionIdManager(
         return false
     }
 
+    /** Queues RETIRE_CONNECTION_ID for [seq] once: copies of a frame below retire_prior_to share the one already waiting or in flight. */
     private fun queueRetire(seq: Long) {
+        if (pendingRetire.contains(seq) || unackedRetire.contains(seq)) return
         if (pendingRetire.size + unackedRetire.size + 1 >
             retiredCap
         ) {
             throw QuicWireException(TransportError.CONNECTION_ID_LIMIT_ERROR, 0x18, "more than $retiredCap retirements outstanding")
         }
         pendingRetire += seq
+        rememberRetired(seq)
+    }
+
+    private fun rememberRetired(seq: Long) {
+        if (retiredPeerSeqs.contains(seq)) return
+        if (retiredPeerSeqs.size >= retiredCap) {
+            var low = 0
+            for (i in 1 until retiredPeerSeqs.size) if (retiredPeerSeqs[i] < retiredPeerSeqs[low]) low = i
+            val forgotten = retiredPeerSeqs.removeAt(low)
+            if (forgotten + 1 > retiredPeerFloor) retiredPeerFloor = forgotten + 1
+        }
+        retiredPeerSeqs += seq
     }
 
     /** RETIRE_CONNECTION_ID frames to send now (they move to the unacknowledged set). */
@@ -473,6 +494,10 @@ internal class ConnectionIdManager(
     }
 
     internal fun localForTest(seq: Long) = local.firstOrNull { it.seq == seq }
+
+    internal fun peerSeqsForTest(): List<Long> = peer.map { it.seq }
+
+    internal fun retiredSeqMemoryForTest(): Int = retiredPeerSeqs.size
 
     /** The peer ID to put in our packets: the lowest active one. */
     fun activePeerCid(): ConnectionId {
