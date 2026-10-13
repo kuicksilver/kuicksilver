@@ -473,6 +473,7 @@ internal class LossDetection(
             listener.onLost(sp.id, p)
         }
         val pcDuration = persistentCongestionDuration()
+        var activePathPersistent = false
         // one loss event per path the lost packets travelled on: a migration must not charge the new path for the old one's losses (RFC 9000 section 9.4)
         if (lostBytes > 0) {
             var done = 0
@@ -514,6 +515,7 @@ internal class LossDetection(
                     }
                 }
                 val persistent = persistentCongestion(sp, pid, pcc, pcDuration)
+                if (persistent && pid == activePath) activePathPersistent = true
                 event.kind = CongestionKind.Lost
                 event.bytes = bytes
                 event.sentTime = largest
@@ -534,6 +536,12 @@ internal class LossDetection(
         }
         for (k in lost.indices) sp.release(lost[k])
         lost.clear()
+        if (activePathPersistent) {
+            // RFC 9002 section 5.2: min_rtt restarts from the newest sample, and (as ngtcp2) a new persistent congestion period
+            // needs packets sent after it, so a lasting RTT increase is not declared persistent congestion again and again
+            rtt.onPersistentCongestion()
+            firstRttSampleTime = now
+        }
     }
 
     /**

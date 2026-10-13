@@ -575,6 +575,18 @@ class LossDetectionTest {
         ld.onAck(SpaceId.Application, ack(20L to 20L), t0 + 2100.milliseconds)
         assertEquals(listOf("0:true", "1:false"), l.lossByPath)
     }
+
+    @Test fun persistentCongestionResetsMinRttToTheNewestSample() {
+        // RFC 9002 section 5.2: "Endpoints SHOULD set the min_rtt to the newest RTT sample after persistent congestion is established"
+        val (ld, _) = ld()
+        ld.handshakeConfirmed = true
+        ld.peerAddressValidated = true
+        sampleByAck(ld, 0, t0 - 200.milliseconds, rtt = 50.milliseconds)
+        assertEquals(50.milliseconds, ld.rtt.min)
+        for (pn in 1L..20L) send(ld, SpaceId.Application, pn, t0 + (pn.toInt() * 100).milliseconds)
+        ld.onAck(SpaceId.Application, ack(20L to 20L), t0 + 2300.milliseconds) // sample: 300 ms
+        assertEquals(300.milliseconds, ld.rtt.min)
+    }
 }
 
 private fun Int.microsecondsAsDuration(): Duration = kotlin.time.Duration.parse("${this}us")
