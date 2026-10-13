@@ -159,7 +159,8 @@ stay green. RFC coverage, section by section, with the tests behind each row, is
 - [docs/architecture.md](docs/architecture.md) — how the code is organised, invariants, entry points.
 - [docs/roadmap.md](docs/roadmap.md) — what 0.1.0 ships, its stated limits, and what 0.2.0 and later bring.
 - [docs/guide/](docs/guide/quic.md) — user guides: [TLS](docs/guide/tls.md), [QUIC](docs/guide/quic.md),
-  [HTTP/3](docs/guide/http3.md), [Ktor engines](docs/guide/ktor.md), [iOS](docs/guide/ios.md).
+  [HTTP/3](docs/guide/http3.md), [Ktor engines](docs/guide/ktor.md), [iOS](docs/guide/ios.md),
+  [publishing on the App Store](docs/guide/app-store.md).
 - [docs/spec/rfc-compliance.md](docs/spec/rfc-compliance.md) — RFC coverage and the interop matrix.
 - [docs/spec/threat-model.md](docs/spec/threat-model.md) — threat model and the `negative_*` security controls.
 - [docs/adr/](docs/adr/README.md) — architecture decision records.

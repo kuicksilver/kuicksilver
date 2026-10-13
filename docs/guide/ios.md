@@ -132,6 +132,8 @@ therefore sets `ITSAppUsesNonExemptEncryption` to `true`:
   recordkeeping of part 762 applies.
 - App Store Connect asks about encryption for every build unless the Info.plist answers it, and may ask for
   documentation (then add `ITSEncryptionExportComplianceCode`), including a declaration for distribution in France.
+- The step-by-step version, with the App Store Connect questions, Info.plist and review-note templates, is
+  [app-store.md](app-store.md).
 - **The classification and the answers are the app owner's decision and responsibility**, not the library's, and this
   section is not legal advice. Changing what the app encrypts (for example adding end-to-end encryption of user data
   on top) can change the answer.
