@@ -256,6 +256,23 @@ class StatelessResetTest {
         }
     }
 
+    /** Fuzzing finding (endpointRoute, packetRecvServer): a trigger larger than the 1500-byte answer buffer overflowed it. */
+    @Test fun negative_resetForJumboDatagramFitsItsBuffer() {
+        val p = Pair()
+        try {
+            val dcid = serverFormatCid(routing = 0)
+            for ((i, size) in listOf(1501, 1600, 9000, 65_527).withIndex()) {
+                assertNull(p.feed(p.server, shortTo(dcid, size, seed = i), InetSocketAddress("10.0.1.${i + 1}", 7)))
+                val out = p.stateless(p.server)
+                assertEquals(1, out.size, "a reset for a datagram of $size bytes")
+                assertTrue(out[0].size in 21..1500, "the reset fits the answer buffer: ${out[0].size}")
+                assertContentEquals(nullToken(dcid), out[0].copyOfRange(out[0].size - 16, out[0].size))
+            }
+        } finally {
+            p.close()
+        }
+    }
+
     @Test fun noResetForLongHeader() {
         val p = Pair()
         try {

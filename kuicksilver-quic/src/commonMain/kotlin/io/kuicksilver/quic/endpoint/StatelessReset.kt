@@ -30,7 +30,8 @@ internal object StatelessReset {
 
     /**
      * Writes a reset for [token] into [out]: strictly shorter than the [incomingLength] that triggered it (so two endpoints
-     * cannot reset each other forever, section 10.3.3), at least [MIN_SIZE]. Returns 0 when the trigger is too small.
+     * cannot reset each other forever, section 10.3.3), at least [MIN_SIZE], and no longer than [out] holds (a trigger can be
+     * a jumbo datagram). Returns 0 when the trigger is too small.
      */
     fun write(
         out: PacketBuffer,
@@ -39,7 +40,9 @@ internal object StatelessReset {
         random: Random,
     ): Int {
         if (incomingLength <= MIN_SIZE) return 0
-        val length = MIN_SIZE + random.nextInt(incomingLength - MIN_SIZE) // [MIN_SIZE, incomingLength - 1]
+        val limit = minOf(incomingLength, out.capacity + 1)
+        if (limit <= MIN_SIZE) return 0
+        val length = MIN_SIZE + random.nextInt(limit - MIN_SIZE) // [MIN_SIZE, min(incomingLength - 1, capacity)]
         val head = ByteArray(length - 16)
         random.nextBytes(head)
         head[0] = ((head[0].toInt() and 0x3f) or 0x40).toByte() // fixed bit set, long-header bit clear
