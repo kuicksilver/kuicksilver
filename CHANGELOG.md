@@ -649,6 +649,9 @@ Samples and testing:
 - `keylogFile(path)` refuses a FIFO at the path instead of blocking until a reader appears (on Native that stalled the
   endpoint loop at the first secret line): Native opens with `O_NONBLOCK` and checks the descriptor, the JVM checks the
   path before opening it, Windows refuses anything but a regular file (security review 2026-10-14, threat model 3.7).
+- Ktor client: an `Alt-Svc` alternative on a loopback, link-local or private address (or a `localhost` name) is ignored
+  unless the origin itself is on such an address, and one on an unspecified, multicast or broadcast address always, so a
+  verified origin cannot aim clients' QUIC Initials at their own network (RFC 9000 section 21.5, threat model 3.14).
 
 ## 0.1.0 candidate (never published)
 

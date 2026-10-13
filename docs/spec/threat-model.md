@@ -190,8 +190,9 @@ Status (core review): skipped packet numbers, all CIDs (the client's ODCID/SCID,
 ### 3.14 Request forgery through the client (RFC 9000 §21.5)
 
 - **Threats:** the server points the client at an arbitrary host:port through `Alt-Svc` or `preferred_address`; an attacker makes the client send Initials/tokens to a victim.
-- **Mitigations:** `Alt-Svc` is accepted only from a response over verified TLS, port ≥ 1024 is dropped when the origin is < 1024, the cache is bounded; `preferred_address` is ignored; NEW_TOKEN is not used.
-- **Verification:** `negative_altSvcFromUnverifiedTls`, `negative_preferredAddressIgnored`.
+- **Mitigations:** `Alt-Svc` is accepted only from a response over verified TLS, port ≥ 1024 is dropped when the origin is < 1024, the cache is bounded; an alternative on a loopback, link-local, private (RFC 1918, RFC 6598, `fc00::/7`) address or a `localhost` name is dropped unless the origin itself is on such an address (the rule migration applies to paths, §3.5), and one on an unspecified, multicast or broadcast address always (security review 2026-10-14, finding 7: before, a verified origin, such as a public site under the attacker's control, could send `h3="127.0.0.1:443"` or `h3="[fe80::1]:500"` and every client sent padded Initials into its own network for up to `ma`); `preferred_address` is ignored; NEW_TOKEN is not used.
+- **Residue:** only IP literals are classified: an alternative named by a DNS name that resolves to a local address is not caught (the resolver runs in the QUIC connect, and a check before it could be raced by DNS rebinding). That exposure equals a redirect to such a name, which the HTTP client follows anyway.
+- **Verification:** `negative_altSvcFromUnverifiedTls`, `AltSvcDestinationTest.negative_altSvcToLocalNetworkFromPublicOrigin`, `.negative_altSvcToUnspecifiedOrMulticastAlwaysRefused`, `.localOriginMayPointToLocalAlternatives`, `negative_preferredAddressIgnored`.
 
 ### 3.15 Header protection removal and AEAD limits (RFC 9001 §9.5, §6.6)
 

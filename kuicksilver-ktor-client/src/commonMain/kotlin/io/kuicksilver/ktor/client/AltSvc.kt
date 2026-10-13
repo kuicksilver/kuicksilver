@@ -203,7 +203,11 @@ internal class AltSvcCache(
                 }
             entries += parsed
         }
-        val usable = entries.filter { !(url.port < 1024 && it.port >= 1024) }.take(MAX_ENTRIES_PER_ORIGIN)
+        // RFC 9000 section 21.5: no alternative on the client's own networks unless the origin is there (AltSvcDestination)
+        val usable =
+            entries
+                .filter { !(url.port < 1024 && it.port >= 1024) && AltSvcDestination.allowed(url.host, it.host) }
+                .take(MAX_ENTRIES_PER_ORIGIN)
         if (usable.isEmpty()) store.remove(origin) else store.put(origin, usable)
     }
 
