@@ -694,7 +694,9 @@ internal class PacketBuilder(
         p.pathId = target.id.value
         p.cc = target.cc // a PMTU probe is tracked for loss but never counts toward the window (RFC 9000 section 14.4)
         p.ecnMarked = currentMark != io.kuicksilver.quic.Ecn.NotEct
-        if (p.ecnMarked && close == null) target.ecn.onSent(true)
+        // a test packet must be one loss detection can declare lost (appendix A.4: "if marked packets are all declared lost"):
+        // ACK-only packets are never stored, so they would keep a black-holed path in the Unknown state forever
+        if (p.ecnMarked && close == null && (ackEliciting || p.inFlight)) target.ecn.onSent(true)
         lastWasAckEliciting = ackEliciting
         // the path the packet travels on owns its congestion state (RFC 9000 section 9.4): a probe lost on a dead path never inflates the active window
         if (close ==
