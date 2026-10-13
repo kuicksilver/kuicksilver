@@ -608,6 +608,9 @@ Pre-release API and operations review (2026-10-14):
   (`listenerFailures`, `admissionContractViolations`, a rejected peer). The listener's `onClosed` runs after `closed` has
   completed. Exceptions out of the logger are now counted in `listenerFailures`, and a failing qlog sink is logged at
   `Warn`, as their KDoc said.
+- Ktor engines: a `KuicksilverEventListener` or `KuicksilverServerEventListener` callback that throws a
+  `CancellationException` no longer fails the call (client) or ends HTTP/3 accepting and the connection's handler
+  (server); it is logged like any other listener failure.
 
 ### Security
 

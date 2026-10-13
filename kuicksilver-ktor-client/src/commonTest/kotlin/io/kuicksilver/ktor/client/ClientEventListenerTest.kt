@@ -268,6 +268,54 @@ class ClientEventListenerTest {
             }
         }
 
+    @Test fun aListenerThrowingCancellationNeverFailsTheCall() =
+        h3Test {
+            // the callbacks are not suspending: a CancellationException out of one is the listener's bug, not the call's cancellation
+            val (server, port) = testServer { routing { get("/") { call.respondText("ok") } } }
+            val throwing =
+                object : KuicksilverEventListener() {
+                    private fun bug(): Nothing = throw kotlinx.coroutines.CancellationException("listener bug")
+
+                    override fun callStart(request: HttpRequestData): Unit = bug()
+
+                    override fun callEnd(
+                        request: HttpRequestData,
+                        protocol: HttpProtocolVersion,
+                        status: Int,
+                    ): Unit = bug()
+
+                    override fun protocolSelected(
+                        request: HttpRequestData,
+                        protocol: HttpProtocolVersion,
+                        reason: ProtocolReason,
+                    ): Unit = bug()
+
+                    override fun connectionAcquired(
+                        request: HttpRequestData,
+                        protocol: HttpProtocolVersion,
+                        reused: Boolean,
+                    ): Unit = bug()
+
+                    override fun connectionReleased(
+                        request: HttpRequestData,
+                        protocol: HttpProtocolVersion,
+                        kept: Boolean,
+                    ): Unit = bug()
+                }
+            try {
+                for (mode in listOf(Http3DiscoveryMode.H1Only, Http3DiscoveryMode.H3Only)) {
+                    testClient(mode, engine = {
+                        eventListener = throwing
+                        logger = KuicksilverLogger.None
+                    }).use { c ->
+                        repeat(2) { assertEquals("ok", c.get("https://127.0.0.1:$port/").bodyAsText(), "$mode") }
+                    }
+                }
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
     @Test fun loggerQlogAndConnectionListenerReachTheQuicEndpoint() =
         h3Test {
             val (server, port) = testServer { routing { get("/") { call.respondText("ok") } } }

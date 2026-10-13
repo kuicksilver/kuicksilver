@@ -17,7 +17,8 @@ import kotlin.time.Duration
  * [callFailed]; [connectionReleased] follows when the call's response is done with.
  *
  * Callbacks run on the call's coroutine (or, for releases, where the response body ends) and must return quickly without
- * blocking; an exception out of one is logged at [LogLevel.Warn] through the engine's logger and otherwise ignored.
+ * blocking; an exception out of one (a CancellationException included) is logged at [LogLevel.Warn] through the engine's
+ * logger and otherwise ignored.
  */
 @ExperimentalKuicksilverApi
 public abstract class KuicksilverEventListener {
@@ -138,9 +139,8 @@ internal class EngineEvents(
         val l = listener ?: return
         try {
             l.call()
-        } catch (e: kotlinx.coroutines.CancellationException) {
-            throw e
         } catch (e: Throwable) {
+            // a CancellationException too: the callbacks are not suspending, so it is the listener's bug, not the call's cancellation
             runCatching { if (logger.isEnabled(LogLevel.Warn)) logger.log(LogLevel.Warn, "event listener failed in $what", e) }
         }
     }
