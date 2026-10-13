@@ -251,6 +251,38 @@ class PathTest {
         }
     }
 
+    /**
+     * Found by the stateful connection fuzzer (`connectionNull`): every PATH_CHALLENGE the server sent was appended to a
+     * test-only record that nothing trimmed, so forged copies from ever new addresses grew the connection's memory without
+     * bound. The record keeps the latest [ConnectionCore.TEST_RECORD_LIMIT] entries.
+     */
+    @Test fun negative_challengeRecordStaysBoundedUnderForgedAddresses() {
+        val (p, c) = connected()
+        try {
+            val s = p.server()
+            repeat(100) { i ->
+                val attacker = InetSocketAddress("10.0.1.${i % 250}", 7000 + i)
+                var copied = false
+                p.filterToServer = { _, b ->
+                    if (!copied && b[0].toInt() and 0x80 == 0) {
+                        copied = true
+                        p.feed(p.server, b, attacker)
+                    }
+                    true
+                }
+                send(c)
+                p.settle(3)
+            }
+            assertTrue(s.pathChallengesSentForTest > ConnectionCore.TEST_RECORD_LIMIT, "challenges sent: ${s.pathChallengesSentForTest}")
+            assertTrue(
+                s.challengedAddressesForTest.size <= ConnectionCore.TEST_RECORD_LIMIT,
+                "challenge record: ${s.challengedAddressesForTest.size}",
+            )
+        } finally {
+            p.close()
+        }
+    }
+
     @Test fun failedValidationFallsBackToLastValidated() {
         // RFC 9000 section 9.3.2: the new path never delivers the server's packets; after the validation timeout the server returns to the last validated path
         val (p, c) = connected()

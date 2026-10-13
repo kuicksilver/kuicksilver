@@ -16,6 +16,12 @@ Nothing has been released yet. This section summarises the development of the fi
 
 ### Fixed
 
+- `QuicTlsSession.earlyDataAccepted` (and `ConnectionCore.earlyDataAccepted`) of a session whose handshake failed
+  threw the native `KslException.Internal`; it now reports the last verdict (found by the `zeroRttHello` fuzz target).
+- QUIC client: a `QuicSessionTicket.remembered` blob whose ALPN length runs past its end (the property is public) threw
+  out of the ticket's use; it now gives no 0-RTT (found by the `rememberedTicket` fuzz target).
+- QUIC: a flow-control error no longer leaves the connection's received-bytes total above the advertised limit (the
+  total is checked before it is updated).
 - QUIC: a burst of losses that left more than `maxReassemblyRanges` gaps in a stream (every other packet lost within one RTT, e.g. a full receive buffer) closed the connection with FLOW_CONTROL_ERROR although the peer stayed within flow control; the packet that would open one gap too many is now dropped unacknowledged and retransmitted by the peer, and the memory bound is unchanged (RFC 9000 §21.7).
 - `FileAltSvcStore` persists on Android API 24-25: kotlinx-io's `atomicMove` needs `java.nio.file` (API 26), so every write failed and the store silently kept alternatives in memory only; it now falls back to `java.io.File.renameTo`, and a store that cannot be written logs one warning.
 - `keylogFile` (and `keylogFile(context)`) on Android below API 26 throws `IllegalArgumentException` (the file cannot be checked without `java.nio.file`) instead of `NoClassDefFoundError`.
@@ -233,6 +239,15 @@ Fixes from a full five-reviewer pass over the code before the first release, amo
 
 ### Security
 
+- Findings of the local fuzzing campaigns (`tools/fuzz/campaign.sh`, threat model §3.10), each with a regression input
+  and a test: a server endpoint answering a short-header datagram over 1500 bytes to an unknown connection ID with a
+  stateless reset overflowed its answer buffer and threw out of `EndpointCore.handleDatagram`; a client that received a
+  Retry with a token too large for its next Initial (Retry integrity keys are public, so an on-path attacker can forge
+  one) threw out of `poll` — such a Retry is now dropped (tokens up to 1024 bytes are taken); a peer's RESET_STREAM final
+  size was checked against the connection window only, so it could exceed the stream window without FLOW_CONTROL_ERROR
+  (RFC 9000 §4.1, §4.5, §19.10); every PATH_CHALLENGE a connection sent was appended to a test-only record that was never
+  trimmed (as was every MTU update), so an attacker who forged copies of a peer's packets from ever new addresses grew the
+  connection's memory without bound — the records now keep their latest 64 entries.
 - Connection IDs, tokens, path challenges and packet-number skips come from OpenSSL's `RAND_bytes` through a
   thread-safe per-loop source; a non-cryptographic generator is no longer used on production paths.
 - HTTP/3 header frames are read incrementally instead of allocating their declared length up front.

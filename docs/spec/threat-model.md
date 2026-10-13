@@ -95,6 +95,40 @@ K3 status: with `loops > 1` each loop answers with a stateless reset only for CI
 - **Mitigations:** `ksl` — minimal code, all buffers with lengths, no `strlen`; Kotlin — bounds checks; fuzzing with Jazzer and libFuzzer; size limits.
 - **Verification:** fuzzing corpus in CI, an ASan/UBSan build of `ksl` in CI.
 
+K7 status (fuzzing campaigns, 2026-10-13/14): local campaigns replace ClusterFuzzLite (`tools/fuzz/campaign.sh`,
+CONTRIBUTING "Fuzzing"): every target runs in slices of at most 20 minutes at background priority, one at a time, and the
+grown corpora are minimized into `tools/fuzz/corpus/<target>/`. New targets: `ConnectionFuzzTest.connectionNull` and
+`.connectionTls` — a stateful fuzzer of a client/server `ConnectionCore` pair (frames sealed by either side into
+Initial/Handshake/0-RTT/1-RTT packets, raw or structured — STREAM, RESET_STREAM, STOP_SENDING, MAX_*, *_BLOCKED,
+NEW/RETIRE_CONNECTION_ID, PATH_CHALLENGE/RESPONSE, DATAGRAM, ACK with ECN counts, HANDSHAKE_DONE, NEW_TOKEN, CRYPTO,
+CONNECTION_CLOSE, unknown types — plus application actions, loss, duplication, reordering, ECN marks, NAT rebinding and
+timers; `connectionTls` after a real TLS 1.3 handshake through ksl), checking after every step crash isolation, a Closed
+event for every closing connection, flow-control and stream-state invariants (`StreamManager.invariantViolationForTest`)
+and bounds on every per-connection collection (`ConnectionCore.sizesForTest`); `ZeroRttFuzzTest.replayRegister` (the
+register against a model of what it must refuse, monotonic and wall clock, small layouts so that full halves and
+rotation are reached) and `.rememberedTicket`; `ZeroRttHelloFuzzTest.clientHelloScan` (fragmented equals whole) and
+`.zeroRttHello` (real server sessions: accepted early data was admitted and kept, refused early data holds no admission,
+a replay gets early data at most once); `tools/fuzz/ksl` — the ksl parsing paths under ASan/UBSan (transport parameters
+and version negotiation, certificate framing, keys, ClientHello with the SNI pause and with 0-RTT, ServerHello; Apple
+clang has no libFuzzer, so a trace-pc-guard driver guides it, coverage of ksl only, not OpenSSL).
+
+Findings, each fixed test-first with a `crash-*` regression input: (1) a stateless reset answering a short-header
+datagram over 1500 bytes overflowed the endpoint's answer buffer (`endpointRoute`, `packetRecvServer`;
+`StatelessResetTest.negative_resetForJumboDatagramFitsItsBuffer`); (2) a Retry token too large for the client's next
+Initial made `poll` throw — Retry integrity keys are public, so an on-path attacker could forge one (`packetRecvClient`;
+`RetryTest.negative_retryOversizedTokenDropped`, tokens above 1024 bytes are dropped with their Retry, a local limit:
+RFC 9000 sets none); (3) a RESET_STREAM final size was checked against the connection window only (RFC 9000 §4.1, §4.5, §19.10),
+and a flow-control error left the received total above the limit (`connectionNull`, `connectionTls`;
+`StreamStateTest.negative_resetFinalSizeBeyondStreamWindowIsFlowControlError`, `.negative_flowControlErrorKeepsReceivedWithinLimit`);
+(4) the early-data verdict of a failed TLS session leaked `KslException` (`zeroRttHello`;
+`QuicEarlyDataTest.negative_earlyDataVerdictAfterFailedHandshake`); (5) a malformed `QuicSessionTicket.remembered` blob threw
+(`rememberedTicket`; `ZeroRttTest.negative_malformedRememberedBlobGivesNoEarlyData`); (6) two test-only records of a
+connection (the addresses it sent PATH_CHALLENGE to, its MTU updates) grew with every challenge, so forged copies of a
+client packet from ever new addresses grew the connection's memory without bound (`connectionNull`;
+`PathTest.negative_challengeRecordStaysBoundedUnderForgedAddresses`; the records keep their latest 64 entries).
+
+<!-- campaign-table -->
+
 ### 3.11 Supply chain
 
 - **Threats:** tampered OpenSSL sources; a tampered native artifact in the JAR; an OpenSSL vulnerability without an update.

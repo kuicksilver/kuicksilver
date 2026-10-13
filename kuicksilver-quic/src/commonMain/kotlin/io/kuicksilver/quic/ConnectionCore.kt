@@ -157,6 +157,7 @@ public class ConnectionCore internal constructor(
     internal var testInjectPathResponse: Long? = null
     internal var pathResponsesSentForTest = 0
     internal val challengedAddressesForTest = ArrayList<InetSocketAddress>()
+    internal var pathChallengesSentForTest = 0
     internal val pathCountForTest: Int get() = paths.all.size
 
     // ---- DPLPMTUD (RFC 8899) ----
@@ -1072,6 +1073,9 @@ public class ConnectionCore internal constructor(
 
     /** Holds [client]; the server-side factory is the `ConnectionCore.Companion.server` extension. */
     public companion object {
+        /** The most entries a test-only record of this connection keeps (the latest ones): a peer must not grow it. */
+        internal const val TEST_RECORD_LIMIT = 64
+
         /** A client connection to [remote]; the first [poll] produces the Initial datagrams. [random] supplies its connection IDs, PATH_CHALLENGE data and skipped packet numbers: a CSPRNG outside tests (predictable IDs would let an off-path attacker forge them). */
         public fun client(
             config: QuicConfig,
@@ -1191,4 +1195,10 @@ internal fun ConnectionCore.Companion.serverWithKeys(
     }
     core.installInitialKeys(profile)
     return core
+}
+
+/** Appends to a test-only record of a connection, dropping the oldest entry beyond [ConnectionCore.TEST_RECORD_LIMIT]. */
+internal fun <T> MutableList<T>.recordForTest(value: T) {
+    if (size >= ConnectionCore.TEST_RECORD_LIMIT) removeAt(0)
+    add(value)
 }

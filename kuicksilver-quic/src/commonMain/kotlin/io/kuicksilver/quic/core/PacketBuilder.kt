@@ -10,6 +10,7 @@ import io.kuicksilver.quic.PacketBatch
 import io.kuicksilver.quic.PathState
 import io.kuicksilver.quic.TimeMark
 import io.kuicksilver.quic.crypto.PacketProtection
+import io.kuicksilver.quic.recordForTest
 import io.kuicksilver.quic.recovery.SentFrames
 import io.kuicksilver.quic.recovery.SpaceId
 import io.kuicksilver.quic.stream.ControlKind
@@ -386,7 +387,8 @@ internal class PacketBuilder(
                 target.challengePending = false
                 ackEliciting =
                     true
-                c.challengedAddressesForTest += target.remote
+                c.challengedAddressesForTest.recordForTest(target.remote)
+                c.pathChallengesSentForTest++
             }
             while (w.remaining >=
                 9
@@ -431,7 +433,8 @@ internal class PacketBuilder(
                         false
                     ackEliciting = true
                     padToEnd = true
-                    c.challengedAddressesForTest += target.remote
+                    c.challengedAddressesForTest.recordForTest(target.remote)
+                    c.pathChallengesSentForTest++
                 } // RFC 9000 section 8.2.1: expanded to 1200 bytes
                 while (w.remaining >=
                     9
