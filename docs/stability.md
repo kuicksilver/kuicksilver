@@ -98,8 +98,8 @@ vendor parts of Ktor CIO ([ktor-internal-api.md](ktor-internal-api.md)), so anot
 when it links. The check (in `kuicksilver-ktor-network`):
 
 - **When.** Creating a client engine (`HttpClient(Kuicksilver)`, also when found through `ServiceLoader`) checks
-  `ktor-client-core` and `ktor-http-cio`; starting a server engine (`start()`, not its construction) checks
-  `ktor-server-core` and `ktor-http-cio`.
+  `ktor-client-core`, `ktor-http-cio`, `ktor-network`, `ktor-io` and `ktor-websockets`; starting a server engine
+  (`start()`, not its construction) checks `ktor-server-core`, `ktor-http-cio`, `ktor-network` and `ktor-io`.
 - **How, on the JVM and Android.** For a class of each artifact it reads `Implementation-Version` from the manifest
   of the jar that holds the class (falling back to the package's implementation version) and compares the first two
   components with `3.6`; patch and qualifier are ignored. A version that cannot be read (Android after dexing, shaded

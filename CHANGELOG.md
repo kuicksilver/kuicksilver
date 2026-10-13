@@ -652,6 +652,9 @@ Ktor server (`kuicksilver-ktor-server`):
   half-close the client never sends); a chunked body with a trailer section is accepted (it failed with "Expected CR"),
   the trailer fields discarded. The connection pipeline is now a copy of Ktor CIO's in `h1/ServerPipeline.kt`, and
   `ktor-server-cio` is no longer a dependency.
+- The startup Ktor version check also covers `ktor-network`, `ktor-io` and (client) `ktor-websockets`, whose internals
+  the engines use: a build that pinned one of them to another minor passed the check and failed later with
+  `NoSuchMethodError`.
 
 Both Ktor engines on Kotlin/Native (`kuicksilver-ktor-network`, `kuicksilver-ktor-client`, `kuicksilver-ktor-server`):
 

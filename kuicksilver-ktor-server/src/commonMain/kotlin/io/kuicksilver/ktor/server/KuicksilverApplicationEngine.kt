@@ -173,10 +173,8 @@ public class KuicksilverApplicationEngine(
 
     override suspend fun startSuspend(wait: Boolean): ApplicationEngine {
         @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class, io.ktor.utils.io.InternalAPI::class)
-        io.kuicksilver.ktor.network.KtorVersionPolicy.check(
-            "ktor-server-core" to io.ktor.server.engine.BaseApplicationEngine::class,
-            "ktor-http-cio" to io.ktor.http.cio.Request::class,
-        ) // docs/guide/ktor.md, "Supported Ktor versions"
+        io.kuicksilver.ktor.network.KtorVersionPolicy
+            .check(*KTOR_ARTIFACTS.toTypedArray()) // docs/guide/ktor.md, "Supported Ktor versions"
         serverJob.start()
         startupJob.await()
         monitor.raiseCatching(ServerReady, environment, environment.log)
@@ -323,3 +321,16 @@ public class KuicksilverApplicationEngine(
 
 /** `EngineSSLConnectorConfig` (JVM `sslConnector {}`) as a Kuicksilver connector; null on platforms without it. */
 internal expect fun platformTlsConnector(c: EngineConnectorConfig): KuicksilverTlsConnector?
+
+/**
+ * The Ktor artifacts the server engine depends on beyond public API (docs/ktor-internal-api.md) or vendors code of, each
+ * with a class it contains, for the startup version check: the server core, the HTTP/1.1 parser, the sockets (adapted on
+ * Native, `kuicksilver-ktor-network`) and the I/O channels (`readBuffer`, `@InternalAPI` channel operations).
+ */
+internal val KTOR_ARTIFACTS: List<Pair<String, kotlin.reflect.KClass<*>>> =
+    listOf(
+        "ktor-server-core" to io.ktor.server.engine.BaseApplicationEngine::class,
+        "ktor-http-cio" to io.ktor.http.cio.Request::class,
+        "ktor-network" to io.ktor.network.selector.SelectorManager::class,
+        "ktor-io" to io.ktor.utils.io.ByteReadChannel::class,
+    )

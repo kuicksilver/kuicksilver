@@ -306,10 +306,11 @@ vendor parts of Ktor CIO (`docs/ktor-internal-api.md`), which Ktor may change in
 major.minor is not supported even when it happens to link.
 
 - **At startup.** Creating a client engine (`HttpClient(Kuicksilver)`, also through `ServiceLoader`) checks
-  `ktor-client-core` and `ktor-http-cio`; starting a server engine checks `ktor-server-core` and `ktor-http-cio`. On the
-  JVM and Android the version is the `Implementation-Version` in the manifest of the jar that holds each class; when the
-  major.minor is not 3.6, the engine fails with an `IllegalStateException` naming the artifact, its version and the
-  fix. Where no version can be read (Android after dexing, shaded or repackaged jars, classes from a directory) the check
+  `ktor-client-core`, `ktor-http-cio`, `ktor-network`, `ktor-io` and `ktor-websockets`; starting a server engine checks
+  `ktor-server-core`, `ktor-http-cio`, `ktor-network` and `ktor-io` (every artifact whose internals the engines use or
+  whose code they adapt). On the JVM and Android the version is the `Implementation-Version` in the manifest of the jar
+  that holds each class; when the major.minor is not 3.6, the engine fails with an `IllegalStateException` naming the
+  artifact, its version and the fix. Where no version can be read (Android after dexing, shaded or repackaged jars, classes from a directory) the check
   passes silently.
 - **Opting out.** `-Dkuicksilver.ktor.versionCheck=false` (or `System.setProperty` before the engine is created) skips
   the check, for experts who verified their Ktor themselves; a mismatch then fails later, if at all, with

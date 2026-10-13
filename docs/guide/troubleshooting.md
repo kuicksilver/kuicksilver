@@ -306,8 +306,8 @@ process: fix the cause and restart.
 ### The engine fails to start with a Ktor version error
 
 `IllegalStateException`: "Kuicksilver's Ktor engines support Ktor 3.6.x, but <artifact> <version> is on the classpath.
-…". Creating `HttpClient(Kuicksilver)` checks `ktor-client-core` and `ktor-http-cio`; starting the server checks
-`ktor-server-core` and `ktor-http-cio`. Align every `io.ktor` dependency to 3.6.x, best with
+…". Creating `HttpClient(Kuicksilver)` checks `ktor-client-core`, `ktor-http-cio`, `ktor-network`, `ktor-io` and
+`ktor-websockets`; starting the server checks `ktor-server-core`, `ktor-http-cio`, `ktor-network` and `ktor-io`. Align every `io.ktor` dependency to 3.6.x, best with
 `platform("io.ktor:ktor-bom:3.6.<patch>")`, and look for a library that pulls a newer Ktor
 (`./gradlew dependencies`). `-Dkuicksilver.ktor.versionCheck=false` skips the check at your own risk
 ([Ktor: Supported Ktor versions](ktor.md#supported-ktor-versions)).
