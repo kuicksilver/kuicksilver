@@ -35,6 +35,9 @@ internal class PathRuntime(
     /** Why the last validation failed (set with the PathFailed event); null while none did. Loop dispatcher only. */
     internal var failureReason: PathFailureReason? = null
 
+    /** Set once [PathEvent.SocketLost][io.kuicksilver.quic.PathEvent.SocketLost] was reported for this path. Loop dispatcher only. */
+    internal var socketLost = false
+
     /** The receive coroutine of [io]; null for the endpoint's own socket. */
     internal var receiver: Job? = null
 

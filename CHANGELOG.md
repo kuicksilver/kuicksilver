@@ -70,6 +70,19 @@ QUIC (`kuicksilver-quic`, `kuicksilver-native`):
   Initial with a stateless CONNECTION_REFUSED (the accept-queue refusal), lets live connections finish within `grace`,
   then closes the rest with an application CONNECTION_CLOSE and the endpoint.
 
+- iOS and macOS network following (experimental, `appleMain`): `nwPathUpdates()` reports the default path of one shared
+  `NWPathMonitor` as `NwPathKey` (preferred interface index and kind, null while unsatisfied), `DatagramIo.open(local,
+  interfaceIndex)` binds the accelerated socket to an interface with `IP_BOUND_IF`/`IPV6_BOUND_IF`, and
+  `QuicConnection.followDefaultNetwork(scope)` returns a started `NetworkMigrator` over both, as
+  `followDefaultNetwork(connectivity, scope)` does on Android.
+- Lost sockets (experimental): a socket error that means the socket is gone (`ENOTCONN`, `EBADF`, `EPIPE`, `ENOTSOCK` as
+  iOS reports for a suspended app's sockets, and `ENETDOWN`, `ENETUNREACH`, `EHOSTUNREACH` on receive) is
+  `SocketDefunctException` on the accelerated and the portable transports; the loop stops using that socket and reports
+  `PathEvent.SocketLost` instead of failing the connection (a migrated path's socket) or the client endpoint (its own
+  socket), and `QuicConnection.rebind()` moves the connection to a fresh socket. A `NetworkMigrator` rebinds on its own
+  when the active path's socket is lost. A client endpoint whose socket is lost refuses `connect` at once; a server
+  endpoint's socket loss still ends the endpoint.
+
 HTTP/3 (`kuicksilver-http3`):
 
 - `Http3Endpoint.stats` (the endpoint's `EndpointStats`) and `Http3Endpoint.shutdown`, which shuts the QUIC endpoint
@@ -136,11 +149,19 @@ Testing (`kuicksilver-testing`, not published) and tooling:
 - `LinkParams.queueLimitBytes` (tail drop) and a shared bottleneck for several simulated connections; BBR property
   tests, a Jazzer target (`bbrInvariants`) and harsh BBR-versus-CUBIC simulator scenarios. The interop endpoint takes
   `KSL_CC=bbr` (or `newreno`, `cubic`) to select its congestion controller.
+- `:kuicksilver-ktor-client:iosHostInteropTest`: the iOS simulator against a host peer (JVM) that the task starts and
+  stops, its control port passed as `SIMCTL_CHILD_KSL_PEER_PORT`; Ktor HTTP/3 and HTTP/1.1 to the host, raw QUIC echo to
+  the host and from a host JVM client to a server on iOS, over 127.0.0.1 and ::1. Without the variable the tests pass
+  without running.
 
 ### Changed
 
 QUIC (`kuicksilver-quic`):
 
+- `NetworkMigrator` also migrates when the active path's socket is lost (`PathEvent.SocketLost`), to a fresh socket on
+  the current network.
+- `QuicConnection.pathEvents` may report the new `PathEvent.SocketLost`; an exhaustive `when` over `PathEvent` needs a
+  branch for it.
 - `QuicEndpointConfig.acceptQueue` defaults to 128 (was 32), and a client Initial that arrives while the accept queue is
   full is refused at once with a stateless Initial CONNECTION_CLOSE carrying CONNECTION_REFUSED (0x02), under the
   stateless rate limits, instead of being dropped: the client's `connect` fails with
@@ -170,6 +191,9 @@ QUIC (`kuicksilver-quic`):
 
 Native layer and TLS (`kuicksilver-native`, `kuicksilver-tls`):
 
+- Apple platform trust (`TrustConfig.Platform`, also under `Pinned` and `ExpectedName`) evaluates with
+  `SecTrustEvaluateAsyncWithError` on a global dispatch queue and suspends the caller: an evaluation waiting on OCSP or
+  AIA fetches no longer holds a `Dispatchers.Default` thread, so slow servers cannot stall other connections' handshakes.
 - `ksl` ABI 4 → 5 → 6; a library of an older ABI is refused (`AbiMismatch`).
   ABI 5: identity private keys stay in OpenSSL. `TlsIdentity.fromDer`/`fromPem` parse the key once into a native
   `ksl_pkey` (`ksl_pkey_new`, `ksl_pkey_free`, `ksl_ctx_set_identity_pkey`) and keep only its handle, so a heap dump no

@@ -40,7 +40,7 @@ Implemented on the integration branch (2026-10-12/13); released after 0.1.0.
 | JVM (Linux, macOS, Windows) | yes | yes | accelerated `KslDatagramIo` (GSO/GRO on Linux, USO/URO on Windows where granted); NIO as fallback |
 | Android (arm64-v8a, armeabi-v7a, x86_64) | yes | yes | accelerated |
 | Kotlin/Native Linux x64 / arm64 | yes | yes | accelerated |
-| Kotlin/Native macOS arm64, iOS | yes | yes (macOS arm64 tested; iOS compiled and linked) | accelerated, without GSO/GRO (ADR-0006) |
+| Kotlin/Native macOS arm64, iOS | yes | yes (macOS arm64 tested; iOS on the simulator, also against a host peer) | accelerated, without GSO/GRO (ADR-0006) |
 | Kotlin/Native Windows (mingw x64) | yes | yes | accelerated (Winsock) |
 
 Windows (Kotlin/Native and the JVM) is implemented and cross-built, but no CI run on Windows has passed on this code
@@ -86,7 +86,7 @@ Known limits of 0.2.0, stated on purpose:
 - `loops > 1` only on Linux and Android (kernel `SO_REUSEPORT` flow hashing); macOS and Windows run one loop per port.
 - Windows: verification pending (above); `TrustConfig.Platform` is not available on Kotlin/Native Windows (use
   `AnchoredCa`); a `0.0.0.0` bind there is IPv4-only (bind `::` for both families).
-- iOS is compiled and linked; its tests have not run on a device or simulator.
+- iOS: the test suites run on the simulator, also against a peer on the host; not yet verified on a physical device.
 - No macosX64 target. The `kuicksilver-testing` module is not published.
 
 ## After 0.2.0

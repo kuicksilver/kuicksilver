@@ -29,6 +29,7 @@ internal class ApiPair private constructor(
     val client: QuicEndpoint,
     val net: MemoryNetwork,
     val clientIo: MemoryDatagramIo,
+    val serverIo: MemoryDatagramIo,
 ) : AutoCloseable {
     override fun close() {
         client.close()
@@ -73,7 +74,7 @@ internal class ApiPair private constructor(
                             io = { a }
                         }.build(),
                 )
-            return ApiPair(server, client, net, a)
+            return ApiPair(server, client, net, a, b)
         }
     }
 
@@ -101,4 +102,9 @@ internal suspend fun ByteReadChannel.readExactly(n: Int): ByteArray {
         off += r
     }
     return out
+}
+
+/** Waits until the client [c] holds an unused connection ID of its peer: a migration before that cannot send (RFC 9000 section 9.5). */
+internal suspend fun awaitSpareConnectionId(c: io.kuicksilver.quic.QuicConnection) {
+    kotlinx.coroutines.withTimeout(10_000) { while (!c.core.cids.hasSparePeerForTest) kotlinx.coroutines.yield() }
 }

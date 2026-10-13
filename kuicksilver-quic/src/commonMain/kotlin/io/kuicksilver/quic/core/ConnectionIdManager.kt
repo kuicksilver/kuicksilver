@@ -335,6 +335,9 @@ internal class ConnectionIdManager(
     /** The peer ID our packets on the active path carry. */
     val currentPeer: Peer? get() = current
 
+    /** Test hook: the peer has given us an ID no path uses yet (a migration can start). */
+    val hasSparePeerForTest: Boolean get() = unusedPeer() != null
+
     /** An unused peer ID reserved for a path other than the active one (RFC 9000 section 9.5); null when the peer gave us no spare. */
     fun takePathPeer(): Peer? {
         val p = unusedPeer() ?: return null

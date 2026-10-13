@@ -71,6 +71,23 @@ public sealed interface PathEvent {
         public val new: QuicPath,
         public val reason: PathChangeReason,
     ) : PathEvent
+
+    /**
+     * The socket under [path] is gone ([cause], a [SocketDefunctException]): iOS reclaimed it while the app was suspended, or
+     * its interface went down. Reported once per path, for every path on that socket; the loop stops reading and writing it.
+     * The connection itself stays open until its idle timeout: move it to a fresh socket with [QuicConnection.rebind] (or
+     * [QuicConnection.migrate]); a [NetworkMigrator] does so on its own when the lost path is the active one.
+     */
+    @ExperimentalKuicksilverApi
+    public class SocketLost(
+        /** The path whose socket was lost; its state is unchanged, but nothing goes through it any more. */
+        public val path: QuicPath,
+        /** What the socket reported. */
+        public val cause: SocketDefunctException,
+    ) : PathEvent {
+        /** For logs. */
+        override fun toString(): String = "SocketLost($path, ${cause.message})"
+    }
 }
 
 /** Nested into [PathEvent] before 0.1.0 (K6 D1); this alias goes away in 0.2.0. */

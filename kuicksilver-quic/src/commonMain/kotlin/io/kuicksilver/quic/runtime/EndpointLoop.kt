@@ -20,6 +20,7 @@ import io.kuicksilver.quic.QuicConnection
 import io.kuicksilver.quic.QuicEndpoint
 import io.kuicksilver.quic.QuicEndpointConfig
 import io.kuicksilver.quic.QuicException
+import io.kuicksilver.quic.SocketDefunctException
 import io.kuicksilver.quic.TimeMark
 import io.kuicksilver.quic.TransportError
 import io.kuicksilver.quic.core.fail
@@ -207,6 +208,9 @@ internal class EndpointLoop private constructor(
                 }
             } catch (e: CancellationException) {
                 throw e
+            } catch (e: SocketDefunctException) {
+                // the system took the socket (iOS background) or its interface: the path is lost, the connection is not
+                if (!closing) socketLost(io, e)
             } catch (e: Throwable) {
                 if (!closing &&
                     isActive
@@ -291,19 +295,28 @@ internal class EndpointLoop private constructor(
         rt: ConnectionRuntime?,
     ) {
         val lost =
-            try {
-                // a socket that already refused part of a batch in this flush (after its one wait for room) is not waited on
-                // again: the flush holds flushLock, so each wait would stall ACKs and timers of every other connection
-                val full = fullThisFlush.any { it === target }
-                val sent = (if (full) target.trySend(batch) else target.send(batch)).coerceIn(0, batch.count)
-                if (sent < batch.count && !full) fullThisFlush.add(target)
-                observer.datagramsSent += sent
-                batch.count - sent
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Throwable) {
-                sendFailures++
-                batch.count
+            if (isDefunct(target)) {
+                batch.count // a lost socket is not written again: its paths wait for a move to a new one
+            } else {
+                try {
+                    // a socket that already refused part of a batch in this flush (after its one wait for room) is not waited on
+                    // again: the flush holds flushLock, so each wait would stall ACKs and timers of every other connection
+                    val full = fullThisFlush.any { it === target }
+                    val sent = (if (full) target.trySend(batch) else target.send(batch)).coerceIn(0, batch.count)
+                    if (sent < batch.count && !full) fullThisFlush.add(target)
+                    observer.datagramsSent += sent
+                    batch.count - sent
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: SocketDefunctException) {
+                    sendFailures++
+                    // a server's own socket serves every client: one refused destination must not take it down
+                    if (target !== io || clientOnly) socketLost(target, e)
+                    batch.count
+                } catch (e: Throwable) {
+                    sendFailures++
+                    batch.count
+                }
             }
         if (lost > 0) {
             socketDrops += lost
@@ -350,9 +363,43 @@ internal class EndpointLoop private constructor(
             }
         } catch (e: CancellationException) {
             throw e
+        } catch (e: SocketDefunctException) {
+            // a client endpoint keeps its connections: each can move to a new socket (QuicConnection.rebind); connect() fails fast
+            if (closing) return
+            if (clientOnly) socketLost(io, e) else fatal("transport failed", e)
         } catch (e: Throwable) {
             if (!closing) fatal("transport failed", e)
         } // a dead socket ends the endpoint: accept() and connect() must not hang
+    }
+
+    /** True for an endpoint without a server role: its socket serves only its own connections, which can move off it. */
+    private val clientOnly: Boolean get() = config.server == null
+
+    /** Sockets the system took away (identity; loop dispatcher only): never read or written again. */
+    private val defunct = ArrayList<DatagramIo>(2)
+
+    /** Set once the endpoint's own socket is lost: connect() fails with it at once. */
+    @Volatile private var endpointSocketLost: SocketDefunctException? = null
+
+    private fun isDefunct(target: DatagramIo): Boolean = defunct.isNotEmpty() && defunct.any { it === target }
+
+    /**
+     * [socket] is gone ([SocketDefunctException]): it is not used again, and every connection reports [PathEvent.SocketLost] for
+     * its paths on it, once. Loop dispatcher only.
+     */
+    internal fun socketLost(
+        socket: DatagramIo,
+        cause: SocketDefunctException,
+    ) {
+        if (isDefunct(socket)) return
+        defunct += socket
+        if (socket === io) endpointSocketLost = cause
+        for (rt in runtimes.values.toList()) rt.onSocketLost(if (socket === io) null else socket, cause)
+    }
+
+    /** A lost path socket was closed (its path is gone): it no longer needs remembering. Loop dispatcher only. */
+    internal fun forgetDefunct(socket: DatagramIo) {
+        if (socket !== io) defunct.removeAll { it === socket }
     }
 
     /** Admission + flush rounds run so far (test hook). */
@@ -623,6 +670,13 @@ internal class EndpointLoop private constructor(
                 try {
                     withContext(dispatcher) {
                         if (closing || shuttingDown) throw QuicException.EndpointClosing()
+                        endpointSocketLost?.let {
+                            throw SocketDefunctException(
+                                "the endpoint's socket is gone: bind a new endpoint",
+                                it.errno,
+                                it,
+                            )
+                        }
                         checkPayloadSize(config.quic)
                         val c = core.connect(config, remote, now(), ticket)
                         val rt = adopt(c)

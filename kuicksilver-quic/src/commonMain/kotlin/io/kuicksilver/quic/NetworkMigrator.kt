@@ -23,6 +23,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.isActive
@@ -51,6 +52,8 @@ import kotlin.concurrent.atomics.ExperimentalAtomicApi
  *   decides if no network comes back.
  * - If [networks] throws, [MigrationEvent.SourceFailed] is the last event and the migrator stops; the exception never reaches
  *   [scope]. When [networks] completes, the migrator stops too.
+ * - [PathEvent.SocketLost] for the active path (iOS reclaimed the socket of a suspended app) opens a fresh socket on the current
+ *   network and migrates to it, reported as [MigrationEvent.Migrated] with `old == new`; nothing happens while there is no network.
  * - Repeated equal values are ignored. A change while a migration runs supersedes it: the unfinished path and its socket are
  *   closed and nothing is reported for it.
  *
@@ -136,12 +139,48 @@ public class NetworkMigrator<N : Any>(
             }
         }
 
+    /** What [follow] reacts to: a value of [networks], or the loss of the active path's socket on the current network. */
+    private sealed interface Trigger<out T> {
+        class Network<T>(
+            val n: T?,
+        ) : Trigger<T>
+
+        data object SocketLost : Trigger<Nothing>
+    }
+
+    /**
+     * [networks] (distinct values) merged with [PathEvent.SocketLost] of the active path; completes when [networks] does. The
+     * path events are subscribed before the first network value is read, so a loss right after [start] is not missed.
+     */
+    private fun triggers(onFailure: (Throwable) -> Unit): Flow<Trigger<N>> =
+        channelFlow {
+            val lost =
+                launch(start = CoroutineStart.UNDISPATCHED) {
+                    connection.pathEvents.collect { e ->
+                        if (e is PathEvent.SocketLost && e.path.id == connection.activePath?.id) send(Trigger.SocketLost)
+                    }
+                }
+            networks
+                .catch { onFailure(it) }
+                .distinctUntilChanged()
+                .collect { send(Trigger.Network(it)) }
+            lost.cancel()
+        }
+
     private suspend fun follow() {
         var path: QuicPath? = null // the path of the last migration; only a fallback for when the connection has no active path
         var failure: Throwable? = null
+        var latest: N? = null // the last value of networks: a socket loss re-opens on it only while there is a network
         // a failing source (Android: registerDefaultNetworkCallback throws TooManyRequestsException) ends the migrator, never the caller's scope
-        networks.catch { failure = it }.distinctUntilChanged().collectLatest { n ->
+        triggers { failure = it }.collectLatest { t ->
             val current = onNetwork.value
+            val n: N? =
+                when (t) {
+                    is Trigger.Network -> t.n.also { latest = it }
+
+                    // the socket under the active path is gone (iOS background): a fresh socket on the same network
+                    Trigger.SocketLost -> latest?.takeIf { it == current } ?: return@collectLatest
+                }
             when {
                 n == null -> {
                     eventFlow.tryEmit(MigrationEvent.NetworkLost)
@@ -151,7 +190,7 @@ public class NetworkMigrator<N : Any>(
                     onNetwork.value = n
                 }
 
-                n != current -> {
+                n != current || t === Trigger.SocketLost -> {
                     while (true) {
                         // the path the connection is on now: the core may have fallen back (or the peer moved) since the last migration
                         val from = connection.activePath ?: path

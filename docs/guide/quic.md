@@ -361,7 +361,8 @@ one arrives, and otherwise fails with `PathFailureReason.NoSpareConnectionId` (`
 `PathValidationException.reason`) rather than as a silent path. Migrating right after `connect()` therefore needs no
 wait of its own. `paths` lists the live paths (the first is the one the connection started on), `activePath` is the one it sends on now,
 and `pathEvents` reports `Validated`, `Failed` and `Changed`, for
-the peer's moves too. Migration needs a confirmed handshake and a server that did not advertise `disable_active_migration`;
+the peer's moves too, and `SocketLost` when the system took a path's socket away (see
+[Suspended apps and lost sockets](#suspended-apps-and-lost-sockets)). Migration needs a confirmed handshake and a server that did not advertise `disable_active_migration`;
 when the active path fails validation and no other validated path remains, the connection closes with
 `ConnectionLost.NoViablePath` (`TimeoutKind.PathValidation` exists in the API but is not produced in this version).
 
@@ -417,6 +418,51 @@ background process that Android froze or killed moves (or is lost) when the app 
 network access whatever the default network is; and a server that advertised `disable_active_migration` is never moved
 (`Failed` events), so the app reconnects instead. As in Chromium's QUIC session pool, losing the network does not close
 the connection: if no network returns within the idle timeout, the connection closes as usual.
+
+On iOS and macOS, `followDefaultNetwork(scope)` does the same with the Network framework:
+
+```kotlin
+val migrator = connection.followDefaultNetwork(scope)   // started; migrator.close() stops it
+scope.launch { migrator.events.collect { println("quic: $it") } }
+```
+
+`nwPathUpdates()` is the flow alone: one `NWPathMonitor` (C API, on its own dispatch queue) per process, started with the
+first collector and cancelled after the last, reporting an `NwPathKey` for a satisfied path (the preferred interface's
+index and kind, `Wifi`, `Cellular`, `Wired`, `Loopback` or `Other`) and `null` while the path is not satisfied; a path
+update that keeps the interface (a new address, a DNS change) is not a new network. Each new socket comes from
+`DatagramIo.open(local, interfaceIndex, prefer)`, which sets `IP_BOUND_IF` (`IPV6_BOUND_IF` for an IPv6 address) on the
+accelerated socket before it carries a datagram, so the connection leaves through the new interface even before the system
+prefers it. The portable socket cannot be bound: when the accelerated one is refused it is unbound and follows the default
+route. No entitlement or `Info.plist` key is needed for a client; a server on the local network needs
+`NSLocalNetworkUsageDescription`.
+
+### Suspended apps and lost sockets
+
+iOS reclaims the sockets of an app it suspends: back in the foreground, `sendmsg` and `recvmsg` fail with `ENOTCONN`,
+`EBADF` or `EPIPE`, and an interface that went away answers `ENETDOWN`, `ENETUNREACH` or `EHOSTUNREACH`. Both transports
+(the accelerated `ksl` socket and the portable `ktor-network` one) turn these errors into `SocketDefunctException`; a custom
+`DatagramIo` throws it for the same conditions. The endpoint loop then stops reading and writing that socket, without
+retrying it in a loop, and every connection reports `PathEvent.SocketLost(path, cause)` for its paths on it; the
+connection is not closed. Recovery is a move to a fresh socket:
+
+```kotlin
+connection.pathEvents.collect { e ->
+    if (e is PathEvent.SocketLost && e.path.id == connection.activePath?.id) connection.rebind()
+}
+```
+
+`rebind(local, prefer)` opens `DatagramIo.open` on the wildcard address of the peer's family, `migrate`s there (the new path
+is validated first) and closes the path it left. Like any migration it needs an unused connection ID of the server (RFC
+9000 section 9.5), which arrives within a round trip after the handshake: the probe waits for one, and if none comes in
+time the move fails with `PathValidationException` (`PathFailureReason.NoSpareConnectionId`) and the connection stays
+where it was. A `NetworkMigrator` (and so `followDefaultNetwork`) does this on its own when the active path's socket is
+lost while a network is up, reported as `Migrated` with `old == new`, and tries again once a spare ID arrives. Until a
+move, the connection's idle timeout runs: a suspension longer than the idle timeout (and than the server's) ends the
+connection as usual, so an app that returns after minutes reconnects, ideally with 0-RTT. A client endpoint whose own
+socket was lost keeps its connections for the move but refuses `connect` at once with `SocketDefunctException`: bind a
+new endpoint. A server endpoint's own socket is the exception: its clients address that port, so a lost server socket
+ends the endpoint as before. iOS gives a suspended app no CPU, so nothing runs during the suspension;
+`beginBackgroundTask` buys about 30 seconds to finish a transfer, and only the foreground can serve.
 
 ## Glitch protection
 

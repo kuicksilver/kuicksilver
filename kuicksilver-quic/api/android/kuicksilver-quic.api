@@ -683,6 +683,13 @@ public final class io/kuicksilver/quic/PathEvent$Failed : io/kuicksilver/quic/Pa
 	public final fun getReason ()Lio/kuicksilver/quic/PathFailureReason;
 }
 
+public final class io/kuicksilver/quic/PathEvent$SocketLost : io/kuicksilver/quic/PathEvent {
+	public fun <init> (Lio/kuicksilver/quic/QuicPath;Lio/kuicksilver/quic/SocketDefunctException;)V
+	public final fun getCause ()Lio/kuicksilver/quic/SocketDefunctException;
+	public final fun getPath ()Lio/kuicksilver/quic/QuicPath;
+	public fun toString ()Ljava/lang/String;
+}
+
 public final class io/kuicksilver/quic/PathEvent$Validated : io/kuicksilver/quic/PathEvent {
 	public fun <init> (Lio/kuicksilver/quic/QuicPath;)V
 	public final fun getPath ()Lio/kuicksilver/quic/QuicPath;
@@ -1163,6 +1170,17 @@ public abstract interface class io/kuicksilver/quic/QuicStream {
 
 public final class io/kuicksilver/quic/QuicStream$DefaultImpls {
 	public static fun getReceivedEarly (Lio/kuicksilver/quic/QuicStream;)Z
+}
+
+public final class io/kuicksilver/quic/RebindKt {
+	public static final fun rebind (Lio/kuicksilver/quic/QuicConnection;Lio/ktor/network/sockets/InetSocketAddress;Lio/kuicksilver/quic/IoPreference;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static synthetic fun rebind$default (Lio/kuicksilver/quic/QuicConnection;Lio/ktor/network/sockets/InetSocketAddress;Lio/kuicksilver/quic/IoPreference;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+}
+
+public final class io/kuicksilver/quic/SocketDefunctException : java/io/IOException {
+	public fun <init> (Ljava/lang/String;ILjava/lang/Throwable;)V
+	public synthetic fun <init> (Ljava/lang/String;ILjava/lang/Throwable;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun getErrno ()I
 }
 
 public final class io/kuicksilver/quic/StreamPriority {
