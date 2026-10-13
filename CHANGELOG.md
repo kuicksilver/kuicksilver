@@ -236,6 +236,13 @@ QUIC runtime and sockets:
 - QUIC: a client that closed after a migration closed its new socket before the CONNECTION_CLOSE was sent on it, so the
   server kept the connection (its streams, CIDs and memory) until its idle timeout; a closing connection now keeps its
   path sockets until it reaches the closed state (found by the soak harness).
+- QUIC: a sender could stop for good once pacing switched on. The pacer refilled its bucket with rate x elapsed time,
+  which overflowed after a long gap (about 80 s at 115 MB/s): a connection whose smoothed RTT stayed below 1 ms
+  (unpaced) for minutes and then reached it got a negative refill, which was dropped without moving the refill time, so
+  the pacer answered "a moment later" forever and the connection sent nothing until its idle timeout. On Linux loopback,
+  where the RTT hovers around 1 ms, the Ktor client's pooled HTTP/3 connection hit it about twice per 30 min soak (every
+  request in flight failed with "Idle timeout after 30s"). A bucket whose fill time has passed is now simply full (found
+  by the soak harness).
 
 TLS and native layer (`kuicksilver-tls`, `kuicksilver-native`):
 
