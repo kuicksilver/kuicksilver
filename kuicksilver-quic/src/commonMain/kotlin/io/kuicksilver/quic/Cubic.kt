@@ -39,6 +39,15 @@ public class Cubic(
     private var recoveryStart: TimeMark = TimeMark.NEVER
     private var lastSent: TimeMark = TimeMark(0)
 
+    /**
+     * RFC 9438 section 4.2: "The elapsed time t in Figure 1 MUST NOT include periods during which cwnd has not been updated due to
+     * application-limited behavior". Two such periods move the epoch forward by their length: from an ACK that arrived
+     * application-limited to the next one that did not ([pausedSince]), and from the moment nothing was left in flight to the
+     * next send ([drainedAt], as Linux's tcp_cubic does on CA_EVENT_TX_START; quic-go restarts the epoch instead).
+     */
+    private var pausedSince: TimeMark = TimeMark.NEVER
+    private var drainedAt: TimeMark = TimeMark.NEVER
+
     // HyStart++ (RFC 9406 section 4): rounds end on the ACK of a packet sent after the round began
     private var roundEndSent: TimeMark = TimeMark.NEVER
     private var roundSamples = 0
@@ -59,6 +68,10 @@ public class Cubic(
         now: TimeMark,
         bytes: Int,
     ) {
+        if (bytesInFlight == 0L && drainedAt != TimeMark.NEVER) {
+            if (pausedSince == TimeMark.NEVER && epochStart != TimeMark.NEVER && now > drainedAt) epochStart += now - drainedAt
+            drainedAt = TimeMark.NEVER
+        } // idle with nothing in flight (an application-limited pause already covers that time)
         bytesInFlight += bytes
         lastSent = now
     }
@@ -127,7 +140,21 @@ public class Cubic(
             }
             consumeSample()
         }
-        if (appLimited) return
+        grow(now, sentTime, bytes, smoothedRtt, appLimited)
+        if (bytesInFlight == 0L) drainedAt = now
+    }
+
+    private fun grow(
+        now: TimeMark,
+        sentTime: TimeMark,
+        bytes: Int,
+        smoothedRtt: Duration,
+        appLimited: Boolean,
+    ) {
+        if (appLimited) {
+            pause(now)
+            return
+        }
         if (recoveryStart != TimeMark.NEVER && sentTime <= recoveryStart) return
         if (inSlowStart) {
             cwnd += if (inConservativeSlowStart) (bytes / CSS_GROWTH_DIVISOR).toLong() else bytes.toLong()
@@ -139,7 +166,10 @@ public class Cubic(
             wMax = cwnd
             k = 0.0
             wEst = cwnd.toDouble()
-        }
+        } else if (pausedSince != TimeMark.NEVER && pausedSince < now) {
+            epochStart += now - pausedSince
+        } // the application-limited ACKs since then did not move the window
+        pausedSince = TimeMark.NEVER
         val t = (now - epochStart + smoothedRtt).inWholeNanoseconds / 1e9
         val d = t - k
         var target = wMax + (C * d * d * d * mss).toLong()
@@ -165,6 +195,7 @@ public class Cubic(
         cwnd = maxOf(cwnd * BETA_NUM / BETA_DEN, minWindow)
         ssthresh = cwnd
         epochStart = now
+        pausedSince = TimeMark.NEVER
         k = cbrt((wMax - cwnd).toDouble() / mss / C)
         wEst = cwnd.toDouble()
         inConservativeSlowStart = false
@@ -183,6 +214,11 @@ public class Cubic(
             recoveryStart = TimeMark.NEVER
             epochStart = TimeMark.NEVER
         }
+        if (bytesInFlight == 0L) drainedAt = now
+    }
+
+    private fun pause(now: TimeMark) {
+        if (pausedSince == TimeMark.NEVER) pausedSince = now
     }
 
     override fun onEcnCe(

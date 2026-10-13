@@ -217,4 +217,28 @@ class CubicTest {
         assertEquals(before + 8 * mss, cc.cwnd, "plain slow start growth again")
         assertEquals(Long.MAX_VALUE, cc.ssthresh)
     }
+
+    @Test fun idleTimeIsNotPartOfTheCubicEpoch() {
+        // RFC 9438 section 4.2: "The elapsed time t in Figure 1 MUST NOT include periods during which cwnd has not been updated due to
+        // application-limited behavior". After a loss and 30 s with nothing in flight, the curve resumes where it stopped (just
+        // after the reduction, concave below W_max), it does not jump 30 s ahead to the 1.5 x cwnd clamp of the convex region
+        val cc = afterFirstLoss()
+        val t = ackWindows(cc, t0 + 30.seconds, 1)
+        assertTrue(cc.cwnd < 8400L * 11 / 10, "one window 30 s after the loss: cwnd ${cc.cwnd}")
+        ackWindows(cc, t, 1)
+        assertTrue(cc.cwnd < 8400L * 12 / 10, "two windows: cwnd ${cc.cwnd}")
+    }
+
+    @Test fun applicationLimitedTimeIsNotPartOfTheCubicEpoch() {
+        // the same for ACKs that arrive while the sender is application-limited (quic-go resets the epoch in OnApplicationLimited)
+        val cc = afterFirstLoss()
+        var t = t0 + srtt * 2
+        repeat(300) {
+            sendAndAck(cc, mss, t, t + srtt, appLimited = true)
+            t += srtt
+        } // 30 s of a trickle
+        assertEquals(8400L, cc.cwnd)
+        ackWindows(cc, t, 1)
+        assertTrue(cc.cwnd < 8400L * 11 / 10, "one window after 30 s of application-limited ACKs: cwnd ${cc.cwnd}")
+    }
 }
