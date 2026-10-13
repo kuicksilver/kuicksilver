@@ -86,6 +86,7 @@ internal class StreamManager(
         kind: ControlKind,
         id: Long,
         a: Long,
+        b: Long = 0,
     ) {
         for (i in 0 until control.size) {
             val c = control[i]
@@ -94,7 +95,7 @@ internal class StreamManager(
                 return
             }
         }
-        queueControl(kind, id, a)
+        queueControl(kind, id, a, b)
     }
 
     val events: ArrayDeque<ConnectionEvent> = ArrayDeque()
@@ -191,6 +192,11 @@ internal class StreamManager(
         opened.clear()
         return l
     }
+
+    /** Receive window of stream [id] and of the connection (test hooks: auto-tuning). */
+    internal fun recvWindowForTest(id: Long): Long = streams[id]?.recv?.flow?.window ?: -1
+
+    internal val connWindowForTest: Long get() = connFlow.window
 
     fun takeControlFrame(): ControlFrame? = control.removeFirstOrNull()
 
@@ -400,7 +406,7 @@ internal class StreamManager(
         if (bytes >
             0
         ) {
-            connFlow.onConsumed(bytes, now, smoothedRtt).let { if (it >= 0) queueControl(ControlKind.MaxData, 0, it) }
+            connFlow.onConsumed(bytes, now, smoothedRtt).let { if (it >= 0) queueOnce(ControlKind.MaxData, 0, it) }
         }
     }
 
@@ -545,8 +551,8 @@ internal class StreamManager(
                 if (it >=
                     0
                 ) {
-                    queueControl(ControlKind.MaxStreamData, id, it)
-                    if (connFlow.ensureWindowAtLeast(r.flow.window * 3 / 2)) queueControl(ControlKind.MaxData, 0, connFlow.limit)
+                    queueOnce(ControlKind.MaxStreamData, id, it)
+                    if (connFlow.ensureWindowAtLeast(r.flow.window * 3 / 2)) queueOnce(ControlKind.MaxData, 0, connFlow.limit)
                 }
             } // connection window ≥ 1.5 × stream window
         }
@@ -779,18 +785,18 @@ internal class StreamManager(
                         if (it.finalSize <
                             0
                         ) {
-                            queueControl(ControlKind.MaxStreamData, f.idValue[i], it.flow.limit)
+                            queueOnce(ControlKind.MaxStreamData, f.idValue[i], it.flow.limit)
                         }
                     }
                 }
 
                 SentFrames.ID_RESET_STREAM -> {
-                    queueControl(ControlKind.ResetStream, f.idValue[i], f.idExtra[i], f.idExtra2[i])
+                    queueOnce(ControlKind.ResetStream, f.idValue[i], f.idExtra[i], f.idExtra2[i])
                 }
 
                 // final size travels with the frame: the stream may be retired by now
                 SentFrames.ID_STOP_SENDING -> {
-                    queueControl(ControlKind.StopSending, f.idValue[i], f.idExtra[i])
+                    queueOnce(ControlKind.StopSending, f.idValue[i], f.idExtra[i])
                 }
 
                 // still blocked at the reported limit with data waiting: the report goes again (RFC 9000 section 13.3 lets it be

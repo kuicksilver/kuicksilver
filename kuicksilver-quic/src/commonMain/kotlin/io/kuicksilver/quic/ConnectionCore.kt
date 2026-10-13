@@ -376,7 +376,23 @@ public class ConnectionCore internal constructor(
     internal var peerIdleMs: Long = 0
     internal var receivedVnVersions: IntArray? = null
     internal var anyPeerPacket = false
+
+    /**
+     * The time of the current call into the core. The stream manager reads the same clock: receive-window auto-tuning compares
+     * the interval between window updates with the RTT, and it used to see a clock stuck at zero, so every update doubled the
+     * window up to its maximum (RFC 9000 section 4.2; `core.WindowAutoTuneTest`).
+     */
     internal var now: TimeMark = now
+        set(v) {
+            field = v
+            streams.now = v
+            streams.smoothedRtt = rtt.smoothed
+        }
+
+    init {
+        streams.now = now
+    }
+
     internal val qlog: QlogWriter? =
         config.qlog?.let {
             QlogWriter(it, config.limits.qlogBytes, now, role, odcid.toString())

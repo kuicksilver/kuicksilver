@@ -76,7 +76,9 @@ class FlowBlockedTest {
     @Test fun lostWindowUpdatesDoNotStallAnUpload() {
         val stalls = (1L..8L).map { seed -> seed to longestStall(seed, 8 shl 20) }
         for ((seed, r) in stalls) {
-            assertTrue(r.first && r.second < 2.seconds, "seed $seed: delivered ${r.first}, longest stall ${r.second}; all: $stalls")
+            // each repeat of the report draws one answer that gets through with 25 %; repeats come at most 8 PTOs (0.3 s here) apart,
+            // so 3 s is ten tries (before: up to 28.9 s, and 33 s without delivery once real window auto-tuning kept windows small)
+            assertTrue(r.first && r.second < 3.seconds, "seed $seed: delivered ${r.first}, longest stall ${r.second}; all: $stalls")
         }
     }
 

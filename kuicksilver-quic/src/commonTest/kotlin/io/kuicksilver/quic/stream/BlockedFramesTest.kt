@@ -150,6 +150,24 @@ class BlockedFramesTest {
         assertTrue(drain(m).of(ControlKind.StreamsBlockedBidi).isEmpty())
     }
 
+    @Test fun lostUpdatesAreQueuedOncePerStream() {
+        // a PTO probe requeues the frames of packets still in flight, which may be declared lost later: without merging, every
+        // round multiplied the queued MAX_STREAM_DATA frames (a packet of 300 of them for one stream in the upload test)
+        val m = manager(TlsRole.Server)
+        recv(m, 0, ByteArray(300_000))
+        m.read(0, ByteArray(300_000), 0, 300_000)
+        drain(m)
+        val lost =
+            SentFrames().also {
+                repeat(3) { _ -> it.addId(SentFrames.ID_MAX_STREAM_DATA, 0, 655_360) }
+                it.flags = SentFrames.MAX_DATA
+            }
+        repeat(4) { m.onFramesLost(lost) }
+        val queued = drain(m)
+        assertEquals(1, queued.of(ControlKind.MaxStreamData).size, "one MAX_STREAM_DATA for stream 0: $queued")
+        assertEquals(1, queued.of(ControlKind.MaxData).size)
+    }
+
     @Test fun staleDataBlockedIsAnsweredWithTheCurrentMaxData() {
         val m = manager(TlsRole.Server)
         recv(m, 0, ByteArray(300_000))

@@ -42,6 +42,16 @@ validation, max(3 x PTO, 6 x `initialRtt`) (RFC 9000 §8.2.4).
 val lossyMobile = quicConfig { initialRtt = 100.milliseconds }
 ```
 
+Flow control: each stream starts with a receive window of `initialStreamWindow` (default 512 KiB) and the connection
+with `initialConnectionWindow` (768 KiB). A window is updated each time the application has read a quarter of it and
+doubles, up to `maxStreamWindow` (6 MiB) / `maxConnectionWindow` (15 MiB), only while the application reads a whole
+window in less than four smoothed RTTs, that is faster than the window lets the peer send (quic-go's auto-tuning rule);
+the connection window stays at least 1.5 x the largest stream window. A busy reader's window settles at 4–8 x the
+bandwidth-delay product, a slow reader keeps the initial window, and the ceilings bound the unread data one connection
+can hold. The defaults are quic-go's. A sender blocked by a window repeats `DATA_BLOCKED` / `STREAM_DATA_BLOCKED` while
+it stays blocked, and the receiver answers a stale report with its current limit, so a lost window update costs a few
+PTOs, not a stall.
+
 A client that prefers v2 but must start in v1 (the widely deployed version) sets `initialVersion = VersionProfile.V1`
 with `versions = listOf(VersionProfile.V2, VersionProfile.V1)`: the first flight is v1, the server upgrades it through
 compatible version negotiation (RFC 9368 section 2.3).
