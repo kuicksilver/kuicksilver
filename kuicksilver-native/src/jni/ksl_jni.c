@@ -42,7 +42,7 @@ static jint j_ctx_set_ticket_keys(JNIEnv *e, jclass c, jlong h, jbyteArray a) { 
 static jint j_ctx_set_session_context(JNIEnv *e, jclass c, jlong h, jbyteArray a) { (void)c; bytes b = get_bytes(e, a); int r = ksl_ctx_set_session_context(CTX(h), b.p, b.n); drop(&b); return r; }
 static jint j_ctx_set_option(JNIEnv *e, jclass c, jlong h, jint o, jint v) { (void)e; (void)c; return ksl_ctx_set_option(CTX(h), o, v); }
 static jint j_ctx_freeze(JNIEnv *e, jclass c, jlong h) { (void)e; (void)c; return ksl_ctx_freeze(CTX(h)); }
-static jstring j_ctx_last_error(JNIEnv *e, jclass c, jlong h, jintArray out) { (void)c; uint32_t code; char m[256]; ksl_ctx_last_error(CTX(h), &code, m, sizeof m); jint v = (jint)code; (*e)->SetIntArrayRegion(e, out, 0, 1, &v); return (*e)->NewStringUTF(e, m); }
+static jstring j_ctx_last_error(JNIEnv *e, jclass c, jlong h, jintArray out) { (void)c; uint32_t code; char m[512]; ksl_ctx_last_error(CTX(h), &code, m, sizeof m); jint v = (jint)code; (*e)->SetIntArrayRegion(e, out, 0, 1, &v); return (*e)->NewStringUTF(e, m); }
 
 static jlong j_ssl_new(JNIEnv *e, jclass c, jlong h, jint mode) { (void)e; (void)c; return H(ksl_ssl_new(CTX(h), mode)); }
 static void j_ssl_free(JNIEnv *e, jclass c, jlong h) { (void)e; (void)c; ksl_ssl_free(SSLP(h)); }
@@ -80,7 +80,7 @@ static jint j_ssl_set_session(JNIEnv *e, jclass c, jlong h, jlong sess) { (void)
 static void j_session_free(JNIEnv *e, jclass c, jlong sess) { (void)e; (void)c; ksl_session_free(P(ksl_session, sess)); }
 static jint j_ssl_new_ticket(JNIEnv *e, jclass c, jlong h) { (void)e; (void)c; return ksl_ssl_new_session_ticket(SSLP(h)); }
 static jint j_ssl_key_update(JNIEnv *e, jclass c, jlong h, jint req) { (void)e; (void)c; return ksl_ssl_key_update(SSLP(h), req); }
-static jstring j_ssl_last_error(JNIEnv *e, jclass c, jlong h, jintArray out) { (void)c; uint32_t code; int alert; char m[256]; ksl_ssl_last_error(SSLP(h), &code, &alert, m, sizeof m); jint v[2] = {(jint)code, alert}; (*e)->SetIntArrayRegion(e, out, 0, 2, v); return (*e)->NewStringUTF(e, m); }
+static jstring j_ssl_last_error(JNIEnv *e, jclass c, jlong h, jintArray out) { (void)c; uint32_t code; int alert; char m[512]; ksl_ssl_last_error(SSLP(h), &code, &alert, m, sizeof m); jint v[2] = {(jint)code, alert}; (*e)->SetIntArrayRegion(e, out, 0, 2, v); return (*e)->NewStringUTF(e, m); }
 static jint j_drive(JNIEnv *e, jclass c, jlong h) { (void)e; (void)c; return ksl_drive(SSLP(h)); }
 
 static jint j_quic_set_tp(JNIEnv *e, jclass c, jlong h, jbyteArray a) { (void)c; bytes b = get_bytes(e, a); int r = ksl_quic_set_transport_params(SSLP(h), b.p, b.n); drop(&b); return r; }
@@ -178,6 +178,13 @@ static jint j_udp_recv(JNIEnv *e, jclass c, jlong h, jobjectArray bufs, jintArra
 static jbyteArray j_udp_get(JNIEnv *e, jclass c, jlong h, jint what) { (void)c; uint8_t out[300]; size_t n = 0; if (ksl_udp_get(P(ksl_udp, h), what, out, sizeof out, &n) != KSL_OK) return NULL; return new_bytes(e, out, n); }
 static void j_udp_shutdown(JNIEnv *e, jclass c, jlong h) { (void)e; (void)c; ksl_udp_shutdown(P(ksl_udp, h)); }
 static void j_udp_close(JNIEnv *e, jclass c, jlong h) { (void)e; (void)c; ksl_udp_close(P(ksl_udp, h)); }
+static jint j_live_objects(JNIEnv *e, jclass c, jlongArray out) {
+    (void)c; int64_t v[KSL_LIVE_COUNT]; int n = ksl_live_objects(v, KSL_LIVE_COUNT); jlong j[KSL_LIVE_COUNT];
+    jsize len = out ? (*e)->GetArrayLength(e, out) : 0; if (len > KSL_LIVE_COUNT) len = KSL_LIVE_COUNT;
+    for (jsize i = 0; i < len; i++) j[i] = (jlong)v[i];
+    if (len) (*e)->SetLongArrayRegion(e, out, 0, len, j);
+    return n;
+}
 
 #define S_BB "Ljava/nio/ByteBuffer;"
 #define S_STR "Ljava/lang/String;"
@@ -199,6 +206,7 @@ static const JNINativeMethod methods[] = {
     {"rand", "(I)[B", (void *)j_rand}, {"sha2", "(I[B)[B", (void *)j_sha2}, {"hkdfExpandLabel", "(I[B" S_STR "[BI)[B", (void *)j_hkdf}, {"sign", "(I[B[B)[B", (void *)j_sign}, {"verify", "(I[B[B[B)I", (void *)j_verify}, {"spkiSha256", "([B)[B", (void *)j_spki},
     {"udpOpen", "([BI[I[Ljava/lang/String;)J", (void *)j_udp_open}, {"udpSend", "(J[Lio/kuicksilver/native/PacketBuffer;[I[B[BI)I", (void *)j_udp_send}, {"udpRecv", "(J[Lio/kuicksilver/native/PacketBuffer;[I[B[BII)I", (void *)j_udp_recv},
     {"udpGet", "(JI)[B", (void *)j_udp_get}, {"udpShutdown", "(J)V", (void *)j_udp_shutdown}, {"udpClose", "(J)V", (void *)j_udp_close},
+    {"liveObjects", "([J)I", (void *)j_live_objects},
 };
 
 static jint on_load(JavaVM *vm, jint version) {

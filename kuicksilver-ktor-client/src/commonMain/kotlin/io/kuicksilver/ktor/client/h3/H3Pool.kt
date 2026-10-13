@@ -90,6 +90,9 @@ internal class H3Pool(
             connections.values.mapNotNull { it.getCompletedOrNull() }
         }
 
+    /** Entries of the connection map, open or not (the resource probe). */
+    internal suspend fun connectionsForProbe(): Int = lock.withLock { connections.size }
+
     fun close() {
         endpoint?.close()
         endpoint = null
@@ -284,16 +287,18 @@ internal class H3Pool(
                 Http3Request("CONNECT", "https", data.url.authority(), data.url.fullPath.ifEmpty { "/" }, headers),
                 "websocket",
             )
-        // a session that closed cleanly both ways ends with its FIN; a late RESET_STREAM could overtake it and discard the Close reply
+        // each direction on its own when the call is over. A send side the session closed cleanly ends with its FIN (the Close
+        // reply may still be on its way to the stream): a RESET_STREAM could overtake it and discard that reply. The closing
+        // handshake can end before the peer's FIN arrives (it may trail the peer's Close frame): only the read side is abandoned
         callContext[Job]?.invokeOnCompletion { cause ->
-            val clean =
-                cause == null && stream.output.isClosedForWrite && stream.output.closedCause == null && stream.input.isClosedForRead &&
-                    stream.input.closedCause == null
-            if (!clean) stream.reset(io.kuicksilver.http3.Http3ErrorCode.REQUEST_CANCELLED)
+            val sentCleanly = cause == null && stream.output.isClosedForWrite && stream.output.closedCause == null
+            val readToEnd = stream.input.isClosedForRead && stream.input.closedCause == null
+            if (!sentCleanly) stream.reset(io.kuicksilver.http3.Http3ErrorCode.REQUEST_CANCELLED)
+            if (!readToEnd) stream.stopSending(io.kuicksilver.http3.Http3ErrorCode.REQUEST_CANCELLED)
         }
         val session =
             RawWebSocket(
-                stream.input,
+                webSocketInputUntilClose(stream.input, callContext),
                 stream.output,
                 masking = true,
                 coroutineContext = callContext,

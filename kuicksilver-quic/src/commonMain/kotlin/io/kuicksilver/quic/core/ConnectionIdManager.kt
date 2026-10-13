@@ -216,8 +216,12 @@ internal class ConnectionIdManager(
         core?.let { registrar.add(cid, it) }
     }
 
+    /** Test hook: NEW_CONNECTION_ID frames wait while set (a peer that issues its IDs late, or whose frames are delayed). */
+    var holdNewCidsForTest = false
+
     /** NEW_CONNECTION_ID frames not yet sent. */
     fun nextNewCidToSend(): Local? {
+        if (holdNewCidsForTest) return null
         for (i in local.indices) if (!local[i].sent) return local[i]
         return null
     }
@@ -243,6 +247,7 @@ internal class ConnectionIdManager(
 
     fun hasPendingFrames(): Boolean {
         if (pendingRetire.isNotEmpty()) return true
+        if (holdNewCidsForTest) return false
         for (i in local.indices) if (!local[i].sent) return true
         return false
     }
@@ -342,6 +347,9 @@ internal class ConnectionIdManager(
         }
         return next
     }
+
+    /** True when the peer gave us an ID no path used yet: a new path can be probed without linking it to another (RFC 9000 section 9.5). */
+    fun hasSparePeer(): Boolean = unusedPeer() != null
 
     /** The peer ID our packets on the active path carry. */
     val currentPeer: Peer? get() = current

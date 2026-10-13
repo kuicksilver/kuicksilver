@@ -96,7 +96,7 @@ To make the floors blocking, download the `perf-<peer>` result artifacts of a fe
   otherwise.
 - **Commits.** `<type>(<scope>): <what>` on the first line (`feat`, `fix`, `test`, `docs`, `build`, `ci`, `refactor`,
   `chore`; scope is the module or area, for example `quic`, `tls`, `http3`, `ksl`), then a body that says why.
-- **Documentation.** The code blocks of `docs/guide/tls.md`, `quic.md` and `http3.md` are compiled and run by
+- **Documentation.** The code blocks of `docs/guide/tls.md`, `quic.md`, `http3.md` and `ktor.md` are compiled and run by
   `GuideSamplesTest` (marked `// guide:<module>:<name>`); change both together. Behaviour that touches an RFC or a
   threat updates `docs/spec/rfc-compliance.md` or `docs/spec/threat-model.md` in the same pull request.
 
@@ -112,7 +112,8 @@ To make the floors blocking, download the `perf-<peer>` result artifacts of a fe
   a generous timeout. A test that is flaky is a bug; report the seed.
 - **Platforms.** Common behaviour is tested in `commonTest` so it runs on the JVM, Android and Native. Tests that need a
   Linux-only facility (GSO/GRO, `SO_REUSEPORT` flow hashing) skip themselves elsewhere and run in the Docker steps; the
-  accelerated UDP socket itself also runs on macOS.
+  accelerated UDP socket itself also runs on macOS and Windows (Windows tests need a Windows host: the CI `windows` jobs
+  or a local Windows VM).
 - **Coverage.** `./gradlew --max-workers=2 -Pkuicksilver.coverage :koverHtmlReportJvmTests` runs the JVM tests of the
   published modules under Kover and merges their line and branch coverage into `build/reports/kover/htmlJvmTests/index.html`.
   `:koverXmlReportJvmTests` writes the same data as XML to `build/reports/kover/reportJvmTests.xml`, and
@@ -120,6 +121,36 @@ To make the floors blocking, download the `perf-<peer>` result artifacts of a fe
   the JNI library, and Kover does not instrument Kotlin/Native. The generated QPACK tables are excluded. The report has
   no threshold, by decision; use it to find untested code, not as a gate. Without `-Pkuicksilver.coverage` the Kover
   agent is off for every test task, so ordinary test runs are not instrumented; the report tasks need the property.
+- **Soak and churn.** `kuicksilver-soak` runs the whole stack on real UDP for a set time: a Ktor server (HTTP/1.1 and
+  HTTP/3 on one port) and raw QUIC servers, against client coroutines doing a weighted mix of transfers (1 KiB–4 MiB),
+  aborted streams, idle timeouts, stateless resets, migrations, 0-RTT resumptions, endpoint and `HttpClient` churn,
+  refusals at a full accept queue and Ktor requests over both protocols. It samples RSS, heap after GC, direct buffers,
+  descriptors, threads, the `ksl` live-object counters and the library's own tables (connections, connection IDs,
+  per-IP and per-remote maps, timer heap, queues, replay register, session caches, client pools, server handlers).
+  It is not part of `check`:
+
+  ```sh
+  ./gradlew --max-workers=2 :kuicksilver-soak:jvmTest -Pkuicksilver.soak.minutes=30          # JVM
+  ./gradlew --max-workers=2 :kuicksilver-soak:macosArm64Test -Pkuicksilver.soak.minutes=30   # Kotlin/Native, macOS
+  ./gradlew --max-workers=2 :kuicksilver-soak:linkDebugTestLinuxArm64                        # then, in a container:
+  docker run --rm -v "$PWD/kuicksilver-soak/build:/b" -e KSL_SOAK_MINUTES=30 -e KSL_SOAK_REPORT=/b/soak ubuntu:24.04 /b/bin/linuxArm64/debugTest/test.kexe
+  ```
+
+  Options: `-Pkuicksilver.soak.clients=8`, `.rate=40` (iterations per second, a ceiling), `.sampleSeconds=15`,
+  `.warmupMinutes` (default a fifth of the run, at least 2), `.label`, `.report=<dir>` (default
+  `kuicksilver-soak/build/soak`), `.scenarios=KtorH3,KtorAbort` (only these scenarios of the mix, each with its weight),
+  `.qlog=<dir>` (every Ktor HTTP/3 connection keeps its last qlog records in memory; one that ends by a timeout or an
+  internal failure is written to `<dir>` with its peer's trace); the container takes the same as `KSL_SOAK_*` variables.
+  Each unexpected failure is printed with its time and scenario. A run **passes** when, after
+  warm-up, every sampled series is flat — its Theil–Sen slope (the median of all pairwise slopes, robust to GC
+  saw-teeth and in-flight bursts) times the window stays within `max(absolute, relative × median)` (32 MiB / 10% for RSS,
+  16 MiB / 10% for heap, 8 / 10% for descriptors and threads, 5 / 25% for counts) — every countable resource (`ksl`
+  objects, connections, CIDs, maps, timers, queues, handler coroutines, descriptors within 4) is back at its idle
+  baseline within 90 s after the load stops, and unexpected failures stay under 0.5% of iterations. The report
+  (`<label>.md`, `<label>.csv`) lists every series. When it reports a leak, `-Pkuicksilver.soak.attribute=20` runs each
+  scenario alone (`.scenarios=QuicMigration,KtorH3` for some only) and prints what it left behind. Run it on an otherwise
+  idle machine: a starved process misses the scenarios' timeouts (a 1 s idle timeout checked within 10 s) and fails on
+  unexpected failures, not on resources. Before a beta: 2 h nightly; before a release: 24–72 h.
 - **Fuzzing.** Jazzer targets live in `kuicksilver-tls`, `kuicksilver-quic` and `kuicksilver-http3` under
   `src/jvmTest/.../fuzz` (among them `ConnectionFuzzTest`, a stateful fuzzer of a client/server `ConnectionCore` pair, and
   the 0-RTT targets); `tools/fuzz/ksl/` holds the libFuzzer harness of the `ksl` parsing code. Their committed inputs run

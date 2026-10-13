@@ -16,6 +16,9 @@ internal class TimerHeap {
 
     val isEmpty: Boolean get() = size == 0
 
+    /** Connections with an armed timer (the resource probe). */
+    val count: Int get() = size
+
     fun peek(): ConnectionCore? = if (size == 0) null else items[0]
 
     /** Sets [c]'s deadline (NEVER removes it). */

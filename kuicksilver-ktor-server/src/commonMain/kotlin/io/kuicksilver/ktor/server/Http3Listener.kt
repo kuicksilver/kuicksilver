@@ -42,6 +42,8 @@ internal class H3Listener(
     suspend fun remove(c: Http3Connection) = lock.withLock { set -= c }
 
     suspend fun live(): List<Http3Connection> = lock.withLock { set.toList() }
+
+    suspend fun size(): Int = lock.withLock { set.size }
 }
 
 /**
@@ -164,6 +166,7 @@ internal suspend fun KuicksilverApplicationEngine.startHttp3(
                 }
             }
         listener = H3Listener(endpoint, acceptJob, connections)
+        h3ListenersForProbe += listener
         return listener
     }
 }

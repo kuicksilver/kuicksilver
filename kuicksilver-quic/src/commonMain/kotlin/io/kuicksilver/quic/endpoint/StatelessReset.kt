@@ -74,6 +74,9 @@ internal class StatelessRateLimiter(
     private var total = 0
     private val perAddress = HashMap<InetSocketAddress, Int>()
 
+    /** Addresses in the current one-second window (the resource probe). */
+    val addresses: Int get() = perAddress.size
+
     fun allow(
         to: InetSocketAddress,
         now: TimeMark,

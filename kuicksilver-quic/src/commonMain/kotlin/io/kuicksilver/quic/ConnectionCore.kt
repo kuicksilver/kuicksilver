@@ -24,6 +24,7 @@ import io.kuicksilver.quic.core.Path
 import io.kuicksilver.quic.core.Paths
 import io.kuicksilver.quic.core.Pmtud
 import io.kuicksilver.quic.core.Timers
+import io.kuicksilver.quic.core.armBlockedRepeat
 import io.kuicksilver.quic.core.buildLocalTp
 import io.kuicksilver.quic.core.checkPmtuBlackHoles
 import io.kuicksilver.quic.core.discardSpace
@@ -38,8 +39,10 @@ import io.kuicksilver.quic.core.glitch
 import io.kuicksilver.quic.core.idleDeadline
 import io.kuicksilver.quic.core.installInitialKeys
 import io.kuicksilver.quic.core.keepAliveDeadline
+import io.kuicksilver.quic.core.largePacketUnanswered
 import io.kuicksilver.quic.core.markClosed
 import io.kuicksilver.quic.core.nextChallengeDelay
+import io.kuicksilver.quic.core.onBlockedRepeatTimer
 import io.kuicksilver.quic.core.onPathFailed
 import io.kuicksilver.quic.core.pmtudUpperBound
 import io.kuicksilver.quic.core.probeOtherHandshakeSpace
@@ -375,7 +378,23 @@ public class ConnectionCore internal constructor(
     internal var peerIdleMs: Long = 0
     internal var receivedVnVersions: IntArray? = null
     internal var anyPeerPacket = false
+
+    /**
+     * The time of the current call into the core. The stream manager reads the same clock: receive-window auto-tuning compares
+     * the interval between window updates with the RTT, and it used to see a clock stuck at zero, so every update doubled the
+     * window up to its maximum (RFC 9000 section 4.2; `core.WindowAutoTuneTest`).
+     */
     internal var now: TimeMark = now
+        set(v) {
+            field = v
+            streams.now = v
+            streams.smoothedRtt = rtt.smoothed
+        }
+
+    init {
+        streams.now = now
+    }
+
     internal val qlog: QlogWriter? =
         config.qlog?.let {
             QlogWriter(it, config.limits.qlogBytes, now, role, odcid.toString())
@@ -515,6 +534,9 @@ public class ConnectionCore internal constructor(
 
     /** Test hook: this many MAX_DATA frames that do not raise the limit (glitches). */
     internal var testInjectMaxData = 0
+
+    /** Test hook: this many DATA_BLOCKED frames, each with a different stale limit (the remaining count). */
+    internal var testInjectDataBlocked = 0
 
     /** Test hook: this many repeats of our NEW_CONNECTION_ID with sequence 1 (duplicates). */
     internal var testInjectRepeatNewCid = 0
@@ -697,6 +719,7 @@ public class ConnectionCore internal constructor(
             driveTls(now)
         }
         val n = builder.poll(out, now)
+        armBlockedRepeat(now)
         if (discardInitialPending) {
             discardInitialPending = false
             discardSpace(SpaceId.Initial)
@@ -734,6 +757,7 @@ public class ConnectionCore internal constructor(
         if (idle < t) t = idle
         val keep = keepAliveDeadline()
         if (keep < t) t = keep
+        if (timers.blockedRepeatAt < t) t = timers.blockedRepeatAt
         if (lifetimeDeadline < t) t = lifetimeDeadline
         keyPhase?.let { if (it.discardAt < t) t = it.discardAt }
         if (zeroRttReadDiscardAt < t) t = zeroRttReadDiscardAt
@@ -817,7 +841,9 @@ public class ConnectionCore internal constructor(
             if (p.challengeDeadline <=
                 now
             ) {
-                if (p === paths.active &&
+                if (p.awaitingCid) {
+                    onPathFailed(p, PathFailureReason.NoSpareConnectionId)
+                } else if (p === paths.active &&
                     p.handshakeValidated
                 ) {
                     settleHandshakeValidated(p)
@@ -841,6 +867,7 @@ public class ConnectionCore internal constructor(
         // QuicEndpointConfig.maxConnectionLifetime: a transport close with NO_ERROR
         if (state == ConnectionState.Closed || state == ConnectionState.Closing || state == ConnectionState.Draining) return
         if (keepAliveDeadline() <= now) timers.keepAlivePending = true
+        onBlockedRepeatTimer(now)
         if (loss.timeout() <=
             now
         ) {
@@ -864,7 +891,8 @@ public class ConnectionCore internal constructor(
                         }
                         ; p.pmtud?.let { m ->
                             if (loss.ptoCount >= 2 &&
-                                m.current > 1200
+                                m.current > 1200 &&
+                                largePacketUnanswered(p)
                             ) {
                                 m.onBlackHole(now)
                                 setMtu(p, 1200)

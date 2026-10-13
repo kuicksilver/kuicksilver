@@ -14,7 +14,7 @@
 
 #define KSL_EVQ 32
 #define KSL_NLEVELS 4
-#define KSL_MSG 256
+#define KSL_MSG 512
 
 typedef struct { uint8_t *buf; size_t len, cap, consumed; } ksl_inbuf;
 
@@ -61,6 +61,9 @@ struct ksl_key {
     uint8_t secret[48]; size_t secret_len;           /* kept for ksl_key_next; zeroed on free */
     uint8_t key[32], iv[12], hp[32]; size_t key_len;
 };
+
+/* live-object counters (ksl_lib.c): which = KSL_LIVE_*, relaxed atomic add */
+void ksl_live_add(int which, int delta);
 
 /* error helpers (ksl_lib.c) */
 uint32_t ksl_pack_openssl_error(unsigned long e);

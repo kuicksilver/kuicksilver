@@ -14,8 +14,10 @@ import io.kuicksilver.quic.DatagramSendResult
 import io.kuicksilver.quic.DatagramUnsupportedReason
 import io.kuicksilver.quic.PathChangeReason
 import io.kuicksilver.quic.PathEvent
+import io.kuicksilver.quic.PathFailureReason
 import io.kuicksilver.quic.PathId
 import io.kuicksilver.quic.PathState
+import io.kuicksilver.quic.PathValidationException
 import io.kuicksilver.quic.QuicConnection
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.QuicPath
@@ -50,7 +52,7 @@ internal class ConnectionRuntime(
     private val closedDeferred = CompletableDeferred<QuicException.ConnectionLost>()
     override val closed: Deferred<QuicException.ConnectionLost> get() = closedDeferred
     private val accepted = Channel<QuicStream>(Channel.UNLIMITED)
-    private val streams = HashMap<Long, StreamRuntime>()
+    internal val streams = HashMap<Long, StreamRuntime>() // internal for the resource probe
 
     /** Signalled after every poll: writers and stream openers retry. */
     private val tickers = ArrayList<Channel<Unit>>()
@@ -142,12 +144,36 @@ internal class ConnectionRuntime(
     override suspend fun migrate(newIo: DatagramIo): PathEvent.Changed {
         val p = addPath(newIo)
         if (!p.probe()) {
-            withContext(loop.dispatcher) { closePath(p as PathRuntime) }
-            throw IllegalStateException("path validation failed")
+            val reason =
+                withContext(loop.dispatcher) {
+                    closePath(p as PathRuntime)
+                    p.failureReason
+                }
+            throw PathValidationException(reason ?: PathFailureReason.ValidationTimeout)
         }
         val old = withContext(loop.dispatcher) { pathRuntime(core.path.id) }
         p.switchTo()
         return PathEvent.Changed(old, p, PathChangeReason.ActiveMigration)
+    }
+
+    /**
+     * Suspends until the peer gave us a connection ID no path used yet (RFC 9000 section 9.5), so a new path can be probed; throws the
+     * connection's [QuicException.ConnectionLost] once it is gone. [NetworkMigrator] waits here after a
+     * [PathFailureReason.NoSpareConnectionId] failure, then migrates again.
+     */
+    internal suspend fun awaitSpareConnectionId() {
+        withContext(loop.dispatcher) {
+            val ticker = newTicker()
+            try {
+                while (true) {
+                    if (finished) throw closedDeferred.await()
+                    if (core.cids.hasSparePeer()) return@withContext
+                    ticker.receive()
+                }
+            } finally {
+                removeTicker(ticker)
+            }
+        }
     }
 
     /** Loop dispatcher only; never called for the active path. */
@@ -177,8 +203,9 @@ internal class ConnectionRuntime(
             is ConnectionEvent.PathFailed -> {
                 val p = pathRuntime(e.path)
                 p.stateFlow.value = PathState.Failed
+                p.failureReason = e.reason
                 if (!p.validation.isCompleted) p.validation.complete(false)
-                pathEventFlow.tryEmit(PathEvent.Failed(p))
+                pathEventFlow.tryEmit(PathEvent.Failed(p, e.reason))
             }
 
             is ConnectionEvent.PathChanged -> {
@@ -433,10 +460,22 @@ internal class ConnectionRuntime(
         for (t in tickers) t.trySend(Unit)
     }
 
+    /** The connection reached Closed and leaves the loop: everything, its path sockets included, is released. */
     internal fun finish() {
-        if (!finished) failed(QuicException.ConnectionLost.Internal("connection finished", null))
+        retire(QuicException.ConnectionLost.Internal("connection finished", null))
     }
 
+    /** [failed], and the path sockets are closed even when the core is still closing (the loop or the endpoint goes away). */
+    internal fun retire(reason: QuicException.ConnectionLost) {
+        failed(reason)
+        releasePaths()
+    }
+
+    /**
+     * The application side ends with [reason]. A connection still closing or draining keeps its path sockets and receivers until
+     * [finish]: its CONNECTION_CLOSE goes out on the active path's socket, which after a migration is not the endpoint's, and is
+     * repeated there for the peer's late packets (RFC 9000 section 10.2.1).
+     */
     internal fun failed(reason: QuicException.ConnectionLost) {
         if (finished) return
         finished = true
@@ -444,16 +483,20 @@ internal class ConnectionRuntime(
         handshake.completeExceptionally(reason)
         accepted.close(reason)
         for (s in streams.values) s.connectionLost(reason)
-        for (p in pathList) {
-            p.receiver?.cancel()
-            p.io?.close()
-            if (!p.validation.isCompleted) p.validation.complete(false)
-        }
+        if (core.state == ConnectionState.Closed) releasePaths()
         datagramDrainer.cancel()
         sendQueue.close()
         datagramSignal.close()
         // every waiter (open, flush, keyUpdate, addPath, sendDatagram) wakes with the connection's own reason
         for (t in tickers) t.close(reason)
+    }
+
+    private fun releasePaths() {
+        for (p in pathList) {
+            p.receiver?.cancel()
+            p.io?.close()
+            if (!p.validation.isCompleted) p.validation.complete(false)
+        }
     }
 
     private fun stream(

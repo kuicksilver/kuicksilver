@@ -13,7 +13,9 @@ import kotlin.time.Duration.Companion.seconds
  * larger than the base with no full-size packet sent after the first of them acknowledged mean a black hole: back to
  * 1200 and no probe for [blackHolePause]. The verdict waits for [takeBlackHole], after the whole ACK was processed:
  * loss detection reports the losses of an ACK before its newly acknowledged packets, and a congestion burst is exactly
- * full-size packets lost while later full-size ones arrive. Probes are ack-eliciting but outside congestion control, and their loss is
+ * full-size packets lost while later full-size ones arrive. A verdict is undone when a full-size packet sent after the
+ * packets it rested on is acknowledged later on (the path carried it: a peer that stalled for a few PTOs, delayed ACKs),
+ * see [onPacketAcked]. Probes are ack-eliciting but outside congestion control, and their loss is
  * not a congestion signal (section 14.4). The core has no ICMP input (threat-model 3.16).
  */
 internal class Pmtud(
@@ -43,6 +45,14 @@ internal class Pmtud(
     private var bigLost = 0
     private var firstBigLostPn = -1L
     private var largestBigAckedPn = -1L
+
+    /** The search state before the last black-hole verdict (0: none to undo) and the packet number after which a full-size acknowledged packet disproves it. */
+    private var undoCurrent = 0
+    private var undoLow = 0
+    private var undoHigh = 0
+    private var undoSearchDone = false
+    private var undoResearchAt: TimeMark = TimeMark.NEVER
+    private var undoAfterPn = -1L
 
     /** The peer's `max_udp_payload_size` lowers the range (RFC 9000 section 14.3). */
     fun limitUpperBound(peerMax: Int) {
@@ -107,17 +117,44 @@ internal class Pmtud(
         if (high - low < step && high <= current) finish(now)
     }
 
-    /** A regular (non-probe) packet [pn] of [size] bytes was acknowledged: a full-size one sent after the lost ones proves the path carries the MTU. */
+    /**
+     * A regular (non-probe) packet [pn] of [size] bytes was acknowledged: a full-size one sent after the lost ones proves the path
+     * carries the MTU. One larger than [current], sent before a black-hole verdict and after the packets that verdict rested on,
+     * proves the verdict wrong (RFC 8899 section 4.1: an acknowledged packet confirms its size): the search state from before it
+     * comes back, without a pause. Returns true when [current] changed so.
+     */
     fun onPacketAcked(
         size: Int,
         pn: Long,
-    ) {
-        if (size < current) return
+    ): Boolean {
+        if (size < current) return false
+        val undone = size > current && undoCurrent > 0 && pn > undoAfterPn
+        if (undone) {
+            if (size >= undoCurrent) {
+                current = undoCurrent
+                low = undoLow
+                high = undoHigh
+                searchDone = undoSearchDone
+                researchAt = undoResearchAt
+            } else {
+                current = size
+                low = size
+                high = undoHigh
+                searchDone = false
+                researchAt = TimeMark.NEVER
+            }
+            finalProbe = false
+            probeInFlight = false
+            probeLosses = 0
+            pausedUntil = TimeMark.NEVER
+            undoCurrent = 0
+        }
         if (pn > largestBigAckedPn) largestBigAckedPn = pn
         if (bigLost > 0 && pn > firstBigLostPn) {
             bigLost = 0
             firstBigLostPn = -1L
         }
+        return undone
     }
 
     /** A regular packet [pn] of [size] bytes was lost; counted unless a later full-size packet already arrived. */
@@ -133,12 +170,29 @@ internal class Pmtud(
     /** After an ACK or a loss timer was processed: true (and back to the base) when three large packets were lost with none acknowledged after them, a black hole (RFC 8899 section 4.3). */
     fun takeBlackHole(now: TimeMark): Boolean {
         if (bigLost < 3) return false
-        onBlackHole(now)
+        fallBack(now, firstBigLostPn)
         return true
     }
 
-    /** Back to the base size with a pause before probing again: also the answer to repeated PTOs while sending above the base, when nothing comes back for loss detection to work with. */
-    fun onBlackHole(now: TimeMark) {
+    /**
+     * Back to the base size with a pause before probing again: also the answer to repeated PTOs while sending above the base, when
+     * nothing comes back for loss detection to work with. A full-size packet newer than every one acknowledged so far that is
+     * acknowledged after all undoes it (a peer that only stalled).
+     */
+    fun onBlackHole(now: TimeMark) = fallBack(now, largestBigAckedPn)
+
+    private fun fallBack(
+        now: TimeMark,
+        disprovedAfterPn: Long,
+    ) {
+        if (current > base) {
+            undoCurrent = current
+            undoLow = low
+            undoHigh = high
+            undoSearchDone = searchDone
+            undoResearchAt = researchAt
+            undoAfterPn = disprovedAfterPn
+        }
         bigLost = 0
         firstBigLostPn = -1L
         current = base

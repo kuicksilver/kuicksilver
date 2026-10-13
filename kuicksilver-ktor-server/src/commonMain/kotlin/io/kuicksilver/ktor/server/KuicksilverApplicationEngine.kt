@@ -255,6 +255,10 @@ public class KuicksilverApplicationEngine(
     /** TCP ports whose UDP twin serves HTTP/3: only those advertise it with Alt-Svc. Written at startup before TCP accepting begins, read-only after. */
     internal val h3Ports = HashSet<Int>()
     internal val h3Endpoints = ArrayList<Http3Endpoint>()
+
+    /** The HTTP/3 listeners and the supervisors of the TCP connection handlers, for [KuicksilverServerProbe]; written at startup. */
+    internal val h3ListenersForProbe = ArrayList<H3Listener>()
+    internal val tcpConnectionsForProbe = ArrayList<Job>()
 }
 
 /** `EngineSSLConnectorConfig` (JVM `sslConnector {}`) as a Kuicksilver connector; null on platforms without it. */

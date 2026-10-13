@@ -7,6 +7,11 @@
 #include <pthread.h>
 #include <unistd.h>
 #if defined(__linux__) || defined(__APPLE__)
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#endif
+#if defined(__linux__) || defined(__APPLE__)
 #include <sys/resource.h> /* RLIMIT_NOFILE for udp_open_without_wake_pipe */
 #endif
 
@@ -200,6 +205,28 @@ void run_udp(void) {
           uint8_t any6[KSL_UDP_ADDR_LEN] = { 6 }; ksl_udp *w6 = ksl_udp_open(any6, 0, &err, msg, sizeof msg);
           if (w6) { uint8_t lw[KSL_UDP_ADDR_LEN], to4[KSL_UDP_ADDR_LEN]; size_t n = 0; ksl_udp_get(w6, KSL_UDP_GET_LOCAL, lw, KSL_UDP_ADDR_LEN, &n); CHECK(lw[0] == 6, ":: reported"); v4(to4, port_of(lw));
             CHECK(ping(a, w6, to4, 1, 100, 0, NULL, NULL, NULL) == 1, ":: takes IPv4 too"); ksl_udp_close(w6); } }
+        /* udp_wildcard_port_free_on_ipv4_side: a dual-stack socket never gets a port an IPv4 socket holds. Darwin hands out such a
+           port (it looks at the IPv6 side only) and the IPv4 holder keeps the IPv4 datagrams: with ~4000 of the 16384 ephemeral ports
+           held on 127.0.0.1, about one wildcard open in five collided before the fix (a client that never received its replies) */
+        { struct rlimit old; CHECK(getrlimit(RLIMIT_NOFILE, &old) == 0, "getrlimit"); struct rlimit more = old;
+          if (more.rlim_cur < 8192) more.rlim_cur = more.rlim_max < 8192 ? more.rlim_max : 8192; setrlimit(RLIMIT_NOFILE, &more); getrlimit(RLIMIT_NOFILE, &more);
+          int want = more.rlim_cur > 4300 ? 4000 : (int)more.rlim_cur - 300, held = 0, collided = 0, opened = 0; int *fds = calloc(4000, sizeof(int)); uint8_t *taken = calloc(65536, 1);
+          for (int i = 0; i < want; i++) { int f = socket(AF_INET, SOCK_DGRAM, 0); if (f < 0) break; struct sockaddr_in a; memset(&a, 0, sizeof a); a.sin_family = AF_INET; a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+            socklen_t l = sizeof a; if (bind(f, (struct sockaddr *)&a, sizeof a) != 0 || getsockname(f, (struct sockaddr *)&a, &l) != 0) { close(f); break; } taken[ntohs(a.sin_port)] = 1; fds[held++] = f; }
+          CHECK(held >= 1000, "held IPv4 ports on 127.0.0.1");
+          uint8_t any4[KSL_UDP_ADDR_LEN]; v4(any4, 0); memset(any4 + 3, 0, 4);
+          for (int i = 0; i < 64; i++) { uint32_t err = 0; char msg[128] = {0}; ksl_udp *w = ksl_udp_open(any4, 0, &err, msg, sizeof msg); if (!w) continue; opened++;
+            uint8_t lw[KSL_UDP_ADDR_LEN]; size_t n = 0; ksl_udp_get(w, KSL_UDP_GET_LOCAL, lw, KSL_UDP_ADDR_LEN, &n); if (taken[port_of(lw)]) collided++; ksl_udp_close(w); }
+          printf("udp: %d wildcard opens beside %d held IPv4 ports, %d on a held port\n", opened, held, collided);
+          CHECK(opened == 64 && collided == 0, "a wildcard socket's port is free on the IPv4 side too");
+          for (int i = 0; i < held; i++) close(fds[i]); free(fds); free(taken); setrlimit(RLIMIT_NOFILE, &old); }
+        /* udp_wildcard_port_held_on_ipv4_refused: 0.0.0.0:P while an IPv4 socket holds 0.0.0.0:P is refused (Darwin bound :: beside it,
+           and that socket kept every IPv4 datagram for P) */
+        { int f = socket(AF_INET, SOCK_DGRAM, 0); struct sockaddr_in a; memset(&a, 0, sizeof a); a.sin_family = AF_INET; a.sin_addr.s_addr = htonl(INADDR_ANY); socklen_t l = sizeof a;
+          CHECK(f >= 0 && bind(f, (struct sockaddr *)&a, sizeof a) == 0 && getsockname(f, (struct sockaddr *)&a, &l) == 0, "an IPv4 socket on 0.0.0.0");
+          uint8_t at[KSL_UDP_ADDR_LEN]; v4(at, ntohs(a.sin_port)); memset(at + 3, 0, 4); uint32_t err = 0; char msg[128] = {0};
+          ksl_udp *w = ksl_udp_open(at, 0, &err, msg, sizeof msg); CHECK(w == NULL && err == KSL_E_BAD_ARG, "0.0.0.0 on a port an IPv4 socket holds is refused");
+          if (w) ksl_udp_close(w); if (f >= 0) close(f); }
         /* udp_wildcard_without_ipv6_falls_back: socket(AF_INET6) fails (a host without IPv6): 0.0.0.0 opens AF_INET as before, :: fails */
         { ksl_udp_no_ipv6_for_test(1); uint8_t any4[KSL_UDP_ADDR_LEN]; v4(any4, 0); memset(any4 + 3, 0, 4); uint32_t err = 0; char msg[128] = {0};
           ksl_udp *w = ksl_udp_open(any4, KSL_UDP_ECN | KSL_UDP_DF, &err, msg, sizeof msg); CHECK(w != NULL, "0.0.0.0 without IPv6: AF_INET");

@@ -42,6 +42,16 @@ validation, max(3 x PTO, 6 x `initialRtt`) (RFC 9000 §8.2.4).
 val lossyMobile = quicConfig { initialRtt = 100.milliseconds }
 ```
 
+Flow control: each stream starts with a receive window of `initialStreamWindow` (default 512 KiB) and the connection
+with `initialConnectionWindow` (768 KiB). A window is updated each time the application has read a quarter of it and
+doubles, up to `maxStreamWindow` (6 MiB) / `maxConnectionWindow` (15 MiB), only while the application reads a whole
+window in less than four smoothed RTTs, that is faster than the window lets the peer send (quic-go's auto-tuning rule);
+the connection window stays at least 1.5 x the largest stream window. A busy reader's window settles at 4–8 x the
+bandwidth-delay product, a slow reader keeps the initial window, and the ceilings bound the unread data one connection
+can hold. The defaults are quic-go's. A sender blocked by a window repeats `DATA_BLOCKED` / `STREAM_DATA_BLOCKED` while
+it stays blocked, and the receiver answers a stale report with its current limit, so a lost window update costs a few
+PTOs, not a stall.
+
 A client that prefers v2 but must start in v1 (the widely deployed version) sets `initialVersion = VersionProfile.V1`
 with `versions = listOf(VersionProfile.V2, VersionProfile.V1)`: the first flight is v1, the server upgrades it through
 compatible version negotiation (RFC 9368 section 2.3).
@@ -64,10 +74,12 @@ The endpoint's socket comes from `DatagramIo.open(local, prefer)`. On Linux and 
 ECN marks read and written per datagram, DF in probe mode for PMTUD, and `SO_REUSEPORT` for several loops on one
 port. On macOS and iOS (JVM and Kotlin/Native) it is the same `ksl` socket without GSO and GRO, which Darwin lacks:
 batches leave as one `sendmsg` per datagram, ECN marks and DF work as on Linux, and `SO_REUSEPORT` is not offered.
-A wildcard address (`0.0.0.0` or `::`) gives a dual-stack socket, as NIO does: one socket bound to `::` sends to and
-receives from IPv4 and IPv6 peers, and IPv4 peers appear as IPv4 addresses. A specific address keeps its own family.
-On Windows (Kotlin/Native and the JVM) the `ksl` socket is Winsock: `WSASendMsg`/`WSARecvMsg`, USO/URO and ECN where the
-Windows version grants them (`io.capabilities` tells), DF, an exclusive bind and no `SO_REUSEPORT` (one loop per port).
+On Linux, Android and Apple a wildcard address (`0.0.0.0` or `::`) gives a dual-stack socket, as NIO does: one socket
+bound to `::` sends to and receives from IPv4 and IPv6 peers, and IPv4 peers appear as IPv4 addresses. A specific address
+keeps its own family. On Windows (Kotlin/Native and the JVM) the `ksl` socket is Winsock: `WSASendMsg`/`WSARecvMsg`,
+USO/URO and ECN where the Windows version grants them (`io.capabilities` tells), DF, an exclusive bind and no
+`SO_REUSEPORT` (one loop per port); every IPv6 socket there is dual-stack, but `0.0.0.0` opens an IPv4-only socket, so
+bind `::` to reach both families.
 With `IoPreference.Portable`, or where `ksl` cannot open its socket, the portable socket is used (NIO on the JVM,
 `ktor-network` on Native); `io.capabilities` says what the socket can do and the core adapts (ECN validation, PMTUD) per
 path. A QUIC server on Kotlin/Native needs the accelerated socket (Linux, Apple, Windows): without it `bind` with a `server` throws
@@ -201,7 +213,8 @@ packets, or two PTOs in a row while sending above 1200, mean the path shrank: th
 the congestion controller, waits a minute, and searches again; a successful search repeats every ten minutes. The core
 raises `MtuUpdated(path, mtu)`, `stats.pathMtu` and `maxDatagramSize` follow, and queued datagrams that no longer fit are
 dropped (`stats.datagramsDroppedSend`). `pmtud = false` keeps 1200. The portable socket does not set DF, so there the MTU
-stays 1200; the accelerated socket of Linux and Android sets DF in probe mode and the search runs (1452 on loopback).
+stays 1200; the accelerated socket sets DF (in probe mode on Linux, Android and Windows; Darwin has no probe mode) and the
+search runs (1452 on loopback).
 
 ## ECN
 
@@ -210,8 +223,9 @@ ACK_ECN counts must appear, never shrink and cover every newly acknowledged mark
 ten test packets. A path that fails never marks again; a new path validates afresh. Received marks are counted per packet
 number space only for datagrams whose packets were processed, and a CE increase reported by the peer is one congestion
 event per recovery period. The portable socket marks every datagram through IP_TOS (`ecnSend`) but cannot read marks, so
-with it the peer's validation of our direction needs an accelerated socket on the peer; the accelerated socket of Linux
-and Android marks and reads per datagram, and two of them validate both directions (`Capable`). Because the portable socket
+with it the peer's validation of our direction needs an accelerated socket on the peer; the accelerated socket (Linux,
+Android, Apple, and Windows 10 2004+ / Server 2022) marks and reads per datagram, and two of them validate both directions
+(`Capable`). Because the portable socket
 marks the whole socket, a failed validation on any of its paths clears IP_TOS for every connection on it (they all
 show `Disabled` from then on: a socket's `capabilities` that lose `ecnSend` or `df` reach the paths already on it, which
 stop marking or stop PMTUD and fall back to 1200 bytes; a gain applies to new paths only); the accelerated
@@ -283,8 +297,17 @@ println("now on ${change.new.localAddress} (${change.reason})")
 `addPath(io)` opens a path through another socket, `probe()` validates it with a `PATH_CHALLENGE` (and re-validates a path
 already validated), `switchTo()` moves the connection, `close()` forgets the path and closes its socket on the loop (on the active path it
 throws `IllegalStateException` and changes nothing). `migrate` does the
-three in a row and throws `IllegalStateException("path validation failed")` when the new socket never hears back, leaving the
-connection where it was. `paths` lists the live paths (the first is the one the connection started on), `activePath` is the one it sends on now,
+three in a row and throws `PathValidationException` (an `IllegalStateException`, "path validation failed") when the new
+socket never hears back, leaving the connection where it was.
+
+Migration timing: a probe on a new path must carry a connection ID of the server that no other path used, so an
+observer cannot link the two networks (RFC 9000 section 9.5). The server issues its spare IDs, up to the client's
+`active_connection_id_limit` (default 4), in its first 1-RTT flight (section 5.1.1), so they normally arrive with the
+handshake. If the network changes before they did (a lost datagram, a peer that issues late), `probe()` does not
+reuse the active path's ID: it waits up to max(3 × PTO, 6 × initial RTT) for a `NEW_CONNECTION_ID`, probes as soon as
+one arrives, and otherwise fails with `PathFailureReason.NoSpareConnectionId` (`PathEvent.Failed.reason`,
+`PathValidationException.reason`) rather than as a silent path. Migrating right after `connect()` therefore needs no
+wait of its own. `paths` lists the live paths (the first is the one the connection started on), `activePath` is the one it sends on now,
 and `pathEvents` reports `Validated`, `Failed` and `Changed`, for
 the peer's moves too. Migration needs a confirmed handshake and a server that did not advertise `disable_active_migration`;
 when the active path fails validation and no other validated path remains, the connection closes with
@@ -307,7 +330,9 @@ The first network the flow reports is the one the connection is on already. Each
 `openIo` and a `migrate` (new path, `PATH_CHALLENGE`, switch); on success the previous path and its socket are closed and
 `events` reports `MigrationEvent.Migrated(old, new, path)`. When the new network never answers, `openIo` throws or the
 server advertised `disable_active_migration` (RFC 9000 section 18.2), the new socket is closed, the connection stays
-where it was and `events` reports `Failed(network, cause)`. A `null` means no network: `NetworkLost` is reported and the
+where it was and `events` reports `Failed(network, cause)`. When the cause is a `PathValidationException` with
+`NoSpareConnectionId` (the network changed before the server's spare connection IDs arrived and none came in time),
+the migrator tries the same network again as soon as one arrives, unless the network changed meanwhile. A `null` means no network: `NetworkLost` is reported and the
 migrator waits; the connection is not closed (its idle timeout decides), and if the same network comes back nothing
 moves. Repeated values are ignored, and a change during a migration supersedes it: the unfinished path is closed and
 nothing is reported for it (`openIo` itself is not cancelled, so keep it short: the socket it returns is closed). The
@@ -344,7 +369,9 @@ the connection: if no network returns within the idle timeout, the connection cl
 ## Glitch protection
 
 Every connection carries a token bucket (1000 tokens, 33 back per second) that pays for work the peer makes us do
-without moving anything forward: a `*_BLOCKED` frame repeating the same limit, a `NEW_CONNECTION_ID` for a sequence
+without moving anything forward: a `DATA_BLOCKED` or `STREAM_DATA_BLOCKED` (per stream) less than one RTT after the
+previous one (a stale one that comes later is answered with the current `MAX_DATA` / `MAX_STREAM_DATA` at once), a
+`STREAMS_BLOCKED` repeating the same limit, a `NEW_CONNECTION_ID` for a sequence
 number we already hold, a `RETIRE_CONNECTION_ID` for an ID that is already retired (one for a sequence number we never issued is a
 `PROTOCOL_VIOLATION`), a third PING-only packet within one
 RTT (the two probes of a PTO may both be PING-only, so a pair is free). A 1-RTT packet that fails to decrypt is discarded silently and spends nothing: anyone who has seen a connection ID

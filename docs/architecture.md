@@ -95,7 +95,8 @@ and public API, its internal transitions are extension functions in `core/Connec
 `EndpointLoop` (one loop, one socket, a timer heap), `LoopGroup` (several loops on one port), `ConnectionRuntime`
 (`QuicConnection`: lifecycle, paths, datagrams), `StreamRuntime` with its ktor-io channels (`StreamChannels.kt`)
 and datagram queues. `DatagramIo` is the socket abstraction, with the accelerated `KslDatagramIo` (batched UDP with ECN and DF
-through `ksl`, GSO/GRO on Linux; Linux, Android, Apple) and the portable NIO or ktor-network sockets (ADR-0006).
+through `ksl`, GSO/GRO on Linux, USO/URO on Windows where granted; Linux, Android, Apple, Windows) and the portable NIO or
+ktor-network sockets as the fallback (ADR-0006).
 
 **Architecture Invariant:** the core packages import no coroutines, no sockets, no clocks and no default randomness;
 `tools/check/sans-io.sh` enforces it. Only `runtime` and the coroutine-level files know about them.
@@ -113,6 +114,10 @@ stable surface; `ConnectionCore`, `EndpointCore`, `CongestionController` and `Da
 ### `kuicksilver-ktor-network`
 
 `Socket.tls(config)` and `Socket.tlsServer(config)` for ktor-network sockets. It depends on `kuicksilver-tls` only.
+`connectTcp`/`bindTcp` (`@InternalKuicksilverApi`) open the engines' TCP sockets: ktor-network's on the JVM and Android, on
+Kotlin/Native a socket of this module on ktor-network's selector (`TcpSockets.native.kt` over the system calls of
+`TcpSys.kt`: `posixMain` for Linux and Apple, `mingwMain`), because Ktor 3.6.0's native sockets bind and connect every
+IPv6 address as `::` ([ktor-native-ipv6.md](upstream/ktor-native-ipv6.md)).
 
 ### `kuicksilver-http3`
 
@@ -141,8 +146,8 @@ directly (ADR-0014).
 ### `kuicksilver-testing`
 
 The deterministic network simulator for the sans-IO core (`Simulator`, `SimLink`, `LinkParams`, invariants checked
-after every step) and `MemoryNetwork`, an in-memory UDP network that runs whole applications without sockets. Not
-published yet.
+after every step) and `MemoryNetwork`, an in-memory UDP network with bounded per-socket receive buffers that runs whole
+applications without sockets. Not published yet.
 
 ### `kuicksilver-interop`, `kuicksilver-bench`, `samples/`
 

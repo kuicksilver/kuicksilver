@@ -243,6 +243,9 @@ internal suspend fun readResponse(
 
                     else -> {
                         val scope = CoroutineScope(callContext + CoroutineName("kuicksilver-h1-body-reader"))
+                        // set only when the whole body went through: a writer whose reader gave up (an abandoned body) can
+                        // complete without an exception, and that connection still has the rest of the body on the wire
+                        var bodyComplete = false
                         val parser =
                             scope.writer(autoFlush = true) {
                                 parseHttpBody(
@@ -253,11 +256,12 @@ internal suspend fun readResponse(
                                     input.withSocketTimeout(request),
                                     channel,
                                 )
+                                bodyComplete = true
                             }
                         // reusable only when the body ended by its framing (length or chunks), not by connection close
                         parser.job.invokeOnCompletion { cause ->
                             onBodyDone(
-                                if (cause == null && keepAlive &&
+                                if (cause == null && bodyComplete && keepAlive &&
                                     (contentLength >= 0 || transferEncoding != null)
                                 ) {
                                     AfterResponse.Reuse

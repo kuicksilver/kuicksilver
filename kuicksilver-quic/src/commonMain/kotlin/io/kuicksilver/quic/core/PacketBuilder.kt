@@ -74,9 +74,10 @@ internal class PacketBuilder(
                 if (dcid == null) {
                     target.challengePending = false
                     while (c.paths.takeResponseFor(target) != null) {}
+                    // no unused peer ID for this path: sending would link it to the active one (RFC 9000 section 9.5); a client probe
+                    // waits for a NEW_CONNECTION_ID
+                    if (c.role == TlsRole.Client && target.state == PathState.Validating) c.awaitPeerCid(target)
                     continue
-                    // no unused peer ID for this path: sending would link it to the active one (RFC 9000 section 9.5); the challenge timer
-                    // tries again
                 }
                 probeTarget = target
                 currentMark = target.ecn.markFor()
@@ -210,6 +211,7 @@ internal class PacketBuilder(
             c.testInjectDatagramFrame ||
             c.testInjectNewCids > 0 ||
             c.testInjectMaxData > 0 ||
+            c.testInjectDataBlocked > 0 ||
             c.testInjectRepeatNewCid > 0 ||
             c.testInjectDatagramBytes > 0 ||
             (c.datagramSender?.hasPending() == true && c.maxDatagramPayload > 0)
@@ -589,6 +591,13 @@ internal class PacketBuilder(
                     ) {
                         FrameEncoder.maxData(w, 0)
                         c.testInjectMaxData--
+                        ackEliciting = true
+                    }
+                    while (c.testInjectDataBlocked > 0 &&
+                        w.remaining >= 9
+                    ) {
+                        FrameEncoder.dataBlocked(w, c.testInjectDataBlocked.toLong())
+                        c.testInjectDataBlocked--
                         ackEliciting = true
                     }
                     while (c.testInjectNewCids > 0 &&

@@ -301,7 +301,10 @@ class HttpTimeoutTest : ClientLoader(timeout = 30.seconds) {
     fun testGetStream() =
         clientTests(except("Curl")) {
             config {
-                install(HttpTimeout) { requestTimeoutMillis = 2000 }
+                // Kuicksilver: 10 s instead of Ktor's 2 s, still far above the stream's nominal 120 ms. The test is that a
+                // streamed response inside the request timeout completes, not how precise the server's twelve delay(10 ms) are:
+                // each is a timer tick on Windows and took ~200 ms on a loaded macOS host (2.4 s, over 2 s on both protocols)
+                install(HttpTimeout) { requestTimeoutMillis = 10_000 }
             }
 
             test { client ->
@@ -356,7 +359,10 @@ class HttpTimeoutTest : ClientLoader(timeout = 30.seconds) {
     fun testRedirect() =
         clientTests(except("Js", "Curl"), retries = 5) {
             config {
-                install(HttpTimeout) { requestTimeoutMillis = 1000 }
+                // Kuicksilver: 5 s instead of Ktor's 1 s for three server delay(20 ms) and a new connection per attempt. Each
+                // delay is a timer tick on Windows and took ~200 ms on a loaded macOS host, too little left of 1 s (failed on
+                // the Windows VM over HTTP/3)
+                install(HttpTimeout) { requestTimeoutMillis = 5_000 }
             }
 
             test { client ->

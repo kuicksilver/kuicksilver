@@ -25,23 +25,36 @@ class FlowControlTest {
         assertEquals(655_360L, f.limit)
     }
 
-    @Test fun windowDoublesWhenUpdatesFasterThanTwoRtt() {
+    // auto-tuning as quic-go (flow_controller_base.go maybeAdjustWindowSize): an epoch of more than half a window that was read
+    // in less than 4 x fraction x sRTT (the whole window in under 4 RTT) doubles the window
+
+    @Test fun windowDoublesWhenReadFasterThanAWindowPerFourRtt() {
         val f = stream()
         f.onData(400_000)
         assertEquals(655_360L, f.onConsumed(131_072, t0, srtt))
-        assertEquals(262_144L + 1_048_576L, f.onConsumed(131_072, t0 + 15.milliseconds, srtt))
+        assertEquals(786_432L, f.onConsumed(131_072, t0 + 5.milliseconds, srtt))
+        // 3/4 of the window in 10 ms < 4 x 0.75 x 10 ms
+        assertEquals(393_216L + 1_048_576L, f.onConsumed(131_072, t0 + 10.milliseconds, srtt))
         assertEquals(1_048_576L, f.window)
+    }
+
+    @Test fun windowDoesNotDoubleForAReaderJustBelowThatRate() {
+        // a quarter every 1.6 RTT: 3/4 of the window in 32 ms >= 30 ms (the former rule, a quarter within 2 RTT, doubled here
+        // and settled at 8-16 x the bandwidth-delay product)
+        val f = stream()
+        f.onData(400_000)
+        f.onConsumed(131_072, t0, srtt)
+        f.onConsumed(131_072, t0 + 16.milliseconds, srtt)
+        f.onConsumed(131_072, t0 + 32.milliseconds, srtt)
+        assertEquals(524_288L, f.window)
     }
 
     @Test fun windowDoesNotDoubleWhenUpdatesAreSlow() {
         val f = stream()
         f.onData(400_000)
         f.onConsumed(131_072, t0, srtt)
-        f.onConsumed(
-            131_072,
-            t0 + 25.milliseconds,
-            srtt,
-        )
+        f.onConsumed(131_072, t0 + 25.milliseconds, srtt)
+        f.onConsumed(131_072, t0 + 50.milliseconds, srtt)
         assertEquals(524_288L, f.window)
     }
 
@@ -49,7 +62,7 @@ class FlowControlTest {
         val f = stream()
         var consumed = 0L
         var t = t0
-        repeat(12) {
+        repeat(20) {
             f.onData(f.limit)
             consumed += f.window / 4
             f.onConsumed(f.window / 4, t, srtt)

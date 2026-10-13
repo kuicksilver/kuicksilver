@@ -297,7 +297,11 @@ internal class ConnectionHandshakeSink(
             core.writeKeys[1] = null
         } // RFC 9001 section 4.9.3: a client drops its 0-RTT key as soon as it has the 1-RTT one
         if (level == 1 && core.role == TlsRole.Server) core.events += ConnectionEvent.EarlyDataAccepted
-        if (direction == Direction.Read && (level != 3 || core.keyPhase != null)) core.receiver.replayBuffered(level)
+        // 1-RTT packets that arrived before the keys (the server's 0.5-RTT flight with its NEW_CONNECTION_ID frames) are opened through
+        // the key phase, which exists once both directions are installed: replay them then, whichever direction came last, or they sit
+        // in the buffer until the peer's loss recovery resends their frames
+        if (direction == Direction.Read && level != 3) core.receiver.replayBuffered(level)
+        if (level == 3 && core.keyPhase != null) core.receiver.replayBuffered(3)
         if (level == 2) core.loss.handshakeKeysAvailable = true
     }
 

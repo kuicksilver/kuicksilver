@@ -3,7 +3,8 @@
 Kuicksilver plugs into Ktor 3.6 as a server engine (`io.kuicksilver:kuicksilver-ktor-server`) and a client engine
 (`io.kuicksilver:kuicksilver-ktor-client`). Both speak HTTP/1.1 over TLS 1.3 (`kuicksilver-ktor-network`) and HTTP/3
 (`kuicksilver-http3`); HTTP/2 is not implemented (ADR-0009). The code blocks below compile and run as `GuideSamplesTest`
-(`kuicksilver-ktor-server/src/jvmTest` and `kuicksilver-ktor-client/src/jvmTest`).
+(`kuicksilver-ktor-server/src/jvmTest` and `kuicksilver-ktor-client/src/jvmTest`); the engines' other tests run on every
+target (see "Compatibility").
 
 ## Server
 
@@ -55,7 +56,7 @@ network. Responses never carry `Transfer-Encoding` or other connection-specific 
 simply a sequence of DATA frames.
 
 Knobs, named after Ktor's Netty engine where one exists: `http3` (on), `quic` (transport settings), `quicMaxIdleTimeout`
-(applies when `quic` is the default), `udpSocketCount` (endpoint loops on `SO_REUSEPORT`, Linux), `quicAdmission`
+(applies when `quic` is the default), `udpSocketCount` (endpoint loops on `SO_REUSEPORT`, Linux and Android), `quicAdmission`
 (Retry policy, Ktor-Netty's `quicTokenHandler`), `http3Settings`. UDP socket buffer sizes are not configurable yet.
 
 The engine serves HTTP/3 on every target, Kotlin/Native Linux, Apple and Windows included (the accelerated `ksl` socket,
@@ -197,8 +198,9 @@ default.
 Both engines run Ktor 3.6.0's own engine contract tests, vendored under `src/commonTest/kotlin/.../contract` (and
 `src/jvmTest` for the JVM-only `ContentTestSuite`; attribution in `NOTICE`), over HTTP/1.1 and over HTTP/3, on every target:
 the JVM, Android, Linux, macOS, iOS and Windows. The HTTP/3 runs, like the engines' own HTTP/3 tests in `commonTest`,
-need a QUIC server peer and run where one can bind (the JVM, Android, Linux; elsewhere they pass without running). The
-Linux test executables run the full set; macOS runs the HTTP/1.1 half.
+need a QUIC server peer and run where one can bind, which since 0.2.0 is every target with the accelerated socket: the
+JVM, Android, Linux, macOS and Windows (where a probe finds no server, they pass without running). iOS is compiled and
+linked, but its tests have not run; Windows runs are not yet verified (no passing CI run, local Windows VM pending).
 
 **Client** (`kuicksilver-ktor-client`): `ContentTest`, `PostTest`, `UploadTest`, `DownloadTest`, `HttpRedirectTest`,
 `HttpTimeoutTest` and `WebSocketTest` against Ktor's test-server routes hosted on the Kuicksilver server engine; every
@@ -237,3 +239,29 @@ and the HTTP/1.1 client sent a streamed request body completely before reading t
 first, then reads the body, deadlocked). On Linux Native the client contract found that a failed HTTP/3 request (a peer
 resetting a WebSocket stream) escaped as an uncaught coroutine exception, which aborts a Kotlin/Native process; each
 request now contains its own failure.
+
+### IPv6 over TCP on Kotlin/Native
+
+Ktor 3.6.0's `ktor-network` sockets on Kotlin/Native (Linux, Apple, Windows) never copy the IPv6 address into the
+`sockaddr_in6` they bind or connect with (`NativeIPv6SocketAddress.nativeAddress` sets family, port, flow label and scope
+only), so every IPv6 bind and connect uses `::`. A connector on `::1` listened on every interface (and, dual-stack, on
+IPv4); a request to an IPv6 address went to `::`, which Linux and Apple route to the local host and Windows refuses
+(`WSAEADDRNOTAVAIL`, 10049). Details and the upstream report draft: [ktor-native-ipv6.md](../upstream/ktor-native-ipv6.md).
+
+Both engines therefore open their HTTP/1.1 TCP sockets through `kuicksilver-ktor-network` (`bindTcp`, `connectTcp`): on
+the JVM and Android that is `ktor-network` as before; on Kotlin/Native it is a TCP socket of Kuicksilver on Ktor's selector
+that binds and connects the address `getaddrinfo` returned. So on every platform:
+
+- a server connector with a specific `host` (`::1`, `127.0.0.1`, a global address) listens on that address only; `::` and
+  `0.0.0.0` stay the wildcards;
+- the client's HTTP/1.1 connection (and its connection to an HTTP proxy) goes to the address in the URL, trying each
+  address a host name resolves to in turn; an IPv4-mapped literal (`[::ffff:127.0.0.1]`) is connected over IPv4, as the
+  JVM does.
+
+HTTP/3 uses the accelerated `ksl` UDP socket, which carries the full address on every platform (the Ktor client's endpoint
+is dual-stack, ADR-0006). The portable Kotlin/Native UDP socket (`IoPreference.Portable`, or a sandbox that refuses the
+accelerated one) still uses `ktor-network`: it refuses to bind a specific IPv6 address (`UnsupportedOperationException`)
+and to send to an IPv6 address (`IOException`), instead of
+using `::`. Tests: `ServerH1Test.negative_ipv6ConnectorListensOnItsAddressOnly`,
+`ClientH1Test.negative_h1ToIpv6LiteralReachesThatAddressOnly`, `ClientH1Test.plainHttpToIpv6Literal`,
+`ClientH3Test.h1ToIpv6Loopback`, `TcpSocketsTest`, `KtorDatagramIoTest`.

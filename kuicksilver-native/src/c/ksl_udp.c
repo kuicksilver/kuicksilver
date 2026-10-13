@@ -20,6 +20,37 @@ static void be16(uint8_t *p, uint16_t v) { p[0] = (uint8_t)(v >> 8); p[1] = (uin
 static int no_ipv6_for_test;   /* simulates a host without IPv6: socket(AF_INET6) fails */
 void ksl_udp_no_ipv6_for_test(int on) { no_ipv6_for_test = on; }
 #endif
+#ifdef __APPLE__
+/* Binds an AF_INET socket to 0.0.0.0:[port] (0: any) and releases it at once: the port it got, 0 when the IPv4 side refused
+   (errno set, EADDRINUSE when an IPv4 socket holds the port). */
+static uint16_t ipv4_port_probe(uint16_t port) {
+    int s = socket(AF_INET, SOCK_DGRAM, 0); if (s < 0) return 0;
+    struct sockaddr_in a; memset(&a, 0, sizeof a); a.sin_len = sizeof a; a.sin_family = AF_INET; a.sin_addr.s_addr = htonl(INADDR_ANY); a.sin_port = htons(port);
+    socklen_t l = sizeof a; uint16_t p = 0;
+    if (bind(s, (struct sockaddr *)&a, sizeof a) == 0 && getsockname(s, (struct sockaddr *)&a, &l) == 0) p = ntohs(a.sin_port);
+    int e = errno; close(s); errno = e; return p;
+}
+/* Darwin binds a dual-stack socket without looking at the IPv4 sockets: the ephemeral port can be one an IPv4 socket holds
+   (127.0.0.1:P, 0.0.0.0:P), and an explicit :: on P succeeds beside 0.0.0.0:P; either way the IPv4 socket keeps receiving the IPv4
+   datagrams for P and ours never sees them (a client whose server's replies all went elsewhere, a server deaf to IPv4). So the
+   IPv4 side is asked first: an explicit port an IPv4 socket holds is refused (EADDRINUSE); port 0 takes a port free there, then
+   binds :: to it (an explicit bind also checks 127.0.0.1:P), and a port taken in between fails with EADDRINUSE: another one.
+   0 when bound; -1 with errno when an explicit port is taken; -2 to bind port 0 the plain way (no IPv4 port to be had). */
+static int bind_dual(int fd, struct sockaddr_storage *ss, socklen_t sl) {
+    uint16_t want = ntohs(((struct sockaddr_in6 *)ss)->sin6_port);
+    if (want) {
+        if (!ipv4_port_probe(want) && errno == EADDRINUSE) return -1;
+        return bind(fd, (struct sockaddr *)ss, sl) == 0 ? 0 : -1;
+    }
+    for (int i = 0; i < 32; i++) {
+        uint16_t p = ipv4_port_probe(0); if (!p) break;
+        ((struct sockaddr_in6 *)ss)->sin6_port = htons(p);
+        if (bind(fd, (struct sockaddr *)ss, sl) == 0) return 0;
+        if (errno != EADDRINUSE) break;
+    }
+    ((struct sockaddr_in6 *)ss)->sin6_port = 0; return -2;
+}
+#endif
 static int is_wildcard(const uint8_t *a) { for (int i = 3; i < (a[0] == 4 ? 7 : 19); i++) if (a[i]) return 0; return 1; }
 /* socket, the options bind needs first, bind; -1 with errno and the failed step. dual: AF_INET6 bound to :: with IPV6_V6ONLY off */
 static int bind_socket(ksl_udp *u, const uint8_t addr[KSL_UDP_ADDR_LEN], int dual, int flags, const char **step) {
@@ -35,6 +66,9 @@ static int bind_socket(ksl_udp *u, const uint8_t addr[KSL_UDP_ADDR_LEN], int dua
 #endif
     if (fd < 0) return -1;
     int one = 1, v6only = !dual;
+#ifdef __APPLE__
+    int r;
+#endif
 #ifdef SO_NOSIGPIPE
     setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof one);   /* Darwin: an error never raises SIGPIPE in the host process */
 #endif
@@ -46,6 +80,9 @@ static int bind_socket(ksl_udp *u, const uint8_t addr[KSL_UDP_ADDR_LEN], int dua
     uint8_t any[KSL_UDP_ADDR_LEN] = { 6 }; any[1] = addr[1]; any[2] = addr[2];
     struct sockaddr_storage ss; socklen_t sl = to_sockaddr(dual ? any : addr, &ss);
     if (family == AF_INET6 && setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, &v6only, sizeof v6only) != 0 && dual) { *step = "IPV6_V6ONLY"; }
+#ifdef __APPLE__   /* a port the IPv4 side has free too (bind_dual) */
+    else if (dual && (r = bind_dual(fd, &ss, sl)) != -2) { if (r == 0) { u->family = family; u->dual = dual; return fd; } *step = "bind"; }
+#endif
     else if (bind(fd, (struct sockaddr *)&ss, sl) == 0) { u->family = family; u->dual = dual; return fd; }
     else *step = "bind";
     int e = errno; close(fd); errno = e; return -1;
@@ -106,6 +143,7 @@ ksl_udp *ksl_udp_open(const uint8_t addr[KSL_UDP_ADDR_LEN], int flags, uint32_t 
     struct sockaddr_storage ss; socklen_t sl = sizeof ss;
     if (getsockname(u->fd, (struct sockaddr *)&ss, &sl) == 0) from_sockaddr(&ss, u->local);
     if (u->dual && addr[0] == 4) { memset(u->local + 3, 0, KSL_UDP_ADDR_LEN - 3); u->local[0] = 4; }   /* 0.0.0.0 asked: 0.0.0.0 reported, the port the kernel chose */
+    ksl_live_add(KSL_LIVE_UDP, 1); ksl_live_add(KSL_LIVE_WAKE, (u->wake[0] >= 0) + (u->wake[1] >= 0));
     return u;
 }
 
@@ -130,6 +168,7 @@ void ksl_udp_close(ksl_udp *u) {
     if (!u) return;
     ksl_udp_shutdown(u);
     for (int i = 0; i < 1000 && __atomic_load_n(&u->in_recv, __ATOMIC_SEQ_CST) > 0; i++) { struct timespec ts = { 0, 1000000 }; nanosleep(&ts, NULL); }   /* a receiver woke up and leaves the object */
+    ksl_live_add(KSL_LIVE_UDP, -1); ksl_live_add(KSL_LIVE_WAKE, -((u->wake[0] >= 0) + (u->wake[1] >= 0)));
     if (u->fd >= 0) close(u->fd); if (u->wake[0] >= 0) close(u->wake[0]); if (u->wake[1] >= 0) close(u->wake[1]);
     free(u->scratch); free(u->tx); memset(u, 0, sizeof *u); free(u);
 }

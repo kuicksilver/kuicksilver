@@ -125,6 +125,10 @@ internal class SentFrames {
         const val STREAMS_BLOCKED_BIDI = 512
         const val STREAMS_BLOCKED_UNI = 1024
         const val PMTU_PROBE = 2048
+
+        /** The flags of the connection-level stream control frames [io.kuicksilver.quic.stream.StreamManager.onFramesLost] repeats. */
+        const val STREAM_CONTROL =
+            MAX_DATA or MAX_STREAMS_BIDI or MAX_STREAMS_UNI or DATA_BLOCKED or STREAMS_BLOCKED_BIDI or STREAMS_BLOCKED_UNI
         const val ID_MAX_STREAM_DATA = 1
         const val ID_RESET_STREAM = 2
         const val ID_STOP_SENDING = 3
