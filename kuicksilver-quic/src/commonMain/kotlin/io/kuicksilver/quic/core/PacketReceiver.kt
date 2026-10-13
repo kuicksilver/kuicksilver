@@ -363,6 +363,8 @@ internal class PacketReceiver(
     /** RFC 9000 section 17.2.5.2: a client takes exactly one Retry, before any other server packet, with a non-empty token, a new SCID and a valid tag (RFC 9001 section 5.8). */
     private fun onRetry(data: PacketBuffer) {
         if (c.role != TlsRole.Client || c.anyPeerPacket || c.retryScid != null || c.state != ConnectionState.Handshaking) return
+        // RFC 9369 section 4.1: a Retry uses the version of the Initial it answers; "The client ignores Retry packets using other versions."
+        if (hv.version != c.version.version) return
         if (!c.localCid.contentEquals(data, hv.dcidOff, hv.dcidLen) || hv.tokenLen == 0) return
         // the token rides in every later Initial: one that cannot fit a 1200-byte Initial with room for CRYPTO is unusable
         if (hv.tokenLen > MAX_RETRY_TOKEN) return
