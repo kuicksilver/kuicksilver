@@ -337,6 +337,12 @@ Ktor client (`kuicksilver-ktor-client`):
 - HTTP/1.1: a response body left halfway returned its connection to the idle pool with the rest of the body still on the
   wire (the server's handler blocked for the life of the client, and a later request on that connection would have read
   the old body); the connection is reused only after the whole body was read (found by the soak harness).
+- `HttpStatement.execute {}` could hang forever when the block left a `bodyAsChannel()` body unread: Ktor's default
+  transformer copies the raw body into the application's channel, and once a megabyte waited there unread its copier
+  suspended on that channel; `execute` cancels the raw body (which does not wake a copier waiting on its destination)
+  and joins the call, which waits for the copier. A body cancelled while still open now cancels its call, over HTTP/1.1
+  and HTTP/3, so `execute` returns. The suspended copier itself belongs to Ktor's client scope and is released only when
+  the `HttpClient` closes (found as a 60 s hang of `AbandonedBodyTest` under load).
 
 Ktor server (`kuicksilver-ktor-server`):
 

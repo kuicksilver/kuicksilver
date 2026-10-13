@@ -100,6 +100,13 @@ internal class KuicksilverEngine(
 
     override suspend fun execute(data: HttpRequestData): HttpResponseData {
         val callContext = callContext()
+        return AbandonableBody.guard(route(data, callContext), callContext)
+    }
+
+    private suspend fun route(
+        data: HttpRequestData,
+        callContext: CoroutineContext,
+    ): HttpResponseData {
         val url = data.url
         // HTTP/3 needs TLS and no proxy (through a proxy only HTTP/1.1)
         if (!url.protocol.isSecure() || config.proxy != null ||
