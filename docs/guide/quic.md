@@ -51,7 +51,11 @@ the connection window stays at least 1.5 x the largest stream window. A busy rea
 bandwidth-delay product, a slow reader keeps the initial window, and the ceilings bound the unread data one connection
 can hold. The defaults are quic-go's. A sender blocked by a window repeats `DATA_BLOCKED` / `STREAM_DATA_BLOCKED` while
 it stays blocked, and the receiver answers a stale report with its current limit, so a lost window update costs a few
-PTOs, not a stall.
+PTOs, not a stall. The repeats come 1, 2, 4 and then 8 PTOs apart for the first 32, then twice as far apart each time,
+up to a third of the idle timeout (the smaller of both sides' `maxIdleTimeout`; 10 s when both are zero). They are
+acknowledged, so a connection blocked because its peer stopped reading stays open, at the cost of about three small
+packets per idle period (about 95 in 10 minutes with the default 30 s); bound such a wait in the application if it must
+not last. A report at a new limit goes out at once and starts the fast gaps again.
 
 A client that prefers v2 but must start in v1 (the widely deployed version) sets `initialVersion = VersionProfile.V1`
 with `versions = listOf(VersionProfile.V2, VersionProfile.V1)`: the first flight is v1, the server upgrades it through

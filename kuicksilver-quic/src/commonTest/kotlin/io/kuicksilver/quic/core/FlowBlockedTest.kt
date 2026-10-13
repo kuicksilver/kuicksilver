@@ -104,13 +104,19 @@ class FlowBlockedTest {
 
     /**
      * What the repeat schedule guarantees, in PTOs. A blocked client reports its limit at once and repeats it 1, 2 and 4 PTOs later,
-     * then every 8 PTOs ([onBlockedRepeatTimer]); the server answers each report (they come more than an RTT apart, so the
-     * one-answer-per-RTT limit never drops one) and each answer gets through with probability 1 - [LOSS], independently. Report n
-     * (n >= 4) goes out (8n - 17) PTOs after the first, so an episode stalls longer than (8m - 15) PTOs (2 for delivery and the read)
-     * only when m answers in a row are lost: probability [LOSS]^m. The server's own retransmissions only shorten a stall. Seed 12:
-     * 22 answers lost in a row, the 23rd report went through after 167 PTOs (6.07 s at 36 ms).
+     * then every 8 PTOs through repeat [BLOCKED_FAST_REPEATS] and at doubling gaps from 16 PTOs after that ([blockedRepeatGap]); the
+     * server answers each report (they come more than an RTT apart, so the one-answer-per-RTT limit never drops one) and each answer
+     * gets through with probability 1 - [LOSS], independently. Report n goes out S(n) PTOs after the first: 8n - 17 for
+     * 4 <= n <= 32, 239 + 16 (2^(n - 32) - 1) beyond (the cap of a third of the idle timeout only shortens gaps, so this is an upper
+     * bound). An episode stalls longer than S(m) + 2 PTOs (2 for delivery and the read) only when m answers in a row are lost:
+     * probability [LOSS]^m. The server's own retransmissions only shorten a stall. Seed 12: 22 answers lost in a row, the 23rd
+     * report went through after 167 PTOs (6.07 s at 36 ms).
      */
-    private fun ptosAfter(m: Int): Int = 8 * maxOf(m, 4) - 15
+    private fun ptosAfter(m: Int): Int {
+        val n = maxOf(m, 4)
+        val fast = BLOCKED_FAST_REPEATS
+        return if (n <= fast) 8 * n - 15 else 8 * fast - 15 + 16 * ((1 shl minOf(n - fast, 24)) - 1)
+    }
 
     /** The smallest m with [LOSS]^m <= [p]. */
     private fun attemptsFor(p: Double): Int = ceil(ln(p) / ln(LOSS)).toInt()

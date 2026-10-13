@@ -17,6 +17,7 @@ import io.kuicksilver.quic.recovery.SentPacket
 import io.kuicksilver.quic.recovery.SpaceId
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
 
 // Timers and loss callbacks of a [ConnectionCore]: PTO, idle and keep-alive deadlines, PTO probes and the [LossListener] (RFC 9000
 // section 10.1; RFC 9002).
@@ -29,20 +30,20 @@ internal fun ConnectionCore.pto(): Duration {
         (if (loss.handshakeConfirmed) loss.peerMaxAckDelay else Duration.ZERO)
 }
 
-/** After a send: a newly reported flow-control limit (re)starts the repeat timer of [onBlockedRepeatTimer] one PTO ahead. */
+/** After a send: a newly reported flow-control limit (re)starts the fast schedule of [onBlockedRepeatTimer]. */
 internal fun ConnectionCore.armBlockedRepeat(now: TimeMark) {
     val epoch = streams.blockedEpoch
     if (epoch == timers.blockedEpochSeen) return
     timers.blockedEpochSeen = epoch
     timers.blockedRepeats = 0
-    timers.blockedRepeatAt = now + pto()
+    timers.blockedRepeatAt = now + blockedRepeatGap(0)
 }
 
 /**
- * A sender blocked by flow control repeats its DATA_BLOCKED / STREAM_DATA_BLOCKED one PTO (without backoff) after the report and
- * then at gaps of 2, 4 and at most 8 PTOs while it stays blocked: a lost MAX_DATA / MAX_STREAM_DATA otherwise waits on the receiver's own
- * PTO backoff (64 PTOs, 11 s, in a simulated upload with 75 % loss on the return path). The receiver answers each repeat that
- * comes at least an RTT after the previous one with its current limit (RFC 9000 section 4.1).
+ * A sender blocked by flow control repeats its DATA_BLOCKED / STREAM_DATA_BLOCKED while it stays blocked, at the gaps of
+ * [blockedRepeatGap]: fast at first, since a lost MAX_DATA / MAX_STREAM_DATA otherwise waits on the receiver's own PTO backoff
+ * (64 PTOs, 11 s, in a simulated upload with 75 % loss on the return path), then backing off to a third of the idle timeout. The
+ * receiver answers each repeat that comes at least an RTT after the previous one with its current limit (RFC 9000 section 4.1).
  */
 internal fun ConnectionCore.onBlockedRepeatTimer(now: TimeMark) {
     if (timers.blockedRepeatAt > now) return
@@ -53,8 +54,58 @@ internal fun ConnectionCore.onBlockedRepeatTimer(now: TimeMark) {
     // not only with nothing in flight: an unacknowledged report waits on our own PTO backoff, which the lossy return path that
     // ate the update also feeds (ungated, the 20-seed simulation's longest stall fell from 9.0 s to 5.3 s)
     streams.repeatBlockedReports()
-    if (timers.blockedRepeats < 3) timers.blockedRepeats++
-    timers.blockedRepeatAt = now + pto() * (1 shl timers.blockedRepeats)
+    if (timers.blockedRepeats < Int.MAX_VALUE) timers.blockedRepeats++
+    timers.blockedRepeatAt = now + blockedRepeatGap(timers.blockedRepeats)
+}
+
+private fun ConnectionCore.blockedRepeatGap(done: Int): Duration =
+    blockedRepeatGap(done, pto(), timers.effectiveIdle(config.maxIdleTimeout, peerIdleMs, pto()))
+
+/**
+ * Repeats at one blocked limit that keep the gaps of before (1, 2, 4, then 8 PTO); later ones back off. At the 75 % loss of
+ * every answer in FlowBlockedTest, 32 lost answers in a row have probability 1e-4 per blocked limit (0.75^32); at 10 % loss,
+ * 1e-32. A sender still blocked after them almost surely faces a receiver that does not read, not a lost window update.
+ */
+internal const val BLOCKED_FAST_REPEATS = 32
+
+/**
+ * The longest gap between repeats when neither side has an idle timeout (both sent max_idle_timeout 0). Nothing has to be kept
+ * alive then; the reports only find a lost update late in a long block. 10 s is the gap the default 30 s idle timeout gives, so
+ * disabling the idle timeout does not change the traffic of a blocked connection, and a lost update after a long block costs
+ * at most 10 s.
+ */
+internal val BLOCKED_REPEAT_CAP_WITHOUT_IDLE = 10.seconds
+
+/**
+ * The longest gap between repeated *_BLOCKED reports: a third of the effective [idle] timeout (the smaller of both sides'
+ * max_idle_timeout, at least 3 PTO), so at least two reports and their acknowledgements, each restarting both idle timers
+ * (RFC 9000 section 10.1), fall in every idle period and one lost exchange does not let a blocked connection idle out.
+ * [BLOCKED_REPEAT_CAP_WITHOUT_IDLE] without an idle timeout.
+ */
+internal fun blockedRepeatCap(idle: Duration): Duration = if (idle.isInfinite()) BLOCKED_REPEAT_CAP_WITHOUT_IDLE else idle / 3
+
+/**
+ * The gap before the next repeat after [done] repeats at the current limit ([done] = 0: the first report). 1, 2 and 4 PTO, then
+ * 8 PTO through repeat [BLOCKED_FAST_REPEATS] (report n, n >= 4, goes out 8n - 17 PTO after the first, as before), then
+ * doubling from 16 PTO; every gap at most [blockedRepeatCap]. Doubling reaches the cap within a few repeats (five from 16 PTO
+ * at PTO 36 ms and a 10 s cap), so a block of length T costs about 33 + log2(cap / 8 PTO) + T / cap reports, not T / 8 PTO.
+ */
+internal fun blockedRepeatGap(
+    done: Int,
+    pto: Duration,
+    idle: Duration,
+): Duration {
+    val cap = blockedRepeatCap(idle)
+    // 2^43 PTO is beyond any cap; stopping the shift there avoids its overflow
+    if (done - BLOCKED_FAST_REPEATS >= 40) return cap
+    val ptos =
+        when {
+            done <= 3 -> 1L shl done
+            done < BLOCKED_FAST_REPEATS -> 8L
+            else -> 16L shl (done - BLOCKED_FAST_REPEATS)
+        }
+    val gap = pto * ptos.toDouble()
+    return if (gap < cap) gap else cap
 }
 
 internal fun ConnectionCore.idleDeadline(): TimeMark {
