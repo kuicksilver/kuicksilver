@@ -96,8 +96,20 @@ internal class PacketReceiver(
         datagramEcn = ecn // a socket that cannot read marks delivers NotEct itself (ADR-0006)
         var off = 0
         var processed = false
+        var firstDcidOff = -1
+        var firstDcidLen = 0
         while (off < length) {
             if (!PacketHeaderCodec.parse(data, off, length, c.localCid.length, hv)) break
+            if (firstDcidOff < 0) {
+                firstDcidOff = hv.dcidOff
+                firstDcidLen = hv.dcidLen
+            } else if (!sameBytes(data, firstDcidOff, firstDcidLen, hv.dcidOff, hv.dcidLen)) {
+                // RFC 9000 section 12.2: "Receivers SHOULD ignore any subsequent packets with a different Destination Connection ID
+                // than the first packet in the datagram"
+                if (hv.packetEnd <= off) break
+                off = hv.packetEnd
+                continue
+            }
             if (hv.isVersionNegotiation) {
                 if (c.localCid.contentEquals(data, hv.dcidOff, hv.dcidLen) &&
                     c.odcid.contentEquals(data, hv.scidOff, hv.scidLen)
@@ -125,6 +137,18 @@ internal class PacketReceiver(
             // stateless reset token as a Stateless Reset, as other QUIC versions might allow the use of a long header"
             c.checkStatelessReset(data, length, now)
         }
+    }
+
+    private fun sameBytes(
+        data: PacketBuffer,
+        aOff: Int,
+        aLen: Int,
+        bOff: Int,
+        bLen: Int,
+    ): Boolean {
+        if (aLen != bLen) return false
+        for (i in 0 until aLen) if (data[aOff + i] != data[bOff + i]) return false
+        return true
     }
 
     private fun matchesLocalCid(data: PacketBuffer): Boolean {
