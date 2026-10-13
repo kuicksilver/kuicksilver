@@ -6,7 +6,6 @@ import io.ktor.network.selector.SelectorManager
 import io.ktor.network.sockets.InetSocketAddress
 import io.ktor.network.sockets.ServerSocket
 import io.ktor.network.sockets.Socket
-import io.ktor.network.sockets.aSocket
 import io.ktor.network.sockets.openReadChannel
 import io.ktor.network.sockets.openWriteChannel
 import io.ktor.utils.io.readRemaining
@@ -16,10 +15,12 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import kotlinx.io.IOException
 import kotlinx.io.readByteArray
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 
@@ -127,11 +128,12 @@ class TcpSocketsTest {
             }
         }
 
-    @Test fun refusedConnectFails() =
+    /**
+     * A connect that fails throws (an IOException naming the address) instead of returning a socket. Port 0 fails at once on
+     * every platform; a just-closed port is no test on Windows, where a listener stays open until the selector has closed it.
+     */
+    @Test fun failedConnectThrows() =
         tcpTest { selector ->
-            // a port that was just free: bind, note it, close
-            val port = aSocket(selector).tcp().bind("127.0.0.1", 0).use { (it.localAddress as InetSocketAddress).port }
-            val r = runCatching { connectTcp(selector, InetSocketAddress("127.0.0.1", port)).close() }
-            assertTrue(r.isFailure)
+            assertFailsWith<IOException> { connectTcp(selector, InetSocketAddress("127.0.0.1", 0)).close() }
         }
 }
