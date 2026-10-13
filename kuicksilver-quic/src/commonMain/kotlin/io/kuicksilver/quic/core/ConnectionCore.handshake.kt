@@ -200,10 +200,14 @@ internal fun ConnectionCore.switchServerVersion(chosen: VersionProfile) {
     writeKeys[0] = w
 }
 
-/** A Version Negotiation packet (RFC 9000 section 6.2): ignored after any server packet, after one we already acted on, or when it lists our version; otherwise restart or give up. */
+/**
+ * A Version Negotiation packet (RFC 9000 section 6.2): ignored after any server packet (a Retry included), after one we already acted
+ * on, or when it lists our version; otherwise restart or give up.
+ */
 internal fun ConnectionCore.onVersionNegotiation(offered: IntArray) {
-    // section 6.2: at most one Version Negotiation is acted on
-    if (role != TlsRole.Client || anyPeerPacket || state != ConnectionState.Handshaking || receivedVnVersions != null) return
+    // section 6.2: at most one Version Negotiation is acted on, and none after "any other packet"
+    if (role != TlsRole.Client || anyPeerPacket || retryScid != null) return
+    if (state != ConnectionState.Handshaking || receivedVnVersions != null) return
     if (offered.contains(version.version)) return
     val next = config.versions.firstOrNull { offered.contains(it.version) }
     if (next ==

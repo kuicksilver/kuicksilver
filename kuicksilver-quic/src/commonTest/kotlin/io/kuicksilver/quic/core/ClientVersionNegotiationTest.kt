@@ -176,4 +176,24 @@ class ClientVersionNegotiationTest {
             p.close()
         }
     }
+
+    /**
+     * Review finding 15, RFC 9000 section 6.2: "A client MUST discard any Version Negotiation packet if it has received and
+     * successfully processed any other packet". A processed Retry counts: a VN echoing the original IDs afterwards used to end the
+     * connection (or restart it with the Retry state left over).
+     */
+    @Test fun negative_versionNegotiationAfterRetryIgnored() {
+        val p = CorePair(crypto = ksl)
+        p.filterToServer = { _, _ -> false }
+        try {
+            p.step()
+            val first = p.lastClientInitial!!
+            p.client.onRetry(io.kuicksilver.quic.wire.ConnectionId(ByteArray(8) { 0x42 }), ByteArray(16) { 7 })
+            feed(p, vn(first, 0x0a0a0a0a))
+            assertNull(p.closedReason(p.clientEvents), "the Version Negotiation after a Retry is discarded")
+            assertNull(p.client.receivedVnVersions)
+        } finally {
+            p.close()
+        }
+    }
 }
