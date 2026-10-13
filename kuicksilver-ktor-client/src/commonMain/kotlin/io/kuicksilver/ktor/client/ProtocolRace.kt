@@ -31,7 +31,6 @@ internal class RaceResult<T>(
  * so the caller can close it (a connection must not be leaked, RFC 8305 section 5) — also when the caller is cancelled.
  */
 internal class ProtocolRace(
-    private val softDelay: Duration,
     private val hardDelay: Duration?,
 ) {
     fun headStart(
@@ -110,7 +109,4 @@ internal class ProtocolRace(
                 }
             }
         }
-
-    /** The soft delay of curl ("no UDP datagram from the server yet") needs a transport signal the QUIC API does not expose; kept for configuration. */
-    val soft: Duration get() = softDelay
 }

@@ -53,7 +53,6 @@ public final class io/kuicksilver/ktor/client/Http3ClientConfig {
 	public final fun getQlog ()Lio/kuicksilver/quic/QlogSink;
 	public final fun getQuicHints ()Ljava/util/Set;
 	public final fun getSettings ()Lio/kuicksilver/http3/Http3Settings;
-	public final fun getSoftDelay-UwyO8pc ()J
 	public final fun setAltSvcStore (Lio/kuicksilver/ktor/client/AltSvcStore;)V
 	public final fun setClearOnNetworkChange (Z)V
 	public final fun setConnectionListener (Lio/kuicksilver/quic/ConnectionListener;)V
@@ -65,7 +64,6 @@ public final class io/kuicksilver/ktor/client/Http3ClientConfig {
 	public final fun setQlog (Lio/kuicksilver/quic/QlogSink;)V
 	public final fun setQuicHints (Ljava/util/Set;)V
 	public final fun setSettings (Lio/kuicksilver/http3/Http3Settings;)V
-	public final fun setSoftDelay-LRDsOJo (J)V
 }
 
 public final class io/kuicksilver/ktor/client/Http3DiscoveryMode : java/lang/Enum {

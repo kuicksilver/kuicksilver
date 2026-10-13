@@ -4,6 +4,7 @@ package io.kuicksilver.quic.wire
 
 import io.kuicksilver.native.PacketBuffer
 import io.kuicksilver.quic.TransportError
+import io.kuicksilver.quic.VersionProfile
 import io.kuicksilver.tls.TlsRole
 
 private const val TRANSPORT_PARAMETER_ERROR = TransportError.TRANSPORT_PARAMETER_ERROR

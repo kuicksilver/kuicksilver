@@ -192,6 +192,15 @@ Documentation:
 
 QUIC (`kuicksilver-quic`):
 
+- Configuration validation: `QuicConfig.handshakeTimeout` must be positive, `maxSendBuffer` 1..2^62, `maxIdleTimeout`
+  zero or positive and finite, `keepAlive` positive and finite; `TlsConfig.handshakeTimeout` must be positive,
+  `SessionTicketConfig.rotateEvery` positive and `ticketLifetime` at least 1 s. Zero, negative or infinite values were
+  accepted and misbehaved later (a zero `keepAlive` sent a PING in every packet). `QuicEndpointConfig` names
+  `maxConnections` and `acceptQueue` in its refusals instead of "Failed requirement.", as does
+  `ConnectionAdmission.default`.
+- `keepAlive` is allowed with `maxIdleTimeout = ZERO` (only the peer's idle timeout applies then, and keep-alive is what
+  holds the connection), and PINGs go out at least every half of the effective idle timeout, so a peer whose timeout is
+  shorter than the interval no longer closes the connection (quic-go's `KeepAlivePeriod` semantics).
 - `NetworkMigrator` also migrates when the active path's socket is lost (`PathEvent.SocketLost`), to a fresh socket on
   the current network.
 - `QuicConnection.pathEvents` may report the new `PathEvent.SocketLost`; an exhaustive `when` over `PathEvent` needs a
@@ -225,6 +234,11 @@ QUIC (`kuicksilver-quic`):
 
 Native layer and TLS (`kuicksilver-native`, `kuicksilver-tls`):
 
+- KDoc corrections: `SessionTicketConfig` and `TlsConfig.sessionTickets` also apply to a QUIC server with `earlyData`
+  (they said QUIC ignores them); `KeylogSink`, `keylogFile` and `TlsConfig.keylog` say that `keylogFromEnvironment()`
+  reads `SSLKEYLOGFILE` when called and that a system-OpenSSL Linux build refuses to load while it is set (they said it
+  is never read).
+- `EarlyDataState` is `@ExperimentalKuicksilverApi`, like every other part of the 0-RTT API it belongs to.
 - Apple platform trust (`TrustConfig.Platform`, also under `Pinned` and `ExpectedName`) evaluates with
   `SecTrustEvaluateAsyncWithError` on a global dispatch queue and suspends the caller: an evaluation waiting on OCSP or
   AIA fetches no longer holds a `Dispatchers.Default` thread, so slow servers cannot stall other connections' handshakes.
@@ -243,6 +257,21 @@ Ktor client (`kuicksilver-ktor-client`):
 - `maxConnectionsPerHost` is documented as what it always was, the number of idle HTTP/1.1 connections kept per route;
   it no longer stands in for a connection limit. The idle map of the HTTP/1.1 pool, which grew by one entry per origin
   and was never pruned, is gone: a route is dropped with its last connection.
+
+### Removed
+
+API that was never published (0.1.0 was not released), removed before 0.2.0 binds the API
+([stability](docs/stability.md)):
+
+- The deprecated type aliases `io.kuicksilver.quic.PathChanged` (use `PathEvent.Changed`) and
+  `io.kuicksilver.quic.wire.VersionProfile` (use `io.kuicksilver.quic.VersionProfile`).
+- `TimeoutKind.PathValidation`, which was never produced (a failed path validation ends in
+  `ConnectionLost.NoViablePath`).
+- Ktor client `http3 { softDelay }`, which was accepted but never acted on (the race uses `hardDelay` or the RTT-based
+  head start).
+- `TlsIdentity.Signer`, whose constructor always threw, and `PrivateKeySigner`: external signers are not implemented.
+- `kuicksilver-native`: `JvmLoader` and `JvmNativeNames`, the loader's pieces made public for its tests, and the
+  constant `KSL_ABI_VERSION` are internal; a mismatch still reports both versions in `KslException.AbiMismatch`.
 
 ### Fixed
 
@@ -324,6 +353,12 @@ Flow control (`kuicksilver-quic`; found with the BBR simulations, 2026-10-13):
 
 QUIC runtime and sockets:
 
+- The `UnsupportedOperationException` of a Kotlin/Native QUIC server without the accelerated socket named Linux and
+  Apple only; Windows has the socket too. `ConnectionLost.Timeout`'s KDoc no longer lists the removed path-validation
+  and disconnect timers, and the Ktor server's `udpSocketCount` KDoc says Linux and Android (it said Linux).
+- The fallback to the portable socket when the accelerated socket's one-time loopback probe fails (a sandbox that
+  refuses every bind) was silent; it is now logged once per process at `Warn`, like a refused bind: "accelerated UDP
+  socket unavailable (<reason>); using the portable socket".
 - Windows: a datagram sent with the CE codepoint no longer turns ECN off for its socket. Windows 11 refuses CE in the
   `IP_ECN` / `IPV6_ECN` control message (`WSAEINVAL`); `ksl` took that for a refusal of ECN itself, so every later
   ECT(0) datagram of the socket left unmarked. CE is now sent unmarked and ECT stays on. The QUIC core never sends CE
@@ -404,6 +439,8 @@ QUIC runtime and sockets:
 
 TLS and native layer (`kuicksilver-tls`, `kuicksilver-native`):
 
+- `TlsException.Verify` printed `VerifyReason.Expired` and the other object reasons as `ClassName@hash`; they are
+  `data object`s now, so the message reads "certificate verification failed: Expired".
 - `TrustConfig.Platform` works on Windows Native (mingwX64): it rejected every peer, so the default
   `HttpClient(Kuicksilver)` could not open any public HTTPS site. It now verifies with CryptoAPI
   (`CertGetCertificateChain` with the presented intermediates and AIA, `CertVerifyCertificateChainPolicy` with the SSL
@@ -447,6 +484,10 @@ TLS and native layer (`kuicksilver-tls`, `kuicksilver-native`):
 
 HTTP/3 (`kuicksilver-http3`):
 
+- `Http3Settings` KDoc gave the defaults of `encoderMaxTableCapacity`, `maxFieldSectionSize`,
+  `maxInformationalResponses` and `maxEarlyPriorityUpdates` in a form that read as ceilings ("32 at most"); it now
+  states default and range, and a negative `maxInformationalResponses` or `maxEarlyPriorityUpdates` is refused with a
+  message naming it.
 - A QPACK encoder-stream instruction cut into many fragments by the transport was re-copied and re-parsed per fragment
   (quadratic in its length); it is now appended to once and parsed when its known length has arrived (RFC 9204 section
   7.4).
@@ -471,6 +512,11 @@ HTTP/3 (`kuicksilver-http3`):
 
 Ktor client (`kuicksilver-ktor-client`):
 
+- An `engine { tls { } }` block that set `alpn` or `serverName` replaced the request's: every HTTP/3 handshake failed on
+  ALPN, or the certificate was verified against another name. Both are now set from the request after the block.
+- Setting `quic = quicConfig { connectionIdLength = … }` alone made every HTTP/3 connect fail: the engine's endpoint
+  kept its default length of 8. The endpoint and the connections now share one length (the one left at the default
+  follows the other); two different explicit values fail the engine's creation with `IllegalArgumentException`.
 - A non-idempotent request that failed on a pooled HTTP/1.1 connection the server had closed is no longer sent again
   (RFC 9112 section 9.3.1); only idempotent requests get the transparent retry, and connections already closed for
   reading are dropped when taken from the pool.
@@ -511,6 +557,8 @@ Ktor client (`kuicksilver-ktor-client`):
 
 Ktor server (`kuicksilver-ktor-server`):
 
+- `quicMaxIdleTimeout` applied whenever `quic` was the `QuicConfig.Default` instance, so `quic = QuicConfig.Default`
+  counted as unset; it now applies only while `quic` was never assigned, whatever the value assigned.
 - With `port = 0` the HTTP/3 endpoint bound the UDP twin of the port the OS gave TCP, and the start failed with
   `BindException` when that UDP port was taken; the TCP + UDP pair is now retried on a new port up to 16 times, then
   HTTP/3 is skipped with a warning and HTTP/1.1 is served alone.

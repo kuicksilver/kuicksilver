@@ -140,9 +140,6 @@ final class io.kuicksilver.ktor.client/Http3ClientConfig { // io.kuicksilver.kto
     final var settings // io.kuicksilver.ktor.client/Http3ClientConfig.settings|{}settings[0]
         final fun <get-settings>(): io.kuicksilver.http3/Http3Settings // io.kuicksilver.ktor.client/Http3ClientConfig.settings.<get-settings>|<get-settings>(){}[0]
         final fun <set-settings>(io.kuicksilver.http3/Http3Settings) // io.kuicksilver.ktor.client/Http3ClientConfig.settings.<set-settings>|<set-settings>(io.kuicksilver.http3.Http3Settings){}[0]
-    final var softDelay // io.kuicksilver.ktor.client/Http3ClientConfig.softDelay|{}softDelay[0]
-        final fun <get-softDelay>(): kotlin.time/Duration // io.kuicksilver.ktor.client/Http3ClientConfig.softDelay.<get-softDelay>|<get-softDelay>(){}[0]
-        final fun <set-softDelay>(kotlin.time/Duration) // io.kuicksilver.ktor.client/Http3ClientConfig.softDelay.<set-softDelay>|<set-softDelay>(kotlin.time.Duration){}[0]
 }
 
 final class io.kuicksilver.ktor.client/InMemoryAltSvcStore : io.kuicksilver.ktor.client/AltSvcStore { // io.kuicksilver.ktor.client/InMemoryAltSvcStore|null[0]

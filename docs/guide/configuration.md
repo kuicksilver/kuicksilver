@@ -27,16 +27,16 @@ Transport settings of a connection: `quicConfig { }` (`QuicConfig.Builder`), `Qu
 
 | Option | Type | Default | Range | What it does |
 |---|---|---|---|---|
-| `maxIdleTimeout` | `Duration` | 30 s | `keepAlive` must stay within 3/4 of it | our `max_idle_timeout`; the connection closes silently after the smaller of both peers' values (never below 3 x PTO) without traffic, with `ConnectionLost.Timeout(TimeoutKind.Idle)`. `Duration.ZERO` advertises none and leaves the timeout to the peer |
-| `handshakeTimeout` | `Duration` | 10 s | not checked | a connection whose handshake has not completed by then closes with `TimeoutKind.Handshake` |
-| `keepAlive` | `Duration?` | `null` (off) | at most 3/4 of `maxIdleTimeout` (so none with `maxIdleTimeout = ZERO`) | PING interval while the application is quiet |
+| `maxIdleTimeout` | `Duration` | 30 s | zero or positive and finite | our `max_idle_timeout`; the connection closes silently after the smaller of both peers' values (never below 3 x PTO) without traffic, with `ConnectionLost.Timeout(TimeoutKind.Idle)`. `Duration.ZERO` advertises none and leaves the timeout to the peer |
+| `handshakeTimeout` | `Duration` | 10 s | positive (`Duration.INFINITE` leaves only the idle timeout) | a connection whose handshake has not completed by then closes with `TimeoutKind.Handshake` |
+| `keepAlive` | `Duration?` | `null` (off) | positive and finite; at most 3/4 of `maxIdleTimeout` unless that is `ZERO` | PING interval while the application is quiet; PINGs go out at least every half of the effective idle timeout, so a peer with a shorter timeout does not close the connection (as quic-go). With `maxIdleTimeout = ZERO` it holds the connection against the peer's timeout |
 | `initialStreamWindow` | `Long` (bytes) | 524 288 (512 KiB) | 1..`maxStreamWindow` | receive window of each stream at its start (`initial_max_stream_data_*`); doubles while the application reads a whole window in under four RTTs |
 | `initialConnectionWindow` | `Long` (bytes) | 786 432 (768 KiB) | 1..`maxConnectionWindow` | receive window of the connection at its start (`initial_max_data`); kept at least 1.5 x the largest stream window |
 | `maxStreamWindow` | `Long` (bytes) | 6 291 456 (6 MiB) | at least `initialStreamWindow` | ceiling of a stream's receive window: the most unread data one stream holds |
 | `maxConnectionWindow` | `Long` (bytes) | 15 728 640 (15 MiB) | at least `initialConnectionWindow` | ceiling of the connection's receive window |
 | `maxBidiStreams` | `Long` | 100 | 0..2^60 | bidirectional streams the peer may have open at once (`initial_max_streams_bidi`); raised by MAX_STREAMS as streams close |
 | `maxUniStreams` | `Long` | 100 | 0..2^60 | the same for unidirectional streams |
-| `maxSendBuffer` | `Long` (bytes) | 4 194 304 (4 MiB) | not checked | unacknowledged send data the connection buffers over all streams; writers wait beyond it |
+| `maxSendBuffer` | `Long` (bytes) | 4 194 304 (4 MiB) | 1..2^62 | unacknowledged send data the connection buffers over all streams; writers wait beyond it |
 | `maxAckDelay` | `Duration` | 25 ms | below 2^14 ms | our `max_ack_delay` |
 | `ackDelayExponent` | `Int` | 3 | 0..20 | our `ack_delay_exponent` |
 | `activeConnectionIdLimit` | `Int` | 4 | at least 2 | our `active_connection_id_limit`: connection IDs of the peer kept for migration and rotation |
@@ -129,13 +129,14 @@ client-only endpoint), `toBuilder()` (*experimental*). Guide: [Admission and end
 | `trust` | `TrustConfig` | `TrustConfig.Platform` | with `clientAuth` other than `None`: `AnchoredCa`, optionally under `Pinned` | how the peer is verified ([below](#trustconfig)) |
 | `clientAuth` | `ClientAuth` | `None` | servers only | `None`, `Optional` or `Required` client certificates |
 | `sniSelector` | `(suspend (ClientHelloInfo) -> ServerTlsOverride?)?` | `null` | servers, TCP only (QUIC refuses it) | picks a `ServerTlsOverride(identity, alpn, clientAuth, trust)` per ClientHello |
-| `sessionTickets` | `SessionTicketConfig` | `SessionTicketConfig.Default` | see below | TLS-over-TCP server tickets, and the tickets of a QUIC server with `earlyData` |
+| `sessionTickets` | `SessionTicketConfig` | `SessionTicketConfig.Default` | see below | the keys and lifetime of a TLS-over-TCP server's tickets and of a QUIC server with `earlyData` (the only QUIC servers that issue tickets) |
 | `keylog` (*delicate*) | `KeylogSink?` | `null` | | TLS secrets as RFC 9850 key log lines ([Key logging](tls.md#key-logging)) |
-| `handshakeTimeout` | `Duration` | 10 s | not checked | TLS over TCP only (QUIC uses `QuicConfig.handshakeTimeout`) |
+| `handshakeTimeout` | `Duration` | 10 s | positive (`Duration.INFINITE`: no deadline) | TLS over TCP only (QUIC uses `QuicConfig.handshakeTimeout`) |
 | `genericAlerts` | `Boolean` | `false` | | send `handshake_failure` instead of the specific alert |
 
 `SessionTicketConfig(keys, rotateEvery, ticketLifetime)`: `keys = null` (generated in the process), `rotateEvery = 1
-day` (at most 7 days), `ticketLifetime = 12 hours` (at most `rotateEvery / 2`); explicit keys are 80-byte entries.
+day` (positive, at most 7 days), `ticketLifetime = 12 hours` (at least 1 s, at most `rotateEvery / 2`); explicit keys
+are 80-byte entries.
 
 Key exchange groups are not configurable: `X25519MLKEM768`, `X25519`, `secp256r1`, `X448`, `secp384r1`, `secp521r1`
 ([Key exchange groups](tls.md#key-exchange-groups)).
@@ -164,7 +165,6 @@ DER.
 | `TlsIdentity.fromPem(chainPem, keyPem, password)` | `password = null` (encrypted keys are refused) | chain plus one PKCS#8 key; `keyPem` is zeroed and the key lives in OpenSSL only |
 | `TlsIdentity.fromDer(chain, keyDer)` | | the same from DER; `keyDer` is zeroed |
 | `TlsIdentity.fromKeyStore(keyStore, alias, password)`, `fromPkcs12(bytes, password)` | | JVM only |
-| `TlsIdentity.Signer` (*experimental, delicate*) | | not available in 0.2.0: the constructor throws `UnsupportedOperationException` |
 | `keylogFile(path)` (*delicate*) | | a 0600 key log file, refused for links, foreign owners and file systems without POSIX permissions |
 | `keylogFile(context, name)` (Android, *delicate*) | `name = "kuicksilver-keylog.txt"` | in the app's files; `null` in a non-debuggable build |
 | `keylogFromEnvironment()` (*delicate*) | | `SSLKEYLOGFILE`, read only when called |
@@ -208,8 +208,8 @@ Guide: [Ktor: Client](ktor.md#client).
 |---|---|---|---|---|
 | `trust` | `TrustConfig` | `TrustConfig.Platform` | | server verification for HTTP/3 and HTTP/1.1 alike |
 | `identity` | `TlsIdentity?` | `null` | | client certificate |
-| `tls` | `TlsConfig.Builder.() -> Unit` | `{}` | | further TLS settings, applied last (after `alpn`, `serverName`, `trust` and `identity`, which it can therefore override) |
-| `quic` | `QuicConfig` | `QuicConfig.Default` | its `connectionIdLength` must equal `http3.endpoint.connectionIdLength` | QUIC transport of HTTP/3 connections |
+| `tls` | `TlsConfig.Builder.() -> Unit` | `{}` | | further TLS settings, applied after `trust` and `identity` (which it can therefore replace); `alpn` and `serverName` come from the request and are set after it, so the block cannot change them (use `TrustConfig.ExpectedName` to verify another name) |
+| `quic` | `QuicConfig` | `QuicConfig.Default` | its `connectionIdLength` and `http3.endpoint.connectionIdLength` agree: the one left at 8 follows the other; two different explicit values fail the engine's creation | QUIC transport of HTTP/3 connections |
 | `maxConnectionsPerHost` | `Int` | 4 | at least 0 | idle HTTP/1.1 keep-alive connections kept per route; not a connection limit |
 | `maxConnectionsCount` (*experimental*) | `Int` | 1000 | at least 1 | HTTP/1.1 connections of the engine, idle ones included; requests beyond it wait (FIFO, within the connect timeout) |
 | `maxConnectionsPerRoute` (*experimental*) | `Int` | 100 | at least 1 | HTTP/1.1 connections to one route (scheme, host, port, proxy) |
@@ -230,7 +230,6 @@ Guide: [Ktor: Client](ktor.md#client).
 | `quicHints` | `Set<HostPort>` | empty | origins treated as `Preferred` in `Auto` mode; `HostPort(host, port)` compares the host exactly as in URLs |
 | `altSvcStore` | `AltSvcStore` | `InMemoryAltSvcStore()` | where alternatives live; `FileAltSvcStore(path)` keeps them across restarts |
 | `clearOnNetworkChange` | `Boolean` | `false` | drop alternatives without `persist=1` when `networkId` changes |
-| `softDelay` | `Duration` | 100 ms | accepted but not acted on in 0.2.0 |
 | `hardDelay` | `Duration?` | `null` (1.5 x the origin's smoothed RTT, 250 ms without history, clamped to 100 ms..2 s) | head start of HTTP/3 over HTTP/1.1 in a race; an explicit value is used as is |
 | `networkId` | `() -> String?` | `{ null }` (one network) | identifies the current network; a change forgets broken marks and QUIC confirmation |
 | `settings` | `Http3Settings` | `Http3Settings.Default` | HTTP/3 settings of the engine's connections |
@@ -252,7 +251,7 @@ Guide: [Ktor: Client](ktor.md#client).
 | `http3` | `Boolean` | `true` | serve HTTP/3 on every TLS connector |
 | `altSvc` | `Boolean` | `true` | add `Alt-Svc: h3=":<port>"; ma=86400` to HTTP/1.1 responses over TLS (not when the application set its own, not on 421) |
 | `quic` | `QuicConfig` | `QuicConfig.Default` | QUIC transport of the HTTP/3 listeners |
-| `quicMaxIdleTimeout` | `Duration?` | `null` | `quic.maxIdleTimeout`, applied only while `quic` is the default instance |
+| `quicMaxIdleTimeout` | `Duration?` | `null` | `quic.maxIdleTimeout`, applied only while `quic` is not assigned (assigning any `QuicConfig`, `QuicConfig.Default` included, uses that config's own timeout) |
 | `udpSocketCount` | `Int` | 1 | endpoint loops per UDP port (`QuicEndpointConfig.loops`; more than 1 needs Linux or Android) |
 | `quicAdmission` | `ConnectionAdmission?` | `null` (`ConnectionAdmission.default()`) | Retry policy |
 | `http3Settings` | `Http3Settings` | `Http3Settings.Default` | HTTP/3 settings |
@@ -299,7 +298,7 @@ keep their defaults and are not configurable from the engine in 0.2.0. Ktor's `c
 | `kuicksilver.native.path` | JVM system property | unset | load `libksl` from this file, without the hash check |
 | `kuicksilver.native.system` | JVM system property | unset | `true` loads `ksl` with `System.loadLibrary`, without the hash check |
 | `SSL_CERT_FILE`, `SSL_CERT_DIR` | environment, Linux Kotlin/Native | unset | the CA store of `TrustConfig.Platform`; when set, they replace the distribution paths ([Linux trust store](tls.md#linux-trust-store)) |
-| `SSLKEYLOGFILE` | environment | | never read implicitly; `keylogFromEnvironment()` reads it on request |
+| `SSLKEYLOGFILE` | environment | | never read implicitly; `keylogFromEnvironment()` reads it on request. A `libksl` built against the system OpenSSL (Linux) refuses to load while it is set |
 
 ## Fixed limits
 

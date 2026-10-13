@@ -153,7 +153,9 @@ public sealed interface TlsEvent {
 /**
  * Whether a client uses 0-RTT (RFC 9001 section 4.6, ADR-0015). 0-RTT data can be replayed by an attacker (RFC 8446
  * section 8): send early only what is safe to execute twice. Entries may be added; keep an `else` branch in `when`.
+ * Experimental, as the rest of the 0-RTT API.
  */
+@ExperimentalKuicksilverApi
 public enum class EarlyDataState {
     /** No resumption and no 0-RTT (the default). */
     Disabled,

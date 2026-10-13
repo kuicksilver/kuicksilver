@@ -78,6 +78,45 @@ class ClientH3Test {
             }
         }
 
+    /**
+     * `quic { connectionIdLength }` alone sets the length of the engine's endpoint too, as the server engine does; the endpoint
+     * kept its default of 8 and every HTTP/3 connect failed its check (docs review before 0.2.0). An endpoint-only change is
+     * followed by the connections in the same way.
+     */
+    @Test fun h3WithAnotherConnectionIdLength() =
+        h3Test {
+            val (server, port) = testServer { routing { get("/") { call.respondText("v=${call.request.local.version}") } } }
+            try {
+                testClient(Http3DiscoveryMode.H3Only, engine = {
+                    quic = io.kuicksilver.quic.quicConfig { connectionIdLength = 12 }
+                }).use { c ->
+                    assertEquals("v=HTTP/3", c.get("https://127.0.0.1:$port/").bodyAsText())
+                }
+                testClient(Http3DiscoveryMode.H3Only, engine = {
+                    http3 { endpoint = io.kuicksilver.quic.quicEndpointConfig { connectionIdLength = 16 } }
+                }).use { c ->
+                    assertEquals("v=HTTP/3", c.get("https://127.0.0.1:$port/").bodyAsText())
+                }
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
+    /** Two different explicit lengths cannot both hold: the engine refuses them when it is created, naming both. */
+    @Test fun conflictingConnectionIdLengthsAreRefused() {
+        val e =
+            assertFailsWith<IllegalArgumentException> {
+                testClient(Http3DiscoveryMode.H3Only, engine = {
+                    quic = io.kuicksilver.quic.quicConfig { connectionIdLength = 12 }
+                    http3 { endpoint = io.kuicksilver.quic.quicEndpointConfig { connectionIdLength = 16 } }
+                }).close()
+            }
+        assertEquals(
+            "quic.connectionIdLength (12) and http3.endpoint.connectionIdLength (16) differ: set one of them, the other follows",
+            e.message,
+        )
+    }
+
     /** The client's endpoint binds 0.0.0.0:0; that socket is dual-stack, so an IPv6 server is reachable over h3 (review of k7/macos-server). */
     @Test fun h3ToIpv6Loopback() =
         h3Test {

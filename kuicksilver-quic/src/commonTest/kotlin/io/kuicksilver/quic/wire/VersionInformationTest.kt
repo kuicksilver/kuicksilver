@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.kuicksilver.quic.wire
 
+import io.kuicksilver.quic.VersionProfile
 import io.kuicksilver.tls.TlsRole
 import kotlin.test.Test
 import kotlin.test.assertEquals

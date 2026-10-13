@@ -83,7 +83,9 @@ public fun interface ConnectionAdmission {
             maxInflightHandshakes: Int = 256,
             maxHandshakeBufferBytes: Long = 8_388_608,
         ): ConnectionAdmission {
-            require(maxInflightHandshakes >= 0 && maxHandshakeBufferBytes >= 0)
+            require(maxInflightHandshakes >= 0 && maxHandshakeBufferBytes >= 0) {
+                "maxInflightHandshakes and maxHandshakeBufferBytes must not be negative"
+            }
             return ConnectionAdmission { a ->
                 if (a.inflightHandshakes >= maxInflightHandshakes ||
                     a.handshakeBufferBytes > maxHandshakeBufferBytes

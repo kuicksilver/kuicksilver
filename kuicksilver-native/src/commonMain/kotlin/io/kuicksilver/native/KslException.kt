@@ -62,7 +62,7 @@ public sealed class KslException(
      * The native library and the Kotlin side disagree on the ABI.
      *
      * @property native the ABI version the loaded library reports (`ksl_abi_version`).
-     * @property kotlin the ABI version this Kotlin code was compiled against ([KSL_ABI_VERSION]).
+     * @property kotlin the ABI version this Kotlin code was compiled against (`KSL_ABI_VERSION` of `ksl.h`, 6 in 0.2.0).
      */
     public class AbiMismatch(
         public val native: Int,

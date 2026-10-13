@@ -57,7 +57,7 @@ network. Responses never carry `Transfer-Encoding` or other connection-specific 
 simply a sequence of DATA frames.
 
 Knobs, named after Ktor's Netty engine where one exists: `http3` (on), `quic` (transport settings), `quicMaxIdleTimeout`
-(applies when `quic` is the default), `udpSocketCount` (endpoint loops on `SO_REUSEPORT`, Linux and Android), `quicAdmission`
+(applies while `quic` is not assigned), `udpSocketCount` (endpoint loops on `SO_REUSEPORT`, Linux and Android), `quicAdmission`
 (Retry policy, Ktor-Netty's `quicTokenHandler`), `http3Settings`. UDP socket buffer sizes are not configurable yet.
 
 The engine serves HTTP/3 on every target, Kotlin/Native Linux, Apple and Windows included (the accelerated `ksl` socket,
@@ -219,8 +219,7 @@ failure is reported — the race was the one HTTP/1.1 attempt, there is no secon
 An alternative is marked broken only when HTTP/3 failed while HTTP/1.1 worked (a lost race, or a request that fell
 back to HTTP/1.1 after the HTTP/3 connection failed as a whole: setup, QUIC transport, an HTTP/3 connection error; a
 single stream reset or a malformed response falls back for that request only) — per origin and alternative, never "UDP is blocked" for everything: 5 minutes, doubling up to 2 days, and forgotten when `networkId()` reports a new
-network. Broken alternatives are skipped (straight to HTTP/1.1). The curl-style `softDelay` ("no UDP datagram from the
-server yet") is accepted in the configuration but not acted on in v1: the QUIC API does not expose that signal.
+network. Broken alternatives are skipped (straight to HTTP/1.1).
 
 ## Observability (experimental)
 

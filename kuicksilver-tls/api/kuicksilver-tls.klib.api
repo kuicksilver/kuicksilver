@@ -165,14 +165,6 @@ abstract interface io.kuicksilver.tls/PacketProtector : kotlin/AutoCloseable { /
     open fun seal(kotlin/Long, io.kuicksilver.native/PacketBuffer, kotlin/Int, io.kuicksilver.native/PacketBuffer, kotlin/Int): kotlin/Int // io.kuicksilver.tls/PacketProtector.seal|seal(kotlin.Long;io.kuicksilver.native.PacketBuffer;kotlin.Int;io.kuicksilver.native.PacketBuffer;kotlin.Int){}[0]
 }
 
-abstract interface io.kuicksilver.tls/PrivateKeySigner { // io.kuicksilver.tls/PrivateKeySigner|null[0]
-    abstract val publicKey // io.kuicksilver.tls/PrivateKeySigner.publicKey|{}publicKey[0]
-        abstract fun <get-publicKey>(): kotlin/ByteArray // io.kuicksilver.tls/PrivateKeySigner.publicKey.<get-publicKey>|<get-publicKey>(){}[0]
-
-    abstract fun chooseScheme(kotlin.collections/List<kotlin/Int>): kotlin/Int? // io.kuicksilver.tls/PrivateKeySigner.chooseScheme|chooseScheme(kotlin.collections.List<kotlin.Int>){}[0]
-    abstract suspend fun sign(kotlin/Int, kotlin/ByteArray): kotlin/ByteArray // io.kuicksilver.tls/PrivateKeySigner.sign|sign(kotlin.Int;kotlin.ByteArray){}[0]
-}
-
 abstract interface io.kuicksilver.tls/QuicCrypto { // io.kuicksilver.tls/QuicCrypto|null[0]
     abstract fun initialProtectors(kotlin/ByteArray, kotlin/Int, io.kuicksilver.tls/TlsRole): kotlin/Pair<io.kuicksilver.tls/PacketProtector, io.kuicksilver.tls/PacketProtector> // io.kuicksilver.tls/QuicCrypto.initialProtectors|initialProtectors(kotlin.ByteArray;kotlin.Int;io.kuicksilver.tls.TlsRole){}[0]
     abstract fun newResetKey(): io.kuicksilver.tls/ResetKey // io.kuicksilver.tls/QuicCrypto.newResetKey|newResetKey(){}[0]
@@ -289,15 +281,6 @@ sealed interface io.kuicksilver.tls/TlsIdentity { // io.kuicksilver.tls/TlsIdent
         final fun close() // io.kuicksilver.tls/TlsIdentity.InMemory.close|close(){}[0]
     }
 
-    final class Signer : io.kuicksilver.tls/TlsIdentity { // io.kuicksilver.tls/TlsIdentity.Signer|null[0]
-        constructor <init>(kotlin.collections/List<io.kuicksilver.tls/Certificate>, io.kuicksilver.tls/PrivateKeySigner) // io.kuicksilver.tls/TlsIdentity.Signer.<init>|<init>(kotlin.collections.List<io.kuicksilver.tls.Certificate>;io.kuicksilver.tls.PrivateKeySigner){}[0]
-
-        final val chain // io.kuicksilver.tls/TlsIdentity.Signer.chain|{}chain[0]
-            final fun <get-chain>(): kotlin.collections/List<io.kuicksilver.tls/Certificate> // io.kuicksilver.tls/TlsIdentity.Signer.chain.<get-chain>|<get-chain>(){}[0]
-        final val signer // io.kuicksilver.tls/TlsIdentity.Signer.signer|{}signer[0]
-            final fun <get-signer>(): io.kuicksilver.tls/PrivateKeySigner // io.kuicksilver.tls/TlsIdentity.Signer.signer.<get-signer>|<get-signer>(){}[0]
-    }
-
     final object Companion { // io.kuicksilver.tls/TlsIdentity.Companion|null[0]
         final fun fromDer(kotlin.collections/List<kotlin/ByteArray>, kotlin/ByteArray): io.kuicksilver.tls/TlsIdentity.InMemory // io.kuicksilver.tls/TlsIdentity.Companion.fromDer|fromDer(kotlin.collections.List<kotlin.ByteArray>;kotlin.ByteArray){}[0]
         final fun fromPem(kotlin/String, kotlin/CharArray, kotlin/CharArray? = ...): io.kuicksilver.tls/TlsIdentity.InMemory // io.kuicksilver.tls/TlsIdentity.Companion.fromPem|fromPem(kotlin.String;kotlin.CharArray;kotlin.CharArray?){}[0]
@@ -383,25 +366,65 @@ sealed interface io.kuicksilver.tls/VerifyReason { // io.kuicksilver.tls/VerifyR
         final fun toString(): kotlin/String // io.kuicksilver.tls/VerifyReason.PinMismatch.toString|toString(){}[0]
     }
 
-    final object BadEncoding : io.kuicksilver.tls/VerifyReason // io.kuicksilver.tls/VerifyReason.BadEncoding|null[0]
+    final object BadEncoding : io.kuicksilver.tls/VerifyReason { // io.kuicksilver.tls/VerifyReason.BadEncoding|null[0]
+        final fun equals(kotlin/Any?): kotlin/Boolean // io.kuicksilver.tls/VerifyReason.BadEncoding.equals|equals(kotlin.Any?){}[0]
+        final fun hashCode(): kotlin/Int // io.kuicksilver.tls/VerifyReason.BadEncoding.hashCode|hashCode(){}[0]
+        final fun toString(): kotlin/String // io.kuicksilver.tls/VerifyReason.BadEncoding.toString|toString(){}[0]
+    }
 
-    final object BadSignature : io.kuicksilver.tls/VerifyReason // io.kuicksilver.tls/VerifyReason.BadSignature|null[0]
+    final object BadSignature : io.kuicksilver.tls/VerifyReason { // io.kuicksilver.tls/VerifyReason.BadSignature|null[0]
+        final fun equals(kotlin/Any?): kotlin/Boolean // io.kuicksilver.tls/VerifyReason.BadSignature.equals|equals(kotlin.Any?){}[0]
+        final fun hashCode(): kotlin/Int // io.kuicksilver.tls/VerifyReason.BadSignature.hashCode|hashCode(){}[0]
+        final fun toString(): kotlin/String // io.kuicksilver.tls/VerifyReason.BadSignature.toString|toString(){}[0]
+    }
 
-    final object CertificateTransparency : io.kuicksilver.tls/VerifyReason // io.kuicksilver.tls/VerifyReason.CertificateTransparency|null[0]
+    final object CertificateTransparency : io.kuicksilver.tls/VerifyReason { // io.kuicksilver.tls/VerifyReason.CertificateTransparency|null[0]
+        final fun equals(kotlin/Any?): kotlin/Boolean // io.kuicksilver.tls/VerifyReason.CertificateTransparency.equals|equals(kotlin.Any?){}[0]
+        final fun hashCode(): kotlin/Int // io.kuicksilver.tls/VerifyReason.CertificateTransparency.hashCode|hashCode(){}[0]
+        final fun toString(): kotlin/String // io.kuicksilver.tls/VerifyReason.CertificateTransparency.toString|toString(){}[0]
+    }
 
-    final object Expired : io.kuicksilver.tls/VerifyReason // io.kuicksilver.tls/VerifyReason.Expired|null[0]
+    final object Expired : io.kuicksilver.tls/VerifyReason { // io.kuicksilver.tls/VerifyReason.Expired|null[0]
+        final fun equals(kotlin/Any?): kotlin/Boolean // io.kuicksilver.tls/VerifyReason.Expired.equals|equals(kotlin.Any?){}[0]
+        final fun hashCode(): kotlin/Int // io.kuicksilver.tls/VerifyReason.Expired.hashCode|hashCode(){}[0]
+        final fun toString(): kotlin/String // io.kuicksilver.tls/VerifyReason.Expired.toString|toString(){}[0]
+    }
 
-    final object InvalidPurpose : io.kuicksilver.tls/VerifyReason // io.kuicksilver.tls/VerifyReason.InvalidPurpose|null[0]
+    final object InvalidPurpose : io.kuicksilver.tls/VerifyReason { // io.kuicksilver.tls/VerifyReason.InvalidPurpose|null[0]
+        final fun equals(kotlin/Any?): kotlin/Boolean // io.kuicksilver.tls/VerifyReason.InvalidPurpose.equals|equals(kotlin.Any?){}[0]
+        final fun hashCode(): kotlin/Int // io.kuicksilver.tls/VerifyReason.InvalidPurpose.hashCode|hashCode(){}[0]
+        final fun toString(): kotlin/String // io.kuicksilver.tls/VerifyReason.InvalidPurpose.toString|toString(){}[0]
+    }
 
-    final object NoCertificate : io.kuicksilver.tls/VerifyReason // io.kuicksilver.tls/VerifyReason.NoCertificate|null[0]
+    final object NoCertificate : io.kuicksilver.tls/VerifyReason { // io.kuicksilver.tls/VerifyReason.NoCertificate|null[0]
+        final fun equals(kotlin/Any?): kotlin/Boolean // io.kuicksilver.tls/VerifyReason.NoCertificate.equals|equals(kotlin.Any?){}[0]
+        final fun hashCode(): kotlin/Int // io.kuicksilver.tls/VerifyReason.NoCertificate.hashCode|hashCode(){}[0]
+        final fun toString(): kotlin/String // io.kuicksilver.tls/VerifyReason.NoCertificate.toString|toString(){}[0]
+    }
 
-    final object NotYetValid : io.kuicksilver.tls/VerifyReason // io.kuicksilver.tls/VerifyReason.NotYetValid|null[0]
+    final object NotYetValid : io.kuicksilver.tls/VerifyReason { // io.kuicksilver.tls/VerifyReason.NotYetValid|null[0]
+        final fun equals(kotlin/Any?): kotlin/Boolean // io.kuicksilver.tls/VerifyReason.NotYetValid.equals|equals(kotlin.Any?){}[0]
+        final fun hashCode(): kotlin/Int // io.kuicksilver.tls/VerifyReason.NotYetValid.hashCode|hashCode(){}[0]
+        final fun toString(): kotlin/String // io.kuicksilver.tls/VerifyReason.NotYetValid.toString|toString(){}[0]
+    }
 
-    final object Revoked : io.kuicksilver.tls/VerifyReason // io.kuicksilver.tls/VerifyReason.Revoked|null[0]
+    final object Revoked : io.kuicksilver.tls/VerifyReason { // io.kuicksilver.tls/VerifyReason.Revoked|null[0]
+        final fun equals(kotlin/Any?): kotlin/Boolean // io.kuicksilver.tls/VerifyReason.Revoked.equals|equals(kotlin.Any?){}[0]
+        final fun hashCode(): kotlin/Int // io.kuicksilver.tls/VerifyReason.Revoked.hashCode|hashCode(){}[0]
+        final fun toString(): kotlin/String // io.kuicksilver.tls/VerifyReason.Revoked.toString|toString(){}[0]
+    }
 
-    final object UnknownIssuer : io.kuicksilver.tls/VerifyReason // io.kuicksilver.tls/VerifyReason.UnknownIssuer|null[0]
+    final object UnknownIssuer : io.kuicksilver.tls/VerifyReason { // io.kuicksilver.tls/VerifyReason.UnknownIssuer|null[0]
+        final fun equals(kotlin/Any?): kotlin/Boolean // io.kuicksilver.tls/VerifyReason.UnknownIssuer.equals|equals(kotlin.Any?){}[0]
+        final fun hashCode(): kotlin/Int // io.kuicksilver.tls/VerifyReason.UnknownIssuer.hashCode|hashCode(){}[0]
+        final fun toString(): kotlin/String // io.kuicksilver.tls/VerifyReason.UnknownIssuer.toString|toString(){}[0]
+    }
 
-    final object UnknownRevocationStatus : io.kuicksilver.tls/VerifyReason // io.kuicksilver.tls/VerifyReason.UnknownRevocationStatus|null[0]
+    final object UnknownRevocationStatus : io.kuicksilver.tls/VerifyReason { // io.kuicksilver.tls/VerifyReason.UnknownRevocationStatus|null[0]
+        final fun equals(kotlin/Any?): kotlin/Boolean // io.kuicksilver.tls/VerifyReason.UnknownRevocationStatus.equals|equals(kotlin.Any?){}[0]
+        final fun hashCode(): kotlin/Int // io.kuicksilver.tls/VerifyReason.UnknownRevocationStatus.hashCode|hashCode(){}[0]
+        final fun toString(): kotlin/String // io.kuicksilver.tls/VerifyReason.UnknownRevocationStatus.toString|toString(){}[0]
+    }
 }
 
 sealed interface io.kuicksilver.tls/VerifyResult { // io.kuicksilver.tls/VerifyResult|null[0]

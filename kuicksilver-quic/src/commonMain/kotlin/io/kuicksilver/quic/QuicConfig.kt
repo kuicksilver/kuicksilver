@@ -35,11 +35,20 @@ public class QuicConfig private constructor(
     /**
      * Our `max_idle_timeout` (RFC 9000 section 10.1): a connection idle for the smaller of both peers' values (never less than 3 x PTO)
      * closes silently with a [TimeoutKind.Idle] timeout; [Duration.ZERO] advertises none and leaves the timeout to the peer.
+     * Zero or a positive finite duration.
      */
     public val maxIdleTimeout: Duration,
-    /** A connection whose handshake has not completed after this long closes silently with a [TimeoutKind.Handshake] timeout. */
+    /**
+     * A connection whose handshake has not completed after this long closes silently with a [TimeoutKind.Handshake] timeout.
+     * Positive; [Duration.INFINITE] leaves only the idle timeout.
+     */
     public val handshakeTimeout: Duration,
-    /** PING interval while the application is quiet; null disables keep-alive. At most 3/4 of [maxIdleTimeout]. */
+    /**
+     * PING interval while the application is quiet; null disables keep-alive. Positive and finite, and at most 3/4 of
+     * [maxIdleTimeout] unless that is [Duration.ZERO] (then only the peer's idle timeout applies, and keep-alive is what holds
+     * the connection). PINGs go out at least every half of the effective idle timeout, so a peer with a shorter timeout than
+     * this interval does not close the connection (as quic-go's `KeepAlivePeriod`).
+     */
     public val keepAlive: Duration?,
     /**
      * Receive window of each stream at its start, in bytes (`initial_max_stream_data_*`, RFC 9000 section 4.1); it doubles up to
@@ -62,7 +71,10 @@ public class QuicConfig private constructor(
     public val maxBidiStreams: Long,
     /** Unidirectional streams the peer may have open at once (`initial_max_streams_uni`, RFC 9000 section 4.6), at most 2^60. */
     public val maxUniStreams: Long,
-    /** Bytes the connection buffers for sending over all its streams until they are acknowledged; a writer waits for room beyond it. */
+    /**
+     * Bytes the connection buffers for sending over all its streams until they are acknowledged, 1..2^62; a writer waits for
+     * room beyond it.
+     */
     public val maxSendBuffer: Long,
     /** Our `max_ack_delay` (RFC 9000 section 18.2): the longest we hold back an acknowledgement; below 2^14 ms. */
     public val maxAckDelay: Duration,
@@ -128,7 +140,16 @@ public class QuicConfig private constructor(
         require(versions.isNotEmpty()) { "at least one QUIC version" }
         require(versions.distinct().size == versions.size) { "duplicate versions" }
         require(initialVersion == null || initialVersion in versions) { "initialVersion must be one of versions" }
-        require(keepAlive == null || keepAlive <= maxIdleTimeout * 3 / 4) { "keepAlive must be at most 3/4 of maxIdleTimeout" }
+        require(!maxIdleTimeout.isNegative() && maxIdleTimeout.isFinite()) {
+            "maxIdleTimeout must be zero (none) or a positive finite duration"
+        }
+        require(handshakeTimeout.isPositive()) { "handshakeTimeout must be positive" }
+        require(keepAlive == null || (keepAlive.isPositive() && keepAlive.isFinite())) { "keepAlive must be positive and finite, or null" }
+        // with our idle timeout off (ZERO) only the peer's applies, and the interval follows it at run time
+        require(keepAlive == null || maxIdleTimeout == Duration.ZERO || keepAlive <= maxIdleTimeout * 3 / 4) {
+            "keepAlive must be at most 3/4 of maxIdleTimeout"
+        }
+        require(maxSendBuffer in 1..(1L shl 62)) { "maxSendBuffer must be 1..2^62" }
         require(connectionIdLength in 4..20) { "connectionIdLength must be 4..20" }
         require(maxUdpPayloadSize in 1200..65527) { "maxUdpPayloadSize must be 1200..65527" }
         require(activeConnectionIdLimit >= 2) { "activeConnectionIdLimit must be at least 2" }
@@ -191,10 +212,13 @@ public class QuicConfig private constructor(
         /** Default 30 s; see [QuicConfig.maxIdleTimeout]. [Duration.ZERO] leaves the idle timeout to the peer. */
         public var maxIdleTimeout: Duration = 30.seconds
 
-        /** Default 10 s; see [QuicConfig.handshakeTimeout]. */
+        /** Default 10 s, positive; see [QuicConfig.handshakeTimeout]. */
         public var handshakeTimeout: Duration = 10.seconds
 
-        /** Default null (no keep-alive); a PING interval of at most 3/4 of [maxIdleTimeout] keeps a quiet connection open. */
+        /**
+         * Default null (no keep-alive); a positive PING interval of at most 3/4 of [maxIdleTimeout] (any, when that is
+         * [Duration.ZERO]) keeps a quiet connection open. See [QuicConfig.keepAlive].
+         */
         public var keepAlive: Duration? = null
 
         /** Default 512 KiB; see [QuicConfig.initialStreamWindow]. */

@@ -191,18 +191,27 @@ public class KslUdpSocket private constructor(
         private const val COUNT = CLOSED - 1
 
         /** True where `ksl_udp` works (Linux, Android, Apple, Windows): learned once by opening a loopback socket. */
-        public val supported: Boolean by lazy {
+        public val supported: Boolean get() = unsupportedReason == null
+
+        /**
+         * Why [supported] is false (the message of the refused loopback open, for example a sandbox's EPERM), or null when the
+         * socket works; learned once per process.
+         */
+        public val unsupportedReason: String? by lazy {
             KslLoader.ensureLoaded()
-            probe { Ksl.udpClose(Ksl.udpOpen(encodeAddress(byteArrayOf(127, 0, 0, 1), 0), 0)) }
+            probeFailure { Ksl.udpClose(Ksl.udpOpen(encodeAddress(byteArrayOf(127, 0, 0, 1), 0), 0)) }
         }
 
         /** Runs the loopback [open] of [supported]: any refusal (not built for the platform, a sandbox that refuses bind) means unsupported, so callers take the portable socket. */
-        internal fun probe(open: () -> Unit): Boolean =
+        internal fun probe(open: () -> Unit): Boolean = probeFailure(open) == null
+
+        /** [probe], answering the refusal's message (null when [open] succeeded). */
+        internal fun probeFailure(open: () -> Unit): String? =
             try {
                 open()
-                true
-            } catch (_: KslException) {
-                false
+                null
+            } catch (e: KslException) {
+                e.message ?: e.toString()
             }
 
         /** Opens and binds to [addr] (see [encodeAddress]) with the wanted [flags]; what the kernel granted is in [grantedFlags]. */

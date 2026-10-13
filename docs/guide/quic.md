@@ -369,7 +369,7 @@ and `pathEvents` reports `Validated`, `Failed` and `Changed`, for
 the peer's moves too, and `SocketLost` when the system took a path's socket away (see
 [Suspended apps and lost sockets](#suspended-apps-and-lost-sockets)). Migration needs a confirmed handshake and a server that did not advertise `disable_active_migration`;
 when the active path fails validation and no other validated path remains, the connection closes with
-`ConnectionLost.NoViablePath` (`TimeoutKind.PathValidation` exists in the API but is not produced in this version).
+`ConnectionLost.NoViablePath`.
 
 ## Network changes
 

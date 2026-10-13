@@ -15,7 +15,6 @@ import io.kuicksilver.tls.TlsConfig
 import io.kuicksilver.tls.TlsIdentity
 import io.kuicksilver.tls.TrustConfig
 import kotlin.time.Duration
-import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 
@@ -66,9 +65,6 @@ public class Http3ClientConfig {
     /** Forget alternatives without `persist=1` when the network changes (RFC 7838 section 2.2; off like browsers). */
     public var clearOnNetworkChange: Boolean = false
 
-    /** Curl's soft timeout: start HTTP/1.1 when no UDP datagram came back within this delay. Accepted but not acted on in v1 (the race uses the head start only); see docs/guide/ktor.md. */
-    public var softDelay: Duration = 100.milliseconds
-
     /** Head start of HTTP/3 over HTTP/1.1; null: 1.5 x the host's smoothed RTT, or 250 ms without history, clamped to 100 ms..2 s. */
     public var hardDelay: Duration? = null
 
@@ -78,7 +74,11 @@ public class Http3ClientConfig {
     /** HTTP/3 settings of the engine's connections. */
     public var settings: Http3Settings = Http3Settings.Default
 
-    /** The client QUIC endpoint (dispatcher, crypto provider, socket factory). */
+    /**
+     * The client QUIC endpoint (dispatcher, crypto provider, socket factory). Its `connectionIdLength` and the one of
+     * [KuicksilverEngineConfig.quic] are kept equal: the one left at its default follows the other, and two different explicit
+     * values fail the engine's creation with [IllegalArgumentException].
+     */
     public var endpoint: QuicEndpointConfig = QuicEndpointConfig.Default
 
     /**
@@ -111,10 +111,17 @@ public class KuicksilverEngineConfig : HttpClientEngineConfig() {
     /** Client certificate, when servers ask for one. */
     public var identity: TlsIdentity? = null
 
-    /** Further TLS settings applied after the engine's (ALPN and server name come from the request). */
+    /**
+     * Further TLS settings, applied after [trust] and [identity] (so the block may replace them). ALPN and the server name
+     * come from the request (`h3` or `http/1.1`, the URL's host) and are set after the block: values the block gives them
+     * are not used. Verify another name with `TrustConfig.ExpectedName` instead.
+     */
     public var tls: TlsConfig.Builder.() -> Unit = {}
 
-    /** QUIC transport settings of HTTP/3 connections. */
+    /**
+     * QUIC transport settings of HTTP/3 connections. A `connectionIdLength` set here is used by the engine's endpoint too
+     * ([Http3ClientConfig.endpoint]).
+     */
     public var quic: QuicConfig = QuicConfig.Default
 
     /**

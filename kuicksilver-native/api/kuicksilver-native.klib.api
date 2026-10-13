@@ -130,8 +130,5 @@ final object io.kuicksilver.native/KslLoader { // io.kuicksilver.native/KslLoade
     final fun isAvailable(): kotlin/Boolean // io.kuicksilver.native/KslLoader.isAvailable|isAvailable(){}[0]
 }
 
-final const val io.kuicksilver.native/KSL_ABI_VERSION // io.kuicksilver.native/KSL_ABI_VERSION|{}KSL_ABI_VERSION[0]
-    final fun <get-KSL_ABI_VERSION>(): kotlin/Int // io.kuicksilver.native/KSL_ABI_VERSION.<get-KSL_ABI_VERSION>|<get-KSL_ABI_VERSION>(){}[0]
-
 final fun (io.kuicksilver.native/PacketBuffer).io.kuicksilver.native/toByteArray(kotlin/Int = ...): kotlin/ByteArray // io.kuicksilver.native/toByteArray|toByteArray@io.kuicksilver.native.PacketBuffer(kotlin.Int){}[0]
 final fun (io.kuicksilver.native/PacketBuffer.Companion).io.kuicksilver.native/of(kotlin/ByteArray): io.kuicksilver.native/PacketBuffer // io.kuicksilver.native/of|of@io.kuicksilver.native.PacketBuffer.Companion(kotlin.ByteArray){}[0]

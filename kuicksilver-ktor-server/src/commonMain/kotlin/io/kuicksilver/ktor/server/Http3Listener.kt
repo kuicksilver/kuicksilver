@@ -74,18 +74,7 @@ private fun KuicksilverApplicationEngine.http3Settings(): Http3Settings =
 
 @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
 private fun KuicksilverApplicationEngine.http3EndpointConfig(tls: KuicksilverTlsConnector): QuicEndpointConfig {
-    val base =
-        configuration.quicMaxIdleTimeout?.let { idle ->
-            if (configuration.quic ===
-                QuicConfig.Default
-            ) {
-                quicConfig { maxIdleTimeout = idle }
-            } else {
-                configuration.quic
-            }
-        }
-            ?: configuration.quic
-    val quic = configuration.qlog?.let { sink -> base.toBuilder().apply { qlog = sink }.build() } ?: base
+    val quic = configuration.http3Quic()
     return QuicEndpointConfig
         .Builder()
         .apply {
@@ -216,4 +205,12 @@ private suspend fun KuicksilverApplicationEngine.handleHttp3(
             events.emit("requestEnded") { requestEnded(HttpProtocolVersion.HTTP_3_0, call, failure) }
         }
     }
+}
+
+/** The QUIC settings of the HTTP/3 listeners: [quic][KuicksilverApplicationEngine.Configuration.quic] with `quicMaxIdleTimeout` and `qlog`. */
+@OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+internal fun KuicksilverApplicationEngine.Configuration.http3Quic(): QuicConfig {
+    val base =
+        quicMaxIdleTimeout?.takeUnless { quicAssigned }?.let { idle -> quicConfig { maxIdleTimeout = idle } } ?: quic
+    return qlog?.let { sink -> base.toBuilder().apply { qlog = sink }.build() } ?: base
 }

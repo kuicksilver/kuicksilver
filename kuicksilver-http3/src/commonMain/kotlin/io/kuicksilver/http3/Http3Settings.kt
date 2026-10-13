@@ -11,9 +11,12 @@ public class Http3Settings private constructor(
     public val qpackMaxTableCapacity: Long,
     /** `SETTINGS_QPACK_BLOCKED_STREAMS` we advertise (0 by default). */
     public val qpackBlockedStreams: Long,
-    /** Ceiling of our own encoder's dynamic table, whatever the peer allows (4096). */
+    /** Ceiling of our own encoder's dynamic table, whatever the peer allows; 4096 by default, 0..2^30. */
     public val encoderMaxTableCapacity: Long,
-    /** Largest decoded field section (headers or trailers) we accept, advertised as `SETTINGS_MAX_FIELD_SECTION_SIZE` (64 KiB). */
+    /**
+     * Largest decoded field section (headers or trailers) we accept, advertised as `SETTINGS_MAX_FIELD_SECTION_SIZE`;
+     * 64 KiB by default, 1..2^30.
+     */
     public val maxFieldSectionSize: Long,
     /** Advertise `SETTINGS_ENABLE_CONNECT_PROTOCOL` (RFC 9220): servers that accept Extended CONNECT turn it on. */
     public val enableConnectProtocol: Boolean,
@@ -21,9 +24,9 @@ public class Http3Settings private constructor(
     public val h3Datagram: Boolean,
     /** Send a reserved setting, frame and unidirectional stream (RFC 9114 sections 6.2.3, 7.2.4.1, 7.2.8) to keep peers tolerant. */
     public val grease: Boolean,
-    /** Interim (1xx) responses a client accepts before the final one (5). */
+    /** Interim (1xx) responses a client accepts before the final one; 5 by default, at least 0. */
     public val maxInformationalResponses: Int,
-    /** PRIORITY_UPDATE frames remembered for streams not yet open (32 at most). */
+    /** PRIORITY_UPDATE frames remembered for streams not yet open; 32 by default, at least 0. */
     public val maxEarlyPriorityUpdates: Int,
     /** Close a connection whose peer floods useless frames (glitch limiter: 1000 tokens, 33/s). */
     public val glitchProtection: Boolean,
@@ -80,7 +83,8 @@ public class Http3Settings private constructor(
             require(qpackBlockedStreams in 0..65_535) { "qpackBlockedStreams must be 0..65535" }
             require(encoderMaxTableCapacity in 0..(1L shl 30)) { "encoderMaxTableCapacity must be 0..2^30" }
             require(maxFieldSectionSize in 1..(1L shl 30)) { "maxFieldSectionSize must be 1..2^30" }
-            require(maxInformationalResponses >= 0 && maxEarlyPriorityUpdates >= 0) { "limits must not be negative" }
+            require(maxInformationalResponses >= 0) { "maxInformationalResponses must not be negative" }
+            require(maxEarlyPriorityUpdates >= 0) { "maxEarlyPriorityUpdates must not be negative" }
             return Http3Settings(
                 qpackMaxTableCapacity,
                 qpackBlockedStreams,

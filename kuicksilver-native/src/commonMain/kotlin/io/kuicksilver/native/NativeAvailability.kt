@@ -13,7 +13,7 @@ import io.kuicksilver.annotations.ExperimentalKuicksilverApi
  */
 @ExperimentalKuicksilverApi
 public sealed interface NativeAvailability {
-    /** The library is loaded, its ABI matches [KSL_ABI_VERSION] and it is initialized: every Kuicksilver transport works. */
+    /** The library is loaded, its `ksl` ABI is the one this release was built for and it is initialized: every Kuicksilver transport works. */
     public data object Available : NativeAvailability
 
     /**
@@ -57,6 +57,6 @@ public enum class NativeUnavailableReason {
      */
     IntegrityMismatch,
 
-    /** The library loaded but reports a `ksl` ABI version other than [KSL_ABI_VERSION] (a library from another release). */
+    /** The library loaded but reports a `ksl` ABI version other than the one this release was built for (a library from another release). */
     AbiMismatch,
 }

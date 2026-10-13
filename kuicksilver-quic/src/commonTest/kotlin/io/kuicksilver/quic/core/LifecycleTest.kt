@@ -116,6 +116,47 @@ class LifecycleTest {
         }
     }
 
+    /** Keep-alive with our idle timeout off holds a connection whose peer has one. */
+    @Test fun keepAliveWithoutLocalIdleTimeoutKeepsPeerAlive() {
+        val p =
+            CorePair(
+                serverQuic = quicConfig { maxIdleTimeout = 2.seconds },
+                clientQuic =
+                    quicConfig {
+                        maxIdleTimeout = kotlin.time.Duration.ZERO
+                        keepAlive = 1.seconds
+                    },
+            )
+        try {
+            assertTrue(p.handshake())
+            silence(p, 10.seconds)
+            assertNull(p.closedReason(p.clientEvents))
+            assertNull(p.closedReason(p.serverEvents))
+        } finally {
+            p.close()
+        }
+    }
+
+    /**
+     * A peer whose idle timeout is shorter than our keep-alive interval: PINGs go out at least every half of the effective
+     * idle timeout (as quic-go's KeepAlivePeriod), so the connection lives; it timed out at the peer's 2 s before.
+     */
+    @Test fun keepAliveFollowsAShorterPeerIdleTimeout() {
+        val p =
+            CorePair(
+                serverQuic = quicConfig { maxIdleTimeout = 2.seconds },
+                clientQuic = quicConfig { keepAlive = 20.seconds },
+            )
+        try {
+            assertTrue(p.handshake())
+            silence(p, 30.seconds)
+            assertNull(p.closedReason(p.clientEvents))
+            assertNull(p.closedReason(p.serverEvents))
+        } finally {
+            p.close()
+        }
+    }
+
     @Test fun keepAliveOffByDefault() {
         val p = CorePair()
         try {

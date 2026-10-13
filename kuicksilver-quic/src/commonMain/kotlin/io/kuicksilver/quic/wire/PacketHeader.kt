@@ -3,6 +3,7 @@
 package io.kuicksilver.quic.wire
 
 import io.kuicksilver.native.PacketBuffer
+import io.kuicksilver.quic.VersionProfile
 
 /** The parsed header of one packet inside a datagram; reused by the receiver. */
 internal class PacketHeaderView {

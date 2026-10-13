@@ -256,7 +256,8 @@ public class QuicEndpointConfig private constructor(
          * (connection ID lengths that differ, loops without a server).
          */
         public fun build(): QuicEndpointConfig {
-            require(maxConnections >= 1 && acceptQueue >= 1)
+            require(maxConnections >= 1) { "maxConnections must be positive" }
+            require(acceptQueue >= 1) { "acceptQueue must be positive" }
             require(connectionIdLength in 4..20) { "connectionIdLength must be 4..20" }
             require(initialQueueCap >= 1) { "initialQueueCap must be positive" }
             require((maxConnectionsPerIp ?: 1) >= 1) { "maxConnectionsPerIp must be positive or null" }

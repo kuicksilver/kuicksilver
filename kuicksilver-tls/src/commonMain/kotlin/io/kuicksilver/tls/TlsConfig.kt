@@ -76,13 +76,16 @@ public class CipherSuites(
 }
 
 /**
- * Server-side session tickets (TCP): a current key and previous keys; rotation at most weekly, lifetime at most half of it.
- * Invalid values throw [TlsException.Config] on construction. QUIC sessions ignore it.
+ * Server-side session tickets: a current key and previous keys; rotation at most weekly, lifetime at most half of it.
+ * Invalid values throw [TlsException.Config] on construction. A TLS-over-TCP server always issues tickets with these keys and
+ * lifetime; a QUIC server issues tickets only when it accepts 0-RTT (`QuicServerConfig.earlyData`), and then with these keys
+ * and lifetime too. Clients ignore it.
  *
- * @property rotateEvery how often the process-wide generated keys rotate (default 1 day, at most 7 days); the previous key
+ * @property rotateEvery how often the process-wide generated keys rotate (default 1 day, positive, at most 7 days); the previous key
  *   still decrypts until the next rotation. Explicit [keys] are not rotated by the library. A longer period lets one stolen
  *   ticket key decrypt more resumed sessions (RFC 8446 section 4.6.1).
- * @property ticketLifetime how long an issued ticket resumes (default 12 hours, at most [rotateEvery] / 2, whole seconds);
+ * @property ticketLifetime how long an issued ticket resumes (default 12 hours, at least 1 second, at most [rotateEvery] / 2,
+ *   whole seconds);
  *   a longer lifetime widens the window in which resumptions can be linked to one client.
  */
 public class SessionTicketConfig(
@@ -94,7 +97,9 @@ public class SessionTicketConfig(
     public val keys: List<ByteArray>? = keys?.map { it.copyOf() }
 
     init {
+        if (!rotateEvery.isPositive()) throw TlsException.Config("rotateEvery must be positive")
         if (rotateEvery > 7.days) throw TlsException.Config("rotateEvery must be at most 7 days")
+        if (ticketLifetime < 1.seconds) throw TlsException.Config("ticketLifetime must be at least 1 second")
         if (ticketLifetime > rotateEvery / 2) throw TlsException.Config("ticketLifetime must be at most rotateEvery / 2")
         if (keys != null && (keys.isEmpty() || keys.any { it.size != 80 })) throw TlsException.Config("ticket keys are 80-byte entries")
     }
@@ -126,7 +131,7 @@ public class TlsConfig private constructor(
     public val clientAuth: ClientAuth,
     /** A server's per-connection identity choice from the ClientHello (TCP only); see [Builder.sniSelector]. */
     public val sniSelector: (suspend (ClientHelloInfo) -> ServerTlsOverride?)?,
-    /** Session ticket keys and lifetimes of a TCP server; see [Builder.sessionTickets]. */
+    /** Session ticket keys and lifetimes of a server (TCP, and QUIC with 0-RTT); see [Builder.sessionTickets]. */
     public val sessionTickets: SessionTicketConfig,
     /** Where TLS secrets are written for debugging, null (the default) for nowhere; see [Builder.keylog]. */
     public val keylog: KeylogSink?,
@@ -236,18 +241,23 @@ public class TlsConfig private constructor(
          */
         public var sniSelector: (suspend (ClientHelloInfo) -> ServerTlsOverride?)? = null
 
-        /** Session ticket keys and lifetimes of a TCP server; default [SessionTicketConfig.Default]. Clients and QUIC ignore it. */
+        /**
+         * Session ticket keys and lifetimes of a server; default [SessionTicketConfig.Default]. Used by TLS-over-TCP servers and by
+         * QUIC servers with 0-RTT (`QuicServerConfig.earlyData`), the only QUIC servers that issue tickets; clients ignore it.
+         */
         public var sessionTickets: SessionTicketConfig = SessionTicketConfig.Default
 
         /**
          * Receives the handshake secrets as RFC 9850 key log lines, so that a capture can be decrypted; default null, and
-         * keep it null in production: anyone who reads the sink can decrypt the traffic. `SSLKEYLOGFILE` is never read.
+         * keep it null in production: anyone who reads the sink can decrypt the traffic. `SSLKEYLOGFILE` is not read unless
+         * the application calls [keylogFromEnvironment] and assigns its sink here.
          */
         @DelicateKuicksilverApi public var keylog: KeylogSink? = null
 
         /**
          * The deadline of a TLS-over-TCP handshake ([TlsConnection], `Socket.tls`); default 10 seconds. When it passes the
-         * handshake fails with [TlsException.Protocol]. QUIC connections use their own `QuicConfig.handshakeTimeout`.
+         * handshake fails with [TlsException.Protocol]. Must be positive; [Duration.INFINITE] waits without a deadline. QUIC
+         * connections use their own `QuicConfig.handshakeTimeout`.
          */
         public var handshakeTimeout: Duration = 10.seconds
 
@@ -267,6 +277,7 @@ public class TlsConfig private constructor(
         @OptIn(DelicateKuicksilverApi::class)
         public fun build(): TlsConfig {
             val validAlpn = alpn.toList().also { validateAlpn(it) } // copy first: the stored list is the one validated
+            if (!handshakeTimeout.isPositive()) throw TlsException.Config("handshakeTimeout must be positive")
             if (role == TlsRole.Server) {
                 if (identity == null && sniSelector == null) throw TlsException.Config("a server needs an identity or an sniSelector")
                 checkServerAuth(clientAuth, trust)

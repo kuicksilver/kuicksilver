@@ -131,6 +131,9 @@ internal fun ConnectionCore.keepAliveDeadline(): TimeMark {
     ) {
         return TimeMark.NEVER
     }
+    // at least every half of the effective idle timeout, which a peer may have made shorter than k (quic-go's KeepAlivePeriod)
+    val idle = timers.effectiveIdle(config.maxIdleTimeout, peerIdleMs, pto())
+    val interval = if (idle != Duration.INFINITE && idle / 2 < k) idle / 2 else k
     return (
         if (timers.lastAckElicitingSent !=
             TimeMark.NEVER
@@ -140,7 +143,7 @@ internal fun ConnectionCore.keepAliveDeadline(): TimeMark {
             timers.lastActivity
         }
     ) +
-        k
+        interval
 }
 
 /**

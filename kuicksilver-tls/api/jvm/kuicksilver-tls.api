@@ -180,6 +180,7 @@ public final class io/kuicksilver/tls/KslUdpSocket$Companion {
 	public final fun encodeAddress ([BI)[B
 	public final fun errnoOf (Ljava/lang/Throwable;)Ljava/lang/Integer;
 	public final fun getSupported ()Z
+	public final fun getUnsupportedReason ()Ljava/lang/String;
 	public final fun ipOf ([B)[B
 	public final fun open ([BI)Lio/kuicksilver/tls/KslUdpSocket;
 	public final fun openOrNull ([BILkotlin/jvm/functions/Function1;)Lio/kuicksilver/tls/KslUdpSocket;
@@ -223,12 +224,6 @@ public final class io/kuicksilver/tls/PinScope : java/lang/Enum {
 
 public final class io/kuicksilver/tls/PlatformVerifier_jvmKt {
 	public static final fun fromTrustManager (Lio/kuicksilver/tls/TrustConfig$Companion;Ljavax/net/ssl/X509TrustManager;)Lio/kuicksilver/tls/TrustConfig;
-}
-
-public abstract interface class io/kuicksilver/tls/PrivateKeySigner {
-	public abstract fun chooseScheme (Ljava/util/List;)Ljava/lang/Integer;
-	public abstract fun getPublicKey ()[B
-	public abstract fun sign (I[BLkotlin/coroutines/Continuation;)Ljava/lang/Object;
 }
 
 public abstract interface class io/kuicksilver/tls/QuicCrypto {
@@ -472,12 +467,6 @@ public final class io/kuicksilver/tls/TlsIdentity$InMemory : io/kuicksilver/tls/
 	public fun getChain ()Ljava/util/List;
 }
 
-public final class io/kuicksilver/tls/TlsIdentity$Signer : io/kuicksilver/tls/TlsIdentity {
-	public fun <init> (Ljava/util/List;Lio/kuicksilver/tls/PrivateKeySigner;)V
-	public fun getChain ()Ljava/util/List;
-	public final fun getSigner ()Lio/kuicksilver/tls/PrivateKeySigner;
-}
-
 public final class io/kuicksilver/tls/TlsIdentity_jvmKt {
 	public static final fun fromKeyStore (Lio/kuicksilver/tls/TlsIdentity$Companion;Ljava/security/KeyStore;Ljava/lang/String;[C)Lio/kuicksilver/tls/TlsIdentity$InMemory;
 	public static final fun fromPkcs12 (Lio/kuicksilver/tls/TlsIdentity$Companion;[B[C)Lio/kuicksilver/tls/TlsIdentity$InMemory;
@@ -564,14 +553,23 @@ public abstract interface class io/kuicksilver/tls/VerifyReason {
 
 public final class io/kuicksilver/tls/VerifyReason$BadEncoding : io/kuicksilver/tls/VerifyReason {
 	public static final field INSTANCE Lio/kuicksilver/tls/VerifyReason$BadEncoding;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
 }
 
 public final class io/kuicksilver/tls/VerifyReason$BadSignature : io/kuicksilver/tls/VerifyReason {
 	public static final field INSTANCE Lio/kuicksilver/tls/VerifyReason$BadSignature;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
 }
 
 public final class io/kuicksilver/tls/VerifyReason$CertificateTransparency : io/kuicksilver/tls/VerifyReason {
 	public static final field INSTANCE Lio/kuicksilver/tls/VerifyReason$CertificateTransparency;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
 }
 
 public final class io/kuicksilver/tls/VerifyReason$Custom : io/kuicksilver/tls/VerifyReason {
@@ -582,6 +580,9 @@ public final class io/kuicksilver/tls/VerifyReason$Custom : io/kuicksilver/tls/V
 
 public final class io/kuicksilver/tls/VerifyReason$Expired : io/kuicksilver/tls/VerifyReason {
 	public static final field INSTANCE Lio/kuicksilver/tls/VerifyReason$Expired;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
 }
 
 public final class io/kuicksilver/tls/VerifyReason$HostnameMismatch : io/kuicksilver/tls/VerifyReason {
@@ -593,14 +594,23 @@ public final class io/kuicksilver/tls/VerifyReason$HostnameMismatch : io/kuicksi
 
 public final class io/kuicksilver/tls/VerifyReason$InvalidPurpose : io/kuicksilver/tls/VerifyReason {
 	public static final field INSTANCE Lio/kuicksilver/tls/VerifyReason$InvalidPurpose;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
 }
 
 public final class io/kuicksilver/tls/VerifyReason$NoCertificate : io/kuicksilver/tls/VerifyReason {
 	public static final field INSTANCE Lio/kuicksilver/tls/VerifyReason$NoCertificate;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
 }
 
 public final class io/kuicksilver/tls/VerifyReason$NotYetValid : io/kuicksilver/tls/VerifyReason {
 	public static final field INSTANCE Lio/kuicksilver/tls/VerifyReason$NotYetValid;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
 }
 
 public final class io/kuicksilver/tls/VerifyReason$PinMismatch : io/kuicksilver/tls/VerifyReason {
@@ -611,14 +621,23 @@ public final class io/kuicksilver/tls/VerifyReason$PinMismatch : io/kuicksilver/
 
 public final class io/kuicksilver/tls/VerifyReason$Revoked : io/kuicksilver/tls/VerifyReason {
 	public static final field INSTANCE Lio/kuicksilver/tls/VerifyReason$Revoked;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
 }
 
 public final class io/kuicksilver/tls/VerifyReason$UnknownIssuer : io/kuicksilver/tls/VerifyReason {
 	public static final field INSTANCE Lio/kuicksilver/tls/VerifyReason$UnknownIssuer;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
 }
 
 public final class io/kuicksilver/tls/VerifyReason$UnknownRevocationStatus : io/kuicksilver/tls/VerifyReason {
 	public static final field INSTANCE Lio/kuicksilver/tls/VerifyReason$UnknownRevocationStatus;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
 }
 
 public abstract interface class io/kuicksilver/tls/VerifyResult {

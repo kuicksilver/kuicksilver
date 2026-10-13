@@ -32,8 +32,8 @@ above it).
   stable to *use* but experimental to *implement* (`@SubclassOptInRequired`): `DatagramIo`, `CongestionController`,
   `DatagramSender`.
 - **Delicate** is not a stability level of its own: it marks API that can weaken security when misused (a custom
-  verifier, key logging, external signers). It combines with the others: `keylogFile` and `TrustConfig.Custom` are
-  stable and delicate, `TlsIdentity.Signer` is experimental and delicate.
+  verifier, key logging, a live internal array). It combines with the others: `keylogFile` and `TrustConfig.Custom` are
+  stable and delicate, `ConnectionCore.glitchByFrameType` is experimental and delicate.
 - **Internal** declarations are public only because another Kuicksilver module needs them (the `Ksl` FFI facade,
   `KslUdpSocket`, the TCP session cache, `KtorVersionPolicy`, the soak probes). The opt-in is an error, they are left
   out of the ABI dumps, and they can change in any release.
@@ -47,8 +47,9 @@ member) is made in a minor release and listed under **Changed** in the CHANGELOG
 changes; see the CHANGELOG's "QUIC API (breaking, before 1.0)" entry and the new `PathEvent.SocketLost`, which an
 exhaustive `when` over `PathEvent` must now handle.
 
-Deprecated in 0.2.0 and still present: the type aliases `io.kuicksilver.quic.PathChanged` (use `PathEvent.Changed`)
-and `io.kuicksilver.quic.wire.VersionProfile` (use `io.kuicksilver.quic.VersionProfile`), both at level `WARNING`.
+Nothing is deprecated in 0.2.0. The two type aliases deprecated before 0.1.0, which was never published,
+`io.kuicksilver.quic.PathChanged` (use `PathEvent.Changed`) and `io.kuicksilver.quic.wire.VersionProfile` (use
+`io.kuicksilver.quic.VersionProfile`), are removed; 0.2.0 is the first release whose API this page binds.
 
 **Security fixes** go to the latest 0.x release only ([SECURITY](../SECURITY.md), "Supported versions").
 
@@ -73,12 +74,12 @@ and `io.kuicksilver.quic.wire.VersionProfile` (use `io.kuicksilver.quic.VersionP
 
 The C shim `ksl` (`kuicksilver-native/src/c/ksl.h`) has its own version, `KSL_ABI_VERSION`, **6 in 0.2.0** (ABI 5 kept
 identity keys in OpenSSL, ABI 6 added the early-data controls for 0-RTT and the live-object counters). It is bumped on
-any incompatible change of the C interface. The Kotlin side expects one exact value (`KSL_ABI_VERSION` in
-`io.kuicksilver.native`), and the loader refuses any other: `KslException.AbiMismatch(native, kotlin)` with the message
+any incompatible change of the C interface. The Kotlin side expects one exact value (an internal constant of
+`kuicksilver-native`), and the loader refuses any other: `KslException.AbiMismatch(native, kotlin)` with the message
 "ksl ABI <n> in the native library, <m> expected", older or newer alike. On the JVM the check runs right after the
-library is loaded and before `ksl_init`; on Android after `System.loadLibrary("ksl")`; on Kotlin/Native `ksl` is linked
-statically, so a mismatch cannot normally happen. The outcome is cached for the process: `KslLoader.ensureLoaded()`
-throws the same exception again and `KslLoader.availability()` reports
+library is loaded and before `ksl_init`; on Android after `System.loadLibrary("ksl")`; on Kotlin/Native `ksl` is
+linked statically, so a mismatch cannot normally happen. The outcome is cached for the process:
+`KslLoader.ensureLoaded()` throws the same exception again and `KslLoader.availability()` reports
 `NativeAvailability.Unavailable(NativeUnavailableReason.AbiMismatch, …)`.
 
 The JVM library carries the ABI in its file name (`libksl_<abi>_<os>_<arch>`), and the jar manifest records it as
@@ -168,10 +169,7 @@ type is experimental, so are its members.
 
 | API | Feature |
 |---|---|
-| `QuicSessionTicket`, `EarlyDataAdmission`, `TlsEvent.SessionTicket`, `QuicTlsSession.earlyDataAccepted`, `resume`, `enableEarlyData`, `QuicCrypto.newSession(config, earlyData)` | 0-RTT plumbing between TLS and QUIC (ADR-0015) |
-| `TlsIdentity.Signer` (also delicate) | external signers; **not available in 0.2.0**: its constructor throws `UnsupportedOperationException` |
-
-`EarlyDataState` (`Disabled`, `Allowed`, `Required`) is stable.
+| `EarlyDataState`, `QuicSessionTicket`, `EarlyDataAdmission`, `TlsEvent.SessionTicket`, `QuicTlsSession.earlyDataAccepted`, `resume`, `enableEarlyData`, `QuicCrypto.newSession(config, earlyData)` | 0-RTT: the client's mode and the plumbing between TLS and QUIC (ADR-0015) |
 
 ### `kuicksilver-quic`
 
@@ -221,8 +219,5 @@ No experimental API. `TlsSocket`, `Socket.tls()` and `Socket.tlsServer()` are st
 
 These are stable, but read their KDoc before relying on them:
 
-- `TimeoutKind.PathValidation` is reserved and not produced: a failed path validation ends in
-  `ConnectionLost.NoViablePath`.
-- `Http3ClientConfig.softDelay` is accepted but not acted on ([ktor.md, Racing and fallback](guide/ktor.md#racing-and-fallback)).
 - `QuicEndpointConfig.loops > 1` throws `UnsupportedOperationException` outside Linux and Android, and a QUIC server on
   Kotlin/Native needs the accelerated socket.

@@ -10,7 +10,6 @@ import io.kuicksilver.quic.KuicksilverLogger
 import io.kuicksilver.quic.LogLevel
 import io.kuicksilver.quic.PathEvent
 import io.kuicksilver.quic.QuicException
-import io.kuicksilver.quic.TimeoutKind
 import io.kuicksilver.quic.ZeroRttOutcome
 import io.kuicksilver.quic.emit
 
@@ -111,7 +110,7 @@ internal class LoopObserver(
     ) {
         if (!handshakeDone) {
             when {
-                reason is QuicException.ConnectionLost.Timeout && reason.kind != TimeoutKind.PathValidation -> handshakesFailedTimeout++
+                reason is QuicException.ConnectionLost.Timeout -> handshakesFailedTimeout++
                 reason is QuicException.ConnectionLost.TransportClosed && reason.code in TLS_ALERTS -> handshakesFailedTls++
                 else -> handshakesFailedOther++
             }

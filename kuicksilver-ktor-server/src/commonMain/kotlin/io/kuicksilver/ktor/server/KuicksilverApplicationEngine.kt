@@ -69,13 +69,27 @@ public class KuicksilverApplicationEngine(
         /** Serve HTTP/3 on UDP on the port of every TLS connector. */
         public var http3: Boolean = true
 
-        /** QUIC transport settings of the HTTP/3 listener. */
+        /** QUIC transport settings of the HTTP/3 listener; [QuicConfig.Default] until assigned. */
         public var quic: QuicConfig = QuicConfig.Default
+            set(value) {
+                field = value
+                quicAssigned = true
+            }
 
-        /** `quic.maxIdleTimeout` for the default [quic] configuration (the name follows Ktor-Netty); ignored when [quic] was set explicitly, which carries its own timeout. */
+        /** Whether [quic] was assigned (any value, [QuicConfig.Default] included): then [quicMaxIdleTimeout] is not used. */
+        internal var quicAssigned: Boolean = false
+            private set
+
+        /**
+         * `quic.maxIdleTimeout` while [quic] is not assigned (the name follows Ktor-Netty). Once [quic] is assigned, before or
+         * after this, its own `maxIdleTimeout` applies and this is ignored, also when the assigned value is [QuicConfig.Default].
+         */
         public var quicMaxIdleTimeout: Duration? = null
 
-        /** Endpoint loops on the UDP port (SO_REUSEPORT, Linux), as Ktor-Netty's `udpSocketCount`. */
+        /**
+         * Endpoint loops on the UDP port, as Ktor-Netty's `udpSocketCount`; more than 1 needs kernel `SO_REUSEPORT` flow
+         * hashing, so Linux and Android; elsewhere the engine logs why and serves HTTP/1.1 only on that connector.
+         */
         public var udpSocketCount: Int = 1
 
         /** Admission of new QUIC connections (Retry above a handshake threshold by default); Ktor-Netty's `quicTokenHandler`. */

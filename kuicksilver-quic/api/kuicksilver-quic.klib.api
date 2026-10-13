@@ -136,7 +136,6 @@ final enum class io.kuicksilver.quic/PathState : kotlin/Enum<io.kuicksilver.quic
 final enum class io.kuicksilver.quic/TimeoutKind : kotlin/Enum<io.kuicksilver.quic/TimeoutKind> { // io.kuicksilver.quic/TimeoutKind|null[0]
     enum entry Handshake // io.kuicksilver.quic/TimeoutKind.Handshake|null[0]
     enum entry Idle // io.kuicksilver.quic/TimeoutKind.Idle|null[0]
-    enum entry PathValidation // io.kuicksilver.quic/TimeoutKind.PathValidation|null[0]
 
     final val entries // io.kuicksilver.quic/TimeoutKind.entries|#static{}entries[0]
         final fun <get-entries>(): kotlin.enums/EnumEntries<io.kuicksilver.quic/TimeoutKind> // io.kuicksilver.quic/TimeoutKind.entries.<get-entries>|<get-entries>#static(){}[0]

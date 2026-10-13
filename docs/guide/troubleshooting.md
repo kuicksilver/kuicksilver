@@ -69,7 +69,8 @@ The client closes with a TLS alert: `TransportClosed(code = 0x0100 + alert, init
 `javax.net.ssl.SSLException`). The server sees `TransportClosed(initiator = Peer)` with a `TlsException.AlertReceived`
 ("TLS alert received from the peer: <description> (<code>)") and counts it in `handshakesFailedTls`.
 
-Decide on `reason`, not on the message text (the message of the object reasons below prints the class name only):
+Decide on `reason`, not on the message text ("certificate verification failed: <reason>", for example
+`Expired` or `HostnameMismatch(expected=…, presented=[…])`):
 
 | `VerifyReason` | Alert | Usual cause and fix |
 |---|---|---|
@@ -106,10 +107,11 @@ smaller of our `QuicConfig.maxIdleTimeout` (30 s) and the peer's, never below 3 
 CONNECTION_CLOSE is sent.
 
 - **A quiet but wanted connection** (a push channel waiting for events): set `QuicConfig.keepAlive` to a PING interval
-  of at most 3/4 of `maxIdleTimeout`, for example `keepAlive = 10.seconds`. A NAT on the path may forget an idle UDP
-  mapping sooner than 30 s; keep-alive covers that too.
-- **The peer's timeout is shorter**: the effective value is the minimum; raise it on both sides. The Ktor server takes
-  `quicMaxIdleTimeout` (when `quic` is left at its default).
+  of at most 3/4 of `maxIdleTimeout`, for example `keepAlive = 10.seconds`; PINGs then go out at least every half of the
+  effective idle timeout, also when the peer's is shorter. A NAT on the path may forget an idle UDP mapping sooner than
+  30 s; keep-alive covers that too.
+- **The peer's timeout is shorter**: the effective value is the minimum; raise it on both sides, or keep the connection busy with `keepAlive`. The Ktor server takes
+  `quicMaxIdleTimeout` (when `quic` is not assigned; otherwise set `maxIdleTimeout` in `quic`).
 - **The peer vanished** (a server restarted without a Stateless Reset, a phone lost coverage): the timeout is the
   intended outcome. A client that follows networks ([Network changes](quic.md#network-changes)) survives a change of
   network instead.
@@ -233,11 +235,13 @@ datagram per call.
 - When a bind of the accelerated socket is refused, the logger says once per process at `Warn`: "accelerated UDP socket
   refused on <address> (<reason>); using the portable socket". The reason is the failing system call and its error
   ("<step>: <strerror>", on Windows "<step>: WSA error <n>").
-- When the one-time loopback probe (`KslUdpSocket.supported`) fails, for example because a sandbox refuses `bind`,
-  the portable socket is used **without a log line**. Tell by `QuicConnection.stats.pathMtu` staying at 1200 and
-  `ecnState` never reaching `Capable`.
+- When the one-time loopback probe fails, for example because a sandbox refuses every `bind`, the same once-per-process
+  warning reads "accelerated UDP socket unavailable (<reason>); using the portable socket". Without a logger line (a
+  `KuicksilverLogger.None` endpoint), tell by `QuicConnection.stats.pathMtu` staying at 1200 and `ecnState` never
+  reaching `Capable`.
 - A QUIC server on Kotlin/Native needs the accelerated socket; without it `bind` with a `server` throws
-  `UnsupportedOperationException`, and the Ktor server serves HTTP/1.1 only, logging "HTTP/3 is not served on port
+  `UnsupportedOperationException` ("a QUIC server on Kotlin/Native needs the accelerated ksl socket (Linux, Apple,
+  Windows), which is unavailable here"), and the Ktor server serves HTTP/1.1 only, logging "HTTP/3 is not served on port
   <port>: <reason>".
 
 ### `UnsupportedOperationException` for `loops > 1`
@@ -293,7 +297,8 @@ exception from the first connection. `NativeUnavailableReason`:
 | `AbiMismatch` | `KslException.AbiMismatch` "ksl ABI <n> in the native library, <m> expected" | the native library belongs to another Kuicksilver release, usually through `-Dkuicksilver.native.path` or `-Dkuicksilver.native.system=true`; use the library of the same version ([stability](../stability.md#the-native-library-abi-ksl)) |
 
 `KslException.Version` ("OpenSSL <found> found, OpenSSL 3.5+ (not 4.x) required") and `KslException.MissingSymbol`
-appear only with a library built against a system OpenSSL. The outcome of the first load attempt is cached for the
+appear only with a library built against a system OpenSSL, as does `KslException.NativeLoad` "SSLKEYLOGFILE is set and
+the system libssl may honour it; unset it (keylog)": such a library refuses to load while `SSLKEYLOGFILE` is set. The outcome of the first load attempt is cached for the
 process: fix the cause and restart.
 
 ## Ktor engines

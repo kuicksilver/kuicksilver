@@ -4,6 +4,7 @@ package io.kuicksilver.quic.wire
 
 import io.kuicksilver.native.PacketBuffer
 import io.kuicksilver.native.of
+import io.kuicksilver.quic.VersionProfile
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
