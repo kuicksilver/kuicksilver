@@ -646,6 +646,9 @@ Samples and testing:
   owner-only and refused when it is a link, another user's, or writable by others without the sticky bit; at most 256
   traces are open at once and 1 GiB is written over the sink's lifetime (experimental constructor
   `DirectoryQlogSink(directory, maxOpenTraces, maxTotalBytes)`).
+- `keylogFile(path)` refuses a FIFO at the path instead of blocking until a reader appears (on Native that stalled the
+  endpoint loop at the first secret line): Native opens with `O_NONBLOCK` and checks the descriptor, the JVM checks the
+  path before opening it, Windows refuses anything but a regular file (security review 2026-10-14, threat model 3.7).
 
 ## 0.1.0 candidate (never published)
 

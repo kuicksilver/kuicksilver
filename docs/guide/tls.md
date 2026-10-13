@@ -159,7 +159,8 @@ directory that only you can write. On the JVM the file is opened once, when the 
 created, and every line goes through that descriptor, so a file removed and recreated at the path later receives nothing;
 the JVM sink is also `java.io.Closeable` (close it when you are done, otherwise the descriptor stays open until the
 channel is collected or the process exits). Kotlin/Native reopens the file without following links for every line and
-repeats the checks on the new descriptor.
+repeats the checks on the new descriptor. A FIFO at the path is refused without waiting for a reader (Native opens with
+`O_NONBLOCK`; the JVM checks the path before it opens it), so a planted FIFO cannot stall `keylogFile` or the endpoint loop.
 
 ```kotlin
 val path = "/tmp/kuicksilver-keys.txt"

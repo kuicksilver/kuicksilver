@@ -128,6 +128,31 @@ class SecretsJvmTest {
         assertEquals(0L, target.length(), "nothing was written through the hard link")
     }
 
+    /**
+     * A FIFO planted at the key log path must not block (security review 2026-10-14, finding 6): opening one for writing waits
+     * for a reader, which would hang `keylogFile` (and, reopened per line on Native, the endpoint loop). It is refused.
+     */
+    @Test fun negative_keylogFileRefusesFifo() {
+        if (!posix) return
+        val fifo = File.createTempFile("ksl-keylog-fifo", ".txt").also { it.delete() }
+        assertEquals(0, ProcessBuilder("mkfifo", fifo.path).start().waitFor())
+        try {
+            var outcome: Any? = "blocked"
+            val t =
+                Thread {
+                    outcome = runCatching { keylogFile(fifo.path) }.exceptionOrNull()
+                }.apply {
+                    isDaemon = true
+                    start()
+                }
+            t.join(10_000)
+            assertFalse(t.isAlive, "keylogFile returned instead of blocking on the FIFO")
+            assertTrue(outcome is IllegalArgumentException, "a FIFO is refused: $outcome")
+        } finally {
+            fifo.delete()
+        }
+    }
+
     @Test fun negative_keylogDisabledInRelease() {
         // the Gradle test task sets SSLKEYLOGFILE; neither OpenSSL (no-sslkeylog) nor the library may touch it
         val env = System.getenv("SSLKEYLOGFILE")

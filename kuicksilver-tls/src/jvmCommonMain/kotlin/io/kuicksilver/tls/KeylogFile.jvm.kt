@@ -34,6 +34,17 @@ private val OPEN_APPEND =
  * at the path later (by anyone) never receives a line: the lines keep going to the inode that was checked.
  */
 private fun openKeylogChannel(p: Path): SeekableByteChannel {
+    // NIO cannot open with O_NONBLOCK, and opening a FIFO for writing blocks until a reader appears: refuse anything that is
+    // not a regular file before the open (the check after it covers a swap in between, except a FIFO swapped in at that
+    // instant by a user who can replace names in the directory)
+    try {
+        val before = Files.readAttributes(p, java.nio.file.attribute.BasicFileAttributes::class.java, LinkOption.NOFOLLOW_LINKS)
+        if (!before.isRegularFile) throw IllegalArgumentException("keylog path $p is not a regular file")
+    } catch (_: java.nio.file.NoSuchFileException) {
+        // created by the open below
+    } catch (e: IOException) {
+        throw IllegalArgumentException("keylog file $p cannot be checked: ${e.message}", e)
+    }
     val ch =
         try {
             Files.newByteChannel(p, OPEN_APPEND, PosixFilePermissions.asFileAttribute(OWNER_ONLY))
