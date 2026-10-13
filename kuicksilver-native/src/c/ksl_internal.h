@@ -85,6 +85,10 @@ void ksl_ctx_enable_early_data(SSL_CTX *ctx);
 ksl_key *ksl_key_from_secret(int aead, const uint8_t *secret, size_t slen, uint32_t version);
 int ksl_aead_of_cipher(const SSL_CIPHER *c);
 
+/* bounds: n bytes at off fit in a buffer of len (off <= len). Written so nothing can wrap: a 32-bit length field on a 32-bit size_t
+   (armeabi-v7a) would wrap off + n past len. */
+static inline int ksl_span_fits(size_t off, size_t n, size_t len) { return off <= len && n <= len - off; }
+
 /* shared crypto (ksl_crypto.c) */
 int ksl_hkdf_extract(int hash, const uint8_t *salt, size_t sl, const uint8_t *ikm, size_t il, uint8_t *out, size_t olen);
 int ksl_parse_chain(const uint8_t *framed, size_t len, STACK_OF(X509) **out);

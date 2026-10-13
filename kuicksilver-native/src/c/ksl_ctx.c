@@ -6,6 +6,7 @@
 #include <openssl/rand.h>
 #include <openssl/core_names.h>
 #include <sys/stat.h>
+#include <limits.h>
 
 #define TLS12_PROFILE "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305"
 #define TLS13_DEFAULT "TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256"
@@ -110,9 +111,9 @@ int ksl_ctx_set_alpn(ksl_ctx *c, const uint8_t *wire, size_t len) {
 }
 int ksl_parse_chain(const uint8_t *framed, size_t len, STACK_OF(X509) **out) {
     STACK_OF(X509) *sk = sk_X509_new_null(); size_t off = 0;
-    while (off + 4 <= len) {
+    while (ksl_span_fits(off, 4, len)) {
         size_t l = ((size_t)framed[off] << 24) | ((size_t)framed[off + 1] << 16) | ((size_t)framed[off + 2] << 8) | framed[off + 3]; off += 4;
-        if (off + l > len) break;
+        if (!ksl_span_fits(off, l, len) || l > LONG_MAX) break;   /* off != len below then refuses the framing */
         const unsigned char *p = framed + off; X509 *x = d2i_X509(NULL, &p, (long)l); if (!x || !sk_X509_push(sk, x)) { X509_free(x); sk_X509_pop_free(sk, X509_free); return 0; }
         off += l;
     }
