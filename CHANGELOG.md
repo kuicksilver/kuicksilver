@@ -617,6 +617,13 @@ Pre-release API and operations review (2026-10-14):
 - Ktor client: when the call setting up a shared HTTP/3 connection was cancelled, every other call waiting for that
   connection failed with a `CancellationException` (no retry, no HTTP/1.1 fallback); they now set up a connection of
   their own.
+- HTTP/3 close paths send H3_NO_ERROR (RFC 9114 section 5.2) instead of QUIC application code 0, which HTTP/3 does not
+  define: `Http3Endpoint.close()`, the Ktor client's `close()` and the Ktor server's stop at its grace deadline (which
+  could close with code 0 when the endpoint's close overtook the connections' own).
+- Ktor server stop: HTTP/3 accepting goes on until the endpoint closes, so a connection whose handshake completes after
+  the stop began is served and gets GOAWAY at once instead of waiting in the accept queue, and the stop returns as soon
+  as the connections are idle rather than always lasting the whole grace period. `docs/guide/ktor.md` describes the
+  stop as it runs.
 
 ### Security
 

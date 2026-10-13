@@ -285,9 +285,11 @@ public class KuicksilverApplicationEngine(
                 servers.forEach { it.acceptJob.cancel() }
                 // every connection at once: goAway() waits 2×RTT between its two frames, one after another the k-th would wait k×50 ms
                 h3.forEach { l ->
-                    l.acceptJob.cancel()
+                    // HTTP/3 accepting goes on: handshakes in flight complete, and those connections get GOAWAY at once
+                    l.stopping = true
                     // the QUIC side of the grace period: new clients refused at their first Initial, the live connections get
-                    // the grace period to finish, then whatever is left closes with H3_NO_ERROR
+                    // the grace period to finish, then whatever is left closes with H3_NO_ERROR; once none is left the
+                    // endpoint closes, which ends accepting
                     launch {
                         @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
                         runCatching { l.endpoint.shutdown(stopGraceMillis.milliseconds) }
@@ -297,6 +299,7 @@ public class KuicksilverApplicationEngine(
                 withContext(userDispatcher) { monitor.raise(ApplicationStopPreparing, environment) }
                 servers.map { it.rootJob }.joinAll()
                 h3.forEach { l ->
+                    l.acceptJob.join()
                     l.connections.children
                         .toList()
                         .joinAll()
@@ -304,8 +307,9 @@ public class KuicksilverApplicationEngine(
             } finally {
                 withContext(NonCancellable) {
                     h3.forEach { l ->
-                        l.connections.cancel()
+                        // the endpoint first: what is left gets CONNECTION_CLOSE with H3_NO_ERROR, not a stream reset per call
                         l.endpoint.close()
+                        l.connections.cancel()
                     }
                 }
             }
@@ -318,6 +322,9 @@ public class KuicksilverApplicationEngine(
 
     /** The HTTP/3 listeners and the supervisors of the TCP connection handlers, for [KuicksilverServerProbe]; written at startup. */
     internal val h3ListenersForProbe = ArrayList<H3Listener>()
+
+    /** Test hook: runs in the HTTP/3 accept loop after each accepted connection, before it is served. */
+    internal var afterH3AcceptForTest: (suspend () -> Unit)? = null
     internal val tcpConnectionsForProbe = ArrayList<Job>()
 }
 

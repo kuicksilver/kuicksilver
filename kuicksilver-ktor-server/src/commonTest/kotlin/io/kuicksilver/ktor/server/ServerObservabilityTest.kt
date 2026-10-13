@@ -26,6 +26,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeout
 import kotlin.concurrent.atomics.AtomicReference
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
@@ -102,6 +103,75 @@ class ServerObservabilityTest {
                 }
                 c.close()
             } finally {
+                ep.close()
+                runCatching { server.stop(100, 500) }
+            }
+        }
+
+    /** At the grace deadline what is left closes with H3_NO_ERROR (RFC 9114 section 5.2), not QUIC application code 0. */
+    @Test fun stopAtTheGraceDeadlineClosesWithH3NoError() =
+        h3ServerTest {
+            val arrived = CompletableDeferred<Unit>()
+            val (server, port) =
+                tlsServer {
+                    routing {
+                        get("/forever") {
+                            arrived.complete(Unit)
+                            delay(60_000)
+                            call.respondText("late")
+                        }
+                    }
+                }
+            val ep = Http3Endpoint.bind(InetSocketAddress("127.0.0.1", 0))
+            try {
+                val c = ep.connect(InetSocketAddress("127.0.0.1", port), ServerFixtures.clientTls(alpn = listOf("h3")))
+                coroutineScope {
+                    val call = async { runCatching { c.request(get("/forever")).body.readFullBody() } }
+                    arrived.await()
+                    val t0 = TimeSource.Monotonic.markNow()
+                    server.stop(300, 3000)
+                    assertTrue(t0.elapsedNow() < 3000.milliseconds, "stop returned within timeoutMillis: ${t0.elapsedNow()}")
+                    val closed = withTimeout(5.seconds) { c.quic.closed.await() }
+                    val app = closed as QuicException.ConnectionLost.ApplicationClosed
+                    assertEquals(io.kuicksilver.http3.Http3ErrorCode.NO_ERROR, app.code, "$closed")
+                    assertTrue(call.await().isFailure, "the call still running at the deadline did not complete")
+                }
+            } finally {
+                ep.close()
+                runCatching { server.stop(100, 500) }
+            }
+        }
+
+    /**
+     * A connection whose handshake completes after the stop began (RFC 9114 section 5.2) is still served: it gets GOAWAY at
+     * once, and the stop ends when it is idle instead of waiting out the whole grace period.
+     */
+    @Test fun aConnectionAcceptedDuringStopGetsGoAwayAndTheStopEndsEarly() =
+        h3ServerTest {
+            val (server, port) = tlsServer { routing { get("/") { call.respondText("ok") } } }
+            val gate = CompletableDeferred<Unit>()
+            val held = CompletableDeferred<Unit>()
+            server.engine.afterH3AcceptForTest = {
+                held.complete(Unit)
+                gate.await()
+            }
+            val ep = Http3Endpoint.bind(InetSocketAddress("127.0.0.1", 0))
+            try {
+                val c = ep.connect(InetSocketAddress("127.0.0.1", port), ServerFixtures.clientTls(alpn = listOf("h3")))
+                withTimeout(5.seconds) { held.await() } // accepted by QUIC, not yet served by the engine
+                coroutineScope {
+                    val t0 = TimeSource.Monotonic.markNow()
+                    val stop = async(Dispatchers.Default) { server.stop(20_000, 30_000) }
+                    eventually { server.engine.h3ListenersForProbe.all { it.stopping } }
+                    gate.complete(Unit)
+                    withTimeout(5.seconds) { c.goAwayReceived.first { it != null } }
+                    withTimeout(10.seconds) { stop.await() }
+                    assertTrue(t0.elapsedNow() < 10.seconds, "the stop ended once the connection was idle: ${t0.elapsedNow()}")
+                    val app = c.quic.closed.await() as QuicException.ConnectionLost.ApplicationClosed
+                    assertEquals(io.kuicksilver.http3.Http3ErrorCode.NO_ERROR, app.code, "$app")
+                }
+            } finally {
+                gate.complete(Unit)
                 ep.close()
                 runCatching { server.stop(100, 500) }
             }

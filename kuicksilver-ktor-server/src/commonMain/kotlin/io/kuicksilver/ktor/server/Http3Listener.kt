@@ -38,6 +38,13 @@ internal class H3Listener(
     private val lock = Mutex()
     private val set = HashSet<Http3Connection>()
 
+    /**
+     * The engine is stopping: accepting goes on (handshakes in flight when the stop began still complete, and the QUIC
+     * endpoint's graceful shutdown waits for them), but every connection accepted from now on gets GOAWAY at once.
+     */
+    @kotlin.concurrent.Volatile
+    var stopping = false
+
     suspend fun add(c: Http3Connection) = lock.withLock { set += c }
 
     suspend fun remove(c: Http3Connection) = lock.withLock { set -= c }
@@ -105,7 +112,7 @@ internal suspend fun KuicksilverApplicationEngine.startHttp3(
         h3Endpoints += endpoint
         h3Ports += port
         val local = InetSocketAddress(tls.host, port)
-        // the handlers outlive the accept loop: a stop cancels accepting first and lets them finish
+        // the handlers outlive the accept loop: at the grace deadline a stop closes the endpoint, which ends accepting
         val connections = SupervisorJob(coroutineContext[Job])
         lateinit var listener: H3Listener
         val acceptJob =
@@ -122,7 +129,10 @@ internal suspend fun KuicksilverApplicationEngine.startHttp3(
                             environment.log.debug("HTTP/3 accept on port $port ended: $e")
                             break
                         }
+                    afterH3AcceptForTest?.invoke()
                     listener.add(conn)
+                    // after add(): a stop that began meanwhile either saw this connection in live() or is seen here (RFC 9114 5.2)
+                    if (listener.stopping) launch { runCatching { conn.goAway() } }
                     val remote =
                         conn.quic.paths
                             .firstOrNull()

@@ -277,8 +277,11 @@ never fails a call.
 `stop(gracePeriodMillis, timeoutMillis)` stops accepting TCP connections, sends GOAWAY on every live HTTP/3 connection at
 once (RFC 9114 section 5.2) and shuts each HTTP/3 endpoint down with the same grace period
 ([QUIC: Graceful shutdown](quic.md#graceful-shutdown)): a new QUIC client is refused at its first Initial with
-CONNECTION_REFUSED instead of waiting for a handshake timeout, the calls in flight finish, and at the end of the grace
-period what is left is closed with H3_NO_ERROR. The engine then waits for the remaining calls up to `timeoutMillis`.
+CONNECTION_REFUSED instead of waiting for a handshake timeout, a handshake already in flight still completes and its
+connection gets GOAWAY at once, and the calls in flight finish. The stop returns as soon as they have: each HTTP/3
+connection closes with H3_NO_ERROR once its last call is answered. At the end of the grace period the calls still
+running are cancelled and the connections left are closed with H3_NO_ERROR; the stop then waits for those calls to end,
+until `timeoutMillis` after it began at most.
 
 ## 0-RTT (opt-in, experimental)
 
