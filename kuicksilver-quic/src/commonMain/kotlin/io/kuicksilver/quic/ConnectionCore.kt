@@ -773,7 +773,9 @@ public class ConnectionCore internal constructor(
             if (p.challengeDeadline <=
                 now
             ) {
-                if (p === paths.active &&
+                if (p.awaitingCid) {
+                    onPathFailed(p, PathFailureReason.NoSpareConnectionId)
+                } else if (p === paths.active &&
                     p.handshakeValidated
                 ) {
                     settleHandshakeValidated(p)

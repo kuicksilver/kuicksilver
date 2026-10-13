@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.kuicksilver.quic
 
+import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import kotlin.jvm.JvmInline
 
 /**
@@ -57,6 +58,35 @@ public enum class PathChangeReason {
     /** The active path failed validation and the connection fell back to the last validated path (section 9.3.2). */
     ValidationFailed,
 }
+
+/** Why a path failed validation ([ConnectionEvent.PathFailed], [PathEvent.Failed], [PathValidationException]). */
+@ExperimentalKuicksilverApi
+public enum class PathFailureReason {
+    /** No PATH_RESPONSE within max(3 x PTO, 6 x initial RTT) of the last PATH_CHALLENGE period (RFC 9000 section 8.2.4). */
+    ValidationTimeout,
+
+    /**
+     * The peer had not given us a connection ID we had not used yet, and none came within max(3 x PTO, 6 x initial RTT): a probe on a
+     * new path must not reuse the active path's ID, or an observer could link the two (RFC 9000 section 9.5). Usually seen right
+     * after the handshake, before the peer's NEW_CONNECTION_ID frames arrived; retrying once one arrives succeeds.
+     */
+    NoSpareConnectionId,
+}
+
+/**
+ * Thrown by [QuicConnection.migrate] when the new path could not be validated; [reason] says why. An IllegalStateException, as the
+ * failure was before this type existed.
+ */
+@ExperimentalKuicksilverApi
+public class PathValidationException(
+    /** Why the path failed. */
+    public val reason: PathFailureReason,
+) : IllegalStateException(
+        when (reason) {
+            PathFailureReason.ValidationTimeout -> "path validation failed"
+            PathFailureReason.NoSpareConnectionId -> "path validation failed: no spare connection ID from the peer"
+        },
+    )
 
 /** ECN codepoint of a datagram (RFC 9000 section 13.4). */
 public enum class Ecn {

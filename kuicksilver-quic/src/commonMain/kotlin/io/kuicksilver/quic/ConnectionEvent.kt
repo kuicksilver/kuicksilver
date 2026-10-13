@@ -111,10 +111,18 @@ public sealed interface ConnectionEvent {
         public val path: PathId,
     ) : ConnectionEvent
 
-    /** [path] never answered within the validation timeout (RFC 9000 section 8.2.4). */
-    public class PathFailed(
-        public val path: PathId,
-    ) : ConnectionEvent
+    /** [path] never answered within the validation timeout (RFC 9000 section 8.2.4), or [reason] says why it could not be probed. */
+    public class PathFailed
+        @ExperimentalKuicksilverApi
+        constructor(
+            public val path: PathId,
+            /** Why the validation failed. */
+            @property:ExperimentalKuicksilverApi public val reason: PathFailureReason,
+        ) : ConnectionEvent {
+            /** A validation that timed out ([PathFailureReason.ValidationTimeout]). */
+            @OptIn(ExperimentalKuicksilverApi::class)
+            public constructor(path: PathId) : this(path, PathFailureReason.ValidationTimeout)
+        }
 
     /** Packets now go to [new] instead of [old] (RFC 9000 section 9.3), for the given [reason]. */
     public class PathChanged(
