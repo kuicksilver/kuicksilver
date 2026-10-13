@@ -1052,6 +1052,8 @@ public class ConnectionCore internal constructor(
         check(role == TlsRole.Client) { "only a client migrates (RFC 9000 section 9)" }
         check(state == ConnectionState.Confirmed) { "migration before the handshake is confirmed (RFC 9000 section 9)" }
         check(peerTp?.disableActiveMigration != true) { "the peer advertised disable_active_migration" }
+        // RFC 9000 section 9.5: traffic on a new path to a peer without connection IDs is trivially linkable to the old one
+        check(remoteCid.length != 0) { "the peer uses a zero-length connection ID (RFC 9000 section 9.5)" }
         this.now = now
         val p =
             paths.add(socket, remote, config.congestionController(), config.newPathInitialRtt, evict = false)

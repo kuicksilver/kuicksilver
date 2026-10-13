@@ -422,6 +422,22 @@ class PathTest {
         }
     }
 
+    /**
+     * Review finding 26, RFC 9000 section 9.5: "An endpoint SHOULD NOT initiate migration with a peer that has requested a zero-length
+     * connection ID, because traffic over the new path might be trivially linkable to traffic over the old one."
+     */
+    @Test fun noMigrationToAZeroLengthCidServer() {
+        val (p, c) = connected()
+        try {
+            c.remoteCid = io.kuicksilver.quic.wire.ConnectionId.EMPTY // as from a server whose Source Connection ID was empty
+            val e = kotlin.test.assertFailsWith<IllegalStateException> { c.addPath(p.serverAddr, p.now) }
+            assertTrue("zero-length" in (e.message ?: ""), e.message)
+            assertEquals(1, c.paths.all.size)
+        } finally {
+            p.close()
+        }
+    }
+
     @Test fun newPathGetsThreeChallengesBeforeDeadline() {
         // RFC 9000 section 8.2.4: three PATH_CHALLENGEs (at 0, 1 and 2 PTO) go out before the 3 x PTO validation timeout
         // a 1 ms initialRtt keeps the 6 x initialRtt floor out of the way: the deadline is 3 x PTO
