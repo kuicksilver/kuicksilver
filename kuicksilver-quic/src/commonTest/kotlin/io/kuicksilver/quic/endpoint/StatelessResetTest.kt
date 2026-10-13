@@ -363,6 +363,64 @@ class StatelessResetTest {
         }
     }
 
+    /**
+     * Review finding 16, RFC 9000 section 10.3: "endpoints MUST treat any packet ending in a valid stateless reset token as a
+     * Stateless Reset, as other QUIC versions might allow the use of a long header." Only short-header datagrams were checked.
+     */
+    @Test fun resetWithLongHeaderIsDetected() {
+        for (variant in 0 until 2) {
+            val p = Pair()
+            try {
+                val c = p.connect()
+                assertTrue(p.handshake(c))
+                repeat(5) { p.step() }
+                val restarted =
+                    EndpointCore(
+                        QuicEndpointConfig
+                            .Builder()
+                            .apply {
+                                server = QuicServerConfig.Builder(CoreFixtures.server()).build()
+                                crypto = NullCryptoProvider
+                            }.build(),
+                        Random(99),
+                    )
+                try {
+                    val id = c.openStream(true)
+                    c.writeStream(id, ByteArray(100), 0, 100, false)
+                    p.batch.clear()
+                    assertTrue(c.poll(p.batch, p.now) >= 1)
+                    val dg = p.batch.buffer(0).toByteArray(p.batch.length(0))
+                    assertNull(p.feed(restarted, dg, clientAddr))
+                    val reset = p.stateless(restarted).single()
+                    reset[0] = 0xc3.toByte()
+                    if (variant == 0) {
+                        // a version-1 Handshake header for a connection ID the client does not know
+                        reset[1] = 0
+                        reset[2] = 0
+                        reset[3] = 0
+                        reset[4] = 1
+                        reset[5] = 8
+                    } else {
+                        // another version's long header that QUIC v1 cannot even parse
+                        reset[1] = 0x7a
+                        reset[5] = 0xff.toByte()
+                    }
+                    assertNotNull(p.feed(p.client, reset, serverAddr), "variant $variant: the long-header reset reaches the connection")
+                    val r =
+                        p.closed(c) ?: run {
+                            p.step()
+                            p.closed(c)
+                        }
+                    assertIs<QuicException.ConnectionLost.StatelessReset>(r, "variant $variant")
+                } finally {
+                    restarted.close()
+                }
+            } finally {
+                p.close()
+            }
+        }
+    }
+
     @Test fun resetDetectedWhenPeerAddressTextDiffers() {
         // the client dialled "::1"; the reset comes from the same address written out in full: one peer, so the reset is found
         // (Kotlin/Native's InetSocketAddress compares the text, so the reset candidates are keyed by the address bytes)

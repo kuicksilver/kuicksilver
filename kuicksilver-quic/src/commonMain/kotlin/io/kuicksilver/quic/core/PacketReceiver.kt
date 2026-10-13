@@ -120,10 +120,10 @@ internal class PacketReceiver(
             if (hv.packetEnd <= off) break
             off = hv.packetEnd
         }
-        if (!processed && length >= io.kuicksilver.quic.endpoint.StatelessReset.MIN_SIZE &&
-            data[0].toInt() and 0x80 == 0
-        ) {
-            c.checkStatelessReset(data, length, now) // RFC 9000 section 10.3.1: a reset looks like an undecryptable short header
+        if (!processed && length >= io.kuicksilver.quic.endpoint.StatelessReset.MIN_SIZE) {
+            // RFC 9000 section 10.3: a reset looks like an undecryptable packet, and "endpoints MUST treat any packet ending in a valid
+            // stateless reset token as a Stateless Reset, as other QUIC versions might allow the use of a long header"
+            c.checkStatelessReset(data, length, now)
         }
     }
 
