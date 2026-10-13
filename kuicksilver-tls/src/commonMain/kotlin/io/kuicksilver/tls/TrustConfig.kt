@@ -224,41 +224,41 @@ public sealed interface VerifyReason {
     }
 
     /** No chain to a trusted anchor could be built; alert `unknown_ca` (48). Also the fallback for unclassified platform failures. */
-    public object UnknownIssuer : VerifyReason
+    public data object UnknownIssuer : VerifyReason
 
     /** A certificate of the chain is past its notAfter; alert `certificate_expired` (45). */
-    public object Expired : VerifyReason
+    public data object Expired : VerifyReason
 
     /** A certificate of the chain is before its notBefore; alert `certificate_expired` (45). */
-    public object NotYetValid : VerifyReason
+    public data object NotYetValid : VerifyReason
 
     /** A certificate of the chain is revoked; alert `certificate_revoked` (44). */
-    public object Revoked : VerifyReason
+    public data object Revoked : VerifyReason
 
     /**
      * The revocation status could not be determined and the verifier requires it; alert `unknown_ca` (48). Reported by the
      * platform verifier when it says so (JVM PKIX `UNDETERMINED_REVOCATION_STATUS`, Apple
      * `errSecIncompleteCertRevocationCheck`) and by a [CertificateVerifier]; `ksl`'s own verifier does not check revocation in v1.
      */
-    public object UnknownRevocationStatus : VerifyReason
+    public data object UnknownRevocationStatus : VerifyReason
 
     /** A signature in the chain does not verify; alert `bad_certificate` (42). */
-    public object BadSignature : VerifyReason
+    public data object BadSignature : VerifyReason
 
     /** The key usage or extended key usage forbids this use (RFC 5280 section 4.2.1.12); alert `unsupported_certificate` (43). */
-    public object InvalidPurpose : VerifyReason
+    public data object InvalidPurpose : VerifyReason
 
     /** A certificate could not be parsed; alert `bad_certificate` (42). */
-    public object BadEncoding : VerifyReason
+    public data object BadEncoding : VerifyReason
 
     /** The peer sent no certificate where one is required; alert `bad_certificate` (42). */
-    public object NoCertificate : VerifyReason
+    public data object NoCertificate : VerifyReason
 
     /**
      * A Certificate Transparency policy (RFC 6962) rejected the chain; alert `certificate_unknown` (46). Reported by the
      * platform verifier when it says so (Android, whose CT policy names it in its error) and by a [CertificateVerifier].
      */
-    public object CertificateTransparency : VerifyReason
+    public data object CertificateTransparency : VerifyReason
 
     /**
      * A reason a [CertificateVerifier] or the platform gave that fits no other case; alert `certificate_unknown` (46).

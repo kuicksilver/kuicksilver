@@ -69,7 +69,8 @@ The client closes with a TLS alert: `TransportClosed(code = 0x0100 + alert, init
 `javax.net.ssl.SSLException`). The server sees `TransportClosed(initiator = Peer)` with a `TlsException.AlertReceived`
 ("TLS alert received from the peer: <description> (<code>)") and counts it in `handshakesFailedTls`.
 
-Decide on `reason`, not on the message text (the message of the object reasons below prints the class name only):
+Decide on `reason`, not on the message text ("certificate verification failed: <reason>", for example
+`Expired` or `HostnameMismatch(expected=…, presented=[…])`):
 
 | `VerifyReason` | Alert | Usual cause and fix |
 |---|---|---|

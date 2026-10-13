@@ -386,6 +386,8 @@ QUIC runtime and sockets:
 
 TLS and native layer (`kuicksilver-tls`, `kuicksilver-native`):
 
+- `TlsException.Verify` printed `VerifyReason.Expired` and the other object reasons as `ClassName@hash`; they are
+  `data object`s now, so the message reads "certificate verification failed: Expired".
 - `TrustConfig.Platform` works on Windows Native (mingwX64): it rejected every peer, so the default
   `HttpClient(Kuicksilver)` could not open any public HTTPS site. It now verifies with CryptoAPI
   (`CertGetCertificateChain` with the presented intermediates and AIA, `CertVerifyCertificateChainPolicy` with the SSL
