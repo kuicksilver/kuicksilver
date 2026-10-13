@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Builds kuicksilver-interop:local (JVM) for the host's Linux platform (both libksl.so variants are packed; KSL_INTEROP_PLATFORMS overrides),
 # or with --native kuicksilver-interop-native:local from the Kotlin/Native executables (linux/amd64 and linux/arm64).
+# KSL_CC=bbr (or newreno) builds the JVM image with that congestion controller instead of CUBIC (Dockerfile ARG KSL_CC).
 # Prerequisites: the Linux libksl.so files (tools/ci/docker-jvm.sh step 1, or tools/build-jni.sh inside the OpenSSL images) and Docker.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/../.." && pwd)"; cd "$root"
@@ -25,5 +26,5 @@ for cls in linux-x86_64 linux-aarch_64; do
   fi
 done
 ./gradlew --max-workers=2 -q -x :kuicksilver-native:buildJniHost :kuicksilver-interop:installJvmDist   # the image carries the manylinux .so above, never a host build (review I8)
-docker buildx build --platform "$platforms" --load -t kuicksilver-interop:local -f tools/interop/Dockerfile .
+docker buildx build --platform "$platforms" --build-arg KSL_CC="${KSL_CC:-}" --load -t kuicksilver-interop:local -f tools/interop/Dockerfile .
 echo "built kuicksilver-interop:local for $platforms"

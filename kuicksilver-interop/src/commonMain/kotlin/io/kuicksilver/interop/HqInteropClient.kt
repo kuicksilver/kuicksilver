@@ -1,5 +1,7 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
+@file:OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+
 package io.kuicksilver.interop
 
 import io.kuicksilver.annotations.DelicateKuicksilverApi
@@ -44,7 +46,7 @@ internal object HqInteropClient {
         if (requests.isEmpty()) return false
         val first = Url.parse(requests[0])
         val tls = tlsConfig(TlsRole.Client) { alpn = listOf("hq-interop"); serverName = first.host.takeUnless { it.contains(':') };   /* an IPv6 literal is no SNI name: the trust config names what to verify */ this.trust = trust; cipherSuites = plan.cipherSuites; keylog?.let { this.keylog = keylogFile(it) } }
-        val quic = quicConfig { versions = plan.quic.versions; initialVersion = plan.quic.initialVersion; handshakeTimeout = plan.quic.handshakeTimeout; this.qlog = qlog }
+        val quic = quicConfig { versions = plan.quic.versions; initialVersion = plan.quic.initialVersion; handshakeTimeout = plan.quic.handshakeTimeout; congestionController = plan.quic.congestionController; this.qlog = qlog }
         val client = QuicClientConfig.Builder(tls).apply { this.quic = quic }.build()
         val remote = InetSocketAddress(first.host, first.port)
         val v6 = (remote.resolveAddress()?.size ?: 4) == 16   /* `server6` resolves to an IPv6 address: the local socket must be of that family */

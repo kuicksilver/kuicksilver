@@ -1,5 +1,7 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
+@file:OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+
 package io.kuicksilver.interop
 
 import io.kuicksilver.annotations.DelicateKuicksilverApi
@@ -10,6 +12,8 @@ import io.kuicksilver.http3.Http3Request
 import io.kuicksilver.http3.Http3ServerRequest
 import io.kuicksilver.quic.ConnectionAdmission
 import io.kuicksilver.quic.QlogSink
+import io.kuicksilver.quic.CongestionController
+import io.kuicksilver.quic.Cubic
 import io.kuicksilver.quic.QuicEndpointConfig
 import io.kuicksilver.quic.QuicServerConfig
 import io.kuicksilver.quic.quicConfig
@@ -72,9 +76,9 @@ internal class H3InteropServer private constructor(private val endpoints: List<H
     override fun close() { scope.cancel(); for (ep in endpoints) ep.close() }
 
     companion object {
-        suspend fun start(identity: TlsIdentity, port: Int, www: String, versions: List<VersionProfile>, host: String = "0.0.0.0", admission: ConnectionAdmission = ConnectionAdmission.default(), cipherSuites: CipherSuites = CipherSuites.Default, handshakeTimeout: Duration = 10.seconds, qlog: QlogSink? = null, ipv6: Boolean = true): H3InteropServer {
+        suspend fun start(identity: TlsIdentity, port: Int, www: String, versions: List<VersionProfile>, host: String = "0.0.0.0", admission: ConnectionAdmission = ConnectionAdmission.default(), cipherSuites: CipherSuites = CipherSuites.Default, handshakeTimeout: Duration = 10.seconds, qlog: QlogSink? = null, ipv6: Boolean = true, congestionController: () -> CongestionController = { Cubic() }): H3InteropServer {
             val tls = tlsConfig(TlsRole.Server) { alpn = listOf(Http3Endpoint.H3); this.identity = identity; this.cipherSuites = cipherSuites }
-            val quic = quicConfig { this.versions = versions; maxBidiStreams = 1000; this.qlog = qlog; this.handshakeTimeout = handshakeTimeout }
+            val quic = quicConfig { this.versions = versions; maxBidiStreams = 1000; this.qlog = qlog; this.handshakeTimeout = handshakeTimeout; this.congestionController = congestionController }
             val config = QuicEndpointConfig.Builder().apply { server = QuicServerConfig.Builder(tls).apply { this.quic = quic }.build(); this.admission = admission }.build()
             val endpoints = ArrayList<Http3Endpoint>(2); endpoints += Http3Endpoint.bind(InetSocketAddress(host, port), config)
             if (ipv6 && host == "0.0.0.0") try { endpoints += Http3Endpoint.bind(InetSocketAddress("::", port), config) } catch (e: Exception) { Files.log("IPv6 endpoint not bound: ${e.message}") }
@@ -90,7 +94,7 @@ internal object H3InteropClient {
         if (requests.isEmpty()) return false
         val first = Url.parse(requests[0])
         val tls = tlsConfig(TlsRole.Client) { alpn = listOf(Http3Endpoint.H3); serverName = first.host.takeUnless { it.contains(':') }; this.trust = trust; cipherSuites = plan.cipherSuites; keylog?.let { this.keylog = keylogFile(it) } }
-        val quic = quicConfig { versions = plan.quic.versions; initialVersion = plan.quic.initialVersion; handshakeTimeout = plan.quic.handshakeTimeout; this.qlog = qlog }
+        val quic = quicConfig { versions = plan.quic.versions; initialVersion = plan.quic.initialVersion; handshakeTimeout = plan.quic.handshakeTimeout; congestionController = plan.quic.congestionController; this.qlog = qlog }
         val remote = InetSocketAddress(first.host, first.port)
         val v6 = (remote.resolveAddress()?.size ?: 4) == 16
         val endpoint = Http3Endpoint.bind(InetSocketAddress(if (v6) "::" else "0.0.0.0", 0), QuicEndpointConfig.Builder().build())
