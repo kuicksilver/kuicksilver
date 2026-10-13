@@ -271,6 +271,11 @@ TLS and native layer (`kuicksilver-tls`, `kuicksilver-native`):
 - TLS over TCP: the reader and the writer pump could drain ciphertext to the transport at the same time, reordering
   records (the peer failed with bad_record_mac) or failing the transport with "Concurrent write attempts" under
   full-duplex traffic; drains are serialized now (found by the soak harness).
+- TLS over TCP: with both peers writing at once over full transports, a connection could stop for good. The reader pump
+  drained ciphertext too, including the application data the writer pump had just encrypted, and while it waited for
+  room on the transport it read nothing; when both peers' reader pumps did, neither transport emptied again. Only the
+  writer pump and a separate drainer write to the transport now, and the reader pump never waits on it (found while
+  chasing a hang of `AbandonedBodyTest`; `TlsConnectionTest.fullDuplexOverFullTransportsNeverStalls`).
 - A TLS connection whose transport failed while the application was writing (a peer gone mid-response) left the
   application's writer waiting forever on a full output buffer; the output channel is now cancelled with the failure, so
   a Ktor server handler writing a long body to a client that left ends and releases its connection.
