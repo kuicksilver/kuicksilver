@@ -78,7 +78,11 @@ public class Http3ClientConfig {
     /** HTTP/3 settings of the engine's connections. */
     public var settings: Http3Settings = Http3Settings.Default
 
-    /** The client QUIC endpoint (dispatcher, crypto provider, socket factory). */
+    /**
+     * The client QUIC endpoint (dispatcher, crypto provider, socket factory). Its `connectionIdLength` and the one of
+     * [KuicksilverEngineConfig.quic] are kept equal: the one left at its default follows the other, and two different explicit
+     * values fail the engine's creation with [IllegalArgumentException].
+     */
     public var endpoint: QuicEndpointConfig = QuicEndpointConfig.Default
 
     /**
@@ -114,7 +118,10 @@ public class KuicksilverEngineConfig : HttpClientEngineConfig() {
     /** Further TLS settings applied after the engine's (ALPN and server name come from the request). */
     public var tls: TlsConfig.Builder.() -> Unit = {}
 
-    /** QUIC transport settings of HTTP/3 connections. */
+    /**
+     * QUIC transport settings of HTTP/3 connections. A `connectionIdLength` set here is used by the engine's endpoint too
+     * ([Http3ClientConfig.endpoint]).
+     */
     public var quic: QuicConfig = QuicConfig.Default
 
     /**

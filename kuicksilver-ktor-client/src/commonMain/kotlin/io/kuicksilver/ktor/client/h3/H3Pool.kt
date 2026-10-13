@@ -112,11 +112,19 @@ internal class H3Pool(
 ) {
     private val lock = Mutex()
 
-    /** The engine's endpoint with its logger and connection listener, when the engine sets them. */
+    /**
+     * The connection ID length of the engine's endpoint and connections, which must agree (the endpoint parses short headers
+     * with it): whichever of `quic` and `http3.endpoint` left the default follows the other; two different explicit values
+     * are refused here, when the engine is created.
+     */
+    private val connectionIdLength: Int =
+        resolveConnectionIdLength(config.quic.connectionIdLength, config.http3.endpoint.connectionIdLength)
+
+    /** The engine's endpoint with its logger, connection listener and [connectionIdLength]. */
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
     private val endpointConfig: io.kuicksilver.quic.QuicEndpointConfig =
         config.http3.endpoint.let { e ->
-            if (config.logger == null && config.http3.connectionListener == null) {
+            if (config.logger == null && config.http3.connectionListener == null && e.connectionIdLength == connectionIdLength) {
                 e
             } else {
                 e
@@ -124,19 +132,26 @@ internal class H3Pool(
                     .apply {
                         config.logger?.let { logger = it }
                         config.http3.connectionListener?.let { listener = it }
+                        connectionIdLength = this@H3Pool.connectionIdLength
                     }.build()
             }
         }
 
-    /** The engine's QUIC settings with its qlog sink, when the engine sets one. */
+    /** The engine's QUIC settings with its qlog sink and [connectionIdLength]. */
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
     private val quic: io.kuicksilver.quic.QuicConfig =
-        config.http3.qlog?.let { sink ->
-            config.quic
-                .toBuilder()
-                .apply { qlog = sink }
-                .build()
-        } ?: config.quic
+        config.quic.let { q ->
+            if (config.http3.qlog == null && q.connectionIdLength == connectionIdLength) {
+                q
+            } else {
+                q
+                    .toBuilder()
+                    .apply {
+                        config.http3.qlog?.let { qlog = it }
+                        connectionIdLength = this@H3Pool.connectionIdLength
+                    }.build()
+            }
+        }
     private var endpoint: Http3Endpoint? = null
     private val connections = HashMap<String, H3Entry>()
 
@@ -520,6 +535,26 @@ internal class H3Pool(
     }
 
     internal companion object {
+        /** See [connectionIdLength]: the explicit one of the two lengths, or the common one. */
+        fun resolveConnectionIdLength(
+            quic: Int,
+            endpoint: Int,
+        ): Int {
+            val default = io.kuicksilver.quic.QuicConfig.Default.connectionIdLength
+            return when {
+                quic == endpoint -> quic
+
+                endpoint == default -> quic
+
+                quic == default -> endpoint
+
+                else -> throw IllegalArgumentException(
+                    "quic.connectionIdLength ($quic) and http3.endpoint.connectionIdLength ($endpoint) differ: " +
+                        "set one of them, the other follows",
+                )
+            }
+        }
+
         /** Connection-specific fields (RFC 9114 section 4.2) and HTTP/1.1 WebSocket handshake fields RFC 9220 drops. */
         val HOP_BY_HOP = setOf("connection", "keep-alive", "proxy-connection", "transfer-encoding", "upgrade", "host", "te")
         val WS_HOP_BY_HOP = setOf("sec-websocket-key", "sec-websocket-accept")
