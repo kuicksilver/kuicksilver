@@ -353,6 +353,61 @@ class H3DatagramTest {
             }
         }
 
+    /**
+     * RFC 9297 section 2.1: "If a datagram is received after the corresponding stream's receive side is closed, the
+     * received datagrams MUST be silently dropped": the stream's datagram flow ends with its receive side.
+     */
+    @Test fun datagramsAfterReceiveSideClosedAreDropped() =
+        h3Test {
+            QuicPair.open().useScoped { q ->
+                val (c, s) = q.connect()
+                val server = Http3Connection.server(s, connectOn)
+                val raw = RawPeer(c)
+                raw.openControl(listOf(SettingsId.H3_DATAGRAM to 1L))
+                withTimeout(5.seconds) { server.peerSettings.filterNotNull().first() }
+                val st = c.openBidi()
+                val req = listOf(":method" to "CONNECT", ":protocol" to "echo", ":scheme" to "https", ":authority" to "a", ":path" to "/d")
+                st.output.writeFully(raw.headers(st.id, req))
+                st.output.flush()
+                val tunnel = server.acceptRequest().acceptConnect()
+                val got = kotlinx.coroutines.flow.MutableStateFlow(listOf<String>())
+                val collector = launch { tunnel.datagrams.collect { d -> got.value = got.value + d.decodeToString() } }
+                val quarter = VarInt.encode(st.id / 4)
+                c.sendDatagram(quarter + "a".encodeToByteArray())
+                withTimeout(5.seconds) { got.first { it == listOf("a") } }
+                st.output.flushAndClose() // the receive side of the server's stream ends
+                tunnel.input.readAllBytes()
+                withTimeout(5.seconds) { collector.join() } // the flow ended with the receive side
+                c.sendDatagram(quarter + "b".encodeToByteArray())
+                delay(100)
+                assertEquals(listOf("a"), got.value)
+                assertFalse(server.closed.isCompleted)
+            }
+        }
+
+    /**
+     * RFC 9297 section 2.1: "HTTP/3 Datagrams MUST NOT be sent unless the corresponding stream's send side is open": once
+     * our output is closed or the stream reset, trySendDatagram answers Closed and sendDatagram throws.
+     */
+    @Test fun noDatagramsAfterSendSideClosed() =
+        h3Test {
+            H3Pair.open(serverSettings = connectOn).useScoped { p ->
+                p.client.peerSettings
+                    .filterNotNull()
+                    .first()
+                val serverSide = async { p.server.acceptRequest().acceptConnect() }
+                val s = p.client.connect(connectReq(), "echo")
+                assertEquals(DatagramSendResult.Sent, s.trySendDatagram(byteArrayOf(1)))
+                s.output.flushAndClose()
+                assertEquals(DatagramSendResult.Closed, s.trySendDatagram(byteArrayOf(2)))
+                assertFailsWith<IllegalStateException> { s.sendDatagram(byteArrayOf(3)) }
+                val t = serverSide.await()
+                assertEquals(DatagramSendResult.Sent, t.trySendDatagram(byteArrayOf(4)))
+                t.reset(Http3ErrorCode.REQUEST_CANCELLED)
+                assertEquals(DatagramSendResult.Closed, t.trySendDatagram(byteArrayOf(5)))
+            }
+        }
+
     @Test fun unknownStreamDroppedSilently() =
         h3Test {
             QuicPair.open().use { q ->

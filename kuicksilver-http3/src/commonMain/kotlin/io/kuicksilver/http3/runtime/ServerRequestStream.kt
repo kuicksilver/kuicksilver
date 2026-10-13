@@ -238,6 +238,7 @@ internal class ServerRequestImpl(
     /** The request's direction ended (FIN, reset or a stream error); ends a tunnel whose response side already ended. */
     fun receiveEnded() {
         receiveEnded = true
+        session.datagrams.unregister(st.id) // datagrams after the receive side closed are dropped (RFC 9297 section 2.1)
         if (tunnel && sendEnded) done()
     }
 

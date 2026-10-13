@@ -185,8 +185,10 @@ waits for the server's SETTINGS and fails with `Http3Exception.Settings` if the 
 plus HTTP datagrams bound to the stream (RFC 9297). `Http3Stream.headers` holds the peer's fields: the CONNECT request's on
 the server, the 2xx response's on the client (for example `sec-websocket-protocol`, RFC 9220 section 3). Each
 direction ends on its own: closing `output` sends FIN and leaves `input` readable until the peer's FIN (a TCP-style
-half-close, RFC 9114 section 4.4); the stream and its datagram registration are released once both directions ended or
-the stream was reset.
+half-close, RFC 9114 section 4.4); the stream is released once both directions ended or the stream was reset. Datagrams
+follow the stream's state (RFC 9297 section 2.1): the `datagrams` flow ends when the receive side closes and later
+datagrams for the stream are dropped; once our send side is closed (`output` closed, or `reset`) `trySendDatagram`
+answers `Closed` and `sendDatagram` throws `IllegalStateException`.
 
 ```kotlin
 // guide:http3:connect (server)

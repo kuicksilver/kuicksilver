@@ -563,6 +563,11 @@ HTTP/3 (`kuicksilver-http3`):
 - A HEADERS frame on an established CONNECT tunnel (a 2xx was sent or received, Extended CONNECT and WebSockets
   included) was taken as trailers and silently ended the tunnel's input; it is now a connection error
   `H3_FRAME_UNEXPECTED`, on the server and on the client (RFC 9114 section 4.4).
+- HTTP datagrams follow the stream's state (RFC 9297 section 2.1): datagrams that arrived after the stream's receive
+  side closed were still delivered (the registration lasted until both directions ended) and are now dropped, the
+  `Http3Stream.datagrams` flow ending with the receive side; after our send side closed (`output` closed or `reset`)
+  `trySendDatagram` still sent, and now answers `DatagramSendResult.Closed` (`sendDatagram` throws
+  `IllegalStateException`).
 
 Ktor client (`kuicksilver-ktor-client`):
 

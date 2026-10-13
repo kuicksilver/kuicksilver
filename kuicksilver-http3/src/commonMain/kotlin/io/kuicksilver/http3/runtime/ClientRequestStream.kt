@@ -67,10 +67,9 @@ internal suspend fun H3Session.connect(
             throw Http3Exception.ConnectRejected(resp.status, resp.headers)
         }
         val writer = ResponseWriterImpl(this@connect, resp.stream, null)
-        // the datagram registration goes when both directions ended, or at a reset
+        // the datagram registration goes when the receive side ended (later datagrams are dropped, RFC 9297 section 2.1), or at a reset
         scope.launch {
             resp.pump.join()
-            writer.pump.join()
             datagrams.unregister(resp.streamId)
         }
         Http3StreamImpl(this@connect, resp.stream, resp.body, writer, resp.datagramChannel!!, resp.headers) {
