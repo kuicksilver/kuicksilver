@@ -145,6 +145,36 @@ class ReceivePathTest {
         }
     }
 
+    /**
+     * Review finding 21, RFC 9000 section 19.19: the Frame Type of CONNECTION_CLOSE is "the type of frame that triggered the error".
+     * Stream-limit and flow-control errors carried 0, and stream errors always STREAM (0x08).
+     */
+    @Test fun closeNamesTheFrameThatTriggeredTheError() {
+        val cases =
+            listOf(
+                // STREAM with OFF=0, LEN=1 on client bidi stream index 1000 (id 4000), far above the stream limit: STREAM_LIMIT_ERROR
+                byteArrayOf(0x0a, 0x4f, 0xa0.toByte(), 0x01, 0x00) to (0x04L to 0x0aL),
+                // RESET_STREAM on stream 0 with a final size of 2^40: FLOW_CONTROL_ERROR
+                byteArrayOf(0x04, 0x00, 0x00, 0xc0.toByte(), 0, 0, 0x01, 0, 0, 0, 0) to (0x03L to 0x04L),
+                // STREAM_DATA_BLOCKED on the server's unopened uni stream 3: STREAM_STATE_ERROR
+                byteArrayOf(0x15, 0x03, 0x00) to (0x05L to 0x15L),
+            )
+        for ((frame, expected) in cases) {
+            val p = CorePair()
+            try {
+                assertTrue(p.handshake())
+                p.client.testInjectFrames += 3 to frame
+                p.runUntil(limit = 300.milliseconds) { p.closedReason(p.serverEvents) != null }
+                val r = p.closedReason(p.serverEvents)
+                assertIs<QuicException.ConnectionLost.TransportClosed>(r)
+                assertEquals(expected.first, r.code, "error code for frame 0x${frame[0].toString(16)}")
+                assertEquals(expected.second, r.frameType, "Frame Type for frame 0x${frame[0].toString(16)}")
+            } finally {
+                p.close()
+            }
+        }
+    }
+
     @Test fun replayedPacketKeepsItsOwnEcn() {
         // RFC 9000 section 13.4.1: a Handshake packet held for its keys arrived in a datagram marked ECT(0); when it is fed again after the
         // (unmarked) datagram that brought the keys, it must be counted with its own mark, not the replaying datagram's

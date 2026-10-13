@@ -332,9 +332,12 @@ internal class PacketReceiver(
                 c.datagramsDropped++
                 return true
             } catch (e: QuicWireException) {
+                // RFC 9000 section 19.19: "the type of frame that triggered the error"; the stream and flow-control layers below the
+                // dispatcher do not know which frame called them, the decoder does
+                val frameType = if (reader.frameType != 0L) reader.frameType else e.frameType
                 c.fail(
                     e.code,
-                    e.frameType,
+                    frameType,
                     e.message ?: "",
                     e,
                 )
