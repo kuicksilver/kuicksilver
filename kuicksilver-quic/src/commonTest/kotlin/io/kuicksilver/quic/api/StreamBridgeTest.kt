@@ -20,6 +20,7 @@ import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlin.concurrent.Volatile
 import kotlin.test.BeforeTest
@@ -199,6 +200,11 @@ class StreamBridgeTest {
      * lets the closes already queued on the loop do the same before the packet is built (interop `zerortt`: one 303-byte
      * packet per request filled the initial window before the last 0-RTT requests left, and the runner counts what then
      * went in 1-RTT).
+     *
+     * The closes are queued on the loop's dispatcher before any of them runs: that is the case the yield covers. Calls that
+     * reach the loop from another thread one by one share packets only as far as they arrive before the first close's turn
+     * comes back, which depends on thread scheduling (on a loaded macOS host 21 of 30 runs took 3 packets when the ten
+     * closes were dispatched from the test's thread).
      */
     @OptIn(io.ktor.utils.io.InternalAPI::class)
     @Test
@@ -210,9 +216,10 @@ class StreamBridgeTest {
                     val (c, s) = p.connect(quicConfig { qlog = sink })
                     val req = "GET /a-file-name-of-some-length\r\n".encodeToByteArray()
                     val streams = List(10) { c.openBidi().also { it.output.writeBuffer.write(req, 0, req.size) } }
-                    streams.map { st -> async { st.output.flushAndClose() } }.forEach { it.await() }
+                    val loop = (streams[0] as io.kuicksilver.quic.runtime.StreamRuntime).loop.dispatcher
+                    withContext(loop) { streams.map { st -> async { st.output.flushAndClose() } }.forEach { it.await() } }
                     repeat(10) { assertContentEquals(req, s.acceptStream().input.readExactly(req.size)) }
-                    assertTrue(sink.count <= 2, "10 requests in ${sink.count} packets")
+                    assertEquals(1, sink.count, "10 requests in ${sink.count} packets")
                     c.close()
                     s.close()
                 }
