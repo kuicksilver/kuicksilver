@@ -624,6 +624,11 @@ Pre-release API and operations review (2026-10-14):
   the stop began is served and gets GOAWAY at once instead of waiting in the accept queue, and the stop returns as soon
   as the connections are idle rather than always lasting the whole grace period. `docs/guide/ktor.md` describes the
   stop as it runs.
+- QUIC counters: `datagramsDroppedQueue` now counts datagrams a loop could not forward to the loop that owns their
+  connection (its queue full or closed), as its KDoc said; `connectionsCreated` no longer counts server connections
+  for Initials that did not decrypt (forged or corrupted; they count in `datagramsDroppedUndecryptable`).
+- TLS: a `TlsConnection` that failed while being built (a client configuration without a reference identifier, a
+  native error setting SNI) leaked its `SSL*` and its `SSL_CTX`; both are freed now.
 
 ### Security
 

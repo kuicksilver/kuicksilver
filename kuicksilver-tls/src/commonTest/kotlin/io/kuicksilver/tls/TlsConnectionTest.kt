@@ -335,6 +335,23 @@ class TlsConnectionTest {
         assertTrue(e.message!!.contains("timed out"), e.message)
     }
 
+    /** A connection that fails while it is built (here: no reference identifier) frees its SSL* and its context. */
+    @Test fun aConnectionThatCannotStartLeaksNoNativeObject() {
+        val pair = ChannelPair()
+        runBlocking {
+            val before = Ksl.liveObjects()
+            repeat(50) {
+                assertFailsWith<TlsException.Config> {
+                    TlsConnection.client(pair.clientIn, pair.clientOut, TcpFixtures.client { serverName = null })
+                }
+            }
+            val after = Ksl.liveObjects()
+            // other tests' connections free theirs asynchronously, so a count may drop meanwhile but never grow by 50
+            assertTrue(after[KslConst.LIVE_SSL] <= before[KslConst.LIVE_SSL], "SSL objects ${before.toList()} -> ${after.toList()}")
+            assertTrue(after[KslConst.LIVE_CTX] <= before[KslConst.LIVE_CTX], "contexts ${before.toList()} -> ${after.toList()}")
+        }
+    }
+
     @Test fun cancellationNotWrapped() {
         val pair = ChannelPair()
         runBlocking {
