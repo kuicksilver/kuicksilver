@@ -241,4 +241,16 @@ class CubicTest {
         ackWindows(cc, t, 1)
         assertTrue(cc.cwnd < 8400L * 11 / 10, "one window after 30 s of application-limited ACKs: cwnd ${cc.cwnd}")
     }
+
+    @Test fun renoFriendlyAlphaBecomesOneAtThePriorWindow() {
+        // RFC 9438 section 4.3: "Once W_est has grown to reach the cwnd at the time of most recently setting ssthresh -- that is,
+        // W_est >= cwnd_prior -- the sender SHOULD set alpha_cubic to 1": Reno's one datagram per RTT from then on
+        val cc = afterFirstLoss()
+        var t = t0 + srtt + 1.milliseconds
+        while (cc.cwnd < 12000L) t = ackWindows(cc, t, 1, rtt = 1.milliseconds)
+        val before = cc.cwnd
+        ackWindows(cc, t, 10, rtt = 1.milliseconds)
+        val grown = cc.cwnd - before
+        assertTrue(grown >= 9L * mss, "10 RTTs above cwnd_prior grow by about 10 datagrams, not 10 x 0.529: $grown")
+    }
 }

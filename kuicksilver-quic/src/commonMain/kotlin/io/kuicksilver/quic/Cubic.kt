@@ -36,6 +36,8 @@ public class Cubic(
     private var k: Double = 0.0 // seconds from the epoch start to W_max
     private var epochStart: TimeMark = TimeMark.NEVER
     private var wEst: Double = 0.0 // Reno-friendly estimate (bytes)
+    private var alpha: Double = ALPHA // alpha_cubic of the Reno-friendly estimate (section 4.3)
+    private var cwndPrior: Long = 0 // the window just before the last reduction
     private var recoveryStart: TimeMark = TimeMark.NEVER
     private var lastSent: TimeMark = TimeMark(0)
 
@@ -179,8 +181,10 @@ public class Cubic(
             target = cwnd * 3 / 2
         }
         cwnd += (target - cwnd) * bytes / cwnd
-        // Reno-friendly region (section 4.3): W_est grows alpha segments per RTT, cwnd never falls behind it
-        wEst += ALPHA * bytes.toDouble() * mss / cwnd
+        // Reno-friendly region (section 4.3): W_est grows alpha segments per RTT, cwnd never falls behind it; once W_est is back at
+        // the window before the reduction, alpha is 1 ("the sender SHOULD set alpha_cubic to 1"): Reno's own rate from there on
+        wEst += alpha * bytes.toDouble() * mss / cwnd
+        if (alpha < 1.0 && wEst >= cwndPrior) alpha = 1.0
         if (wEst > cwnd) cwnd = wEst.toLong()
     }
 
@@ -190,6 +194,8 @@ public class Cubic(
     ) {
         if (recoveryStart != TimeMark.NEVER && sentTime <= recoveryStart) return
         recoveryStart = now
+        cwndPrior = cwnd
+        alpha = ALPHA
         // fast convergence (section 4.6): W_max = cwnd (1 + beta) / 2
         wMax = if (cwnd < wMax) cwnd * (BETA_DEN + BETA_NUM) / (2 * BETA_DEN) else cwnd
         cwnd = maxOf(cwnd * BETA_NUM / BETA_DEN, minWindow)
