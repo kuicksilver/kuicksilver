@@ -332,6 +332,13 @@ public expect object Ksl {
     public fun udpShutdown(udp: Long)
 
     public fun udpClose(udp: Long)
+
+    /**
+     * `ksl_live_objects`: the process-wide counts of native objects alive now, indexed by `KslConst.LIVE_*` (contexts,
+     * sessions, keys, key and session handles, UDP sockets, wake descriptors). For soak and leak tests; a snapshot, never
+     * a synchronisation point.
+     */
+    public fun liveObjects(): LongArray
 }
 
 /** The ABI the Kotlin side was written against; checked against [Ksl.abiVersion] on load. */

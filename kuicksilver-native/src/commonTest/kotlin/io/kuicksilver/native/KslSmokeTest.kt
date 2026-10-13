@@ -22,6 +22,22 @@ class KslSmokeTest {
 
     @Test fun abiVersionMatches() = assertEquals(KSL_ABI_VERSION, Ksl.abiVersion())
 
+    /** `ksl_live_objects` through the bindings: a context and a key handle count while they live (the soak sampler reads these). */
+    @Test fun liveObjectsCountContextsAndKeys() {
+        val before = Ksl.liveObjects()
+        assertEquals(KslConst.LIVE_COUNT, before.size)
+        val ctx = Ksl.ctxNew(KslConst.SERVER)
+        val k = Ksl.pkeyNew(TestCerts.serverKey.copyOf())
+        val during = Ksl.liveObjects()
+        Ksl.pkeyFree(k)
+        Ksl.ctxFree(ctx)
+        val after = Ksl.liveObjects()
+        assertEquals(before[KslConst.LIVE_CTX] + 1, during[KslConst.LIVE_CTX])
+        assertEquals(before[KslConst.LIVE_PKEY] + 1, during[KslConst.LIVE_PKEY])
+        assertEquals(before[KslConst.LIVE_CTX], after[KslConst.LIVE_CTX])
+        assertEquals(before[KslConst.LIVE_PKEY], after[KslConst.LIVE_PKEY])
+    }
+
     /** ABI 5: a parsed key handle serves a context after the caller dropped its own reference; garbage and a foreign key are refused. */
     @Test fun pkeyHandleSetsIdentity() {
         val k = Ksl.pkeyNew(TestCerts.serverKey.copyOf())

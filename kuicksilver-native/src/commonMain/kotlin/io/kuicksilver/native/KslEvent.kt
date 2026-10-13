@@ -101,6 +101,16 @@ public object KslConst {
     public const val UDP_DF: Int = 8
     public const val UDP_REUSEPORT: Int = 16
     public const val UDP_ADDR_LEN: Int = 20
+
+    // ksl_live_objects indices (KSL_LIVE_*)
+    public const val LIVE_CTX: Int = 0
+    public const val LIVE_SSL: Int = 1
+    public const val LIVE_KEY: Int = 2
+    public const val LIVE_PKEY: Int = 3
+    public const val LIVE_SESSION: Int = 4
+    public const val LIVE_UDP: Int = 5
+    public const val LIVE_WAKE: Int = 6
+    public const val LIVE_COUNT: Int = 7
     public const val UDP_GET_FD: Int = 1
     public const val UDP_GET_CAPS: Int = 2
     public const val UDP_GET_LOCAL: Int = 3

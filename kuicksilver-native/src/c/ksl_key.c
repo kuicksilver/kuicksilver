@@ -33,6 +33,7 @@ static const EVP_CIPHER *hp_cipher_of(int aead) { return aead == KSL_AEAD_AES_12
 
 static ksl_key *key_build(int aead, uint32_t version, const uint8_t *secret, size_t slen) {
     ksl_key *k = calloc(1, sizeof *k); if (!k) return NULL;
+    ksl_live_add(KSL_LIVE_KEY, 1);   /* a failed build frees through ksl_key_free, which takes it back */
     k->aead = aead; k->version = version; k->hash = aead == KSL_AEAD_AES_256_GCM ? KSL_HASH_SHA384 : KSL_HASH_SHA256;
     k->key_len = aead == KSL_AEAD_AES_128_GCM ? 16 : 32; k->secret_len = slen; memcpy(k->secret, secret, slen);
     int ok = ksl_hkdf_expand_label(k->hash, secret, slen, label(version, "key"), NULL, 0, k->key, k->key_len) == KSL_OK
@@ -66,7 +67,7 @@ ksl_key *ksl_key_random(int kind) {
     if (RAND_bytes(secret, 32) != 1) return NULL;
     ksl_key *k;
     if (kind == KSL_EKEY_TOKEN) k = key_build(KSL_AEAD_AES_256_GCM, V1, secret, 32);
-    else { k = calloc(1, sizeof *k); if (k) { k->secret_len = 32; memcpy(k->secret, secret, 32); } }
+    else { k = calloc(1, sizeof *k); if (k) { ksl_live_add(KSL_LIVE_KEY, 1); k->secret_len = 32; memcpy(k->secret, secret, 32); } }
     OPENSSL_cleanse(secret, 32);
     if (k) k->kind = kind;
     return k;
@@ -85,7 +86,7 @@ ksl_key *ksl_key_next(ksl_key *k) {
     return n;
 }
 void ksl_key_free(ksl_key *k) {
-    if (!k) return; EVP_CIPHER_CTX_free(k->enc); EVP_CIPHER_CTX_free(k->dec); EVP_CIPHER_CTX_free(k->hp_ctx);
+    if (!k) return; ksl_live_add(KSL_LIVE_KEY, -1); EVP_CIPHER_CTX_free(k->enc); EVP_CIPHER_CTX_free(k->dec); EVP_CIPHER_CTX_free(k->hp_ctx);
     OPENSSL_cleanse(k, sizeof *k); free(k);
 }
 static void nonce_for(const ksl_key *k, uint64_t pn, uint8_t out[12]) { memcpy(out, k->iv, 12); for (int i = 0; i < 8; i++) out[11 - i] ^= (uint8_t)(pn >> (8 * i)); }

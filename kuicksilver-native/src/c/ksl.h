@@ -150,6 +150,18 @@ typedef struct ksl_client_hello {
 int         ksl_init(void);                         /* idempotent */
 const char *ksl_version(void);                      /* "ksl 0.1.0 / OpenSSL 3.5.9 ..." */
 uint32_t    ksl_abi_version(void);
+/* Live-object counters, process-wide (soak and churn tests; additive in ABI 6, see ADR-0003): objects ksl made and has not
+ * freed yet. A handle-reference counter (pkey, session) counts the references ksl handed out and the caller has not dropped;
+ * references OpenSSL keeps inside a context or a session are not counted. Relaxed atomics: a snapshot, not a barrier. */
+#define KSL_LIVE_CTX 0             /* ksl_ctx */
+#define KSL_LIVE_SSL 1             /* ksl_ssl */
+#define KSL_LIVE_KEY 2             /* ksl_key: packet keys (KSL_EV_KEY handles included), token and reset keys */
+#define KSL_LIVE_PKEY 3            /* ksl_pkey references from ksl_pkey_new not yet dropped with ksl_pkey_free */
+#define KSL_LIVE_SESSION 4         /* ksl_session references from ksl_ssl_get1_session not yet dropped with ksl_session_free */
+#define KSL_LIVE_UDP 5             /* ksl_udp objects opened and not closed */
+#define KSL_LIVE_WAKE 6            /* wake descriptors those ksl_udp objects hold: pipe ends (Linux, Apple) or wake sockets (Windows) */
+#define KSL_LIVE_COUNT 7
+int         ksl_live_objects(int64_t *out, size_t n);  /* writes the first min(n, KSL_LIVE_COUNT) counters; returns KSL_LIVE_COUNT */
 
 /* --- context (immutable after freeze) --- */
 ksl_ctx *ksl_ctx_new(int role);

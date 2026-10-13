@@ -19,10 +19,12 @@ ksl_ssl *ksl_ssl_new(ksl_ctx *c, int mode) {
         BIO *internal = NULL; if (!BIO_new_bio_pair(&internal, 0, &s->net, 0)) { SSL_free(s->ssl); free(s); return NULL; }
         SSL_set_bio(s->ssl, internal, internal);
     }
+    ksl_live_add(KSL_LIVE_SSL, 1);
     return s;
 }
 void ksl_ssl_free(ksl_ssl *s) {
     if (!s) return;
+    ksl_live_add(KSL_LIVE_SSL, -1);
     SSL_set_shutdown(s->ssl, SSL_SENT_SHUTDOWN | SSL_RECEIVED_SHUTDOWN);   /* keeps the session resumable */
     SSL_free(s->ssl); BIO_free(s->net);
     for (int i = 0; i < KSL_NLEVELS; i++) { free(s->in[i].buf); free(s->stash[i].buf); }
@@ -133,6 +135,7 @@ int ksl_ssl_export_keying_material(ksl_ssl *s, uint8_t *out, size_t out_len, con
 ksl_session *ksl_ssl_get1_session(ksl_ssl *s) {
     ERR_clear_error(); SSL_SESSION *sess = SSL_get1_session(s->ssl);
     if (sess && !SSL_SESSION_is_resumable(sess)) { SSL_SESSION_free(sess); sess = NULL; }
+    if (sess) ksl_live_add(KSL_LIVE_SESSION, 1);
     return (ksl_session *)sess;
 }
 int ksl_ssl_set_session(ksl_ssl *s, ksl_session *session) {
@@ -140,7 +143,7 @@ int ksl_ssl_set_session(ksl_ssl *s, ksl_session *session) {
     if (!session || SSL_set_session(s->ssl, (SSL_SESSION *)session) != 1) { ksl_ssl_set_error(s, KSL_E_BAD_ARG, "ksl: session rejected"); return KSL_ERROR; }
     return KSL_OK;
 }
-void ksl_session_free(ksl_session *session) { SSL_SESSION_free((SSL_SESSION *)session); }
+void ksl_session_free(ksl_session *session) { if (session) ksl_live_add(KSL_LIVE_SESSION, -1); SSL_SESSION_free((SSL_SESSION *)session); }
 int ksl_ssl_new_session_ticket(ksl_ssl *s) { ERR_clear_error(); if (SSL_new_session_ticket(s->ssl) != 1) { ksl_ssl_set_error(s, KSL_E_NOT_SUPPORTED, "ksl: ticket request failed"); return KSL_ERROR; } return KSL_OK; }
 int ksl_ssl_key_update(ksl_ssl *s, int request_peer) {
     ERR_clear_error();
