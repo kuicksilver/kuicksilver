@@ -435,6 +435,8 @@ internal class KslQuicTlsSession(
         if (cached != null) presented = cached.chain
         if (pinsApply) {
             if (cached == null) presented = Ksl.sslPeerChain(s(), KslConst.CHAIN_PRESENTED).map(::Certificate)
+            // ClientAuth.Optional: a client without a certificate is accepted; one that presents a certificate must pass the pins
+            if (config.role == TlsRole.Server && config.clientAuth == ClientAuth.Optional && presented.isEmpty()) return
             val r = verification.pinCheck(cached?.validated ?: validatedChain())
             if (r is VerifyResult.Rejected) {
                 failure =

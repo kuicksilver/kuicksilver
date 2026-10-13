@@ -250,11 +250,14 @@ public class TlsConnection private constructor(
             }
         } else {
             val pinnedClients = effective.clientAuth != ClientAuth.None && effective.trust is TrustConfig.Pinned
+            // ClientAuth.Optional: a client without a certificate is accepted (its session can never gain one); a presented one must pass the pins
+            val anonymous = effective.clientAuth == ClientAuth.Optional && presented.isEmpty()
             // a resumed session carries only the client's leaf, so a CA pin cannot be re-checked; it resumed under this trust configuration's
             // session context, and with pinned clients ksl encrypts a ticket only on the explicit request below and resumes only tickets
             // stamped that way (ksl_ctx.c ticket callbacks): the verdict travels with it
             if (pinnedClients &&
-                !reused
+                !reused &&
+                !anonymous
             ) {
                 val r = Verification(effective).pinCheck(validated())
                 if (r is VerifyResult.Rejected) abort(TlsException.Verify(r.reason, presented))

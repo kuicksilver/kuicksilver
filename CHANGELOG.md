@@ -454,6 +454,9 @@ QUIC runtime and sockets:
 
 TLS and native layer (`kuicksilver-tls`, `kuicksilver-native`):
 
+- A server with `ClientAuth.Optional` and `TrustConfig.Pinned` rejected every client that sent no certificate (TCP and
+  QUIC); such a client is now accepted, as documented, and a presented certificate must still match a pin
+  (`clientAuthOptionalPinnedAcceptsClientWithoutCertificate`, `quicServerOptionalPinnedAcceptsClientWithoutCertificate`).
 - `TlsException.Verify` printed `VerifyReason.Expired` and the other object reasons as `ClassName@hash`; they are
   `data object`s now, so the message reads "certificate verification failed: Expired".
 - `TrustConfig.Platform` works on Windows Native (mingwX64): it rejected every peer, so the default

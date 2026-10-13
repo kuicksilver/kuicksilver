@@ -263,6 +263,25 @@ class VerificationNegativeTest {
         )
     }
 
+    /** ClientAuth.Optional + Pinned (review T3): a client without a certificate is accepted, a presented one must match a pin. */
+    @Test fun quicServerOptionalPinnedAcceptsClientWithoutCertificate() {
+        val pinned = TrustConfig.Pinned(setOf(pin(TestCerts.client)), base = ca)
+        expectAccept(
+            run(Fixtures.client(ca)) {
+                clientAuth = ClientAuth.Optional
+                trust = pinned
+            },
+            "anonymous client under Optional + Pinned",
+        )
+        val unpinned = TlsIdentity.fromDer(listOf(TestCerts.client), TestCerts.clientKey.copyOf())
+        val o =
+            run(Fixtures.client(ca) { identity = unpinned }) {
+                clientAuth = ClientAuth.Optional
+                trust = TrustConfig.Pinned(setOf(pin(TestCerts.proxy)), base = ca)
+            }
+        assertTrue(!o.serverDone, "a presented certificate is still checked")
+    }
+
     @Test fun clientCertificateRequiredAnchoredCa() {
         val clientId = TlsIdentity.fromDer(listOf(TestCerts.client), TestCerts.clientKey.copyOf())
         expectAccept(

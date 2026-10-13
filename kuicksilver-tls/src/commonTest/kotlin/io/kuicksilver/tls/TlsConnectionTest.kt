@@ -461,6 +461,26 @@ class TlsServerTest {
             }
         }
 
+    /** ClientAuth.Optional + Pinned (review T3): a client without a certificate is accepted (TlsConfig.clientAuth KDoc), a presented one must match a pin. */
+    @Test fun clientAuthOptionalPinnedAcceptsClientWithoutCertificate(): Unit =
+        runBlocking {
+            val ca = TrustConfig.AnchoredCa(listOf(Fixtures.testCa))
+            val server =
+                TcpFixtures.server {
+                    clientAuth = ClientAuth.Optional
+                    trust = TrustConfig.Pinned(setOf(Certificate(TestCerts.proxy).spkiSha256), base = ca)
+                }
+            val (c, s) = both(TcpFixtures.client(), server)
+            try {
+                assertTrue(s.peerCertificates.isEmpty(), "no client certificate")
+            } finally {
+                c.close()
+                s.close()
+            }
+            val (_, sd) = connect(TcpFixtures.client { identity = TlsIdentity.fromDer(listOf(TestCerts.client), TestCerts.clientKey.copyOf()) }, server)
+            assertIs<VerifyReason.PinMismatch>(assertFailsWith<TlsException.Verify> { withTimeout(10.seconds) { sd.await() } }.reason)
+        }
+
     @Test fun clientAuthRequiredAnchoredCaAndPinned(): Unit =
         runBlocking {
             val ca = TrustConfig.AnchoredCa(listOf(Fixtures.testCa))
