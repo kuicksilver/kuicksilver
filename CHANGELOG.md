@@ -454,6 +454,11 @@ QUIC runtime and sockets:
 
 TLS and native layer (`kuicksilver-tls`, `kuicksilver-native`):
 
+- QUIC handshakes without ALPN completed: a server accepted a ClientHello without the extension and a client a server
+  that negotiated none. Both now close with `no_application_protocol` (CRYPTO_ERROR 0x0178, RFC 9001 section 8.1), and
+  `Http3Endpoint.connect`/`connectEarly` fail with H3_GENERAL_PROTOCOL_ERROR when a client that offered more than `h3`
+  ends on another protocol (C `quic_no_alpn_is_no_application_protocol`,
+  `Http3EndpointAlpnTest.negative_clientRefusesServerThatChoseAnotherProtocol`).
 - A server with `ClientAuth.Optional` and `TrustConfig.Pinned` rejected every client that sent no certificate (TCP and
   QUIC); such a client is now accepted, as documented, and a presented certificate must still match a pin
   (`clientAuthOptionalPinnedAcceptsClientWithoutCertificate`, `quicServerOptionalPinnedAcceptsClientWithoutCertificate`).

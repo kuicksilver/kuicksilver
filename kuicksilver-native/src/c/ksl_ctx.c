@@ -123,6 +123,7 @@ ksl_ctx *ksl_ctx_new(int role) {
     SSL_CTX_set_session_id_context(c->ctx, (const unsigned char *)"ksl", 3); memcpy(c->sid_ctx, "ksl", 3); c->sid_ctx_len = 3;
     /* every server stamps its tickets (the flag byte of ticket_gen_cb) and checks them on resumption */
     if (role == KSL_SERVER) SSL_CTX_set_session_ticket_cb(c->ctx, ticket_gen_cb, ticket_dec_cb, NULL);
+    if (role == KSL_SERVER) SSL_CTX_set_client_hello_cb(c->ctx, ksl_client_hello_cb, c);   /* QUIC ALPN check, SNI pause (KSL_OPT_SNI_PAUSE) */
     ksl_live_add(KSL_LIVE_CTX, 1);
     return c;
 }
@@ -272,7 +273,8 @@ int ksl_ctx_set_option(ksl_ctx *c, int option, int value) {
         if (c->role != KSL_SERVER) { ksl_ctx_set_error(c, KSL_E_BAD_ARG, "ksl: early data option is server-only"); return KSL_ERROR; }
         c->early_data = value != 0; if (c->early_data) ksl_ctx_enable_early_data(c->ctx); return KSL_OK;
     case KSL_OPT_SNI_PAUSE:
-        c->sni_pause = value != 0; SSL_CTX_set_client_hello_cb(c->ctx, value ? ksl_client_hello_cb : NULL, c); return KSL_OK;
+        if (c->role != KSL_SERVER) { ksl_ctx_set_error(c, KSL_E_BAD_ARG, "ksl: SNI pause is server-only"); return KSL_ERROR; }
+        c->sni_pause = value != 0; return KSL_OK;
     default: ksl_ctx_set_error(c, KSL_E_BAD_ARG, "ksl: unknown option"); return KSL_ERROR;
     }
 }

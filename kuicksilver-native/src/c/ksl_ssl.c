@@ -179,7 +179,13 @@ int ksl_drive(ksl_ssl *s) {
         if (r == 1) {
             s->done = 1;
             if (s->mode == KSL_MODE_TCP && SSL_version(s->ssl) < TLS1_3_VERSION && !SSL_get_extms_support(s->ssl)) return ksl_ssl_fail(s, KSL_E_EMS_REQUIRED, "ksl: TLS 1.2 without extended master secret rejected");
-            if (s->mode == KSL_MODE_QUIC) ksl_push_event(s, KSL_EV_HANDSHAKE_DONE, NULL, 0);
+            if (s->mode == KSL_MODE_QUIC) {
+                /* RFC 9001 section 8.1: "QUIC clients MUST use error 0x0178 to terminate a connection when ALPN negotiation fails"; an
+                   OpenSSL client accepts a server that answered without ALPN (the server side is refused in ksl_client_hello_cb) */
+                const unsigned char *a; unsigned al; SSL_get0_alpn_selected(s->ssl, &a, &al);
+                if (al == 0) { s->last_alert = SSL_AD_NO_APPLICATION_PROTOCOL; s->done = 0; return ksl_ssl_fail(s, KSL_E_NOT_SUPPORTED, "ksl: no application protocol negotiated (RFC 9001 section 8.1)"); }
+                ksl_push_event(s, KSL_EV_HANDSHAKE_DONE, NULL, 0);
+            }
             return KSL_OK;
         }
     } else {

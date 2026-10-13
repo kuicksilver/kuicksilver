@@ -5,20 +5,25 @@ package io.kuicksilver.http3
 import io.ktor.network.sockets.InetSocketAddress
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.quic.EndpointStats
+import io.kuicksilver.quic.Initiator
 import io.kuicksilver.quic.QuicClientConfig
 import io.kuicksilver.quic.QuicConfig
+import io.kuicksilver.quic.QuicConnection
 import io.kuicksilver.quic.QuicEndpoint
 import io.kuicksilver.quic.QuicEndpointConfig
+import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.QuicServerConfig
 import io.kuicksilver.tls.EarlyDataState
 import io.kuicksilver.tls.TlsConfig
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.launch
 import kotlin.time.Duration
 
 /**
  * HTTP/3 over a bound QUIC endpoint: the transport surface the Ktor engines use (layer rule, ADR-0005). TLS
  * configurations must offer ALPN `h3` (RFC 9114 section 3.1); an accepted connection that negotiated anything else is
- * closed. `SETTINGS_H3_DATAGRAM` follows the transport: it is 1 only when [QuicConfig.maxDatagramFrameSize] is not 0.
+ * closed, and [connect]/[connectEarly] fail with H3_GENERAL_PROTOCOL_ERROR ([Http3Exception.Protocol]) when the server chose
+ * another protocol the client offered. `SETTINGS_H3_DATAGRAM` follows the transport: it is 1 only when [QuicConfig.maxDatagramFrameSize] is not 0.
  */
 public class Http3Endpoint private constructor(
     private val endpoint: QuicEndpoint,
@@ -37,6 +42,7 @@ public class Http3Endpoint private constructor(
         require(H3 in tls.alpn) { "the TLS configuration must offer ALPN \"h3\"" }
         val c = endpoint.connect(remote, QuicClientConfig.Builder(tls).apply { this.quic = quic }.build())
         return try {
+            requireH3(c)
             Http3Connection.client(c, settings.withTransport(quic))
         } catch (e: Throwable) {
             c.close()
@@ -71,12 +77,38 @@ public class Http3Endpoint private constructor(
                     }.build(),
             )
         return try {
-            Http3Connection.client(c, settings.withTransport(quic))
+            if (c.isHandshakeComplete) requireH3(c)
+            Http3Connection.client(c, settings.withTransport(quic)).also { h ->
+                // 0-RTT: the protocol is settled by the handshake (a resumed session offers its own, a rejected 0-RTT may end elsewhere)
+                if (!c.isHandshakeComplete) {
+                    h.session.scope.launch {
+                        try {
+                            c.awaitHandshake()
+                        } catch (_: QuicException) {
+                            return@launch
+                        }
+                        if (c.negotiatedAlpn != H3) h.session.fail(Http3ErrorCode.GENERAL_PROTOCOL_ERROR, notH3(c.negotiatedAlpn))
+                    }
+                }
+            }
         } catch (e: Throwable) {
             c.close()
             throw e
         }
     }
+
+    /**
+     * A client offering more than `h3` may end on another of its protocols (RFC 7301): HTTP/3 must not be spoken there. The
+     * TLS layer already refuses a handshake without ALPN (RFC 9001 section 8.1, `no_application_protocol`).
+     */
+    private suspend fun requireH3(c: QuicConnection) {
+        if (c.negotiatedAlpn == H3) return
+        val message = notH3(c.negotiatedAlpn)
+        c.close(Http3ErrorCode.GENERAL_PROTOCOL_ERROR, message)
+        throw Http3Exception.Protocol(Http3ErrorCode.GENERAL_PROTOCOL_ERROR, Initiator.Local, null, message)
+    }
+
+    private fun notH3(alpn: String?): String = "the server chose ALPN \"$alpn\", not \"$H3\""
 
     /** The next server connection that negotiated `h3`. */
     public suspend fun accept(): Http3Connection {

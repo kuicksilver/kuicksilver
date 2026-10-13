@@ -71,9 +71,17 @@ int ksl_cert_verify_cb(X509_STORE_CTX *xctx, void *arg) {
     sk_X509_pop_free(s->validated_chain, X509_free); s->validated_chain = X509_STORE_CTX_get1_chain(xctx);
     return 1;
 }
-/* Server pause at ClientHello (KSL_OPT_SNI_PAUSE): Kotlin reads ksl_ssl_client_hello and answers with ksl_ssl_sni_resume. */
+/* Every server's ClientHello: QUIC needs ALPN (RFC 9001 section 8.1: "endpoints MUST immediately close a connection ... with a
+   no_application_protocol TLS alert (QUIC error code 0x0178)"); OpenSSL calls the ALPN select callback only when the extension is
+   present, so a ClientHello without it is refused here, as OpenSSL's own QUIC stack and BoringSSL do. Then the pause for SNI selection
+   (KSL_OPT_SNI_PAUSE): Kotlin reads ksl_ssl_client_hello and answers with ksl_ssl_sni_resume; the override is applied once (a second
+   ClientHello after HelloRetryRequest keeps it). */
 int ksl_client_hello_cb(SSL *ssl, int *al, void *arg) {
-    (void)arg; ksl_ssl *s = SSL_get_ex_data(ssl, 1);
+    (void)arg; ksl_ssl *s = SSL_get_ex_data(ssl, 1); const unsigned char *ext; size_t ext_len;
+    if (s->mode == KSL_MODE_QUIC && SSL_client_hello_get0_ext(ssl, TLSEXT_TYPE_application_layer_protocol_negotiation, &ext, &ext_len) != 1) {
+        *al = SSL_AD_NO_APPLICATION_PROTOCOL; return SSL_CLIENT_HELLO_ERROR;
+    }
+    if (!s->owner->sni_pause || s->sni_pending == 3) return SSL_CLIENT_HELLO_SUCCESS;
     if (s->sni_pending == 0) { s->sni_pending = 1; return SSL_CLIENT_HELLO_RETRY; }
     if (s->sni_pending == 1) return SSL_CLIENT_HELLO_RETRY;
     s->sni_pending = 3;
