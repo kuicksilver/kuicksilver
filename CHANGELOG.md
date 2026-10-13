@@ -68,6 +68,11 @@ Testing (`kuicksilver-testing`, not published) and tooling:
 - Reproducible builds: base images pinned by digest, the Gradle wrapper by checksum, `-ffile-prefix-map` in the native
   builds, and `tools/check/double-build.sh` (builds the native libraries from two checkout paths and compares them) and
   `tools/check/pins.sh`; the CI scripts and OpenSSL tasks run on fresh GitHub runners.
+- Soak and churn harness `kuicksilver-soak` (not published): a Ktor server (HTTP/1.1 + HTTP/3) and raw QUIC servers on
+  real UDP under a weighted mix of client scenarios, with RSS, heap, descriptor, `ksl` live-object and library-table
+  sampling, a Theil–Sen flatness verdict and a return-to-baseline check (CONTRIBUTING.md, "Soak and churn").
+  `ksl_live_objects` (additive in `ksl` ABI 6) counts live native contexts, sessions, keys, key and session handles, UDP
+  sockets and wake descriptors.
 
 ### Changed
 
@@ -225,6 +230,19 @@ QUIC runtime and sockets:
   sockets without `WSA_FLAG_OVERLAPPED`, so Windows serialised a send behind the receiving thread's `WSAPoll` on the
   same socket; a small request took ~500 ms, an 8 MiB upload timed out after 60 s, and Ktor's redirect test with a 1 s
   budget failed. Sockets are now overlapped, as `socket()` and msquic create them.
+- QUIC: a stateless Initial CONNECTION_CLOSE (INVALID_TOKEN, or CONNECTION_REFUSED at a full accept queue) leaked one
+  native packet key per answer — a peer could grow the server's native memory without bound within the stateless rate
+  limits; both Initial keys are freed now (found by the soak harness).
+- QUIC: a client that closed after a migration closed its new socket before the CONNECTION_CLOSE was sent on it, so the
+  server kept the connection (its streams, CIDs and memory) until its idle timeout; a closing connection now keeps its
+  path sockets until it reaches the closed state (found by the soak harness).
+- QUIC: a sender could stop for good once pacing switched on. The pacer refilled its bucket with rate x elapsed time,
+  which overflowed after a long gap (about 80 s at 115 MB/s): a connection whose smoothed RTT stayed below 1 ms
+  (unpaced) for minutes and then reached it got a negative refill, which was dropped without moving the refill time, so
+  the pacer answered "a moment later" forever and the connection sent nothing until its idle timeout. On Linux loopback,
+  where the RTT hovers around 1 ms, the Ktor client's pooled HTTP/3 connection hit it about twice per 30 min soak (every
+  request in flight failed with "Idle timeout after 30s"). A bucket whose fill time has passed is now simply full (found
+  by the soak harness).
 
 TLS and native layer (`kuicksilver-tls`, `kuicksilver-native`):
 
@@ -257,6 +275,17 @@ TLS and native layer (`kuicksilver-tls`, `kuicksilver-native`):
   clears the previous one instead of checking both.
 - `keylogFile` (and `keylogFile(context)`) on Android below API 26 throws `IllegalArgumentException` (the file cannot be
   checked without `java.nio.file`) instead of `NoClassDefFoundError`.
+- TLS over TCP: the reader and the writer pump could drain ciphertext to the transport at the same time, reordering
+  records (the peer failed with bad_record_mac) or failing the transport with "Concurrent write attempts" under
+  full-duplex traffic; drains are serialized now (found by the soak harness).
+- TLS over TCP: with both peers writing at once over full transports, a connection could stop for good. The reader pump
+  drained ciphertext too, including the application data the writer pump had just encrypted, and while it waited for
+  room on the transport it read nothing; when both peers' reader pumps did, neither transport emptied again. Only the
+  writer pump and a separate drainer write to the transport now, and the reader pump never waits on it (found while
+  chasing a hang of `AbandonedBodyTest`; `TlsConnectionTest.fullDuplexOverFullTransportsNeverStalls`).
+- A TLS connection whose transport failed while the application was writing (a peer gone mid-response) left the
+  application's writer waiting forever on a full output buffer; the output channel is now cancelled with the failure, so
+  a Ktor server handler writing a long body to a client that left ends and releases its connection.
 
 HTTP/3 (`kuicksilver-http3`):
 
@@ -312,6 +341,15 @@ Ktor client (`kuicksilver-ktor-client`):
   delayed `webSocket {}` and one that never sent it kept the session open until the caller gave up. The engine now ends
   the input it hands to that reader after the peer's Close frame and abandons the rest of the stream with STOP_SENDING
   (RFC 6455 §7.1.1, RFC 9220).
+- HTTP/1.1: a response body left halfway returned its connection to the idle pool with the rest of the body still on the
+  wire (the server's handler blocked for the life of the client, and a later request on that connection would have read
+  the old body); the connection is reused only after the whole body was read (found by the soak harness).
+- `HttpStatement.execute {}` could hang forever when the block left a `bodyAsChannel()` body unread: Ktor's default
+  transformer copies the raw body into the application's channel, and once a megabyte waited there unread its copier
+  suspended on that channel; `execute` cancels the raw body (which does not wake a copier waiting on its destination)
+  and joins the call, which waits for the copier. A body cancelled while still open now cancels its call, over HTTP/1.1
+  and HTTP/3, so `execute` returns. The suspended copier itself belongs to Ktor's client scope and is released only when
+  the `HttpClient` closes (found as a 60 s hang of `AbandonedBodyTest` under load).
 
 Ktor server (`kuicksilver-ktor-server`):
 

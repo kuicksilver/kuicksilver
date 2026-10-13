@@ -36,18 +36,28 @@ import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 
 /** Two crossed in-memory channels: what the client writes, the server reads, and the other way round. */
-internal class ChannelPair {
+internal open class ChannelPair {
     private val c2s = ByteChannel(autoFlush = true)
     private val s2c = ByteChannel(autoFlush = true)
-    val clientIn: ByteReadChannel get() = s2c
-    val clientOut: ByteWriteChannel get() = c2s
-    val serverIn: ByteReadChannel get() = c2s
-    val serverOut: ByteWriteChannel get() = s2c
+    open val clientIn: ByteReadChannel get() = s2c
+    open val clientOut: ByteWriteChannel get() = c2s
+    open val serverIn: ByteReadChannel get() = c2s
+    open val serverOut: ByteWriteChannel get() = s2c
 
     /** Simulates a transport that ends without close_notify in the client's receive direction. */
     fun killServerToClient() {
         s2c.close()
     }
+}
+
+/** [ChannelPair] over [BoundedPipe]s: each direction holds a few KiB, so a side that stops reading stops its peer's writes. */
+internal class BoundedChannelPair : ChannelPair() {
+    private val c2s = BoundedPipe()
+    private val s2c = BoundedPipe()
+    override val clientIn: ByteReadChannel get() = s2c.read
+    override val clientOut: ByteWriteChannel get() = c2s.write
+    override val serverIn: ByteReadChannel get() = c2s.read
+    override val serverOut: ByteWriteChannel get() = s2c.write
 }
 
 internal suspend fun ByteReadChannel.readExactly(n: Int): ByteArray {
@@ -140,6 +150,71 @@ class TlsConnectionTest {
             } finally {
                 c.close()
                 s.close()
+            }
+        }
+
+    @Test fun fullDuplexKeepsRecordOrder(): Unit =
+        runBlocking(Dispatchers.Default) {
+            // both pumps drain ciphertext to the transport: the reader after each read, the writer after each write. Two drains
+            // racing reordered records on the wire (the peer answered bad_record_mac; found by the soak)
+            repeat(4) { round ->
+                val (c, s) = both()
+                try {
+                    val size = 4 shl 20
+                    val up = ByteArray(size) { (it * 7 + round).toByte() }
+                    val down = ByteArray(size) { (it * 13 + round).toByte() }
+                    withTimeout(60.seconds) {
+                        val sw =
+                            async {
+                                s.output.writeFully(down, 0, size)
+                                s.output.flush()
+                            }
+                        val cw =
+                            async {
+                                c.output.writeFully(up, 0, size)
+                                c.output.flush()
+                            }
+                        val sr = async { s.input.readExactly(size) }
+                        val cr = async { c.input.readExactly(size) }
+                        assertContentEquals(up, sr.await(), "client to server, round $round")
+                        assertContentEquals(down, cr.await(), "server to client, round $round")
+                        sw.await()
+                        cw.await()
+                    }
+                } finally {
+                    c.close()
+                    s.close()
+                }
+            }
+        }
+
+    @Test fun fullDuplexOverFullTransportsNeverStalls(): Unit =
+        runBlocking(Dispatchers.Default) {
+            // both applications write and read at once over transports that hold a few KiB: a reader pump that writes the
+            // writer's ciphertext and waits for room on its full transport stops reading, and when both peers' reader pumps
+            // do, neither transport empties again
+            repeat(4) { round ->
+                val (c, s) = both(pair = BoundedChannelPair())
+                try {
+                    val size = 2 shl 20
+                    val up = ByteArray(size) { (it * 7 + round).toByte() }
+                    val down = ByteArray(size) { (it * 13 + round).toByte() }
+                    val done =
+                        withTimeoutOrNull(30.seconds) {
+                            val sw = async { s.output.writeFully(down, 0, size).also { s.output.flush() } }
+                            val cw = async { c.output.writeFully(up, 0, size).also { c.output.flush() } }
+                            val sr = async { s.input.readExactly(size) }
+                            val cr = async { c.input.readExactly(size) }
+                            assertContentEquals(up, sr.await(), "client to server, round $round")
+                            assertContentEquals(down, cr.await(), "server to client, round $round")
+                            sw.await()
+                            cw.await()
+                        }
+                    assertTrue(done != null, "full-duplex transfer over full transports stalled, round $round")
+                } finally {
+                    c.close()
+                    s.close()
+                }
             }
         }
 

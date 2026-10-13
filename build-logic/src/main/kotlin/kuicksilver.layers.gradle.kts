@@ -13,6 +13,7 @@ val allowed = mapOf(
     "kuicksilver-http3" to setOf("kuicksilver-quic"),
     "kuicksilver-ktor-server" to setOf("kuicksilver-http3", "kuicksilver-ktor-network"),
     "kuicksilver-ktor-client" to setOf("kuicksilver-http3", "kuicksilver-ktor-network"),
+    "kuicksilver-soak" to setOf("kuicksilver-ktor-client", "kuicksilver-ktor-server"),   // the soak harness drives the whole stack (not published)
 )
 val checkLayerDependencies by tasks.registering {
     group = "verification"

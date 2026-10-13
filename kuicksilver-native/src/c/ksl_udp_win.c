@@ -209,6 +209,7 @@ ksl_udp *ksl_udp_open(const uint8_t addr[KSL_UDP_ADDR_LEN], int flags, uint32_t 
         else if (u->family == AF_INET) from_sockaddr(&ss, u->local);
         else { const struct sockaddr_in6 *in6 = (const struct sockaddr_in6 *)&ss; u->local[0] = 6; memcpy(u->local + 1, &in6->sin6_port, 2); memcpy(u->local + 3, &in6->sin6_addr, 16); }   /* the socket's own family, never unmapped */
     }
+    ksl_live_add(KSL_LIVE_UDP, 1); ksl_live_add(KSL_LIVE_WAKE, u->wake != INVALID_SOCKET);
     return u;
 }
 
@@ -388,6 +389,7 @@ void ksl_udp_close(ksl_udp *u) {
     if (!u) return;
     ksl_udp_shutdown(u);
     for (int i = 0; i < 1000 && __atomic_load_n(&u->in_recv, __ATOMIC_SEQ_CST) > 0; i++) Sleep(1);   /* a receiver woke up and leaves the object */
+    ksl_live_add(KSL_LIVE_UDP, -1); ksl_live_add(KSL_LIVE_WAKE, -(u->wake != INVALID_SOCKET));
     if (u->fd != INVALID_SOCKET) closesocket(u->fd); if (u->wake != INVALID_SOCKET) closesocket(u->wake);
     free(u->scratch); free(u->tx); memset(u, 0, sizeof *u); free(u);
 }

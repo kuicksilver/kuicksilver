@@ -100,6 +100,13 @@ internal class KuicksilverEngine(
 
     override suspend fun execute(data: HttpRequestData): HttpResponseData {
         val callContext = callContext()
+        return AbandonableBody.guard(route(data, callContext), callContext)
+    }
+
+    private suspend fun route(
+        data: HttpRequestData,
+        callContext: CoroutineContext,
+    ): HttpResponseData {
         val url = data.url
         // HTTP/3 needs TLS and no proxy (through a proxy only HTTP/1.1)
         if (!url.protocol.isSecure() || config.proxy != null ||
@@ -241,6 +248,21 @@ internal class KuicksilverEngine(
         srtt.remove(origin)
         srtt[origin] = rtt
         srtt.evictEldest(AltSvcCache.MAX_ORIGINS)
+    }
+
+    /** The engine's table sizes (the resource probe, [KuicksilverClientProbe]). */
+    @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+    internal suspend fun probeSizes(): Map<String, Long> {
+        val (idle, idleKeys) = h1.idleForProbe()
+        val (broken, rtts) = altSvcLock.withLock { brokenAltSvc.size to srtt.size }
+        return linkedMapOf(
+            "client.h1Idle" to idle.toLong(),
+            "client.h1IdleKeys" to idleKeys.toLong(),
+            "client.h1Sessions" to h1.sessions.size().toLong(),
+            "client.h3Connections" to h3.connectionsForProbe().toLong(),
+            "client.brokenAltSvc" to broken.toLong(),
+            "client.srtt" to rtts.toLong(),
+        )
     }
 
     /** The origins with a remembered RTT (tests). */

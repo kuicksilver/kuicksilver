@@ -807,4 +807,11 @@ public actual object Ksl {
     public actual fun udpShutdown(udp: Long): Unit = ksl_udp_shutdown(udp(udp))
 
     public actual fun udpClose(udp: Long): Unit = ksl_udp_close(udp(udp))
+
+    public actual fun liveObjects(): LongArray =
+        memScoped {
+            val out = allocArray<LongVar>(KslConst.LIVE_COUNT)
+            ksl_live_objects(out, KslConst.LIVE_COUNT.toULong())
+            LongArray(KslConst.LIVE_COUNT) { out[it] }
+        }
 }

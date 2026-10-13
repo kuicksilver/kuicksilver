@@ -70,7 +70,7 @@ public class EndpointCore(
     internal val resetKey: ResetKey = config.crypto.newResetKey()
     internal val limiter = StatelessRateLimiter(config.statelessPerAddressPerSecond, config.statelessTotalPerSecond)
     internal val retryTokens: RetryTokens? = if (config.server != null) RetryTokens(config.crypto, random) else null
-    private val queue: AdmissionQueue? = if (config.server != null) AdmissionQueue(config.initialQueueCap) else null
+    internal val queue: AdmissionQueue? = if (config.server != null) AdmissionQueue(config.initialQueueCap) else null
 
     /** The server's 0-RTT setup (configuration digest and the replay register shared by every loop), or null without 0-RTT. */
     internal val serverEarly: io.kuicksilver.quic.core.ServerEarlyData? = config.server?.earlySetup(random)
@@ -249,7 +249,7 @@ public class EndpointCore(
     }
 
     /** Connections by the remote address of their active path: Stateless Reset candidates for an unknown short header are only those at its source. */
-    private val byRemote = HashMap<AddressClass.AddrKey, ArrayList<ConnectionCore>>()
+    internal val byRemote = HashMap<AddressClass.AddrKey, ArrayList<ConnectionCore>>()
 
     // ---- dirty connections: the loop polls only connections something happened to since its last flush ----
     private val dirty = ArrayList<ConnectionCore>()

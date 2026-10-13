@@ -88,7 +88,7 @@ internal class EndpointLoop private constructor(
     private val wake = Channel<Unit>(Channel.CONFLATED)
     private val flushLock = Mutex() // a suspending DatagramIo.send must not interleave with another flush over the same batch
     internal val runtimes = HashMap<ConnectionCore, ConnectionRuntime>()
-    private val timers = TimerHeap()
+    internal val timers = TimerHeap()
     private val start = TimeSource.Monotonic.markNow()
     private val closingFlag = AtomicInt(0) // set once, by compare-and-set: two concurrent close() calls must not both tear down
     private val closing: Boolean get() = closingFlag.load() != 0
@@ -139,6 +139,7 @@ internal class EndpointLoop private constructor(
 
     /** Starts the receive, timer and forward coroutines; a [LoopGroup] calls it only once every loop exists, so no datagram is forwarded to a loop not built yet. */
     internal fun start() {
+        QuicResourceProbe.register(this)
         receiveJob = scope.launch { receiveLoop() }
         scope.launch { timerLoop() }
         scope.launch { followCapabilities(io, PathId.Initial) }
@@ -563,7 +564,7 @@ internal class EndpointLoop private constructor(
     }
 
     private fun failAll(reason: QuicException.ConnectionLost) {
-        for (rt in runtimes.values) rt.failed(reason)
+        for (rt in runtimes.values) rt.retire(reason)
         runtimes.clear()
         handshaking = 0
     }
@@ -682,7 +683,7 @@ internal class EndpointLoop private constructor(
                     flush(signalTimer = false)
                 } finally {
                     for (rt in runtimes.values.toList()) {
-                        rt.failed(
+                        rt.retire(
                             QuicException.ConnectionLost.Internal("endpoint closed", QuicException.EndpointClosing()),
                         )
                     }
@@ -699,6 +700,7 @@ internal class EndpointLoop private constructor(
                     inBatch.close()
                     outBatch.close()
                     single.close()
+                    QuicResourceProbe.unregister(this@EndpointLoop)
                     scope.cancel()
                 }
             }

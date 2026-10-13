@@ -564,4 +564,6 @@ public actual object Ksl {
     public actual fun udpShutdown(udp: Long): Unit = KslNative.udpShutdown(udp)
 
     public actual fun udpClose(udp: Long): Unit = KslNative.udpClose(udp)
+
+    public actual fun liveObjects(): LongArray = LongArray(KslConst.LIVE_COUNT).also { KslNative.liveObjects(it) }
 }
