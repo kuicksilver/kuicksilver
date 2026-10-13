@@ -405,6 +405,10 @@ internal class ConnectionIdManager(
         len: Int,
         tokenOff: Int,
     ): Boolean {
+        if (current?.cid?.length == 0) {
+            // RFC 9000 section 19.15: a peer that asked for zero-length connection IDs cannot issue more
+            throw QuicWireException(TransportError.PROTOCOL_VIOLATION, 0x18, "NEW_CONNECTION_ID from a zero-length-ID peer")
+        }
         val existing = peer.firstOrNull { it.seq == seq }
         if (existing !=
             null

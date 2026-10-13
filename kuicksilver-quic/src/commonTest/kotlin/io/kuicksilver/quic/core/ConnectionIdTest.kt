@@ -257,6 +257,18 @@ class ConnectionIdTest {
         assertEquals(listOf(3L), m.takeRetireFrames(), "it is retired again instead")
     }
 
+    /**
+     * Review finding 13, RFC 9000 section 19.15: "An endpoint that is sending packets with a zero-length Destination Connection ID
+     * MUST treat receipt of a NEW_CONNECTION_ID frame as a connection error of type PROTOCOL_VIOLATION."
+     */
+    @Test fun negative_newCidFromZeroLengthCidPeer() {
+        val m = manager()
+        m.adoptInitialPeerCid(ConnectionId.EMPTY)
+        val e = assertFailsWith<QuicWireException> { newCid(m, 1) }
+        assertEquals(0x0aL, e.code)
+        assertEquals(0x18L, e.frameType)
+    }
+
     @Test fun retiredBacklogAbove32IsCidLimitError() {
         val m = manager(limit = 2)
         m.adoptInitialPeerCid(ConnectionId(ByteArray(8)))
