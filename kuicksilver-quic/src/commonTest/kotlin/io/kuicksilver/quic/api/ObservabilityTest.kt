@@ -166,6 +166,10 @@ class ObservabilityTest {
             endpoints(clients = 2, server = { acceptQueue = 1 }).use { e ->
                 withTimeout(20.seconds) {
                     e.clients[0].connect(e.server.localAddress, clientConfig()) // waits in the accept queue, never accepted
+                    // connect returns when the client's handshake is complete; the server queues the connection only once the
+                    // client's Finished arrives, so the second client must not start before (its Initial would be admitted, and
+                    // its connection refused only after its handshake completed: seen in the Windows JVM run)
+                    eventually { e.server.stats.connectionsAccepted == 1L }
                     val lost =
                         assertFailsWith<QuicException.ConnectionLost.TransportClosed> {
                             e.clients[1].connect(e.server.localAddress, clientConfig())
