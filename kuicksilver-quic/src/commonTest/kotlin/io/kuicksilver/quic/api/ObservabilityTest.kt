@@ -394,6 +394,137 @@ class ObservabilityTest {
             }
         }
 
+    @Test fun aListenerThrowingCancellationNeverStopsTheEndpointOrHangsAConnection(): Unit =
+        runBlocking {
+            // a callback may throw a CancellationException it did not mean (Future.get() on a cancelled JDK future): it is the
+            // listener's failure, not the loop's cancellation; the server still hands the connection to accept() and `closed`
+            // completes on both sides
+            val throwing =
+                object : ConnectionListener {
+                    override fun onHandshakeCompleted(connection: ConnectionInfo): Unit =
+                        throw kotlinx.coroutines.CancellationException("listener bug")
+
+                    override fun onClosed(
+                        connection: ConnectionInfo,
+                        reason: QuicException.ConnectionLost,
+                    ): Unit = throw kotlinx.coroutines.CancellationException("listener bug")
+                }
+            endpoints(
+                clients = 2,
+                server = {
+                    listener = throwing
+                    logger = KuicksilverLogger.None
+                },
+                client = {
+                    listener = throwing
+                    logger = KuicksilverLogger.None
+                },
+            ).use { e ->
+                withTimeout(20.seconds) {
+                    val accepted = async { e.server.accept().also { serveEcho(it) } }
+                    val c = e.clients[0].connect(e.server.localAddress, clientConfig())
+                    assertEquals("still works", echo(c, "still works"))
+                    val s = accepted.await()
+                    c.close(7, "bye")
+                    assertIs<QuicException.ConnectionLost.ApplicationClosed>(c.closed.await())
+                    assertIs<QuicException.ConnectionLost.ApplicationClosed>(s.closed.await())
+                    // the endpoints still serve
+                    val second = async { e.server.accept().also { serveEcho(it) } }
+                    val c2 = e.clients[1].connect(e.server.localAddress, clientConfig())
+                    assertEquals("again", echo(c2, "again"))
+                    second.await()
+                    eventually { e.server.stats.listenerFailures >= 3 } // two handshakes, one close
+                    assertTrue(e.clients[0].stats.listenerFailures >= 2, "${e.clients[0].stats}")
+                }
+            }
+        }
+
+    @Test fun aThrowingLoggerIsCountedAndNeverStopsTheEndpoint(): Unit =
+        runBlocking {
+            val throwing =
+                object : KuicksilverLogger {
+                    override fun isEnabled(level: LogLevel) = true
+
+                    override fun log(
+                        level: LogLevel,
+                        message: String,
+                        cause: Throwable?,
+                    ): Unit = throw kotlinx.coroutines.CancellationException("logger bug")
+                }
+            endpoints(server = { logger = throwing }, client = { logger = throwing }).use { e ->
+                withTimeout(20.seconds) {
+                    val accepted = async { e.server.accept().also { serveEcho(it) } }
+                    val c = e.clients[0].connect(e.server.localAddress, clientConfig())
+                    assertEquals("still works", echo(c, "still works"))
+                    val s = accepted.await()
+                    c.close(7, "bye")
+                    assertIs<QuicException.ConnectionLost.ApplicationClosed>(s.closed.await())
+                    eventually { e.server.stats.listenerFailures >= 3 } // opened, handshake complete, closed (debug lines)
+                    assertTrue(e.clients[0].stats.listenerFailures >= 2, "${e.clients[0].stats}")
+                }
+            }
+        }
+
+    @Test fun aFailingQlogSinkIsLoggedAtWarn(): Unit =
+        runBlocking {
+            val warnings = Lines()
+            val logger =
+                object : KuicksilverLogger {
+                    override fun isEnabled(level: LogLevel) = level >= LogLevel.Warn
+
+                    override fun log(
+                        level: LogLevel,
+                        message: String,
+                        cause: Throwable?,
+                    ) {
+                        warnings += "$level $message $cause"
+                    }
+                }
+            val failing =
+                object : io.kuicksilver.quic.QlogSink {
+                    override fun open(
+                        odcidHex: String,
+                        role: io.kuicksilver.tls.TlsRole,
+                    ): io.kuicksilver.quic.QlogTrace = throw kotlinx.coroutines.CancellationException("EMFILE")
+                }
+            endpoints(server = {
+                this.logger = logger
+                this.server =
+                    QuicServerConfig
+                        .Builder(CoreFixtures.server())
+                        .apply { quic = io.kuicksilver.quic.quicConfig { qlog = failing } }
+                        .build()
+            }).use { e ->
+                withTimeout(20.seconds) {
+                    val accepted = async { e.server.accept().also { serveEcho(it) } }
+                    val c = e.clients[0].connect(e.server.localAddress, clientConfig())
+                    assertEquals("traced or not", echo(c, "traced or not"))
+                    accepted.await()
+                    eventually { warnings.all.any { "qlog" in it } }
+                    assertTrue(warnings.all.single { "qlog" in it }.startsWith("Warn"), "${warnings.all}")
+                }
+            }
+        }
+
+    @Test fun anAdmissionPolicyThrowingCancellationIsAContractViolation(): Unit =
+        runBlocking {
+            var n = 0
+            val admission =
+                ConnectionAdmission {
+                    if (n++ == 0) throw kotlinx.coroutines.CancellationException("policy bug") else AdmissionDecision.Allow
+                }
+            endpoints(server = { this.admission = admission }).use { e ->
+                withTimeout(20.seconds) {
+                    // the first Initial is dropped (fail closed); the client's retransmission is admitted
+                    val accepted = async { e.server.accept().also { serveEcho(it) } }
+                    val c = e.clients[0].connect(e.server.localAddress, clientConfig())
+                    assertEquals("admitted", echo(c, "admitted"))
+                    accepted.await()
+                    assertEquals(1, e.server.stats.admissionContractViolations, "${e.server.stats}")
+                }
+            }
+        }
+
     @Test fun debugLoggingOfAHandshakeLogsNoSecret(): Unit =
         runBlocking {
             // threat model: keys, traffic secrets, tickets and tokens never reach a log, even at debug level. The keylog sink sees

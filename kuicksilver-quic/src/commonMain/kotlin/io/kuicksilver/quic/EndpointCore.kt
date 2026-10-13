@@ -498,7 +498,7 @@ public class EndpointCore(
         } catch (
             e: Throwable,
         ) {
-            if (e is kotlinx.coroutines.CancellationException) throw e
+            // sans-IO and not suspending: a CancellationException here came out of code the connection calls (a crypto provider)
             core.failInternal(e)
         }
     }

@@ -88,7 +88,7 @@ internal fun EndpointCore.admitOne(
         } catch (
             t: Throwable,
         ) {
-            if (t is kotlinx.coroutines.CancellationException) throw t
+            // a CancellationException too: admit() is not suspending, so it is the policy's failure, never the loop's cancellation
             admissionContractViolations++
             AdmissionDecision.Drop
         } // fail closed

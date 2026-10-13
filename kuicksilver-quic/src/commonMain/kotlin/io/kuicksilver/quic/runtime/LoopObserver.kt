@@ -6,6 +6,7 @@ import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.quic.ConnectionInfo
 import io.kuicksilver.quic.ConnectionListener
 import io.kuicksilver.quic.EndpointStats
+import io.kuicksilver.quic.GuardedLogger
 import io.kuicksilver.quic.KuicksilverLogger
 import io.kuicksilver.quic.LogLevel
 import io.kuicksilver.quic.PathEvent
@@ -20,9 +21,12 @@ import io.kuicksilver.quic.emit
  */
 @OptIn(ExperimentalKuicksilverApi::class)
 internal class LoopObserver(
-    val logger: KuicksilverLogger,
+    logger: KuicksilverLogger,
     private val listener: ConnectionListener?,
 ) {
+    /** The endpoint's logger behind a guard: what it throws is counted in [EndpointStats.listenerFailures], never propagated. */
+    val logger: GuardedLogger = GuardedLogger(logger)
+
     var accepted = 0L
     var handshakesCompleted = 0L
     var handshakesFailedTimeout = 0L
@@ -39,7 +43,11 @@ internal class LoopObserver(
 
     private val debug: Boolean get() = logger.isEnabled(LogLevel.Debug)
 
-    /** Calls the listener when there is one; its exception is logged and counted, never the connection's. */
+    /**
+     * Calls the listener when there is one; its exception is logged and counted, never the connection's. A
+     * CancellationException included: the callbacks are not suspending, so one out of them is the listener's own failure
+     * (a cancelled future's `get()`), not the loop's cancellation, and rethrowing it would end the loop coroutine.
+     */
     private inline fun notify(
         rt: ConnectionRuntime,
         what: String,
@@ -48,8 +56,6 @@ internal class LoopObserver(
         val l = listener ?: return
         try {
             l.call(rt.info)
-        } catch (e: kotlinx.coroutines.CancellationException) {
-            throw e
         } catch (e: Throwable) {
             listenerFailures++
             logger.emit(LogLevel.Warn, e) { "connection listener failed in $what for ${rt.info.id}" }
@@ -100,6 +106,14 @@ internal class LoopObserver(
             }
         }
         notify(rt, "onPathChanged") { onPathChanged(it, change) }
+    }
+
+    /** [rt]'s qlog sink failed: tracing stopped for that connection, the connection goes on. */
+    fun qlogFailed(
+        rt: ConnectionRuntime,
+        e: Throwable,
+    ) {
+        logger.emit(LogLevel.Warn, e) { "qlog sink failed for connection ${rt.info.id}; tracing stopped for it" }
     }
 
     /** The connection is over; [handshakeDone] says whether its handshake had completed (else it counts as a failed one). */
@@ -155,7 +169,7 @@ internal class LoopObserver(
             pathValidationFailures = pathValidationFailures,
             uncaughtFailures = uncaughtFailures,
             sendFailures = sendFailures,
-            listenerFailures = listenerFailures,
+            listenerFailures = listenerFailures + logger.failures,
         )
 
     private companion object {

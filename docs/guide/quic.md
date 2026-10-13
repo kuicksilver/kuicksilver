@@ -653,7 +653,8 @@ logging framework. The default, `KuicksilverLogger.Stderr`, writes warnings and 
 library did before it had a logger); `KuicksilverLogger.None` drops everything and `KuicksilverLogger.stderr(level)`
 picks another threshold. `Debug` logs each connection's lifecycle (opened, handshake complete, path change, 0-RTT outcome,
 close with its reason), `Info` the endpoint's (shutting down, closing), `Warn` degradations (a fallback to the portable
-socket, a failing listener), `Error` a loop that died. A line is built only when its level is enabled. The library never
+socket, a failing listener or qlog sink), `Error` a loop that died. A logger that throws is ignored and counted in
+`listenerFailures`. A line is built only when its level is enabled. The library never
 logs secrets: keys, traffic secrets, session tickets, Retry and address-validation tokens and reset tokens stay out of
 every level; connection IDs and addresses are logged.
 
@@ -661,7 +662,7 @@ every level; connection IDs and addresses are logged.
 `onOpened`, `onHandshakeCompleted`, `onZeroRtt` (accepted or rejected), `onPathChanged` and `onClosed` with the
 `ConnectionLost` reason: who closed (`initiator`), the code and, for a transport error, the frame type. They run on the
 loop that owns the connection, in order, exactly once each for opened and closed, so they must not block; an exception
-out of one is logged and counted in `listenerFailures`. `ConnectionInfo.id` is the original destination connection ID in
+out of one, a `CancellationException` included, is logged and counted in `listenerFailures`, and the connection goes on. `ConnectionInfo.id` is the original destination connection ID in
 hex, the same name the connection's qlog trace has.
 
 ```kotlin

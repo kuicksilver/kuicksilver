@@ -600,6 +600,15 @@ Samples and testing:
 - The `NullCryptoProvider` test protection binds the packet number into its tag, so a misdecoded packet number fails to
   open as with real keys instead of being acknowledged.
 
+Pre-release API and operations review (2026-10-14):
+
+- QUIC: an application callback that throws a `CancellationException` (a `ConnectionListener`, a `KuicksilverLogger`,
+  a `ConnectionAdmission` policy, a custom certificate verifier) no longer ends the endpoint loop's coroutine silently or
+  leaves `closed`, the handshake and `accept()` waiting: it counts as that callback's failure like any other exception
+  (`listenerFailures`, `admissionContractViolations`, a rejected peer). The listener's `onClosed` runs after `closed` has
+  completed. Exceptions out of the logger are now counted in `listenerFailures`, and a failing qlog sink is logged at
+  `Warn`, as their KDoc said.
+
 ### Security
 
 - Findings of the local fuzzing campaigns (`tools/fuzz/campaign.sh`, threat model §3.10), each with a regression input

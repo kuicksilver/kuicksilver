@@ -17,8 +17,8 @@ import io.kuicksilver.tls.TlsRole
  * by RS (0x1e). Writing stops silently once [maxBytes] were produced; the connection is never affected.
  *
  * The trace is opened lazily, at the first event: a server connection created for an Initial that does not decrypt emits
- * none, so a forged Initial costs no file. A sink whose `open` or `write` throws (EMFILE, ENOSPC) disables tracing for
- * this connection only; [close] runs when the connection releases its resources. Records are written
+ * none, so a forged Initial costs no file. A sink whose `open`, `write` or `close` throws (EMFILE, ENOSPC; anything, a
+ * CancellationException included) disables tracing for this connection only and is reported once to [onFailure]; [close] runs when the connection releases its resources. Records are written
  * on the loop thread: a [QlogSink] should buffer (DirectoryQlogSink does).
  */
 internal class QlogWriter(
@@ -32,6 +32,25 @@ internal class QlogWriter(
     private var closed = false
     private var trace: QlogTrace? = null
     private val sb = StringBuilder(256)
+    private var failure: Throwable? = null
+
+    /**
+     * Hears of the sink's first failure (the runtime logs it at warn level). Set after the first events may already have
+     * failed (a server connection's first Initial is processed before the runtime exists): such a failure is reported here
+     * when it is set.
+     */
+    var onFailure: ((Throwable) -> Unit)? = null
+        set(value) {
+            field = value
+            val f = failure
+            if (value != null && f != null) value(f)
+        }
+
+    private fun failed(e: Throwable) {
+        if (failure != null) return
+        failure = e
+        onFailure?.invoke(e)
+    }
 
     private fun emit(json: String) {
         if (closed) return
@@ -40,7 +59,8 @@ internal class QlogWriter(
         written += record.length
         try {
             t.write(record)
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
+            failed(e)
             close()
             return
         }
@@ -51,7 +71,8 @@ internal class QlogWriter(
         val t =
             try {
                 sink.open(odcidHex, role)
-            } catch (e: Exception) {
+            } catch (e: Throwable) {
+                failed(e)
                 null
             }
         if (t == null) {
@@ -66,7 +87,8 @@ internal class QlogWriter(
         written += header.length
         try {
             t.write(header)
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
+            failed(e)
             close()
             return null
         }
@@ -180,7 +202,8 @@ internal class QlogWriter(
         trace = null
         try {
             t.close()
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
+            failed(e)
         }
     }
 
