@@ -89,35 +89,34 @@ public class Cubic(
         if (hystart && inSlowStart) pendingSample = latest
     }
 
+    /** RFC 9406 section 4.2 for one ACK in slow start: every sample of the round counts; the checks run once N_RTT_SAMPLE arrived. */
     private fun consumeSample() {
         val s = pendingSample
         if (s == Duration.INFINITE) return
         pendingSample = Duration.INFINITE
-        if (roundSamples < N_RTT_SAMPLE) {
-            roundSamples++
-            if (s < currRttMin) currRttMin = s
-        }
-        if (roundSamples == N_RTT_SAMPLE && lastRttMin != Duration.INFINITE && !inConservativeSlowStart) {
+        roundSamples++
+        if (s < currRttMin) currRttMin = s
+        if (roundSamples < N_RTT_SAMPLE) return
+        if (!inConservativeSlowStart) {
+            if (lastRttMin == Duration.INFINITE) return
             val thresh = (lastRttMin / MIN_RTT_DIVISOR).coerceIn(MIN_RTT_THRESH, MAX_RTT_THRESH)
             if (currRttMin >= lastRttMin + thresh) {
                 inConservativeSlowStart = true
-                cssBaseline = lastRttMin
+                cssBaseline = currRttMin
                 cssRounds = 0
-            } // section 4.2: the RTT rose, approach the limit carefully
-        }
+            } // the RTT rose: approach the limit carefully, from this round's minimum
+        } else if (currRttMin < cssBaseline) {
+            inConservativeSlowStart = false
+            cssBaseline = Duration.INFINITE
+            cssRounds = 0
+        } // the increase was spurious: back to plain slow start
     }
 
     private fun endRound() {
-        if (inConservativeSlowStart) {
-            if (currRttMin < cssBaseline) {
-                inConservativeSlowStart = false
-                cssRounds = 0
-            } // the increase was spurious: back to plain slow start
-            else if (++cssRounds >= CSS_ROUNDS) {
-                ssthresh = cwnd
-                inConservativeSlowStart = false
-            } // section 4.2: five CSS rounds end slow start
-        }
+        if (inConservativeSlowStart && ++cssRounds >= CSS_ROUNDS) {
+            ssthresh = cwnd
+            inConservativeSlowStart = false
+        } // section 4.2: CSS_ROUNDS rounds (the partial one it began in counts) end slow start
         lastRttMin = currRttMin
         currRttMin = Duration.INFINITE
         roundSamples = 0
