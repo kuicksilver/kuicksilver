@@ -117,6 +117,9 @@ Ktor server (`kuicksilver-ktor-server`):
 
 Testing (`kuicksilver-testing`, not published) and tooling:
 
+- The ABI dumps leave out the companion objects and nested classes of `@InternalKuicksilverApi` classes (the JVM and
+  Android dumps listed `KslUdpSocket.Companion` and `KslUdpSocket.Stats`); `checkInternalAbi`, part of `check` and run
+  after `checkKotlinAbi`, fails when a JVM or Android dump lists a class that is, or is nested in, an internal class.
 - `MemoryNetwork(receiveBuffer, assignEphemeralPorts)` (`@ExperimentalKuicksilverApi`): sockets of the in-memory network
   hold at most `receiveBuffer` unread datagrams (256 by default) and count what a full buffer drops, `open` on port 0
   binds an ephemeral port, oversized datagrams are dropped instead of truncated, and `trySend` counts only addressed

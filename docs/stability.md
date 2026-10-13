@@ -60,8 +60,11 @@ Nothing is deprecated in 0.2.0. The two type aliases deprecated before 0.1.0, wh
   `<module>/api/`: `api/jvm/<module>.api` (JVM), `api/android/<module>.api` (Android) and `api/<module>.klib.api` (the
   Kotlin/Native klibs of `iosArm64`, `iosSimulatorArm64`, `linuxArm64`, `linuxX64`, `macosArm64` and `mingwX64`,
   with Apple-only declarations in their own sections). The one filter excludes declarations annotated
-  `@InternalKuicksilverApi`; experimental and delicate API is in the dumps, so its changes are reviewed too.
-  `checkKotlinAbi` compares the build against the dumps and is part of each module's `check`; the CI matrix
+  `@InternalKuicksilverApi` together with everything nested in an annotated top-level class (its companion object and
+  nested types); experimental and delicate API is in the dumps, so its changes are reviewed too.
+  `checkKotlinAbi` compares the build against the dumps and is part of each module's `check`, as is `checkInternalAbi`,
+  which reads the compiled classes and fails when a JVM or Android dump lists a class that is, or is nested in, an
+  `@InternalKuicksilverApi` class; the CI matrix
   (`tools/ci/matrix.sh`, the `apple` job, and `tools/ci/local-matrix.sh`) runs it over every module, which needs the
   Apple, Android and Kotlin/Native toolchains together. An intended API change regenerates the dumps with
   `updateKotlinAbi` in the same commit, and reviewers read the `api/` diff. Before a release, `./gradlew

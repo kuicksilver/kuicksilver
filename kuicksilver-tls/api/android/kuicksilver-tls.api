@@ -181,25 +181,6 @@ public final class io/kuicksilver/tls/KslQuicCrypto : io/kuicksilver/tls/QuicCry
 	public fun retryIntegrityTag (I[B[B)[B
 }
 
-public final class io/kuicksilver/tls/KslUdpSocket$Companion {
-	public final fun encodeAddress ([BI)[B
-	public final fun errnoOf (Ljava/lang/Throwable;)Ljava/lang/Integer;
-	public final fun getSupported ()Z
-	public final fun getUnsupportedReason ()Ljava/lang/String;
-	public final fun ipOf ([B)[B
-	public final fun open ([BI)Lio/kuicksilver/tls/KslUdpSocket;
-	public final fun openOrNull ([BILkotlin/jvm/functions/Function1;)Lio/kuicksilver/tls/KslUdpSocket;
-	public static synthetic fun openOrNull$default (Lio/kuicksilver/tls/KslUdpSocket$Companion;[BILkotlin/jvm/functions/Function1;ILjava/lang/Object;)Lio/kuicksilver/tls/KslUdpSocket;
-	public final fun portOf ([B)I
-}
-
-public final class io/kuicksilver/tls/KslUdpSocket$Stats {
-	public fun <init> (JJJ)V
-	public final fun getGsoFallbacks ()J
-	public final fun getReceiveSyscalls ()J
-	public final fun getSendSyscalls ()J
-}
-
 public final class io/kuicksilver/tls/PacketProtectionException : java/io/IOException {
 	public fun <init> (Ljava/lang/String;)V
 }

@@ -83,7 +83,8 @@ To make the floors blocking, download the `perf-<peer>` result artifacts of a fe
   states the contract (what it does, what it throws, which thread or coroutine context it expects). Internal helpers stay
   `internal`.
 - **ABI dumps.** A change to the public API updates the dumps with `./gradlew updateKotlinAbi` in the same commit;
-  reviewers read the `api/` diff. Declarations annotated `@InternalKuicksilverApi` are excluded from the dumps.
+  reviewers read the `api/` diff. Declarations annotated `@InternalKuicksilverApi` are excluded from the dumps, with the
+  companions and nested classes of an annotated top-level class; `checkInternalAbi` (part of `check`) verifies it.
 - **Readability.** A human reviewer reads the code, not only a test runner: one statement per line (no `;` between
   statements, no `if (…) { a; b }` on one line), at most 140 columns, a comment says why and cites the RFC section or
   the decision, not what the next line does. Big files are split by responsibility, not by size.
