@@ -232,8 +232,14 @@ internal class KuicksilverEngine(
             selected(data, HttpProtocolVersion.HTTP_3_0, ProtocolReason.ExistingConnection)
             return h3WithFallback(t, data, callContext, extraHeaders)
         }
-        // the HTTP/3 attempt outlives a lost race: it fills the pool for the next request, or marks the alternative broken
-        val h3Attempt = engineScope.async { h3.connection(t, data) }
+        // the HTTP/3 attempt outlives a lost race: it fills the pool for the next request, or marks the alternative broken.
+        // A 0-RTT connection is usable before its handshake, but on a network where QUIC was never seen working it must
+        // complete the handshake to win (as Chromium requires confirmation there): a path that drops UDP then loses to
+        // HTTP/1.1 at once instead of holding the request until the connect timeout
+        val h3Attempt =
+            engineScope.async {
+                h3.connection(t, data).also { if (!confirmed) it.quic.awaitHandshake() }
+            }
         val result =
             race.race<Any>({ h3Attempt.await() }, { h1.open(data) }, rtt, confirmed, onLoser = {
                 (it as? H1Pool.Opened)?.let { o -> h1.recycle(o.connection) } // unused: back to the pool
@@ -244,10 +250,18 @@ internal class KuicksilverEngine(
         return when (result.winner) {
             Protocol.H3 -> {
                 val conn = result.value as io.kuicksilver.http3.Http3Connection
-                altSvcLock.withLock {
-                    brokenAltSvc.confirmQuic(network)
-                    brokenAltSvc.markWorking(origin, alt)
-                    rememberSrtt(origin, conn.quic.stats.smoothedRtt)
+                // QUIC works here and the alternative works only once the handshake completed, not on a 0-RTT start
+                // (Chromium marks QUIC working at handshake confirmation); the RTT is a measured one then. A failed
+                // handshake marks nothing here: the request's fallback marks the alternative broken
+                @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+                if (conn.quic.isHandshakeComplete) {
+                    altSvcLock.withLock { recordQuicWorking(network, origin, alt, conn) }
+                } else {
+                    engineScope.launch {
+                        if (runCatching { conn.quic.awaitHandshake() }.isSuccess) {
+                            altSvcLock.withLock { recordQuicWorking(network, origin, alt, conn) }
+                        }
+                    }
                 }
                 h3WithFallback(t, data, callContext, extraHeaders)
             }
@@ -255,21 +269,20 @@ internal class KuicksilverEngine(
             Protocol.H1 -> {
                 h3Attempt.invokeOnCompletion { cause ->
                     engineScope.launch {
+                        // a 0-RTT connection counts once its handshake completed (or failed)
+                        val outcome =
+                            cause ?: runCatching { h3Attempt.getCompleted().quic.awaitHandshake() }.exceptionOrNull()
                         altSvcLock.withLock {
-                            if (cause ==
-                                null
-                            ) {
+                            if (outcome == null) {
+                                // lost the race, but QUIC works here
                                 brokenAltSvc.confirmQuic(network)
-                                runCatching {
-                                    rememberSrtt(
-                                        origin,
-                                        h3Attempt
-                                            .getCompleted()
-                                            .quic.stats.smoothedRtt,
-                                    )
-                                }
-                            } // lost the race, but QUIC works here
-                            else if (cause !is CancellationException) {
+                                rememberSrtt(
+                                    origin,
+                                    h3Attempt
+                                        .getCompleted()
+                                        .quic.stats.smoothedRtt,
+                                )
+                            } else if (outcome !is CancellationException) {
                                 brokenAltSvc.markBroken(origin, alt)
                                 events.emit("altSvcMarkedBroken") { altSvcMarkedBroken(origin, alt) }
                             }
@@ -279,6 +292,18 @@ internal class KuicksilverEngine(
                 h1.execute(data, callContext, result.value as H1Pool.Opened)
             }
         }
+    }
+
+    /** Under [altSvcLock]: QUIC completed a handshake on [network] through [alt] of [origin], with [conn]'s measured RTT. */
+    private fun recordQuicWorking(
+        network: String?,
+        origin: String,
+        alt: String,
+        conn: io.kuicksilver.http3.Http3Connection,
+    ) {
+        brokenAltSvc.confirmQuic(network)
+        brokenAltSvc.markWorking(origin, alt)
+        rememberSrtt(origin, conn.quic.stats.smoothedRtt)
     }
 
     /** The cached alternatives for the origin of [url] (tests). */

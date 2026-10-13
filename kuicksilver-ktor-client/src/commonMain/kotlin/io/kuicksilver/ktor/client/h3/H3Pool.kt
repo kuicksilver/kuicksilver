@@ -48,6 +48,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeout
 import kotlin.coroutines.CoroutineContext
+import kotlin.time.Duration.Companion.milliseconds
 
 /** Where an HTTP/3 request goes: the origin (for `:authority`, SNI and verification) and the UDP endpoint (origin or alternative). */
 internal class H3Target(
@@ -155,6 +156,22 @@ internal class H3Pool(
     private var endpoint: Http3Endpoint? = null
     private val connections = HashMap<String, H3Entry>()
 
+    /** [quic] with its handshake timeout cut to [connectTimeoutMillis] when that is shorter (a 0-RTT connect returns early). */
+    private fun quicWithin(connectTimeoutMillis: Long): io.kuicksilver.quic.QuicConfig {
+        val limit = connectTimeoutMillis.milliseconds
+        return if (quic.handshakeTimeout <= limit) quic else quic.toBuilder().apply { handshakeTimeout = limit }.build()
+    }
+
+    /**
+     * Whether [data] goes out in 0-RTT on a connection still handshaking (as `Http3Request.allowEarlyData` admits it: the
+     * engine's `earlyData`, a safe method, no body; never a WebSocket). Every other request waits for the handshake first.
+     */
+    private fun goesEarly(data: HttpRequestData): Boolean =
+        @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+        config.http3.earlyData && !data.attributes.contains(WEBSOCKETS_KEY) &&
+            data.method.value in io.kuicksilver.http3.Http3EarlyDataPolicy.SAFE_METHODS &&
+            data.body.unwrap() is OutgoingContent.NoContent
+
     /** Connections past their lifetime that still carry requests: closed once they have none. */
     private val retired = ArrayList<H3Entry>()
 
@@ -238,10 +255,12 @@ internal class H3Pool(
                     withTimeout(data.connectTimeoutMillis(config)) {
                         @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
                         if (config.http3.earlyData) {
+                            // returns as soon as 0-RTT keys exist: the connect timeout still bounds the setup, through
+                            // the handshake timer (a request sent early then fails, and falls back, at that time)
                             ep.connectEarly(
                                 InetSocketAddress(socketHost(t.host), t.port),
                                 config.tlsConfigFor(t.originHost, listOf(Http3Endpoint.H3)),
-                                quic,
+                                quicWithin(data.connectTimeoutMillis(config)),
                                 config.http3.settings,
                             )
                         } else {
@@ -400,6 +419,18 @@ internal class H3Pool(
                     throw H3NotSent(e)
                 }
             try {
+                // a request that cannot go in 0-RTT waits for the handshake here, before any stream is opened or its body
+                // touched: a handshake that fails leaves it provably unsent (RFC 8470 section 4 — the client starts over)
+                @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+                if (!conn.quic.isHandshakeComplete && !goesEarly(data)) {
+                    try {
+                        conn.quic.awaitHandshake()
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Throwable) {
+                        throw H3NotSent(e)
+                    }
+                }
                 // inside the try: a cancellation while taking the lock must still release the entry's count
                 if (events.enabled) {
                     val reused = lock.withLock { !fresh.remove(conn) }

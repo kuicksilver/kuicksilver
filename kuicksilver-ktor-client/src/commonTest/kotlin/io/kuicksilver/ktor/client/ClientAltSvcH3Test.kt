@@ -5,19 +5,9 @@ package io.kuicksilver.ktor.client
 import io.ktor.client.request.get
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpProtocolVersion
-import io.ktor.network.sockets.InetSocketAddress
 import io.ktor.util.date.getTimeMillis
-import io.ktor.utils.io.writeStringUtf8
-import io.kuicksilver.http3.Http3Endpoint
-import io.kuicksilver.http3.Http3Headers
 import io.kuicksilver.native.KslLoader
-import io.kuicksilver.quic.QuicEndpointConfig
-import io.kuicksilver.quic.QuicServerConfig
-import io.kuicksilver.tls.TlsRole
-import io.kuicksilver.tls.tlsConfig
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.launch
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -72,36 +62,4 @@ class ClientAltSvcH3Test {
                 }
             }
         }
-
-    /** An HTTP/3 server on a free UDP port of 127.0.0.1 that answers every request 200 "h3" with [headers]. */
-    private suspend fun CoroutineScope.h3Origin(headers: List<Pair<String, String>>): Http3Endpoint {
-        val tls =
-            tlsConfig(TlsRole.Server) {
-                alpn = listOf(Http3Endpoint.H3)
-                identity = ClientFixtures.identity()
-            }
-        val ep =
-            Http3Endpoint.bind(
-                InetSocketAddress("127.0.0.1", 0),
-                QuicEndpointConfig.Builder().apply { server = QuicServerConfig.Builder(tls).build() }.build(),
-            )
-        launch {
-            runCatching {
-                while (true) {
-                    val conn = ep.accept()
-                    launch {
-                        runCatching {
-                            while (true) {
-                                val r = conn.acceptRequest()
-                                val w = r.respond(200, Http3Headers(headers))
-                                w.output.writeStringUtf8("h3")
-                                w.finish()
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        return ep
-    }
 }
