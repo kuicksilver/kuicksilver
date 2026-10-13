@@ -345,7 +345,7 @@ internal class PacketReceiver(
                 }
             }
         }
-        sp.ack.onPacketReceived(pn, ackEliciting, now)
+        sp.ack.onPacketReceived(pn, ackEliciting, now, ce = datagramEcn == io.kuicksilver.quic.Ecn.Ce)
         if (type == PacketType.Handshake &&
             c.role == TlsRole.Server
         ) {
