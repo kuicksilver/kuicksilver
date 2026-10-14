@@ -10,7 +10,6 @@ import io.kuicksilver.quic.VersionProfile
 import io.kuicksilver.tls.TlsIdentity
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.runBlocking
-import kotlin.system.exitProcess
 
 /** The QUIC Interop Runner endpoint: ROLE, TESTCASE, REQUESTS, SSLKEYLOGFILE, QLOGDIR (and our KSL_CC) from the environment; exit 0 / 1 / 127 (unsupported). */
 internal object Interop {
@@ -46,4 +45,4 @@ internal object Interop {
     }
 }
 
-fun main() { exitProcess(Interop.run(Interop.environment())) }
+fun main() { exitWith(Interop.run(Interop.environment())) }
