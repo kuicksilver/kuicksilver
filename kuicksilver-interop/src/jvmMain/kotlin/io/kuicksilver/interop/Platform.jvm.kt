@@ -3,3 +3,5 @@
 package io.kuicksilver.interop
 
 internal actual fun envVar(name: String): String? = System.getenv(name)
+
+internal actual fun exitWith(code: Int): Nothing = kotlin.system.exitProcess(code)
