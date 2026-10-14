@@ -76,12 +76,12 @@ import PackageDescription
 
 let package = Package(
     name: "Kuicksilver",
-    platforms: [.iOS(.v15)]   // the OpenSSL build floor,
+    platforms: [.iOS(.v15)],  // the Kotlin/Native, OpenSSL and SecTrust floor
     products: [.library(name: "Kuicksilver", targets: ["Kuicksilver"])],
     targets: [
         .binaryTarget(
             name: "Kuicksilver",
-            url: "https://example.com/releases/0.1.0/Kuicksilver.xcframework.zip",
+            url: "https://example.com/releases/0.2.0/Kuicksilver.xcframework.zip",
             checksum: "<contents of checksum.txt>"
         ),
     ]
