@@ -78,8 +78,9 @@ class SimulatorTest {
     }
 
     @Test fun natRebindMidTransferKeepsCwnd() {
-        // a NAT rebind (same IP, new port) at 3 MiB of 10 keeps the server's congestion state and costs no stall (10 MiB rather than 50:
-        // two 50 MiB transfers took about 11 minutes on Kotlin/Native, the rebind and the check are the same)
+        // a NAT rebind (same IP, new port) at 3 MiB of 10 keeps the server's congestion state and costs no stall against the same
+        // transfer without it (10 MiB rather than 50: two 50 MiB transfers took about 11 minutes on Kotlin/Native); the plain run is
+        // window-limited, so the comparison is tight (uploadIsWindowLimitedNotQuantumLimited)
         val plain = SimScenario.transfer(Simulator(seed = 21, LinkParams(delay = 20.milliseconds)), 10 shl 20)
         ok(plain, "no rebind")
         val sim = Simulator(seed = 21, LinkParams(delay = 20.milliseconds))
@@ -343,5 +344,18 @@ class SimulatorTest {
             )
         ; ok(r, "1 Mbit/s")
         assertTrue(r.elapsed >= 8.seconds, "${r.elapsed}")
+    }
+
+    /**
+     * An upload is window-limited, not limited to one send quantum per batch of ACKs. A poll ends after one quantum (ten datagrams,
+     * RFC 9002 section 7.7) and the connection used to wait for the peer's next packet to send the rest. Where a flight's ACKs
+     * arrive together (here a link without a rate limit, on a real host a receive batch processed in one flush) that meant one
+     * quantum per round of ACKs: about 20 datagrams in flight whatever the window, 10 MiB over a 20 ms link in 18.2 s, and
+     * CUBIC, seeing an application-limited sender, never grew. Now the window fills: 0.53 s.
+     */
+    @Test fun uploadIsWindowLimitedNotQuantumLimited() {
+        val r = SimScenario.transfer(Simulator(seed = 21, LinkParams(delay = 20.milliseconds)), 10 shl 20)
+        ok(r, "10 MiB over 20 ms")
+        assertTrue(r.elapsed <= 2.seconds, "10 MiB took ${r.elapsed}")
     }
 }
