@@ -17,6 +17,7 @@ import io.kuicksilver.quic.QuicConfig
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.TimeMark
 import io.kuicksilver.quic.TransportError
+import io.kuicksilver.quic.VersionProfile
 import io.kuicksilver.quic.endpoint.ZeroRttReplayRegister
 import io.kuicksilver.quic.ksl
 import io.kuicksilver.quic.quicConfig
@@ -54,9 +55,11 @@ class ZeroRttTest {
     private fun ticket(
         serverQuic: QuicConfig = QuicConfig.Default,
         serverTls: TlsConfig = CoreFixtures.server(),
+        clientQuic: QuicConfig = QuicConfig.Default,
     ): QuicSessionTicket {
         val p =
             CorePair(
+                clientQuic = clientQuic,
                 serverTls = serverTls,
                 crypto = ksl,
                 clientEarly = EarlyDataState.Allowed,
@@ -95,10 +98,12 @@ class ZeroRttTest {
         serverEarly: ServerEarlyData? = early(),
         serverQuic: QuicConfig = QuicConfig.Default,
         mode: EarlyDataState = EarlyDataState.Allowed,
+        clientQuic: QuicConfig = QuicConfig.Default,
     ): Pair<CorePair, Long> {
         var id = -1L
         val p =
             CorePair(
+                clientQuic = clientQuic,
                 crypto = ksl,
                 clientEarly = mode,
                 serverEarly = serverEarly,
@@ -121,7 +126,8 @@ class ZeroRttTest {
         assertNull(rememberedParameters(ByteArray(0)))
         assertNull(rememberedParameters(byteArrayOf(5, 'h'.code.toByte(), '3'.code.toByte())))
         assertNull(rememberedParameters(byteArrayOf(0xff.toByte())))
-        assertNotNull(rememberedParameters(rememberedBlob("h3", ByteArray(0))))
+        assertNull(rememberedParameters(byteArrayOf(0, 0, 0, 1, 5, 'h'.code.toByte(), '3'.code.toByte())))
+        assertNotNull(rememberedParameters(rememberedBlob(1, "h3", ByteArray(0))))
     }
 
     @Test fun zeroRttDataAnsweredBeforeHandshakeCompletes() {
@@ -302,6 +308,52 @@ class ZeroRttTest {
         tp.initialMaxData = 2000
         t.remembered = withTp(t.remembered!!, TransportParametersCodec.encode(tp, TlsRole.Server, 27))
         return t
+    }
+
+    private val v1v2 = quicConfig { versions = listOf(VersionProfile.V1, VersionProfile.V2) }
+    private val v2v1 = quicConfig { versions = listOf(VersionProfile.V2, VersionProfile.V1) }
+
+    /**
+     * RFC 9369 section 4.1: across a compatible upgrade from v1 to v2 the client keeps sending 0-RTT in v1 ("MUST NOT send
+     * 0-RTT packets using the negotiated version") and the server takes it with v1 keys.
+     */
+    @Test fun zeroRttStaysInTheOriginalVersionAcrossAnUpgrade() {
+        val t = ticket() // a v1 server: a v1 ticket
+        val (p, id) = resumed(t, clientQuic = v1v2, serverQuic = v2v1, serverEarly = early(v2v1))
+        try {
+            assertTrue(p.handshake(), "${p.closedReason(p.clientEvents)} / ${p.closedReason(p.serverEvents)}")
+            assertEquals(VersionProfile.V2, p.server!!.version, "upgraded to v2")
+            assertEquals(VersionProfile.V2, p.client.version)
+            assertEquals(true, p.client.earlyDataAccepted)
+            assertTrue(p.server!!.streamReceivedEarly(id), "the request arrived in 0-RTT")
+            assertEquals("GET /index.html", streamText(p.server!!, id))
+        } finally {
+            p.close()
+        }
+    }
+
+    /** RFC 9369 section 5: a ticket belongs to the negotiated version of its connection and is not used to start another. */
+    @Test fun negative_ticketOfAnotherVersionIsNotUsed() {
+        for ((start, used) in listOf(v1v2 to false, v2v1 to true)) {
+            val t = ticket(serverQuic = v2v1, clientQuic = v1v2) // upgraded to v2: a v2 ticket
+            var took: Boolean? = null
+            val p =
+                CorePair(
+                    clientQuic = start,
+                    serverQuic = v2v1,
+                    crypto = ksl,
+                    clientEarly = EarlyDataState.Allowed,
+                    serverEarly = early(v2v1),
+                    clientSetup = { c -> took = c.useTicket(t) },
+                )
+            try {
+                assertEquals(used, took, "a v2 ticket for a connection starting in ${start.versions.first()}")
+                assertTrue(p.handshake())
+                assertEquals(used, p.client.earlyDataAccepted == true, "0-RTT only with the ticket of our version")
+            } finally {
+                p.close()
+            }
+        }
     }
 
     @Test fun rejectedWithSmallerLimitsFailsZeroRttRejected() {

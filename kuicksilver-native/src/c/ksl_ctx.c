@@ -44,20 +44,33 @@ static int ticket_cb(SSL *ssl, unsigned char key_name[16], unsigned char iv[EVP_
     return enc ? 1 : (k == c->ticket_keys ? 1 : 2);   /* 2 = decrypted with a previous key: renew the ticket */
 }
 
-/* 0-RTT (ADR-0015). The ticket app data carries the server's early context; a resumed ticket whose context differs keeps the
-   resumption but gets no early data. The final decision also needs the transport's verdict for this hello (its replay register). */
+/* Server tickets (ADR-0015): the app data is the QUIC version of the connection that issued the ticket (4 bytes, 0 for TLS over TCP) and
+   the server's early context. A ticket of another version than the one the client started this connection with is not resumed
+   (RFC 9369 section 5: a full handshake, without 0-RTT); a resumed ticket whose context differs keeps the resumption but gets no early
+   data. The final decision also needs the transport's verdict for this hello (its replay register). */
+static uint32_t ticket_version(const ksl_ssl *s, int issuing) {
+    if (s->mode != KSL_MODE_QUIC) return 0;
+    return issuing || !s->orig_version ? s->quic_version : s->orig_version;   /* issued: the negotiated version; resumed: the original one */
+}
 static int ticket_gen_cb(SSL *ssl, void *arg) {
     (void)arg; ksl_ssl *s = SSL_get_ex_data(ssl, 1); SSL_SESSION *sess = SSL_get0_session(ssl);
     if (!s || !sess) return 0;
-    return SSL_SESSION_set1_ticket_appdata(sess, s->early_ctx_len ? s->early_ctx : NULL, s->early_ctx_len);
+    uint8_t d[4 + sizeof s->early_ctx]; uint32_t v = ticket_version(s, 1);
+    d[0] = (uint8_t)(v >> 24); d[1] = (uint8_t)(v >> 16); d[2] = (uint8_t)(v >> 8); d[3] = (uint8_t)v;
+    memcpy(d + 4, s->early_ctx, s->early_ctx_len);
+    return SSL_SESSION_set1_ticket_appdata(sess, d, 4 + s->early_ctx_len);
 }
 static SSL_TICKET_RETURN ticket_dec_cb(SSL *ssl, SSL_SESSION *sess, const unsigned char *keyname, size_t keyname_len, SSL_TICKET_STATUS status, void *arg) {
     (void)keyname; (void)keyname_len; (void)arg; ksl_ssl *s = SSL_get_ex_data(ssl, 1);
     switch (status) {
     case SSL_TICKET_SUCCESS: case SSL_TICKET_SUCCESS_RENEW: {
         void *d = NULL; size_t l = 0;
-        if (s) s->early_ctx_match = SSL_SESSION_get0_ticket_appdata(sess, &d, &l) == 1 && l > 0 && l == s->early_ctx_len && !memcmp(d, s->early_ctx, l);
-        return SSL_TICKET_RETURN_USE_RENEW;   /* client tickets are single-use: every resumption gets a fresh one */
+        if (!s || SSL_SESSION_get0_ticket_appdata(sess, &d, &l) != 1 || l < 4) return SSL_TICKET_RETURN_IGNORE_RENEW;
+        const uint8_t *b = d; uint32_t v = ((uint32_t)b[0] << 24) | ((uint32_t)b[1] << 16) | ((uint32_t)b[2] << 8) | b[3];
+        if (v != ticket_version(s, 0)) { s->early_ctx_match = 0; return SSL_TICKET_RETURN_IGNORE_RENEW; }
+        s->early_ctx_match = l > 4 && l - 4 == s->early_ctx_len && !memcmp(b + 4, s->early_ctx, l - 4);
+        /* with early data client tickets are single-use: every resumption gets a fresh one */
+        return s->owner->early_data || status == SSL_TICKET_SUCCESS_RENEW ? SSL_TICKET_RETURN_USE_RENEW : SSL_TICKET_RETURN_USE;
     }
     case SSL_TICKET_EMPTY: case SSL_TICKET_NO_DECRYPT: return SSL_TICKET_RETURN_IGNORE_RENEW;
     default: return SSL_TICKET_RETURN_IGNORE;
@@ -68,7 +81,6 @@ void ksl_ctx_enable_early_data(SSL_CTX *ctx) {
     /* OpenSSL's own anti-replay makes tickets stateful in the server cache ksl keeps off: with it every early data would be refused */
     SSL_CTX_set_options(ctx, SSL_OP_NO_ANTI_REPLAY);
     SSL_CTX_set_allow_early_data_cb(ctx, allow_early_data_cb, NULL);
-    SSL_CTX_set_session_ticket_cb(ctx, ticket_gen_cb, ticket_dec_cb, NULL);
 }
 
 ksl_ctx *ksl_ctx_new(int role) {
@@ -90,6 +102,7 @@ ksl_ctx *ksl_ctx_new(int role) {
     SSL_CTX_set_session_cache_mode(c->ctx, SSL_SESS_CACHE_OFF);
     /* required by OpenSSL to resume a session whose handshake verified a client certificate */
     SSL_CTX_set_session_id_context(c->ctx, (const unsigned char *)"ksl", 3);
+    if (role == KSL_SERVER) SSL_CTX_set_session_ticket_cb(c->ctx, ticket_gen_cb, ticket_dec_cb, NULL);   /* tickets carry their version */
     ksl_live_add(KSL_LIVE_CTX, 1);
     return c;
 }

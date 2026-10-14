@@ -82,7 +82,9 @@ extern "C" {
 #define KSL_SET_QUIC_VERSION 3     /* data = 4-byte big-endian QUIC version (0x00000001 | 0x6b3343cf): labels for Handshake/1-RTT keys (RFC 9369 3.3);
                                       unknown -> KSL_E_BAD_ARG, after Handshake keys exist -> KSL_E_TOO_LATE */
 #define KSL_SET_EARLY_CONTEXT 4    /* server, 1..64 bytes before the first drive: written into every ticket this session issues; a resumed ticket
-                                      whose stored context differs gets no early data (RFC 9001 section 4.6.3) */
+                                      whose stored context differs gets no early data (RFC 9001 section 4.6.3). Every server ticket also
+                                      carries the QUIC version of its connection (the negotiated one); a ticket of another version than
+                                      the client's original one is not resumed (RFC 9369 section 5) */
 #define KSL_SET_EARLY_DATA 5       /* 1 byte before the first drive. Client: 1 = send 0-RTT with the session set by ksl_ssl_set_session
                                       (KSL_E_NOT_SUPPORTED when its ticket does not allow early data). Server: 1 = the transport admits early
                                       data for this hello (replay register), 0 = refuse; KSL_E_NOT_SUPPORTED without KSL_OPT_EARLY_DATA */

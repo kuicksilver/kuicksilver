@@ -309,7 +309,8 @@ internal class PacketBuilder(
             lengthOff =
                 PacketHeaderCodec.writeLong(
                     w,
-                    c.version,
+                    // RFC 9369 section 4.1: "The client MUST NOT send 0-RTT packets using the negotiated version"
+                    if (type == PacketType.ZeroRtt) c.originalVersion else c.version,
                     type,
                     c.remoteCid,
                     c.localCid,

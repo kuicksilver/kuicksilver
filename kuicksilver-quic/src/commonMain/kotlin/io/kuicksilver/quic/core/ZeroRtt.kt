@@ -88,35 +88,47 @@ internal class ServerEarlyData(
     }
 }
 
-/** What a ticket remembers: the negotiated ALPN and the server's encoded transport parameters. */
+/**
+ * What a ticket remembers: the QUIC version of the connection that received it (RFC 9369 section 5: the negotiated one),
+ * the negotiated ALPN and the server's encoded transport parameters, as `[version u32][alpn length][alpn][parameters]`.
+ */
 internal fun rememberedBlob(
+    version: Int,
     alpn: String?,
     tp: ByteArray,
 ): ByteArray {
     val a = (alpn ?: "").encodeToByteArray()
-    return byteArrayOf(a.size.toByte()) + a + tp
+    val v = byteArrayOf((version ushr 24).toByte(), (version ushr 16).toByte(), (version ushr 8).toByte(), version.toByte())
+    return v + byteArrayOf(a.size.toByte()) + a + tp
 }
 
-internal fun rememberedAlpn(blob: ByteArray): String = blob.decodeToString(1, 1 + (blob[0].toInt() and 0xff))
+internal fun rememberedVersion(blob: ByteArray): Int =
+    ((blob[0].toInt() and 0xff) shl 24) or ((blob[1].toInt() and 0xff) shl 16) or ((blob[2].toInt() and 0xff) shl 8) or
+        (blob[3].toInt() and 0xff)
 
-internal fun rememberedTp(blob: ByteArray): ByteArray = blob.copyOfRange(1 + (blob[0].toInt() and 0xff), blob.size)
+internal fun rememberedAlpn(blob: ByteArray): String = blob.decodeToString(5, 5 + (blob[4].toInt() and 0xff))
 
-/** The ALPN and the server's transport parameters a ticket remembers ([rememberedBlob]), or null when [blob] does not hold them. */
-internal fun rememberedParameters(blob: ByteArray): Pair<String, TransportParameters>? {
-    if (blob.isEmpty() || 1 + (blob[0].toInt() and 0xff) > blob.size) return null // the application can set the blob
+internal fun rememberedTp(blob: ByteArray): ByteArray = blob.copyOfRange(5 + (blob[4].toInt() and 0xff), blob.size)
+
+/**
+ * The version, ALPN and server transport parameters a ticket remembers ([rememberedBlob]), or null when [blob] does not
+ * hold them.
+ */
+internal fun rememberedParameters(blob: ByteArray): Triple<Int, String, TransportParameters>? {
+    if (blob.size < 5 || 5 + (blob[4].toInt() and 0xff) > blob.size) return null // the application can set the blob
     val tp =
         try {
             TransportParametersCodec.decode(rememberedTp(blob), TlsRole.Server)
         } catch (_: QuicWireException) {
             return null
         }
-    return rememberedAlpn(blob) to tp
+    return Triple(rememberedVersion(blob), rememberedAlpn(blob), tp)
 }
 
 internal fun withTp(
     blob: ByteArray,
     tp: ByteArray,
-): ByteArray = rememberedBlob(rememberedAlpn(blob), tp)
+): ByteArray = rememberedBlob(rememberedVersion(blob), rememberedAlpn(blob), tp)
 
 /** Server: hands the TLS session the context and an admission backed by the replay register at its clock. */
 internal fun ConnectionCore.enableServerEarlyData(early: ServerEarlyData) {
@@ -136,13 +148,21 @@ internal fun ConnectionCore.enableServerEarlyData(early: ServerEarlyData) {
 
 /**
  * Client, before the first [ConnectionCore.poll]: resumes [ticket] and, when it allows early data and remembers the
- * server's transport parameters, applies them as the limits of 0-RTT (RFC 9000 section 7.4.1). True when 0-RTT is on.
+ * server's transport parameters, applies them as the limits of 0-RTT (RFC 9000 section 7.4.1). True when 0-RTT is on. A
+ * ticket from a connection of another QUIC version than ours is closed unused (RFC 9369 section 5).
  */
 internal fun ConnectionCore.useTicket(ticket: QuicSessionTicket): Boolean {
     check(role == TlsRole.Client && earlyMode != EarlyDataState.Disabled) { "0-RTT needs a client core with early data" }
     val blob = ticket.remembered
-    if (!handshake.session.resume(ticket) || blob == null) return false
-    val (alpn, tp) = rememberedParameters(blob) ?: return false
+    val stored = blob?.let { rememberedParameters(it) }
+    // RFC 9369 section 5: "Clients MUST NOT use a session ticket ... from a QUIC version 1 connection to initiate a QUIC
+    // version 2 connection, and vice versa": a ticket of another version is not resumed at all
+    if (stored != null && stored.first != version.version) {
+        ticket.close()
+        return false
+    }
+    if (!handshake.session.resume(ticket) || stored == null) return false
+    val (_, alpn, tp) = stored
     if (!handshake.session.enableEarlyData(null, null)) return false
     remembered = tp
     rememberedAlpn = alpn

@@ -191,11 +191,13 @@ internal class PacketReceiver(
         if (type == PacketType.Initial && c.role == TlsRole.Client && hv.tokenLen != 0) return false
         // migration off, or to loopback/link-local (threat-model 3.14)
         if (type == PacketType.OneRtt && c.role == TlsRole.Server && !c.path.isRemote(from) && !c.migrationAllowedFrom(from)) return false
+        // RFC 9369 section 4.1: a server takes 0-RTT only in the original version, whatever the negotiated one
+        if (type == PacketType.ZeroRtt && hv.version != c.originalVersion.version) return false
         if (type != PacketType.OneRtt && hv.version != c.version.version) {
             val profile = VersionProfile.of(hv.version) ?: return false
             if (c.role == TlsRole.Client) {
                 if (!c.switchClientVersion(profile)) return false
-            } else if (!(type == PacketType.Initial && hv.version == c.originalVersion.version)) {
+            } else if (!((type == PacketType.Initial || type == PacketType.ZeroRtt) && hv.version == c.originalVersion.version)) {
                 return false
             }
         }

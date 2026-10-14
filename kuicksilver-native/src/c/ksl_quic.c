@@ -50,7 +50,10 @@ static int cb_yield_secret(SSL *ssl, uint32_t prot_level, int direction, const u
     if (direction == 0) s->read_level = (int)prot_level; else s->write_level = (int)prot_level;
     int aead = ksl_aead_of_cipher(SSL_get_current_cipher(ssl)); if (!aead) return 0;
     if (prot_level >= 2) s->hs_keys = 1;                                                    /* Handshake-level keys: the version is final (RFC 9368 2.2) */
-    ksl_key *k = ksl_key_from_secret(aead, secret, secret_len, s->quic_version); if (!k) return 0;   /* labels of the negotiated version (RFC 9369 3.3) */
+    /* labels of the negotiated version (RFC 9369 3.3), but 0-RTT stays in the original one (RFC 9369 4.1): a server derives its 0-RTT
+       key after negotiating */
+    uint32_t v = prot_level == KSL_LEVEL_EARLY && s->orig_version ? s->orig_version : s->quic_version;
+    ksl_key *k = ksl_key_from_secret(aead, secret, secret_len, v); if (!k) return 0;
     ksl_event *e = ksl_push_event(s, KSL_EV_KEY, NULL, 0); if (!e) { ksl_key_free(k); return 0; }
     e->level = (int)prot_level; e->direction = direction; e->aead = aead; e->key = k; return 1;
 }
@@ -74,6 +77,7 @@ static int negotiate_version(ksl_ssl *s, const uint8_t *peer, size_t peer_len) {
     size_t cl = 0, sl = 0; const uint8_t *cv = find_version_information(peer, peer_len, &cl), *sv = s->tp ? find_version_information(s->tp, s->tp_len, &sl) : NULL;
     int client_has = cv && cl >= 4 && cl % 4 == 0;                   /* none (or malformed: the transport rejects it): keep the set version, still announce it as Chosen */
     uint32_t original = client_has ? rd32(cv) : s->quic_version, chosen = original;
+    s->orig_version = original;
     if (client_has && sv && sl >= 4 && sl % 4 == 0) {
         for (size_t i = 0; i + 4 <= sl && chosen == original; i += 4) {   /* our Chosen Version heads our preference order */
             uint32_t ours = rd32(sv + i); if (ours == original) break;

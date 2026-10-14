@@ -34,6 +34,7 @@ struct ksl_ssl {
     int mode, done, fatal, read_level, write_level;
     uint8_t *tp; size_t tp_len;                      /* must outlive the handshake: OpenSSL keeps the pointer */
     uint32_t quic_version; int hs_keys;              /* version whose labels derive Handshake/1-RTT keys; set once Handshake keys exist */
+    uint32_t orig_version;                           /* server: the client's original version (0 until negotiated); labels of 0-RTT keys (RFC 9369 4.1) */
     ksl_inbuf in[KSL_NLEVELS], stash[KSL_NLEVELS];   /* stash receives bytes while a record is outstanding */
     int rcd_level;                                   /* level of the record handed to OpenSSL and not yet released, or -1 */
     ksl_event q[KSL_EVQ]; uint8_t *qbuf[KSL_EVQ]; int qh, qt;

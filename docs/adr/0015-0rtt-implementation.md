@@ -32,9 +32,14 @@ Facts of the pinned OpenSSL 3.5.9 that fix the design:
 ### ksl (ABI 6)
 
 - `KSL_OPT_EARLY_DATA` (server context): each QUIC session enables early data at creation. The context sets
-  `SSL_OP_NO_ANTI_REPLAY` and installs the allow-early-data callback and the ticket app-data callbacks.
+  `SSL_OP_NO_ANTI_REPLAY` and installs the allow-early-data callback. (K7: every server context installs the ticket
+  app-data callbacks, since every ticket carries its QUIC version.)
 - `KSL_SET_EARLY_CONTEXT` (server session): bytes that are written into every ticket the session issues and compared
-  with the app data of the ticket being resumed. A mismatch rejects early data but keeps the resumption.
+  with the app data of the ticket being resumed. A mismatch rejects early data but keeps the resumption. (K7: the app
+  data starts with the negotiated QUIC version of the issuing connection; a ticket whose version is not the client's
+  original version is not resumed at all, RFC 9369 section 5. The client checks the same with the version it keeps
+  in the ticket's `remembered` blob, and sends 0-RTT in its original version across a compatible upgrade, RFC 9369
+  section 4.1.)
 - `KSL_SET_EARLY_DATA`: on a client, `[1]` requests 0-RTT with the resumed session (`KSL_E_NOT_SUPPORTED` when the
   ticket does not allow it). On a server, `[1]` is the transport's verdict for this ClientHello (the replay register
   admitted it). Without it the callback rejects.
