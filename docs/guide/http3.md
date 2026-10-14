@@ -20,9 +20,11 @@ Header compression uses the static table always and the dynamic table only when 
   literals until the peer catches up, so a peer that never acknowledges sections cannot grow the encoder's state.
 - `authorization`, `proxy-authorization`, `cookie` and `set-cookie` are never inserted into the dynamic table and are
   sent with the never-index bit (RFC 9204 section 7.1); neither are values longer than a quarter of the table.
-- The decoder rejects, before allocating, integers longer than 62 bits and string literals above 64 KiB, and counts the
-  decoded size of a field section as it goes (name + value + 32 per line, RFC 9114 section 4.2.2), stopping at
-  `maxFieldSectionSize`.
+- The decoder rejects, before allocating, integers longer than 62 bits and string literals above a ceiling, and counts
+  the decoded size of a field section as it goes (name + value + 32 per line, RFC 9114 section 4.2.2), stopping at
+  `maxFieldSectionSize`. In a field section the ceiling is `maxFieldSectionSize` itself and a longer string makes the
+  section too large (431 on the server, `FieldSectionTooLarge` on the client; the connection lives, RFC 9204 section
+  7.4); on the encoder stream it is 64 KiB and a longer string closes the connection with `QPACK_ENCODER_STREAM_ERROR`.
 - An encoder-stream instruction the transport delivers in pieces is reassembled in linear time: once its length is
   known the decoder only appends bytes until it is complete (at most 2 x 64 KiB + 64 bytes are held).
 - A field section that references entries still in flight on the peer's encoder stream waits for them (at most
@@ -182,12 +184,15 @@ of them); one that arrives after the field replaces it.
 
 A server that accepts Extended CONNECT (RFC 9220) sets `enableConnectProtocol = true`; a client calls `connect`, which
 waits for the server's SETTINGS and fails with `Http3Exception.Settings` if the server did not opt in. The result is an
-`Http3Stream`: a byte stream both ways (WebSocket frames for `:protocol = websocket`, capsules for other protocols)
+`Http3Stream`: a byte stream both ways (WebSocket frames for `:protocol = websocket`, the protocol's own framing otherwise:
+Kuicksilver does not implement the Capsule Protocol of RFC 9297 section 3, so capsules are bytes the application writes and parses)
 plus HTTP datagrams bound to the stream (RFC 9297). `Http3Stream.headers` holds the peer's fields: the CONNECT request's on
 the server, the 2xx response's on the client (for example `sec-websocket-protocol`, RFC 9220 section 3). Each
 direction ends on its own: closing `output` sends FIN and leaves `input` readable until the peer's FIN (a TCP-style
-half-close, RFC 9114 section 4.4); the stream and its datagram registration are released once both directions ended or
-the stream was reset.
+half-close, RFC 9114 section 4.4); the stream is released once both directions ended or the stream was reset. Datagrams
+follow the stream's state (RFC 9297 section 2.1): the `datagrams` flow ends when the receive side closes and later
+datagrams for the stream are dropped; once our send side is closed (`output` closed, or `reset`) `trySendDatagram`
+answers `Closed` and `sendDatagram` throws `IllegalStateException`.
 
 ```kotlin
 // guide:http3:connect (server)

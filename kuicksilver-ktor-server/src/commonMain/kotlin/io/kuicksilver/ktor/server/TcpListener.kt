@@ -15,9 +15,6 @@ import io.ktor.network.sockets.Socket
 import io.ktor.network.sockets.SocketAddress
 import io.ktor.network.sockets.openReadChannel
 import io.ktor.network.sockets.openWriteChannel
-import io.ktor.server.cio.backend.ServerIncomingConnection
-import io.ktor.server.cio.backend.ServerRequestScope
-import io.ktor.server.cio.backend.startServerConnectionPipeline
 import io.ktor.server.engine.handleFailure
 import io.ktor.server.request.ApplicationReceivePipeline
 import io.ktor.server.response.respond
@@ -31,6 +28,9 @@ import io.kuicksilver.http3.Http3Endpoint
 import io.kuicksilver.ktor.network.bindTcp
 import io.kuicksilver.ktor.network.tlsServer
 import io.kuicksilver.ktor.server.h1.H1Call
+import io.kuicksilver.ktor.server.h1.H1Connection
+import io.kuicksilver.ktor.server.h1.H1RequestScope
+import io.kuicksilver.ktor.server.h1.startH1Pipeline
 import io.kuicksilver.tls.Certificate
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
@@ -168,13 +168,13 @@ internal fun KuicksilverApplicationEngine.startTcp(
                                 events.emit("connectionOpened") { connectionOpened(HttpProtocolVersion.HTTP_1_1, remote) }
                                 try {
                                     val connection =
-                                        ServerIncomingConnection(
+                                        H1Connection(
                                             sock.openReadChannel(),
                                             sock.openWriteChannel(),
                                             sock.remoteAddress.toNetworkAddress(),
                                             sock.localAddress.toNetworkAddress(),
                                         )
-                                    startServerConnectionPipeline(
+                                    startH1Pipeline(
                                         connection,
                                         timeout,
                                     ) { request -> handleRequest(this, request, scheme, peer, altSvc) }.join()
@@ -206,7 +206,7 @@ internal fun KuicksilverApplicationEngine.startTcp(
 private fun KuicksilverApplicationEngine.http3AltSvc(port: Int): String? = if (port in h3Ports) "h3=\":$port\"; ma=86400" else null
 
 private suspend fun KuicksilverApplicationEngine.handleRequest(
-    scope: ServerRequestScope,
+    scope: H1RequestScope,
     request: Request,
     scheme: String,
     peer: List<Certificate>,
@@ -234,7 +234,14 @@ private suspend fun KuicksilverApplicationEngine.handleRequest(
             var failure: Throwable? = null
             try {
                 addHandlerForExpectedHeader(output, call)
-                pipeline.execute(call)
+                // forwarded from early data by a gateway and not replayable: 425, it cannot be made safe by waiting (RFC 8470 section 5.1)
+                if (request.headers[EARLY_DATA_FIELD] != null &&
+                    request.method.value !in io.kuicksilver.http3.Http3EarlyDataPolicy.SAFE_METHODS
+                ) {
+                    call.respond(HttpStatusCode.TooEarly)
+                } else {
+                    pipeline.execute(call)
+                }
             } catch (error: Throwable) {
                 failure = error
                 handleFailure(call, error)

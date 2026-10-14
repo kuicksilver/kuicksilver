@@ -9,8 +9,11 @@ import kotlinx.coroutines.Deferred
 
 /**
  * A client request (RFC 9114 section 4.1), built with [http3Request] (or [Builder]). [authority] and [path] become the
- * pseudo-headers; [headers] must not contain pseudo-headers or connection-specific fields. A null [body] sends HEADERS with
- * FIN; otherwise the channel is copied into DATA frames until it closes, then [trailers] (if any) are sent.
+ * pseudo-headers; [headers] must not contain pseudo-headers or connection-specific fields. `request` refuses with
+ * IllegalArgumentException what the peer would treat as malformed (RFC 9114 sections 4.2, 4.3.1): a [method] that is not
+ * a token, a [path] that does not start with `/` (or is `*` for OPTIONS), userinfo (`user@`) in [authority], a `host`
+ * field differing from [authority], `te` other than `trailers`, invalid field names or values. A null [body] sends HEADERS
+ * with FIN; otherwise the channel is copied into DATA frames until it closes, then [trailers] (if any) are sent.
  */
 public class Http3Request private constructor(
     b: Builder,

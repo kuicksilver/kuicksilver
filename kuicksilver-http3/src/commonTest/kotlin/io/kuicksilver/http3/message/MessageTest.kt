@@ -173,6 +173,65 @@ class PseudoHeadersTest {
         )
     }
 
+    private fun with(
+        name: String,
+        value: String,
+    ) = base.map { if (it.first == name) name to value else it }
+
+    /** RFC 9114 section 4.3.1 and RFC 9110 section 9.1: `:method` is a token (quic-go validMethod). */
+    @Test fun negative_h3MethodMustBeToken() {
+        bad(with(":method", "GET /admin X"))
+        bad(with(":method", "GET\t"))
+        bad(with(":method", "G(T"))
+        assertEquals("M-SEARCH", PseudoHeaders.parseRequest(with(":method", "M-SEARCH"), false).method)
+    }
+
+    /** `:path` is path-absolute plus query, or `*` for OPTIONS (RFC 9114 section 4.3.1, quic-go headers.go). */
+    @Test fun negative_h3PathMustBeAbsoluteOrAsterisk() {
+        bad(with(":path", "http://evil/x"))
+        bad(with(":path", "a b"))
+        bad(with(":path", "../x"))
+        bad(with(":path", "*"))
+        assertEquals(
+            "*",
+            PseudoHeaders
+                .parseRequest(
+                    with(":method", "OPTIONS").let { f ->
+                        f.map {
+                            if (it.first ==
+                                ":path"
+                            ) {
+                                ":path" to "*"
+                            } else {
+                                it
+                            }
+                        }
+                    },
+                    false,
+                ).path,
+        )
+        // Extended CONNECT carries a path too
+        bad(
+            listOf(":method" to "CONNECT", ":protocol" to "websocket", ":scheme" to "https", ":authority" to "a", ":path" to "chat"),
+            connect = true,
+        )
+    }
+
+    /** `:authority` (or the `host` it falls back to) MUST NOT carry userinfo for http and https (RFC 9114 section 4.3.1). */
+    @Test fun negative_h3UserinfoInAuthorityRejected() {
+        bad(with(":authority", "user@example.com"))
+        bad(with(":authority", "user:pass@example.com") + ("host" to "user:pass@example.com"))
+        bad(base.filter { it.first != ":authority" } + ("host" to "user@h.example"))
+        bad(listOf(":method" to "CONNECT", ":authority" to "user@proxy:443"))
+    }
+
+    /** RFC 9114 section 4.3.1: Host and :authority MUST match; a second Host is malformed too (quic-go: too many Host headers). */
+    @Test fun negative_h3SecondHostRejected() {
+        bad(base + ("host" to "example.com") + ("host" to "other.com"))
+        bad(base + ("host" to "example.com") + ("host" to "example.com"))
+        bad(base.filter { it.first != ":authority" } + ("host" to "h.example") + ("host" to "h.example"))
+    }
+
     @Test fun responseStatusRange() {
         assertEquals(204, PseudoHeaders.parseResponse(listOf(":status" to "204", "x" to "y")).first)
         for (s in listOf(

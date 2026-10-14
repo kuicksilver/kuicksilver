@@ -96,7 +96,8 @@ internal class PoolLimits(
  * [PoolLimits.idleTimeoutMillis] ([evictExpired]) and are never reused past [PoolLimits.maxLifetimeMillis]; a route without
  * connections or waiters is dropped from the map at once, so the map is bounded by the live connections and waiters.
  *
- * Every state change runs under a [SpinLock] and never suspends; connections are closed outside it.
+ * Every state change runs under a [SpinLock] and never suspends; connections are closed and waiters resumed outside it
+ * (a waiter on `Dispatchers.Unconfined` resumes inline and may enter the pool again at once).
  */
 internal class ConnectionPool<C : PooledConnection>(
     private val limits: PoolLimits,
@@ -116,6 +117,10 @@ internal class ConnectionPool<C : PooledConnection>(
         val route: String,
     ) {
         val result = CompletableDeferred<C?>()
+
+        /** Under the lock, when it leaves the queue: whether it was granted [connection] (null: a permit) or failed by shutdown. */
+        var granted = false
+        var connection: C? = null
     }
 
     private val lock = SpinLock()
@@ -171,12 +176,12 @@ internal class ConnectionPool<C : PooledConnection>(
                         }
                         null
                     } else {
-                        // completed under the lock before we got here: hand back what we were given
-                        waiter.result
+                        // it left the queue under the lock (its result may still be on its way): hand back what it was given
+                        waiter.takeIf { it.granted }
                     }
                 }
-            if (granted != null && granted.getCompletionExceptionOrNull() == null) {
-                val c = granted.getCompleted()
+            if (granted != null) {
+                val c = granted.connection
                 if (c == null) releasePermit(route) else release(c)
             }
             throw e
@@ -191,10 +196,12 @@ internal class ConnectionPool<C : PooledConnection>(
     /** A permit from [acquire] whose connection could not be opened. */
     fun releasePermit(route: String) {
         val toClose = ArrayList<C>()
+        val served = ArrayList<Waiter<C>>()
         lock.withLock {
             routes[route]?.let { freeSlot(it) }
-            dispatch(toClose)
+            dispatch(toClose, served)
         }
+        resumeAll(served)
         closeAll(toClose)
     }
 
@@ -206,6 +213,7 @@ internal class ConnectionPool<C : PooledConnection>(
     fun release(c: C): Boolean {
         if (c.closed) return false
         val toClose = ArrayList<C>()
+        val served = ArrayList<Waiter<C>>()
         val kept =
             lock.withLock {
                 val r = routes[c.route]
@@ -217,20 +225,21 @@ internal class ConnectionPool<C : PooledConnection>(
                 if (first != null) {
                     waiters.remove(first)
                     r.waiting--
-                    first.result.complete(c)
+                    grant(first, c, served)
                     return@withLock true
                 }
                 if (waiters.isNotEmpty() || r.idle.size >= limits.maxIdlePerRoute) {
                     // waiters of other routes need the slot more than this route needs an idle connection
                     if (c.claimSlot()) freeSlot(r)
                     toClose += c
-                    dispatch(toClose)
+                    dispatch(toClose, served)
                     return@withLock false
                 }
                 c.idleSince = now()
                 r.idle.addLast(c)
                 true
             }
+        resumeAll(served)
         closeAll(toClose)
         return kept
     }
@@ -239,14 +248,16 @@ internal class ConnectionPool<C : PooledConnection>(
     internal fun slotReturned(c: PooledConnection) {
         if (!c.claimSlot()) return
         val toClose = ArrayList<C>()
+        val served = ArrayList<Waiter<C>>()
         lock.withLock {
             val r = routes[c.route]
             if (r != null) {
                 r.idle.removeAll { it === c }
                 freeSlot(r)
             }
-            dispatch(toClose)
+            dispatch(toClose, served)
         }
+        resumeAll(served)
         closeAll(toClose)
     }
 
@@ -256,6 +267,7 @@ internal class ConnectionPool<C : PooledConnection>(
      */
     fun evictExpired(): Long? {
         val toClose = ArrayList<C>()
+        val served = ArrayList<Waiter<C>>()
         var next: Long? = null
         lock.withLock {
             val t = now()
@@ -276,8 +288,9 @@ internal class ConnectionPool<C : PooledConnection>(
                 }
                 prune(r)
             }
-            dispatch(toClose)
+            dispatch(toClose, served)
         }
+        resumeAll(served)
         closeAll(toClose)
         return next
     }
@@ -343,8 +356,14 @@ internal class ConnectionPool<C : PooledConnection>(
         return true
     }
 
-    /** Serves waiters in FIFO order; one that cannot be served yet keeps its place, later ones of other routes may go. */
-    private fun dispatch(toClose: MutableList<C>) {
+    /**
+     * Serves waiters in FIFO order; one that cannot be served yet keeps its place, later ones of other routes may go. The
+     * served ones are resumed by the caller once the lock is released ([resumeAll]).
+     */
+    private fun dispatch(
+        toClose: MutableList<C>,
+        served: MutableList<Waiter<C>>,
+    ) {
         if (waiters.isEmpty()) return
         val it = waiters.iterator()
         while (it.hasNext()) {
@@ -355,17 +374,28 @@ internal class ConnectionPool<C : PooledConnection>(
                 idle != null -> {
                     it.remove()
                     r.waiting--
-                    w.result.complete(idle)
+                    grant(w, idle, served)
                 }
 
                 grantPermit(r, toClose) -> {
                     it.remove()
                     r.waiting--
-                    w.result.complete(null)
+                    grant(w, null, served)
                 }
             }
         }
         routes.values.filter { it.live == 0 && it.waiting == 0 }.forEach { routes.remove(it.key) }
+    }
+
+    /** Records what [w] gets (a cancelled waiter hands it back from this record); its result is completed by [resumeAll]. */
+    private fun grant(
+        w: Waiter<C>,
+        c: C?,
+        served: MutableList<Waiter<C>>,
+    ) {
+        w.granted = true
+        w.connection = c
+        served += w
     }
 
     private fun freeSlot(r: Route<C>) {
@@ -386,6 +416,11 @@ internal class ConnectionPool<C : PooledConnection>(
         c: C,
         t: Long,
     ): Boolean = t >= saturatedAdd(c.createdAt, limits.maxLifetimeMillis)
+
+    /** Outside the lock: hands the served waiters what [grant] recorded. */
+    private fun resumeAll(l: List<Waiter<C>>) {
+        for (w in l) w.result.complete(w.connection)
+    }
 
     private fun closeAll(l: List<C>) {
         for (c in l) c.close()

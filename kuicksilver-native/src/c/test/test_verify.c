@@ -30,6 +30,8 @@ static void test_openssl_verifier(void) {
     scenario wild = {"server", "test-ca", "a.wild.test", KSL_VERIFY_OPENSSL, 0, 0}; EXPECT_OK(wild, "*.wild.test matches a.wild.test");
     scenario ip = {"server", "test-ca", "127.0.0.1", KSL_VERIFY_OPENSSL, 0, 0}; EXPECT_OK(ip, "IP literal against iPAddress SAN");
     scenario ca = {"server-other-ca", "test-ca", "server.test", KSL_VERIFY_OPENSSL, 0, 0}; EXPECT_ALERT(ca, 48, "negative: unknown CA -> unknown_ca");
+    scenario mid = {"server-via-intermediate", "intermediate", "server.test", KSL_VERIFY_OPENSSL, 0, 0}; EXPECT_OK(mid, "an anchored intermediate is a trust anchor (AnchoredCa: each is trusted as a root)");
+    scenario midother = {"server", "intermediate", "server.test", KSL_VERIFY_OPENSSL, 0, 0}; EXPECT_ALERT(midother, 48, "negative: a chain outside the anchored intermediate -> unknown_ca");
     scenario name = {"server", "test-ca", "wrong.test", KSL_VERIFY_OPENSSL, 0, 0}; EXPECT_ALERT(name, 42, "negative: name mismatch -> bad_certificate");
     scenario cn = {"server-cn-only", "test-ca", "cn.test", KSL_VERIFY_OPENSSL, 0, 0}; EXPECT_ALERT(cn, 42, "negative: CN without SAN rejected");
     scenario pw = {"server-partial-wildcard", "test-ca", "foo.wild.test", KSL_VERIFY_OPENSSL, 0, 0}; EXPECT_ALERT(pw, 42, "negative: partial wildcard f*.wild.test rejected");
@@ -91,8 +93,27 @@ static void test_client_cert(void) {
     END();
 }
 
+static void test_verify_cached_chain(void) {
+    SECTION("verify_cached_chain_again");
+    /* resumption (ADR-0011): a chain kept from a full handshake is verified again with the current store, time, name and purpose */
+    ksl_ctx *cc = client_ctx("test-ca", KSL_VERIFY_OPENSSL), *mid = client_ctx("intermediate", KSL_VERIFY_OPENSSL), *other = client_ctx("other-ca", KSL_VERIFY_OPENSSL);
+    blob leaf = chain_of(1, "server"), via = chain_of(2, "server-via-intermediate", "intermediate"), cl = chain_of(1, "client"); int err = -1;
+    CHECK(ksl_ctx_verify_chain(cc, leaf.buf, leaf.len, "server.test", 0, &err) == KSL_OK && err == 0, "the cached chain still verifies");
+    CHECK(ksl_ctx_verify_chain(cc, leaf.buf, leaf.len, "127.0.0.1", 0, &err) == KSL_OK, "an IP reference identifier");
+    CHECK(ksl_ctx_verify_chain(mid, via.buf, via.len, "server.test", 0, &err) == KSL_OK, "an anchored intermediate (PARTIAL_CHAIN) as at the handshake");
+    CHECK(ksl_ctx_verify_chain(cc, leaf.buf, leaf.len, "server.test", (int64_t)7258118400 /* 2200-01-01 */, &err) == KSL_ERROR && err == X509_V_ERR_CERT_HAS_EXPIRED, "negative: past the leaf's notAfter -> expired");
+    CHECK(ksl_ctx_verify_chain(other, leaf.buf, leaf.len, "server.test", 0, &err) == KSL_ERROR && err == X509_V_ERR_UNABLE_TO_GET_ISSUER_CERT_LOCALLY, "negative: anchor no longer trusted -> unknown issuer");
+    CHECK(ksl_ctx_verify_chain(cc, leaf.buf, leaf.len, "wrong.test", 0, &err) == KSL_ERROR && err == X509_V_ERR_HOSTNAME_MISMATCH, "negative: another name -> hostname mismatch");
+    CHECK(ksl_ctx_verify_chain(cc, cl.buf, cl.len, "client.test", 0, &err) == KSL_ERROR && err == X509_V_ERR_INVALID_PURPOSE, "negative: a clientAuth-only certificate as a server -> invalid purpose");
+    CHECK(ksl_ctx_verify_chain(cc, leaf.buf, leaf.len, "", 0, &err) == KSL_ERROR && err == 0, "negative: a client needs a name");
+    CHECK(ksl_ctx_verify_chain(cc, leaf.buf, 3, "server.test", 0, &err) == KSL_ERROR && err == 0, "negative: bad framing");
+    ksl_ctx *sc = server_ctx("server"); blob r = chain_of(1, "test-ca"); ksl_ctx_set_roots(sc, r.buf, r.len); free(r.buf);
+    CHECK(ksl_ctx_verify_chain(sc, cl.buf, cl.len, NULL, 0, &err) == KSL_OK, "a server verifies a cached client chain without a name");
+    free(leaf.buf); free(via.buf); free(cl.buf); ksl_ctx_free(cc); ksl_ctx_free(mid); ksl_ctx_free(other); ksl_ctx_free(sc); END();
+}
+
 void run_verify_review(void);
-void run_verify(void) { test_openssl_verifier(); test_pause_path(); test_chains(); test_client_cert(); run_verify_review(); }
+void run_verify(void) { test_openssl_verifier(); test_pause_path(); test_chains(); test_client_cert(); test_verify_cached_chain(); run_verify_review(); }
 
 /* ---- wire alerts, verify_err exposure, generic alerts, system store, resumed-session chain ---- */
 static int raw_alert(ksl_ssl *s) { uint32_t c; int a; char m[256]; ksl_ssl_last_error(s, &c, &a, m, sizeof m); return a; }

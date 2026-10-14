@@ -25,9 +25,12 @@ val server = embeddedServer(Kuicksilver, configure = {
 server.start(wait = true)
 ```
 
-- A `tlsConnector` serves HTTP/1.1 over TLS on TCP; Ktor's HTTP/1.1 connection pipeline (from `ktor-server-cio`) parses
-  requests, so keep-alive, pipelining, chunked bodies and `100-continue` behave as in the CIO engine. ALPN on TCP is
-  `http/1.1`.
+- A `tlsConnector` serves HTTP/1.1 over TLS on TCP; Ktor's HTTP/1.1 parser (`ktor-http-cio`) and a copy of the CIO
+  engine's connection pipeline handle requests, so keep-alive, pipelining, chunked bodies and `100-continue` behave as
+  in the CIO engine. Request framing follows RFC 9112 section 6 more strictly than CIO: a request with both
+  Content-Length and Transfer-Encoding is refused with 400 and the connection closed, a request with neither has no
+  body (also with `Connection: close`), and a chunked trailer section is accepted (its fields are discarded). ALPN on
+  TCP is `http/1.1`.
 - `configuration.identity = ...` turns plain connectors into TLS ones, so `embeddedServer(Kuicksilver, port = 443,
   configure = { identity = ... })` works as expected. Without an identity a plain `connector { port = ... }` serves
   cleartext HTTP/1.1 (behind a TLS-terminating proxy, for tests).
@@ -295,9 +298,23 @@ default.
   0-RTT run before the handshake completes, and `call.request.receivedEarly` is true for them. Every other request
   waits for the handshake. `http3Settings { earlyData = Http3EarlyDataPolicy.Reject425() }` answers `425 Too Early`
   instead.
+- **Behind a gateway** (with or without `quicEarlyData`): a CDN or reverse proxy that forwards a request it received in
+  early data marks it `Early-Data: 1` (RFC 8470 section 5.1), and such a request may be a replay whatever the state of
+  the connection it arrives on. Over HTTP/1.1 and HTTP/3 the server engine sets `call.request.receivedEarly` for it and
+  answers `425 Too Early` to any such request the early-data policy does not declare replayable (over HTTP/1.1: anything
+  but GET, HEAD and OPTIONS), without running the handler; the gateway forwards the 425 and its client retries after
+  its handshake. Gate side effects on `receivedEarly`, not on the TLS state of your own connection.
 - **Client:** set `http3 { earlyData = true }`. The engine keeps the servers' session tickets for its lifetime, and
   on a new connection to a server it has a ticket for, it sends GET, HEAD and OPTIONS requests without a body in 0-RTT.
-  Other requests wait for the handshake. A `425` is retried once.
+  Other requests wait for the handshake. A `425` is retried once. 0-RTT keeps the h3/h1 race and the fallback intact:
+  - A 0-RTT connection wins the race at once only on a network where QUIC was already seen working; elsewhere it must
+    complete its handshake first, as in Chromium, so a network that drops UDP loses nothing over HTTP/1.1.
+  - QUIC counts as working on the network, the alternative as working, and the connection's RTT is remembered only
+    once the handshake completed, never on the 0-RTT start alone.
+  - The connect timeout bounds the handshake of a 0-RTT connection (its handshake timer is cut to it): a GET sent early
+    on a path that went dark fails then and falls back to HTTP/1.1, not after `handshakeTimeout`.
+  - A request that waits for the handshake (POST, or anything with a body) has not been sent when the handshake fails:
+    it goes over HTTP/1.1 like any request whose HTTP/3 connection could not be set up.
 
 > **Replay warning.** An attacker can replay a 0-RTT request (RFC 8446 section 8). Turn this on only when the handlers
 > of GET, HEAD and OPTIONS have no side effects.
@@ -309,10 +326,11 @@ vendor parts of Ktor CIO (`docs/ktor-internal-api.md`), which Ktor may change in
 major.minor is not supported even when it happens to link.
 
 - **At startup.** Creating a client engine (`HttpClient(Kuicksilver)`, also through `ServiceLoader`) checks
-  `ktor-client-core` and `ktor-http-cio`; starting a server engine checks `ktor-server-core` and `ktor-server-cio`. On the
-  JVM and Android the version is the `Implementation-Version` in the manifest of the jar that holds each class; when the
-  major.minor is not 3.6, the engine fails with an `IllegalStateException` naming the artifact, its version and the
-  fix. Where no version can be read (Android after dexing, shaded or repackaged jars, classes from a directory) the check
+  `ktor-client-core`, `ktor-http-cio`, `ktor-network`, `ktor-io` and `ktor-websockets`; starting a server engine checks
+  `ktor-server-core`, `ktor-http-cio`, `ktor-network` and `ktor-io` (every artifact whose internals the engines use or
+  whose code they adapt). On the JVM and Android the version is the `Implementation-Version` in the manifest of the jar
+  that holds each class; when the major.minor is not 3.6, the engine fails with an `IllegalStateException` naming the
+  artifact, its version and the fix. Where no version can be read (Android after dexing, shaded or repackaged jars, classes from a directory) the check
   passes silently.
 - **Opting out.** `-Dkuicksilver.ktor.versionCheck=false` (or `System.setProperty` before the engine is created) skips
   the check, for experts who verified their Ktor themselves; a mismatch then fails later, if at all, with

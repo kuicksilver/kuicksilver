@@ -238,6 +238,96 @@ class LimitsTest {
             }
         }
 
+    private fun statusOf(
+        streamId: Long,
+        resp: ByteArray,
+    ): String {
+        val h = FrameHeaders.parse(resp, 0, resp.size)!!
+        assertEquals(FrameType.HEADERS, h.type)
+        val d =
+            io.kuicksilver.http3.qpack.QpackDecoder(0, 0, 65_536).decode(
+                streamId,
+                resp.copyOfRange(h.headerSize, h.headerSize + h.length.toInt()),
+            )
+        return (d as io.kuicksilver.http3.qpack.DecodeResult.Decoded).fields.first { it.first == ":status" }.second
+    }
+
+    /**
+     * One field value above the string ceiling (65,600 bytes at the default 64 KiB limit) is a stream error: 431 and the
+     * connection keeps serving (RFC 9204 section 7.4); before, it closed the connection with QPACK_DECOMPRESSION_FAILED.
+     */
+    @Test fun negative_h3SingleOversizedFieldIs431NotConnectionError() =
+        h3Test {
+            QuicPair.open().useScoped { q ->
+                val (c, s) = q.connect()
+                val server = Http3Connection.server(s)
+                val raw = RawPeer(c)
+                raw.openControl()
+                val st = c.openBidi()
+                st.output.writeFully(raw.headers(st.id, GET + ("x-big" to "v".repeat(65_600))))
+                peerMayHaveClosed { st.output.flush() }
+                assertEquals("431", statusOf(st.id, st.input.readAllBytes()))
+                assertTrue(!server.closed.isCompleted)
+                // another request on the same connection is served
+                val served =
+                    launch {
+                        server
+                            .acceptRequest()
+                            .respond(204)
+                            .finish()
+                    }
+                val st2 = c.openBidi()
+                st2.output.writeFully(raw.headers(st2.id, GET))
+                st2.output.flushAndClose()
+                assertEquals("204", statusOf(st2.id, st2.input.readAllBytes()))
+                served.join()
+                assertTrue(!server.closed.isCompleted)
+            }
+        }
+
+    /** Client side: a response with one oversized field fails that request only; the next request on the connection succeeds. */
+    @Test fun singleOversizedResponseFieldFailsOnlyItsRequest() =
+        h3Test {
+            QuicPair.open().useScoped { q ->
+                val (c, s) = q.connect()
+                val client = Http3Connection.client(c)
+                val raw = RawPeer(s)
+                raw.openControl()
+                launch {
+                    val st = s.acceptBidi()
+                    st.input.readAllBytes()
+                    peerMayHaveClosed {
+                        st.output.writeFully(raw.headers(st.id, listOf(":status" to "200", "set-cookie" to "c".repeat(70_000))))
+                        st.output.flushAndClose()
+                    }
+                    val st2 = s.acceptBidi()
+                    st2.input.readAllBytes()
+                    st2.output.writeFully(raw.headers(st2.id, listOf(":status" to "204")))
+                    st2.output.flushAndClose()
+                }
+                assertFailsWith<Http3Exception.FieldSectionTooLarge> { client.request(get()) }
+                assertEquals(204, client.request(get()).status)
+                assertTrue(!client.closed.isCompleted)
+            }
+        }
+
+    /** A raised SETTINGS_MAX_FIELD_SECTION_SIZE also raises the string ceiling: one 100 KB value is accepted under 1 MiB. */
+    @Test fun raisedMaxFieldSectionSizeAcceptsLargeSingleValue() =
+        h3Test {
+            H3Pair.open(serverSettings = http3Settings { maxFieldSectionSize = 1L shl 20 }).useScoped { p ->
+                withTimeout(5.seconds) { p.client.peerSettings.first { it != null } }
+                val value = "v".repeat(100_000)
+                val server =
+                    async {
+                        val r = p.server.acceptRequest()
+                        r.respond(204).finish()
+                        r.headers["x-big"]
+                    }
+                assertEquals(204, p.client.request(get(headers = Http3Headers.of("x-big" to value))).status)
+                assertEquals(value, server.await())
+            }
+        }
+
     @Test fun headersFrameLengthAboveCapRejectedWithoutReading() =
         h3Test {
             QuicPair.open().use { q ->

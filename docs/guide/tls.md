@@ -75,6 +75,10 @@ val roots = Certificate.parsePem(caPem)   // every CERTIFICATE block, in order; 
 val trust = TrustConfig.AnchoredCa(roots)
 ```
 
+Every certificate given to `AnchoredCa` is a trust anchor, also one that is not self-signed: anchoring at an
+intermediate CA accepts the chains that reach it, without its issuers (OpenSSL `X509_V_FLAG_PARTIAL_CHAIN`, as JDK
+`TrustAnchor`s, Apple anchor certificates and Go's root pools behave).
+
 ### Platform trust
 
 `TrustConfig.Platform` hands the chain to the platform's own verifier. `ksl` checks the reference identifier with the
@@ -90,8 +94,10 @@ shared RFC 9525 matcher afterwards on every platform, so a platform matcher can 
 | Linux (Native) | OpenSSL inside `ksl` with the system CA bundle (below) | none |
 
 Windows errors map to `VerifyReason`: `CERT_E_UNTRUSTEDROOT` and chaining failures to `UnknownIssuer`, `CERT_E_EXPIRED` to
-`Expired` or `NotYetValid`, `CERT_E_CN_NO_MATCH` to `HostnameMismatch`, `CRYPT_E_REVOKED` to `Revoked`,
-`CERT_E_WRONG_USAGE` to `InvalidPurpose`, a bad signature to `BadSignature`; anything else is `UnknownIssuer`.
+`Expired` or `NotYetValid`, `CERT_E_CN_NO_MATCH` to `HostnameMismatch`, `CRYPT_E_REVOKED` and `CERT_E_REVOKED` to `Revoked`,
+`CRYPT_E_NO_REVOCATION_CHECK`, `CRYPT_E_REVOCATION_OFFLINE` and `CERT_E_REVOCATION_FAILURE` to `UnknownRevocationStatus`,
+`CERT_E_WRONG_USAGE` and `CERT_E_PURPOSE` to `InvalidPurpose`, `TRUST_E_CERT_SIGNATURE` to `BadSignature`,
+`CERT_E_MALFORMED` to `BadEncoding`; anything else is `UnknownIssuer`.
 
 ### Linux trust store
 
@@ -137,6 +143,16 @@ socket.close()   // sends close_notify, then closes the TCP socket
 ```
 
 The same works on the server side with `Socket.tlsServer(config)` after `ServerSocket.accept()`.
+
+### Resumption and trust
+
+A resumed handshake carries no certificates, so the client checks the chain it cached from the full handshake again
+before it offers the ticket (ADR-0011): under `AnchoredCa` and the Linux `Platform` store `ksl` verifies it again
+against the trust store, the current time, the name and the purpose; under the other platform verifiers and `Custom`
+the verifier runs again on it. Pins are then checked against the cached validated chain. A chain that no longer passes
+(an expired leaf, for example) means a full handshake, not a failure. A server holds only the client's leaf of a
+resumed session: its verdict travels with the ticket, which resumes only under the same trust configuration and lives
+at most `SessionTicketConfig.ticketLifetime`.
 
 ## TLS over any channel
 

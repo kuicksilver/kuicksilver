@@ -80,6 +80,21 @@ class PrimitivesTest {
         assertFailsWith<QpackError> { QpackReader(b3, 0, b3.size).readString(7, QpackLimits(maxStringLength = 1000)) }
     }
 
+    /** RFC 7541 section 5.1: bits shifted past 63 in the 10th continuation byte are an overflow, not silently dropped. */
+    @Test fun negative_qpackIntegerOverflowIn10thContinuationByte() {
+        // prefix all ones, nine 0x80 continuation bytes (shift reaches 63), then 0x02: 2^64 + 31 would read as 31
+        val even = hex("1f" + "80".repeat(9) + "02")
+        val e =
+            assertFailsWith<QpackError> {
+                QpackReader(even, 0, even.size).readInt(5, QpackLimits(maxInteger = Long.MAX_VALUE))
+            }
+        assertEquals(Http3ErrorCode.QPACK_DECOMPRESSION_FAILED, e.code)
+        assertFailsWith<QpackError> { QpackReader(even, 0, even.size).readInt(5, limits) }
+        // zero padding in the 10th byte adds nothing and is still a valid (if non-canonical) encoding
+        val padded = hex("1f" + "81" + "80".repeat(8) + "00")
+        assertEquals(32L, QpackReader(padded, 0, padded.size).readInt(5, limits))
+    }
+
     @Test fun stringRoundTripBothEncodings() {
         for (h in listOf(false, true)) {
             val w = QpackWriter()

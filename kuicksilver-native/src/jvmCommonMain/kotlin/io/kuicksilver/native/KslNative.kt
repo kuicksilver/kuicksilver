@@ -67,6 +67,14 @@ internal object KslNative {
 
     @JvmStatic external fun ctxFreeze(ctx: Long): Int
 
+    /** 0 = passes, X509_V_ERR_* = fails, -1 = unusable input */
+    @JvmStatic external fun ctxVerifyChain(
+        ctx: Long,
+        chain: ByteArray,
+        name: String?,
+        at: Long,
+    ): Int
+
     /** out[0] = packed code */
     @JvmStatic external fun ctxLastError(
         ctx: Long,

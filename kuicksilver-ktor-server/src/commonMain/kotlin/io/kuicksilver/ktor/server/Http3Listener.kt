@@ -192,6 +192,13 @@ private suspend fun KuicksilverApplicationEngine.handleHttp3(
         runCatching { req.respond(501).finish() }
         return
     }
+    // forwarded from early data by a gateway (RFC 8470 section 5.1): what the early-data policy does not declare replayable
+    // cannot be made safe by waiting for this hop's handshake, so it gets 425 Too Early and never reaches the application
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    if (req.headers[EARLY_DATA_FIELD.lowercase()] != null && !configuration.http3Settings.earlyData.replayable(req)) {
+        runCatching { req.respond(425).finish() }
+        return
+    }
     withContext(userDispatcher) requestContext@{
         val call =
             H3Call(

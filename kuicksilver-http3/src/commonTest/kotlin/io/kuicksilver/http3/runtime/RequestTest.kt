@@ -573,6 +573,108 @@ class RequestTest {
             }
         }
 
+    /**
+     * RFC 9114 sections 4.2 and 4.3.1: a request the peer would reject as malformed (te other than trailers, a
+     * connection-specific field, a method that is not a token, a path that is not absolute, userinfo in :authority, a
+     * host differing from :authority) fails locally with IllegalArgumentException before a stream is opened.
+     */
+    @Test fun invalidOutgoingRequestFailsLocally() =
+        h3Test {
+            H3Pair.open().useScoped { p ->
+                val bad =
+                    listOf(
+                        get(headers = Http3Headers.of("te" to "gzip")),
+                        get(headers = Http3Headers.of("connection" to "close")),
+                        get(headers = Http3Headers.of("host" to "other.test")),
+                        http3Request("GET /admin", "server.test", "/"),
+                        http3Request("GET", "server.test", "a b"),
+                        http3Request("GET", "server.test", "http://evil/x"),
+                        http3Request("GET", "user@server.test", "/"),
+                    )
+                for (r in bad) {
+                    val e = withTimeout(5.seconds) { runCatching { p.client.request(r) }.exceptionOrNull() }
+                    assertIs<IllegalArgumentException>(e, "${r.method} ${r.path} ${r.headers.fields}: $e")
+                }
+                val server =
+                    launch {
+                        p.server
+                            .acceptRequest()
+                            .respond(204)
+                            .finish()
+                    }
+                val ok = p.client.request(get(headers = Http3Headers.of("te" to "trailers")))
+                assertEquals(204, ok.status)
+                assertEquals(0L, ok.streamId, "a refused request opened no stream")
+                server.join()
+            }
+        }
+
+    /** Trailers with a connection-specific field or `te` are refused by `finish` (the stream is reset) instead of sent for the peer to reject. */
+    @Test fun invalidServerTrailersFailFinish() =
+        h3Test {
+            H3Pair.open().useScoped { p ->
+                val resp =
+                    async {
+                        runCatching {
+                            p.client
+                                .request(get())
+                                .body
+                                .readAllBytes()
+                        }
+                    }
+                val r = p.server.acceptRequest()
+                val w = r.respond(200)
+                w.output.writeStringUtf8("partial")
+                w.output.flush()
+                assertFailsWith<IllegalArgumentException> { w.finish(Http3Headers.of("connection" to "close")) }
+                val body = withTimeout(5.seconds) { resp.await() }
+                assertTrue(body.isFailure, "the client saw a complete body ${body.getOrNull()?.decodeToString()}")
+                // te is a request field: not in response trailers either (RFC 9110 section 10.1.4)
+                val r2 =
+                    async {
+                        runCatching {
+                            p.client
+                                .request(get())
+                                .body
+                                .readAllBytes()
+                        }
+                    }
+                val w2 = p.server.acceptRequest().respond(200)
+                assertFailsWith<IllegalArgumentException> { w2.finish(Http3Headers.of("te" to "trailers")) }
+                assertTrue(withTimeout(5.seconds) { r2.await() }.isFailure)
+            }
+        }
+
+    /** Request trailers the server would reject reach the caller as IllegalArgumentException; the exchange is abandoned. */
+    @Test fun invalidClientTrailersFailRequest() =
+        h3Test {
+            H3Pair.open().useScoped { p ->
+                val server =
+                    launch {
+                        val r = p.server.acceptRequest()
+                        runCatching { r.body.readAllBytes() }
+                        runCatching { r.respond(200).finish() }
+                    }
+                val post =
+                    http3Request("POST", "server.test", "/") {
+                        body = ByteReadChannel("ping")
+                        trailers = {
+                            Http3Headers.of("transfer-encoding" to "chunked")
+                        }
+                    }
+                val e =
+                    withTimeout(5.seconds) {
+                        runCatching {
+                            val resp = p.client.request(post)
+                            resp.body.readAllBytes()
+                            resp.trailers.await()
+                        }.exceptionOrNull()
+                    }
+                assertIs<IllegalArgumentException>(e, "got $e")
+                server.join()
+            }
+        }
+
     /** A request body the application never reads is stopped with H3_NO_ERROR once the response is complete (RFC 9114 section 4.1). */
     @Test fun unreadBodyIsStoppedAfterResponse() =
         h3Test {

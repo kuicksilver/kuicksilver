@@ -58,7 +58,7 @@ internal object Huffman {
         if (n > 0) out.writeByte(((acc shl (8 - n)) or ((1L shl (8 - n)) - 1)).toInt() and 0xff) // pad with the EOS prefix (ones)
     }
 
-    /** Decodes [len] bytes at [off]; at most [maxOut] output bytes. EOS inside, padding over 7 bits or not all ones -> [errorCode]. */
+    /** Decodes [len] bytes at [off]; more than [maxOut] output bytes -> [QpackStringTooLong]. EOS inside, padding over 7 bits or not all ones -> [errorCode]. */
     fun decode(
         buf: ByteArray,
         off: Int,
@@ -82,7 +82,7 @@ internal object Huffman {
                 if (v < 0) {
                     val sym = -v - 1
                     if (sym == EOS) throw QpackError(errorCode, "EOS inside a Huffman string")
-                    if (n == maxOut) throw QpackError(errorCode, "Huffman string longer than $maxOut bytes")
+                    if (n == maxOut) throw QpackStringTooLong(errorCode, "Huffman string longer than $maxOut bytes")
                     if (n == out.size) out = out.copyOf(minOf(out.size * 2, maxOut))
                     out[n++] = sym.toByte()
                     node = 0

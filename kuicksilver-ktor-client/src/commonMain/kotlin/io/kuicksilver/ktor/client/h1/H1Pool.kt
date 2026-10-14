@@ -22,6 +22,8 @@ import io.ktor.network.sockets.Socket
 import io.ktor.network.sockets.openReadChannel
 import io.ktor.network.sockets.openWriteChannel
 import io.ktor.util.date.GMTDate
+import io.ktor.util.network.address
+import io.ktor.util.network.port
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.ByteWriteChannel
 import io.ktor.utils.io.ClosedReadChannelException
@@ -103,8 +105,17 @@ internal class H1Pool(
             "${it.protocol.name}://${it.host}:${it.port}|${config.proxy?.resolveAddress()}"
         }
 
-    /** A connection for [data]: an idle pooled one, else a new one (the HTTP/1.1 side of the h3/h1 race). */
-    suspend fun open(data: HttpRequestData): H1Connection = obtain(data, keyOf(data)).first
+    /**
+     * A connection for [data]: an idle pooled one, else a new one (the HTTP/1.1 side of the h3/h1 race). [Opened.reused]
+     * travels with it to [execute], so a pooled connection the server closed still earns the stale-connection retry.
+     */
+    suspend fun open(data: HttpRequestData): Opened = obtain(data, keyOf(data)).let { Opened(it.first, it.second) }
+
+    /** A connection [open] handed out and whether it came from the idle pool. */
+    class Opened(
+        val connection: H1Connection,
+        val reused: Boolean,
+    )
 
     /**
      * An idle connection for [key] (second: true), else a new one once the limits allow; waiting for room and connecting
@@ -140,11 +151,11 @@ internal class H1Pool(
         return conn!! to reused
     }
 
-    /** One exchange; [preopened] is a connection the race already set up. */
+    /** One exchange; [preopened] is a connection the race already obtained ([open]). */
     suspend fun execute(
         data: HttpRequestData,
         callContext: CoroutineContext,
-        preopened: H1Connection? = null,
+        preopened: Opened? = null,
     ): HttpResponseData {
         val url = data.url
         val secure = url.protocol.isSecure()
@@ -167,14 +178,14 @@ internal class H1Pool(
         var first = true
         var given = preopened
         while (true) {
-            // a connection the race just opened is fresh: it is not a pooled one and never earns the stale retry
-            val (conn, reused) = given?.let { it to false } ?: obtain(data, key)
+            // a connection the race just opened is fresh and never earns the stale retry; an idle one it took from the pool does
+            val (conn, reused) = given?.let { it.connection to it.reused } ?: obtain(data, key)
             given = null
             events.emit("connectionAcquired") { connectionAcquired(data, HttpProtocolVersion.HTTP_1_1, reused) }
             var bodyJob: BodySender? = null
             try {
                 val requestTime = GMTDate()
-                writeHeaders(data, conn.output, overProxy = proxy != null && !secure)
+                writeHeaders(data, conn.output, overProxy = proxy != null && !secure, tunneled = proxy != null && secure)
                 // a streamed body is sent while the response is read (as the CIO engine): the server may answer first
                 if (data.body.isStreamed()) {
                     bodyJob =
@@ -291,7 +302,8 @@ internal class H1Pool(
     ): H1Connection {
         val target =
             if (viaProxy) {
-                config.proxy!!.resolveAddress().let { it as InetSocketAddress }
+                // a NetworkAddress (java.net's on the JVM, ktor-utils' on Native), not ktor-network's InetSocketAddress
+                config.proxy!!.resolveAddress().let { InetSocketAddress(socketHost(it.address), it.port) }
             } else {
                 InetSocketAddress(
                     socketHost(url.host),

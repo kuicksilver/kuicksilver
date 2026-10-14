@@ -3,6 +3,7 @@
 package io.kuicksilver.http3.runtime
 
 import io.ktor.utils.io.copyTo
+import io.ktor.utils.io.readAvailable
 import io.ktor.utils.io.writeFully
 import io.kuicksilver.http3.H3Pair
 import io.kuicksilver.http3.Http3Connection
@@ -233,6 +234,64 @@ class ExtendedConnectTest {
             }
         }
 
+    /**
+     * RFC 9114 section 4.4: once CONNECT completed only DATA may follow; any other known frame (HEADERS) is a connection
+     * error H3_FRAME_UNEXPECTED. Before, the server took it as the request's trailers and ended the tunnel's input.
+     */
+    @Test fun headersOnEstablishedTunnelIsFrameUnexpectedOnServer() =
+        h3Test {
+            QuicPair.open().useScoped { q ->
+                val (c, s) = q.connect()
+                val server = Http3Connection.server(s, connectOn)
+                val raw = RawPeer(c)
+                raw.openControl()
+                val st = c.openBidi()
+                val req =
+                    listOf(
+                        ":method" to "CONNECT",
+                        ":protocol" to "websocket",
+                        ":scheme" to "https",
+                        ":authority" to "a",
+                        ":path" to "/ws",
+                    )
+                st.output.writeFully(raw.headers(st.id, req) + raw.data("hello".encodeToByteArray()))
+                st.output.flush()
+                val tunnel = server.acceptRequest().acceptConnect()
+                launch { runCatching { tunnel.input.readAllBytes() } }
+                // the 2xx arrived: the tunnel is established
+                val head = ByteArray(1)
+                st.input.readAvailable(head, 0, 1)
+                peerMayHaveClosed {
+                    st.output.writeFully(raw.headers(st.id, listOf("x-after" to "tunnel")))
+                    st.output.flush()
+                }
+                assertEquals(Http3ErrorCode.FRAME_UNEXPECTED, withTimeout(5.seconds) { peerSawClose(c) })
+            }
+        }
+
+    /** The client side of the same rule: HEADERS from the server after its 2xx closes the connection with H3_FRAME_UNEXPECTED. */
+    @Test fun headersOnEstablishedTunnelIsFrameUnexpectedOnClient() =
+        h3Test {
+            QuicPair.open().useScoped { q ->
+                val (c, s) = q.connect()
+                val client = Http3Connection.client(c)
+                val raw = RawPeer(s)
+                raw.openControl(listOf(SettingsId.ENABLE_CONNECT_PROTOCOL to 1L))
+                launch {
+                    val st = s.acceptBidi()
+                    peerMayHaveClosed {
+                        st.output.writeFully(raw.headers(st.id, listOf(":status" to "200")) + raw.data("hi".encodeToByteArray()))
+                        st.output.flush()
+                        st.output.writeFully(raw.headers(st.id, listOf("x-after" to "tunnel")))
+                        st.output.flush()
+                    }
+                }
+                val stream = client.connect(connectReq(), "websocket")
+                runCatching { stream.input.readAllBytes() }
+                assertEquals(Http3ErrorCode.FRAME_UNEXPECTED, withTimeout(5.seconds) { peerSawClose(s) })
+            }
+        }
+
     @Test fun rejectedConnectReportsStatus() =
         h3Test {
             H3Pair.open(serverSettings = connectOn).useScoped { p ->
@@ -288,6 +347,61 @@ class H3DatagramTest {
                 }
                 assertEquals(listOf("/ax0", "/ax1", "/ax2"), withTimeout(5.seconds) { gotA.await() }.sorted())
                 assertEquals(listOf("/by0", "/by1", "/by2"), withTimeout(5.seconds) { gotB.await() }.sorted())
+            }
+        }
+
+    /**
+     * RFC 9297 section 2.1: "If a datagram is received after the corresponding stream's receive side is closed, the
+     * received datagrams MUST be silently dropped": the stream's datagram flow ends with its receive side.
+     */
+    @Test fun datagramsAfterReceiveSideClosedAreDropped() =
+        h3Test {
+            QuicPair.open().useScoped { q ->
+                val (c, s) = q.connect()
+                val server = Http3Connection.server(s, connectOn)
+                val raw = RawPeer(c)
+                raw.openControl(listOf(SettingsId.H3_DATAGRAM to 1L))
+                withTimeout(5.seconds) { server.peerSettings.filterNotNull().first() }
+                val st = c.openBidi()
+                val req = listOf(":method" to "CONNECT", ":protocol" to "echo", ":scheme" to "https", ":authority" to "a", ":path" to "/d")
+                st.output.writeFully(raw.headers(st.id, req))
+                st.output.flush()
+                val tunnel = server.acceptRequest().acceptConnect()
+                val got = kotlinx.coroutines.flow.MutableStateFlow(listOf<String>())
+                val collector = launch { tunnel.datagrams.collect { d -> got.value = got.value + d.decodeToString() } }
+                val quarter = VarInt.encode(st.id / 4)
+                c.sendDatagram(quarter + "a".encodeToByteArray())
+                withTimeout(5.seconds) { got.first { it == listOf("a") } }
+                st.output.flushAndClose() // the receive side of the server's stream ends
+                tunnel.input.readAllBytes()
+                withTimeout(5.seconds) { collector.join() } // the flow ended with the receive side
+                c.sendDatagram(quarter + "b".encodeToByteArray())
+                delay(100)
+                assertEquals(listOf("a"), got.value)
+                assertFalse(server.closed.isCompleted)
+            }
+        }
+
+    /**
+     * RFC 9297 section 2.1: "HTTP/3 Datagrams MUST NOT be sent unless the corresponding stream's send side is open": once
+     * our output is closed or the stream reset, trySendDatagram answers Closed and sendDatagram throws.
+     */
+    @Test fun noDatagramsAfterSendSideClosed() =
+        h3Test {
+            H3Pair.open(serverSettings = connectOn).useScoped { p ->
+                p.client.peerSettings
+                    .filterNotNull()
+                    .first()
+                val serverSide = async { p.server.acceptRequest().acceptConnect() }
+                val s = p.client.connect(connectReq(), "echo")
+                assertEquals(DatagramSendResult.Sent, s.trySendDatagram(byteArrayOf(1)))
+                s.output.flushAndClose()
+                assertEquals(DatagramSendResult.Closed, s.trySendDatagram(byteArrayOf(2)))
+                assertFailsWith<IllegalStateException> { s.sendDatagram(byteArrayOf(3)) }
+                val t = serverSide.await()
+                assertEquals(DatagramSendResult.Sent, t.trySendDatagram(byteArrayOf(4)))
+                t.reset(Http3ErrorCode.REQUEST_CANCELLED)
+                assertEquals(DatagramSendResult.Closed, t.trySendDatagram(byteArrayOf(5)))
             }
         }
 

@@ -140,7 +140,7 @@ internal suspend fun handleRequestStream(
             req.done()
             return@with
         }
-        pumpBody(st, frames, req.bodyChannel, req.trailersDeferred, contentLength(parsed.regular)) { f ->
+        pumpBody(st, frames, req.bodyChannel, req.trailersDeferred, contentLength(parsed.regular), tunnel = { req.tunnel }) { f ->
             if (f.code == Http3ErrorCode.EXCESSIVE_LOAD && !req.responseStarted) reject431(st) else abort(st, f.code)
             req.done()
         }
@@ -229,14 +229,16 @@ internal class ServerRequestImpl(
 
     private val datagramChannel = if (method == "CONNECT") session.datagrams.register(st.id) else null
 
-    /** A CONNECT answered with 2xx: each direction ends on its own, the exchange is over when both did. */
-    private var tunnel = false
+    /** A CONNECT answered with 2xx: each direction ends on its own, the exchange is over when both did; only DATA may arrive (RFC 9114 section 4.4). */
+    var tunnel = false
+        private set
     private var sendEnded = false
     private var receiveEnded = false
 
     /** The request's direction ended (FIN, reset or a stream error); ends a tunnel whose response side already ended. */
     fun receiveEnded() {
         receiveEnded = true
+        session.datagrams.unregister(st.id) // datagrams after the receive side closed are dropped (RFC 9297 section 2.1)
         if (tunnel && sendEnded) done()
     }
 
@@ -397,13 +399,21 @@ internal class ResponseWriterImpl(
         withContext(session.dispatcher) {
             if (trailers != null) {
                 // checked before anything is closed: refused trailers reset the stream instead of leaving it without FIN
-                try {
-                    session.checkPeerFieldLimit(st.id, trailers.fields)
-                } catch (e: Http3Exception.FieldSectionTooLarge) {
+                val refused =
+                    try {
+                        PseudoHeaders.requireValidTrailers(trailers.fields)
+                        session.checkPeerFieldLimit(st.id, trailers.fields)
+                        null
+                    } catch (e: IllegalArgumentException) {
+                        e
+                    } catch (e: Http3Exception.FieldSectionTooLarge) {
+                        e
+                    }
+                if (refused != null) {
                     runCatching { st.reset(Http3ErrorCode.INTERNAL_ERROR) }
                     runCatching { st.stopSending(Http3ErrorCode.INTERNAL_ERROR) }
                     request?.done()
-                    throw e
+                    throw refused
                 }
             }
             try {

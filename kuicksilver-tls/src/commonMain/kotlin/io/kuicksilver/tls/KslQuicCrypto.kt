@@ -292,6 +292,11 @@ internal class KslQuicTlsSession(
     override fun resume(ticket: QuicSessionTicket): Boolean {
         check(ctx.config.role == TlsRole.Client) { "only a client resumes" }
         if (ticket.closed) return false
+        // ADR-0011: the OpenSSL verifier's verdict is not taken from the cache: an expired leaf or a withdrawn anchor runs a full handshake
+        if (ctx.verifyMode == KslConst.VERIFY_OPENSSL && !ctx.cachedChainStillTrusted(ticket.entry.chain, reference)) {
+            ticket.close()
+            return false
+        }
         return try {
             Ksl.sslSetSession(s(), ticket.entry.session)
             resumed?.close()
@@ -435,6 +440,8 @@ internal class KslQuicTlsSession(
         if (cached != null) presented = cached.chain
         if (pinsApply) {
             if (cached == null) presented = Ksl.sslPeerChain(s(), KslConst.CHAIN_PRESENTED).map(::Certificate)
+            // ClientAuth.Optional: a client without a certificate is accepted; one that presents a certificate must pass the pins
+            if (config.role == TlsRole.Server && config.clientAuth == ClientAuth.Optional && presented.isEmpty()) return
             val r = verification.pinCheck(cached?.validated ?: validatedChain())
             if (r is VerifyResult.Rejected) {
                 failure =
