@@ -201,6 +201,8 @@ API shape before the first release (pre-release review, 2026-10-14; nothing was 
 - **Breaking:** implementing `QuicCrypto`, `QuicTlsSession`, `PacketProtector`, `TokenKey` or `ResetKey` needs
   `@OptIn(ExperimentalKuicksilverApi::class)` (`@SubclassOptInRequired`), as do the constructors of the `TlsEvent` and
   `DriveResult` classes and of `IoCapabilities` that an implementation returns; using them is unchanged.
+- `QuicEndpoint.stats` and `Http3Endpoint.stats` are stable: the stable counters (`initialsDropped` to
+  `connectionsCreated`) could only be read through these experimental accessors.
 - **Breaking:** library-produced values have internal constructors: `ConnectionAttempt`, the `PathEvent`,
   `ConnectionEvent` and `MigrationEvent` classes, `ClientHelloInfo`, `Http3PeerSettings`.
 

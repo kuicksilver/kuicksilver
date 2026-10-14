@@ -187,7 +187,7 @@ type is experimental, so are its members.
 | `PathFailureReason`, `PathValidationException`, the `reason` of `PathEvent.Failed` and `ConnectionEvent.PathFailed` | why a path failed (`NoSpareConnectionId`, …) |
 | `PathEvent.SocketLost`, `SocketDefunctException` | sockets the system took away (suspended iOS apps) |
 | `DatagramIo` (to implement), `DatagramSender`, `DatagramPacketWriter`, `ConnectionStats.datagramsDroppedSocket` | custom socket and datagram plumbing |
-| `QuicEndpoint.stats`, 24 `EndpointStats` counters from `connectionsActive` to `listenerFailures`, `KuicksilverLogger`, `LogLevel`, `ConnectionListener`, `ConnectionInfo`, `QuicEndpointConfig.logger` / `listener`, `AsyncQlogSink` | observability (`QlogSink`, `DirectoryQlogSink`, `QuicConfig.qlog`, `QuicConnection.stats` and the first `EndpointStats` counters, `initialsDropped` to `connectionsCreated`, are stable) |
+| 24 `EndpointStats` counters from `connectionsActive` to `listenerFailures`, `KuicksilverLogger`, `LogLevel`, `ConnectionListener`, `ConnectionInfo`, `QuicEndpointConfig.logger` / `listener`, `AsyncQlogSink` | observability (`QlogSink`, `DirectoryQlogSink`, `QuicConfig.qlog`, `QuicConnection.stats`, `QuicEndpoint.stats` and the first `EndpointStats` counters, `initialsDropped` to `connectionsCreated`, are stable) |
 | `QuicEndpoint.shutdown(grace, code, reason)` | graceful shutdown |
 | `ConnectionCore.glitchByFrameType` (delicate) | glitch accounting per frame type |
 
@@ -196,7 +196,7 @@ type is experimental, so are its members.
 | API | Feature |
 |---|---|
 | `Http3Endpoint.connectEarly`, `Http3Request.allowEarlyData`, `Http3Settings.earlyData`, `Http3EarlyDataPolicy`, `Http3ServerRequest.receivedEarly` | 0-RTT |
-| `Http3Endpoint.stats`, `Http3Endpoint.shutdown` | observability, graceful shutdown |
+| `Http3Endpoint.shutdown` | graceful shutdown (`Http3Endpoint.stats` is stable, its counters as in `kuicksilver-quic`) |
 
 ### `kuicksilver-ktor-client`
 

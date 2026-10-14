@@ -620,8 +620,8 @@ without a lock.
 
 ## Observability
 
-Everything below is experimental (`@ExperimentalKuicksilverApi`) except `QuicConnection.stats`, the first `EndpointStats`
-counters (`initialsDropped` to `connectionsCreated`) and `DirectoryQlogSink`, which are stable
+Everything below is experimental (`@ExperimentalKuicksilverApi`) except `QuicConnection.stats`, `QuicEndpoint.stats` with
+the first `EndpointStats` counters (`initialsDropped` to `connectionsCreated`) and `DirectoryQlogSink`, which are stable
 ([stability](../stability.md)). None of it costs anything per packet unless you turn it on: the counters are plain fields of the endpoint loop, and the logger and the listener are called per connection
 event, not per datagram.
 

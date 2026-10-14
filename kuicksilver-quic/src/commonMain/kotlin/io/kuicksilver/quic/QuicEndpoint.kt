@@ -47,9 +47,10 @@ public interface QuicEndpoint : AutoCloseable {
 
     /**
      * The endpoint's counters summed over all its loops (docs/guide/quic.md, "Observability"): admission outcomes,
-     * handshakes, 0-RTT, datagrams and their drops, internal failures. A cheap snapshot that any thread may take.
+     * handshakes, 0-RTT, datagrams and their drops, internal failures. A cheap snapshot that any thread may take. Stable,
+     * so that the stable counters (`initialsDropped` to `connectionsCreated`) can be read without an opt-in; the other
+     * counters are experimental properties of [EndpointStats].
      */
-    @ExperimentalKuicksilverApi
     public val stats: EndpointStats
 
     /**

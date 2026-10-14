@@ -110,7 +110,6 @@ public class Http3Endpoint private constructor(
     }
 
     /** The QUIC endpoint's counters (`QuicEndpoint.stats`): admission, handshakes, 0-RTT, datagrams, failures. */
-    @ExperimentalKuicksilverApi
     public val stats: EndpointStats get() = endpoint.stats
 
     /**
