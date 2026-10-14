@@ -72,7 +72,7 @@ class GuideSamplesTest {
                     }
                 val connection = client.connect(serverAddress, clientTls /* alpn = listOf("h3") */)
                 // guide:http3:client-request
-                val response = connection.request(Http3Request("GET", authority = "example.com", path = "/"))
+                val response = connection.request(http3Request("GET", "example.com", "/"))
                 println(response.status)
                 val body = response.body
                 assertEquals("hello", body.readAllBytes().decodeToString())
@@ -115,7 +115,7 @@ class GuideSamplesTest {
                         }
                     }
                 // guide:http3:connect (client)
-                val stream = client.connect(Http3Request("CONNECT", authority = "example.com", path = "/chat"), protocol = "echo")
+                val stream = client.connect(http3Request("CONNECT", "example.com", "/chat"), protocol = "echo")
                 stream.trySendDatagram(byteArrayOf(1, 2, 3))
                 val collector = launch { stream.datagrams.collect { println(it.size) } }
                 assertEquals(3, echoed.await())

@@ -7,7 +7,7 @@ plugins {
     id("com.vanniktech.maven.publish")
 }
 group = "io.kuicksilver"
-version = providers.gradleProperty("kuicksilver.version").getOrElse("0.1.0-SNAPSHOT")
+version = providers.gradleProperty("kuicksilver.version").getOrElse("0.2.0-SNAPSHOT")
 
 dependencies {
     constraints {

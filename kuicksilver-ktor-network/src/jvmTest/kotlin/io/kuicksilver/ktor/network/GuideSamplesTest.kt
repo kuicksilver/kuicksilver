@@ -1,6 +1,6 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
-@file:OptIn(DelicateKuicksilverApi::class)
+@file:OptIn(DelicateKuicksilverApi::class, io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
 
 package io.kuicksilver.ktor.network
 
@@ -39,6 +39,17 @@ class GuideSamplesTest {
     private val rootCertificate = Certificate(TestCerts.testCa)
     private val chainPem = TestCerts.toPem("CERTIFICATE", TestCerts.server)
     private val keyPem = TestCerts.toPem("PRIVATE KEY", TestCerts.serverKey)
+
+    @Test fun availabilitySample() {
+        var fellBack = false
+
+        fun fallBackToTcp() {
+            fellBack = true
+        }
+        // guide:tls:availability
+        if (!KslLoader.isAvailable()) fallBackToTcp() // never throws; the outcome is cached for the process
+        kotlin.test.assertFalse(fellBack, "the JVM test host has the native library")
+    }
 
     @Test fun clientConfigSample() {
         // guide:tls:client-config

@@ -28,7 +28,8 @@ public enum class LogLevel {
  * The library never logs secrets: no keys, traffic secrets, session tickets, Retry or address-validation tokens and no
  * reset tokens; connection IDs and addresses are logged. Lines are built only when [isEnabled] answers true for their
  * level, so a disabled level costs one call. [log] may be called from the endpoint loops (several threads with more than one
- * loop) and must be quick and thread-safe; an exception out of it is swallowed.
+ * loop) and must be quick and thread-safe; an exception out of it (a CancellationException too) is swallowed and counted
+ * in `EndpointStats.listenerFailures`.
  */
 @ExperimentalKuicksilverApi
 public interface KuicksilverLogger {
@@ -84,7 +85,11 @@ private class StderrLogger(
     override fun toString(): String = "KuicksilverLogger.stderr($minLevel)"
 }
 
-/** Logs [message] (built only when [level] is enabled); a logger that throws is ignored, never the caller's failure. */
+/**
+ * Logs [message] (built only when [level] is enabled); a logger that throws is ignored, never the caller's failure. That
+ * includes a CancellationException: logging is not suspending, so one out of [KuicksilverLogger.log] is the logger's own
+ * failure, and rethrowing it would end the coroutine of an endpoint loop without a trace.
+ */
 @OptIn(ExperimentalKuicksilverApi::class)
 internal inline fun KuicksilverLogger.emit(
     level: LogLevel,
@@ -93,8 +98,42 @@ internal inline fun KuicksilverLogger.emit(
 ) {
     try {
         if (isEnabled(level)) log(level, message(), cause)
-    } catch (e: kotlinx.coroutines.CancellationException) {
-        throw e
     } catch (_: Throwable) {
     }
+}
+
+/**
+ * [delegate] behind a guard: nothing it throws, a CancellationException included, reaches the caller; [failures] counts
+ * what it threw (an endpoint's `EndpointStats.listenerFailures`). Any thread may call it.
+ */
+@OptIn(ExperimentalKuicksilverApi::class, kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+internal class GuardedLogger(
+    private val delegate: KuicksilverLogger,
+) : KuicksilverLogger {
+    private val failed = kotlin.concurrent.atomics.AtomicLong(0)
+
+    /** Exceptions out of [delegate] so far. */
+    val failures: Long get() = failed.load()
+
+    override fun isEnabled(level: LogLevel): Boolean =
+        try {
+            delegate.isEnabled(level)
+        } catch (_: Throwable) {
+            failed.addAndFetch(1)
+            false
+        }
+
+    override fun log(
+        level: LogLevel,
+        message: String,
+        cause: Throwable?,
+    ) {
+        try {
+            delegate.log(level, message, cause)
+        } catch (_: Throwable) {
+            failed.addAndFetch(1)
+        }
+    }
+
+    override fun toString(): String = delegate.toString()
 }

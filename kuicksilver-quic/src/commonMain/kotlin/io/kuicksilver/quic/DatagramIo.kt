@@ -16,19 +16,22 @@ import kotlinx.coroutines.flow.StateFlow
  * @property df The socket sets Don't Fragment in probe mode, which DPLPMTUD needs (RFC 8899); without it the MTU stays 1200.
  * @property batch Datagrams moved per system call (up to 64 on the accelerated socket, 1 on the portable ones).
  */
-public class IoCapabilities(
-    public val ecnSend: Boolean,
-    public val ecnReceive: Boolean,
-    public val gsoMaxSegments: Int,
-    public val gro: Boolean,
-    public val df: Boolean,
-    public val batch: Int,
-) {
-    /** Holds [Portable]: no accelerated feature (one datagram per call; no ECN, GSO, GRO or DF), what a plain UDP socket offers. */
-    public companion object {
-        public val Portable: IoCapabilities = IoCapabilities(false, false, 1, false, false, 1)
+public class IoCapabilities
+    @ExperimentalKuicksilverApi
+    constructor(
+        public val ecnSend: Boolean,
+        public val ecnReceive: Boolean,
+        public val gsoMaxSegments: Int,
+        public val gro: Boolean,
+        public val df: Boolean,
+        public val batch: Int,
+    ) {
+        /** Holds [Portable]: no accelerated feature (one datagram per call; no ECN, GSO, GRO or DF), what a plain UDP socket offers. */
+        public companion object {
+            @OptIn(ExperimentalKuicksilverApi::class)
+            public val Portable: IoCapabilities = IoCapabilities(false, false, 1, false, false, 1)
+        }
     }
-}
 
 /** Which implementation [DatagramIo.open] prefers: the accelerated `ksl` socket where it exists (Linux, Android, Apple, Windows), the portable one otherwise or on request. */
 public enum class IoPreference {

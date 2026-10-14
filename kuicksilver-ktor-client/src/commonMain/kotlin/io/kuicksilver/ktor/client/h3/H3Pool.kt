@@ -27,8 +27,8 @@ import io.kuicksilver.http3.Http3Connection
 import io.kuicksilver.http3.Http3Endpoint
 import io.kuicksilver.http3.Http3Exception
 import io.kuicksilver.http3.Http3Headers
-import io.kuicksilver.http3.Http3Request
 import io.kuicksilver.http3.Http3Response
+import io.kuicksilver.http3.http3Request
 import io.kuicksilver.ktor.client.EngineEvents
 import io.kuicksilver.ktor.client.H3BodyConsumed
 import io.kuicksilver.ktor.client.KuicksilverEngineConfig
@@ -43,9 +43,11 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineName
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlin.coroutines.CoroutineContext
 import kotlin.time.Duration.Companion.milliseconds
@@ -230,6 +232,28 @@ internal class H3Pool(
         t: H3Target,
         data: HttpRequestData,
     ): Pair<H3Entry, Http3Connection> {
+        while (true) {
+            try {
+                return connectionEntryOnce(t, data)
+            } catch (_: SetupAbandoned) {
+                // the caller that was setting the connection up was cancelled: not a failure of the origin, so this caller
+                // starts (or joins) a new setup instead of failing or falling back
+            }
+        }
+    }
+
+    /** Test hook: runs in the caller that sets up a connection, before it connects. */
+    internal var beforeSetupForTest: (suspend () -> Unit)? = null
+
+    /** Test hook: callers that waited for a setup another caller started. */
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    internal val setupWaitersForTest = kotlin.concurrent.atomics.AtomicInt(0)
+
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    private suspend fun connectionEntryOnce(
+        t: H3Target,
+        data: HttpRequestData,
+    ): Pair<H3Entry, Http3Connection> {
         val ep = endpoint()
         val (e, connect) =
             lock.withLock {
@@ -251,6 +275,7 @@ internal class H3Pool(
         val d = e.deferred
         if (connect) {
             try {
+                beforeSetupForTest?.invoke()
                 val c =
                     withTimeout(data.connectTimeoutMillis(config)) {
                         @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
@@ -288,16 +313,24 @@ internal class H3Pool(
             } catch (
                 x: CancellationException,
             ) {
-                d.cancel(x)
-                forget(t, e)
+                // only this caller is cancelled: the others waiting on d start a new setup (cancelling d would cancel them too)
+                d.completeExceptionally(SetupAbandoned(x))
+                withContext(NonCancellable) { forget(t, e) }
                 throw x
             } catch (x: Throwable) {
                 d.completeExceptionally(x)
                 forget(t, e)
             }
+        } else {
+            setupWaitersForTest.addAndFetch(1)
         }
         return e to d.await()
     }
+
+    /** The caller setting up a shared connection was cancelled; the callers waiting for it try again. */
+    private class SetupAbandoned(
+        cause: CancellationException,
+    ) : Exception("the connection setup was abandoned by the cancelled caller that started it", cause)
 
     /**
      * [connection] counted as in use until [H3Entry.release]: [evictExpired] never closes a connection a request was
@@ -418,6 +451,7 @@ internal class H3Pool(
                 } catch (e: Throwable) {
                     throw H3NotSent(e)
                 }
+            var reported = false // connectionAcquired went out: a failure below reports the release too
             try {
                 // a request that cannot go in 0-RTT waits for the handshake here, before any stream is opened or its body
                 // touched: a handshake that fails leaves it provably unsent (RFC 8470 section 4 — the client starts over)
@@ -435,6 +469,7 @@ internal class H3Pool(
                 if (events.enabled) {
                     val reused = lock.withLock { !fresh.remove(conn) }
                     events.emit("connectionAcquired") { connectionAcquired(data, HttpProtocolVersion.HTTP_3_0, reused) }
+                    reported = true
                 }
                 val r =
                     if (data.attributes.contains(
@@ -451,6 +486,12 @@ internal class H3Pool(
                 return r
             } catch (e: Throwable) {
                 entry.release(clock())
+                // every connectionAcquired gets its connectionReleased, also when the exchange failed before a response
+                if (reported) {
+                    events.emit(
+                        "connectionReleased",
+                    ) { connectionReleased(data, HttpProtocolVersion.HTTP_3_0, kept = !conn.closed.isCompleted) }
+                }
                 if (e !is Http3Exception.RequestNotProcessed) throw e
                 lock.withLock {
                     connections[t.key]?.let {
@@ -481,15 +522,12 @@ internal class H3Pool(
         val response: Http3Response =
             withSocketTimeout(data) {
                 conn.request(
-                    Http3Request(
-                        data.method.value,
-                        "https",
-                        data.url.authority(),
-                        data.url.h3Path(),
-                        headersOf(data, body) + Http3Headers(extraHeaders),
-                        bodyChannel(body, callContext),
-                        allowEarlyData = @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class) config.http3.earlyData,
-                    ),
+                    http3Request(data.method.value, data.url.authority(), data.url.h3Path()) {
+                        headers = headersOf(data, body) + Http3Headers(extraHeaders)
+                        this.body = bodyChannel(body, callContext)
+                        @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+                        allowEarlyData = config.http3.earlyData
+                    },
                 )
             }
         callContext[Job]?.invokeOnCompletion { cause ->
@@ -521,7 +559,7 @@ internal class H3Pool(
         val headers = Http3Headers(headersOf(data, data.body.unwrap()).fields.filter { it.first !in WS_HOP_BY_HOP } + extraHeaders)
         val stream =
             conn.connect(
-                Http3Request("CONNECT", "https", data.url.authority(), data.url.h3Path(), headers),
+                http3Request("CONNECT", data.url.authority(), data.url.h3Path()) { this.headers = headers },
                 "websocket",
             )
         // each direction on its own when the call is over. A send side the session closed cleanly ends with its FIN (the Close
@@ -532,6 +570,7 @@ internal class H3Pool(
             val readToEnd = stream.input.isClosedForRead && stream.input.closedCause == null
             if (!sentCleanly) stream.reset(io.kuicksilver.http3.Http3ErrorCode.REQUEST_CANCELLED)
             if (!readToEnd) stream.stopSending(io.kuicksilver.http3.Http3ErrorCode.REQUEST_CANCELLED)
+            events.emit("connectionReleased") { connectionReleased(data, HttpProtocolVersion.HTTP_3_0, kept = !conn.closed.isCompleted) }
         }
         val session =
             RawWebSocket(

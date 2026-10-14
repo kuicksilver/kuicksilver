@@ -178,7 +178,6 @@ public final class io/kuicksilver/http3/Http3Headers$Companion {
 }
 
 public final class io/kuicksilver/http3/Http3PeerSettings {
-	public fun <init> (JJLjava/lang/Long;ZZLjava/util/Map;)V
 	public final fun getEnableConnectProtocol ()Z
 	public final fun getH3Datagram ()Z
 	public final fun getMaxFieldSectionSize ()Ljava/lang/Long;
@@ -189,8 +188,6 @@ public final class io/kuicksilver/http3/Http3PeerSettings {
 }
 
 public final class io/kuicksilver/http3/Http3Request {
-	public fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Lio/kuicksilver/http3/Http3Headers;Lio/ktor/utils/io/ByteReadChannel;Lkotlin/jvm/functions/Function1;Lio/kuicksilver/quic/StreamPriority;Ljava/lang/String;Lkotlin/jvm/functions/Function3;Z)V
-	public synthetic fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Lio/kuicksilver/http3/Http3Headers;Lio/ktor/utils/io/ByteReadChannel;Lkotlin/jvm/functions/Function1;Lio/kuicksilver/quic/StreamPriority;Ljava/lang/String;Lkotlin/jvm/functions/Function3;ZILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public final fun getAllowEarlyData ()Z
 	public final fun getAuthority ()Ljava/lang/String;
 	public final fun getBody ()Lio/ktor/utils/io/ByteReadChannel;
@@ -202,6 +199,39 @@ public final class io/kuicksilver/http3/Http3Request {
 	public final fun getProtocol ()Ljava/lang/String;
 	public final fun getScheme ()Ljava/lang/String;
 	public final fun getTrailers ()Lkotlin/jvm/functions/Function1;
+	public final fun toBuilder ()Lio/kuicksilver/http3/Http3Request$Builder;
+}
+
+public final class io/kuicksilver/http3/Http3Request$Builder {
+	public fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V
+	public final fun build ()Lio/kuicksilver/http3/Http3Request;
+	public final fun getAllowEarlyData ()Z
+	public final fun getAuthority ()Ljava/lang/String;
+	public final fun getBody ()Lio/ktor/utils/io/ByteReadChannel;
+	public final fun getHeaders ()Lio/kuicksilver/http3/Http3Headers;
+	public final fun getMethod ()Ljava/lang/String;
+	public final fun getOnInformational ()Lkotlin/jvm/functions/Function3;
+	public final fun getPath ()Ljava/lang/String;
+	public final fun getPriority ()Lio/kuicksilver/quic/StreamPriority;
+	public final fun getProtocol ()Ljava/lang/String;
+	public final fun getScheme ()Ljava/lang/String;
+	public final fun getTrailers ()Lkotlin/jvm/functions/Function1;
+	public final fun setAllowEarlyData (Z)V
+	public final fun setAuthority (Ljava/lang/String;)V
+	public final fun setBody (Lio/ktor/utils/io/ByteReadChannel;)V
+	public final fun setHeaders (Lio/kuicksilver/http3/Http3Headers;)V
+	public final fun setMethod (Ljava/lang/String;)V
+	public final fun setOnInformational (Lkotlin/jvm/functions/Function3;)V
+	public final fun setPath (Ljava/lang/String;)V
+	public final fun setPriority (Lio/kuicksilver/quic/StreamPriority;)V
+	public final fun setProtocol (Ljava/lang/String;)V
+	public final fun setScheme (Ljava/lang/String;)V
+	public final fun setTrailers (Lkotlin/jvm/functions/Function1;)V
+}
+
+public final class io/kuicksilver/http3/Http3RequestKt {
+	public static final fun http3Request (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Lkotlin/jvm/functions/Function1;)Lio/kuicksilver/http3/Http3Request;
+	public static synthetic fun http3Request$default (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Lkotlin/jvm/functions/Function1;ILjava/lang/Object;)Lio/kuicksilver/http3/Http3Request;
 }
 
 public abstract interface class io/kuicksilver/http3/Http3Response {

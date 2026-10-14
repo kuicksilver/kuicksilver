@@ -43,7 +43,7 @@ internal object JvmTrust {
         role: TlsRole,
     ): VerifyResult {
         val cf = CertificateFactory.getInstance("X.509")
-        val x509 = chain.map { cf.generateCertificate(it.der.inputStream()) as X509Certificate }.toTypedArray()
+        val x509 = chain.map { cf.generateCertificate(it.encoded.inputStream()) as X509Certificate }.toTypedArray()
         val authType = if (x509[0].publicKey.algorithm == "EC") "ECDHE_ECDSA" else "ECDHE_RSA"
         return try {
             if (role == TlsRole.Client) tm.checkServerTrusted(x509, authType) else tm.checkClientTrusted(x509, authType)

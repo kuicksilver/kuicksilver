@@ -164,6 +164,25 @@ class LoopGroupTest {
             }
         }
 
+    /** A datagram for another loop whose queue does not take it (full, or closed under a closing loop) counts as a queue drop. */
+    @Test fun aForwardedDatagramTheOwnerCannotTakeCountsAsAQueueDrop() =
+        runBlocking {
+            withTimeout(30.seconds) {
+                val net = MemoryNetwork()
+                val io1 = net.open(otherAddr)
+                val group = LoopGroup.create(config, listOf(net.open(serverAddr), io1))
+                try {
+                    group.loopForTest(0).forwarded.close()
+                    group.misrouteForTest(from = 1, to = 0) // every datagram of loop 1's socket goes to loop 0's queue
+                    repeat(10) { io1.inbox.trySend(ByteArray(100) { 0x40 } to clientAddr) }
+                    withTimeout(5.seconds) { while (group.stats.datagramsDroppedQueue < 10L) delay(10) }
+                    assertEquals(10L, group.stats.datagramsDroppedQueue, "${group.stats}")
+                } finally {
+                    group.close()
+                }
+            }
+        }
+
     @Test fun oneFailedLoopClosesTheWholeGroup() =
         runBlocking {
             withTimeout(30.seconds) {

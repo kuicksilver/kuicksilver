@@ -6,6 +6,7 @@ package io.kuicksilver.quic
 
 import android.content.Context
 import android.net.ConnectivityManager
+import android.util.Log
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import io.ktor.network.sockets.InetSocketAddress
@@ -37,6 +38,43 @@ import kotlin.time.Duration.Companion.seconds
 class NetworkMigrationAndroidTest {
     private val connectivity =
         InstrumentationRegistry.getInstrumentation().targetContext.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+
+    /** The Android sample of docs/guide/quic.md (an instrumentation test has no lifecycle: a coroutine scope stands in). */
+    @Test fun followDefaultNetworkSample() =
+        runBlocking {
+            KslLoader.ensureLoaded()
+            val context = InstrumentationRegistry.getInstrumentation().targetContext
+            val lo = InetSocketAddress("127.0.0.1", 0)
+            val server =
+                QuicEndpoint.bind(
+                    lo,
+                    QuicEndpointConfig
+                        .Builder()
+                        .apply {
+                            this.server = QuicServerConfig.Builder(CoreFixtures.server()).build()
+                            crypto = KslQuicCrypto
+                        }.build(),
+                )
+            val client = QuicEndpoint.bind(lo, QuicEndpointConfig.Builder().apply { crypto = KslQuicCrypto }.build())
+            try {
+                withTimeout(60.seconds) {
+                    val accepted = async { server.accept() }
+                    val connection = client.connect(server.localAddress, QuicClientConfig.Builder(CoreFixtures.client()).build())
+                    accepted.await()
+                    val lifecycleScope = this
+                    // guide:quic:android-follow
+                    val cm = context.getSystemService(ConnectivityManager::class.java)
+                    val migrator = connection.followDefaultNetwork(cm, lifecycleScope) // started; migrator.close() stops it
+                    val log = lifecycleScope.launch { migrator.events.collect { Log.i("quic", "$it") } }
+                    migrator.close()
+                    log.cancel()
+                    connection.close()
+                }
+            } finally {
+                client.close()
+                server.close()
+            }
+        }
 
     @Test fun bindingToTheActiveNetworkSucceeds() =
         runBlocking {
@@ -151,6 +189,71 @@ class NetworkMigrationAndroidTest {
                     roundTrip() // traffic continues on the new path
                     m.close()
                     echo.cancel()
+                    c.close()
+                }
+            } finally {
+                client.close()
+                server.close()
+            }
+        }
+
+    /**
+     * `defaultNetworks()` starts with the current default network, and its shared callback is unregistered when the last
+     * collector stops: 150 collections in a row stay below Android's limit of about 100 callbacks per app.
+     */
+    @Test fun defaultNetworksStartsWithTheDefaultAndReleasesItsCallback() =
+        runBlocking {
+            val network = connectivity.activeNetwork
+            assumeTrue("the device has a default network", network != null)
+            withTimeout(60.seconds) {
+                repeat(150) { assertEquals(network, connectivity.defaultNetworks().first()) }
+                // two collectors at once share one callback and both see the default
+                val a = async { connectivity.defaultNetworks().first() }
+                val b = async { connectivity.defaultNetworks().first() }
+                assertEquals(network, a.await())
+                assertEquals(network, b.await())
+            }
+        }
+
+    /** `followDefaultNetwork` takes the current default network as the connection's: no migration, traffic goes on. */
+    @Test fun followDefaultNetworkStaysOnTheCurrentDefault() =
+        runBlocking {
+            KslLoader.ensureLoaded()
+            val network = connectivity.activeNetwork
+            assumeTrue("the device has a default network", network != null)
+            val lo = InetSocketAddress("127.0.0.1", 0)
+            val server =
+                QuicEndpoint.bind(
+                    lo,
+                    QuicEndpointConfig
+                        .Builder()
+                        .apply {
+                            this.server = QuicServerConfig.Builder(CoreFixtures.server()).build()
+                            crypto = KslQuicCrypto
+                        }.build(),
+                )
+            val client = QuicEndpoint.bind(lo, QuicEndpointConfig.Builder().apply { crypto = KslQuicCrypto }.build())
+            try {
+                withTimeout(60.seconds) {
+                    val accepted = async { server.accept() }
+                    val c = client.connect(server.localAddress, QuicClientConfig.Builder(CoreFixtures.client()).build())
+                    val s = accepted.await()
+                    val echo =
+                        launch {
+                            val st = s.acceptStream()
+                            val got = st.input.readExactly(4)
+                            st.output.writeFully(got, 0, 4)
+                            st.output.flushAndClose()
+                        }
+                    val m = c.followDefaultNetwork(connectivity, this, local = lo)
+                    assertEquals(network, m.network.first { it != null })
+                    assertEquals(1, c.paths.size, "the default network it is already on: no new path")
+                    val st = c.openBidi()
+                    st.output.writeFully(byteArrayOf(5, 6, 7, 8), 0, 4)
+                    st.output.flushAndClose()
+                    assertContentEquals(byteArrayOf(5, 6, 7, 8), st.input.readExactly(4))
+                    echo.join()
+                    m.close()
                     c.close()
                 }
             } finally {

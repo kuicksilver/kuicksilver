@@ -6,10 +6,16 @@
 pluginManagement {
     repositories { gradlePluginPortal(); mavenCentral(); google() }
 }
-// -Pkuicksilver.fromMavenLocal=true builds the sample from the artifacts in ~/.m2 instead (the consumer smoke test of a release: `tools/check/consumer-smoke.sh`).
+// -Pkuicksilver.fromMavenLocal=true builds the sample from the artifacts in ~/.m2 instead, -Pkuicksilver.fromMavenCentral=true
+// from Maven Central only (the consumer smoke tests of a release: `tools/check/consumer-smoke.sh [--central]`).
 val fromMavenLocal = providers.gradleProperty("kuicksilver.fromMavenLocal").orNull == "true"
+val fromMavenCentral = providers.gradleProperty("kuicksilver.fromMavenCentral").orNull == "true"
 dependencyResolutionManagement {
-    repositories { if (fromMavenLocal) mavenLocal(); mavenCentral(); google() }
+    repositories {
+        if (fromMavenLocal) mavenLocal()
+        mavenCentral()
+        google()
+    }
 }
 rootProject.name = "realtime-telemetry"
-if (!fromMavenLocal) includeBuild("../..")
+if (!fromMavenLocal && !fromMavenCentral) includeBuild("../..")

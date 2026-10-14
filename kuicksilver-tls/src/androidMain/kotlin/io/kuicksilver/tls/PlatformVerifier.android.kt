@@ -32,7 +32,7 @@ internal actual object PlatformVerifier {
         tmf.init(null as KeyStore?)
         val tm = tmf.trustManagers.filterIsInstance<X509TrustManager>().first()
         val cf = CertificateFactory.getInstance("X.509")
-        val x509 = chain.map { cf.generateCertificate(it.der.inputStream()) as X509Certificate }.toTypedArray()
+        val x509 = chain.map { cf.generateCertificate(it.encoded.inputStream()) as X509Certificate }.toTypedArray()
         val authType = if (x509[0].publicKey.algorithm == "EC") "ECDHE_ECDSA" else "ECDHE_RSA"
         return try {
             val validated = X509TrustManagerExtensions(tm).checkServerTrusted(x509, authType, host.value)

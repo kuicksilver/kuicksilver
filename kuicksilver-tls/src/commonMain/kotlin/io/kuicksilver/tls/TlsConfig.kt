@@ -374,7 +374,7 @@ public inline fun tlsConfig(
  * @property signatureSchemes the TLS SignatureScheme code points of `signature_algorithms` (RFC 8446 section 4.2.3), e.g.
  *   `0x0403` for ecdsa_secp256r1_sha256, so the selector can pick an identity whose key the client can verify.
  */
-public class ClientHelloInfo(
+public class ClientHelloInfo internal constructor(
     public val serverName: String?,
     public val alpn: List<String>,
     public val signatureSchemes: List<Int>,

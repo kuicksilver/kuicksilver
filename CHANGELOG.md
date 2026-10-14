@@ -30,9 +30,11 @@ QUIC (`kuicksilver-quic`, `kuicksilver-native`):
   configuration, safe methods only before the handshake.
 - QUIC server on Kotlin/Native macOS: the accelerated `ksl` UDP socket (ADR-0006) works on Apple platforms — ECN marks
   sent and read per datagram, DF set for PMTUD (`IP_DONTFRAG`), no GSO/GRO (Darwin has none). `QuicEndpoint.bind` with
-  a server and the Ktor server engine over HTTP/3 run on `macosArm64`; iOS compiles and links the same code.
+  a server and the Ktor server engine over HTTP/3 run on `macosArm64` and on the iOS simulator, where every module's
+  suite runs and `iosHostInteropTest` connects a host JVM client to a server on iOS; `iosArm64` is compiled and linked,
+  not yet run on a device.
 - QUIC server on Kotlin/Native Windows (`mingwX64`): `ksl_udp` over Winsock (`WSASendMsg`/`WSARecvMsg` with `WSAPoll` and
-  a wake socket, ECN through `IP_ECN`/`IPV6_ECN` on Windows 10 2004+ / Server 2022, USO/URO where the system grants them,
+  a wake socket, ECN through `IP_ECN`/`IPV6_ECN` where Windows accepts them (probed when the socket opens; verified on Windows 11), USO/URO where the system grants them,
   DF, dual-stack IPv6 sockets, `SO_EXCLUSIVEADDRUSE`); the JVM on Windows uses the same socket through JNI. Winsock is
   started when the Kotlin/Native runtime starts (not from a C constructor, which in a `sharedLib` would run under the
   loader lock), so address lookups before the first socket do not fail with `WSANOTINITIALISED`. Verified in a local
@@ -193,6 +195,28 @@ Documentation:
 
 ### Changed
 
+API shape before the first release (pre-release review, 2026-10-14; nothing was published, so no deprecation cycle):
+
+- **Breaking:** `Http3Request` is built with `http3Request(method, authority, path) { ... }` or `Http3Request.Builder`
+  (plus `toBuilder()`) instead of an 11-parameter constructor, so request options can be added later without breaking
+  binaries; `allowEarlyData` is set in the builder under the experimental opt-in.
+- **Breaking:** implementing `QuicCrypto`, `QuicTlsSession`, `PacketProtector`, `TokenKey` or `ResetKey` needs
+  `@OptIn(ExperimentalKuicksilverApi::class)` (`@SubclassOptInRequired`), as do the constructors of the `TlsEvent` and
+  `DriveResult` classes and of `IoCapabilities` that an implementation returns; using them is unchanged.
+- The Ktor server engine's experimental `logger` is a `KuicksilverLogger?` defaulting to null (the QUIC endpoint's
+  default, `Stderr`), like the client engine's.
+- `QuicEndpoint.stats` and `Http3Endpoint.stats` are stable: the stable counters (`initialsDropped` to
+  `connectionsCreated`) could only be read through these experimental accessors.
+- `Certificate.der`, `SpkiSha256.bytes` and `QuicException.ConnectionLost.TransportClosed.reasonBytes` return a fresh
+  copy on every read instead of the instance's own array, which a caller could change under `equals`, `hashCode` and
+  the pin checks; a `ByteString` view can be added later without breaking these. `Datagram.data` stays the receiver's
+  own array (one per datagram, never shared).
+- `docs/stability.md` now states the minimum Kotlin of consumers (2.3 on the JVM and Android, 2.4 for klibs), that the
+  QUIC, TLS and HTTP/3 modules expose Ktor 3.6 types and so require Ktor 3.6.x too, that sealed hierarchies and enums
+  may gain members in a minor release, and the crypto SPI's opt-in.
+- **Breaking:** library-produced values have internal constructors: `ConnectionAttempt`, the `PathEvent`,
+  `ConnectionEvent` and `MigrationEvent` classes, `ClientHelloInfo`, `Http3PeerSettings`.
+
 QUIC (`kuicksilver-quic`):
 
 - Configuration validation: `QuicConfig.handshakeTimeout` must be positive, `maxSendBuffer` 1..2^62, `maxIdleTimeout`
@@ -219,7 +243,7 @@ QUIC (`kuicksilver-quic`):
   validate ECN, receives run as 100 ms blocking slices on `Dispatchers.IO`, and a wildcard bind is dual-stack as with
   NIO. A refused socket falls back to NIO; `DatagramIo.open(local, IoPreference.Portable)` (or an endpoint built on it)
   keeps NIO.
-- A STREAM frame that would open more than `maxReassemblyRanges` gaps in a stream is dropped unacknowledged (the peer
+- A STREAM frame that would open more than the internal reassembly limit (256 gaps per stream, 4096 per connection) gaps in a stream is dropped unacknowledged (the peer
   retransmits it) instead of closing the connection with FLOW_CONTROL_ERROR: a burst that lost every other packet within
   one RTT (e.g. a full receive buffer) closed connections whose peer stayed within flow control. The memory bound is
   unchanged (RFC 9000 §21.7).
@@ -257,8 +281,9 @@ Native layer and TLS (`kuicksilver-native`, `kuicksilver-tls`):
 
 Ktor client (`kuicksilver-ktor-client`):
 
-- `maxConnectionsPerHost` is documented as what it always was, the number of idle HTTP/1.1 connections kept per route;
-  it no longer stands in for a connection limit. The idle map of the HTTP/1.1 pool, which grew by one entry per origin
+- `maxConnectionsPerHost` is renamed `maxIdleConnectionsPerRoute` (**breaking**, before the first release), the name of
+  what it always was: the number of idle HTTP/1.1 connections kept per route, not a connection limit (that is the
+  experimental `maxConnectionsPerRoute`); a Ktor or OkHttp user setting `maxConnectionsPerHost = 10` expected a cap. The idle map of the HTTP/1.1 pool, which grew by one entry per origin
   and was never pruned, is gone: a route is dropped with its last connection.
 
 ### Removed
@@ -753,6 +778,61 @@ Samples and testing:
   instead of growing the server's buffer.
 - The `NullCryptoProvider` test protection binds the packet number into its tag, so a misdecoded packet number fails to
   open as with real keys instead of being acknowledged.
+
+Pre-release API and operations review (2026-10-14):
+
+- QUIC: an application callback that throws a `CancellationException` (a `ConnectionListener`, a `KuicksilverLogger`,
+  a `ConnectionAdmission` policy, a custom certificate verifier) no longer ends the endpoint loop's coroutine silently or
+  leaves `closed`, the handshake and `accept()` waiting: it counts as that callback's failure like any other exception
+  (`listenerFailures`, `admissionContractViolations`, a rejected peer). The listener's `onClosed` runs after `closed` has
+  completed. Exceptions out of the logger are now counted in `listenerFailures`, and a failing qlog sink is logged at
+  `Warn`, as their KDoc said.
+- Ktor engines: a `KuicksilverEventListener` or `KuicksilverServerEventListener` callback that throws a
+  `CancellationException` no longer fails the call (client) or ends HTTP/3 accepting and the connection's handler
+  (server); it is logged like any other listener failure.
+- HTTP/3: `Http3Connection.goAway()` runs on the connection's session dispatcher whatever thread calls it (the Ktor
+  server calls it from `Dispatchers.IO`); it read and wrote the GOAWAY state unsynchronised, so a request racing the
+  final GOAWAY could be processed above the announced id while the client retried it elsewhere.
+- Ktor client: when the call setting up a shared HTTP/3 connection was cancelled, every other call waiting for that
+  connection failed with a `CancellationException` (no retry, no HTTP/1.1 fallback); they now set up a connection of
+  their own.
+- HTTP/3 close paths send H3_NO_ERROR (RFC 9114 section 5.2) instead of QUIC application code 0, which HTTP/3 does not
+  define: `Http3Endpoint.close()`, the Ktor client's `close()` and the Ktor server's stop at its grace deadline (which
+  could close with code 0 when the endpoint's close overtook the connections' own).
+- Ktor server stop: HTTP/3 accepting goes on until the endpoint closes, so a connection whose handshake completes after
+  the stop began is served and gets GOAWAY at once instead of waiting in the accept queue, and the stop returns as soon
+  as the connections are idle rather than always lasting the whole grace period. `docs/guide/ktor.md` describes the
+  stop as it runs.
+- QUIC counters: `datagramsDroppedQueue` now counts datagrams a loop could not forward to the loop that owns their
+  connection (its queue full or closed), as its KDoc said; `connectionsCreated` no longer counts server connections
+  for Initials that did not decrypt (forged or corrupted; they count in `datagramsDroppedUndecryptable`).
+- Linux and macOS UDP: `ENOBUFS` from a full interface queue (Darwin) or qdisc (Linux) is backpressure like `EAGAIN`;
+  the rest of the batch was counted as lost and thrown into the same full queue (f6d40586).
+- Ktor client, HTTP/3 WebSockets on the JVM and Android: a session closed before the server's FIN arrived reset its
+  stream and could discard its own Close reply on the way to the server; each direction now ends on its own (07b105a9).
+- Kotlin/Native IP literals take ASCII digits only and no octets with leading zeros: `fe80::١` and `010.0.0.1` (which
+  `inet_aton` reads as 8.0.0.1) could name different addresses for the loop and the socket (b3332a90).
+- HTTP/3 client: a caller cancelled just as `request` (or `connect`) returned dropped the finished response without
+  STOP_SENDING or RESET_STREAM, so the stream held flow-control credit until the connection ended; it is abandoned with
+  H3_REQUEST_CANCELLED now.
+- Ktor client: `connectionReleased` follows every `connectionAcquired`, also for an exchange that failed before its
+  response and for an HTTP/3 WebSocket; such calls reported no release.
+- TLS: a `TlsConnection` that failed while being built (a client configuration without a reference identifier, a
+  native error setting SNI) leaked its `SSL*` and its `SSL_CTX`; both are freed now.
+- Linux Native trust store: a certificate directory without `c_rehash` links (`SSL_CERT_DIR`, `/etc/ssl/certs`) was
+  accepted and then found no issuer at every handshake (`UnknownIssuer`); such a directory is now read file by file as Go
+  does, and one without certificates fails with `TlsException.Config` naming the paths. The RHEL 7+ bundle
+  `/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem` joins the searched files (Go's list).
+- Windows Native TCP sockets (`kuicksilver-ktor-network`, used by both engines): every socket is created without
+  handle inheritance (`WSA_FLAG_NO_HANDLE_INHERIT`; accepted ones are cleared too), so a child process no longer keeps
+  a listener's port or a connection open, and listeners bind with `SO_EXCLUSIVEADDRUSE`, so no `SO_REUSEADDR` socket
+  of another process can bind over them, as the UDP sockets, msquic and Go already did.
+- Ktor client on Android: `http://` and `ws://` requests honour the app's Network Security Configuration
+  (`NetworkSecurityPolicy.isCleartextTrafficPermitted(host)`, false by default from targetSdk 28) and are refused with an
+  `IOException` before any connection, as OkHttp, `HttpURLConnection` and Cronet do; they were sent in cleartext.
+- Ktor engines on Android: the Ktor version check read the version Android gives every package ("0.0") and refused to
+  create a client or start a server ("ktor-server-core 0.0 is on the classpath"); on Android only a jar manifest counts
+  now, so the check passes as documented.
 
 ### Security
 

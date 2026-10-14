@@ -5,6 +5,7 @@ SPDX-License-Identifier: Apache-2.0
 
 # Kuicksilver
 
+<!-- release-flip: at 0.2.0, "nothing is published to Maven Central yet" becomes "0.2.0 is on Maven Central" -->
 **Status: 0.x, experimental.** The API can change between any two 0.x releases, nothing is published to Maven Central
 yet, and the CI described below runs on the maintainers' machines until the repository's first public build. Do not
 use it in production yet; do try it, and tell us what breaks. [docs/stability.md](docs/stability.md) says which API is
@@ -44,8 +45,8 @@ in-memory UDP), `kuicksilver-bench` and `kuicksilver-interop` live in this repos
 | JVM 17+ | Linux x86_64 / aarch64, macOS arm64 / x86_64, Windows x86_64 | yes | yes | Linux: glibc 2.17 or newer (the native library is built in manylinux2014); musl (Alpine) is not supported in v1. macOS 11 or newer. Accelerated UDP everywhere: on Linux (GSO/GRO, ECN, DF), macOS (ECN, DF; no GSO/GRO) and Windows (USO/URO and ECN where the Windows version grants them, DF). `loops > 1` needs Linux. The Windows JNI library is cross-built with mingw-w64; the JVM suites on Windows were verified in a local Windows 11 VM (Parallels); there is no CI run on Windows while GitHub Actions is paused. |
 | Android | `minSdk` 24; arm64-v8a, armeabi-v7a, x86_64 | yes | yes | Native libraries are aligned for 16 KiB pages; accelerated UDP as on Linux. |
 | Kotlin/Native Linux | `linuxX64`, `linuxArm64` | yes | yes | glibc of the Kotlin/Native sysroot (2.19 on x64, 2.25 on arm64). |
-| Kotlin/Native Apple | `macosArm64`, `iosArm64`, `iosSimulatorArm64` (no `macosX64`: deprecated by Kotlin; the JVM on Intel Macs is served by the JNI library) | yes | yes | The server runs on the accelerated `ksl` socket (ADR-0006): ECN and DF, no GSO/GRO (Darwin has none), `loops = 1` only (Darwin has no `SO_REUSEPORT` flow hashing). The test suites of every module run on the iOS simulator (`iosSimulatorArm64Test`), and `:kuicksilver-ktor-client:iosHostInteropTest` runs the simulator against a peer on the host (Ktor HTTP/3 and HTTP/1.1, raw QUIC in both directions, IPv4 and IPv6); network following through `NWPathMonitor` (`followDefaultNetwork`) is in `appleMain`. Not yet verified on a physical device. |
-| Kotlin/Native Windows | `mingwX64` | yes | yes | The server runs on the accelerated Winsock socket (`WSASendMsg`/`WSARecvMsg`; ECN on Windows 10 2004+ / Server 2022, USO/URO where granted), `loops = 1` only (exclusive bind, no `SO_REUSEPORT`). A `0.0.0.0` bind opens a dual-stack socket, as on Linux and Apple. `TrustConfig.Platform` verifies with CryptoAPI (the Windows root store, AIA, soft-fail revocation of the leaf). Cross-built on macOS/Linux and verified in a local Windows 11 VM (Parallels); no CI run on Windows while GitHub Actions is paused. |
+| Kotlin/Native Apple | `macosArm64`, `iosArm64`, `iosSimulatorArm64` (no `macosX64`: deprecated by Kotlin; the JVM on Intel Macs is served by the JNI library) | yes | yes | macOS 12 or newer, iOS 15 or newer. The server runs on the accelerated `ksl` socket (ADR-0006): ECN and DF, no GSO/GRO (Darwin has none), `loops = 1` only (Darwin has no `SO_REUSEPORT` flow hashing). The test suites of every module run on the iOS simulator (`iosSimulatorArm64Test`), and `:kuicksilver-ktor-client:iosHostInteropTest` runs the simulator against a peer on the host (Ktor HTTP/3 and HTTP/1.1, raw QUIC in both directions, IPv4 and IPv6); network following through `NWPathMonitor` (`followDefaultNetwork`) is in `appleMain`. Not yet verified on a physical device. |
+| Kotlin/Native Windows | `mingwX64` | yes | yes | The server runs on the accelerated Winsock socket (`WSASendMsg`/`WSARecvMsg`; ECN where Windows accepts `IP_ECN`, probed when the socket opens and verified on Windows 11, USO/URO where granted), `loops = 1` only (exclusive bind, no `SO_REUSEPORT`). A `0.0.0.0` bind opens a dual-stack socket, as on Linux and Apple. `TrustConfig.Platform` verifies with CryptoAPI (the Windows root store, AIA, soft-fail revocation of the leaf). Cross-built on macOS/Linux and verified in a local Windows 11 VM (Parallels); no CI run on Windows while GitHub Actions is paused. |
 
 TLS over TCP (`TlsConnection`, `Socket.tls()`) works on every target above. JS and Wasm are not targets.
 
@@ -54,9 +55,11 @@ is available as an opt-in, experimental API and is off by default (ADR-0015).
 
 ## Quick start
 
-Artifacts are not on Maven Central yet. Until they are, build from source (see [CONTRIBUTING.md](CONTRIBUTING.md))
+<!-- release-flip: at 0.2.0, drop "not on Maven Central yet" and the includeBuild lines; the coordinates stay -->
+Artifacts are not on Maven Central yet. Until 0.2.0 is, build from source (see [CONTRIBUTING.md](CONTRIBUTING.md))
 and consume the modules through a Gradle composite build, as
-[`samples/realtime-telemetry`](samples/realtime-telemetry/README.md) does:
+[`samples/realtime-telemetry`](samples/realtime-telemetry/README.md) does (the included build stands in for the
+coordinates, whatever version they name):
 
 ```kotlin
 // settings.gradle.kts of your project
@@ -64,7 +67,7 @@ includeBuild("../kuicksilver")
 
 // build.gradle.kts
 dependencies {
-    implementation("io.kuicksilver:kuicksilver-ktor-client:0.1.0-SNAPSHOT")
+    implementation("io.kuicksilver:kuicksilver-ktor-client:0.2.0")
 }
 ```
 
@@ -148,13 +151,13 @@ vulnerabilities are reported privately as described in [SECURITY.md](SECURITY.md
 
 The QUIC Interop Runner (pinned in `tools/interop/runner.lock`) is run against msquic, ngtcp2, picoquic, quic-go,
 quiche and quinn, with Kuicksilver as server and as client, from two images: the JVM build and a Kotlin/Native
-`linuxArm64` build. Latest local results (2026-10-08):
+`linuxArm64` build. Latest local results (2026-10-13, runner 740c05a, the 0.2.0 code):
 
 | Image | Cases | Green cells |
 |---|---|---|
-| JVM | 18 cases (handshake, transfer, longrtt, chacha20, multiplexing, retry, keyupdate, blackhole, ecn, amplificationlimit, handshakeloss, transferloss, handshakecorruption, transfercorruption, ipv6, v2, rebind-port, rebind-addr) x 6 peers x 2 roles | 188 / 216 |
-| Kotlin/Native `linuxArm64` | handshake, transfer, retry, keyupdate, ecn, rebind-port x 5 peers x 2 roles | 54 / 60 |
-| both | `http3` | green in both roles against every peer that implements the case (ngtcp2, picoquic, quic-go, quiche, quinn) |
+| JVM | 21 cases (the 18 of 0.1.0 — handshake, transfer, longrtt, chacha20, multiplexing, retry, keyupdate, blackhole, ecn, amplificationlimit, handshakeloss, transferloss, handshakecorruption, transfercorruption, ipv6, v2, rebind-port, rebind-addr — plus http3, resumption, zerortt) x 6 peers x 2 roles | 227 of the 237 cells both sides support |
+| Kotlin/Native `linuxArm64` | handshake, transfer, retry, keyupdate, ecn, rebind-port, http3, resumption, zerortt x 6 peers x 2 roles | 96 of the 99 cells both sides support |
+| both | `resumption`, `zerortt` | green in both roles against all six peers |
 
 Every red cell is analysed, cell by cell, in the interop section of
 [docs/spec/rfc-compliance.md](docs/spec/rfc-compliance.md); `tools/interop/required.json` lists the cells that must
@@ -163,7 +166,7 @@ stay green. RFC coverage, section by section, with the tests behind each row, is
 ## Documentation
 
 - [docs/architecture.md](docs/architecture.md) — how the code is organised, invariants, entry points.
-- [docs/roadmap.md](docs/roadmap.md) — what 0.1.0 ships, its stated limits, and what 0.2.0 and later bring.
+- [docs/roadmap.md](docs/roadmap.md) — the never-published 0.1.0 candidate, what 0.2.0 ships, its stated limits, and what later releases bring.
 - [docs/guide/](docs/guide/quic.md) — user guides: [TLS](docs/guide/tls.md), [QUIC](docs/guide/quic.md),
   [HTTP/3](docs/guide/http3.md), [Ktor engines](docs/guide/ktor.md), [iOS](docs/guide/ios.md),
   [publishing on the App Store](docs/guide/app-store.md), the [configuration reference](docs/guide/configuration.md)

@@ -190,8 +190,8 @@ internal object WindowsTrust {
             CertAddEncodedCertificateToStore(
                 store,
                 X509_ASN_ENCODING.toUInt(),
-                cert.der.toUByteArray().toCValues(),
-                cert.der.size.toUInt(),
+                cert.encoded.toUByteArray().toCValues(),
+                cert.encoded.size.toUInt(),
                 CERT_STORE_ADD_ALWAYS.toUInt(),
                 out.ptr,
             )

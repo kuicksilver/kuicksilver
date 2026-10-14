@@ -5,6 +5,12 @@
 #include "test_common.h"
 #include <openssl/x509_vfy.h>
 #include <openssl/pem.h>
+#include <sys/stat.h>
+#ifdef _WIN32
+#include <direct.h>
+#else
+#include <unistd.h>
+#endif
 
 typedef struct { const char *cert; const char *root; const char *name; int mode; int accept; int alert_on_reject; } scenario;
 static int on_verify(ksl_ssl *s, int rc, void *a) { scenario *x = a; if (rc != KSL_WANT_VERIFY) return 1; return ksl_ssl_verify_resume(s, x->accept, x->alert_on_reject) == KSL_OK; }
@@ -151,6 +157,13 @@ static void env_set(const char *k, const char *v) {
     if (v) setenv(k, v, 1); else unsetenv(k);
 #endif
 }
+static void mk_dir(const char *p) {
+#ifdef _WIN32
+    _mkdir(p);
+#else
+    mkdir(p, 0700);
+#endif
+}
 static int roots_from(const char *file, const char *dir, char *m, size_t cap) {
     env_set("SSL_CERT_FILE", file); env_set("SSL_CERT_DIR", dir);
     ksl_ctx *c = ksl_ctx_new(KSL_CLIENT); uint32_t e; m[0] = 0; int rc = ksl_ctx_set_roots(c, NULL, 0); if (rc != KSL_OK) ksl_ctx_last_error(c, &e, m, cap); ksl_ctx_free(c); return rc;
@@ -174,7 +187,21 @@ static void test_system_store_missing(void) {
     { size_t l = 0; uint8_t *d = read_file(TESTDATA "test-ca.der", &l); const unsigned char *p = d; X509 *x = d ? d2i_X509(NULL, &p, (long)l) : NULL; FILE *f = x ? fopen("ksl_test_ca_bundle.pem", "w") : NULL;
       int w = f && PEM_write_X509(f, x) == 1; if (f) fclose(f); X509_free(x); free(d);
       CHECK(w && roots_from("ksl_test_ca_bundle.pem", NULL, m, sizeof m) == KSL_OK, "SSL_CERT_FILE with a PEM bundle loads"); remove("ksl_test_ca_bundle.pem"); }
-    CHECK(roots_from(NULL, TESTDATA, m, sizeof m) == KSL_OK, "SSL_CERT_DIR naming an existing directory loads");
+    /* a directory nobody ran c_rehash on: X509_STORE_load_path "succeeds" on it and then finds nothing at every handshake */
+    CHECK(roots_from(NULL, TESTDATA, m, sizeof m) == KSL_ERROR && strstr(m, "SSL_CERT_DIR="), "negative: SSL_CERT_DIR without PEM files or hash links is refused, not an unknown issuer later");
+    { size_t l = 0; uint8_t *d = read_file(TESTDATA "test-ca.der", &l); const unsigned char *p = d; X509 *x = d ? d2i_X509(NULL, &p, (long)l) : NULL;
+      char hashed[64]; snprintf(hashed, sizeof hashed, "ksl_test_hashed/%08lx.0", x ? X509_subject_name_hash(x) : 0UL);
+      mk_dir("ksl_test_plain"); mk_dir("ksl_test_hashed");
+      FILE *f = x ? fopen("ksl_test_plain/test-ca.pem", "w") : NULL; int w = f && PEM_write_X509(f, x) == 1; if (f) fclose(f);
+      f = x ? fopen(hashed, "w") : NULL; w = w && f && PEM_write_X509(f, x) == 1; if (f) fclose(f);
+      CHECK(w && roots_from(NULL, "ksl_test_plain", m, sizeof m) == KSL_OK, "SSL_CERT_DIR with PEM files and no hash links loads them (as Go does)");
+      CHECK(w && roots_from(NULL, "ksl_test_hashed", m, sizeof m) == KSL_OK, "SSL_CERT_DIR with c_rehash links loads");
+      ksl_trust_paths_for_test(files, (const char *const[]){"ksl_test_plain", NULL});
+      CHECK(roots_from(NULL, NULL, m, sizeof m) == KSL_OK, "a distribution directory of PEM files without hash links loads");
+      ksl_trust_paths_for_test(files, (const char *const[]){TESTDATA, NULL});
+      CHECK(roots_from(NULL, NULL, m, sizeof m) == KSL_ERROR, "negative: a distribution directory without certificates does not count");
+      ksl_trust_paths_for_test(NULL, NULL);
+      remove("ksl_test_plain/test-ca.pem"); remove(hashed); rmdir("ksl_test_plain"); rmdir("ksl_test_hashed"); X509_free(x); free(d); }
     env_set("SSL_CERT_FILE", sf); env_set("SSL_CERT_DIR", sd); free(sf); free(sd);
     END();
 }

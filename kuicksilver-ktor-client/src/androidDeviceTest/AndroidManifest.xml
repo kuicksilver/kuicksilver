@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+Copyright 2026 The Kuicksilver Authors
+SPDX-License-Identifier: Apache-2.0
+-->
+<!-- The device tests run the common suite against plain-HTTP servers on the loopback: cleartext is allowed there only, as an
+     app would declare it; CleartextPolicyAndroidTest checks that every other host is refused. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application android:networkSecurityConfig="@xml/kuicksilver_test_network_security" />
+</manifest>

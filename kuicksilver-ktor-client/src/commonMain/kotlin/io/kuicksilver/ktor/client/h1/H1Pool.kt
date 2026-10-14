@@ -31,6 +31,7 @@ import io.kuicksilver.ktor.client.EngineEvents
 import io.kuicksilver.ktor.client.KuicksilverEngineConfig
 import io.kuicksilver.ktor.client.connectTimeoutMillis
 import io.kuicksilver.ktor.client.isIdempotent
+import io.kuicksilver.ktor.client.platformCleartextPermitted
 import io.kuicksilver.ktor.client.socketHost
 import io.kuicksilver.ktor.client.socketTimeoutMillis
 import io.kuicksilver.ktor.client.tlsConfigFor
@@ -69,7 +70,7 @@ internal class H1Connection(
  * HTTP/1.1 over TCP with TLS 1.3 (ADR-0009: no HTTP/2), with keep-alive and connection limits ([ConnectionPool]): at most
  * `maxConnectionsCount` connections and `maxConnectionsPerRoute` per route, requests beyond that wait in FIFO order
  * within the connect timeout; a connection whose response body ended by its framing goes back to an idle list of at most
- * `maxConnectionsPerHost` per route, kept for `idleTimeout`. A stale idle connection is replaced once, transparently,
+ * `maxIdleConnectionsPerRoute` per route, kept for `idleTimeout`. A stale idle connection is replaced once, transparently,
  * for idempotent requests only (RFC 9110 section 9.2.2, RFC 9112 section 9.3.1): a request the server may have processed
  * is never sent twice.
  */
@@ -79,6 +80,9 @@ internal class H1Pool(
     private val events: EngineEvents = EngineEvents(null, io.kuicksilver.quic.KuicksilverLogger.None),
     private val clock: () -> Long = monotonicMillis(),
 ) {
+    /** The platform's cleartext policy (Android Network Security Configuration); replaced by tests. */
+    internal var cleartextPermitted: (String) -> Boolean = { host -> platformCleartextPermitted(host) }
+
     /** Limits, keep-alive and idle expiry; internal for tests. */
     internal val pool = ConnectionPool<H1Connection>(config.poolLimits(), clock)
 
@@ -155,6 +159,13 @@ internal class H1Pool(
     ): HttpResponseData {
         val url = data.url
         val secure = url.protocol.isSecure()
+        if (!secure) {
+            val host = url.host.removePrefix("[").removeSuffix("]") // an IPv6 literal as the policy knows it
+            if (!cleartextPermitted(host)) {
+                throw io.kuicksilver.ktor.client
+                    .cleartextNotPermitted(host)
+            }
+        }
         val proxy =
             config.proxy?.also {
                 if (it.type !=
@@ -221,9 +232,12 @@ internal class H1Pool(
                 }
             } catch (e: CancellationException) {
                 conn.close()
+                events.emit("connectionReleased") { connectionReleased(data, HttpProtocolVersion.HTTP_1_1, kept = false) }
                 throw e
             } catch (e: Throwable) {
                 conn.close()
+                // every connectionAcquired gets its connectionReleased, also when the exchange failed before a response
+                events.emit("connectionReleased") { connectionReleased(data, HttpProtocolVersion.HTTP_1_1, kept = false) }
                 bodyJob?.failure?.let { throw it }
                 // a pooled connection the server already closed: one transparent retry on a fresh connection, for an
                 // idempotent request with a replayable body only (a non-idempotent one may have been processed, RFC 9112 section 9.3.1)
@@ -352,7 +366,7 @@ internal fun KuicksilverEngineConfig.poolLimits(): PoolLimits =
     PoolLimits(
         maxTotal = maxConnectionsCount,
         maxPerRoute = maxConnectionsPerRoute,
-        maxIdlePerRoute = maxConnectionsPerHost,
+        maxIdlePerRoute = maxIdleConnectionsPerRoute,
         idleTimeoutMillis = idleTimeout.toMillisOrMax(),
         maxLifetimeMillis = maxConnectionLifetime.toMillisOrMax(),
     )

@@ -70,6 +70,8 @@ class QlogRobustnessTest {
                 p.feed(p.server, bytes, InetSocketAddress("10.2.${i / 256}.${i % 256}", 40000))
             }
             assertEquals(0, p.server.connectionCount, "no state for forged Initials")
+            assertEquals(0L, p.server.stats.connectionsCreated, "a forged Initial creates no connection")
+            assertEquals(100L, p.server.stats.datagramsDroppedUndecryptable)
             assertEquals(sink.opened, sink.closed, "every trace that was opened is closed (opened ${sink.opened})")
         } finally {
             b.close()

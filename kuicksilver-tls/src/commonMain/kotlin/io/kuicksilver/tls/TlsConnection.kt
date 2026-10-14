@@ -84,6 +84,18 @@ public class TlsConnection private constructor(
     }
 
     init {
+        try {
+            setUpClient()
+        } catch (t: Throwable) {
+            // the constructor fails, so nobody can close() this object: free what it holds (the context is the caller's)
+            Ksl.sslFree(ssl)
+            ssl = 0L
+            scope.coroutineContext[Job]?.cancel()
+            throw t
+        }
+    }
+
+    private fun setUpClient() {
         if (config.role == TlsRole.Client) {
             val name =
                 when (val t = config.trust) {
@@ -601,7 +613,14 @@ public class TlsConnection private constructor(
             context: CoroutineContext,
             sessionCache: SessionCache,
         ): TlsConnection {
-            val c = TlsConnection(KslContext.create(config, quic = false), transportIn, transportOut, context, sessionCache)
+            val ctx = KslContext.create(config, quic = false)
+            val c =
+                try {
+                    TlsConnection(ctx, transportIn, transportOut, context, sessionCache)
+                } catch (t: Throwable) {
+                    ctx.close() // a connection that could not be built never owned it
+                    throw t
+                }
             try {
                 c.handshake()
             } catch (t: Throwable) {
@@ -820,7 +839,8 @@ internal fun KslContext.cachedChainStillTrusted(
     chain: List<Certificate>,
     reference: HostName,
 ): Boolean =
-    chain.isNotEmpty() && Ksl.ctxVerifyChain(handle, chain.map { it.der }, reference.value, nowSeconds() + resumptionClockSkewForTest) == 0
+    chain.isNotEmpty() &&
+        Ksl.ctxVerifyChain(handle, chain.map { it.encoded }, reference.value, nowSeconds() + resumptionClockSkewForTest) == 0
 
 internal fun TrustConfig.cacheKey(): String =
     when (this) {

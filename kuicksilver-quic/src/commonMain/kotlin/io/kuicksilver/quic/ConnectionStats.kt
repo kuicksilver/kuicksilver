@@ -7,7 +7,9 @@ import kotlin.time.Duration
 
 /**
  * A snapshot of the connection's recovery and path state (docs/architecture.md, "Cross-Cutting Concerns"). Counters run since the
- * connection started; RTT, window and MTU values belong to the active path.
+ * connection started; RTT, window and MTU values belong to the active path. `QuicConnection.stats` builds it from any thread
+ * while the endpoint loop goes on updating the connection, without a lock: each field is a value the loop held, but two
+ * fields need not come from the same instant (bytesSent may already count a packet that packetsSent does not).
  *
  * @property minRtt Lowest RTT sample of the active path (RFC 9002 section 5.2).
  * @property smoothedRtt Smoothed RTT of the active path (RFC 9002 section 5.3); the initial RTT until the first sample.

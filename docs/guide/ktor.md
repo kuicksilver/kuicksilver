@@ -105,9 +105,12 @@ val client = HttpClient(Kuicksilver) {
 ```
 
 - `https://` and `wss://` go over TLS 1.3 with the same `trust`, `identity` and `tls {}` settings whatever the protocol;
-  SNI and verification use the URL's host. `http://` and `ws://` are plain HTTP/1.1 over TCP.
+  SNI and verification use the URL's host. `http://` and `ws://` are plain HTTP/1.1 over TCP. On Android they follow
+  the app's Network Security Configuration as OkHttp does: a host for which `NetworkSecurityPolicy.isCleartextTrafficPermitted`
+  is false (every host by default from `targetSdk` 28) is refused before any connection with an `IOException`
+  "CLEARTEXT communication to <host> not permitted by network security policy".
 - HTTP/1.1 requests are written and responses parsed with Ktor's CIO code (vendored, see `docs/ktor-internal-api.md`):
-  chunked bodies, `Expect: 100-continue`, keep-alive with at most `maxConnectionsPerHost` idle connections per route
+  chunked bodies, `Expect: 100-continue`, keep-alive with at most `maxIdleConnectionsPerRoute` idle connections per route
   (a pooled connection the server already closed is replaced once, transparently, for idempotent requests; a POST
   that failed on one is reported, never sent again). Requests on one connection are
   sequential; `pipelining` is not used. Limits and idle cleanup: see "Connection pool" below.
@@ -125,11 +128,12 @@ val client = HttpClient(Kuicksilver) {
 
 ```kotlin
 // guide:ktor:pool
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
 val client = HttpClient(Kuicksilver) {
     engine {
         maxConnectionsCount = 1000                 // HTTP/1.1 connections of the engine, idle ones included
         maxConnectionsPerRoute = 100               // ... to one route (scheme, host, port, proxy)
-        maxConnectionsPerHost = 4                  // idle keep-alive connections kept per route
+        maxIdleConnectionsPerRoute = 4             // idle keep-alive connections kept per route
         idleTimeout = 5.minutes                    // idle HTTP/1.1 and HTTP/3 connections are closed after this
         maxConnectionLifetime = Duration.INFINITE  // age after which a connection takes no new requests
     }
@@ -140,7 +144,7 @@ val client = HttpClient(Kuicksilver) {
 |---|---|---|
 | `maxConnectionsCount` | 1000 | CIO `maxConnectionsCount` 1000; OkHttp `Dispatcher.maxRequests` 64 (requests, not sockets) |
 | `maxConnectionsPerRoute` | 100 | CIO `endpoint.maxConnectionsPerRoute` 100; OkHttp `maxRequestsPerHost` 5 |
-| `maxConnectionsPerHost` (idle per route) | 4 | OkHttp `ConnectionPool` 5 idle in all |
+| `maxIdleConnectionsPerRoute` (idle per route) | 4 | OkHttp `ConnectionPool` 5 idle in all |
 | `idleTimeout` | 5 min | OkHttp keep-alive 5 min; CIO `keepAliveTime` 5 s |
 | `maxConnectionLifetime` | infinite | neither OkHttp nor CIO has one |
 
@@ -159,7 +163,7 @@ the server closed meanwhile is detected when it is taken from the pool and repla
   credit is used up, a request waits for the next credit on that connection instead of failing or opening another
   connection; the request timeout bounds the wait (`HttpRequestTimeoutException`), and so does the socket timeout,
   which covers every wait until the response head. A connection without requests for `idleTimeout` is closed (QUIC's
-  own idle timeout, `quic { idleTimeout }` and the server's, may end it first); one past `maxConnectionLifetime` takes
+  own idle timeout, `quic = quicConfig { maxIdleTimeout = ... }` and the server's, may end it first); one past `maxConnectionLifetime` takes
   no new requests and closes once its requests are done.
 - **Cleanup.** A background task of the engine closes expired connections; it sleeps until the next expiry, at most
   `idleTimeout` and at most a minute, and stops when the client closes. Per-origin bookkeeping lives only while an
@@ -238,6 +242,8 @@ handshake, `HTTP/3.0` once accepted) and the peer's address, `tlsHandshakeFailed
 around the application's pipeline with the `ApplicationCall` (its response status) and the pipeline's failure, if any.
 
 ```kotlin
+// guide:ktor:server-observability
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
 embeddedServer(Kuicksilver, configure = {
     tlsConnector(identity) { port = 443 }
     logger = KuicksilverLogger.stderr(LogLevel.Info)
@@ -260,6 +266,8 @@ or closed). `logger` (null keeps `http3.endpoint.logger`) also receives the list
 `http3 { qlog = ...; connectionListener = ... }` reach the engine's QUIC endpoint.
 
 ```kotlin
+// guide:ktor:client-observability
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
 HttpClient(Kuicksilver) {
     engine {
         eventListener = object : KuicksilverEventListener() {
@@ -280,8 +288,11 @@ never fails a call.
 `stop(gracePeriodMillis, timeoutMillis)` stops accepting TCP connections, sends GOAWAY on every live HTTP/3 connection at
 once (RFC 9114 section 5.2) and shuts each HTTP/3 endpoint down with the same grace period
 ([QUIC: Graceful shutdown](quic.md#graceful-shutdown)): a new QUIC client is refused at its first Initial with
-CONNECTION_REFUSED instead of waiting for a handshake timeout, the calls in flight finish, and at the end of the grace
-period what is left is closed with H3_NO_ERROR. The engine then waits for the remaining calls up to `timeoutMillis`.
+CONNECTION_REFUSED instead of waiting for a handshake timeout, a handshake already in flight still completes and its
+connection gets GOAWAY at once, and the calls in flight finish. The stop returns as soon as they have: each HTTP/3
+connection closes with H3_NO_ERROR once its last call is answered. At the end of the grace period the calls still
+running are cancelled and the connections left are closed with H3_NO_ERROR; the stop then waits for those calls to end,
+until `timeoutMillis` after it began at most.
 
 ## 0-RTT (opt-in, experimental)
 
@@ -290,8 +301,9 @@ default.
 
 - **Server:** set `quicEarlyData = true` in the engine configuration. GET, HEAD and OPTIONS requests that arrive in
   0-RTT run before the handshake completes, and `call.request.receivedEarly` is true for them. Every other request
-  waits for the handshake. `http3Settings { earlyData = Http3EarlyDataPolicy.Reject425() }` answers `425 Too Early`
-  instead.
+  waits for the handshake. `http3Settings = http3Settings { earlyData = Http3EarlyDataPolicy.Reject425() }` answers
+  `425 Too Early` instead (an assignment: a bare `http3Settings { ... }` inside `configure` only builds a value and
+  changes nothing).
 - **Behind a gateway** (with or without `quicEarlyData`): a CDN or reverse proxy that forwards a request it received in
   early data marks it `Early-Data: 1` (RFC 8470 section 5.1), and such a request may be a replay whatever the state of
   the connection it arrives on. Over HTTP/1.1 and HTTP/3 the server engine sets `call.request.receivedEarly` for it and
@@ -309,6 +321,20 @@ default.
     on a path that went dark fails then and falls back to HTTP/1.1, not after `handshakeTimeout`.
   - A request that waits for the handshake (POST, or anything with a body) has not been sent when the handshake fails:
     it goes over HTTP/1.1 like any request whose HTTP/3 connection could not be set up.
+
+```kotlin
+// guide:ktor:zero-rtt-server
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+val server = embeddedServer(Kuicksilver, configure = {
+    tlsConnector(identity) { port = 443 }
+    quicEarlyData = true
+    http3Settings = http3Settings { earlyData = Http3EarlyDataPolicy.Reject425() }   // or keep the default: safe methods early
+}, module = Application::module)
+// guide:ktor:zero-rtt-client
+val client = HttpClient(Kuicksilver) {
+    engine { http3 { earlyData = true } }
+}
+```
 
 > **Replay warning.** An attacker can replay a 0-RTT request (RFC 8446 section 8). Turn this on only when the handlers
 > of GET, HEAD and OPTIONS have no side effects.

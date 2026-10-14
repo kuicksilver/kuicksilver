@@ -85,7 +85,7 @@ extensions. The peer's SETTINGS are in `peerSettings` once they arrive.
 
 ```kotlin
 // guide:http3:client-request
-val response = connection.request(Http3Request("GET", authority = "example.com", path = "/"))
+val response = connection.request(http3Request("GET", "example.com", "/"))
 println(response.status)
 val body = response.body            // a ByteReadChannel; reading it to the end completes response.trailers
 ```
@@ -161,7 +161,10 @@ is answered — including one whose HEADERS were still arriving when GOAWAY went
 per-stream deadline; it bounds the whole graceful shutdown with the caller's context.) A client receiving GOAWAY fails the requests it did not cover, and every
 new request, with `Http3Exception.RequestNotProcessed(retrySafe = true)`: they were never processed and can be sent
 again on a new connection (the Ktor engine does that by itself). A client's own `goAway()` sends GOAWAY(0) and stops
-issuing requests.
+issuing requests. `goAway()` may be called from any thread; it runs on the connection's own dispatcher.
+
+`Http3Endpoint.close()` ends every connection at once, without GOAWAY, with `H3_NO_ERROR` (a QUIC endpoint's `close()`
+sends application code 0, which HTTP/3 does not define); `Http3Endpoint.shutdown(grace)` is the graceful way.
 
 A peer that keeps sending frames nobody needs (unknown frames on the control stream or on a request stream — reserved GREASE types on a request stream are free — empty
 unidirectional streams, PRIORITY_UPDATE floods) spends tokens of a glitch bucket (1000 tokens, 33 per second); an empty bucket closes the
@@ -200,7 +203,7 @@ if (request.protocol == "echo") {
 } else request.respond(501).finish()
 
 // guide:http3:connect (client)
-val stream = client.connect(Http3Request("CONNECT", authority = "example.com", path = "/chat"), protocol = "echo")
+val stream = client.connect(http3Request("CONNECT", "example.com", "/chat"), protocol = "echo")
 stream.trySendDatagram(byteArrayOf(1, 2, 3))      // Unsupported until both sides sent SETTINGS_H3_DATAGRAM=1
 stream.datagrams.collect { println(it.size) }
 ```

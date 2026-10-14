@@ -129,7 +129,7 @@ internal actual object PlatformVerifier {
         owned: MutableList<CFTypeRef?>,
     ): SecTrustRef? =
         memScoped {
-            val certs = chain.map { secCertificate(it.der) }
+            val certs = chain.map { secCertificate(it.encoded) }
             owned += certs
             if (certs.any { it == null }) return null
             val array = cfArray(certs)

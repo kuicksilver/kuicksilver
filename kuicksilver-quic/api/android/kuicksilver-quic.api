@@ -79,7 +79,6 @@ public final class io/kuicksilver/quic/ConnectionAdmission$Companion {
 }
 
 public final class io/kuicksilver/quic/ConnectionAttempt {
-	public fun <init> (Lio/ktor/network/sockets/InetSocketAddress;IIIJZ)V
 	public final fun getAddressValidated ()Z
 	public final fun getConnections ()I
 	public final fun getConnectionsFromAddress ()I
@@ -91,7 +90,6 @@ public final class io/kuicksilver/quic/ConnectionAttempt {
 
 public final class io/kuicksilver/quic/ConnectionCore {
 	public static final field Companion Lio/kuicksilver/quic/ConnectionCore$Companion;
-	public synthetic fun <init> (Lio/kuicksilver/tls/TlsRole;Lio/kuicksilver/quic/QuicConfig;Lio/kuicksilver/tls/TlsConfig;Lio/kuicksilver/tls/QuicCrypto;Lio/ktor/network/sockets/InetSocketAddress;Lkotlin/random/Random;JLio/kuicksilver/quic/wire/ConnectionId;Lio/kuicksilver/quic/wire/ConnectionId;Lio/kuicksilver/quic/wire/ConnectionId;Lio/kuicksilver/quic/VersionProfile;Lio/kuicksilver/tls/ResetKey;Lio/kuicksilver/tls/EarlyDataState;Lio/kuicksilver/quic/core/ServerEarlyData;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public final fun addPath--BOkhLY (Lio/ktor/network/sockets/InetSocketAddress;JLio/kuicksilver/quic/PathId;)I
 	public static synthetic fun addPath--BOkhLY$default (Lio/kuicksilver/quic/ConnectionCore;Lio/ktor/network/sockets/InetSocketAddress;JLio/kuicksilver/quic/PathId;ILjava/lang/Object;)I
 	public final fun close-YkdGQLM (JLjava/lang/String;J)V
@@ -146,7 +144,6 @@ public abstract interface class io/kuicksilver/quic/ConnectionEvent {
 }
 
 public final class io/kuicksilver/quic/ConnectionEvent$Closed : io/kuicksilver/quic/ConnectionEvent {
-	public fun <init> (Lio/kuicksilver/quic/QuicException$ConnectionLost;)V
 	public final fun getReason ()Lio/kuicksilver/quic/QuicException$ConnectionLost;
 }
 
@@ -167,74 +164,60 @@ public final class io/kuicksilver/quic/ConnectionEvent$HandshakeCompleted : io/k
 }
 
 public final class io/kuicksilver/quic/ConnectionEvent$MtuUpdated : io/kuicksilver/quic/ConnectionEvent {
-	public synthetic fun <init> (IILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public final fun getMtu ()I
 	public final fun getPath-ako8JRA ()I
 }
 
 public final class io/kuicksilver/quic/ConnectionEvent$PathChanged : io/kuicksilver/quic/ConnectionEvent {
-	public synthetic fun <init> (IILio/kuicksilver/quic/PathChangeReason;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public final fun getNew-ako8JRA ()I
 	public final fun getOld-ako8JRA ()I
 	public final fun getReason ()Lio/kuicksilver/quic/PathChangeReason;
 }
 
 public final class io/kuicksilver/quic/ConnectionEvent$PathFailed : io/kuicksilver/quic/ConnectionEvent {
-	public synthetic fun <init> (ILio/kuicksilver/quic/PathFailureReason;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
-	public synthetic fun <init> (ILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public final fun getPath-ako8JRA ()I
 	public final fun getReason ()Lio/kuicksilver/quic/PathFailureReason;
 }
 
 public final class io/kuicksilver/quic/ConnectionEvent$PathValidated : io/kuicksilver/quic/ConnectionEvent {
-	public synthetic fun <init> (ILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public final fun getPath-ako8JRA ()I
 }
 
 public final class io/kuicksilver/quic/ConnectionEvent$SessionTicket : io/kuicksilver/quic/ConnectionEvent {
-	public fun <init> (Lio/kuicksilver/tls/QuicSessionTicket;)V
 	public final fun getTicket ()Lio/kuicksilver/tls/QuicSessionTicket;
 }
 
 public final class io/kuicksilver/quic/ConnectionEvent$StopSendingReceived : io/kuicksilver/quic/ConnectionEvent {
-	public fun <init> (JJ)V
 	public final fun getCode ()J
 	public final fun getId ()J
 }
 
 public final class io/kuicksilver/quic/ConnectionEvent$StreamFinished : io/kuicksilver/quic/ConnectionEvent {
-	public fun <init> (J)V
 	public final fun getId ()J
 }
 
 public final class io/kuicksilver/quic/ConnectionEvent$StreamOpened : io/kuicksilver/quic/ConnectionEvent {
-	public fun <init> (J)V
 	public final fun getId ()J
 }
 
 public final class io/kuicksilver/quic/ConnectionEvent$StreamReadable : io/kuicksilver/quic/ConnectionEvent {
-	public fun <init> (J)V
 	public final fun getId ()J
 }
 
 public final class io/kuicksilver/quic/ConnectionEvent$StreamReset : io/kuicksilver/quic/ConnectionEvent {
-	public fun <init> (JJ)V
 	public final fun getCode ()J
 	public final fun getId ()J
 }
 
 public final class io/kuicksilver/quic/ConnectionEvent$StreamWritable : io/kuicksilver/quic/ConnectionEvent {
-	public fun <init> (J)V
 	public final fun getId ()J
 }
 
 public final class io/kuicksilver/quic/ConnectionEvent$StreamsAvailable : io/kuicksilver/quic/ConnectionEvent {
-	public fun <init> (Z)V
 	public final fun getBidi ()Z
 }
 
 public final class io/kuicksilver/quic/ConnectionEvent$VerifyRequested : io/kuicksilver/quic/ConnectionEvent {
-	public fun <init> (Ljava/util/List;Lio/kuicksilver/tls/QuicTlsSession;)V
 	public final fun getChain ()Ljava/util/List;
 	public final fun getSession ()Lio/kuicksilver/tls/QuicTlsSession;
 }
@@ -583,14 +566,12 @@ public abstract interface class io/kuicksilver/quic/MigrationEvent {
 }
 
 public final class io/kuicksilver/quic/MigrationEvent$Failed : io/kuicksilver/quic/MigrationEvent {
-	public fun <init> (Ljava/lang/Object;Ljava/lang/Throwable;)V
 	public final fun getCause ()Ljava/lang/Throwable;
 	public final fun getNetwork ()Ljava/lang/Object;
 	public fun toString ()Ljava/lang/String;
 }
 
 public final class io/kuicksilver/quic/MigrationEvent$Migrated : io/kuicksilver/quic/MigrationEvent {
-	public fun <init> (Ljava/lang/Object;Ljava/lang/Object;Lio/kuicksilver/quic/QuicPath;)V
 	public final fun getNew ()Ljava/lang/Object;
 	public final fun getOld ()Ljava/lang/Object;
 	public final fun getPath ()Lio/kuicksilver/quic/QuicPath;
@@ -605,7 +586,6 @@ public final class io/kuicksilver/quic/MigrationEvent$NetworkLost : io/kuicksilv
 }
 
 public final class io/kuicksilver/quic/MigrationEvent$SourceFailed : io/kuicksilver/quic/MigrationEvent {
-	public fun <init> (Ljava/lang/Throwable;)V
 	public final fun getCause ()Ljava/lang/Throwable;
 	public fun toString ()Ljava/lang/String;
 }
@@ -670,28 +650,23 @@ public abstract interface class io/kuicksilver/quic/PathEvent {
 }
 
 public final class io/kuicksilver/quic/PathEvent$Changed : io/kuicksilver/quic/PathEvent {
-	public fun <init> (Lio/kuicksilver/quic/QuicPath;Lio/kuicksilver/quic/QuicPath;Lio/kuicksilver/quic/PathChangeReason;)V
 	public final fun getNew ()Lio/kuicksilver/quic/QuicPath;
 	public final fun getOld ()Lio/kuicksilver/quic/QuicPath;
 	public final fun getReason ()Lio/kuicksilver/quic/PathChangeReason;
 }
 
 public final class io/kuicksilver/quic/PathEvent$Failed : io/kuicksilver/quic/PathEvent {
-	public fun <init> (Lio/kuicksilver/quic/QuicPath;)V
-	public fun <init> (Lio/kuicksilver/quic/QuicPath;Lio/kuicksilver/quic/PathFailureReason;)V
 	public final fun getPath ()Lio/kuicksilver/quic/QuicPath;
 	public final fun getReason ()Lio/kuicksilver/quic/PathFailureReason;
 }
 
 public final class io/kuicksilver/quic/PathEvent$SocketLost : io/kuicksilver/quic/PathEvent {
-	public fun <init> (Lio/kuicksilver/quic/QuicPath;Lio/kuicksilver/quic/SocketDefunctException;)V
 	public final fun getCause ()Lio/kuicksilver/quic/SocketDefunctException;
 	public final fun getPath ()Lio/kuicksilver/quic/QuicPath;
 	public fun toString ()Ljava/lang/String;
 }
 
 public final class io/kuicksilver/quic/PathEvent$Validated : io/kuicksilver/quic/PathEvent {
-	public fun <init> (Lio/kuicksilver/quic/QuicPath;)V
 	public final fun getPath ()Lio/kuicksilver/quic/QuicPath;
 }
 

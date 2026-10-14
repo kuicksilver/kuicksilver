@@ -30,7 +30,9 @@ above it).
   used, in a later minor release"). Opt in per use site with `@OptIn(ExperimentalKuicksilverApi::class)` or for a
   module with `languageSettings.optIn("io.kuicksilver.annotations.ExperimentalKuicksilverApi")`. Some interfaces are
   stable to *use* but experimental to *implement* (`@SubclassOptInRequired`): `DatagramIo`, `CongestionController`,
-  `DatagramSender`.
+  `DatagramSender`, and the crypto provider interfaces `QuicCrypto`, `QuicTlsSession`, `PacketProtector`, `TokenKey` and
+  `ResetKey`; the values an implementation returns (the `TlsEvent` and `DriveResult` classes, `IoCapabilities`) have
+  experimental constructors for the same reason.
 - **Delicate** is not a stability level of its own: it marks API that can weaken security when misused (a custom
   verifier, key logging, a live internal array). It combines with the others: `keylogFile` and `TrustConfig.Custom` are
   stable and delicate, `ConnectionCore.glitchByFrameType` is experimental and delicate.
@@ -39,6 +41,12 @@ above it).
   out of the ABI dumps, and they can change in any release.
 - **Interfaces the library implements** (`QuicConnection`, `QuicStream`, `Http3Connection`, `Http3Stream`, …) are
   meant to be called, not implemented; a minor release may add members to them. Implement them only in test fakes.
+
+- **Sealed hierarchies and enums grow.** A minor release may add a member to a sealed type or an enum the library
+  produces (`PathEvent`, `QuicException.ConnectionLost`, `Http3Exception`, `DatagramSendResult`, `VerifyReason`,
+  `TrustConfig`, `ProtocolReason`, `Http3DiscoveryMode`, …), listed in the CHANGELOG. Give a `when` over them an `else`
+  branch rather than relying on exhaustiveness. Classes whose instances only the library creates (events, attempts,
+  peer settings) have internal constructors, so new fields can be added.
 
 **Deprecation cycle** (from [CONTRIBUTING](../CONTRIBUTING.md)): a stable declaration that goes away is first
 `@Deprecated` at level `WARNING` with a `ReplaceWith`, then `ERROR`, then removed, with at least one minor release
@@ -91,9 +99,21 @@ practice means a library supplied from outside the jar (`-Dkuicksilver.native.pa
 that belongs to another release. `ksl` is not an API for applications: always take the native library from the
 `kuicksilver-native` artifact of the same version.
 
+## Kotlin version
+
+The modules are compiled with **Kotlin 2.4.20** (no lower `apiVersion` or `languageVersion`) and depend on
+`kotlin-stdlib` 2.4.20. An application on the JVM or Android needs a Kotlin compiler that reads 2.4 metadata: Kotlin
+2.3 or newer (a compiler reads metadata one minor version ahead); Kotlin/Native and the klibs need Kotlin 2.4.x. A
+minor release may raise this with the Kotlin it is built with, and says so in the CHANGELOG.
+
 ## Ktor versions
 
-Kuicksilver 0.2.0 supports **Ktor 3.6.x** (built and tested against 3.6.0). The engines use some Ktor internals and
+Kuicksilver 0.2.0 supports **Ktor 3.6.x** (built and tested against 3.6.0). This holds for every module, not only the
+engines: `kuicksilver-quic`, `kuicksilver-tls`, `kuicksilver-http3` and `kuicksilver-ktor-network` expose Ktor types in
+their public API (`io.ktor.network.sockets.InetSocketAddress`, the `ByteReadChannel` / `ByteWriteChannel` of ktor-io;
+the address type by design, ADR-0004) and depend on `ktor-network` and `ktor-io` 3.6 as `api`. Only the engines check the version at
+runtime (below); a QUIC-only application that moves to another Ktor minor gets no check, and an incompatible change
+surfaces as a link error (`NoSuchMethodError`). The engines use some Ktor internals and
 vendor parts of Ktor CIO ([ktor-internal-api.md](ktor-internal-api.md)), so another major.minor is unsupported even
 when it links. The check (in `kuicksilver-ktor-network`):
 
@@ -138,6 +158,9 @@ Targets of every published module (`kuicksilver.kmp` convention plugin): `jvm`, 
 `linuxX64`, `linuxArm64`, `macosArm64`, `iosArm64`, `iosSimulatorArm64`, `mingwX64`. JS and Wasm are not targets;
 `macosX64` was dropped (Intel Macs are served by the JVM and its JNI library).
 
+The Android artifacts are built with AGP 9.3.3, inside the range Kotlin 2.4.20 documents as tested (up to 9.3.x);
+the AGP version only affects the build, not consumers, who can use any AGP their Kotlin supports.
+
 Apple targets are built and tested with Xcode 27.0 (`gradle/toolchains.toml`). Kotlin 2.4.20 officially lists Xcode 26.4;
 every Apple suite, the simulator runs and the iOS sample passed on 27.0, and the pin follows the Kotlin compatibility
 table once it lists Xcode 27. Apps that use Kotlin 2.4.20 may build with either.
@@ -147,10 +170,10 @@ table once it lists Xcode 27. Apps that use Kotlin 2.4.20 may build with either.
 | JVM | JVM 17 or newer (bytecode 17; built with JDK 21). JNI libraries for Linux x86_64 and aarch64 (glibc 2.17+, manylinux2014; not musl), macOS arm64 and x86_64 (macOS 11+), Windows x86_64 | the JVM suites on macOS, on Linux in Docker, and on Windows in a local Windows 11 VM (Parallels) |
 | Android | `minSdk` 24, `compileSdk` 35; arm64-v8a, armeabi-v7a, x86_64; libraries aligned for 16 KiB pages | device tests on the emulator (`androidConnectedCheck`), the AAR's size and 16 KiB page checks |
 | `linuxX64`, `linuxArm64` | glibc of the Kotlin/Native sysroot (2.19 on x64, 2.25 on arm64) | the native suites in Docker; the interop runner's native image (`linuxArm64`) |
-| `macosArm64` | macOS 11 or newer | the native suites on the macOS host |
-| `iosSimulatorArm64` | | the suites of every module on the simulator, and `iosHostInteropTest` against a peer on the host |
-| `iosArm64` | | compiled, linked and size-checked (`tools/check/ios-size.sh`, `ios-private-api.py`); **not yet run on a physical device** ([ios.md, Device checklist](guide/ios.md#device-checklist)) |
-| `mingwX64` | ECN needs Windows 10 2004 or Server 2022 | the native suites in a local Windows 11 VM (Parallels) |
+| `macosArm64` | macOS 12 or newer (the Kotlin/Native default of Kotlin 2.4.20, and `SecTrustCopyCertificateChain` in the platform verifier) | the native suites on the macOS host |
+| `iosSimulatorArm64` | iOS 15 or newer (the Kotlin/Native default, the OpenSSL build floor and `SecTrustCopyCertificateChain`) | the suites of every module on the simulator, and `iosHostInteropTest` against a peer on the host |
+| `iosArm64` | iOS 15 or newer | compiled, linked and size-checked (`tools/check/ios-size.sh`, `ios-private-api.py`); **not yet run on a physical device** ([ios.md, Device checklist](guide/ios.md#device-checklist)) |
+| `mingwX64` | ECN where the Windows version accepts `IP_ECN` (probed when the socket opens; verified on Windows 11) | the native suites in a local Windows 11 VM (Parallels) |
 
 There is no hosted CI run in 0.2.0: GitHub Actions is paused, and the matrix (`tools/ci/local-matrix.sh`) runs on the
 maintainers' machines. Platform limits that are part of the contract (one endpoint loop per port outside Linux and
@@ -187,7 +210,7 @@ type is experimental, so are its members.
 | `PathFailureReason`, `PathValidationException`, the `reason` of `PathEvent.Failed` and `ConnectionEvent.PathFailed` | why a path failed (`NoSpareConnectionId`, …) |
 | `PathEvent.SocketLost`, `SocketDefunctException` | sockets the system took away (suspended iOS apps) |
 | `DatagramIo` (to implement), `DatagramSender`, `DatagramPacketWriter`, `ConnectionStats.datagramsDroppedSocket` | custom socket and datagram plumbing |
-| `QuicEndpoint.stats`, 24 `EndpointStats` counters from `connectionsActive` to `listenerFailures`, `KuicksilverLogger`, `LogLevel`, `ConnectionListener`, `ConnectionInfo`, `QuicEndpointConfig.logger` / `listener`, `AsyncQlogSink` | observability (`QlogSink`, `DirectoryQlogSink`, `QuicConfig.qlog`, `QuicConnection.stats` and the first `EndpointStats` counters, `initialsDropped` to `connectionsCreated`, are stable) |
+| 24 `EndpointStats` counters from `connectionsActive` to `listenerFailures`, `KuicksilverLogger`, `LogLevel`, `ConnectionListener`, `ConnectionInfo`, `QuicEndpointConfig.logger` / `listener`, `AsyncQlogSink` | observability (`QlogSink`, `DirectoryQlogSink`, `QuicConfig.qlog`, `QuicConnection.stats`, `QuicEndpoint.stats` and the first `EndpointStats` counters, `initialsDropped` to `connectionsCreated`, are stable) |
 | `QuicEndpoint.shutdown(grace, code, reason)` | graceful shutdown |
 | `ConnectionCore.glitchByFrameType` (delicate) | glitch accounting per frame type |
 
@@ -196,7 +219,7 @@ type is experimental, so are its members.
 | API | Feature |
 |---|---|
 | `Http3Endpoint.connectEarly`, `Http3Request.allowEarlyData`, `Http3Settings.earlyData`, `Http3EarlyDataPolicy`, `Http3ServerRequest.receivedEarly` | 0-RTT |
-| `Http3Endpoint.stats`, `Http3Endpoint.shutdown` | observability, graceful shutdown |
+| `Http3Endpoint.shutdown` | graceful shutdown (`Http3Endpoint.stats` is stable, its counters as in `kuicksilver-quic`) |
 
 ### `kuicksilver-ktor-client`
 

@@ -40,6 +40,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -206,12 +208,12 @@ internal class EndpointLoop private constructor(
                         limiter.start(now())
                     }
                 }
-            } catch (e: CancellationException) {
-                throw e
             } catch (e: SocketDefunctException) {
                 // the system took the socket (iOS background) or its interface: the path is lost, the connection is not
                 if (!closing) socketLost(io, e)
             } catch (e: Throwable) {
+                // a CancellationException while this coroutine is active came out of a socket or callback: a failure like any other
+                if (e is CancellationException) currentCoroutineContext().ensureActive()
                 if (!closing &&
                     isActive
                 ) {
@@ -307,7 +309,9 @@ internal class EndpointLoop private constructor(
                     observer.datagramsSent += sent
                     batch.count - sent
                 } catch (e: CancellationException) {
-                    throw e
+                    currentCoroutineContext().ensureActive() // else a DatagramIo's own failure: a lost batch
+                    sendFailures++
+                    batch.count
                 } catch (e: SocketDefunctException) {
                     sendFailures++
                     // a server's own socket serves every client: one refused destination must not take it down
@@ -334,12 +338,12 @@ internal class EndpointLoop private constructor(
     ) {
         val misroute = testMisrouteTo
         if (misroute >= 0 && group != null) {
-            group.forward(misroute, buf, length, from, ecn, asReceived = true)
+            if (!group.forward(misroute, buf, length, from, ecn, asReceived = true)) core.droppedQueue++
             return
         }
         if (core.handleDatagram(buf, length, from, ecn, now) != null || group == null) return
         val owner = core.ownerLoop(buf, length)
-        if (owner >= 0 && owner != index) group.forward(owner, buf, length, from, ecn, asReceived = false)
+        if (owner >= 0 && owner != index && !group.forward(owner, buf, length, from, ecn, asReceived = false)) core.droppedQueue++
     }
 
     /** Receive rounds (this socket's and the forwarded ones) between two yields: timers and commands share the dispatcher with the receivers. */
@@ -362,7 +366,8 @@ internal class EndpointLoop private constructor(
                 }
             }
         } catch (e: CancellationException) {
-            throw e
+            currentCoroutineContext().ensureActive() // our cancellation goes on; else a socket's own failure
+            if (!closing) fatal("transport failed", e)
         } catch (e: SocketDefunctException) {
             // a client endpoint keeps its connections: each can move to a new socket (QuicConnection.rebind); connect() fails fast
             if (closing) return
@@ -456,11 +461,8 @@ internal class EndpointLoop private constructor(
                     }
                 }
             }
-        } catch (
-            e: CancellationException,
-        ) {
-            throw e
         } catch (e: Throwable) {
+            if (e is CancellationException) currentCoroutineContext().ensureActive()
             if (!closing) fatal("forwarding failed", e)
         } finally {
             buf.close()
@@ -470,9 +472,8 @@ internal class EndpointLoop private constructor(
     private suspend fun timerLoop() {
         try {
             timerTicks()
-        } catch (e: CancellationException) {
-            throw e
         } catch (e: Throwable) {
+            if (e is CancellationException) currentCoroutineContext().ensureActive()
             if (!closing) fatal("timer failed", e)
         } // like the receive loop: a dead timer ends the endpoint instead of escaping
     }
@@ -494,10 +495,8 @@ internal class EndpointLoop private constructor(
                 core.markDirty(c)
                 try {
                     c.onTimeout(now)
-                } catch (e: CancellationException) {
-                    throw e
                 } catch (e: Throwable) {
-                    c.failInternal(e)
+                    c.failInternal(e) // sans-IO, not suspending: even a CancellationException is the connection's failure
                 }
             }
             flush(signalTimer = false) // the timer loop re-reads the heap itself; signalling itself here would spin
@@ -538,9 +537,9 @@ internal class EndpointLoop private constructor(
                         if (c.poll(outBatch, now) > 0) sendOut(rt, outBatch)
                         rt.drainEvents()
                         rt.tick()
-                    } catch (e: CancellationException) {
-                        throw e
                     } catch (e: Throwable) {
+                        // our own cancellation goes on; a CancellationException out of a callback is that connection's failure
+                        if (e is CancellationException) currentCoroutineContext().ensureActive()
                         c.failInternal(e)
                         rt.drainEvents()
                     }

@@ -199,7 +199,7 @@ Endpoint and request parameters:
 | `Http3Endpoint.connect(remote, tls, quic, settings)` | `quic = QuicConfig.Default`, `settings = Http3Settings.Default`; `tls` must offer ALPN `h3` |
 | `Http3Endpoint.connectEarly(remote, tls, quic, settings, earlyData)` (*experimental*) | as `connect`, `earlyData = EarlyDataState.Allowed` (not `Disabled`) |
 | `Http3Endpoint.shutdown(grace, code, reason)` (*experimental*) | `code = H3_NO_ERROR`, `reason = "shutdown"` |
-| `Http3Request(method, scheme, authority, path, headers, body, trailers, priority, protocol, onInformational, allowEarlyData)` | `scheme = "https"`, `headers = Http3Headers.Empty`, `body = null` (no body), `trailers = null`, `priority = null` (the default `u=3`), `protocol = null`, `onInformational = null`, `allowEarlyData = false` (*experimental*; GET, HEAD and OPTIONS without a body only) |
+| `http3Request(method, authority, path) { ... }` (`Http3Request.Builder`) | `scheme = "https"`, `headers = Http3Headers.Empty`, `body = null` (no body), `trailers = null`, `priority = null` (the default `u=3`), `protocol = null`, `onInformational = null`, `allowEarlyData = false` (*experimental*; GET, HEAD and OPTIONS without a body only) |
 
 ## Ktor client engine
 
@@ -212,7 +212,7 @@ Guide: [Ktor: Client](ktor.md#client).
 | `identity` | `TlsIdentity?` | `null` | | client certificate |
 | `tls` | `TlsConfig.Builder.() -> Unit` | `{}` | | further TLS settings, applied after `trust` and `identity` (which it can therefore replace); `alpn` and `serverName` come from the request and are set after it, so the block cannot change them (use `TrustConfig.ExpectedName` to verify another name) |
 | `quic` | `QuicConfig` | `QuicConfig.Default` | its `connectionIdLength` and `http3.endpoint.connectionIdLength` agree: the one left at 8 follows the other; two different explicit values fail the engine's creation | QUIC transport of HTTP/3 connections |
-| `maxConnectionsPerHost` | `Int` | 4 | at least 0 | idle HTTP/1.1 keep-alive connections kept per route; not a connection limit |
+| `maxIdleConnectionsPerRoute` | `Int` | 4 | at least 0 | idle HTTP/1.1 keep-alive connections kept per route; not a connection limit |
 | `maxConnectionsCount` (*experimental*) | `Int` | 1000 | at least 1 | HTTP/1.1 connections of the engine, idle ones included; requests beyond it wait (FIFO, within the connect timeout) |
 | `maxConnectionsPerRoute` (*experimental*) | `Int` | 100 | at least 1 | HTTP/1.1 connections to one route (scheme, host, port, proxy) |
 | `idleTimeout` (*experimental*) | `Duration` | 5 min | positive | idle HTTP/1.1 connections, and HTTP/3 connections without requests, are closed after this |
@@ -259,7 +259,7 @@ Guide: [Ktor: Client](ktor.md#client).
 | `http3Settings` | `Http3Settings` | `Http3Settings.Default` | HTTP/3 settings |
 | `webSocketsOverHttp3` | `Boolean` | `true` | accept RFC 9220 WebSockets (turns `enableConnectProtocol` on) |
 | `quicEarlyData` (*experimental*) | `Boolean` | `false` | accept 0-RTT; requests are handled by `http3Settings.earlyData` |
-| `logger` (*experimental*) | `KuicksilverLogger` | `KuicksilverLogger.Stderr` | the HTTP/3 endpoints' diagnostics |
+| `logger` (*experimental*) | `KuicksilverLogger?` | `null` (the endpoint default, `KuicksilverLogger.Stderr`) | the HTTP/3 endpoints' diagnostics |
 | `qlog` (*experimental*) | `QlogSink?` | `null` | added to `quic` |
 | `connectionListener` (*experimental*) | `ConnectionListener?` | `null` | lifecycle of every QUIC connection |
 | `eventListener` (*experimental*) | `KuicksilverServerEventListener?` | `null` | connection and request events over both protocols |

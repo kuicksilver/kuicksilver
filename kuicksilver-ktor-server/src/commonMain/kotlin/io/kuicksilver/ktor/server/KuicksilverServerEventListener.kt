@@ -15,12 +15,16 @@ import io.kuicksilver.annotations.ExperimentalKuicksilverApi
  * the engine is done with it; each request reports [requestStarted] before the application's pipeline and [requestEnded]
  * after it.
  *
- * Callbacks run on the engine's coroutines and must return quickly; an exception out of one is logged as a warning on the
- * application's log and otherwise ignored.
+ * Callbacks run on the engine's coroutines and must return quickly; an exception out of one (a CancellationException
+ * included) is logged as a warning on the application's log and otherwise ignored.
  */
 @ExperimentalKuicksilverApi
 public abstract class KuicksilverServerEventListener {
-    /** A client connected over [protocol] (`HTTP_1_1`, `HTTP_1_0` for plain connectors alike, or `HTTP_3_0`) from [remote]. */
+    /**
+     * A client connected over [protocol] (`HTTP_1_1`, `HTTP_1_0` for plain connectors alike, or `HTTP_3_0`) from [remote]:
+     * after the TLS handshake for HTTP/1.1, at `accept` for HTTP/3, which with `quicEarlyData` is when 0-RTT was accepted,
+     * before the handshake completes (the client is not authenticated yet).
+     */
     public open fun connectionOpened(
         protocol: HttpProtocolVersion,
         remote: InetSocketAddress?,
@@ -65,9 +69,9 @@ internal class ServerEvents(
         val l = listener ?: return
         try {
             l.call()
-        } catch (e: kotlinx.coroutines.CancellationException) {
-            throw e
         } catch (e: Throwable) {
+            // a CancellationException too: the callbacks are not suspending, so it is the listener's bug, and rethrowing it
+            // would end the HTTP/3 accept loop or a connection's handler as if they were cancelled
             runCatching { log.warn("Kuicksilver server event listener failed in $what", e) }
         }
     }

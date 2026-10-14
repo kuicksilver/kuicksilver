@@ -166,6 +166,21 @@ class GoAwayTest {
             }
         }
 
+    /**
+     * The GOAWAY state (phase, sent id, requests in flight) belongs to the session dispatcher: a goAway() from another thread
+     * (the Ktor server stops on Dispatchers.IO) runs there, so a request racing it cannot be processed above the announced id.
+     */
+    @Test fun goAwayRunsOnTheSessionDispatcher() =
+        h3Test {
+            H3Pair.open().use { p ->
+                var seen: kotlin.coroutines.CoroutineContext? = null
+                p.server.session.goAwayContextForTest = { seen = it }
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { p.server.goAway() }
+                val interceptor = seen!![kotlin.coroutines.ContinuationInterceptor]
+                assertTrue(interceptor === p.server.session.dispatcher, "goAway ran on $interceptor")
+            }
+        }
+
     @Test fun closesWhenIdleAfterGoAway() =
         h3Test {
             H3Pair.open().use { p ->

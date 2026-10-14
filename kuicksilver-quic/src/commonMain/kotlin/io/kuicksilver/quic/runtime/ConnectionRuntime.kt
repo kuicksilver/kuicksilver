@@ -36,6 +36,7 @@ import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -97,6 +98,10 @@ internal class ConnectionRuntime(
 
     /** The 0-RTT outcome went to the observer already (loop dispatcher only). */
     internal var zeroRttReported = false
+
+    init {
+        core.qlog?.onFailure = { e -> loop.observer.qlogFailed(this, e) } // LogLevel.Warn: a failing qlog sink
+    }
 
     // ---- paths ----
 
@@ -393,8 +398,11 @@ internal class ConnectionRuntime(
                     earlyAccepted = core.earlyDataAccepted
                     certificates = core.peerCertificates // read once, on the loop: the TLS object is not shared across threads
                     handshake.complete(Unit)
-                    loop.observer.handshakeCompleted(this)
-                    loop.onHandshakeCompleted(this)
+                    try {
+                        loop.observer.handshakeCompleted(this)
+                    } finally {
+                        loop.onHandshakeCompleted(this) // a server connection reaches accept() whatever the callback did
+                    }
                 }
 
                 is ConnectionEvent.VerifyRequested -> {
@@ -475,12 +483,10 @@ internal class ConnectionRuntime(
             try {
                 e.session.verifyPeer(e.chain)
             } catch (
-                c: CancellationException,
-            ) {
-                throw c
-            } catch (
                 t: Throwable,
             ) {
+                // our cancellation goes on; a CancellationException out of an application verifier rejects like any failure
+                if (t is CancellationException) kotlinx.coroutines.currentCoroutineContext().ensureActive()
                 VerifyResult.Rejected(VerifyReason.Custom("verifier failed: ${t.message ?: t::class.simpleName}"))
             }
         withContext(loop.dispatcher) {
@@ -523,17 +529,23 @@ internal class ConnectionRuntime(
     internal fun failed(reason: QuicException.ConnectionLost) {
         if (finished) return
         finished = true
-        loop.observer.closed(this, reason, handshakeDone = handshake.isCompleted && !handshake.isCancelled)
-        closedDeferred.complete(reason)
-        handshake.completeExceptionally(reason)
-        accepted.close(reason)
-        for (s in streams.values) s.connectionLost(reason)
-        if (core.state == ConnectionState.Closed) releasePaths()
-        datagramDrainer.cancel()
-        sendQueue.close()
-        datagramSignal.close()
-        // every waiter (open, flush, keyUpdate, addPath, sendDatagram) wakes with the connection's own reason
-        for (t in tickers) t.close(reason)
+        val handshakeDone = handshake.isCompleted && !handshake.isCancelled
+        // the observer (application callbacks) runs last, once every waiter can see the end: whatever it does, `closed`,
+        // the handshake and the streams are complete
+        try {
+            closedDeferred.complete(reason)
+            handshake.completeExceptionally(reason)
+            accepted.close(reason)
+            for (s in streams.values) s.connectionLost(reason)
+            if (core.state == ConnectionState.Closed) releasePaths()
+            datagramDrainer.cancel()
+            sendQueue.close()
+            datagramSignal.close()
+            // every waiter (open, flush, keyUpdate, addPath, sendDatagram) wakes with the connection's own reason
+            for (t in tickers) t.close(reason)
+        } finally {
+            loop.observer.closed(this, reason, handshakeDone)
+        }
     }
 
     private fun releasePaths() {

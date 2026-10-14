@@ -109,15 +109,15 @@ internal class KslContext private constructor(
             Ksl.ctxSetCiphers(h, config.cipherSuites.openSslList, null)
             config.identity?.let { id ->
                 when (id) {
-                    is TlsIdentity.InMemory -> id.withKey { k -> Ksl.ctxSetIdentityKey(h, id.chain.map { it.der }, k) }
+                    is TlsIdentity.InMemory -> id.withKey { k -> Ksl.ctxSetIdentityKey(h, id.chain.map { it.encoded }, k) }
                 }
             }
             if (config.role ==
                 TlsRole.Client
             ) {
-                rootsOf(config.trust)?.let { Ksl.ctxSetRoots(h, it.map { c -> c.der }) }
+                rootsOf(config.trust)?.let { Ksl.ctxSetRoots(h, it.map { c -> c.encoded }) }
             } else {
-                rootsOf(config.trust)?.takeIf { it.isNotEmpty() }?.let { Ksl.ctxSetRoots(h, it.map { c -> c.der }) }
+                rootsOf(config.trust)?.takeIf { it.isNotEmpty() }?.let { Ksl.ctxSetRoots(h, it.map { c -> c.encoded }) }
             }
             if (config.role == TlsRole.Client) {
                 Ksl.ctxSetOption(h, KslConst.OPT_VERIFY_MODE, verifyModeFor(config))

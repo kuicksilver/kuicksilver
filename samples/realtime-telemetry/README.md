@@ -42,8 +42,7 @@ Run it by hand (two terminals):
 
 ## Limits worth knowing
 
-- Kuicksilver v1 has no QUIC **server** on Apple platforms: `QuicEndpoint.bind` with a server config throws
-  `UnsupportedOperationException` there. The macOS test opts its server into the portable client socket explicitly
-  (`io = { DatagramIo.open(it, IoPreference.Portable) }`), which is fine for a loopback test and not for production.
-  Clients work on every platform.
+- A QUIC server on Kotlin/Native (macOS, iOS, Linux, Windows) runs on the accelerated `ksl` socket, which
+  `QuicEndpoint.bind` picks by default; on Apple with one endpoint loop per port (`loops = 1`). The macOS test runs the
+  server that way. Clients work on every platform.
 - The certificates in `SampleCerts.kt` are public test material; never ship them.

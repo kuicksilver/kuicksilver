@@ -63,6 +63,32 @@ class UncaughtExceptionTest {
             assertTrue(uncaught.isEmpty(), "uncaught: $uncaught")
         }
 
+    @Test fun aVerifierThrowingCancellationRejectsThePeerAtOnce() =
+        runBlocking {
+            // not the verifying coroutine's cancellation: the peer is rejected with a TLS alert, not left to the handshake timeout
+            ApiPair.open(crypto = KslQuicCrypto).use { p ->
+                val cfg =
+                    QuicClientConfig
+                        .Builder(
+                            CoreFixtures.client(
+                                trust =
+                                    TrustConfig.Custom { _, _, _ ->
+                                        throw kotlinx.coroutines.CancellationException("verifier bug")
+                                    },
+                            ),
+                        ).apply { quic = quicConfig { handshakeTimeout = 5.seconds } }
+                        .build()
+                val lost =
+                    assertFailsWith<QuicException.ConnectionLost> {
+                        withTimeout(
+                            10.seconds,
+                        ) { p.client.connect(p.server.localAddress, cfg) }
+                    }
+                assertTrue(lost !is QuicException.ConnectionLost.Timeout, "rejected at once, not timed out: $lost")
+            }
+            assertTrue(uncaught.isEmpty(), "uncaught: $uncaught")
+        }
+
     @Test fun lateVerifierAfterTheHandshakeTimeout() =
         runBlocking {
             connectWith { chain, _, _ ->

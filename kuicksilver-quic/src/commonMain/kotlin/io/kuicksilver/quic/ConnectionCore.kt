@@ -107,11 +107,12 @@ public class ConnectionCore internal constructor(
     internal var localCid: ConnectionId,
     internal var remoteCid: ConnectionId,
     startVersion: VersionProfile,
-    resetKey: ResetKey? = null,
+    resetKey: ResetKey?,
     /** Client: whether to resume and send 0-RTT (ADR-0015). */
-    internal val earlyMode: io.kuicksilver.tls.EarlyDataState = io.kuicksilver.tls.EarlyDataState.Disabled,
+    internal val earlyMode: io.kuicksilver.tls.EarlyDataState,
     /** Server: the 0-RTT setup, or null when this server does not accept early data. */
-    internal val serverEarly: io.kuicksilver.quic.core.ServerEarlyData? = null,
+    internal val serverEarly: io.kuicksilver.quic.core.ServerEarlyData?,
+    // no default arguments: they would add a public synthetic constructor exposing these internal types to the ABI dumps
 ) {
     /** Where the connection is in its life (RFC 9000 section 10); [ConnectionState.Closed] once its TLS session and keys are freed. */
     public var state: ConnectionState = ConnectionState.Handshaking
@@ -1188,6 +1189,7 @@ public class ConnectionCore internal constructor(
                 config.firstVersion,
                 resetKey,
                 earlyMode,
+                serverEarly = null,
             )
         }
     }
@@ -1254,6 +1256,7 @@ internal fun ConnectionCore.Companion.serverWithKeys(
             remoteCid,
             profile,
             resetKey,
+            earlyMode = io.kuicksilver.tls.EarlyDataState.Disabled,
             serverEarly = early,
         )
     if (retryScid !=

@@ -4,12 +4,16 @@ package io.kuicksilver.ktor.client
 
 import io.ktor.client.request.HttpRequestData
 import io.ktor.client.request.get
+import io.ktor.client.request.post
+import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpProtocolVersion
+import io.ktor.network.sockets.openReadChannel
 import io.ktor.server.response.header
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
 import io.ktor.server.routing.routing
+import io.ktor.utils.io.readUTF8Line
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.ConnectionInfo
@@ -21,6 +25,7 @@ import io.kuicksilver.quic.QlogTrace
 import io.kuicksilver.quic.quicConfig
 import io.kuicksilver.tls.TlsRole
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
 import kotlin.concurrent.atomics.AtomicReference
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
@@ -235,6 +240,43 @@ class ClientEventListenerTest {
             }
         }
 
+    /** Every connectionAcquired is followed by a connectionReleased, also when the exchange fails before a response. */
+    @Test fun aFailedExchangeStillReleasesItsConnection() =
+        clientTest {
+            val selector =
+                io.ktor.network.selector
+                    .SelectorManager(kotlinx.coroutines.Dispatchers.Default)
+            val listener =
+                io.ktor.network.sockets
+                    .aSocket(selector)
+                    .tcp()
+                    .bind("127.0.0.1", 0)
+            val port = (listener.localAddress as io.ktor.network.sockets.InetSocketAddress).port
+            val events = Recorder()
+            try {
+                kotlinx.coroutines.coroutineScope {
+                    // reads the request head, then closes without an answer
+                    val server =
+                        launch {
+                            listener.accept().use { s ->
+                                val input = s.openReadChannel()
+                                while ((input.readUTF8Line() ?: "").isNotEmpty()) Unit
+                            }
+                        }
+                    testClient(engine = { eventListener = events }).use { c ->
+                        kotlin.test.assertFails { c.post("http://127.0.0.1:$port/") { setBody("x") } }
+                    }
+                    server.join()
+                }
+            } finally {
+                listener.close()
+                selector.close()
+            }
+            val e = events.events
+            assertEquals(e.count { it.startsWith("acquired") }, e.count { it.startsWith("released") }, "$e")
+            assertTrue(e.any { it.startsWith("released") }, "$e")
+        }
+
     @Test fun aThrowingListenerNeverFailsTheCall() =
         clientTest {
             val (server, port) = testServer { routing { get("/") { call.respondText("ok") } } }
@@ -262,6 +304,54 @@ class ClientEventListenerTest {
                 }).use { c ->
                     assertEquals("ok", c.get("https://127.0.0.1:$port/").bodyAsText())
                     assertEquals(listOf("event listener failed in callStart"), warnings.all)
+                }
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
+    @Test fun aListenerThrowingCancellationNeverFailsTheCall() =
+        h3Test {
+            // the callbacks are not suspending: a CancellationException out of one is the listener's bug, not the call's cancellation
+            val (server, port) = testServer { routing { get("/") { call.respondText("ok") } } }
+            val throwing =
+                object : KuicksilverEventListener() {
+                    private fun bug(): Nothing = throw kotlinx.coroutines.CancellationException("listener bug")
+
+                    override fun callStart(request: HttpRequestData): Unit = bug()
+
+                    override fun callEnd(
+                        request: HttpRequestData,
+                        protocol: HttpProtocolVersion,
+                        status: Int,
+                    ): Unit = bug()
+
+                    override fun protocolSelected(
+                        request: HttpRequestData,
+                        protocol: HttpProtocolVersion,
+                        reason: ProtocolReason,
+                    ): Unit = bug()
+
+                    override fun connectionAcquired(
+                        request: HttpRequestData,
+                        protocol: HttpProtocolVersion,
+                        reused: Boolean,
+                    ): Unit = bug()
+
+                    override fun connectionReleased(
+                        request: HttpRequestData,
+                        protocol: HttpProtocolVersion,
+                        kept: Boolean,
+                    ): Unit = bug()
+                }
+            try {
+                for (mode in listOf(Http3DiscoveryMode.H1Only, Http3DiscoveryMode.H3Only)) {
+                    testClient(mode, engine = {
+                        eventListener = throwing
+                        logger = KuicksilverLogger.None
+                    }).use { c ->
+                        repeat(2) { assertEquals("ok", c.get("https://127.0.0.1:$port/").bodyAsText(), "$mode") }
+                    }
                 }
             } finally {
                 server.stop(100, 500)

@@ -16,6 +16,10 @@
 #   ports (`InetSocketAddress("0.0.0.0", 443)`, `connect("server.test", 443)`, `port = 0`, `127.0.0.1:8080`), and
 #   `wait = true` (a test cannot block in `start(wait = true)`).
 # - Every guide line must appear in the test block, in order; the test may have extra lines (assertions, timeouts).
+# - A guide line `@file:OptIn(...)` (a sample that uses experimental API says so) names markers the test file that holds
+#   the block opts in to with its own `@file:OptIn`; keep the test file's opt-ins to what its samples show.
+# - Every ```kotlin block of a guide carries a marker, unless the line before the fence is
+#   `<!-- guide-sync: not compiled (<why>) -->` (a build script, say).
 set -euo pipefail
 root="${1:-$(cd "$(dirname "$0")/../.." && pwd)}"
 exec python3 - "$root" <<'PY'
@@ -59,6 +63,9 @@ def normalize(line):
 
 # guide blocks: key -> list of (normalized, original) lines
 guides, guide_where = {}, {}
+file_optins = {}   # key -> the @file:OptIn lines the guide block shows
+unmarked = []
+prev = ''
 gdir = os.path.join(root, 'docs', 'guide')
 for name in sorted(os.listdir(gdir)):
     if not name.endswith('.md'): continue
@@ -67,8 +74,15 @@ for name in sorted(os.listdir(gdir)):
     for no, line in enumerate(open(path, encoding='utf-8'), 1):
         line = line.rstrip('\n')
         if line.lstrip().startswith('```'):
-            in_code = not in_code; key = None; continue
+            if not in_code:
+                fence_lang, fence_at, fence_marked = line.strip()[3:].strip(), no, False
+                fence_exempt = prev.strip().startswith('<!-- guide-sync: not compiled')
+            elif fence_lang == 'kotlin' and not fence_marked and not fence_exempt:
+                unmarked.append(f'docs/guide/{name}:{fence_at}')
+            in_code = not in_code; key = None; prev = line; continue
+        prev = line
         if not in_code: continue
+        if MARK.match(line): fence_marked = True
         m = MARK.match(line)
         if m:
             key = f'{m.group(2)}:{m.group(3)}' + (f' ({m.group(4)})' if m.group(4) else '')
@@ -77,10 +91,13 @@ for name in sorted(os.listdir(gdir)):
             continue
         if key is not None:
             n = normalize(line)
-            if n: guides[key].append((n, line.strip()))
+            if n and n.startswith('@file:OptIn('):
+                file_optins.setdefault(key, []).append(n)
+            elif n:
+                guides[key].append((n, line.strip()))
 
 # test blocks: key -> list of runs; a run is a list of (normalized, original)
-tests, test_where = {}, {}
+tests, test_where, test_file_optins = {}, {}, {}
 for top, dirs, files in os.walk(root):
     dirs[:] = [d for d in dirs if d not in ('build', '.git', '.gradle', '.worktrees', '.claude', 'node_modules', 'plans')]
     if '/src/' not in top + '/' or 'Test' not in top: continue
@@ -111,6 +128,7 @@ for top, dirs, files in os.walk(root):
                 j += 1
             tests.setdefault(key, []).append(run)
             test_where.setdefault(key, f'{os.path.relpath(path, root)}:{i + 1}')
+            test_file_optins.setdefault(key, set()).update(n for n in (normalize(x) for x in lines) if n and n.startswith('@file:OptIn('))
             i += 1
 
 drifts = 0
@@ -137,6 +155,14 @@ for key, glines in guides.items():
         cands = [o for run in tests[key] for _, o in run]
         near = [o for o in cands if o.split('(')[0] == glines[gi][1].split('(')[0]]
         if near: print(f'    test:  {near[0]}')
+def optin_classes(lines):
+    return {c for l in lines for c in re.findall(r'(\w+)::class', l)}
+for key, wanted in file_optins.items():
+    missing = optin_classes(wanted) - optin_classes(test_file_optins.get(key, ()))
+    if key in tests and missing:
+        print(f'DRIFT {key} ({guide_where[key]} vs {test_where[key]}): the test file does not opt in to {sorted(missing)}'); drifts += 1
+for where in unmarked:
+    print(f'DRIFT {where}: a kotlin block without a guide marker (compiled by no test)'); drifts += 1
 for key in tests:
     if key not in guides:
         print(f'DRIFT {key} ({test_where[key]}): test marker without a guide block'); drifts += 1

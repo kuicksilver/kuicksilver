@@ -4,6 +4,7 @@ package io.kuicksilver.http3
 
 import io.ktor.network.sockets.InetSocketAddress
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
+import io.kuicksilver.annotations.InternalKuicksilverApi
 import io.kuicksilver.quic.EndpointStats
 import io.kuicksilver.quic.Initiator
 import io.kuicksilver.quic.QuicClientConfig
@@ -13,6 +14,7 @@ import io.kuicksilver.quic.QuicEndpoint
 import io.kuicksilver.quic.QuicEndpointConfig
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.QuicServerConfig
+import io.kuicksilver.quic.closeWith
 import io.kuicksilver.tls.EarlyDataState
 import io.kuicksilver.tls.TlsConfig
 import kotlinx.coroutines.CancellationException
@@ -130,10 +132,16 @@ public class Http3Endpoint private constructor(
         }
     }
 
-    override fun close(): Unit = endpoint.close()
+    /**
+     * Closes the endpoint and every connection on it with H3_NO_ERROR (RFC 9114 section 5.2), at once and without GOAWAY;
+     * [shutdown] is the graceful way. Asynchronous: the CONNECTION_CLOSE frames go out on the endpoint loop after it returns.
+     */
+    override fun close() {
+        @OptIn(InternalKuicksilverApi::class)
+        endpoint.closeWith(Http3ErrorCode.NO_ERROR, "endpoint closed")
+    }
 
     /** The QUIC endpoint's counters (`QuicEndpoint.stats`): admission, handshakes, 0-RTT, datagrams, failures. */
-    @ExperimentalKuicksilverApi
     public val stats: EndpointStats get() = endpoint.stats
 
     /**

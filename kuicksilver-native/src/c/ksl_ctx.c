@@ -6,6 +6,8 @@
 #include <openssl/rand.h>
 #include <openssl/core_names.h>
 #include <sys/stat.h>
+#include <dirent.h>
+#include <ctype.h>
 #include <limits.h>
 
 #define TLS12_PROFILE "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305"
@@ -200,26 +202,51 @@ int ksl_ctx_set_identity(ksl_ctx *c, const uint8_t *chain, size_t chain_len, con
 /* The system store for TrustConfig.Platform on Linux Native (docs/guide/tls.md, "Linux trust store"). The bundled OpenSSL has
    --openssldir=/nonexistent, so the store is located explicitly. SSL_CERT_FILE / SSL_CERT_DIR, when either is set, replace the
    distribution paths (as Go's crypto/x509 does), so a configured store never silently becomes another one. Otherwise the first
-   bundle file that loads wins, then the first hashed directory that exists. X509_STORE_load_path accepts any string without
-   looking, so a directory counts only when it exists: in a distroless or scratch image the failure is reported here, with the
-   paths searched, instead of as an unknown issuer at every handshake. */
-static const char *const default_files[] = {"/etc/ssl/certs/ca-certificates.crt", "/etc/pki/tls/certs/ca-bundle.crt", "/etc/ssl/ca-bundle.pem", "/etc/pki/tls/cacert.pem", "/etc/ssl/cert.pem", "/usr/local/etc/openssl/cert.pem", NULL};
+   bundle file that loads wins, then the first directory that yields certificates. The lists are Go's (crypto/x509
+   root_linux.go), plus /usr/local/etc/openssl/cert.pem. X509_STORE_load_path accepts any string without looking and finds
+   certificates only through subject-hash links (c_rehash), so a directory counts only when it holds such links or, like Go
+   reads it, PEM files that load: in a distroless or scratch image, or a directory nobody ran c_rehash on, the failure is
+   reported here, with the paths searched, instead of as an unknown issuer at every handshake. */
+static const char *const default_files[] = {"/etc/ssl/certs/ca-certificates.crt", "/etc/pki/tls/certs/ca-bundle.crt", "/etc/ssl/ca-bundle.pem", "/etc/pki/tls/cacert.pem", "/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem", "/etc/ssl/cert.pem", "/usr/local/etc/openssl/cert.pem", NULL};
 static const char *const default_dirs[] = {"/etc/ssl/certs", "/etc/pki/tls/certs", NULL};
 static const char *const *trust_files = default_files, *const *trust_dirs = default_dirs;
 #ifdef KSL_TEST
 void ksl_trust_paths_for_test(const char *const *files, const char *const *dirs) { trust_files = files ? files : default_files; trust_dirs = dirs ? dirs : default_dirs; }
 #endif
 static int is_dir(const char *path) { struct stat sb; return stat(path, &sb) == 0 && S_ISDIR(sb.st_mode); }
+/* A c_rehash link name: 8 hex digits, '.', a decimal suffix (CRLs, ".r<n>", do not count) */
+static int is_hash_name(const char *n) {
+    for (int i = 0; i < 8; i++) if (!isxdigit((unsigned char)n[i])) return 0;
+    if (n[8] != '.' || !isdigit((unsigned char)n[9])) return 0;
+    for (const char *p = n + 10; *p; p++) if (!isdigit((unsigned char)*p)) return 0;
+    return 1;
+}
+/* A hashed directory is handed to OpenSSL's lookup; any other one is read like Go does: every regular file, the PEM ones load */
+static int load_dir(X509_STORE *st, const char *dir) {
+    if (!is_dir(dir)) return 0;
+    DIR *d = opendir(dir); if (!d) return 0;
+    struct dirent *e; int hashed = 0, loaded = 0;
+    while (!hashed && (e = readdir(d)) != NULL) hashed = is_hash_name(e->d_name);
+    if (hashed) { closedir(d); return X509_STORE_load_path(st, dir) == 1; }
+    rewinddir(d);
+    while ((e = readdir(d)) != NULL) {
+        if (e->d_name[0] == '.') continue;
+        char path[4096]; struct stat sb;
+        if (snprintf(path, sizeof path, "%s/%s", dir, e->d_name) >= (int)sizeof path || stat(path, &sb) != 0 || !S_ISREG(sb.st_mode)) continue;
+        if (X509_STORE_load_file(st, path) == 1) loaded = 1;
+    }
+    closedir(d); return loaded;
+}
 static void append(char *out, size_t cap, const char *text) { size_t n = strlen(out); if (n < cap) snprintf(out + n, cap - n, "%s", text); }
 void ksl_trust_paths(const char *const **files, const char *const **dirs) { *files = trust_files; *dirs = trust_dirs; }
 int ksl_load_system_roots(ksl_ctx *c, X509_STORE *st) {
     const char *ef = getenv("SSL_CERT_FILE"), *ed = getenv("SSL_CERT_DIR"); int from_env = (ef && *ef) || (ed && *ed), loaded = 0;
     if (from_env) {
         if (ef && *ef && X509_STORE_load_file(st, ef) == 1) loaded = 1;
-        if (ed && *ed && is_dir(ed) && X509_STORE_load_path(st, ed) == 1) loaded = 1;
+        if (ed && *ed && load_dir(st, ed)) loaded = 1;
     } else {
         for (int i = 0; !loaded && trust_files[i]; i++) if (X509_STORE_load_file(st, trust_files[i]) == 1) loaded = 1;
-        for (int i = 0; !loaded && trust_dirs[i]; i++) if (is_dir(trust_dirs[i]) && X509_STORE_load_path(st, trust_dirs[i]) == 1) loaded = 1;
+        for (int i = 0; !loaded && trust_dirs[i]; i++) if (load_dir(st, trust_dirs[i])) loaded = 1;
     }
     ERR_clear_error();
     if (loaded) return KSL_OK;
@@ -227,7 +254,7 @@ int ksl_load_system_roots(ksl_ctx *c, X509_STORE *st) {
     if (from_env) {
         if (ef && *ef) { append(m, sizeof m, "SSL_CERT_FILE="); append(m, sizeof m, ef); append(m, sizeof m, ed && *ed ? ", " : ""); }
         if (ed && *ed) { append(m, sizeof m, "SSL_CERT_DIR="); append(m, sizeof m, ed); }
-        append(m, sizeof m, " (these replace the system paths); point them at a PEM bundle or a hashed directory");
+        append(m, sizeof m, " (these replace the system paths); point them at a PEM bundle, or a directory of PEM files or c_rehash links");
     } else {
         for (int i = 0; trust_files[i]; i++) { append(m, sizeof m, trust_files[i]); append(m, sizeof m, ", "); }
         for (int i = 0; trust_dirs[i]; i++) { append(m, sizeof m, trust_dirs[i]); append(m, sizeof m, trust_dirs[i + 1] ? "/, " : "/"); }

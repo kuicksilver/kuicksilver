@@ -40,6 +40,7 @@ radio links with modest RTTs; keep the default for satellite or other long-RTT p
 validation, max(3 x PTO, 6 x `initialRtt`) (RFC 9000 §8.2.4).
 
 ```kotlin
+// guide:quic:initial-rtt
 val lossyMobile = quicConfig { initialRtt = 100.milliseconds }
 ```
 
@@ -141,16 +142,23 @@ design in [ADR-0015](../adr/0015-0rtt-implementation.md)). It is off on both sid
 > another server process with shared ticket keys passes the age check alone.
 
 ```kotlin
+// guide:quic:zero-rtt
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
 val server = QuicEndpoint.bind(addr, quicEndpointConfig {
     this.server = quicServerConfig(tlsServerConfig) { earlyData = true }   // tickets that allow 0-RTT
 })
 val client = QuicEndpoint.bind(InetSocketAddress("0.0.0.0", 0))
 val config = quicClientConfig(tlsClientConfig) { earlyData = EarlyDataState.Allowed }
-client.connect(addr, config).close()                 // a full handshake leaves a ticket in this endpoint
-val c = client.connectEarly(addr, config)            // returns once the 0-RTT keys exist
+val first = client.connect(addr, config)             // a full handshake; the server's ticket arrives shortly after it
+// ... the application uses `first`; once the ticket is in, later connections of this endpoint can resume
+val c = client.connectEarly(addr, config)            // returns once the 0-RTT keys exist (a full handshake without a ticket)
 val s = c.openBidi(); s.output.writeFully(safeRequest); s.output.flush()   // travels in 0-RTT
 c.awaitHandshake()                                   // from here the connection is authenticated
+println("0-RTT accepted: ${c.earlyDataAccepted}")    // false: the server refused it; null: there was no ticket yet
 ```
+
+The ticket is not there the moment `connect` returns: the server sends it after the handshake, so a `connectEarly` right
+after the first `connect` usually finds none and does a full handshake (`earlyDataAccepted` is then null).
 
 - **Tickets** are kept per client endpoint, used once, and checked against the current trust again before use. The
   remembered transport parameters (RFC 9000 section 7.4.1) set the limits of 0-RTT. Closing the endpoint drops them.
@@ -281,7 +289,7 @@ ten test packets. A path that fails never marks again; a new path validates afre
 number space only for datagrams whose packets were processed, and a CE increase reported by the peer is one congestion
 event per recovery period. The portable socket marks every datagram through IP_TOS (`ecnSend`) but cannot read marks, so
 with it the peer's validation of our direction needs an accelerated socket on the peer; the accelerated socket (Linux,
-Android, Apple, and Windows 10 2004+ / Server 2022) marks and reads per datagram, and two of them validate both directions
+Android, Apple, and Windows where `IP_ECN` is accepted, probed when the socket opens) marks and reads per datagram, and two of them validate both directions
 (`Capable`). Because the portable socket
 marks the whole socket, a failed validation on any of its paths clears IP_TOS for every connection on it (they all
 show `Disabled` from then on: a socket's `capabilities` that lose `ecnSend` or `df` reach the paths already on it, which
@@ -299,6 +307,7 @@ handshake is confirmed and, for a later update, three PTOs after the peer acknow
 
 ```kotlin
 // guide:quic:key-update
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
 if (core.initiateKeyUpdate(now)) println("key phase ${core.stats.keyUpdates}")   // false while RFC 9001 section 6.1 forbids it
 ```
 
@@ -380,6 +389,7 @@ whenever the network changes:
 
 ```kotlin
 // guide:quic:network-migrator
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
 val migrator = NetworkMigrator(connection, networks, { DatagramIo.open(InetSocketAddress("0.0.0.0", 0)) }, scope)
 val log = scope.launch { migrator.events.collect { println("network: $it") } }
 migrator.start()
@@ -406,6 +416,8 @@ server connection is refused with `IllegalArgumentException`.
 On Android, `followDefaultNetwork` does the wiring (API 24+):
 
 ```kotlin
+// guide:quic:android-follow
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
 val cm = context.getSystemService(ConnectivityManager::class.java)
 val migrator = connection.followDefaultNetwork(cm, lifecycleScope)   // started; migrator.close() stops it
 lifecycleScope.launch { migrator.events.collect { Log.i("quic", "$it") } }
@@ -428,6 +440,8 @@ the connection: if no network returns within the idle timeout, the connection cl
 On iOS and macOS, `followDefaultNetwork(scope)` does the same with the Network framework:
 
 ```kotlin
+// guide:quic:apple-follow
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
 val migrator = connection.followDefaultNetwork(scope)   // started; migrator.close() stops it
 scope.launch { migrator.events.collect { println("quic: $it") } }
 ```
@@ -452,6 +466,8 @@ retrying it in a loop, and every connection reports `PathEvent.SocketLost(path, 
 connection is not closed. Recovery is a move to a fresh socket:
 
 ```kotlin
+// guide:quic:socket-lost
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
 connection.pathEvents.collect { e ->
     if (e is PathEvent.SocketLost && e.path.id == connection.activePath?.id) connection.rebind()
 }
@@ -621,8 +637,8 @@ without a lock.
 
 ## Observability
 
-Everything below is experimental (`@ExperimentalKuicksilverApi`) except `QuicConnection.stats`, the first `EndpointStats`
-counters (`initialsDropped` to `connectionsCreated`) and `DirectoryQlogSink`, which are stable
+Everything below is experimental (`@ExperimentalKuicksilverApi`) except `QuicConnection.stats`, `QuicEndpoint.stats` with
+the first `EndpointStats` counters (`initialsDropped` to `connectionsCreated`) and `DirectoryQlogSink`, which are stable
 ([stability](../stability.md)). None of it costs anything per packet unless you turn it on: the counters are plain fields of the endpoint loop, and the logger and the listener are called per connection
 event, not per datagram.
 
@@ -642,6 +658,7 @@ few seconds from any thread (fields are read without a lock and may lag the loop
 
 ```kotlin
 // guide:quic:stats
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
 val stats = server.stats
 println("${stats.connectionsActive} live, ${stats.handshakesCompleted} handshakes, ${stats.connectionsRefusedAcceptQueue} refused")
 ```
@@ -654,7 +671,8 @@ logging framework. The default, `KuicksilverLogger.Stderr`, writes warnings and 
 library did before it had a logger); `KuicksilverLogger.None` drops everything and `KuicksilverLogger.stderr(level)`
 picks another threshold. `Debug` logs each connection's lifecycle (opened, handshake complete, path change, 0-RTT outcome,
 close with its reason), `Info` the endpoint's (shutting down, closing), `Warn` degradations (a fallback to the portable
-socket, a failing listener), `Error` a loop that died. A line is built only when its level is enabled. The library never
+socket, a failing listener or qlog sink), `Error` a loop that died. A logger that throws is ignored and counted in
+`listenerFailures`. A line is built only when its level is enabled. The library never
 logs secrets: keys, traffic secrets, session tickets, Retry and address-validation tokens and reset tokens stay out of
 every level; connection IDs and addresses are logged.
 
@@ -662,11 +680,12 @@ every level; connection IDs and addresses are logged.
 `onOpened`, `onHandshakeCompleted`, `onZeroRtt` (accepted or rejected), `onPathChanged` and `onClosed` with the
 `ConnectionLost` reason: who closed (`initiator`), the code and, for a transport error, the frame type. They run on the
 loop that owns the connection, in order, exactly once each for opened and closed, so they must not block; an exception
-out of one is logged and counted in `listenerFailures`. `ConnectionInfo.id` is the original destination connection ID in
+out of one, a `CancellationException` included, is logged and counted in `listenerFailures`, and the connection goes on. `ConnectionInfo.id` is the original destination connection ID in
 hex, the same name the connection's qlog trace has.
 
 ```kotlin
 // guide:quic:observability
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
 val observed = quicEndpointConfig {
     this.server = quicServerConfig(tlsServerConfig)
     logger = KuicksilverLogger.stderr(LogLevel.Info)
@@ -692,6 +711,7 @@ or `close()`, ends the grace period at once.
 
 ```kotlin
 // guide:quic:shutdown
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
 server.shutdown(grace = 30.seconds)
 ```
 
@@ -721,6 +741,7 @@ connection in n; `flush()` waits for what is queued and `close()` stops the writ
 
 ```kotlin
 // guide:quic:qlog-async
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
 val quicWithAsyncQlog = quicConfig { qlog = AsyncQlogSink(DirectoryQlogSink(qlogDir), sampleEvery = 10) }
 ```
 
@@ -733,6 +754,7 @@ scheduler) can drive it directly instead of going through `QuicEndpoint`.
 
 ```kotlin
 // guide:quic:core-loop
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
 val core = ConnectionCore.client(quic, tlsClientConfig, KslQuicCrypto, remote, Random, now)
 val out = PacketBatch(capacity = 4)
 try {

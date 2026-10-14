@@ -28,6 +28,20 @@ class TrustConfigTest {
             ) {}
         }
 
+    /** Byte arrays the API hands out are copies: changing one never changes a certificate's identity or a pin. */
+    @Test fun handedOutBytesAreCopies() {
+        io.kuicksilver.native.KslLoader
+            .ensureLoaded()
+        val cert = Certificate(TestCerts.server)
+        val pin = cert.spkiSha256
+        cert.der.fill(0)
+        pin.bytes.fill(0)
+        kotlin.test.assertEquals(Certificate(TestCerts.server), cert)
+        kotlin.test.assertContentEquals(TestCerts.server, cert.der)
+        kotlin.test.assertEquals(Certificate(TestCerts.server).spkiSha256, pin)
+        kotlin.test.assertTrue(pin.bytes.any { it != 0.toByte() })
+    }
+
     @Test fun pinnedWithTofuIsConfigError() {
         assertFailsWith<TlsException.Config> { TrustConfig.Pinned(setOf(pin), base = TrustConfig.Tofu(store)) }
     }

@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 [versions]
 kotlin = "2.4.20"
-agp = "9.4.0"
+agp = "9.3.3"
 coroutines = "1.11.0"
 kotlinx-io = "0.9.1"
 ktor = "3.6.0"

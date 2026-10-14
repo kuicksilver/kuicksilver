@@ -53,7 +53,10 @@ Done for the project in October 2026, kept here so it can be repeated for a new 
    options, every step's result, and `result=pass` only when every step passed with the tree clean and on the same
    commit from start to end. Any later commit needs a new run.
 2. `CHANGELOG.md`: move `[Unreleased]` under `## [0.2.0] - <date>`; `docs/spec/rfc-compliance.md` and
-   `docs/roadmap.md` say what the version does and does not do. Commit, then run the gate (step 1) on that commit.
+   `docs/roadmap.md` say what the version does and does not do. Rewrite every sentence marked
+   `<!-- release-flip: ... -->` (`grep -rn release-flip README.md docs`) as its comment says, so the README no longer says
+   "not on Maven Central yet" and drops the composite-build instructions; the coordinates in the README, the guides and
+   `samples/` already name 0.2.0 and need no change. Commit, then run the gate (step 1) on that commit.
 3. Dry run, then the release, from the same commit:
    ```
    tools/release/local-release.sh 0.2.0 --dry-run      # everything but the upload; refusals become warnings
@@ -96,8 +99,10 @@ Done for the project in October 2026, kept here so it can be repeated for a new 
 4. Portal (central.sonatype.com → *Publishing* → *Deployments*): the deployment must read **VALIDATED** (every module,
    every platform publication, the BOM, signatures and checksums). Then press *Publish*. A deployment that fails
    validation is dropped in the portal and the script runs again after the fix; nothing was released.
-5. Consumer check from Central (allow the sync to `repo1.maven.org` an hour): `samples/realtime-telemetry` built against
-   `io.kuicksilver:kuicksilver-bom:0.2.0` from `mavenCentral()` only, no `includeBuild`.
+5. Consumer check from Central (allow the sync to `repo1.maven.org` an hour): `tools/check/consumer-smoke.sh --central
+   0.2.0` builds the main source sets of `samples/realtime-telemetry` (JVM and macosArm64) against
+   `io.kuicksilver:kuicksilver-quic:0.2.0` and its transitive modules from Maven Central, without `includeBuild` or
+   mavenLocal. Its tests are not run there: they need `kuicksilver-testing`, which is not published.
 6. Only after the deployment is published: `git tag -s v0.2.0 -m "Kuicksilver 0.2.0"` on the release commit, push `main`
    and the tag, and the GitHub release from the tag with the changelog section. The version is passed to Gradle; it is
    not stored in the tree.

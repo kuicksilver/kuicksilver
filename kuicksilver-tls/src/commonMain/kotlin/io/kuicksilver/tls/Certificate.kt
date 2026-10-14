@@ -15,13 +15,16 @@ import io.kuicksilver.native.Ksl
 public class Certificate(
     der: ByteArray,
 ) {
-    /** The DER encoding (RFC 5280), copied on construction; the instance's own array, used for equality, so do not modify it. */
-    public val der: ByteArray = der.copyOf()
+    /** The DER bytes, copied on construction and never handed out: equality, the pins and the native layer use them. */
+    internal val encoded: ByteArray = der.copyOf()
+
+    /** The DER encoding (RFC 5280); a fresh copy on every read, so changing it changes nothing here. */
+    public val der: ByteArray get() = encoded.copyOf()
 
     /** SHA-256 over the DER SubjectPublicKeyInfo: the value pins are compared against (RFC 7469). */
-    public val spkiSha256: SpkiSha256 by lazy { SpkiSha256(Ksl.spkiSha256(this.der)) }
+    public val spkiSha256: SpkiSha256 by lazy { SpkiSha256(Ksl.spkiSha256(encoded)) }
 
-    private val parsed: Der.CertificateFields by lazy { Der.parseCertificate(this.der) }
+    private val parsed: Der.CertificateFields by lazy { Der.parseCertificate(encoded) }
 
     /** dNSName entries of the subjectAltName extension, as presented (case preserved). */
     public val dnsNames: List<String> get() = parsed.dnsNames
@@ -38,9 +41,9 @@ public class Certificate(
      */
     public val notAfterEpochSeconds: Long get() = parsed.notAfter ?: Der.fail()
 
-    override fun equals(other: Any?): Boolean = other is Certificate && other.der.contentEquals(der)
+    override fun equals(other: Any?): Boolean = other is Certificate && other.encoded.contentEquals(encoded)
 
-    override fun hashCode(): Int = der.contentHashCode()
+    override fun hashCode(): Int = encoded.contentHashCode()
 
     /** Never throws: diagnostics of a certificate the walker cannot read show no names. */
     override fun toString(): String =

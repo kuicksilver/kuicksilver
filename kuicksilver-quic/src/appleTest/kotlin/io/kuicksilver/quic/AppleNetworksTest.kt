@@ -151,6 +151,26 @@ class AppleNetworksTest {
         return ch to job
     }
 
+    /** The iOS/macOS sample of docs/guide/quic.md: following the default network starts at once and stops on close. */
+    @Test fun followDefaultNetworkSample() =
+        runBlocking<Unit> {
+            val l = Loopback.open()
+            try {
+                withTimeout(60.seconds) {
+                    val (connection, _) = l.connect()
+                    val scope = this
+                    // guide:quic:apple-follow
+                    val migrator = connection.followDefaultNetwork(scope) // started; migrator.close() stops it
+                    val log = scope.launch { migrator.events.collect { println("quic: $it") } }
+                    migrator.close()
+                    log.cancel()
+                    connection.close()
+                }
+            } finally {
+                l.close()
+            }
+        }
+
     @Test fun followingMovesTheConnectionToASocketBoundToTheNewInterface() =
         runBlocking<Unit> {
             val l = Loopback.open()

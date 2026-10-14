@@ -18,6 +18,7 @@ import io.kuicksilver.http3.Http3Stream
 import io.kuicksilver.http3.frame.ControlFrames
 import io.kuicksilver.http3.frame.FrameType
 import io.kuicksilver.http3.frame.H3ProtocolError
+import io.kuicksilver.http3.http3Request
 import io.kuicksilver.http3.message.MalformedMessage
 import io.kuicksilver.http3.message.PriorityField
 import io.kuicksilver.http3.message.PseudoHeaders
@@ -44,20 +45,35 @@ internal suspend fun H3Session.connect(
     protocol: String,
 ): Http3Stream {
     val caller = callerDispatcher()
-    return withContext(dispatcher) {
+    var made: Http3Stream? = null // as in requestOnce: a stream set up for a caller cancelled at the return is closed
+    try {
+        return connectOnDispatcher(r, protocol, caller) { made = it }
+    } catch (e: CancellationException) {
+        made?.let {
+            it.reset(Http3ErrorCode.REQUEST_CANCELLED)
+            it.stopSending(Http3ErrorCode.REQUEST_CANCELLED)
+        }
+        throw e
+    }
+}
+
+private suspend fun H3Session.connectOnDispatcher(
+    r: Http3Request,
+    protocol: String,
+    caller: ContinuationInterceptor,
+    made: (Http3Stream) -> Unit,
+): Http3Stream =
+    withContext(dispatcher) {
         val ps = awaitPeerSettings()
         if (!ps.enableConnectProtocol) throw Http3Exception.Settings("the peer did not send SETTINGS_ENABLE_CONNECT_PROTOCOL")
         val req =
-            Http3Request(
-                "CONNECT",
-                r.scheme,
-                r.authority,
-                r.path,
-                r.headers,
-                priority = r.priority,
-                protocol = protocol,
-                onInformational = r.onInformational,
-            )
+            http3Request("CONNECT", r.authority, r.path) {
+                scheme = r.scheme
+                headers = r.headers
+                priority = r.priority
+                this.protocol = protocol
+                onInformational = r.onInformational
+            }
         val resp = request(req, keepOpen = true, caller = caller) as ResponseImpl
         if (resp.status !in
             200..299
@@ -66,17 +82,16 @@ internal suspend fun H3Session.connect(
             datagrams.unregister(resp.streamId)
             throw Http3Exception.ConnectRejected(resp.status, resp.headers)
         }
-        val writer = ResponseWriterImpl(this@connect, resp.stream, null)
+        val writer = ResponseWriterImpl(this@connectOnDispatcher, resp.stream, null)
         // the datagram registration goes when the receive side ended (later datagrams are dropped, RFC 9297 section 2.1), or at a reset
         scope.launch {
             resp.pump.join()
             datagrams.unregister(resp.streamId)
         }
-        Http3StreamImpl(this@connect, resp.stream, resp.body, writer, resp.datagramChannel!!, resp.headers) {
+        Http3StreamImpl(this@connectOnDispatcher, resp.stream, resp.body, writer, resp.datagramChannel!!, resp.headers) {
             scope.launch { datagrams.unregister(resp.streamId) }
-        }
+        }.also(made)
     }
-}
 
 /**
  * The dispatcher of the coroutine calling into the session: user callbacks ([Http3Request.onInformational],
@@ -111,7 +126,24 @@ private suspend fun H3Session.requestOnce(
     caller: ContinuationInterceptor?,
 ): Http3Response {
     val callbacks = caller ?: callerDispatcher()
-    return withContext(dispatcher) {
+    // set on the dispatcher once the exchange exists: a caller cancelled as withContext returns (its result is then
+    // dropped) must not leave the stream open, holding flow-control credit until the connection ends
+    var made: Http3Response? = null
+    try {
+        return requestOnDispatcher(r, keepOpen, callbacks) { made = it }
+    } catch (e: CancellationException) {
+        made?.cancel(Http3ErrorCode.REQUEST_CANCELLED)
+        throw e
+    }
+}
+
+private suspend fun H3Session.requestOnDispatcher(
+    r: Http3Request,
+    keepOpen: Boolean,
+    callbacks: ContinuationInterceptor,
+    made: (Http3Response) -> Unit,
+): Http3Response =
+    withContext(dispatcher) {
         if (closed.isCompleted) throw connectionError()
         if (goAwayReceived.value != null) throw Http3Exception.RequestNotProcessed(true)
         check(goAwaySentId == null) { "this client sent GOAWAY: no new requests" }
@@ -136,7 +168,11 @@ private suspend fun H3Session.requestOnce(
         clientStreams[st.id] = st
         val dgrams = if (keepOpen) datagrams.register(st.id) else null
         try {
-            exchange(st, r, keepOpen, callbacks).also { it.datagramChannel = dgrams }
+            exchange(st, r, keepOpen, callbacks).also {
+                it.datagramChannel = dgrams
+                made(it)
+                afterRequestForTest?.invoke()
+            }
         } catch (e: Throwable) {
             if (dgrams != null) datagrams.unregister(st.id)
             // a GOAWAY that did not cover this stream aborted it: the server never processed it (RFC 9114 section 5.2)
@@ -147,7 +183,6 @@ private suspend fun H3Session.requestOnce(
             rejectedByGoAway.remove(st.id)
         }
     }
-}
 
 private suspend fun H3Session.exchange(
     st: QuicStream,

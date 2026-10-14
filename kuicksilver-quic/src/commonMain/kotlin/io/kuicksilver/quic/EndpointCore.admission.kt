@@ -88,7 +88,7 @@ internal fun EndpointCore.admitOne(
         } catch (
             t: Throwable,
         ) {
-            if (t is kotlinx.coroutines.CancellationException) throw t
+            // a CancellationException too: admit() is not suspending, so it is the policy's failure, never the loop's cancellation
             admissionContractViolations++
             AdmissionDecision.Drop
         } // fail closed
@@ -177,6 +177,7 @@ internal fun EndpointCore.admitOne(
         droppedUndecryptable++
         return false
     } // the Initial did not decrypt: no state for a datagram anyone can forge (threat-model 3.2)
+    connectionsCreated++ // only now: a forged Initial creates nothing
     core.admissionIpKey = ipKey
     perIp[ipKey] = fromIp + 1
     accepted += core

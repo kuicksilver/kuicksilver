@@ -137,7 +137,7 @@ public class Http3Settings private constructor(
 public inline fun http3Settings(block: Http3Settings.Builder.() -> Unit): Http3Settings = Http3Settings.Builder().apply(block).build()
 
 /** SETTINGS received from the peer; absent settings take their RFC defaults. */
-public class Http3PeerSettings(
+public class Http3PeerSettings internal constructor(
     /** `SETTINGS_QPACK_MAX_TABLE_CAPACITY` (0 when absent): the upper bound of our encoder's dynamic table toward this peer. */
     public val qpackMaxTableCapacity: Long,
     /** `SETTINGS_QPACK_BLOCKED_STREAMS` (0 when absent): how many of our streams may reference unacknowledged inserts. */

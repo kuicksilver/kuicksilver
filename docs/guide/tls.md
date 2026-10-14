@@ -11,10 +11,12 @@ must also run elsewhere (another OS or CPU architecture) checks once at startup 
 catching `KslException` from the first connection:
 
 ```kotlin
+// guide:tls:availability
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
 if (!KslLoader.isAvailable()) fallBackToTcp()   // never throws; the outcome is cached for the process
 ```
 
-`KslLoader.availability()` (`@ExperimentalKuicksilverApi`) says why: `NativeAvailability.Unavailable.reason` is
+`KslLoader.isAvailable()` and `KslLoader.availability()` are experimental (`@ExperimentalKuicksilverApi`); the latter says why: `NativeAvailability.Unavailable.reason` is
 `NoLibraryForPlatform`, `LoadFailed`, `IntegrityMismatch` (the SHA-256 manifest check refused the library) or
 `AbiMismatch`, with the original exception as `cause`. The check makes the same single load attempt as
 `KslLoader.ensureLoaded()`; after a failure, `ensureLoaded()` throws that same exception without retrying.
@@ -88,7 +90,7 @@ shared RFC 9525 matcher afterwards on every platform, so a platform matcher can 
 | Platform | Verifier and store | Revocation |
 |---|---|---|
 | JVM | the default `X509TrustManager`: the JDK's `cacerts` or `javax.net.ssl.trustStore`, not the OS store | as the JDK is configured (off by default) |
-| Android | the platform `TrustManager`, including the app's Network Security Config | the platform's policy |
+| Android | the platform `TrustManager`, including the app's Network Security Config (whose `cleartextTrafficPermitted` the Ktor client also honours for `http://`) | the platform's policy |
 | Apple (macOS, iOS) | `SecTrust` with the SSL policy for the host name: the keychain and the system roots | the platform's policy; an incomplete required check is `UnknownRevocationStatus` |
 | Windows (mingwX64) | CryptoAPI: `CertGetCertificateChain` for the `serverAuth` (or, for a client certificate, `clientAuth`) usage with the presented intermediates, then `CertVerifyCertificateChainPolicy(CERT_CHAIN_POLICY_SSL)` with the host name: the Windows root store, missing intermediates fetched through AIA | the leaf's status is checked; a revoked leaf is `Revoked`, an unknown status is ignored (soft fail, as browsers); network fetches share a 10 s budget and run off the handshake's thread |
 | Linux (Native) | OpenSSL inside `ksl` with the system CA bundle (below) | none |
@@ -104,12 +106,16 @@ Windows errors map to `VerifyReason`: `CERT_E_UNTRUSTEDROOT` and chaining failur
 On Linux Native the bundled OpenSSL has no built-in certificate directory, so `ksl` looks for the system store when a
 client context with `TrustConfig.Platform` is built, in this order:
 
-1. `SSL_CERT_FILE` (a PEM bundle) and `SSL_CERT_DIR` (a directory of hashed certificates, `c_rehash`). When either variable
-   is set, only these are used, as in Go's `crypto/x509`: a configured store never silently becomes another one.
-2. Otherwise the first bundle that loads: `/etc/ssl/certs/ca-certificates.crt` (Debian, Ubuntu, Alpine),
-   `/etc/pki/tls/certs/ca-bundle.crt` (Fedora, RHEL), `/etc/ssl/ca-bundle.pem` (openSUSE), `/etc/pki/tls/cacert.pem`,
-   `/etc/ssl/cert.pem`, `/usr/local/etc/openssl/cert.pem`.
-3. Otherwise the first of `/etc/ssl/certs` and `/etc/pki/tls/certs` that exists.
+1. `SSL_CERT_FILE` (a PEM bundle) and `SSL_CERT_DIR` (a directory of PEM certificates, hashed with `c_rehash` or not). When
+   either variable is set, only these are used, as in Go's `crypto/x509`: a configured store never silently becomes another
+   one.
+2. Otherwise the first bundle that loads, from Go's list: `/etc/ssl/certs/ca-certificates.crt` (Debian, Ubuntu, Gentoo),
+   `/etc/pki/tls/certs/ca-bundle.crt` (Fedora, RHEL 6), `/etc/ssl/ca-bundle.pem` (openSUSE), `/etc/pki/tls/cacert.pem`,
+   `/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem` (CentOS, RHEL 7 and later), `/etc/ssl/cert.pem` (Alpine), and
+   `/usr/local/etc/openssl/cert.pem`.
+3. Otherwise the first of `/etc/ssl/certs` and `/etc/pki/tls/certs` that holds certificates. A directory with `c_rehash`
+   links is searched by OpenSSL's hash lookup; any other directory is read like Go reads it: every PEM file in it loads.
+   A directory without either does not count.
 
 When nothing is found (a distroless or `scratch` image without `ca-certificates`), building the configuration fails with
 `TlsException.Config` naming every path searched:

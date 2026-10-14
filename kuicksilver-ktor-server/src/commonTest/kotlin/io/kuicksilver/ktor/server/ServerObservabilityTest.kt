@@ -10,7 +10,7 @@ import io.ktor.server.routing.get
 import io.ktor.server.routing.routing
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.http3.Http3Endpoint
-import io.kuicksilver.http3.Http3Request
+import io.kuicksilver.http3.http3Request
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.ConnectionInfo
 import io.kuicksilver.quic.ConnectionListener
@@ -26,6 +26,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeout
 import kotlin.concurrent.atomics.AtomicReference
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
@@ -55,7 +56,7 @@ class ServerObservabilityTest {
         }
     }
 
-    private fun get(path: String = "/") = Http3Request("GET", authority = "server.test", path = path)
+    private fun get(path: String = "/") = http3Request("GET", "server.test", path)
 
     private suspend fun eventually(cond: () -> Boolean) = withTimeout(5.seconds) { while (!cond()) delay(10) }
 
@@ -102,6 +103,75 @@ class ServerObservabilityTest {
                 }
                 c.close()
             } finally {
+                ep.close()
+                runCatching { server.stop(100, 500) }
+            }
+        }
+
+    /** At the grace deadline what is left closes with H3_NO_ERROR (RFC 9114 section 5.2), not QUIC application code 0. */
+    @Test fun stopAtTheGraceDeadlineClosesWithH3NoError() =
+        h3ServerTest {
+            val arrived = CompletableDeferred<Unit>()
+            val (server, port) =
+                tlsServer {
+                    routing {
+                        get("/forever") {
+                            arrived.complete(Unit)
+                            delay(60_000)
+                            call.respondText("late")
+                        }
+                    }
+                }
+            val ep = Http3Endpoint.bind(InetSocketAddress("127.0.0.1", 0))
+            try {
+                val c = ep.connect(InetSocketAddress("127.0.0.1", port), ServerFixtures.clientTls(alpn = listOf("h3")))
+                coroutineScope {
+                    val call = async { runCatching { c.request(get("/forever")).body.readFullBody() } }
+                    arrived.await()
+                    val t0 = TimeSource.Monotonic.markNow()
+                    server.stop(300, 3000)
+                    assertTrue(t0.elapsedNow() < 3000.milliseconds, "stop returned within timeoutMillis: ${t0.elapsedNow()}")
+                    val closed = withTimeout(5.seconds) { c.quic.closed.await() }
+                    val app = closed as QuicException.ConnectionLost.ApplicationClosed
+                    assertEquals(io.kuicksilver.http3.Http3ErrorCode.NO_ERROR, app.code, "$closed")
+                    assertTrue(call.await().isFailure, "the call still running at the deadline did not complete")
+                }
+            } finally {
+                ep.close()
+                runCatching { server.stop(100, 500) }
+            }
+        }
+
+    /**
+     * A connection whose handshake completes after the stop began (RFC 9114 section 5.2) is still served: it gets GOAWAY at
+     * once, and the stop ends when it is idle instead of waiting out the whole grace period.
+     */
+    @Test fun aConnectionAcceptedDuringStopGetsGoAwayAndTheStopEndsEarly() =
+        h3ServerTest {
+            val (server, port) = tlsServer { routing { get("/") { call.respondText("ok") } } }
+            val gate = CompletableDeferred<Unit>()
+            val held = CompletableDeferred<Unit>()
+            server.engine.afterH3AcceptForTest = {
+                held.complete(Unit)
+                gate.await()
+            }
+            val ep = Http3Endpoint.bind(InetSocketAddress("127.0.0.1", 0))
+            try {
+                val c = ep.connect(InetSocketAddress("127.0.0.1", port), ServerFixtures.clientTls(alpn = listOf("h3")))
+                withTimeout(5.seconds) { held.await() } // accepted by QUIC, not yet served by the engine
+                coroutineScope {
+                    val t0 = TimeSource.Monotonic.markNow()
+                    val stop = async(Dispatchers.Default) { server.stop(20_000, 30_000) }
+                    eventually { server.engine.h3ListenersForProbe.all { it.stopping } }
+                    gate.complete(Unit)
+                    withTimeout(5.seconds) { c.goAwayReceived.first { it != null } }
+                    withTimeout(10.seconds) { stop.await() }
+                    assertTrue(t0.elapsedNow() < 10.seconds, "the stop ended once the connection was idle: ${t0.elapsedNow()}")
+                    val app = c.quic.closed.await() as QuicException.ConnectionLost.ApplicationClosed
+                    assertEquals(io.kuicksilver.http3.Http3ErrorCode.NO_ERROR, app.code, "$app")
+                }
+            } finally {
+                gate.complete(Unit)
                 ep.close()
                 runCatching { server.stop(100, 500) }
             }
@@ -166,6 +236,64 @@ class ServerObservabilityTest {
                     listOf("opened HTTP/3.0 true", "started HTTP/3.0 /?h3", "ended HTTP/3.0 200 true", "closed HTTP/3.0"),
                     e.filter { "HTTP/3.0" in it },
                 )
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
+    @Test fun anEventListenerThrowingCancellationNeverStopsServing() =
+        h3ServerTest {
+            // not suspending callbacks: a CancellationException out of one is the listener's bug; HTTP/3 accepting goes on
+            val throwing =
+                object : KuicksilverServerEventListener() {
+                    private fun bug(): Nothing = throw kotlinx.coroutines.CancellationException("listener bug")
+
+                    override fun connectionOpened(
+                        protocol: HttpProtocolVersion,
+                        remote: InetSocketAddress?,
+                    ): Unit = bug()
+
+                    override fun connectionClosed(
+                        protocol: HttpProtocolVersion,
+                        remote: InetSocketAddress?,
+                    ): Unit = bug()
+
+                    override fun requestStarted(
+                        protocol: HttpProtocolVersion,
+                        call: ApplicationCall,
+                    ): Unit = bug()
+
+                    override fun requestEnded(
+                        protocol: HttpProtocolVersion,
+                        call: ApplicationCall,
+                        cause: Throwable?,
+                    ): Unit = bug()
+                }
+            val (server, port) = tlsServer({ eventListener = throwing }) { routing { get("/") { call.respondText("ok") } } }
+            try {
+                repeat(2) {
+                    val raw = rawHttp(port, "GET / HTTP/1.1\r\nHost: server.test\r\nConnection: close\r\n\r\n")
+                    assertTrue(raw.startsWith("HTTP/1.1 200"), raw)
+                }
+                repeat(2) {
+                    val ep = Http3Endpoint.bind(InetSocketAddress("127.0.0.1", 0))
+                    try {
+                        withTimeout(10.seconds) {
+                            val c = ep.connect(InetSocketAddress("127.0.0.1", port), ServerFixtures.clientTls(alpn = listOf("h3")))
+                            assertEquals(
+                                "ok",
+                                c
+                                    .request(get())
+                                    .body
+                                    .readFullBody()
+                                    .decodeToString(),
+                            )
+                            c.close()
+                        }
+                    } finally {
+                        ep.close()
+                    }
+                }
             } finally {
                 server.stop(100, 500)
             }

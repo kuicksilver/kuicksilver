@@ -77,9 +77,11 @@ public sealed interface DriveResult {
      *
      * @property chain the certificates the peer presented, leaf first, not yet trusted.
      */
-    public class WantVerify(
-        public val chain: List<Certificate>,
-    ) : DriveResult
+    public class WantVerify
+        @ExperimentalKuicksilverApi
+        constructor(
+            public val chain: List<Certificate>,
+        ) : DriveResult
 
     /**
      * Fatal; [alert] is the TLS alert the transport sends as `CONNECTION_CLOSE 0x0100 + alert` (null when none applies).
@@ -88,10 +90,12 @@ public sealed interface DriveResult {
      * @property exception what failed, for the application.
      * @property alert the TLS alert code (RFC 8446 section 6), already `handshake_failure` with [TlsConfig.genericAlerts].
      */
-    public class Failed(
-        public val exception: TlsException,
-        public val alert: Int?,
-    ) : DriveResult
+    public class Failed
+        @ExperimentalKuicksilverApi
+        constructor(
+            public val exception: TlsException,
+            public val alert: Int?,
+        ) : DriveResult
 }
 
 /** Events produced by the TLS layer for the QUIC transport (RFC 9001 section 4). */
@@ -102,10 +106,12 @@ public sealed interface TlsEvent {
      * @property level the encryption level whose packets carry the data.
      * @property data the bytes, in order; a fresh array the receiver owns.
      */
-    public class CryptoData(
-        public val level: EncryptionLevel,
-        public val data: ByteArray,
-    ) : TlsEvent
+    public class CryptoData
+        @ExperimentalKuicksilverApi
+        constructor(
+            public val level: EncryptionLevel,
+            public val data: ByteArray,
+        ) : TlsEvent
 
     /**
      * New packet protection keys became available (RFC 9001 section 4.1.4).
@@ -114,11 +120,13 @@ public sealed interface TlsEvent {
      * @property direction whether they protect sent or received packets.
      * @property protector the keys as a native handle; the receiver owns it and must close it when the level is discarded.
      */
-    public class Keys(
-        public val level: EncryptionLevel,
-        public val direction: Direction,
-        public val protector: PacketProtector,
-    ) : TlsEvent
+    public class Keys
+        @ExperimentalKuicksilverApi
+        constructor(
+            public val level: EncryptionLevel,
+            public val direction: Direction,
+            public val protector: PacketProtector,
+        ) : TlsEvent
 
     /**
      * The peer's transport parameters and the QUIC version the keys of this connection use from here on (RFC 9368):
@@ -127,10 +135,12 @@ public sealed interface TlsEvent {
      * @property encoded the body of the peer's `quic_transport_parameters` extension, still encoded (RFC 9000 section 18).
      * @property negotiatedVersion the QUIC version number in use from here on.
      */
-    public class PeerTransportParameters(
-        public val encoded: ByteArray,
-        public val negotiatedVersion: Int,
-    ) : TlsEvent
+    public class PeerTransportParameters
+        @ExperimentalKuicksilverApi
+        constructor(
+            public val encoded: ByteArray,
+            public val negotiatedVersion: Int,
+        ) : TlsEvent
 
     /**
      * The TLS handshake completed and every trust check, pins included, passed (RFC 9001 section 4.1.1); a failed check
@@ -145,9 +155,11 @@ public sealed interface TlsEvent {
      * @property ticket the resumable session.
      */
     @ExperimentalKuicksilverApi
-    public class SessionTicket(
-        public val ticket: QuicSessionTicket,
-    ) : TlsEvent
+    public class SessionTicket
+        @ExperimentalKuicksilverApi
+        constructor(
+            public val ticket: QuicSessionTicket,
+        ) : TlsEvent
 }
 
 /**
@@ -210,6 +222,7 @@ public class QuicSessionTicket internal constructor(
  * A call in the wrong state throws [IllegalStateException]; an error reported by TLS itself throws [TlsException] (most
  * failures arrive as [DriveResult.Failed] instead). The native layer's exceptions never escape.
  */
+@SubclassOptInRequired(ExperimentalKuicksilverApi::class)
 public interface QuicTlsSession : AutoCloseable {
     /**
      * Sets the local transport parameters, already encoded (RFC 9000 section 18), carried in the
@@ -318,6 +331,7 @@ public class PacketProtectionException(
 ) : IOException(message)
 
 /** Packet protection for one level and direction (RFC 9001 section 5); key material lives in native memory. */
+@SubclassOptInRequired(ExperimentalKuicksilverApi::class)
 public interface PacketProtector : AutoCloseable {
     /** The AEAD of these keys; it fixes the 16-byte tag and the header protection cipher. */
     public val aead: Aead
@@ -377,6 +391,7 @@ public interface PacketProtector : AutoCloseable {
 }
 
 /** An AEAD key for Retry tokens (RFC 9000 section 8.1.4): random, lives inside the native layer, one per endpoint loop (ADR-0003). */
+@SubclassOptInRequired(ExperimentalKuicksilverApi::class)
 public interface TokenKey : AutoCloseable {
     /** `ciphertext || tag(16)` of [plaintext] under [nonce] (a 64-bit value the token carries) and [aad] (what binds the token to its client). */
     public fun seal(
@@ -394,6 +409,7 @@ public interface TokenKey : AutoCloseable {
 }
 
 /** A keyed MAC for stateless reset tokens (RFC 9000 section 10.3.2): the token of a connection ID is derived, never stored. */
+@SubclassOptInRequired(ExperimentalKuicksilverApi::class)
 public interface ResetKey : AutoCloseable {
     /** Writes the 16-byte token of `cid[offset, +length)` at `out[outOffset]`. */
     public fun token(
@@ -406,6 +422,7 @@ public interface ResetKey : AutoCloseable {
 }
 
 /** The crypto provider the QUIC core sees (ADR-0002). */
+@SubclassOptInRequired(ExperimentalKuicksilverApi::class)
 public interface QuicCrypto {
     /**
      * A new handshake for one QUIC connection; the caller closes it. Throws [TlsException.Config] unless [config] suits QUIC:

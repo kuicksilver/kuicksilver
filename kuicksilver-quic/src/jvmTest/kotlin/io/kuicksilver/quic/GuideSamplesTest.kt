@@ -7,6 +7,7 @@ package io.kuicksilver.quic
 import io.ktor.network.sockets.InetSocketAddress
 import io.ktor.utils.io.discard
 import io.ktor.utils.io.readUTF8Line
+import io.ktor.utils.io.writeFully
 import io.ktor.utils.io.writeStringUtf8
 import io.kuicksilver.annotations.DelicateKuicksilverApi
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
@@ -15,6 +16,7 @@ import io.kuicksilver.native.PacketBuffer
 import io.kuicksilver.quic.VersionProfile
 import io.kuicksilver.quic.qlog.AsyncQlogSink
 import io.kuicksilver.quic.qlog.DirectoryQlogSink
+import io.kuicksilver.tls.EarlyDataState
 import io.kuicksilver.tls.KslQuicCrypto
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.first
@@ -31,6 +33,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.hours
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
 /** The code blocks of docs/guide/quic.md, kept compiling and running (block markers `guide:quic:*`). */
@@ -58,7 +61,57 @@ class GuideSamplesTest {
                 initialVersion = VersionProfile.V1
             }
         assertEquals(VersionProfile.V1, prefersV2.firstVersion)
+        // guide:quic:initial-rtt
+        val lossyMobile = quicConfig { initialRtt = 100.milliseconds }
+        assertEquals(100.milliseconds, lossyMobile.initialRtt)
     }
+
+    /** A free UDP port on the loopback, so the sample can bind and connect to the same `addr`. */
+    private fun freeUdpPort(): Int = java.net.DatagramSocket(0, java.net.InetAddress.getLoopbackAddress()).use { it.localPort }
+
+    @Test fun zeroRttSample(): Unit =
+        runBlocking {
+            val addr = InetSocketAddress("127.0.0.1", freeUdpPort())
+            val safeRequest = "GET /".encodeToByteArray()
+            withTimeout(60.seconds) {
+                // guide:quic:zero-rtt
+                val server =
+                    QuicEndpoint.bind(
+                        addr,
+                        quicEndpointConfig {
+                            this.server = quicServerConfig(tlsServerConfig) { earlyData = true } // tickets that allow 0-RTT
+                        },
+                    )
+                val client = QuicEndpoint.bind(InetSocketAddress("127.0.0.1", 0))
+                try {
+                    val serving =
+                        launch {
+                            while (true) {
+                                val sc = server.accept()
+                                launch { runCatching { sc.acceptStream().input.discard() } }
+                            }
+                        }
+                    val config = quicClientConfig(tlsClientConfig) { earlyData = EarlyDataState.Allowed }
+                    val first = client.connect(addr, config) // a full handshake; the server's ticket arrives shortly after it
+                    // the test's stand-in for "the application uses first": wait until the ticket is in
+                    while ((client as io.kuicksilver.quic.runtime.EndpointLoop).sessions.size() == 0) kotlinx.coroutines.yield()
+                    first.close()
+                    val c = client.connectEarly(addr, config) // returns once the 0-RTT keys exist (a full handshake without a ticket)
+                    val s = c.openBidi()
+                    s.output.writeFully(safeRequest)
+                    s.output.flush() // travels in 0-RTT
+                    c.awaitHandshake() // from here the connection is authenticated
+                    println("0-RTT accepted: ${c.earlyDataAccepted}") // false: the server refused it; null: there was no ticket yet
+                    assertEquals(true, c.earlyDataAccepted)
+                    s.output.flushAndClose()
+                    c.close(0, "done")
+                    serving.cancel()
+                } finally {
+                    client.close()
+                    server.close()
+                }
+            }
+        }
 
     @Test fun connectEchoAndServerAcceptSamples(): Unit =
         runBlocking {
@@ -385,6 +438,14 @@ class GuideSamplesTest {
                     runCatching { collector.await() }
                     assertEquals(2, received.size)
                     assertEquals(0, dropped)
+                    val watcher =
+                        launch {
+                            // guide:quic:socket-lost
+                            connection.pathEvents.collect { e ->
+                                if (e is PathEvent.SocketLost && e.path.id == connection.activePath?.id) connection.rebind()
+                            }
+                        }
+                    watcher.cancel()
                     // guide:quic:migration
                     val change = connection.migrate(DatagramIo.open(InetSocketAddress("0.0.0.0", 0))) // addPath + probe + switchTo
                     println("now on ${change.new.localAddress} (${change.reason})")

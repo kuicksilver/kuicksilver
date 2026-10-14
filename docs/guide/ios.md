@@ -25,13 +25,14 @@ HTTP/3 GET, a raw QUIC echo with an RTT and path-event log, and a server mode ad
 Depend on the Kuicksilver modules from your shared module like any KMP library. The klibs carry the prefixed OpenSSL
 and `libksl` as static libraries; Kotlin/Native links them into the framework your app already builds:
 
+<!-- guide-sync: not compiled (a Gradle build script; samples/ios/shared/build.gradle.kts is the built one) -->
 ```kotlin
 kotlin {
     listOf(iosArm64(), iosSimulatorArm64()).forEach {
         it.binaries.framework { baseName = "Shared"; isStatic = true }
     }
     sourceSets.commonMain.dependencies {
-        implementation("io.kuicksilver:kuicksilver-http3:0.1.0-SNAPSHOT")   // or -quic, -ktor-client
+        implementation("io.kuicksilver:kuicksilver-http3:0.2.0")   // or -quic, -ktor-client
     }
 }
 ```
@@ -76,12 +77,12 @@ import PackageDescription
 
 let package = Package(
     name: "Kuicksilver",
-    platforms: [.iOS(.v15)]   // the OpenSSL build floor,
+    platforms: [.iOS(.v15)],  // the Kotlin/Native, OpenSSL and SecTrust floor
     products: [.library(name: "Kuicksilver", targets: ["Kuicksilver"])],
     targets: [
         .binaryTarget(
             name: "Kuicksilver",
-            url: "https://example.com/releases/0.1.0/Kuicksilver.xcframework.zip",
+            url: "https://example.com/releases/0.2.0/Kuicksilver.xcframework.zip",
             checksum: "<contents of checksum.txt>"
         ),
     ]

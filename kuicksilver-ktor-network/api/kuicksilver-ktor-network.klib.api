@@ -26,8 +26,6 @@ final class io.kuicksilver.ktor.network/TlsSocket : io.ktor.network.sockets/Sock
     final fun attachForWriting(io.ktor.utils.io/ByteChannel): io.ktor.utils.io/ReaderJob // io.kuicksilver.ktor.network/TlsSocket.attachForWriting|attachForWriting(io.ktor.utils.io.ByteChannel){}[0]
     final fun close() // io.kuicksilver.ktor.network/TlsSocket.close|close(){}[0]
     final fun dispose() // io.kuicksilver.ktor.network/TlsSocket.dispose|dispose(){}[0]
-
-    final object Companion // io.kuicksilver.ktor.network/TlsSocket.Companion|null[0]
 }
 
 final suspend fun (io.ktor.network.sockets/Socket).io.kuicksilver.ktor.network/tls(io.kuicksilver.tls/TlsConfig, kotlin.coroutines/CoroutineContext = ...): io.kuicksilver.ktor.network/TlsSocket // io.kuicksilver.ktor.network/tls|tls@io.ktor.network.sockets.Socket(io.kuicksilver.tls.TlsConfig;kotlin.coroutines.CoroutineContext){}[0]

@@ -25,7 +25,11 @@ public class EndpointStats internal constructor(
     public val statelessRateLimited: Long,
     /** [AdmissionDecision.Retry] returned for an already validated address, or an exception out of [ConnectionAdmission.admit]; each one was dropped. */
     public val admissionContractViolations: Long,
-    /** Connections this endpoint (loop) created so far: server connections admitted plus client connections opened; closed ones still count. */
+    /**
+     * Connections this endpoint created so far: client connections opened, plus server connections admitted whose first
+     * Initial decrypted (a forged or corrupted Initial creates none and counts in [datagramsDroppedUndecryptable]); closed
+     * ones still count.
+     */
     public val connectionsCreated: Long = 0,
     /** Connections the endpoint holds now, in any state until their closing period ends. */
     @property:ExperimentalKuicksilverApi

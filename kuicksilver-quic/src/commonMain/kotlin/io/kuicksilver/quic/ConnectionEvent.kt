@@ -36,18 +36,18 @@ public sealed interface ConnectionEvent {
     public object HandshakeCompleted : ConnectionEvent
 
     /** The handshake paused for certificate verification: run `session.verifyPeer(chain)` off the loop and pass the result to [ConnectionCore.resumeVerify]. */
-    public class VerifyRequested(
+    public class VerifyRequested internal constructor(
         public val chain: List<Certificate>,
         public val session: QuicTlsSession,
     ) : ConnectionEvent
 
     /** The peer opened stream [id] (RFC 9000 section 3.2); a lower stream of the same type it skipped gets its own event first. */
-    public class StreamOpened(
+    public class StreamOpened internal constructor(
         public val id: Long,
     ) : ConnectionEvent
 
     /** Stream [id] has new data, its end or its reset for [ConnectionCore.readStream]; raised again only after more arrives. */
-    public class StreamReadable(
+    public class StreamReadable internal constructor(
         public val id: Long,
     ) : ConnectionEvent
 
@@ -57,12 +57,12 @@ public sealed interface ConnectionEvent {
      * data waiting to be sent. Retry the write; the event is a hint, a write may still take fewer bytes when other streams share the
      * buffer.
      */
-    public class StreamWritable(
+    public class StreamWritable internal constructor(
         public val id: Long,
     ) : ConnectionEvent
 
     /** The peer abandoned stream [id] with RESET_STREAM and application error [code] (RFC 9000 section 19.4); its reads end with -1. */
-    public class StreamReset(
+    public class StreamReset internal constructor(
         public val id: Long,
         public val code: Long,
     ) : ConnectionEvent
@@ -71,7 +71,7 @@ public sealed interface ConnectionEvent {
      * The peer sent STOP_SENDING with [code] for stream [id] (RFC 9000 section 19.5); the core already answered with RESET_STREAM carrying
      * the same code.
      */
-    public class StopSendingReceived(
+    public class StopSendingReceived internal constructor(
         public val id: Long,
         public val code: Long,
     ) : ConnectionEvent
@@ -80,7 +80,7 @@ public sealed interface ConnectionEvent {
      * Stream [id] is done in both directions — its sending half acknowledged or reset, its receiving half read to the end or reset
      * and consumed — and was retired: its state is gone and, for a peer stream, its credit returns through MAX_STREAMS. Raised once.
      */
-    public class StreamFinished(
+    public class StreamFinished internal constructor(
         public val id: Long,
     ) : ConnectionEvent
 
@@ -88,17 +88,17 @@ public sealed interface ConnectionEvent {
      * The peer raised its stream limit ([bidi] or unidirectional) with MAX_STREAMS (RFC 9000 section 4.6) after
      * [ConnectionCore.openStream] was refused at the old one: retry the open. Raised once per refusal.
      */
-    public class StreamsAvailable(
+    public class StreamsAvailable internal constructor(
         public val bidi: Boolean,
     ) : ConnectionEvent
 
     /** The connection ended for [reason]; the last event of the connection, raised once. */
-    public class Closed(
+    public class Closed internal constructor(
         public val reason: QuicException.ConnectionLost,
     ) : ConnectionEvent
 
     /** DPLPMTUD changed the datagram size of [path] to [mtu] bytes of UDP payload (RFC 8899); after a black hole it drops back to 1200. */
-    public class MtuUpdated(
+    public class MtuUpdated internal constructor(
         public val path: PathId,
         public val mtu: Int,
     ) : ConnectionEvent
@@ -107,25 +107,24 @@ public sealed interface ConnectionEvent {
     public object DatagramsReadable : ConnectionEvent
 
     /** [path] answered our PATH_CHALLENGE (RFC 9000 section 8.2.3). */
-    public class PathValidated(
+    public class PathValidated internal constructor(
         public val path: PathId,
     ) : ConnectionEvent
 
     /** [path] never answered within the validation timeout (RFC 9000 section 8.2.4), or [reason] says why it could not be probed. */
     public class PathFailed
-        @ExperimentalKuicksilverApi
-        constructor(
+        internal constructor(
             public val path: PathId,
             /** Why the validation failed. */
             @property:ExperimentalKuicksilverApi public val reason: PathFailureReason,
         ) : ConnectionEvent {
             /** A validation that timed out ([PathFailureReason.ValidationTimeout]). */
             @OptIn(ExperimentalKuicksilverApi::class)
-            public constructor(path: PathId) : this(path, PathFailureReason.ValidationTimeout)
+            internal constructor(path: PathId) : this(path, PathFailureReason.ValidationTimeout)
         }
 
     /** Packets now go to [new] instead of [old] (RFC 9000 section 9.3), for the given [reason]. */
-    public class PathChanged(
+    public class PathChanged internal constructor(
         public val old: PathId,
         public val new: PathId,
         public val reason: PathChangeReason,
@@ -147,7 +146,7 @@ public sealed interface ConnectionEvent {
      * (RFC 9000 section 7.4.1). The receiver owns it: store it (single use) or close it.
      */
     @ExperimentalKuicksilverApi
-    public class SessionTicket(
+    public class SessionTicket internal constructor(
         public val ticket: QuicSessionTicket,
     ) : ConnectionEvent
 }

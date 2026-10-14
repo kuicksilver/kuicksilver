@@ -9,6 +9,8 @@ plugins {
     id("kuicksilver.publish")
 }
 kotlin {
+    // the device tests' network security config (src/androidDeviceTest/res/xml) needs Android resources; the library has none
+    androidLibrary { androidResources { enable = true } }
     sourceSets {
         commonMain.dependencies {
             api(project(":kuicksilver-http3"))

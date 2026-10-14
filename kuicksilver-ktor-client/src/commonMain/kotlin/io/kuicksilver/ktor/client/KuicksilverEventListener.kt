@@ -17,7 +17,8 @@ import kotlin.time.Duration
  * [callFailed]; [connectionReleased] follows when the call's response is done with.
  *
  * Callbacks run on the call's coroutine (or, for releases, where the response body ends) and must return quickly without
- * blocking; an exception out of one is logged at [LogLevel.Warn] through the engine's logger and otherwise ignored.
+ * blocking; an exception out of one (a CancellationException included) is logged at [LogLevel.Warn] through the engine's
+ * logger and otherwise ignored.
  */
 @ExperimentalKuicksilverApi
 public abstract class KuicksilverEventListener {
@@ -87,7 +88,10 @@ public abstract class KuicksilverEventListener {
         reused: Boolean,
     ) {}
 
-    /** [request]'s exchange gave its connection back: [kept] when the connection stays open for the next request. */
+    /**
+     * [request]'s exchange gave its connection back: [kept] when the connection stays open for the next request. Follows
+     * every [connectionAcquired] once, also when the exchange failed before a response (then usually not [kept]).
+     */
     public open fun connectionReleased(
         request: HttpRequestData,
         protocol: HttpProtocolVersion,
@@ -138,9 +142,8 @@ internal class EngineEvents(
         val l = listener ?: return
         try {
             l.call()
-        } catch (e: kotlinx.coroutines.CancellationException) {
-            throw e
         } catch (e: Throwable) {
+            // a CancellationException too: the callbacks are not suspending, so it is the listener's bug, not the call's cancellation
             runCatching { if (logger.isEnabled(LogLevel.Warn)) logger.log(LogLevel.Warn, "event listener failed in $what", e) }
         }
     }

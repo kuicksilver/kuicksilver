@@ -165,8 +165,6 @@ final class io.kuicksilver.http3/Http3Headers { // io.kuicksilver.http3/Http3Hea
 }
 
 final class io.kuicksilver.http3/Http3PeerSettings { // io.kuicksilver.http3/Http3PeerSettings|null[0]
-    constructor <init>(kotlin/Long, kotlin/Long, kotlin/Long?, kotlin/Boolean, kotlin/Boolean, kotlin.collections/Map<kotlin/Long, kotlin/Long>) // io.kuicksilver.http3/Http3PeerSettings.<init>|<init>(kotlin.Long;kotlin.Long;kotlin.Long?;kotlin.Boolean;kotlin.Boolean;kotlin.collections.Map<kotlin.Long,kotlin.Long>){}[0]
-
     final val enableConnectProtocol // io.kuicksilver.http3/Http3PeerSettings.enableConnectProtocol|{}enableConnectProtocol[0]
         final fun <get-enableConnectProtocol>(): kotlin/Boolean // io.kuicksilver.http3/Http3PeerSettings.enableConnectProtocol.<get-enableConnectProtocol>|<get-enableConnectProtocol>(){}[0]
     final val h3Datagram // io.kuicksilver.http3/Http3PeerSettings.h3Datagram|{}h3Datagram[0]
@@ -184,8 +182,6 @@ final class io.kuicksilver.http3/Http3PeerSettings { // io.kuicksilver.http3/Htt
 }
 
 final class io.kuicksilver.http3/Http3Request { // io.kuicksilver.http3/Http3Request|null[0]
-    constructor <init>(kotlin/String, kotlin/String = ..., kotlin/String?, kotlin/String?, io.kuicksilver.http3/Http3Headers = ..., io.ktor.utils.io/ByteReadChannel? = ..., kotlin.coroutines/SuspendFunction0<io.kuicksilver.http3/Http3Headers?>? = ..., io.kuicksilver.quic/StreamPriority? = ..., kotlin/String? = ..., kotlin.coroutines/SuspendFunction2<kotlin/Int, io.kuicksilver.http3/Http3Headers, kotlin/Unit>? = ..., kotlin/Boolean = ...) // io.kuicksilver.http3/Http3Request.<init>|<init>(kotlin.String;kotlin.String;kotlin.String?;kotlin.String?;io.kuicksilver.http3.Http3Headers;io.ktor.utils.io.ByteReadChannel?;kotlin.coroutines.SuspendFunction0<io.kuicksilver.http3.Http3Headers?>?;io.kuicksilver.quic.StreamPriority?;kotlin.String?;kotlin.coroutines.SuspendFunction2<kotlin.Int,io.kuicksilver.http3.Http3Headers,kotlin.Unit>?;kotlin.Boolean){}[0]
-
     final val allowEarlyData // io.kuicksilver.http3/Http3Request.allowEarlyData|{}allowEarlyData[0]
         final fun <get-allowEarlyData>(): kotlin/Boolean // io.kuicksilver.http3/Http3Request.allowEarlyData.<get-allowEarlyData>|<get-allowEarlyData>(){}[0]
     final val authority // io.kuicksilver.http3/Http3Request.authority|{}authority[0]
@@ -208,6 +204,48 @@ final class io.kuicksilver.http3/Http3Request { // io.kuicksilver.http3/Http3Req
         final fun <get-scheme>(): kotlin/String // io.kuicksilver.http3/Http3Request.scheme.<get-scheme>|<get-scheme>(){}[0]
     final val trailers // io.kuicksilver.http3/Http3Request.trailers|{}trailers[0]
         final fun <get-trailers>(): kotlin.coroutines/SuspendFunction0<io.kuicksilver.http3/Http3Headers?>? // io.kuicksilver.http3/Http3Request.trailers.<get-trailers>|<get-trailers>(){}[0]
+
+    final fun toBuilder(): io.kuicksilver.http3/Http3Request.Builder // io.kuicksilver.http3/Http3Request.toBuilder|toBuilder(){}[0]
+
+    final class Builder { // io.kuicksilver.http3/Http3Request.Builder|null[0]
+        constructor <init>(kotlin/String, kotlin/String?, kotlin/String?) // io.kuicksilver.http3/Http3Request.Builder.<init>|<init>(kotlin.String;kotlin.String?;kotlin.String?){}[0]
+
+        final var allowEarlyData // io.kuicksilver.http3/Http3Request.Builder.allowEarlyData|{}allowEarlyData[0]
+            final fun <get-allowEarlyData>(): kotlin/Boolean // io.kuicksilver.http3/Http3Request.Builder.allowEarlyData.<get-allowEarlyData>|<get-allowEarlyData>(){}[0]
+            final fun <set-allowEarlyData>(kotlin/Boolean) // io.kuicksilver.http3/Http3Request.Builder.allowEarlyData.<set-allowEarlyData>|<set-allowEarlyData>(kotlin.Boolean){}[0]
+        final var authority // io.kuicksilver.http3/Http3Request.Builder.authority|{}authority[0]
+            final fun <get-authority>(): kotlin/String? // io.kuicksilver.http3/Http3Request.Builder.authority.<get-authority>|<get-authority>(){}[0]
+            final fun <set-authority>(kotlin/String?) // io.kuicksilver.http3/Http3Request.Builder.authority.<set-authority>|<set-authority>(kotlin.String?){}[0]
+        final var body // io.kuicksilver.http3/Http3Request.Builder.body|{}body[0]
+            final fun <get-body>(): io.ktor.utils.io/ByteReadChannel? // io.kuicksilver.http3/Http3Request.Builder.body.<get-body>|<get-body>(){}[0]
+            final fun <set-body>(io.ktor.utils.io/ByteReadChannel?) // io.kuicksilver.http3/Http3Request.Builder.body.<set-body>|<set-body>(io.ktor.utils.io.ByteReadChannel?){}[0]
+        final var headers // io.kuicksilver.http3/Http3Request.Builder.headers|{}headers[0]
+            final fun <get-headers>(): io.kuicksilver.http3/Http3Headers // io.kuicksilver.http3/Http3Request.Builder.headers.<get-headers>|<get-headers>(){}[0]
+            final fun <set-headers>(io.kuicksilver.http3/Http3Headers) // io.kuicksilver.http3/Http3Request.Builder.headers.<set-headers>|<set-headers>(io.kuicksilver.http3.Http3Headers){}[0]
+        final var method // io.kuicksilver.http3/Http3Request.Builder.method|{}method[0]
+            final fun <get-method>(): kotlin/String // io.kuicksilver.http3/Http3Request.Builder.method.<get-method>|<get-method>(){}[0]
+            final fun <set-method>(kotlin/String) // io.kuicksilver.http3/Http3Request.Builder.method.<set-method>|<set-method>(kotlin.String){}[0]
+        final var onInformational // io.kuicksilver.http3/Http3Request.Builder.onInformational|{}onInformational[0]
+            final fun <get-onInformational>(): kotlin.coroutines/SuspendFunction2<kotlin/Int, io.kuicksilver.http3/Http3Headers, kotlin/Unit>? // io.kuicksilver.http3/Http3Request.Builder.onInformational.<get-onInformational>|<get-onInformational>(){}[0]
+            final fun <set-onInformational>(kotlin.coroutines/SuspendFunction2<kotlin/Int, io.kuicksilver.http3/Http3Headers, kotlin/Unit>?) // io.kuicksilver.http3/Http3Request.Builder.onInformational.<set-onInformational>|<set-onInformational>(kotlin.coroutines.SuspendFunction2<kotlin.Int,io.kuicksilver.http3.Http3Headers,kotlin.Unit>?){}[0]
+        final var path // io.kuicksilver.http3/Http3Request.Builder.path|{}path[0]
+            final fun <get-path>(): kotlin/String? // io.kuicksilver.http3/Http3Request.Builder.path.<get-path>|<get-path>(){}[0]
+            final fun <set-path>(kotlin/String?) // io.kuicksilver.http3/Http3Request.Builder.path.<set-path>|<set-path>(kotlin.String?){}[0]
+        final var priority // io.kuicksilver.http3/Http3Request.Builder.priority|{}priority[0]
+            final fun <get-priority>(): io.kuicksilver.quic/StreamPriority? // io.kuicksilver.http3/Http3Request.Builder.priority.<get-priority>|<get-priority>(){}[0]
+            final fun <set-priority>(io.kuicksilver.quic/StreamPriority?) // io.kuicksilver.http3/Http3Request.Builder.priority.<set-priority>|<set-priority>(io.kuicksilver.quic.StreamPriority?){}[0]
+        final var protocol // io.kuicksilver.http3/Http3Request.Builder.protocol|{}protocol[0]
+            final fun <get-protocol>(): kotlin/String? // io.kuicksilver.http3/Http3Request.Builder.protocol.<get-protocol>|<get-protocol>(){}[0]
+            final fun <set-protocol>(kotlin/String?) // io.kuicksilver.http3/Http3Request.Builder.protocol.<set-protocol>|<set-protocol>(kotlin.String?){}[0]
+        final var scheme // io.kuicksilver.http3/Http3Request.Builder.scheme|{}scheme[0]
+            final fun <get-scheme>(): kotlin/String // io.kuicksilver.http3/Http3Request.Builder.scheme.<get-scheme>|<get-scheme>(){}[0]
+            final fun <set-scheme>(kotlin/String) // io.kuicksilver.http3/Http3Request.Builder.scheme.<set-scheme>|<set-scheme>(kotlin.String){}[0]
+        final var trailers // io.kuicksilver.http3/Http3Request.Builder.trailers|{}trailers[0]
+            final fun <get-trailers>(): kotlin.coroutines/SuspendFunction0<io.kuicksilver.http3/Http3Headers?>? // io.kuicksilver.http3/Http3Request.Builder.trailers.<get-trailers>|<get-trailers>(){}[0]
+            final fun <set-trailers>(kotlin.coroutines/SuspendFunction0<io.kuicksilver.http3/Http3Headers?>?) // io.kuicksilver.http3/Http3Request.Builder.trailers.<set-trailers>|<set-trailers>(kotlin.coroutines.SuspendFunction0<io.kuicksilver.http3.Http3Headers?>?){}[0]
+
+        final fun build(): io.kuicksilver.http3/Http3Request // io.kuicksilver.http3/Http3Request.Builder.build|build(){}[0]
+    }
 }
 
 final class io.kuicksilver.http3/Http3Settings { // io.kuicksilver.http3/Http3Settings|null[0]
@@ -428,4 +466,5 @@ final object io.kuicksilver.http3/Http3ErrorCode { // io.kuicksilver.http3/Http3
     final fun normalize(kotlin/Long): kotlin/Long // io.kuicksilver.http3/Http3ErrorCode.normalize|normalize(kotlin.Long){}[0]
 }
 
+final inline fun io.kuicksilver.http3/http3Request(kotlin/String, kotlin/String?, kotlin/String?, kotlin/Function1<io.kuicksilver.http3/Http3Request.Builder, kotlin/Unit> = ...): io.kuicksilver.http3/Http3Request // io.kuicksilver.http3/http3Request|http3Request(kotlin.String;kotlin.String?;kotlin.String?;kotlin.Function1<io.kuicksilver.http3.Http3Request.Builder,kotlin.Unit>){}[0]
 final inline fun io.kuicksilver.http3/http3Settings(kotlin/Function1<io.kuicksilver.http3/Http3Settings.Builder, kotlin/Unit>): io.kuicksilver.http3/Http3Settings // io.kuicksilver.http3/http3Settings|http3Settings(kotlin.Function1<io.kuicksilver.http3.Http3Settings.Builder,kotlin.Unit>){}[0]

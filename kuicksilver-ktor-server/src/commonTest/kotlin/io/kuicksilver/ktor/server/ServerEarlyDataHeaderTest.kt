@@ -12,7 +12,7 @@ import io.ktor.server.routing.post
 import io.ktor.server.routing.routing
 import io.kuicksilver.http3.Http3Endpoint
 import io.kuicksilver.http3.Http3Headers
-import io.kuicksilver.http3.Http3Request
+import io.kuicksilver.http3.http3Request
 import io.kuicksilver.native.KslLoader
 import kotlin.test.BeforeTest
 import kotlin.test.Test
@@ -77,9 +77,19 @@ class ServerEarlyDataHeaderTest {
                     val c = ep.connect(InetSocketAddress("127.0.0.1", port), ServerFixtures.clientTls(alpn = listOf("h3")))
                     try {
                         val early = Http3Headers(listOf("early-data" to "1"))
-                        val get = c.request(Http3Request("GET", authority = "server.test", path = "/e", headers = early))
+                        val get =
+                            c.request(
+                                http3Request("GET", "server.test", "/e") {
+                                    headers = early
+                                },
+                            )
                         assertEquals("early=true", get.body.readFullBody().decodeToString())
-                        val post = c.request(Http3Request("POST", authority = "server.test", path = "/p", headers = early))
+                        val post =
+                            c.request(
+                                http3Request("POST", "server.test", "/p") {
+                                    headers = early
+                                },
+                            )
                         assertEquals(425, post.status)
                         post.body.readFullBody()
                         assertEquals(0, unsafeCalls, "the application processed a request that may be a replay")
