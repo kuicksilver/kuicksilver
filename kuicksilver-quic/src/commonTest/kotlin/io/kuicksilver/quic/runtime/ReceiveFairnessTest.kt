@@ -99,12 +99,21 @@ class ReceiveFairnessTest {
                                 b.localAddress,
                                 QuicClientConfig
                                     .Builder(CoreFixtures.client())
-                                    .apply { quic = quicConfig { maxIdleTimeout = 500.milliseconds } }
-                                    .build(),
+                                    .apply {
+                                        // a 50 ms initial RTT keeps 3 x PTO (the floor of the idle timeout, RFC 9000 section 10.1) at
+                                        // 450 ms: the 500 ms idle timeout decides, not a 3 s floor from the 333 ms default
+                                        quic =
+                                            quicConfig {
+                                                maxIdleTimeout = 500.milliseconds
+                                                initialRtt = 50.milliseconds
+                                            }
+                                    }.build(),
                             )
                         }
                     a.goBusy()
-                    assertFailsWith<QuicException.ConnectionLost.Timeout> { withTimeout(5.seconds) { connectJob.await() } }
+                    // starvation never ends; the 10 s bound leaves room for timer slack on a loaded host (a background-QoS test JVM
+                    // on macOS saw each 1 s timer wait return 0.1-0.3 s late without any flood)
+                    assertFailsWith<QuicException.ConnectionLost.Timeout> { withTimeout(10.seconds) { connectJob.await() } }
                 } finally {
                     connects.cancel()
                     client.close()
