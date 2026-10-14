@@ -13,9 +13,11 @@
 #        tools/fuzz/campaign.sh status            per-target time, executions, coverage, findings
 #        tools/fuzz/campaign.sh minimize [ids]     merge the grown corpora into tools/fuzz/corpus/<id>/ (committed)
 #        tools/fuzz/campaign.sh list              target ids
-# Options: --slice MIN (≤ 20, default 20)  --goal HOURS per target (default 2)  --hours HOURS wall clock for this
-#          invocation (default: until every selected target reaches the goal)  --gap SEC between slices (default 60)
-#          --targets id,id,...  --no-build (reuse the last classpath snapshot)
+# Options: --slice MIN (≤ 20, default 20)  --goal HOURS per target (default 2)  --goals id=HOURS,... (per-target goals
+#          that override --goal)  --hours HOURS wall clock for this invocation (default: until every selected target
+#          reaches its goal)  --gap SEC between slices (default 60)  --jobs N slices at once, each on its own target
+#          (default 1)  --nice N (default 19; background QoS either way)  --targets id,id,...  --no-build (reuse the last
+#          classpath snapshot)
 set -euo pipefail
 root="$(cd "$(dirname "$0")/../.." && pwd)"
 state="${KSL_FUZZ_STATE:-$root/build/fuzz-campaign}"
@@ -73,11 +75,14 @@ if [ "$cmd" = status ]; then
   exit 0
 fi
 
-slice=20; goal=2; hours=0; gap=60; only=""; build=1
+slice=20; goal=2; goals=""; jobs=1; niceness=19; hours=0; gap=60; only=""; build=1
 while [ $# -gt 0 ]; do
   case "$1" in
     --slice) slice=$2; shift 2 ;;
     --goal) goal=$2; shift 2 ;;
+    --goals) goals=$2; shift 2 ;;
+    --jobs) jobs=$2; shift 2 ;;
+    --nice) niceness=$2; shift 2 ;;
     --hours) hours=$2; shift 2 ;;
     --gap) gap=$2; shift 2 ;;
     --targets) only=$2; shift 2 ;;
@@ -87,6 +92,8 @@ while [ $# -gt 0 ]; do
   esac
 done
 [ "$slice" -ge 1 ] && [ "$slice" -le 20 ] || die "--slice must be 1..20 minutes (the laptop stays quiet)"
+[ "$jobs" -ge 1 ] && [ "$jobs" -le 4 ] || die "--jobs must be 1..4"
+[ "$niceness" -ge 0 ] && [ "$niceness" -le 20 ] || die "--nice must be 0..20"
 selected=$(targets_table | awk '{ print $1 }')
 if [ -n "$only" ]; then
   for id in ${only//,/ }; do [ -n "$(field "$id" 1)" ] || die "unknown target $id (tools/fuzz/campaign.sh list)"; done
@@ -103,7 +110,7 @@ fi
 echo $$ > "$lock/pid"
 trap 'rm -rf "$lock"' EXIT INT TERM
 
-quiet() { if command -v taskpolicy >/dev/null 2>&1; then taskpolicy -b nice -n 19 "$@"; else nice -n 19 "$@"; fi; }
+quiet() { if command -v taskpolicy >/dev/null 2>&1; then taskpolicy -b nice -n "$niceness" "$@"; else nice -n "$niceness" "$@"; fi; }
 
 # Classpath snapshot: the project's own class directories and jars are copied, so a rebuild during the campaign does not
 # change the classes under a running fuzzer; dependency jars from the Gradle cache are used in place.
@@ -237,27 +244,60 @@ fi
 
 snapshot_classpath
 deadline=0; [ "$hours" != 0 ] && deadline=$(( $(date +%s) + $(awk -v h="$hours" 'BEGIN { printf "%d", h * 3600 }') ))
-goal_s=$(awk -v h="$goal" 'BEGIN { printf "%d", h * 3600 }')
-first=1
+goal_of() { # seconds of fuzzing [id] should get
+  local h=$goal g
+  for g in ${goals//,/ }; do [ "${g%%=*}" = "$1" ] && h=${g#*=}; done
+  awk -v h="$h" 'BEGIN { printf "%d", h * 3600 }'
+}
+# running slices: parallel arrays (bash 3.2 has no associative arrays and no wait -n)
+run_pids=(); run_ids=(); run_secs=()
+reap() {
+  local i np=() ni=() ns=()
+  for i in "${!run_pids[@]}"; do
+    if kill -0 "${run_pids[$i]}" 2>/dev/null; then np+=("${run_pids[$i]}"); ni+=("${run_ids[$i]}"); ns+=("${run_secs[$i]}")
+    else wait "${run_pids[$i]}" 2>/dev/null || true; fi
+  done
+  run_pids=(${np[@]+"${np[@]}"}); run_ids=(${ni[@]+"${ni[@]}"}); run_secs=(${ns[@]+"${ns[@]}"})
+}
+running() { local i; for i in ${run_ids[@]+"${run_ids[@]}"}; do [ "$i" = "$1" ] && return 0; done; return 1; }
+kill_tree() { # [pid] and its descendants, by PID
+  local c
+  for c in $(ps -ax -o pid= -o ppid= | awk -v p="$1" '$2 == p { print $1 }'); do kill_tree "$c"; done
+  kill "$1" 2>/dev/null || true
+}
+trap 'for p in ${run_pids[@]+"${run_pids[@]}"}; do kill_tree "$p"; done; rm -rf "$lock"' EXIT INT TERM
+first=1; stop=""
 while :; do
-  next=""; least=-1
+  reap
+  if [ -n "$stop" ]; then [ "${#run_pids[@]}" -eq 0 ] && { echo "$stop"; break; }; sleep 5; continue; fi
+  if [ "${#run_pids[@]}" -ge "$jobs" ]; then sleep 5; continue; fi
+  # the target furthest from its goal (smallest share of it done), not already running
+  next=""; best=""; left_goal=0
   for id in $selected; do
     [ -f "$state/crashed-$id" ] && continue
-    t=$(total_seconds "$id"); [ "$t" -ge "$goal_s" ] && continue
-    if [ "$least" -lt 0 ] || [ "$t" -lt "$least" ]; then least=$t; next=$id; fi
+    running "$id" && continue
+    t=$(total_seconds "$id"); g=$(goal_of "$id"); [ "$t" -ge "$g" ] && continue
+    share=$(awk -v t="$t" -v g="$g" 'BEGIN { printf "%.6f", t / g }')
+    if [ -z "$best" ] || awk -v a="$share" -v b="$best" 'BEGIN { exit !(a < b) }'; then best=$share; next=$id; left_goal=$((g - t)); fi
   done
-  [ -n "$next" ] || { echo "every selected target reached ${goal} h (or crashed): done"; break; }
+  if [ -z "$next" ]; then
+    [ "${#run_pids[@]}" -eq 0 ] && { echo "every selected target reached its goal (or crashed): done"; break; }
+    sleep 5; continue
+  fi
   if [ "$deadline" -ne 0 ]; then
-    left=$((deadline - $(date +%s))); [ "$left" -ge 60 ] || { echo "wall clock limit reached"; break; }
+    left=$((deadline - $(date +%s))); [ "$left" -ge 60 ] || { stop="wall clock limit reached"; continue; }
   else left=$((slice * 60)); fi
-  secs=$((slice * 60)); [ "$secs" -gt "$((goal_s - least))" ] && secs=$((goal_s - least)); [ "$secs" -gt "$left" ] && secs=$left
+  secs=$((slice * 60)); [ "$secs" -gt "$left_goal" ] && secs=$left_goal; [ "$secs" -gt "$left" ] && secs=$left
   [ "$secs" -ge 30 ] || secs=30
   [ "$first" = 1 ] || sleep "$gap"
   first=0
-  # new commits (fixes) since the snapshot: rebuild, so a fixed target is not fuzzed on old classes
+  # new commits (fixes) since the snapshot: rebuild once no slice runs, so a fixed target is not fuzzed on old classes
+  # and no running fuzzer has its classes or binary replaced under it
   if [ "$build" = 1 ] && [ "$(head_rev)" != "$(cat "$state/cp/HEAD" 2>/dev/null)" ]; then
+    if [ "${#run_pids[@]}" -gt 0 ]; then sleep 5; continue; fi
     echo "$(date '+%F %T') HEAD moved: refreshing the classpath snapshot"; snapshot_classpath
   fi
-  run_slice "$next" "$secs"
+  run_slice "$next" "$secs" &
+  run_pids+=($!); run_ids+=("$next"); run_secs+=("$secs")
 done
 "$0" status
