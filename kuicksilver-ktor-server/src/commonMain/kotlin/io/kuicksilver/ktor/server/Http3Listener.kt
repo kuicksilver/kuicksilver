@@ -96,7 +96,7 @@ private fun KuicksilverApplicationEngine.http3EndpointConfig(tls: KuicksilverTls
             connectionIdLength = quic.connectionIdLength
             loops = configuration.udpSocketCount
             configuration.quicAdmission?.let { admission = it }
-            logger = configuration.logger
+            configuration.logger?.let { logger = it }
             listener = configuration.connectionListener
         }.build()
 }

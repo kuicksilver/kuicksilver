@@ -257,7 +257,7 @@ Guide: [Ktor: Client](ktor.md#client).
 | `http3Settings` | `Http3Settings` | `Http3Settings.Default` | HTTP/3 settings |
 | `webSocketsOverHttp3` | `Boolean` | `true` | accept RFC 9220 WebSockets (turns `enableConnectProtocol` on) |
 | `quicEarlyData` (*experimental*) | `Boolean` | `false` | accept 0-RTT; requests are handled by `http3Settings.earlyData` |
-| `logger` (*experimental*) | `KuicksilverLogger` | `KuicksilverLogger.Stderr` | the HTTP/3 endpoints' diagnostics |
+| `logger` (*experimental*) | `KuicksilverLogger?` | `null` (the endpoint default, `KuicksilverLogger.Stderr`) | the HTTP/3 endpoints' diagnostics |
 | `qlog` (*experimental*) | `QlogSink?` | `null` | added to `quic` |
 | `connectionListener` (*experimental*) | `ConnectionListener?` | `null` | lifecycle of every QUIC connection |
 | `eventListener` (*experimental*) | `KuicksilverServerEventListener?` | `null` | connection and request events over both protocols |

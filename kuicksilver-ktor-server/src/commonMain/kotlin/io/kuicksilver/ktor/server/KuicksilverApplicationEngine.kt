@@ -110,11 +110,12 @@ public class KuicksilverApplicationEngine(
         public var quicEarlyData: Boolean = false
 
         /**
-         * Where the HTTP/3 endpoints' diagnostics go (docs/guide/quic.md, "Observability"); warnings on standard error by
-         * default. The engine's own messages keep going to the application's log.
+         * Where the HTTP/3 endpoints' diagnostics go (docs/guide/quic.md, "Observability"); null (the default) keeps the QUIC
+         * endpoint's default, `KuicksilverLogger.Stderr` (warnings on standard error), as the client engine's `logger` does.
+         * The engine's own messages keep going to the application's log.
          */
         @io.kuicksilver.annotations.ExperimentalKuicksilverApi
-        public var logger: KuicksilverLogger = KuicksilverLogger.Stderr
+        public var logger: KuicksilverLogger? = null
 
         /**
          * A qlog trace per HTTP/3 connection, added to [quic]; null (the default) keeps that configuration's own. Wrap a file
