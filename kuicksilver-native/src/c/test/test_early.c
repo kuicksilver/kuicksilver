@@ -130,4 +130,75 @@ static void test_early_option_server_only(void) {
     ksl_ssl *s = ksl_ssl_new(cc, KSL_MODE_QUIC); CHECK(set_str(s, KSL_SET_EARLY_CONTEXT, "x") == KSL_ERROR, "client session refuses an early context");
     ksl_ssl_free(s); ksl_ctx_free(cc); END();
 }
-void run_early(void) { test_server_done_waits_for_finished(); test_early_accepted(); test_resumption_renews_ticket(); test_early_context_mismatch(); test_early_verdict_refused(); test_ticket_without_early_data(); test_early_option_server_only(); }
+
+/* ---- RFC 9369 sections 4.1 and 5: 0-RTT keys in the original version, tickets bound to their version ---- */
+#define V2 0x6b3343cfu
+static void be32(uint8_t *o, uint32_t v) { o[0] = (uint8_t)(v >> 24); o[1] = (uint8_t)(v >> 16); o[2] = (uint8_t)(v >> 8); o[3] = (uint8_t)v; }
+static void set_version(ksl_ssl *s, uint32_t v) { uint8_t b[4]; be32(b, v); ksl_ssl_set(s, KSL_SET_QUIC_VERSION, b, 4); }
+/* max_idle_timeout + version_information(chosen, available...) */
+static void tp_versions(ksl_ssl *s, uint32_t chosen, uint32_t a0, uint32_t a1) {
+    uint8_t t[18] = {0x01, 0x02, 0x67, 0x10, 0x11, 12}; be32(t + 6, chosen); be32(t + 10, a0); be32(t + 14, a1);
+    ksl_quic_set_transport_params(s, t, sizeof t);
+}
+typedef struct { ksl_key *early; uint32_t client_switch; ksl_ssl *client; } vtrack;
+/* like pump_early, keeping the first 0-RTT key seen (write for the client, read for the server) and flipping the client to
+   the server's version before the ServerHello is provided (the transport does so from the server's Initial header) */
+static void pump_versions(ksl_ssl *c, ksl_ssl *s, track *ct, track *st, vtrack *cv, vtrack *sv) {
+    ksl_ssl *who[2] = {c, s}, *peer[2] = {s, c}; track *t[2] = {ct, st}; vtrack *v[2] = {cv, sv};
+    for (int round = 0; round < 40; round++) {
+        int progressed = 0;
+        for (int k = 0; k < 2; k++) {
+            if (ksl_drive(who[k]) == KSL_ERROR) return;
+            ksl_event ev;
+            while (ksl_quic_next_event(who[k], &ev)) {
+                progressed = 1;
+                if (ev.type == KSL_EV_CRYPTO_SEND) {
+                    if (k == 1 && ev.level == KSL_LEVEL_INITIAL && sv->client_switch) { set_version(c, sv->client_switch); sv->client_switch = 0; }
+                    ksl_quic_provide(peer[k], ev.level, ev.buf, ev.len);
+                } else if (ev.type == KSL_EV_KEY) {
+                    t[k]->levels[ev.direction][ev.level]++;
+                    if (ev.level == KSL_LEVEL_EARLY && !v[k]->early) v[k]->early = ev.key; else ksl_key_free(ev.key);
+                } else if (ev.type == KSL_EV_HANDSHAKE_DONE) t[k]->done = 1;
+            }
+        }
+        if (!progressed && round > 3) return;
+    }
+}
+static void test_early_key_in_original_version(void) {
+    SECTION("quic_early_key_in_original_version_after_upgrade");
+    ksl_ctx *cc = client_ctx("test-ca", KSL_VERIFY_OPENSSL), *sc = early_server_ctx(1);
+    ksl_session *sess = first_session(cc, sc, "cfg-1");   /* a v1 connection: a v1 ticket */
+    ksl_ssl *c = qclient(cc), *s = qserver(sc, "cfg-1"); uint8_t one = 1;
+    tp_versions(c, 1u, 1u, V2); tp_versions(s, V2, V2, 1u);   /* the client starts in v1 and offers v2; the server prefers v2 */
+    ksl_ssl_set_session(c, sess); ksl_ssl_set(c, KSL_SET_EARLY_DATA, &one, 1); ksl_ssl_set(s, KSL_SET_EARLY_DATA, &one, 1);
+    track ct = {0}, st = {0}; vtrack cv = {0}, sv = {.client_switch = V2};
+    pump_versions(c, s, &ct, &st, &cv, &sv);
+    uint8_t vb[4]; size_t n; ksl_ssl_get(s, KSL_GET_QUIC_VERSION, vb, 4, &n);
+    CHECK(vb[0] == 0x6b && ct.done && st.done && reused(c) == 1 && early_status(s) == 2, "resumed with 0-RTT, upgraded to v2");
+    CHECK(cv.early && sv.early, "both 0-RTT keys");
+    uint8_t hdr[5] = {0xd0, 0, 0, 0, 1}, buf[40] = "0-RTT in the original version";
+    int len = cv.early ? ksl_seal(cv.early, 3, hdr, 5, buf, 24, sizeof buf) : -1;
+    CHECK(len == 40 && sv.early && ksl_open(sv.early, 3, hdr, 5, buf, (size_t)len) == 24, "the server's 0-RTT key opens the client's: both use v1 labels (RFC 9369 4.1)");
+    ksl_key_free(cv.early); ksl_key_free(sv.early); ksl_ssl_free(c); ksl_ssl_free(s); ksl_session_free(sess); ksl_ctx_free(cc); ksl_ctx_free(sc); END();
+}
+static void test_ticket_bound_to_version(void) {
+    SECTION("quic_ticket_bound_to_its_version");
+    ksl_ctx *cc = client_ctx("test-ca", KSL_VERIFY_OPENSSL), *sc = early_server_ctx(1);
+    /* the first connection starts in v1 and is upgraded to v2: its tickets belong to v2 (RFC 9369 section 5) */
+    ksl_ssl *c = qclient(cc), *s = qserver(sc, "cfg-1"); tp_versions(c, 1u, 1u, V2); tp_versions(s, V2, V2, 1u);
+    track ct = {0}, st = {0}; vtrack cv = {0}, sv = {.client_switch = V2}; pump_versions(c, s, &ct, &st, &cv, &sv);
+    ksl_session *sess = ct.done && st.done ? ksl_ssl_get1_session(c) : NULL; CHECK(sess != NULL, "upgraded connection leaves a session");
+    ksl_ssl_free(c); ksl_ssl_free(s);
+    for (int start_v2 = 0; start_v2 < 2; start_v2++) {
+        c = qclient(cc); s = qserver(sc, "cfg-1");
+        if (start_v2) { set_version(c, V2); set_version(s, V2); tp_versions(c, V2, V2, 1u); } else tp_versions(c, 1u, 1u, V2);
+        tp_versions(s, start_v2 ? V2 : 1u, start_v2 ? V2 : 1u, start_v2 ? 1u : V2);
+        ksl_ssl_set_session(c, sess); track a = {0}, b = {0}; vtrack x = {0}, y = {0}; pump_versions(c, s, &a, &b, &x, &y);
+        CHECK(a.done && b.done, "handshake completes");
+        CHECK(reused(c) == (uint8_t)start_v2, start_v2 ? "a v2 ticket resumes a connection started in v2" : "a v2 ticket does not resume a connection started in v1");
+        ksl_ssl_free(c); ksl_ssl_free(s);
+    }
+    ksl_session_free(sess); ksl_ctx_free(cc); ksl_ctx_free(sc); END();
+}
+void run_early(void) { test_server_done_waits_for_finished(); test_early_accepted(); test_resumption_renews_ticket(); test_early_context_mismatch(); test_early_verdict_refused(); test_ticket_without_early_data(); test_early_option_server_only();
+    test_early_key_in_original_version(); test_ticket_bound_to_version(); }

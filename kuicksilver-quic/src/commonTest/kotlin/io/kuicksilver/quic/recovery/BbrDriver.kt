@@ -162,16 +162,25 @@ internal class BbrDriver(
         if (bytes > 0) cc.onDiscarded(bytes)
     }
 
+    /**
+     * The 4-datagram floor from before the last larger datagram size, while the window is still below the new one: RFC 8899
+     * forbids the size update itself to raise the window, the controller lifts it to the new floor when it next sets it.
+     */
+    private var oldFloor = Long.MAX_VALUE
+
     private fun mtu(v: Int) {
+        val floor = cc.minPipeCwnd
         mss = 1200 + (v and 0x7fffffff) % (65_527 - 1200 + 1)
         cc.onMtuUpdate(mss)
+        if (cc.minPipeCwnd > floor) oldFloor = minOf(oldFloor, floor)
     }
 
     /** The invariants: violated ones throw [IllegalStateException] with the operation count. */
     fun check() {
         val flight = outstanding.sumOf { it.size.toLong() }
         check(cc.bytesInFlight == flight) { "op $ops: bytes in flight ${cc.bytesInFlight}, outstanding $flight" }
-        check(cc.cwnd >= cc.minPipeCwnd) { "op $ops: cwnd ${cc.cwnd} below the 4-datagram minimum ${cc.minPipeCwnd}" }
+        if (cc.cwnd >= cc.minPipeCwnd) oldFloor = Long.MAX_VALUE
+        check(cc.cwnd >= minOf(cc.minPipeCwnd, oldFloor)) { "op $ops: cwnd ${cc.cwnd} below the 4-datagram minimum ${cc.minPipeCwnd}" }
         for (srtt in SRTTS) {
             val r = cc.pacingRate(srtt.nanoseconds)
             check(r > 0) { "op $ops: pacing rate $r at srtt $srtt ns" }

@@ -6,7 +6,8 @@ import io.kuicksilver.quic.Ecn
 import io.kuicksilver.quic.EcnState
 
 /**
- * Per-path ECN validation (RFC 9000 section 13.4.2): the first ten packets go out with ECT(0); the peer's ACK_ECN counts
+ * Per-path ECN validation (RFC 9000 section 13.4.2): the first ten packets go out with ECT(0), the following ones unmarked until
+ * the path is capable; the peer's ACK_ECN counts
  * must appear and move consistently (the connection-wide bookkeeping of `LossDetection` checks that they never decrease, show
  * no ECT(1) and cover every newly acknowledged marked packet); losing all ten test packets fails too. A failed path never marks
  * again. CE growth is reported to the caller by loss detection, who turns it into one congestion event per recovery period.
@@ -25,10 +26,14 @@ internal class EcnValidator {
         if (state == EcnState.Testing || state == EcnState.Unknown) state = EcnState.Disabled
     }
 
-    /** The codepoint for the next datagram on this path. */
+    /**
+     * The codepoint for the next datagram on this path. RFC 9000 appendix A.4: 'On paths with a "testing" or "capable" state, the
+     * endpoint sends packets with an ECT marking -- ECT(0) by default; otherwise, the endpoint sends unmarked packets': after the
+     * test packets nothing more is marked until an ACK validated the counts (quic-go's ecn.go does the same).
+     */
     fun markFor(): Ecn =
         when (state) {
-            EcnState.Testing, EcnState.Unknown, EcnState.Capable -> Ecn.Ect0
+            EcnState.Testing, EcnState.Capable -> Ecn.Ect0
             else -> Ecn.NotEct
         }
 

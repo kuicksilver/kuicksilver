@@ -270,6 +270,15 @@ public interface QuicTlsSession : AutoCloseable {
     public val earlyDataAccepted: Boolean? get() = null
 
     /**
+     * CRYPTO bytes [provide]d at [level] that TLS has not read yet. The transport counts them toward the memory of an
+     * unfinished handshake and, once TLS reads a higher level, treats any left at a lower one as a PROTOCOL_VIOLATION
+     * (RFC 9001 section 4.1.3). TLS holds at most 256 KiB unread per level: [provide] beyond that, or at a level below the
+     * one TLS reads, throws [TlsException]. Zero for a closed or failed session.
+     */
+    @ExperimentalKuicksilverApi
+    public fun pendingCryptoBytes(level: EncryptionLevel): Int = 0
+
+    /**
      * Client: resume [ticket] (it is consumed and closed by this session); call before the first [drive]. False when TLS
      * refused it (the handshake then is a full one).
      */

@@ -72,6 +72,19 @@ internal class PacketReceiver(
     internal var datagramLength = 0
     private var datagramEcn: io.kuicksilver.quic.Ecn = io.kuicksilver.quic.Ecn.NotEct
 
+    /** The accounting of a received datagram without looking inside it. */
+    fun countOnly(
+        length: Int,
+        from: InetSocketAddress,
+        socket: PathId,
+    ) {
+        c.bytesReceived += length
+        c.paths
+            .byRemote(socket, from)
+            ?.amplification
+            ?.onReceived(length) // per-path bytes; RFC 9000 sections 8.1 and 9.3.1: an unvalidated path has a 3x budget
+    }
+
     fun onDatagram(
         data: PacketBuffer,
         length: Int,
@@ -88,11 +101,7 @@ internal class PacketReceiver(
             c.datagramsDropped++
             return
         } // RFC 9000 section 9: a client discards packets from an unknown server address
-        c.bytesReceived += length
-        c.paths
-            .byRemote(socket, from)
-            ?.amplification
-            ?.onReceived(length) // per-path bytes; RFC 9000 sections 8.1 and 9.3.1: an unvalidated path has a 3x budget
+        countOnly(length, from, socket)
         datagramEcn = ecn // a socket that cannot read marks delivers NotEct itself (ADR-0006)
         var off = 0
         var processed = false
@@ -206,11 +215,13 @@ internal class PacketReceiver(
         if (type == PacketType.Initial && c.role == TlsRole.Client && hv.tokenLen != 0) return false
         // migration off, or to loopback/link-local (threat-model 3.14)
         if (type == PacketType.OneRtt && c.role == TlsRole.Server && !c.path.isRemote(from) && !c.migrationAllowedFrom(from)) return false
+        // RFC 9369 section 4.1: a server takes 0-RTT only in the original version, whatever the negotiated one
+        if (type == PacketType.ZeroRtt && hv.version != c.originalVersion.version) return false
         if (type != PacketType.OneRtt && hv.version != c.version.version) {
             val profile = VersionProfile.of(hv.version) ?: return false
             if (c.role == TlsRole.Client) {
                 if (!c.switchClientVersion(profile)) return false
-            } else if (!(type == PacketType.Initial && hv.version == c.originalVersion.version)) {
+            } else if (!((type == PacketType.Initial || type == PacketType.ZeroRtt) && hv.version == c.originalVersion.version)) {
                 return false
             }
         }
@@ -368,7 +379,7 @@ internal class PacketReceiver(
                 }
             }
         }
-        sp.ack.onPacketReceived(pn, ackEliciting, now)
+        sp.ack.onPacketReceived(pn, ackEliciting, now, ce = datagramEcn == io.kuicksilver.quic.Ecn.Ce)
         if (type == PacketType.Handshake &&
             c.role == TlsRole.Server
         ) {
@@ -395,6 +406,8 @@ internal class PacketReceiver(
     /** RFC 9000 section 17.2.5.2: a client takes exactly one Retry, before any other server packet, with a non-empty token, a new SCID and a valid tag (RFC 9001 section 5.8). */
     private fun onRetry(data: PacketBuffer) {
         if (c.role != TlsRole.Client || c.anyPeerPacket || c.retryScid != null || c.state != ConnectionState.Handshaking) return
+        // RFC 9369 section 4.1: a Retry uses the version of the Initial it answers; "The client ignores Retry packets using other versions."
+        if (hv.version != c.version.version) return
         if (!c.localCid.contentEquals(data, hv.dcidOff, hv.dcidLen) || hv.tokenLen == 0) return
         // the token rides in every later Initial: one that cannot fit a 1200-byte Initial with room for CRYPTO is unusable
         if (hv.tokenLen > MAX_RETRY_TOKEN) return

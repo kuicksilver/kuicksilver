@@ -140,11 +140,11 @@ internal class NullTlsSession(
             }
             negotiatedAlpn = chosen
             negotiateVersion(tp)
+            events += TlsEvent.PeerTransportParameters(tp, version) // as OpenSSL: while parsing the ClientHello, before any key
             events += TlsEvent.CryptoData(EncryptionLevel.Initial, message(2, serverHelloBody(chosen)))
             keys(EncryptionLevel.Handshake)
             events += TlsEvent.CryptoData(EncryptionLevel.Handshake, message(20, ByteArray(0)))
             keys(EncryptionLevel.Application)
-            events += TlsEvent.PeerTransportParameters(tp, version)
             stage = 1
         }
         if (stage == 1) {

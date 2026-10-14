@@ -83,10 +83,12 @@ internal class AckTracker(
         return false // below every tracked range but never evicted: a reordered packet we have not seen (RFC 9000 section 13.2.3)
     }
 
+    /** [ce]: the packet arrived marked Congestion Experienced (RFC 9000 section 13.2.1: acknowledged immediately). */
     fun onPacketReceived(
         pn: Long,
         ackEliciting: Boolean,
         now: TimeMark,
+        ce: Boolean = false,
     ) {
         if (pn <= floor || pn <= evictedBelow) return
         val reordered = largest >= 0 && (pn < largest || pn > largest + 1)
@@ -98,7 +100,7 @@ internal class AckTracker(
         if (ackEliciting) {
             pending++
             if (pending == 1) firstPendingTime = now
-            if (immediate || pending >= 2 || reordered) required = true
+            if (immediate || pending >= 2 || reordered || ce) required = true
         }
     }
 

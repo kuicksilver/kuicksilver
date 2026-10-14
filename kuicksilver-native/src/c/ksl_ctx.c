@@ -45,29 +45,39 @@ static int ticket_cb(SSL *ssl, unsigned char key_name[16], unsigned char iv[EVP_
     return enc ? 1 : (k == c->ticket_keys ? 1 : 2);   /* 2 = decrypted with a previous key: renew the ticket */
 }
 
-/* Ticket app data: one flag byte (KSL_TICKET_AFTER_VERDICT: issued by ksl_ssl_new_session_ticket, after the pin verdict), then the
-   server's early context (0-RTT, ADR-0015); a resumed ticket whose early context differs keeps the resumption but gets no early data. The
-   final early-data decision also needs the transport's verdict for this hello (its replay register). Both callbacks are the base
-   (session) context's: OpenSSL keeps them across an SNI override, and they read the settings of the session's current owner. */
+/* Ticket app data: one flag byte (KSL_TICKET_AFTER_VERDICT: issued by ksl_ssl_new_session_ticket, after the pin verdict), the QUIC
+   version of the issuing connection (4 bytes big-endian, the negotiated one; 0 for TLS over TCP), then the server's early context (0-RTT,
+   ADR-0015). A ticket of another version than the one the client started this connection with is not resumed (RFC 9369 section 5: a
+   full handshake, without 0-RTT); a resumed ticket whose early context differs keeps the resumption but gets no early data. The final
+   early-data decision also needs the transport's verdict for this hello (its replay register). Both callbacks are the base (session)
+   context's: OpenSSL keeps them across an SNI override, and they read the settings of the session's current owner. */
 #define KSL_TICKET_AFTER_VERDICT 1
+static uint32_t ticket_version(const ksl_ssl *s, int issuing) {
+    if (s->mode != KSL_MODE_QUIC) return 0;
+    return issuing || !s->orig_version ? s->quic_version : s->orig_version;   /* issued: the negotiated version; resumed: the original one */
+}
 static int ticket_gen_cb(SSL *ssl, void *arg) {
     (void)arg; ksl_ssl *s = SSL_get_ex_data(ssl, 1); SSL_SESSION *sess = SSL_get0_session(ssl);
     if (!s || !sess) return 0;
-    uint8_t data[1 + sizeof s->early_ctx]; data[0] = s->ticket_authorized ? KSL_TICKET_AFTER_VERDICT : 0;
-    memcpy(data + 1, s->early_ctx, s->early_ctx_len);
-    return SSL_SESSION_set1_ticket_appdata(sess, data, 1 + s->early_ctx_len);
+    uint8_t data[5 + sizeof s->early_ctx]; uint32_t v = ticket_version(s, 1); data[0] = s->ticket_authorized ? KSL_TICKET_AFTER_VERDICT : 0;
+    data[1] = (uint8_t)(v >> 24); data[2] = (uint8_t)(v >> 16); data[3] = (uint8_t)(v >> 8); data[4] = (uint8_t)v;
+    memcpy(data + 5, s->early_ctx, s->early_ctx_len);
+    return SSL_SESSION_set1_ticket_appdata(sess, data, 5 + s->early_ctx_len);
 }
 static SSL_TICKET_RETURN ticket_dec_cb(SSL *ssl, SSL_SESSION *sess, const unsigned char *keyname, size_t keyname_len, SSL_TICKET_STATUS status, void *arg) {
     (void)keyname; (void)keyname_len; (void)arg; ksl_ssl *s = SSL_get_ex_data(ssl, 1);
     switch (status) {
     case SSL_TICKET_SUCCESS: case SSL_TICKET_SUCCESS_RENEW: {
         void *d = NULL; size_t l = 0; const uint8_t *p;
-        if (SSL_SESSION_get0_ticket_appdata(sess, &d, &l) != 1 || l < 1) { d = NULL; l = 0; }
+        if (SSL_SESSION_get0_ticket_appdata(sess, &d, &l) != 1 || l < 5) { d = NULL; l = 0; }
         p = d;
         /* a context that issues tickets only after the pin verdict (NUM_TICKETS 0) resumes only such tickets: a ticket from anywhere else
            (another configuration sharing keys and session context, an in-handshake ticket) proves no verdict, so a full handshake runs */
         if (s && s->owner->num_tickets == 0 && !(p && (p[0] & KSL_TICKET_AFTER_VERDICT))) return SSL_TICKET_RETURN_IGNORE;
-        if (s) s->early_ctx_match = p && l > 1 && l - 1 == s->early_ctx_len && !memcmp(p + 1, s->early_ctx, l - 1);
+        if (!s || !p) return SSL_TICKET_RETURN_IGNORE_RENEW;
+        uint32_t v = ((uint32_t)p[1] << 24) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 8) | p[4];
+        if (v != ticket_version(s, 0)) { s->early_ctx_match = 0; return SSL_TICKET_RETURN_IGNORE_RENEW; }
+        s->early_ctx_match = l > 5 && l - 5 == s->early_ctx_len && !memcmp(p + 5, s->early_ctx, l - 5);
         return SSL_TICKET_RETURN_USE_RENEW;   /* client tickets are single-use: every resumption gets a fresh one */
     }
     case SSL_TICKET_EMPTY: case SSL_TICKET_NO_DECRYPT: return SSL_TICKET_RETURN_IGNORE_RENEW;

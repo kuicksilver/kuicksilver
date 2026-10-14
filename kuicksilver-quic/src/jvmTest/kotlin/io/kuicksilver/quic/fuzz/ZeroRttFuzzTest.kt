@@ -96,7 +96,7 @@ class ZeroRttFuzzTest {
     /**
      * `rememberedTicket`: what a client ticket remembers (`QuicSessionTicket.remembered`, a public property the application
      * can set) is read back without an exception: malformed bytes give no 0-RTT. Input bit 0 of `[flags]`: the rest is
-     * the blob itself; else it is `[alpn length][alpn][transport parameters]` re-encoded through [rememberedBlob].
+     * the blob itself; else it is `[alpn length][alpn][transport parameters]` re-encoded through [rememberedBlob] (version 1).
      */
     @FuzzTest(maxDuration = "60s")
     fun rememberedTicket(data: ByteArray) {
@@ -107,12 +107,12 @@ class ZeroRttFuzzTest {
                 rest
             } else {
                 val n = minOf(rest[0].toInt() and 0xff, rest.size - 1)
-                rememberedBlob(rest.decodeToString(1, 1 + n), rest.copyOfRange(1 + n, rest.size))
+                rememberedBlob(1, rest.decodeToString(1, 1 + n), rest.copyOfRange(1 + n, rest.size))
             }
         val parsed = rememberedParameters(blob) ?: return
         // what was read back encodes again (the client keeps it for the comparison at handshake completion)
-        TransportParametersCodec.encode(parsed.second, TlsRole.Server, 0)
-        check(parsed.first.length <= 255) { "an ALPN of ${parsed.first.length} characters" }
+        TransportParametersCodec.encode(parsed.third, TlsRole.Server, 0)
+        check(parsed.second.length <= 255) { "an ALPN of ${parsed.second.length} characters" }
     }
 
     private companion object {

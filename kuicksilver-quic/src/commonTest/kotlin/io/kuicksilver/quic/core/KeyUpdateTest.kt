@@ -14,6 +14,7 @@ import io.kuicksilver.quic.Ecn
 import io.kuicksilver.quic.NullCryptoProvider
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.StreamPriority
+import io.kuicksilver.quic.TimeMark
 import io.kuicksilver.quic.crypto.NullPacketProtector
 import io.kuicksilver.quic.ksl
 import io.kuicksilver.tls.CipherSuites
@@ -169,8 +170,49 @@ class KeyUpdateTest {
             assertTrue(p.client.initiateKeyUpdate(p.now))
             assertFalse(p.client.initiateKeyUpdate(p.now), "no packet of the new phase acknowledged yet")
             assertTrue(echo(p, 64 shl 10))
-            assertTrue(p.client.initiateKeyUpdate(p.now), "after an ACK of the current phase")
+            assertTrue(p.runUntil(limit = 5.seconds) { p.client.initiateKeyUpdate(p.now) }, "after an ACK of the current phase")
             assertEquals(2L, p.client.stats.keyUpdates)
+        } finally {
+            p.close()
+        }
+    }
+
+    /**
+     * RFC 9001 section 6.1: after our own update the old read key stays until a packet of the new phase authenticated, not
+     * for 3 x PTO from the update: an idle connection's peer still sends in the old phase.
+     */
+    @Test fun ownUpdateKeepsOldReadKeyUntilNewPhaseArrives() {
+        val p = CorePair(crypto = ksl)
+        try {
+            assertTrue(confirmed(p))
+            p.filterToServer = { _, _ -> false } // the server never sees a packet of the new phase
+            assertTrue(p.client.initiateKeyUpdate(p.now))
+            val pto = p.client.pto()
+            p.runUntil(limit = pto * 10) { false }
+            val failuresBefore = p.client.stats.authenticationFailures
+            val id = p.server!!.openStream(bidi = false, StreamPriority.Default)
+            p.server!!.writeStream(id, ByteArray(100), 0, 100, fin = true)
+            val buf = ByteArray(200)
+            assertTrue(p.runUntil(limit = 1.seconds) { p.client.readStream(id, buf, 0, buf.size) > 0 }, "old-phase data still decrypts")
+            assertEquals(failuresBefore, p.client.stats.authenticationFailures)
+        } finally {
+            p.close()
+        }
+    }
+
+    /** RFC 9001 section 6.5: the next update waits 3 x PTO after the acknowledgment that confirmed the previous one. */
+    @Test fun nextUpdateWaitsThreePtoAfterConfirmingAck() {
+        val p = CorePair(crypto = ksl)
+        try {
+            assertTrue(confirmed(p))
+            assertTrue(p.client.initiateKeyUpdate(p.now))
+            val kp = p.client.keyPhaseForTest!!
+            val id = p.client.openStream(bidi = false, StreamPriority.Default)
+            p.client.writeStream(id, ByteArray(100), 0, 100, fin = true)
+            assertTrue(p.runUntil(limit = 2.seconds) { kp.confirmedAt != TimeMark.NEVER }, "a packet of the new phase acknowledged")
+            assertFalse(p.client.initiateKeyUpdate(p.now), "not right after the confirming ACK")
+            assertTrue(p.runUntil(limit = 5.seconds) { p.now >= kp.confirmedAt + p.client.pto() * 3 })
+            assertTrue(p.client.initiateKeyUpdate(p.now), "3 x PTO later")
         } finally {
             p.close()
         }
@@ -195,7 +237,7 @@ class KeyUpdateTest {
         assertEquals(1, write.nextCalls)
         assertEquals(false, kp.phase)
         kp.onPacketSent(0)
-        kp.onPacketAcked(0)
+        kp.onPacketAcked(0, io.kuicksilver.quic.TimeMark(0))
         assertTrue(kp.initiate(io.kuicksilver.quic.TimeMark(0), 100.milliseconds))
         assertEquals(true, kp.phase)
         assertEquals(1, read.nextCalls, "the generation-0 protector is not asked again; the new current one derives the next")
@@ -207,7 +249,7 @@ class KeyUpdateTest {
         val write = Counting()
         val kp = KeyPhase(read, write) { _, _ -> }
         kp.onPacketSent(0)
-        kp.onPacketAcked(0)
+        kp.onPacketAcked(0, io.kuicksilver.quic.TimeMark(0))
         kp.initiate(io.kuicksilver.quic.TimeMark(0), 100.milliseconds)
         assertSame(read, kp.hpRead, "header protection stays with the generation-0 key (RFC 9001 section 5.4)")
         kp.close()

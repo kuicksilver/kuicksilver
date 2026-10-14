@@ -283,4 +283,51 @@ class EcnTest {
             p.close()
         }
     }
+
+    @Test fun onlyTheTestPacketsAreMarkedUntilValidated() {
+        // RFC 9000 appendix A.4: 'On paths with a "testing" or "capable" state, the endpoint sends packets with an ECT marking --
+        // ECT(0) by default; otherwise, the endpoint sends unmarked packets.' After the ten test packets the path is "unknown" until
+        // an ACK validates the counts: a black hole that eats marked datagrams then costs ten packets, not everything until a PTO
+        val (p, c) = pair(clientCaps = IoCapabilities.Portable)
+        try {
+            transfer(p, c, 1_000_000) // a window wider than the ten test packets
+            c.setPathCapabilities(PathId.Initial, ecnCaps)
+            p.filterToServer = { i, _ -> p.clientEcnSentAt(i) != Ecn.Ect0 }
+            transfer(p, c, 200_000)
+            val marked = p.clientEcnSent.count { it == Ecn.Ect0 }
+            assertTrue(marked in 10..12, "the ten test packets (and an ACK-only packet or two between them) were marked: $marked")
+            assertEquals(EcnState.Failed, c.stats.ecnState, "the ten test packets were all declared lost (appendix A.4)")
+        } finally {
+            p.close()
+        }
+    }
+
+    @Test fun ceMarkedPacketIsAcknowledgedAtOnce() {
+        // RFC 9000 section 13.2.1: "an endpoint SHOULD immediately acknowledge all packets marked with the ECN Congestion Experienced
+        // (CE) codepoint in the IP header". One small ack-eliciting packet otherwise waits for max_ack_delay (25 ms, three steps)
+        var ce = false
+        val (p, c) = pair { ecnToServer = { e -> if (ce && e == Ecn.Ect0) Ecn.Ce else e } }
+        try {
+            transfer(p, c, 50_000)
+            assertEquals(EcnState.Capable, c.stats.ecnState)
+
+            fun stepsToAck(): Int {
+                p.runUntil(1.seconds) { false } // quiet
+                val id = c.openStream(true)
+                c.writeStream(id, ByteArray(100), 0, 100, true)
+                var steps = 0
+                while (steps < 20) {
+                    p.step()
+                    steps++
+                    if (c.stats.bytesInFlight == 0L) break
+                }
+                return steps
+            }
+            assertTrue(stepsToAck() > 1, "control: an unmarked lone packet waits for the delayed ACK")
+            ce = true
+            assertEquals(1, stepsToAck(), "a CE-marked packet is acknowledged in the round it arrived")
+        } finally {
+            p.close()
+        }
+    }
 }

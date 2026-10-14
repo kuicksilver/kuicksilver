@@ -198,4 +198,15 @@ class AckTrackerTest {
             p.close()
         }
     }
+
+    @Test fun ceMarkedPacketIsAcknowledgedImmediately() {
+        // RFC 9000 section 13.2.1: "an endpoint SHOULD immediately acknowledge all packets marked with the ECN Congestion Experienced
+        // (CE) codepoint in the IP header", so the sender learns of the congestion within one RTT (quic-go queues an ACK the same way)
+        val a = AckTracker(64)
+        a.onPacketReceived(0, true, t0, ce = true)
+        assertTrue(a.ackRequired)
+        val b = AckTracker(64)
+        b.onPacketReceived(0, false, t0, ce = true)
+        assertFalse(b.ackRequired, "a packet that is not ack-eliciting still elicits no ACK")
+    }
 }

@@ -13,6 +13,9 @@ import kotlin.time.Duration.Companion.seconds
 internal class QuicLimits(
     val cryptoOutOfOrderPerLevel: Int = 65_536,
     val cryptoPostHandshake: Int = 65_536,
+    /** Where the Initial and Handshake CRYPTO streams end (ngtcp2: 64 KiB each; Handshake here leaves room for large chains). */
+    val cryptoInitialMax: Long = 65_536,
+    val cryptoHandshakeMax: Long = 262_144,
     val undecryptablePackets: Int = 32,
     val ackRanges: Int = 64,
     val reassemblyRangesPerStream: Int = 256,

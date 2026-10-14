@@ -191,6 +191,7 @@ abstract interface io.kuicksilver.tls/QuicTlsSession : kotlin/AutoCloseable { //
     abstract fun setTransportParameters(kotlin/ByteArray) // io.kuicksilver.tls/QuicTlsSession.setTransportParameters|setTransportParameters(kotlin.ByteArray){}[0]
     abstract suspend fun verifyPeer(kotlin.collections/List<io.kuicksilver.tls/Certificate>): io.kuicksilver.tls/VerifyResult // io.kuicksilver.tls/QuicTlsSession.verifyPeer|verifyPeer(kotlin.collections.List<io.kuicksilver.tls.Certificate>){}[0]
     open fun enableEarlyData(kotlin/ByteArray?, io.kuicksilver.tls/EarlyDataAdmission?): kotlin/Boolean // io.kuicksilver.tls/QuicTlsSession.enableEarlyData|enableEarlyData(kotlin.ByteArray?;io.kuicksilver.tls.EarlyDataAdmission?){}[0]
+    open fun pendingCryptoBytes(io.kuicksilver.tls/EncryptionLevel): kotlin/Int // io.kuicksilver.tls/QuicTlsSession.pendingCryptoBytes|pendingCryptoBytes(io.kuicksilver.tls.EncryptionLevel){}[0]
     open fun resume(io.kuicksilver.tls/QuicSessionTicket): kotlin/Boolean // io.kuicksilver.tls/QuicTlsSession.resume|resume(io.kuicksilver.tls.QuicSessionTicket){}[0]
 }
 

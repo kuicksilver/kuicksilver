@@ -197,6 +197,39 @@ class RetryTest {
         }
     }
 
+    /** RFC 9369 section 4.1: "The client ignores Retry packets using other versions." */
+    @Test fun negative_retryInOtherVersionIgnored() {
+        for (retryVersion in listOf(VersionProfile.V2, VersionProfile.V1)) {
+            val p = EndpointPair()
+            p.serverStalled = true // no server packet before the Retry
+            try {
+                val c = p.connect(io.kuicksilver.quic.quicConfig { versions = listOf(VersionProfile.V1, VersionProfile.V2) })
+                p.step()
+                val b = PacketBuffer.allocate(100)
+                try {
+                    val n =
+                        RetryPacket.write(
+                            b,
+                            retryVersion,
+                            c.localCid,
+                            ConnectionId(ByteArray(8) { 5 }),
+                            ByteArray(16) { 7 },
+                            c.odcid,
+                            NullCryptoProvider,
+                            0,
+                        )
+                    p.feed(p.client, b.toByteArray(n), p.serverAddr)
+                } finally {
+                    b.close()
+                }
+                // the v1 Retry is the control: the same packet in the Initial's version is taken
+                assertEquals(retryVersion == VersionProfile.V1, c.retryReceivedForTest, "Retry in $retryVersion answering a v1 Initial")
+            } finally {
+                p.close()
+            }
+        }
+    }
+
     /**
      * Fuzzing finding (packetRecvClient): a Retry whose token cannot fit the client's next 1200-byte Initial made the packet
      * builder throw out of poll. Such a Retry is dropped; the largest token that fits is still taken and sent.

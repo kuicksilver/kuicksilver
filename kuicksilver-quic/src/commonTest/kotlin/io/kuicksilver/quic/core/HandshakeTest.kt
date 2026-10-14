@@ -15,7 +15,13 @@ import io.kuicksilver.quic.StreamPriority
 import io.kuicksilver.quic.TestCerts
 import io.kuicksilver.quic.ksl
 import io.kuicksilver.tls.Certificate
+import io.kuicksilver.tls.EncryptionLevel
+import io.kuicksilver.tls.QuicCrypto
+import io.kuicksilver.tls.QuicTlsSession
+import io.kuicksilver.tls.TlsConfig
+import io.kuicksilver.tls.TlsEvent
 import io.kuicksilver.tls.TlsException
+import io.kuicksilver.tls.TlsRole
 import io.kuicksilver.tls.TrustConfig
 import io.kuicksilver.tls.VerifyResult
 import kotlin.test.BeforeTest
@@ -26,10 +32,44 @@ import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.seconds
 
 @OptIn(ExperimentalKuicksilverApi::class, DelicateKuicksilverApi::class)
 class HandshakeTest {
     @BeforeTest fun load() = KslLoader.ensureLoaded()
+
+    /** RFC 9001 section 8.4: a server treats a ClientHello with a non-empty legacy_session_id as a PROTOCOL_VIOLATION. */
+    @Test fun negative_clientHelloWithLegacySessionIdIsProtocolViolation() {
+        val p = CorePair(crypto = WithLegacySessionId(ksl))
+        try {
+            p.runUntil(limit = 2.seconds) { p.closedReason(p.serverEvents) != null }
+            val r = p.closedReason(p.serverEvents)
+            assertIs<QuicException.ConnectionLost.TransportClosed>(r)
+            assertEquals(0x0aL, r.code, r.reason)
+        } finally {
+            p.close()
+        }
+    }
+
+    /** RFC 9001 section 8.2: a peer without the quic_transport_parameters extension is closed with 0x016d (missing_extension). */
+    @Test fun negative_missingTransportParametersIsMissingExtension() {
+        for (role in listOf(TlsRole.Server, TlsRole.Client)) {
+            // the session of [role] never reports the peer's transport parameters, as if the extension were absent
+            val p = CorePair(crypto = WithoutPeerTransportParameters(ksl, role))
+            try {
+                p.runUntil(limit = 2.seconds) {
+                    (if (role == TlsRole.Server) p.closedReason(p.serverEvents) else p.closedReason(p.clientEvents)) != null
+                }
+                val events = if (role == TlsRole.Server) p.serverEvents else p.clientEvents
+                val r = p.closedReason(events)
+                assertIs<QuicException.ConnectionLost.TransportClosed>(r, "$role")
+                assertEquals(0x16dL, r.code, "$role")
+                assertFalse(events.any { it is ConnectionEvent.HandshakeCompleted }, "$role")
+            } finally {
+                p.close()
+            }
+        }
+    }
 
     @Test fun nullHandshakeCompletesBothSides() {
         val p = CorePair()
@@ -280,3 +320,72 @@ class HandshakeTest {
 }
 
 private fun Int.milliseconds() = kotlin.time.Duration.parse("${this}ms")
+
+/** Hides the peer's transport parameters from the sessions of [role] (a peer that sent no quic_transport_parameters). */
+private class WithoutPeerTransportParameters(
+    private val inner: QuicCrypto,
+    private val role: TlsRole,
+) : QuicCrypto by inner {
+    override fun newSession(config: TlsConfig): QuicTlsSession = wrap(config, inner.newSession(config))
+
+    override fun newSession(
+        config: TlsConfig,
+        earlyData: Boolean,
+    ): QuicTlsSession = wrap(config, inner.newSession(config, earlyData))
+
+    private fun wrap(
+        config: TlsConfig,
+        s: QuicTlsSession,
+    ): QuicTlsSession =
+        if (config.role != role) {
+            s
+        } else {
+            object : QuicTlsSession by s {
+                override fun nextEvent(): TlsEvent? {
+                    while (true) {
+                        val e = s.nextEvent() ?: return null
+                        if (e !is TlsEvent.PeerTransportParameters) return e
+                    }
+                }
+            }
+        }
+}
+
+/** A client whose ClientHello carries a 32-byte legacy_session_id (TLS 1.3 middlebox compatibility mode, RFC 8446 appendix D.4). */
+private class WithLegacySessionId(
+    private val inner: QuicCrypto,
+) : QuicCrypto by inner {
+    override fun newSession(config: TlsConfig): QuicTlsSession = wrap(config, inner.newSession(config))
+
+    override fun newSession(
+        config: TlsConfig,
+        earlyData: Boolean,
+    ): QuicTlsSession = wrap(config, inner.newSession(config, earlyData))
+
+    private fun wrap(
+        config: TlsConfig,
+        s: QuicTlsSession,
+    ): QuicTlsSession =
+        if (config.role != TlsRole.Client) {
+            s
+        } else {
+            object : QuicTlsSession by s {
+                private var done = false
+
+                override fun nextEvent(): TlsEvent? {
+                    val e = s.nextEvent()
+                    if (done || e !is TlsEvent.CryptoData || e.level != EncryptionLevel.Initial || e.data[38].toInt() != 0) return e
+                    done = true
+                    // handshake header (4), legacy_version (2), random (32), then the session ID length byte at 38
+                    val d = e.data
+                    val out = d.copyOfRange(0, 38) + byteArrayOf(32) + ByteArray(32) { 0x5a } + d.copyOfRange(39, d.size)
+                    val len = ((d[1].toInt() and 0xff) shl 16) or ((d[2].toInt() and 0xff) shl 8) or (d[3].toInt() and 0xff)
+                    val n = len + 32
+                    out[1] = (n ushr 16).toByte()
+                    out[2] = (n ushr 8).toByte()
+                    out[3] = n.toByte()
+                    return TlsEvent.CryptoData(e.level, out)
+                }
+            }
+        }
+}

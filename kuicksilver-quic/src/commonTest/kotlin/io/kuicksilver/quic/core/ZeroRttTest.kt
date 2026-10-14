@@ -17,15 +17,20 @@ import io.kuicksilver.quic.QuicConfig
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.TimeMark
 import io.kuicksilver.quic.TransportError
+import io.kuicksilver.quic.VersionProfile
 import io.kuicksilver.quic.endpoint.ZeroRttReplayRegister
 import io.kuicksilver.quic.ksl
 import io.kuicksilver.quic.quicConfig
 import io.kuicksilver.quic.serverWithKeys
 import io.kuicksilver.quic.wire.TransportParametersCodec
 import io.kuicksilver.tls.EarlyDataState
+import io.kuicksilver.tls.EncryptionLevel
+import io.kuicksilver.tls.QuicCrypto
 import io.kuicksilver.tls.QuicSessionTicket
+import io.kuicksilver.tls.QuicTlsSession
 import io.kuicksilver.tls.SessionTicketConfig
 import io.kuicksilver.tls.TlsConfig
+import io.kuicksilver.tls.TlsEvent
 import io.kuicksilver.tls.TlsRole
 import kotlin.random.Random
 import kotlin.test.BeforeTest
@@ -54,9 +59,11 @@ class ZeroRttTest {
     private fun ticket(
         serverQuic: QuicConfig = QuicConfig.Default,
         serverTls: TlsConfig = CoreFixtures.server(),
+        clientQuic: QuicConfig = QuicConfig.Default,
     ): QuicSessionTicket {
         val p =
             CorePair(
+                clientQuic = clientQuic,
                 serverTls = serverTls,
                 crypto = ksl,
                 clientEarly = EarlyDataState.Allowed,
@@ -95,10 +102,12 @@ class ZeroRttTest {
         serverEarly: ServerEarlyData? = early(),
         serverQuic: QuicConfig = QuicConfig.Default,
         mode: EarlyDataState = EarlyDataState.Allowed,
+        clientQuic: QuicConfig = QuicConfig.Default,
     ): Pair<CorePair, Long> {
         var id = -1L
         val p =
             CorePair(
+                clientQuic = clientQuic,
                 crypto = ksl,
                 clientEarly = mode,
                 serverEarly = serverEarly,
@@ -121,7 +130,8 @@ class ZeroRttTest {
         assertNull(rememberedParameters(ByteArray(0)))
         assertNull(rememberedParameters(byteArrayOf(5, 'h'.code.toByte(), '3'.code.toByte())))
         assertNull(rememberedParameters(byteArrayOf(0xff.toByte())))
-        assertNotNull(rememberedParameters(rememberedBlob("h3", ByteArray(0))))
+        assertNull(rememberedParameters(byteArrayOf(0, 0, 0, 1, 5, 'h'.code.toByte(), '3'.code.toByte())))
+        assertNotNull(rememberedParameters(rememberedBlob(1, "h3", ByteArray(0))))
     }
 
     @Test fun zeroRttDataAnsweredBeforeHandshakeCompletes() {
@@ -246,6 +256,128 @@ class ZeroRttTest {
         val r = assertIs<QuicException.ConnectionLost.TransportClosed>(p.closedReason(p.clientEvents))
         assertEquals(TransportError.PROTOCOL_VIOLATION, r.code, r.reason)
         p.close()
+    }
+
+    /** RFC 9221 section 3: a stored max_datagram_frame_size must not shrink when the server accepts 0-RTT. */
+    @Test fun negative_0rttMaxDatagramFrameSizeReduced() {
+        val t = ticket()
+        val tp = TransportParametersCodec.decode(rememberedTp(t.remembered!!), TlsRole.Server)
+        tp.maxDatagramFrameSize = tp.maxDatagramFrameSize + 1200
+        t.remembered = withTp(t.remembered!!, TransportParametersCodec.encode(tp, TlsRole.Server, 27))
+        val (p, _) = resumed(t)
+        assertTrue(p.runUntil(limit = 3.seconds) { p.closedReason(p.clientEvents) != null })
+        val r = assertIs<QuicException.ConnectionLost.TransportClosed>(p.closedReason(p.clientEvents))
+        assertEquals(TransportError.PROTOCOL_VIOLATION, r.code, r.reason)
+        p.close()
+    }
+
+    /**
+     * RFC 9000 section 7.4.1: "When sending frames in 0-RTT packets, a client MUST only use remembered transport parameters";
+     * the server's new ones apply from 1-RTT on.
+     */
+    @Test fun zeroRttKeepsRememberedLimitsUntilOneRtt() {
+        val t = ticket()
+        val tp = TransportParametersCodec.decode(rememberedTp(t.remembered!!), TlsRole.Server)
+        tp.initialMaxData = 2000
+        t.remembered = withTp(t.remembered!!, TransportParametersCodec.encode(tp, TlsRole.Server, 27))
+        val (p, _) = resumed(t, request = "x")
+        try {
+            val c = p.client
+            p.filterToServer = { _, _ -> false }
+            p.step() // the client drives TLS: ClientHello and the 0-RTT key
+            assertEquals(2000L, c.connSend.maxLimit)
+            // the server's EncryptedExtensions before its Finished: 0-RTT keeps the remembered limit
+            tp.initialMaxData = 1_000_000
+            tp.originalDestinationConnectionId = c.odcid
+            tp.initialSourceConnectionId = c.remoteCid
+            ConnectionHandshakeSink(c).onPeerTransportParameters(TransportParametersCodec.encode(tp, TlsRole.Server, 27), c.version.version)
+            assertTrue(c.writeKeys[1] != null && c.writeKeys[3] == null, "still sending 0-RTT")
+            assertEquals(2000L, c.connSend.maxLimit, "0-RTT uses only the remembered limit")
+        } finally {
+            p.close()
+        }
+        val (q, _) = resumed(t2(), request = "x")
+        try {
+            assertTrue(q.handshake())
+            assertEquals(true, q.client.earlyDataAccepted)
+            assertEquals(QuicConfig.Default.initialConnectionWindow, q.client.connSend.maxLimit, "1-RTT gets the server's new limit")
+        } finally {
+            q.close()
+        }
+    }
+
+    private fun t2(): QuicSessionTicket {
+        val t = ticket()
+        val tp = TransportParametersCodec.decode(rememberedTp(t.remembered!!), TlsRole.Server)
+        tp.initialMaxData = 2000
+        t.remembered = withTp(t.remembered!!, TransportParametersCodec.encode(tp, TlsRole.Server, 27))
+        return t
+    }
+
+    private val v1v2 = quicConfig { versions = listOf(VersionProfile.V1, VersionProfile.V2) }
+    private val v2v1 = quicConfig { versions = listOf(VersionProfile.V2, VersionProfile.V1) }
+
+    /**
+     * RFC 9369 section 4.1: across a compatible upgrade from v1 to v2 the client keeps sending 0-RTT in v1 ("MUST NOT send
+     * 0-RTT packets using the negotiated version") and the server takes it with v1 keys.
+     */
+    @Test fun zeroRttStaysInTheOriginalVersionAcrossAnUpgrade() {
+        val t = ticket() // a v1 server: a v1 ticket
+        val (p, id) = resumed(t, clientQuic = v1v2, serverQuic = v2v1, serverEarly = early(v2v1))
+        try {
+            assertTrue(p.handshake(), "${p.closedReason(p.clientEvents)} / ${p.closedReason(p.serverEvents)}")
+            assertEquals(VersionProfile.V2, p.server!!.version, "upgraded to v2")
+            assertEquals(VersionProfile.V2, p.client.version)
+            assertEquals(true, p.client.earlyDataAccepted)
+            assertTrue(p.server!!.streamReceivedEarly(id), "the request arrived in 0-RTT")
+            assertEquals("GET /index.html", streamText(p.server!!, id))
+        } finally {
+            p.close()
+        }
+    }
+
+    /** RFC 9369 section 5: a ticket belongs to the negotiated version of its connection and is not used to start another. */
+    @Test fun negative_ticketOfAnotherVersionIsNotUsed() {
+        for ((start, used) in listOf(v1v2 to false, v2v1 to true)) {
+            val t = ticket(serverQuic = v2v1, clientQuic = v1v2) // upgraded to v2: a v2 ticket
+            var took: Boolean? = null
+            val p =
+                CorePair(
+                    clientQuic = start,
+                    serverQuic = v2v1,
+                    crypto = ksl,
+                    clientEarly = EarlyDataState.Allowed,
+                    serverEarly = early(v2v1),
+                    clientSetup = { c -> took = c.useTicket(t) },
+                )
+            try {
+                assertEquals(used, took, "a v2 ticket for a connection starting in ${start.versions.first()}")
+                assertTrue(p.handshake())
+                assertEquals(used, p.client.earlyDataAccepted == true, "0-RTT only with the ticket of our version")
+            } finally {
+                p.close()
+            }
+        }
+    }
+
+    /**
+     * RFC 9001 section 4.6.1: a NewSessionTicket whose early_data extension carries any max_early_data_size other than
+     * 0xffffffff is a PROTOCOL_VIOLATION (OpenSSL reports it as illegal_parameter).
+     */
+    @Test fun negative_invalidMaxEarlyDataIsProtocolViolation() {
+        val p =
+            CorePair(
+                crypto = WithMaxEarlyData(ksl, 0x4000),
+                clientEarly = EarlyDataState.Allowed,
+                serverEarly = early(),
+            )
+        try {
+            p.runUntil(limit = 3.seconds) { p.closedReason(p.clientEvents) != null }
+            val r = assertIs<QuicException.ConnectionLost.TransportClosed>(p.closedReason(p.clientEvents))
+            assertEquals(TransportError.PROTOCOL_VIOLATION, r.code, r.reason)
+        } finally {
+            p.close()
+        }
     }
 
     @Test fun rejectedWithSmallerLimitsFailsZeroRttRejected() {
@@ -385,5 +517,67 @@ class ZeroRttTest {
             "traffic continues within the new limits",
         )
         p.close()
+    }
+}
+
+/** A server whose NewSessionTickets announce [max] in their early_data extension instead of 0xffffffff. */
+private class WithMaxEarlyData(
+    private val inner: QuicCrypto,
+    private val max: Int,
+) : QuicCrypto by inner {
+    override fun newSession(config: TlsConfig): QuicTlsSession = wrap(config, inner.newSession(config))
+
+    override fun newSession(
+        config: TlsConfig,
+        earlyData: Boolean,
+    ): QuicTlsSession = wrap(config, inner.newSession(config, earlyData))
+
+    private fun wrap(
+        config: TlsConfig,
+        s: QuicTlsSession,
+    ): QuicTlsSession =
+        if (config.role != TlsRole.Server) {
+            s
+        } else {
+            object : QuicTlsSession by s {
+                override fun nextEvent(): TlsEvent? {
+                    val e = s.nextEvent()
+                    if (e !is TlsEvent.CryptoData || e.level != EncryptionLevel.Application) return e
+                    return TlsEvent.CryptoData(e.level, patch(e.data.copyOf()))
+                }
+            }
+        }
+
+    /** Walks the NewSessionTicket messages (RFC 8446 section 4.6.1) and rewrites each early_data extension's value. */
+    private fun patch(d: ByteArray): ByteArray {
+        fun u(
+            at: Int,
+            n: Int,
+        ): Int {
+            var v = 0
+            for (i in 0 until n) v = (v shl 8) or (d[at + i].toInt() and 0xff)
+            return v
+        }
+        var m = 0
+        while (m + 4 <= d.size) {
+            val end = m + 4 + u(m + 1, 3)
+            if (d[m].toInt() == 4) {
+                var p = m + 4 + 8
+                p += 1 + u(p, 1) // nonce
+                p += 2 + u(p, 2) // ticket
+                val extEnd = p + 2 + u(p, 2)
+                p += 2
+                while (p + 4 <= extEnd) {
+                    val type = u(p, 2)
+                    val len = u(p + 2, 2)
+                    if (type == 0x2a && len == 4) {
+                        for (i in 0 until 4) d[p + 4 + i] = (max ushr (24 - 8 * i)).toByte()
+                    }
+                    p += 4 + len
+                }
+            }
+            m = end
+        }
+        return d
     }
 }

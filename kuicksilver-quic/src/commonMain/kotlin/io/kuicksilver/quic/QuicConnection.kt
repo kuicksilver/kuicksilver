@@ -85,7 +85,10 @@ public interface QuicConnection : AutoCloseable {
     /** Largest payload [sendDatagram] accepts right now; 0 while unknown or unsupported. Follows the path MTU. */
     public val maxDatagramSize: StateFlow<Int>
 
-    /** Starts a key update (RFC 9001 section 6); suspends until one is allowed: handshake confirmed and the current phase acknowledged (section 6.1). */
+    /**
+     * Starts a key update (RFC 9001 section 6); suspends until one is allowed: handshake confirmed, the current phase
+     * acknowledged (section 6.1) and, after an earlier update, three PTOs since that acknowledgment (section 6.5).
+     */
     public suspend fun keyUpdate()
 
     /** RFC 5705 exporter over the connection's TLS session; runs on the endpoint loop (the TLS object is not shared across threads). */

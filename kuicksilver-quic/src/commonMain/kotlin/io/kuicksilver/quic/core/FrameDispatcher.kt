@@ -12,6 +12,10 @@ import io.kuicksilver.quic.wire.QuicWireException
 import io.kuicksilver.tls.TlsRole
 
 /** Frame dispatch of the receive path: each decoded frame of a [PacketReceiver] packet goes to its handler in the connection (RFC 9000 section 12.4). */
+
+/** Handshake header, legacy_version, random and the legacy_session_id length byte of a ClientHello. */
+private const val HELLO_PREFIX = 39
+
 @OptIn(ExperimentalKuicksilverApi::class)
 internal class FrameDispatcher(
     private val c: ConnectionCore,
@@ -54,9 +58,33 @@ internal class FrameDispatcher(
         if (r.level == 0) r.initialCryptoSeen = true
         c.cryptoStreams.onData(r.level, offset, data, off, len, c.handshake.done)
         c.cryptoStreams.deliver(r.level) { bytes, n ->
+            if (r.level == 0 && c.role == TlsRole.Server) checkClientHello(bytes, n)
             c.handshake.provide(r.level, bytes, n)
             c.tlsDirty = true
         }
+    }
+
+    private var helloPrefix: ByteArray? = ByteArray(HELLO_PREFIX)
+    private var helloPrefixLength = 0
+
+    /**
+     * RFC 9001 section 8.4: "A server SHOULD treat the receipt of a TLS ClientHello with a non-empty legacy_session_id
+     * field as a connection error of type PROTOCOL_VIOLATION" (TLS would only fail the handshake later, on an alert).
+     * The length byte follows the handshake header (4), legacy_version 0x0303 (2) and random (32); the first 39 bytes
+     * of the Initial stream are collected until they are all there.
+     */
+    private fun checkClientHello(
+        bytes: ByteArray,
+        n: Int,
+    ) {
+        val prefix = helloPrefix ?: return
+        val take = minOf(n, HELLO_PREFIX - helloPrefixLength)
+        bytes.copyInto(prefix, helloPrefixLength, 0, take)
+        helloPrefixLength += take
+        if (helloPrefixLength < HELLO_PREFIX) return
+        helloPrefix = null
+        val tlsClientHello = prefix[0].toInt() == 1 && prefix[4].toInt() == 3 && prefix[5].toInt() == 3
+        if (tlsClientHello && prefix[HELLO_PREFIX - 1].toInt() != 0) violation("ClientHello with a legacy_session_id")
     }
 
     override fun newToken(
