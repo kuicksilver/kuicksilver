@@ -11,10 +11,12 @@ must also run elsewhere (another OS or CPU architecture) checks once at startup 
 catching `KslException` from the first connection:
 
 ```kotlin
+// guide:tls:availability
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
 if (!KslLoader.isAvailable()) fallBackToTcp()   // never throws; the outcome is cached for the process
 ```
 
-`KslLoader.availability()` (`@ExperimentalKuicksilverApi`) says why: `NativeAvailability.Unavailable.reason` is
+`KslLoader.isAvailable()` and `KslLoader.availability()` are experimental (`@ExperimentalKuicksilverApi`); the latter says why: `NativeAvailability.Unavailable.reason` is
 `NoLibraryForPlatform`, `LoadFailed`, `IntegrityMismatch` (the SHA-256 manifest check refused the library) or
 `AbiMismatch`, with the original exception as `cause`. The check makes the same single load attempt as
 `KslLoader.ensureLoaded()`; after a failure, `ensureLoaded()` throws that same exception without retrying.

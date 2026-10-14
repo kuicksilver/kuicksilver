@@ -839,7 +839,8 @@ internal fun KslContext.cachedChainStillTrusted(
     chain: List<Certificate>,
     reference: HostName,
 ): Boolean =
-    chain.isNotEmpty() && Ksl.ctxVerifyChain(handle, chain.map { it.encoded }, reference.value, nowSeconds() + resumptionClockSkewForTest) == 0
+    chain.isNotEmpty() &&
+        Ksl.ctxVerifyChain(handle, chain.map { it.encoded }, reference.value, nowSeconds() + resumptionClockSkewForTest) == 0
 
 internal fun TrustConfig.cacheKey(): String =
     when (this) {

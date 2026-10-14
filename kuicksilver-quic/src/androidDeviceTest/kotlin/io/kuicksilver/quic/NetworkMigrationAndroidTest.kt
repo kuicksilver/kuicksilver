@@ -6,6 +6,7 @@ package io.kuicksilver.quic
 
 import android.content.Context
 import android.net.ConnectivityManager
+import android.util.Log
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import io.ktor.network.sockets.InetSocketAddress
@@ -37,6 +38,43 @@ import kotlin.time.Duration.Companion.seconds
 class NetworkMigrationAndroidTest {
     private val connectivity =
         InstrumentationRegistry.getInstrumentation().targetContext.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+
+    /** The Android sample of docs/guide/quic.md (an instrumentation test has no lifecycle: a coroutine scope stands in). */
+    @Test fun followDefaultNetworkSample() =
+        runBlocking {
+            KslLoader.ensureLoaded()
+            val context = InstrumentationRegistry.getInstrumentation().targetContext
+            val lo = InetSocketAddress("127.0.0.1", 0)
+            val server =
+                QuicEndpoint.bind(
+                    lo,
+                    QuicEndpointConfig
+                        .Builder()
+                        .apply {
+                            this.server = QuicServerConfig.Builder(CoreFixtures.server()).build()
+                            crypto = KslQuicCrypto
+                        }.build(),
+                )
+            val client = QuicEndpoint.bind(lo, QuicEndpointConfig.Builder().apply { crypto = KslQuicCrypto }.build())
+            try {
+                withTimeout(60.seconds) {
+                    val accepted = async { server.accept() }
+                    val connection = client.connect(server.localAddress, QuicClientConfig.Builder(CoreFixtures.client()).build())
+                    accepted.await()
+                    val lifecycleScope = this
+                    // guide:quic:android-follow
+                    val cm = context.getSystemService(ConnectivityManager::class.java)
+                    val migrator = connection.followDefaultNetwork(cm, lifecycleScope) // started; migrator.close() stops it
+                    val log = lifecycleScope.launch { migrator.events.collect { Log.i("quic", "$it") } }
+                    migrator.close()
+                    log.cancel()
+                    connection.close()
+                }
+            } finally {
+                client.close()
+                server.close()
+            }
+        }
 
     @Test fun bindingToTheActiveNetworkSucceeds() =
         runBlocking {

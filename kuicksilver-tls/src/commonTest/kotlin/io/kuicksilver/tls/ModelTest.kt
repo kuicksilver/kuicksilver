@@ -30,7 +30,8 @@ class TrustConfigTest {
 
     /** Byte arrays the API hands out are copies: changing one never changes a certificate's identity or a pin. */
     @Test fun handedOutBytesAreCopies() {
-        io.kuicksilver.native.KslLoader.ensureLoaded()
+        io.kuicksilver.native.KslLoader
+            .ensureLoaded()
         val cert = Certificate(TestCerts.server)
         val pin = cert.spkiSha256
         cert.der.fill(0)

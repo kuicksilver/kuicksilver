@@ -1,9 +1,16 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
+@file:OptIn(ExperimentalKuicksilverApi::class)
+
 package io.kuicksilver.ktor.client
 
 import io.ktor.client.HttpClient
 import io.ktor.client.plugins.HttpTimeout
+import io.ktor.client.request.HttpRequestData
+import io.ktor.http.HttpProtocolVersion
+import io.kuicksilver.annotations.ExperimentalKuicksilverApi
+import io.kuicksilver.quic.qlog.AsyncQlogSink
+import io.kuicksilver.quic.qlog.DirectoryQlogSink
 import io.kuicksilver.tls.SpkiSha256
 import io.kuicksilver.tls.TrustConfig
 import java.io.File
@@ -24,7 +31,33 @@ class GuideSamplesTest {
         assertTrue("guide:ktor:pool" in guide, "marker pool")
     }
 
-    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    @Test fun observabilityAndZeroRttSamples() {
+        // guide:ktor:client-observability
+        val observed =
+            HttpClient(Kuicksilver) {
+                engine {
+                    eventListener =
+                        object : KuicksilverEventListener() {
+                            override fun protocolSelected(
+                                request: HttpRequestData,
+                                protocol: HttpProtocolVersion,
+                                reason: ProtocolReason,
+                            ) {
+                                println("${request.url}: $protocol ($reason)")
+                            }
+                        }
+                    http3 { qlog = AsyncQlogSink(DirectoryQlogSink("qlog")) }
+                }
+            }
+        observed.close()
+        // guide:ktor:zero-rtt-client
+        val client =
+            HttpClient(Kuicksilver) {
+                engine { http3 { earlyData = true } }
+            }
+        client.close()
+    }
+
     @Test
     fun poolSample() {
         // guide:ktor:pool

@@ -25,6 +25,7 @@ HTTP/3 GET, a raw QUIC echo with an RTT and path-event log, and a server mode ad
 Depend on the Kuicksilver modules from your shared module like any KMP library. The klibs carry the prefixed OpenSSL
 and `libksl` as static libraries; Kotlin/Native links them into the framework your app already builds:
 
+<!-- guide-sync: not compiled (a Gradle build script; samples/ios/shared/build.gradle.kts is the built one) -->
 ```kotlin
 kotlin {
     listOf(iosArm64(), iosSimulatorArm64()).forEach {

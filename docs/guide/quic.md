@@ -40,6 +40,7 @@ radio links with modest RTTs; keep the default for satellite or other long-RTT p
 validation, max(3 x PTO, 6 x `initialRtt`) (RFC 9000 §8.2.4).
 
 ```kotlin
+// guide:quic:initial-rtt
 val lossyMobile = quicConfig { initialRtt = 100.milliseconds }
 ```
 
@@ -141,16 +142,23 @@ design in [ADR-0015](../adr/0015-0rtt-implementation.md)). It is off on both sid
 > another server process with shared ticket keys passes the age check alone.
 
 ```kotlin
+// guide:quic:zero-rtt
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
 val server = QuicEndpoint.bind(addr, quicEndpointConfig {
     this.server = quicServerConfig(tlsServerConfig) { earlyData = true }   // tickets that allow 0-RTT
 })
 val client = QuicEndpoint.bind(InetSocketAddress("0.0.0.0", 0))
 val config = quicClientConfig(tlsClientConfig) { earlyData = EarlyDataState.Allowed }
-client.connect(addr, config).close()                 // a full handshake leaves a ticket in this endpoint
-val c = client.connectEarly(addr, config)            // returns once the 0-RTT keys exist
+val first = client.connect(addr, config)             // a full handshake; the server's ticket arrives shortly after it
+// ... the application uses `first`; once the ticket is in, later connections of this endpoint can resume
+val c = client.connectEarly(addr, config)            // returns once the 0-RTT keys exist (a full handshake without a ticket)
 val s = c.openBidi(); s.output.writeFully(safeRequest); s.output.flush()   // travels in 0-RTT
 c.awaitHandshake()                                   // from here the connection is authenticated
+println("0-RTT accepted: ${c.earlyDataAccepted}")    // false: the server refused it; null: there was no ticket yet
 ```
+
+The ticket is not there the moment `connect` returns: the server sends it after the handshake, so a `connectEarly` right
+after the first `connect` usually finds none and does a full handshake (`earlyDataAccepted` is then null).
 
 - **Tickets** are kept per client endpoint, used once, and checked against the current trust again before use. The
   remembered transport parameters (RFC 9000 section 7.4.1) set the limits of 0-RTT. Closing the endpoint drops them.
@@ -298,6 +306,7 @@ A caller driving `ConnectionCore` directly can start an update once the handshak
 
 ```kotlin
 // guide:quic:key-update
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
 if (core.initiateKeyUpdate(now)) println("key phase ${core.stats.keyUpdates}")   // false while RFC 9001 section 6.1 forbids it
 ```
 
@@ -379,6 +388,7 @@ whenever the network changes:
 
 ```kotlin
 // guide:quic:network-migrator
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
 val migrator = NetworkMigrator(connection, networks, { DatagramIo.open(InetSocketAddress("0.0.0.0", 0)) }, scope)
 val log = scope.launch { migrator.events.collect { println("network: $it") } }
 migrator.start()
@@ -405,6 +415,8 @@ server connection is refused with `IllegalArgumentException`.
 On Android, `followDefaultNetwork` does the wiring (API 24+):
 
 ```kotlin
+// guide:quic:android-follow
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
 val cm = context.getSystemService(ConnectivityManager::class.java)
 val migrator = connection.followDefaultNetwork(cm, lifecycleScope)   // started; migrator.close() stops it
 lifecycleScope.launch { migrator.events.collect { Log.i("quic", "$it") } }
@@ -427,6 +439,8 @@ the connection: if no network returns within the idle timeout, the connection cl
 On iOS and macOS, `followDefaultNetwork(scope)` does the same with the Network framework:
 
 ```kotlin
+// guide:quic:apple-follow
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
 val migrator = connection.followDefaultNetwork(scope)   // started; migrator.close() stops it
 scope.launch { migrator.events.collect { println("quic: $it") } }
 ```
@@ -451,6 +465,8 @@ retrying it in a loop, and every connection reports `PathEvent.SocketLost(path, 
 connection is not closed. Recovery is a move to a fresh socket:
 
 ```kotlin
+// guide:quic:socket-lost
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
 connection.pathEvents.collect { e ->
     if (e is PathEvent.SocketLost && e.path.id == connection.activePath?.id) connection.rebind()
 }
@@ -641,6 +657,7 @@ few seconds from any thread (fields are read without a lock and may lag the loop
 
 ```kotlin
 // guide:quic:stats
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
 val stats = server.stats
 println("${stats.connectionsActive} live, ${stats.handshakesCompleted} handshakes, ${stats.connectionsRefusedAcceptQueue} refused")
 ```
@@ -667,6 +684,7 @@ hex, the same name the connection's qlog trace has.
 
 ```kotlin
 // guide:quic:observability
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
 val observed = quicEndpointConfig {
     this.server = quicServerConfig(tlsServerConfig)
     logger = KuicksilverLogger.stderr(LogLevel.Info)
@@ -692,6 +710,7 @@ or `close()`, ends the grace period at once.
 
 ```kotlin
 // guide:quic:shutdown
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
 server.shutdown(grace = 30.seconds)
 ```
 
@@ -714,6 +733,7 @@ connection in n; `flush()` waits for what is queued and `close()` stops the writ
 
 ```kotlin
 // guide:quic:qlog-async
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
 val quicWithAsyncQlog = quicConfig { qlog = AsyncQlogSink(DirectoryQlogSink(qlogDir), sampleEvery = 10) }
 ```
 
@@ -726,6 +746,7 @@ scheduler) can drive it directly instead of going through `QuicEndpoint`.
 
 ```kotlin
 // guide:quic:core-loop
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
 val core = ConnectionCore.client(quic, tlsClientConfig, KslQuicCrypto, remote, Random, now)
 val out = PacketBatch(capacity = 4)
 try {

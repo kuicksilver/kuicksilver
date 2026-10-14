@@ -128,6 +128,7 @@ val client = HttpClient(Kuicksilver) {
 
 ```kotlin
 // guide:ktor:pool
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
 val client = HttpClient(Kuicksilver) {
     engine {
         maxConnectionsCount = 1000                 // HTTP/1.1 connections of the engine, idle ones included
@@ -162,7 +163,7 @@ the server closed meanwhile is detected when it is taken from the pool and repla
   credit is used up, a request waits for the next credit on that connection instead of failing or opening another
   connection; the request timeout bounds the wait (`HttpRequestTimeoutException`), and so does the socket timeout,
   which covers every wait until the response head. A connection without requests for `idleTimeout` is closed (QUIC's
-  own idle timeout, `quic { idleTimeout }` and the server's, may end it first); one past `maxConnectionLifetime` takes
+  own idle timeout, `quic = quicConfig { maxIdleTimeout = ... }` and the server's, may end it first); one past `maxConnectionLifetime` takes
   no new requests and closes once its requests are done.
 - **Cleanup.** A background task of the engine closes expired connections; it sleeps until the next expiry, at most
   `idleTimeout` and at most a minute, and stops when the client closes. Per-origin bookkeeping lives only while an
@@ -241,6 +242,8 @@ handshake, `HTTP/3.0` once accepted) and the peer's address, `tlsHandshakeFailed
 around the application's pipeline with the `ApplicationCall` (its response status) and the pipeline's failure, if any.
 
 ```kotlin
+// guide:ktor:server-observability
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
 embeddedServer(Kuicksilver, configure = {
     tlsConnector(identity) { port = 443 }
     logger = KuicksilverLogger.stderr(LogLevel.Info)
@@ -263,6 +266,8 @@ or closed). `logger` (null keeps `http3.endpoint.logger`) also receives the list
 `http3 { qlog = ...; connectionListener = ... }` reach the engine's QUIC endpoint.
 
 ```kotlin
+// guide:ktor:client-observability
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
 HttpClient(Kuicksilver) {
     engine {
         eventListener = object : KuicksilverEventListener() {
@@ -296,8 +301,9 @@ default.
 
 - **Server:** set `quicEarlyData = true` in the engine configuration. GET, HEAD and OPTIONS requests that arrive in
   0-RTT run before the handshake completes, and `call.request.receivedEarly` is true for them. Every other request
-  waits for the handshake. `http3Settings { earlyData = Http3EarlyDataPolicy.Reject425() }` answers `425 Too Early`
-  instead.
+  waits for the handshake. `http3Settings = http3Settings { earlyData = Http3EarlyDataPolicy.Reject425() }` answers
+  `425 Too Early` instead (an assignment: a bare `http3Settings { ... }` inside `configure` only builds a value and
+  changes nothing).
 - **Behind a gateway** (with or without `quicEarlyData`): a CDN or reverse proxy that forwards a request it received in
   early data marks it `Early-Data: 1` (RFC 8470 section 5.1), and such a request may be a replay whatever the state of
   the connection it arrives on. Over HTTP/1.1 and HTTP/3 the server engine sets `call.request.receivedEarly` for it and
@@ -315,6 +321,20 @@ default.
     on a path that went dark fails then and falls back to HTTP/1.1, not after `handshakeTimeout`.
   - A request that waits for the handshake (POST, or anything with a body) has not been sent when the handshake fails:
     it goes over HTTP/1.1 like any request whose HTTP/3 connection could not be set up.
+
+```kotlin
+// guide:ktor:zero-rtt-server
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+val server = embeddedServer(Kuicksilver, configure = {
+    tlsConnector(identity) { port = 443 }
+    quicEarlyData = true
+    http3Settings = http3Settings { earlyData = Http3EarlyDataPolicy.Reject425() }   // or keep the default: safe methods early
+}, module = Application::module)
+// guide:ktor:zero-rtt-client
+val client = HttpClient(Kuicksilver) {
+    engine { http3 { earlyData = true } }
+}
+```
 
 > **Replay warning.** An attacker can replay a 0-RTT request (RFC 8446 section 8). Turn this on only when the handlers
 > of GET, HEAD and OPTIONS have no side effects.
