@@ -408,6 +408,9 @@ QUIC congestion control and loss recovery (conformance review of 2026-10-14):
 
 QUIC runtime and sockets:
 
+- A client whose only socket was lost between handshake completion and confirmation ends at once with
+  `ConnectionLost.NoViablePath`: it may not migrate yet (RFC 9000 §9) and can neither send its Finished nor receive
+  HANDSHAKE_DONE, so `migrate()` used to wait for the 30 s idle timeout.
 - The `UnsupportedOperationException` of a Kotlin/Native QUIC server without the accelerated socket named Linux and
   Apple only; Windows has the socket too. `ConnectionLost.Timeout`'s KDoc no longer lists the removed path-validation
   and disconnect timers, and the Ktor server's `udpSocketCount` KDoc says Linux and Android (it said Linux).

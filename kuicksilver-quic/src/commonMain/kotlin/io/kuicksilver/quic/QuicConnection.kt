@@ -41,9 +41,11 @@ public interface QuicConnection : AutoCloseable {
     public val pathEvents: Flow<PathEvent>
 
     /**
-     * Client only: a new path to the server through [io] (a second socket), unvalidated. IllegalStateException before the
-     * handshake is confirmed, when the server advertised `disable_active_migration`, or beyond four paths; the socket is closed then,
-     * as on any other failure or cancellation before the path took it over.
+     * Client only: a new path to the server through [io] (a second socket), unvalidated. Before the handshake is confirmed it
+     * waits for the confirmation (it follows completion within a round trip) and throws the connection's
+     * [QuicException.ConnectionLost] if it ends first; IllegalStateException when the server advertised
+     * `disable_active_migration`, or beyond four paths. The socket is closed then, as on any other failure or cancellation before
+     * the path took it over.
      */
     public suspend fun addPath(io: DatagramIo): QuicPath
 
