@@ -743,6 +743,9 @@ Pre-release API and operations review (2026-10-14):
   stream and could discard its own Close reply on the way to the server; each direction now ends on its own (07b105a9).
 - Kotlin/Native IP literals take ASCII digits only and no octets with leading zeros: `fe80::١` and `010.0.0.1` (which
   `inet_aton` reads as 8.0.0.1) could name different addresses for the loop and the socket (b3332a90).
+- HTTP/3 client: a caller cancelled just as `request` (or `connect`) returned dropped the finished response without
+  STOP_SENDING or RESET_STREAM, so the stream held flow-control credit until the connection ended; it is abandoned with
+  H3_REQUEST_CANCELLED now.
 - Ktor client: `connectionReleased` follows every `connectionAcquired`, also for an exchange that failed before its
   response and for an HTTP/3 WebSocket; such calls reported no release.
 - TLS: a `TlsConnection` that failed while being built (a client configuration without a reference identifier, a

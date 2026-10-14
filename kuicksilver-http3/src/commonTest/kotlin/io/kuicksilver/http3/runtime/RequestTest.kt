@@ -55,6 +55,34 @@ internal fun get(
 class RequestTest {
     @BeforeTest fun load() = KslLoader.ensureLoaded()
 
+    /**
+     * A caller cancelled just as `request` returns (withContext drops the finished result) abandons the stream with
+     * STOP_SENDING instead of leaving it open, holding flow-control credit until the connection ends.
+     */
+    @Test fun aCallerCancelledAsTheRequestReturnsAbandonsTheStream() =
+        h3Test {
+            H3Pair.open().use { p ->
+                val serverDone =
+                    async {
+                        val r = p.server.acceptRequest()
+                        val w = r.respond(200)
+                        // the client never reads: the writes stall at its window unless it stops the stream
+                        runCatching {
+                            repeat(10_000) {
+                                w.output.writeFully(ByteArray(1024))
+                                w.output.flush()
+                            }
+                        }.exceptionOrNull()
+                    }
+                lateinit var call: kotlinx.coroutines.Job
+                p.client.session.afterRequestForTest = { call.cancel() }
+                call = launch { p.client.request(get()) }
+                call.join()
+                val failure = withTimeout(10.seconds) { serverDone.await() }
+                assertTrue(failure != null, "the server's writes ended: the client stopped the abandoned stream")
+            }
+        }
+
     @Test fun getRoundTrip() =
         h3Test {
             H3Pair.open().useScoped { p ->

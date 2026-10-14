@@ -475,6 +475,9 @@ internal class H3Session(
      */
     suspend fun goAway(): Unit = withContext(dispatcher) { goAwayConfined() }
 
+    /** Runs on the session dispatcher right after a request's exchange was set up, before `request` returns (test hook). */
+    internal var afterRequestForTest: (() -> Unit)? = null
+
     /** The context [goAway] ran in (test hook). */
     internal var goAwayContextForTest: ((kotlin.coroutines.CoroutineContext) -> Unit)? = null
 
