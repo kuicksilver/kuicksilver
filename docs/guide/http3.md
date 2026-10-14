@@ -158,7 +158,9 @@ request id it will not process; such requests are reset with `H3_REQUEST_REJECTE
 is answered — including one whose HEADERS were still arriving when GOAWAY went out — and every response has been
 acknowledged by the client's QUIC stack, the connection is closed with `H3_NO_ERROR`: by the client, which closes an
 idle connection after a GOAWAY once its responses are read (a Kuicksilver client always does; quic-go's server waits for
-exactly that), or by the server three seconds later if the client does not. A response handed to QUIC is not yet received:
+exactly that), or by the server three seconds later if the client does not. A client that never closes (some other
+stacks) therefore has three seconds to read a response its QUIC stack has acknowledged; data still unread then is lost
+with the connection. A response handed to QUIC is not yet received:
 closing a fixed 200 ms after the last answer (before 0.2.0's last fix) cut large or slow responses short. A stream gets 10 seconds after the final GOAWAY to complete its HEADERS; after that it is reset with
 `H3_REQUEST_REJECTED` (it was never processed) and no longer holds the connection open. (quic-go has no such
 per-stream deadline; it bounds the whole graceful shutdown with the caller's context.) A client receiving GOAWAY fails the requests it did not cover, and every

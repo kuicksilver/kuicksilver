@@ -223,6 +223,42 @@ class GoAwayTest {
             }
         }
 
+    /**
+     * A client that never closes after GOAWAY (a raw QUIC peer here): the server keeps the connection while its response is
+     * unacknowledged, however long that takes, and closes it itself with H3_NO_ERROR only [goAwayCloseFallback] after the
+     * response stream finished. The residual risk is documented: such a client must read an acknowledged response within the
+     * fallback (3 s by default).
+     */
+    @Test fun aClientThatNeverClosesIsClosedOnlyAfterItsResponseFinished() =
+        h3Test {
+            QuicPair.open().use { q ->
+                val (c, s) = q.connect()
+                val server = Http3Connection.server(s)
+                server.session.goAwayCloseFallback = 300.milliseconds
+                val raw = RawPeer(c)
+                raw.openControl()
+                val st = c.openBidi()
+                st.output.writeFully(raw.headers(st.id, GET))
+                st.output.flushAndClose()
+                val size = 4 * 1024 * 1024
+                launch {
+                    val w = server.acceptRequest().respond(200)
+                    w.output.writeFully(ByteArray(size))
+                    w.finish()
+                }
+                withTimeout(5.seconds) { while (server.session.maxRequestId < st.id) yield() }
+                launch { server.goAway() }
+                // unread for well past the fallback: flow control holds the response back, the stream is not finished
+                assertEquals(null, withTimeoutOrNull(1500.milliseconds) { server.closed.await() }, "closed with the response unread")
+                val got = withTimeout(30.seconds) { st.input.readAllBytes() }
+                assertTrue(got.size > size, "the whole response (frames included) arrived: ${got.size}")
+                // finished now; the raw client never closes, so the server does, after the fallback, with H3_NO_ERROR
+                val e = withTimeout(10.seconds) { c.closed.await() } as QuicException.ConnectionLost.ApplicationClosed
+                assertEquals(Http3ErrorCode.NO_ERROR, e.code)
+                assertEquals(Initiator.Peer, e.initiator)
+            }
+        }
+
     /** A request below the GOAWAY id whose HEADERS are still arriving counts as in flight: the idle close waits for it (RFC 9114 section 5.2). */
     @Test fun unreadRequestHeadersKeepConnectionOpenAfterGoAway() =
         h3Test {
