@@ -12,9 +12,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
-Nothing has been published yet. This section lists the work for 0.2.0, the first version to be published on Maven
-Central, made on top of the 0.1.0 candidate. That candidate, frozen on 2026-10-09, was never published (no tag, no
-Central deployment); it is summarised in the last section, and its changes reach users with 0.2.0.
+## [0.2.0] - 2026-10-15
+
+The first version published on Maven Central, made on top of the 0.1.0 candidate. That candidate, frozen on 2026-10-09,
+was never published (no tag, no Central deployment); it is summarised in the last section, and its changes reach users
+with 0.2.0.
 
 ### Added
 

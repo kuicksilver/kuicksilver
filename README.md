@@ -5,11 +5,10 @@ SPDX-License-Identifier: Apache-2.0
 
 # Kuicksilver
 
-<!-- release-flip: at 0.2.0, "nothing is published to Maven Central yet" becomes "0.2.0 is on Maven Central" -->
-**Status: 0.x, experimental.** The API can change between any two 0.x releases, nothing is published to Maven Central
-yet, and the CI described below runs on the maintainers' machines until the repository's first public build. Do not
-use it in production yet; do try it, and tell us what breaks. [docs/stability.md](docs/stability.md) says which API is
-stable and which is experimental.
+**Status: 0.x, experimental.** The API can change between any two 0.x releases, 0.2.0 is on Maven Central, and the CI
+described below runs on the maintainers' machines until the repository's first public build. Do not use it in production
+yet; do try it, and tell us what breaks. [docs/stability.md](docs/stability.md) says which API is stable and which is
+experimental.
 
 Kuicksilver is a Kotlin Multiplatform network stack: QUIC v1 and v2 (RFC 9000/9001/9002/9369, datagrams of RFC 9221,
 path MTU discovery of RFC 8899), HTTP/3 with QPACK (RFC 9114/9204, priorities of RFC 9218, Extended CONNECT and
@@ -55,16 +54,9 @@ is available as an opt-in, experimental API and is off by default (ADR-0015).
 
 ## Quick start
 
-<!-- release-flip: at 0.2.0, drop "not on Maven Central yet" and the includeBuild lines; the coordinates stay -->
-Artifacts are not on Maven Central yet. Until 0.2.0 is, build from source (see [CONTRIBUTING.md](CONTRIBUTING.md))
-and consume the modules through a Gradle composite build, as
-[`samples/realtime-telemetry`](samples/realtime-telemetry/README.md) does (the included build stands in for the
-coordinates, whatever version they name):
+Artifacts are on Maven Central:
 
 ```kotlin
-// settings.gradle.kts of your project
-includeBuild("../kuicksilver")
-
 // build.gradle.kts
 dependencies {
     implementation("io.kuicksilver:kuicksilver-ktor-client:0.2.0")
