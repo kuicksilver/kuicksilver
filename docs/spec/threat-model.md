@@ -167,6 +167,44 @@ a time at background priority while other builds ran). The goal of 2 h per targe
 | `http3.qpackDecode` | 4 | 0.80 | 52,966,184 | 436 / 1631 | 249 | none |
 | `ksl.parsers` | 3 | 1.01 | 2,365,952 | 257 / 257 | 26 | none |
 
+
+Second campaign, 2026-10-14 14:52 to 19:53, on the code after the full review (k7/ci 54f108ab: sealed CRYPTO streams and
+per-level caps, key-update timing, version-bound tickets, retired-CID memory, path validation, stateless reset in long
+headers, HTTP/3 header validation, QPACK stream errors, ticket keys in ksl, ALPN enforcement), seeded from the corpora
+above: 44 slices, 14.3 h of fuzzing, 607 million executions, three targets at a time at background QoS (nice 10), the
+targets whose code the fixes changed first (goals 1-1.25 h, the others 0.5 h; about 75% of each goal was reached in the
+5 h window). New for it: the connection fuzzer's BLOCK operation holds one side at an encryption level the other has left,
+so CRYPTO reaches both sealed streams (Initial at the server, Handshake at a client that completed while the server is
+still in Handshake; seeds `crypto-past-sealed-*`), and the ksl harness drives the ticket-key API of `ksl_tickets.c` and
+serves resumption ClientHellos carrying a real ticket to contexts with set, registered and generated keys (ksl coverage
+257 -> 346 edges). No finding in the library. One finding in the test fixtures: `CorePair` never released its cores and
+made a new server identity for every pair, so `connectionTls` ran out of memory after ~98 000 inputs (native objects
+of ~110 KB per input); fixed in the fixtures (`CorePair.close` releases both cores, the default identity is shared), and
+the ksl live-object counters stay flat over 600 corpus inputs.
+
+| Target | Slices | Hours | Executions | Coverage (cov / ft) | Committed corpus | Findings |
+|---|---:|---:|---:|---:|---:|---|
+| `quic.frameDecode` | 3 | 1.00 | 52,014,081 | 541 / 2416 | 267 | none |
+| `quic.packetHeader` | 1 | 0.34 | 43,191,670 | 379 / 1031 | 65 | none |
+| `quic.transportParameters` | 3 | 0.85 | 59,622,076 | 552 / 1072 | 98 | none |
+| `quic.streamReassembler` | 2 | 0.51 | 757,470 | 161 / 1086 | 210 | none |
+| `quic.retryPacket` | 2 | 0.68 | 913,900 | 3619 / 5712 | 75 | none |
+| `quic.endpointRoute` | 2 | 0.68 | 570,780 | 5071 / 13295 | 622 | none |
+| `quic.packetRecvServer` | 3 | 1.02 | 3,959,018 | 3500 / 6068 | 235 | none |
+| `quic.packetRecvClient` | 3 | 1.02 | 2,694,398 | 4358 / 12756 | 776 | none |
+| `quic.multiPacket` | 3 | 1.02 | 1,694,313 | 5386 / 21434 | 910 | none |
+| `quic.postHandshake` | 1 | 0.34 | 383,340 | 5325 / 14501 | 880 | none |
+| `quic.connectionNull` | 2 | 0.50 | 253,619 | 7306 / 41052 | 2501 | none |
+| `quic.connectionTls` | 3 | 0.94 | 297,717 | 7593 / 40115 | 2302 | none |
+| `quic.replayRegister` | 1 | 0.34 | 44,723 | 208 / 1401 | 158 | none |
+| `quic.rememberedTicket` | 2 | 0.68 | 56,672,584 | 364 / 744 | 86 | none |
+| `tls.clientHelloScan` | 3 | 1.00 | 289,183,825 | 87 / 227 | 44 | none |
+| `tls.zeroRttHello` | 2 | 0.68 | 254,112 | 1239 / 2121 | 73 | none |
+| `http3.h3Frames` | 2 | 0.68 | 7,154,450 | 316 / 1716 | 289 | none |
+| `http3.capsules` | 1 | 0.34 | 46,263,476 | 64 / 297 | 67 | none |
+| `http3.qpackDecode` | 2 | 0.69 | 37,679,540 | 504 / 1910 | 282 | none |
+| `ksl.parsers` | 3 | 1.03 | 2,936,164 | 346 / 346 | 34 | none |
+
 ### 3.11 Supply chain
 
 - **Threats:** tampered OpenSSL sources; a tampered native artifact in the JAR; an OpenSSL vulnerability without an update.
