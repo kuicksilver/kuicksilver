@@ -15,7 +15,7 @@ private val descriptions = mapOf(
     "kuicksilver-native" to "The ksl C shim with OpenSSL 3.5 inside, its JNI and cinterop bindings and the native library loader",
     "kuicksilver-tls" to "TLS 1.3 configuration and trust (platform verifier, private CA, SPKI pins, TOFU) over any byte channel",
     "kuicksilver-ktor-network" to "Socket.tls() and Socket.tlsServer() for ktor-network sockets",
-    "kuicksilver-quic" to "QUIC v1 transport for Kotlin Multiplatform: streams, datagrams, migration, a coroutine API over a sans-IO core",
+    "kuicksilver-quic" to "QUIC transport (v1 and v2) for Kotlin Multiplatform: streams, datagrams, migration, a coroutine API over a sans-IO core",
     "kuicksilver-http3" to "HTTP/3 and QPACK over kuicksilver-quic",
     "kuicksilver-ktor-client" to "Ktor client engine: HTTP/1.1 over TLS and HTTP/3 with Alt-Svc discovery, racing and fallback",
     "kuicksilver-ktor-server" to "Ktor server engine: HTTP/1.1 over TLS on TCP and HTTP/3 on UDP on the same port",

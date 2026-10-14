@@ -173,7 +173,7 @@ table once it lists Xcode 27. Apps that use Kotlin 2.4.20 may build with either.
 | `macosArm64` | macOS 12 or newer (the Kotlin/Native default of Kotlin 2.4.20, and `SecTrustCopyCertificateChain` in the platform verifier) | the native suites on the macOS host |
 | `iosSimulatorArm64` | iOS 15 or newer (the Kotlin/Native default, the OpenSSL build floor and `SecTrustCopyCertificateChain`) | the suites of every module on the simulator, and `iosHostInteropTest` against a peer on the host |
 | `iosArm64` | iOS 15 or newer | compiled, linked and size-checked (`tools/check/ios-size.sh`, `ios-private-api.py`); **not yet run on a physical device** ([ios.md, Device checklist](guide/ios.md#device-checklist)) |
-| `mingwX64` | ECN needs Windows 10 2004 or Server 2022 | the native suites in a local Windows 11 VM (Parallels) |
+| `mingwX64` | ECN where the Windows version accepts `IP_ECN` (probed when the socket opens; verified on Windows 11) | the native suites in a local Windows 11 VM (Parallels) |
 
 There is no hosted CI run in 0.2.0: GitHub Actions is paused, and the matrix (`tools/ci/local-matrix.sh`) runs on the
 maintainers' machines. Platform limits that are part of the contract (one endpoint loop per port outside Linux and

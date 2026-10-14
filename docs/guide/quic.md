@@ -289,7 +289,7 @@ ten test packets. A path that fails never marks again; a new path validates afre
 number space only for datagrams whose packets were processed, and a CE increase reported by the peer is one congestion
 event per recovery period. The portable socket marks every datagram through IP_TOS (`ecnSend`) but cannot read marks, so
 with it the peer's validation of our direction needs an accelerated socket on the peer; the accelerated socket (Linux,
-Android, Apple, and Windows 10 2004+ / Server 2022) marks and reads per datagram, and two of them validate both directions
+Android, Apple, and Windows where `IP_ECN` is accepted, probed when the socket opens) marks and reads per datagram, and two of them validate both directions
 (`Capable`). Because the portable socket
 marks the whole socket, a failed validation on any of its paths clears IP_TOS for every connection on it (they all
 show `Disabled` from then on: a socket's `capabilities` that lose `ecnSend` or `df` reach the paths already on it, which

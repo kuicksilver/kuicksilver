@@ -186,7 +186,7 @@ ksl_udp *ksl_udp_open(const uint8_t addr[KSL_UDP_ADDR_LEN], int flags, uint32_t 
     DWORD ret = 0; WSAIoctl(u->fd, SIO_UDP_CONNRESET, &no, sizeof no, NULL, 0, &ret, NULL, NULL);   /* an ICMP unreachable must not fail the next receive */
     WSAIoctl(u->fd, SIO_UDP_NETRESET, &no, sizeof no, NULL, 0, &ret, NULL, NULL);
     int buf = 7 * 1024 * 1024; setsockopt(u->fd, SOL_SOCKET, SO_RCVBUF, (const char *)&buf, sizeof buf); setsockopt(u->fd, SOL_SOCKET, SO_SNDBUF, (const char *)&buf, sizeof buf);
-    if (flags & KSL_UDP_ECN) {   /* Windows 10 2004+ / Server 2022: marks read through the option, written per message as the IP_ECN / IPV6_ECN cmsg */
+    if (flags & KSL_UDP_ECN) {   /* granted only where Windows accepts the option (verified on Windows 11): marks read through the option, written per message as the IP_ECN / IPV6_ECN cmsg */
         int ok = u->family == AF_INET ? setsockopt(u->fd, IPPROTO_IP, IP_ECN, (const char *)&yes, sizeof yes) : setsockopt(u->fd, IPPROTO_IPV6, IPV6_ECN, (const char *)&yes, sizeof yes);
         if (u->family == AF_INET6 && ok == 0) setsockopt(u->fd, IPPROTO_IP, IP_ECN, (const char *)&yes, sizeof yes);   /* the v4-mapped half of a dual-stack socket */
         if (ok == 0) { u->granted |= KSL_UDP_ECN; u->ecn_cmsg_on = 1; }

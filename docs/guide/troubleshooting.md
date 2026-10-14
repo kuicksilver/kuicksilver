@@ -254,7 +254,7 @@ the portable socket "loops > 1 needs the accelerated transport…". Use `loops =
 ### Windows
 
 - The accelerated socket is Winsock with `SO_EXCLUSIVEADDRUSE`: a port another socket holds is refused, and only one
-  loop per port runs. ECN needs Windows 10 2004 or Server 2022; USO/URO are used where Windows grants them
+  loop per port runs. ECN needs a Windows that accepts `IP_ECN` (probed when the socket opens, verified on Windows 11); USO/URO are used where Windows grants them
   (`DatagramIo.capabilities` tells).
 - A wildcard bind (`0.0.0.0` or `::`) is dual-stack; on a host without IPv6, `0.0.0.0` falls back to an IPv4 socket.
 - `TrustConfig.Platform` verifies with CryptoAPI and the Windows root store, fetching missing intermediates through
