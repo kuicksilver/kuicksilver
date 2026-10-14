@@ -30,7 +30,9 @@ above it).
   used, in a later minor release"). Opt in per use site with `@OptIn(ExperimentalKuicksilverApi::class)` or for a
   module with `languageSettings.optIn("io.kuicksilver.annotations.ExperimentalKuicksilverApi")`. Some interfaces are
   stable to *use* but experimental to *implement* (`@SubclassOptInRequired`): `DatagramIo`, `CongestionController`,
-  `DatagramSender`.
+  `DatagramSender`, and the crypto provider interfaces `QuicCrypto`, `QuicTlsSession`, `PacketProtector`, `TokenKey` and
+  `ResetKey`; the values an implementation returns (the `TlsEvent` and `DriveResult` classes, `IoCapabilities`) have
+  experimental constructors for the same reason.
 - **Delicate** is not a stability level of its own: it marks API that can weaken security when misused (a custom
   verifier, key logging, a live internal array). It combines with the others: `keylogFile` and `TrustConfig.Custom` are
   stable and delicate, `ConnectionCore.glitchByFrameType` is experimental and delicate.
@@ -39,6 +41,12 @@ above it).
   out of the ABI dumps, and they can change in any release.
 - **Interfaces the library implements** (`QuicConnection`, `QuicStream`, `Http3Connection`, `Http3Stream`, …) are
   meant to be called, not implemented; a minor release may add members to them. Implement them only in test fakes.
+
+- **Sealed hierarchies and enums grow.** A minor release may add a member to a sealed type or an enum the library
+  produces (`PathEvent`, `QuicException.ConnectionLost`, `Http3Exception`, `DatagramSendResult`, `VerifyReason`,
+  `TrustConfig`, `ProtocolReason`, `Http3DiscoveryMode`, …), listed in the CHANGELOG. Give a `when` over them an `else`
+  branch rather than relying on exhaustiveness. Classes whose instances only the library creates (events, attempts,
+  peer settings) have internal constructors, so new fields can be added.
 
 **Deprecation cycle** (from [CONTRIBUTING](../CONTRIBUTING.md)): a stable declaration that goes away is first
 `@Deprecated` at level `WARNING` with a `ReplaceWith`, then `ERROR`, then removed, with at least one minor release
@@ -91,9 +99,21 @@ practice means a library supplied from outside the jar (`-Dkuicksilver.native.pa
 that belongs to another release. `ksl` is not an API for applications: always take the native library from the
 `kuicksilver-native` artifact of the same version.
 
+## Kotlin version
+
+The modules are compiled with **Kotlin 2.4.20** (no lower `apiVersion` or `languageVersion`) and depend on
+`kotlin-stdlib` 2.4.20. An application on the JVM or Android needs a Kotlin compiler that reads 2.4 metadata: Kotlin
+2.3 or newer (a compiler reads metadata one minor version ahead); Kotlin/Native and the klibs need Kotlin 2.4.x. A
+minor release may raise this with the Kotlin it is built with, and says so in the CHANGELOG.
+
 ## Ktor versions
 
-Kuicksilver 0.2.0 supports **Ktor 3.6.x** (built and tested against 3.6.0). The engines use some Ktor internals and
+Kuicksilver 0.2.0 supports **Ktor 3.6.x** (built and tested against 3.6.0). This holds for every module, not only the
+engines: `kuicksilver-quic`, `kuicksilver-tls`, `kuicksilver-http3` and `kuicksilver-ktor-network` expose Ktor types in
+their public API (`io.ktor.network.sockets.InetSocketAddress`, the `ByteReadChannel` / `ByteWriteChannel` of ktor-io;
+the address type by design, ADR-0004) and depend on `ktor-network` and `ktor-io` 3.6 as `api`. Only the engines check the version at
+runtime (below); a QUIC-only application that moves to another Ktor minor gets no check, and an incompatible change
+surfaces as a link error (`NoSuchMethodError`). The engines use some Ktor internals and
 vendor parts of Ktor CIO ([ktor-internal-api.md](ktor-internal-api.md)), so another major.minor is unsupported even
 when it links. The check (in `kuicksilver-ktor-network`):
 

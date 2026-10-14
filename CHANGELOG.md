@@ -209,6 +209,9 @@ API shape before the first release (pre-release review, 2026-10-14; nothing was 
   copy on every read instead of the instance's own array, which a caller could change under `equals`, `hashCode` and
   the pin checks; a `ByteString` view can be added later without breaking these. `Datagram.data` stays the receiver's
   own array (one per datagram, never shared).
+- `docs/stability.md` now states the minimum Kotlin of consumers (2.3 on the JVM and Android, 2.4 for klibs), that the
+  QUIC, TLS and HTTP/3 modules expose Ktor 3.6 types and so require Ktor 3.6.x too, that sealed hierarchies and enums
+  may gain members in a minor release, and the crypto SPI's opt-in.
 - **Breaking:** library-produced values have internal constructors: `ConnectionAttempt`, the `PathEvent`,
   `ConnectionEvent` and `MigrationEvent` classes, `ClientHelloInfo`, `Http3PeerSettings`.
 
