@@ -9,5 +9,5 @@ package io.kuicksilver.swift
  */
 public object KuicksilverInfo {
     /** The Kuicksilver version this framework was built from. */
-    public const val VERSION: String = "0.1.0-SNAPSHOT"
+    public const val VERSION: String = "0.2.0-SNAPSHOT"
 }
