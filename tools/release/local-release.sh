@@ -175,7 +175,8 @@ check_lib() { # <classifier> <dir>: the checks CI runs on that library, plus its
   [ "$(awk -v l="$lib" '$2 == l || $2 == "*"l {print $1}' "$r/manifest.sha256")" = "$(sha "$f")" ] || { echo "FAIL: manifest.sha256 does not match $lib"; return 1; }
   echo "OK: manifest.sha256 matches $lib"
   # the pinned OpenSSL inside, no sanitizer/coverage instrumentation or debug sections, the export whitelist
-  bash tools/check/native-release.sh "$f" "$(case "$cls" in osx-*) echo macos ;; linux-*) echo linux ;; *) echo windows ;; esac)" || return 1
+  local plat=windows; case "$cls" in osx-*) plat=macos ;; linux-*) plat=linux ;; esac
+  bash tools/check/native-release.sh "$f" "$plat" || return 1
   local deps bad
   case "$cls" in
     osx-*)
