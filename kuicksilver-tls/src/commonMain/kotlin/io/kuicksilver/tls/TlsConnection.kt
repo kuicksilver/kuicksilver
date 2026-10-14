@@ -115,6 +115,11 @@ public class TlsConnection private constructor(
     private suspend fun handshake() {
         cacheKey?.let { key ->
             sessionCache.take(key)?.let { e ->
+                // ADR-0011: the OpenSSL verifier's verdict is not taken from the cache: an expired leaf or a withdrawn anchor runs a full handshake
+                if (ctx.verifyMode == KslConst.VERIFY_OPENSSL && !ctx.cachedChainStillTrusted(e.chain, reference!!)) {
+                    e.close()
+                    return@let
+                }
                 cached = e
                 try {
                     lock.withLock { Ksl.sslSetSession(s(), e.session) }
@@ -232,7 +237,8 @@ public class TlsConnection private constructor(
         val effective = overrideCtx?.config ?: config
         if (effective.role == TlsRole.Client) {
             if (reused) {
-                // no Certificate on a resumed handshake: trust is re-established from the cached chain (ADR-0011: resumption never bypasses verification)
+                // no Certificate on a resumed handshake: trust is re-established from the cached chain (ADR-0011: resumption never bypasses
+                // verification); on the OpenSSL path the chain itself was verified again before the ticket was offered (handshake())
                 val cached = cached ?: throw TlsException.Protocol(null, "resumed session without a cached chain", null)
                 presented = cached.chain
                 val r =
@@ -250,10 +256,14 @@ public class TlsConnection private constructor(
             }
         } else {
             val pinnedClients = effective.clientAuth != ClientAuth.None && effective.trust is TrustConfig.Pinned
+            // ClientAuth.Optional: a client without a certificate is accepted (its session can never gain one); a presented one must pass the pins
+            val anonymous = effective.clientAuth == ClientAuth.Optional && presented.isEmpty()
             // a resumed session carries only the client's leaf, so a CA pin cannot be re-checked; it resumed under this trust configuration's
-            // session context, and with pinned clients its ticket was issued only after this check passed: the verdict travels with it
+            // session context, and with pinned clients ksl encrypts a ticket only on the explicit request below and resumes only tickets
+            // stamped that way (ksl_ctx.c ticket callbacks): the verdict travels with it
             if (pinnedClients &&
-                !reused
+                !reused &&
+                !anonymous
             ) {
                 val r = Verification(effective).pinCheck(validated())
                 if (r is VerifyResult.Rejected) abort(TlsException.Verify(r.reason, presented))
@@ -796,6 +806,21 @@ public class SessionCache(
 }
 
 internal expect fun nowSeconds(): Long
+
+/** Test hook: seconds added to the clock of a resumption's re-verification, to age a cached chain without waiting. */
+@kotlin.concurrent.Volatile
+internal var resumptionClockSkewForTest: Long = 0L
+
+/**
+ * Verifies a chain cached from a full handshake again with this context's OpenSSL verifier (AnchoredCa, Platform on Linux, Pinned or
+ * ExpectedName over them): validity at the current time, the anchors, the name and the purpose, as the handshake did (ADR-0011:
+ * resumption never bypasses verification). The platform and custom verifiers re-run through [Verification.verify] instead.
+ */
+internal fun KslContext.cachedChainStillTrusted(
+    chain: List<Certificate>,
+    reference: HostName,
+): Boolean =
+    chain.isNotEmpty() && Ksl.ctxVerifyChain(handle, chain.map { it.der }, reference.value, nowSeconds() + resumptionClockSkewForTest) == 0
 
 internal fun TrustConfig.cacheKey(): String =
     when (this) {

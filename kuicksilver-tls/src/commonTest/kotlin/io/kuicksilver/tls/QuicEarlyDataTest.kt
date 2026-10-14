@@ -87,6 +87,27 @@ class QuicEarlyDataTest {
         return t[0]
     }
 
+    /** ADR-0011 (review T4): a QUIC client verifies the cached chain again before it offers a ticket; an expired one is not offered. */
+    @Test fun negative_resumeRechecksCachedChain() {
+        val ticket = firstTicket({ KslQuicCrypto.newSession(Fixtures.server(), earlyData = true) })
+        val c = KslQuicCrypto.newSession(Fixtures.client(), earlyData = true)
+        resumptionClockSkewForTest = 101L * 366 * 24 * 3600 // past the test certificates' notAfter (2126)
+        try {
+            assertTrue(!c.resume(ticket), "an expired cached chain is not resumed")
+            assertTrue(!c.enableEarlyData(null, null), "and carries no 0-RTT")
+        } finally {
+            resumptionClockSkewForTest = 0
+            c.close()
+        }
+        val again = firstTicket({ KslQuicCrypto.newSession(Fixtures.server(), earlyData = true) })
+        val c2 = KslQuicCrypto.newSession(Fixtures.client(), earlyData = true)
+        try {
+            assertTrue(c2.resume(again), "control: a current chain resumes")
+        } finally {
+            c2.close()
+        }
+    }
+
     @Test fun zeroRttAcceptedOnResumption() {
         val ticket = firstTicket({ KslQuicCrypto.newSession(Fixtures.server(), earlyData = true) })
         val c = KslQuicCrypto.newSession(Fixtures.client(), earlyData = true)

@@ -27,7 +27,8 @@ internal class RaceResult<T>(
  * Racing HTTP/3 against HTTP/1.1 connection setup (RFC 8305 section 5, as in Chromium): HTTP/3 starts at once;
  * HTTP/1.1 starts when HTTP/3 fails, or after the head start — [hardDelay] when set, else 1.5 x the host's smoothed RTT,
  * or 250 ms without history, clamped to 100 ms..2 s — and immediately on a network where QUIC was never seen working.
- * The first success wins; the loser is cancelled, and an h1 setup that completed just as h3 won is handed to `onLoser`
+ * An HTTP/3 setup succeeds when its connection is usable: with 0-RTT that is before the handshake only on a network where
+ * QUIC was confirmed (the caller's `h3` decides). The first success wins; the loser is cancelled, and an h1 setup that completed just as h3 won is handed to `onLoser`
  * so the caller can close it (a connection must not be leaked, RFC 8305 section 5) — also when the caller is cancelled.
  */
 internal class ProtocolRace(

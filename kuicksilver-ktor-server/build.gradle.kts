@@ -12,8 +12,7 @@ kotlin {
             api(project(":kuicksilver-http3"))
             api(project(":kuicksilver-ktor-network"))
             api(libs.ktor.server.core)
-            implementation(libs.ktor.server.cio)   // @InternalAPI startServerConnectionPipeline (docs/ktor-internal-api.md)
-            implementation(libs.ktor.http.cio)
+            implementation(libs.ktor.http.cio) // the HTTP/1.1 request parser (the connection pipeline is vendored, h1/ServerPipeline.kt)
         }
         commonTest.dependencies {
             implementation(libs.ktor.server.websockets)
