@@ -20,7 +20,11 @@ import io.kuicksilver.annotations.ExperimentalKuicksilverApi
  */
 @ExperimentalKuicksilverApi
 public abstract class KuicksilverServerEventListener {
-    /** A client connected over [protocol] (`HTTP_1_1`, `HTTP_1_0` for plain connectors alike, or `HTTP_3_0`) from [remote]. */
+    /**
+     * A client connected over [protocol] (`HTTP_1_1`, `HTTP_1_0` for plain connectors alike, or `HTTP_3_0`) from [remote]:
+     * after the TLS handshake for HTTP/1.1, at `accept` for HTTP/3, which with `quicEarlyData` is when 0-RTT was accepted,
+     * before the handshake completes (the client is not authenticated yet).
+     */
     public open fun connectionOpened(
         protocol: HttpProtocolVersion,
         remote: InetSocketAddress?,

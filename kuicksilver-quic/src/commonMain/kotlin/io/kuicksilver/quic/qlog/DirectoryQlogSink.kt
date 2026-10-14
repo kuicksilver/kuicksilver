@@ -11,7 +11,14 @@ import kotlinx.io.files.Path
 import kotlinx.io.files.SystemFileSystem
 import kotlinx.io.writeString
 
-/** One `<odcid>_<client|server>.sqlog` file per connection inside [directory] (created when missing). */
+/**
+ * One `<odcid>_<client|server>.sqlog` file per connection inside [directory] (created when missing).
+ *
+ * The file is opened and written on the endpoint loop, so a slow disk stalls every connection of that loop: on a busy
+ * server wrap it in [AsyncQlogSink]. A server's file name is the original destination connection ID the client chose, so
+ * two connections (or a client that repeats an ID on purpose) can name the same file, and the later one replaces it; keep
+ * traces of untrusted clients in a directory of their own, or sample them with [AsyncQlogSink].
+ */
 public class DirectoryQlogSink(
     private val directory: String,
 ) : QlogSink {
