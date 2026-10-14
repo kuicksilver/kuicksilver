@@ -288,9 +288,15 @@ class QuicApiTest {
                     s1.core.testInjectFailure = IllegalStateException("boom")
                     val st = c1.openBidi()
                     st.output.writeFully(byteArrayOf(1), 0, 1)
-                    st.output.flush()
+                    // the server forgot connection 1 silently, so it answers the client's next packets with a Stateless Reset
+                    // (RFC 9000 section 10.3): this flush may already see connection 1 reset, which is connection 1's fate, not 2's
+                    runCatching { st.output.flush() }.exceptionOrNull()?.let {
+                        assertIs<QuicException.ConnectionLost.StatelessReset>(c1.closed.await(), "flush failed with $it")
+                    }
                     val r = withTimeoutOrNull(10.seconds) { s1.closed.await() }
                     assertIs<QuicException.ConnectionLost.Internal>(r, "connection 1 failed internally: $r")
+                    val r1 = withTimeoutOrNull(10.seconds) { c1.closed.await() }
+                    assertIs<QuicException.ConnectionLost.StatelessReset>(r1, "the client of connection 1 is reset: $r1")
                     val echo =
                         async {
                             val a = s2.acceptStream()
@@ -303,6 +309,36 @@ class QuicApiTest {
                     assertFalse(s2.closed.isCompleted)
                     c2.close()
                     s2.close()
+                }
+            }
+        }
+
+    /**
+     * The order the test above allows: the client of the failed connection can be reset (RFC 9000 section 10.3) before its
+     * flush returns, and the flush then fails with that reset; the other connection is untouched.
+     */
+    @Test fun clientOfAFailedConnectionIsResetAndItsFlushMayFail() =
+        runBlocking {
+            ApiPair.open().use { p ->
+                withTimeout(20.seconds) {
+                    val (c1, s1) = p.connect()
+                    val (c2, s2) = p.connect()
+                    s1.core.testInjectFailure = IllegalStateException("boom")
+                    val st = c1.openBidi()
+                    st.output.writeFully(byteArrayOf(1), 0, 1)
+                    runCatching { st.output.flush() } // the datagram that makes the server fail connection 1; may already see the reset
+                    assertIs<QuicException.ConnectionLost.StatelessReset>(c1.closed.await())
+                    // the write side reports the reset itself or a ClosedWriteChannelException caused (possibly through a copy) by it
+                    val e =
+                        kotlin.test.assertFails {
+                            st.output.writeFully(byteArrayOf(2), 0, 1)
+                            st.output.flush()
+                        }
+                    val chain = generateSequence(e) { it.cause }.toList()
+                    assertTrue(chain.any { it is QuicException.ConnectionLost.StatelessReset }, "$chain")
+                    assertFalse(c2.closed.isCompleted)
+                    assertFalse(s2.closed.isCompleted)
+                    c2.close()
                 }
             }
         }
