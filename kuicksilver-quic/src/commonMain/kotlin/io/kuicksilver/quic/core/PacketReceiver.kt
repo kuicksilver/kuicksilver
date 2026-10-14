@@ -314,8 +314,10 @@ internal class PacketReceiver(
         if (c.path.isRemote(from) && socket == c.path.socket) {
             c.lastReceivedOnActivePath = now
         } else if ((type == PacketType.Initial || type == PacketType.Handshake) && c.role == TlsRole.Server &&
-            c.state == ConnectionState.Handshaking
+            c.state == ConnectionState.Handshaking && pn > sp.ack.largestReceived
         ) {
+            // only the highest-numbered packet of its space moves the path: a delayed older one from the old address does not move it
+            // back (RFC 9000 section 9.3)
             c.onHandshakeAddressChange(
                 socket,
                 from,

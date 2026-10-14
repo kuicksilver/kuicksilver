@@ -6,6 +6,8 @@ import io.ktor.network.sockets.InetSocketAddress
 import io.kuicksilver.annotations.DelicateKuicksilverApi
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.native.KslLoader
+import io.kuicksilver.native.PacketBuffer
+import io.kuicksilver.native.of
 import io.kuicksilver.quic.Bbr
 import io.kuicksilver.quic.ConnectionCore
 import io.kuicksilver.quic.ConnectionEvent
@@ -980,6 +982,81 @@ class PathTest {
     }
 
     /** Interop `rebind-port` against picoquic: the client's NAT mapping changed between its first Initial and the server's answer, so every retransmitted Initial came from a new port while the server kept answering the old one until the handshake timed out (final review follow-up). */
+    /**
+     * Review finding 25, RFC 9000 section 9.3: "An endpoint only changes the address to which it sends packets in response to the
+     * highest-numbered non-probing packet", so reordered packets do not send it back to an old address. During the handshake the
+     * server followed every Handshake packet from another address, a delayed older one included. (Null protection: the packet
+     * number, payload and tag of a captured Handshake packet can be rewritten in place.)
+     */
+    @Test fun handshakeTimeRebindIgnoresAnOlderPacketFromTheOldAddress() {
+        val p = EndpointPair()
+        var held: ByteArray? = null
+        val hv = io.kuicksilver.quic.wire.PacketHeaderView()
+
+        fun handshakePacketOf(d: ByteArray): IntArray? {
+            val b = PacketBuffer.of(d)
+            try {
+                var off = 0
+                while (off < d.size && io.kuicksilver.quic.wire.PacketHeaderCodec.parse(b, off, d.size, 8, hv)) {
+                    if (d[off].toInt() and 0x80 != 0 && (d[off].toInt() and 0x30) ushr 4 == 2) return intArrayOf(off, hv.pnOffset, hv.packetEnd)
+                    off = hv.packetEnd
+                }
+                return null
+            } finally {
+                b.close()
+            }
+        }
+        p.filterToServer = { _, b ->
+            if (handshakePacketOf(b) != null) {
+                if (held == null) held = b
+                false // the server sees no client Handshake packet: it stays in the handshake
+            } else {
+                true
+            }
+        }
+        try {
+            val c = p.connect()
+            assertTrue(p.runUntil(2.seconds) { held != null })
+            val s = p.server()
+            assertEquals(io.kuicksilver.quic.ConnectionState.Handshaking, s.state)
+            val d = held!!
+            val (off, pnOff, end) = handshakePacketOf(d)!!
+
+            // the client's Handshake packet [pn], PING and padding only (no CRYPTO: the handshake stays open)
+            fun forged(pn: Int): ByteArray {
+                val pkt = d.copyOfRange(off, end)
+                val pnLen = (pkt[0].toInt() and 0x03) + 1
+                val at = pnOff - off
+                for (i in 0 until pnLen) pkt[at + i] = ((pn ushr (8 * (pnLen - 1 - i))) and 0xff).toByte()
+                for (i in at + pnLen until pkt.size) pkt[i] = 0
+                pkt[at + pnLen] = 0x01
+                for (i in 0 until 8) pkt[pkt.size - 8 + i] = ((pn.toLong() ushr (8 * (7 - i))) and 0xff).toByte() // the Null tag
+                return pkt
+            }
+            val newPort = InetSocketAddress("10.0.0.1", 40002)
+
+            fun deliver(
+                bytes: ByteArray,
+                from: InetSocketAddress,
+            ) {
+                val b = PacketBuffer.of(bytes)
+                try {
+                    p.server.handleDatagram(b, bytes.size, from, io.kuicksilver.quic.Ecn.NotEct, p.now)
+                } finally {
+                    b.close()
+                }
+            }
+            deliver(forged(10), newPort)
+            assertEquals(newPort, s.remoteAddressForTest, "the server follows the newest Handshake packet")
+            deliver(forged(9), p.clientAddr) // sent before the rebinding, delayed in the network
+            assertEquals(newPort, s.remoteAddressForTest, "an older packet from the old address does not move it back")
+            assertNull(p.closed(s))
+            assertTrue(c.state != io.kuicksilver.quic.ConnectionState.Closed)
+        } finally {
+            p.close()
+        }
+    }
+
     @Test fun natRebindDuringHandshakeIsFollowedByTheServer() {
         val p = EndpointPair()
         try {
