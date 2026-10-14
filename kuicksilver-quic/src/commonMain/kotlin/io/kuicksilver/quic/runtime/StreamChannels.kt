@@ -121,7 +121,9 @@ internal class StreamOutput(
         private set
     override val writeBuffer: Sink get() {
         closedCause?.let { throw ClosedWriteChannelException(it) }
-        if (isClosedForWrite) throw ClosedWriteChannelException(null)
+        // read again: the loop may have closed the stream (cause first, then the flag) between the two reads above, and the
+        // exception must carry the connection's reason, not none
+        if (isClosedForWrite) throw ClosedWriteChannelException(closedCause)
         return buffer
     }
 
