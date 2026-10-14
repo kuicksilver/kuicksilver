@@ -27,10 +27,15 @@ internal actual fun ktorArtifactVersion(anchor: KClass<*>): String? =
                         conn.useCaches = false
                         conn.getInputStream().use { Manifest(it).mainAttributes.getValue("Implementation-Version") }
                     }
-                fromJar ?: cls.`package`?.implementationVersion
+                // Android defines every package of an app with the versions "0.0" (dalvik's ClassLoader.definePackage): not
+                // a Ktor version, so on Android only a jar manifest counts, and dex classes have none
+                fromJar ?: cls.`package`?.implementationVersion?.takeUnless { onAndroid }
             }
         }.getOrNull()
 
 @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
 internal actual fun versionCheckDisabled(): Boolean =
     System.getProperty(KtorVersionPolicy.CHECK_PROPERTY).equals("false", ignoreCase = true)
+
+/** ART and Dalvik report `java.vm.name` "Dalvik". */
+private val onAndroid: Boolean = System.getProperty("java.vm.name").orEmpty().contains("Dalvik", ignoreCase = true)
