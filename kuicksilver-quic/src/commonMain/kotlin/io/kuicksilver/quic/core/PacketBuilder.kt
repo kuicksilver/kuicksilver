@@ -163,6 +163,14 @@ internal class PacketBuilder(
             c.amplification.onSent(n)
             if (c.closeFrame != null && c.closeSent) break
         }
+        // one send quantum went out with window and data left: ask for the next poll when the pacer allows the next datagram (at
+        // once without pacing), or the rest would wait for the peer's next packet and the sender would look application-limited
+        if (!congested && bytes >= c.cc.sendQuantum && c.closeFrame == null && c.cc.bytesInFlight < c.cc.cwnd &&
+            hasData(SpaceId.Application) && pacerWakeup == TimeMark.NEVER
+        ) {
+            pacer(now)
+            if (pacerWakeup == TimeMark.NEVER) pacerWakeup = now
+        }
         // the sender ran out of data with room in the window and no pacing delay: the next rate samples show the application's pace
         if (!congested && count < out.capacity && bytes < c.cc.sendQuantum && c.closeFrame == null && !hasData(SpaceId.Application)) {
             (c.cc as? io.kuicksilver.quic.Bbr)?.onAppLimited()
