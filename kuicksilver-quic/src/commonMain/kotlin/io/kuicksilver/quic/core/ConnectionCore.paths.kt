@@ -406,8 +406,14 @@ internal fun ConnectionCore.onPathResponse(data: Long) {
     for (i in 0 until paths.all.size) {
         val p = paths.all[i]
         if (p.state == PathState.Validating && p.answers(data)) {
-            p.state = PathState.Validated
             p.amplification.validated = true
+            if (p.answeredUndersized(data)) {
+                // RFC 9000 section 8.2.1: the address is validated, the path MTU is not: "the endpoint MUST perform a second path
+                // validation by sending a PATH_CHALLENGE frame in a datagram of at least 1200 bytes" (as ngtcp2's UNDERSIZED entries)
+                startValidation(p)
+                return
+            }
+            p.state = PathState.Validated
             p.challengePending = false
             p.challengeRetries = 0
             p.challengeDeadline =

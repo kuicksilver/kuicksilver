@@ -50,19 +50,34 @@ internal class Path(
 
     /** The last [SENT_CHALLENGES] challenges of this validation: a PATH_RESPONSE to any of them validates (as quic-go). */
     private val sentChallenges = LongArray(SENT_CHALLENGES)
+    private val sentUndersized = BooleanArray(SENT_CHALLENGES)
     private var sentChallengeCount = 0
 
     /** Records [data] as the next PATH_CHALLENGE of this validation (RFC 9000 section 13.3: a different payload each time). */
     fun onChallengeSent(data: Long) {
         challenge = data
         sentChallenges[sentChallengeCount % SENT_CHALLENGES] = data
+        sentUndersized[sentChallengeCount % SENT_CHALLENGES] = false
         sentChallengeCount++
     }
 
+    /** The last challenge went out in a datagram below 1200 bytes (the anti-amplification limit, RFC 9000 section 8.2.1). */
+    fun markLastChallengeUndersized() {
+        if (sentChallengeCount > 0) sentUndersized[(sentChallengeCount - 1) % SENT_CHALLENGES] = true
+    }
+
     /** True when [data] answers one of the recent challenges of this validation. */
-    fun answers(data: Long): Boolean {
-        for (i in 0 until minOf(sentChallengeCount, SENT_CHALLENGES)) if (sentChallenges[i] == data) return true
-        return false
+    fun answers(data: Long): Boolean = indexOf(data) >= 0
+
+    /** True when [data] answers a challenge that was sent in a datagram below 1200 bytes. */
+    fun answeredUndersized(data: Long): Boolean {
+        val i = indexOf(data)
+        return i >= 0 && sentUndersized[i]
+    }
+
+    private fun indexOf(data: Long): Int {
+        for (i in 0 until minOf(sentChallengeCount, SENT_CHALLENGES)) if (sentChallenges[i] == data) return i
+        return -1
     }
 
     /** A new validation: earlier challenges no longer count (RFC 9000 section 8.2.3 ties a response to its own validation). */

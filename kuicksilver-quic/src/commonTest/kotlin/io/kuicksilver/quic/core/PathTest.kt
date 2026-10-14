@@ -441,6 +441,42 @@ class PathTest {
         }
     }
 
+    /**
+     * Review finding 8, RFC 9000 section 8.2.1: "When an endpoint is unable to expand the datagram size to 1200 bytes due to the
+     * anti-amplification limit, the path MTU will not be validated. To ensure that the path MTU is large enough, the endpoint MUST
+     * perform a second path validation by sending a PATH_CHALLENGE frame in a datagram of at least 1200 bytes." A NAT rebinding
+     * whose first packet was a small ACK left the server a budget below 1200 bytes, and the one small challenge validated the path.
+     */
+    @Test fun amplificationLimitedChallengeIsFollowedByAFullSizeOne() {
+        val (p, c) = connected()
+        try {
+            val s = p.server()
+            val rebound = InetSocketAddress("10.0.0.1", 40003)
+            p.clientSource = rebound
+            p.clientListens += rebound
+            send(s, 100) // the client's first packet from the new port is the ACK for this
+            val sentBefore = p.serverSent.size
+            assertTrue(p.runUntil(3.seconds) { s.remoteAddressForTest == rebound && s.pathState(s.stats.currentPath) == PathState.Validated })
+            p.settle(10)
+            val challenges =
+                p.serverSent
+                    .drop(sentBefore)
+                    .filter { (to, b) ->
+                        to == rebound &&
+                            io.kuicksilver.quic
+                                .nullOneRttFrames(b)
+                                ?.any { it is io.kuicksilver.quic.TestFrame.PathChallenge } == true
+                    }.map { it.second.size }
+            assertTrue(challenges.isNotEmpty() && challenges.first() < 1200, "the first challenge is amplification-limited: $challenges")
+            assertTrue(challenges.any { it >= 1200 }, "a second validation in a datagram of at least 1200 bytes: $challenges")
+            val firstFull = challenges.indexOfFirst { it >= 1200 }
+            assertTrue(firstFull > 0, "after the small one: $challenges")
+            assertNull(p.closed(s))
+        } finally {
+            p.close()
+        }
+    }
+
     @Test fun newPathGetsThreeChallengesBeforeDeadline() {
         // RFC 9000 section 8.2.4: three PATH_CHALLENGEs (at 0, 1 and 2 PTO) go out before the 3 x PTO validation timeout
         // a 1 ms initialRtt keeps the 6 x initialRtt floor out of the way: the deadline is 3 x PTO

@@ -685,6 +685,8 @@ internal class PacketBuilder(
         val payloadEnd = w.pos
         if (lengthOff >= 0) VarInt.writeFixed(buf, lengthOff, (pnLen + (payloadEnd - payloadStart) + 16).toLong(), 2)
         val end = PacketProtection.protect(buf, start, pnOff, pnLen, payloadEnd, pn, key, mask)
+        // RFC 9000 section 8.2.1: a challenge the amplification limit kept below 1200 bytes does not validate the path MTU
+        if (frames.flags and SentFrames.PATH_CHALLENGE != 0 && end < 1200) target.markLastChallengeUndersized()
         if (type == PacketType.OneRtt) c.onOneRttPacketSealed(pn)
         p.zeroRtt = type == PacketType.ZeroRtt
         p.pn = pn
