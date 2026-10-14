@@ -793,6 +793,31 @@ class SeedCorpusTest {
                 .app(1, 7, ConnProgram.num(0))
                 .steps(3)
                 .build()
+        // CRYPTO at a level the receiver's TLS has left (sealed streams, RFC 9001 section 4.1.3): the server's datagrams are
+        // dropped, so the client stays in Initial (then in Handshake) and keeps sending there past what the server consumed
+        programs["crypto-past-sealed-initial"] =
+            ConnProgram
+                .Builder(1)
+                .block(1)
+                .steps(2)
+                .frame(0, 0, "CRYPTO", 0, 600)
+                .frame(0, 0, "CRYPTO", 4000, 100)
+                .steps(4)
+                .build()
+        // the server confirms (and drops its Handshake keys) when it completes, so the window is the client's: the client's
+        // datagrams are dropped, the server stays in Handshake with its keys while the client completed and sealed that level
+        programs["crypto-past-sealed-handshake"] =
+            ConnProgram
+                .Builder(1)
+                .step()
+                .block(0)
+                .steps(2)
+                .frame(1, 2, "CRYPTO", 0, 300)
+                .frame(1, 2, "CRYPTO", 6000, 100)
+                .steps(4)
+                .block(0)
+                .steps(4)
+                .build()
         // small limits: windows and stream counts are reachable
         programs["small-limits"] =
             ConnProgram
