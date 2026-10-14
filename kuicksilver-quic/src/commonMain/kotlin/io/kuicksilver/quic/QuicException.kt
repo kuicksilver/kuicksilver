@@ -55,25 +55,29 @@ public sealed class QuicException(
          * @property code The transport error code (RFC 9000 section 20.1; a TLS alert as `0x0100 + alert`, see [TransportError]).
          * @property frameType The frame type that triggered the error (RFC 9000 section 19.19), 0 when no frame did.
          * @property reason The reason phrase; a peer's is decoded as UTF-8 (malformed bytes replaced) and kept within 1 KiB.
-         * @property reasonBytes The reason phrase as it travelled on the wire, at most 1024 bytes.
          * @property initiator Who closed: we on a protocol error we detected, or the peer.
          */
         public class TransportClosed(
             public val code: Long,
             public val frameType: Long,
             public val reason: String,
-            public val reasonBytes: ByteArray,
+            reasonBytes: ByteArray,
             public val initiator: Initiator,
             cause: Throwable? = null,
         ) : ConnectionLost(
                 "transport closed by $initiator: code 0x${code.toString(16)}${if (reason.isEmpty()) "" else " ($reason)"}",
                 cause,
             ) {
+            private val wire: ByteArray = reasonBytes.copyOf()
+
+            /** The reason phrase as it travelled on the wire, at most 1024 bytes; a fresh copy on every read. */
+            public val reasonBytes: ByteArray get() = wire.copyOf()
+
             init {
                 checkCode(code)
             }
 
-            override fun createCopy(): TransportClosed = TransportClosed(code, frameType, reason, reasonBytes, initiator, cause)
+            override fun createCopy(): TransportClosed = TransportClosed(code, frameType, reason, wire, initiator, cause)
         }
 
         /**

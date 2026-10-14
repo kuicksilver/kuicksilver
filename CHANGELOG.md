@@ -205,6 +205,10 @@ API shape before the first release (pre-release review, 2026-10-14; nothing was 
   default, `Stderr`), like the client engine's.
 - `QuicEndpoint.stats` and `Http3Endpoint.stats` are stable: the stable counters (`initialsDropped` to
   `connectionsCreated`) could only be read through these experimental accessors.
+- `Certificate.der`, `SpkiSha256.bytes` and `QuicException.ConnectionLost.TransportClosed.reasonBytes` return a fresh
+  copy on every read instead of the instance's own array, which a caller could change under `equals`, `hashCode` and
+  the pin checks; a `ByteString` view can be added later without breaking these. `Datagram.data` stays the receiver's
+  own array (one per datagram, never shared).
 - **Breaking:** library-produced values have internal constructors: `ConnectionAttempt`, the `PathEvent`,
   `ConnectionEvent` and `MigrationEvent` classes, `ClientHelloInfo`, `Http3PeerSettings`.
 

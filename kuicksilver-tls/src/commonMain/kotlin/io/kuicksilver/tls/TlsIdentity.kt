@@ -84,7 +84,7 @@ public sealed interface TlsIdentity {
                 val keys = Pem.secretBlocks(keyPem, "PRIVATE KEY") // no String of the key text is ever made
                 try {
                     if (keys.size != 1) throw TlsException.Config("expected exactly one PKCS#8 PRIVATE KEY block")
-                    return fromDer(chain.map { it.der }, keys[0])
+                    return fromDer(chain.map { it.encoded }, keys[0])
                 } finally {
                     keys.forEach { it.fill(0) }
                 }

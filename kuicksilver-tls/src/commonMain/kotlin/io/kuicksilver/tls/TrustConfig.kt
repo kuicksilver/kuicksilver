@@ -129,18 +129,21 @@ public enum class PinScope {
 public class SpkiSha256(
     bytes: ByteArray,
 ) {
-    /** The 32-byte digest; the instance's own copy, so do not modify it. */
-    public val bytes: ByteArray = bytes.copyOf()
+    /** The digest, copied on construction and never handed out: pin checks compare it. */
+    internal val digest: ByteArray = bytes.copyOf()
+
+    /** The 32-byte digest; a fresh copy on every read, so changing it never changes a pin. */
+    public val bytes: ByteArray get() = digest.copyOf()
 
     init {
-        require(bytes.size == 32) { "SpkiSha256 is 32 bytes" }
+        require(digest.size == 32) { "SpkiSha256 is 32 bytes" }
     }
 
-    override fun equals(other: Any?): Boolean = other is SpkiSha256 && other.bytes.contentEquals(bytes)
+    override fun equals(other: Any?): Boolean = other is SpkiSha256 && other.digest.contentEquals(digest)
 
-    override fun hashCode(): Int = bytes.contentHashCode()
+    override fun hashCode(): Int = digest.contentHashCode()
 
-    override fun toString(): String = "sha256/" + Base64.encode(bytes)
+    override fun toString(): String = "sha256/" + Base64.encode(digest)
 
     /** Holds [parse]. */
     public companion object {
