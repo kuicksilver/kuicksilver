@@ -155,13 +155,19 @@ trailers reset the stream with `H3_REQUEST_CANCELLED`, and `request` (or, once t
 `connection.goAway()` shuts a connection down gracefully (RFC 9114 section 5.2). A server first announces
 2^62-4 ("no promises yet"), waits about two round trips so requests already in flight arrive, then announces the first
 request id it will not process; such requests are reset with `H3_REQUEST_REJECTED`. Once every request below that id
-is answered — including one whose HEADERS were still arriving when GOAWAY went out — the server closes with
-`H3_NO_ERROR`. A stream gets 10 seconds after the final GOAWAY to complete its HEADERS; after that it is reset with
+is answered — including one whose HEADERS were still arriving when GOAWAY went out — and every response has been
+acknowledged by the client's QUIC stack, the connection is closed with `H3_NO_ERROR`: by the client, which closes an
+idle connection after a GOAWAY once its responses are read (a Kuicksilver client always does; quic-go's server waits for
+exactly that), or by the server three seconds later if the client does not. A client that never closes (some other
+stacks) therefore has three seconds to read a response its QUIC stack has acknowledged; data still unread then is lost
+with the connection. A response handed to QUIC is not yet received:
+closing a fixed 200 ms after the last answer (before 0.2.0's last fix) cut large or slow responses short. A stream gets 10 seconds after the final GOAWAY to complete its HEADERS; after that it is reset with
 `H3_REQUEST_REJECTED` (it was never processed) and no longer holds the connection open. (quic-go has no such
 per-stream deadline; it bounds the whole graceful shutdown with the caller's context.) A client receiving GOAWAY fails the requests it did not cover, and every
 new request, with `Http3Exception.RequestNotProcessed(retrySafe = true)`: they were never processed and can be sent
-again on a new connection (the Ktor engine does that by itself). A client's own `goAway()` sends GOAWAY(0) and stops
-issuing requests. `goAway()` may be called from any thread; it runs on the connection's own dispatcher.
+again on a new connection (the Ktor engine does that by itself). Once the requests and responses it still has are done
+(bodies read, tunnels ended), a client that received GOAWAY closes the connection with `H3_NO_ERROR`. A client's own
+`goAway()` sends GOAWAY(0) and stops issuing requests. `goAway()` may be called from any thread; it runs on the connection's own dispatcher.
 
 `Http3Endpoint.close()` ends every connection at once, without GOAWAY, with `H3_NO_ERROR` (a QUIC endpoint's `close()`
 sends application code 0, which HTTP/3 does not define); `Http3Endpoint.shutdown(grace)` is the graceful way.

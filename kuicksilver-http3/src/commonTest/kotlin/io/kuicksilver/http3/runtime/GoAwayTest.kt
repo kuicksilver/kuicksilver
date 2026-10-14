@@ -27,6 +27,7 @@ import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.yield
 import kotlin.test.BeforeTest
 import kotlin.test.Test
@@ -181,13 +182,80 @@ class GoAwayTest {
             }
         }
 
-    @Test fun closesWhenIdleAfterGoAway() =
+    /**
+     * The server's GOAWAY idle close must not cut a response the client is still receiving (RFC 9114 section 5.2): a
+     * response larger than the flow-control windows is handed to QUIC long before the client has it. The client reads
+     * late; the whole body still arrives, and then the client, idle after GOAWAY, closes the connection itself.
+     */
+    @Test fun aResponseStillBeingReceivedSurvivesTheGoAwayIdleClose() =
+        h3Test {
+            H3Pair.open().use { p ->
+                val size = 4 * 1024 * 1024
+                launch {
+                    val r = p.server.acceptRequest()
+                    val w = r.respond(200)
+                    w.output.writeFully(ByteArray(size) { it.toByte() })
+                    w.finish()
+                }
+                val resp = p.client.request(get())
+                launch { p.server.goAway() }
+                // the client does not read yet: the old server closed ~200 ms after handing the last bytes to QUIC
+                withTimeoutOrNull(1.seconds) { p.server.closed.await() }
+                val body = withTimeout(30.seconds) { resp.body.readAllBytes() }
+                assertEquals(size, body.size, "the whole response arrived")
+                // idle after GOAWAY: the client closes the connection itself, with H3_NO_ERROR
+                val e = withTimeout(10.seconds) { p.client.closed.await() } as Http3Exception.Protocol
+                assertEquals(Http3ErrorCode.NO_ERROR, e.h3Code)
+            }
+        }
+
+    /** An idle client that receives GOAWAY closes the connection itself with H3_NO_ERROR (RFC 9114 section 5.2). */
+    @Test fun anIdleClientClosesAfterGoAway() =
         h3Test {
             H3Pair.open().use { p ->
                 p.server.goAway()
                 val e = withTimeout(5.seconds) { p.client.closed.await() }
                 assertEquals(Http3ErrorCode.NO_ERROR, assertIs<Http3Exception.Protocol>(e).h3Code)
-                assertEquals(Initiator.Peer, (e as Http3Exception.Protocol).initiator)
+                assertEquals(Initiator.Local, (e as Http3Exception.Protocol).initiator)
+                val s = withTimeout(5.seconds) { p.server.closed.await() } as Http3Exception.Protocol
+                assertEquals(Http3ErrorCode.NO_ERROR, s.h3Code)
+                assertEquals(Initiator.Peer, s.initiator)
+            }
+        }
+
+    /**
+     * A client that never closes after GOAWAY (a raw QUIC peer here): the server keeps the connection while its response is
+     * unacknowledged, however long that takes, and closes it itself with H3_NO_ERROR only [goAwayCloseFallback] after the
+     * response stream finished. The residual risk is documented: such a client must read an acknowledged response within the
+     * fallback (3 s by default).
+     */
+    @Test fun aClientThatNeverClosesIsClosedOnlyAfterItsResponseFinished() =
+        h3Test {
+            QuicPair.open().use { q ->
+                val (c, s) = q.connect()
+                val server = Http3Connection.server(s)
+                server.session.goAwayCloseFallback = 300.milliseconds
+                val raw = RawPeer(c)
+                raw.openControl()
+                val st = c.openBidi()
+                st.output.writeFully(raw.headers(st.id, GET))
+                st.output.flushAndClose()
+                val size = 4 * 1024 * 1024
+                launch {
+                    val w = server.acceptRequest().respond(200)
+                    w.output.writeFully(ByteArray(size))
+                    w.finish()
+                }
+                withTimeout(5.seconds) { while (server.session.maxRequestId < st.id) yield() }
+                launch { server.goAway() }
+                // unread for well past the fallback: flow control holds the response back, the stream is not finished
+                assertEquals(null, withTimeoutOrNull(1500.milliseconds) { server.closed.await() }, "closed with the response unread")
+                val got = withTimeout(30.seconds) { st.input.readAllBytes() }
+                assertTrue(got.size > size, "the whole response (frames included) arrived: ${got.size}")
+                // finished now; the raw client never closes, so the server does, after the fallback, with H3_NO_ERROR
+                val e = withTimeout(10.seconds) { c.closed.await() } as QuicException.ConnectionLost.ApplicationClosed
+                assertEquals(Http3ErrorCode.NO_ERROR, e.code)
+                assertEquals(Initiator.Peer, e.initiator)
             }
         }
 

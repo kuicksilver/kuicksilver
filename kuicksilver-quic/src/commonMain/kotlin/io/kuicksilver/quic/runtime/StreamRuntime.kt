@@ -48,9 +48,13 @@ internal class StreamRuntime(
         readable.trySend(Unit)
     }
 
+    /** Completes when both halves are done (our data acknowledged or reset, the peer's consumed) or the connection ended. */
+    internal val done = kotlinx.coroutines.CompletableDeferred<Unit>()
+
     internal fun finished() {
         readable.trySend(Unit)
         conn.removeTicker(ticker)
+        done.complete(Unit)
     }
 
     internal fun peerReset(code: Long) {
@@ -64,6 +68,7 @@ internal class StreamRuntime(
     internal fun connectionLost(reason: QuicException.ConnectionLost) {
         inChannel?.closeWith(reason)
         outChannel?.closeWith(reason)
+        done.complete(Unit)
     }
 
     override fun reset(code: Long) {

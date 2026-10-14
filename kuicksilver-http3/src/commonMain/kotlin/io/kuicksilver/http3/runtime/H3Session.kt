@@ -30,6 +30,7 @@ import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.QuicPath
 import io.kuicksilver.quic.QuicStream
 import io.kuicksilver.quic.StreamPriority
+import io.kuicksilver.quic.awaitFinished
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineName
@@ -125,6 +126,19 @@ internal class H3Session(
 
     /** Server: how long a request stream may take to complete its HEADERS once the final GOAWAY went out; internal for tests. */
     var headerDeadlineAfterGoAway: Duration = HEADER_DEADLINE_AFTER_GOAWAY
+
+    /**
+     * Server, after the final GOAWAY: how long an idle connection whose answered request streams are all finished at the
+     * transport level waits for the client to close it (a Kuicksilver client does once its responses are read) before the
+     * server closes it itself. Settable by tests.
+     */
+    var goAwayCloseFallback: Duration = GOAWAY_CLOSE_FALLBACK
+
+    /** Server: answered request streams not yet finished at the transport level (response unacknowledged). Session dispatcher only. */
+    private var settling = 0
+
+    /** Client: exchanges whose request or response is still moving; idle after a GOAWAY, the client closes. Dispatcher only. */
+    private var openExchanges = 0
 
     /** Server: request streams still reading their HEADERS, with the coroutine reading them. */
     val pendingHeaders = HashMap<Long, Pair<QuicStream, Job>>()
@@ -423,6 +437,7 @@ internal class H3Session(
                     runCatching { st.reset(Http3ErrorCode.REQUEST_CANCELLED) }
                 }
             }
+            closeIfIdleAfterGoAway()
         }
     }
 
@@ -487,16 +502,16 @@ internal class H3Session(
         if (!isServer) {
             goAwayPhase = 2
             goAwaySentId = 0
-            sendControl(FrameType.GOAWAY, ControlFrames.goAwayPayload(0))
+            sendGoAway(0)
             return
         }
         goAwayPhase = 1
-        sendControl(FrameType.GOAWAY, ControlFrames.goAwayPayload((1L shl 62) - 4))
+        if (!sendGoAway((1L shl 62) - 4)) return
         delay(maxOf(quic.stats.smoothedRtt * 2, 50.milliseconds))
         val id = if (maxRequestId < 0) 0 else maxRequestId + 4
         goAwayPhase = 2
         goAwaySentId = id
-        sendControl(FrameType.GOAWAY, ControlFrames.goAwayPayload(id))
+        if (!sendGoAway(id)) return
         // a request below the GOAWAY id whose HEADERS never complete must not hold the connection open forever
         scope.launch {
             delay(headerDeadlineAfterGoAway)
@@ -506,8 +521,22 @@ internal class H3Session(
                 reader.cancel()
             }
         }
-        closeIfIdle()
+        scope.launch { closeIfIdle() }
     }
+
+    /**
+     * GOAWAY([id]) on our control stream; false when the connection closed meanwhile, which ends the graceful shutdown
+     * (a client idle after our first GOAWAY closes at once, RFC 9114 section 5.2).
+     */
+    private suspend fun sendGoAway(id: Long): Boolean =
+        try {
+            sendControl(FrameType.GOAWAY, ControlFrames.goAwayPayload(id))
+            true
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            if (closed.isCompleted) false else throw e
+        }
 
     fun requestStarted() {
         activeRequests++
@@ -518,11 +547,53 @@ internal class H3Session(
         if (goAwayPhase == 2) scope.launch { closeIfIdle() }
     }
 
-    /** After the final GOAWAY with nothing in flight: give the last responses a few round trips to be acknowledged, then close. */
+    /**
+     * Server: [st]'s response was handed to QUIC; until the stream is finished at the transport level (everything
+     * acknowledged) the GOAWAY idle close waits for it. A response handed over is not yet received: closing 200 ms after
+     * it cut responses still in flight or held back by flow control (the client then lost their bodies).
+     */
+    fun responseHandedOver(st: QuicStream) {
+        settling++
+        scope.launch {
+            try {
+                @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+                st.awaitFinished()
+            } finally {
+                settling--
+                if (goAwayPhase == 2) scope.launch { closeIfIdle() }
+            }
+        }
+    }
+
+    /**
+     * After the final GOAWAY with nothing in flight and every response acknowledged (RFC 9114 section 5.2): the client
+     * closes the connection once it read its responses (quic-go's server waits for exactly that); one that does not is
+     * closed after [goAwayCloseFallback], so a slow reader of an acknowledged response still has that long.
+     */
     private suspend fun closeIfIdle() {
-        if (activeRequests > 0 || closed.isCompleted) return
-        delay(maxOf(quic.stats.smoothedRtt * 4, 200.milliseconds))
-        if (activeRequests == 0) close(Http3ErrorCode.NO_ERROR, "")
+        if (activeRequests > 0 || settling > 0 || closed.isCompleted) return
+        delay(maxOf(quic.stats.smoothedRtt * 4, goAwayCloseFallback))
+        if (activeRequests == 0 && settling == 0) close(Http3ErrorCode.NO_ERROR, "")
+    }
+
+    /** Client: a request stream was opened; [exchangeEnded] follows once its request and response are done. */
+    fun exchangeOpened() {
+        openExchanges++
+    }
+
+    fun exchangeEnded() {
+        openExchanges--
+        closeIfIdleAfterGoAway()
+    }
+
+    /**
+     * Client: a GOAWAY was received and no exchange is left, so this connection carries nothing more (no new request may
+     * use it): close it with H3_NO_ERROR (RFC 9114 section 5.2), which is what lets the server finish its graceful stop
+     * without guessing whether our responses were read.
+     */
+    private fun closeIfIdleAfterGoAway() {
+        if (isServer || goAwayReceived.value == null || openExchanges > 0 || closed.isCompleted) return
+        scope.launch { close(Http3ErrorCode.NO_ERROR, "") }
     }
 
     /** Sends a frame on our control stream. */
@@ -585,6 +656,7 @@ internal class H3Session(
     companion object {
         /** A client that started a request before GOAWAY gets this long to finish its HEADERS (no RFC value; see docs/guide/http3.md). */
         val HEADER_DEADLINE_AFTER_GOAWAY: Duration = 10.seconds
+        val GOAWAY_CLOSE_FALLBACK: Duration = 3.seconds
         val CRITICAL = StreamPriority(0)
         const val MAX_PRIORITY_UPDATE = 256
 

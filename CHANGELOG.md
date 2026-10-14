@@ -815,6 +815,13 @@ Pre-release API and operations review (2026-10-14):
 - HTTP/3 client: a caller cancelled just as `request` (or `connect`) returned dropped the finished response without
   STOP_SENDING or RESET_STREAM, so the stream held flow-control credit until the connection ended; it is abandoned with
   H3_REQUEST_CANCELLED now.
+- HTTP/3 graceful shutdown no longer cuts responses short: the server's idle close after GOAWAY waited a fixed
+  max(4 RTT, 200 ms) after the last response was handed to QUIC, so a response still in flight or held back by flow
+  control (a large body, a slow or loaded client) was lost to the CONNECTION_CLOSE (seen once as
+  `ServerH3Test.stopSendsGoAwayToAllConnectionsAtOnce` failing under load). The server now waits until every answered
+  request stream is finished at the QUIC level, and then for the client to close, which a client idle after GOAWAY does
+  with H3_NO_ERROR once its responses are read (RFC 9114 section 5.2, as quic-go's server expects); a client that does
+  not is closed three seconds later.
 - Ktor client: `connectionReleased` follows every `connectionAcquired`, also for an exchange that failed before its
   response and for an HTTP/3 WebSocket; such calls reported no release.
 - TLS: a `TlsConnection` that failed while being built (a client configuration without a reference identifier, a
