@@ -138,6 +138,9 @@ Targets of every published module (`kuicksilver.kmp` convention plugin): `jvm`, 
 `linuxX64`, `linuxArm64`, `macosArm64`, `iosArm64`, `iosSimulatorArm64`, `mingwX64`. JS and Wasm are not targets;
 `macosX64` was dropped (Intel Macs are served by the JVM and its JNI library).
 
+The Android artifacts are built with AGP 9.3.3, inside the range Kotlin 2.4.20 documents as tested (up to 9.3.x);
+the AGP version only affects the build, not consumers, who can use any AGP their Kotlin supports.
+
 Apple targets are built and tested with Xcode 27.0 (`gradle/toolchains.toml`). Kotlin 2.4.20 officially lists Xcode 26.4;
 every Apple suite, the simulator runs and the iOS sample passed on 27.0, and the pin follows the Kotlin compatibility
 table once it lists Xcode 27. Apps that use Kotlin 2.4.20 may build with either.

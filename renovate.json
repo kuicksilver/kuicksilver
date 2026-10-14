@@ -24,6 +24,11 @@
       "groupName": "Kotlin"
     },
     {
+      "description": "AGP stays within the range the pinned Kotlin documents as tested (Kotlin 2.4.20: up to AGP 9.3.x); raise this bound together with Kotlin.",
+      "matchPackageNames": ["com.android.tools.build:gradle", "com.android.kotlin.multiplatform.library:**", "com.android.**"],
+      "allowedVersions": "<9.4.0"
+    },
+    {
       "description": "Ktor modules move together; the engines vendor Ktor 3.6.0 code and tests, so a Ktor update needs a manual review of docs/ktor-internal-api.md.",
       "matchPackageNames": ["io.ktor:**"],
       "groupName": "Ktor"
