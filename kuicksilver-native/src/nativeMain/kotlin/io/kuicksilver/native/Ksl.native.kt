@@ -114,13 +114,19 @@ public actual object Ksl {
         tls12: String?,
     ): Unit = ctxCheck(ctx, ksl_ctx_set_ciphers(ctx(ctx), tls13, tls12))
 
-    public actual fun ctxSetTicketKeys(
+    public actual fun ctxUseDefaultTicketKeys(
         ctx: Long,
-        keys: List<ByteArray>,
-    ) {
-        require(keys.all { it.size == 80 }) { "each ticket key is 80 bytes" }
-        keys.fold(ByteArray(0)) { a, b -> a + b }.pin { p, n -> ctxCheck(ctx, ksl_ctx_set_ticket_keys(ctx(ctx), p, (n / 80u))) }
-    }
+        rotateSeconds: Int,
+    ): Unit = ctxCheck(ctx, ksl_ctx_use_default_ticket_keys(ctx(ctx), rotateSeconds.toUInt()))
+
+    public actual fun ticketKeysRegister(keys: List<ByteArray>): Int =
+        withTicketKeys(keys) { flat -> flat.pin { p, n -> ksl_ticket_keys_register(p, n / 80u) } }
+            .also { if (it <= 0) internal("ticket keys refused") }
+
+    public actual fun ctxUseTicketKeys(
+        ctx: Long,
+        id: Int,
+    ): Unit = ctxCheck(ctx, ksl_ctx_use_ticket_keys(ctx(ctx), id))
 
     public actual fun ctxSetSessionContext(
         ctx: Long,

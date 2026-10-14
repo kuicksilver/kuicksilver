@@ -11,8 +11,12 @@ fun String.camel() = split('-').joinToString("") { it.replaceFirstChar(Char::upp
 
 // -Pkuicksilver.openssl.prebuilt=true: an existing build/openssl/<target> is reused instead of running tools/openssl/*.sh when
 // it is current (CI downloads it as an artifact; worktrees share one read-only). Current = both archives present, the pinned
-// version in include/openssl/opensslv.h and the configure-flags.txt that tools/openssl/build.sh copies next to them equal to
-// tools/openssl/configure-flags.txt. A stale one fails the build rather than being overwritten; a missing one is built as usual.
+// version in include/openssl/opensslv.h, the configure-flags.txt that tools/openssl/build.sh copies next to them equal to
+// tools/openssl/configure-flags.txt, its configure-target.txt equal (paths aside) to what build.sh --print-target says for
+// the target (so an OPT=-O0 -fsanitize=... or another target's build is refused), and its provenance.txt naming the pinned
+// tarball's SHA-256, the same target line and the SHA-256 of both archives as they are now (security review 2026-10-14,
+// finding 3). A stale one fails the build rather than being overwritten; a missing one is built as usual. A release never
+// reuses: tools/release/local-release.sh rebuilds all twelve from the verified tarball (KSL_OPENSSL_FRESH=1).
 val prebuilt = providers.gradleProperty("kuicksilver.openssl.prebuilt").map { it.toBoolean() }.getOrElse(false)
 val pinnedVersion = Regex("^version = \"(.*)\"", RegexOption.MULTILINE).find(root.resolve("gradle/openssl.toml").readText())?.groupValues?.get(1)
 fun prebuiltState(t: String): String? { // null when current, else why not ("missing" when there is nothing to reuse)
@@ -23,6 +27,20 @@ fun prebuiltState(t: String): String? { // null when current, else why not ("mis
     if (version != pinnedVersion) return "OpenSSL $version there, $pinnedVersion pinned in gradle/openssl.toml"
     val flags = dir.resolve("configure-flags.txt")
     if (!flags.isFile || flags.readText() != root.resolve("tools/openssl/configure-flags.txt").readText()) return "configure-flags.txt differs from tools/openssl/configure-flags.txt"
+    fun portable(line: String) = line.split(Regex("\\s+")).filter { it.isNotEmpty() && '/' !in it }.joinToString(" ")
+    val expected = ProcessBuilder("bash", root.resolve("tools/openssl/build.sh").path, "--print-target", t).redirectErrorStream(true).start()
+        .let { p -> p.inputStream.bufferedReader().readText().trim().also { if (p.waitFor() != 0) return "build.sh --print-target $t failed: $it" } }
+    val target = dir.resolve("configure-target.txt").takeIf { it.isFile }?.readText()?.let(::portable)
+    if (target != expected) return "configure-target.txt says '$target', build.sh configures '$expected' for $t"
+    val provenance = dir.resolve("provenance.txt").takeIf { it.isFile }?.readLines()?.associate { it.substringBefore(' ') to it.substringAfter(' ') }
+        ?: return "no provenance.txt (built before it existed: rebuild with tools/openssl/build.sh $t)"
+    val pinnedSha = Regex("^sha256 = \"(.*)\"", RegexOption.MULTILINE).find(root.resolve("gradle/openssl.toml").readText())?.groupValues?.get(1)
+    if (provenance["tarball-sha256"] != pinnedSha) return "provenance.txt names tarball ${provenance["tarball-sha256"]}, $pinnedSha is pinned"
+    if (provenance["target"] != expected) return "provenance.txt names target '${provenance["target"]}', not '$expected'"
+    for (a in listOf("libcrypto.a", "libssl.a")) {
+        val actual = java.security.MessageDigest.getInstance("SHA-256").digest(dir.resolve("lib/$a").readBytes()).joinToString("") { "%02x".format(it) }
+        if (provenance[a] != actual) return "lib/$a changed after it was built (SHA-256 $actual, provenance.txt ${provenance[a]})"
+    }
     return null
 }
 

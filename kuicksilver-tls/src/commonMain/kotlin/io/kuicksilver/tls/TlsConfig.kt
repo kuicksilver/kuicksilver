@@ -5,6 +5,9 @@ package io.kuicksilver.tls
 import io.kuicksilver.annotations.DelicateKuicksilverApi
 import io.kuicksilver.annotations.InternalKuicksilverApi
 import io.kuicksilver.annotations.KuicksilverDsl
+import io.kuicksilver.native.Ksl
+import io.kuicksilver.native.KslException
+import io.kuicksilver.native.KslLoader
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.days
 import kotlin.time.Duration.Companion.hours
@@ -81,6 +84,14 @@ public class CipherSuites(
  * lifetime; a QUIC server issues tickets only when it accepts 0-RTT (`QuicServerConfig.earlyData`), and then with these keys
  * and lifetime too. Clients ignore it.
  *
+ * The keys never live on the Kotlin heap (threat model 3.7): generated keys are made and rotated inside the native library,
+ * and explicit [keys] are copied there on construction, after which every array in the list is zeroed.
+ *
+ * @param keys explicit 80-byte entries (name 16 | AES-256 32 | HMAC-SHA256 32, at most 64), first encrypts, for servers in
+ *   several processes that must resume each other's tickets; null (the default) = keys generated in this process. The arrays
+ *   are zeroed when the constructor returns, also when it throws; keep the source of the keys (a secret store), not the arrays.
+ *   Explicit keys are not rotated by the library: construct a new configuration with the new key first and the old one after.
+ *   Each distinct set stays in native memory for the life of the process (at most 1024 distinct sets).
  * @property rotateEvery how often the process-wide generated keys rotate (default 1 day, positive, at most 7 days); the previous key
  *   still decrypts until the next rotation. Explicit [keys] are not rotated by the library. A longer period lets one stolen
  *   ticket key decrypt more resumed sessions (RFC 8446 section 4.6.1).
@@ -88,20 +99,38 @@ public class CipherSuites(
  *   whole seconds);
  *   a longer lifetime widens the window in which resumptions can be linked to one client.
  */
+@OptIn(InternalKuicksilverApi::class)
 public class SessionTicketConfig(
     keys: List<ByteArray>? = null,
     public val rotateEvery: Duration = 1.days,
     public val ticketLifetime: Duration = 12.hours,
 ) {
-    /** 80-byte entries (name 16 | AES-256 32 | HMAC-SHA256 32), first encrypts; null = fresh random keys per process. */
-    public val keys: List<ByteArray>? = keys?.map { it.copyOf() }
+    /** The `ksl` id of the explicit keys, 0 for the generated ones. */
+    internal val keysId: Int
 
     init {
-        if (!rotateEvery.isPositive()) throw TlsException.Config("rotateEvery must be positive")
-        if (rotateEvery > 7.days) throw TlsException.Config("rotateEvery must be at most 7 days")
-        if (ticketLifetime < 1.seconds) throw TlsException.Config("ticketLifetime must be at least 1 second")
-        if (ticketLifetime > rotateEvery / 2) throw TlsException.Config("ticketLifetime must be at most rotateEvery / 2")
-        if (keys != null && (keys.isEmpty() || keys.any { it.size != 80 })) throw TlsException.Config("ticket keys are 80-byte entries")
+        try {
+            if (!rotateEvery.isPositive()) throw TlsException.Config("rotateEvery must be positive")
+            if (rotateEvery > 7.days) throw TlsException.Config("rotateEvery must be at most 7 days")
+            if (ticketLifetime < 1.seconds) throw TlsException.Config("ticketLifetime must be at least 1 second")
+            if (ticketLifetime > rotateEvery / 2) throw TlsException.Config("ticketLifetime must be at most rotateEvery / 2")
+            if (keys != null && (keys.isEmpty() || keys.size > 64 || keys.any { it.size != 80 })) {
+                throw TlsException.Config("ticket keys are 1..64 entries of 80 bytes")
+            }
+            keysId =
+                if (keys == null) {
+                    0
+                } else {
+                    KslLoader.ensureLoaded()
+                    try {
+                        Ksl.ticketKeysRegister(keys)
+                    } catch (e: KslException.Internal) {
+                        throw TlsException.Config("ticket keys refused: ${e.message}")
+                    }
+                }
+        } finally {
+            keys?.forEach { it.fill(0) }
+        }
     }
 
     /** Holds [Default]. */

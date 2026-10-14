@@ -5,7 +5,11 @@ package io.kuicksilver.tls
 import java.security.KeyStore
 import java.security.cert.X509Certificate
 
-/** JVM: import an identity from a `KeyStore` (migration path from Ktor's `sslConnector { keyStore }`); the key is exported as PKCS#8 and zeroed after import. */
+/**
+ * JVM: import an identity from a `KeyStore` (migration path from Ktor's `sslConnector { keyStore }`); the key is exported as
+ * PKCS#8 and that copy is zeroed after import. The `KeyStore`'s own `PrivateKey` objects cannot be wiped and stay on the heap
+ * while the key store lives (and as garbage after); use [fromPem] or [fromDer] when a heap dump must not contain the key.
+ */
 public fun TlsIdentity.Companion.fromKeyStore(
     keyStore: KeyStore,
     alias: String,
@@ -23,7 +27,11 @@ public fun TlsIdentity.Companion.fromKeyStore(
     }
 }
 
-/** JVM: PKCS#12 bundles through the JDK keystore provider. */
+/**
+ * JVM: PKCS#12 bundles through the JDK keystore provider. The JDK decrypts the key into objects that cannot be wiped and that
+ * stay on the heap as garbage until collected (threat model 3.7); use [fromPem] or [fromDer] when a heap dump must not
+ * contain the key.
+ */
 public fun TlsIdentity.Companion.fromPkcs12(
     bytes: ByteArray,
     password: CharArray,

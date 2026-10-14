@@ -128,6 +128,31 @@ class SecretsJvmTest {
         assertEquals(0L, target.length(), "nothing was written through the hard link")
     }
 
+    /**
+     * A FIFO planted at the key log path must not block (security review 2026-10-14, finding 6): opening one for writing waits
+     * for a reader, which would hang `keylogFile` (and, reopened per line on Native, the endpoint loop). It is refused.
+     */
+    @Test fun negative_keylogFileRefusesFifo() {
+        if (!posix) return
+        val fifo = File.createTempFile("ksl-keylog-fifo", ".txt").also { it.delete() }
+        assertEquals(0, ProcessBuilder("mkfifo", fifo.path).start().waitFor())
+        try {
+            var outcome: Any? = "blocked"
+            val t =
+                Thread {
+                    outcome = runCatching { keylogFile(fifo.path) }.exceptionOrNull()
+                }.apply {
+                    isDaemon = true
+                    start()
+                }
+            t.join(10_000)
+            assertFalse(t.isAlive, "keylogFile returned instead of blocking on the FIFO")
+            assertTrue(outcome is IllegalArgumentException, "a FIFO is refused: $outcome")
+        } finally {
+            fifo.delete()
+        }
+    }
+
     @Test fun negative_keylogDisabledInRelease() {
         // the Gradle test task sets SSLKEYLOGFILE; neither OpenSSL (no-sslkeylog) nor the library may touch it
         val env = System.getenv("SSLKEYLOGFILE")
@@ -374,6 +399,58 @@ class SecretsJvmTest {
             assertTrue(contains(heap, "kuicksilver".encodeToByteArray()), "sanity: the dump is searchable")
         }
 
+    /**
+     * Session ticket keys stay in `ksl` (security review 2026-10-14, finding 1): explicit keys given to [SessionTicketConfig] are
+     * copied into native memory and the arrays zeroed, so after a server issued and resumed tickets with them, a heap dump that
+     * includes unreachable objects holds no copy of the key, its AES part or its HMAC part. The needle is computed only after
+     * the dump is written. Generated keys never cross into Kotlin at all (no binding returns them).
+     */
+    @Test fun negative_heapDumpNoSessionTicketKeys(): Unit =
+        runBlocking {
+            val tickets = SessionTicketConfig(keys = listOf(ticketKeyNeedle()))
+            val server = TcpFixtures.server { sessionTickets = tickets }
+            val client = TcpFixtures.client()
+            repeat(2) { round ->
+                val (cd, sd) = connect(client, server)
+                val c = withTimeout(20.seconds) { cd.await() }
+                val s = withTimeout(20.seconds) { sd.await() }
+                c.output.writeFully(byteArrayOf(1), 0, 1)
+                c.output.flush()
+                s.input.readExactly(1)
+                s.output.writeFully(byteArrayOf(2), 0, 1)
+                s.output.flush()
+                c.input.readExactly(1)
+                if (round == 1) assertTrue(c.sessionReused, "the second connection resumed a ticket made with the keys")
+                withTimeout(5.seconds) { while (SessionCache.Default.size() == 0) delay(10) }
+                c.close()
+                s.close()
+            }
+            val dump =
+                File.createTempFile("ksl-heap", ".hprof").also {
+                    it.delete()
+                    it.deleteOnExit()
+                }
+            withContext(Dispatchers.IO) {
+                System.gc()
+                ManagementFactory
+                    .newPlatformMXBeanProxy(
+                        ManagementFactory.getPlatformMBeanServer(),
+                        "com.sun.management:type=HotSpotDiagnostic",
+                        com.sun.management.HotSpotDiagnosticMXBean::class.java,
+                    ).dumpHeap(dump.path, false) // unreachable objects too: a dropped copy is still in the heap
+            }
+            assertTrue(server.sessionTickets === tickets, "the configuration is alive while the heap is dumped")
+            val heap = dump.readBytes()
+            val key = ticketKeyNeedle()
+            assertFalse(contains(heap, key), "the session ticket key was found in the heap dump")
+            assertFalse(contains(heap, key.copyOfRange(16, 48)), "the ticket AES key was found in the heap dump")
+            assertFalse(contains(heap, key.copyOfRange(48, 80)), "the ticket HMAC key was found in the heap dump")
+            assertTrue(contains(heap, "kuicksilver".encodeToByteArray()), "sanity: the dump is searchable")
+        }
+
+    /** A ticket key no other test uses, computed (not a literal in the class file). */
+    private fun ticketKeyNeedle(): ByteArray = ByteArray(80) { ((it * 73 + 11) xor 0x5a xor (it ushr 3)).toByte() }
+
     /** A TLS 1.2-only server over raw `ksl` that issues a ticket in its handshake flight and stops once the handshake is done. */
     private suspend fun tls12Server(
         input: ByteReadChannel,
@@ -386,7 +463,7 @@ class SecretsJvmTest {
             Ksl.ctxSetIdentity(ctx, listOf(TestCerts.server), TestCerts.serverKey.copyOf())
             Ksl.ctxSetOption(ctx, KslConst.OPT_MIN_VERSION, KslConst.TLS1_2)
             Ksl.ctxSetOption(ctx, KslConst.OPT_MAX_VERSION, KslConst.TLS1_2)
-            Ksl.ctxSetTicketKeys(ctx, listOf(Ksl.rand(80)))
+            Ksl.ctxUseDefaultTicketKeys(ctx, 86400)
             Ksl.ctxSetOption(ctx, KslConst.OPT_NUM_TICKETS, 1)
             Ksl.ctxFreeze(ctx)
             ssl = Ksl.sslNew(ctx, KslConst.MODE_TCP)
