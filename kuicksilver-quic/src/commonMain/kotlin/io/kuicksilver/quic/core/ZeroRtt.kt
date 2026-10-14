@@ -163,7 +163,8 @@ internal val ConnectionCore.zeroRttWritable: Boolean get() = writeKeys[1] != nul
 
 /**
  * Client, at handshake completion: the server's answer to our 0-RTT (RFC 9001 section 4.6.2). Accepted: the new limits
- * must not be lower than the remembered ones (RFC 9000 section 7.4.1; PROTOCOL_VIOLATION, as quic-go). Rejected: the
+ * and max_datagram_frame_size must not be lower than the remembered ones (RFC 9000 section 7.4.1, RFC 9221 section 3;
+ * PROTOCOL_VIOLATION, as quic-go). Rejected: the
  * 0-RTT packets leave flight without a congestion signal and their frames are queued again for 1-RTT, provided the ALPN
  * is the same and the new limits cover what was already sent; otherwise (and always under [EarlyDataState.Required]) the
  * connection closes with [QuicException.ConnectionLost.ZeroRttRejected].
@@ -182,7 +183,9 @@ internal fun ConnectionCore.settleZeroRtt() {
                 tp.initialMaxStreamDataBidiRemote < old.initialMaxStreamDataBidiRemote ||
                 tp.initialMaxStreamDataUni < old.initialMaxStreamDataUni ||
                 tp.initialMaxStreamsBidi < old.initialMaxStreamsBidi ||
-                tp.initialMaxStreamsUni < old.initialMaxStreamsUni
+                tp.initialMaxStreamsUni < old.initialMaxStreamsUni ||
+                // RFC 9221 section 3: the ticket stores max_datagram_frame_size, so a smaller one is a PROTOCOL_VIOLATION as well
+                tp.maxDatagramFrameSize < old.maxDatagramFrameSize
         if (lower) {
             fail(TransportError.PROTOCOL_VIOLATION, 0, "server accepted 0-RTT with transport parameters below the remembered ones", null)
             return

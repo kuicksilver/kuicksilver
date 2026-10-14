@@ -248,6 +248,19 @@ class ZeroRttTest {
         p.close()
     }
 
+    /** RFC 9221 section 3: a stored max_datagram_frame_size must not shrink when the server accepts 0-RTT. */
+    @Test fun negative_0rttMaxDatagramFrameSizeReduced() {
+        val t = ticket()
+        val tp = TransportParametersCodec.decode(rememberedTp(t.remembered!!), TlsRole.Server)
+        tp.maxDatagramFrameSize = tp.maxDatagramFrameSize + 1200
+        t.remembered = withTp(t.remembered!!, TransportParametersCodec.encode(tp, TlsRole.Server, 27))
+        val (p, _) = resumed(t)
+        assertTrue(p.runUntil(limit = 3.seconds) { p.closedReason(p.clientEvents) != null })
+        val r = assertIs<QuicException.ConnectionLost.TransportClosed>(p.closedReason(p.clientEvents))
+        assertEquals(TransportError.PROTOCOL_VIOLATION, r.code, r.reason)
+        p.close()
+    }
+
     @Test fun rejectedWithSmallerLimitsFailsZeroRttRejected() {
         val big = "x".repeat(4000)
         val (p, _) =
