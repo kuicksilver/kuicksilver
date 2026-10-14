@@ -107,8 +107,8 @@ public class TlsSocket private constructor(
 
     override fun dispose(): Unit = close()
 
-    /** No public members: create a [TlsSocket] with [Socket.tls] or [Socket.tlsServer]. */
-    public companion object {
+    /** The factory behind [Socket.tls] and [Socket.tlsServer]; internal, so no empty companion is part of the public ABI. */
+    internal companion object {
         internal suspend fun start(
             raw: Socket,
             config: TlsConfig,
