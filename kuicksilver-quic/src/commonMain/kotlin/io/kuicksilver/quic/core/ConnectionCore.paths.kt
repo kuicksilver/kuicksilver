@@ -170,6 +170,7 @@ internal fun ConnectionCore.onPathPacket(
         socket == active.socket
     ) {
         if (nonProbing && pn > largestNonProbingPn) largestNonProbingPn = pn
+        if (rxDcidSeq >= 0) activeDcidSeq = rxDcidSeq
         active.lastReceivedAt = now
         return
     }
@@ -197,13 +198,15 @@ internal fun ConnectionCore.onPathPacket(
     } else if (p.state == PathState.Unknown || (p.state == PathState.Failed && p.standbyUntil <= now)) {
         startValidation(p) // a path first seen through the peer's probe is validated once it carries anything else
     }
+    notePeerDcid(p)
     p.lastReceivedAt = now
     if (nonProbing &&
         pn > largestNonProbingPn
     ) {
         largestNonProbingPn = pn
-        if (p.state !=
-            PathState.Failed
+        // no ID to send there without linking the paths (RFC 9000 section 9.5): stay until the client gives us one
+        if (p.state != PathState.Failed &&
+            dcidFor(p) != null
         ) {
             switchPath(
                 p,
@@ -212,6 +215,11 @@ internal fun ConnectionCore.onPathPacket(
             )
         }
     }
+}
+
+/** Server: records whether the 1-RTT packet just received on [p] carries another of our IDs than the active path's packets. */
+private fun ConnectionCore.notePeerDcid(p: Path) {
+    if (p !== paths.active && rxDcidSeq >= 0 && activeDcidSeq >= 0) p.peerChangedDcid = rxDcidSeq != activeDcidSeq
 }
 
 /** A validating path silent this long may give its slot to a probe from a new address (quic-go's pathTimeout). */
@@ -260,6 +268,7 @@ internal fun ConnectionCore.switchPath(
     if (old === p) return
     val oldPeer = cids.currentPeer
     paths.active = p
+    p.peerProbed = false
     loss.rtt = p.rtt
     loss.activePath = p.id.value
     if (old.remote != p.remote) onRemoteChanged?.invoke(old.remote, p.remote)
@@ -295,7 +304,9 @@ internal fun ConnectionCore.switchPath(
 /**
  * The DCID of a packet to [p] (RFC 9000 section 9.5): the active path carries the current peer ID; any other path an unused one of its own,
  * reserved on its first packet. Null when the peer gave us no spare and reuse would link the paths; a server answering a new address from
- * the same socket may keep the current ID (section 9.5 allows it for a peer whose address changed under it), and a zero-length ID is never a link.
+ * the same socket may keep the current ID only while the client's packets there carry the same DCID as on the active path (section 9.5:
+ * "Due to network changes outside the control of its peer ... it MAY continue to use the current connection ID"), and a zero-length ID
+ * is never a link.
  */
 internal fun ConnectionCore.dcidFor(p: Path): ConnectionId? {
     if (p === paths.active || remoteCid.length == 0) return remoteCid
@@ -307,7 +318,7 @@ internal fun ConnectionCore.dcidFor(p: Path): ConnectionId? {
         p.peerCid = it
         return it.cid
     }
-    return if (role == TlsRole.Server && p.socket == paths.active.socket) remoteCid else null
+    return if (role == TlsRole.Server && p.socket == paths.active.socket && !p.peerChangedDcid) remoteCid else null
 }
 
 /** Fresh unpredictable data for the PATH_CHALLENGE about to go out on [p] (RFC 9000 sections 8.2.1 and 13.3). */
@@ -369,6 +380,10 @@ internal fun ConnectionCore.onPathChallenge(
         }
         p.amplification.onReceived(datagramBytes)
     }
+    if (role == TlsRole.Server && p !== paths.active) {
+        notePeerDcid(p)
+        p.peerProbed = true
+    }
     if (!paths.queueResponse(data, p)) glitch(0x1a)
 }
 
@@ -386,11 +401,9 @@ internal fun ConnectionCore.onPathResponse(data: Long) {
             p.nextChallengeAt = TimeMark.NEVER
             p.validatedAt = now
             paths.lastValidated = p
-            if (p !==
-                paths.active
-            ) {
-                releasePathCid(p)
-            }
+            // a client gives back the ID of a path it only probed; a server keeps the one it answers a client's probe with, since the
+            // client probes to migrate there next, and the switch must not need another spare ID (RFC 9000 section 9.5)
+            if (p !== paths.active && (role == TlsRole.Client || !p.peerProbed)) releasePathCid(p)
             events += ConnectionEvent.PathValidated(p.id)
             return
         }

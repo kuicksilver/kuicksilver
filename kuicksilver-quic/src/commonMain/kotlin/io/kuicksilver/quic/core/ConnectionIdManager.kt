@@ -245,6 +245,17 @@ internal class ConnectionIdManager(
         return false
     } // indexed: no iterator per packet (allocation gate)
 
+    /** The sequence number of our ID at [off] in [buf] (live or still routing after retirement), or -1. */
+    fun localSeqOf(
+        buf: PacketBuffer,
+        off: Int,
+        len: Int,
+    ): Long {
+        for (i in 0 until local.size) if (local[i].cid.contentEquals(buf, off, len)) return local[i].seq
+        for (i in 0 until retiredLocal.size) if (retiredLocal[i].cid.contentEquals(buf, off, len)) return retiredLocal[i].seq
+        return -1
+    } // indexed: no iterator per packet (allocation gate)
+
     /** The highest retire_prior_to we sent: a lost NEW_CONNECTION_ID below it is not retransmitted (RFC 9000 section 19.15). */
     private var issuedRetirePriorTo = 0L
 

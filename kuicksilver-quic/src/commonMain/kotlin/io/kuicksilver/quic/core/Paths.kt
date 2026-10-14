@@ -111,6 +111,15 @@ internal class Path(
      */
     var awaitingCid: Boolean = false
 
+    /**
+     * Server: the client's packets on this path carry another of our IDs than those on the active path, a deliberate migration (RFC
+     * 9000 section 9.5): our current ID must not follow it there.
+     */
+    var peerChangedDcid: Boolean = false
+
+    /** Server: the client probed this path (a PATH_CHALLENGE from it while another path was active), typically to migrate there. */
+    var peerProbed: Boolean = false
+
     /** The peer connection ID this path's packets carry while it is not the active path (RFC 9000 section 9.5: never the active path's); null until it first sends. */
     var peerCid: ConnectionIdManager.Peer? = null
 

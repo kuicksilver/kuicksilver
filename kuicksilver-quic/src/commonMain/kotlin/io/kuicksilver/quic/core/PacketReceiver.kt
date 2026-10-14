@@ -324,6 +324,9 @@ internal class PacketReceiver(
                     type == PacketType.Initial,
             ) // a NAT rebinding in the middle of the handshake (interop rebind cases)
         }
+        // which of our IDs the peer used: a server answers a new address with its current ID only if that did not change (RFC 9000
+        // section 9.5)
+        if (type == PacketType.OneRtt && c.role == TlsRole.Server) c.rxDcidSeq = c.cids.localSeqOf(data, hv.dcidOff, hv.dcidLen)
         val ackEliciting =
             try {
                 FrameDecoder.decode(reader, type, frames, ackView)

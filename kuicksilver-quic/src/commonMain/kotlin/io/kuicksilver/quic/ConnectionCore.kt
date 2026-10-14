@@ -155,6 +155,12 @@ public class ConnectionCore internal constructor(
 
     /** The highest packet number of a non-probing 1-RTT packet; only a higher one moves the connection to its source address (RFC 9000 section 9.3). */
     internal var largestNonProbingPn = -1L
+
+    /** The sequence number of our ID that the 1-RTT packet being processed carries (-1: none of them, or not known yet). */
+    internal var rxDcidSeq = -1L
+
+    /** Our ID the peer's packets on the active path carry, by sequence number (-1 until the first 1-RTT packet). */
+    internal var activeDcidSeq = -1L
     internal var oneRttSinceRotation = 0
     internal var testInjectPathChallenges = 0
     internal var testInjectPathResponse: Long? = null

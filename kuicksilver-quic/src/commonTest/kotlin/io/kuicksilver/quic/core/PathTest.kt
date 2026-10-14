@@ -23,6 +23,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
+import kotlin.test.assertNotNull
 import kotlin.test.assertNotSame
 import kotlin.test.assertNull
 import kotlin.test.assertSame
@@ -758,6 +759,57 @@ class PathTest {
             val id = c.addPath(p.serverAddr, p.now)
             assertEquals(PathState.Unknown, c.pathState(id))
             kotlin.test.assertFailsWith<IllegalStateException> { p.server().addPath(p.clientAddr, p.now) }
+        } finally {
+            p.close()
+        }
+    }
+
+    /**
+     * Review finding 23, RFC 9000 section 9.5: "an endpoint MUST NOT reuse a connection ID when sending to more than one destination
+     * address"; it MAY keep the current one only for a peer whose packets from the new address carry the same Destination Connection
+     * ID (a NAT rebinding). A server without a spare ID of the client answered a deliberate migration (a new DCID) with its current
+     * ID, linking both paths; it now sends nothing there until the client gives it a new ID (as ngtcp2's CONN_ID_BLOCKED).
+     */
+    @Test fun serverWithoutSpareCidDoesNotReuseItTowardAMigratingClient() {
+        val (p, c) = connected()
+        try {
+            val s = p.server()
+            for (seq in 1L..7L) s.cids.markUsedForTest(seq) // every spare ID of the client is spent
+            assertTrue(!s.cids.hasSparePeerForTest)
+            val id = c.addPath(p.serverAddr, p.now)
+            p.clientSocketSources[id] = other
+            p.clientListens += other
+            c.probePath(id, p.now)
+            p.runUntil(3.seconds) { c.pathState(id) != PathState.Validating }
+            val toOther = p.serverSent.filter { it.first == other }.map { it.second }
+            for (d in toOther) assertNotEquals(s.remoteCid, dcidOf(d), "the server's current ID toward the new address links the paths")
+            assertNull(p.closed(s))
+        } finally {
+            p.close()
+        }
+    }
+
+    /**
+     * Review finding 23: the ID a server answers a client's probe with stays with that path once it is validated, so the client's
+     * switch there right after (QuicConnection.migrate) does not need one more spare ID of the client.
+     */
+    @Test fun serverKeepsTheProbedPathsCidForTheSwitch() {
+        val (p, c) = connected()
+        try {
+            val s = p.server()
+            val id = c.addPath(p.serverAddr, p.now)
+            p.clientSocketSources[id] = other
+            p.clientListens += other
+            c.probePath(id, p.now)
+            assertTrue(p.runUntil(5.seconds) { c.pathState(id) == PathState.Validated }, "probe answered: ${c.pathState(id)}")
+            val probed = s.paths.all.single { it.remote == other }
+            val held = assertNotNull(probed.peerCid, "the server path keeps the client ID it answered with")
+            for (seq in 0L..7L) s.cids.markUsedForTest(seq) // no spare left for the switch itself
+            c.switchPath(id, p.now)
+            send(c)
+            p.settle(5)
+            assertEquals(other, s.remoteAddressForTest, "the server followed the client")
+            assertEquals(held.cid, s.remoteCid, "with the ID the probed path held")
         } finally {
             p.close()
         }
