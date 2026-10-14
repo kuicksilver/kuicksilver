@@ -53,7 +53,16 @@ internal class ConnectionIdManager(
         val cid: ConnectionId,
         val token: ByteArray,
     ) {
+        /** The NEW_CONNECTION_ID frame is out (false again while a lost one waits to be resent). */
         var sent = false
+            set(value) {
+                field = value
+                if (value) everSent = true
+            }
+
+        /** The peer may know this ID: a RETIRE_CONNECTION_ID for one never sent is a PROTOCOL_VIOLATION (RFC 9000 section 19.16). */
+        var everSent = false
+            private set
         var retirePriorTo = 0L
     }
 
@@ -132,6 +141,15 @@ internal class ConnectionIdManager(
     private var retirePriorTo = 0L
     private var largestPeerSeq = -1L
     private val pendingRetire = ArrayList<Long>()
+
+    /**
+     * Peer sequence numbers we retired, at most [retiredCap]: a retransmitted NEW_CONNECTION_ID for one of them is ignored instead
+     * of bringing the ID back (RFC 9000 section 19.15; quic-go retires anything below its highest retired number at once). When the
+     * memory is full the lowest number is forgotten and [retiredPeerFloor] rises above it: an unknown ID below the floor is retired
+     * again on arrival, never added.
+     */
+    private val retiredPeerSeqs = ArrayList<Long>()
+    private var retiredPeerFloor = 0L
     private val unackedRetire = ArrayList<Long>()
     var core: ConnectionCore? = null
     var retiredByPeer: Int = 0
@@ -169,6 +187,31 @@ internal class ConnectionIdManager(
         }
     }
 
+    /**
+     * The peer's `preferred_address` carries its sequence-1 ID (RFC 9000 section 5.1.1): it is kept like one from NEW_CONNECTION_ID,
+     * so it can serve a migration and is retired, not forgotten, when the peer asks (section 5.1.2).
+     */
+    fun adoptPreferredAddressCid(
+        cid: ConnectionId,
+        token: ByteArray,
+    ) {
+        if (peer.any { it.seq == 1L } || peer.size + 1 > localLimit) return
+        peer += Peer(1, cid, token.copyOf())
+        if (largestPeerSeq < 1) largestPeerSeq = 1
+    }
+
+    /** Test hook for a server that advertises `preferred_address`: its sequence-1 ID, issued and sent with the transport parameters. */
+    fun preferredAddressLocalForTest(): Local {
+        local.firstOrNull { it.seq == 1L }?.let { return it }
+        check(nextLocalSeq == 1L) { "preferred_address needs sequence 1" }
+        val cid = newLocalCid()
+        val l = Local(nextLocalSeq++, cid, tokenFor(cid))
+        l.sent = true
+        local += l
+        core?.let { registrar.add(cid, it) }
+        return l
+    }
+
     /** How new local IDs are made; the endpoint sets the server CID format with its routing byte, clients keep random bytes. */
     var generator: ((Random) -> ConnectionId)? = null
 
@@ -200,6 +243,17 @@ internal class ConnectionIdManager(
             if (retiredLocal[i].cid.contentEquals(buf, off, len)) return true
         }
         return false
+    } // indexed: no iterator per packet (allocation gate)
+
+    /** The sequence number of our ID at [off] in [buf] (live or still routing after retirement), or -1. */
+    fun localSeqOf(
+        buf: PacketBuffer,
+        off: Int,
+        len: Int,
+    ): Long {
+        for (i in 0 until local.size) if (local[i].cid.contentEquals(buf, off, len)) return local[i].seq
+        for (i in 0 until retiredLocal.size) if (retiredLocal[i].cid.contentEquals(buf, off, len)) return retiredLocal[i].seq
+        return -1
     } // indexed: no iterator per packet (allocation gate)
 
     /** The highest retire_prior_to we sent: a lost NEW_CONNECTION_ID below it is not retransmitted (RFC 9000 section 19.15). */
@@ -263,6 +317,9 @@ internal class ConnectionIdManager(
             throw QuicWireException(TransportError.PROTOCOL_VIOLATION, 0x19, "RETIRE_CONNECTION_ID for an unissued sequence")
         }
         val i = local.indexOfFirst { it.seq == seq }
+        if (i >= 0 && !local[i].everSent) {
+            throw QuicWireException(TransportError.PROTOCOL_VIOLATION, 0x19, "RETIRE_CONNECTION_ID for an unsent sequence")
+        }
         if (i < 0) {
             // still in its grace period: a retransmission, or an ID we dropped after its NEW_CONNECTION_ID was declared lost
             for (k in 0 until retiredLocal.size) if (retiredLocal[k].seq == seq) return true
@@ -384,6 +441,7 @@ internal class ConnectionIdManager(
         if (p === current || !isActive(p) || pendingRetire.size + unackedRetire.size + 1 > retiredCap) return
         peer.remove(p)
         pendingRetire += p.seq
+        rememberRetired(p.seq)
     }
 
     /** True when the frame was a repeat of a known sequence number (a glitch when it is not a retransmission). */
@@ -395,6 +453,10 @@ internal class ConnectionIdManager(
         len: Int,
         tokenOff: Int,
     ): Boolean {
+        if (current?.cid?.length == 0) {
+            // RFC 9000 section 19.15: a peer that asked for zero-length connection IDs cannot issue more
+            throw QuicWireException(TransportError.PROTOCOL_VIOLATION, 0x18, "NEW_CONNECTION_ID from a zero-length-ID peer")
+        }
         val existing = peer.firstOrNull { it.seq == seq }
         if (existing !=
             null
@@ -409,10 +471,6 @@ internal class ConnectionIdManager(
             }
             return true
         }
-        if (seq <= largestPeerSeq && seq < retirePriorTo) {
-            queueRetire(seq)
-            return false
-        } // already retired by a later frame
         if (retire > retirePriorTo) {
             retirePriorTo = retire
             val it = peer.iterator()
@@ -424,7 +482,8 @@ internal class ConnectionIdManager(
                 }
             }
         }
-        if (seq < retirePriorTo) {
+        if (retiredPeerSeqs.contains(seq)) return true // we retired it already: a retransmission that crossed our RETIRE
+        if (seq < retirePriorTo || seq < retiredPeerFloor) {
             queueRetire(seq)
             return false
         }
@@ -447,13 +506,27 @@ internal class ConnectionIdManager(
         return false
     }
 
+    /** Queues RETIRE_CONNECTION_ID for [seq] once: copies of a frame below retire_prior_to share the one already waiting or in flight. */
     private fun queueRetire(seq: Long) {
+        if (pendingRetire.contains(seq) || unackedRetire.contains(seq)) return
         if (pendingRetire.size + unackedRetire.size + 1 >
             retiredCap
         ) {
             throw QuicWireException(TransportError.CONNECTION_ID_LIMIT_ERROR, 0x18, "more than $retiredCap retirements outstanding")
         }
         pendingRetire += seq
+        rememberRetired(seq)
+    }
+
+    private fun rememberRetired(seq: Long) {
+        if (retiredPeerSeqs.contains(seq)) return
+        if (retiredPeerSeqs.size >= retiredCap) {
+            var low = 0
+            for (i in 1 until retiredPeerSeqs.size) if (retiredPeerSeqs[i] < retiredPeerSeqs[low]) low = i
+            val forgotten = retiredPeerSeqs.removeAt(low)
+            if (forgotten + 1 > retiredPeerFloor) retiredPeerFloor = forgotten + 1
+        }
+        retiredPeerSeqs += seq
     }
 
     /** RETIRE_CONNECTION_ID frames to send now (they move to the unacknowledged set). */
@@ -473,6 +546,10 @@ internal class ConnectionIdManager(
     }
 
     internal fun localForTest(seq: Long) = local.firstOrNull { it.seq == seq }
+
+    internal fun peerSeqsForTest(): List<Long> = peer.map { it.seq }
+
+    internal fun retiredSeqMemoryForTest(): Int = retiredPeerSeqs.size
 
     /** The peer ID to put in our packets: the lowest active one. */
     fun activePeerCid(): ConnectionId {

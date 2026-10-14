@@ -387,7 +387,7 @@ internal class PacketBuilder(
             if (target.challengePending &&
                 w.remaining >= 9
             ) {
-                FrameEncoder.pathChallenge(w, target.challenge)
+                FrameEncoder.pathChallenge(w, c.newChallengeData(target))
                 frames.flags =
                     frames.flags or SentFrames.PATH_CHALLENGE
                 frames.pathChallenge = target.challenge
@@ -396,6 +396,7 @@ internal class PacketBuilder(
                     true
                 c.challengedAddressesForTest.recordForTest(target.remote)
                 c.pathChallengesSentForTest++
+                c.challengeDataSentForTest.recordForTest(target.challenge)
             }
             while (w.remaining >=
                 9
@@ -432,7 +433,7 @@ internal class PacketBuilder(
                 if (target.challengePending &&
                     w.remaining >= 9
                 ) {
-                    FrameEncoder.pathChallenge(w, target.challenge)
+                    FrameEncoder.pathChallenge(w, c.newChallengeData(target))
                     frames.flags =
                         frames.flags or SentFrames.PATH_CHALLENGE
                     frames.pathChallenge = target.challenge
@@ -442,6 +443,7 @@ internal class PacketBuilder(
                     padToEnd = true
                     c.challengedAddressesForTest.recordForTest(target.remote)
                     c.pathChallengesSentForTest++
+                    c.challengeDataSentForTest.recordForTest(target.challenge)
                 } // RFC 9000 section 8.2.1: expanded to 1200 bytes
                 while (w.remaining >=
                     9
@@ -684,6 +686,8 @@ internal class PacketBuilder(
         val payloadEnd = w.pos
         if (lengthOff >= 0) VarInt.writeFixed(buf, lengthOff, (pnLen + (payloadEnd - payloadStart) + 16).toLong(), 2)
         val end = PacketProtection.protect(buf, start, pnOff, pnLen, payloadEnd, pn, key, mask)
+        // RFC 9000 section 8.2.1: a challenge the amplification limit kept below 1200 bytes does not validate the path MTU
+        if (frames.flags and SentFrames.PATH_CHALLENGE != 0 && end < 1200) target.markLastChallengeUndersized()
         if (type == PacketType.OneRtt) c.onOneRttPacketSealed(pn)
         p.zeroRtt = type == PacketType.ZeroRtt
         p.pn = pn

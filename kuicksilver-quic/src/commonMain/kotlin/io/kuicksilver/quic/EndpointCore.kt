@@ -296,6 +296,28 @@ public class EndpointCore(
         dirty.clear()
     }
 
+    /** The connection to [from] whose peer token ends the datagram (a Stateless Reset, RFC 9000 section 10.3.1), or null. */
+    private fun statelessResetFor(
+        data: PacketBuffer,
+        length: Int,
+        from: InetSocketAddress,
+        now: TimeMark,
+    ): ConnectionCore? {
+        resetCandidatesExaminedForTest = 0
+        if (length < StatelessReset.MIN_SIZE) return null
+        val l =
+            byRemote[AddressClass.addrKey(from)] ?: return null
+        for (i in l.indices) {
+            val c = l[i]
+            resetCandidatesExaminedForTest++
+            if (c.checkStatelessReset(data, length, now)) {
+                markDirty(c)
+                return c
+            }
+        }
+        return null
+    }
+
     /**
      * The loop that owns the connection a datagram belongs to, read from the routing byte of our server CID format ([ServerCidFormat]),
      * or -1: an Initial (admitted where it lands), Version Negotiation, a client endpoint, or a DCID not in our format. The
@@ -333,6 +355,8 @@ public class EndpointCore(
         socket: PathId,
     ): ConnectionCore? {
         if (!PacketHeaderCodec.parse(data, 0, length, cidLength, hv)) {
+            // RFC 9000 section 10.3: a reset may come in another version's long header that v1 cannot parse
+            statelessResetFor(data, length, from, now)?.let { return it }
             droppedUndecryptable++
             return null
         }
@@ -352,19 +376,11 @@ public class EndpointCore(
             droppedStateless++
             return null
         }
+        // RFC 9000 section 10.3: an unknown DCID is either a Stateless Reset for one of our connections to that peer (any header
+        // form: "endpoints MUST treat any packet ending in a valid stateless reset token as a Stateless Reset"), or, in a short
+        // header, a reason to send one
+        statelessResetFor(data, length, from, now)?.let { return it }
         if (hv.type == PacketType.OneRtt) {
-            // RFC 9000 section 10.3: an unknown DCID in a short header is either a Stateless Reset for one of our connections to that peer, or a reason to send one
-            resetCandidatesExaminedForTest = 0
-            byRemote[AddressClass.addrKey(from)]?.let { l ->
-                for (i in l.indices) {
-                    val c = l[i]
-                    resetCandidatesExaminedForTest++
-                    if (c.checkStatelessReset(data, length, now)) {
-                        markDirty(c)
-                        return c
-                    }
-                }
-            }
             if (config.server != null && length > StatelessReset.MIN_SIZE && hv.dcidLen == cidLength &&
                 data[hv.dcidOff].toInt() == ServerCidFormat.FORMAT_VERSION &&
                 data[hv.dcidOff + 1].toInt() == loopIndex

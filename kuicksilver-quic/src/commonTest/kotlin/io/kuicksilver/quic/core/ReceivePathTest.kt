@@ -87,6 +87,104 @@ class ReceivePathTest {
         }
     }
 
+    /**
+     * Review finding 18, RFC 9000 section 12.2: "Receivers SHOULD ignore any subsequent packets with a different Destination
+     * Connection ID than the first packet in the datagram." Each coalesced packet was matched against all of our IDs on its own.
+     * (Null protection ignores the header in its AEAD, so the rewritten DCID still opens.)
+     */
+    @Test fun coalescedPacketWithOtherDcidIsIgnored() {
+        val p = CorePair()
+        var held: ByteArray? = null
+        val hv =
+            io.kuicksilver.quic.wire
+                .PacketHeaderView()
+        p.filterToServer = { _, b ->
+            val buf = PacketBuffer.of(b)
+            try {
+                if (held == null && isLong(b) && longType(b) == 0 &&
+                    io.kuicksilver.quic.wire.PacketHeaderCodec
+                        .parse(buf, 0, b.size, 8, hv) && hv.packetEnd < b.size &&
+                    p.server != null && isLong(b.copyOfRange(hv.packetEnd, b.size))
+                ) {
+                    held = b // the client's Initial with its Handshake packet coalesced
+                    false
+                } else {
+                    true
+                }
+            } finally {
+                buf.close()
+            }
+        }
+        try {
+            p.runUntil(limit = 300.milliseconds) { held != null }
+            val d = held!!
+            val s = p.server!!
+            val other =
+                s.cids
+                    .localForTest(1)!!
+                    .cid
+                    .toByteArray()
+            var packets = 0
+            val b = PacketBuffer.of(d)
+            try {
+                var off = 0
+                while (off < d.size &&
+                    io.kuicksilver.quic.wire.PacketHeaderCodec
+                        .parse(b, off, d.size, 8, hv)
+                ) {
+                    if (packets == 1) {
+                        assertEquals(8, hv.dcidLen)
+                        other.copyInto(d, hv.dcidOff) // the Handshake packet now names another of the server's IDs
+                    }
+                    packets++
+                    off = hv.packetEnd
+                }
+            } finally {
+                b.close()
+            }
+            val before = s.stats.packetsReceived
+            val m = PacketBuffer.of(d)
+            try {
+                s.handleDatagram(m, d.size, CoreFixtures.clientAddr, Ecn.NotEct, p.now)
+            } finally {
+                m.close()
+            }
+            assertEquals(packets - 1L, s.stats.packetsReceived - before, "the packet with another DCID is skipped, the rest processed")
+        } finally {
+            p.close()
+        }
+    }
+
+    /**
+     * Review finding 21, RFC 9000 section 19.19: the Frame Type of CONNECTION_CLOSE is "the type of frame that triggered the error".
+     * Stream-limit and flow-control errors carried 0, and stream errors always STREAM (0x08).
+     */
+    @Test fun closeNamesTheFrameThatTriggeredTheError() {
+        val cases =
+            listOf(
+                // STREAM with OFF=0, LEN=1 on client bidi stream index 1000 (id 4000), far above the stream limit: STREAM_LIMIT_ERROR
+                byteArrayOf(0x0a, 0x4f, 0xa0.toByte(), 0x01, 0x00) to (0x04L to 0x0aL),
+                // RESET_STREAM on stream 0 with a final size of 2^40: FLOW_CONTROL_ERROR
+                byteArrayOf(0x04, 0x00, 0x00, 0xc0.toByte(), 0, 0, 0x01, 0, 0, 0, 0) to (0x03L to 0x04L),
+                // STREAM_DATA_BLOCKED on the server's unopened uni stream 3: STREAM_STATE_ERROR
+                byteArrayOf(0x15, 0x03, 0x00) to (0x05L to 0x15L),
+            )
+        for ((frame, expected) in cases) {
+            val p = CorePair()
+            try {
+                assertTrue(p.handshake())
+                p.client.testInjectFrames += 3 to frame
+                p.runUntil(limit = 300.milliseconds) { p.closedReason(p.serverEvents) != null }
+                val r = p.closedReason(p.serverEvents)
+                assertIs<QuicException.ConnectionLost.TransportClosed>(r)
+                assertEquals(expected.first, r.code, "error code for frame 0x${frame[0].toString(16)}")
+                assertEquals(expected.second, r.frameType, "Frame Type for frame 0x${frame[0].toString(16)}")
+            } finally {
+                p.close()
+            }
+        }
+    }
+
     @Test fun replayedPacketKeepsItsOwnEcn() {
         // RFC 9000 section 13.4.1: a Handshake packet held for its keys arrived in a datagram marked ECT(0); when it is fed again after the
         // (unmarked) datagram that brought the keys, it must be counted with its own mark, not the replaying datagram's
@@ -314,6 +412,12 @@ class ReceivePathTest {
             assertTrue(p.handshake())
             assertEquals(PathId.Initial, p.client.stats.currentPath)
             assertNull(p.closedReason(p.clientEvents))
+            // review finding 14, RFC 9000 sections 5.1.1 and 5.1.2: the preferred_address ID is the server's sequence 1; it is kept
+            // (and later retired), not forgotten
+            p.runUntil(limit = 300.milliseconds) { p.client.peerCidCount >= 4 }
+            assertTrue(1L in p.client.cids.peerSeqsForTest(), "peer IDs ${p.client.cids.peerSeqsForTest()}")
+            assertNull(p.closedReason(p.clientEvents))
+            assertNull(p.closedReason(p.serverEvents))
         } finally {
             p.close()
         }

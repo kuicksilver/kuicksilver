@@ -6,6 +6,8 @@ import io.ktor.network.sockets.InetSocketAddress
 import io.kuicksilver.annotations.DelicateKuicksilverApi
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.native.KslLoader
+import io.kuicksilver.native.PacketBuffer
+import io.kuicksilver.native.of
 import io.kuicksilver.quic.Bbr
 import io.kuicksilver.quic.ConnectionCore
 import io.kuicksilver.quic.ConnectionEvent
@@ -23,6 +25,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
+import kotlin.test.assertNotNull
 import kotlin.test.assertNotSame
 import kotlin.test.assertNull
 import kotlin.test.assertSame
@@ -391,6 +394,91 @@ class PathTest {
         }
     }
 
+    /**
+     * Review finding 10, RFC 9000 section 8.2.1: "The endpoint MUST use unpredictable data in every PATH_CHALLENGE frame", and section
+     * 13.3: "PATH_CHALLENGE frames include a different payload each time they are sent." Repeats carried the first data again; a
+     * late PATH_RESPONSE to an earlier challenge of the same validation still validates the path.
+     */
+    @Test fun everyPathChallengeRepeatCarriesFreshData() {
+        val (p, c) = connected()
+        val batch = io.kuicksilver.quic.PacketBatch(16)
+        try {
+            val id = c.addPath(p.serverAddr, p.now)
+            c.probePath(id, p.now)
+            val path = c.paths.byId(id)!!
+            c.poll(batch, p.now)
+            repeat(3) {
+                val t = path.nextChallengeAt
+                c.onTimeout(t)
+                batch.clear()
+                c.poll(batch, t)
+            }
+            val sent = c.challengeDataSentForTest.toList()
+            assertEquals(4, sent.size, "four PATH_CHALLENGEs: $sent")
+            assertEquals(sent.size, sent.toSet().size, "each one carries new data: $sent")
+            assertEquals(PathState.Validating, path.state)
+            c.onPathResponse(sent.first())
+            assertEquals(PathState.Validated, path.state, "a response to the first challenge of the validation is accepted")
+        } finally {
+            batch.close()
+            p.close()
+        }
+    }
+
+    /**
+     * Review finding 26, RFC 9000 section 9.5: "An endpoint SHOULD NOT initiate migration with a peer that has requested a zero-length
+     * connection ID, because traffic over the new path might be trivially linkable to traffic over the old one."
+     */
+    @Test fun noMigrationToAZeroLengthCidServer() {
+        val (p, c) = connected()
+        try {
+            c.remoteCid = io.kuicksilver.quic.wire.ConnectionId.EMPTY // as from a server whose Source Connection ID was empty
+            val e = kotlin.test.assertFailsWith<IllegalStateException> { c.addPath(p.serverAddr, p.now) }
+            assertTrue("zero-length" in (e.message ?: ""), e.message)
+            assertEquals(1, c.paths.all.size)
+        } finally {
+            p.close()
+        }
+    }
+
+    /**
+     * Review finding 8, RFC 9000 section 8.2.1: "When an endpoint is unable to expand the datagram size to 1200 bytes due to the
+     * anti-amplification limit, the path MTU will not be validated. To ensure that the path MTU is large enough, the endpoint MUST
+     * perform a second path validation by sending a PATH_CHALLENGE frame in a datagram of at least 1200 bytes." A NAT rebinding
+     * whose first packet was a small ACK left the server a budget below 1200 bytes, and the one small challenge validated the path.
+     */
+    @Test fun amplificationLimitedChallengeIsFollowedByAFullSizeOne() {
+        val (p, c) = connected()
+        try {
+            val s = p.server()
+            val rebound = InetSocketAddress("10.0.0.1", 40003)
+            p.clientSource = rebound
+            p.clientListens += rebound
+            send(s, 100) // the client's first packet from the new port is the ACK for this
+            val sentBefore = p.serverSent.size
+            assertTrue(
+                p.runUntil(3.seconds) { s.remoteAddressForTest == rebound && s.pathState(s.stats.currentPath) == PathState.Validated },
+            )
+            p.settle(10)
+            val challenges =
+                p.serverSent
+                    .drop(sentBefore)
+                    .filter { (to, b) ->
+                        to == rebound &&
+                            io.kuicksilver.quic
+                                .nullOneRttFrames(b)
+                                ?.any { it is io.kuicksilver.quic.TestFrame.PathChallenge } == true
+                    }.map { it.second.size }
+            assertTrue(challenges.isNotEmpty() && challenges.first() < 1200, "the first challenge is amplification-limited: $challenges")
+            assertTrue(challenges.any { it >= 1200 }, "a second validation in a datagram of at least 1200 bytes: $challenges")
+            val firstFull = challenges.indexOfFirst { it >= 1200 }
+            assertTrue(firstFull > 0, "after the small one: $challenges")
+            assertNull(p.closed(s))
+        } finally {
+            p.close()
+        }
+    }
+
     @Test fun newPathGetsThreeChallengesBeforeDeadline() {
         // RFC 9000 section 8.2.4: three PATH_CHALLENGEs (at 0, 1 and 2 PTO) go out before the 3 x PTO validation timeout
         // a 1 ms initialRtt keeps the 6 x initialRtt floor out of the way: the deadline is 3 x PTO
@@ -716,6 +804,57 @@ class PathTest {
         }
     }
 
+    /**
+     * Review finding 23, RFC 9000 section 9.5: "an endpoint MUST NOT reuse a connection ID when sending to more than one destination
+     * address"; it MAY keep the current one only for a peer whose packets from the new address carry the same Destination Connection
+     * ID (a NAT rebinding). A server without a spare ID of the client answered a deliberate migration (a new DCID) with its current
+     * ID, linking both paths; it now sends nothing there until the client gives it a new ID (as ngtcp2's CONN_ID_BLOCKED).
+     */
+    @Test fun serverWithoutSpareCidDoesNotReuseItTowardAMigratingClient() {
+        val (p, c) = connected()
+        try {
+            val s = p.server()
+            for (seq in 1L..7L) s.cids.markUsedForTest(seq) // every spare ID of the client is spent
+            assertTrue(!s.cids.hasSparePeerForTest)
+            val id = c.addPath(p.serverAddr, p.now)
+            p.clientSocketSources[id] = other
+            p.clientListens += other
+            c.probePath(id, p.now)
+            p.runUntil(3.seconds) { c.pathState(id) != PathState.Validating }
+            val toOther = p.serverSent.filter { it.first == other }.map { it.second }
+            for (d in toOther) assertNotEquals(s.remoteCid, dcidOf(d), "the server's current ID toward the new address links the paths")
+            assertNull(p.closed(s))
+        } finally {
+            p.close()
+        }
+    }
+
+    /**
+     * Review finding 23: the ID a server answers a client's probe with stays with that path once it is validated, so the client's
+     * switch there right after (QuicConnection.migrate) does not need one more spare ID of the client.
+     */
+    @Test fun serverKeepsTheProbedPathsCidForTheSwitch() {
+        val (p, c) = connected()
+        try {
+            val s = p.server()
+            val id = c.addPath(p.serverAddr, p.now)
+            p.clientSocketSources[id] = other
+            p.clientListens += other
+            c.probePath(id, p.now)
+            assertTrue(p.runUntil(5.seconds) { c.pathState(id) == PathState.Validated }, "probe answered: ${c.pathState(id)}")
+            val probed = s.paths.all.single { it.remote == other }
+            val held = assertNotNull(probed.peerCid, "the server path keeps the client ID it answered with")
+            for (seq in 0L..7L) s.cids.markUsedForTest(seq) // no spare left for the switch itself
+            c.switchPath(id, p.now)
+            send(c)
+            p.settle(5)
+            assertEquals(other, s.remoteAddressForTest, "the server followed the client")
+            assertEquals(held.cid, s.remoteCid, "with the ID the probed path held")
+        } finally {
+            p.close()
+        }
+    }
+
     @Test fun serverSeesActiveMigrationAsPeerMigration() {
         // the client adds a path on a second socket, probes it and switches: the server reports PeerMigration and answers on the new address
         val (p, c) = connected(crypto = KslQuicCrypto)
@@ -881,6 +1020,91 @@ class PathTest {
     }
 
     /** Interop `rebind-port` against picoquic: the client's NAT mapping changed between its first Initial and the server's answer, so every retransmitted Initial came from a new port while the server kept answering the old one until the handshake timed out (final review follow-up). */
+
+    /**
+     * Review finding 25, RFC 9000 section 9.3: "An endpoint only changes the address to which it sends packets in response to the
+     * highest-numbered non-probing packet", so reordered packets do not send it back to an old address. During the handshake the
+     * server followed every Handshake packet from another address, a delayed older one included. (Null protection: the packet
+     * number, payload and tag of a captured Handshake packet can be rewritten in place.)
+     */
+    @Test fun handshakeTimeRebindIgnoresAnOlderPacketFromTheOldAddress() {
+        val p = EndpointPair()
+        var held: ByteArray? = null
+        val hv =
+            io.kuicksilver.quic.wire
+                .PacketHeaderView()
+
+        fun handshakePacketOf(d: ByteArray): IntArray? {
+            val b = PacketBuffer.of(d)
+            try {
+                var off = 0
+                while (off < d.size &&
+                    io.kuicksilver.quic.wire.PacketHeaderCodec
+                        .parse(b, off, d.size, 8, hv)
+                ) {
+                    if (d[off].toInt() and 0x80 != 0 &&
+                        (d[off].toInt() and 0x30) ushr 4 == 2
+                    ) {
+                        return intArrayOf(off, hv.pnOffset, hv.packetEnd)
+                    }
+                    off = hv.packetEnd
+                }
+                return null
+            } finally {
+                b.close()
+            }
+        }
+        p.filterToServer = { _, b ->
+            if (handshakePacketOf(b) != null) {
+                if (held == null) held = b
+                false // the server sees no client Handshake packet: it stays in the handshake
+            } else {
+                true
+            }
+        }
+        try {
+            val c = p.connect()
+            assertTrue(p.runUntil(2.seconds) { held != null })
+            val s = p.server()
+            assertEquals(io.kuicksilver.quic.ConnectionState.Handshaking, s.state)
+            val d = held!!
+            val (off, pnOff, end) = handshakePacketOf(d)!!
+
+            // the client's Handshake packet [pn], PING and padding only (no CRYPTO: the handshake stays open)
+            fun forged(pn: Int): ByteArray {
+                val pkt = d.copyOfRange(off, end)
+                val pnLen = (pkt[0].toInt() and 0x03) + 1
+                val at = pnOff - off
+                for (i in 0 until pnLen) pkt[at + i] = ((pn ushr (8 * (pnLen - 1 - i))) and 0xff).toByte()
+                for (i in at + pnLen until pkt.size) pkt[i] = 0
+                pkt[at + pnLen] = 0x01
+                for (i in 0 until 8) pkt[pkt.size - 8 + i] = ((pn.toLong() ushr (8 * (7 - i))) and 0xff).toByte() // the Null tag
+                return pkt
+            }
+            val newPort = InetSocketAddress("10.0.0.1", 40002)
+
+            fun deliver(
+                bytes: ByteArray,
+                from: InetSocketAddress,
+            ) {
+                val b = PacketBuffer.of(bytes)
+                try {
+                    p.server.handleDatagram(b, bytes.size, from, io.kuicksilver.quic.Ecn.NotEct, p.now)
+                } finally {
+                    b.close()
+                }
+            }
+            deliver(forged(10), newPort)
+            assertEquals(newPort, s.remoteAddressForTest, "the server follows the newest Handshake packet")
+            deliver(forged(9), p.clientAddr) // sent before the rebinding, delayed in the network
+            assertEquals(newPort, s.remoteAddressForTest, "an older packet from the old address does not move it back")
+            assertNull(p.closed(s))
+            assertTrue(c.state != io.kuicksilver.quic.ConnectionState.Closed)
+        } finally {
+            p.close()
+        }
+    }
+
     @Test fun natRebindDuringHandshakeIsFollowedByTheServer() {
         val p = EndpointPair()
         try {

@@ -167,6 +167,13 @@ public class QuicConfig private constructor(
         require(defaultStreamErrorCode in 0..((1L shl 62) - 1)) { "error code must be 0..2^62-1" }
     }
 
+    /**
+     * The configured [initialRtt], kInitialRtt for a new path (RFC 9000 sections 8.2.4 and 9.4): a client endpoint's remembered RTT
+     * ([withInitialRtt]) belongs to the first path's network, so it neither shortens path validation nor seeds another path's estimator.
+     */
+    internal var newPathInitialRtt: Duration = initialRtt
+        private set
+
     /** This configuration with another [initialRtt] (a client endpoint's remembered RTT to the same server, RFC 9002 section 6.2.2). */
     internal fun withInitialRtt(rtt: Duration): QuicConfig =
         QuicConfig(
@@ -201,7 +208,7 @@ public class QuicConfig private constructor(
             datagramSendQueue,
             datagramSendQueueBytes,
             limits,
-        )
+        ).also { it.newPathInitialRtt = newPathInitialRtt }
 
     /** The version a client starts with: [initialVersion] or the first of [versions]. */
     public val firstVersion: VersionProfile get() = initialVersion ?: versions[0]

@@ -179,7 +179,24 @@ class TransportParametersTest {
 
     @Test fun negative_preferredAddressIgnored() {
         val pa = ByteArray(4 + 2 + 16 + 2 + 1 + 8 + 16).also { it[24] = 8 }
+        for (i in 0 until 8) pa[25 + i] = (i + 1).toByte()
+        pa[25 + 8] = 0x5a
         val tp = TransportParametersCodec.decode(raw(0x0dL to pa), TlsRole.Server)
         assertTrue(tp.preferredAddressPresent)
+        assertEquals(ConnectionId(ByteArray(8) { (it + 1).toByte() }), tp.preferredAddressCid, "the sequence-1 ID is kept")
+        assertEquals(0x5a.toByte(), tp.preferredAddressToken!![0])
     }
+
+    /** Review finding 14, RFC 9000 section 18.2: "a server MUST NOT include a zero-length connection ID in this transport parameter." */
+    @Test fun negative_preferredAddressWithZeroLengthCid() = expect(0x08, raw(0x0dL to ByteArray(41)))
+
+    /** Review finding 14: the Connection ID Length must agree with the parameter's length (and stay within 20 bytes). */
+    @Test fun negative_preferredAddressLengthMismatch() {
+        expect(0x08, raw(0x0dL to ByteArray(4 + 2 + 16 + 2 + 1 + 8 + 16).also { it[24] = 9 }))
+        expect(0x08, raw(0x0dL to ByteArray(4 + 2 + 16 + 2 + 1 + 21 + 16).also { it[24] = 21 }))
+    }
+
+    /** Review finding 14, RFC 9000 section 18.2: "A server that chooses a zero-length connection ID MUST NOT provide a preferred address." */
+    @Test fun negative_preferredAddressFromZeroLengthCidServer() =
+        expect(0x08, raw(0x0fL to ByteArray(0), 0x0dL to ByteArray(4 + 2 + 16 + 2 + 1 + 8 + 16).also { it[24] = 8 }))
 }

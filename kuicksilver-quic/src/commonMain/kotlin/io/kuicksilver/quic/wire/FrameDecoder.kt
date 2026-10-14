@@ -87,6 +87,7 @@ internal object FrameDecoder {
         h: FrameHandler,
         ackView: AckFrameView = sharedView,
     ): Boolean {
+        r.frameType = 0 // the reader may carry the last frame of an earlier packet
         if (r.remaining == 0) throw QuicWireException(TransportError.PROTOCOL_VIOLATION, 0, "packet without frames")
         val allowedBit = bit(packet)
         var ackEliciting = false

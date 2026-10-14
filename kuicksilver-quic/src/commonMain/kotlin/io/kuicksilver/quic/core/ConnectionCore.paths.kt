@@ -134,10 +134,13 @@ internal fun ConnectionCore.onRetireConnectionId(seq: Long) {
     if (!cids.onPeerRetired(seq, now + pto() * 3)) glitch(0x19)
 }
 
-/** The validation timeout of RFC 9000 section 8.2.4: max(3 x PTO, 6 x initial RTT). */
+/**
+ * The validation timeout of RFC 9000 section 8.2.4: max(3 x PTO, 6 x initial RTT), as ngtcp2. The new-path term uses the configured
+ * initial RTT (kInitialRtt), never an RTT remembered for the first path: "the new path could have a longer round-trip time".
+ */
 internal fun ConnectionCore.validationTimeout(): Duration {
     val p3 = pto() * 3
-    val r6 = config.initialRtt * 6
+    val r6 = config.newPathInitialRtt * 6
     return if (p3 > r6) p3 else r6
 }
 
@@ -167,6 +170,7 @@ internal fun ConnectionCore.onPathPacket(
         socket == active.socket
     ) {
         if (nonProbing && pn > largestNonProbingPn) largestNonProbingPn = pn
+        if (rxDcidSeq >= 0) activeDcidSeq = rxDcidSeq
         active.lastReceivedAt = now
         return
     }
@@ -181,26 +185,27 @@ internal fun ConnectionCore.onPathPacket(
             socket,
             from,
             config.congestionController(),
-            config.initialRtt,
+            config.newPathInitialRtt,
             now = now,
             abandonValidatingHeardBefore = if (migrating) TimeMark.NEVER else now - idle,
         ) ?: return
         p.amplification.onReceived(datagramBytes)
-        p.caps = active.caps
-        if (p.caps.ecnSend) p.ecn.enable() // the same socket: ECN is validated afresh on the new path (section 13.4.2)
         // NAT rebinding keeps the congestion state (same network); the old address probes on a controller of its own
         if (sameIp(from, active.remote)) p.inheritFrom(active, config.congestionController())
+        initServerPath(p, active)
         startValidation(p)
     } else if (p.state == PathState.Unknown || (p.state == PathState.Failed && p.standbyUntil <= now)) {
         startValidation(p) // a path first seen through the peer's probe is validated once it carries anything else
     }
+    notePeerDcid(p)
     p.lastReceivedAt = now
     if (nonProbing &&
         pn > largestNonProbingPn
     ) {
         largestNonProbingPn = pn
-        if (p.state !=
-            PathState.Failed
+        // no ID to send there without linking the paths (RFC 9000 section 9.5): stay until the client gives us one
+        if (p.state != PathState.Failed &&
+            dcidFor(p) != null
         ) {
             switchPath(
                 p,
@@ -211,11 +216,30 @@ internal fun ConnectionCore.onPathPacket(
     }
 }
 
+/** Server: records whether the 1-RTT packet just received on [p] carries another of our IDs than the active path's packets. */
+private fun ConnectionCore.notePeerDcid(p: Path) {
+    if (p !== paths.active && rxDcidSeq >= 0 && activeDcidSeq >= 0) p.peerChangedDcid = rxDcidSeq != activeDcidSeq
+}
+
+/**
+ * Server: a path the client opened toward our socket gets what that socket does for the active path: ECN validated afresh (RFC 9000
+ * section 13.4.2) and DPLPMTUD with black-hole detection (RFC 8899 section 4.3; RFC 9000 section 14), starting from the MTU a NAT
+ * rebinding inherited ([Path.inheritFrom]) or from 1200 on a new address.
+ */
+private fun ConnectionCore.initServerPath(
+    p: Path,
+    active: Path,
+) {
+    p.caps = active.caps
+    if (p.caps.ecnSend) p.ecn.enable()
+    if (p.caps.df && config.pmtud && p.pmtud == null) p.pmtud = Pmtud(upperBound = pmtudUpperBound(), start = p.mtu)
+}
+
 /** A validating path silent this long may give its slot to a probe from a new address (quic-go's pathTimeout). */
 internal val PATH_IDLE_TIMEOUT: Duration = 5.seconds
 
 internal fun ConnectionCore.startValidation(p: Path) {
-    p.challenge = random.nextLong()
+    p.forgetChallenges()
     p.challengePending = true
     p.state = PathState.Validating
     p.handshakeValidated = false
@@ -257,6 +281,7 @@ internal fun ConnectionCore.switchPath(
     if (old === p) return
     val oldPeer = cids.currentPeer
     paths.active = p
+    p.peerProbed = false
     loss.rtt = p.rtt
     loss.activePath = p.id.value
     if (old.remote != p.remote) onRemoteChanged?.invoke(old.remote, p.remote)
@@ -292,7 +317,9 @@ internal fun ConnectionCore.switchPath(
 /**
  * The DCID of a packet to [p] (RFC 9000 section 9.5): the active path carries the current peer ID; any other path an unused one of its own,
  * reserved on its first packet. Null when the peer gave us no spare and reuse would link the paths; a server answering a new address from
- * the same socket may keep the current ID (section 9.5 allows it for a peer whose address changed under it), and a zero-length ID is never a link.
+ * the same socket may keep the current ID only while the client's packets there carry the same DCID as on the active path (section 9.5:
+ * "Due to network changes outside the control of its peer ... it MAY continue to use the current connection ID"), and a zero-length ID
+ * is never a link.
  */
 internal fun ConnectionCore.dcidFor(p: Path): ConnectionId? {
     if (p === paths.active || remoteCid.length == 0) return remoteCid
@@ -304,7 +331,15 @@ internal fun ConnectionCore.dcidFor(p: Path): ConnectionId? {
         p.peerCid = it
         return it.cid
     }
-    return if (role == TlsRole.Server && p.socket == paths.active.socket) remoteCid else null
+    return if (role == TlsRole.Server && p.socket == paths.active.socket && !p.peerChangedDcid) remoteCid else null
+}
+
+/** Fresh unpredictable data for the PATH_CHALLENGE about to go out on [p] (RFC 9000 sections 8.2.1 and 13.3). */
+internal fun ConnectionCore.newChallengeData(p: Path): Long {
+    var d = random.nextLong()
+    while (d == 0L || p.answers(d)) d = random.nextLong()
+    p.onChallengeSent(d)
+    return d
 }
 
 /** A path that stopped probing gives its peer ID back (retired: it was used, RFC 9000 section 9.5). */
@@ -349,7 +384,7 @@ internal fun ConnectionCore.onPathChallenge(
     if (p ==
         null
     ) {
-        p = paths.add(socket, from, config.congestionController(), config.initialRtt)
+        p = paths.add(socket, from, config.congestionController(), config.newPathInitialRtt)
         if (p ==
             null
         ) {
@@ -357,6 +392,11 @@ internal fun ConnectionCore.onPathChallenge(
             return
         }
         p.amplification.onReceived(datagramBytes)
+        if (role == TlsRole.Server) initServerPath(p, paths.active)
+    }
+    if (role == TlsRole.Server && p !== paths.active) {
+        notePeerDcid(p)
+        p.peerProbed = true
     }
     if (!paths.queueResponse(data, p)) glitch(0x1a)
 }
@@ -365,9 +405,15 @@ internal fun ConnectionCore.onPathChallenge(
 internal fun ConnectionCore.onPathResponse(data: Long) {
     for (i in 0 until paths.all.size) {
         val p = paths.all[i]
-        if (p.state == PathState.Validating && p.challenge == data) {
-            p.state = PathState.Validated
+        if (p.state == PathState.Validating && p.answers(data)) {
             p.amplification.validated = true
+            if (p.answeredUndersized(data)) {
+                // RFC 9000 section 8.2.1: the address is validated, the path MTU is not: "the endpoint MUST perform a second path
+                // validation by sending a PATH_CHALLENGE frame in a datagram of at least 1200 bytes" (as ngtcp2's UNDERSIZED entries)
+                startValidation(p)
+                return
+            }
+            p.state = PathState.Validated
             p.challengePending = false
             p.challengeRetries = 0
             p.challengeDeadline =
@@ -375,11 +421,9 @@ internal fun ConnectionCore.onPathResponse(data: Long) {
             p.nextChallengeAt = TimeMark.NEVER
             p.validatedAt = now
             paths.lastValidated = p
-            if (p !==
-                paths.active
-            ) {
-                releasePathCid(p)
-            }
+            // a client gives back the ID of a path it only probed; a server keeps the one it answers a client's probe with, since the
+            // client probes to migrate there next, and the switch must not need another spare ID (RFC 9000 section 9.5)
+            if (p !== paths.active && (role == TlsRole.Client || !p.peerProbed)) releasePathCid(p)
             events += ConnectionEvent.PathValidated(p.id)
             return
         }

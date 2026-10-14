@@ -196,6 +196,111 @@ class ConnectionIdTest {
         }
     }
 
+    /**
+     * Review finding 5, RFC 9000 section 19.15 ("Receipt of the same frame multiple times MUST NOT be treated as a connection
+     * error"): a retransmitted NEW_CONNECTION_ID for an ID we rotated away from and retired used to be added again, as a fresh
+     * unused ID (whose stateless reset the peer may now send) or past our limit as CONNECTION_ID_LIMIT_ERROR.
+     */
+    @Test fun retransmittedNewCidForSelfRetiredIdIsIgnored() {
+        val m = manager(limit = 4)
+        m.adoptInitialPeerCid(ConnectionId(ByteArray(8)))
+        for (seq in 1L..3L) newCid(m, seq)
+        assertTrue(m.rotatePeerCid())
+        assertEquals(listOf(0L), m.takeRetireFrames())
+        m.onRetireAcked(0)
+        newCid(m, 4) // the peer replaces the retired ID
+        assertTrue(m.rotatePeerCid())
+        assertEquals(listOf(1L), m.takeRetireFrames())
+        newCid(m, 1) // the peer's retransmission of NEW_CONNECTION_ID(1) crosses our RETIRE_CONNECTION_ID(1)
+        assertEquals(3, m.peerCount, "the retired ID is not added again")
+        assertEquals(listOf(2L, 3L, 4L), m.peerSeqsForTest())
+        newCid(m, 5)
+        newCid(m, 0) // and a very late copy of the first replacement after our limit is full again
+        newCid(m, 1)
+        assertEquals(4, m.peerCount, "no CONNECTION_ID_LIMIT_ERROR, nothing re-added")
+        assertNull(m.takeRetireFrames().firstOrNull(), "the RETIRE frames already went out once")
+    }
+
+    /** Review finding 5: copies of a NEW_CONNECTION_ID below retire_prior_to queue one RETIRE_CONNECTION_ID, not one per copy. */
+    @Test fun duplicateNewCidBelowRetirePriorToQueuesOneRetire() {
+        val m = manager(limit = 2)
+        m.adoptInitialPeerCid(ConnectionId(ByteArray(8)))
+        newCid(m, 1, retire = 1)
+        assertEquals(listOf(0L), m.takeRetireFrames())
+        newCid(m, 2) // never seen before, already below retire_prior_to after the next frame
+        newCid(m, 3, retire = 3)
+        assertEquals(listOf(1L, 2L), m.takeRetireFrames())
+        repeat(40) {
+            newCid(m, 0)
+            newCid(m, 2)
+        }
+        assertNull(m.takeRetireFrames().firstOrNull(), "the unacknowledged RETIRE frames cover every copy")
+        m.onRetireAcked(0)
+        m.onRetireAcked(1)
+        m.onRetireAcked(2)
+        repeat(40) { newCid(m, 1) }
+        assertNull(m.takeRetireFrames().firstOrNull(), "an ID retired and acknowledged is remembered, not retired again")
+        assertEquals(1, m.peerCount)
+    }
+
+    /** Review finding 5: the memory of retired sequence numbers is bounded; older ones are retired again rather than re-added. */
+    @Test fun retiredSequenceMemoryIsBounded() {
+        val m = manager(limit = 2)
+        m.adoptInitialPeerCid(ConnectionId(ByteArray(8)))
+        for (seq in 1L..100L) {
+            newCid(m, seq, retire = seq)
+            m.takeRetireFrames().forEach { m.onRetireAcked(it) }
+        }
+        assertTrue(m.retiredSeqMemoryForTest() <= 32, "remembered ${m.retiredSeqMemoryForTest()}")
+        newCid(m, 3)
+        assertEquals(listOf(100L), m.peerSeqsForTest(), "a forgotten retired ID is still not re-added")
+        assertEquals(listOf(3L), m.takeRetireFrames(), "it is retired again instead")
+    }
+
+    /**
+     * Review finding 13, RFC 9000 section 19.15: "An endpoint that is sending packets with a zero-length Destination Connection ID
+     * MUST treat receipt of a NEW_CONNECTION_ID frame as a connection error of type PROTOCOL_VIOLATION."
+     */
+    @Test fun negative_newCidFromZeroLengthCidPeer() {
+        val m = manager()
+        m.adoptInitialPeerCid(ConnectionId.EMPTY)
+        val e = assertFailsWith<QuicWireException> { newCid(m, 1) }
+        assertEquals(0x0aL, e.code)
+        assertEquals(0x18L, e.frameType)
+    }
+
+    /**
+     * Review finding 22, RFC 9000 section 19.16: "Receipt of a RETIRE_CONNECTION_ID frame containing a sequence number greater than
+     * any previously sent to the peer MUST be treated as a connection error of type PROTOCOL_VIOLATION." An ID we issued but whose
+     * NEW_CONNECTION_ID has not gone out yet was accepted.
+     */
+    @Test fun negative_retireOfIssuedButUnsentId() {
+        val m = manager()
+        m.adoptInitialLocalCid(ConnectionId(ByteArray(8)))
+        m.setPeerLimit(3)
+        m.nextNewCidToSend()!!.sent = true // sequence 1 goes out, 2 waits
+        val e = assertFailsWith<QuicWireException> { m.onPeerRetired(2, TimeMark(1_000_000_000L)) }
+        assertEquals(0x0aL, e.code)
+        assertTrue(m.onPeerRetired(1, TimeMark(1_000_000_000L)), "sequence 1 was sent")
+        m.nextNewCidToSend()!!.sent = true // sequence 2
+        m.nextNewCidToSend()!!.let {
+            // sequence 3, the replacement of 1, is lost after it was sent once
+            it.sent = true
+            m.onNewCidLost(it.seq, TimeMark(1_000_000_000L))
+        }
+        assertTrue(m.onPeerRetired(3, TimeMark(1_000_000_000L)), "a sequence sent once may be retired while its frame is resent")
+    }
+
+    /** Review finding 14, RFC 9000 section 5.1.2: the preferred_address ID (sequence 1) is retired by retire_prior_to, not forgotten. */
+    @Test fun preferredAddressIdIsRetiredNotForgotten() {
+        val m = manager()
+        m.adoptInitialPeerCid(ConnectionId(ByteArray(8)))
+        m.adoptPreferredAddressCid(ConnectionId(ByteArray(8) { 1 }), ByteArray(16))
+        newCid(m, 2, retire = 2)
+        assertEquals(listOf(0L, 1L), m.takeRetireFrames())
+        assertEquals(listOf(2L), m.peerSeqsForTest())
+    }
+
     @Test fun retiredBacklogAbove32IsCidLimitError() {
         val m = manager(limit = 2)
         m.adoptInitialPeerCid(ConnectionId(ByteArray(8)))
