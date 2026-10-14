@@ -6,6 +6,7 @@
 #include <openssl/rand.h>
 #include <openssl/core_names.h>
 #include <sys/stat.h>
+#include <limits.h>
 
 #define TLS12_PROFILE "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305"
 #define TLS13_DEFAULT "TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256"
@@ -21,10 +22,19 @@ static void info_cb(const SSL *ssl, int where, int ret) {
     int code = ret & 0xff; if ((ret >> 8) != SSL3_AL_FATAL && code != SSL_AD_CLOSE_NOTIFY) return;
     s->last_alert = (where & SSL_CB_READ) ? (code | 0x100) : code;
 }
+/* Moves a buffer of secrets into a larger one and zeroes the whole old block before the caller frees it: realloc would free
+   (or leave behind) a copy of the TLS secrets uncleansed (threat model 3.7). */
+void ksl_secret_move(void *dst, void *old, size_t used, size_t old_cap) {
+    if (!old) return;
+    memcpy(dst, old, used); OPENSSL_cleanse(old, old_cap);
+}
 static void keylog_cb(const SSL *ssl, const char *line) {
     ksl_ssl *s = SSL_get_ex_data(ssl, 1); if (!s || !s->owner->keylog) return;
     size_t l = strlen(line);
-    if (s->keylog_len + l + 2 > s->keylog_cap) { size_t nc = (s->keylog_len + l + 2) * 2; char *nb = realloc(s->keylog, nc); if (!nb) return; s->keylog = nb; s->keylog_cap = nc; }
+    if (s->keylog_len + l + 2 > s->keylog_cap) {
+        size_t nc = (s->keylog_len + l + 2) * 2; char *nb = malloc(nc); if (!nb) return;
+        ksl_secret_move(nb, s->keylog, s->keylog_len, s->keylog_cap); free(s->keylog); s->keylog = nb; s->keylog_cap = nc;
+    }
     memcpy(s->keylog + s->keylog_len, line, l); s->keylog_len += l; s->keylog[s->keylog_len++] = '\n'; s->keylog[s->keylog_len] = 0;
 }
 /* RFC 8446 section 4.6.1 tickets: name16 | aes-256 key 32 | hmac-sha256 key 32; current key encrypts, all keys decrypt. */
@@ -154,9 +164,9 @@ int ksl_ctx_set_alpn(ksl_ctx *c, const uint8_t *wire, size_t len) {
 }
 int ksl_parse_chain(const uint8_t *framed, size_t len, STACK_OF(X509) **out) {
     STACK_OF(X509) *sk = sk_X509_new_null(); size_t off = 0;
-    while (off + 4 <= len) {
+    while (ksl_span_fits(off, 4, len)) {
         size_t l = ((size_t)framed[off] << 24) | ((size_t)framed[off + 1] << 16) | ((size_t)framed[off + 2] << 8) | framed[off + 3]; off += 4;
-        if (off + l > len) break;
+        if (!ksl_span_fits(off, l, len) || l > LONG_MAX) break;   /* off != len below then refuses the framing */
         const unsigned char *p = framed + off; X509 *x = d2i_X509(NULL, &p, (long)l); if (!x || !sk_X509_push(sk, x)) { X509_free(x); sk_X509_pop_free(sk, X509_free); return 0; }
         off += l;
     }
@@ -201,7 +211,8 @@ void ksl_trust_paths_for_test(const char *const *files, const char *const *dirs)
 #endif
 static int is_dir(const char *path) { struct stat sb; return stat(path, &sb) == 0 && S_ISDIR(sb.st_mode); }
 static void append(char *out, size_t cap, const char *text) { size_t n = strlen(out); if (n < cap) snprintf(out + n, cap - n, "%s", text); }
-static int load_system_roots(ksl_ctx *c, X509_STORE *st) {
+void ksl_trust_paths(const char *const **files, const char *const **dirs) { *files = trust_files; *dirs = trust_dirs; }
+int ksl_load_system_roots(ksl_ctx *c, X509_STORE *st) {
     const char *ef = getenv("SSL_CERT_FILE"), *ed = getenv("SSL_CERT_DIR"); int from_env = (ef && *ef) || (ed && *ed), loaded = 0;
     if (from_env) {
         if (ef && *ef && X509_STORE_load_file(st, ef) == 1) loaded = 1;
@@ -226,8 +237,8 @@ static int load_system_roots(ksl_ctx *c, X509_STORE *st) {
 }
 int ksl_ctx_set_roots(ksl_ctx *c, const uint8_t *roots, size_t roots_len) {
     if (frozen(c)) return KSL_ERROR; ERR_clear_error();
-    X509_STORE *st = SSL_CTX_get_cert_store(c->ctx);
-    if (roots_len == 0) return load_system_roots(c, st);
+    if (roots_len == 0) return ksl_ctx_use_system_store(c);   /* parsed once, shared (ksl_trust_cache.c) */
+    X509_STORE *st = ksl_ctx_private_store(c); if (!st) { ksl_ctx_set_error(c, KSL_E_BAD_ARG, "ksl: no certificate store"); return KSL_ERROR; }
     STACK_OF(X509) *sk = NULL; if (!ksl_parse_chain(roots, roots_len, &sk)) { ksl_ctx_set_error(c, KSL_E_BAD_ARG, "ksl: bad roots framing"); return KSL_ERROR; }
     int ok = 1; for (int i = 0; ok && i < sk_X509_num(sk); i++) ok = X509_STORE_add_cert(st, sk_X509_value(sk, i)) == 1;
     sk_X509_pop_free(sk, X509_free);

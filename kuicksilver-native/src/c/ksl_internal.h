@@ -27,6 +27,7 @@ struct ksl_ctx {
     /* settings SSL_new copies into each session, kept so an SNI override can apply them (ksl_ctx_apply_to_ssl) */
     char suites13[256], list12[512]; const char *groups; uint8_t sid_ctx[32]; size_t sid_ctx_len;
     uint8_t *ticket_keys; size_t ticket_key_count;   /* 80-byte entries, first encrypts */
+    int shared_roots;                                /* the cert store is the process-wide system store: never modified */
     uint32_t last_err; char last_msg[KSL_MSG];
 };
 
@@ -85,6 +86,12 @@ size_t ksl_quic_pending(const ksl_ssl *s, int level);   /* CRYPTO bytes provided
 int ksl_cert_verify_cb(X509_STORE_CTX *xctx, void *arg);
 int ksl_client_hello_cb(SSL *ssl, int *al, void *arg);
 
+/* the system CA store (ksl_ctx.c, ksl_trust_cache.c) */
+void ksl_trust_paths(const char *const **files, const char *const **dirs);
+int ksl_load_system_roots(ksl_ctx *c, X509_STORE *st);
+int ksl_ctx_use_system_store(ksl_ctx *c);
+X509_STORE *ksl_ctx_private_store(ksl_ctx *c);
+
 /* 0-RTT (ksl_ctx.c) */
 void ksl_ctx_enable_early_data(SSL_CTX *ctx);
 int ksl_ctx_apply_to_ssl(ksl_ctx *o, SSL *ssl);
@@ -92,6 +99,10 @@ int ksl_ctx_apply_to_ssl(ksl_ctx *o, SSL *ssl);
 /* keys (ksl_key.c) */
 ksl_key *ksl_key_from_secret(int aead, const uint8_t *secret, size_t slen, uint32_t version);
 int ksl_aead_of_cipher(const SSL_CIPHER *c);
+
+/* bounds: n bytes at off fit in a buffer of len (off <= len). Written so nothing can wrap: a 32-bit length field on a 32-bit size_t
+   (armeabi-v7a) would wrap off + n past len. */
+static inline int ksl_span_fits(size_t off, size_t n, size_t len) { return off <= len && n <= len - off; }
 
 /* shared crypto (ksl_crypto.c) */
 int ksl_hkdf_extract(int hash, const uint8_t *salt, size_t sl, const uint8_t *ikm, size_t il, uint8_t *out, size_t olen);

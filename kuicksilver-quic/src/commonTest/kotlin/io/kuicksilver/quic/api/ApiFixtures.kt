@@ -104,7 +104,13 @@ internal suspend fun ByteReadChannel.readExactly(n: Int): ByteArray {
     return out
 }
 
-/** Waits until the client [c] holds an unused connection ID of its peer: a migration before that cannot send (RFC 9000 section 9.5). */
+/**
+ * Waits until the client [c] can move: its handshake is confirmed (RFC 9000 section 9; `connect` returns at completion, one
+ * round trip earlier, and a socket lost in between ends the connection) and it holds an unused connection ID of its peer (a
+ * migration before that cannot send, RFC 9000 section 9.5).
+ */
 internal suspend fun awaitSpareConnectionId(c: io.kuicksilver.quic.QuicConnection) {
-    kotlinx.coroutines.withTimeout(10_000) { while (!c.core.cids.hasSparePeerForTest) kotlinx.coroutines.yield() }
+    kotlinx.coroutines.withTimeout(10_000) {
+        while (!c.core.cids.hasSparePeerForTest || c.core.state != io.kuicksilver.quic.ConnectionState.Confirmed) kotlinx.coroutines.yield()
+    }
 }

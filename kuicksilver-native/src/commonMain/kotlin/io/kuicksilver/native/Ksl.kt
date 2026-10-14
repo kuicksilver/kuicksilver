@@ -63,9 +63,27 @@ public expect object Ksl {
         tls12: String?,
     )
 
-    public fun ctxSetTicketKeys(
+    /**
+     * Server: session tickets with the process-wide keys generated and rotated inside `ksl` (the current key encrypts, the
+     * previous one still decrypts; they rotate when the current one is [rotateSeconds] old). The keys never reach Kotlin.
+     */
+    public fun ctxUseDefaultTicketKeys(
         ctx: Long,
-        keys: List<ByteArray>,
+        rotateSeconds: Int,
+    )
+
+    /**
+     * Copies explicit ticket keys (80-byte entries, 1..64, first encrypts) into `ksl` for the life of the process and returns
+     * their id for [ctxUseTicketKeys]; the same keys give the same id. Every array in [keys] and every temporary copy is
+     * zeroed before this returns, on failure too. Throws [KslException.Internal] when the keys are invalid or too many
+     * distinct sets exist.
+     */
+    public fun ticketKeysRegister(keys: List<ByteArray>): Int
+
+    /** Server: session tickets with the explicit keys registered under [id] by [ticketKeysRegister]. */
+    public fun ctxUseTicketKeys(
+        ctx: Long,
+        id: Int,
     )
 
     /** Server: 1..32 bytes; a session resumes only under a context with the same bytes (otherwise a full handshake). */
@@ -410,4 +428,31 @@ public fun frameDerList(items: List<ByteArray>): ByteArray {
         off += 4 + d.size
     }
     return out
+}
+
+/**
+ * Runs [block] with [keys] (80-byte ticket key entries) concatenated into one temporary array, then zeroes that array and
+ * every entry of [keys], also when [block] throws or the keys are malformed: the ticket keys must not stay on the heap
+ * (threat model 3.7).
+ */
+@OptIn(InternalKuicksilverApi::class)
+internal inline fun <T> withTicketKeys(
+    keys: List<ByteArray>,
+    block: (ByteArray) -> T,
+): T {
+    val flat = ByteArray(keys.sumOf { it.size })
+    try {
+        if (keys.isEmpty() || keys.any { it.size != 80 }) {
+            throw KslException.Internal(KslConst.E_BAD_ARG, 0, "ticket keys are 1..64 entries of 80 bytes")
+        }
+        var off = 0
+        for (k in keys) {
+            k.copyInto(flat, off)
+            off += k.size
+        }
+        return block(flat)
+    } finally {
+        flat.fill(0)
+        keys.forEach { it.fill(0) }
+    }
 }

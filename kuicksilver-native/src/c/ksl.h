@@ -28,6 +28,8 @@ extern "C" {
    between contexts, so the caller keeps no DER copy of it) */
 /* 6: 0-RTT — KSL_OPT_EARLY_DATA, KSL_SET_EARLY_CONTEXT, KSL_SET_EARLY_DATA, KSL_GET_EARLY_DATA; the 0-RTT secret arrives as KSL_EV_KEY at KSL_LEVEL_EARLY (ADR-0015);
    ksl_ctx_verify_chain (resumption re-verifies the cached chain, ADR-0011; added before 6 was published) */
+/*    additive in 6 (ADR-0003): session ticket keys stay native — ksl_ctx_use_default_ticket_keys (generated and rotated in ksl),
+   ksl_ticket_keys_register / ksl_ctx_use_ticket_keys (explicit keys copied in once, referred to by id) */
 
 /* return codes */
 #define KSL_OK 0
@@ -182,6 +184,13 @@ void     ksl_pkey_free(ksl_pkey *);                                   /* drops o
 int      ksl_ctx_set_roots(ksl_ctx *, const uint8_t *roots, size_t roots_len);  /* same framing; empty = system store */
 int      ksl_ctx_set_ciphers(ksl_ctx *, const char *tls13_suites, const char *tls12_list);
 int      ksl_ctx_set_ticket_keys(ksl_ctx *, const uint8_t *keys, size_t n);     /* n x 80 bytes: name16 | aes32 | hmac32; first encrypts */
+/* Session ticket keys that never leave ksl (threat model 3.7). The process-wide generated keys: the context gets the current key
+   (encrypts) and the previous one (decrypts); they rotate when the current one is rotate_seconds old (wall clock) at this call. */
+int      ksl_ctx_use_default_ticket_keys(ksl_ctx *, uint32_t rotate_seconds);
+/* Explicit keys (n x 80 bytes, 1..64), copied once for the life of the process; the caller wipes its copy. Returns an id > 0 for
+   ksl_ctx_use_ticket_keys (the same id for the same keys), KSL_ERROR when invalid or when 1024 distinct sets exist. */
+int      ksl_ticket_keys_register(const uint8_t *keys, size_t n);
+int      ksl_ctx_use_ticket_keys(ksl_ctx *, int id);
 int      ksl_ctx_set_session_context(ksl_ctx *, const uint8_t *sid_ctx, size_t len); /* server, 1..32 bytes: a session (ticket) resumes only under the same context (default "ksl") */
 int      ksl_ctx_set_option(ksl_ctx *, int option, int value);
 int      ksl_ctx_freeze(ksl_ctx *);

@@ -38,7 +38,10 @@ static jlong j_pkey_new(JNIEnv *e, jclass c, jbyteArray k) { (void)c; bytes b = 
 static void j_pkey_free(JNIEnv *e, jclass c, jlong k) { (void)e; (void)c; ksl_pkey_free(P(ksl_pkey, k)); }
 static jint j_ctx_set_roots(JNIEnv *e, jclass c, jlong h, jbyteArray a) { (void)c; bytes b = get_bytes(e, a); int r = ksl_ctx_set_roots(CTX(h), b.p, b.n); drop(&b); return r; }
 static jint j_ctx_set_ciphers(JNIEnv *e, jclass c, jlong h, jstring s13, jstring s12) { (void)c; const char *a = cstr(e, s13), *b = cstr(e, s12); int r = ksl_ctx_set_ciphers(CTX(h), a, b); cstr_free(e, s13, a); cstr_free(e, s12, b); return r; }
-static jint j_ctx_set_ticket_keys(JNIEnv *e, jclass c, jlong h, jbyteArray a) { (void)c; bytes b = get_bytes(e, a); int r = b.n % 80 ? KSL_ERROR : ksl_ctx_set_ticket_keys(CTX(h), b.p, b.n / 80); drop(&b); return r; }
+static jint j_ctx_use_default_ticket_keys(JNIEnv *e, jclass c, jlong h, jint rotate) { (void)e; (void)c; return rotate <= 0 ? KSL_ERROR : ksl_ctx_use_default_ticket_keys(CTX(h), (uint32_t)rotate); }
+/* the keys: copied by get_bytes, wiped by drop; the caller zeroes its array */
+static jint j_ticket_keys_register(JNIEnv *e, jclass c, jbyteArray a) { (void)c; bytes b = get_bytes(e, a); int r = b.n == 0 || b.n % 80 ? KSL_ERROR : ksl_ticket_keys_register(b.p, b.n / 80); drop(&b); return r; }
+static jint j_ctx_use_ticket_keys(JNIEnv *e, jclass c, jlong h, jint id) { (void)e; (void)c; return ksl_ctx_use_ticket_keys(CTX(h), id); }
 static jint j_ctx_set_session_context(JNIEnv *e, jclass c, jlong h, jbyteArray a) { (void)c; bytes b = get_bytes(e, a); int r = ksl_ctx_set_session_context(CTX(h), b.p, b.n); drop(&b); return r; }
 static jint j_ctx_set_option(JNIEnv *e, jclass c, jlong h, jint o, jint v) { (void)e; (void)c; return ksl_ctx_set_option(CTX(h), o, v); }
 static jint j_ctx_freeze(JNIEnv *e, jclass c, jlong h) { (void)e; (void)c; return ksl_ctx_freeze(CTX(h)); }
@@ -198,7 +201,7 @@ static const JNINativeMethod methods[] = {
     {"ctxNew", "(I)J", (void *)j_ctx_new}, {"ctxFree", "(J)V", (void *)j_ctx_free}, {"ctxSetAlpn", "(J[B)I", (void *)j_ctx_set_alpn},
     {"ctxSetIdentity", "(J[B[B)I", (void *)j_ctx_set_identity}, {"ctxSetIdentityPkey", "(J[BJ)I", (void *)j_ctx_set_identity_pkey}, {"pkeyNew", "([B)J", (void *)j_pkey_new}, {"pkeyFree", "(J)V", (void *)j_pkey_free},
     {"ctxSetRoots", "(J[B)I", (void *)j_ctx_set_roots}, {"ctxSetCiphers", "(J" S_STR S_STR ")I", (void *)j_ctx_set_ciphers},
-    {"ctxSetTicketKeys", "(J[B)I", (void *)j_ctx_set_ticket_keys}, {"ctxSetSessionContext", "(J[B)I", (void *)j_ctx_set_session_context}, {"ctxSetOption", "(JII)I", (void *)j_ctx_set_option}, {"ctxFreeze", "(J)I", (void *)j_ctx_freeze}, {"ctxVerifyChain", "(J[B" S_STR "J)I", (void *)j_ctx_verify_chain}, {"ctxLastError", "(J[I)" S_STR, (void *)j_ctx_last_error},
+    {"ctxUseDefaultTicketKeys", "(JI)I", (void *)j_ctx_use_default_ticket_keys}, {"ticketKeysRegister", "([B)I", (void *)j_ticket_keys_register}, {"ctxUseTicketKeys", "(JI)I", (void *)j_ctx_use_ticket_keys}, {"ctxSetSessionContext", "(J[B)I", (void *)j_ctx_set_session_context}, {"ctxSetOption", "(JII)I", (void *)j_ctx_set_option}, {"ctxFreeze", "(J)I", (void *)j_ctx_freeze}, {"ctxVerifyChain", "(J[B" S_STR "J)I", (void *)j_ctx_verify_chain}, {"ctxLastError", "(J[I)" S_STR, (void *)j_ctx_last_error},
     {"sslNew", "(JI)J", (void *)j_ssl_new}, {"sslFree", "(J)V", (void *)j_ssl_free}, {"sslSet", "(JI[B)I", (void *)j_ssl_set},
     {"sslGet", "(JI)[B", (void *)j_ssl_get}, {"sslPeerChainCount", "(JI)I", (void *)j_ssl_peer_chain_count}, {"sslPeerChainItem", "(JII)[B", (void *)j_ssl_peer_chain_item},
     {"sslVerifyResume", "(JII)I", (void *)j_ssl_verify_resume}, {"sslClientHello", "(J)[B", (void *)j_ssl_client_hello}, {"sslSniResume", "(JJI)I", (void *)j_ssl_sni_resume},

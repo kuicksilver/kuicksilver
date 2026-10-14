@@ -434,6 +434,9 @@ QUIC congestion control and loss recovery (conformance review of 2026-10-14):
 
 QUIC runtime and sockets:
 
+- A client whose only socket was lost between handshake completion and confirmation ends at once with
+  `ConnectionLost.NoViablePath`: it may not migrate yet (RFC 9000 §9) and can neither send its Finished nor receive
+  HANDSHAKE_DONE, so `migrate()` used to wait for the 30 s idle timeout.
 - The `UnsupportedOperationException` of a Kotlin/Native QUIC server without the accelerated socket named Linux and
   Apple only; Windows has the socket too. `ConnectionLost.Timeout`'s KDoc no longer lists the removed path-validation
   and disconnect timers, and the Ktor server's `udpSocketCount` KDoc says Linux and Android (it said Linux).
@@ -813,6 +816,29 @@ Samples and testing:
   connection kept open, so behind a front proxy that frames by Content-Length the rest of the bytes became a second,
   smuggled request; such a request is now refused with 400 and the connection closed (RFC 9112 §6.1, threat model
   section 3.20, `negative_contentLengthWithTransferEncodingIsRejectedAndClosed`).
+- Session ticket keys no longer live on the Kotlin heap (security review 2026-10-14, threat model sections 1 and 3.7): the
+  process-wide keys are generated and rotated inside `ksl`, and explicit `SessionTicketConfig(keys = …)` are copied into
+  native memory when the configuration is built. **Breaking:** the arrays passed as `keys` are zeroed by the constructor
+  (also when it throws), and the `SessionTicketConfig.keys` property is removed (the keys cannot be read back).
+- `DirectoryQlogSink` no longer trusts the client-chosen connection ID it names files after (security review 2026-10-14,
+  threat model section 3.2): files are created exclusively and never through a symbolic link (a planted link, FIFO or
+  file is never followed, truncated or blocked on), named `<odcid>_<role>_<random>.sqlog`; the directory is created
+  owner-only and refused when it is a link, another user's, or writable by others without the sticky bit; at most 256
+  traces are open at once and 1 GiB is written over the sink's lifetime (experimental constructor
+  `DirectoryQlogSink(directory, maxOpenTraces, maxTotalBytes)`).
+- `keylogFile(path)` refuses a FIFO at the path instead of blocking until a reader appears (on Native that stalled the
+  endpoint loop at the first secret line): Native opens with `O_NONBLOCK` and checks the descriptor, the JVM checks the
+  path before opening it, Windows refuses anything but a regular file (security review 2026-10-14, threat model 3.7).
+- Ktor client: an `Alt-Svc` alternative on a loopback, link-local or private address (or a `localhost` name) is ignored
+  unless the origin itself is on such an address, and one on an unspecified, multicast or broadcast address always, so a
+  verified origin cannot aim clients' QUIC Initials at their own network (RFC 9000 section 21.5, threat model 3.14).
+- Kotlin/Native Linux clients with `TrustConfig.Platform` parse the system CA bundle once per process instead of once per
+  connection (3.6 ms each, seven handshakes' worth); the shared store is reloaded when the bundle or `SSL_CERT_FILE` /
+  `SSL_CERT_DIR` change (threat model 3.2, `tools/bench/ksl-ctx-bench.sh`).
+- Supply chain (threat model 3.11): every Gradle dependency and plugin is verified by signature or SHA-256
+  (`gradle/verification-metadata.xml`); a release rebuilds all twelve OpenSSL targets from the verified tarball instead of
+  reusing `build/openssl`, and checks the Android `.so` files and the Kotlin/Native archives, as it did the JVM libraries,
+  for the pinned OpenSSL, sanitizer or debug builds and the export whitelist or symbol prefix.
 
 ## 0.1.0 candidate (never published)
 

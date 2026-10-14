@@ -23,6 +23,10 @@ internal class MemoryNetwork {
     /** Largest datagram the network carries; bigger ones vanish (DF, no ICMP). */
     var mtu: Int = 65_535
 
+    /** A datagram for which this answers true is lost (set by the test thread, read by the loops). */
+    @kotlin.concurrent.Volatile
+    var lose: ((from: InetSocketAddress, to: InetSocketAddress, bytes: ByteArray) -> Boolean)? = null
+
     /** Binds a socket at [local]; a [deaf] one never delivers what it receives (a dead path). */
     fun open(
         local: InetSocketAddress,
@@ -69,7 +73,7 @@ internal class MemoryNetwork {
         to: InetSocketAddress,
         bytes: ByteArray,
     ) {
-        if (from in cut || to in cut || bytes.size > mtu) {
+        if (from in cut || to in cut || bytes.size > mtu || lose?.invoke(from, to, bytes) == true) {
             dropped++
             return
         }
