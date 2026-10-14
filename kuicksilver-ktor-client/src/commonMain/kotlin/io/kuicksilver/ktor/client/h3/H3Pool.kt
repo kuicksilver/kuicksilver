@@ -451,6 +451,7 @@ internal class H3Pool(
                 } catch (e: Throwable) {
                     throw H3NotSent(e)
                 }
+            var reported = false // connectionAcquired went out: a failure below reports the release too
             try {
                 // a request that cannot go in 0-RTT waits for the handshake here, before any stream is opened or its body
                 // touched: a handshake that fails leaves it provably unsent (RFC 8470 section 4 — the client starts over)
@@ -468,6 +469,7 @@ internal class H3Pool(
                 if (events.enabled) {
                     val reused = lock.withLock { !fresh.remove(conn) }
                     events.emit("connectionAcquired") { connectionAcquired(data, HttpProtocolVersion.HTTP_3_0, reused) }
+                    reported = true
                 }
                 val r =
                     if (data.attributes.contains(
@@ -484,6 +486,12 @@ internal class H3Pool(
                 return r
             } catch (e: Throwable) {
                 entry.release(clock())
+                // every connectionAcquired gets its connectionReleased, also when the exchange failed before a response
+                if (reported) {
+                    events.emit(
+                        "connectionReleased",
+                    ) { connectionReleased(data, HttpProtocolVersion.HTTP_3_0, kept = !conn.closed.isCompleted) }
+                }
                 if (e !is Http3Exception.RequestNotProcessed) throw e
                 lock.withLock {
                     connections[t.key]?.let {
@@ -562,6 +570,7 @@ internal class H3Pool(
             val readToEnd = stream.input.isClosedForRead && stream.input.closedCause == null
             if (!sentCleanly) stream.reset(io.kuicksilver.http3.Http3ErrorCode.REQUEST_CANCELLED)
             if (!readToEnd) stream.stopSending(io.kuicksilver.http3.Http3ErrorCode.REQUEST_CANCELLED)
+            events.emit("connectionReleased") { connectionReleased(data, HttpProtocolVersion.HTTP_3_0, kept = !conn.closed.isCompleted) }
         }
         val session =
             RawWebSocket(

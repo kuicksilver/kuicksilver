@@ -88,7 +88,10 @@ public abstract class KuicksilverEventListener {
         reused: Boolean,
     ) {}
 
-    /** [request]'s exchange gave its connection back: [kept] when the connection stays open for the next request. */
+    /**
+     * [request]'s exchange gave its connection back: [kept] when the connection stays open for the next request. Follows
+     * every [connectionAcquired] once, also when the exchange failed before a response (then usually not [kept]).
+     */
     public open fun connectionReleased(
         request: HttpRequestData,
         protocol: HttpProtocolVersion,

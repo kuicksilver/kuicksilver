@@ -232,9 +232,12 @@ internal class H1Pool(
                 }
             } catch (e: CancellationException) {
                 conn.close()
+                events.emit("connectionReleased") { connectionReleased(data, HttpProtocolVersion.HTTP_1_1, kept = false) }
                 throw e
             } catch (e: Throwable) {
                 conn.close()
+                // every connectionAcquired gets its connectionReleased, also when the exchange failed before a response
+                events.emit("connectionReleased") { connectionReleased(data, HttpProtocolVersion.HTTP_1_1, kept = false) }
                 bodyJob?.failure?.let { throw it }
                 // a pooled connection the server already closed: one transparent retry on a fresh connection, for an
                 // idempotent request with a replayable body only (a non-idempotent one may have been processed, RFC 9112 section 9.3.1)
