@@ -70,7 +70,10 @@ class ConnectionFuzzTest {
  * - 4 NET: on the datagrams queued towards the other side — `arg & 3`: 0 drop the first, 1 duplicate it, 2 reverse the
  *   queue, 3 mark them ECT(0) (`arg & 4`: CE); `arg & 8`: they come from a new source address (NAT rebinding).
  * - 5 TICK: `arg * 100` ms (15: 3 s) pass, then one round.
- * - 6, 7: one round.
+ * - 6 BLOCK: `arg & 1` toggles dropping every datagram from that side to the other (`arg & 1 == 0`: one round). A
+ *   blocked direction holds one side at an encryption level the other has left, so it still sends CRYPTO there
+ *   (Initial or Handshake data past what TLS consumed: the sealed CRYPTO streams, RFC 9001 section 4.1.3).
+ * - 7: one round.
  *
  * A [num] is one byte `b` < 0xf8 for its own value, else `b - 0xf7` big-endian bytes masked to 62 bits.
  */
@@ -186,6 +189,9 @@ internal object ConnProgram {
         ) = apply { op(4, side, arg) }
 
         fun tick(hundredMs: Int) = apply { op(5, 0, hundredMs) }
+
+        /** Toggles dropping the datagrams from [side] to the other side. */
+        fun block(side: Int) = apply { op(6, side, 1) }
 
         fun build(): ByteArray = out.toByteArray()
     }
@@ -441,6 +447,9 @@ internal class ConnectionFuzz(
             }.build()
 
     private val sides = arrayOf(Side(), Side())
+
+    /** BLOCK: datagrams from side 0 (client) / 1 (server) to the other are dropped. */
+    private val blocked = BooleanArray(2)
     private lateinit var pair: CorePair
     private var rebind = 0
 
@@ -451,6 +460,8 @@ internal class ConnectionFuzz(
         try {
             pair.client.datagramSender = sides[0]
             pair.onServerCreated = { it.datagramSender = sides[1] }
+            pair.filterToServer = { _, _ -> !blocked[0] }
+            pair.filterToClient = { _, _ -> !blocked[1] }
             p = 1
             if (flags and 1 == 0) {
                 pair.handshake()
@@ -502,6 +513,10 @@ internal class ConnectionFuzz(
             5 -> {
                 pair.advance(if (arg == 15) 3_000.milliseconds else (arg * 100).milliseconds)
                 step()
+            }
+
+            6 -> {
+                if (arg and 1 != 0) blocked[side] = !blocked[side] else step()
             }
 
             else -> {

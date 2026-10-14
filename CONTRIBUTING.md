@@ -185,8 +185,9 @@ To make the floors blocking, download the `perf-<peer>` result artifacts of a fe
   between slices, resumes where it stopped (state in `build/fuzz-campaign/`) and gives each slice to the target with the
   least time so far. `tools/fuzz/campaign.sh status` prints hours, executions and coverage per target;
   `tools/fuzz/campaign.sh minimize` merges the grown corpora into `tools/fuzz/corpus/<target>/`, which is committed and
-  seeds later campaigns. Options: `--slice MIN`, `--goal HOURS` per target, `--hours HOURS` of wall clock, `--targets
-  id,...` (`tools/fuzz/campaign.sh list`). A crash you find becomes a `crash-*` input next to the seeds, a unit test that
+  seeds later campaigns. Options: `--slice MIN`, `--goal HOURS` per target, `--goals id=HOURS,...` per target, `--hours
+  HOURS` of wall clock, `--jobs N` slices at once (each on its own target, default 1), `--nice N` (default 19),
+  `--targets id,...` (`tools/fuzz/campaign.sh list`). A crash you find becomes a `crash-*` input next to the seeds, a unit test that
   reproduces it and a fix; delete `build/fuzz-campaign/crashed-<target>` so the campaign takes the target again. A timeout
   is replayed first: one whose input runs in time alone (a slice starved on a busy machine) is recorded as `load-timeout`
   in `build/fuzz-campaign/load-timeouts/` and is not a finding.

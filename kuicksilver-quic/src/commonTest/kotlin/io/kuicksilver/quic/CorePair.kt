@@ -10,6 +10,7 @@ import io.kuicksilver.native.PacketBuffer
 import io.kuicksilver.native.of
 import io.kuicksilver.native.toByteArray
 import io.kuicksilver.quic.VersionProfile
+import io.kuicksilver.quic.core.release
 import io.kuicksilver.tls.Certificate
 import io.kuicksilver.tls.KslQuicCrypto
 import io.kuicksilver.tls.QuicCrypto
@@ -47,16 +48,25 @@ internal object CoreFixtures {
             block()
         }
 
+    private val defaultChain: List<ByteArray> by lazy { listOf(TestCerts.server) }
+
+    /**
+     * The identity of the default chain and key, made once: a fresh one per fixture is never closed, so its native key
+     * stayed allocated (the fuzz targets build a pair per input and ran out of memory over hours).
+     */
+    private val defaultIdentity: TlsIdentity by lazy { TlsIdentity.fromDer(defaultChain, TestCerts.serverKey.copyOf()) }
+
     fun server(
         alpn: String = "hq-interop",
-        chain: List<ByteArray> = listOf(TestCerts.server),
+        chain: List<ByteArray> = defaultChain,
         key: ByteArray = TestCerts.serverKey,
         block: TlsConfig.Builder.() -> Unit = {
         },
     ): TlsConfig =
         tlsConfig(TlsRole.Server) {
             this.alpn = listOf(alpn)
-            identity = TlsIdentity.fromDer(chain, key.copyOf())
+            identity =
+                if (chain === defaultChain && key === TestCerts.serverKey) defaultIdentity else TlsIdentity.fromDer(chain, key.copyOf())
             block()
         }
 
@@ -245,8 +255,11 @@ internal class CorePair(
     fun closedReason(events: List<ConnectionEvent>): QuicException.ConnectionLost? =
         events.filterIsInstance<ConnectionEvent.Closed>().firstOrNull()?.reason
 
+    /** Frees the cores' native resources (TLS sessions, keys) too: a connection still open at the end would keep them. */
     fun close() {
         batch.close()
+        client.release()
+        server?.release()
     }
 }
 
