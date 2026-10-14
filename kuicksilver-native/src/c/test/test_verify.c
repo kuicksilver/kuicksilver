@@ -1,6 +1,7 @@
 /* Copyright 2026 The Kuicksilver Authors
  * SPDX-License-Identifier: Apache-2.0 */
 /* Verification contract (ADR-0011, ADR-0012): OpenSSL verifier, client pause, matcher on every path, EKU, chains. */
+#define _POSIX_C_SOURCE 200809L   /* setenv, unsetenv, strdup under -std=c11 with glibc */
 #include "test_common.h"
 #include <openssl/x509_vfy.h>
 #include <openssl/pem.h>

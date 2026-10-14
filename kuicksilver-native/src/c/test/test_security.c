@@ -1,6 +1,7 @@
 /* Copyright 2026 The Kuicksilver Authors
  * SPDX-License-Identifier: Apache-2.0 */
 /* Findings of the 0.2.0 security review: framing bounds, keylog buffer growth, native session ticket keys. */
+#define _POSIX_C_SOURCE 200809L   /* setenv, unsetenv, strdup under -std=c11 with glibc */
 #include "test_common.h"
 #include "ksl_internal.h"
 #include <limits.h>
