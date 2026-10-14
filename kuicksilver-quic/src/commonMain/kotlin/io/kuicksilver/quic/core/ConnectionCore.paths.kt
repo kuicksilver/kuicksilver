@@ -190,10 +190,9 @@ internal fun ConnectionCore.onPathPacket(
             abandonValidatingHeardBefore = if (migrating) TimeMark.NEVER else now - idle,
         ) ?: return
         p.amplification.onReceived(datagramBytes)
-        p.caps = active.caps
-        if (p.caps.ecnSend) p.ecn.enable() // the same socket: ECN is validated afresh on the new path (section 13.4.2)
         // NAT rebinding keeps the congestion state (same network); the old address probes on a controller of its own
         if (sameIp(from, active.remote)) p.inheritFrom(active, config.congestionController())
+        initServerPath(p, active)
         startValidation(p)
     } else if (p.state == PathState.Unknown || (p.state == PathState.Failed && p.standbyUntil <= now)) {
         startValidation(p) // a path first seen through the peer's probe is validated once it carries anything else
@@ -220,6 +219,20 @@ internal fun ConnectionCore.onPathPacket(
 /** Server: records whether the 1-RTT packet just received on [p] carries another of our IDs than the active path's packets. */
 private fun ConnectionCore.notePeerDcid(p: Path) {
     if (p !== paths.active && rxDcidSeq >= 0 && activeDcidSeq >= 0) p.peerChangedDcid = rxDcidSeq != activeDcidSeq
+}
+
+/**
+ * Server: a path the client opened toward our socket gets what that socket does for the active path: ECN validated afresh (RFC 9000
+ * section 13.4.2) and DPLPMTUD with black-hole detection (RFC 8899 section 4.3; RFC 9000 section 14), starting from the MTU a NAT
+ * rebinding inherited ([Path.inheritFrom]) or from 1200 on a new address.
+ */
+private fun ConnectionCore.initServerPath(
+    p: Path,
+    active: Path,
+) {
+    p.caps = active.caps
+    if (p.caps.ecnSend) p.ecn.enable()
+    if (p.caps.df && config.pmtud && p.pmtud == null) p.pmtud = Pmtud(upperBound = pmtudUpperBound(), start = p.mtu)
 }
 
 /** A validating path silent this long may give its slot to a probe from a new address (quic-go's pathTimeout). */
@@ -379,6 +392,7 @@ internal fun ConnectionCore.onPathChallenge(
             return
         }
         p.amplification.onReceived(datagramBytes)
+        if (role == TlsRole.Server) initServerPath(p, paths.active)
     }
     if (role == TlsRole.Server && p !== paths.active) {
         notePeerDcid(p)

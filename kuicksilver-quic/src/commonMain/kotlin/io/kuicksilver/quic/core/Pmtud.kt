@@ -25,12 +25,14 @@ internal class Pmtud(
     private val maxProbes: Int = 3,
     private val research: Duration = 600.seconds,
     private val blackHolePause: Duration = 60.seconds,
+    /** The size in use at the start: the base, or the MTU a NAT-rebound path inherited (black-hole detection covers it, RFC 8899 section 4.3). */
+    start: Int = base,
 ) {
     var upperBound: Int = upperBound
         private set
-    var current: Int = base
+    var current: Int = start
         private set
-    private var low = base
+    private var low = start
     private var high = upperBound
     private var probeSize = 0
     private var probeLosses = 0
