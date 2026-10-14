@@ -61,7 +61,7 @@ class RealUdpH3Test {
                                     async {
                                         conn
                                             .request(
-                                                Http3Request("GET", authority = "server.test", path = "/$i"),
+                                                http3Request("GET", "server.test", "/$i"),
                                             ).body
                                             .readAllBytes()
                                             .decodeToString()

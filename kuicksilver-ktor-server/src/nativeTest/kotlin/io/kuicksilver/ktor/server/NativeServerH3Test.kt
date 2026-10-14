@@ -8,7 +8,7 @@ import io.ktor.server.routing.get
 import io.ktor.server.routing.routing
 import io.ktor.utils.io.readRemaining
 import io.kuicksilver.http3.Http3Endpoint
-import io.kuicksilver.http3.Http3Request
+import io.kuicksilver.http3.http3Request
 import io.kuicksilver.native.KslLoader
 import kotlinx.io.readByteArray
 import kotlin.test.BeforeTest
@@ -30,7 +30,7 @@ class NativeServerH3Test {
                 try {
                     val c = ep.connect(InetSocketAddress("127.0.0.1", port), ServerFixtures.clientTls(alpn = listOf("h3")))
                     try {
-                        val r = c.request(Http3Request("GET", authority = "server.test", path = "/"))
+                        val r = c.request(http3Request("GET", "server.test", "/"))
                         assertEquals(200, r.status)
                         assertEquals(
                             "native h3",

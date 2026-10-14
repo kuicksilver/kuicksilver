@@ -10,9 +10,9 @@ import io.kuicksilver.http3.Http3Connection
 import io.kuicksilver.http3.Http3EarlyDataPolicy
 import io.kuicksilver.http3.Http3Endpoint
 import io.kuicksilver.http3.Http3Headers
-import io.kuicksilver.http3.Http3Request
 import io.kuicksilver.http3.Http3Settings
 import io.kuicksilver.http3.MemoryNet
+import io.kuicksilver.http3.http3Request
 import io.kuicksilver.http3.http3Settings
 import io.kuicksilver.http3.readAllBytes
 import io.kuicksilver.native.KslLoader
@@ -123,9 +123,13 @@ class EarlyDataTest {
             c.close()
         }
 
-        fun get(early: Boolean = false) = Http3Request("GET", authority = "server.test", path = "/", allowEarlyData = early)
+        fun get(early: Boolean = false) =
+            http3Request("GET", "server.test", "/") {
+                @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+                allowEarlyData = early
+            }
 
-        fun post() = Http3Request("POST", authority = "server.test", path = "/order")
+        fun post() = http3Request("POST", "server.test", "/order")
 
         override fun close() {
             scope.cancel()

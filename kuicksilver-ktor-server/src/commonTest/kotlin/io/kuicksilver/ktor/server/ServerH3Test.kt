@@ -18,7 +18,7 @@ import io.ktor.utils.io.readAvailable
 import io.ktor.utils.io.writeFully
 import io.kuicksilver.http3.Http3Connection
 import io.kuicksilver.http3.Http3Endpoint
-import io.kuicksilver.http3.Http3Request
+import io.kuicksilver.http3.http3Request
 import io.kuicksilver.native.KslLoader
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -71,7 +71,7 @@ class ServerH3Test {
         }
     }
 
-    private fun get(path: String = "/") = Http3Request("GET", authority = "server.test", path = path)
+    private fun get(path: String = "/") = http3Request("GET", "server.test", path)
 
     @Test fun getOverH3() =
         h3ServerTest {
@@ -105,7 +105,12 @@ class ServerH3Test {
             val (server, port) = tlsServer { routing { post("/echo") { call.respondBytes(call.receive<ByteArray>()) } } }
             try {
                 h3(port) { c ->
-                    val r = c.request(Http3Request("POST", authority = "server.test", path = "/echo", body = ByteReadChannel(payload)))
+                    val r =
+                        c.request(
+                            http3Request("POST", "server.test", "/echo") {
+                                body = ByteReadChannel(payload)
+                            },
+                        )
                     assertContentEquals(payload, r.body.readFullBody())
                 }
             } finally {
@@ -172,7 +177,7 @@ class ServerH3Test {
                 }
             try {
                 h3(port) { c ->
-                    val head = c.request(Http3Request("HEAD", authority = "server.test", path = "/h"))
+                    val head = c.request(http3Request("HEAD", "server.test", "/h"))
                     assertEquals(200, head.status)
                     assertEquals("4", head.headers["content-length"])
                     assertEquals(0, head.body.readFullBody().size)
@@ -488,14 +493,11 @@ class ServerH3Test {
                 h3(port) { c ->
                     val r =
                         c.request(
-                            Http3Request(
-                                "GET",
-                                authority = "server.test",
-                                path = "/",
+                            http3Request("GET", "server.test", "/") {
                                 headers =
                                     io.kuicksilver.http3.Http3Headers
-                                        .of("cookie" to "a=1", "cookie" to "b=2"),
-                            ),
+                                        .of("cookie" to "a=1", "cookie" to "b=2")
+                            },
                         )
                     assertEquals("a=1; b=2|2", r.body.readFullBody().decodeToString())
                 }

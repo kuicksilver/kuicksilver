@@ -11,9 +11,9 @@ import io.kuicksilver.http3.Http3Connection
 import io.kuicksilver.http3.Http3ErrorCode
 import io.kuicksilver.http3.Http3Exception
 import io.kuicksilver.http3.Http3Headers
-import io.kuicksilver.http3.Http3Request
 import io.kuicksilver.http3.QuicPair
 import io.kuicksilver.http3.frame.FrameType
+import io.kuicksilver.http3.http3Request
 import io.kuicksilver.http3.readAllBytes
 import io.kuicksilver.http3.useScoped
 import io.kuicksilver.native.KslLoader
@@ -48,7 +48,9 @@ import kotlin.time.Duration.Companion.seconds
 internal fun get(
     path: String = "/",
     headers: Http3Headers = Http3Headers.Empty,
-) = Http3Request("GET", authority = "server.test", path = path, headers = headers)
+) = http3Request("GET", "server.test", path) {
+    this.headers = headers
+}
 
 class RequestTest {
     @BeforeTest fun load() = KslLoader.ensureLoaded()
@@ -91,7 +93,12 @@ class RequestTest {
                     body.writeFully(payload)
                     body.flushAndClose()
                 }
-                val resp = p.client.request(Http3Request("POST", authority = "server.test", path = "/echo", body = body))
+                val resp =
+                    p.client.request(
+                        http3Request("POST", "server.test", "/echo") {
+                            this.body = body
+                        },
+                    )
                 assertContentEquals(payload, resp.body.readAllBytes())
             }
         }
@@ -109,9 +116,12 @@ class RequestTest {
                 }
                 val resp =
                     p.client.request(
-                        Http3Request("POST", authority = "server.test", path = "/", body = ByteReadChannel("ping"), trailers = {
-                            Http3Headers.of("x-checksum" to "c1")
-                        }),
+                        http3Request("POST", "server.test", "/") {
+                            body = ByteReadChannel("ping")
+                            trailers = {
+                                Http3Headers.of("x-checksum" to "c1")
+                            }
+                        },
                     )
                 assertEquals("pong", resp.body.readAllBytes().decodeToString())
                 assertEquals("s1", resp.trailers.await()?.get("x-checksum"))
@@ -133,10 +143,12 @@ class RequestTest {
                 val hints = ArrayList<Pair<Int, String?>>()
                 val resp =
                     p.client.request(
-                        Http3Request("GET", authority = "server.test", path = "/", onInformational = { s, h ->
-                            hints +=
-                                s to h["link"]
-                        }),
+                        http3Request("GET", "server.test", "/") {
+                            onInformational = { s, h ->
+                                hints +=
+                                    s to h["link"]
+                            }
+                        },
                     )
                 assertEquals(listOf<Pair<Int, String?>>(103 to "</style.css>; rel=preload"), hints)
                 assertEquals(204, resp.status)
@@ -156,9 +168,11 @@ class RequestTest {
                     }
                 var seen: Any? = null
                 p.client.request(
-                    Http3Request("GET", authority = "server.test", path = "/", onInformational = { _, _ ->
-                        seen = currentCoroutineContext()[ContinuationInterceptor]
-                    }),
+                    http3Request("GET", "server.test", "/") {
+                        onInformational = { _, _ ->
+                            seen = currentCoroutineContext()[ContinuationInterceptor]
+                        }
+                    },
                 )
                 server.join()
                 assertNotNull(seen)
@@ -180,10 +194,13 @@ class RequestTest {
                 var seen: Any? = null
                 val resp =
                     p.client.request(
-                        Http3Request("POST", authority = "server.test", path = "/", body = ByteReadChannel("ping"), trailers = {
-                            seen = currentCoroutineContext()[ContinuationInterceptor]
-                            Http3Headers.of("x-checksum" to "c1")
-                        }),
+                        http3Request("POST", "server.test", "/") {
+                            body = ByteReadChannel("ping")
+                            trailers = {
+                                seen = currentCoroutineContext()[ContinuationInterceptor]
+                                Http3Headers.of("x-checksum" to "c1")
+                            }
+                        },
                     )
                 assertEquals(204, resp.status)
                 server.join()
@@ -377,7 +394,7 @@ class RequestTest {
                     }
                     st
                 }
-            val resp = client.request(Http3Request(method, authority = "server.test", path = "/"))
+            val resp = client.request(http3Request(method, "server.test", "/"))
             assertEquals(status, resp.status)
             val e = assertFailsWith<Http3Exception.MessageError> { resp.body.readAllBytes() }
             assertEquals(served.await().id, e.streamId)
@@ -447,7 +464,14 @@ class RequestTest {
                     }
                 }
                 val body = ByteChannel()
-                val job = async { p.client.request(Http3Request("POST", authority = "server.test", path = "/", body = body)) }
+                val job =
+                    async {
+                        p.client.request(
+                            http3Request("POST", "server.test", "/") {
+                                this.body = body
+                            },
+                        )
+                    }
                 body.writeFully(ByteArray(100))
                 body.flush()
                 delay(200)
@@ -514,7 +538,7 @@ class RequestTest {
                             Http3Headers.of("content-length" to "5"),
                         ).finish()
                 }
-                val resp = p.client.request(Http3Request("HEAD", authority = "server.test", path = "/"))
+                val resp = p.client.request(http3Request("HEAD", "server.test", "/"))
                 assertEquals(200, resp.status)
                 assertEquals("5", resp.headers["content-length"])
                 assertEquals(0, resp.body.readAllBytes().size)
@@ -569,7 +593,12 @@ class RequestTest {
                         body.flushAndClose()
                     }
                 } // chunks: the channel stays open while the uploader waits
-                val resp = p.client.request(Http3Request("POST", authority = "server.test", path = "/", body = body))
+                val resp =
+                    p.client.request(
+                        http3Request("POST", "server.test", "/") {
+                            this.body = body
+                        },
+                    )
                 assertEquals(404, resp.status)
                 val r = served.await()
                 assertEquals(
@@ -633,7 +662,13 @@ class RequestTest {
                     val resp =
                         withTimeoutOrNull(
                             5.seconds,
-                        ) { p.client.request(Http3Request("POST", authority = "server.test", path = "/$i", body = body)) }
+                        ) {
+                            p.client.request(
+                                http3Request("POST", "server.test", "/$i") {
+                                    this.body = body
+                                },
+                            )
+                        }
                     assertEquals(404, resp?.status, "request $i is answered")
                     resp!!.body.readAllBytes()
                 }

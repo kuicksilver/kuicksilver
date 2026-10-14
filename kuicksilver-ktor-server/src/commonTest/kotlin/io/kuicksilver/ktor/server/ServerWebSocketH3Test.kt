@@ -17,7 +17,7 @@ import io.kuicksilver.http3.Http3Endpoint
 import io.kuicksilver.http3.Http3ErrorCode
 import io.kuicksilver.http3.Http3Exception
 import io.kuicksilver.http3.Http3Headers
-import io.kuicksilver.http3.Http3Request
+import io.kuicksilver.http3.http3Request
 import io.kuicksilver.native.KslLoader
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.cancel
@@ -36,13 +36,9 @@ class ServerWebSocketH3Test {
     @BeforeTest fun load() = KslLoader.ensureLoaded()
 
     private val wsRequest =
-        Http3Request(
-            "CONNECT",
-            authority = "server.test",
-            path = "/ws",
-            headers =
-                Http3Headers.of("sec-websocket-version" to "13"),
-        )
+        http3Request("CONNECT", "server.test", "/ws") {
+            headers = Http3Headers.of("sec-websocket-version" to "13")
+        }
 
     private suspend fun <T> h3(
         port: Int,

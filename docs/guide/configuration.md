@@ -197,7 +197,7 @@ Endpoint and request parameters:
 | `Http3Endpoint.connect(remote, tls, quic, settings)` | `quic = QuicConfig.Default`, `settings = Http3Settings.Default`; `tls` must offer ALPN `h3` |
 | `Http3Endpoint.connectEarly(remote, tls, quic, settings, earlyData)` (*experimental*) | as `connect`, `earlyData = EarlyDataState.Allowed` (not `Disabled`) |
 | `Http3Endpoint.shutdown(grace, code, reason)` (*experimental*) | `code = H3_NO_ERROR`, `reason = "shutdown"` |
-| `Http3Request(method, scheme, authority, path, headers, body, trailers, priority, protocol, onInformational, allowEarlyData)` | `scheme = "https"`, `headers = Http3Headers.Empty`, `body = null` (no body), `trailers = null`, `priority = null` (the default `u=3`), `protocol = null`, `onInformational = null`, `allowEarlyData = false` (*experimental*; GET, HEAD and OPTIONS without a body only) |
+| `http3Request(method, authority, path) { ... }` (`Http3Request.Builder`) | `scheme = "https"`, `headers = Http3Headers.Empty`, `body = null` (no body), `trailers = null`, `priority = null` (the default `u=3`), `protocol = null`, `onInformational = null`, `allowEarlyData = false` (*experimental*; GET, HEAD and OPTIONS without a body only) |
 
 ## Ktor client engine
 

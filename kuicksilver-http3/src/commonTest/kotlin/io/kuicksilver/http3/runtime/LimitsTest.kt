@@ -9,10 +9,10 @@ import io.kuicksilver.http3.Http3Connection
 import io.kuicksilver.http3.Http3ErrorCode
 import io.kuicksilver.http3.Http3Exception
 import io.kuicksilver.http3.Http3Headers
-import io.kuicksilver.http3.Http3Request
 import io.kuicksilver.http3.QuicPair
 import io.kuicksilver.http3.frame.FrameHeaders
 import io.kuicksilver.http3.frame.FrameType
+import io.kuicksilver.http3.http3Request
 import io.kuicksilver.http3.http3Settings
 import io.kuicksilver.http3.readAllBytes
 import io.kuicksilver.http3.useScoped
@@ -101,10 +101,13 @@ class LimitsTest {
                 withTimeout(5.seconds) { p.client.peerSettings.first { it != null } }
 
                 fun post(before: CompletableDeferred<Unit>? = null) =
-                    Http3Request("POST", authority = "server.test", path = "/", body = ByteReadChannel("ping"), trailers = {
-                        before?.await()
-                        Http3Headers.of("x-big" to "v".repeat(2000))
-                    })
+                    http3Request("POST", "server.test", "/") {
+                        body = ByteReadChannel("ping")
+                        trailers = {
+                            before?.await()
+                            Http3Headers.of("x-big" to "v".repeat(2000))
+                        }
+                    }
                 // the server waits for the whole request before it answers: `request` fails
                 val waits =
                     launch {

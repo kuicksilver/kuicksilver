@@ -193,6 +193,17 @@ Documentation:
 
 ### Changed
 
+API shape before the first release (pre-release review, 2026-10-14; nothing was published, so no deprecation cycle):
+
+- **Breaking:** `Http3Request` is built with `http3Request(method, authority, path) { ... }` or `Http3Request.Builder`
+  (plus `toBuilder()`) instead of an 11-parameter constructor, so request options can be added later without breaking
+  binaries; `allowEarlyData` is set in the builder under the experimental opt-in.
+- **Breaking:** implementing `QuicCrypto`, `QuicTlsSession`, `PacketProtector`, `TokenKey` or `ResetKey` needs
+  `@OptIn(ExperimentalKuicksilverApi::class)` (`@SubclassOptInRequired`), as do the constructors of the `TlsEvent` and
+  `DriveResult` classes and of `IoCapabilities` that an implementation returns; using them is unchanged.
+- **Breaking:** library-produced values have internal constructors: `ConnectionAttempt`, the `PathEvent`,
+  `ConnectionEvent` and `MigrationEvent` classes, `ClientHelloInfo`, `Http3PeerSettings`.
+
 QUIC (`kuicksilver-quic`):
 
 - Configuration validation: `QuicConfig.handshakeTimeout` must be positive, `maxSendBuffer` 1..2^62, `maxIdleTimeout`

@@ -83,7 +83,7 @@ extensions. The peer's SETTINGS are in `peerSettings` once they arrive.
 
 ```kotlin
 // guide:http3:client-request
-val response = connection.request(Http3Request("GET", authority = "example.com", path = "/"))
+val response = connection.request(http3Request("GET", "example.com", "/"))
 println(response.status)
 val body = response.body            // a ByteReadChannel; reading it to the end completes response.trailers
 ```
@@ -198,7 +198,7 @@ if (request.protocol == "echo") {
 } else request.respond(501).finish()
 
 // guide:http3:connect (client)
-val stream = client.connect(Http3Request("CONNECT", authority = "example.com", path = "/chat"), protocol = "echo")
+val stream = client.connect(http3Request("CONNECT", "example.com", "/chat"), protocol = "echo")
 stream.trySendDatagram(byteArrayOf(1, 2, 3))      // Unsupported until both sides sent SETTINGS_H3_DATAGRAM=1
 stream.datagrams.collect { println(it.size) }
 ```

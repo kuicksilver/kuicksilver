@@ -8,7 +8,7 @@ import io.kuicksilver.annotations.DelicateKuicksilverApi
 import io.kuicksilver.http3.Http3Connection
 import io.kuicksilver.http3.Http3Endpoint
 import io.kuicksilver.http3.Http3Headers
-import io.kuicksilver.http3.Http3Request
+import io.kuicksilver.http3.http3Request
 import io.kuicksilver.http3.Http3ServerRequest
 import io.kuicksilver.quic.ConnectionAdmission
 import io.kuicksilver.quic.QlogSink
@@ -108,7 +108,7 @@ internal object H3InteropClient {
         } finally { endpoint.close() }
     }
     private suspend fun fetch(conn: Http3Connection, authority: String, path: String, downloads: String): Boolean {
-        val resp = conn.request(Http3Request("GET", authority = authority, path = path))
+        val resp = conn.request(http3Request("GET", authority, path))
         val out = Buffer(); val buf = ByteArray(65536)
         while (true) { val n = resp.body.readAvailable(buf, 0, buf.size); if (n < 0) break; out.write(buf, 0, n) }
         if (resp.status != 200) { Files.log("GET $path: ${resp.status}"); return false }

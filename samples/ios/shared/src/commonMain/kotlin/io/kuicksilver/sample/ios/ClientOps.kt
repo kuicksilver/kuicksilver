@@ -3,7 +3,7 @@
 package io.kuicksilver.sample.ios
 
 import io.kuicksilver.http3.Http3Endpoint
-import io.kuicksilver.http3.Http3Request
+import io.kuicksilver.http3.http3Request
 import io.kuicksilver.quic.DatagramIo
 import io.kuicksilver.quic.PathEvent
 import io.kuicksilver.quic.QuicConnection
@@ -65,7 +65,7 @@ internal suspend fun http3Get(url: String, mode: TrustMode, tofu: TofuStore): Ht
     Http3Endpoint.bind(InetSocketAddress("::", 0)).use { endpoint ->
         val connection = endpoint.connect(InetSocketAddress(u.host, u.port), clientTls(u.host, "h3", mode, tofu))
         try {
-            val response = connection.request(Http3Request("GET", authority = u.authority, path = u.path))
+            val response = connection.request(http3Request("GET", u.authority, u.path))
             val preview = ByteArray(4096); var kept = 0; var total = 0L
             val buf = ByteArray(16 * 1024)
             while (true) {

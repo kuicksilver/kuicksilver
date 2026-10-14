@@ -9,13 +9,13 @@ import io.kuicksilver.http3.Http3Connection
 import io.kuicksilver.http3.Http3ErrorCode
 import io.kuicksilver.http3.Http3Exception
 import io.kuicksilver.http3.Http3Headers
-import io.kuicksilver.http3.Http3Request
 import io.kuicksilver.http3.QuicPair
 import io.kuicksilver.http3.frame.FrameType
 import io.kuicksilver.http3.frame.SettingsCodec
 import io.kuicksilver.http3.frame.SettingsId
 import io.kuicksilver.http3.frame.StreamType
 import io.kuicksilver.http3.frame.VarInt
+import io.kuicksilver.http3.http3Request
 import io.kuicksilver.http3.http3Settings
 import io.kuicksilver.http3.message.CapsuleParser
 import io.kuicksilver.http3.readAllBytes
@@ -46,7 +46,7 @@ import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
-internal fun connectReq(path: String = "/chat") = Http3Request("CONNECT", authority = "server.test", path = path)
+internal fun connectReq(path: String = "/chat") = http3Request("CONNECT", "server.test", path)
 
 private val connectOn = http3Settings { enableConnectProtocol = true }
 
@@ -192,15 +192,12 @@ class ExtendedConnectTest {
                 }
                 val s =
                     p.client.connect(
-                        Http3Request(
-                            "CONNECT",
-                            authority = "server.test",
-                            path = "/chat",
+                        http3Request("CONNECT", "server.test", "/chat") {
                             headers =
                                 Http3Headers(
                                     listOf("sec-websocket-protocol" to "v1, chat"),
-                                ),
-                        ),
+                                )
+                        },
                         "echo",
                     )
                 assertEquals("chat", s.headers["sec-websocket-protocol"])

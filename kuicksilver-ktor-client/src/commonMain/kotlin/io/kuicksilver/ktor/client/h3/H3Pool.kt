@@ -27,8 +27,8 @@ import io.kuicksilver.http3.Http3Connection
 import io.kuicksilver.http3.Http3Endpoint
 import io.kuicksilver.http3.Http3Exception
 import io.kuicksilver.http3.Http3Headers
-import io.kuicksilver.http3.Http3Request
 import io.kuicksilver.http3.Http3Response
+import io.kuicksilver.http3.http3Request
 import io.kuicksilver.ktor.client.EngineEvents
 import io.kuicksilver.ktor.client.H3BodyConsumed
 import io.kuicksilver.ktor.client.KuicksilverEngineConfig
@@ -483,15 +483,12 @@ internal class H3Pool(
         val response: Http3Response =
             withSocketTimeout(data) {
                 conn.request(
-                    Http3Request(
-                        data.method.value,
-                        "https",
-                        data.url.authority(),
-                        data.url.fullPath.ifEmpty { "/" },
-                        headersOf(data, body) + Http3Headers(extraHeaders),
-                        bodyChannel(body, callContext),
-                        allowEarlyData = @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class) config.http3.earlyData,
-                    ),
+                    http3Request(data.method.value, data.url.authority(), data.url.fullPath.ifEmpty { "/" }) {
+                        headers = headersOf(data, body) + Http3Headers(extraHeaders)
+                        this.body = bodyChannel(body, callContext)
+                        @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+                        allowEarlyData = config.http3.earlyData
+                    },
                 )
             }
         callContext[Job]?.invokeOnCompletion { cause ->
@@ -523,7 +520,7 @@ internal class H3Pool(
         val headers = Http3Headers(headersOf(data, data.body.unwrap()).fields.filter { it.first !in WS_HOP_BY_HOP } + extraHeaders)
         val stream =
             conn.connect(
-                Http3Request("CONNECT", "https", data.url.authority(), data.url.fullPath.ifEmpty { "/" }, headers),
+                http3Request("CONNECT", data.url.authority(), data.url.fullPath.ifEmpty { "/" }) { this.headers = headers },
                 "websocket",
             )
         // each direction on its own when the call is over. A send side the session closed cleanly ends with its FIN (the Close

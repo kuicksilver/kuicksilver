@@ -6,11 +6,11 @@ import io.ktor.utils.io.writeFully
 import io.kuicksilver.http3.H3Pair
 import io.kuicksilver.http3.Http3Connection
 import io.kuicksilver.http3.Http3ErrorCode
-import io.kuicksilver.http3.Http3Request
 import io.kuicksilver.http3.Http3ServerRequest
 import io.kuicksilver.http3.QuicPair
 import io.kuicksilver.http3.frame.ControlFrames
 import io.kuicksilver.http3.frame.FrameType
+import io.kuicksilver.http3.http3Request
 import io.kuicksilver.http3.useScoped
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.StreamPriority
@@ -46,7 +46,13 @@ class PriorityTest {
     @Test fun headerAppliedOnServer() =
         h3Test {
             H3Pair.open().useScoped { p ->
-                launch { p.client.request(Http3Request("GET", authority = "server.test", path = "/", priority = StreamPriority(1, true))) }
+                launch {
+                    p.client.request(
+                        http3Request("GET", "server.test", "/") {
+                            priority = StreamPriority(1, true)
+                        },
+                    )
+                }
                 val r = p.server.acceptRequest()
                 assertEquals(StreamPriority(1, true), r.priority.value)
                 assertEquals(StreamPriority(1, true), (r as ServerRequestImpl).stream.priority)

@@ -18,6 +18,7 @@ import io.kuicksilver.http3.Http3Stream
 import io.kuicksilver.http3.frame.ControlFrames
 import io.kuicksilver.http3.frame.FrameType
 import io.kuicksilver.http3.frame.H3ProtocolError
+import io.kuicksilver.http3.http3Request
 import io.kuicksilver.http3.message.FieldValidator
 import io.kuicksilver.http3.message.MalformedMessage
 import io.kuicksilver.http3.message.PriorityField
@@ -49,16 +50,13 @@ internal suspend fun H3Session.connect(
         val ps = awaitPeerSettings()
         if (!ps.enableConnectProtocol) throw Http3Exception.Settings("the peer did not send SETTINGS_ENABLE_CONNECT_PROTOCOL")
         val req =
-            Http3Request(
-                "CONNECT",
-                r.scheme,
-                r.authority,
-                r.path,
-                r.headers,
-                priority = r.priority,
-                protocol = protocol,
-                onInformational = r.onInformational,
-            )
+            http3Request("CONNECT", r.authority, r.path) {
+                scheme = r.scheme
+                headers = r.headers
+                priority = r.priority
+                this.protocol = protocol
+                onInformational = r.onInformational
+            }
         val resp = request(req, keepOpen = true, caller = caller) as ResponseImpl
         if (resp.status !in
             200..299

@@ -10,7 +10,7 @@ import io.ktor.server.routing.get
 import io.ktor.server.routing.routing
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.http3.Http3Endpoint
-import io.kuicksilver.http3.Http3Request
+import io.kuicksilver.http3.http3Request
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.ConnectionInfo
 import io.kuicksilver.quic.ConnectionListener
@@ -56,7 +56,7 @@ class ServerObservabilityTest {
         }
     }
 
-    private fun get(path: String = "/") = Http3Request("GET", authority = "server.test", path = path)
+    private fun get(path: String = "/") = http3Request("GET", "server.test", path)
 
     private suspend fun eventually(cond: () -> Boolean) = withTimeout(5.seconds) { while (!cond()) delay(10) }
 

@@ -5,8 +5,8 @@ package io.kuicksilver.http3.message
 import io.kuicksilver.http3.Http3ErrorCode
 import io.kuicksilver.http3.Http3Exception
 import io.kuicksilver.http3.Http3Headers
-import io.kuicksilver.http3.Http3Request
 import io.kuicksilver.http3.Http3Settings
+import io.kuicksilver.http3.http3Request
 import io.kuicksilver.http3.http3Settings
 import io.kuicksilver.quic.Initiator
 import io.kuicksilver.quic.QuicException
@@ -194,13 +194,10 @@ class PseudoHeadersTest {
 
     @Test fun buildRequestRoundTrip() {
         val r =
-            Http3Request(
-                "POST",
-                authority = "example.com",
-                path = "/up",
-                headers = Http3Headers.of("content-type" to "text/plain"),
-                priority = StreamPriority(1, true),
-            )
+            http3Request("POST", "example.com", "/up") {
+                headers = Http3Headers.of("content-type" to "text/plain")
+                priority = StreamPriority(1, true)
+            }
         val f = PseudoHeaders.buildRequest(r)
         assertEquals(
             listOf(
