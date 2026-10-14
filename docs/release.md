@@ -63,19 +63,27 @@ Done for the project in October 2026, kept here so it can be repeated for a new 
    `main` with `--release-commit <sha>`), a dirty tree, a missing or failed gate record for `HEAD` (or one run with
    `--skip-*`, or without `--with-interop --with-windows`), a `CHANGELOG.md` without the version, an NDK or Xcode other
    than the pins (`--allow-toolchain-drift` to accept), and missing credentials or signing key. Then:
-   - OpenSSL: the pinned tarball fetched and verified; `linux-x64`, `linux-arm64` and `mingw-x64` built in Docker (one
-     container at a time, under `nice`; `linux-x64` and `mingw-x64` emulated on Apple Silicon), `macos-arm64` and
-     `macos-x64` on the host; `no-sslkeylog` checked for each. `mingw-x64` is the `openssl-mingw-x64` the workflow
-     downloads.
+   - OpenSSL: the pinned tarball fetched and verified; **all twelve targets rebuilt from it** (`KSL_OPENSSL_FRESH=1`:
+     `build/openssl`, which worktrees share and CI downloads, and the build cache are deleted or bypassed, never reused):
+     `linux-x64`, `linux-arm64` and `mingw-x64` in Docker (one container at a time, under `nice`; `linux-x64` and
+     `mingw-x64` emulated on Apple Silicon), `macos-arm64`, `macos-x64`, `ios-arm64`, `ios-sim-arm64`, the three Android
+     ABIs and the two Kotlin/Native Linux targets on the host; `no-sslkeylog` checked for each. Each build writes
+     `provenance.txt` (the tarball's SHA-256, the configure line, the archives' SHA-256), which
+     `-Pkuicksilver.openssl.prebuilt=true` checks before Gradle reuses the build (`tools/openssl/prebuilt-test.sh` runs
+     its negative controls). `mingw-x64` is the `openssl-mingw-x64` the workflow downloads.
    - The five JVM libraries, as the CI jobs build them, each into `build/release/jni-artifacts/jni-<classifier>`:
      `osx-aarch_64` and `osx-x86_64` (`.dylib`, the second cross-built with `clang -arch x86_64`), `linux-x86_64` and
      `linux-aarch_64` (manylinux2014 `.so`), `windows-x86_64` (mingw-w64 `.dll`, `tools/ci/jni-windows.sh`). Each is
      checked: architecture, export whitelist (`tools/check/exports.sh`), imported libraries (system ones only), glibc
-     floor 2.17 for Linux, the pinned OpenSSL version inside, its `manifest.sha256`.
+     floor 2.17 for Linux, the pinned OpenSSL version inside, no sanitizer or coverage instrumentation and no debug
+     sections (`tools/check/native-release.sh`), its `manifest.sha256`.
    - `tools/ci/collect-jni.sh`, the `kuicksilver-native` jar with `-x :kuicksilver-native:buildJniHost`,
      `collect-jni.sh --check-jar` (all five present), each library in the jar equal to the collected one, the jar
      manifest naming the pinned OpenSSL, the ksl ABI and the commit.
    - `publishToMavenLocal` into `build/release/m2` (never `~/.m2`), file count and size per module against the limits.
+     The published AAR's three `libksl.so` and the static archives in each Kotlin/Native `cinterop-ksl` klib get the
+     same checks as the JVM libraries (`tools/check/native-release.sh`: the pinned OpenSSL inside, no instrumentation or
+     debug sections, the export whitelist for the `.so`, the `ksl_` prefix for the archives).
    - `publishToMavenCentral`: **one Gradle invocation, one deployment** (several would produce several deployments and
      inconsistent root metadata), signed, `automaticRelease = false`:
      ```

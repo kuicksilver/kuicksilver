@@ -655,6 +655,10 @@ Samples and testing:
 - Kotlin/Native Linux clients with `TrustConfig.Platform` parse the system CA bundle once per process instead of once per
   connection (3.6 ms each, seven handshakes' worth); the shared store is reloaded when the bundle or `SSL_CERT_FILE` /
   `SSL_CERT_DIR` change (threat model 3.2, `tools/bench/ksl-ctx-bench.sh`).
+- Supply chain (threat model 3.11): every Gradle dependency and plugin is verified by signature or SHA-256
+  (`gradle/verification-metadata.xml`); a release rebuilds all twelve OpenSSL targets from the verified tarball instead of
+  reusing `build/openssl`, and checks the Android `.so` files and the Kotlin/Native archives, as it did the JVM libraries,
+  for the pinned OpenSSL, sanitizer or debug builds and the export whitelist or symbol prefix.
 
 ## 0.1.0 candidate (never published)
 

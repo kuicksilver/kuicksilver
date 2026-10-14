@@ -21,4 +21,4 @@ docker build -q --platform "$plat" -t "$img" -f "$here/docker/$df.Dockerfile" "$
 # On Linux hosts (CI) the container runs as the invoking user: files it writes into the checkout must stay writable for the host Gradle.
 uflag=""; [ "$(uname -s)" = Linux ] && uflag="--user $(id -u):$(id -g)"
 # shellcheck disable=SC2086
-docker run --rm $uflag -e HOME=/tmp --platform "$plat" -v "$root:/w" -w /w -e JOBS="${JOBS:-4}" ${cc:+-e CC="$cc"} "$img" bash tools/openssl/build.sh "$target"
+docker run --rm $uflag -e HOME=/tmp --platform "$plat" -v "$root:/w" -w /w -e JOBS="${JOBS:-4}" -e KSL_OPENSSL_FRESH="${KSL_OPENSSL_FRESH:-0}" ${cc:+-e CC="$cc"} "$img" bash tools/openssl/build.sh "$target"

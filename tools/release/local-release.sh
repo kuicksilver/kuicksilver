@@ -9,15 +9,19 @@
 #      --release-commit, contained in main); the tree is clean; build/ci/gate/<HEAD>.stamp from tools/ci/local-matrix.sh
 #      says the full matrix (Android, Docker, interop, Windows) passed on this exact commit; CHANGELOG.md has the version;
 #      the NDK and Xcode of gradle/toolchains.toml are installed; the portal token and a signing key are configured.
-#   2. OpenSSL: fetch and verify the pinned tarball; build linux-x64, linux-arm64 and mingw-x64 in Docker (one container at a
-#      time, under nice; linux-x64 and mingw run emulated on Apple Silicon) and macos-arm64, macos-x64 on the host; no-sslkeylog.
+#   2. OpenSSL: fetch and verify the pinned tarball; rebuild all twelve targets from it, never from build/openssl or the build
+#      cache (KSL_OPENSSL_FRESH=1): linux-x64, linux-arm64 and mingw-x64 in Docker (one container at a time, under nice;
+#      linux-x64 and mingw run emulated on Apple Silicon), the macOS, iOS, Android and Kotlin/Native Linux ones on the host;
+#      no-sslkeylog in each; the prefixed Kotlin/Native archives are made again from them.
 #   3. The five JVM libraries, each into build/release/jni-artifacts/jni-<classifier> (the layout of the CI artifacts):
 #      osx-aarch_64, osx-x86_64 (cross-built with clang -arch x86_64), linux-x86_64, linux-aarch_64 (manylinux2014),
 #      windows-x86_64 (mingw-w64, tools/ci/jni-windows.sh). Checks per library: architecture, export whitelist, the shared
 #      libraries it imports, the glibc floor 2.17 (Linux), the pinned OpenSSL version string inside, its manifest.sha256.
 #   4. tools/ci/collect-jni.sh, the kuicksilver-native jar, --check-jar (all five present), the jar's libraries equal to the
 #      collected ones, its manifest naming the pinned OpenSSL and this commit.
-#   5. publishToMavenLocal into build/release/m2 (never ~/.m2), file count and size against the Central limits.
+#   5. publishToMavenLocal into build/release/m2 (never ~/.m2), file count and size against the Central limits; the published
+#      AAR's three libksl.so and every Kotlin/Native klib's static archives checked as the JVM libraries are (pinned OpenSSL
+#      inside, no sanitizer or coverage instrumentation, no debug sections, the export whitelist or the ksl_ prefix).
 #   6. publishToMavenCentral (skipped by --dry-run), then the portal steps and the checks after publishing.
 #
 # Usage: tools/release/local-release.sh <version> [--dry-run [--unsigned]] [--resume] [--repro] [--release-commit <sha>]
@@ -131,13 +135,18 @@ sign_args=(); [ "$signed" = 1 ] || sign_args=(-Pkuicksilver.sign=false)
 P=(-Pkuicksilver.version="$version" -Pkuicksilver.openssl.prebuilt=true -x :kuicksilver-native:buildJniHost ${sign_args[@]+"${sign_args[@]}"})
 
 # ------------------------------------------------------------------------------------------------------------- 2. OpenSSL
-echo "-- OpenSSL $ossl"
+echo "-- OpenSSL $ossl (all twelve targets rebuilt from the verified tarball)"
 step "openssl: fetch and verify"                               bash tools/openssl/fetch.sh
+# security review 2026-10-14, finding 3: nothing of build/openssl (shared between worktrees, downloaded by CI) or of the build
+# cache is trusted for a release; -Pkuicksilver.openssl.prebuilt=true below then reuses exactly these builds, after checking
+# their provenance.txt (openssl.gradle.kts)
+export KSL_OPENSSL_FRESH=1
+rm -rf build/openssl build/openssl-prefixed
 for t in linux-x64 linux-arm64 mingw-x64; do   # Docker, one container at a time
   step "openssl: build $t (Docker)"                            once_more nice -n 10 bash tools/openssl/build-docker.sh "$t"
   step "openssl: no-sslkeylog ($t)"                            bash tools/check/keylog-disabled.sh "build/openssl/$t/include"
 done
-for t in macos-arm64 macos-x64; do
+for t in macos-arm64 macos-x64 ios-arm64 ios-sim-arm64 android-arm64 android-x86_64 android-arm linux-x64-kn linux-arm64-kn; do
   step "openssl: build $t"                                     nice -n 10 bash tools/openssl/build.sh "$t"
   step "openssl: no-sslkeylog ($t)"                            bash tools/check/keylog-disabled.sh "build/openssl/$t/include"
 done
@@ -165,24 +174,20 @@ check_lib() { # <classifier> <dir>: the checks CI runs on that library, plus its
   cmp -s "$f" "$r/$lib" || { echo "FAIL: $r/$lib differs from $f"; return 1; }
   [ "$(awk -v l="$lib" '$2 == l || $2 == "*"l {print $1}' "$r/manifest.sha256")" = "$(sha "$f")" ] || { echo "FAIL: manifest.sha256 does not match $lib"; return 1; }
   echo "OK: manifest.sha256 matches $lib"
-  # the pinned OpenSSL is the one inside: OpenSSL_version() text of the static libcrypto
-  LC_ALL=C grep -aq "OpenSSL $ossl " "$f" || { echo "FAIL: 'OpenSSL $ossl' not found in $lib"; return 1; }
-  echo "OK: $lib carries OpenSSL $ossl"
+  # the pinned OpenSSL inside, no sanitizer/coverage instrumentation or debug sections, the export whitelist
+  bash tools/check/native-release.sh "$f" "$(case "$cls" in osx-*) echo macos ;; linux-*) echo linux ;; *) echo windows ;; esac)" || return 1
   local deps bad
   case "$cls" in
     osx-*)
       local want; want=$([ "$cls" = osx-aarch_64 ] && echo arm64 || echo x86_64)
       [ "$(lipo -archs "$f")" = "$want" ] || { echo "FAIL: $lib is $(lipo -archs "$f"), not $want"; return 1; }
-      bash tools/check/exports.sh "$f" macos || return 1
       deps=$(otool -L "$f" | tail -n +2 | awk '{print $1}' | grep -vx "$(otool -D "$f" | tail -1)")   # minus its own install name
       bad=$(printf '%s\n' "$deps" | grep -vE '^(/usr/lib/libSystem\.B\.dylib|/usr/lib/libobjc\.A\.dylib|/System/Library/Frameworks/[A-Za-z]+\.framework/.*)$' || true) ;;
     linux-*)
-      bash tools/check/exports.sh "$f" linux || return 1
       bash tools/check/glibc-floor.sh "$f" 2.17 || return 1
       deps=$("$(ksl_llvm_tool llvm-readelf)" -d "$f" | sed -n 's/.*(NEEDED).*\[\(.*\)\]/\1/p')
       bad=$(printf '%s\n' "$deps" | grep -vE '^(libc\.so\.6|libpthread\.so\.0|libdl\.so\.2|ld-linux.*)$' || true) ;;
     windows-*)   # tools/ci/jni-windows.sh already ran the export whitelist and the export-directory check inside its container
-      bash tools/check/exports.sh "$f" windows || return 1
       deps=$("$(ksl_llvm_tool llvm-objdump)" -p "$f" | sed -n 's/^ *DLL Name: *//p')
       bad=$(printf '%s\n' "$deps" | grep -viE '^(kernel32|msvcrt|ws2_32|crypt32|bcrypt|advapi32|user32|api-ms-win-crt-[a-z-]+-l1-1-0)\.dll$' || true) ;;
   esac
@@ -270,6 +275,25 @@ set +e; count | tee "$out/count.txt"; within=${PIPESTATUS[0]}; set -e
 if [ "$within" = 3 ]; then
   [ "$allow_over" = 1 ] && echo "  WARN: above the Central limits (--allow-over-limit)" || refuse "the deployment is above the Central limits (ask central-support@sonatype.com, or --allow-over-limit within the 30 days of grace)"
 fi
+# security review 2026-10-14, findings 3 and 4: the Android and Kotlin/Native artifacts carry their own static OpenSSL
+check_aar() {
+  local aar; aar=$(ls "$m2"/io/kuicksilver/kuicksilver-native-android/"$version"/kuicksilver-native-android-"$version".aar 2>/dev/null | head -1)
+  [ -n "$aar" ] || { echo "FAIL: no kuicksilver-native-android-$version.aar in $m2"; return 1; }
+  bash tools/check/native-release.sh "$aar" aar
+}
+check_klibs() {
+  local t k dir rc=0 n=0
+  for t in iosarm64 iossimulatorarm64 macosarm64 linuxx64 linuxarm64 mingwx64; do
+    k=$(ls "$m2"/io/kuicksilver/kuicksilver-native-"$t"/"$version"/*cinterop-ksl*.klib 2>/dev/null | head -1)
+    [ -n "$k" ] || { echo "FAIL: no cinterop klib of kuicksilver-native-$t $version"; rc=1; continue; }
+    dir="$out/klib-check/$t"; rm -rf "$dir"; mkdir -p "$dir/x"; unzip -q -o "$k" -d "$dir/x"
+    find "$dir/x" -name 'lib*.a' -exec cp {} "$dir/" \;
+    echo "== $t: $(basename "$k")"; bash tools/check/native-release.sh "$dir" archives || rc=1; n=$((n+1))
+  done
+  [ "$n" = 6 ] || rc=1; return $rc
+}
+step "android: AAR libksl.so (OpenSSL, exports, no sanitizers)"  check_aar
+step "native: klib archives (OpenSSL, ksl_ prefix, no sanitizers)" check_klibs
 echo "     local repository for consumer checks: $m2 (bash tools/check/consumer-smoke.sh $version with KSL_MAVEN_REPO=$m2)"
 
 # --------------------------------------------------------------------------------------------------------------- 6. upload
