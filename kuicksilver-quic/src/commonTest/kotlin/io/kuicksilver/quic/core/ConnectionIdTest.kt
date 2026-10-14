@@ -283,7 +283,8 @@ class ConnectionIdTest {
         assertEquals(0x0aL, e.code)
         assertTrue(m.onPeerRetired(1, TimeMark(1_000_000_000L)), "sequence 1 was sent")
         m.nextNewCidToSend()!!.sent = true // sequence 2
-        m.nextNewCidToSend()!!.let { // sequence 3, the replacement of 1, is lost after it was sent once
+        m.nextNewCidToSend()!!.let {
+            // sequence 3, the replacement of 1, is lost after it was sent once
             it.sent = true
             m.onNewCidLost(it.seq, TimeMark(1_000_000_000L))
         }

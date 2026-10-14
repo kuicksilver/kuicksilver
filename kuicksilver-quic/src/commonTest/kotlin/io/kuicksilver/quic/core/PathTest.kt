@@ -456,7 +456,9 @@ class PathTest {
             p.clientListens += rebound
             send(s, 100) // the client's first packet from the new port is the ACK for this
             val sentBefore = p.serverSent.size
-            assertTrue(p.runUntil(3.seconds) { s.remoteAddressForTest == rebound && s.pathState(s.stats.currentPath) == PathState.Validated })
+            assertTrue(
+                p.runUntil(3.seconds) { s.remoteAddressForTest == rebound && s.pathState(s.stats.currentPath) == PathState.Validated },
+            )
             p.settle(10)
             val challenges =
                 p.serverSent
@@ -1018,6 +1020,7 @@ class PathTest {
     }
 
     /** Interop `rebind-port` against picoquic: the client's NAT mapping changed between its first Initial and the server's answer, so every retransmitted Initial came from a new port while the server kept answering the old one until the handshake timed out (final review follow-up). */
+
     /**
      * Review finding 25, RFC 9000 section 9.3: "An endpoint only changes the address to which it sends packets in response to the
      * highest-numbered non-probing packet", so reordered packets do not send it back to an old address. During the handshake the
@@ -1027,14 +1030,23 @@ class PathTest {
     @Test fun handshakeTimeRebindIgnoresAnOlderPacketFromTheOldAddress() {
         val p = EndpointPair()
         var held: ByteArray? = null
-        val hv = io.kuicksilver.quic.wire.PacketHeaderView()
+        val hv =
+            io.kuicksilver.quic.wire
+                .PacketHeaderView()
 
         fun handshakePacketOf(d: ByteArray): IntArray? {
             val b = PacketBuffer.of(d)
             try {
                 var off = 0
-                while (off < d.size && io.kuicksilver.quic.wire.PacketHeaderCodec.parse(b, off, d.size, 8, hv)) {
-                    if (d[off].toInt() and 0x80 != 0 && (d[off].toInt() and 0x30) ushr 4 == 2) return intArrayOf(off, hv.pnOffset, hv.packetEnd)
+                while (off < d.size &&
+                    io.kuicksilver.quic.wire.PacketHeaderCodec
+                        .parse(b, off, d.size, 8, hv)
+                ) {
+                    if (d[off].toInt() and 0x80 != 0 &&
+                        (d[off].toInt() and 0x30) ushr 4 == 2
+                    ) {
+                        return intArrayOf(off, hv.pnOffset, hv.packetEnd)
+                    }
                     off = hv.packetEnd
                 }
                 return null

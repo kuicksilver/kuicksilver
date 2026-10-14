@@ -95,12 +95,15 @@ class ReceivePathTest {
     @Test fun coalescedPacketWithOtherDcidIsIgnored() {
         val p = CorePair()
         var held: ByteArray? = null
-        val hv = io.kuicksilver.quic.wire.PacketHeaderView()
+        val hv =
+            io.kuicksilver.quic.wire
+                .PacketHeaderView()
         p.filterToServer = { _, b ->
             val buf = PacketBuffer.of(b)
             try {
                 if (held == null && isLong(b) && longType(b) == 0 &&
-                    io.kuicksilver.quic.wire.PacketHeaderCodec.parse(buf, 0, b.size, 8, hv) && hv.packetEnd < b.size &&
+                    io.kuicksilver.quic.wire.PacketHeaderCodec
+                        .parse(buf, 0, b.size, 8, hv) && hv.packetEnd < b.size &&
                     p.server != null && isLong(b.copyOfRange(hv.packetEnd, b.size))
                 ) {
                     held = b // the client's Initial with its Handshake packet coalesced
@@ -116,12 +119,19 @@ class ReceivePathTest {
             p.runUntil(limit = 300.milliseconds) { held != null }
             val d = held!!
             val s = p.server!!
-            val other = s.cids.localForTest(1)!!.cid.toByteArray()
+            val other =
+                s.cids
+                    .localForTest(1)!!
+                    .cid
+                    .toByteArray()
             var packets = 0
             val b = PacketBuffer.of(d)
             try {
                 var off = 0
-                while (off < d.size && io.kuicksilver.quic.wire.PacketHeaderCodec.parse(b, off, d.size, 8, hv)) {
+                while (off < d.size &&
+                    io.kuicksilver.quic.wire.PacketHeaderCodec
+                        .parse(b, off, d.size, 8, hv)
+                ) {
                     if (packets == 1) {
                         assertEquals(8, hv.dcidLen)
                         other.copyInto(d, hv.dcidOff) // the Handshake packet now names another of the server's IDs

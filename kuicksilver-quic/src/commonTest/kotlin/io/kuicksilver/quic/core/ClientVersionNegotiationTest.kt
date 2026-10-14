@@ -188,7 +188,11 @@ class ClientVersionNegotiationTest {
         try {
             p.step()
             val first = p.lastClientInitial!!
-            p.client.onRetry(io.kuicksilver.quic.wire.ConnectionId(ByteArray(8) { 0x42 }), ByteArray(16) { 7 })
+            p.client.onRetry(
+                io.kuicksilver.quic.wire
+                    .ConnectionId(ByteArray(8) { 0x42 }),
+                ByteArray(16) { 7 },
+            )
             feed(p, vn(first, 0x0a0a0a0a))
             assertNull(p.closedReason(p.clientEvents), "the Version Negotiation after a Retry is discarded")
             assertNull(p.client.receivedVnVersions)
