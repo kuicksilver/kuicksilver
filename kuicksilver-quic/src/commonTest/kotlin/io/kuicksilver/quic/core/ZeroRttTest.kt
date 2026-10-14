@@ -24,9 +24,13 @@ import io.kuicksilver.quic.quicConfig
 import io.kuicksilver.quic.serverWithKeys
 import io.kuicksilver.quic.wire.TransportParametersCodec
 import io.kuicksilver.tls.EarlyDataState
+import io.kuicksilver.tls.EncryptionLevel
+import io.kuicksilver.tls.QuicCrypto
 import io.kuicksilver.tls.QuicSessionTicket
+import io.kuicksilver.tls.QuicTlsSession
 import io.kuicksilver.tls.SessionTicketConfig
 import io.kuicksilver.tls.TlsConfig
+import io.kuicksilver.tls.TlsEvent
 import io.kuicksilver.tls.TlsRole
 import kotlin.random.Random
 import kotlin.test.BeforeTest
@@ -356,6 +360,26 @@ class ZeroRttTest {
         }
     }
 
+    /**
+     * RFC 9001 section 4.6.1: a NewSessionTicket whose early_data extension carries any max_early_data_size other than
+     * 0xffffffff is a PROTOCOL_VIOLATION (OpenSSL reports it as illegal_parameter).
+     */
+    @Test fun negative_invalidMaxEarlyDataIsProtocolViolation() {
+        val p =
+            CorePair(
+                crypto = WithMaxEarlyData(ksl, 0x4000),
+                clientEarly = EarlyDataState.Allowed,
+                serverEarly = early(),
+            )
+        try {
+            p.runUntil(limit = 3.seconds) { p.closedReason(p.clientEvents) != null }
+            val r = assertIs<QuicException.ConnectionLost.TransportClosed>(p.closedReason(p.clientEvents))
+            assertEquals(TransportError.PROTOCOL_VIOLATION, r.code, r.reason)
+        } finally {
+            p.close()
+        }
+    }
+
     @Test fun rejectedWithSmallerLimitsFailsZeroRttRejected() {
         val big = "x".repeat(4000)
         val (p, _) =
@@ -493,5 +517,67 @@ class ZeroRttTest {
             "traffic continues within the new limits",
         )
         p.close()
+    }
+}
+
+/** A server whose NewSessionTickets announce [max] in their early_data extension instead of 0xffffffff. */
+private class WithMaxEarlyData(
+    private val inner: QuicCrypto,
+    private val max: Int,
+) : QuicCrypto by inner {
+    override fun newSession(config: TlsConfig): QuicTlsSession = wrap(config, inner.newSession(config))
+
+    override fun newSession(
+        config: TlsConfig,
+        earlyData: Boolean,
+    ): QuicTlsSession = wrap(config, inner.newSession(config, earlyData))
+
+    private fun wrap(
+        config: TlsConfig,
+        s: QuicTlsSession,
+    ): QuicTlsSession =
+        if (config.role != TlsRole.Server) {
+            s
+        } else {
+            object : QuicTlsSession by s {
+                override fun nextEvent(): TlsEvent? {
+                    val e = s.nextEvent()
+                    if (e !is TlsEvent.CryptoData || e.level != EncryptionLevel.Application) return e
+                    return TlsEvent.CryptoData(e.level, patch(e.data.copyOf()))
+                }
+            }
+        }
+
+    /** Walks the NewSessionTicket messages (RFC 8446 section 4.6.1) and rewrites each early_data extension's value. */
+    private fun patch(d: ByteArray): ByteArray {
+        fun u(
+            at: Int,
+            n: Int,
+        ): Int {
+            var v = 0
+            for (i in 0 until n) v = (v shl 8) or (d[at + i].toInt() and 0xff)
+            return v
+        }
+        var m = 0
+        while (m + 4 <= d.size) {
+            val end = m + 4 + u(m + 1, 3)
+            if (d[m].toInt() == 4) {
+                var p = m + 4 + 8
+                p += 1 + u(p, 1) // nonce
+                p += 2 + u(p, 2) // ticket
+                val extEnd = p + 2 + u(p, 2)
+                p += 2
+                while (p + 4 <= extEnd) {
+                    val type = u(p, 2)
+                    val len = u(p + 2, 2)
+                    if (type == 0x2a && len == 4) {
+                        for (i in 0 until 4) d[p + 4 + i] = (max ushr (24 - 8 * i)).toByte()
+                    }
+                    p += 4 + len
+                }
+            }
+            m = end
+        }
+        return d
     }
 }

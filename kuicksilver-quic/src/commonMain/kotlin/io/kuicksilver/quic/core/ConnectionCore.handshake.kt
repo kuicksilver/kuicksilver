@@ -479,11 +479,18 @@ internal class ConnectionHandshakeSink(
         exception: TlsException,
         alert: Int?,
     ) {
+        // RFC 9001 section 4.6.1: a max_early_data_size other than 0xffffffff "MUST be treated as a connection error of type
+        // PROTOCOL_VIOLATION"; OpenSSL fails it with illegal_parameter (SSL_R_INVALID_MAX_EARLY_DATA)
+        val code = (exception as? TlsException.Protocol)?.openSslCode
+        val invalidMaxEarlyData = code == (OPENSSL_LIB_SSL shl 16 or SSL_R_INVALID_MAX_EARLY_DATA)
         core.fail(
-            TransportError.crypto(alert ?: 80),
+            if (invalidMaxEarlyData) TransportError.PROTOCOL_VIOLATION else TransportError.crypto(alert ?: 80),
             0,
             exception.message ?: "TLS failure",
             exception,
         )
     }
 }
+
+private const val OPENSSL_LIB_SSL = 20
+private const val SSL_R_INVALID_MAX_EARLY_DATA = 174
