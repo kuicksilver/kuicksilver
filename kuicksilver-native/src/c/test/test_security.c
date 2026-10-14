@@ -187,7 +187,7 @@ static void test_system_store_parsed_once(void) {
 #else
     unsetenv("SSL_CERT_FILE"); unsetenv("SSL_CERT_DIR");
 #endif
-    static const char *const files[] = {"build/ksl-trust-cache-test.pem", NULL}; static const char *const dirs[] = {NULL};
+    static const char *const files[] = {"ksl-trust-cache-test.pem", NULL}; static const char *const dirs[] = {NULL};
     const char *ca[] = {"test-ca"}, *both[] = {"other-ca", "test-ca"};
     CHECK(write_pem(files[0], ca, 1), "bundle written");
     ksl_trust_paths_for_test(files, dirs);
