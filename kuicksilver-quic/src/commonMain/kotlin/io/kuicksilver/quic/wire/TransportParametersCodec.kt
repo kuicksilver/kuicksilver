@@ -275,6 +275,13 @@ internal object TransportParametersCodec {
                         if (chosen == 0) fail("version_information chosen version is zero")
                         val n = (len - 4) / 4
                         val av = IntArray(n) { r.u32().toInt() }
+                        // RFC 9368 section 4: parsing failures; a server's own list may omit its Chosen Version or be empty (section 3)
+                        if (av.contains(0)) fail("version_information available version is zero")
+                        if (sender == TlsRole.Client &&
+                            !av.contains(chosen)
+                        ) {
+                            fail("version_information chosen version not among the available ones")
+                        }
                         tp.chosenVersion = chosen
                         tp.availableVersions = av
                     }
@@ -340,7 +347,8 @@ internal object VersionNegotiationValidator {
         }
         if (receivedVnVersions != null) {
             // we restarted with currentVersion after a VN packet: the server must not support the version of our first Initial
-            // nor any version we rank above the current one (RFC 9368 section 4)
+            // nor any version we rank above the current one, and must list some (RFC 9368 section 4)
+            if (av.isEmpty()) fail("server Available Versions empty after Version Negotiation")
             if (sentInitialVersion != currentVersion &&
                 av.contains(sentInitialVersion)
             ) {

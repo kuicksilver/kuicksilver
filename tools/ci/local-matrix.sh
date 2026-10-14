@@ -40,6 +40,7 @@ step "lint: ktlint"                            $G lintKotlin
 step "check: spdx, layers, abi"                $G $KSL_CHECKS
 # shellcheck disable=SC2086
 step "quic/http3: architecture checks"         $G $KSL_ARCH_CHECKS
+step "compile: shared source sets (metadata)"  $G allMetadataJar   # commonMain/nativeMain/... of every module, the interop endpoint too: the per-target builds compile them only per target
 step "openssl: no-sslkeylog (macos-arm64)"      bash tools/check/keylog-disabled.sh build/openssl/macos-arm64/include
 step "c-tests: macos-arm64 (ASan/UBSan)"        bash tools/c-test.sh macos-arm64
 # shellcheck disable=SC2086
@@ -54,6 +55,8 @@ step "jvm: JNI library osx-x86_64 (Intel Macs)"  bash -c "$G :kuicksilver-native
 step "android: AAR"                             $G :kuicksilver-native:bundleAndroidMainAar
 step "android: size gate"                       bash tools/check/size.sh "$aar" "$SIZE_LIMIT"
 step "android: 16 KiB pages"                    bash tools/check/page-align.sh "$aar"
+step "android: libksl.so exports, OpenSSL, no sanitizers"  bash tools/check/native-release.sh "$aar" aar   # all three ABIs (review 2026-10-14, finding 4)
+step "check: native-release negative controls"   bash tools/check/native-release-test.sh
 if [ "$skip_android" = 0 ]; then
 step "android: device tests (emulator)"         $G androidConnectedCheck
 fi

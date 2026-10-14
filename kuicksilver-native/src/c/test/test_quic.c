@@ -327,8 +327,38 @@ static void test_tp_replace(void) {
     ksl_ssl_free(c); ksl_ctx_free(cc); END();
 }
 
+/* RFC 9001 section 4.1.3: CRYPTO data at a level below the one TLS reads now is never handed to TLS; ksl refuses it instead of
+   buffering it until the level is discarded (a pre-authentication memory sink), and caps what one level may hold unread. */
+static size_t pending_at(ksl_ssl *s, int level) {
+    uint8_t b[16]; size_t n = 0; if (ksl_ssl_get(s, KSL_GET_QUIC_PENDING, b, sizeof b, &n) != KSL_OK || n != 16) return (size_t)-1;
+    const uint8_t *p = b + 4 * level; return ((size_t)p[0] << 24) | ((size_t)p[1] << 16) | ((size_t)p[2] << 8) | p[3];
+}
+static void test_previous_level_refused(void) {
+    SECTION("quic_crypto_at_previous_level_refused");
+    ksl_ctx *cc = client_ctx("test-ca", KSL_VERIFY_OPENSSL), *sc = server_ctx("server"); ksl_ssl *c = client(cc, "server.test"), *s = server(sc);
+    ksl_drive(c); ksl_event ev; while (ksl_quic_next_event(c, &ev)) if (ev.type == KSL_EV_CRYPTO_SEND) ksl_quic_provide(s, ev.level, ev.buf, ev.len);
+    ksl_drive(s); while (ksl_quic_next_event(s, &ev)) if (ev.type == KSL_EV_KEY) ksl_key_free(ev.key);
+    CHECK(pending_at(s, KSL_LEVEL_INITIAL) == 0, "the ClientHello was consumed whole");
+    uint8_t junk[1024]; memset(junk, 0x16, sizeof junk);
+    CHECK(ksl_quic_provide(s, KSL_LEVEL_INITIAL, junk, sizeof junk) == KSL_ERROR, "Initial data after the server reads Handshake is refused");
+    CHECK(last_code(s, NULL) == KSL_E_CRYPTO_LEVEL, "KSL_E_CRYPTO_LEVEL");
+    CHECK(pending_at(s, KSL_LEVEL_INITIAL) == 0, "and nothing was buffered");
+    ksl_ssl_free(c); ksl_ssl_free(s); ksl_ctx_free(cc); ksl_ctx_free(sc); END();
+}
+static void test_level_cap(void) {
+    SECTION("quic_crypto_level_buffer_capped");
+    ksl_ctx *sc = server_ctx("server"); ksl_ssl *s = server(sc);
+    uint8_t *junk = calloc(1, 65536); int rc = KSL_OK, i = 0;
+    for (; i < 8 && rc == KSL_OK; i++) rc = ksl_quic_provide(s, KSL_LEVEL_HANDSHAKE, junk, 65536);
+    CHECK(rc == KSL_ERROR && i == 5, "the fifth 64 KiB block passes the 256 KiB cap of unread data at one level");
+    CHECK(last_code(s, NULL) == KSL_E_CRYPTO_LEVEL, "KSL_E_CRYPTO_LEVEL");
+    CHECK(pending_at(s, KSL_LEVEL_HANDSHAKE) == 4 * 65536, "the refused block was not appended");
+    free(junk); ksl_ssl_free(s); ksl_ctx_free(sc); END();
+}
+
 void run_quic(void) {
     test_handshake(); test_no_hrr_for_x25519_only_client(); test_split_server_hello(); test_provide_during_pause(); test_corrupt_stable(); test_unknown_ca(); test_alpn_required();
     test_post_handshake_ticket(); test_server_pause_forbidden(); test_resume_without_pause(); test_peek(); test_no_verify_name(); test_secret_lengths();
     test_v2_key_from_fixed_secret(); test_server_picks_v2(); test_server_falls_back_to_original(); test_no_version_information(); test_tp_replace();
+    test_previous_level_refused(); test_level_cap();
 }

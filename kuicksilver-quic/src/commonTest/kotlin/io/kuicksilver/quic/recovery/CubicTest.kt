@@ -209,12 +209,89 @@ class CubicTest {
         var t = round(cc, t0, 50.milliseconds, 50.milliseconds)
         t = round(cc, t, 60.milliseconds, 50.milliseconds)
         assertTrue(cc.inConservativeSlowStart)
-        // a CSS round whose RTT fell below the baseline; the verdict comes when the next round begins
+        // a CSS round whose RTT fell below the baseline: slow start resumes once the round has N_RTT_SAMPLE samples
         t = round(cc, t, 48.milliseconds, 48.milliseconds)
         val before = cc.cwnd
         round(cc, t, 48.milliseconds, 48.milliseconds)
         assertTrue(!cc.inConservativeSlowStart, "the RTT fell below the CSS baseline: back to slow start")
         assertEquals(before + 8 * mss, cc.cwnd, "plain slow start growth again")
         assertEquals(Long.MAX_VALUE, cc.ssthresh)
+    }
+
+    @Test fun idleTimeIsNotPartOfTheCubicEpoch() {
+        // RFC 9438 section 4.2: "The elapsed time t in Figure 1 MUST NOT include periods during which cwnd has not been updated due to
+        // application-limited behavior". After a loss and 30 s with nothing in flight, the curve resumes where it stopped (just
+        // after the reduction, concave below W_max), it does not jump 30 s ahead to the 1.5 x cwnd clamp of the convex region
+        val cc = afterFirstLoss()
+        val t = ackWindows(cc, t0 + 30.seconds, 1)
+        assertTrue(cc.cwnd < 8400L * 11 / 10, "one window 30 s after the loss: cwnd ${cc.cwnd}")
+        ackWindows(cc, t, 1)
+        assertTrue(cc.cwnd < 8400L * 12 / 10, "two windows: cwnd ${cc.cwnd}")
+    }
+
+    @Test fun applicationLimitedTimeIsNotPartOfTheCubicEpoch() {
+        // the same for ACKs that arrive while the sender is application-limited (quic-go resets the epoch in OnApplicationLimited)
+        val cc = afterFirstLoss()
+        var t = t0 + srtt * 2
+        repeat(300) {
+            sendAndAck(cc, mss, t, t + srtt, appLimited = true)
+            t += srtt
+        } // 30 s of a trickle
+        assertEquals(8400L, cc.cwnd)
+        ackWindows(cc, t, 1)
+        assertTrue(cc.cwnd < 8400L * 11 / 10, "one window after 30 s of application-limited ACKs: cwnd ${cc.cwnd}")
+    }
+
+    @Test fun renoFriendlyAlphaBecomesOneAtThePriorWindow() {
+        // RFC 9438 section 4.3: "Once W_est has grown to reach the cwnd at the time of most recently setting ssthresh -- that is,
+        // W_est >= cwnd_prior -- the sender SHOULD set alpha_cubic to 1": Reno's one datagram per RTT from then on
+        val cc = afterFirstLoss()
+        var t = t0 + srtt + 1.milliseconds
+        while (cc.cwnd < 12000L) t = ackWindows(cc, t, 1, rtt = 1.milliseconds)
+        val before = cc.cwnd
+        ackWindows(cc, t, 10, rtt = 1.milliseconds)
+        val grown = cc.cwnd - before
+        assertTrue(grown >= 9L * mss, "10 RTTs above cwnd_prior grow by about 10 datagrams, not 10 x 0.529: $grown")
+    }
+
+    /** A HyStart++ round of one packet per entry of [rtts], each acknowledged with that RTT sample. */
+    private fun roundOf(
+        cc: Cubic,
+        start: TimeMark,
+        rtts: List<Duration>,
+    ): TimeMark {
+        rtts.indices.forEach { i -> cc.onPacketSent(start + i.milliseconds, mss) }
+        var min = Duration.INFINITE
+        var last = start
+        rtts.forEachIndexed { i, rtt ->
+            val sent = start + i.milliseconds
+            val ack = sent + rtt
+            if (rtt < min) min = rtt
+            cc.onRttSample(ack, rtt, min)
+            cc.onAck(ack, sent, mss, rtt, appLimited = false)
+            if (ack > last) last = ack
+        }
+        return last + 10.milliseconds
+    }
+
+    @Test fun hystartCssBaselineIsTheRoundThatEnteredIt() {
+        // RFC 9406 section 4.2: entering CSS sets cssBaselineMinRtt = currentRoundMinRTT (60 ms here, not the previous round's
+        // 50 ms), so a CSS round at 55 ms shows the exit was spurious and slow start resumes
+        val cc = Cubic(mss)
+        var t = roundOf(cc, t0, List(8) { 50.milliseconds })
+        t = roundOf(cc, t, List(8) { 60.milliseconds })
+        assertTrue(cc.inConservativeSlowStart)
+        roundOf(cc, t, List(8) { 55.milliseconds })
+        assertTrue(!cc.inConservativeSlowStart, "55 ms is below the 60 ms baseline: back to slow start")
+        assertEquals(Long.MAX_VALUE, cc.ssthresh)
+    }
+
+    @Test fun hystartEverySampleOfARoundCounts() {
+        // RFC 9406 section 4.2: currentRoundMinRTT takes every sample of the round and the checks run on every ACK once
+        // N_RTT_SAMPLE samples arrived, not only on the eighth: later lower samples of the round that entered CSS undo it
+        val cc = Cubic(mss)
+        var t = roundOf(cc, t0, List(8) { 50.milliseconds })
+        roundOf(cc, t, List(8) { 70.milliseconds } + List(8) { 50.milliseconds })
+        assertTrue(!cc.inConservativeSlowStart, "the round's minimum came back to 50 ms: the RTT increase was spurious")
     }
 }

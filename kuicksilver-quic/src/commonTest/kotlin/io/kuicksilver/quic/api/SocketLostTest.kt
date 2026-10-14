@@ -13,6 +13,7 @@ import io.kuicksilver.quic.PathEvent
 import io.kuicksilver.quic.PathId
 import io.kuicksilver.quic.QuicClientConfig
 import io.kuicksilver.quic.QuicConnection
+import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.SocketDefunctException
 import io.kuicksilver.quic.activePath
 import kotlinx.coroutines.CoroutineStart
@@ -98,6 +99,32 @@ class SocketLostTest {
                     ping(c, s)
                     collector.cancel()
                     c.close()
+                }
+            }
+        }
+
+    /**
+     * The only socket lost before the handshake is confirmed: the client cannot migrate (RFC 9000 section 9) and can neither
+     * send its Finished nor receive HANDSHAKE_DONE, so the connection ends at once with [QuicException.ConnectionLost.NoViablePath]
+     * instead of waiting for the idle timeout (it used to keep `migrate` suspended for 30 s).
+     */
+    @Test fun socketLostBeforeConfirmationEndsTheConnectionAtOnce() =
+        runBlocking<Unit> {
+            ApiPair.open().use { p ->
+                var fromClient = 0
+                // after the ClientHello nothing of the client arrives: no Finished, so no HANDSHAKE_DONE
+                p.net.lose = { from, _, _ -> from == p.clientIo.localAddress && fromClient++ >= 1 }
+                withTimeout(5.seconds) {
+                    // the client completes; the server, without the client's Finished, never does (so no accept)
+                    val c = p.client.connect(p.server.localAddress, QuicClientConfig.Builder(CoreFixtures.client()).build())
+                    assertFalse(c.closed.isCompleted)
+                    p.clientIo.failWith(enotconn)
+                    assertIs<QuicException.ConnectionLost.NoViablePath>(c.closed.await())
+                    assertFailsWith<QuicException.ConnectionLost.NoViablePath> {
+                        c.migrate(
+                            p.net.open(InetSocketAddress("10.0.0.9", 9999)),
+                        )
+                    }
                 }
             }
         }

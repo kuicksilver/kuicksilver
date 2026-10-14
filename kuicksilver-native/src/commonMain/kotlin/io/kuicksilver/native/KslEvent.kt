@@ -53,6 +53,9 @@ public object KslConst {
     /** 1 byte: 0 not attempted, 1 rejected, 2 accepted. */
     public const val GET_EARLY_DATA: Int = 9
 
+    /** 16 bytes: per encryption level 0..3, 4 bytes big-endian, CRYPTO bytes provided and not yet read by TLS (additive in ABI 6). */
+    public const val GET_QUIC_PENDING: Int = 10
+
     public const val SET_SNI: Int = 1
     public const val SET_VERIFY_NAME: Int = 2
     public const val SET_QUIC_VERSION: Int = 3
@@ -119,6 +122,9 @@ public object KslConst {
     public const val UDP_MAX_BATCH: Int = 64
     public const val E_TRUNCATED: Int = 0xff0009
     public const val E_TOO_LATE: Int = 0xff000a
+
+    /** quicProvide: a level TLS no longer reads (RFC 9001 section 4.1.3), or more than 256 KiB unread at one level. */
+    public const val E_CRYPTO_LEVEL: Int = 0xff000b
 
     /** Event wire layout produced by the bindings: 6 x int32 header then the payload. */
     public const val EVENT_HEADER_BYTES: Int = 24

@@ -8,3 +8,5 @@ import kotlinx.cinterop.toKString
 import platform.posix.getenv
 
 internal actual fun envVar(name: String): String? = getenv(name)?.toKString()
+
+internal actual fun exitWith(code: Int): Nothing = kotlin.system.exitProcess(code)

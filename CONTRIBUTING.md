@@ -41,6 +41,30 @@ You rarely call these scripts by hand: the Gradle tasks (`opensslBuild<Target>`,
 Never edit the pin without also updating the SHA-256 (and the key fingerprint if the signer changed), and never
 disable the signature check.
 
+### Dependency verification
+
+Gradle checks every plugin and dependency it resolves against `gradle/verification-metadata.xml` (threat model 3.11): a
+PGP signature by a key trusted for that publisher's group (the keys are in `gradle/verification-keyring.keys`, so no key
+server is needed), or a SHA-256 for artifacts that are not signed or whose key no key server has. An artifact that
+matches neither fails the build, the release included. When a dependency, a plugin or a toolchain pin changes (Renovate
+pull requests too), update the file in the same pull request and review its diff:
+
+```sh
+# every configuration of every project and of build-logic, every test compilation, then the tasks that resolve detached
+# configurations (ktlint, the ABI tools, Kover, Dokka, publishing)
+./gradlew --max-workers=2 -I tools/check/resolve-all.init.gradle.kts --write-verification-metadata sha256,pgp --export-keys \
+  -Pkuicksilver.openssl.prebuilt=true -Pkuicksilver.coverage -Pkuicksilver.sign=false -Dmaven.repo.local=/tmp/ksl-m2 \
+  :build-logic:ksResolveAll ksResolveAll ksCompileAllTests assemble lintKotlin checkKotlinAbi checkInternalAbi \
+  :kuicksilver-native:bundleAndroidMainAar :kuicksilver-native:koverXmlReportJvmTests publishToMavenLocal
+```
+
+`--write-verification-metadata` adds what the run resolved and keeps the rest; remove entries of versions no longer used.
+Review new `<trusted-key>` entries (the key belongs to the group's publisher: compare its fingerprint with the one the
+project publishes) and every new `<ignored-key>` (its artifacts then fall back to a checksum). Never set
+`--dependency-verification lenient` or `off` in a script or a properties file. If a build fails with "Dependency
+verification failed", do not regenerate blindly: find out why the artifact changed first. Gradle writes a report under
+`build/reports/dependency-verification/`.
+
 ### Common commands
 
 ```sh

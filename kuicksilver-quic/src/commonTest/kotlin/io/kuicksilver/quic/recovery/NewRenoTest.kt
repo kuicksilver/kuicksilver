@@ -111,4 +111,24 @@ class NewRenoTest {
         assertEquals(6000L, cc.cwnd)
         assertTrue(cc.bytesInFlight == 1200L)
     }
+
+    @Test fun congestionAvoidanceKeepsGrowingAboveMssSquared() {
+        // RFC 9002 section 7.3.3: one maximum datagram per window of acknowledged bytes. 1200 x 1200 / cwnd is 0 in integer bytes
+        // once cwnd > 1.44 MB, so growth used to stop there; the remainder now carries over
+        val cc = NewReno(1200)
+        var t = t0
+        while (cc.cwnd < 2_000_000L) {
+            sendAndAck(cc, 1200, t, t + srtt)
+            t += 1.milliseconds
+        }
+        cc.onPacketSent(t, 1200)
+        cc.onLoss(t + srtt, 1200, t, false) // into congestion avoidance at about 1 MB
+        t += srtt * 2
+        while (cc.cwnd < 1_500_000L) {
+            val before = cc.cwnd
+            repeat((cc.cwnd / 1200).toInt()) { i -> sendAndAck(cc, 1200, t + i.milliseconds / 1000, t + srtt) }
+            assertTrue(cc.cwnd >= before + 1100, "about one datagram per window at cwnd $before: ${cc.cwnd}")
+            t += srtt * 2
+        }
+    }
 }

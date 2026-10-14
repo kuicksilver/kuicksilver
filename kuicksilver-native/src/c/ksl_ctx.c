@@ -8,6 +8,7 @@
 #include <sys/stat.h>
 #include <dirent.h>
 #include <ctype.h>
+#include <limits.h>
 
 #define TLS12_PROFILE "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305"
 #define TLS13_DEFAULT "TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256"
@@ -23,10 +24,19 @@ static void info_cb(const SSL *ssl, int where, int ret) {
     int code = ret & 0xff; if ((ret >> 8) != SSL3_AL_FATAL && code != SSL_AD_CLOSE_NOTIFY) return;
     s->last_alert = (where & SSL_CB_READ) ? (code | 0x100) : code;
 }
+/* Moves a buffer of secrets into a larger one and zeroes the whole old block before the caller frees it: realloc would free
+   (or leave behind) a copy of the TLS secrets uncleansed (threat model 3.7). */
+void ksl_secret_move(void *dst, void *old, size_t used, size_t old_cap) {
+    if (!old) return;
+    memcpy(dst, old, used); OPENSSL_cleanse(old, old_cap);
+}
 static void keylog_cb(const SSL *ssl, const char *line) {
     ksl_ssl *s = SSL_get_ex_data(ssl, 1); if (!s || !s->owner->keylog) return;
     size_t l = strlen(line);
-    if (s->keylog_len + l + 2 > s->keylog_cap) { size_t nc = (s->keylog_len + l + 2) * 2; char *nb = realloc(s->keylog, nc); if (!nb) return; s->keylog = nb; s->keylog_cap = nc; }
+    if (s->keylog_len + l + 2 > s->keylog_cap) {
+        size_t nc = (s->keylog_len + l + 2) * 2; char *nb = malloc(nc); if (!nb) return;
+        ksl_secret_move(nb, s->keylog, s->keylog_len, s->keylog_cap); free(s->keylog); s->keylog = nb; s->keylog_cap = nc;
+    }
     memcpy(s->keylog + s->keylog_len, line, l); s->keylog_len += l; s->keylog[s->keylog_len++] = '\n'; s->keylog[s->keylog_len] = 0;
 }
 /* RFC 8446 section 4.6.1 tickets: name16 | aes-256 key 32 | hmac-sha256 key 32; current key encrypts, all keys decrypt. */
@@ -47,29 +57,39 @@ static int ticket_cb(SSL *ssl, unsigned char key_name[16], unsigned char iv[EVP_
     return enc ? 1 : (k == c->ticket_keys ? 1 : 2);   /* 2 = decrypted with a previous key: renew the ticket */
 }
 
-/* Ticket app data: one flag byte (KSL_TICKET_AFTER_VERDICT: issued by ksl_ssl_new_session_ticket, after the pin verdict), then the
-   server's early context (0-RTT, ADR-0015); a resumed ticket whose early context differs keeps the resumption but gets no early data. The
-   final early-data decision also needs the transport's verdict for this hello (its replay register). Both callbacks are the base
-   (session) context's: OpenSSL keeps them across an SNI override, and they read the settings of the session's current owner. */
+/* Ticket app data: one flag byte (KSL_TICKET_AFTER_VERDICT: issued by ksl_ssl_new_session_ticket, after the pin verdict), the QUIC
+   version of the issuing connection (4 bytes big-endian, the negotiated one; 0 for TLS over TCP), then the server's early context (0-RTT,
+   ADR-0015). A ticket of another version than the one the client started this connection with is not resumed (RFC 9369 section 5: a
+   full handshake, without 0-RTT); a resumed ticket whose early context differs keeps the resumption but gets no early data. The final
+   early-data decision also needs the transport's verdict for this hello (its replay register). Both callbacks are the base (session)
+   context's: OpenSSL keeps them across an SNI override, and they read the settings of the session's current owner. */
 #define KSL_TICKET_AFTER_VERDICT 1
+static uint32_t ticket_version(const ksl_ssl *s, int issuing) {
+    if (s->mode != KSL_MODE_QUIC) return 0;
+    return issuing || !s->orig_version ? s->quic_version : s->orig_version;   /* issued: the negotiated version; resumed: the original one */
+}
 static int ticket_gen_cb(SSL *ssl, void *arg) {
     (void)arg; ksl_ssl *s = SSL_get_ex_data(ssl, 1); SSL_SESSION *sess = SSL_get0_session(ssl);
     if (!s || !sess) return 0;
-    uint8_t data[1 + sizeof s->early_ctx]; data[0] = s->ticket_authorized ? KSL_TICKET_AFTER_VERDICT : 0;
-    memcpy(data + 1, s->early_ctx, s->early_ctx_len);
-    return SSL_SESSION_set1_ticket_appdata(sess, data, 1 + s->early_ctx_len);
+    uint8_t data[5 + sizeof s->early_ctx]; uint32_t v = ticket_version(s, 1); data[0] = s->ticket_authorized ? KSL_TICKET_AFTER_VERDICT : 0;
+    data[1] = (uint8_t)(v >> 24); data[2] = (uint8_t)(v >> 16); data[3] = (uint8_t)(v >> 8); data[4] = (uint8_t)v;
+    memcpy(data + 5, s->early_ctx, s->early_ctx_len);
+    return SSL_SESSION_set1_ticket_appdata(sess, data, 5 + s->early_ctx_len);
 }
 static SSL_TICKET_RETURN ticket_dec_cb(SSL *ssl, SSL_SESSION *sess, const unsigned char *keyname, size_t keyname_len, SSL_TICKET_STATUS status, void *arg) {
     (void)keyname; (void)keyname_len; (void)arg; ksl_ssl *s = SSL_get_ex_data(ssl, 1);
     switch (status) {
     case SSL_TICKET_SUCCESS: case SSL_TICKET_SUCCESS_RENEW: {
         void *d = NULL; size_t l = 0; const uint8_t *p;
-        if (SSL_SESSION_get0_ticket_appdata(sess, &d, &l) != 1 || l < 1) { d = NULL; l = 0; }
+        if (SSL_SESSION_get0_ticket_appdata(sess, &d, &l) != 1 || l < 5) { d = NULL; l = 0; }
         p = d;
         /* a context that issues tickets only after the pin verdict (NUM_TICKETS 0) resumes only such tickets: a ticket from anywhere else
            (another configuration sharing keys and session context, an in-handshake ticket) proves no verdict, so a full handshake runs */
         if (s && s->owner->num_tickets == 0 && !(p && (p[0] & KSL_TICKET_AFTER_VERDICT))) return SSL_TICKET_RETURN_IGNORE;
-        if (s) s->early_ctx_match = p && l > 1 && l - 1 == s->early_ctx_len && !memcmp(p + 1, s->early_ctx, l - 1);
+        if (!s || !p) return SSL_TICKET_RETURN_IGNORE_RENEW;
+        uint32_t v = ((uint32_t)p[1] << 24) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 8) | p[4];
+        if (v != ticket_version(s, 0)) { s->early_ctx_match = 0; return SSL_TICKET_RETURN_IGNORE_RENEW; }
+        s->early_ctx_match = l > 5 && l - 5 == s->early_ctx_len && !memcmp(p + 5, s->early_ctx, l - 5);
         return SSL_TICKET_RETURN_USE_RENEW;   /* client tickets are single-use: every resumption gets a fresh one */
     }
     case SSL_TICKET_EMPTY: case SSL_TICKET_NO_DECRYPT: return SSL_TICKET_RETURN_IGNORE_RENEW;
@@ -146,9 +166,9 @@ int ksl_ctx_set_alpn(ksl_ctx *c, const uint8_t *wire, size_t len) {
 }
 int ksl_parse_chain(const uint8_t *framed, size_t len, STACK_OF(X509) **out) {
     STACK_OF(X509) *sk = sk_X509_new_null(); size_t off = 0;
-    while (off + 4 <= len) {
+    while (ksl_span_fits(off, 4, len)) {
         size_t l = ((size_t)framed[off] << 24) | ((size_t)framed[off + 1] << 16) | ((size_t)framed[off + 2] << 8) | framed[off + 3]; off += 4;
-        if (off + l > len) break;
+        if (!ksl_span_fits(off, l, len) || l > LONG_MAX) break;   /* off != len below then refuses the framing */
         const unsigned char *p = framed + off; X509 *x = d2i_X509(NULL, &p, (long)l); if (!x || !sk_X509_push(sk, x)) { X509_free(x); sk_X509_pop_free(sk, X509_free); return 0; }
         off += l;
     }
@@ -218,7 +238,8 @@ static int load_dir(X509_STORE *st, const char *dir) {
     closedir(d); return loaded;
 }
 static void append(char *out, size_t cap, const char *text) { size_t n = strlen(out); if (n < cap) snprintf(out + n, cap - n, "%s", text); }
-static int load_system_roots(ksl_ctx *c, X509_STORE *st) {
+void ksl_trust_paths(const char *const **files, const char *const **dirs) { *files = trust_files; *dirs = trust_dirs; }
+int ksl_load_system_roots(ksl_ctx *c, X509_STORE *st) {
     const char *ef = getenv("SSL_CERT_FILE"), *ed = getenv("SSL_CERT_DIR"); int from_env = (ef && *ef) || (ed && *ed), loaded = 0;
     if (from_env) {
         if (ef && *ef && X509_STORE_load_file(st, ef) == 1) loaded = 1;
@@ -243,8 +264,8 @@ static int load_system_roots(ksl_ctx *c, X509_STORE *st) {
 }
 int ksl_ctx_set_roots(ksl_ctx *c, const uint8_t *roots, size_t roots_len) {
     if (frozen(c)) return KSL_ERROR; ERR_clear_error();
-    X509_STORE *st = SSL_CTX_get_cert_store(c->ctx);
-    if (roots_len == 0) return load_system_roots(c, st);
+    if (roots_len == 0) return ksl_ctx_use_system_store(c);   /* parsed once, shared (ksl_trust_cache.c) */
+    X509_STORE *st = ksl_ctx_private_store(c); if (!st) { ksl_ctx_set_error(c, KSL_E_BAD_ARG, "ksl: no certificate store"); return KSL_ERROR; }
     STACK_OF(X509) *sk = NULL; if (!ksl_parse_chain(roots, roots_len, &sk)) { ksl_ctx_set_error(c, KSL_E_BAD_ARG, "ksl: bad roots framing"); return KSL_ERROR; }
     int ok = 1; for (int i = 0; ok && i < sk_X509_num(sk); i++) ok = X509_STORE_add_cert(st, sk_X509_value(sk, i)) == 1;
     sk_X509_pop_free(sk, X509_free);

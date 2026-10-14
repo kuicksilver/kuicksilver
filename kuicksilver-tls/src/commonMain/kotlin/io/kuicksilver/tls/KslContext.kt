@@ -10,8 +10,6 @@ import io.kuicksilver.native.Ksl
 import io.kuicksilver.native.KslConst
 import io.kuicksilver.native.KslException
 import io.kuicksilver.native.KslLoader
-import kotlin.concurrent.atomics.AtomicReference
-import kotlin.concurrent.atomics.ExperimentalAtomicApi
 
 /** Translates a [TlsConfig] into a frozen `ksl_ctx`; shared by the QUIC and TCP sessions. */
 internal class KslContext private constructor(
@@ -136,7 +134,7 @@ internal class KslContext private constructor(
                 if (config.sniSelector != null) Ksl.ctxSetOption(h, KslConst.OPT_SNI_PAUSE, 1)
                 if (!quic) {
                     // every connection has its own SSL_CTX: without shared keys no ticket could ever be resumed, so the default is a process-wide rotating set
-                    Ksl.ctxSetTicketKeys(h, config.sessionTickets.keys ?: DefaultTicketKeys.current(config.sessionTickets))
+                    useTicketKeys(h, config.sessionTickets)
                     Ksl.ctxSetOption(
                         h,
                         KslConst.OPT_TICKET_LIFETIME,
@@ -170,7 +168,7 @@ internal class KslContext private constructor(
             config: TlsConfig,
             earlyData: Boolean,
         ) {
-            Ksl.ctxSetTicketKeys(h, config.sessionTickets.keys ?: DefaultTicketKeys.current(config.sessionTickets))
+            useTicketKeys(h, config.sessionTickets)
             Ksl.ctxSetOption(
                 h,
                 KslConst.OPT_TICKET_LIFETIME,
@@ -193,37 +191,18 @@ internal class KslContext private constructor(
     }
 }
 
-/** Process-wide session ticket keys (name 16 | AES-256 32 | HMAC 32), rotated per [SessionTicketConfig.rotateEvery] with one previous key kept. */
-@OptIn(ExperimentalAtomicApi::class)
-internal object DefaultTicketKeys {
-    private class Keys(
-        val current: ByteArray,
-        val previous: ByteArray?,
-        val rotatedAt: Long,
-    )
-
-    /** One immutable snapshot swapped atomically: servers starting together agree on the current key. */
-    private val state = AtomicReference<Keys?>(null)
-
-    internal fun resetForTest() {
-        state.store(null)
-    }
-
-    fun current(config: SessionTicketConfig): List<ByteArray> {
-        while (true) {
-            val s = state.load()
-            val now = nowSeconds()
-            val keys =
-                if (s != null &&
-                    now - s.rotatedAt < config.rotateEvery.inWholeSeconds
-                ) {
-                    s
-                } else {
-                    Keys(Ksl.rand(80), s?.current, now).takeIf { state.compareAndSet(s, it) }
-                        ?: continue
-                }
-            return listOfNotNull(keys.current, keys.previous).map { it.copyOf() }
-        }
+/**
+ * Session ticket keys stay in `ksl` (threat model 1, 3.7): the process-wide generated keys are made and rotated there (current +
+ * previous, per [SessionTicketConfig.rotateEvery]); explicit keys were copied there when the [SessionTicketConfig] was built.
+ */
+internal fun useTicketKeys(
+    h: Long,
+    tickets: SessionTicketConfig,
+) {
+    if (tickets.keysId != 0) {
+        Ksl.ctxUseTicketKeys(h, tickets.keysId)
+    } else {
+        Ksl.ctxUseDefaultTicketKeys(h, tickets.rotateEvery.inWholeSeconds.toInt())
     }
 }
 

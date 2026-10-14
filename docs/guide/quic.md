@@ -301,8 +301,9 @@ where a connection stands: `Disabled`, `Testing`, `Unknown`, `Capable` or `Faile
 ## Key update
 
 The core rotates 1-RTT keys as RFC 9001 section 6 describes: the next generation is derived when the current one is
-installed, a peer's update is followed automatically, and packets of the previous phase still decrypt for three PTOs.
-A caller driving `ConnectionCore` directly can start an update once the handshake is confirmed:
+installed, a peer's update is followed automatically, and packets of the previous phase still decrypt until three PTOs
+after the first packet of the new phase arrived. A caller driving `ConnectionCore` directly can start an update once the
+handshake is confirmed and, for a later update, three PTOs after the peer acknowledged the current phase (section 6.5):
 
 ```kotlin
 // guide:quic:key-update
@@ -717,7 +718,14 @@ server.shutdown(grace = 30.seconds)
 ## qlog
 
 `DirectoryQlogSink` writes one JSON-SEQ file per connection (schema `draft-ietf-quic-qlog-main-schema`/`quic-events`
-0.3), named after the connection's original destination CID.
+0.3), named `<odcid>_<client|server>_<random>.sqlog` after the connection's original destination CID. On a server the
+client chooses that CID, so the sink treats the name as hostile: the directory is created owner-only (0700) when missing
+and refused when it is a symbolic link, belongs to another user, or is writable by group or others without the sticky
+bit (keep it out of `/tmp`); every file is created exclusively and never through a link, and the random suffix gives a
+client that reuses a CID a file of its own. qlog on a public server is a disk-exhaustion surface, so the sink has two
+ceilings besides `QuicLimits.qlogBytes` per connection: at most `maxOpenTraces` traces open at once (256) and
+`maxTotalBytes` written over its lifetime (1 GiB); beyond them connections are not traced
+(`DirectoryQlogSink(dir, maxOpenTraces, maxTotalBytes)`, *experimental*).
 
 ```kotlin
 val qlogDir = "/var/log/kuicksilver/qlog"

@@ -15,6 +15,7 @@ import platform.posix.chmod
 import platform.posix.close
 import platform.posix.getpid
 import platform.posix.link
+import platform.posix.mkfifo
 import platform.posix.open
 import platform.posix.stat
 import platform.posix.symlink
@@ -87,6 +88,30 @@ class KeylogFileAppleTest {
         } finally {
             unlink(hard)
             unlink(target)
+        }
+    }
+
+    /** A FIFO at the path is refused instead of blocking until a reader appears (security review 2026-10-14, finding 6). */
+    @Test fun negative_keylogFileRefusesFifo() {
+        val fifo = tmp("fifo")
+        assertEquals(0, mkfifo(fifo, 0x180u))
+        try {
+            assertFails { keylogFile(fifo) }
+        } finally {
+            unlink(fifo)
+        }
+    }
+
+    /** Native reopens per line: a FIFO swapped in after the sink was made drops the line instead of stalling the caller (the loop). */
+    @Test fun negative_keylogFifoSwappedInLaterDoesNotBlock() {
+        val path = tmp("swap")
+        val sink = keylogFile(path)
+        unlink(path)
+        assertEquals(0, mkfifo(path, 0x180u))
+        try {
+            sink.log("X") // returns: no reader, the nonblocking open fails and the line is dropped
+        } finally {
+            unlink(path)
         }
     }
 }

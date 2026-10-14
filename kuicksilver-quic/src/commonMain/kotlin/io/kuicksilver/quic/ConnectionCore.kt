@@ -27,6 +27,7 @@ import io.kuicksilver.quic.core.Timers
 import io.kuicksilver.quic.core.armBlockedRepeat
 import io.kuicksilver.quic.core.buildLocalTp
 import io.kuicksilver.quic.core.checkPmtuBlackHoles
+import io.kuicksilver.quic.core.checkTlsInput
 import io.kuicksilver.quic.core.discardSpace
 import io.kuicksilver.quic.core.discardZeroRttKeys
 import io.kuicksilver.quic.core.driveTls
@@ -71,6 +72,7 @@ import io.kuicksilver.quic.wire.ConnectionId
 import io.kuicksilver.quic.wire.PacketHeaderCodec
 import io.kuicksilver.quic.wire.PacketHeaderView
 import io.kuicksilver.quic.wire.PacketType
+import io.kuicksilver.quic.wire.QuicWireException
 import io.kuicksilver.quic.wire.TransportParameters
 import io.kuicksilver.quic.wire.TransportParametersCodec
 import io.kuicksilver.quic.wire.VarInt
@@ -292,7 +294,7 @@ public class ConnectionCore internal constructor(
     internal val connFlow = RecvFlowController(config.initialConnectionWindow, config.maxConnectionWindow)
     internal val connSend = SendFlowController(0)
     internal val streams = StreamManager(role, config, connFlow, connSend, StreamLimits(role, config.maxBidiStreams, config.maxUniStreams))
-    internal var cryptoStreams = CryptoStreams(config.limits.cryptoOutOfOrderPerLevel, config.limits.cryptoPostHandshake)
+    internal var cryptoStreams = CryptoStreams(config.limits)
 
     /** The active path's anti-amplification budget (RFC 9000 sections 8.1 and 9.3.1). */
     internal val amplification: AmplificationLimit get() = paths.active.amplification
@@ -440,8 +442,11 @@ public class ConnectionCore internal constructor(
     /** The per-IP counting key the endpoint registered this connection under (null for client connections). */
     internal var admissionIpKey: Any? = null
 
-    /** Bytes this unfinished handshake holds: undecryptable packets waiting for keys plus out-of-order CRYPTO data (`ConnectionAttempt.handshakeBufferBytes` for admission). */
-    internal val handshakeBufferBytes: Long get() = receiver.bufferedBytes + cryptoStreams.bufferedBytes
+    /** Bytes this unfinished handshake holds: undecryptable packets waiting for keys, out-of-order CRYPTO data and CRYPTO data TLS has not read (`ConnectionAttempt.handshakeBufferBytes` for admission). */
+    internal val handshakeBufferBytes: Long get() = receiver.bufferedBytes + cryptoStreams.bufferedBytes + tlsPendingBytes
+
+    /** CRYPTO bytes TLS held unread after it last ran, while the handshake keys are live (`checkTlsInput`). */
+    internal var tlsPendingBytes = 0L
     internal val createdAtForTest: TimeMark get() = createdAt
     internal val remoteAddressForTest: InetSocketAddress get() = path.remote
     internal var lastActivity: TimeMark = now
@@ -684,7 +689,15 @@ public class ConnectionCore internal constructor(
         this.now = now
         lastActivity = now
         if (state == ConnectionState.Draining) return
-        receiver.onDatagram(data, length, from, socket, ecn, now)
+        // RFC 9001 section 6.6: past the integrity limit "not process any more packets"; the bytes still count (amplification), and
+        // the close is repeated as in any closing state
+        if (state == ConnectionState.Closing &&
+            closeFrame?.let { !it.application && it.code == TransportError.AEAD_LIMIT_REACHED } == true
+        ) {
+            receiver.countOnly(length, from, socket)
+        } else {
+            receiver.onDatagram(data, length, from, socket, ecn, now)
+        }
         if (state ==
             ConnectionState.Closing
         ) {
@@ -764,6 +777,7 @@ public class ConnectionCore internal constructor(
         if (timers.blockedRepeatAt < t) t = timers.blockedRepeatAt
         if (lifetimeDeadline < t) t = lifetimeDeadline
         keyPhase?.let { if (it.discardAt < t) t = it.discardAt }
+        if (keyUpdateRetryAt < t) t = keyUpdateRetryAt
         if (zeroRttReadDiscardAt < t) t = zeroRttReadDiscardAt
         for (i in 0 until paths.all.size) {
             val p = paths.all[i]
@@ -910,15 +924,27 @@ public class ConnectionCore internal constructor(
         }
         if (builder.pacerWakeup <= now) builder.pacerWakeup = TimeMark.NEVER
         keyPhase?.onTimeout(now)
+        if (now >= keyUpdateRetryAt) keyUpdateRetryAt = TimeMark.NEVER // a wake-up for a caller retrying initiateKeyUpdate, nothing more
     }
 
-    /** Starts a key update (RFC 9001 section 6.1); false while one is not allowed yet: handshake not confirmed, or no packet of the current phase acknowledged. */
+    /**
+     * Starts a key update (RFC 9001 section 6.1); false while one is not allowed yet: handshake not confirmed, no packet of the
+     * current phase acknowledged, or less than 3 x PTO since that acknowledgment (section 6.5; the next [nextTimeout] wakes the caller then).
+     */
     public fun initiateKeyUpdate(now: TimeMark): Boolean {
         if (state != ConnectionState.Confirmed) return false
         val kp = keyPhase ?: return false
         this.now = now
-        return kp.initiate(now, pto())
+        if (kp.initiate(now, pto())) {
+            keyUpdateRetryAt = TimeMark.NEVER
+            return true
+        }
+        keyUpdateRetryAt = kp.initiateAllowedAt(pto())
+        return false
     }
+
+    /** When a refused [initiateKeyUpdate] may succeed (3 x PTO after the confirming ACK): a timer, so a retrying caller is woken. */
+    private var keyUpdateRetryAt = TimeMark.NEVER
 
     internal val probeScratch = ArrayList<SentPacket>()
 
@@ -940,7 +966,13 @@ public class ConnectionCore internal constructor(
      * connection with the TLS alert (CRYPTO_ERROR).
      */
     public fun resumeVerify(result: VerifyResult) {
-        handshake.resumeVerify(result)
+        try {
+            handshake.resumeVerify(result)
+            checkTlsInput()
+        } catch (e: QuicWireException) {
+            fail(e.code, e.frameType, e.message ?: "", null)
+            return
+        }
         if (handshake.failed) return
         drainStreamEvents()
     }

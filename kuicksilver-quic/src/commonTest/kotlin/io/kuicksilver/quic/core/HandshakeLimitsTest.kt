@@ -7,16 +7,22 @@ import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.native.PacketBuffer
 import io.kuicksilver.native.of
+import io.kuicksilver.quic.ConnectionEvent
 import io.kuicksilver.quic.CoreFixtures
 import io.kuicksilver.quic.CorePair
 import io.kuicksilver.quic.Ecn
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.TestCerts
 import io.kuicksilver.quic.TimeMark
+import io.kuicksilver.quic.TransportError
 import io.kuicksilver.quic.ksl
+import io.kuicksilver.quic.wire.QuicWireException
+import io.kuicksilver.tls.TrustConfig
+import io.kuicksilver.tls.VerifyResult
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -160,6 +166,72 @@ class HandshakeLimitsTest {
             val r = p.closedReason(p.serverEvents)
             assertIs<QuicException.ConnectionLost.TransportClosed>(r)
             assertEquals(0x0dL, r.code)
+        } finally {
+            p.close()
+        }
+    }
+
+    /** RFC 9001 section 4.1.3: once the server reads Handshake, Initial CRYPTO past what it received is a PROTOCOL_VIOLATION, not buffered. */
+    @Test fun negative_cryptoPastEndOfPreviousLevel() {
+        val p = CorePair(crypto = ksl)
+        try {
+            p.filterToClient = { _, _ -> false } // the client stays in Initial and keeps sending there
+            p.step()
+            p.step()
+            val s = p.server!!
+            assertTrue(s.readKeys[2] != null, "the server read the ClientHello and installed its Handshake keys")
+            p.client.testInjectCrypto = Triple(0, 0L, 6000) // overlaps the ClientHello, then runs past its end
+            p.runUntil(limit = 300.milliseconds) { p.closedReason(p.serverEvents) != null }
+            val r = p.closedReason(p.serverEvents)
+            assertIs<QuicException.ConnectionLost.TransportClosed>(r)
+            assertEquals(0x0aL, r.code)
+            assertEquals(0L, s.handshakeBufferBytes)
+        } finally {
+            p.close()
+        }
+    }
+
+    /** RFC 9001 section 4.1.3: Initial data still waiting for a gap when TLS moves to Handshake will never be consumed. */
+    @Test fun negative_cryptoGapAtKeyChange() {
+        val p = CorePair(crypto = ksl)
+        try {
+            p.client.testInjectCrypto = Triple(0, 3000L, 10)
+            p.runUntil(limit = 300.milliseconds) { p.closedReason(p.serverEvents) != null }
+            val r = p.closedReason(p.serverEvents)
+            assertIs<QuicException.ConnectionLost.TransportClosed>(r)
+            assertEquals(0x0aL, r.code)
+        } finally {
+            p.close()
+        }
+    }
+
+    /** ngtcp2-style absolute end of the Initial CRYPTO stream, independent of the out-of-order window. */
+    @Test fun negative_cryptoInitialLevelCap() {
+        val cs = CryptoStreams(1 shl 20, 65_536, longArrayOf(65_536, 0, 262_144, Long.MAX_VALUE))
+        val b = PacketBuffer.of(ByteArray(1000))
+        try {
+            val e = assertFailsWith<QuicWireException> { cs.onData(0, 65_000L, b, 0, 1000, false) }
+            assertEquals(TransportError.CRYPTO_BUFFER_EXCEEDED, e.code)
+            cs.onData(2, 65_000L, b, 0, 1000, false) // the Handshake level ends later
+        } finally {
+            b.close()
+        }
+    }
+
+    /** CRYPTO bytes TLS holds unread count toward the handshake's buffers (admission). */
+    @Test fun unreadTlsInputCountsTowardHandshakeBuffer() {
+        val p =
+            CorePair(
+                clientTls = CoreFixtures.client(trust = TrustConfig.Custom { chain, _, _ -> VerifyResult.Accepted(chain) }),
+                crypto = ksl,
+            )
+        p.autoVerify = false
+        try {
+            assertTrue(p.runUntil(limit = 500.milliseconds) { p.clientEvents.any { it is ConnectionEvent.VerifyRequested } })
+            val c = p.client
+            assertEquals(0L, c.cryptoStreams.bufferedBytes)
+            val tls = c.handshakeBufferBytes - c.receiver.bufferedBytes
+            assertTrue(tls > 0, "the paused TLS holds the server's Handshake flight: $tls")
         } finally {
             p.close()
         }

@@ -391,8 +391,51 @@ Flow control (`kuicksilver-quic`; found with the BBR simulations, 2026-10-13):
   loss. Lost `MAX_DATA` / `MAX_STREAM_DATA` / `RESET_STREAM` / `STOP_SENDING` are queued once per stream instead of
   once per loss report.
 
+QUIC TLS, key update and versions (`kuicksilver-quic`, `kuicksilver-native`; conformance review of 2026-10-14):
+
+- Key update (RFC 9001 §6.1): after our own update the previous read key now stays until a packet of the new phase
+  authenticated, then 3 x PTO; it used to go 3 x PTO after the update, so on an idle connection the peer's later
+  old-phase packets failed authentication. A further update waits 3 x PTO after the ACK that confirmed the previous
+  one (§6.5), and `QuicConnection.keyUpdate()` is woken when that wait ends.
+- A peer without the quic_transport_parameters extension is closed with 0x016d (RFC 9001 §8.2); the handshake used to
+  complete without the RFC 9000 §7.3 connection ID checks. A ClientHello with a legacy_session_id is a
+  PROTOCOL_VIOLATION (§8.4), and so is a NewSessionTicket with a max_early_data_size other than 0xffffffff (§4.6.1;
+  OpenSSL's illegal_parameter is mapped). No packet is processed after closing at the AEAD integrity limit (§6.6).
+- 0-RTT and QUIC v2 (RFC 9369 §4.1, §5): across a compatible v1 -> v2 upgrade the client keeps 0-RTT in its original
+  version and the server takes it with original-version keys (it never decrypted before); tickets carry the
+  negotiated version of their connection and are not resumed for a connection started in another version, by the
+  client nor by `ksl`. A Retry in another version than the client's Initial is ignored.
+- 0-RTT packets use only the remembered transport parameters until 1-RTT (RFC 9000 §7.4.1); a smaller
+  max_datagram_frame_size on acceptance is a PROTOCOL_VIOLATION (RFC 9221 §3).
+- version_information (RFC 9368 §4): an Available Version of zero and a client Chosen Version missing from its
+  Available Versions are parsing failures; an empty server list after Version Negotiation is VERSION_NEGOTIATION_ERROR.
+
+QUIC congestion control and loss recovery (conformance review of 2026-10-14):
+
+- Persistent congestion (RFC 9002 §7.6.2) needs two lost ack-eliciting packets sent after the first RTT sample, with no
+  packet between them acknowledged, and is judged per path. A lost first Initial and two lost PTO probes used to drop
+  every such handshake to the 2-datagram window; ACK-only and skipped packet numbers no longer break the period, and
+  padding-only packets no longer end it. After persistent congestion min_rtt restarts from the newest sample (§5.2).
+- The window grows only when the sender used it before the ACK frame (RFC 9002 §7.8): an ACK of a whole window in slow
+  start counted half of it as application-limited, and in congestion avoidance a sender using 55 % of its window
+  still grew it. The margins are quic-go's: at most 3 datagrams unused, or more than half in flight in slow start.
+- CUBIC: the time since the epoch no longer includes application-limited ACKs or time with nothing in flight (RFC 9438
+  §4.2; after 30 s idle the window grew 1.5x per RTT past W_max); the Reno-friendly alpha becomes 1 once W_est reaches
+  the window before the last reduction (§4.3). HyStart++ takes every RTT sample of a round, checks on each ACK from the
+  8th sample, and uses the minimum of the round that entered Conservative Slow Start as baseline (RFC 9406 §4.2).
+- NewReno (not the default) kept the remainder of max_datagram_size x acked / cwnd: congestion avoidance stalled above
+  a 1.44 MB window.
+- BBR: CE reports count toward the Startup exit like lost ranges (draft-ietf-ccwg-bbr-06 §3.7); a larger datagram size
+  from PMTUD no longer raises the window (RFC 8899 §3), the 4-datagram floor applies when the window is next set.
+- ECN: after the ten test packets nothing is marked until an ACK validates the path (RFC 9000 appendix A.4), so a path
+  that drops marked datagrams costs those ten packets instead of everything sent until a PTO; only packets loss
+  detection tracks count as test packets. CE-marked ack-eliciting packets are acknowledged at once (§13.2.1).
+
 QUIC runtime and sockets:
 
+- A client whose only socket was lost between handshake completion and confirmation ends at once with
+  `ConnectionLost.NoViablePath`: it may not migrate yet (RFC 9000 §9) and can neither send its Finished nor receive
+  HANDSHAKE_DONE, so `migrate()` used to wait for the 30 s idle timeout.
 - The `UnsupportedOperationException` of a Kotlin/Native QUIC server without the accelerated socket named Linux and
   Apple only; Windows has the socket too. `ConnectionLost.Timeout`'s KDoc no longer lists the removed path-validation
   and disconnect timers, and the Ktor server's `udpSocketCount` KDoc says Linux and Android (it said Linux).
@@ -767,6 +810,13 @@ Pre-release API and operations review (2026-10-14):
 
 ### Security
 
+- CRYPTO data at an encryption level TLS has left was buffered without bound (RFC 9001 §4.1.3): after one valid
+  ClientHello, in-order Initial CRYPTO went to a `ksl` buffer OpenSSL never reads again, so a client could grow a
+  server's memory at its own bandwidth until the handshake timeout, uncounted by admission. Such data is now a
+  PROTOCOL_VIOLATION (the Initial stream is sealed when TLS reads Handshake, the Handshake stream at completion), the
+  Initial stream ends at 64 KiB and the Handshake stream at 256 KiB (CRYPTO_BUFFER_EXCEEDED, as ngtcp2), `ksl` refuses
+  data below its read level and holds at most 256 KiB unread per level, and that data counts toward admission's
+  handshake buffer bytes.
 - Findings of the local fuzzing campaigns (`tools/fuzz/campaign.sh`, threat model §3.10), each with a regression input
   and a test: a server endpoint answering a short-header datagram over 1500 bytes to an unknown connection ID with a
   stateless reset overflowed its answer buffer and threw out of `EndpointCore.handleDatagram`; a client that received a
@@ -820,6 +870,29 @@ Pre-release API and operations review (2026-10-14):
   connection kept open, so behind a front proxy that frames by Content-Length the rest of the bytes became a second,
   smuggled request; such a request is now refused with 400 and the connection closed (RFC 9112 §6.1, threat model
   section 3.20, `negative_contentLengthWithTransferEncodingIsRejectedAndClosed`).
+- Session ticket keys no longer live on the Kotlin heap (security review 2026-10-14, threat model sections 1 and 3.7): the
+  process-wide keys are generated and rotated inside `ksl`, and explicit `SessionTicketConfig(keys = …)` are copied into
+  native memory when the configuration is built. **Breaking:** the arrays passed as `keys` are zeroed by the constructor
+  (also when it throws), and the `SessionTicketConfig.keys` property is removed (the keys cannot be read back).
+- `DirectoryQlogSink` no longer trusts the client-chosen connection ID it names files after (security review 2026-10-14,
+  threat model section 3.2): files are created exclusively and never through a symbolic link (a planted link, FIFO or
+  file is never followed, truncated or blocked on), named `<odcid>_<role>_<random>.sqlog`; the directory is created
+  owner-only and refused when it is a link, another user's, or writable by others without the sticky bit; at most 256
+  traces are open at once and 1 GiB is written over the sink's lifetime (experimental constructor
+  `DirectoryQlogSink(directory, maxOpenTraces, maxTotalBytes)`).
+- `keylogFile(path)` refuses a FIFO at the path instead of blocking until a reader appears (on Native that stalled the
+  endpoint loop at the first secret line): Native opens with `O_NONBLOCK` and checks the descriptor, the JVM checks the
+  path before opening it, Windows refuses anything but a regular file (security review 2026-10-14, threat model 3.7).
+- Ktor client: an `Alt-Svc` alternative on a loopback, link-local or private address (or a `localhost` name) is ignored
+  unless the origin itself is on such an address, and one on an unspecified, multicast or broadcast address always, so a
+  verified origin cannot aim clients' QUIC Initials at their own network (RFC 9000 section 21.5, threat model 3.14).
+- Kotlin/Native Linux clients with `TrustConfig.Platform` parse the system CA bundle once per process instead of once per
+  connection (3.6 ms each, seven handshakes' worth); the shared store is reloaded when the bundle or `SSL_CERT_FILE` /
+  `SSL_CERT_DIR` change (threat model 3.2, `tools/bench/ksl-ctx-bench.sh`).
+- Supply chain (threat model 3.11): every Gradle dependency and plugin is verified by signature or SHA-256
+  (`gradle/verification-metadata.xml`); a release rebuilds all twelve OpenSSL targets from the verified tarball instead of
+  reusing `build/openssl`, and checks the Android `.so` files and the Kotlin/Native archives, as it did the JVM libraries,
+  for the pinned OpenSSL, sanitizer or debug builds and the export whitelist or symbol prefix.
 
 ## 0.1.0 candidate (never published)
 

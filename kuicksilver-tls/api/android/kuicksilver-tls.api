@@ -235,6 +235,7 @@ public abstract interface class io/kuicksilver/tls/QuicTlsSession : java/lang/Au
 	public abstract fun getNegotiatedAlpn ()Ljava/lang/String;
 	public abstract fun getPeerCertificates ()Ljava/util/List;
 	public abstract fun nextEvent ()Lio/kuicksilver/tls/TlsEvent;
+	public fun pendingCryptoBytes (Lio/kuicksilver/tls/EncryptionLevel;)I
 	public abstract fun provide (Lio/kuicksilver/tls/EncryptionLevel;[BII)V
 	public static synthetic fun provide$default (Lio/kuicksilver/tls/QuicTlsSession;Lio/kuicksilver/tls/EncryptionLevel;[BIIILjava/lang/Object;)V
 	public fun resume (Lio/kuicksilver/tls/QuicSessionTicket;)Z
@@ -247,6 +248,7 @@ public abstract interface class io/kuicksilver/tls/QuicTlsSession : java/lang/Au
 public final class io/kuicksilver/tls/QuicTlsSession$DefaultImpls {
 	public static fun enableEarlyData (Lio/kuicksilver/tls/QuicTlsSession;[BLio/kuicksilver/tls/EarlyDataAdmission;)Z
 	public static fun getEarlyDataAccepted (Lio/kuicksilver/tls/QuicTlsSession;)Ljava/lang/Boolean;
+	public static fun pendingCryptoBytes (Lio/kuicksilver/tls/QuicTlsSession;Lio/kuicksilver/tls/EncryptionLevel;)I
 	public static synthetic fun provide$default (Lio/kuicksilver/tls/QuicTlsSession;Lio/kuicksilver/tls/EncryptionLevel;[BIIILjava/lang/Object;)V
 	public static fun resume (Lio/kuicksilver/tls/QuicTlsSession;Lio/kuicksilver/tls/QuicSessionTicket;)Z
 }
@@ -269,7 +271,6 @@ public final class io/kuicksilver/tls/SessionTicketConfig {
 	public fun <init> ()V
 	public synthetic fun <init> (Ljava/util/List;JJILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public synthetic fun <init> (Ljava/util/List;JJLkotlin/jvm/internal/DefaultConstructorMarker;)V
-	public final fun getKeys ()Ljava/util/List;
 	public final fun getRotateEvery-UwyO8pc ()J
 	public final fun getTicketLifetime-UwyO8pc ()J
 }

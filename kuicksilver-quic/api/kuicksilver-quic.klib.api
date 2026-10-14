@@ -605,6 +605,12 @@ final class io.kuicksilver.quic.qlog/AsyncQlogSink : io.kuicksilver.quic/QlogSin
 
 final class io.kuicksilver.quic.qlog/DirectoryQlogSink : io.kuicksilver.quic/QlogSink { // io.kuicksilver.quic.qlog/DirectoryQlogSink|null[0]
     constructor <init>(kotlin/String) // io.kuicksilver.quic.qlog/DirectoryQlogSink.<init>|<init>(kotlin.String){}[0]
+    constructor <init>(kotlin/String, kotlin/Int, kotlin/Long) // io.kuicksilver.quic.qlog/DirectoryQlogSink.<init>|<init>(kotlin.String;kotlin.Int;kotlin.Long){}[0]
+
+    final val maxOpenTraces // io.kuicksilver.quic.qlog/DirectoryQlogSink.maxOpenTraces|{}maxOpenTraces[0]
+        final fun <get-maxOpenTraces>(): kotlin/Int // io.kuicksilver.quic.qlog/DirectoryQlogSink.maxOpenTraces.<get-maxOpenTraces>|<get-maxOpenTraces>(){}[0]
+    final val maxTotalBytes // io.kuicksilver.quic.qlog/DirectoryQlogSink.maxTotalBytes|{}maxTotalBytes[0]
+        final fun <get-maxTotalBytes>(): kotlin/Long // io.kuicksilver.quic.qlog/DirectoryQlogSink.maxTotalBytes.<get-maxTotalBytes>|<get-maxTotalBytes>(){}[0]
 
     final fun open(kotlin/String, io.kuicksilver.tls/TlsRole): io.kuicksilver.quic/QlogTrace? // io.kuicksilver.quic.qlog/DirectoryQlogSink.open|open(kotlin.String;io.kuicksilver.tls.TlsRole){}[0]
 }

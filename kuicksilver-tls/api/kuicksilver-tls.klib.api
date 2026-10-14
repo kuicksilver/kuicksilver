@@ -191,6 +191,7 @@ abstract interface io.kuicksilver.tls/QuicTlsSession : kotlin/AutoCloseable { //
     abstract fun setTransportParameters(kotlin/ByteArray) // io.kuicksilver.tls/QuicTlsSession.setTransportParameters|setTransportParameters(kotlin.ByteArray){}[0]
     abstract suspend fun verifyPeer(kotlin.collections/List<io.kuicksilver.tls/Certificate>): io.kuicksilver.tls/VerifyResult // io.kuicksilver.tls/QuicTlsSession.verifyPeer|verifyPeer(kotlin.collections.List<io.kuicksilver.tls.Certificate>){}[0]
     open fun enableEarlyData(kotlin/ByteArray?, io.kuicksilver.tls/EarlyDataAdmission?): kotlin/Boolean // io.kuicksilver.tls/QuicTlsSession.enableEarlyData|enableEarlyData(kotlin.ByteArray?;io.kuicksilver.tls.EarlyDataAdmission?){}[0]
+    open fun pendingCryptoBytes(io.kuicksilver.tls/EncryptionLevel): kotlin/Int // io.kuicksilver.tls/QuicTlsSession.pendingCryptoBytes|pendingCryptoBytes(io.kuicksilver.tls.EncryptionLevel){}[0]
     open fun resume(io.kuicksilver.tls/QuicSessionTicket): kotlin/Boolean // io.kuicksilver.tls/QuicTlsSession.resume|resume(io.kuicksilver.tls.QuicSessionTicket){}[0]
 }
 
@@ -551,8 +552,6 @@ final class io.kuicksilver.tls/ServerTlsOverride { // io.kuicksilver.tls/ServerT
 final class io.kuicksilver.tls/SessionTicketConfig { // io.kuicksilver.tls/SessionTicketConfig|null[0]
     constructor <init>(kotlin.collections/List<kotlin/ByteArray>? = ..., kotlin.time/Duration = ..., kotlin.time/Duration = ...) // io.kuicksilver.tls/SessionTicketConfig.<init>|<init>(kotlin.collections.List<kotlin.ByteArray>?;kotlin.time.Duration;kotlin.time.Duration){}[0]
 
-    final val keys // io.kuicksilver.tls/SessionTicketConfig.keys|{}keys[0]
-        final fun <get-keys>(): kotlin.collections/List<kotlin/ByteArray>? // io.kuicksilver.tls/SessionTicketConfig.keys.<get-keys>|<get-keys>(){}[0]
     final val rotateEvery // io.kuicksilver.tls/SessionTicketConfig.rotateEvery|{}rotateEvery[0]
         final fun <get-rotateEvery>(): kotlin.time/Duration // io.kuicksilver.tls/SessionTicketConfig.rotateEvery.<get-rotateEvery>|<get-rotateEvery>(){}[0]
     final val ticketLifetime // io.kuicksilver.tls/SessionTicketConfig.ticketLifetime|{}ticketLifetime[0]

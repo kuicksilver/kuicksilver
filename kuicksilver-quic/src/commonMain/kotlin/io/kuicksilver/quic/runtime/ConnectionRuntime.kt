@@ -25,7 +25,9 @@ import io.kuicksilver.quic.QuicStream
 import io.kuicksilver.quic.SocketDefunctException
 import io.kuicksilver.quic.StreamPriority
 import io.kuicksilver.quic.core.failInternal
+import io.kuicksilver.quic.core.silentClose
 import io.kuicksilver.tls.Certificate
+import io.kuicksilver.tls.TlsRole
 import io.kuicksilver.tls.VerifyReason
 import io.kuicksilver.tls.VerifyResult
 import kotlinx.coroutines.CancellationException
@@ -191,7 +193,10 @@ internal class ConnectionRuntime(
 
     /**
      * The socket [io] is gone (null: the endpoint's own): each live path on it reports [PathEvent.SocketLost] once. The paths
-     * stay (the active one cannot go before a move); the loop no longer touches the socket. Loop dispatcher only.
+     * stay (the active one cannot go before a move); the loop no longer touches the socket. A client whose active path lost its
+     * socket before the handshake is confirmed ends at once with [QuicException.ConnectionLost.NoViablePath]: it may not migrate
+     * yet (RFC 9000 section 9) and can neither send its Finished nor receive HANDSHAKE_DONE, so only the idle timeout would end
+     * it. Loop dispatcher only.
      */
     internal fun onSocketLost(
         io: DatagramIo?,
@@ -202,6 +207,11 @@ internal class ConnectionRuntime(
             if (p.io !== io || p.socketLost || p.stateFlow.value == PathState.Closed) continue
             p.socketLost = true
             pathEventFlow.tryEmit(PathEvent.SocketLost(p, cause))
+        }
+        val unconfirmed = core.state == ConnectionState.Handshaking || core.state == ConnectionState.Established
+        if (role == TlsRole.Client && unconfirmed && pathList.any { it.id == core.path.id && it.socketLost }) {
+            core.silentClose(QuicException.ConnectionLost.NoViablePath())
+            drainEvents()
         }
     }
 

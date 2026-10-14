@@ -28,6 +28,8 @@ extern "C" {
    between contexts, so the caller keeps no DER copy of it) */
 /* 6: 0-RTT — KSL_OPT_EARLY_DATA, KSL_SET_EARLY_CONTEXT, KSL_SET_EARLY_DATA, KSL_GET_EARLY_DATA; the 0-RTT secret arrives as KSL_EV_KEY at KSL_LEVEL_EARLY (ADR-0015);
    ksl_ctx_verify_chain (resumption re-verifies the cached chain, ADR-0011; added before 6 was published) */
+/*    additive in 6 (ADR-0003): session ticket keys stay native — ksl_ctx_use_default_ticket_keys (generated and rotated in ksl),
+   ksl_ticket_keys_register / ksl_ctx_use_ticket_keys (explicit keys copied in once, referred to by id) */
 
 /* return codes */
 #define KSL_OK 0
@@ -75,6 +77,7 @@ extern "C" {
 #define KSL_GET_EMS 7              /* 1 byte: 1 if extended master secret was used (TLS 1.2) */
 #define KSL_GET_QUIC_VERSION 8     /* 4 bytes big-endian: negotiated (server, RFC 9368) or set (client) QUIC version */
 #define KSL_GET_EARLY_DATA 9       /* 1 byte: 0 not attempted, 1 rejected, 2 accepted (final once EncryptedExtensions is sent / received) */
+#define KSL_GET_QUIC_PENDING 10    /* 16 bytes: per level 0..3, 4 bytes big-endian, CRYPTO bytes provided and not yet read by TLS */
 
 /* ksl_ssl_set keys */
 #define KSL_SET_SNI 1              /* data = host name, ASCII */
@@ -82,7 +85,9 @@ extern "C" {
 #define KSL_SET_QUIC_VERSION 3     /* data = 4-byte big-endian QUIC version (0x00000001 | 0x6b3343cf): labels for Handshake/1-RTT keys (RFC 9369 3.3);
                                       unknown -> KSL_E_BAD_ARG, after Handshake keys exist -> KSL_E_TOO_LATE */
 #define KSL_SET_EARLY_CONTEXT 4    /* server, 1..64 bytes before the first drive: written into every ticket this session issues; a resumed ticket
-                                      whose stored context differs gets no early data (RFC 9001 section 4.6.3) */
+                                      whose stored context differs gets no early data (RFC 9001 section 4.6.3). Every server ticket also
+                                      carries the QUIC version of its connection (the negotiated one); a ticket of another version than
+                                      the client's original one is not resumed (RFC 9369 section 5) */
 #define KSL_SET_EARLY_DATA 5       /* 1 byte before the first drive. Client: 1 = send 0-RTT with the session set by ksl_ssl_set_session
                                       (KSL_E_NOT_SUPPORTED when its ticket does not allow early data). Server: 1 = the transport admits early
                                       data for this hello (replay register), 0 = refuse; KSL_E_NOT_SUPPORTED without KSL_OPT_EARLY_DATA */
@@ -123,6 +128,8 @@ extern "C" {
 #define KSL_E_NOT_SUPPORTED 0xff0008u
 #define KSL_E_TRUNCATED 0xff0009u
 #define KSL_E_TOO_LATE 0xff000au      /* the setting cannot change at this stage of the handshake */
+#define KSL_E_CRYPTO_LEVEL 0xff000bu  /* ksl_quic_provide: a level TLS no longer reads (RFC 9001 4.1.3) or more than
+                                         KSL_QUIC_LEVEL_MAX unread bytes at one level */
 
 typedef struct ksl_ctx ksl_ctx;
 typedef struct ksl_ssl ksl_ssl;
@@ -177,6 +184,13 @@ void     ksl_pkey_free(ksl_pkey *);                                   /* drops o
 int      ksl_ctx_set_roots(ksl_ctx *, const uint8_t *roots, size_t roots_len);  /* same framing; empty = system store */
 int      ksl_ctx_set_ciphers(ksl_ctx *, const char *tls13_suites, const char *tls12_list);
 int      ksl_ctx_set_ticket_keys(ksl_ctx *, const uint8_t *keys, size_t n);     /* n x 80 bytes: name16 | aes32 | hmac32; first encrypts */
+/* Session ticket keys that never leave ksl (threat model 3.7). The process-wide generated keys: the context gets the current key
+   (encrypts) and the previous one (decrypts); they rotate when the current one is rotate_seconds old (wall clock) at this call. */
+int      ksl_ctx_use_default_ticket_keys(ksl_ctx *, uint32_t rotate_seconds);
+/* Explicit keys (n x 80 bytes, 1..64), copied once for the life of the process; the caller wipes its copy. Returns an id > 0 for
+   ksl_ctx_use_ticket_keys (the same id for the same keys), KSL_ERROR when invalid or when 1024 distinct sets exist. */
+int      ksl_ticket_keys_register(const uint8_t *keys, size_t n);
+int      ksl_ctx_use_ticket_keys(ksl_ctx *, int id);
 int      ksl_ctx_set_session_context(ksl_ctx *, const uint8_t *sid_ctx, size_t len); /* server, 1..32 bytes: a session (ticket) resumes only under the same context (default "ksl") */
 int      ksl_ctx_set_option(ksl_ctx *, int option, int value);
 int      ksl_ctx_freeze(ksl_ctx *);

@@ -41,9 +41,11 @@ public interface QuicConnection : AutoCloseable {
     public val pathEvents: Flow<PathEvent>
 
     /**
-     * Client only: a new path to the server through [io] (a second socket), unvalidated. IllegalStateException before the
-     * handshake is confirmed, when the server advertised `disable_active_migration`, or beyond four paths; the socket is closed then,
-     * as on any other failure or cancellation before the path took it over.
+     * Client only: a new path to the server through [io] (a second socket), unvalidated. Before the handshake is confirmed it
+     * waits for the confirmation (it follows completion within a round trip) and throws the connection's
+     * [QuicException.ConnectionLost] if it ends first; IllegalStateException when the server advertised
+     * `disable_active_migration`, or beyond four paths. The socket is closed then, as on any other failure or cancellation before
+     * the path took it over.
      */
     public suspend fun addPath(io: DatagramIo): QuicPath
 
@@ -84,7 +86,10 @@ public interface QuicConnection : AutoCloseable {
     /** Largest payload [sendDatagram] accepts right now; 0 while unknown or unsupported. Follows the path MTU. */
     public val maxDatagramSize: StateFlow<Int>
 
-    /** Starts a key update (RFC 9001 section 6); suspends until one is allowed: handshake confirmed and the current phase acknowledged (section 6.1). */
+    /**
+     * Starts a key update (RFC 9001 section 6); suspends until one is allowed: handshake confirmed, the current phase
+     * acknowledged (section 6.1) and, after an earlier update, three PTOs since that acknowledgment (section 6.5).
+     */
     public suspend fun keyUpdate()
 
     /** RFC 5705 exporter over the connection's TLS session; runs on the endpoint loop (the TLS object is not shared across threads). */
