@@ -80,9 +80,18 @@ private suspend fun H3Session.connectOnDispatcher(
         ) {
             resp.cancel(Http3ErrorCode.REQUEST_CANCELLED)
             datagrams.unregister(resp.streamId)
+            exchangeEnded()
             throw Http3Exception.ConnectRejected(resp.status, resp.headers)
         }
         val writer = ResponseWriterImpl(this@connectOnDispatcher, resp.stream, null)
+        scope.launch {
+            try {
+                resp.pump.join()
+                writer.pump.join()
+            } finally {
+                exchangeEnded()
+            }
+        }
         // the datagram registration goes when the receive side ended (later datagrams are dropped, RFC 9297 section 2.1), or at a reset
         scope.launch {
             resp.pump.join()
@@ -144,8 +153,9 @@ private suspend fun H3Session.requestOnDispatcher(
     made: (Http3Response) -> Unit,
 ): Http3Response =
     withContext(dispatcher) {
-        if (closed.isCompleted) throw connectionError()
+        // first: after a GOAWAY the client closes an idle connection itself, and a request then was still never sent
         if (goAwayReceived.value != null) throw Http3Exception.RequestNotProcessed(true)
+        if (closed.isCompleted) throw connectionError()
         check(goAwaySentId == null) { "this client sent GOAWAY: no new requests" }
         // before a stream is opened: a refused section costs no stream credit (the id is not known yet: -1)
         val fields = PseudoHeaders.buildRequest(r)
@@ -166,14 +176,18 @@ private suspend fun H3Session.requestOnDispatcher(
             }
         }
         clientStreams[st.id] = st
+        exchangeOpened()
         val dgrams = if (keepOpen) datagrams.register(st.id) else null
         try {
             exchange(st, r, keepOpen, callbacks).also {
                 it.datagramChannel = dgrams
+                // a tunnel ends when both directions did: connect() reports it; a request when its body is out and its response in
+                if (!keepOpen) it.whenSettled { exchangeEnded() }
                 made(it)
                 afterRequestForTest?.invoke()
             }
         } catch (e: Throwable) {
+            exchangeEnded()
             if (dgrams != null) datagrams.unregister(st.id)
             // a GOAWAY that did not cover this stream aborted it: the server never processed it (RFC 9114 section 5.2)
             if (st.id in rejectedByGoAway && e !is CancellationException) throw Http3Exception.RequestNotProcessed(true)
@@ -426,6 +440,18 @@ internal class ResponseImpl(
                 tunnel = { tunnel },
             ) { f -> session.run { abortClient(f.code) } }
         }
+
+    /** Runs [block] on the session once the request body is out and the response body pumped (or both abandoned). */
+    internal fun whenSettled(block: () -> Unit) {
+        session.scope.launch {
+            try {
+                pump.join()
+                sender?.join()
+            } finally {
+                block()
+            }
+        }
+    }
 
     init {
         // the request was abandoned after the response began: the body and trailers end with the sender's failure

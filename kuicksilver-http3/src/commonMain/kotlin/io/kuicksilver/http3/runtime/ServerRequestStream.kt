@@ -204,6 +204,7 @@ internal class ServerRequestImpl(
             finished = true
             session.activeServerRequests.remove(st.id)
             session.datagrams.unregister(st.id)
+            session.responseHandedOver(st)
             session.requestDone()
         }
     }
