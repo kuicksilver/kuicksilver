@@ -190,7 +190,8 @@ internal fun ConnectionCore.settleZeroRtt() {
             fail(TransportError.PROTOCOL_VIOLATION, 0, "server accepted 0-RTT with transport parameters below the remembered ones", null)
             return
         }
-        // section 7.4.1: streams opened in 0-RTT get the new initial limits
+        // section 7.4.1: the new limits apply from 1-RTT on, also to the streams opened in 0-RTT
+        applyPeerLimits(tp)
         streams.raiseLocalSendLimits(tp.initialMaxStreamDataBidiRemote, tp.initialMaxStreamDataUni)
         return
     }
@@ -210,6 +211,7 @@ internal fun ConnectionCore.settleZeroRtt() {
         return
     }
     // the remembered limits no longer hold: the server's new ones replace them, also where lower (RFC 9000 section 7.4.1)
+    applyPeerLimits(tp)
     connSend.resetLimit(tp.initialMaxData)
     streams.adoptLocalSendLimits(
         tp.initialMaxStreamDataBidiRemote,

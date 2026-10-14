@@ -267,6 +267,18 @@ internal fun ConnectionCore.switchClientVersion(profile: VersionProfile): Boolea
     return true
 }
 
+/** The peer's stream and connection flow-control limits from its transport parameters (RFC 9000 section 18.2). */
+internal fun ConnectionCore.applyPeerLimits(tp: TransportParameters) {
+    streams.applyPeerParameters(
+        tp.initialMaxStreamDataBidiLocal,
+        tp.initialMaxStreamDataBidiRemote,
+        tp.initialMaxStreamDataUni,
+        tp.initialMaxStreamsBidi,
+        tp.initialMaxStreamsUni,
+    )
+    connSend.onMaxUpdate(tp.initialMaxData)
+}
+
 internal class ConnectionHandshakeSink(
     private val core: ConnectionCore,
 ) : HandshakeSink {
@@ -410,14 +422,8 @@ internal class ConnectionHandshakeSink(
         core.peerTp = tp
         core.peerTpEncoded = encoded
         tp.statelessResetToken?.let { core.cids.setPeerResetToken(0, it) }
-        core.streams.applyPeerParameters(
-            tp.initialMaxStreamDataBidiLocal,
-            tp.initialMaxStreamDataBidiRemote,
-            tp.initialMaxStreamDataUni,
-            tp.initialMaxStreamsBidi,
-            tp.initialMaxStreamsUni,
-        )
-        core.connSend.onMaxUpdate(tp.initialMaxData)
+        // RFC 9000 section 7.4.1: while 0-RTT is in use only the remembered limits apply; settleZeroRtt applies these with 1-RTT
+        if (core.remembered == null) core.applyPeerLimits(tp)
         core.loss.peerAckDelayExponent = tp.ackDelayExponent
         core.loss.peerMaxAckDelay = tp.maxAckDelayMs.milliseconds
         core.peerGreaseQuicBit = tp.greaseQuicBit

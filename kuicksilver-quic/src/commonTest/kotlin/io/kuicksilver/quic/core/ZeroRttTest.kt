@@ -261,6 +261,49 @@ class ZeroRttTest {
         p.close()
     }
 
+    /**
+     * RFC 9000 section 7.4.1: "When sending frames in 0-RTT packets, a client MUST only use remembered transport parameters";
+     * the server's new ones apply from 1-RTT on.
+     */
+    @Test fun zeroRttKeepsRememberedLimitsUntilOneRtt() {
+        val t = ticket()
+        val tp = TransportParametersCodec.decode(rememberedTp(t.remembered!!), TlsRole.Server)
+        tp.initialMaxData = 2000
+        t.remembered = withTp(t.remembered!!, TransportParametersCodec.encode(tp, TlsRole.Server, 27))
+        val (p, _) = resumed(t, request = "x")
+        try {
+            val c = p.client
+            p.filterToServer = { _, _ -> false }
+            p.step() // the client drives TLS: ClientHello and the 0-RTT key
+            assertEquals(2000L, c.connSend.maxLimit)
+            // the server's EncryptedExtensions before its Finished: 0-RTT keeps the remembered limit
+            tp.initialMaxData = 1_000_000
+            tp.originalDestinationConnectionId = c.odcid
+            tp.initialSourceConnectionId = c.remoteCid
+            ConnectionHandshakeSink(c).onPeerTransportParameters(TransportParametersCodec.encode(tp, TlsRole.Server, 27), c.version.version)
+            assertTrue(c.writeKeys[1] != null && c.writeKeys[3] == null, "still sending 0-RTT")
+            assertEquals(2000L, c.connSend.maxLimit, "0-RTT uses only the remembered limit")
+        } finally {
+            p.close()
+        }
+        val (q, _) = resumed(t2(), request = "x")
+        try {
+            assertTrue(q.handshake())
+            assertEquals(true, q.client.earlyDataAccepted)
+            assertEquals(QuicConfig.Default.initialConnectionWindow, q.client.connSend.maxLimit, "1-RTT gets the server's new limit")
+        } finally {
+            q.close()
+        }
+    }
+
+    private fun t2(): QuicSessionTicket {
+        val t = ticket()
+        val tp = TransportParametersCodec.decode(rememberedTp(t.remembered!!), TlsRole.Server)
+        tp.initialMaxData = 2000
+        t.remembered = withTp(t.remembered!!, TransportParametersCodec.encode(tp, TlsRole.Server, 27))
+        return t
+    }
+
     @Test fun rejectedWithSmallerLimitsFailsZeroRttRejected() {
         val big = "x".repeat(4000)
         val (p, _) =
