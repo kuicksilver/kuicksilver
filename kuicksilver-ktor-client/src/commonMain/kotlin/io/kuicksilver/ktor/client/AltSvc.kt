@@ -142,11 +142,34 @@ internal object AltSvcParser {
         return out
     }
 
-    private fun unquote(s: String): String? =
-        when {
-            s.length >= 2 && s.startsWith('"') && s.endsWith('"') -> s.substring(1, s.length - 1)
-            else -> null // alt-authority is a quoted-string (RFC 7838 section 3)
+    /**
+     * The content of the quoted-string [s] with its quoted-pairs resolved (RFC 9110 section 5.6.4, as RFC 7838 section 3
+     * requires), or null when [s] is not one quoted-string (alt-authority must be quoted).
+     */
+    private fun unquote(s: String): String? {
+        if (s.length < 2 || s[0] != '"') return null
+        val out = StringBuilder()
+        var i = 1
+        while (i < s.length) {
+            when (val c = s[i]) {
+                '\\' -> {
+                    if (i + 1 >= s.length) return null
+                    out.append(s[i + 1])
+                    i += 2
+                }
+
+                '"' -> {
+                    return if (i == s.length - 1) out.toString() else null
+                }
+
+                else -> {
+                    out.append(c)
+                    i++
+                }
+            }
         }
+        return null // no closing quote
+    }
 
     private fun splitTopLevel(
         s: String,
@@ -155,7 +178,19 @@ internal object AltSvcParser {
         val out = ArrayList<String>()
         val cur = StringBuilder()
         var quoted = false
+        var escaped = false
         for (c in s) {
+            // inside a quoted-string a backslash takes the next character as is: an escaped quote does not end it
+            if (escaped) {
+                cur.append(c)
+                escaped = false
+                continue
+            }
+            if (quoted && c == '\\') {
+                cur.append(c)
+                escaped = true
+                continue
+            }
             if (c == '"') quoted = !quoted
             if (c == sep && !quoted) {
                 out += cur.toString()

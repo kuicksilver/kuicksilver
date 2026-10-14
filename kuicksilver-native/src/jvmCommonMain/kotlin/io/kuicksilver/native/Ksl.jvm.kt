@@ -108,6 +108,13 @@ public actual object Ksl {
 
     public actual fun ctxFreeze(ctx: Long): Unit = ctxCheck(ctx, KslNative.ctxFreeze(ctx))
 
+    public actual fun ctxVerifyChain(
+        ctx: Long,
+        chainDer: List<ByteArray>,
+        name: String?,
+        atEpochSeconds: Long,
+    ): Int = KslNative.ctxVerifyChain(ctx, frameDerList(chainDer), name, atEpochSeconds)
+
     public actual fun ctxLastError(ctx: Long): KslError {
         val o = IntArray(1)
         val m = KslNative.ctxLastError(ctx, o)

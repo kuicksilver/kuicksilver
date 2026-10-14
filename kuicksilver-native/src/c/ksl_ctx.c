@@ -40,11 +40,12 @@ static void keylog_cb(const SSL *ssl, const char *line) {
 /* RFC 8446 section 4.6.1 tickets: name16 | aes-256 key 32 | hmac-sha256 key 32; current key encrypts, all keys decrypt. */
 static int ticket_cb(SSL *ssl, unsigned char key_name[16], unsigned char iv[EVP_MAX_IV_LENGTH], EVP_CIPHER_CTX *ectx, EVP_MAC_CTX *hctx, int enc) {
     ksl_ssl *s = SSL_get_ex_data(ssl, 1); ksl_ctx *c = s->owner;
-    const uint8_t *k = NULL; if (!c->ticket_keys) return -1;   /* an override context without keys: no tickets */
-    /* KSL_OPT_NUM_TICKETS 0: tickets only from ksl_ssl_new_session_ticket (after Kotlin's pin verdict). TLS 1.2 issues its ticket inside the
-       handshake, before any verdict: 0 sends an empty one, so no 1.2 session is resumable (a 1.2 ticket would otherwise precede the pin verdict). SSL_OP_NO_TICKET would switch TLS 1.3
-       to stateful tickets, which need the server cache ksl keeps off. */
-    if (enc && c->num_tickets == 0 && SSL_version(ssl) < TLS1_3_VERSION) return 0;
+    const uint8_t *k = NULL; if (!c->ticket_keys) return 0;   /* an override context without keys: no ticket (TLS 1.3 sends none), none decrypts */
+    /* KSL_OPT_NUM_TICKETS 0: tickets only from ksl_ssl_new_session_ticket (after Kotlin's pin verdict); 0 here makes TLS 1.3 send none, so a
+       ticket can never precede the verdict, whatever count the SSL carries. TLS 1.2 issues its ticket inside the handshake, before any
+       verdict: 0 sends an empty one, so no 1.2 session is resumable. SSL_OP_NO_TICKET would switch TLS 1.3 to stateful tickets, which
+       need the server cache ksl keeps off. */
+    if (enc && c->num_tickets == 0 && (SSL_version(ssl) < TLS1_3_VERSION || !s->ticket_authorized)) return 0;
     if (enc) { k = c->ticket_keys; memcpy(key_name, k, 16); if (RAND_bytes(iv, 16) != 1) return -1; }
     else { for (size_t i = 0; i < c->ticket_key_count; i++) if (!memcmp(c->ticket_keys + i * 80, key_name, 16)) { k = c->ticket_keys + i * 80; break; } if (!k) return 0; }
     if (EVP_CipherInit_ex(ectx, EVP_aes_256_cbc(), NULL, k + 16, iv, enc) != 1) return -1;
@@ -54,19 +55,29 @@ static int ticket_cb(SSL *ssl, unsigned char key_name[16], unsigned char iv[EVP_
     return enc ? 1 : (k == c->ticket_keys ? 1 : 2);   /* 2 = decrypted with a previous key: renew the ticket */
 }
 
-/* 0-RTT (ADR-0015). The ticket app data carries the server's early context; a resumed ticket whose context differs keeps the
-   resumption but gets no early data. The final decision also needs the transport's verdict for this hello (its replay register). */
+/* Ticket app data: one flag byte (KSL_TICKET_AFTER_VERDICT: issued by ksl_ssl_new_session_ticket, after the pin verdict), then the
+   server's early context (0-RTT, ADR-0015); a resumed ticket whose early context differs keeps the resumption but gets no early data. The
+   final early-data decision also needs the transport's verdict for this hello (its replay register). Both callbacks are the base
+   (session) context's: OpenSSL keeps them across an SNI override, and they read the settings of the session's current owner. */
+#define KSL_TICKET_AFTER_VERDICT 1
 static int ticket_gen_cb(SSL *ssl, void *arg) {
     (void)arg; ksl_ssl *s = SSL_get_ex_data(ssl, 1); SSL_SESSION *sess = SSL_get0_session(ssl);
     if (!s || !sess) return 0;
-    return SSL_SESSION_set1_ticket_appdata(sess, s->early_ctx_len ? s->early_ctx : NULL, s->early_ctx_len);
+    uint8_t data[1 + sizeof s->early_ctx]; data[0] = s->ticket_authorized ? KSL_TICKET_AFTER_VERDICT : 0;
+    memcpy(data + 1, s->early_ctx, s->early_ctx_len);
+    return SSL_SESSION_set1_ticket_appdata(sess, data, 1 + s->early_ctx_len);
 }
 static SSL_TICKET_RETURN ticket_dec_cb(SSL *ssl, SSL_SESSION *sess, const unsigned char *keyname, size_t keyname_len, SSL_TICKET_STATUS status, void *arg) {
     (void)keyname; (void)keyname_len; (void)arg; ksl_ssl *s = SSL_get_ex_data(ssl, 1);
     switch (status) {
     case SSL_TICKET_SUCCESS: case SSL_TICKET_SUCCESS_RENEW: {
-        void *d = NULL; size_t l = 0;
-        if (s) s->early_ctx_match = SSL_SESSION_get0_ticket_appdata(sess, &d, &l) == 1 && l > 0 && l == s->early_ctx_len && !memcmp(d, s->early_ctx, l);
+        void *d = NULL; size_t l = 0; const uint8_t *p;
+        if (SSL_SESSION_get0_ticket_appdata(sess, &d, &l) != 1 || l < 1) { d = NULL; l = 0; }
+        p = d;
+        /* a context that issues tickets only after the pin verdict (NUM_TICKETS 0) resumes only such tickets: a ticket from anywhere else
+           (another configuration sharing keys and session context, an in-handshake ticket) proves no verdict, so a full handshake runs */
+        if (s && s->owner->num_tickets == 0 && !(p && (p[0] & KSL_TICKET_AFTER_VERDICT))) return SSL_TICKET_RETURN_IGNORE;
+        if (s) s->early_ctx_match = p && l > 1 && l - 1 == s->early_ctx_len && !memcmp(p + 1, s->early_ctx, l - 1);
         return SSL_TICKET_RETURN_USE_RENEW;   /* client tickets are single-use: every resumption gets a fresh one */
     }
     case SSL_TICKET_EMPTY: case SSL_TICKET_NO_DECRYPT: return SSL_TICKET_RETURN_IGNORE_RENEW;
@@ -78,7 +89,25 @@ void ksl_ctx_enable_early_data(SSL_CTX *ctx) {
     /* OpenSSL's own anti-replay makes tickets stateful in the server cache ksl keeps off: with it every early data would be refused */
     SSL_CTX_set_options(ctx, SSL_OP_NO_ANTI_REPLAY);
     SSL_CTX_set_allow_early_data_cb(ctx, allow_early_data_cb, NULL);
-    SSL_CTX_set_session_ticket_cb(ctx, ticket_gen_cb, ticket_dec_cb, NULL);
+}
+/* SSL_new copies these settings from the SSL_CTX into the session, and SSL_set_SSL_CTX moves only the certificate and the session id
+   context: an SNI override (ksl_client_hello_cb) applies the rest itself, so that every setting of the override is in effect (ticket
+   count, version range, options, verify mode and parameters, suites, groups, early data). The ALPN select, ticket key, keylog and
+   verify callbacks are read from the current or the session context and look up the session's owner. */
+int ksl_ctx_apply_to_ssl(ksl_ctx *o, SSL *ssl) {
+    SSL_CTX *x = o->ctx; ERR_clear_error();
+    SSL_clear_options(ssl, SSL_get_options(ssl) & ~SSL_CTX_get_options(x)); SSL_set_options(ssl, SSL_CTX_get_options(x));
+    if (SSL_set_min_proto_version(ssl, SSL_CTX_get_min_proto_version(x)) != 1 || SSL_set_max_proto_version(ssl, SSL_CTX_get_max_proto_version(x)) != 1) return 0;
+    if (SSL_set_num_tickets(ssl, SSL_CTX_get_num_tickets(x)) != 1) return 0;
+    SSL_set_verify(ssl, SSL_CTX_get_verify_mode(x), SSL_CTX_get_verify_callback(x));
+    X509_VERIFY_PARAM *p = SSL_get0_param(ssl); uint32_t inh = X509_VERIFY_PARAM_get_inh_flags(p);
+    X509_VERIFY_PARAM_set_inh_flags(p, X509_VP_FLAG_OVERWRITE | X509_VP_FLAG_RESET_FLAGS);
+    int ok = X509_VERIFY_PARAM_inherit(p, SSL_CTX_get0_param(x)) == 1; X509_VERIFY_PARAM_set_inh_flags(p, inh);
+    if (!ok || SSL_set_ciphersuites(ssl, o->suites13) != 1 || SSL_set_cipher_list(ssl, o->list12) != 1 || SSL_set1_groups_list(ssl, o->groups) != 1) return 0;
+    if (SSL_set_session_id_context(ssl, o->sid_ctx, (unsigned)o->sid_ctx_len) != 1) return 0;
+    if (SSL_set_max_early_data(ssl, SSL_CTX_get_max_early_data(x)) != 1 || SSL_set_recv_max_early_data(ssl, SSL_CTX_get_recv_max_early_data(x)) != 1) return 0;
+    SSL_set_allow_early_data_cb(ssl, o->early_data ? allow_early_data_cb : NULL, NULL);
+    return 1;
 }
 
 ksl_ctx *ksl_ctx_new(int role) {
@@ -89,17 +118,22 @@ ksl_ctx *ksl_ctx_new(int role) {
     SSL_CTX_set_options(c->ctx, SSL_OP_NO_RENEGOTIATION | SSL_OP_NO_COMPRESSION);
     SSL_CTX_clear_options(c->ctx, SSL_OP_LEGACY_SERVER_CONNECT);
     SSL_CTX_set_cipher_list(c->ctx, TLS12_PROFILE); SSL_CTX_set_ciphersuites(c->ctx, TLS13_DEFAULT);
+    snprintf(c->list12, sizeof c->list12, "%s", TLS12_PROFILE); snprintf(c->suites13, sizeof c->suites13, "%s", TLS13_DEFAULT);
     /* One tuple of key-exchange groups: a server takes the client's X25519 key share instead of answering HelloRetryRequest for
        X25519MLKEM768 when the client supports it but sent no share for it (OpenSSL's default puts the hybrid alone in the first
        tuple; ngtcp2 and others ship X25519 shares only, and the extra round trip doubled handshake loss in interop). A client
        still sends shares for the hybrid and X25519 (the '*' marks), so a post-quantum server picks the hybrid in one flight. */
-    if (SSL_CTX_set1_groups_list(c->ctx, role == KSL_SERVER ? "X25519MLKEM768:X25519:secp256r1:X448:secp384r1:secp521r1" : "*X25519MLKEM768:*X25519:secp256r1:X448:secp384r1:secp521r1") != 1) { SSL_CTX_free(c->ctx); free(c); return NULL; }
+    c->groups = role == KSL_SERVER ? "X25519MLKEM768:X25519:secp256r1:X448:secp384r1:secp521r1" : "*X25519MLKEM768:*X25519:secp256r1:X448:secp384r1:secp521r1";
+    if (SSL_CTX_set1_groups_list(c->ctx, c->groups) != 1) { SSL_CTX_free(c->ctx); free(c); return NULL; }
     SSL_CTX_set_cert_verify_callback(c->ctx, ksl_cert_verify_cb, c);
     SSL_CTX_set_verify(c->ctx, role == KSL_CLIENT ? SSL_VERIFY_PEER : SSL_VERIFY_NONE, NULL);
     SSL_CTX_set_num_tickets(c->ctx, 0); SSL_CTX_set_keylog_callback(c->ctx, keylog_cb); SSL_CTX_set_info_callback(c->ctx, info_cb);
     SSL_CTX_set_session_cache_mode(c->ctx, SSL_SESS_CACHE_OFF);
     /* required by OpenSSL to resume a session whose handshake verified a client certificate */
-    SSL_CTX_set_session_id_context(c->ctx, (const unsigned char *)"ksl", 3);
+    SSL_CTX_set_session_id_context(c->ctx, (const unsigned char *)"ksl", 3); memcpy(c->sid_ctx, "ksl", 3); c->sid_ctx_len = 3;
+    /* every server stamps its tickets (the flag byte of ticket_gen_cb) and checks them on resumption */
+    if (role == KSL_SERVER) SSL_CTX_set_session_ticket_cb(c->ctx, ticket_gen_cb, ticket_dec_cb, NULL);
+    if (role == KSL_SERVER) SSL_CTX_set_client_hello_cb(c->ctx, ksl_client_hello_cb, c);   /* QUIC ALPN check, SNI pause (KSL_OPT_SNI_PAUSE) */
     ksl_live_add(KSL_LIVE_CTX, 1);
     return c;
 }
@@ -198,13 +232,18 @@ int ksl_ctx_set_roots(ksl_ctx *c, const uint8_t *roots, size_t roots_len) {
     STACK_OF(X509) *sk = NULL; if (!ksl_parse_chain(roots, roots_len, &sk)) { ksl_ctx_set_error(c, KSL_E_BAD_ARG, "ksl: bad roots framing"); return KSL_ERROR; }
     int ok = 1; for (int i = 0; ok && i < sk_X509_num(sk); i++) ok = X509_STORE_add_cert(st, sk_X509_value(sk, i)) == 1;
     sk_X509_pop_free(sk, X509_free);
+    /* AnchoredCa: every listed certificate is a trust anchor, also one that is not self-signed (an intermediate), as a JDK TrustAnchor,
+       an Apple anchor certificate or Go's root pool; without PARTIAL_CHAIN OpenSSL accepts a chain only up to a self-signed root */
+    if (ok) ok = X509_VERIFY_PARAM_set_flags(SSL_CTX_get0_param(c->ctx), X509_V_FLAG_PARTIAL_CHAIN) == 1;
     if (!ok) { ksl_ctx_set_error(c, KSL_E_BAD_ARG, "ksl: root rejected"); return KSL_ERROR; }
     return KSL_OK;
 }
 int ksl_ctx_set_ciphers(ksl_ctx *c, const char *tls13_suites, const char *tls12_list) {
     if (frozen(c)) return KSL_ERROR; ERR_clear_error();
-    if (tls13_suites && SSL_CTX_set_ciphersuites(c->ctx, tls13_suites) != 1) { ksl_ctx_set_error(c, KSL_E_BAD_ARG, "ksl: bad TLS 1.3 suites"); return KSL_ERROR; }
-    if (tls12_list && SSL_CTX_set_cipher_list(c->ctx, tls12_list) != 1) { ksl_ctx_set_error(c, KSL_E_BAD_ARG, "ksl: bad TLS 1.2 list"); return KSL_ERROR; }
+    if (tls13_suites && (strlen(tls13_suites) >= sizeof c->suites13 || SSL_CTX_set_ciphersuites(c->ctx, tls13_suites) != 1)) { ksl_ctx_set_error(c, KSL_E_BAD_ARG, "ksl: bad TLS 1.3 suites"); return KSL_ERROR; }
+    if (tls12_list && (strlen(tls12_list) >= sizeof c->list12 || SSL_CTX_set_cipher_list(c->ctx, tls12_list) != 1)) { ksl_ctx_set_error(c, KSL_E_BAD_ARG, "ksl: bad TLS 1.2 list"); return KSL_ERROR; }
+    if (tls13_suites) snprintf(c->suites13, sizeof c->suites13, "%s", tls13_suites);
+    if (tls12_list) snprintf(c->list12, sizeof c->list12, "%s", tls12_list);
     return KSL_OK;
 }
 int ksl_ctx_set_ticket_keys(ksl_ctx *c, const uint8_t *keys, size_t n) {
@@ -220,6 +259,7 @@ int ksl_ctx_set_ticket_keys(ksl_ctx *c, const uint8_t *keys, size_t n) {
 int ksl_ctx_set_session_context(ksl_ctx *c, const uint8_t *sid_ctx, size_t len) {
     if (frozen(c)) return KSL_ERROR; ERR_clear_error();
     if (!sid_ctx || len == 0 || len > SSL_MAX_SID_CTX_LENGTH || SSL_CTX_set_session_id_context(c->ctx, sid_ctx, (unsigned)len) != 1) { ksl_ctx_set_error(c, KSL_E_BAD_ARG, "ksl: session context is 1..32 bytes"); return KSL_ERROR; }
+    memcpy(c->sid_ctx, sid_ctx, len); c->sid_ctx_len = len;
     return KSL_OK;
 }
 int ksl_ctx_set_option(ksl_ctx *c, int option, int value) {
@@ -247,7 +287,8 @@ int ksl_ctx_set_option(ksl_ctx *c, int option, int value) {
         if (c->role != KSL_SERVER) { ksl_ctx_set_error(c, KSL_E_BAD_ARG, "ksl: early data option is server-only"); return KSL_ERROR; }
         c->early_data = value != 0; if (c->early_data) ksl_ctx_enable_early_data(c->ctx); return KSL_OK;
     case KSL_OPT_SNI_PAUSE:
-        c->sni_pause = value != 0; SSL_CTX_set_client_hello_cb(c->ctx, value ? ksl_client_hello_cb : NULL, c); return KSL_OK;
+        if (c->role != KSL_SERVER) { ksl_ctx_set_error(c, KSL_E_BAD_ARG, "ksl: SNI pause is server-only"); return KSL_ERROR; }
+        c->sni_pause = value != 0; return KSL_OK;
     default: ksl_ctx_set_error(c, KSL_E_BAD_ARG, "ksl: unknown option"); return KSL_ERROR;
     }
 }

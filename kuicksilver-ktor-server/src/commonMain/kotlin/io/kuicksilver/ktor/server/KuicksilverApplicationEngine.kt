@@ -104,7 +104,8 @@ public class KuicksilverApplicationEngine(
         /**
          * Accept 0-RTT on HTTP/3 (off by default; ADR-0015). Early requests can be replayed by an attacker: by default only
          * GET, HEAD and OPTIONS run before the handshake completes (`http3Settings.earlyData` decides), every other request
-         * waits for it. Handlers of early requests must be free of side effects; see `ApplicationRequest.receivedEarly`.
+         * waits for it. Handlers of early requests must be free of side effects; see `ApplicationRequest.receivedEarly`. A
+         * request a gateway marked `Early-Data` (RFC 8470 section 5.1) is treated as early whatever this setting.
          */
         @io.kuicksilver.annotations.ExperimentalKuicksilverApi
         public var quicEarlyData: Boolean = false
@@ -173,10 +174,8 @@ public class KuicksilverApplicationEngine(
 
     override suspend fun startSuspend(wait: Boolean): ApplicationEngine {
         @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class, io.ktor.utils.io.InternalAPI::class)
-        io.kuicksilver.ktor.network.KtorVersionPolicy.check(
-            "ktor-server-core" to io.ktor.server.engine.BaseApplicationEngine::class,
-            "ktor-server-cio" to io.ktor.server.cio.backend.ServerIncomingConnection::class,
-        ) // docs/guide/ktor.md, "Supported Ktor versions"
+        io.kuicksilver.ktor.network.KtorVersionPolicy
+            .check(*KTOR_ARTIFACTS.toTypedArray()) // docs/guide/ktor.md, "Supported Ktor versions"
         serverJob.start()
         startupJob.await()
         monitor.raiseCatching(ServerReady, environment, environment.log)
@@ -323,3 +322,16 @@ public class KuicksilverApplicationEngine(
 
 /** `EngineSSLConnectorConfig` (JVM `sslConnector {}`) as a Kuicksilver connector; null on platforms without it. */
 internal expect fun platformTlsConnector(c: EngineConnectorConfig): KuicksilverTlsConnector?
+
+/**
+ * The Ktor artifacts the server engine depends on beyond public API (docs/ktor-internal-api.md) or vendors code of, each
+ * with a class it contains, for the startup version check: the server core, the HTTP/1.1 parser, the sockets (adapted on
+ * Native, `kuicksilver-ktor-network`) and the I/O channels (`readBuffer`, `@InternalAPI` channel operations).
+ */
+internal val KTOR_ARTIFACTS: List<Pair<String, kotlin.reflect.KClass<*>>> =
+    listOf(
+        "ktor-server-core" to io.ktor.server.engine.BaseApplicationEngine::class,
+        "ktor-http-cio" to io.ktor.http.cio.Request::class,
+        "ktor-network" to io.ktor.network.selector.SelectorManager::class,
+        "ktor-io" to io.ktor.utils.io.ByteReadChannel::class,
+    )

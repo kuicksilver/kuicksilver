@@ -45,6 +45,11 @@ static jint j_ctx_use_ticket_keys(JNIEnv *e, jclass c, jlong h, jint id) { (void
 static jint j_ctx_set_session_context(JNIEnv *e, jclass c, jlong h, jbyteArray a) { (void)c; bytes b = get_bytes(e, a); int r = ksl_ctx_set_session_context(CTX(h), b.p, b.n); drop(&b); return r; }
 static jint j_ctx_set_option(JNIEnv *e, jclass c, jlong h, jint o, jint v) { (void)e; (void)c; return ksl_ctx_set_option(CTX(h), o, v); }
 static jint j_ctx_freeze(JNIEnv *e, jclass c, jlong h) { (void)e; (void)c; return ksl_ctx_freeze(CTX(h)); }
+static jint j_ctx_verify_chain(JNIEnv *e, jclass c, jlong h, jbyteArray a, jstring name, jlong at) {
+    (void)c; bytes b = get_bytes(e, a); const char *n = cstr(e, name); int err = 0;
+    int r = ksl_ctx_verify_chain(CTX(h), b.p, b.n, n, (int64_t)at, &err); cstr_free(e, name, n); drop(&b);
+    return r == KSL_OK ? 0 : err ? err : -1;
+}
 static jstring j_ctx_last_error(JNIEnv *e, jclass c, jlong h, jintArray out) { (void)c; uint32_t code; char m[512]; ksl_ctx_last_error(CTX(h), &code, m, sizeof m); jint v = (jint)code; (*e)->SetIntArrayRegion(e, out, 0, 1, &v); return (*e)->NewStringUTF(e, m); }
 
 static jlong j_ssl_new(JNIEnv *e, jclass c, jlong h, jint mode) { (void)e; (void)c; return H(ksl_ssl_new(CTX(h), mode)); }
@@ -196,7 +201,7 @@ static const JNINativeMethod methods[] = {
     {"ctxNew", "(I)J", (void *)j_ctx_new}, {"ctxFree", "(J)V", (void *)j_ctx_free}, {"ctxSetAlpn", "(J[B)I", (void *)j_ctx_set_alpn},
     {"ctxSetIdentity", "(J[B[B)I", (void *)j_ctx_set_identity}, {"ctxSetIdentityPkey", "(J[BJ)I", (void *)j_ctx_set_identity_pkey}, {"pkeyNew", "([B)J", (void *)j_pkey_new}, {"pkeyFree", "(J)V", (void *)j_pkey_free},
     {"ctxSetRoots", "(J[B)I", (void *)j_ctx_set_roots}, {"ctxSetCiphers", "(J" S_STR S_STR ")I", (void *)j_ctx_set_ciphers},
-    {"ctxUseDefaultTicketKeys", "(JI)I", (void *)j_ctx_use_default_ticket_keys}, {"ticketKeysRegister", "([B)I", (void *)j_ticket_keys_register}, {"ctxUseTicketKeys", "(JI)I", (void *)j_ctx_use_ticket_keys}, {"ctxSetSessionContext", "(J[B)I", (void *)j_ctx_set_session_context}, {"ctxSetOption", "(JII)I", (void *)j_ctx_set_option}, {"ctxFreeze", "(J)I", (void *)j_ctx_freeze}, {"ctxLastError", "(J[I)" S_STR, (void *)j_ctx_last_error},
+    {"ctxUseDefaultTicketKeys", "(JI)I", (void *)j_ctx_use_default_ticket_keys}, {"ticketKeysRegister", "([B)I", (void *)j_ticket_keys_register}, {"ctxUseTicketKeys", "(JI)I", (void *)j_ctx_use_ticket_keys}, {"ctxSetSessionContext", "(J[B)I", (void *)j_ctx_set_session_context}, {"ctxSetOption", "(JII)I", (void *)j_ctx_set_option}, {"ctxFreeze", "(J)I", (void *)j_ctx_freeze}, {"ctxVerifyChain", "(J[B" S_STR "J)I", (void *)j_ctx_verify_chain}, {"ctxLastError", "(J[I)" S_STR, (void *)j_ctx_last_error},
     {"sslNew", "(JI)J", (void *)j_ssl_new}, {"sslFree", "(J)V", (void *)j_ssl_free}, {"sslSet", "(JI[B)I", (void *)j_ssl_set},
     {"sslGet", "(JI)[B", (void *)j_ssl_get}, {"sslPeerChainCount", "(JI)I", (void *)j_ssl_peer_chain_count}, {"sslPeerChainItem", "(JII)[B", (void *)j_ssl_peer_chain_item},
     {"sslVerifyResume", "(JII)I", (void *)j_ssl_verify_resume}, {"sslClientHello", "(J)[B", (void *)j_ssl_client_hello}, {"sslSniResume", "(JJI)I", (void *)j_ssl_sni_resume},

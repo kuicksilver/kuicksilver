@@ -7,8 +7,10 @@ package io.kuicksilver.ktor.client
 import io.kuicksilver.ktor.client.h1.ConnectionPool
 import io.kuicksilver.ktor.client.h1.PoolLimits
 import io.kuicksilver.ktor.client.h1.PooledConnection
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -301,5 +303,41 @@ class ConnectionPoolTest {
                 }
             assertEquals(200, results.awaitAll().size)
             assertTrue(p.liveCount <= 4)
+        }
+
+    /**
+     * A waiter cancelled while [ConnectionPool.shutdown] fails the waiters (after it left the queue, before its own failure
+     * arrived) ends with a CancellationException like the others, not "This job has not completed yet".
+     */
+    @Test fun waiterCancelledDuringShutdownGetsCancellation() =
+        test {
+            val p = pool(maxPerRoute = 1)
+            val held = p.get("a")
+            var secondFailure: Throwable? = null
+            lateinit var second: Job
+            // Unconfined: the first waiter's failure runs inside shutdown() and cancels the second before shutdown reaches it
+            val first =
+                launch(Dispatchers.Unconfined) {
+                    try {
+                        p.get("a")
+                    } finally {
+                        second.cancel()
+                    }
+                }
+            second =
+                launch(Dispatchers.Unconfined) {
+                    try {
+                        p.get("a")
+                    } catch (e: Throwable) {
+                        secondFailure = e
+                    }
+                }
+            assertEquals(2, p.waiterCount)
+            p.shutdown()
+            first.join()
+            second.join()
+            assertTrue(secondFailure is CancellationException, "the second waiter failed with $secondFailure")
+            held.close()
+            assertEquals(0, p.liveCount)
         }
 }

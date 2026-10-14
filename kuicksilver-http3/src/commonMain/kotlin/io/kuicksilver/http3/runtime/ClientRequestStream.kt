@@ -18,7 +18,6 @@ import io.kuicksilver.http3.Http3Stream
 import io.kuicksilver.http3.frame.ControlFrames
 import io.kuicksilver.http3.frame.FrameType
 import io.kuicksilver.http3.frame.H3ProtocolError
-import io.kuicksilver.http3.message.FieldValidator
 import io.kuicksilver.http3.message.MalformedMessage
 import io.kuicksilver.http3.message.PriorityField
 import io.kuicksilver.http3.message.PseudoHeaders
@@ -68,10 +67,9 @@ internal suspend fun H3Session.connect(
             throw Http3Exception.ConnectRejected(resp.status, resp.headers)
         }
         val writer = ResponseWriterImpl(this@connect, resp.stream, null)
-        // the datagram registration goes when both directions ended, or at a reset
+        // the datagram registration goes when the receive side ended (later datagrams are dropped, RFC 9297 section 2.1), or at a reset
         scope.launch {
             resp.pump.join()
-            writer.pump.join()
             datagrams.unregister(resp.streamId)
         }
         Http3StreamImpl(this@connect, resp.stream, resp.body, writer, resp.datagramChannel!!, resp.headers) {
@@ -117,14 +115,10 @@ private suspend fun H3Session.requestOnce(
         if (closed.isCompleted) throw connectionError()
         if (goAwayReceived.value != null) throw Http3Exception.RequestNotProcessed(true)
         check(goAwaySentId == null) { "this client sent GOAWAY: no new requests" }
-        for ((n, v) in r.headers.fields) {
-            require(
-                !n.startsWith(':') && FieldValidator.checkName(n) == null && FieldValidator.checkValue(v) == null &&
-                    n !in FieldValidator.CONNECTION_SPECIFIC,
-            ) { "invalid request field '$n'" }
-        }
         // before a stream is opened: a refused section costs no stream credit (the id is not known yet: -1)
-        checkPeerFieldLimit(-1, PseudoHeaders.buildRequest(r))
+        val fields = PseudoHeaders.buildRequest(r)
+        PseudoHeaders.requireValidRequest(fields)
+        checkPeerFieldLimit(-1, fields)
         val st =
             try {
                 quic.openBidi(r.priority ?: StreamPriority.Default)
@@ -249,6 +243,7 @@ private suspend fun H3Session.exchange(
                         frames,
                         sender,
                         sendFailure,
+                        tunnel = r.method == "CONNECT" && status in 200..299,
                         bodyLimit =
                             when {
                                 r.method == "CONNECT" && status in 200..299 -> null
@@ -330,19 +325,22 @@ private suspend fun H3Session.sendBody(
             body.closedCause?.let { throw it }
         }
         r.trailers?.let { cb -> withContext(callbacks) { cb() } }?.let { t ->
-            for ((n, v) in t.fields) {
-                require(
-                    !n.startsWith(':') && FieldValidator.checkName(n) == null && FieldValidator.checkValue(v) == null,
-                ) { "invalid trailer field '$n'" }
-            }
-            try {
-                checkPeerFieldLimit(st.id, t.fields)
-            } catch (e: Http3Exception.FieldSectionTooLarge) {
+            val refused =
+                try {
+                    PseudoHeaders.requireValidTrailers(t.fields)
+                    checkPeerFieldLimit(st.id, t.fields)
+                    null
+                } catch (e: IllegalArgumentException) {
+                    e
+                } catch (e: Http3Exception.FieldSectionTooLarge) {
+                    e
+                }
+            if (refused != null) {
                 // the request cannot be completed: the exchange is abandoned both ways and its caller gets this failure
-                sendFailure.completeExceptionally(e)
+                sendFailure.completeExceptionally(refused)
                 runCatching { st.reset(Http3ErrorCode.REQUEST_CANCELLED) }
                 runCatching { st.stopSending(Http3ErrorCode.REQUEST_CANCELLED) }
-                r.body?.cancel(e)
+                r.body?.cancel(refused)
                 return
             }
             st.output.writeFrame(FrameType.HEADERS, qpack.encode(st.id, t.fields))
@@ -372,6 +370,7 @@ internal class ResponseImpl(
     frames: RequestFrames,
     private val sender: Job?,
     sendFailure: CompletableDeferred<Unit>? = null,
+    tunnel: Boolean = false,
     bodyLimit: Long? = null,
 ) : Http3Response {
     private val st get() = stream
@@ -383,7 +382,14 @@ internal class ResponseImpl(
     override val trailers: Deferred<Http3Headers?> get() = trailersDeferred
     internal val pump: Job =
         session.scope.launch {
-            session.pumpBody(st, frames, bodyChannel, trailersDeferred, bodyLimit) { f -> session.run { abortClient(f.code) } }
+            session.pumpBody(
+                st,
+                frames,
+                bodyChannel,
+                trailersDeferred,
+                bodyLimit,
+                tunnel = { tunnel },
+            ) { f -> session.run { abortClient(f.code) } }
         }
 
     init {

@@ -31,6 +31,8 @@ internal class QpackDecoder(
     val maxFieldSectionSize: Long,
     private val limits: QpackLimits = QpackLimits(),
 ) {
+    /** Field sections: no single string can exceed the section limit (RFC 9204 section 7.4 ties the ceiling to it). */
+    private val fieldLimits = QpackLimits(limits.maxInteger, maxFieldSectionSize.coerceIn(1L, Int.MAX_VALUE.toLong()).toInt())
     private val table = DynamicTable(0)
     private val pend = QpackWriter(0) // an encoder-stream instruction cut by the transport, appended to as its bytes arrive
     private var needed = 0 // the full length of the instruction in [pend] once known (0: parse again when more arrives)
@@ -185,35 +187,12 @@ internal class QpackDecoder(
         while (r.remaining > 0) {
             val b = r.peek()
             val f: Pair<String, String> =
-                when {
-                    b and 0x80 != 0 -> {
-                        val t = b and 0x40 != 0
-                        val i = r.readInt(6, limits)
-                        if (t) static(i) else dynamic(base - i - 1)
-                    }
-
-                    b and 0x40 != 0 -> {
-                        val t =
-                            b and 0x10 != 0
-                        val i = r.readInt(4, limits)
-                        val name = if (t) static(i).first else dynamic(base - i - 1).first
-                        name to
-                            r.readString(7, limits)
-                    }
-
-                    b and 0x20 != 0 -> {
-                        val name = r.readString(3, limits)
-                        name to r.readString(7, limits)
-                    }
-
-                    b and 0x10 != 0 -> {
-                        dynamic(base + r.readInt(4, limits))
-                    }
-
-                    else -> {
-                        val i = r.readInt(3, limits)
-                        dynamic(base + i).first to r.readString(7, limits)
-                    }
+                try {
+                    fieldLine(r, b, base, ::dynamic, ::static)
+                } catch (e: QpackStringTooLong) {
+                    // one string larger than we decode: the section is too large, a stream error (RFC 9204 section 7.4)
+                    acknowledge(streamId, ric)
+                    return DecodeResult.TooLarge
                 }
             size += entrySize(f.first, f.second)
             if (size > maxFieldSectionSize) {
@@ -225,6 +204,45 @@ internal class QpackDecoder(
         acknowledge(streamId, ric)
         return DecodeResult.Decoded(fields, size)
     }
+
+    /** One field line (RFC 9204 sections 4.5.2-4.5.6) starting with byte [b]. */
+    private fun fieldLine(
+        r: QpackReader,
+        b: Int,
+        base: Long,
+        dynamic: (Long) -> Pair<String, String>,
+        static: (Long) -> Pair<String, String>,
+    ): Pair<String, String> =
+        when {
+            b and 0x80 != 0 -> {
+                val t = b and 0x40 != 0
+                val i = r.readInt(6, limits)
+                if (t) static(i) else dynamic(base - i - 1)
+            }
+
+            b and 0x40 != 0 -> {
+                val t =
+                    b and 0x10 != 0
+                val i = r.readInt(4, limits)
+                val name = if (t) static(i).first else dynamic(base - i - 1).first
+                name to
+                    r.readString(7, fieldLimits)
+            }
+
+            b and 0x20 != 0 -> {
+                val name = r.readString(3, fieldLimits)
+                name to r.readString(7, fieldLimits)
+            }
+
+            b and 0x10 != 0 -> {
+                dynamic(base + r.readInt(4, limits))
+            }
+
+            else -> {
+                val i = r.readInt(3, limits)
+                dynamic(base + i).first to r.readString(7, fieldLimits)
+            }
+        }
 
     /** RFC 9204 section 4.5.1.1. */
     private fun requiredInsertCount(

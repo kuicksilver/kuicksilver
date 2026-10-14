@@ -23,6 +23,8 @@ struct ksl_ctx {
     int role, verify_mode, client_cert_mode, frozen, sni_pause, keylog, generic_alerts, early_data;
     size_t num_tickets;
     uint8_t alpn[256]; size_t alpn_len;
+    /* settings SSL_new copies into each session, kept so an SNI override can apply them (ksl_ctx_apply_to_ssl) */
+    char suites13[256], list12[512]; const char *groups; uint8_t sid_ctx[32]; size_t sid_ctx_len;
     uint8_t *ticket_keys; size_t ticket_key_count;   /* 80-byte entries, first encrypts */
     int shared_roots;                                /* the cert store is the process-wide system store: never modified */
     uint32_t last_err; char last_msg[KSL_MSG];
@@ -46,6 +48,8 @@ struct ksl_ssl {
     uint8_t early_ctx[64]; size_t early_ctx_len; int early_allow, early_ctx_match;
     /* server SNI pause */
     int sni_pending, sni_decision_alert; ksl_ctx *sni_override;
+    /* KSL_OPT_NUM_TICKETS 0: set by ksl_ssl_new_session_ticket, the only way such a session gets a ticket (after the pin verdict) */
+    int ticket_authorized;
     /* TCP mode */
     BIO *net;                                        /* our end of the bio pair */
     /* keylog lines */
@@ -87,6 +91,7 @@ X509_STORE *ksl_ctx_private_store(ksl_ctx *c);
 
 /* 0-RTT (ksl_ctx.c) */
 void ksl_ctx_enable_early_data(SSL_CTX *ctx);
+int ksl_ctx_apply_to_ssl(ksl_ctx *o, SSL *ssl);
 
 /* keys (ksl_key.c) */
 ksl_key *ksl_key_from_secret(int aead, const uint8_t *secret, size_t slen, uint32_t version);
