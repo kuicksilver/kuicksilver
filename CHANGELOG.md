@@ -366,6 +366,46 @@ Flow control (`kuicksilver-quic`; found with the BBR simulations, 2026-10-13):
   loss. Lost `MAX_DATA` / `MAX_STREAM_DATA` / `RESET_STREAM` / `STOP_SENDING` are queued once per stream instead of
   once per loss report.
 
+QUIC TLS, key update and versions (`kuicksilver-quic`, `kuicksilver-native`; conformance review of 2026-10-14):
+
+- Key update (RFC 9001 §6.1): after our own update the previous read key now stays until a packet of the new phase
+  authenticated, then 3 x PTO; it used to go 3 x PTO after the update, so on an idle connection the peer's later
+  old-phase packets failed authentication. A further update waits 3 x PTO after the ACK that confirmed the previous
+  one (§6.5), and `QuicConnection.keyUpdate()` is woken when that wait ends.
+- A peer without the quic_transport_parameters extension is closed with 0x016d (RFC 9001 §8.2); the handshake used to
+  complete without the RFC 9000 §7.3 connection ID checks. A ClientHello with a legacy_session_id is a
+  PROTOCOL_VIOLATION (§8.4), and so is a NewSessionTicket with a max_early_data_size other than 0xffffffff (§4.6.1;
+  OpenSSL's illegal_parameter is mapped). No packet is processed after closing at the AEAD integrity limit (§6.6).
+- 0-RTT and QUIC v2 (RFC 9369 §4.1, §5): across a compatible v1 -> v2 upgrade the client keeps 0-RTT in its original
+  version and the server takes it with original-version keys (it never decrypted before); tickets carry the
+  negotiated version of their connection and are not resumed for a connection started in another version, by the
+  client nor by `ksl`. A Retry in another version than the client's Initial is ignored.
+- 0-RTT packets use only the remembered transport parameters until 1-RTT (RFC 9000 §7.4.1); a smaller
+  max_datagram_frame_size on acceptance is a PROTOCOL_VIOLATION (RFC 9221 §3).
+- version_information (RFC 9368 §4): an Available Version of zero and a client Chosen Version missing from its
+  Available Versions are parsing failures; an empty server list after Version Negotiation is VERSION_NEGOTIATION_ERROR.
+
+QUIC congestion control and loss recovery (conformance review of 2026-10-14):
+
+- Persistent congestion (RFC 9002 §7.6.2) needs two lost ack-eliciting packets sent after the first RTT sample, with no
+  packet between them acknowledged, and is judged per path. A lost first Initial and two lost PTO probes used to drop
+  every such handshake to the 2-datagram window; ACK-only and skipped packet numbers no longer break the period, and
+  padding-only packets no longer end it. After persistent congestion min_rtt restarts from the newest sample (§5.2).
+- The window grows only when the sender used it before the ACK frame (RFC 9002 §7.8): an ACK of a whole window in slow
+  start counted half of it as application-limited, and in congestion avoidance a sender using 55 % of its window
+  still grew it. The margins are quic-go's: at most 3 datagrams unused, or more than half in flight in slow start.
+- CUBIC: the time since the epoch no longer includes application-limited ACKs or time with nothing in flight (RFC 9438
+  §4.2; after 30 s idle the window grew 1.5x per RTT past W_max); the Reno-friendly alpha becomes 1 once W_est reaches
+  the window before the last reduction (§4.3). HyStart++ takes every RTT sample of a round, checks on each ACK from the
+  8th sample, and uses the minimum of the round that entered Conservative Slow Start as baseline (RFC 9406 §4.2).
+- NewReno (not the default) kept the remainder of max_datagram_size x acked / cwnd: congestion avoidance stalled above
+  a 1.44 MB window.
+- BBR: CE reports count toward the Startup exit like lost ranges (draft-ietf-ccwg-bbr-06 §3.7); a larger datagram size
+  from PMTUD no longer raises the window (RFC 8899 §3), the 4-datagram floor applies when the window is next set.
+- ECN: after the ten test packets nothing is marked until an ACK validates the path (RFC 9000 appendix A.4), so a path
+  that drops marked datagrams costs those ten packets instead of everything sent until a PTO; only packets loss
+  detection tracks count as test packets. CE-marked ack-eliciting packets are acknowledged at once (§13.2.1).
+
 QUIC runtime and sockets:
 
 - The `UnsupportedOperationException` of a Kotlin/Native QUIC server without the accelerated socket named Linux and
@@ -687,6 +727,13 @@ Samples and testing:
 
 ### Security
 
+- CRYPTO data at an encryption level TLS has left was buffered without bound (RFC 9001 §4.1.3): after one valid
+  ClientHello, in-order Initial CRYPTO went to a `ksl` buffer OpenSSL never reads again, so a client could grow a
+  server's memory at its own bandwidth until the handshake timeout, uncounted by admission. Such data is now a
+  PROTOCOL_VIOLATION (the Initial stream is sealed when TLS reads Handshake, the Handshake stream at completion), the
+  Initial stream ends at 64 KiB and the Handshake stream at 256 KiB (CRYPTO_BUFFER_EXCEEDED, as ngtcp2), `ksl` refuses
+  data below its read level and holds at most 256 KiB unread per level, and that data counts toward admission's
+  handshake buffer bytes.
 - Findings of the local fuzzing campaigns (`tools/fuzz/campaign.sh`, threat model §3.10), each with a regression input
   and a test: a server endpoint answering a short-header datagram over 1500 bytes to an unknown connection ID with a
   stateless reset overflowed its answer buffer and threw out of `EndpointCore.handleDatagram`; a client that received a
