@@ -454,6 +454,23 @@ QUIC runtime and sockets:
 
 TLS and native layer (`kuicksilver-tls`, `kuicksilver-native`):
 
+- A client resuming under the OpenSSL verifier (`AnchoredCa`, `Platform` on Linux, and `Pinned`/`ExpectedName` over them)
+  re-checked only the pins, so a chain that expired after the full handshake kept resuming, and sending 0-RTT, for the
+  ticket's lifetime (ADR-0011). The cached chain is now verified again (`ksl_ctx_verify_chain`: trust store, time, name,
+  purpose) before the ticket is offered; a chain that no longer passes runs a full handshake
+  (`negative_resumptionRechecksCachedChainOnOpenSslPath`, `negative_resumeRechecksCachedChain`, C `verify_cached_chain_again`).
+- `TrustConfig.AnchoredCa` with an intermediate CA among its roots rejected the chains through it with `UnknownIssuer`,
+  although each listed certificate is documented as trusted as a root: OpenSSL accepted only chains up to a self-signed
+  certificate. Every anchor now ends a chain (`X509_V_FLAG_PARTIAL_CHAIN`) (`anchoredAtIntermediateAccepts`, C
+  `verify_openssl_verifier`).
+- QUIC handshakes without ALPN completed: a server accepted a ClientHello without the extension and a client a server
+  that negotiated none. Both now close with `no_application_protocol` (CRYPTO_ERROR 0x0178, RFC 9001 section 8.1), and
+  `Http3Endpoint.connect`/`connectEarly` fail with H3_GENERAL_PROTOCOL_ERROR when a client that offered more than `h3`
+  ends on another protocol (C `quic_no_alpn_is_no_application_protocol`,
+  `Http3EndpointAlpnTest.negative_clientRefusesServerThatChoseAnotherProtocol`).
+- A server with `ClientAuth.Optional` and `TrustConfig.Pinned` rejected every client that sent no certificate (TCP and
+  QUIC); such a client is now accepted, as documented, and a presented certificate must still match a pin
+  (`clientAuthOptionalPinnedAcceptsClientWithoutCertificate`, `quicServerOptionalPinnedAcceptsClientWithoutCertificate`).
 - `TlsException.Verify` printed `VerifyReason.Expired` and the other object reasons as `ClassName@hash`; they are
   `data object`s now, so the message reads "certificate verification failed: Expired".
 - `TrustConfig.Platform` works on Windows Native (mingwX64): it rejected every peer, so the default
@@ -524,6 +541,33 @@ HTTP/3 (`kuicksilver-http3`):
   `respond`/`finish` (refused trailers reset the stream with `H3_INTERNAL_ERROR` rather than leaving it without FIN),
   request trailers reset the stream and fail the request or its response body with `FieldSectionTooLarge` — instead of
   being sent for the peer to refuse.
+- QPACK: a prefixed integer whose 10th continuation byte carried bits above bit 62 lost them silently (an even byte
+  read 2^64 + n as n); such an encoding is now a decoding error (RFC 7541 section 5.1, RFC 9204 section 4.1.1).
+- QPACK: one field longer than 64 KiB closed the whole connection with `QPACK_DECOMPRESSION_FAILED` (the decoder's
+  string ceiling was fixed), even below a raised `maxFieldSectionSize`; the ceiling in field sections is now
+  `maxFieldSectionSize`, and a longer string makes the section too large — the server answers 431 with
+  `STOP_SENDING H3_EXCESSIVE_LOAD`, the client fails that request with `FieldSectionTooLarge`, other requests on the
+  connection go on (RFC 9204 section 7.4). Encoder-stream strings keep the 64 KiB ceiling and the connection error.
+- QPACK with the dynamic table on: a request or response stream that the peer reset, or whose body the reader
+  abandoned, after its first HEADERS sent no Stream Cancellation, so the peer's encoder kept references to entries
+  that trailers still in flight might use (they could never be evicted); one is now sent (RFC 9204 section 2.2.2.2).
+- Request pseudo-headers are validated like quic-go does (RFC 9114 section 4.3.1): a `:method` that is not a token
+  (`GET /admin X`), a `:path` that does not start with `/` (or is `*` for OPTIONS) or holds whitespace, userinfo in
+  `:authority` (or in the `host` standing in for it) and a second `host` field make the request malformed
+  (`H3_MESSAGE_ERROR`); before, such values reached the application, and a proxy could copy them into an HTTP/1.1
+  request line.
+- What we send is checked the same way: `Http3Connection.request` throws `IllegalArgumentException` for a request the
+  peer would reject (`te` other than `trailers`, a bad method, path or authority, a `host` differing from the
+  authority) before it opens a stream, and request trailers or response trailers (`finish`) with a pseudo-header, a
+  connection-specific field or `te` throw it too and reset the stream — instead of being sent for the peer to reset.
+- A HEADERS frame on an established CONNECT tunnel (a 2xx was sent or received, Extended CONNECT and WebSockets
+  included) was taken as trailers and silently ended the tunnel's input; it is now a connection error
+  `H3_FRAME_UNEXPECTED`, on the server and on the client (RFC 9114 section 4.4).
+- HTTP datagrams follow the stream's state (RFC 9297 section 2.1): datagrams that arrived after the stream's receive
+  side closed were still delivered (the registration lasted until both directions ended) and are now dropped, the
+  `Http3Stream.datagrams` flow ending with the receive side; after our send side closed (`output` closed or `reset`)
+  `trySendDatagram` still sent, and now answers `DatagramSendResult.Closed` (`sendDatagram` throws
+  `IllegalStateException`).
 
 Ktor client (`kuicksilver-ktor-client`):
 
@@ -569,6 +613,35 @@ Ktor client (`kuicksilver-ktor-client`):
   and joins the call, which waits for the copier. A body cancelled while still open now cancels its call, over HTTP/1.1
   and HTTP/3, so `execute` returns. The suspended copier itself belongs to Ktor's client scope and is released only when
   the `HttpClient` closes (found as a 60 s hang of `AbandonedBodyTest` under load).
+- Over HTTP/3 a URL with a query but no path (`https://host?a=1`) went out as `:path ?a=1`, which RFC 9114 section 4.3.1
+  makes malformed (strict servers such as quic-go reset it, and the HTTP/3 layer now refuses it); it is sent as `/?a=1`.
+- HTTP/1.1 connection pool: a request waiting for a connection is resumed after the pool's lock is released. With
+  `engine { dispatcher = Dispatchers.Unconfined }` the waiter resumed inside the lock, and one whose connection failed at
+  once (or whose connect failed before suspending) spun forever on the lock its own thread held. A waiter cancelled
+  while the engine closes now ends with `CancellationException`, not `IllegalStateException`.
+- HTTPS through an HTTP proxy failed on every platform with `ClassCastException`: the proxy's address was cast to
+  `ktor-network`'s `InetSocketAddress`, which `ProxyConfig.resolveAddress()` never returns. A `2xx` answer to the CONNECT
+  that carried `Content-Length` made the client wait for that many bytes before its ClientHello, until the connect
+  timeout; Content-Length and Transfer-Encoding of a successful CONNECT response are now ignored (RFC 9110 §9.3.6).
+- HTTP/1.1 responses are framed as RFC 9112 §6.3 says, where the vendored Ktor CIO code did not: a response without
+  Content-Length or Transfer-Encoding is read until the server closes the connection (it failed with "Failed to parse
+  request body"); a chunked body with a trailer section is accepted (the trailer fields, at most 16 KiB, are discarded;
+  it failed with "Expected CR"), and one cut before its last chunk fails instead of arriving short; a transfer coding
+  other than a final `chunked` is read until close. A request that sends `Connection: close` is the last one on its
+  connection even when the server does not echo the option (§9.6).
+- An idle pooled HTTP/1.1 connection that won the h3/h1 race was treated as a new one, so an idempotent request on it
+  failed when the server had closed it, without the one transparent retry the plain HTTP/1.1 path gives (RFC 9112 §9.3.1).
+- Client 0-RTT (`http3 { earlyData = true }`) no longer defeats the h3/h1 race and the fallback: a connection that
+  merely had 0-RTT keys won every race, confirmed QUIC on the network, marked the alternative working and stored its
+  initial RTT estimate as the origin's; on a path that dropped UDP a GET waited for the 10 s handshake timeout instead
+  of the connect timeout, and a POST (which waits for the handshake) failed without falling back although it was never
+  sent. Now a 0-RTT connection wins before its handshake only where QUIC was confirmed, the bookkeeping waits for the
+  handshake, the connect timeout bounds the handshake, and a request that waited for a failed handshake falls back to
+  HTTP/1.1.
+- `Alt-Svc` on HTTP/3 responses is processed (RFC 7838 §3): a `clear`, or a new list, sent over the alternative in use
+  replaced nothing, so clients already on HTTP/3 kept a retired alternative until its `ma` ran out (24 h by default).
+  The `Alt-Svc` parser resolves quoted-pairs (`\"` no longer ends a quoted string or lets a comma inside it split the
+  list).
 
 Ktor server (`kuicksilver-ktor-server`):
 
@@ -581,6 +654,18 @@ Ktor server (`kuicksilver-ktor-server`):
   and skips HTTP/3 with a warning (no `Alt-Svc`), as on a platform without a QUIC server.
 - A failed HTTP/3 request (for example a client resetting a WebSocket CONNECT stream) no longer cancels the
   connection's handler and aborts the Kotlin/Native process; each request contains its own failure.
+- HTTP/1.1 request framing follows RFC 9112 §6: a request without Content-Length or Transfer-Encoding has no body, also
+  a POST with `Connection: close` (Ktor CIO's pipeline read the connection to its end, so `receiveText()` waited for a
+  half-close the client never sends); a chunked body with a trailer section is accepted (it failed with "Expected CR"),
+  the trailer fields discarded. The connection pipeline is now a copy of Ktor CIO's in `h1/ServerPipeline.kt`, and
+  `ktor-server-cio` is no longer a dependency.
+- A request a gateway forwarded from early data, marked `Early-Data: 1` (RFC 8470 §5.1), was processed as an ordinary
+  request: `receivedEarly` was false and an unsafe method ran although it may be a replay. Over HTTP/1.1 and HTTP/3,
+  such a request now has `receivedEarly` true, and one the early-data policy does not declare replayable gets
+  `425 Too Early` without reaching the application.
+- The startup Ktor version check also covers `ktor-network`, `ktor-io` and (client) `ktor-websockets`, whose internals
+  the engines use: a build that pinned one of them to another minor passed the check and failed later with
+  `NoSuchMethodError`.
 
 Both Ktor engines on Kotlin/Native (`kuicksilver-ktor-network`, `kuicksilver-ktor-client`, `kuicksilver-ktor-server`):
 
@@ -636,6 +721,25 @@ Samples and testing:
 - 0-RTT replay protection, hardened before its first release (threat model section 3.8): one replay register per process,
   shared by every endpoint, loop and configuration that can decrypt the process's tickets; forged ClientHellos no longer
   fill it; a wall clock stepped back cannot reopen a replay; an idle register stripe keeps a full half of history.
+- TLS server with an `sniSelector`: the override's settings are now fully in effect. OpenSSL copies per-connection
+  settings out of the base context when the session is created and an SNI context switch moved only the certificate, so
+  an override that pins client certificates over a base that does not still sent a TLS 1.3 ticket before its pin verdict,
+  and the client resumed with it past the pin (ADR-0011 rule 2). `ksl` now applies the override's ticket count, version
+  range, options, verify mode and parameters, suites, groups, session context and early-data settings; a ticket is issued
+  under such a configuration only after the pin verdict, and only such tickets resume there (`ksl` stamps each ticket)
+  (`negative_sniOverridePinnedClientsNoTicketBeforeVerdict`, C `tcp_sni_override_settings_effective`).
+- Ktor client: `Proxy-Authorization` (and `Proxy-Connection`) set on a request went to the proxy on the CONNECT and then,
+  inside the TLS tunnel, to the origin server as well, which received the proxy credentials; they now stay on the
+  CONNECT (RFC 9110 §11.7.2, threat model section 3.20, `negative_proxyCredentialsStayOnTheConnect`).
+- Ktor client: a response with conflicting or invalid Content-Length values (`5` and `42`, `+5`) was framed by the first
+  one and its connection returned to the pool, so the rest of its bytes became the response to the next request on it
+  (response splitting); it now fails and the connection is closed (RFC 9112 §6.3 item 5). A response with both
+  Content-Length and Transfer-Encoding is framed by the coding and its connection is not reused (item 3)
+  (`negative_conflictingContentLengthFailsAndClosesConnection`, `negative_contentLengthWithTransferEncodingIsNotReused`).
+- Ktor server: a request with both Content-Length and Transfer-Encoding was framed by the chunked coding and the
+  connection kept open, so behind a front proxy that frames by Content-Length the rest of the bytes became a second,
+  smuggled request; such a request is now refused with 400 and the connection closed (RFC 9112 §6.1, threat model
+  section 3.20, `negative_contentLengthWithTransferEncodingIsRejectedAndClosed`).
 
 ## 0.1.0 candidate (never published)
 
@@ -676,7 +780,7 @@ The first 0.x candidate: the code frozen on 2026-10-09 for the first public rele
   accelerated UDP socket on Linux and Android (GSO, GRO, ECN, batches) and portable sockets elsewhere; several
   endpoint loops on one port (`SO_REUSEPORT`); a glitch budget against abusive peers; qlog output.
 - **HTTP/3** (`kuicksilver-http3`): RFC 9114 with QPACK (RFC 9204, dynamic table), extensible priorities (RFC 9218),
-  Extended CONNECT (RFC 9220), HTTP datagrams and capsules (RFC 9297), trailers, 1xx responses, GOAWAY.
+  Extended CONNECT (RFC 9220), HTTP datagrams (RFC 9297; the Capsule Protocol of its section 3 is not implemented, a correction of the 0.2.0 review), trailers, 1xx responses, GOAWAY.
 - **Ktor engines**: `HttpClient(Kuicksilver)` with HTTP/1.1 over TLS and HTTP/3, `Alt-Svc` discovery, connection
   racing and fallback that keeps pins, WebSockets and SSE; `embeddedServer(Kuicksilver)` serving HTTP/1.1 over TLS and
   HTTP/3 on one port, `Alt-Svc`, WebSockets over HTTP/3, graceful stop with GOAWAY, `EngineMain`. Both run Ktor 3.6.0's

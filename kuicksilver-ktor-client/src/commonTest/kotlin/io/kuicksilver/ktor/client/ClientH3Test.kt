@@ -79,6 +79,24 @@ class ClientH3Test {
         }
 
     /**
+     * A URL without a path but with a query (`https://host?a=1`) goes out as `:path /?a=1`: RFC 9114 section 4.3.1 requires
+     * "/" for an http(s) URI without a path, and the HTTP/3 layer refuses `?a=1` as malformed.
+     */
+    @Test fun queryWithoutPathSendsSlash() =
+        h3Test {
+            val (server, port) = testServer { routing { get("/") { call.respondText(call.request.uri) } } }
+            try {
+                testClient(Http3DiscoveryMode.H3Only).use { c ->
+                    val r = c.get("https://127.0.0.1:$port?a=1")
+                    assertEquals(HttpProtocolVersion.HTTP_3_0, r.version)
+                    assertEquals("/?a=1", r.bodyAsText())
+                }
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
+    /**
      * `quic { connectionIdLength }` alone sets the length of the engine's endpoint too, as the server engine does; the endpoint
      * kept its default of 8 and every HTTP/3 connect failed its check (docs review before 0.2.0). An endpoint-only change is
      * followed by the connections in the same way.

@@ -136,6 +136,57 @@ static void test_sni_override_alpn(void) {
     ksl_ssl_free(c); ksl_ssl_free(s); ksl_ctx_free(cc); ksl_ctx_free(sc); ksl_ctx_free(proxy); END();
 }
 
+static ksl_session *client_session_after(ksl_ssl *c) { uint8_t buf[16]; size_t n; ksl_tcp_read(c, buf, sizeof buf, &n); return ksl_ssl_get1_session(c); }   /* consumes a NewSessionTicket */
+static void test_sni_override_settings_effective(void) {
+    SECTION("tcp_sni_override_settings_effective");
+    /* SSL_new copies per-connection settings out of the base SSL_CTX and SSL_set_SSL_CTX moves only the certificate and the
+       session id context: every other setting of the override must be applied to the session too (review T1) */
+    uint8_t keys[80]; for (int i = 0; i < 80; i++) keys[i] = (uint8_t)(i * 3 + 1);
+    ksl_ctx *cc = client_ctx("test-ca", KSL_VERIFY_OPENSSL);
+    blob ch = chain_of(1, "client"); size_t kl; uint8_t *k = key_of("client", &kl); CHECK(ksl_ctx_set_identity(cc, ch.buf, ch.len, k, kl) == KSL_OK, "client identity"); free(ch.buf); free(k);
+    ksl_ctx *base = server_ctx("server"); ksl_ctx_set_ticket_keys(base, keys, 1); ksl_ctx_set_option(base, KSL_OPT_NUM_TICKETS, 1);
+    ksl_ctx_set_option(base, KSL_OPT_MIN_VERSION, KSL_TLS1_2); ksl_ctx_set_session_context(base, (const uint8_t *)"base-ctx", 8); ksl_ctx_set_option(base, KSL_OPT_SNI_PAUSE, 1); ksl_ctx_freeze(base);
+    /* the override as KslContext builds it for Pinned + clientAuth: NUM_TICKETS 0, tickets only after the pin verdict */
+    ksl_ctx *ovr = server_ctx("server"); ksl_ctx_set_ticket_keys(ovr, keys, 1); ksl_ctx_set_option(ovr, KSL_OPT_NUM_TICKETS, 0);
+    blob r = chain_of(1, "test-ca"); ksl_ctx_set_roots(ovr, r.buf, r.len); free(r.buf); ksl_ctx_set_option(ovr, KSL_OPT_CLIENT_CERT, KSL_CLIENT_CERT_REQUIRED);
+    ksl_ctx_set_session_context(ovr, (const uint8_t *)"ovr-pinned", 10); CHECK(ksl_ctx_set_ciphers(ovr, "TLS_CHACHA20_POLY1305_SHA256", NULL) == KSL_OK, "override suites");
+    SSL_CTX_set_options(ovr->ctx, SSL_OP_CIPHER_SERVER_PREFERENCE); SSL_CTX_set_verify_depth(ovr->ctx, 7); ksl_ctx_freeze(ovr);
+    ksl_ssl *c = tcp_client(cc, "server.test"), *s = ksl_ssl_new(base, KSL_MODE_TCP); sni_arg a = {ovr, 0, 0, {0}};
+    CHECK(tcp_pump(c, s, on_sni, &a) == KSL_OK, "handshake under the override, client certificate verified by the CA");
+    CHECK(SSL_get_num_tickets(s->ssl) == 0, "the override's ticket count (0) is in effect");
+    CHECK(SSL_get_current_cipher(s->ssl) && SSL_CIPHER_get_id(SSL_get_current_cipher(s->ssl)) == 0x03001303, "the override's TLS 1.3 suites are in effect");
+    CHECK((SSL_get_options(s->ssl) & SSL_OP_CIPHER_SERVER_PREFERENCE) != 0, "the override's options are in effect");
+    CHECK(SSL_get_verify_depth(s->ssl) == 7, "the override's verify parameters are in effect");
+    CHECK(SSL_get_min_proto_version(s->ssl) == TLS1_3_VERSION, "the override's minimum version is in effect");
+    ksl_session *sess = client_session_after(c); CHECK(sess == NULL, "negative: no ticket before the pin verdict");
+    ksl_session_free(sess); ksl_ssl_free(c); ksl_ssl_free(s);
+    /* a TLS 1.2-only client: the base context allows 1.2, the override does not */
+    ksl_ctx *cc12 = client_ctx("test-ca", KSL_VERIFY_OPENSSL); ksl_ctx_set_option(cc12, KSL_OPT_MIN_VERSION, KSL_TLS1_2); ksl_ctx_set_option(cc12, KSL_OPT_MAX_VERSION, KSL_TLS1_2);
+    ch = chain_of(1, "client"); k = key_of("client", &kl); ksl_ctx_set_identity(cc12, ch.buf, ch.len, k, kl); free(ch.buf); free(k);
+    c = tcp_client(cc12, "server.test"); s = ksl_ssl_new(base, KSL_MODE_TCP);
+    CHECK(tcp_pump(c, s, on_sni, &a) == KSL_ERROR, "negative: the override's TLS 1.3 floor refuses a TLS 1.2 client");
+    ksl_ssl_free(c); ksl_ssl_free(s); ksl_ctx_free(cc12);
+    /* a ticket for the override's session context issued without a verdict (here by an ungated context sharing keys and
+       context) is never resumed under the gated override: only explicit, post-verdict tickets are */
+    ksl_ctx *ungated = server_ctx("server"); ksl_ctx_set_ticket_keys(ungated, keys, 1); ksl_ctx_set_option(ungated, KSL_OPT_NUM_TICKETS, 1);
+    blob r2 = chain_of(1, "test-ca"); ksl_ctx_set_roots(ungated, r2.buf, r2.len); free(r2.buf); ksl_ctx_set_option(ungated, KSL_OPT_CLIENT_CERT, KSL_CLIENT_CERT_REQUIRED);
+    ksl_ctx_set_session_context(ungated, (const uint8_t *)"ovr-pinned", 10); ksl_ctx_freeze(ungated);
+    c = tcp_client(cc, "server.test"); s = ksl_ssl_new(ungated, KSL_MODE_TCP); CHECK(tcp_pump(c, s, NULL, NULL) == KSL_OK, "handshake with the ungated context");
+    sess = client_session_after(c); CHECK(sess != NULL, "control: the ungated context issued a ticket"); ksl_ssl_free(c); ksl_ssl_free(s);
+    uint8_t reused = 9; size_t n;
+    c = tcp_client(cc, "server.test"); s = ksl_ssl_new(base, KSL_MODE_TCP); ksl_ssl_set_session(c, sess);
+    CHECK(tcp_pump(c, s, on_sni, &a) == KSL_OK && ksl_ssl_get(s, KSL_GET_SESSION_REUSED, &reused, 1, &n) == KSL_OK && reused == 0, "negative: a ticket issued before any verdict does not resume under the gated override");
+    ksl_ssl_free(c); ksl_ssl_free(s); ksl_session_free(sess);
+    /* control: the explicit ticket (the pin verdict passed) resumes */
+    c = tcp_client(cc, "server.test"); s = ksl_ssl_new(base, KSL_MODE_TCP);
+    CHECK(tcp_pump(c, s, on_sni, &a) == KSL_OK && ksl_ssl_new_session_ticket(s) == KSL_OK, "explicit ticket after the verdict");
+    ksl_drive(s); shuttle(s, c); sess = client_session_after(c); CHECK(sess != NULL, "the explicit ticket arrived"); ksl_ssl_free(c); ksl_ssl_free(s);
+    c = tcp_client(cc, "server.test"); s = ksl_ssl_new(base, KSL_MODE_TCP); ksl_ssl_set_session(c, sess);
+    CHECK(tcp_pump(c, s, on_sni, &a) == KSL_OK && ksl_ssl_get(s, KSL_GET_SESSION_REUSED, &reused, 1, &n) == KSL_OK && reused == 1, "control: the post-verdict ticket resumes");
+    ksl_ssl_free(c); ksl_ssl_free(s); ksl_session_free(sess);
+    ksl_ctx_free(cc); ksl_ctx_free(base); ksl_ctx_free(ovr); ksl_ctx_free(ungated); END();
+}
+
 static void test_no_tls12_ticket_without_num_tickets(void) {
     SECTION("tcp_tls12_no_ticket_when_num_tickets_zero");
     /* KSL_OPT_NUM_TICKETS 0 means tickets only through ksl_ssl_new_session_ticket (after the pin verdict); TLS 1.2 issues its
@@ -167,4 +218,4 @@ static void test_session_context(void) {
     ksl_ssl_free(c); ksl_ssl_free(s); ksl_session_free(sess); ksl_ctx_free(cc); ksl_ctx_free(a); ksl_ctx_free(a2); ksl_ctx_free(b); END();
 }
 
-void run_tcp(void) { test_echo(); test_truncation(); test_tls12(); test_resumption(); test_sni_pause(); test_sni_override_alpn(); test_no_tls12_ticket_without_num_tickets(); test_session_context(); }
+void run_tcp(void) { test_echo(); test_truncation(); test_tls12(); test_resumption(); test_sni_pause(); test_sni_override_alpn(); test_sni_override_settings_effective(); test_no_tls12_ticket_without_num_tickets(); test_session_context(); }

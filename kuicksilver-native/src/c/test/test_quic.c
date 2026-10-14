@@ -101,6 +101,24 @@ static void test_unknown_ca(void) {
     ksl_ssl_free(c); ksl_ssl_free(s); ksl_ctx_free(cc); ksl_ctx_free(sc); END();
 }
 
+/* RFC 9001 section 8.1: QUIC requires ALPN on both sides; an endpoint without an agreed protocol closes with no_application_protocol
+   (0x0178). OpenSSL calls the server's select callback only when the ClientHello carries the extension, and its client accepts a
+   server that answered without one. */
+static void test_alpn_required(void) {
+    SECTION("quic_no_alpn_is_no_application_protocol");
+    ksl_ctx *bare = ksl_ctx_new(KSL_CLIENT); blob r = chain_of(1, "test-ca"); ksl_ctx_set_roots(bare, r.buf, r.len); free(r.buf); ksl_ctx_set_option(bare, KSL_OPT_VERIFY_MODE, KSL_VERIFY_OPENSSL);
+    ksl_ctx *sc = server_ctx("server"); ksl_ssl *c = client(bare, "server.test"), *s = server(sc);
+    side cs = {0}, ss = {0}; int alert = 0; (void)pump(c, s, &cs, &ss, 40, NULL, NULL); last_code(s, &alert);
+    CHECK(!ss.done && !cs.done && alert == 120, "negative: a server refuses a ClientHello without ALPN with no_application_protocol (120)");
+    ksl_ssl_free(c); ksl_ssl_free(s);
+    ksl_ctx *cc = client_ctx("test-ca", KSL_VERIFY_OPENSSL), *silent = ksl_ctx_new(KSL_SERVER);
+    blob ch = chain_of(1, "server"); size_t kl; uint8_t *k = key_of("server", &kl); ksl_ctx_set_identity(silent, ch.buf, ch.len, k, kl); free(ch.buf); free(k);
+    c = client(cc, "server.test"); s = server(silent); side cs2 = {0}, ss2 = {0}; alert = 0;
+    int rc = pump(c, s, &cs2, &ss2, 40, NULL, NULL); last_code(c, &alert);
+    CHECK(rc == KSL_ERROR && !cs2.done && alert == 120, "negative: a client fails a server that negotiated no ALPN with no_application_protocol (120)");
+    ksl_ssl_free(c); ksl_ssl_free(s); ksl_ctx_free(bare); ksl_ctx_free(cc); ksl_ctx_free(sc); ksl_ctx_free(silent); END();
+}
+
 static void test_post_handshake_ticket(void) {
     SECTION("quic_post_handshake_ticket_delivered");
     ksl_ctx *cc = client_ctx("test-ca", KSL_VERIFY_OPENSSL), *sc = server_ctx("server"); ksl_ctx_set_option(sc, KSL_OPT_NUM_TICKETS, 0);
@@ -339,7 +357,7 @@ static void test_level_cap(void) {
 }
 
 void run_quic(void) {
-    test_handshake(); test_no_hrr_for_x25519_only_client(); test_split_server_hello(); test_provide_during_pause(); test_corrupt_stable(); test_unknown_ca();
+    test_handshake(); test_no_hrr_for_x25519_only_client(); test_split_server_hello(); test_provide_during_pause(); test_corrupt_stable(); test_unknown_ca(); test_alpn_required();
     test_post_handshake_ticket(); test_server_pause_forbidden(); test_resume_without_pause(); test_peek(); test_no_verify_name(); test_secret_lengths();
     test_v2_key_from_fixed_secret(); test_server_picks_v2(); test_server_falls_back_to_original(); test_no_version_information(); test_tp_replace();
     test_previous_level_refused(); test_level_cap();

@@ -44,5 +44,9 @@ internal class H1Call(
     init {
         putResponseAttribute()
         attributes.put(PeerCertificatesKey, peerCertificates)
+        // a gateway forwarded it from early data (RFC 8470 section 5.1)
+        if (_request.headers[io.kuicksilver.ktor.server.EARLY_DATA_FIELD] != null) {
+            attributes.put(io.kuicksilver.ktor.server.ReceivedEarlyKey, true)
+        }
     }
 }

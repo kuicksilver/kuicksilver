@@ -26,7 +26,8 @@ extern "C" {
    KSL_GET_SESSION (serialized session bytes) removed; ksl_ctx_set_session_context (a ticket resumes only under the trust configuration that issued it) */
 /* 5: identity private keys stay native — ksl_pkey_new / ksl_pkey_free / ksl_ctx_set_identity_pkey (a parsed key shared by reference
    between contexts, so the caller keeps no DER copy of it) */
-/* 6: 0-RTT — KSL_OPT_EARLY_DATA, KSL_SET_EARLY_CONTEXT, KSL_SET_EARLY_DATA, KSL_GET_EARLY_DATA; the 0-RTT secret arrives as KSL_EV_KEY at KSL_LEVEL_EARLY (ADR-0015) */
+/* 6: 0-RTT — KSL_OPT_EARLY_DATA, KSL_SET_EARLY_CONTEXT, KSL_SET_EARLY_DATA, KSL_GET_EARLY_DATA; the 0-RTT secret arrives as KSL_EV_KEY at KSL_LEVEL_EARLY (ADR-0015);
+   ksl_ctx_verify_chain (resumption re-verifies the cached chain, ADR-0011; added before 6 was published) */
 
 /* return codes */
 #define KSL_OK 0
@@ -184,6 +185,12 @@ int      ksl_ctx_set_ticket_keys(ksl_ctx *, const uint8_t *keys, size_t n);     
 int      ksl_ctx_set_session_context(ksl_ctx *, const uint8_t *sid_ctx, size_t len); /* server, 1..32 bytes: a session (ticket) resumes only under the same context (default "ksl") */
 int      ksl_ctx_set_option(ksl_ctx *, int option, int value);
 int      ksl_ctx_freeze(ksl_ctx *);
+/* Verifies a peer chain kept from an earlier handshake (framed as for ksl_ctx_set_roots, leaf first) again, as that handshake did: this
+   context's trust store and verify parameters, the purpose of the peer's role, and on a client the reference identifier `name` (DNS-ID
+   or IP literal). `at`: seconds since the epoch, 0 for now. KSL_OK, or KSL_ERROR with *x509_err = X509_V_ERR_* (0 when the input was
+   unusable); writes nothing into the context, so it is safe on a frozen context from any thread. Resumption re-checks trust with it
+   (ADR-0011). */
+int      ksl_ctx_verify_chain(ksl_ctx *, const uint8_t *chain, size_t chain_len, const char *name, int64_t at, int *x509_err);
 int      ksl_ctx_last_error(ksl_ctx *, uint32_t *packed, char *buf, size_t len);
 
 /* --- session (QUIC or TCP) --- */

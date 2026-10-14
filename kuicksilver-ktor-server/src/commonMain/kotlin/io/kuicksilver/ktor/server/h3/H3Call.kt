@@ -26,7 +26,9 @@ import io.ktor.utils.io.writeFully
 import io.kuicksilver.http3.Http3Headers
 import io.kuicksilver.http3.Http3ResponseWriter
 import io.kuicksilver.http3.Http3ServerRequest
+import io.kuicksilver.ktor.server.EARLY_DATA_FIELD
 import io.kuicksilver.ktor.server.PeerCertificatesKey
+import io.kuicksilver.ktor.server.ReceivedEarlyKey
 import io.kuicksilver.quic.ipLiteral
 import io.kuicksilver.tls.Certificate
 import kotlinx.coroutines.CoroutineScope
@@ -68,8 +70,10 @@ internal class H3Call(
     init {
         putResponseAttribute()
         attributes.put(PeerCertificatesKey, peerCertificates)
+        // in 0-RTT here, or forwarded from early data by a gateway (RFC 8470 section 5.1)
+        val gatewayMarked = h3.headers[EARLY_DATA_FIELD.lowercase()] != null
         @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-        if (h3.receivedEarly) attributes.put(io.kuicksilver.ktor.server.ReceivedEarlyKey, true)
+        if (h3.receivedEarly || gatewayMarked) attributes.put(ReceivedEarlyKey, true)
     }
 
     companion object {
