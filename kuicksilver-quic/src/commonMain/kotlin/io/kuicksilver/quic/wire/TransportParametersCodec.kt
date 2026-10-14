@@ -277,7 +277,11 @@ internal object TransportParametersCodec {
                         val av = IntArray(n) { r.u32().toInt() }
                         // RFC 9368 section 4: parsing failures; a server's own list may omit its Chosen Version or be empty (section 3)
                         if (av.contains(0)) fail("version_information available version is zero")
-                        if (sender == TlsRole.Client && !av.contains(chosen)) fail("version_information chosen version not among the available ones")
+                        if (sender == TlsRole.Client &&
+                            !av.contains(chosen)
+                        ) {
+                            fail("version_information chosen version not among the available ones")
+                        }
                         tp.chosenVersion = chosen
                         tp.availableVersions = av
                     }

@@ -688,7 +688,15 @@ public class ConnectionCore internal constructor(
         this.now = now
         lastActivity = now
         if (state == ConnectionState.Draining) return
-        receiver.onDatagram(data, length, from, socket, ecn, now)
+        // RFC 9001 section 6.6: past the integrity limit "not process any more packets"; the bytes still count (amplification), and
+        // the close is repeated as in any closing state
+        if (state == ConnectionState.Closing &&
+            closeFrame?.let { !it.application && it.code == TransportError.AEAD_LIMIT_REACHED } == true
+        ) {
+            receiver.countOnly(length, from, socket)
+        } else {
+            receiver.onDatagram(data, length, from, socket, ecn, now)
+        }
         if (state ==
             ConnectionState.Closing
         ) {

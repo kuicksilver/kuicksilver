@@ -72,6 +72,19 @@ internal class PacketReceiver(
     internal var datagramLength = 0
     private var datagramEcn: io.kuicksilver.quic.Ecn = io.kuicksilver.quic.Ecn.NotEct
 
+    /** The accounting of a received datagram without looking inside it. */
+    fun countOnly(
+        length: Int,
+        from: InetSocketAddress,
+        socket: PathId,
+    ) {
+        c.bytesReceived += length
+        c.paths
+            .byRemote(socket, from)
+            ?.amplification
+            ?.onReceived(length) // per-path bytes; RFC 9000 sections 8.1 and 9.3.1: an unvalidated path has a 3x budget
+    }
+
     fun onDatagram(
         data: PacketBuffer,
         length: Int,
@@ -88,11 +101,7 @@ internal class PacketReceiver(
             c.datagramsDropped++
             return
         } // RFC 9000 section 9: a client discards packets from an unknown server address
-        c.bytesReceived += length
-        c.paths
-            .byRemote(socket, from)
-            ?.amplification
-            ?.onReceived(length) // per-path bytes; RFC 9000 sections 8.1 and 9.3.1: an unvalidated path has a 3x budget
+        countOnly(length, from, socket)
         datagramEcn = ecn // a socket that cannot read marks delivers NotEct itself (ADR-0006)
         var off = 0
         var processed = false
