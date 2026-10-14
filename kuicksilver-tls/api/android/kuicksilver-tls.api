@@ -53,7 +53,6 @@ public final class io/kuicksilver/tls/ClientAuth : java/lang/Enum {
 }
 
 public final class io/kuicksilver/tls/ClientHelloInfo {
-	public fun <init> (Ljava/lang/String;Ljava/util/List;Ljava/util/List;)V
 	public final fun getAlpn ()Ljava/util/List;
 	public final fun getServerName ()Ljava/lang/String;
 	public final fun getSignatureSchemes ()Ljava/util/List;

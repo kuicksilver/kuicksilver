@@ -178,7 +178,6 @@ public final class io/kuicksilver/http3/Http3Headers$Companion {
 }
 
 public final class io/kuicksilver/http3/Http3PeerSettings {
-	public fun <init> (JJLjava/lang/Long;ZZLjava/util/Map;)V
 	public final fun getEnableConnectProtocol ()Z
 	public final fun getH3Datagram ()Z
 	public final fun getMaxFieldSectionSize ()Ljava/lang/Long;

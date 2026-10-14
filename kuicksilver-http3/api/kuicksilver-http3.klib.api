@@ -165,7 +165,6 @@ final class io.kuicksilver.http3/Http3Headers { // io.kuicksilver.http3/Http3Hea
 }
 
 final class io.kuicksilver.http3/Http3PeerSettings { // io.kuicksilver.http3/Http3PeerSettings|null[0]
-    constructor <init>(kotlin/Long, kotlin/Long, kotlin/Long?, kotlin/Boolean, kotlin/Boolean, kotlin.collections/Map<kotlin/Long, kotlin/Long>) // io.kuicksilver.http3/Http3PeerSettings.<init>|<init>(kotlin.Long;kotlin.Long;kotlin.Long?;kotlin.Boolean;kotlin.Boolean;kotlin.collections.Map<kotlin.Long,kotlin.Long>){}[0]
 
     final val enableConnectProtocol // io.kuicksilver.http3/Http3PeerSettings.enableConnectProtocol|{}enableConnectProtocol[0]
         final fun <get-enableConnectProtocol>(): kotlin/Boolean // io.kuicksilver.http3/Http3PeerSettings.enableConnectProtocol.<get-enableConnectProtocol>|<get-enableConnectProtocol>(){}[0]

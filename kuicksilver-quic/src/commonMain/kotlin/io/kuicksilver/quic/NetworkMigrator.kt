@@ -282,7 +282,7 @@ public class NetworkMigrator<N : Any>(
 @ExperimentalKuicksilverApi
 public sealed interface MigrationEvent<out N> {
     /** The connection moved from network [old] to network [new] and sends on [path] now; the old path was closed. */
-    public class Migrated<out N>(
+    public class Migrated<out N> internal constructor(
         /** The network the connection left. */
         public val old: N,
         /** The network the connection is on now. */
@@ -295,7 +295,7 @@ public sealed interface MigrationEvent<out N> {
     }
 
     /** Migrating to [network] failed with [cause]; the connection stays on its previous path and the new socket is closed. */
-    public class Failed<out N>(
+    public class Failed<out N> internal constructor(
         /** The network that could not be used. */
         public val network: N,
         /**
@@ -315,7 +315,7 @@ public sealed interface MigrationEvent<out N> {
      * The network source failed with [cause] (on Android, for example, the system refused another network callback); the
      * migrator has stopped, its job completed normally, and the connection stays where it is. The last event.
      */
-    public class SourceFailed(
+    public class SourceFailed internal constructor(
         /** What the source threw. */
         public val cause: Throwable,
     ) : MigrationEvent<Nothing> {

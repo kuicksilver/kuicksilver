@@ -11,7 +11,7 @@ import io.ktor.network.sockets.InetSocketAddress
  * at least 8 bytes, no reflective source port) and the hard limits (`maxConnections`, `acceptQueue`,
  * `maxConnectionsPerIp`); the policy never sees datagrams those checks dropped or refused.
  */
-public class ConnectionAttempt(
+public class ConnectionAttempt internal constructor(
     /** The client's address and port as seen on the socket. */
     public val remote: InetSocketAddress,
     /** Server connections whose handshake has not been confirmed yet. */

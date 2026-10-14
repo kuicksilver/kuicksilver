@@ -42,7 +42,7 @@ public interface QuicPath {
 /** What happens to a connection's paths; collect [QuicConnection.pathEvents]. */
 public sealed interface PathEvent {
     /** [path] answered our PATH_CHALLENGE (RFC 9000 section 8.2.3), or the handshake validated it. */
-    public class Validated(
+    public class Validated internal constructor(
         public val path: QuicPath,
     ) : PathEvent
 
@@ -51,22 +51,21 @@ public sealed interface PathEvent {
      * why it could not be probed.
      */
     public class Failed
-        @ExperimentalKuicksilverApi
-        constructor(
+        internal constructor(
             public val path: QuicPath,
             /** Why the validation failed. */
             @property:ExperimentalKuicksilverApi public val reason: PathFailureReason,
         ) : PathEvent {
             /** A validation that timed out ([PathFailureReason.ValidationTimeout]). */
             @OptIn(ExperimentalKuicksilverApi::class)
-            public constructor(path: QuicPath) : this(path, PathFailureReason.ValidationTimeout)
+            internal constructor(path: QuicPath) : this(path, PathFailureReason.ValidationTimeout)
         }
 
     /**
      * The connection now sends on [new] instead of [old]: our own migration, the peer's, a NAT rebinding or a fallback after a failed
      * validation, as [reason] says (RFC 9000 section 9).
      */
-    public class Changed(
+    public class Changed internal constructor(
         public val old: QuicPath,
         public val new: QuicPath,
         public val reason: PathChangeReason,
@@ -79,7 +78,7 @@ public sealed interface PathEvent {
      * [QuicConnection.migrate]); a [NetworkMigrator] does so on its own when the lost path is the active one.
      */
     @ExperimentalKuicksilverApi
-    public class SocketLost(
+    public class SocketLost internal constructor(
         /** The path whose socket was lost; its state is unchanged, but nothing goes through it any more. */
         public val path: QuicPath,
         /** What the socket reported. */

@@ -335,8 +335,6 @@ abstract interface io.kuicksilver.quic/QuicStream { // io.kuicksilver.quic/QuicS
 
 sealed interface <#A: out kotlin/Any?> io.kuicksilver.quic/MigrationEvent { // io.kuicksilver.quic/MigrationEvent|null[0]
     final class <#A1: out kotlin/Any?> Failed : io.kuicksilver.quic/MigrationEvent<#A1> { // io.kuicksilver.quic/MigrationEvent.Failed|null[0]
-        constructor <init>(#A1, kotlin/Throwable) // io.kuicksilver.quic/MigrationEvent.Failed.<init>|<init>(1:0;kotlin.Throwable){}[0]
-
         final val cause // io.kuicksilver.quic/MigrationEvent.Failed.cause|{}cause[0]
             final fun <get-cause>(): kotlin/Throwable // io.kuicksilver.quic/MigrationEvent.Failed.cause.<get-cause>|<get-cause>(){}[0]
         final val network // io.kuicksilver.quic/MigrationEvent.Failed.network|{}network[0]
@@ -346,8 +344,6 @@ sealed interface <#A: out kotlin/Any?> io.kuicksilver.quic/MigrationEvent { // i
     }
 
     final class <#A1: out kotlin/Any?> Migrated : io.kuicksilver.quic/MigrationEvent<#A1> { // io.kuicksilver.quic/MigrationEvent.Migrated|null[0]
-        constructor <init>(#A1, #A1, io.kuicksilver.quic/QuicPath) // io.kuicksilver.quic/MigrationEvent.Migrated.<init>|<init>(1:0;1:0;io.kuicksilver.quic.QuicPath){}[0]
-
         final val new // io.kuicksilver.quic/MigrationEvent.Migrated.new|{}new[0]
             final fun <get-new>(): #A1 // io.kuicksilver.quic/MigrationEvent.Migrated.new.<get-new>|<get-new>(){}[0]
         final val old // io.kuicksilver.quic/MigrationEvent.Migrated.old|{}old[0]
@@ -359,8 +355,6 @@ sealed interface <#A: out kotlin/Any?> io.kuicksilver.quic/MigrationEvent { // i
     }
 
     final class SourceFailed : io.kuicksilver.quic/MigrationEvent<kotlin/Nothing> { // io.kuicksilver.quic/MigrationEvent.SourceFailed|null[0]
-        constructor <init>(kotlin/Throwable) // io.kuicksilver.quic/MigrationEvent.SourceFailed.<init>|<init>(kotlin.Throwable){}[0]
-
         final val cause // io.kuicksilver.quic/MigrationEvent.SourceFailed.cause|{}cause[0]
             final fun <get-cause>(): kotlin/Throwable // io.kuicksilver.quic/MigrationEvent.SourceFailed.cause.<get-cause>|<get-cause>(){}[0]
 
@@ -401,15 +395,11 @@ sealed interface io.kuicksilver.quic/AdmissionDecision { // io.kuicksilver.quic/
 
 sealed interface io.kuicksilver.quic/ConnectionEvent { // io.kuicksilver.quic/ConnectionEvent|null[0]
     final class Closed : io.kuicksilver.quic/ConnectionEvent { // io.kuicksilver.quic/ConnectionEvent.Closed|null[0]
-        constructor <init>(io.kuicksilver.quic/QuicException.ConnectionLost) // io.kuicksilver.quic/ConnectionEvent.Closed.<init>|<init>(io.kuicksilver.quic.QuicException.ConnectionLost){}[0]
-
         final val reason // io.kuicksilver.quic/ConnectionEvent.Closed.reason|{}reason[0]
             final fun <get-reason>(): io.kuicksilver.quic/QuicException.ConnectionLost // io.kuicksilver.quic/ConnectionEvent.Closed.reason.<get-reason>|<get-reason>(){}[0]
     }
 
     final class MtuUpdated : io.kuicksilver.quic/ConnectionEvent { // io.kuicksilver.quic/ConnectionEvent.MtuUpdated|null[0]
-        constructor <init>(io.kuicksilver.quic/PathId, kotlin/Int) // io.kuicksilver.quic/ConnectionEvent.MtuUpdated.<init>|<init>(io.kuicksilver.quic.PathId;kotlin.Int){}[0]
-
         final val mtu // io.kuicksilver.quic/ConnectionEvent.MtuUpdated.mtu|{}mtu[0]
             final fun <get-mtu>(): kotlin/Int // io.kuicksilver.quic/ConnectionEvent.MtuUpdated.mtu.<get-mtu>|<get-mtu>(){}[0]
         final val path // io.kuicksilver.quic/ConnectionEvent.MtuUpdated.path|{}path[0]
@@ -417,8 +407,6 @@ sealed interface io.kuicksilver.quic/ConnectionEvent { // io.kuicksilver.quic/Co
     }
 
     final class PathChanged : io.kuicksilver.quic/ConnectionEvent { // io.kuicksilver.quic/ConnectionEvent.PathChanged|null[0]
-        constructor <init>(io.kuicksilver.quic/PathId, io.kuicksilver.quic/PathId, io.kuicksilver.quic/PathChangeReason) // io.kuicksilver.quic/ConnectionEvent.PathChanged.<init>|<init>(io.kuicksilver.quic.PathId;io.kuicksilver.quic.PathId;io.kuicksilver.quic.PathChangeReason){}[0]
-
         final val new // io.kuicksilver.quic/ConnectionEvent.PathChanged.new|{}new[0]
             final fun <get-new>(): io.kuicksilver.quic/PathId // io.kuicksilver.quic/ConnectionEvent.PathChanged.new.<get-new>|<get-new>(){}[0]
         final val old // io.kuicksilver.quic/ConnectionEvent.PathChanged.old|{}old[0]
@@ -428,9 +416,6 @@ sealed interface io.kuicksilver.quic/ConnectionEvent { // io.kuicksilver.quic/Co
     }
 
     final class PathFailed : io.kuicksilver.quic/ConnectionEvent { // io.kuicksilver.quic/ConnectionEvent.PathFailed|null[0]
-        constructor <init>(io.kuicksilver.quic/PathId) // io.kuicksilver.quic/ConnectionEvent.PathFailed.<init>|<init>(io.kuicksilver.quic.PathId){}[0]
-        constructor <init>(io.kuicksilver.quic/PathId, io.kuicksilver.quic/PathFailureReason) // io.kuicksilver.quic/ConnectionEvent.PathFailed.<init>|<init>(io.kuicksilver.quic.PathId;io.kuicksilver.quic.PathFailureReason){}[0]
-
         final val path // io.kuicksilver.quic/ConnectionEvent.PathFailed.path|{}path[0]
             final fun <get-path>(): io.kuicksilver.quic/PathId // io.kuicksilver.quic/ConnectionEvent.PathFailed.path.<get-path>|<get-path>(){}[0]
         final val reason // io.kuicksilver.quic/ConnectionEvent.PathFailed.reason|{}reason[0]
@@ -438,22 +423,16 @@ sealed interface io.kuicksilver.quic/ConnectionEvent { // io.kuicksilver.quic/Co
     }
 
     final class PathValidated : io.kuicksilver.quic/ConnectionEvent { // io.kuicksilver.quic/ConnectionEvent.PathValidated|null[0]
-        constructor <init>(io.kuicksilver.quic/PathId) // io.kuicksilver.quic/ConnectionEvent.PathValidated.<init>|<init>(io.kuicksilver.quic.PathId){}[0]
-
         final val path // io.kuicksilver.quic/ConnectionEvent.PathValidated.path|{}path[0]
             final fun <get-path>(): io.kuicksilver.quic/PathId // io.kuicksilver.quic/ConnectionEvent.PathValidated.path.<get-path>|<get-path>(){}[0]
     }
 
     final class SessionTicket : io.kuicksilver.quic/ConnectionEvent { // io.kuicksilver.quic/ConnectionEvent.SessionTicket|null[0]
-        constructor <init>(io.kuicksilver.tls/QuicSessionTicket) // io.kuicksilver.quic/ConnectionEvent.SessionTicket.<init>|<init>(io.kuicksilver.tls.QuicSessionTicket){}[0]
-
         final val ticket // io.kuicksilver.quic/ConnectionEvent.SessionTicket.ticket|{}ticket[0]
             final fun <get-ticket>(): io.kuicksilver.tls/QuicSessionTicket // io.kuicksilver.quic/ConnectionEvent.SessionTicket.ticket.<get-ticket>|<get-ticket>(){}[0]
     }
 
     final class StopSendingReceived : io.kuicksilver.quic/ConnectionEvent { // io.kuicksilver.quic/ConnectionEvent.StopSendingReceived|null[0]
-        constructor <init>(kotlin/Long, kotlin/Long) // io.kuicksilver.quic/ConnectionEvent.StopSendingReceived.<init>|<init>(kotlin.Long;kotlin.Long){}[0]
-
         final val code // io.kuicksilver.quic/ConnectionEvent.StopSendingReceived.code|{}code[0]
             final fun <get-code>(): kotlin/Long // io.kuicksilver.quic/ConnectionEvent.StopSendingReceived.code.<get-code>|<get-code>(){}[0]
         final val id // io.kuicksilver.quic/ConnectionEvent.StopSendingReceived.id|{}id[0]
@@ -461,29 +440,21 @@ sealed interface io.kuicksilver.quic/ConnectionEvent { // io.kuicksilver.quic/Co
     }
 
     final class StreamFinished : io.kuicksilver.quic/ConnectionEvent { // io.kuicksilver.quic/ConnectionEvent.StreamFinished|null[0]
-        constructor <init>(kotlin/Long) // io.kuicksilver.quic/ConnectionEvent.StreamFinished.<init>|<init>(kotlin.Long){}[0]
-
         final val id // io.kuicksilver.quic/ConnectionEvent.StreamFinished.id|{}id[0]
             final fun <get-id>(): kotlin/Long // io.kuicksilver.quic/ConnectionEvent.StreamFinished.id.<get-id>|<get-id>(){}[0]
     }
 
     final class StreamOpened : io.kuicksilver.quic/ConnectionEvent { // io.kuicksilver.quic/ConnectionEvent.StreamOpened|null[0]
-        constructor <init>(kotlin/Long) // io.kuicksilver.quic/ConnectionEvent.StreamOpened.<init>|<init>(kotlin.Long){}[0]
-
         final val id // io.kuicksilver.quic/ConnectionEvent.StreamOpened.id|{}id[0]
             final fun <get-id>(): kotlin/Long // io.kuicksilver.quic/ConnectionEvent.StreamOpened.id.<get-id>|<get-id>(){}[0]
     }
 
     final class StreamReadable : io.kuicksilver.quic/ConnectionEvent { // io.kuicksilver.quic/ConnectionEvent.StreamReadable|null[0]
-        constructor <init>(kotlin/Long) // io.kuicksilver.quic/ConnectionEvent.StreamReadable.<init>|<init>(kotlin.Long){}[0]
-
         final val id // io.kuicksilver.quic/ConnectionEvent.StreamReadable.id|{}id[0]
             final fun <get-id>(): kotlin/Long // io.kuicksilver.quic/ConnectionEvent.StreamReadable.id.<get-id>|<get-id>(){}[0]
     }
 
     final class StreamReset : io.kuicksilver.quic/ConnectionEvent { // io.kuicksilver.quic/ConnectionEvent.StreamReset|null[0]
-        constructor <init>(kotlin/Long, kotlin/Long) // io.kuicksilver.quic/ConnectionEvent.StreamReset.<init>|<init>(kotlin.Long;kotlin.Long){}[0]
-
         final val code // io.kuicksilver.quic/ConnectionEvent.StreamReset.code|{}code[0]
             final fun <get-code>(): kotlin/Long // io.kuicksilver.quic/ConnectionEvent.StreamReset.code.<get-code>|<get-code>(){}[0]
         final val id // io.kuicksilver.quic/ConnectionEvent.StreamReset.id|{}id[0]
@@ -491,22 +462,16 @@ sealed interface io.kuicksilver.quic/ConnectionEvent { // io.kuicksilver.quic/Co
     }
 
     final class StreamWritable : io.kuicksilver.quic/ConnectionEvent { // io.kuicksilver.quic/ConnectionEvent.StreamWritable|null[0]
-        constructor <init>(kotlin/Long) // io.kuicksilver.quic/ConnectionEvent.StreamWritable.<init>|<init>(kotlin.Long){}[0]
-
         final val id // io.kuicksilver.quic/ConnectionEvent.StreamWritable.id|{}id[0]
             final fun <get-id>(): kotlin/Long // io.kuicksilver.quic/ConnectionEvent.StreamWritable.id.<get-id>|<get-id>(){}[0]
     }
 
     final class StreamsAvailable : io.kuicksilver.quic/ConnectionEvent { // io.kuicksilver.quic/ConnectionEvent.StreamsAvailable|null[0]
-        constructor <init>(kotlin/Boolean) // io.kuicksilver.quic/ConnectionEvent.StreamsAvailable.<init>|<init>(kotlin.Boolean){}[0]
-
         final val bidi // io.kuicksilver.quic/ConnectionEvent.StreamsAvailable.bidi|{}bidi[0]
             final fun <get-bidi>(): kotlin/Boolean // io.kuicksilver.quic/ConnectionEvent.StreamsAvailable.bidi.<get-bidi>|<get-bidi>(){}[0]
     }
 
     final class VerifyRequested : io.kuicksilver.quic/ConnectionEvent { // io.kuicksilver.quic/ConnectionEvent.VerifyRequested|null[0]
-        constructor <init>(kotlin.collections/List<io.kuicksilver.tls/Certificate>, io.kuicksilver.tls/QuicTlsSession) // io.kuicksilver.quic/ConnectionEvent.VerifyRequested.<init>|<init>(kotlin.collections.List<io.kuicksilver.tls.Certificate>;io.kuicksilver.tls.QuicTlsSession){}[0]
-
         final val chain // io.kuicksilver.quic/ConnectionEvent.VerifyRequested.chain|{}chain[0]
             final fun <get-chain>(): kotlin.collections/List<io.kuicksilver.tls/Certificate> // io.kuicksilver.quic/ConnectionEvent.VerifyRequested.chain.<get-chain>|<get-chain>(){}[0]
         final val session // io.kuicksilver.quic/ConnectionEvent.VerifyRequested.session|{}session[0]
@@ -579,8 +544,6 @@ sealed interface io.kuicksilver.quic/DatagramSendResult { // io.kuicksilver.quic
 
 sealed interface io.kuicksilver.quic/PathEvent { // io.kuicksilver.quic/PathEvent|null[0]
     final class Changed : io.kuicksilver.quic/PathEvent { // io.kuicksilver.quic/PathEvent.Changed|null[0]
-        constructor <init>(io.kuicksilver.quic/QuicPath, io.kuicksilver.quic/QuicPath, io.kuicksilver.quic/PathChangeReason) // io.kuicksilver.quic/PathEvent.Changed.<init>|<init>(io.kuicksilver.quic.QuicPath;io.kuicksilver.quic.QuicPath;io.kuicksilver.quic.PathChangeReason){}[0]
-
         final val new // io.kuicksilver.quic/PathEvent.Changed.new|{}new[0]
             final fun <get-new>(): io.kuicksilver.quic/QuicPath // io.kuicksilver.quic/PathEvent.Changed.new.<get-new>|<get-new>(){}[0]
         final val old // io.kuicksilver.quic/PathEvent.Changed.old|{}old[0]
@@ -590,9 +553,6 @@ sealed interface io.kuicksilver.quic/PathEvent { // io.kuicksilver.quic/PathEven
     }
 
     final class Failed : io.kuicksilver.quic/PathEvent { // io.kuicksilver.quic/PathEvent.Failed|null[0]
-        constructor <init>(io.kuicksilver.quic/QuicPath) // io.kuicksilver.quic/PathEvent.Failed.<init>|<init>(io.kuicksilver.quic.QuicPath){}[0]
-        constructor <init>(io.kuicksilver.quic/QuicPath, io.kuicksilver.quic/PathFailureReason) // io.kuicksilver.quic/PathEvent.Failed.<init>|<init>(io.kuicksilver.quic.QuicPath;io.kuicksilver.quic.PathFailureReason){}[0]
-
         final val path // io.kuicksilver.quic/PathEvent.Failed.path|{}path[0]
             final fun <get-path>(): io.kuicksilver.quic/QuicPath // io.kuicksilver.quic/PathEvent.Failed.path.<get-path>|<get-path>(){}[0]
         final val reason // io.kuicksilver.quic/PathEvent.Failed.reason|{}reason[0]
@@ -600,8 +560,6 @@ sealed interface io.kuicksilver.quic/PathEvent { // io.kuicksilver.quic/PathEven
     }
 
     final class SocketLost : io.kuicksilver.quic/PathEvent { // io.kuicksilver.quic/PathEvent.SocketLost|null[0]
-        constructor <init>(io.kuicksilver.quic/QuicPath, io.kuicksilver.quic/SocketDefunctException) // io.kuicksilver.quic/PathEvent.SocketLost.<init>|<init>(io.kuicksilver.quic.QuicPath;io.kuicksilver.quic.SocketDefunctException){}[0]
-
         final val cause // io.kuicksilver.quic/PathEvent.SocketLost.cause|{}cause[0]
             final fun <get-cause>(): io.kuicksilver.quic/SocketDefunctException // io.kuicksilver.quic/PathEvent.SocketLost.cause.<get-cause>|<get-cause>(){}[0]
         final val path // io.kuicksilver.quic/PathEvent.SocketLost.path|{}path[0]
@@ -611,8 +569,6 @@ sealed interface io.kuicksilver.quic/PathEvent { // io.kuicksilver.quic/PathEven
     }
 
     final class Validated : io.kuicksilver.quic/PathEvent { // io.kuicksilver.quic/PathEvent.Validated|null[0]
-        constructor <init>(io.kuicksilver.quic/QuicPath) // io.kuicksilver.quic/PathEvent.Validated.<init>|<init>(io.kuicksilver.quic.QuicPath){}[0]
-
         final val path // io.kuicksilver.quic/PathEvent.Validated.path|{}path[0]
             final fun <get-path>(): io.kuicksilver.quic/QuicPath // io.kuicksilver.quic/PathEvent.Validated.path.<get-path>|<get-path>(){}[0]
     }
@@ -674,8 +630,6 @@ final class io.kuicksilver.quic/Bbr : io.kuicksilver.quic/CongestionController {
 }
 
 final class io.kuicksilver.quic/ConnectionAttempt { // io.kuicksilver.quic/ConnectionAttempt|null[0]
-    constructor <init>(io.ktor.network.sockets/InetSocketAddress, kotlin/Int, kotlin/Int, kotlin/Int, kotlin/Long, kotlin/Boolean) // io.kuicksilver.quic/ConnectionAttempt.<init>|<init>(io.ktor.network.sockets.InetSocketAddress;kotlin.Int;kotlin.Int;kotlin.Int;kotlin.Long;kotlin.Boolean){}[0]
-
     final val addressValidated // io.kuicksilver.quic/ConnectionAttempt.addressValidated|{}addressValidated[0]
         final fun <get-addressValidated>(): kotlin/Boolean // io.kuicksilver.quic/ConnectionAttempt.addressValidated.<get-addressValidated>|<get-addressValidated>(){}[0]
     final val connections // io.kuicksilver.quic/ConnectionAttempt.connections|{}connections[0]
