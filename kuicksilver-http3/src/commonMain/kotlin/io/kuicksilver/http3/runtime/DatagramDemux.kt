@@ -24,7 +24,8 @@ import kotlinx.coroutines.launch
 /**
  * HTTP datagrams of a connection (RFC 9297 section 2.1): one collector of the transport's datagrams, routed by quarter
  * stream ID to the streams that registered. Unknown IDs are dropped silently; a datagram without a valid quarter
- * stream ID is a connection error H3_DATAGRAM_ERROR.
+ * stream ID is a connection error H3_DATAGRAM_ERROR. A stream is unregistered when its receive side closes, so later
+ * datagrams for it are dropped as the RFC requires.
  */
 internal class DatagramDemux(
     private val session: H3Session,
@@ -141,13 +142,22 @@ internal class Http3StreamImpl(
         }
     override val datagrams: Flow<ByteArray> = incoming.receiveAsFlow()
 
-    override fun trySendDatagram(payload: ByteArray): DatagramSendResult = session.datagrams.trySend(st.id, payload)
+    /** Set by [reset]; a closed [output] (FIN sent or failed) closes the send side too. */
+    private var resetSent = false
+
+    /** RFC 9297 section 2.1: datagrams go out only while the stream's send side is open. */
+    private val sendOpen: Boolean get() = !resetSent && !writer.output.isClosedForWrite && !st.output.isClosedForWrite
+
+    override fun trySendDatagram(payload: ByteArray): DatagramSendResult =
+        if (!sendOpen) DatagramSendResult.Closed else session.datagrams.trySend(st.id, payload)
 
     override suspend fun sendDatagram(payload: ByteArray) {
+        check(sendOpen) { "the send side of stream ${st.id} is closed: HTTP datagrams are no longer sent (RFC 9297 section 2.1)" }
         session.datagrams.send(st.id, payload)
     }
 
     override fun reset(code: Long) {
+        resetSent = true
         st.reset(code)
         onReset()
     }

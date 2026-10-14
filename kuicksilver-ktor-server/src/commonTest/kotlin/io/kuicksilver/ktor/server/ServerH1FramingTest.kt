@@ -1,0 +1,138 @@
+// Copyright 2026 The Kuicksilver Authors
+// SPDX-License-Identifier: Apache-2.0
+package io.kuicksilver.ktor.server
+
+import io.ktor.server.application.Application
+import io.ktor.server.engine.connector
+import io.ktor.server.engine.embeddedServer
+import io.ktor.server.request.receiveText
+import io.ktor.server.response.respondText
+import io.ktor.server.routing.get
+import io.ktor.server.routing.post
+import io.ktor.server.routing.routing
+import io.kuicksilver.native.KslLoader
+import kotlinx.coroutines.withTimeout
+import kotlin.test.BeforeTest
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.seconds
+
+/** How the server finds the end of an HTTP/1.1 request and whether the connection carries another (RFC 9112 sections 6, 7). */
+class ServerH1FramingTest {
+    @BeforeTest fun load() = KslLoader.ensureLoaded()
+
+    private val routes: Application.() -> Unit = {
+        routing {
+            post("/echo") { call.respondText("body=" + call.receiveText()) }
+            get("/admin") { call.respondText("admin secret") }
+            get("/") { call.respondText("root") }
+        }
+    }
+
+    /**
+     * Content-Length and Transfer-Encoding together: the server MUST close the connection after responding (RFC 9112
+     * section 6.1); here it rejects the request with 400. Before, it framed the body by the chunked coding and kept reading
+     * the connection, so the bytes a Content-Length-framing front proxy took as body became a second, smuggled request.
+     */
+    @Test fun negative_contentLengthWithTransferEncodingIsRejectedAndClosed() =
+        serverTest {
+            plainServer { port ->
+                val resp =
+                    withTimeout(10.seconds) {
+                        rawHttp(
+                            port,
+                            "POST /echo HTTP/1.1\r\nHost: s\r\nContent-Length: 4\r\nTransfer-Encoding: chunked\r\n\r\n" +
+                                "0\r\n\r\nGET /admin HTTP/1.1\r\nHost: s\r\nConnection: close\r\n\r\n",
+                            tls = null,
+                        )
+                    }
+                assertTrue(resp.startsWith("HTTP/1.0 400") || resp.startsWith("HTTP/1.1 400"), resp)
+                assertFalse(resp.contains("admin secret"), "the smuggled request was served: $resp")
+            }
+        }
+
+    /** Conflicting Content-Length values: 400 and close (RFC 9112 section 6.3 item 5). */
+    @Test fun negative_invalidContentLengthIsRejected() =
+        serverTest {
+            plainServer { port ->
+                for (cl in listOf("Content-Length: +4", "Content-Length: 4\r\nContent-Length: 5", "Content-Length: 4, 5")) {
+                    val resp = withTimeout(10.seconds) { rawHttp(port, "POST /echo HTTP/1.1\r\nHost: s\r\n$cl\r\n\r\nabcd", tls = null) }
+                    assertTrue(resp.contains(" 400 "), "$cl: $resp")
+                }
+            }
+        }
+
+    /**
+     * A request without Content-Length or Transfer-Encoding has no body (RFC 9112 section 6.3 item 7), also with
+     * `Connection: close`. Before, the server read the connection to its end as the body, and `receiveText()` waited for
+     * a half-close the client never sends.
+     */
+    @Test fun postWithoutFramingHasAnEmptyBody() =
+        serverTest {
+            plainServer { port ->
+                val resp =
+                    withTimeout(10.seconds) {
+                        rawHttp(port, "POST /echo HTTP/1.1\r\nHost: s\r\nConnection: close\r\n\r\n", tls = null)
+                    }
+                assertTrue(resp.startsWith("HTTP/1.1 200"), resp)
+                assertTrue(resp.endsWith("body="), resp)
+            }
+        }
+
+    /**
+     * A chunked request body with a trailer section (RFC 9112 section 7.1.2): the body arrives, the trailer fields are
+     * discarded, and the next request on the connection is read in step. Before, the body failed with "Expected CR".
+     */
+    @Test fun chunkedRequestWithTrailersIsAccepted() =
+        serverTest {
+            plainServer { port ->
+                val resp =
+                    withTimeout(10.seconds) {
+                        rawHttp(
+                            port,
+                            "POST /echo HTTP/1.1\r\nHost: s\r\nTransfer-Encoding: chunked\r\n\r\n" +
+                                "5\r\nhello\r\n0\r\nX-Checksum: 1\r\nServer-Timing: x\r\n\r\n" +
+                                "GET / HTTP/1.1\r\nHost: s\r\nConnection: close\r\n\r\n",
+                            tls = null,
+                        )
+                    }
+                assertTrue(resp.contains("body=hello"), resp)
+                assertTrue(resp.endsWith("root"), resp)
+            }
+        }
+
+    /** A transfer coding other than a final `chunked`: 400 and close (RFC 9112 section 6.3 item 4). */
+    @Test fun negative_unknownTransferCodingIsRejected() =
+        serverTest {
+            plainServer { port ->
+                val resp =
+                    withTimeout(10.seconds) {
+                        rawHttp(port, "POST /echo HTTP/1.1\r\nHost: s\r\nTransfer-Encoding: gzip\r\n\r\nabcd", tls = null)
+                    }
+                assertTrue(resp.contains(" 400 "), resp)
+            }
+        }
+
+    private suspend fun plainServer(block: suspend (Int) -> Unit) {
+        val server =
+            embeddedServer(Kuicksilver, configure = {
+                connector {
+                    host = "127.0.0.1"
+                    port = 0
+                }
+            }, module = routes)
+        server.startSuspend(false)
+        try {
+            block(
+                server.engine
+                    .resolvedConnectors()
+                    .first()
+                    .port,
+            )
+        } finally {
+            server.stop(100, 500)
+        }
+    }
+}

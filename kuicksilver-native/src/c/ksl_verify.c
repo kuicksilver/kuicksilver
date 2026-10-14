@@ -71,20 +71,51 @@ int ksl_cert_verify_cb(X509_STORE_CTX *xctx, void *arg) {
     sk_X509_pop_free(s->validated_chain, X509_free); s->validated_chain = X509_STORE_CTX_get1_chain(xctx);
     return 1;
 }
-/* Server pause at ClientHello (KSL_OPT_SNI_PAUSE): Kotlin reads ksl_ssl_client_hello and answers with ksl_ssl_sni_resume. */
+/* Every server's ClientHello: QUIC needs ALPN (RFC 9001 section 8.1: "endpoints MUST immediately close a connection ... with a
+   no_application_protocol TLS alert (QUIC error code 0x0178)"); OpenSSL calls the ALPN select callback only when the extension is
+   present, so a ClientHello without it is refused here, as OpenSSL's own QUIC stack and BoringSSL do. Then the pause for SNI selection
+   (KSL_OPT_SNI_PAUSE): Kotlin reads ksl_ssl_client_hello and answers with ksl_ssl_sni_resume; the override is applied once (a second
+   ClientHello after HelloRetryRequest keeps it). */
 int ksl_client_hello_cb(SSL *ssl, int *al, void *arg) {
-    (void)arg; ksl_ssl *s = SSL_get_ex_data(ssl, 1);
+    (void)arg; ksl_ssl *s = SSL_get_ex_data(ssl, 1); const unsigned char *ext; size_t ext_len;
+    if (s->mode == KSL_MODE_QUIC && SSL_client_hello_get0_ext(ssl, TLSEXT_TYPE_application_layer_protocol_negotiation, &ext, &ext_len) != 1) {
+        *al = SSL_AD_NO_APPLICATION_PROTOCOL; return SSL_CLIENT_HELLO_ERROR;
+    }
+    if (!s->owner->sni_pause || s->sni_pending == 3) return SSL_CLIENT_HELLO_SUCCESS;
     if (s->sni_pending == 0) { s->sni_pending = 1; return SSL_CLIENT_HELLO_RETRY; }
     if (s->sni_pending == 1) return SSL_CLIENT_HELLO_RETRY;
     s->sni_pending = 3;
     if (s->sni_decision_alert) { *al = s->sni_decision_alert; return SSL_CLIENT_HELLO_ERROR; }
     if (s->sni_override) {
         ksl_ctx *o = s->sni_override;
-        if (!SSL_set_SSL_CTX(ssl, o->ctx)) { *al = SSL_AD_INTERNAL_ERROR; return SSL_CLIENT_HELLO_ERROR; }
-        SSL_set_verify(ssl, SSL_CTX_get_verify_mode(o->ctx), NULL);
+        if (!SSL_set_SSL_CTX(ssl, o->ctx) || !ksl_ctx_apply_to_ssl(o, ssl)) { *al = SSL_AD_INTERNAL_ERROR; return SSL_CLIENT_HELLO_ERROR; }
         /* ALPN: the override's SSL_CTX carries its own select callback (arg = o); the frozen base context, shared by other sessions, is never written */
         s->owner = o;   /* ownership of the session's settings moves to the override context */
         SSL_set_ex_data(ssl, 1, s);
     }
     return SSL_CLIENT_HELLO_SUCCESS;
+}
+/* Resumption (ADR-0011): a resumed handshake carries no Certificate, so the chain cached from the full handshake is verified again with
+   the current trust store, time, name and purpose; X509_STORE is safe to share between threads for verification. */
+int ksl_ctx_verify_chain(ksl_ctx *c, const uint8_t *chain, size_t chain_len, const char *name, int64_t at, int *x509_err) {
+    ERR_clear_error(); if (x509_err) *x509_err = 0;
+    if (c->role == KSL_CLIENT && (!name || !*name)) return KSL_ERROR;   /* no error is written into the shared context: *x509_err says it all */
+    STACK_OF(X509) *sk = NULL;
+    if (!ksl_parse_chain(chain, chain_len, &sk) || sk_X509_num(sk) == 0) { sk_X509_pop_free(sk, X509_free); return KSL_ERROR; }
+    X509_STORE_CTX *x = X509_STORE_CTX_new(); int ok = 0, err = 0;
+    if (x && X509_STORE_CTX_init(x, SSL_CTX_get_cert_store(c->ctx), sk_X509_value(sk, 0), sk) == 1
+        && X509_STORE_CTX_set_default(x, c->role == KSL_CLIENT ? "ssl_server" : "ssl_client") == 1) {
+        X509_VERIFY_PARAM *p = X509_STORE_CTX_get0_param(x); int named = 1;
+        X509_VERIFY_PARAM_set1(p, SSL_CTX_get0_param(c->ctx));   /* the context's flags (PARTIAL_CHAIN for AnchoredCa) and depth */
+        if (at > 0) X509_VERIFY_PARAM_set_time(p, (time_t)at);
+        if (c->role == KSL_CLIENT) {
+            X509_VERIFY_PARAM_set_hostflags(p, X509_CHECK_FLAG_NEVER_CHECK_SUBJECT | X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS);
+            if (X509_VERIFY_PARAM_set1_ip_asc(p, name) != 1) { ERR_clear_error(); named = X509_VERIFY_PARAM_set1_host(p, name, 0) == 1; }
+        }
+        if (named) { ok = X509_verify_cert(x) == 1; err = ok ? X509_V_OK : X509_STORE_CTX_get_error(x); }
+    }
+    X509_STORE_CTX_free(x); sk_X509_pop_free(sk, X509_free); ERR_clear_error();
+    if (ok) return KSL_OK;
+    if (x509_err) *x509_err = err;
+    return KSL_ERROR;
 }

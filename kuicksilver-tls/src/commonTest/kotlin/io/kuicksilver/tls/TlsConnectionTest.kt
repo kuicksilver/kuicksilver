@@ -7,6 +7,7 @@ package io.kuicksilver.tls
 import io.ktor.utils.io.ByteChannel
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.ByteWriteChannel
+import io.ktor.utils.io.discard
 import io.ktor.utils.io.readAvailable
 import io.ktor.utils.io.writeFully
 import io.kuicksilver.annotations.DelicateKuicksilverApi
@@ -294,8 +295,12 @@ class TlsConnectionTest {
         }
     }
 
-    @Test fun negative_tls12WithoutEmsRejected() {
-        // our side never disables EMS; a TLS 1.2 handshake with EMS succeeds and reports Tls12
+    /**
+     * Tls12And13 on both sides still negotiates TLS 1.3. The negative control for a TLS 1.2 peer without EMS
+     * (`negative_tls12WithoutEmsRejected`, threat model section 5) lives in the C suite (`tcp_tls12_profile_and_ems`): the Kotlin
+     * API cannot build a peer without extended master secret.
+     */
+    @Test fun tls12And13PeersNegotiateTls13() {
         val (c, s) =
             both(
                 TcpFixtures.client {
@@ -460,6 +465,33 @@ class TlsServerTest {
             }
         }
 
+    /** ClientAuth.Optional + Pinned (review T3): a client without a certificate is accepted (TlsConfig.clientAuth KDoc), a presented one must match a pin. */
+    @Test fun clientAuthOptionalPinnedAcceptsClientWithoutCertificate(): Unit =
+        runBlocking {
+            val ca = TrustConfig.AnchoredCa(listOf(Fixtures.testCa))
+            val server =
+                TcpFixtures.server {
+                    clientAuth = ClientAuth.Optional
+                    trust = TrustConfig.Pinned(setOf(Certificate(TestCerts.proxy).spkiSha256), base = ca)
+                }
+            val (c, s) = both(TcpFixtures.client(), server)
+            try {
+                assertTrue(s.peerCertificates.isEmpty(), "no client certificate")
+            } finally {
+                c.close()
+                s.close()
+            }
+            val (_, sd) =
+                connect(
+                    TcpFixtures.client {
+                        identity =
+                            TlsIdentity.fromDer(listOf(TestCerts.client), TestCerts.clientKey.copyOf())
+                    },
+                    server,
+                )
+            assertIs<VerifyReason.PinMismatch>(assertFailsWith<TlsException.Verify> { withTimeout(10.seconds) { sd.await() } }.reason)
+        }
+
     @Test fun clientAuthRequiredAnchoredCaAndPinned(): Unit =
         runBlocking {
             val ca = TrustConfig.AnchoredCa(listOf(Fixtures.testCa))
@@ -568,6 +600,39 @@ class TlsServerTest {
             }
         }
 
+    /**
+     * Threat model 5, item 2, through an SNI override (review T1): the base configuration asks for no client certificate and
+     * issues tickets in the handshake, the selector's override pins client certificates. The override's settings must be in
+     * effect: no ticket before its pin verdict, so a client whose CA-issued certificate is not pinned can never resume past the pin.
+     */
+    @Test fun negative_sniOverridePinnedClientsNoTicketBeforeVerdict(): Unit =
+        runBlocking {
+            val pinned =
+                TrustConfig.Pinned(setOf(Certificate(TestCerts.proxy).spkiSha256), base = TrustConfig.AnchoredCa(listOf(Fixtures.testCa)))
+            val server =
+                TcpFixtures.server {
+                    sniSelector = { ServerTlsOverride(serverIdentity, clientAuth = ClientAuth.Required, trust = pinned) }
+                }
+            val client = TcpFixtures.client { identity = TlsIdentity.fromDer(listOf(TestCerts.client), TestCerts.clientKey.copyOf()) }
+            repeat(2) { attempt ->
+                val (cd, sd) = connect(client, server)
+                val e = assertFailsWith<TlsException.Verify>("attempt $attempt") { withTimeout(10.seconds) { sd.await() } }
+                assertIs<VerifyReason.PinMismatch>(e.reason, "attempt $attempt: the pin is checked")
+                // the server's close_notify follows anything it sent: reading to the end has processed a ticket, if one came
+                runCatching {
+                    withTimeout(10.seconds) {
+                        val c = cd.await()
+                        try {
+                            c.input.discard()
+                        } finally {
+                            c.close()
+                        }
+                    }
+                }
+                assertEquals(0, SessionCache.Default.size(), "attempt $attempt: no ticket reached the rejected client")
+            }
+        }
+
     /** Drives a raw `ksl` TCP session over channels until its handshake completes; returns the last drive result. */
     private suspend fun rawHandshake(
         ssl: Long,
@@ -647,6 +712,25 @@ class SessionResumptionTest {
         } ?: false
 
     private fun stored(key: String): Boolean = runBlocking { awaitTicket(key) }
+
+    /**
+     * ADR-0011 (review T4): on the OpenSSL verifier's path (AnchoredCa here, Platform on Linux) a resumption verifies the cached
+     * chain again; a chain that expired since the full handshake is not resumed, the client runs a full handshake instead.
+     */
+    @Test fun negative_resumptionRechecksCachedChainOnOpenSslPath() {
+        val client = TcpFixtures.client()
+        val server = TcpFixtures.server()
+        once(client, server)
+        resumptionClockSkewForTest = 101L * 366 * 24 * 3600 // past the test certificates' notAfter (2126)
+        try {
+            val (_, r) = once(client, server)
+            assertTrue(!r, "an expired cached chain is never resumed")
+        } finally {
+            resumptionClockSkewForTest = 0
+        }
+        val (_, r2) = once(client, server)
+        assertTrue(r2, "control: the fresh ticket of that full handshake resumes")
+    }
 
     @Test fun secondConnectionResumes() {
         val client = TcpFixtures.client()

@@ -178,7 +178,7 @@ DER.
 | `qpackMaxTableCapacity` | `Long` | 0 | 0..2^30 | `SETTINGS_QPACK_MAX_TABLE_CAPACITY` we advertise: the dynamic table the peer's encoder may use |
 | `qpackBlockedStreams` | `Long` | 0 | 0..65 535 | `SETTINGS_QPACK_BLOCKED_STREAMS` we advertise |
 | `encoderMaxTableCapacity` | `Long` | 4096 | 0..2^30 | ceiling of our own encoder's dynamic table, under what the peer allows |
-| `maxFieldSectionSize` | `Long` | 65 536 (64 KiB) | 1..2^30 | largest decoded header or trailer section we accept, advertised as `SETTINGS_MAX_FIELD_SECTION_SIZE` |
+| `maxFieldSectionSize` | `Long` | 65 536 (64 KiB) | 1..2^30 | largest decoded header or trailer section we accept (and so the longest single field; above it: 431, the connection lives), advertised as `SETTINGS_MAX_FIELD_SECTION_SIZE` |
 | `enableConnectProtocol` | `Boolean` | `false` | | advertise Extended CONNECT (RFC 9220) |
 | `h3Datagram` | `Boolean` | `true` | | `SETTINGS_H3_DATAGRAM` (always sent); `Http3Endpoint` sends 0 when `QuicConfig.maxDatagramFrameSize` is 0 |
 | `grease` | `Boolean` | `true` | | send a reserved setting, frame and stream type |

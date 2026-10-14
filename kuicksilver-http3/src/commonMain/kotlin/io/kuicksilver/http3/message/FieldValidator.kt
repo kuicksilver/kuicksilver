@@ -17,6 +17,9 @@ internal object FieldValidator {
     val CONNECTION_SPECIFIC: Set<String> = setOf("connection", "keep-alive", "proxy-connection", "transfer-encoding", "upgrade")
     private const val TCHAR_SYMBOLS = "!#$%&'*+-.^_`|~"
 
+    /** A token (RFC 9110 section 5.6.2), any case: an HTTP method (section 9.1). */
+    fun isToken(t: String): Boolean = t.isNotEmpty() && t.all { it in 'a'..'z' || it in 'A'..'Z' || it in '0'..'9' || it in TCHAR_SYMBOLS }
+
     /** null when [n] is a valid lowercase token, else the reason. */
     fun checkName(n: String): String? {
         if (n.isEmpty()) return "empty field name"
@@ -138,10 +141,17 @@ internal object PseudoHeaders {
         }
         val method = pseudo[":method"] ?: throw MalformedMessage(":method missing")
         if (method.isEmpty()) throw MalformedMessage("empty :method")
+        if (!FieldValidator.isToken(method)) throw MalformedMessage(":method is not a token")
         val protocol = pseudo[":protocol"]
         val scheme = pseudo[":scheme"]
         val path = pseudo[":path"]
-        val host = regular.firstOrNull { it.first == "host" }?.second
+        // one host at most, equal to :authority when both are present (RFC 9114 section 4.3.1; quic-go rejects a second one)
+        var host: String? = null
+        for ((n, v) in regular) {
+            if (n != "host") continue
+            if (host != null) throw MalformedMessage("more than one host field")
+            host = v
+        }
         var authority = pseudo[":authority"]
         if (authority != null && host != null && authority != host) throw MalformedMessage(":authority and host differ")
         if (protocol != null) {
@@ -155,6 +165,7 @@ internal object PseudoHeaders {
         } else if (method == "CONNECT") {
             if (scheme != null || path != null) throw MalformedMessage("CONNECT with :scheme or :path")
             if (authority.isNullOrEmpty()) throw MalformedMessage("CONNECT without :authority")
+            if ('@' in authority) throw MalformedMessage("userinfo in the CONNECT :authority")
         } else {
             if (scheme.isNullOrEmpty()) throw MalformedMessage(":scheme missing")
             if (path.isNullOrEmpty()) throw MalformedMessage(":path missing or empty")
@@ -163,6 +174,15 @@ internal object PseudoHeaders {
                 authority.isNullOrEmpty()
             ) {
                 throw MalformedMessage("no :authority or host for $scheme")
+            }
+        }
+        if (method != "CONNECT" || protocol != null) {
+            // path-absolute ["?" query], or "*" for OPTIONS (RFC 9114 section 4.3.1): never an absolute URI, a relative path or spaces
+            val p = path!!
+            if (!(p.startsWith('/') || (method == "OPTIONS" && p == "*"))) throw MalformedMessage(":path is not absolute")
+            if (p.any { it == ' ' || it == '\t' }) throw MalformedMessage("whitespace in :path")
+            if ((scheme == "http" || scheme == "https") && authority != null && '@' in authority) {
+                throw MalformedMessage("userinfo in :authority") // deprecated for http and https URIs, RFC 9114 section 4.3.1
             }
         }
         return Request(method, scheme, authority ?: host, path, protocol, Http3Headers(FieldValidator.checkContentLength(regular)))
@@ -195,6 +215,27 @@ internal object PseudoHeaders {
             FieldValidator.checkRegular(n, v, request = false)
         }
         return Http3Headers(fields)
+    }
+
+    /**
+     * Our own request [fields] (from [buildRequest]) must pass the checks the peer applies ([parseRequest]): the caller
+     * gets IllegalArgumentException instead of a stream the peer resets with H3_MESSAGE_ERROR (RFC 9114 sections 4.2, 4.3.1).
+     */
+    fun requireValidRequest(fields: List<Pair<String, String>>) {
+        try {
+            parseRequest(fields, connectProtocolEnabled = true)
+        } catch (e: MalformedMessage) {
+            throw IllegalArgumentException("invalid request: ${e.reason}")
+        }
+    }
+
+    /** Our own trailers: no pseudo-headers, no connection-specific fields, no `te` (RFC 9114 section 4.2); IllegalArgumentException otherwise. */
+    fun requireValidTrailers(fields: List<Pair<String, String>>) {
+        try {
+            parseTrailers(fields)
+        } catch (e: MalformedMessage) {
+            throw IllegalArgumentException("invalid trailers: ${e.reason}")
+        }
     }
 
     fun buildRequest(r: Http3Request): List<Pair<String, String>> {

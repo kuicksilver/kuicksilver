@@ -53,7 +53,9 @@ public class Http3Connection private constructor(
      * Client: sends [request] and returns at its final response; interim (1xx) responses go to `onInformational`. Fails
      * with [Http3Exception.RequestNotProcessed] after GOAWAY, with [Http3Exception] stream errors for this request
      * (the connection lives on), and with the connection's error once it is gone. Cancelling the call resets the stream
-     * with H3_REQUEST_CANCELLED.
+     * with H3_REQUEST_CANCELLED. A request the peer would have to treat as malformed (RFC 9114 sections 4.2, 4.3.1: see
+     * [Http3Request]) throws IllegalArgumentException before a stream is opened; so do its trailers, which also abandon
+     * the request (the stream is reset with H3_REQUEST_CANCELLED).
      */
     public suspend fun request(request: Http3Request): Http3Response {
         check(role == Http3Role.Client) { "request() is client-only" }
@@ -204,7 +206,8 @@ public interface Http3ResponseWriter {
     /**
      * Flushes [output], sends [trailers] if any, then FIN. Closing [output] without calling this ends the response without trailers.
      * Trailers above the peer's `SETTINGS_MAX_FIELD_SECTION_SIZE` throw [Http3Exception.FieldSectionTooLarge] and reset the
-     * stream with H3_INTERNAL_ERROR.
+     * stream with H3_INTERNAL_ERROR; trailers with a pseudo-header, a connection-specific field or `te` (RFC 9114 section
+     * 4.2) throw IllegalArgumentException and reset it the same way.
      */
     public suspend fun finish(trailers: Http3Headers? = null)
 }

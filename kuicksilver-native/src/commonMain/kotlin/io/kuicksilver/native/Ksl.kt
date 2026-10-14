@@ -82,6 +82,18 @@ public expect object Ksl {
 
     public fun ctxFreeze(ctx: Long)
 
+    /**
+     * Verifies [chainDer] (leaf first), kept from an earlier handshake, again as that handshake did: the context's trust store and
+     * verify parameters, the purpose of the peer's role and, on a client, [name] (DNS-ID or IP literal). [atEpochSeconds] 0 means
+     * now. Returns 0 when it passes, the X509_V_ERR_* code when it fails, -1 when the input is unusable (`ksl_ctx_verify_chain`).
+     */
+    public fun ctxVerifyChain(
+        ctx: Long,
+        chainDer: List<ByteArray>,
+        name: String?,
+        atEpochSeconds: Long,
+    ): Int
+
     public fun ctxLastError(ctx: Long): KslError
 
     // session

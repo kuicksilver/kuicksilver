@@ -118,6 +118,38 @@ class QpackDecoderTest {
         assertEquals(60_074, assertIs<DecodeResult.Decoded>(d.decode(0, w2.toByteArray())).decodedSize)
     }
 
+    /**
+     * RFC 9204 section 7.4: a single string above what we can decode is a stream error (the section is TooLarge: 431 on a
+     * request stream), not a connection error; the ceiling follows maxFieldSectionSize.
+     */
+    @Test fun oversizedSingleFieldIsTooLargeNotAnError() {
+        fun section(
+            value: String,
+            huffman: Boolean,
+        ): ByteArray {
+            val w = QpackWriter()
+            w.writeByte(0)
+            w.writeByte(0)
+            w.writeString(0x20, 3, "x-big", huffman = false)
+            w.writeString(0, 7, value, huffman = huffman)
+            return w.toByteArray()
+        }
+        val d = dec(cap = 0, max = 65_536)
+        assertIs<DecodeResult.TooLarge>(d.decode(0, section("v".repeat(65_600), huffman = false)))
+        assertIs<DecodeResult.TooLarge>(d.decode(4, section("a".repeat(65_600), huffman = true)))
+        // a raised limit: one 100 KB value fits a 1 MiB field section
+        val raised = dec(cap = 0, max = 1L shl 20)
+        val f = assertIs<DecodeResult.Decoded>(raised.decode(0, section("v".repeat(100_000), huffman = false))).fields
+        assertEquals(100_000, f.single().second.length)
+        assertEquals(
+            100_000,
+            assertIs<DecodeResult.Decoded>(raised.decode(4, section("a".repeat(100_000), huffman = true)))
+                .fields
+                .single()
+                .second.length,
+        )
+    }
+
     @Test fun staticOnlyWhenCapacityZero() {
         val d = dec(cap = 0)
         assertEquals(Http3ErrorCode.QPACK_DECOMPRESSION_FAILED, assertFailsWith<QpackError> { d.decode(0, hex("0381 10")) }.code)

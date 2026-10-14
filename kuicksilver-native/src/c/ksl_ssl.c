@@ -144,7 +144,7 @@ int ksl_ssl_set_session(ksl_ssl *s, ksl_session *session) {
     return KSL_OK;
 }
 void ksl_session_free(ksl_session *session) { if (session) ksl_live_add(KSL_LIVE_SESSION, -1); SSL_SESSION_free((SSL_SESSION *)session); }
-int ksl_ssl_new_session_ticket(ksl_ssl *s) { ERR_clear_error(); if (SSL_new_session_ticket(s->ssl) != 1) { ksl_ssl_set_error(s, KSL_E_NOT_SUPPORTED, "ksl: ticket request failed"); return KSL_ERROR; } return KSL_OK; }
+int ksl_ssl_new_session_ticket(ksl_ssl *s) { ERR_clear_error(); s->ticket_authorized = 1; if (SSL_new_session_ticket(s->ssl) != 1) { ksl_ssl_set_error(s, KSL_E_NOT_SUPPORTED, "ksl: ticket request failed"); return KSL_ERROR; } return KSL_OK; }
 int ksl_ssl_key_update(ksl_ssl *s, int request_peer) {
     ERR_clear_error();
     if (SSL_key_update(s->ssl, request_peer ? SSL_KEY_UPDATE_REQUESTED : SSL_KEY_UPDATE_NOT_REQUESTED) != 1) { ksl_ssl_set_error(s, KSL_E_NOT_SUPPORTED, "ksl: key update failed"); return KSL_ERROR; }
@@ -179,7 +179,13 @@ int ksl_drive(ksl_ssl *s) {
         if (r == 1) {
             s->done = 1;
             if (s->mode == KSL_MODE_TCP && SSL_version(s->ssl) < TLS1_3_VERSION && !SSL_get_extms_support(s->ssl)) return ksl_ssl_fail(s, KSL_E_EMS_REQUIRED, "ksl: TLS 1.2 without extended master secret rejected");
-            if (s->mode == KSL_MODE_QUIC) ksl_push_event(s, KSL_EV_HANDSHAKE_DONE, NULL, 0);
+            if (s->mode == KSL_MODE_QUIC) {
+                /* RFC 9001 section 8.1: "QUIC clients MUST use error 0x0178 to terminate a connection when ALPN negotiation fails"; an
+                   OpenSSL client accepts a server that answered without ALPN (the server side is refused in ksl_client_hello_cb) */
+                const unsigned char *a; unsigned al; SSL_get0_alpn_selected(s->ssl, &a, &al);
+                if (al == 0) { s->last_alert = SSL_AD_NO_APPLICATION_PROTOCOL; s->done = 0; return ksl_ssl_fail(s, KSL_E_NOT_SUPPORTED, "ksl: no application protocol negotiated (RFC 9001 section 8.1)"); }
+                ksl_push_event(s, KSL_EV_HANDSHAKE_DONE, NULL, 0);
+            }
             return KSL_OK;
         }
     } else {

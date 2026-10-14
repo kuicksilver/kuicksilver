@@ -135,6 +135,23 @@ public actual object Ksl {
 
     public actual fun ctxFreeze(ctx: Long): Unit = ctxCheck(ctx, ksl_ctx_freeze(ctx(ctx)))
 
+    public actual fun ctxVerifyChain(
+        ctx: Long,
+        chainDer: List<ByteArray>,
+        name: String?,
+        atEpochSeconds: Long,
+    ): Int =
+        memScoped {
+            val err = alloc<IntVar>()
+            err.value = 0
+            val rc = frameDerList(chainDer).pin { p, n -> ksl_ctx_verify_chain(ctx(ctx), p, n, name, atEpochSeconds, err.ptr) }
+            when {
+                rc == KSL_OK -> 0
+                err.value != 0 -> err.value
+                else -> -1
+            }
+        }
+
     public actual fun ctxLastError(ctx: Long): KslError = ctxError(ctx).let { KslError(it.packed, it.alert, it.message ?: "") }
 
     public actual fun sslNew(
