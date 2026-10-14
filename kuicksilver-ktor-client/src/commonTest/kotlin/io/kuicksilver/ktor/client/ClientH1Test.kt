@@ -65,6 +65,26 @@ import io.ktor.server.websocket.webSocket as serverWebSocket
 class ClientH1Test {
     @BeforeTest fun load() = KslLoader.ensureLoaded()
 
+    /** Android's Network Security Configuration (`cleartextTrafficPermitted`) refuses `http://` before any connection, as OkHttp does. */
+    @Test fun cleartextThePolicyRefusesNeverConnects() =
+        clientTest {
+            var served = 0
+            val (server, port) = testServer(plain = true) { routing { get("/") { call.respondText("ok").also { served++ } } } }
+            try {
+                testClient().use { client ->
+                    val engine = client.engine as KuicksilverEngine
+                    engine.h1.cleartextPermitted = { host -> host != "127.0.0.1" }
+                    val e = kotlin.test.assertFailsWith<kotlinx.io.IOException> { client.get("http://127.0.0.1:$port/") }
+                    assertEquals("CLEARTEXT communication to 127.0.0.1 not permitted by network security policy", e.message)
+                    assertEquals(0, served)
+                    engine.h1.cleartextPermitted = { true }
+                    assertEquals("ok", client.get("http://127.0.0.1:$port/").bodyAsText())
+                }
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
     @Test fun getHttps() =
         clientTest {
             val (server, port) = testServer { routing { get("/") { call.respondText("ok") } } }

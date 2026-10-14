@@ -102,7 +102,10 @@ val client = HttpClient(Kuicksilver) {
 ```
 
 - `https://` and `wss://` go over TLS 1.3 with the same `trust`, `identity` and `tls {}` settings whatever the protocol;
-  SNI and verification use the URL's host. `http://` and `ws://` are plain HTTP/1.1 over TCP.
+  SNI and verification use the URL's host. `http://` and `ws://` are plain HTTP/1.1 over TCP. On Android they follow
+  the app's Network Security Configuration as OkHttp does: a host for which `NetworkSecurityPolicy.isCleartextTrafficPermitted`
+  is false (every host by default from `targetSdk` 28) is refused before any connection with an `IOException`
+  "CLEARTEXT communication to <host> not permitted by network security policy".
 - HTTP/1.1 requests are written and responses parsed with Ktor's CIO code (vendored, see `docs/ktor-internal-api.md`):
   chunked bodies, `Expect: 100-continue`, keep-alive with at most `maxConnectionsPerHost` idle connections per route
   (a pooled connection the server already closed is replaced once, transparently, for idempotent requests; a POST

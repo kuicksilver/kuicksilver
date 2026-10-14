@@ -84,7 +84,7 @@ shared RFC 9525 matcher afterwards on every platform, so a platform matcher can 
 | Platform | Verifier and store | Revocation |
 |---|---|---|
 | JVM | the default `X509TrustManager`: the JDK's `cacerts` or `javax.net.ssl.trustStore`, not the OS store | as the JDK is configured (off by default) |
-| Android | the platform `TrustManager`, including the app's Network Security Config | the platform's policy |
+| Android | the platform `TrustManager`, including the app's Network Security Config (whose `cleartextTrafficPermitted` the Ktor client also honours for `http://`) | the platform's policy |
 | Apple (macOS, iOS) | `SecTrust` with the SSL policy for the host name: the keychain and the system roots | the platform's policy; an incomplete required check is `UnknownRevocationStatus` |
 | Windows (mingwX64) | CryptoAPI: `CertGetCertificateChain` for the `serverAuth` (or, for a client certificate, `clientAuth`) usage with the presented intermediates, then `CertVerifyCertificateChainPolicy(CERT_CHAIN_POLICY_SSL)` with the host name: the Windows root store, missing intermediates fetched through AIA | the leaf's status is checked; a revoked leaf is `Revoked`, an unknown status is ignored (soft fail, as browsers); network fetches share a 10 s budget and run off the handshake's thread |
 | Linux (Native) | OpenSSL inside `ksl` with the system CA bundle (below) | none |

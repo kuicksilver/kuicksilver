@@ -637,6 +637,12 @@ Pre-release API and operations review (2026-10-14):
   handle inheritance (`WSA_FLAG_NO_HANDLE_INHERIT`; accepted ones are cleared too), so a child process no longer keeps
   a listener's port or a connection open, and listeners bind with `SO_EXCLUSIVEADDRUSE`, so no `SO_REUSEADDR` socket
   of another process can bind over them, as the UDP sockets, msquic and Go already did.
+- Ktor client on Android: `http://` and `ws://` requests honour the app's Network Security Configuration
+  (`NetworkSecurityPolicy.isCleartextTrafficPermitted(host)`, false by default from targetSdk 28) and are refused with an
+  `IOException` before any connection, as OkHttp, `HttpURLConnection` and Cronet do; they were sent in cleartext.
+- Ktor engines on Android: the Ktor version check read the version Android gives every package ("0.0") and refused to
+  create a client or start a server ("ktor-server-core 0.0 is on the classpath"); on Android only a jar manifest counts
+  now, so the check passes as documented.
 
 ### Security
 

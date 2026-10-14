@@ -29,6 +29,7 @@ import io.kuicksilver.ktor.client.EngineEvents
 import io.kuicksilver.ktor.client.KuicksilverEngineConfig
 import io.kuicksilver.ktor.client.connectTimeoutMillis
 import io.kuicksilver.ktor.client.isIdempotent
+import io.kuicksilver.ktor.client.platformCleartextPermitted
 import io.kuicksilver.ktor.client.socketHost
 import io.kuicksilver.ktor.client.socketTimeoutMillis
 import io.kuicksilver.ktor.client.tlsConfigFor
@@ -77,6 +78,9 @@ internal class H1Pool(
     private val events: EngineEvents = EngineEvents(null, io.kuicksilver.quic.KuicksilverLogger.None),
     private val clock: () -> Long = monotonicMillis(),
 ) {
+    /** The platform's cleartext policy (Android Network Security Configuration); replaced by tests. */
+    internal var cleartextPermitted: (String) -> Boolean = { host -> platformCleartextPermitted(host) }
+
     /** Limits, keep-alive and idle expiry; internal for tests. */
     internal val pool = ConnectionPool<H1Connection>(config.poolLimits(), clock)
 
@@ -144,6 +148,13 @@ internal class H1Pool(
     ): HttpResponseData {
         val url = data.url
         val secure = url.protocol.isSecure()
+        if (!secure) {
+            val host = url.host.removePrefix("[").removeSuffix("]") // an IPv6 literal as the policy knows it
+            if (!cleartextPermitted(host)) {
+                throw io.kuicksilver.ktor.client
+                    .cleartextNotPermitted(host)
+            }
+        }
         val proxy =
             config.proxy?.also {
                 if (it.type !=
