@@ -48,6 +48,26 @@ class VersionInformationTest {
             TransportParametersCodec.decode(byteArrayOf(0x11, 8, 0, 0, 0, 0, 0, 0, 0, 1), TlsRole.Server)
         }
 
+    /** RFC 9368 section 4: "any Available Version equal to zero ... MUST treat it as a parsing failure". */
+    @Test fun negative_availableVersionZeroRejected() =
+        expect08 {
+            TransportParametersCodec.decode(byteArrayOf(0x11, 8, 0, 0, 0, 1, 0, 0, 0, 0), TlsRole.Server)
+        }
+
+    /** RFC 9368 section 4: a server treats a client Chosen Version missing from its Available Versions as a parsing failure. */
+    @Test fun negative_clientChosenVersionNotInAvailableRejected() {
+        expect08 { TransportParametersCodec.decode(byteArrayOf(0x11, 8, 0, 0, 0, 1, 0x6b, 0x33, 0x43, 0xcf.toByte()), TlsRole.Client) }
+        expect08 { TransportParametersCodec.decode(byteArrayOf(0x11, 4, 0, 0, 0, 1), TlsRole.Client) }
+        // a server's list need not contain its Chosen Version and may be empty (section 3)
+        TransportParametersCodec.decode(byteArrayOf(0x11, 4, 0, 0, 0, 1), TlsRole.Server)
+    }
+
+    /** RFC 9368 section 4: "if the client reacted to a Version Negotiation packet and the server's Available Versions field is empty". */
+    @Test fun negative_emptyAvailableVersionsAfterVnRejected() =
+        expect11 {
+            VersionNegotiationValidator.clientCheck(v2, v1, tp(v1), intArrayOf(v1), both())
+        }
+
     @Test fun chooseVersionServerPreferenceFirst() {
         assertEquals(v2, chooseVersion(intArrayOf(v2, v1), v1, intArrayOf(v1, v2)))
         assertEquals(v1, chooseVersion(intArrayOf(v1, v2), v1, intArrayOf(v1, v2)))

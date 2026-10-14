@@ -20,6 +20,11 @@ internal class RttEstimator(
     var hasSample: Boolean = false
         private set
 
+    /** RFC 9002 section 5.2: after persistent congestion min_rtt restarts from the newest sample. */
+    fun onPersistentCongestion() {
+        if (hasSample) min = latest
+    }
+
     fun onSample(
         latest: Duration,
         ackDelay: Duration,

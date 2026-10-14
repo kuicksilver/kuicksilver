@@ -75,6 +75,7 @@ extern "C" {
 #define KSL_GET_EMS 7              /* 1 byte: 1 if extended master secret was used (TLS 1.2) */
 #define KSL_GET_QUIC_VERSION 8     /* 4 bytes big-endian: negotiated (server, RFC 9368) or set (client) QUIC version */
 #define KSL_GET_EARLY_DATA 9       /* 1 byte: 0 not attempted, 1 rejected, 2 accepted (final once EncryptedExtensions is sent / received) */
+#define KSL_GET_QUIC_PENDING 10    /* 16 bytes: per level 0..3, 4 bytes big-endian, CRYPTO bytes provided and not yet read by TLS */
 
 /* ksl_ssl_set keys */
 #define KSL_SET_SNI 1              /* data = host name, ASCII */
@@ -82,7 +83,9 @@ extern "C" {
 #define KSL_SET_QUIC_VERSION 3     /* data = 4-byte big-endian QUIC version (0x00000001 | 0x6b3343cf): labels for Handshake/1-RTT keys (RFC 9369 3.3);
                                       unknown -> KSL_E_BAD_ARG, after Handshake keys exist -> KSL_E_TOO_LATE */
 #define KSL_SET_EARLY_CONTEXT 4    /* server, 1..64 bytes before the first drive: written into every ticket this session issues; a resumed ticket
-                                      whose stored context differs gets no early data (RFC 9001 section 4.6.3) */
+                                      whose stored context differs gets no early data (RFC 9001 section 4.6.3). Every server ticket also
+                                      carries the QUIC version of its connection (the negotiated one); a ticket of another version than
+                                      the client's original one is not resumed (RFC 9369 section 5) */
 #define KSL_SET_EARLY_DATA 5       /* 1 byte before the first drive. Client: 1 = send 0-RTT with the session set by ksl_ssl_set_session
                                       (KSL_E_NOT_SUPPORTED when its ticket does not allow early data). Server: 1 = the transport admits early
                                       data for this hello (replay register), 0 = refuse; KSL_E_NOT_SUPPORTED without KSL_OPT_EARLY_DATA */
@@ -123,6 +126,8 @@ extern "C" {
 #define KSL_E_NOT_SUPPORTED 0xff0008u
 #define KSL_E_TRUNCATED 0xff0009u
 #define KSL_E_TOO_LATE 0xff000au      /* the setting cannot change at this stage of the handshake */
+#define KSL_E_CRYPTO_LEVEL 0xff000bu  /* ksl_quic_provide: a level TLS no longer reads (RFC 9001 4.1.3) or more than
+                                         KSL_QUIC_LEVEL_MAX unread bytes at one level */
 
 typedef struct ksl_ctx ksl_ctx;
 typedef struct ksl_ssl ksl_ssl;

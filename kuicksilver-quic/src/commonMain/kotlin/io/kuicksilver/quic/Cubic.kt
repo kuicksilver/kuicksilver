@@ -36,8 +36,19 @@ public class Cubic(
     private var k: Double = 0.0 // seconds from the epoch start to W_max
     private var epochStart: TimeMark = TimeMark.NEVER
     private var wEst: Double = 0.0 // Reno-friendly estimate (bytes)
+    private var alpha: Double = ALPHA // alpha_cubic of the Reno-friendly estimate (section 4.3)
+    private var cwndPrior: Long = 0 // the window just before the last reduction
     private var recoveryStart: TimeMark = TimeMark.NEVER
     private var lastSent: TimeMark = TimeMark(0)
+
+    /**
+     * RFC 9438 section 4.2: "The elapsed time t in Figure 1 MUST NOT include periods during which cwnd has not been updated due to
+     * application-limited behavior". Two such periods move the epoch forward by their length: from an ACK that arrived
+     * application-limited to the next one that did not ([pausedSince]), and from the moment nothing was left in flight to the
+     * next send ([drainedAt], as Linux's tcp_cubic does on CA_EVENT_TX_START; quic-go restarts the epoch instead).
+     */
+    private var pausedSince: TimeMark = TimeMark.NEVER
+    private var drainedAt: TimeMark = TimeMark.NEVER
 
     // HyStart++ (RFC 9406 section 4): rounds end on the ACK of a packet sent after the round began
     private var roundEndSent: TimeMark = TimeMark.NEVER
@@ -59,6 +70,10 @@ public class Cubic(
         now: TimeMark,
         bytes: Int,
     ) {
+        if (bytesInFlight == 0L && drainedAt != TimeMark.NEVER) {
+            if (pausedSince == TimeMark.NEVER && epochStart != TimeMark.NEVER && now > drainedAt) epochStart += now - drainedAt
+            drainedAt = TimeMark.NEVER
+        } // idle with nothing in flight (an application-limited pause already covers that time)
         bytesInFlight += bytes
         lastSent = now
     }
@@ -74,35 +89,34 @@ public class Cubic(
         if (hystart && inSlowStart) pendingSample = latest
     }
 
+    /** RFC 9406 section 4.2 for one ACK in slow start: every sample of the round counts; the checks run once N_RTT_SAMPLE arrived. */
     private fun consumeSample() {
         val s = pendingSample
         if (s == Duration.INFINITE) return
         pendingSample = Duration.INFINITE
-        if (roundSamples < N_RTT_SAMPLE) {
-            roundSamples++
-            if (s < currRttMin) currRttMin = s
-        }
-        if (roundSamples == N_RTT_SAMPLE && lastRttMin != Duration.INFINITE && !inConservativeSlowStart) {
+        roundSamples++
+        if (s < currRttMin) currRttMin = s
+        if (roundSamples < N_RTT_SAMPLE) return
+        if (!inConservativeSlowStart) {
+            if (lastRttMin == Duration.INFINITE) return
             val thresh = (lastRttMin / MIN_RTT_DIVISOR).coerceIn(MIN_RTT_THRESH, MAX_RTT_THRESH)
             if (currRttMin >= lastRttMin + thresh) {
                 inConservativeSlowStart = true
-                cssBaseline = lastRttMin
+                cssBaseline = currRttMin
                 cssRounds = 0
-            } // section 4.2: the RTT rose, approach the limit carefully
-        }
+            } // the RTT rose: approach the limit carefully, from this round's minimum
+        } else if (currRttMin < cssBaseline) {
+            inConservativeSlowStart = false
+            cssBaseline = Duration.INFINITE
+            cssRounds = 0
+        } // the increase was spurious: back to plain slow start
     }
 
     private fun endRound() {
-        if (inConservativeSlowStart) {
-            if (currRttMin < cssBaseline) {
-                inConservativeSlowStart = false
-                cssRounds = 0
-            } // the increase was spurious: back to plain slow start
-            else if (++cssRounds >= CSS_ROUNDS) {
-                ssthresh = cwnd
-                inConservativeSlowStart = false
-            } // section 4.2: five CSS rounds end slow start
-        }
+        if (inConservativeSlowStart && ++cssRounds >= CSS_ROUNDS) {
+            ssthresh = cwnd
+            inConservativeSlowStart = false
+        } // section 4.2: CSS_ROUNDS rounds (the partial one it began in counts) end slow start
         lastRttMin = currRttMin
         currRttMin = Duration.INFINITE
         roundSamples = 0
@@ -127,7 +141,21 @@ public class Cubic(
             }
             consumeSample()
         }
-        if (appLimited) return
+        grow(now, sentTime, bytes, smoothedRtt, appLimited)
+        if (bytesInFlight == 0L) drainedAt = now
+    }
+
+    private fun grow(
+        now: TimeMark,
+        sentTime: TimeMark,
+        bytes: Int,
+        smoothedRtt: Duration,
+        appLimited: Boolean,
+    ) {
+        if (appLimited) {
+            pause(now)
+            return
+        }
         if (recoveryStart != TimeMark.NEVER && sentTime <= recoveryStart) return
         if (inSlowStart) {
             cwnd += if (inConservativeSlowStart) (bytes / CSS_GROWTH_DIVISOR).toLong() else bytes.toLong()
@@ -139,7 +167,10 @@ public class Cubic(
             wMax = cwnd
             k = 0.0
             wEst = cwnd.toDouble()
-        }
+        } else if (pausedSince != TimeMark.NEVER && pausedSince < now) {
+            epochStart += now - pausedSince
+        } // the application-limited ACKs since then did not move the window
+        pausedSince = TimeMark.NEVER
         val t = (now - epochStart + smoothedRtt).inWholeNanoseconds / 1e9
         val d = t - k
         var target = wMax + (C * d * d * d * mss).toLong()
@@ -149,8 +180,10 @@ public class Cubic(
             target = cwnd * 3 / 2
         }
         cwnd += (target - cwnd) * bytes / cwnd
-        // Reno-friendly region (section 4.3): W_est grows alpha segments per RTT, cwnd never falls behind it
-        wEst += ALPHA * bytes.toDouble() * mss / cwnd
+        // Reno-friendly region (section 4.3): W_est grows alpha segments per RTT, cwnd never falls behind it; once W_est is back at
+        // the window before the reduction, alpha is 1 ("the sender SHOULD set alpha_cubic to 1"): Reno's own rate from there on
+        wEst += alpha * bytes.toDouble() * mss / cwnd
+        if (alpha < 1.0 && wEst >= cwndPrior) alpha = 1.0
         if (wEst > cwnd) cwnd = wEst.toLong()
     }
 
@@ -160,11 +193,14 @@ public class Cubic(
     ) {
         if (recoveryStart != TimeMark.NEVER && sentTime <= recoveryStart) return
         recoveryStart = now
+        cwndPrior = cwnd
+        alpha = ALPHA
         // fast convergence (section 4.6): W_max = cwnd (1 + beta) / 2
         wMax = if (cwnd < wMax) cwnd * (BETA_DEN + BETA_NUM) / (2 * BETA_DEN) else cwnd
         cwnd = maxOf(cwnd * BETA_NUM / BETA_DEN, minWindow)
         ssthresh = cwnd
         epochStart = now
+        pausedSince = TimeMark.NEVER
         k = cbrt((wMax - cwnd).toDouble() / mss / C)
         wEst = cwnd.toDouble()
         inConservativeSlowStart = false
@@ -183,6 +219,11 @@ public class Cubic(
             recoveryStart = TimeMark.NEVER
             epochStart = TimeMark.NEVER
         }
+        if (bytesInFlight == 0L) drainedAt = now
+    }
+
+    private fun pause(now: TimeMark) {
+        if (pausedSince == TimeMark.NEVER) pausedSince = now
     }
 
     override fun onEcnCe(

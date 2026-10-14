@@ -26,6 +26,7 @@ import io.kuicksilver.tls.Aead
 import io.kuicksilver.tls.Certificate
 import io.kuicksilver.tls.Direction
 import io.kuicksilver.tls.EarlyDataState
+import io.kuicksilver.tls.EncryptionLevel
 import io.kuicksilver.tls.PacketProtector
 import io.kuicksilver.tls.QuicSessionTicket
 import io.kuicksilver.tls.TlsException
@@ -103,10 +104,34 @@ internal fun ConnectionCore.driveTls(now: TimeMark) {
     if (state == ConnectionState.Closing || state == ConnectionState.Draining || state == ConnectionState.Closed) return
     try {
         handshake.drive()
+        checkTlsInput()
     } catch (e: QuicWireException) {
         fail(e.code, e.frameType, e.message ?: "", null)
     }
 }
+
+/**
+ * After TLS ran: CRYPTO bytes it holds unread count toward the handshake's memory (admission), and any left at a level TLS has
+ * moved past will never be read, a PROTOCOL_VIOLATION (RFC 9001 section 4.1.3). Only levels whose space is still live are asked.
+ */
+internal fun ConnectionCore.checkTlsInput() {
+    if (handshake.failed || spaceDiscarded[1]) {
+        tlsPendingBytes = 0
+        return
+    }
+    var pending = 0L
+    for (level in CRYPTO_LEVELS) {
+        if (level != 3 && spaceDiscarded[if (level == 0) 0 else 1]) continue
+        val n = handshake.session.pendingCryptoBytes(EncryptionLevel.entries[level])
+        if (n > 0 && cryptoStreams.isSealed(level)) {
+            throw QuicWireException(TransportError.PROTOCOL_VIOLATION, 0x06, "CRYPTO data left unconsumed at a previous encryption level")
+        }
+        pending += n
+    }
+    tlsPendingBytes = pending
+}
+
+private val CRYPTO_LEVELS = intArrayOf(0, 2, 3)
 
 /** Counts one AEAD failure of [aead]; closes with AEAD_LIMIT_REACHED at the integrity limit. */
 internal fun ConnectionCore.onAuthenticationFailure(aead: Aead) {
@@ -133,7 +158,7 @@ internal fun ConnectionCore.onOneRttPacketSealed(pn: Long) {
         fail(TransportError.AEAD_LIMIT_REACHED, 0, "AEAD confidentiality limit reached without a possible key update", null)
         return
     }
-    if (kp.packetsProtected >= limit - limit / 8 && kp.canInitiate(state == ConnectionState.Confirmed)) kp.initiate(now, pto())
+    if (kp.packetsProtected >= limit - limit / 8 && kp.canInitiate(state == ConnectionState.Confirmed, now, pto())) kp.initiate(now, pto())
 }
 
 internal fun ConnectionCore.discardSpace(space: SpaceId) {
@@ -226,7 +251,7 @@ internal fun ConnectionCore.onVersionNegotiation(offered: IntArray) {
     path.pacer = Pacer()
     cryptoStreams =
         // the abandoned version's flight leaves the congestion state too
-        CryptoStreams(config.limits.cryptoOutOfOrderPerLevel, config.limits.cryptoPostHandshake)
+        CryptoStreams(config.limits)
     for (i in 0 until 3) spaceDiscarded[i] = false
     receiver.reset()
     installInitialKeys(next)
@@ -240,6 +265,18 @@ internal fun ConnectionCore.switchClientVersion(profile: VersionProfile): Boolea
     version = profile
     installInitialKeys(profile)
     return true
+}
+
+/** The peer's stream and connection flow-control limits from its transport parameters (RFC 9000 section 18.2). */
+internal fun ConnectionCore.applyPeerLimits(tp: TransportParameters) {
+    streams.applyPeerParameters(
+        tp.initialMaxStreamDataBidiLocal,
+        tp.initialMaxStreamDataBidiRemote,
+        tp.initialMaxStreamDataUni,
+        tp.initialMaxStreamsBidi,
+        tp.initialMaxStreamsUni,
+    )
+    connSend.onMaxUpdate(tp.initialMaxData)
 }
 
 internal class ConnectionHandshakeSink(
@@ -269,6 +306,7 @@ internal class ConnectionHandshakeSink(
             protector.close()
             return
         }
+        if (level == 3) requirePeerTransportParameters()
         if (level == 1 && (core.state != ConnectionState.Handshaking || (direction == Direction.Write) != (core.role == TlsRole.Client))) {
             protector.close()
             return
@@ -278,6 +316,8 @@ internal class ConnectionHandshakeSink(
         ) {
             core.readKeys[level]?.close()
             core.readKeys[level] = protector
+            // RFC 9001 section 4.1.3: TLS reads Handshake after Initial and never Initial again
+            if (level == 2) core.cryptoStreams.seal(0)
         } else {
             core.writeKeys[level]?.close()
             core.writeKeys[level] =
@@ -311,7 +351,7 @@ internal class ConnectionHandshakeSink(
             ticket.close()
             return
         }
-        ticket.remembered = rememberedBlob(core.negotiatedAlpn, tp)
+        ticket.remembered = rememberedBlob(core.version.version, core.negotiatedAlpn, tp) // the negotiated version (RFC 9369 section 5)
         core.events += ConnectionEvent.SessionTicket(ticket)
     }
 
@@ -382,14 +422,8 @@ internal class ConnectionHandshakeSink(
         core.peerTp = tp
         core.peerTpEncoded = encoded
         tp.statelessResetToken?.let { core.cids.setPeerResetToken(0, it) }
-        core.streams.applyPeerParameters(
-            tp.initialMaxStreamDataBidiLocal,
-            tp.initialMaxStreamDataBidiRemote,
-            tp.initialMaxStreamDataUni,
-            tp.initialMaxStreamsBidi,
-            tp.initialMaxStreamsUni,
-        )
-        core.connSend.onMaxUpdate(tp.initialMaxData)
+        // RFC 9000 section 7.4.1: while 0-RTT is in use only the remembered limits apply; settleZeroRtt applies these with 1-RTT
+        if (core.remembered == null) core.applyPeerLimits(tp)
         core.loss.peerAckDelayExponent = tp.ackDelayExponent
         core.loss.peerMaxAckDelay = tp.maxAckDelayMs.milliseconds
         core.peerGreaseQuicBit = tp.greaseQuicBit
@@ -403,8 +437,23 @@ internal class ConnectionHandshakeSink(
         }
     }
 
+    /**
+     * RFC 9001 section 8.2: by the time TLS has 1-RTT keys the peer's quic_transport_parameters extension (ClientHello or
+     * EncryptedExtensions) has been processed; without it the connection closes with missing_extension (0x016d), before the
+     * transport parameter checks of RFC 9000 section 7.3 could be skipped.
+     */
+    private fun requirePeerTransportParameters() {
+        if (core.peerTp == null) {
+            throw QuicWireException(TransportError.crypto(109), 0, "no quic_transport_parameters extension from the peer")
+        }
+    }
+
     override fun onHandshakeDone() {
         if (core.state != ConnectionState.Handshaking) return
+        requirePeerTransportParameters()
+        // the Handshake level ends with the peer's Finished; sealed only now, since a TLS stack may hand a server its 1-RTT
+        // read key before that Finished arrives (BoringSSL's QUIC API and NullTlsSession do)
+        core.cryptoStreams.seal(2)
         if (core.role == TlsRole.Client) {
             core.settleZeroRtt()
             if (core.state != ConnectionState.Handshaking) return
@@ -430,11 +479,18 @@ internal class ConnectionHandshakeSink(
         exception: TlsException,
         alert: Int?,
     ) {
+        // RFC 9001 section 4.6.1: a max_early_data_size other than 0xffffffff "MUST be treated as a connection error of type
+        // PROTOCOL_VIOLATION"; OpenSSL fails it with illegal_parameter (SSL_R_INVALID_MAX_EARLY_DATA)
+        val code = (exception as? TlsException.Protocol)?.openSslCode
+        val invalidMaxEarlyData = code == (OPENSSL_LIB_SSL shl 16 or SSL_R_INVALID_MAX_EARLY_DATA)
         core.fail(
-            TransportError.crypto(alert ?: 80),
+            if (invalidMaxEarlyData) TransportError.PROTOCOL_VIOLATION else TransportError.crypto(alert ?: 80),
             0,
             exception.message ?: "TLS failure",
             exception,
         )
     }
 }
+
+private const val OPENSSL_LIB_SSL = 20
+private const val SSL_R_INVALID_MAX_EARLY_DATA = 174

@@ -331,6 +331,14 @@ internal class KslQuicTlsSession(
         return true
     }
 
+    override fun pendingCryptoBytes(level: EncryptionLevel): Int {
+        if (ssl == 0L || failure != null) return 0
+        val b = Ksl.sslGet(ssl, KslConst.GET_QUIC_PENDING)
+        val i = 4 * level.ksl
+        return (b[i].toInt() and 0xff shl 24) or (b[i + 1].toInt() and 0xff shl 16) or (b[i + 2].toInt() and 0xff shl 8) or
+            (b[i + 3].toInt() and 0xff)
+    }
+
     private var earlySeen = 0 // the last early-data status read, kept for a session that failed since (ksl refuses queries then)
 
     private fun earlyStatus(): Int {
