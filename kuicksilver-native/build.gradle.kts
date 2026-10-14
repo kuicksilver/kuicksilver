@@ -21,7 +21,6 @@ kotlin {
             extraOpts("-libraryPath", lib.resolve("lib").absolutePath)
         }
         tasks.matching { it.name == "cinteropKsl" + name.replaceFirstChar(Char::uppercase) }.configureEach { dependsOn(archive) }
-        binaries.all { freeCompilerArgs += listOf("-Xoverride-konan-properties=minVersion.macos=11.0") }
     }
     sourceSets {
         jvmMain { resources.srcDir(layout.buildDirectory.dir("jni/resources")) }
