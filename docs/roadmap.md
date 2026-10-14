@@ -93,6 +93,32 @@ Known limits of 0.2.0, stated on purpose:
 
 ## After 0.2.0
 
+A proposal (2026-10-14), not a commitment: the order may change with user feedback, and every item still follows the
+release bar (each bug fixed with a test before a release).
+
+### 0.2.x — patch releases
+
+- Fixes from early user reports.
+- A run of the iOS device checklist on a physical iPhone (`guide/ios.md`, "Device checklist").
+- A published benchmark table: goodput, CPU per GB and handshakes per second against quiche, quinn and msquic.
+- Supply chain: an SBOM (CycloneDX) and build provenance for the published artifacts.
+- CI on GitHub Actions again once the minutes reset (from 2026-11-01), alongside the local gate.
+- Longer soak (24–72 h) and fuzzing campaigns (at least 2 h per target).
+- A statement in `stability.md` that the library is not FIPS-certified.
+
+### 0.3.0 — client and server completeness
+
+- The client follows a server's preferred address (RFC 9000 §9.6).
+- NEW_TOKEN: the server issues tokens, the client stores and returns them (RFC 9000 §8.1.3).
+- The Capsule Protocol on CONNECT streams (RFC 9297 §3).
+- HTTP/3 priorities exposed in the Ktor engines (RFC 9218).
+- PMTUD from ICMP Packet Too Big as a hint (RFC 8899 §4.6).
+- Clients: SOCKS and system proxy settings, Happy Eyeballs on TCP (RFC 8305), WebSocket permessage-deflate (RFC 7692).
+- Server: certificate hot reload and a limit on TCP connections.
+- `loops > 1` on macOS and Windows.
+
+### 0.4.0 and later
+
 - RFC 9460 HTTPS records as a source of h3.
 - WebTransport.
 - Multipath.
