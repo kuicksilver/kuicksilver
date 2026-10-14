@@ -128,7 +128,7 @@ public class KuicksilverEngineConfig : HttpClientEngineConfig() {
      * Idle HTTP/1.1 keep-alive connections kept per route (origin and proxy) for reuse; it does not limit open
      * connections, [maxConnectionsPerRoute] and [maxConnectionsCount] do. 0 keeps none.
      */
-    public var maxConnectionsPerHost: Int = 4
+    public var maxIdleConnectionsPerRoute: Int = 4
 
     /**
      * HTTP/1.1 connections open at once across all routes, idle ones included (CIO's `maxConnectionsCount`, the same

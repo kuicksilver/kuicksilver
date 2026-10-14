@@ -210,7 +210,7 @@ Guide: [Ktor: Client](ktor.md#client).
 | `identity` | `TlsIdentity?` | `null` | | client certificate |
 | `tls` | `TlsConfig.Builder.() -> Unit` | `{}` | | further TLS settings, applied after `trust` and `identity` (which it can therefore replace); `alpn` and `serverName` come from the request and are set after it, so the block cannot change them (use `TrustConfig.ExpectedName` to verify another name) |
 | `quic` | `QuicConfig` | `QuicConfig.Default` | its `connectionIdLength` and `http3.endpoint.connectionIdLength` agree: the one left at 8 follows the other; two different explicit values fail the engine's creation | QUIC transport of HTTP/3 connections |
-| `maxConnectionsPerHost` | `Int` | 4 | at least 0 | idle HTTP/1.1 keep-alive connections kept per route; not a connection limit |
+| `maxIdleConnectionsPerRoute` | `Int` | 4 | at least 0 | idle HTTP/1.1 keep-alive connections kept per route; not a connection limit |
 | `maxConnectionsCount` (*experimental*) | `Int` | 1000 | at least 1 | HTTP/1.1 connections of the engine, idle ones included; requests beyond it wait (FIFO, within the connect timeout) |
 | `maxConnectionsPerRoute` (*experimental*) | `Int` | 100 | at least 1 | HTTP/1.1 connections to one route (scheme, host, port, proxy) |
 | `idleTimeout` (*experimental*) | `Duration` | 5 min | positive | idle HTTP/1.1 connections, and HTTP/3 connections without requests, are closed after this |

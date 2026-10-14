@@ -33,7 +33,7 @@ class GuideSamplesTest {
                 engine {
                     maxConnectionsCount = 1000 // HTTP/1.1 connections of the engine, idle ones included
                     maxConnectionsPerRoute = 100 // ... to one route (scheme, host, port, proxy)
-                    maxConnectionsPerHost = 4 // idle keep-alive connections kept per route
+                    maxIdleConnectionsPerRoute = 4 // idle keep-alive connections kept per route
                     idleTimeout = 5.minutes // idle HTTP/1.1 and HTTP/3 connections are closed after this
                     maxConnectionLifetime = Duration.INFINITE // age after which a connection takes no new requests
                 }

@@ -107,7 +107,7 @@ val client = HttpClient(Kuicksilver) {
   is false (every host by default from `targetSdk` 28) is refused before any connection with an `IOException`
   "CLEARTEXT communication to <host> not permitted by network security policy".
 - HTTP/1.1 requests are written and responses parsed with Ktor's CIO code (vendored, see `docs/ktor-internal-api.md`):
-  chunked bodies, `Expect: 100-continue`, keep-alive with at most `maxConnectionsPerHost` idle connections per route
+  chunked bodies, `Expect: 100-continue`, keep-alive with at most `maxIdleConnectionsPerRoute` idle connections per route
   (a pooled connection the server already closed is replaced once, transparently, for idempotent requests; a POST
   that failed on one is reported, never sent again). Requests on one connection are
   sequential; `pipelining` is not used. Limits and idle cleanup: see "Connection pool" below.
@@ -129,7 +129,7 @@ val client = HttpClient(Kuicksilver) {
     engine {
         maxConnectionsCount = 1000                 // HTTP/1.1 connections of the engine, idle ones included
         maxConnectionsPerRoute = 100               // ... to one route (scheme, host, port, proxy)
-        maxConnectionsPerHost = 4                  // idle keep-alive connections kept per route
+        maxIdleConnectionsPerRoute = 4             // idle keep-alive connections kept per route
         idleTimeout = 5.minutes                    // idle HTTP/1.1 and HTTP/3 connections are closed after this
         maxConnectionLifetime = Duration.INFINITE  // age after which a connection takes no new requests
     }
@@ -140,7 +140,7 @@ val client = HttpClient(Kuicksilver) {
 |---|---|---|
 | `maxConnectionsCount` | 1000 | CIO `maxConnectionsCount` 1000; OkHttp `Dispatcher.maxRequests` 64 (requests, not sockets) |
 | `maxConnectionsPerRoute` | 100 | CIO `endpoint.maxConnectionsPerRoute` 100; OkHttp `maxRequestsPerHost` 5 |
-| `maxConnectionsPerHost` (idle per route) | 4 | OkHttp `ConnectionPool` 5 idle in all |
+| `maxIdleConnectionsPerRoute` (idle per route) | 4 | OkHttp `ConnectionPool` 5 idle in all |
 | `idleTimeout` | 5 min | OkHttp keep-alive 5 min; CIO `keepAliveTime` 5 s |
 | `maxConnectionLifetime` | infinite | neither OkHttp nor CIO has one |
 

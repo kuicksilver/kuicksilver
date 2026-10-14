@@ -82,7 +82,7 @@ internal class PoolLimits(
     init {
         require(maxTotal > 0) { "maxConnectionsCount must be positive, was $maxTotal" }
         require(maxPerRoute > 0) { "maxConnectionsPerRoute must be positive, was $maxPerRoute" }
-        require(maxIdlePerRoute >= 0) { "maxConnectionsPerHost must not be negative, was $maxIdlePerRoute" }
+        require(maxIdlePerRoute >= 0) { "maxIdleConnectionsPerRoute must not be negative, was $maxIdlePerRoute" }
         require(idleTimeoutMillis > 0) { "idleTimeout must be positive" }
         require(maxLifetimeMillis > 0) { "maxConnectionLifetime must be positive" }
     }

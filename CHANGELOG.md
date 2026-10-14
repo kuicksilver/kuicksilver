@@ -268,8 +268,9 @@ Native layer and TLS (`kuicksilver-native`, `kuicksilver-tls`):
 
 Ktor client (`kuicksilver-ktor-client`):
 
-- `maxConnectionsPerHost` is documented as what it always was, the number of idle HTTP/1.1 connections kept per route;
-  it no longer stands in for a connection limit. The idle map of the HTTP/1.1 pool, which grew by one entry per origin
+- `maxConnectionsPerHost` is renamed `maxIdleConnectionsPerRoute` (**breaking**, before the first release), the name of
+  what it always was: the number of idle HTTP/1.1 connections kept per route, not a connection limit (that is the
+  experimental `maxConnectionsPerRoute`); a Ktor or OkHttp user setting `maxConnectionsPerHost = 10` expected a cap. The idle map of the HTTP/1.1 pool, which grew by one entry per origin
   and was never pruned, is gone: a route is dropped with its last connection.
 
 ### Removed

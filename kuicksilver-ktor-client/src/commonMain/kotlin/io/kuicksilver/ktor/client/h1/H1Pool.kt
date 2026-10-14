@@ -68,7 +68,7 @@ internal class H1Connection(
  * HTTP/1.1 over TCP with TLS 1.3 (ADR-0009: no HTTP/2), with keep-alive and connection limits ([ConnectionPool]): at most
  * `maxConnectionsCount` connections and `maxConnectionsPerRoute` per route, requests beyond that wait in FIFO order
  * within the connect timeout; a connection whose response body ended by its framing goes back to an idle list of at most
- * `maxConnectionsPerHost` per route, kept for `idleTimeout`. A stale idle connection is replaced once, transparently,
+ * `maxIdleConnectionsPerRoute` per route, kept for `idleTimeout`. A stale idle connection is replaced once, transparently,
  * for idempotent requests only (RFC 9110 section 9.2.2, RFC 9112 section 9.3.1): a request the server may have processed
  * is never sent twice.
  */
@@ -351,7 +351,7 @@ internal fun KuicksilverEngineConfig.poolLimits(): PoolLimits =
     PoolLimits(
         maxTotal = maxConnectionsCount,
         maxPerRoute = maxConnectionsPerRoute,
-        maxIdlePerRoute = maxConnectionsPerHost,
+        maxIdlePerRoute = maxIdleConnectionsPerRoute,
         idleTimeoutMillis = idleTimeout.toMillisOrMax(),
         maxLifetimeMillis = maxConnectionLifetime.toMillisOrMax(),
     )
