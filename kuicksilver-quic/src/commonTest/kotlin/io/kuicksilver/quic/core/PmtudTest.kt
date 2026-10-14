@@ -95,6 +95,76 @@ class PmtudTest {
         }
     }
 
+    /** The client sends a little on a new stream, from wherever [EndpointPair.clientSource] now says, until the server has it. */
+    private fun clientSends(
+        p: EndpointPair,
+        c: ConnectionCore,
+        s: ConnectionCore,
+    ) {
+        val rx = s.stats.packetsReceived
+        val id = c.openStream(true)
+        c.writeStream(id, ByteArray(2000), 0, 2000, true)
+        assertTrue(p.runUntil(5.seconds) { s.stats.packetsReceived > rx && c.stats.bytesInFlight == 0L })
+        p.runUntil(200.milliseconds) { false }
+    }
+
+    /** The server sends [bytes] on a new stream and the pair runs until everything is acknowledged. */
+    private fun download(
+        p: EndpointPair,
+        s: ConnectionCore,
+        bytes: Int = 300_000,
+    ) {
+        val id = s.openStream(false)
+        var w = 0
+        assertTrue(
+            p.runUntil(30.seconds) {
+                if (w < bytes) {
+                    val n = minOf(16384, bytes - w)
+                    w += s.writeStream(id, ByteArray(n), 0, n, w + n == bytes)
+                }
+                w == bytes && s.stats.bytesInFlight == 0L
+            },
+            "download done: state ${s.state}, mtu ${s.stats.pathMtu}",
+        )
+    }
+
+    /**
+     * Review finding 24, RFC 8899 section 4.3 and RFC 9000 section 14: a path the client moved the server to had no DPLPMTUD. A NAT
+     * rebinding kept the old MTU (1452 here) without black-hole detection, so when the new port's route carried only 1280 bytes the
+     * server kept sending datagrams that vanished; a path to a new address stayed at 1200 for life.
+     */
+    @Test fun serverPathsAfterClientMovesKeepPmtud() {
+        val (p, c) = pair(clientQuic = noIdle, serverQuic = noIdle)
+        try {
+            val s = p.server.connections().single()
+            download(p, s)
+            assertTrue(p.runUntil(20.seconds) { s.stats.pathMtu == 1452 }, "the server's search: ${s.stats.pathMtu}")
+            // NAT rebinding: same IP, new port
+            val rebound = InetSocketAddress("10.0.0.1", 40001)
+            p.clientSource = rebound
+            p.clientListens += rebound
+            clientSends(p, c, s)
+            assertEquals(rebound, s.remoteAddressForTest)
+            assertTrue(s.paths.active.pmtud != null, "the rebound path runs DPLPMTUD")
+            assertEquals(1452, s.stats.pathMtu, "and keeps the measured MTU as its start")
+            p.linkMtuToClient = 1280 // the new route is narrower
+            download(p, s, 200_000)
+            assertTrue(p.runUntil(30.seconds) { s.stats.pathMtu == 1200 }, "black-hole fallback on the rebound path: ${s.stats.pathMtu}")
+            // a migration to a new address: the search starts again from 1200
+            p.linkMtuToClient = 1500
+            val moved = InetSocketAddress("10.0.0.9", 40000)
+            p.clientSource = moved
+            p.clientListens += moved
+            clientSends(p, c, s)
+            assertEquals(moved, s.remoteAddressForTest)
+            assertTrue(s.paths.active.pmtud != null, "the migrated path runs DPLPMTUD")
+            download(p, s)
+            assertTrue(p.runUntil(20.seconds) { s.stats.pathMtu > 1200 }, "the search on the new address: ${s.stats.pathMtu}")
+        } finally {
+            p.close()
+        }
+    }
+
     @Test fun searchStopsBelowLinkMtu() {
         val (p, c) = pair(linkMtu = 1400)
         try {

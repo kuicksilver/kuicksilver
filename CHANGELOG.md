@@ -366,6 +366,32 @@ Flow control (`kuicksilver-quic`; found with the BBR simulations, 2026-10-13):
   loss. Lost `MAX_DATA` / `MAX_STREAM_DATA` / `RESET_STREAM` / `STOP_SENDING` are queued once per stream instead of
   once per loss report.
 
+QUIC transport conformance (`kuicksilver-quic`; RFC 9000 review of 2026-10-14):
+
+- Connection IDs: a retransmitted NEW_CONNECTION_ID for an ID we had retired ourselves came back as a fresh ID (one the
+  peer's stateless reset could then match) or closed the connection with CONNECTION_ID_LIMIT_ERROR; retired sequence
+  numbers are now remembered (bounded) and copies of a frame below retire_prior_to queue one RETIRE_CONNECTION_ID, not
+  one each (§19.15). NEW_CONNECTION_ID from a peer using zero-length IDs and RETIRE_CONNECTION_ID for an ID whose
+  NEW_CONNECTION_ID was never sent are PROTOCOL_VIOLATION (§19.15, §19.16). `preferred_address` is validated (no
+  zero-length ID, a length that matches, not from a zero-length-ID server; §18.2), and its ID is kept as the server's
+  sequence 1 and retired rather than forgotten (§5.1).
+- Version Negotiation after a processed Retry is discarded (§6.2); a Stateless Reset is recognised in a long-header
+  datagram too (§10.3), and the reset for a trigger of at most 43 bytes is one byte shorter than it (longer triggers
+  get at least 43 bytes). A coalesced packet whose DCID differs from the first packet's is skipped (§12.2).
+- Streams: STREAM, RESET_STREAM and STREAM_DATA_BLOCKED on a send-only stream and MAX_STREAM_DATA and STOP_SENDING on
+  a receive-only one are STREAM_STATE_ERROR also once the stream was retired (§19.4-§19.13); no MAX_STREAM_DATA once
+  the final size is known and no STOP_SENDING after RESET_STREAM or all data (§13.3, §3.2); CONNECTION_CLOSE carries
+  the type of the frame that caused a stream or flow-control error instead of 0 or STREAM (§19.19).
+- Paths: every PATH_CHALLENGE carries new data (§8.2.1, §13.3); a challenge the amplification limit kept below 1200
+  bytes is followed by a second, full-size validation (§8.2.1); the validation timeout and new paths' RTT estimators
+  use the configured initial RTT, not the RTT a client endpoint remembered for the first path, so a migration from a
+  fast network to a slow one no longer times out (§8.2.4); a server never sends its current connection ID to a
+  client address whose packets carry another of its IDs (it waits for a spare ID, as ngtcp2) and keeps the ID it
+  answered a probe with for the switch that follows (§9.5); paths the client moves the server to run DPLPMTUD with
+  black-hole detection, from the MTU a NAT rebinding inherited or from 1200 (RFC 8899 §4.3); the handshake-time
+  rebinding follows only the highest packet number of its space (§9.3); `QuicConnection.addPath`/`migrate` refuse a
+  server that uses zero-length connection IDs with IllegalStateException (§9.5).
+
 QUIC TLS, key update and versions (`kuicksilver-quic`, `kuicksilver-native`; conformance review of 2026-10-14):
 
 - Key update (RFC 9001 §6.1): after our own update the previous read key now stays until a packet of the new phase

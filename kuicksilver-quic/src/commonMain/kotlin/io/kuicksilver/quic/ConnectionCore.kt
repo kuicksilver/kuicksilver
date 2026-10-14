@@ -157,12 +157,21 @@ public class ConnectionCore internal constructor(
 
     /** The highest packet number of a non-probing 1-RTT packet; only a higher one moves the connection to its source address (RFC 9000 section 9.3). */
     internal var largestNonProbingPn = -1L
+
+    /** The sequence number of our ID that the 1-RTT packet being processed carries (-1: none of them, or not known yet). */
+    internal var rxDcidSeq = -1L
+
+    /** Our ID the peer's packets on the active path carry, by sequence number (-1 until the first 1-RTT packet). */
+    internal var activeDcidSeq = -1L
     internal var oneRttSinceRotation = 0
     internal var testInjectPathChallenges = 0
     internal var testInjectPathResponse: Long? = null
     internal var pathResponsesSentForTest = 0
     internal val challengedAddressesForTest = ArrayList<InetSocketAddress>()
     internal var pathChallengesSentForTest = 0
+
+    /** The data of every PATH_CHALLENGE sent, in order (bounded). */
+    internal val challengeDataSentForTest = ArrayList<Long>()
     internal val pathCountForTest: Int get() = paths.all.size
 
     // ---- DPLPMTUD (RFC 8899) ----
@@ -1081,9 +1090,11 @@ public class ConnectionCore internal constructor(
         check(role == TlsRole.Client) { "only a client migrates (RFC 9000 section 9)" }
         check(state == ConnectionState.Confirmed) { "migration before the handshake is confirmed (RFC 9000 section 9)" }
         check(peerTp?.disableActiveMigration != true) { "the peer advertised disable_active_migration" }
+        // RFC 9000 section 9.5: traffic on a new path to a peer without connection IDs is trivially linkable to the old one
+        check(remoteCid.length != 0) { "the peer uses a zero-length connection ID (RFC 9000 section 9.5)" }
         this.now = now
         val p =
-            paths.add(socket, remote, config.congestionController(), config.initialRtt, evict = false)
+            paths.add(socket, remote, config.congestionController(), config.newPathInitialRtt, evict = false)
                 ?: throw IllegalStateException("at most 4 paths")
         p.amplification.validated = true // our own address: nothing to amplify against
         return p.id

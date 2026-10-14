@@ -44,8 +44,9 @@ public interface QuicConnection : AutoCloseable {
      * Client only: a new path to the server through [io] (a second socket), unvalidated. Before the handshake is confirmed it
      * waits for the confirmation (it follows completion within a round trip) and throws the connection's
      * [QuicException.ConnectionLost] if it ends first; IllegalStateException when the server advertised
-     * `disable_active_migration`, or beyond four paths. The socket is closed then, as on any other failure or cancellation before
-     * the path took it over.
+     * `disable_active_migration` or uses zero-length connection IDs (a new path would be linkable to the old one, RFC 9000
+     * section 9.5), or beyond four paths. The socket is closed then, as on any other failure or cancellation before the path
+     * took it over.
      */
     public suspend fun addPath(io: DatagramIo): QuicPath
 

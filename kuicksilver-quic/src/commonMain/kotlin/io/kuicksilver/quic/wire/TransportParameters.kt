@@ -21,8 +21,12 @@ internal class TransportParameters {
     var maxAckDelayMs: Long = 25
     var disableActiveMigration: Boolean = false
 
-    /** The peer sent `preferred_address`; the address itself is not kept (the server never sends it; the client does not move to it). */
+    /** The peer sent `preferred_address`; the addresses are not kept (the server never sends it; the client does not move to it). */
     var preferredAddressPresent: Boolean = false
+
+    /** The connection ID of `preferred_address`, the server's sequence 1 (RFC 9000 section 5.1.1), and its reset token. */
+    var preferredAddressCid: ConnectionId? = null
+    var preferredAddressToken: ByteArray? = null
     var activeConnectionIdLimit: Long = 2
     var initialSourceConnectionId: ConnectionId? = null
     var retrySourceConnectionId: ConnectionId? = null

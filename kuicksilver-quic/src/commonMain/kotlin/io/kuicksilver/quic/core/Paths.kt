@@ -44,8 +44,47 @@ internal class Path(
     var rtt: RttEstimator = RttEstimator(initialRtt)
     var pacer: Pacer = Pacer()
 
-    /** The PATH_CHALLENGE data in flight, when [challengePending] or [state] is Validating. */
+    /** The data of the latest PATH_CHALLENGE sent in this validation (0 before the first). */
     var challenge: Long = 0
+        private set
+
+    /** The last [SENT_CHALLENGES] challenges of this validation: a PATH_RESPONSE to any of them validates (as quic-go). */
+    private val sentChallenges = LongArray(SENT_CHALLENGES)
+    private val sentUndersized = BooleanArray(SENT_CHALLENGES)
+    private var sentChallengeCount = 0
+
+    /** Records [data] as the next PATH_CHALLENGE of this validation (RFC 9000 section 13.3: a different payload each time). */
+    fun onChallengeSent(data: Long) {
+        challenge = data
+        sentChallenges[sentChallengeCount % SENT_CHALLENGES] = data
+        sentUndersized[sentChallengeCount % SENT_CHALLENGES] = false
+        sentChallengeCount++
+    }
+
+    /** The last challenge went out in a datagram below 1200 bytes (the anti-amplification limit, RFC 9000 section 8.2.1). */
+    fun markLastChallengeUndersized() {
+        if (sentChallengeCount > 0) sentUndersized[(sentChallengeCount - 1) % SENT_CHALLENGES] = true
+    }
+
+    /** True when [data] answers one of the recent challenges of this validation. */
+    fun answers(data: Long): Boolean = indexOf(data) >= 0
+
+    /** True when [data] answers a challenge that was sent in a datagram below 1200 bytes. */
+    fun answeredUndersized(data: Long): Boolean {
+        val i = indexOf(data)
+        return i >= 0 && sentUndersized[i]
+    }
+
+    private fun indexOf(data: Long): Int {
+        for (i in 0 until minOf(sentChallengeCount, SENT_CHALLENGES)) if (sentChallenges[i] == data) return i
+        return -1
+    }
+
+    /** A new validation: earlier challenges no longer count (RFC 9000 section 8.2.3 ties a response to its own validation). */
+    fun forgetChallenges() {
+        challenge = 0
+        sentChallengeCount = 0
+    }
 
     /** A PATH_CHALLENGE must go out on this path at the next poll. */
     var challengePending: Boolean = false
@@ -87,6 +126,15 @@ internal class Path(
      */
     var awaitingCid: Boolean = false
 
+    /**
+     * Server: the client's packets on this path carry another of our IDs than those on the active path, a deliberate migration (RFC
+     * 9000 section 9.5): our current ID must not follow it there.
+     */
+    var peerChangedDcid: Boolean = false
+
+    /** Server: the client probed this path (a PATH_CHALLENGE from it while another path was active), typically to migrate there. */
+    var peerProbed: Boolean = false
+
     /** The peer connection ID this path's packets carry while it is not the active path (RFC 9000 section 9.5: never the active path's); null until it first sends. */
     var peerCid: ConnectionIdManager.Peer? = null
 
@@ -105,6 +153,10 @@ internal class Path(
     }
 
     override fun toString(): String = "Path(${id.value}, $remote, $state)"
+
+    private companion object {
+        const val SENT_CHALLENGES = 8
+    }
 }
 
 /** The paths of a connection: at most [maxPaths], one active; the queue of PATH_RESPONSEs to send (at most 3). */

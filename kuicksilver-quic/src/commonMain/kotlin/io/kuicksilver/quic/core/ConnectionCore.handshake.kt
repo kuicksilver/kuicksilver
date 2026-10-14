@@ -54,7 +54,12 @@ internal fun ConnectionCore.buildLocalTp(): TransportParameters {
     ) {
         tp.chosenVersion = tp.availableVersions!!.first { it != tp.chosenVersion }
     }
-    if (testAdvertisePreferredAddress) tp.preferredAddressPresent = true
+    if (testAdvertisePreferredAddress) {
+        val l = cids.preferredAddressLocalForTest()
+        tp.preferredAddressPresent = true
+        tp.preferredAddressCid = l.cid
+        tp.preferredAddressToken = l.token
+    }
     // client: Chosen Version is the one in use (after a Version Negotiation restart it differs from the configured head); server: ksl rewrites it to the negotiated one
     if (role == TlsRole.Client && tp.availableVersions != null && !testForgeChosenVersion) tp.chosenVersion = version.version
     return tp
@@ -220,10 +225,14 @@ internal fun ConnectionCore.switchServerVersion(chosen: VersionProfile) {
     writeKeys[0] = w
 }
 
-/** A Version Negotiation packet (RFC 9000 section 6.2): ignored after any server packet, after one we already acted on, or when it lists our version; otherwise restart or give up. */
+/**
+ * A Version Negotiation packet (RFC 9000 section 6.2): ignored after any server packet (a Retry included), after one we already acted
+ * on, or when it lists our version; otherwise restart or give up.
+ */
 internal fun ConnectionCore.onVersionNegotiation(offered: IntArray) {
-    // section 6.2: at most one Version Negotiation is acted on
-    if (role != TlsRole.Client || anyPeerPacket || state != ConnectionState.Handshaking || receivedVnVersions != null) return
+    // section 6.2: at most one Version Negotiation is acted on, and none after "any other packet"
+    if (role != TlsRole.Client || anyPeerPacket || retryScid != null) return
+    if (state != ConnectionState.Handshaking || receivedVnVersions != null) return
     if (offered.contains(version.version)) return
     val next = config.versions.firstOrNull { offered.contains(it.version) }
     if (next ==
@@ -422,6 +431,7 @@ internal class ConnectionHandshakeSink(
         core.peerTp = tp
         core.peerTpEncoded = encoded
         tp.statelessResetToken?.let { core.cids.setPeerResetToken(0, it) }
+        tp.preferredAddressCid?.let { core.cids.adoptPreferredAddressCid(it, tp.preferredAddressToken!!) }
         // RFC 9000 section 7.4.1: while 0-RTT is in use only the remembered limits apply; settleZeroRtt applies these with 1-RTT
         if (core.remembered == null) core.applyPeerLimits(tp)
         core.loss.peerAckDelayExponent = tp.ackDelayExponent

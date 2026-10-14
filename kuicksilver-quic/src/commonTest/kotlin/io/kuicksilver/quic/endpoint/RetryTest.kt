@@ -168,8 +168,43 @@ class RetryTest {
         }
     }
 
+    /** RFC 9001 section 5.8: a Retry whose integrity tag does not verify is dropped; the same packet with its tag intact is taken. */
+    @Test fun negative_forgedRetryTagDropped() {
+        for (forge in listOf(true, false)) {
+            val p = EndpointPair()
+            p.serverStalled = true // no server packet before the Retry
+            try {
+                val c = p.connect()
+                p.step()
+                val b = PacketBuffer.allocate(100)
+                try {
+                    val n =
+                        RetryPacket.write(
+                            b,
+                            VersionProfile.V1,
+                            c.localCid,
+                            ConnectionId(ByteArray(8) { 5 }),
+                            ByteArray(16) { 7 },
+                            c.odcid,
+                            NullCryptoProvider,
+                            0,
+                        )
+                    val bytes = b.toByteArray(n)
+                    if (forge) bytes[n - 1] = (bytes[n - 1].toInt() xor 1).toByte()
+                    p.feed(p.client, bytes, p.serverAddr)
+                } finally {
+                    b.close()
+                }
+                assertEquals(!forge, c.retryReceivedForTest, if (forge) "a forged tag is dropped" else "the control is taken")
+            } finally {
+                p.close()
+            }
+        }
+    }
+
     @Test fun negative_retryEmptyToken() {
         val p = EndpointPair()
+        p.serverStalled = true // no server packet before the Retry: a client that processed one ignores any Retry anyway
         try {
             val c = p.connect()
             p.step()
@@ -268,6 +303,7 @@ class RetryTest {
 
     @Test fun negative_retryScidEqualsOdcid() {
         val p = EndpointPair()
+        p.serverStalled = true // no server packet before the Retry: a client that processed one ignores any Retry anyway
         try {
             val c = p.connect()
             p.step()
@@ -296,10 +332,14 @@ class RetryTest {
     }
 
     @Test fun negative_retryAfterInitial() {
-        val p = EndpointPair()
+        // the client processed the server's first datagram (its Initial) and is still in the handshake: only the rule "before any
+        // other server packet" (RFC 9000 section 17.2.5.2) can drop a Retry now (with the server's own SCID, a valid tag)
+        val p = EndpointPair(crypto = KslQuicCrypto)
+        p.filterToClient = { i, _ -> i == 0 }
         try {
             val c = p.connect()
-            assertTrue(p.runUntil { c.hasHandshakeKeys }) // a server Initial was processed
+            assertTrue(p.runUntil { c.anyPeerPacket })
+            assertEquals(io.kuicksilver.quic.ConnectionState.Handshaking, c.state)
             val b = PacketBuffer.allocate(100)
             try {
                 val n =
@@ -307,14 +347,10 @@ class RetryTest {
                         b,
                         VersionProfile.V1,
                         c.localCid,
-                        ConnectionId(
-                            ByteArray(8) {
-                                5
-                            },
-                        ),
+                        c.remoteCid,
                         "t".encodeToByteArray(),
                         c.odcid,
-                        NullCryptoProvider,
+                        KslQuicCrypto,
                         0,
                     )
                 p.feed(p.client, b.toByteArray(n), p.serverAddr)
@@ -322,6 +358,7 @@ class RetryTest {
                 b.close()
             }
             assertFalse(c.retryReceivedForTest)
+            p.filterToClient = { _, _ -> true }
             assertTrue(p.confirmed(c))
         } finally {
             p.close()

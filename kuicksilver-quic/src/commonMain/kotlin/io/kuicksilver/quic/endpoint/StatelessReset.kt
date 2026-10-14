@@ -28,10 +28,14 @@ internal object StatelessReset {
     /** 1 header byte + 4 random bytes + 16-byte token: the smallest reset that cannot be mistaken for anything else (section 10.3). */
     const val MIN_SIZE: Int = 21
 
+    /** Triggers up to this size get a reset exactly one byte shorter; longer ones one of at least this size (section 10.3). */
+    const val SHORT_TRIGGER: Int = 43
+
     /**
      * Writes a reset for [token] into [out]: strictly shorter than the [incomingLength] that triggered it (so two endpoints
      * cannot reset each other forever, section 10.3.3), at least [MIN_SIZE], and no longer than [out] holds (a trigger can be
-     * a jumbo datagram). Returns 0 when the trigger is too small.
+     * a jumbo datagram). A trigger of at most [SHORT_TRIGGER] bytes gets a reset one byte shorter, a longer one a random length
+     * from [SHORT_TRIGGER] up, so a small reset does not stand out (section 10.3). Returns 0 when the trigger is too small.
      */
     fun write(
         out: PacketBuffer,
@@ -42,7 +46,13 @@ internal object StatelessReset {
         if (incomingLength <= MIN_SIZE) return 0
         val limit = minOf(incomingLength, out.capacity + 1)
         if (limit <= MIN_SIZE) return 0
-        val length = MIN_SIZE + random.nextInt(limit - MIN_SIZE) // [MIN_SIZE, min(incomingLength - 1, capacity)]
+        val length =
+            if (limit <= SHORT_TRIGGER) {
+                limit - 1 // incomingLength - 1, or all of a small buffer
+            } else {
+                // [SHORT_TRIGGER, min(incomingLength - 1, capacity)]
+                SHORT_TRIGGER + random.nextInt(limit - SHORT_TRIGGER)
+            }
         val head = ByteArray(length - 16)
         random.nextBytes(head)
         head[0] = ((head[0].toInt() and 0x3f) or 0x40).toByte() // fixed bit set, long-header bit clear

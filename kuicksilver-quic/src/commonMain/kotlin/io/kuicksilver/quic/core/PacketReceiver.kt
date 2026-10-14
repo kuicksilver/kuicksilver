@@ -105,8 +105,20 @@ internal class PacketReceiver(
         datagramEcn = ecn // a socket that cannot read marks delivers NotEct itself (ADR-0006)
         var off = 0
         var processed = false
+        var firstDcidOff = -1
+        var firstDcidLen = 0
         while (off < length) {
             if (!PacketHeaderCodec.parse(data, off, length, c.localCid.length, hv)) break
+            if (firstDcidOff < 0) {
+                firstDcidOff = hv.dcidOff
+                firstDcidLen = hv.dcidLen
+            } else if (!sameBytes(data, firstDcidOff, firstDcidLen, hv.dcidOff, hv.dcidLen)) {
+                // RFC 9000 section 12.2: "Receivers SHOULD ignore any subsequent packets with a different Destination Connection ID
+                // than the first packet in the datagram"
+                if (hv.packetEnd <= off) break
+                off = hv.packetEnd
+                continue
+            }
             if (hv.isVersionNegotiation) {
                 if (c.localCid.contentEquals(data, hv.dcidOff, hv.dcidLen) &&
                     c.odcid.contentEquals(data, hv.scidOff, hv.scidLen)
@@ -129,11 +141,23 @@ internal class PacketReceiver(
             if (hv.packetEnd <= off) break
             off = hv.packetEnd
         }
-        if (!processed && length >= io.kuicksilver.quic.endpoint.StatelessReset.MIN_SIZE &&
-            data[0].toInt() and 0x80 == 0
-        ) {
-            c.checkStatelessReset(data, length, now) // RFC 9000 section 10.3.1: a reset looks like an undecryptable short header
+        if (!processed && length >= io.kuicksilver.quic.endpoint.StatelessReset.MIN_SIZE) {
+            // RFC 9000 section 10.3: a reset looks like an undecryptable packet, and "endpoints MUST treat any packet ending in a valid
+            // stateless reset token as a Stateless Reset, as other QUIC versions might allow the use of a long header"
+            c.checkStatelessReset(data, length, now)
         }
+    }
+
+    private fun sameBytes(
+        data: PacketBuffer,
+        aOff: Int,
+        aLen: Int,
+        bOff: Int,
+        bLen: Int,
+    ): Boolean {
+        if (aLen != bLen) return false
+        for (i in 0 until aLen) if (data[aOff + i] != data[bOff + i]) return false
+        return true
     }
 
     private fun matchesLocalCid(data: PacketBuffer): Boolean {
@@ -301,8 +325,10 @@ internal class PacketReceiver(
         if (c.path.isRemote(from) && socket == c.path.socket) {
             c.lastReceivedOnActivePath = now
         } else if ((type == PacketType.Initial || type == PacketType.Handshake) && c.role == TlsRole.Server &&
-            c.state == ConnectionState.Handshaking
+            c.state == ConnectionState.Handshaking && pn > sp.ack.largestReceived
         ) {
+            // only the highest-numbered packet of its space moves the path: a delayed older one from the old address does not move it
+            // back (RFC 9000 section 9.3)
             c.onHandshakeAddressChange(
                 socket,
                 from,
@@ -311,6 +337,9 @@ internal class PacketReceiver(
                     type == PacketType.Initial,
             ) // a NAT rebinding in the middle of the handshake (interop rebind cases)
         }
+        // which of our IDs the peer used: a server answers a new address with its current ID only if that did not change (RFC 9000
+        // section 9.5)
+        if (type == PacketType.OneRtt && c.role == TlsRole.Server) c.rxDcidSeq = c.cids.localSeqOf(data, hv.dcidOff, hv.dcidLen)
         val ackEliciting =
             try {
                 FrameDecoder.decode(reader, type, frames, ackView)
@@ -319,9 +348,12 @@ internal class PacketReceiver(
                 c.datagramsDropped++
                 return true
             } catch (e: QuicWireException) {
+                // RFC 9000 section 19.19: "the type of frame that triggered the error"; the stream and flow-control layers below the
+                // dispatcher do not know which frame called them, the decoder does
+                val frameType = if (reader.frameType != 0L) reader.frameType else e.frameType
                 c.fail(
                     e.code,
-                    e.frameType,
+                    frameType,
                     e.message ?: "",
                     e,
                 )
