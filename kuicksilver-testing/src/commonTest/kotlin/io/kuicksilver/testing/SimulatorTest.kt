@@ -78,8 +78,9 @@ class SimulatorTest {
     }
 
     @Test fun natRebindMidTransferKeepsCwnd() {
-        // a NAT rebind (same IP, new port) at 10 MiB of 50 keeps the server's congestion state and costs no stall
-        val plain = SimScenario.transfer(Simulator(seed = 21, LinkParams(delay = 20.milliseconds)), 50 shl 20)
+        // a NAT rebind (same IP, new port) at 3 MiB of 10 keeps the server's congestion state and costs no stall (10 MiB rather than 50:
+        // two 50 MiB transfers took about 11 minutes on Kotlin/Native, the rebind and the check are the same)
+        val plain = SimScenario.transfer(Simulator(seed = 21, LinkParams(delay = 20.milliseconds)), 10 shl 20)
         ok(plain, "no rebind")
         val sim = Simulator(seed = 21, LinkParams(delay = 20.milliseconds))
         val (ct, st) = SimScenario.defaultTls!!()
@@ -87,7 +88,7 @@ class SimulatorTest {
         var rttBefore = Duration.ZERO
         var cwndBefore = 0L
         val r =
-            SimScenario.transfer(sim, 50 shl 20, connection = conn, atBytes = 10L shl 20, midway = {
+            SimScenario.transfer(sim, 10 shl 20, connection = conn, atBytes = 3L shl 20, midway = {
                 rttBefore =
                     conn.server!!.stats.smoothedRtt
                 ; cwndBefore = conn.server!!.stats.cwnd
