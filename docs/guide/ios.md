@@ -32,7 +32,7 @@ kotlin {
         it.binaries.framework { baseName = "Shared"; isStatic = true }
     }
     sourceSets.commonMain.dependencies {
-        implementation("io.kuicksilver:kuicksilver-http3:0.1.0-SNAPSHOT")   // or -quic, -ktor-client
+        implementation("io.kuicksilver:kuicksilver-http3:0.2.0")   // or -quic, -ktor-client
     }
 }
 ```

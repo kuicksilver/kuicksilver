@@ -5,6 +5,7 @@ SPDX-License-Identifier: Apache-2.0
 
 # Kuicksilver
 
+<!-- release-flip: at 0.2.0, "nothing is published to Maven Central yet" becomes "0.2.0 is on Maven Central" -->
 **Status: 0.x, experimental.** The API can change between any two 0.x releases, nothing is published to Maven Central
 yet, and the CI described below runs on the maintainers' machines until the repository's first public build. Do not
 use it in production yet; do try it, and tell us what breaks. [docs/stability.md](docs/stability.md) says which API is
@@ -54,9 +55,11 @@ is available as an opt-in, experimental API and is off by default (ADR-0015).
 
 ## Quick start
 
-Artifacts are not on Maven Central yet. Until they are, build from source (see [CONTRIBUTING.md](CONTRIBUTING.md))
+<!-- release-flip: at 0.2.0, drop "not on Maven Central yet" and the includeBuild lines; the coordinates stay -->
+Artifacts are not on Maven Central yet. Until 0.2.0 is, build from source (see [CONTRIBUTING.md](CONTRIBUTING.md))
 and consume the modules through a Gradle composite build, as
-[`samples/realtime-telemetry`](samples/realtime-telemetry/README.md) does:
+[`samples/realtime-telemetry`](samples/realtime-telemetry/README.md) does (the included build stands in for the
+coordinates, whatever version they name):
 
 ```kotlin
 // settings.gradle.kts of your project
@@ -64,7 +67,7 @@ includeBuild("../kuicksilver")
 
 // build.gradle.kts
 dependencies {
-    implementation("io.kuicksilver:kuicksilver-ktor-client:0.1.0-SNAPSHOT")
+    implementation("io.kuicksilver:kuicksilver-ktor-client:0.2.0")
 }
 ```
 
@@ -163,7 +166,7 @@ stay green. RFC coverage, section by section, with the tests behind each row, is
 ## Documentation
 
 - [docs/architecture.md](docs/architecture.md) — how the code is organised, invariants, entry points.
-- [docs/roadmap.md](docs/roadmap.md) — what 0.1.0 ships, its stated limits, and what 0.2.0 and later bring.
+- [docs/roadmap.md](docs/roadmap.md) — the never-published 0.1.0 candidate, what 0.2.0 ships, its stated limits, and what later releases bring.
 - [docs/guide/](docs/guide/quic.md) — user guides: [TLS](docs/guide/tls.md), [QUIC](docs/guide/quic.md),
   [HTTP/3](docs/guide/http3.md), [Ktor engines](docs/guide/ktor.md), [iOS](docs/guide/ios.md),
   [publishing on the App Store](docs/guide/app-store.md), the [configuration reference](docs/guide/configuration.md)
