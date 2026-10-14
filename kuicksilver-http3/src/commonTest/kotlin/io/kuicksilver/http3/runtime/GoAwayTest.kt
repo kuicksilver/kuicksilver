@@ -176,10 +176,8 @@ class GoAwayTest {
                 var seen: kotlin.coroutines.CoroutineContext? = null
                 p.server.session.goAwayContextForTest = { seen = it }
                 kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { p.server.goAway() }
-                assertTrue(
-                    seen!![kotlin.coroutines.ContinuationInterceptor] === p.server.session.dispatcher,
-                    "goAway ran on ${seen!![kotlin.coroutines.ContinuationInterceptor]}",
-                )
+                val interceptor = seen!![kotlin.coroutines.ContinuationInterceptor]
+                assertTrue(interceptor === p.server.session.dispatcher, "goAway ran on $interceptor")
             }
         }
 
