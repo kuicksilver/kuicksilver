@@ -489,15 +489,17 @@ ends the endpoint as before. iOS gives a suspended app no CPU, so nothing runs d
 ## Glitch protection
 
 Every connection carries a token bucket (1000 tokens, 33 back per second) that pays for work the peer makes us do
-without moving anything forward: a `DATA_BLOCKED` or `STREAM_DATA_BLOCKED` (per stream) less than one RTT after the
-previous one (a stale one that comes later is answered with the current `MAX_DATA` / `MAX_STREAM_DATA` at once), a
+without moving anything forward: a
 `STREAMS_BLOCKED` repeating the same limit, a `NEW_CONNECTION_ID` for a sequence
 number we already hold, a `RETIRE_CONNECTION_ID` for an ID that is already retired (one for a sequence number we never issued is a
 `PROTOCOL_VIOLATION`), a third PING-only packet within one
 RTT (the two probes of a PTO may both be PING-only, so a pair is free). A 1-RTT packet that fails to decrypt is discarded silently and spends nothing: anyone who has seen a connection ID
 can forge such packets (RFC 9000 section 12.2). A `MAX_DATA`, `MAX_STREAM_DATA` or `MAX_STREAMS` that raises nothing is
 ignored for free: it is what a retransmitted or reordered update looks like (quic-go repeats `MAX_STREAMS` in every
-packet until it is acknowledged, a thousand times in one interop run). An empty
+packet until it is acknowledged, a thousand times in one interop run). So is a `DATA_BLOCKED` or `STREAM_DATA_BLOCKED`:
+a stale one is answered with the current `MAX_DATA` / `MAX_STREAM_DATA` at once, at most once per RTT per connection or
+stream, and a repeat within that RTT is not answered (quiche reports `DATA_BLOCKED` in almost every packet of a
+download, about a thousand times in two seconds). An empty
 bucket closes the connection with `PROTOCOL_VIOLATION` and the reason `excessive peer activity (0x10=…)`, listing the frame types that spent the tokens; `closed` then
 completes with `ConnectionLost.TransportClosed(code = 0x0a)`. Honest peers never spend: retransmitted data,
 keep-alive PINGs and real flow-control updates cost nothing, and `stats.glitchTokensSpent` stays at zero through a

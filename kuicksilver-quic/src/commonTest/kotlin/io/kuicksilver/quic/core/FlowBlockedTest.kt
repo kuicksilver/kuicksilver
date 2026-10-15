@@ -5,8 +5,6 @@ package io.kuicksilver.quic.core
 import io.kuicksilver.annotations.DelicateKuicksilverApi
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.quic.CorePair
-import io.kuicksilver.quic.Initiator
-import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.StreamPriority
 import io.kuicksilver.quic.TestFrame
 import io.kuicksilver.quic.nullOneRttFrames
@@ -16,7 +14,7 @@ import kotlin.math.pow
 import kotlin.random.Random
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertIs
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
@@ -138,7 +136,10 @@ class FlowBlockedTest {
     }
 
     @Test fun negative_dataBlockedFloodIsRateLimited() {
-        // a peer repeating stale DATA_BLOCKED frames gets one MAX_DATA per RTT, and spends a glitch token for every other one
+        // a peer repeating DATA_BLOCKED gets at most one MAX_DATA per RTT; the repeats themselves cost nothing and close nothing.
+        // quiche reports DATA_BLOCKED on every stream_send that finds the window short, i.e. in almost every packet of a
+        // download (interop run 20261015-005204, quiche->kuicksilver:transfer: 1130 reports in 2.1 s, about one per 2 ms):
+        // when an unanswered repeat spent a glitch token, our client closed every quiche download after ~1070 of them.
         val p = CorePair()
         try {
             assertTrue(p.handshake())
@@ -149,10 +150,10 @@ class FlowBlockedTest {
                 true
             }
             p.client.testInjectDataBlocked = 1100
-            assertTrue(p.runUntil(limit = 1.seconds) { p.closedReason(p.serverEvents) != null }, "the server closes within the second")
-            val r = assertIs<QuicException.ConnectionLost.TransportClosed>(p.closedReason(p.serverEvents))
-            assertEquals(0x0aL, r.code)
-            assertEquals(Initiator.Local, r.initiator)
+            p.runUntil(limit = 1.seconds) { p.closedReason(p.serverEvents) != null }
+            assertEquals(0, p.client.testInjectDataBlocked, "every report was sent")
+            assertNull(p.closedReason(p.serverEvents), "the server stays open")
+            assertEquals(0L, p.server!!.stats.glitchTokensSpent, "an unanswered report is free")
             assertTrue(maxData <= 3, "MAX_DATA answers: $maxData")
         } finally {
             p.close()

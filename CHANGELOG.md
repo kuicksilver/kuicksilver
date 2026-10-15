@@ -376,8 +376,9 @@ Flow control (`kuicksilver-quic`; found with the BBR simulations, 2026-10-13):
   idling out (with a short idle timeout the old 8 PTO gap let it idle out); a report at a new limit goes out at once and
   starts the fast gaps again. A receiver that already granted more answers a stale `DATA_BLOCKED` /
   `STREAM_DATA_BLOCKED` with its current limit at once (RFC 9000 §4.1, §13.3, §19.12–§19.14). One answer per smoothed
-  RTT per connection or stream; a faster repeat is not answered and spends a glitch token (it used to be a repeat of the
-  same limit). Simulated 50 Mbit/s, 40 ms upload with 75 % ACK-path loss, 20 seeds: mean goodput 7.2 → 18.5 Mbit/s
+  RTT per connection or stream; a faster repeat is not answered and spends no glitch token (a repeat of the same limit
+  used to spend one: quiche reports `DATA_BLOCKED` in almost every packet of a download, about 750 times per 10 MB
+  interop transfer). Simulated 50 Mbit/s, 40 ms upload with 75 % ACK-path loss, 20 seeds: mean goodput 7.2 → 18.5 Mbit/s
   (CUBIC) and 7.3 → 21.0 Mbit/s (BBR), longest stall after the handshake at most 7.5 s instead of 13.6 s. quic-go,
   quiche, ngtcp2 and msquic send each report once per limit and at most retransmit it on loss (msquic also re-sends
   `STREAM_DATA_BLOCKED` on every acknowledgement); `docs/spec/rfc-compliance.md` compares them.

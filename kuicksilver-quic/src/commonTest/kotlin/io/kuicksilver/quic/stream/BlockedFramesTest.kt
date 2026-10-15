@@ -174,11 +174,11 @@ class BlockedFramesTest {
         m.read(0, ByteArray(300_000), 0, 300_000)
         val limit = drain(m).of(ControlKind.MaxData).maxOf { it.a }
         assertTrue(limit > 786_432L)
-        assertTrue(m.onDataBlocked(786_432, m.now, m.smoothedRtt))
+        m.onDataBlocked(786_432, m.now, m.smoothedRtt)
         assertEquals(listOf(limit), drain(m).of(ControlKind.MaxData).map { it.a }, "the update the peer evidently lost, at once")
         m.now += 41.milliseconds
-        assertTrue(m.onDataBlocked(limit, m.now, m.smoothedRtt), "blocked at what we granted: nothing to say, nothing wrong")
-        assertTrue(drain(m).isEmpty())
+        m.onDataBlocked(limit, m.now, m.smoothedRtt)
+        assertTrue(drain(m).isEmpty(), "blocked at what we granted: nothing to say, nothing wrong")
     }
 
     @Test fun staleStreamDataBlockedIsAnsweredWithTheCurrentMaxStreamData() {
@@ -186,10 +186,10 @@ class BlockedFramesTest {
         recv(m, 0, ByteArray(300_000))
         m.read(0, ByteArray(300_000), 0, 300_000)
         val limit = drain(m).of(ControlKind.MaxStreamData).maxOf { it.a }
-        assertTrue(m.onStreamDataBlocked(0, 524_288, m.now, m.smoothedRtt))
+        m.onStreamDataBlocked(0, 524_288, m.now, m.smoothedRtt)
         assertEquals(listOf(0L to limit), drain(m).of(ControlKind.MaxStreamData).map { it.id to it.a })
-        assertTrue(m.onStreamDataBlocked(4, 524_288, m.now, m.smoothedRtt), "another stream, not yet over its window")
-        assertTrue(drain(m).of(ControlKind.MaxStreamData).isEmpty())
+        m.onStreamDataBlocked(4, 524_288, m.now, m.smoothedRtt)
+        assertTrue(drain(m).of(ControlKind.MaxStreamData).isEmpty(), "another stream, not yet over its window")
     }
 
     @Test fun staleBlockedIsAnsweredOncePerRtt() {
@@ -197,16 +197,16 @@ class BlockedFramesTest {
         recv(m, 0, ByteArray(300_000))
         m.read(0, ByteArray(300_000), 0, 300_000)
         drain(m)
-        assertTrue(m.onDataBlocked(786_432, m.now, m.smoothedRtt))
+        m.onDataBlocked(786_432, m.now, m.smoothedRtt)
         assertEquals(1, drain(m).of(ControlKind.MaxData).size)
-        assertFalse(m.onDataBlocked(786_432, m.now, m.smoothedRtt), "again within the RTT: not answered, a glitch")
-        assertFalse(m.onDataBlocked(786_000, m.now, m.smoothedRtt), "another stale value within the RTT is no better")
-        assertTrue(drain(m).isEmpty())
+        m.onDataBlocked(786_432, m.now, m.smoothedRtt)
+        m.onDataBlocked(786_000, m.now, m.smoothedRtt)
+        assertTrue(drain(m).isEmpty(), "again within the RTT: not answered")
         m.now += 41.milliseconds
-        assertTrue(m.onDataBlocked(786_432, m.now, m.smoothedRtt), "a PTO later the peer may repeat it honestly")
-        assertEquals(1, drain(m).of(ControlKind.MaxData).size)
-        assertTrue(m.onStreamDataBlocked(0, 524_288, m.now, m.smoothedRtt))
-        assertFalse(m.onStreamDataBlocked(0, 524_288, m.now, m.smoothedRtt))
+        m.onDataBlocked(786_432, m.now, m.smoothedRtt)
+        assertEquals(1, drain(m).of(ControlKind.MaxData).size, "an RTT later the peer may still lack the update")
+        m.onStreamDataBlocked(0, 524_288, m.now, m.smoothedRtt)
+        m.onStreamDataBlocked(0, 524_288, m.now, m.smoothedRtt)
         assertEquals(1, drain(m).of(ControlKind.MaxStreamData).size)
     }
 
