@@ -75,7 +75,7 @@ abstract class EngineTestBase<TEngine : ApplicationEngine, TConfiguration : Appl
     /** The protocol of [withUrl]; HTTP/3 suites override it. */
     protected open val protocol: ContractProtocol = ContractProtocol.H1
 
-    private val testJob = Job()
+    private var testJob = Job()
     override val coroutineContext: CoroutineContext get() = testJob + Dispatchers.IO.limitedParallelism(32)
 
     @Target(AnnotationTarget.FUNCTION)
@@ -101,7 +101,21 @@ abstract class EngineTestBase<TEngine : ApplicationEngine, TConfiguration : Appl
         unhandled.update { it + error }
     }
 
-    @BeforeTest open fun beforeTest() {}
+    /**
+     * Resets everything a test may have changed on this instance. JUnit builds a fresh instance per test, but the
+     * Kotlin/Native runner keeps one instance per test case and reuses it under `--ktest_repeat`: a test that set
+     * [enableSsl] to false would otherwise start its next run without the TLS connector while [sslPort] still names the
+     * closed one, and the HTTP/3 client would dial a dead port until its handshake timeout.
+     */
+    @BeforeTest open fun beforeTest() {
+        testJob = Job()
+        server = null
+        port = 0
+        sslPort = 0
+        enableHttp2 = false
+        enableSsl = true
+        enableCertVerify = false
+    }
 
     @AfterTest open fun afterTest() {
         try {
