@@ -56,7 +56,9 @@ private fun openKeylogChannel(p: Path): SeekableByteChannel {
     try {
         val attrs = Files.readAttributes(p, PosixFileAttributes::class.java, LinkOption.NOFOLLOW_LINKS)
         if (!attrs.isRegularFile) throw IllegalArgumentException("keylog path $p is not a regular file")
-        val me = p.fileSystem.userPrincipalLookupService.lookupPrincipalByName(System.getProperty("user.name"))
+        val me =
+            processUser()
+                ?: throw IllegalArgumentException("keylog file $p cannot be checked: the user of this process is unknown")
         if (attrs.owner() != me) throw IllegalArgumentException("keylog file $p is owned by ${attrs.owner().name}, not by this user")
         if ("unix" in p.fileSystem.supportedFileAttributeViews() &&
             (Files.getAttribute(p, "unix:nlink", LinkOption.NOFOLLOW_LINKS) as Number).toInt() != 1
