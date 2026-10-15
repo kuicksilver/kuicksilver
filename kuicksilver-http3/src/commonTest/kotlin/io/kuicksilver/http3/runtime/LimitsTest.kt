@@ -202,8 +202,12 @@ class LimitsTest {
                 raw.openControl()
                 val st = c.openBidi()
                 val post = listOf(":method" to "POST", ":scheme" to "https", ":authority" to "server.test", ":path" to "/")
-                st.output.writeFully(raw.headers(st.id, post) + raw.data("x".encodeToByteArray()) + raw.headers(st.id, big))
-                st.output.flushAndClose()
+                // the server may stop the stream (STOP_SENDING) once it has read past its limit, before the rest of the 70 KiB
+                // is out: the raw client's write then fails, which is the refusal under test, not an error of the test
+                runCatching {
+                    st.output.writeFully(raw.headers(st.id, post) + raw.data("x".encodeToByteArray()) + raw.headers(st.id, big))
+                    st.output.flushAndClose()
+                }
                 val r = server.acceptRequest()
                 val e =
                     runCatching {
