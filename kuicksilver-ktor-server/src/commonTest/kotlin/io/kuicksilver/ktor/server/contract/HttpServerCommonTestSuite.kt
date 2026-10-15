@@ -927,11 +927,10 @@ abstract class HttpServerCommonTestSuite<TEngine : ApplicationEngine, TConfigura
     fun testResponseSentCalledOnce() =
         runTest {
             var responseSentCalled = 0
+            // One request only, so ResponseSent fires once: over HTTP/1.1 withUrl would also hit the TLS port. HTTP/3 needs
+            // the TLS connector and makes a single request anyway. Set before the server is built, not inside the module.
+            if (protocol == ContractProtocol.H1) enableSsl = false
             createAndStartServer {
-                serverConfig {
-                    enableSsl = false
-                    enableHttp2 = false
-                }
                 install(
                     createRouteScopedPlugin("Plugin") {
                         on(ResponseSent) {
