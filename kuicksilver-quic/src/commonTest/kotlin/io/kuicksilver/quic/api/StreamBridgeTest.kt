@@ -168,6 +168,102 @@ class StreamBridgeTest {
         }
 
     /**
+     * A connection that ends before the peer's FIN is not an end of stream: `readAvailable` throws the connection's reason
+     * instead of returning -1, which the interop client took for a complete download (0.2.0 release gate).
+     */
+    @Test fun connectionClosedByPeerFailsReads() =
+        runBlocking {
+            ApiPair.open().use { p ->
+                withTimeout(20.seconds) {
+                    val (c, s) = p.connect()
+                    val st = c.openBidi()
+                    st.output.writeFully(byteArrayOf(1), 0, 1)
+                    st.output.flush()
+                    val ss = s.acceptStream()
+                    ss.input.readExactly(1)
+                    c.close(7, "boom")
+                    val e = assertFailsWith<Throwable> { withTimeout(10.seconds) { ss.input.readAvailable(ByteArray(4), 0, 4) } }
+                    val lost = causes<Throwable>(e).filterIsInstance<QuicException.ConnectionLost.ApplicationClosed>().first()
+                    assertEquals(7L, lost.code)
+                    assertEquals(Initiator.Peer, lost.initiator)
+                    assertFalse(ss.input.isClosedForRead, "a failed stream is not at its end")
+                    assertIs<QuicException.ConnectionLost>(ss.input.closedCause)
+                    // every later read fails the same way: the truncation cannot be missed by a second loop
+                    assertFailsWith<Throwable> { ss.input.readAvailable(ByteArray(4), 0, 4) }
+                    assertFailsWith<Throwable> { ss.input.readByte() }
+                    s.close()
+                }
+            }
+        }
+
+    /** Our own close (a protocol violation we detected, an idle timeout) fails the reads of our streams the same way. */
+    @Test fun localCloseFailsReads() =
+        runBlocking {
+            ApiPair.open().use { p ->
+                withTimeout(20.seconds) {
+                    val (c, s) = p.connect()
+                    val st = c.openBidi()
+                    st.output.writeFully(byteArrayOf(1), 0, 1)
+                    st.output.flush()
+                    val ss = s.acceptStream()
+                    ss.input.readExactly(1)
+                    s.close(3, "local")
+                    val e = assertFailsWith<Throwable> { withTimeout(10.seconds) { ss.input.readAvailable(ByteArray(4), 0, 4) } }
+                    val lost = causes<Throwable>(e).filterIsInstance<QuicException.ConnectionLost.ApplicationClosed>().first()
+                    assertEquals(3L, lost.code)
+                    assertEquals(Initiator.Local, lost.initiator)
+                    c.close()
+                }
+            }
+        }
+
+    /** RESET_STREAM mid-stream: `readAvailable` throws the reset, never -1. */
+    @Test fun resetMidStreamFailsReadAvailable() =
+        runBlocking {
+            ApiPair.open().use { p ->
+                withTimeout(20.seconds) {
+                    val (c, s) = p.connect()
+                    val st = c.openBidi()
+                    st.output.writeFully(byteArrayOf(1), 0, 1)
+                    st.output.flush()
+                    val ss = s.acceptStream()
+                    ss.input.readExactly(1)
+                    st.reset(7)
+                    val e = assertFailsWith<Throwable> { withTimeout(10.seconds) { ss.input.readAvailable(ByteArray(4), 0, 4) } }
+                    val r = causes<Throwable>(e).filterIsInstance<QuicException.StreamError.Reset>().first()
+                    assertEquals(7L, r.code)
+                    assertEquals(Initiator.Peer, r.initiator)
+                    assertFalse(ss.input.isClosedForRead, "a reset stream is not at its end")
+                    c.close()
+                    s.close()
+                }
+            }
+        }
+
+    /** A FIN whose data was all read is the end of the stream, and stays so when the connection ends afterwards. */
+    @Test fun finThenConnectionLossStaysEof() =
+        runBlocking {
+            ApiPair.open().use { p ->
+                withTimeout(20.seconds) {
+                    val (c, s) = p.connect()
+                    val st = c.openBidi()
+                    st.output.writeFully(byteArrayOf(9), 0, 1)
+                    st.output.flushAndClose()
+                    val ss = s.acceptStream()
+                    assertContentEquals(byteArrayOf(9), ss.input.readExactly(1))
+                    assertTrue(ss.input.readAvailable(ByteArray(4), 0, 4) < 0, "EOF after FIN")
+                    assertTrue(ss.input.isClosedForRead)
+                    assertEquals(null, ss.input.closedCause)
+                    c.close(7, "boom")
+                    s.closed.await()
+                    assertTrue(ss.input.readAvailable(ByteArray(4), 0, 4) < 0, "still EOF after the connection ended")
+                    assertEquals(null, ss.input.closedCause)
+                    s.close()
+                }
+            }
+        }
+
+    /**
      * Data still buffered in the channel (written without a flush: `output` is auto-flushing, so `writeFully` sends at once)
      * leaves with the FIN in one STREAM frame on `flushAndClose`: no FIN-only frame in a packet of its own after the data
      * (interop `zerortt` with quiche: its hq server handled one FIN-only read per pass and left the last nine 0-RTT requests

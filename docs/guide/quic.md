@@ -105,6 +105,14 @@ val connection = client.connect(
 `QuicStream` exposes a ktor-io `ByteReadChannel`/`ByteWriteChannel` pair; closing `output` sends a FIN, cancelling
 `input` sends `STOP_SENDING` and the connection survives.
 
+Only the peer's FIN, with every byte before it read, ends `input`: then `isClosedForRead` is true, `readAvailable`
+returns -1 and `closedCause` is null. Any other end — a `RESET_STREAM`, a connection closed by either side (also
+with code 0), an idle timeout, a stateless reset, our own `stopSending` — fails every read with its cause
+(`QuicException.StreamError.Reset`, `QuicException.ConnectionLost`, …): `readAvailable`, `readByte`, `readRemaining`,
+`copyTo` and the rest throw instead of reporting an end, and the channel is not `isClosedForRead`. A loop that stops at
+-1 therefore cannot take a truncated stream for a complete one; `closedCause` still says why a channel failed. (ktor-io's
+own `ByteChannel` reports a cancelled channel as closed and answers -1 from `readAvailable`; `QuicStream.input` does not.)
+
 ```kotlin
 // guide:quic:echo
 val stream = connection.openBidi()

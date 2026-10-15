@@ -28,6 +28,7 @@ import io.ktor.server.routing.routing
 import io.ktor.utils.io.ByteWriteChannel
 import io.ktor.utils.io.discard
 import io.ktor.utils.io.readAvailable
+import io.ktor.utils.io.readByteArray
 import io.ktor.utils.io.readRemaining
 import io.ktor.utils.io.writeFully
 import io.ktor.websocket.Frame
@@ -47,10 +48,12 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.yield
 import kotlinx.io.readByteArray
 import kotlin.test.BeforeTest
 import kotlin.test.Test
@@ -564,6 +567,90 @@ class ClientH3Test {
                 }
             } finally {
                 server.stop(100, 500)
+            }
+        }
+
+    /**
+     * A response whose connection ends before its FIN fails the body, it does not look complete: `bodyAsText` throws, a
+     * streamed `bodyAsChannel()` fails once the bytes that arrived are read, and the engine's own channel (`rawContent`)
+     * throws from `readAvailable` instead of answering -1, which the interop client took for the end of a truncated download
+     * (0.2.0 release gate).
+     */
+    @OptIn(io.ktor.utils.io.InternalAPI::class)
+    @Test
+    fun truncatedH3ResponseFailsTheBody() =
+        h3Test {
+            coroutineScope {
+                val tls =
+                    tlsConfig(TlsRole.Server) {
+                        alpn = listOf(Http3Endpoint.H3)
+                        identity = ClientFixtures.identity()
+                    }
+                val ep =
+                    Http3Endpoint.bind(
+                        InetSocketAddress("127.0.0.1", 0),
+                        QuicEndpointConfig.Builder().apply { server = QuicServerConfig.Builder(tls).build() }.build(),
+                    )
+                // one gate per request, in the order the requests are made: the origin ends the connection once the gate opens
+                val gates = Channel<CompletableDeferred<Unit>>(Channel.UNLIMITED)
+                val serving =
+                    launch {
+                        while (true) {
+                            val conn = ep.accept()
+                            launch {
+                                runCatching {
+                                    val r = conn.acceptRequest()
+                                    val w = r.respond(200, Http3Headers.of("content-length" to "2000"))
+                                    w.output.writeFully(ByteArray(1000) { 1 })
+                                    w.output.flush()
+                                    gates.receive().await()
+                                    conn.close(Http3ErrorCode.INTERNAL_ERROR, "gone")
+                                }
+                            }
+                        }
+                    }
+                try {
+                    testClient(Http3DiscoveryMode.H3Only).use { c ->
+                        val url = "https://127.0.0.1:${ep.localAddress.port}/"
+                        val gate1 = CompletableDeferred<Unit>().also { gates.send(it) }
+                        var readFailed = false
+                        c.prepareGet(url).execute { r ->
+                            assertEquals(HttpProtocolVersion.HTTP_3_0, r.version)
+                            val ch = r.bodyAsChannel()
+                            assertEquals(1000, ch.readByteArray(1000).size)
+                            gate1.complete(Unit)
+                            assertFailsWith<Throwable> { withTimeout(10.seconds) { ch.readRemaining() } }
+                            readFailed = true
+                        }
+                        assertTrue(readFailed, "the streamed body failed after its first 1000 bytes")
+                        // the engine's channel as the application sees it: readAvailable throws the cause, never -1
+                        val gate2 = CompletableDeferred<Unit>().also { gates.send(it) }
+                        readFailed = false
+                        c.prepareGet(url).execute { r ->
+                            assertEquals(200, r.status.value)
+                            val raw = r.rawContent
+                            val buf = ByteArray(1000)
+                            var got = 0
+                            while (got < 1000) {
+                                val n = raw.readAvailable(buf, got, 1000 - got)
+                                assertTrue(n > 0, "the first 1000 bytes arrive before the connection ends")
+                                got += n
+                            }
+                            gate2.complete(Unit)
+                            // the end is known before the application reads on: a read that was not waiting must fail too, not see -1
+                            withTimeout(10.seconds) { while (raw.closedCause == null) yield() }
+                            assertFailsWith<Throwable> { while (raw.readAvailable(buf, 0, buf.size) >= 0) Unit }
+                            readFailed = true
+                        }
+                        assertTrue(readFailed, "the engine's channel failed after its first 1000 bytes")
+                        // the whole body at once: the connection ends right after the first bytes
+                        CompletableDeferred<Unit>().also { it.complete(Unit) }.also { gates.send(it) }
+                        assertFailsWith<Throwable> { withTimeout(10.seconds) { c.get(url).bodyAsText() } }
+                    }
+                } finally {
+                    serving.cancel()
+                    ep.close()
+                }
             }
         }
 }

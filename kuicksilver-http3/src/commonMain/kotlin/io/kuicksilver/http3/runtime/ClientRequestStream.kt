@@ -426,7 +426,7 @@ internal class ResponseImpl(
     override val streamId: Long get() = st.id
     internal var datagramChannel: kotlinx.coroutines.channels.Channel<ByteArray>? = null
     private val bodyChannel = ByteChannel()
-    override val body: ByteReadChannel get() = bodyChannel
+    override val body: ByteReadChannel = BodyReadChannel(bodyChannel)
     private val trailersDeferred = CompletableDeferred<Http3Headers?>()
     override val trailers: Deferred<Http3Headers?> get() = trailersDeferred
     internal val pump: Job =

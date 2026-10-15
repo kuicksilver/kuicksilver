@@ -187,7 +187,11 @@ without the application noticing. When HTTP/3 fails before the response headers,
 (bytes, a `WriteChannelContent` writer, or no body). A streamed `ReadChannelContent` body that HTTP/3 already consumed
 is never replayed, neither on the fallback nor after a 421 or a `RequestNotProcessed`: the call fails with
 `H3BodyConsumed` and the application decides. The fallback uses the same `trust`, pins and TLS 1.3 settings. When a call ends before its body was read, the rest of the stream is abandoned
-with `STOP_SENDING`.
+with `STOP_SENDING`. A response body the connection cut short (a reset, a lost connection) never looks complete:
+`bodyAsText`, `bodyAsBytes`, `readRemaining` and the other whole-body reads throw the cause, and the engine's own channel
+(`rawContent`, the server's request body) throws it from `readAvailable` instead of answering -1. `bodyAsChannel()`
+hands out Ktor's copy of the body, which keeps ktor-io's contract: its `readAvailable` answers -1 with the cause in
+`closedCause`, so a loop over that channel checks `closedCause` after -1 (or reads the rest with `readRemaining`).
 
 WebSockets use HTTP/1.1 `Upgrade` unless an HTTP/3 connection to the origin already allows Extended CONNECT (or the
 mode is `H3Only`); over HTTP/3 the handshake is RFC 9220 and the plugin sees the usual 101.

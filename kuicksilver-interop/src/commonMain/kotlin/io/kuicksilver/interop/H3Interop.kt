@@ -111,6 +111,8 @@ internal object H3InteropClient {
         val resp = conn.request(http3Request("GET", authority, path))
         val out = Buffer(); val buf = ByteArray(65536)
         while (true) { val n = resp.body.readAvailable(buf, 0, buf.size); if (n < 0) break; out.write(buf, 0, n) }
+        // the library fails the read on a reset or a lost connection; -1 is only the message's end, and a cause with it is checked all the same
+        resp.body.closedCause?.let { cause -> Files.log("GET $path: ended after ${out.size} bytes without FIN: $cause"); return false }
         if (resp.status != 200) { Files.log("GET $path: ${resp.status}"); return false }
         Files.write("$downloads/${path.substringAfterLast('/')}", out.readByteArray()); return true
     }

@@ -184,7 +184,7 @@ internal class ServerRequestImpl(
     override val protocol: String? = parsed.protocol
     override val headers: Http3Headers = parsed.regular
     val bodyChannel = ByteChannel()
-    override val body: ByteReadChannel get() = bodyChannel
+    override val body: ByteReadChannel = BodyReadChannel(bodyChannel)
     val trailersDeferred = CompletableDeferred<Http3Headers?>()
     override val trailers: Deferred<Http3Headers?> get() = trailersDeferred
 
@@ -251,7 +251,7 @@ internal class ServerRequestImpl(
     override suspend fun acceptConnect(headers: Http3Headers): Http3Stream {
         check(method == "CONNECT") { "acceptConnect() needs a CONNECT request" }
         val writer = respond(200, headers)
-        return Http3StreamImpl(session, st, bodyChannel, writer, datagramChannel!!, this.headers) { session.scope.launch { done() } }
+        return Http3StreamImpl(session, st, body, writer, datagramChannel!!, this.headers) { session.scope.launch { done() } }
     }
 
     /** A PRIORITY_UPDATE from the client; a priority the server chose in [respond] stays. */

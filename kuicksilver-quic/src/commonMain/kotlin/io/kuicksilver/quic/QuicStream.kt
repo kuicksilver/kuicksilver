@@ -20,8 +20,11 @@ public interface QuicStream {
     public val id: Long
 
     /**
-     * The bytes the peer sends, in order, ending at its FIN; fails with [QuicException.StreamError.Reset] when the peer resets the stream.
-     * IllegalStateException on our own unidirectional stream.
+     * The bytes the peer sends, in order. Only its FIN, with every byte before it read, ends the channel (`isClosedForRead`,
+     * -1 from `readAvailable`, `closedCause` null). Any other end fails every read with its cause instead of reporting an end,
+     * and leaves the channel not `isClosedForRead`: [QuicException.StreamError.Reset] when the peer resets the stream,
+     * [QuicException.StreamError.Stopped] after our [stopSending], [QuicException.ConnectionLost] once the connection is gone
+     * (a close by either side, an idle timeout, a stateless reset). IllegalStateException on our own unidirectional stream.
      */
     public val input: ByteReadChannel
 

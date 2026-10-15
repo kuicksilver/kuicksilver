@@ -22,25 +22,40 @@ import kotlin.concurrent.Volatile
 // The two ktor-io halves of a [StreamRuntime]: StreamInput pulls from the core when the application awaits content,
 // StreamOutput hands bytes to the core on every flush. Every core access hops onto the loop.
 
+/**
+ * The receiving half. Only the peer's FIN, with every byte before it taken, is the end of the stream (`isClosedForRead`,
+ * -1 from `readAvailable`); a RESET_STREAM, a lost connection or our own STOP_SENDING fails every read with its cause
+ * instead. ktor-io's own `ByteChannel` reports a cause as "closed" and lets `readAvailable` answer -1, which an
+ * application cannot tell from a complete stream (the interop client wrote a truncated download, 0.2.0 release gate); so
+ * a failed input is never "closed for read", and `readBuffer` and `awaitContent` throw the cause, as `readAvailable` and
+ * every other ktor-io read goes through one of them. [closedCause] still tells why.
+ */
 @OptIn(ExperimentalKuicksilverApi::class, io.ktor.utils.io.InternalAPI::class)
 internal class StreamInput(
     private val stream: StreamRuntime,
 ) : ByteReadChannel {
     private val buffer = Buffer()
     private val tmp = ByteArray(16384)
-    private var eof = false
+
+    /** The FIN was taken from the core: all the peer's data is in [buffer] or was read; a later cause changes nothing. */
+    @Volatile private var eof = false
 
     @Volatile override var closedCause: Throwable? = null
         private set
-    override val readBuffer: Source get() = buffer
-    override val isClosedForRead: Boolean get() = closedCause != null || (eof && buffer.exhausted())
+    override val readBuffer: Source get() {
+        closedCause?.let { throw it }
+        return buffer
+    }
+    override val isClosedForRead: Boolean get() = eof && buffer.exhausted()
 
     override suspend fun awaitContent(min: Int): Boolean {
-        if (closedCause != null) return false
+        if (eof) return buffer.size >= min
+        closedCause?.let { throw it }
         if (buffer.size >= min) return true
         return withContext(stream.loop.dispatcher) {
             while (true) {
-                if (closedCause != null) return@withContext false
+                if (eof) return@withContext buffer.size >= min
+                closedCause?.let { throw it }
                 var pulled = 0
                 var touched = false
                 while (buffer.size < maxOf(min.toLong(), PULL_TARGET) &&
@@ -74,8 +89,8 @@ internal class StreamInput(
                 ) {
                     throw e
                 } catch (_: Throwable) {
-                    return@withContext buffer.size >=
-                        min
+                    // the signal channel closed: with a cause, the next round throws it; a finished stream has nothing more
+                    if (closedCause == null) return@withContext buffer.size >= min
                 }
             }
             @Suppress("UNREACHABLE_CODE")
@@ -96,8 +111,9 @@ internal class StreamInput(
         }
     }
 
+    /** Fails the input with [cause] unless the peer's FIN was already taken: a complete stream stays complete. */
     fun closeWith(cause: Throwable) {
-        if (closedCause == null) closedCause = cause
+        if (closedCause == null && !eof) closedCause = cause
         stream.readable.close()
     }
 

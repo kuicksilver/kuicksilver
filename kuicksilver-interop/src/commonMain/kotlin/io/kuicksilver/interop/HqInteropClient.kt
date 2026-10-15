@@ -99,9 +99,11 @@ internal object HqInteropClient {
         val path = Url.parse(url).path
         val out = Buffer(); val buf = ByteArray(65536)
         while (true) {
+            // the library fails the read on a reset or a lost connection; -1 is only a FIN, and a cause with it is checked all the same
             val n = st.input.readAvailable(buf, 0, buf.size); if (n < 0) break; out.write(buf, 0, n)
             if (progress != null && !progress.done) { progress.received += n; if (progress.received >= progress.after) { progress.done = true; conn.keyUpdate() } }
         }
+        st.input.closedCause?.let { cause -> Files.log("$url: ended after ${out.size} bytes without FIN: $cause"); return false }
         Files.write("$downloads/${path.substringAfterLast('/')}", out.readByteArray()); return true
     }
 }

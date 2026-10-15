@@ -146,8 +146,16 @@ internal suspend fun H3Session.pumpBody(
     } catch (
         e: CancellationException,
     ) {
-        out.cancel(e)
-        trailers.cancel(e)
+        // the session's scope goes with the connection, and may cancel the pump before it read the transport's failure: the
+        // body then fails with the connection's reason, which is what the reader needs, not the pump's own cancellation
+        if (closed.isCompleted) {
+            val reason = closed.getCompleted()
+            out.cancel(reason)
+            trailers.completeExceptionally(reason)
+        } else {
+            out.cancel(e)
+            trailers.cancel(e)
+        }
         throw e
     } catch (
         e: StreamFailure,
