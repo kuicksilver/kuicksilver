@@ -166,13 +166,16 @@ internal fun ConnectionCore.probeOtherHandshakeSpace(space: SpaceId) {
     requeueForProbe(other, 1)
 }
 
-/** A PTO probe carries the frames of the oldest unacknowledged packets rather than a bare PING (RFC 9002 section 6.2.4). */
+/**
+ * A PTO probe carries the frames of the oldest unacknowledged packets that hold something to resend and that no earlier probe
+ * took, rather than a bare PING (RFC 9002 section 6.2.4; [io.kuicksilver.quic.recovery.LossDetection.takeForProbe]).
+ */
 internal fun ConnectionCore.requeueForProbe(
     space: SpaceId,
     n: Int,
 ) {
     probeScratch.clear()
-    loss.oldestUnacked(space, n, probeScratch)
+    loss.takeForProbe(space, n, probeScratch)
     for (p in probeScratch) {
         val f = p.frames
         for (i in 0 until f.cryptoCount) cryptoStreams.send[f.cryptoLevel[i]].onLost(f.cryptoOffset[i], f.cryptoLength[i])
