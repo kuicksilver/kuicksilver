@@ -90,6 +90,12 @@ println(response.status)
 val body = response.body            // a ByteReadChannel; reading it to the end completes response.trailers
 ```
 
+A body ends only with the message: the peer's FIN after its DATA (and trailers, if any), with `content-length`
+matched. Then `isClosedForRead` is true and `readAvailable` returns -1. A body cut short — a reset, a connection that
+ended, a request abandoned, a frame error — fails every read with its cause (`Http3Exception`, or the
+`QuicException.ConnectionLost` of the connection) and is not `isClosedForRead`, so a read loop that stops at -1 never
+takes a truncated body for a complete one; `closedCause` says why. The same holds for the request body on the server.
+
 A request body is any `ByteReadChannel`; it is copied into DATA frames as the transport accepts it, so a slow peer
 slows the producer instead of filling memory. `trailers` is called after the body ends. Interim responses (1xx,
 103 Early Hints included) reach `onInformational`; more than `maxInformationalResponses` (5) fail the request with

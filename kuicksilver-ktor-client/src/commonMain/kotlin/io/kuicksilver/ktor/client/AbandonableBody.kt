@@ -34,7 +34,8 @@ internal class AbandonableBody(
     override suspend fun awaitContent(min: Int): Boolean = inner.awaitContent(min)
 
     override fun cancel(cause: Throwable?) {
-        val abandoned = !inner.isClosedForRead
+        // a body that failed (a reset, a lost connection) is not at its end either, but nothing is left to abandon
+        val abandoned = !inner.isClosedForRead && inner.closedCause == null
         inner.cancel(cause)
         if (abandoned) call.cancel(CancellationException("response body left unread", cause))
     }

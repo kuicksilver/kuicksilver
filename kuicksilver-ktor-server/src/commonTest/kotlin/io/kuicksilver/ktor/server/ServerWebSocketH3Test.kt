@@ -29,6 +29,7 @@ import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertIs
 import kotlin.time.Duration.Companion.seconds
 
 /** WebSockets over HTTP/3 (RFC 9220) through Ktor's own `webSocket {}` route. */
@@ -75,6 +76,10 @@ class ServerWebSocketH3Test {
                     ws.send(Frame.Text("ping"))
                     assertEquals("echo:ping", (ws.incoming.receive() as Frame.Text).readText())
                     ws.send(Frame.Close())
+                    // the reader stays on the stream after the server's Close reply; cancel it before the connection is closed
+                    // under it: a stream cut short fails its reads (the raw reader rethrows), only the FIN ends them
+                    assertIs<Frame.Close>(ws.incoming.receive())
+                    ws.cancel()
                 }
             } finally {
                 server.stop(100, 500)

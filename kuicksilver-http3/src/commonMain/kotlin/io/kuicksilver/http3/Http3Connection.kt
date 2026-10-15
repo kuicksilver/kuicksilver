@@ -161,8 +161,10 @@ public interface Http3ServerRequest {
     public val headers: Http3Headers
 
     /**
-     * The request content from DATA frames; it ends at the client's FIN. Content still unread when the response is
-     * complete is dropped with `STOP_SENDING H3_NO_ERROR`.
+     * The request content from DATA frames; it ends at the client's FIN (and trailers, if any). A body cut short — the
+     * client's reset, a lost connection — fails every read with its cause ([Http3Exception] or the connection's
+     * [io.kuicksilver.quic.QuicException.ConnectionLost]) and is never `isClosedForRead`, so it cannot pass for complete.
+     * Content still unread when the response is complete is dropped with `STOP_SENDING H3_NO_ERROR`.
      */
     public val body: ByteReadChannel
 

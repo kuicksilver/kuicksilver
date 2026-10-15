@@ -319,6 +319,15 @@ Found by the 0.2.0 release gate (QUIC Interop Runner):
   gets the connection closed with `PROTOCOL_VIOLATION` "excessive peer activity" after about a thousand repeats; a repeat
   within an RTT is still not answered (`quiche->kuicksilver:transfer`, `chacha20`, `keyupdate`, `blackhole`, and the
   native image's `transfer`).
+- QUIC and HTTP/3: a stream that ended without the peer's FIN (a `RESET_STREAM`, a connection closed by either side, an
+  idle timeout, a stateless reset) looked like a complete one: `QuicStream.input` and the HTTP/3 body channels kept the
+  cause in `closedCause` but answered -1 from ktor-io's `readAvailable`, as after a FIN, and the interop client wrote a
+  truncated download and exited 0. Only a FIN with all its data read is the end of a stream now; every other end fails
+  the read (`readAvailable`, `readByte`, `readRemaining`, `copyTo`, …) with the `QuicException` or `Http3Exception`, and
+  such a channel is not `isClosedForRead`. The Ktor engines inherit this for `rawContent` and the request body;
+  `bodyAsChannel()` goes through Ktor's own copy, whose `readAvailable` keeps ktor-io's contract (-1 with the cause in
+  `closedCause`) while `bodyAsText`, `readRemaining` and the other whole-body reads throw. The interop client checks
+  `closedCause` as well.
 
 Found by the fuzzing campaigns (threat model section 3.10):
 

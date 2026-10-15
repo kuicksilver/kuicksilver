@@ -143,7 +143,11 @@ public interface Http3Response {
     /** The validated response fields, pseudo-headers excluded (RFC 9114 section 4.2). */
     public val headers: Http3Headers
 
-    /** The response content from DATA frames; it ends at the server's FIN and fails with the stream's error after a reset. */
+    /**
+     * The response content from DATA frames; it ends at the server's FIN (and trailers, if any). A body cut short — a reset,
+     * a lost connection, a failed request — fails every read with its cause ([Http3Exception] or the connection's
+     * [io.kuicksilver.quic.QuicException.ConnectionLost]) and is never `isClosedForRead`, so it cannot pass for complete.
+     */
     public val body: ByteReadChannel
 
     /** Completes once [body] was read to the end: the trailers, or null when the server sent none. */
