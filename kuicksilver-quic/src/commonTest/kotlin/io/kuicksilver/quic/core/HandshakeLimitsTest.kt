@@ -279,4 +279,37 @@ class HandshakeLimitsTest {
             p.close()
         }
     }
+
+    /**
+     * RFC 9000 section 8.1 with budget left after the first flight (the default chain): the server's PTO probes, which resend
+     * CRYPTO since probes cycle through outstanding data, spend the rest of the 3x budget and then stop; no datagram ever crosses
+     * the limit (the interop runner's amplificationlimit check counts every server datagram against 3x the client's Initials).
+     */
+    @Test fun ptoProbesStayWithinAmplificationBudget() {
+        var received = 0L
+        var sent = 0L
+        var violated = false
+        val p = CorePair(crypto = ksl)
+        p.filterToServer = { i, b ->
+            // only the client's first flight reaches the server; its Handshake packets (which would validate the address) are lost
+            if (i <= 1) received += b.size
+            i <= 1
+        }
+        p.filterToClient = { _, b ->
+            sent += b.size
+            if (!p.server!!.addressValidated && sent > 3 * received) violated = true
+            true
+        }
+        try {
+            p.runUntil(10.seconds) { false }
+            val s = p.server!!
+            assertTrue(!s.addressValidated, "the address stays unvalidated")
+            assertTrue(s.stats.ptoCount > 0, "the server probed: ptoCount ${s.stats.ptoCount}, sent $sent of ${3 * received}")
+            assertTrue(!violated, "server sent $sent after receiving $received before validation")
+            assertTrue(s.amplification.budget() < 64, "the probes spent the budget: ${s.amplification.budget()} left of ${3 * received}")
+            assertEquals(TimeMark.NEVER, s.loss.timeout(), "no PTO armed once the budget is spent")
+        } finally {
+            p.close()
+        }
+    }
 }
