@@ -79,7 +79,15 @@ class LimitsTest {
         h3Test {
             H3Pair.open(clientSettings = http3Settings { maxFieldSectionSize = 1000 }).useScoped { p ->
                 withTimeout(5.seconds) { p.server.peerSettings.first { it != null } }
-                val resp = async { p.client.request(get()) }
+                // the reset may reach the client before or after its response head: `request` itself or the body read
+                // fails, and either failure stays inside this coroutine (an async child that throws would cancel the test)
+                val outcome =
+                    async {
+                        runCatching {
+                            val response = p.client.request(get())
+                            response.body.readAllBytes()
+                        }
+                    }
                 val r = p.server.acceptRequest()
                 val w = r.respond(200)
                 w.output.writeFully("hello".encodeToByteArray())
@@ -89,7 +97,7 @@ class LimitsTest {
                         w.finish(Http3Headers.of("x-big" to "v".repeat(2000)))
                     }
                 assertEquals(1000L, e.limit)
-                val body = withTimeout(5.seconds) { runCatching { resp.await().body.readAllBytes() } }
+                val body = withTimeout(5.seconds) { outcome.await() }
                 assertTrue(body.isFailure, "the client saw a complete body ${body.getOrNull()?.decodeToString()}")
             }
         }
