@@ -15,7 +15,6 @@ import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpMethod
 import io.ktor.http.HttpProtocolVersion
 import io.ktor.http.isSecure
-import io.ktor.network.selector.SelectorManager
 import io.ktor.util.date.getTimeMillis
 import io.ktor.utils.io.InternalAPI
 import io.kuicksilver.http3.Http3Exception
@@ -24,6 +23,7 @@ import io.kuicksilver.ktor.client.h3.H3NotSent
 import io.kuicksilver.ktor.client.h3.H3Pool
 import io.kuicksilver.ktor.client.h3.H3Pool.Companion.isReplayable
 import io.kuicksilver.ktor.client.h3.H3Target
+import io.kuicksilver.ktor.network.engineSelector
 import io.kuicksilver.quic.QuicException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineName
@@ -56,7 +56,9 @@ internal class KuicksilverEngine(
      * for its own parent and every closed client kept its sockets (found by the vendored Ktor client contract tests).
      */
     override val coroutineContext: CoroutineContext = super.coroutineContext.let { it + SupervisorJob(it[Job]) }
-    private val selector = SelectorManager(dispatcher)
+
+    @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+    private val selector = engineSelector(dispatcher) // a socket closed on it is released at once (EngineSelector.kt)
     private val engineJob = SupervisorJob(coroutineContext[Job])
 
     /** Background work that outlives a call (a QUIC setup that lost the race); completed by [close] so the cleanup can run. */
