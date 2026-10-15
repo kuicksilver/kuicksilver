@@ -40,6 +40,28 @@ class KtorDatagramIoTest {
         }
 
     /**
+     * A refused bind (the port is taken) leaves nothing behind: before, every refusal leaked its `SelectorManager`, a
+     * selection thread of `Dispatchers.IO` and a pipe pair, so 64 of them (an ephemeral `port = 0` server retrying taken
+     * UDP twins, a client retrying) starved `Dispatchers.IO` and hung whatever ran there next, Ktor's server stop included.
+     */
+    @Test fun negative_refusedPortableBindReleasesItsSelector() =
+        runBlocking {
+            val held = DatagramIo.open(InetSocketAddress("127.0.0.1", 0), IoPreference.Portable)
+            try {
+                val taken = InetSocketAddress("127.0.0.1", held.localAddress.port)
+                assertFailsWith<Throwable> { DatagramIo.open(taken, IoPreference.Portable).close() } // warm-up
+                val before = openDescriptors()
+                repeat(20) { assertFailsWith<Throwable> { DatagramIo.open(taken, IoPreference.Portable).close() } }
+                // the default (accelerated, then portable) path, which the HTTP/3 server binds with
+                repeat(20) { assertFailsWith<Throwable> { DatagramIo.open(taken).close() } }
+                val leaked = openDescriptors() - before
+                assertTrue(leaked < 10, "40 refused binds left $leaked descriptors open")
+            } finally {
+                held.close()
+            }
+        }
+
+    /**
      * ktor-network 3.6.0's Native sockets put `::` into every IPv6 sockaddr (docs/upstream/ktor-native-ipv6.md): the portable
      * socket would bind `::` (every interface, IPv4 too) for `::1`. It refuses instead of binding somewhere else.
      */
@@ -73,4 +95,7 @@ class KtorDatagramIoTest {
             val r = runCatching { DatagramIo.open(InetSocketAddress("::", 0), IoPreference.Portable).close() }
             assertTrue(r.exceptionOrNull() !is UnsupportedOperationException, "$r")
         }
+
+    @OptIn(kotlinx.cinterop.ExperimentalForeignApi::class)
+    private fun openDescriptors(): Int = (0 until 4096).count { platform.posix.fcntl(it, platform.posix.F_GETFD) != -1 }
 }

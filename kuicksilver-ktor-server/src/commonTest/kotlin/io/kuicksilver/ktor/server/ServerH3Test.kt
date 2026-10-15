@@ -20,6 +20,7 @@ import io.kuicksilver.http3.Http3Connection
 import io.kuicksilver.http3.Http3Endpoint
 import io.kuicksilver.http3.http3Request
 import io.kuicksilver.native.KslLoader
+import io.kuicksilver.quic.DatagramIo
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -259,33 +260,69 @@ class ServerH3Test {
     /**
      * `port = 0`: the UDP twin of the port the OS gave TCP may be taken. The hook occupies it before the first HTTP/3 bind,
      * so that bind fails for real; the server retries the TCP + UDP pair and serves h3 and Alt-Svc on one new number.
+     * Other processes hold UDP ports too (a parallel test run opens hundreds), so a later pair may also be refused: the
+     * contract is "the taken port is skipped, within the budget", not an exact attempt count.
      */
-    @Test fun ephemeralPortRetriesWhenUdpTwinIsTaken() =
+    @Test fun ephemeralPortRetriesWhenUdpTwinIsTaken() = ephemeralPairRetry(occupied = 1)
+
+    /** Several taken twins in a row (what parallel load does by chance) still end on one free TCP + UDP number. */
+    @Test fun ephemeralPortRetriesPastSeveralTakenTwins() = ephemeralPairRetry(occupied = 3)
+
+    /**
+     * Occupies the UDP twin of the first [occupied] pairs the server tries, then checks the retry contract: every taken
+     * port is skipped, the server ends on the pair it tried last, TCP and UDP share that number (Alt-Svc names it, h3
+     * answers on it) and it took at most [EPHEMERAL_PAIR_ATTEMPTS] pairs.
+     */
+    private fun ephemeralPairRetry(occupied: Int) =
         h3ServerTest {
-            val taken = ArrayList<io.kuicksilver.quic.DatagramIo>()
+            val taken = ArrayList<DatagramIo>()
+            val takenPorts = HashSet<Int>()
             val tried = ArrayList<Int>()
             val (server, port) =
                 tlsServer(configure = {
                     http3Bind = { a, c, s ->
                         tried += a.port
-                        if (tried.size == 1) {
-                            taken +=
-                                io.kuicksilver.quic.DatagramIo
-                                    .open(InetSocketAddress("127.0.0.1", a.port))
+                        if (takenPorts.size < occupied && a.port !in takenPorts) {
+                            // Already held by another process: the bind below fails all the same.
+                            val held = runCatching { DatagramIo.open(InetSocketAddress("127.0.0.1", a.port)) }
+                            held.getOrNull()?.let { taken += it }
+                            takenPorts += a.port
                         }
                         Http3Endpoint.bind(a, c, s)
                     }
                 }) { routing { get("/") { call.respondText("ok") } } }
             try {
-                assertEquals(2, tried.size, "one retry after the taken UDP port ${tried.firstOrNull()}")
-                assertEquals(port, tried.last())
-                assertTrue(port != tried.first())
+                val why = "taken $takenPorts, tried $tried, serving $port"
+                assertEquals(occupied, takenPorts.size, why)
+                assertTrue(tried.size in occupied + 1..EPHEMERAL_PAIR_ATTEMPTS, why)
+                assertEquals(port, tried.last(), why)
+                assertTrue(port !in takenPorts, why)
                 val resp = rawHttp(port, "GET / HTTP/1.1\r\nHost: server.test\r\nConnection: close\r\n\r\n")
                 assertTrue(resp.contains("Alt-Svc: h3=\":$port\""), resp)
                 h3(port) { c -> assertEquals(200, c.request(get()).status) }
             } finally {
                 server.stop(100, 500)
                 taken.forEach { it.close() }
+            }
+        }
+
+    /** No free twin within [EPHEMERAL_PAIR_ATTEMPTS] pairs: exactly that many tries, then HTTP/1.1 alone, no Alt-Svc. */
+    @Test fun ephemeralPortGivesUpHttp3AfterTheBudget() =
+        h3ServerTest {
+            val tried = ArrayList<Int>()
+            val (server, port) =
+                tlsServer(configure = {
+                    http3Bind = { a, _, _ ->
+                        tried += a.port
+                        throw kotlinx.io.IOException("UDP ${a.port}: Address already in use")
+                    }
+                }) { routing { get("/") { call.respondText("ok") } } }
+            try {
+                assertEquals(EPHEMERAL_PAIR_ATTEMPTS, tried.size, "tried $tried")
+                val resp = rawHttp(port, "GET / HTTP/1.1\r\nHost: server.test\r\nConnection: close\r\n\r\n")
+                assertTrue(resp.endsWith("ok") && !resp.contains("Alt-Svc"), resp)
+            } finally {
+                server.stop(100, 500)
             }
         }
 
