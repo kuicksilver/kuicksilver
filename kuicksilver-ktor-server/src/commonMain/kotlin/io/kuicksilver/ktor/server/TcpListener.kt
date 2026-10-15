@@ -26,6 +26,7 @@ import io.ktor.utils.io.InternalAPI
 import io.ktor.utils.io.writeStringUtf8
 import io.kuicksilver.http3.Http3Endpoint
 import io.kuicksilver.ktor.network.bindTcp
+import io.kuicksilver.ktor.network.engineSelector
 import io.kuicksilver.ktor.network.tlsServer
 import io.kuicksilver.ktor.server.h1.H1Call
 import io.kuicksilver.ktor.server.h1.H1Connection
@@ -118,7 +119,7 @@ internal fun KuicksilverApplicationEngine.startTcp(
         val socket = CompletableDeferred<ServerSocket>()
         val latch: CompletableJob = Job()
         val rootJob = launch(CoroutineName("kuicksilver-server-${l.config}"), start = CoroutineStart.UNDISPATCHED) { latch.join() }
-        val selector = SelectorManager(coroutineContext)
+        val selector = engineSelector(coroutineContext) // a socket closed on it is released at once (EngineSelector.kt)
         val timeout = configuration.connectionIdleTimeoutSeconds.seconds
         val connections = SupervisorJob(rootJob)
         tcpConnectionsForProbe += connections
