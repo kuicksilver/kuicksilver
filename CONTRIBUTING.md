@@ -59,6 +59,13 @@ pull requests too), update the file in the same pull request and review its diff
 ```
 
 `--write-verification-metadata` adds what the run resolved and keeps the rest; remove entries of versions no longer used.
+The sample (`samples/realtime-telemetry`, its own build) links the same two files; after a change to its plugins run
+`../../gradlew -I ../../tools/check/resolve-all.init.gradle.kts --write-verification-metadata sha256,pgp --export-keys
+ksResolveAll jvmTest` there too (it replaces the keyring link with a copy: put the link back). Run the update with the
+pins as they will be committed (an AGP or Kotlin pin that moves afterwards brings other tool artifacts), and check it
+with the gate's step `check: dependency verification (every configuration)`:
+`./gradlew --max-workers=2 -I tools/check/resolve-all.init.gradle.kts -Pkuicksilver.resolveAll.strict=true --continue
+:build-logic:ksResolveAll ksResolveAll` resolves every configuration with verification on and fails on any gap.
 Review new `<trusted-key>` entries (the key belongs to the group's publisher: compare its fingerprint with the one the
 project publishes) and every new `<ignored-key>` (its artifacts then fall back to a checksum). Never set
 `--dependency-verification lenient` or `off` in a script or a properties file. If a build fails with "Dependency

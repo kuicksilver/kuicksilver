@@ -36,6 +36,7 @@ export SIZE_LIMIT="${SIZE_LIMIT:-3000000}"
 aar=kuicksilver-native/build/outputs/aar/kuicksilver-native.aar
 step "lint: action/image pins"                 bash tools/check/pins.sh .
 step "lint: ktlint"                            $G lintKotlin
+step "check: dependency verification (every configuration)"  $G -I tools/check/resolve-all.init.gradle.kts -Pkuicksilver.resolveAll.strict=true --continue :build-logic:ksResolveAll ksResolveAll   # a metadata gap fails here, not in the late step resolving it
 # shellcheck disable=SC2086
 step "check: spdx, layers, abi"                $G $KSL_CHECKS
 # shellcheck disable=SC2086

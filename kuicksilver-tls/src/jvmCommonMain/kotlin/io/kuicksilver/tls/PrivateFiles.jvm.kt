@@ -50,7 +50,7 @@ private fun checkNioDirectory(dir: Path) {
     if (!Files.isDirectory(dir, LinkOption.NOFOLLOW_LINKS)) throw IllegalArgumentException("$dir is not a directory")
     if (!posix) return
     val attrs = Files.readAttributes(dir, PosixFileAttributes::class.java, LinkOption.NOFOLLOW_LINKS)
-    val me = dir.fileSystem.userPrincipalLookupService.lookupPrincipalByName(System.getProperty("user.name"))
+    val me = processUser() ?: throw IllegalArgumentException("$dir cannot be checked: the user of this process cannot be determined")
     if (attrs.owner() != me) throw IllegalArgumentException("$dir is owned by ${attrs.owner().name}, not by this user")
     val perms = attrs.permissions()
     if (PosixFilePermission.GROUP_WRITE in perms || PosixFilePermission.OTHERS_WRITE in perms) {
@@ -61,6 +61,26 @@ private fun checkNioDirectory(dir: Path) {
         if (!sticky) throw IllegalArgumentException("$dir is writable by group or others without the sticky bit")
     }
 }
+
+/**
+ * The user this process creates files as: the owner of a file created now in `java.io.tmpdir`, else the principal
+ * `user.name` names; null when neither works. Not `user.name` first: Android sets it to a name that is not the app's
+ * uid, and on any JVM it is only a property (`-Duser.name=`), while the owner of a new file is the effective uid.
+ */
+internal fun processUser(): java.nio.file.attribute.UserPrincipal? =
+    runCatching {
+        val probe = Files.createTempFile("ksl-owner", null)
+        try {
+            Files.getOwner(probe, LinkOption.NOFOLLOW_LINKS)
+        } finally {
+            Files.deleteIfExists(probe)
+        }
+    }.recoverCatching {
+        java.nio.file.FileSystems
+            .getDefault()
+            .userPrincipalLookupService
+            .lookupPrincipalByName(System.getProperty("user.name"))
+    }.getOrNull()
 
 @InternalKuicksilverApi
 public actual fun createPrivateFile(

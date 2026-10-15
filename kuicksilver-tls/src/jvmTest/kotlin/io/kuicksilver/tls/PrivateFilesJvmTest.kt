@@ -1,6 +1,6 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
-@file:OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+@file:OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class, io.kuicksilver.annotations.DelicateKuicksilverApi::class)
 
 package io.kuicksilver.tls
 
@@ -39,6 +39,26 @@ class PrivateFilesJvmTest {
         if (posix) {
             assertEquals("rwx------", PosixFilePermissions.toString(Files.getPosixFilePermissions(dir.toPath())))
             assertEquals("rw-------", PosixFilePermissions.toString(Files.getPosixFilePermissions(File(dir, "x.sqlog").toPath())))
+        }
+    }
+
+    /**
+     * The owner checks compare with the user this process creates files as, not with the principal `user.name` names:
+     * Android sets `user.name` to a name that is not the app's uid, so every qlog directory and keylog file of an app was
+     * refused as "owned by u0_a…, not by this user" (gate 2026-10-15, androidConnectedCheck, DirectoryQlogSinkTest).
+     * Here `user.name` names another existing user ("nobody") as it did there.
+     */
+    @Test fun ownerCheckDoesNotTrustUserName() {
+        if (!posix) return
+        val saved = System.getProperty("user.name")
+        System.setProperty("user.name", "nobody")
+        try {
+            val dir = File(root, "qlog")
+            checkPrivateDirectory(dir.path)
+            checkPrivateDirectory(dir.path) // an existing directory of ours passes too
+            (keylogFile(File(root, "keys.log").path) as java.io.Closeable).close()
+        } finally {
+            System.setProperty("user.name", saved)
         }
     }
 

@@ -78,12 +78,7 @@ class KslLoaderTest {
     @Test fun negative_workdirForeignOwnerRefused() {
         val dir = Files.createTempDirectory("ksl-workdir-owner").toFile().apply { deleteOnExit() }
         if (!posix) return assertOnlyTheDirectoryCheckWithoutPosix(dir) // Windows: no "root", ownership not checked
-        val root =
-            dir
-                .toPath()
-                .fileSystem.userPrincipalLookupService
-                .lookupPrincipalByName("root")
-        val e = assertFailsWith<KslException.NativeLoad> { JvmLoader.checkWorkDir(dir.toPath(), root) }
+        val e = assertFailsWith<KslException.NativeLoad> { JvmLoader.checkWorkDir(dir.toPath(), foreignUser(dir.toPath())) }
         assertTrue(e.reason.contains("owned by"), e.reason)
         JvmLoader.checkWorkDir(dir.toPath()) // our own directory passes
     }
@@ -149,6 +144,19 @@ class KslLoaderTest {
     }
 }
 
+/**
+ * A user that does not own [path]: "root", or "nobody"/"daemon" when the tests themselves run as root (the Docker JVM
+ * steps run in a Temurin container as root, where "root" is no foreign owner and the negative tests would pass nothing).
+ */
+internal fun foreignUser(path: java.nio.file.Path): java.nio.file.attribute.UserPrincipal {
+    val owner = Files.getOwner(path)
+    val lookup = path.fileSystem.userPrincipalLookupService
+    return listOf("root", "nobody", "daemon")
+        .firstNotNullOfOrNull { name ->
+            runCatching { lookup.lookupPrincipalByName(name) }.getOrNull()?.takeIf { it != owner }
+        } ?: error("no user other than ${owner.name} to own $path")
+}
+
 class SystemOpenSslMappingTest {
     @Test fun initCodesMapToExceptions() {
         KslLoader.ensureLoaded()
@@ -199,12 +207,7 @@ class LoaderInstallTest {
             return
         }
         val before = Files.readAttributes(out.toPath(), java.nio.file.attribute.BasicFileAttributes::class.java).fileKey()
-        val root =
-            dir
-                .toPath()
-                .fileSystem.userPrincipalLookupService
-                .lookupPrincipalByName("root")
-        JvmLoader.installLibrary(out, lib.readBytes(), manifest, root)
+        JvmLoader.installLibrary(out, lib.readBytes(), manifest, foreignUser(out.toPath()))
         val after = Files.readAttributes(out.toPath(), java.nio.file.attribute.BasicFileAttributes::class.java).fileKey()
         kotlin.test.assertNotEquals(before, after, "a copy owned by another user was reused")
         kotlin.test.assertTrue(dir.listFiles()!!.none { it.name.endsWith(".tmp") }, "no temp files left")

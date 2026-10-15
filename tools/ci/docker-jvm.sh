@@ -24,7 +24,10 @@ if [ "$(uname -s)" = Linux ] && [ "$(uname -m)" = "$march" ] && [ "${KSL_JVM_IN_
   # shellcheck disable=SC2086
   (cd "$root" && ./gradlew ${KSL_GRADLE_ARGS:-} --continue -x :kuicksilver-native:buildJniHost $KSL_JVM_TESTS)
 else
+  # --no-daemon: the build releases its locks in the shared ~/.gradle before the container exits (a daemon killed with the container left
+  # the journal and build-cache locks to time out the next host build); --no-watch-fs: a container build never runs twice, and inotify
+  # on the bind mount ended in "Couldn't poll for events, error = 4" (EINTR) noise
   docker run --rm --platform "$plat" -v "$root:/w" -v "$HOME/.gradle:/root/.gradle" -w /w -e GRADLE_OPTS="-Dorg.gradle.workers.max=2" \
     eclipse-temurin:21@sha256:3e3c176ffed168beb42c607be9bc1639b466cf00261a0fb04425562c9d0c5c2b bash -c \
-    "./gradlew --offline -q --continue -x :kuicksilver-native:buildJniHost $KSL_JVM_TESTS"
+    "./gradlew --offline --no-daemon --no-watch-fs -q --continue -x :kuicksilver-native:buildJniHost $KSL_JVM_TESTS"
 fi

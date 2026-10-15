@@ -510,7 +510,8 @@ its own single-threaded dispatcher, its own admission state and its own Retry an
 client flow onto one socket, and the loop that admits a connection owns it for life: its index is the routing byte of
 every connection ID that loop issues. A datagram that lands on another loop after a NAT rebind is copied to the owner;
 no loop ever answers a Stateless Reset for a connection ID that names another loop. `accept()` is one queue over all
-loops, `connect` picks loops in turn. `loops > 1` needs a server and the accelerated transport with kernel flow hashing (Linux, Android); elsewhere,
+loops, `connect` picks loops in turn; a connection it opens issues connection IDs with its loop's routing byte as
+well, so the server's answers reach that loop whichever socket the kernel hands them to. `loops > 1` needs a server and the accelerated transport with kernel flow hashing (Linux, Android); elsewhere,
 macOS included (Darwin hands a port's unicast datagrams to one `SO_REUSEPORT` socket only) and Windows (the socket is bound
 with `SO_EXCLUSIVEADDRUSE`), `bind` throws
 `UnsupportedOperationException`. Inside each loop a flush visits only the connections something happened to

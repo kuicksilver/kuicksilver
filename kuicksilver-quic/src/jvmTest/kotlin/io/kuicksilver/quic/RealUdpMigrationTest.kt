@@ -8,6 +8,7 @@ import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.api.readExactly
 import io.kuicksilver.tls.KslQuicCrypto
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -51,14 +52,22 @@ class RealUdpMigrationTest {
                             st.input.readExactly(data.size)
                         }
                     val st = c.openBidi()
+                    // the second part is written only once the connection moved: written at once, the whole rest could go out on
+                    // the old path while the new one is validated (a slow host: the linux-x64 Docker run under emulation), and
+                    // the server would never see a packet from the new socket to move to
+                    val migrated = CompletableDeferred<Unit>()
                     val writer =
                         launch {
-                            st.output.writeFully(data, 0, data.size)
+                            st.output.writeFully(data, 0, 4 shl 20)
+                            st.output.flush()
+                            migrated.await()
+                            st.output.writeFully(data, 4 shl 20, data.size)
                             st.output.flushAndClose()
                         }
                     while (s.stats.bytesReceived < (3L shl 20)) kotlinx.coroutines.delay(20)
                     val change = c.migrate(DatagramIo.open(InetSocketAddress("127.0.0.1", 0)))
                     assertEquals(PathChangeReason.ActiveMigration, change.reason)
+                    migrated.complete(Unit)
                     writer.join()
                     assertContentEquals(data, sink.await())
                     assertEquals(
