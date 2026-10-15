@@ -312,6 +312,9 @@ Found by the 0.2.0 release gate (QUIC Interop Runner):
   acknowledgement from the peer was lost, each probe was ACK + PING and the data behind them (HANDSHAKE_DONE, a response)
   was never resent until the idle timeout (`kuicksilver->ngtcp2:handshakeloss`, one connection of 50). A probe now takes
   the oldest packets that hold something to resend and that no earlier probe took (RFC 9002 section 6.2.4).
+- QUIC: resent stream data no longer carries a FIN that is still in flight; a lost FIN goes again as an empty STREAM
+  frame. quiche's receiver loses a FIN that arrives on a frame whose bytes it already read, and a request timed out
+  (`kuicksilver->quiche:handshakeloss`, once probes carried data).
 - QUIC: a peer that repeats `DATA_BLOCKED` in almost every packet, as quiche's server does during a download, no longer
   gets the connection closed with `PROTOCOL_VIOLATION` "excessive peer activity" after about a thousand repeats; a repeat
   within an RTT is still not answered (`quiche->kuicksilver:transfer`, `chacha20`, `keyupdate`, `blackhole`, and the

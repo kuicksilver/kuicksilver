@@ -112,9 +112,11 @@ internal class SendStream(
             val e = minOf(lost[1], s + max)
             out.offset = s
             out.length = (e - s).toInt()
-            out.fin =
-                finSent && finQueued && e == written
-            return out.length > 0 || out.fin
+            // a resent range never carries the FIN: one still in flight needs no copy, a lost one goes as an empty frame of
+            // its own. quiche's receiver takes the final size from a frame whose bytes it already read, drops the frame as a
+            // duplicate and never wakes the application for the FIN (interop run 20261015-170940, kuicksilver->quiche:handshakeloss)
+            out.fin = false
+            return out.length > 0
         }
         if (sentEnd <
             written
