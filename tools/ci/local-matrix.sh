@@ -4,7 +4,7 @@
 # The CI matrix on the owner's macOS host: the same steps as .github/workflows/build.yml, with the same names and
 # the same module and interop case lists (tools/ci/matrix.sh), so moving to GitHub Actions is a change of runner, not of scripts. Docker provides Linux and mingw; the Android
 # emulator must be running for the device steps.
-# Usage: tools/ci/local-matrix.sh [--dry-run] [--skip-android] [--skip-docker] [--with-interop] [--with-windows]
+# Usage: [KSL_GATE_WORKERS=n] tools/ci/local-matrix.sh [--dry-run] [--skip-android] [--skip-docker] [--with-interop] [--with-windows]
 # --with-interop also runs the QUIC Interop Runner against every peer with both images (tools/interop/run-local.sh --check-required): hours, needs the peer images.
 # --with-windows also runs the JVM suites in the owner's Windows 11 VM against the mingw-w64 dll (CI's windows-jvm job) with
 #   $KSL_WIN_JVM_TEST (default ~/.kuicksilver-tools/win-jvm-test, Parallels; outside the repository).
@@ -16,7 +16,7 @@ root="$(cd "$(dirname "$0")/../.." && pwd)"; cd "$root"
 . tools/ci/matrix.sh
 dry=0; skip_android=0; skip_docker=0; with_interop=0; with_windows=0
 for a in "$@"; do case "$a" in --dry-run) dry=1 ;; --skip-android) skip_android=1 ;; --skip-docker) skip_docker=1 ;; --with-interop) with_interop=1 ;; --with-windows) with_windows=1 ;; esac; done
-G="./gradlew --max-workers=2 -q"; failed=0; n=0; results=""
+G="./gradlew --max-workers=${KSL_GATE_WORKERS:-2} -q"; failed=0; n=0; results=""
 head0=$(git rev-parse HEAD 2>/dev/null || echo unknown); dirty0=$(git status --porcelain 2>/dev/null | head -5); started=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 step() { # name command...
   local name="$1"; shift; n=$((n+1)); printf '[%2d] %-44s' "$n" "$name"
@@ -46,7 +46,7 @@ step "c-tests: macos-arm64 (ASan/UBSan)"        bash tools/c-test.sh macos-arm64
 # shellcheck disable=SC2086
 step "jvm: all module tests"                   $G $KSL_JVM_TESTS
 step "jvm: coverage report"                     $G -Pkuicksilver.coverage :koverHtmlReportJvmTests :koverXmlReportJvmTests   # no threshold; build/reports/kover/htmlJvmTests
-step "sample: realtime-telemetry"               bash -c 'cd samples/realtime-telemetry && ../../gradlew --max-workers=2 -q jvmTest'
+step "sample: realtime-telemetry"               bash -c 'cd samples/realtime-telemetry && ../../gradlew --max-workers=${KSL_GATE_WORKERS:-2} -q jvmTest'
 step "fuzz: regression corpus"                  $G "${KSL_FUZZ_ARGS[@]}"
 step "sim: Monte-Carlo (KSL_SIM_RUNS=200)"      $G "${KSL_SIM_ARGS[@]}"
 step "bench: allocation gate"                   $G :kuicksilver-bench:jvmTest
