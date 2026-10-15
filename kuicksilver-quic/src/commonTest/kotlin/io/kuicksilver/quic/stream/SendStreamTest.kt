@@ -57,4 +57,35 @@ class SendStreamTest {
         )
         assertTrue(!s.hasRetransmit)
     }
+
+    @Test fun retransmittedDataDoesNotCarryAFinThatIsStillInFlight() {
+        // interop run 20261015-170940, kuicksilver->quiche:handshakeloss: the response went out as 1024 bytes and then an empty
+        // FIN; a PTO probe resent the bytes as one frame with FIN while that empty FIN was still in flight. quiche's receiver had
+        // read the 1024 bytes, took the final size from the duplicate frame, dropped the frame as a duplicate and never woke
+        // the application for the FIN; the later empty FIN changed nothing, and the request timed out
+        val s = stream(1024)
+        assertFalse(s.take(2000)!!.fin)
+        s.enqueue(ByteArray(0), 0, 0, true)
+        val finOnly = s.take(2000)!!
+        assertEquals(Triple(1024L, 0, true), Triple(finOnly.offset, finOnly.length, finOnly.fin))
+        s.onLost(0, 1024)
+        val again = s.take(2000)!!
+        assertEquals(Triple(0L, 1024, false), Triple(again.offset, again.length, again.fin), "the FIN is in flight on its own")
+        assertEquals(null, s.take(2000))
+        s.onLost(1024, 0, fin = true)
+        val fin = s.take(2000)!!
+        assertEquals(Triple(1024L, 0, true), Triple(fin.offset, fin.length, fin.fin), "a lost FIN goes again in a frame of its own")
+    }
+
+    @Test fun lostDataAndLostFinGoAsDataThenAnEmptyFin() {
+        val s = stream(100)
+        s.enqueue(ByteArray(0), 0, 0, true)
+        val first = s.take(2000)!!
+        assertTrue(first.fin && first.length == 100, "first transmission: data and FIN in one frame")
+        s.onLost(0, 100, fin = true)
+        val data = s.take(2000)!!
+        assertEquals(Triple(0L, 100, false), Triple(data.offset, data.length, data.fin))
+        val fin = s.take(2000)!!
+        assertEquals(Triple(100L, 0, true), Triple(fin.offset, fin.length, fin.fin))
+    }
 }

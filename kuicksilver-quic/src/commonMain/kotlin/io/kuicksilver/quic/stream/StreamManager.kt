@@ -521,18 +521,19 @@ internal class StreamManager(
 
     /**
      * DATA_BLOCKED from the peer (RFC 9000 sections 4.1 and 19.12). Below the limit we granted, our MAX_DATA was lost or is still in
-     * flight: the current one goes out at once rather than after our PTO backoff. False when it repeats one from less than an RTT
-     * ago: an honest peer reports a limit once and again only after a loss, so a faster repeat is not answered and is a glitch.
+     * flight: the current one goes out at once rather than after our PTO backoff. A repeat from less than an RTT ago is not
+     * answered (the answer to the previous one is still in flight), so a flood buys at most one MAX_DATA per RTT. It is not a
+     * glitch either: quiche reports DATA_BLOCKED on every `stream_send` that finds the window short, in almost every packet of a
+     * download (interop run 20261015-005204).
      */
     fun onDataBlocked(
         limit: Long,
         now: TimeMark,
         smoothedRtt: Duration,
-    ): Boolean {
-        if (!blockedReportDue(dataBlockedSeenAt, now, smoothedRtt)) return false
+    ) {
+        if (!blockedReportDue(dataBlockedSeenAt, now, smoothedRtt)) return
         dataBlockedSeenAt = now
         if (limit < connFlow.limit) queueOnce(ControlKind.MaxData, 0, connFlow.limit)
-        return true
     }
 
     /** STREAM_DATA_BLOCKED from the peer (RFC 9000 sections 4.1 and 19.13), answered like [onDataBlocked] with the stream's MAX_STREAM_DATA. */
@@ -541,15 +542,14 @@ internal class StreamManager(
         limit: Long,
         now: TimeMark,
         smoothedRtt: Duration,
-    ): Boolean {
-        val e = peerStream(id, 0x15, receiving = true) ?: return true
+    ) {
+        val e = peerStream(id, 0x15, receiving = true) ?: return
         val r =
             e.recv ?: throw QuicWireException(TransportError.STREAM_STATE_ERROR, 0x15, "STREAM_DATA_BLOCKED on our send-only stream $id")
-        if (!blockedReportDue(r.blockedSeenAt, now, smoothedRtt)) return false
+        if (!blockedReportDue(r.blockedSeenAt, now, smoothedRtt)) return
         r.blockedSeenAt = now
         // once the final size is known no more credit is needed (RFC 9000 section 13.3)
         if (limit < r.flow.limit && r.finalSize < 0) queueOnce(ControlKind.MaxStreamData, id, r.flow.limit)
-        return true
     }
 
     private fun blockedReportDue(

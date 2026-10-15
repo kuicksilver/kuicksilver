@@ -33,6 +33,16 @@ internal class SentFrames {
     var dgCount: Int = 0
     var dgId = LongArray(2)
 
+    /** Whether a PTO probe can resend something of this packet: CRYPTO, STREAM, stream control frames or HANDSHAKE_DONE. */
+    fun probeContent(): Boolean {
+        if (cryptoCount > 0 || streamCount > 0 || flags and (STREAM_CONTROL or HANDSHAKE_DONE) != 0) return true
+        // the stream-keyed control frames; NEW_CONNECTION_ID and RETIRE_CONNECTION_ID go again only on loss
+        for (i in 0 until idCount) {
+            if (idKind[i] != ID_NEW_CONNECTION_ID && idKind[i] != ID_RETIRE_CONNECTION_ID) return true
+        }
+        return false
+    }
+
     fun clear() {
         flags = 0
         ackLargest = -1
@@ -158,6 +168,9 @@ internal class SentPacket {
     /** Sent with 0-RTT keys (client): a rejection takes it out of flight and its frames go again in 1-RTT. */
     var zeroRtt: Boolean = false
 
+    /** Its frames already went out again in a PTO probe: the next probe takes newer packets (RFC 9002 section 6.2.4). */
+    var probed: Boolean = false
+
     val frames: SentFrames = SentFrames()
 
     /** Delivery-rate snapshot at send (draft-ietf-ccwg-bbr section 4.1.2.1.2), written only for a sampling controller ([DeliveryRateSampler]); -1: none. */
@@ -180,6 +193,7 @@ internal class SentPacket {
         ackEliciting = false
         inFlight = false
         zeroRtt = false
+        probed = false
         pathId = 0
         cc = null
         ecnMarked =

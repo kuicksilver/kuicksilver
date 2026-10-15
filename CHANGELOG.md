@@ -305,6 +305,21 @@ API that was never published (0.1.0 was not released), removed before 0.2.0 bind
 
 ### Fixed
 
+Found by the 0.2.0 release gate (QUIC Interop Runner):
+
+- QUIC: a PTO probe could repeat the same two oldest packets for the life of a connection. It took the oldest
+  unacknowledged packets whatever they held, so when those were a PING and NEW_CONNECTION_ID frames and every
+  acknowledgement from the peer was lost, each probe was ACK + PING and the data behind them (HANDSHAKE_DONE, a response)
+  was never resent until the idle timeout (`kuicksilver->ngtcp2:handshakeloss`, one connection of 50). A probe now takes
+  the oldest packets that hold something to resend and that no earlier probe took (RFC 9002 section 6.2.4).
+- QUIC: resent stream data no longer carries a FIN that is still in flight; a lost FIN goes again as an empty STREAM
+  frame. quiche's receiver loses a FIN that arrives on a frame whose bytes it already read, and a request timed out
+  (`kuicksilver->quiche:handshakeloss`, once probes carried data).
+- QUIC: a peer that repeats `DATA_BLOCKED` in almost every packet, as quiche's server does during a download, no longer
+  gets the connection closed with `PROTOCOL_VIOLATION` "excessive peer activity" after about a thousand repeats; a repeat
+  within an RTT is still not answered (`quiche->kuicksilver:transfer`, `chacha20`, `keyupdate`, `blackhole`, and the
+  native image's `transfer`).
+
 Found by the fuzzing campaigns (threat model section 3.10):
 
 - `QuicTlsSession.earlyDataAccepted` (and `ConnectionCore.earlyDataAccepted`) of a session whose handshake failed
@@ -376,8 +391,9 @@ Flow control (`kuicksilver-quic`; found with the BBR simulations, 2026-10-13):
   idling out (with a short idle timeout the old 8 PTO gap let it idle out); a report at a new limit goes out at once and
   starts the fast gaps again. A receiver that already granted more answers a stale `DATA_BLOCKED` /
   `STREAM_DATA_BLOCKED` with its current limit at once (RFC 9000 §4.1, §13.3, §19.12–§19.14). One answer per smoothed
-  RTT per connection or stream; a faster repeat is not answered and spends a glitch token (it used to be a repeat of the
-  same limit). Simulated 50 Mbit/s, 40 ms upload with 75 % ACK-path loss, 20 seeds: mean goodput 7.2 → 18.5 Mbit/s
+  RTT per connection or stream; a faster repeat is not answered and spends no glitch token (a repeat of the same limit
+  used to spend one: quiche reports `DATA_BLOCKED` in almost every packet of a download, about 750 times per 10 MB
+  interop transfer). Simulated 50 Mbit/s, 40 ms upload with 75 % ACK-path loss, 20 seeds: mean goodput 7.2 → 18.5 Mbit/s
   (CUBIC) and 7.3 → 21.0 Mbit/s (BBR), longest stall after the handshake at most 7.5 s instead of 13.6 s. quic-go,
   quiche, ngtcp2 and msquic send each report once per limit and at most retransmit it on loss (msquic also re-sends
   `STREAM_DATA_BLOCKED` on every acknowledgement); `docs/spec/rfc-compliance.md` compares them.

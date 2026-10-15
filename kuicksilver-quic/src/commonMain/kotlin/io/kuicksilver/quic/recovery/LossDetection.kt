@@ -643,8 +643,13 @@ internal class LossDetection(
         return best
     }
 
-    /** The oldest packets still awaiting acknowledgement in [space], for PTO probes that resend their frames (RFC 9002 section 6.2.4). */
-    fun oldestUnacked(
+    /**
+     * The [n] oldest unacknowledged packets of [space] whose frames a PTO probe can send again ([SentFrames.probeContent]) and that
+     * no earlier probe took; each is marked [SentPacket.probed]. A probe's own copy is a newer packet that a later PTO takes, so
+     * successive probes cycle through everything outstanding instead of repeating the oldest packets: when those hold only a PING
+     * or NEW_CONNECTION_ID frames and every acknowledgement is lost, the data behind them would otherwise never be resent.
+     */
+    fun takeForProbe(
         space: SpaceId,
         n: Int,
         out: MutableList<SentPacket>,
@@ -656,7 +661,10 @@ internal class LossDetection(
             ) {
                 break
             }
-            if (p.ackEliciting) out += p
+            if (p.ackEliciting && !p.probed && p.frames.probeContent()) {
+                p.probed = true
+                out += p
+            }
         }
     }
 

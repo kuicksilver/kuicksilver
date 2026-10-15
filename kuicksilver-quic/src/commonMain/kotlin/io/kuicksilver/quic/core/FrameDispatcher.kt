@@ -128,17 +128,18 @@ internal class FrameDispatcher(
         c.streams.onMaxStreams(bidi, max)
     }
 
-    // a stale DATA_BLOCKED / STREAM_DATA_BLOCKED is answered with the current limit at once; one repeated within an RTT is not
-    // answered and spends a token, so a flood buys at most one small frame per RTT
+    // a stale DATA_BLOCKED / STREAM_DATA_BLOCKED is answered with the current limit at once, at most once per RTT, so a flood
+    // buys at most one small frame per RTT; an unanswered repeat spends no glitch token: quiche repeats DATA_BLOCKED in almost
+    // every packet of a download, as quic-go repeats MAX_STREAMS
     override fun dataBlocked(limit: Long) {
-        if (!c.streams.onDataBlocked(limit, r.now, c.rtt.smoothed)) c.glitch(0x14)
+        c.streams.onDataBlocked(limit, r.now, c.rtt.smoothed)
     }
 
     override fun streamDataBlocked(
         id: Long,
         limit: Long,
     ) {
-        if (!c.streams.onStreamDataBlocked(id, limit, r.now, c.rtt.smoothed)) c.glitch(0x15)
+        c.streams.onStreamDataBlocked(id, limit, r.now, c.rtt.smoothed)
     }
 
     override fun streamsBlocked(
