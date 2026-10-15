@@ -141,7 +141,13 @@ internal class KtorDatagramIo private constructor(
             val ip = local.ipBytes()
             if (ip != null && ip.size == 16 && ip.any { it.toInt() != 0 }) throw UnsupportedOperationException(misdirected(local))
             val selector = SelectorManager()
-            val s = aSocket(selector).udp().bind(local)
+            val s =
+                try {
+                    aSocket(selector).udp().bind(local)
+                } catch (e: Throwable) {
+                    selector.close() // a refused bind (port taken) must not keep its selection thread and pipe
+                    throw e
+                }
             return KtorDatagramIo(selector, s)
         }
     }
