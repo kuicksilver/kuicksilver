@@ -312,6 +312,12 @@ Found by the 0.2.0 release gate (QUIC Interop Runner):
   acknowledgement from the peer was lost, each probe was ACK + PING and the data behind them (HANDSHAKE_DONE, a response)
   was never resent until the idle timeout (`kuicksilver->ngtcp2:handshakeloss`, one connection of 50). A probe now takes
   the oldest packets that hold something to resend and that no earlier probe took (RFC 9002 section 6.2.4).
+- Interop tooling: the runner's simulator container exited right after forwarding SIGTERM to its two `dumpcap`
+  processes, so Docker could tear it down while one was still writing: a pcap missing its last packets, and a runner
+  check judged on it (`kuicksilver->ngtcp2:amplificationlimit` went red on a server-side trace holding 49 of 71 packets,
+  about 1 in 70 cells of a gate lacked a flushed capture). `tools/interop/run-local.sh` now runs the simulator through
+  `tools/interop/sim-entrypoint.sh` (a compose override), which waits for the captures to finish, and reports a cell
+  whose simulator output still lacks a `dumpcap` summary as `ENVIRONMENT`, rerunning it once.
 - QUIC: resent stream data no longer carries a FIN that is still in flight; a lost FIN goes again as an empty STREAM
   frame. quiche's receiver loses a FIN that arrives on a frame whose bytes it already read, and a request timed out
   (`kuicksilver->quiche:handshakeloss`, once probes carried data).
