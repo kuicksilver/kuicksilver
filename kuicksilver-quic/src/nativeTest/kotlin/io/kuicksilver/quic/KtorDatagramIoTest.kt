@@ -96,6 +96,5 @@ class KtorDatagramIoTest {
             assertTrue(r.exceptionOrNull() !is UnsupportedOperationException, "$r")
         }
 
-    @OptIn(kotlinx.cinterop.ExperimentalForeignApi::class)
-    private fun openDescriptors(): Int = (0 until 4096).count { platform.posix.fcntl(it, platform.posix.F_GETFD) != -1 }
+    private fun openDescriptors(): Int = openHandleCount()
 }
