@@ -42,7 +42,7 @@ jobs:
   lint:
     runs-on: ubuntu-24.04
     permissions: { contents: read }
-    timeout-minutes: 20
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { persist-credentials: false }
@@ -59,6 +59,10 @@ jobs:
       - name: 'lint: ktlint'
         # kotlinter's lintKotlin only parses sources: no Kotlin/Native toolchain, OpenSSL or NDK is needed
         run: ./gradlew --max-workers=2 lintKotlin
+      - name: 'check: dependency verification (every configuration)'
+        # resolves every configuration of every project with verification on: an artifact gradle/verification-metadata.xml does
+        # not cover fails here, not in the one late job that happens to resolve it (CONTRIBUTING.md, "Dependency verification")
+        run: ./gradlew --max-workers=2 -I tools/check/resolve-all.init.gradle.kts -Pkuicksilver.resolveAll.strict=true --continue :build-logic:ksResolveAll ksResolveAll
 
   openssl-docker:
     # The container-built OpenSSL targets, shared with the other jobs as artifacts (they reuse them through
