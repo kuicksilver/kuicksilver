@@ -1170,11 +1170,13 @@ public class ConnectionCore internal constructor(
             now: TimeMark,
             resetKey: ResetKey?,
             earlyMode: io.kuicksilver.tls.EarlyDataState = io.kuicksilver.tls.EarlyDataState.Disabled,
+            localCid: ConnectionId? = null,
         ): ConnectionCore {
             // the crypto provider validates the rest (sniSelector etc.)
             require(tls.role == TlsRole.Client) { "client core needs a client TlsConfig" }
             val odcid = ConnectionId(ByteArray(8).also { random.nextBytes(it) })
-            val scid = ConnectionId(ByteArray(config.connectionIdLength).also { random.nextBytes(it) })
+            // [localCid]: a loop group's client connection carries its loop's routing byte (EndpointCore.connect)
+            val scid = localCid ?: ConnectionId(ByteArray(config.connectionIdLength).also { random.nextBytes(it) })
             return ConnectionCore(
                 TlsRole.Client,
                 config,

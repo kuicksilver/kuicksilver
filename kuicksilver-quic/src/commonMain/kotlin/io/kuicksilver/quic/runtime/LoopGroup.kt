@@ -23,7 +23,8 @@ import kotlin.concurrent.atomics.incrementAndFetch
  * SO_REUSEPORT, its own dispatcher, [io.kuicksilver.quic.EndpointCore] (so its own Retry and reset keys) and the routing
  * byte `index` in every connection ID it issues. The kernel hashes a client's flow onto one socket; a datagram that lands
  * elsewhere after a rebind is copied to its owner ([EndpointLoop.forwarded]), never answered by a stranger (threat-model
- * 3.4). Accepted connections of every loop reach one `accept()` queue; `connect` picks loops round-robin.
+ * 3.4). Accepted connections of every loop reach one `accept()` queue; `connect` picks loops round-robin, and the client
+ * connection's IDs carry its loop's routing byte, so the answers the kernel hashes onto another loop's socket are copied back.
  */
 @OptIn(ExperimentalKuicksilverApi::class, ExperimentalAtomicApi::class, InternalKuicksilverApi::class)
 internal class LoopGroup private constructor(

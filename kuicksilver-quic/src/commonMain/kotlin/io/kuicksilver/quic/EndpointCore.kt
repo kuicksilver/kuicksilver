@@ -226,7 +226,9 @@ public class EndpointCore(
         // is probed at about 3 x that RTT instead of 1 s, 2 s, 4 s ... (a peer like quic-go drops a half-open connection after 5 s of silence)
         val quic = rttMemory[AddressClass.addrKey(remote)]?.let { client.quic.withInitialRtt(it) } ?: client.quic
         // the endpoint's CSPRNG itself: a child Random(seed) would let an observer recover the 64-bit seed from two cleartext CIDs
-        val core = ConnectionCore.client(quic, client.tls, config.crypto, remote, random, now, resetKey, client.earlyData)
+        // in a group the server's answers may land on another loop's socket: the routing byte in our CIDs brings them back
+        val scid = if (grouped) ServerCidFormat.generate(loopIndex, cidLength, random) else null
+        val core = ConnectionCore.client(quic, client.tls, config.crypto, remote, random, now, resetKey, client.earlyData, scid)
         attach(core)
         connectionsCreated++
         return core
@@ -256,7 +258,7 @@ public class EndpointCore(
         connections += core
         markDirty(core)
         // rotated IDs route and reset like the first one
-        if (core.role == TlsRole.Server) core.cids.generator = { r -> ServerCidFormat.generate(loopIndex, cidLength, r) }
+        if (core.role == TlsRole.Server || grouped) core.cids.generator = { r -> ServerCidFormat.generate(loopIndex, cidLength, r) }
         byRemote.getOrPut(AddressClass.addrKey(core.remoteAddress)) { ArrayList(1) } += core
         core.onRemoteChanged =
             {
@@ -319,18 +321,34 @@ public class EndpointCore(
     }
 
     /**
-     * The loop that owns the connection a datagram belongs to, read from the routing byte of our server CID format ([ServerCidFormat]),
-     * or -1: an Initial (admitted where it lands), Version Negotiation, a client endpoint, or a DCID not in our format. The
-     * endpoint runtime forwards a datagram whose owner is another loop (a flow the kernel hashed onto this socket after a rebind).
+     * The loop that owns the connection a datagram belongs to, read from the routing byte of our CID format ([ServerCidFormat]),
+     * or -1: Version Negotiation, a client endpoint, a DCID not in our format, or a long header naming this loop or no loop of
+     * the group (an Initial is then admitted where it lands). The endpoint runtime forwards a datagram whose owner is another
+     * loop: a flow the kernel hashed onto this socket after a rebind, or the answer to a group's client connection ([connect]),
+     * which the kernel hashes onto any loop's socket from the first Initial on.
      */
     public fun ownerLoop(
         data: PacketBuffer,
         length: Int,
     ): Int {
-        if (config.server == null || !PacketHeaderCodec.parse(data, 0, length, cidLength, hv)) return -1
-        if (hv.isVersionNegotiation || hv.type == PacketType.Initial || hv.type == PacketType.Retry) return -1
+        if (config.server == null || !PacketHeaderCodec.parse(data, 0, length, cidLength, hv) || hv.isVersionNegotiation) return -1
+        if (hv.type != PacketType.OneRtt) return if (routedElsewhere(data)) data[hv.dcidOff + 1].toInt() and 0xff else -1
         if (hv.dcidLen != cidLength || data[hv.dcidOff].toInt() != ServerCidFormat.FORMAT_VERSION) return -1
         return data[hv.dcidOff + 1].toInt() and 0xff
+    }
+
+    /** In a group, connection IDs of client connections carry the routing byte too ([connect]), not only those of server connections. */
+    private val grouped: Boolean get() = config.loops > 1
+
+    /**
+     * The parsed long-header DCID is in our format and names another existing loop of the group: one of its client
+     * connections (the server's Initial, Handshake or Retry hashed onto this socket), or a new client whose DCID names it
+     * (its retransmits name it too, so it is admitted there consistently). One naming no loop is admitted where it lands.
+     */
+    private fun routedElsewhere(data: PacketBuffer): Boolean {
+        if (!grouped || hv.dcidLen != cidLength || data[hv.dcidOff].toInt() != ServerCidFormat.FORMAT_VERSION) return false
+        val routing = data[hv.dcidOff + 1].toInt() and 0xff
+        return routing != loopIndex && routing < config.loops
     }
 
     /**
@@ -380,6 +398,7 @@ public class EndpointCore(
         // form: "endpoints MUST treat any packet ending in a valid stateless reset token as a Stateless Reset"), or, in a short
         // header, a reason to send one
         statelessResetFor(data, length, from, now)?.let { return it }
+        if (hv.type != PacketType.OneRtt && routedElsewhere(data)) return null // another loop's: the group forwards it (ownerLoop)
         if (hv.type == PacketType.OneRtt) {
             if (config.server != null && length > StatelessReset.MIN_SIZE && hv.dcidLen == cidLength &&
                 data[hv.dcidOff].toInt() == ServerCidFormat.FORMAT_VERSION &&

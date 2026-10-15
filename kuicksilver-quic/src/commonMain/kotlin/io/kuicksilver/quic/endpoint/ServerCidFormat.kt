@@ -5,7 +5,10 @@ package io.kuicksilver.quic.endpoint
 import io.kuicksilver.quic.wire.ConnectionId
 import kotlin.random.Random
 
-/** Server connection IDs: `[format version 0x01][routing byte][random]`, 8 bytes by default. */
+/**
+ * Server connection IDs: `[format version 0x01][routing byte][random]`, 8 bytes by default. In a loop group the client
+ * connections' IDs take this format too, so the answers of their peers reach the loop that connected (EndpointCore.ownerLoop).
+ */
 internal object ServerCidFormat {
     const val FORMAT_VERSION: Int = 0x01
 

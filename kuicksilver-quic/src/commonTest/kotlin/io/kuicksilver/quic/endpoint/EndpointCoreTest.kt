@@ -533,6 +533,85 @@ class EndpointCoreTest {
         assertEquals(-1, owner(byteArrayOf(0x40, 1, 2)), "too short to carry a CID")
     }
 
+    /** One loop of a two-loop group (the server config every group has), sans IO. */
+    private fun groupLoop(index: Int): EndpointCore =
+        EndpointCore(
+            QuicEndpointConfig
+                .Builder()
+                .apply {
+                    server = QuicServerConfig.Builder(CoreFixtures.server()).build()
+                    crypto = NullCryptoProvider
+                    loops = 2
+                }.build(),
+            Random(10L + index),
+            loopIndex = index,
+        )
+
+    /** Every datagram [c] has to send now. */
+    private fun datagrams(c: ConnectionCore): List<ByteArray> {
+        val b = PacketBatch(16)
+        try {
+            val n = c.poll(b, now)
+            return List(n) { b.buffer(it).toByteArray(b.length(it)) }
+        } finally {
+            b.close()
+        }
+    }
+
+    private fun owner(
+        ep: EndpointCore,
+        bytes: ByteArray,
+    ): Int {
+        val b = PacketBuffer.of(bytes)
+        try {
+            return ep.ownerLoop(b, bytes.size)
+        } finally {
+            b.close()
+        }
+    }
+
+    /**
+     * A client connection of a group (`connect` on a multi-loop endpoint) carries its loop's routing byte in its connection
+     * IDs, so the server's answers, which the kernel may hash onto another loop's socket, are forwarded to it: the Initial
+     * with the ServerHello included (MultiLoopTest.zeroRttTicketsServeEveryLoop timed out in the handshake on Linux when
+     * the answer landed on the other loop: a random client CID named no loop and an Initial was never forwarded).
+     */
+    @Test fun groupClientConnectionAnswersReachItsLoop() {
+        val loop0 = groupLoop(0)
+        val loop1 = groupLoop(1)
+        val peer = server()
+        val c = loop0.connect(clientConfig(), a2, now)
+        assertEquals(0x01, c.localCid.toByteArray()[0].toInt(), "a group's client CID is in the routing format")
+        assertEquals(0, c.localCid.toByteArray()[1].toInt(), "routing byte = the connecting loop")
+        val s = assertNotNull(feed(peer, firstInitial(c), a1))
+        val answers = datagrams(s)
+        assertTrue(answers.isNotEmpty())
+        for (d in answers) {
+            assertEquals(0, owner(loop1, d), "the other loop names the owner of the server's answer")
+            assertNull(feed(loop1, d, a2), "the other loop takes nothing from it")
+        }
+        assertEquals(0, loop1.connectionCount, "no stranger connection from a server's Initial")
+        for (d in answers) assertEquals(c, feed(loop0, d, a2), "the owner takes it")
+    }
+
+    /** An Initial whose DCID names another loop of the group goes there whole (its retransmits do too); one naming no loop is admitted where it lands. */
+    @Test fun groupInitialRoutedOnlyToALoopThatExists() {
+        val loop0 = groupLoop(0)
+        val initial = firstInitial(clientEndpoint().connect(clientConfig(), a2, now))
+
+        fun withDcid(routing: Int) =
+            initial.copyOf().also {
+                it[6] = 0x01
+                it[7] = routing.toByte()
+            }
+        assertEquals(1, owner(loop0, withDcid(1)), "a DCID naming loop 1 belongs to loop 1")
+        assertNull(feed(loop0, withDcid(1), a1), "loop 0 admits nothing for loop 1")
+        assertEquals(0, loop0.connectionCount)
+        assertEquals(-1, owner(loop0, withDcid(0)), "naming this loop: admitted here")
+        assertEquals(-1, owner(loop0, withDcid(7)), "naming no loop of the group: admitted here, never dropped")
+        assertEquals(-1, owner(server(), withDcid(1)), "a single loop forwards nothing")
+    }
+
     @Test fun cidRoutingByteIsLoopIndex() {
         val srv =
             EndpointCore(
