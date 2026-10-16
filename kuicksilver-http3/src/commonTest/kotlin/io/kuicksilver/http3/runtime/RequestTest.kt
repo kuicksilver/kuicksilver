@@ -676,32 +676,74 @@ class RequestTest {
     /** Request trailers the server would reject reach the caller as IllegalArgumentException; the exchange is abandoned. */
     @Test fun invalidClientTrailersFailRequest() =
         h3Test {
+            H3Pair.open().useScoped { p -> abandonForInvalidTrailers(p) }
+        }
+
+    /**
+     * The same, with the request's packets lost: the reset drops the unsent HEADERS and DATA (RFC 9000 section 3.1), so the
+     * server only ever sees RESET_STREAM and has no request to hand out. A test that waited for that request hung for the full
+     * 30 s (release gate 43, Windows JVM; about 1 run in 100 on a macOS JVM without loss, when the reset reached the server's
+     * request stream before its HEADERS were read).
+     */
+    @Test fun invalidClientTrailersOnLostRequest() =
+        h3Test {
             H3Pair.open().useScoped { p ->
-                val server =
-                    launch {
-                        val r = p.server.acceptRequest()
-                        runCatching { r.body.readAllBytes() }
-                        runCatching { r.respond(200).finish() }
-                    }
-                val post =
-                    http3Request("POST", "server.test", "/") {
-                        body = ByteReadChannel("ping")
-                        trailers = {
-                            Http3Headers.of("transfer-encoding" to "chunked")
-                        }
-                    }
-                val e =
-                    withTimeout(5.seconds) {
-                        runCatching {
-                            val resp = p.client.request(post)
-                            resp.body.readAllBytes()
-                            resp.trailers.await()
-                        }.exceptionOrNull()
-                    }
-                assertIs<IllegalArgumentException>(e, "got $e")
-                server.join()
+                // the control streams are through: only the request is lost
+                p.server.peerSettings
+                    .filterNotNull()
+                    .first()
+                val delivered = CompletableDeferred<Unit>()
+                p.quic.net.drop = { _, to, _ -> to == p.quic.server.localAddress && !delivered.isCompleted }
+                abandonForInvalidTrailers(p) { delivered.complete(Unit) }
             }
         }
+
+    /**
+     * Sends a POST whose trailers are refused and expects IllegalArgumentException, then a GET on the same connection. The
+     * server gets the abandoned request (stream 0) only when its HEADERS were read before the reset arrived, and then its
+     * body fails; it never waits for that request, since a stream reset before its HEADERS is not a request.
+     */
+    private suspend fun CoroutineScope.abandonForInvalidTrailers(
+        p: H3Pair,
+        afterFailure: () -> Unit = {},
+    ) {
+        val server =
+            launch {
+                while (true) {
+                    val r = p.server.acceptRequest()
+                    if (r.streamId == 0L) {
+                        val body = runCatching { r.body.readAllBytes() }
+                        assertTrue(body.isFailure, "the abandoned request ended normally: ${body.getOrNull()?.decodeToString()}")
+                        runCatching { r.respond(200).finish() }
+                        continue
+                    }
+                    r.respond(204).finish()
+                    break
+                }
+            }
+        val post =
+            http3Request("POST", "server.test", "/") {
+                body = ByteReadChannel("ping")
+                trailers = {
+                    Http3Headers.of("transfer-encoding" to "chunked")
+                }
+            }
+        val e =
+            withTimeout(5.seconds) {
+                runCatching {
+                    val resp = p.client.request(post)
+                    resp.body.readAllBytes()
+                    resp.trailers.await()
+                }.exceptionOrNull()
+            }
+        assertIs<IllegalArgumentException>(e, "got $e")
+        afterFailure()
+        // the connection outlives the abandoned exchange
+        val next = withTimeout(5.seconds) { p.client.request(get()) }
+        assertEquals(204, next.status)
+        assertEquals(4L, next.streamId, "the abandoned request had stream 0")
+        withTimeout(5.seconds) { server.join() }
+    }
 
     /** A request body the application never reads is stopped with H3_NO_ERROR once the response is complete (RFC 9114 section 4.1). */
     @Test fun unreadBodyIsStoppedAfterResponse() =
