@@ -186,9 +186,9 @@ class StreamStateTest {
     }
 
     /**
-     * Soak regression (0.2.0, Linux arm64 Native heap creep): every peer-opened stream was also appended to a list nothing
-     * drained, so a long-lived connection (the soak's one server HTTP/3 connection) kept a boxed id per request forever. Once
-     * its streams are done and the events and control frames are taken, the manager must hold nothing per stream.
+     * Once its peer streams are done and the events and control frames are taken, the manager's probed collections
+     * ([StreamManager.sizesForTest]) are empty. The 0.2.0 soak leak (a list of peer stream ids nothing drained) was not among
+     * them: `StreamManagerRetentionJvmTest` pins that one, by walking every field of the manager.
      */
     @Test fun finishedPeerStreamsLeaveNothingBehind() {
         val m = manager(TlsRole.Server, maxStreams = 1000)
