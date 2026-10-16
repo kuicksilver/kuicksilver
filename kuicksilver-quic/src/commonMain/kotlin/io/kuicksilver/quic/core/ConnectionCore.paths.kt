@@ -433,59 +433,101 @@ internal fun ConnectionCore.onPathResponse(data: Long) {
 /**
  * A client Initial or Handshake packet decrypted from a new address while the handshake is still open: the client's NAT mapping
  * changed between its first flight and ours (the interop runner's rebind cases do this one second in). RFC 9000 section 9 lets a
- * server "proceed with path validation and allow the peer to migrate"; a PATH_CHALLENGE could not be answered before the client
- * holds 1-RTT keys, so the handshake itself validates: the active path follows the latest decrypted source, its amplification
- * budget starts over for the new address (section 8.1), a PATH_CHALLENGE leads the first datagram there (section 9.1) and the next
- * Handshake packet from it marks it validated again.
- * Packets already in flight to the old address are retransmitted by the usual PTO to the new one.
+ * server "proceed with path validation and allow the peer to migrate", and the handshake itself validates the new address (section
+ * 8.1): the active path follows the latest decrypted source, its amplification budget starts over for the new address, and the next
+ * Handshake packet from it marks it validated.
  *
- * The challenge can only lead once the server has 1-RTT keys, that is once the ClientHello is complete. A packet from the new
- * address before that (a repeat of the first half of a two-datagram ClientHello whose second half was lost: the 0.2.0 gate's
- * kuicksilver->quiche:rebind-addr) would otherwise move the path and send its Initial ACK there first; the move then waits for TLS
- * to run on that datagram ([ConnectionCore.afterInput]) and happens only if that gave the keys, else the next packet from the new
- * address tries again.
+ * When the move happens:
+ *  * a Handshake packet proves the client: at once;
+ *  * the datagram that completes the ClientHello (the server gets its keys from it): at once, after TLS ran on it
+ *    ([ConnectionCore.afterInput]). Its CRYPTO bytes are what the whole handshake answers, so the flight must go where they came
+ *    from. Before, an Initial moved the path only after the old address had been quiet for a PTO, and the 0.2.0 gate's
+ *    kuicksilver->quiche:rebind-addr sent its whole ServerHello flight to the dead old mapping for 2 s, until the client's next PTO.
+ *    An on-path attacker could copy that datagram from a spoofed source first (RFC 9000 section 9.3.3); the flight then goes to
+ *    the spoofed address within 3x the bytes received from it, the client's next Initial moves the path back once the copy's
+ *    address has been quiet for a PTO, and its first Handshake packet at once: a delay, once per connection, never more traffic;
+ *  * any other Initial (Initial keys are public, anyone can forge one): only once the current address went quiet for a PTO, and
+ *    only when the server can lead the new address with a PATH_CHALLENGE (it holds 1-RTT keys): a repeat of the first half of a
+ *    two-datagram ClientHello would otherwise send its Initial ACK there first.
+ *
+ * The new address's budget counts every datagram the server decrypted from it since it first appeared (a ClientHello repeated in
+ * two datagrams credits both, not only the second), so the flight is not held back waiting for ACKs (section 8.1 counts all bytes
+ * received from the address). A PATH_CHALLENGE leads the first datagram there (section 9.1, and the interop runner's check), except
+ * when the move comes with the ClientHello's completion: no ServerHello has left yet, so the client cannot read 1-RTT packets and
+ * would drop the probe (quiche does, "dropped invalid packet"); it would only spend 1200 bytes of that 3x budget. The Handshake packet
+ * validates that address instead (section 8.1). Packets already in flight to the old address are resent by the usual PTO.
  */
 internal fun ConnectionCore.onHandshakeAddressChange(
     socket: PathId,
     from: InetSocketAddress,
     datagramBytes: Int,
+    datagram: Long,
     initial: Boolean,
 ) {
     val p = paths.active
     if (socket != p.socket) return
     if (!migrationAllowedFrom(from)) return // allowMigration = false (and the loopback/link-local rule) holds during the handshake too
-    // Initial keys are public: an Initial moves the path only once the current address went quiet for a PTO; a Handshake packet proves
-    // the client
-    if (initial && now - lastReceivedOnActivePath < pto()) return
-    val move = HandshakeMove(from, datagramBytes)
-    if (writeKeys[3] == null) {
-        pendingHandshakeMove = move
-        return
+    val credit = handshakeCredit?.takeIf { it.from == from } ?: HandshakeCredit(from).also { handshakeCredit = it }
+    if (credit.lastDatagram != datagram) {
+        credit.lastDatagram = datagram
+        credit.bytes += datagramBytes
     }
-    pendingHandshakeMove = null
-    applyHandshakeMove(move)
+    val haveKeys = writeKeys[3] != null
+    // with the keys already there, an Initial completes nothing: it moves the path only once the current address went quiet for a PTO
+    if (initial && haveKeys && now - lastReceivedOnActivePath < pto()) return
+    if (!initial || haveKeys) {
+        pendingHandshakeMove = null
+        applyHandshakeMove(from, completesClientHello = false)
+    } else {
+        pendingHandshakeMove = from // decided once TLS ran on this datagram: only a ClientHello it completed moves the path
+    }
 }
 
-/** A handshake-time move of the active path to [from] (see [onHandshakeAddressChange]), waiting for the 1-RTT keys of its datagram. */
-internal class HandshakeMove(
+/** Bytes of the datagrams the server decrypted from [from], a client address the active path does not have yet (see [onHandshakeAddressChange]). */
+internal class HandshakeCredit(
     val from: InetSocketAddress,
-    val datagramBytes: Int,
-)
+) {
+    var bytes: Long = 0
+    var lastDatagram: Long = -1
+}
 
-/** Moves the active path to [move]'s address if the server can now lead there with a PATH_CHALLENGE (it holds 1-RTT keys). */
-internal fun ConnectionCore.applyHandshakeMove(move: HandshakeMove) {
+/** [afterInput]: the datagram from [from] that recorded a pending move went through TLS; it moves the path if it completed the ClientHello. */
+internal fun ConnectionCore.onHandshakeDatagramDone(from: InetSocketAddress) {
+    if (writeKeys[3] != null) applyHandshakeMove(from, completesClientHello = true)
+}
+
+/**
+ * Moves the active path to [from] (see [onHandshakeAddressChange]). [completesClientHello]: the server only now got its keys, so no
+ * ServerHello has left yet and no PATH_CHALLENGE leads; otherwise one does.
+ */
+internal fun ConnectionCore.applyHandshakeMove(
+    from: InetSocketAddress,
+    completesClientHello: Boolean,
+) {
     if (writeKeys[3] == null || state != io.kuicksilver.quic.ConnectionState.Handshaking) return
     val p = paths.active
-    if (p.isRemote(move.from)) return
+    if (p.isRemote(from)) return
     val old = p.remote
-    p.remote = move.from
+    p.remote = from
     p.validatedAt = TimeMark.NEVER
     p.amplification.reset()
-    p.amplification.onReceived(move.datagramBytes)
-    // a PATH_CHALLENGE leads the first datagram to the new address and is repeated until answered (a client without 1-RTT keys drops
-    // the first one)
-    startValidation(p)
-    onRemoteChanged?.invoke(old, move.from)
+    p.amplification.onReceived((handshakeCredit?.takeIf { it.from == from }?.bytes ?: 0L).toInt())
+    handshakeCredit = null
+    lastReceivedOnActivePath = now
+    if (completesClientHello) {
+        // validated by the client's first Handshake packet (onInitialPathValidated) or the handshake's confirmation
+        p.forgetChallenges()
+        p.challengePending = false
+        p.state = PathState.Unknown
+        p.handshakeValidated = false
+        p.challengeDeadline = TimeMark.NEVER
+        p.nextChallengeAt = TimeMark.NEVER
+    } else {
+        // a PATH_CHALLENGE leads the first datagram to the new address and is repeated until answered (a client that has no 1-RTT keys
+        // yet drops the first one)
+        startValidation(p)
+    }
+    onRemoteChanged?.invoke(old, from)
     qlog?.metricsUpdated(stats, now)
 }
 

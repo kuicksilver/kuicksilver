@@ -24,7 +24,6 @@ import io.kuicksilver.quic.core.Path
 import io.kuicksilver.quic.core.Paths
 import io.kuicksilver.quic.core.Pmtud
 import io.kuicksilver.quic.core.Timers
-import io.kuicksilver.quic.core.applyHandshakeMove
 import io.kuicksilver.quic.core.armBlockedRepeat
 import io.kuicksilver.quic.core.buildLocalTp
 import io.kuicksilver.quic.core.checkPmtuBlackHoles
@@ -45,6 +44,7 @@ import io.kuicksilver.quic.core.largePacketUnanswered
 import io.kuicksilver.quic.core.markClosed
 import io.kuicksilver.quic.core.nextChallengeDelay
 import io.kuicksilver.quic.core.onBlockedRepeatTimer
+import io.kuicksilver.quic.core.onHandshakeDatagramDone
 import io.kuicksilver.quic.core.onPathFailed
 import io.kuicksilver.quic.core.pmtudUpperBound
 import io.kuicksilver.quic.core.probeOtherHandshakeSpace
@@ -423,8 +423,11 @@ public class ConnectionCore internal constructor(
     internal var discardHandshakeKeysAfterPacket = false
     internal var discardInitialPending = false
 
-    /** A handshake-time address change seen before the server had 1-RTT keys: applied once TLS ran on its datagram (`afterInput`). */
-    internal var pendingHandshakeMove: io.kuicksilver.quic.core.HandshakeMove? = null
+    /** A handshake-time address change seen before the server had 1-RTT keys: decided once TLS ran on its datagram (`afterInput`). */
+    internal var pendingHandshakeMove: InetSocketAddress? = null
+
+    /** Bytes received from a client address the handshake may move the active path to (`onHandshakeAddressChange`). */
+    internal var handshakeCredit: io.kuicksilver.quic.core.HandshakeCredit? = null
     internal var closeFrame: CloseFrame? = null
 
     /** CONNECTION_CLOSE already carried by a packet of this space since the last (re)send trigger. */
@@ -728,7 +731,7 @@ public class ConnectionCore internal constructor(
         }
         pendingHandshakeMove?.let {
             pendingHandshakeMove = null
-            applyHandshakeMove(it)
+            onHandshakeDatagramDone(it)
         }
         if (discardHandshakeKeysAfterPacket) {
             discardHandshakeKeysAfterPacket = false
