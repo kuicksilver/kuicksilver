@@ -70,6 +70,9 @@ internal class PacketReceiver(
     internal var socket: PathId = PathId.Initial
     internal var from: InetSocketAddress? = null
     internal var datagramLength = 0
+
+    /** Datagrams handed to [onDatagram] so far: tells packets of one datagram from those of the next. */
+    internal var datagramSeq = 0L
     private var datagramEcn: io.kuicksilver.quic.Ecn = io.kuicksilver.quic.Ecn.NotEct
 
     /** The accounting of a received datagram without looking inside it. */
@@ -97,6 +100,7 @@ internal class PacketReceiver(
         this.socket = socket
         this.from = from
         datagramLength = length
+        datagramSeq++
         if (c.role == TlsRole.Client && c.paths.byRemote(socket, from) == null) {
             c.datagramsDropped++
             return
@@ -333,6 +337,7 @@ internal class PacketReceiver(
                 socket,
                 from,
                 datagramLength,
+                datagramSeq,
                 initial =
                     type == PacketType.Initial,
             ) // a NAT rebinding in the middle of the handshake (interop rebind cases)

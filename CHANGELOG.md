@@ -318,6 +318,26 @@ Found by the 0.2.0 release gate (QUIC Interop Runner):
   about 1 in 70 cells of a gate lacked a flushed capture). `tools/interop/run-local.sh` now runs the simulator through
   `tools/interop/sim-entrypoint.sh` (a compose override), which waits for the captures to finish, and reports a cell
   whose simulator output still lacks a `dumpcap` summary as `ENVIRONMENT`, rerunning it once.
+- QUIC: a server whose client's NAT mapping changed during the handshake answered the new address late and short. When the
+  ClientHello completed from the new address inside a PTO of the client's last packet from the old one, the Initial
+  anti-spoofing rule kept the whole ServerHello flight going to the dead old mapping until the client's next PTO (2 s in
+  the gate's `kuicksilver->quiche:rebind-addr`); a repeat of the first half of a two-datagram ClientHello could move the
+  path before the server had keys and send its Initial ACK there first; and the new address's 3x budget counted only the
+  datagram that moved the path, so a 1200-byte probe the client could not read yet and the flight waited for ACKs. The
+  datagram that completes the ClientHello now moves the path at once (an Initial that completes nothing still waits for
+  a quiet PTO), the budget counts every datagram decrypted from the new address, and no PATH_CHALLENGE leads when the
+  move comes with the ClientHello's completion (the client's Handshake packet validates the address, RFC 9000 section
+  8.1).
+- Interop tooling: in the rebind cases the client starts, polling the simulator once a second, within milliseconds of the
+  simulator's first rebind at 1 s; when it starts first the handshake runs across the rebind and no server can pass the
+  runner's check, because the PATH_CHALLENGE it wants first on the new path goes out before anyone can decrypt it
+  (`kuicksilver->quiche:rebind-addr` red in the gate on a841e079 and in 16 of 23 runs on the same host that day, every
+  green run one where the client started after the rebind). `sim-entrypoint.sh` now holds the simulator's ready port
+  closed until the first rebind is over (the scenario is unchanged), and a cell failed that way anyway is reported as
+  `ENVIRONMENT` (`tools/interop/handshake-challenge.py` proves it from both captures) and rerun, as is an unflushed
+  capture, up to five times while the rerun hits the environment again.
+  The rebind cells therefore no longer exercise a rebind in the middle of the handshake; `core.PathTest`'s
+  rebind-during-handshake tests cover that case.
 - QUIC: resent stream data no longer carries a FIN that is still in flight; a lost FIN goes again as an empty STREAM
   frame. quiche's receiver loses a FIN that arrives on a frame whose bytes it already read, and a request timed out
   (`kuicksilver->quiche:handshakeloss`, once probes carried data).

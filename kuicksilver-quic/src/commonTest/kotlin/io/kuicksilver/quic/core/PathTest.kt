@@ -8,6 +8,7 @@ import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.native.PacketBuffer
 import io.kuicksilver.native.of
+import io.kuicksilver.native.toByteArray
 import io.kuicksilver.quic.Bbr
 import io.kuicksilver.quic.ConnectionCore
 import io.kuicksilver.quic.ConnectionEvent
@@ -1138,6 +1139,186 @@ class PathTest {
                 p.runUntil(2.seconds) { p.server().pathState(p.server().stats.currentPath) == PathState.Validated },
                 "the new address validates",
             )
+        } finally {
+            p.close()
+        }
+    }
+
+    /** A client whose ClientHello spans two Initial datagrams (ksl's, with an ML-KEM key share): its flights, polled by hand. */
+    private class SplitHello(
+        val p: EndpointPair,
+    ) {
+        val c: ConnectionCore = p.connect()
+        val newPort = InetSocketAddress("10.0.0.1", 40002)
+
+        fun flight(): List<ByteArray> {
+            p.batch.clear()
+            val n = c.poll(p.batch, p.now)
+            return List(n) { p.batch.buffer(it).toByteArray(p.batch.length(it)) }
+        }
+
+        fun serverSends(s: ConnectionCore): List<Pair<InetSocketAddress, ByteArray>> {
+            val all = ArrayList<Pair<InetSocketAddress, ByteArray>>()
+            while (true) { // everything the server may send now (its amplification budget decides, not one batch)
+                p.batch.clear()
+                val n = s.poll(p.batch, p.now)
+                if (n == 0) return all
+                for (i in 0 until n) all += p.batch.address(i)!! to p.batch.buffer(i).toByteArray(p.batch.length(i))
+            }
+        }
+
+        /**
+         * The first half of the ClientHello reaches the server from the old mapping [delay] after it left (the second half is lost)
+         * and the server's answer is lost with the mapping; at [repeatAfter] the client's PTO repeat leaves from [newPort]. Returns
+         * the server connection and the repeat.
+         */
+        fun rebindWithinTheHello(
+            delay: Duration,
+            repeatAfter: Duration,
+        ): Pair<ConnectionCore, List<ByteArray>> {
+            val start = p.now
+            val first = flight()
+            assertEquals(2, first.size, "ksl ClientHello spans two Initial datagrams")
+            p.now = start + delay
+            val s = assertNotNull(p.feed(p.server, first[0], p.clientAddr), "the first half creates the connection")
+            serverSends(s) // to the old mapping, which the rebind removed
+            val pto = c.nextTimeoutOrNever()
+            assertTrue(pto != io.kuicksilver.quic.TimeMark.NEVER)
+            p.now = maxOf(pto, start + repeatAfter)
+            c.onTimeout(p.now)
+            val repeat = flight()
+            assertTrue(repeat.size >= 2, "the PTO repeats the ClientHello (${repeat.size} datagrams)")
+            return s to repeat
+        }
+    }
+
+    private fun isLoneAck(bytes: ByteArray): Boolean = bytes[0].toInt() and 0x80 != 0 && bytes.size < 200
+
+    /**
+     * 0.2.0 gate repetitions of kuicksilver->quiche:rebind-addr (2026-10-16): quiche's two-datagram ClientHello began before the
+     * simulator's rebind at 1 s, only its first datagram reached us from the old address, and its PTO repeat came from the new one
+     * in two receive batches. The first repeat (no new CRYPTO bytes, so no keys yet) moved the path and its Initial ACK became our
+     * first datagram to the new address. The path now moves with the datagram that completes the ClientHello, and the first
+     * datagram there carries the answer to it. The repeat leaves well after the server's anti-spoofing PTO here (the other branch
+     * is [handshakeTimeRebindMovesAtOnceWhenTheHelloCompletesThere]).
+     */
+    @Test fun handshakeTimeRebindMovesWithTheDatagramThatCompletesTheClientHello() {
+        val p = EndpointPair(crypto = KslQuicCrypto)
+        try {
+            val h = SplitHello(p)
+            val (s, repeat) = h.rebindWithinTheHello(delay = 10.milliseconds, repeatAfter = 3.seconds)
+            val toNewPort = ArrayList<ByteArray>()
+            for ((i, d) in repeat.withIndex()) { // one receive batch each, as the endpoint loop flushes after every batch
+                p.feedNoAdmit(p.server, d, h.newPort)
+                val sent = h.serverSends(s)
+                if (i ==
+                    0
+                ) {
+                    assertTrue(sent.none { it.first == h.newPort }, "nothing goes to the new port before the ClientHello is complete")
+                }
+                for ((to, bytes) in sent) if (to == h.newPort) toNewPort += bytes
+            }
+            assertEquals(io.kuicksilver.quic.ConnectionState.Handshaking, s.state)
+            assertEquals(h.newPort, s.remoteAddressForTest, "the server follows the new mapping once the ClientHello is complete")
+            assertTrue(toNewPort.isNotEmpty())
+            assertFalse(
+                isLoneAck(toNewPort.first()),
+                "the first datagram to the new port is no lone Initial ACK (${toNewPort.first().size} bytes)",
+            )
+            assertTrue(toNewPort.none { isProbe(it) }, "no 1-RTT probe the client could not read yet")
+        } finally {
+            p.close()
+        }
+    }
+
+    /**
+     * The 0.2.0 gate's kuicksilver->quiche:rebind-addr itself: the ClientHello completed from the new address 1 s after its first half
+     * came from the old one, inside the server's PTO, and the anti-spoofing rule for Initials kept the whole ServerHello flight going to
+     * the dead mapping until the client's next PTO 2 s later. The datagram that completes the ClientHello now moves the path at once;
+     * the new address's budget counts both repeated datagrams, so the whole flight leaves without waiting for an ACK and the client
+     * completes its side of the handshake from it.
+     */
+    @Test fun handshakeTimeRebindMovesAtOnceWhenTheHelloCompletesThere() {
+        val p = EndpointPair(crypto = KslQuicCrypto)
+        try {
+            val h = SplitHello(p)
+            // the first half arrives late (queued behind the rebind), so the repeat comes well inside the server's PTO
+            val (s, repeat) = h.rebindWithinTheHello(delay = 500.milliseconds, repeatAfter = Duration.ZERO)
+            assertTrue(p.now - s.lastReceivedOnActivePath < s.pto() - 200.milliseconds, "the repeat comes inside the server's PTO")
+            val toNewPort = ArrayList<ByteArray>()
+            val toOldPort = ArrayList<ByteArray>()
+            for (d in repeat) {
+                p.feedNoAdmit(p.server, d, h.newPort)
+                for ((to, bytes) in h.serverSends(s)) if (to == h.newPort) toNewPort += bytes else toOldPort += bytes
+            }
+            assertEquals(h.newPort, s.remoteAddressForTest, "the datagram that completes the ClientHello moves the path at once")
+            // the repeat's first half completes nothing: its ACK may still go to the old mapping, the flight may not
+            assertTrue(toOldPort.all { isLoneAck(it) }, "nothing of the flight goes to the old mapping (${toOldPort.map { it.size }})")
+            assertEquals(
+                repeat.sumOf { it.size }.toLong(),
+                s.paths.active.amplification.received,
+                "the new address's budget counts every repeated datagram, not only the last",
+            )
+            for (d in toNewPort) p.feedNoAdmit(p.client, d, p.serverAddr)
+            h.flight() // the client's TLS runs on what it received; its answer (Finished) is not needed here
+            p.drain(h.c)
+            assertTrue(
+                h.c.state != io.kuicksilver.quic.ConnectionState.Handshaking,
+                "the client completes its side from that one burst (${toNewPort.size} datagrams, ${toNewPort.sumOf { it.size }} bytes; " +
+                    "budget left ${s.paths.active.amplification.budget()})",
+            )
+        } finally {
+            p.close()
+        }
+    }
+
+    /**
+     * An on-path attacker copies the datagram that completes the ClientHello and gets its copy in first from a spoofed address (RFC 9000
+     * section 9.3.3). The flight goes there within 3x the bytes received from it, nothing more; the client's next Initial moves the path
+     * back once the spoofed address has been quiet for a PTO, and the handshake completes on the client's own address.
+     */
+    @Test fun negative_spoofedCopyOfTheCompletingDatagramOnlyDelaysTheHandshake() {
+        val p = EndpointPair(crypto = KslQuicCrypto)
+        try {
+            val h = SplitHello(p)
+            val attacker = InetSocketAddress("10.9.9.9", 4444)
+            val first = h.flight()
+            val s = assertNotNull(p.feed(p.server, first[0], p.clientAddr))
+            h.serverSends(s)
+            p.feedNoAdmit(p.server, first[1], attacker) // the copy, first
+            assertEquals(attacker, s.remoteAddressForTest, "the copy that completes the ClientHello moves the path")
+            val toAttacker = h.serverSends(s).filter { it.first == attacker }.sumOf { it.second.size }
+            assertTrue(toAttacker <= 3 * first[1].size, "$toAttacker bytes to the spoofed address for ${first[1].size} received")
+            p.feedNoAdmit(p.server, first[1], p.clientAddr) // the genuine datagram: a duplicate now
+            assertEquals(attacker, s.remoteAddressForTest)
+            assertTrue(p.confirmed(h.c), "the handshake completes (client ${h.c.state}, server ${s.state})")
+            assertEquals(p.clientAddr, s.remoteAddressForTest, "the path is back on the client's own address")
+            assertEquals(1L, p.server.stats.connectionsCreated)
+        } finally {
+            p.close()
+        }
+    }
+
+    /** The Initial spoof guard still holds: with the keys already there, an Initial from a new address inside the PTO moves nothing. */
+    @Test fun negative_initialThatCompletesNothingDoesNotMoveThePathInsideThePto() {
+        val p = EndpointPair(crypto = KslQuicCrypto)
+        try {
+            val h = SplitHello(p)
+            val start = p.now
+            val first = h.flight()
+            p.now = start + 500.milliseconds
+            val s = assertNotNull(p.feed(p.server, first[0], p.clientAddr))
+            p.feedNoAdmit(p.server, first[1], p.clientAddr) // the ClientHello completes from the old address: the keys are there
+            h.serverSends(s)
+            p.now = h.c.nextTimeoutOrNever()
+            h.c.onTimeout(p.now)
+            val repeat = h.flight()
+            assertTrue(p.now - s.lastReceivedOnActivePath < s.pto() - 200.milliseconds)
+            for (d in repeat) {
+                p.feedNoAdmit(p.server, d, h.newPort)
+                h.serverSends(s)
+            }
+            assertEquals(p.clientAddr, s.remoteAddressForTest, "an Initial that completes nothing moves the path only after a quiet PTO")
         } finally {
             p.close()
         }
