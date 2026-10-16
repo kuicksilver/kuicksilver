@@ -182,7 +182,31 @@ class StreamStateTest {
         val m = manager(TlsRole.Server)
         recv(m, 8, 0, ByteArray(1))
         assertTrue(m.isOpen(0) && m.isOpen(4) && m.isOpen(8))
-        assertEquals(listOf(0L, 4L, 8L), m.takeOpenedStreams())
+        assertEquals(listOf(0L, 4L, 8L), m.events.filterIsInstance<ConnectionEvent.StreamOpened>().map { it.id })
+    }
+
+    /**
+     * Soak regression (0.2.0, Linux arm64 Native heap creep): every peer-opened stream was also appended to a list nothing
+     * drained, so a long-lived connection (the soak's one server HTTP/3 connection) kept a boxed id per request forever. Once
+     * its streams are done and the events and control frames are taken, the manager must hold nothing per stream.
+     */
+    @Test fun finishedPeerStreamsLeaveNothingBehind() {
+        val m = manager(TlsRole.Server, maxStreams = 1000)
+        val buf = ByteArray(64)
+        repeat(3000) { i ->
+            val id = 4L * i + 2 // client-initiated unidirectional
+            recv(m, id, 0, ByteArray(10), fin = true)
+            while (m.read(id, buf, 0, buf.size) >= 0) {
+                // drain to the end: the stream finishes and is forgotten
+            }
+            assertTrue(!m.isOpen(id), "stream $id finished")
+            m.events.clear()
+            while (m.takeControlFrame() != null) {
+                // MAX_STREAMS credit, as the connection would send it
+            }
+        }
+        val sizes = m.sizesForTest()
+        assertTrue(sizes.all { it == 0 }, "per-stream state left after 3000 finished peer streams: ${sizes.toList()}")
     }
 
     @Test fun sendBufferCap4MiB() {
