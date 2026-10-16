@@ -192,7 +192,10 @@ To make the floors blocking, download the `perf-<peer>` result artifacts of a fe
   objects, connections, CIDs, maps, timers, queues, handler coroutines, descriptors within 4) is back at its idle
   baseline within 90 s after the load stops, and unexpected failures stay under 0.5% of iterations. The report
   (`<label>.md`, `<label>.csv`) lists every series. When it reports a leak, `-Pkuicksilver.soak.attribute=20` runs each
-  scenario alone (`.scenarios=QuicMigration,KtorH3` for some only) and prints what it left behind. Run it on an otherwise
+  scenario alone (`.scenarios=QuicMigration,KtorH3` for some only) and prints what it left behind. On Kotlin/Native
+  `kn.heapAfterGcKiB` counts the default allocator's pages (128 KiB steps), not live objects, so it includes fragmentation;
+  link with `-Pkuicksilver.soak.allocator=std` (with `linkDebugTest…` for a container) to measure exact live bytes. The
+  report also lists RSS and heap at idle before and after the load. Run it on an otherwise
   idle machine: a starved process misses the scenarios' timeouts (a 1 s idle timeout checked within 10 s) and fails on
   unexpected failures, not on resources. Before a beta: 2 h nightly; before a release: 24–72 h.
 - **Fuzzing.** Jazzer targets live in `kuicksilver-tls`, `kuicksilver-quic` and `kuicksilver-http3` under

@@ -49,3 +49,8 @@ tasks.withType<KotlinNativeTest>().configureEach {
 }
 // the native test executables link the whole stack: built only for a soak run (or explicitly, for a container run)
 tasks.matching { it.name.startsWith("link") && it.name.contains("Test") }.configureEach { onlyIf { soakRequested || gradle.startParameter.taskNames.any { n -> n.endsWith(name) } } }
+// -Pkuicksilver.soak.allocator=std links the native test binaries with the malloc-based allocator: `kn.heapAfterGcKiB` is then
+// the exact size of the live objects instead of the default allocator's pages (CONTRIBUTING.md, "Soak and churn")
+providers.gradleProperty("kuicksilver.soak.allocator").orNull?.let { a ->
+    kotlin.targets.withType<org.jetbrains.kotlin.gradle.plugin.mpp.KotlinNativeTarget>().configureEach { binaries.all { freeCompilerArgs += "-Xallocator=$a" } }
+}
