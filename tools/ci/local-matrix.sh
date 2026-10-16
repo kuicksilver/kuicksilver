@@ -16,7 +16,9 @@ root="$(cd "$(dirname "$0")/../.." && pwd)"; cd "$root"
 . tools/ci/matrix.sh
 dry=0; skip_android=0; skip_docker=0; with_interop=0; with_windows=0
 for a in "$@"; do case "$a" in --dry-run) dry=1 ;; --skip-android) skip_android=1 ;; --skip-docker) skip_docker=1 ;; --with-interop) with_interop=1 ;; --with-windows) with_windows=1 ;; esac; done
-G="./gradlew --max-workers=${KSL_GATE_WORKERS:-2} -q"; failed=0; n=0; results=""
+# Kotlin incremental compilation is off: a gate must not trust compiler state left by earlier builds in this checkout
+# (Kotlin 2.4.20's classpath-snapshot diff failed on stale state in a gate run, 2026-10-16).
+G="./gradlew --max-workers=${KSL_GATE_WORKERS:-2} -q -Pkotlin.incremental=false"; failed=0; n=0; results=""
 head0=$(git rev-parse HEAD 2>/dev/null || echo unknown); dirty0=$(git status --porcelain 2>/dev/null | head -5); started=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 step() { # name command...
   local name="$1"; shift; n=$((n+1)); printf '[%2d] %-44s' "$n" "$name"
@@ -47,7 +49,7 @@ step "c-tests: macos-arm64 (ASan/UBSan)"        bash tools/c-test.sh macos-arm64
 # shellcheck disable=SC2086
 step "jvm: all module tests"                   $G $KSL_JVM_TESTS
 step "jvm: coverage report"                     $G -Pkuicksilver.coverage :koverHtmlReportJvmTests :koverXmlReportJvmTests   # no threshold; build/reports/kover/htmlJvmTests
-step "sample: realtime-telemetry"               bash -c 'cd samples/realtime-telemetry && ../../gradlew --max-workers=${KSL_GATE_WORKERS:-2} -q jvmTest'
+step "sample: realtime-telemetry"               bash -c 'cd samples/realtime-telemetry && ../../gradlew --max-workers=${KSL_GATE_WORKERS:-2} -q -Pkotlin.incremental=false jvmTest'
 step "fuzz: regression corpus"                  $G "${KSL_FUZZ_ARGS[@]}"
 step "sim: Monte-Carlo (KSL_SIM_RUNS=200)"      $G "${KSL_SIM_ARGS[@]}"
 step "bench: allocation gate"                   $G :kuicksilver-bench:jvmTest
