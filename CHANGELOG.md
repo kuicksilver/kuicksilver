@@ -318,6 +318,18 @@ Found by the 0.2.0 release gate (QUIC Interop Runner):
   about 1 in 70 cells of a gate lacked a flushed capture). `tools/interop/run-local.sh` now runs the simulator through
   `tools/interop/sim-entrypoint.sh` (a compose override), which waits for the captures to finish, and reports a cell
   whose simulator output still lacks a `dumpcap` summary as `ENVIRONMENT`, rerunning it once.
+- QUIC: a server whose client's NAT mapping changed during the handshake could send its first datagram to the new address
+  without the PATH_CHALLENGE that should lead there: a repeat of the first half of a two-datagram ClientHello moved the
+  path before the server had 1-RTT keys, and its Initial ACK went first (`kuicksilver->quiche:rebind-addr` repetitions).
+  Such a move now waits until TLS ran on that datagram and happens only once the challenge can lead.
+- Interop tooling: in the rebind cases the client starts, polling the simulator once a second, within milliseconds of the
+  simulator's first rebind at 1 s; when it starts first the handshake runs across the rebind and no server can pass the
+  runner's check, because the PATH_CHALLENGE it wants first on the new path goes out before anyone can decrypt it
+  (`kuicksilver->quiche:rebind-addr` red in the gate on a841e079 and in 16 of 23 runs on the same host that day, every
+  green run one where the client started after the rebind). `sim-entrypoint.sh` now holds the simulator's ready port
+  closed until the first rebind is over (the scenario is unchanged), and a cell failed that way anyway is reported as
+  `ENVIRONMENT` (`tools/interop/handshake-challenge.py` proves it from both captures) and rerun, as is an unflushed
+  capture, up to five times while the rerun hits the environment again.
 - QUIC: resent stream data no longer carries a FIN that is still in flight; a lost FIN goes again as an empty STREAM
   frame. quiche's receiver loses a FIN that arrives on a frame whose bytes it already read, and a request timed out
   (`kuicksilver->quiche:handshakeloss`, once probes carried data).

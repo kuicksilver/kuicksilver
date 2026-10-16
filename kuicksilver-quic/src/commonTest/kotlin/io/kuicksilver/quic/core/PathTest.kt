@@ -8,6 +8,7 @@ import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.native.PacketBuffer
 import io.kuicksilver.native.of
+import io.kuicksilver.native.toByteArray
 import io.kuicksilver.quic.Bbr
 import io.kuicksilver.quic.ConnectionCore
 import io.kuicksilver.quic.ConnectionEvent
@@ -1137,6 +1138,57 @@ class PathTest {
             assertTrue(
                 p.runUntil(2.seconds) { p.server().pathState(p.server().stats.currentPath) == PathState.Validated },
                 "the new address validates",
+            )
+        } finally {
+            p.close()
+        }
+    }
+
+    /**
+     * 0.2.0 gate repetitions of kuicksilver->quiche:rebind-addr (2026-10-16): quiche's two-datagram ClientHello began before the
+     * simulator's rebind at 1 s, only its first datagram reached us from the old address, and its PTO repeat came from the new one
+     * in two receive batches. The first repeat (no new CRYPTO bytes: no 1-RTT keys yet, so no PATH_CHALLENGE possible) moved the
+     * path, and its Initial ACK became our first datagram to the new address; the runner requires a PATH_CHALLENGE there. The path
+     * now moves only once the server can lead with the challenge (the datagram that completes the ClientHello).
+     */
+    @Test fun handshakeTimeRebindLeadsWithTheChallengeWhenTheClientHelloCompletesThere() {
+        val p = EndpointPair(crypto = KslQuicCrypto)
+        try {
+            val c = p.connect()
+            val newPort = InetSocketAddress("10.0.0.1", 40002)
+
+            fun flight(): List<ByteArray> {
+                p.batch.clear()
+                val n = c.poll(p.batch, p.now)
+                return List(n) { p.batch.buffer(it).toByteArray(p.batch.length(it)) }
+            }
+
+            fun serverSends(s: ConnectionCore): List<Pair<InetSocketAddress, ByteArray>> {
+                p.batch.clear()
+                val n = s.poll(p.batch, p.now)
+                return List(n) { p.batch.address(it)!! to p.batch.buffer(it).toByteArray(p.batch.length(it)) }
+            }
+            val first = flight()
+            assertEquals(2, first.size, "ksl ClientHello spans two Initial datagrams")
+            val s = assertNotNull(p.feed(p.server, first[0], p.clientAddr), "the first half creates the connection")
+            serverSends(s) // its ACK goes to the old mapping, which the rebind removed: the client never sees it
+            // the second half is lost; the client repeats its ClientHello from the new mapping after a PTO
+            p.now = assertNotNull(c.nextTimeoutOrNever().takeIf { it != io.kuicksilver.quic.TimeMark.NEVER })
+            c.onTimeout(p.now)
+            val repeat = flight()
+            assertTrue(repeat.size >= 2, "the PTO repeats the ClientHello (${repeat.size} datagrams)")
+            val toNewPort = ArrayList<ByteArray>()
+            for (d in repeat) { // one receive batch each, as the endpoint loop flushes after every batch
+                p.feedNoAdmit(p.server, d, newPort)
+                for ((to, bytes) in serverSends(s)) if (to == newPort) toNewPort += bytes
+            }
+            assertEquals(io.kuicksilver.quic.ConnectionState.Handshaking, s.state)
+            assertEquals(newPort, s.remoteAddressForTest, "the server follows the new mapping once the ClientHello is complete")
+            assertTrue(toNewPort.isNotEmpty())
+            assertTrue(
+                isProbe(toNewPort.first()),
+                "the first datagram to the new port is the 1-RTT PATH_CHALLENGE probe (${toNewPort.first().size} bytes, " +
+                    "first byte 0x${(toNewPort.first()[0].toInt() and 0xff).toString(16)})",
             )
         } finally {
             p.close()

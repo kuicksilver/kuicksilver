@@ -438,6 +438,12 @@ internal fun ConnectionCore.onPathResponse(data: Long) {
  * budget starts over for the new address (section 8.1), a PATH_CHALLENGE leads the first datagram there (section 9.1) and the next
  * Handshake packet from it marks it validated again.
  * Packets already in flight to the old address are retransmitted by the usual PTO to the new one.
+ *
+ * The challenge can only lead once the server has 1-RTT keys, that is once the ClientHello is complete. A packet from the new
+ * address before that (a repeat of the first half of a two-datagram ClientHello whose second half was lost: the 0.2.0 gate's
+ * kuicksilver->quiche:rebind-addr) would otherwise move the path and send its Initial ACK there first; the move then waits for TLS
+ * to run on that datagram ([ConnectionCore.afterInput]) and happens only if that gave the keys, else the next packet from the new
+ * address tries again.
  */
 internal fun ConnectionCore.onHandshakeAddressChange(
     socket: PathId,
@@ -451,15 +457,35 @@ internal fun ConnectionCore.onHandshakeAddressChange(
     // Initial keys are public: an Initial moves the path only once the current address went quiet for a PTO; a Handshake packet proves
     // the client
     if (initial && now - lastReceivedOnActivePath < pto()) return
+    val move = HandshakeMove(from, datagramBytes)
+    if (writeKeys[3] == null) {
+        pendingHandshakeMove = move
+        return
+    }
+    pendingHandshakeMove = null
+    applyHandshakeMove(move)
+}
+
+/** A handshake-time move of the active path to [from] (see [onHandshakeAddressChange]), waiting for the 1-RTT keys of its datagram. */
+internal class HandshakeMove(
+    val from: InetSocketAddress,
+    val datagramBytes: Int,
+)
+
+/** Moves the active path to [move]'s address if the server can now lead there with a PATH_CHALLENGE (it holds 1-RTT keys). */
+internal fun ConnectionCore.applyHandshakeMove(move: HandshakeMove) {
+    if (writeKeys[3] == null || state != io.kuicksilver.quic.ConnectionState.Handshaking) return
+    val p = paths.active
+    if (p.isRemote(move.from)) return
     val old = p.remote
-    p.remote = from
+    p.remote = move.from
     p.validatedAt = TimeMark.NEVER
     p.amplification.reset()
-    p.amplification.onReceived(datagramBytes)
+    p.amplification.onReceived(move.datagramBytes)
     // a PATH_CHALLENGE leads the first datagram to the new address and is repeated until answered (a client without 1-RTT keys drops
     // the first one)
     startValidation(p)
-    onRemoteChanged?.invoke(old, from)
+    onRemoteChanged?.invoke(old, move.from)
     qlog?.metricsUpdated(stats, now)
 }
 

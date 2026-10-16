@@ -24,6 +24,7 @@ import io.kuicksilver.quic.core.Path
 import io.kuicksilver.quic.core.Paths
 import io.kuicksilver.quic.core.Pmtud
 import io.kuicksilver.quic.core.Timers
+import io.kuicksilver.quic.core.applyHandshakeMove
 import io.kuicksilver.quic.core.armBlockedRepeat
 import io.kuicksilver.quic.core.buildLocalTp
 import io.kuicksilver.quic.core.checkPmtuBlackHoles
@@ -421,6 +422,9 @@ public class ConnectionCore internal constructor(
     internal val probePending = IntArray(3)
     internal var discardHandshakeKeysAfterPacket = false
     internal var discardInitialPending = false
+
+    /** A handshake-time address change seen before the server had 1-RTT keys: applied once TLS ran on its datagram (`afterInput`). */
+    internal var pendingHandshakeMove: io.kuicksilver.quic.core.HandshakeMove? = null
     internal var closeFrame: CloseFrame? = null
 
     /** CONNECTION_CLOSE already carried by a packet of this space since the last (re)send trigger. */
@@ -721,6 +725,10 @@ public class ConnectionCore internal constructor(
         if (tlsDirty) {
             tlsDirty = false
             driveTls(now)
+        }
+        pendingHandshakeMove?.let {
+            pendingHandshakeMove = null
+            applyHandshakeMove(it)
         }
         if (discardHandshakeKeysAfterPacket) {
             discardHandshakeKeysAfterPacket = false
