@@ -71,6 +71,9 @@ internal suspend fun handleRequestStream(
                 truncated(st, null, null)
                 return@with
             } catch (e: QuicException.StreamError) {
+                // reset before its HEADERS were read: no request, but the peer's encoder may count a section that was lost
+                // or dropped with the reset (RFC 9204 section 4.4.2)
+                runCatching { qpack.cancelStream(st.id) }
                 return@with
             }
         val block =

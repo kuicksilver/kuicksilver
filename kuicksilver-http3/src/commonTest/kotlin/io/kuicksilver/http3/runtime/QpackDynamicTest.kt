@@ -221,6 +221,24 @@ class QpackDynamicTest {
                 withTimeout(5.seconds) { while (!decoderBytes.value.contains((0x40 or st.id.toInt()).toByte())) delay(20) }
             }
         }
+
+    /**
+     * A request stream reset before any of its HEADERS were read: the section may have been sent (and counted by the peer's
+     * encoder) and then lost or discarded with the reset, so it gets a Stream Cancellation too (RFC 9204 section 4.4.2).
+     */
+    @Test fun resetBeforeHeadersSendsCancellation() =
+        h3Test {
+            QuicPair.open().use { q ->
+                val (c, s) = q.connect()
+                Http3Connection.server(s, dyn)
+                RawPeer(c).openControl()
+                val decoderBytes = serverDecoderStream(c)
+                val st = c.openBidi()
+                st.reset(Http3ErrorCode.REQUEST_CANCELLED)
+                // Stream Cancellation
+                withTimeout(5.seconds) { while (!decoderBytes.value.contains((0x40 or st.id.toInt()).toByte())) delay(20) }
+            }
+        }
 }
 
 /**
