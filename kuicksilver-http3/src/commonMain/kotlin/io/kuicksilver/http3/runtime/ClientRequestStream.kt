@@ -334,6 +334,9 @@ private suspend fun H3Session.exchange(
         throw sendFailure.failureOr(map(st.input.closedCause ?: e))
     } catch (e: Throwable) {
         sender?.cancel()
+        // the stream was reset, or we stopped it (refused trailers), before the response HEADERS were read: a section the
+        // peer's encoder sent may be lost with it, and must not stay outstanding there (RFC 9204 section 4.4.2)
+        withContext(NonCancellable) { runCatching { qpack.cancelStream(st.id) } }
         throw sendFailure.failureOr(map(e)) // transport failures (possibly wrapped by ktor-io) become HTTP/3 exceptions
     }
 }

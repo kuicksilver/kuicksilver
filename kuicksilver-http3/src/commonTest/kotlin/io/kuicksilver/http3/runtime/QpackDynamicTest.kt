@@ -22,6 +22,8 @@ import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.QuicConnection
 import io.kuicksilver.quic.QuicStream
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.filterNotNull
@@ -290,6 +292,49 @@ class QpackStreamCancellationTest {
                     b.output.flush()
                 }
                 withTimeout(5.seconds) { while (!decoderBytes.value.contains((0x40 or b.id.toInt()).toByte())) delay(20) }
+                c.close()
+            }
+        }
+
+    /**
+     * The client side of the same clause: a server that resets the request stream before sending its response HEADERS gets
+     * a Stream Cancellation for the request's section, which its encoder would otherwise keep outstanding.
+     */
+    @Test fun responseResetBeforeHeadersSendsCancellation() =
+        h3Test {
+            QuicPair.open().use { q ->
+                val (c, s) = q.connect()
+                val client = Http3Connection.client(c, http3Settings { enableQpackDynamicTable() })
+                RawPeer(s).openControl()
+                val decoderBytes = MutableStateFlow(ByteArray(0))
+                val requests = Channel<QuicStream>(Channel.UNLIMITED)
+                launch {
+                    runCatching {
+                        while (true) {
+                            val st = s.acceptStream()
+                            if (st.id and 2L == 0L) {
+                                requests.send(st) // a client-initiated bidirectional stream: a request
+                                continue
+                            }
+                            if (st.readVarInt() != StreamType.QPACK_DECODER) continue
+                            launch {
+                                runCatching {
+                                    val b = ByteArray(256)
+                                    while (true) {
+                                        val n = st.input.readAvailable(b, 0, b.size)
+                                        if (n < 0) break
+                                        decoderBytes.update { it + b.copyOf(n) }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                val resp = async { runCatching { client.request(get()) } }
+                val st = withTimeout(5.seconds) { requests.receive() }
+                st.reset(Http3ErrorCode.REQUEST_CANCELLED)
+                assertTrue(withTimeout(5.seconds) { resp.await() }.isFailure)
+                withTimeout(5.seconds) { while (!decoderBytes.value.contains((0x40 or st.id.toInt()).toByte())) delay(20) }
                 c.close()
             }
         }
