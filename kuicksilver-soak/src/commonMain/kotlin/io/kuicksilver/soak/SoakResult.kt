@@ -85,6 +85,19 @@ internal class SoakResult(
                     "| ${r.metric} | ${r.baseline} | ${r.end} | ${r.tolerance} | ${if (r.ok) "ok" else "**LEAK**"} |",
                 )
             }
+            val memory = Soak.MEMORY.filter { it in baseline && it in end }
+            if (memory.isNotEmpty()) {
+                appendLine()
+                appendLine("Memory at idle (informational; allocators and collectors keep some):")
+                appendLine()
+                appendLine("| Metric | Baseline | End | Change |")
+                appendLine("|---|---:|---:|---:|")
+                for (m in memory) {
+                    val b = baseline.getValue(m)
+                    val e = end.getValue(m)
+                    appendLine("| $m | $b | $e | ${e - b} |")
+                }
+            }
         }
 
     fun csv(): String =

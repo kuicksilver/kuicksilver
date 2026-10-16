@@ -72,11 +72,34 @@ internal class SoakConfig(
     }
 }
 
-/** One sample: seconds since the start of the load, and every metric. */
-internal class Sample(
+/**
+ * One sample: seconds since the start of the load, and every metric. Stored as a row of longs over a key table shared with
+ * the previous sample (the keys rarely change), so a long run's own series do not show up in the heap it measures.
+ */
+internal class Sample private constructor(
     val t: Double,
-    val values: Map<String, Long>,
-)
+    private val keys: Array<String>,
+    private val row: LongArray,
+) {
+    val values: Map<String, Long>
+        get() = LinkedHashMap<String, Long>(keys.size * 2).also { m -> for (i in keys.indices) m[keys[i]] = row[i] }
+
+    companion object {
+        private var lastKeys: Array<String> = emptyArray()
+
+        operator fun invoke(
+            t: Double,
+            values: Map<String, Long>,
+        ): Sample {
+            var keys = lastKeys
+            if (keys.size != values.size || values.keys.withIndex().any { (i, k) -> keys[i] != k }) {
+                keys = values.keys.toTypedArray()
+                lastKeys = keys
+            }
+            return Sample(t, keys, LongArray(keys.size) { values.getValue(keys[it]) })
+        }
+    }
+}
 
 /** Per-scenario counts: iterations, outcomes by tag, unexpected failures by message. */
 internal class ScenarioStats {

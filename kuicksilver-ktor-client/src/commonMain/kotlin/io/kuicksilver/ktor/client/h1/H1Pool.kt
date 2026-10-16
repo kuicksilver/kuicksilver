@@ -86,7 +86,7 @@ internal class H1Pool(
     /** Limits, keep-alive and idle expiry; internal for tests. */
     internal val pool = ConnectionPool<H1Connection>(config.poolLimits(), clock)
 
-    /** This engine's TLS session tickets (resumption secrets stay native); cleared by [closeAll], so closing the engine drops them. */
+    /** This engine's TLS session tickets (resumption secrets stay native); closed by [closeAll], so closing the engine drops them. */
     internal val sessions = SessionCache()
 
     /** Returns a connection that finished its exchange, or one that lost the protocol race unused. */
@@ -97,7 +97,7 @@ internal class H1Pool(
 
     suspend fun closeAll() {
         pool.shutdown()
-        sessions.clear()
+        sessions.close() // a connection still finishing stores its ticket into a closed cache, which releases it
     }
 
     private fun keyOf(data: HttpRequestData): String =

@@ -99,7 +99,6 @@ internal class StreamManager(
     }
 
     val events: ArrayDeque<ConnectionEvent> = ArrayDeque()
-    private val opened = ArrayList<Long>()
     private val nextIndex = longArrayOf(0, 0) // [bidi, uni]
     private var peerBidiLocal = 0L
     private var peerBidiRemote = 0L
@@ -185,12 +184,6 @@ internal class StreamManager(
             if (limit.used > if (StreamIds.isBidi(id)) bidiRemote else uni) return false
         }
         return true
-    }
-
-    fun takeOpenedStreams(): List<Long> {
-        val l = opened.toList()
-        opened.clear()
-        return l
     }
 
     /** Receive window of stream [id] and of the connection (test hooks: auto-tuning). */
@@ -368,8 +361,6 @@ internal class StreamManager(
                 )
             ; if (!streams.containsKey(sid)) {
                 newEntry(sid)
-                opened +=
-                    sid
                 events += ConnectionEvent.StreamOpened(sid)
             }
             index++

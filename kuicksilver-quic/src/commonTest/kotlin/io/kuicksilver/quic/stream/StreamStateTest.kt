@@ -182,7 +182,31 @@ class StreamStateTest {
         val m = manager(TlsRole.Server)
         recv(m, 8, 0, ByteArray(1))
         assertTrue(m.isOpen(0) && m.isOpen(4) && m.isOpen(8))
-        assertEquals(listOf(0L, 4L, 8L), m.takeOpenedStreams())
+        assertEquals(listOf(0L, 4L, 8L), m.events.filterIsInstance<ConnectionEvent.StreamOpened>().map { it.id })
+    }
+
+    /**
+     * Once its peer streams are done and the events and control frames are taken, the manager's probed collections
+     * ([StreamManager.sizesForTest]) are empty. The 0.2.0 soak leak (a list of peer stream ids nothing drained) was not among
+     * them: `StreamManagerRetentionJvmTest` pins that one, by walking every field of the manager.
+     */
+    @Test fun finishedPeerStreamsLeaveNothingBehind() {
+        val m = manager(TlsRole.Server, maxStreams = 1000)
+        val buf = ByteArray(64)
+        repeat(3000) { i ->
+            val id = 4L * i + 2 // client-initiated unidirectional
+            recv(m, id, 0, ByteArray(10), fin = true)
+            while (m.read(id, buf, 0, buf.size) >= 0) {
+                // drain to the end: the stream finishes and is forgotten
+            }
+            assertTrue(!m.isOpen(id), "stream $id finished")
+            m.events.clear()
+            while (m.takeControlFrame() != null) {
+                // MAX_STREAMS credit, as the connection would send it
+            }
+        }
+        val sizes = m.sizesForTest()
+        assertTrue(sizes.all { it == 0 }, "per-stream state left after 3000 finished peer streams: ${sizes.toList()}")
     }
 
     @Test fun sendBufferCap4MiB() {

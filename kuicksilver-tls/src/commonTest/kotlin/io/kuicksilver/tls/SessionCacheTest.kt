@@ -5,6 +5,8 @@
 package io.kuicksilver.tls
 
 import io.kuicksilver.native.KslLoader
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlin.test.BeforeTest
 import kotlin.test.Test
@@ -51,6 +53,35 @@ class SessionCacheTest {
             assertEquals(1, SessionCache.Default.size(), "the two week-old sessions are gone once a fresh one is stored")
             assertTrue(SessionCache.Default.peek("c"))
             SessionCache.Default.clear()
+        }
+
+    /**
+     * Soak regression (0.2.0, `ksl.session` left at 1): put owns the entry it is given. A TLS reader cancelled while it waited
+     * for the cache's lock (its connection closed) dropped the entry, and with it a native session nothing would ever free.
+     */
+    @Test fun putCancelledWhileWaitingReleasesEntry(): Unit =
+        runBlocking {
+            val cache = SessionCache()
+            val e = SessionCache.Entry(0L, emptyList(), emptyList())
+            cache.mutex.lock()
+            val putter = launch(start = CoroutineStart.UNDISPATCHED) { cache.put("k", e) }
+            putter.cancel()
+            cache.mutex.unlock()
+            putter.join()
+            assertTrue(e.closed || cache.peek("k"), "the entry is either cached or released, never lost")
+            cache.clear()
+            assertTrue(e.closed)
+        }
+
+    /** A cache that was closed (its engine or endpoint is gone) releases what is stored afterwards instead of keeping it. */
+    @Test fun putAfterCloseReleasesEntry(): Unit =
+        runBlocking {
+            val cache = SessionCache()
+            cache.close()
+            val e = SessionCache.Entry(0L, emptyList(), emptyList())
+            cache.put("k", e)
+            assertTrue(e.closed, "released at once")
+            assertEquals(0, cache.size())
         }
 
     /** A QUIC ticket is taken once (RFC 8446 appendix C.4) and only while its cached chain still passes the current trust. */
