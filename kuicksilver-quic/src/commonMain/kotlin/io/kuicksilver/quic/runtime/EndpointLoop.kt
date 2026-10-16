@@ -589,7 +589,8 @@ internal class EndpointLoop private constructor(
             ticket.close()
             return
         }
-        scope.launch { sessions.putQuic(tls, ticket) }
+        // started even when the scope is cancelled meanwhile: putQuic then releases the ticket instead of dropping it
+        scope.launch(start = kotlinx.coroutines.CoroutineStart.ATOMIC) { sessions.putQuic(tls, ticket) }
     }
 
     internal fun onHandshakeCompleted(rt: ConnectionRuntime) {
@@ -799,7 +800,7 @@ internal class EndpointLoop private constructor(
         closeJob =
             scope.launch {
                 try {
-                    sessions.clear()
+                    sessions.close() // a group's loops close together (LoopGroup.closeWith), so the shared cache can close too
                     val now = now()
                     for (c in core.connections().toList()) {
                         c.close(code, reason, now)

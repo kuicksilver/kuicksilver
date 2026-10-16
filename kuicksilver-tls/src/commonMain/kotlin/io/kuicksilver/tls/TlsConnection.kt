@@ -710,7 +710,7 @@ public class SessionCache(
     }
 
     private val entries = LinkedHashMap<String, Entry>() // insertion order: the head is the least recently stored entry
-    private val mutex = Mutex()
+    internal val mutex = Mutex() // internal for the tests
 
     /** The process-wide cache, key derivation and the default bound. */
     @InternalKuicksilverApi
@@ -743,29 +743,61 @@ public class SessionCache(
             }
         }
 
-    /** Stores [entry] and drops every expired session, so the cache never keeps dead tickets (and their native secrets) until their key is asked for. */
+    private var closed = false
+
+    /**
+     * Stores [entry] and drops every expired session, so the cache never keeps dead tickets (and their native secrets) until
+     * their key is asked for. The cache owns [entry] from the call on: a closed cache releases it at once, and so does a
+     * caller cancelled while it waited for the lock (a TLS reader whose connection closed), or nothing would free it.
+     */
     internal suspend fun put(
         key: String,
         entry: Entry,
     ) {
-        mutex.withLock {
-            entries.remove(key)?.close() // re-inserted at the tail: a fresh ticket for an origin is the most recent entry
-            entries.put(key, entry)
-            val now = nowSeconds()
-            val it = entries.values.iterator()
-            while (it.hasNext()) {
-                val e = it.next()
-                if (now - e.created > TTL_SECONDS) {
-                    e.close()
-                    it.remove()
+        var taken = false
+        try {
+            mutex.withLock {
+                taken = true
+                if (closed) {
+                    entry.close()
+                    return
                 }
+                store(key, entry)
             }
-            while (entries.size > maxEntries) {
-                val oldest = entries.entries.iterator()
-                val e = oldest.next()
-                e.value.close()
-                oldest.remove()
+        } finally {
+            if (!taken) entry.close()
+        }
+    }
+
+    private fun store(
+        key: String,
+        entry: Entry,
+    ) {
+        entries.remove(key)?.close() // re-inserted at the tail: a fresh ticket for an origin is the most recent entry
+        entries.put(key, entry)
+        val now = nowSeconds()
+        val it = entries.values.iterator()
+        while (it.hasNext()) {
+            val e = it.next()
+            if (now - e.created > TTL_SECONDS) {
+                e.close()
+                it.remove()
             }
+        }
+        while (entries.size > maxEntries) {
+            val oldest = entries.entries.iterator()
+            val e = oldest.next()
+            e.value.close()
+            oldest.remove()
+        }
+    }
+
+    /** Drops every cached session and releases whatever is stored later: the owner (an engine, an endpoint) is gone. */
+    public suspend fun close() {
+        mutex.withLock {
+            closed = true
+            entries.values.forEach { it.close() }
+            entries.clear()
         }
     }
 
