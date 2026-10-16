@@ -100,12 +100,16 @@ measurement) with no result; `--perf --results DIR` re-checks an earlier run. To
 the same commit. `bash tools/interop/check-perf-test.sh` runs the checker's exit-code cases on `tools/interop/testdata`.
 
 In the rebind cases `tools/interop/sim-entrypoint.sh` keeps the simulator's ready port closed until its first rebind is
-over, so the client's handshake never runs across it. A cell whose verdict rests on the environment is reported as
-`ENVIRONMENT` and rerun, up to five times while the rerun hits the environment again (`tools/interop/environment.sh`;
-`--check-required` counts a green rerun): a sim capture that was not flushed before teardown, and a rebind cell of our
-server failed only because the client started just before the simulator's rebind at 1 s, so that nobody could decrypt
-the PATH_CHALLENGE the runner checks when it went out (`tools/interop/handshake-challenge.py`). `bash
-tools/interop/environment-test.sh` runs those rules on `tools/interop/testdata`.
+over, so the client's handshake never runs across it: the `rebind-port` and `rebind-addr` cells no longer exercise a
+rebind in the middle of the handshake. That case is covered by `core.PathTest` (the `rebindDuringHandshake` tests:
+`natRebindDuringHandshakeIsFollowedByTheServer`, `handshakeTimeRebind*`,
+`handshakeTimeChallengeIsRepeatedUntilTheClientCanAnswer`, `unansweredHandshakeTimeChallengeDoesNotCloseTheConnection`
+and their `negative_*` counterparts). A cell whose verdict rests on the environment is reported as `ENVIRONMENT` and
+rerun, up to five times while the rerun hits the environment again (`tools/interop/environment.sh`; `--check-required`
+counts a green rerun): a sim capture that was not flushed before teardown, and a rebind cell of our server failed only
+because the client started just before the simulator's rebind at 1 s, so that nobody could decrypt the PATH_CHALLENGE
+the runner checks when it went out (`tools/interop/handshake-challenge.py`). `bash tools/interop/environment-test.sh`
+runs those rules on `tools/interop/testdata`.
 
 The floors were measured on a local host, so the thresholds file says `"blocking": false`: a cell below its floor is a
 warning (exit 0, a `::warning::` annotation in the weekly `perf` workflow) while a failed or missing cell still fails.

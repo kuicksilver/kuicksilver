@@ -39,6 +39,10 @@ check "undecryptable first packet that carries a challenge"  0 "sent before our 
 check "a ServerHello of ours preceded it (runner could read)" 1 "" -- python3 "$hc" --decoded "$(variant2 hello '.server_side[0].crypto = true')"
 check "no PATH_CHALLENGE in it even after the handshake"     1 "" -- python3 "$hc" --decoded "$(variant2 nochallenge "[$first][0] as \$f | (.server_side[] | select(.n == \$f.n)).late_challenges = []")"
 check "the first packet on the new path is not 1-RTT"         1 "" -- python3 "$hc" --decoded "$(variant2 long "(.server_side[] | select(.n == 48)).short = false")"
+hello='(.server_side[] | select(.n == 48)) |= (.short = false | .long = ["0", "2"] | .crypto = true | del(.late_challenges))'
+check "it is our ServerHello (no probe since the 0.2.0 fix)"  0 "is our ServerHello" -- python3 "$hc" --decoded "$(variant2 sh "$hello")"
+check "  but a ServerHello of ours went out before it"        1 "" -- python3 "$hc" --decoded "$(variant2 shlate "$hello | .server_side[0].crypto = true")"
+check "  but it carries no CRYPTO (a lone ACK)"               1 "" -- python3 "$hc" --decoded "$(variant2 shack "$hello | (.server_side[] | select(.n == 48)).crypto = false")"
 check "another path than the one the runner named"            1 "" -- python3 "$hc" --decoded "$(variant2 other '.missing_on = "193.167.0.71:39968"')"
 
 # cell mode: only our own server's cells, only with the runner's verdict, and never a guess without the captures

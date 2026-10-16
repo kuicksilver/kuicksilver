@@ -20,13 +20,16 @@ Handshake flight are through; no server can put both first. It fails one of two 
   * "First server packet on new path ... did not contain a PATH_CHALLENGE frame": the ClientHello was completed only from
     the new address, so no ServerHello of ours precedes the challenge in the capture and Wireshark, dissecting in capture
     order, has no cipher to decrypt it with. Moved behind our first Handshake datagram it decrypts, with its PATH_CHALLENGE.
+    Since the server learned not to lead with a probe the client cannot read in this case, its first packet there is the
+    ServerHello itself, which the runner rejects the same way.
 
 A cell has the first signature when the runner names the unanswered challenges and, on the server-side capture, each left in
 our first 1-RTT datagram to its address, before HANDSHAKE_DONE and before any Handshake packet to that address, while no
 Handshake packet of ours had reached the client (client-side capture, the sim's clock; the simulator forwards in order, so
 the challenge arrived, if at all, before any of them). It has the second when the runner names the new path and our first
 datagram to it is 1-RTT, sent before any CRYPTO frame of ours (no ServerHello yet: neither the runner nor the client can
-read it) and before HANDSHAKE_DONE, and it carries a PATH_CHALLENGE once dissected after our first Handshake datagram.
+read it) and before HANDSHAKE_DONE, and it carries a PATH_CHALLENGE once dissected after our first Handshake datagram, or is
+our ServerHello itself.
 Never for a peer server's cell, or for a challenge sent after the handshake.
 
 Usage: handshake-challenge.py CELL_DIR          decodes the cell's sim/trace_node_{right,left}.pcap with tshark
@@ -114,12 +117,16 @@ def decode(cell):
 
 
 def undecryptable_first(d):
-    """Our first datagram to the path the runner named: 1-RTT, before any CRYPTO frame of ours and before HANDSHAKE_DONE, and a
-    PATH_CHALLENGE in it once dissected after our first Handshake datagram."""
+    """Our first datagram to the path the runner named, sent before any CRYPTO frame of ours went anywhere (the ClientHello completed
+    only from there) and before HANDSHAKE_DONE: either 1-RTT with a PATH_CHALLENGE in it once dissected after our first Handshake
+    datagram, or our ServerHello itself (since the 0.2.0 fix a server whose move comes with the ClientHello's completion sends no
+    probe the client could not read yet)."""
     first = next((x for x in d["server_side"] if x["dst"] == d["missing_on"]), None)
-    if first is None or not first["short"] or first["done"] or not first.get("late_challenges"): return None
+    if first is None or first["done"]: return None
     if any(x["crypto"] for x in d["server_side"][:d["server_side"].index(first)]): return None  # a ServerHello was out: readable
-    return first
+    if first["short"] and first.get("late_challenges"): return first
+    if not first["short"] and "0" in first["long"] and first["crypto"]: return first
+    return None
 
 
 def unreadable_challenges(d):
@@ -146,6 +153,9 @@ def analyse(d):
     if d.get("missing_on"):
         first = undecryptable_first(d)
         if first is None: return None
+        if not first["short"]:
+            return (f"the rebind landed inside the handshake: the ClientHello completed only from the new path {first['dst']}, so our first packet there "
+                    "is our ServerHello; no PATH_CHALLENGE could be read before it")
         return (f"the rebind landed inside the handshake: our first packet on the new path {first['dst']} is 1-RTT, sent before our ServerHello, "
                 f"which neither the runner nor the client can decrypt yet; dissected after our Handshake flight it carries PATH_CHALLENGE {', '.join(first['late_challenges'])}")
     carrier = unreadable_challenges(d)

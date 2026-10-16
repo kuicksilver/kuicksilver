@@ -12,7 +12,8 @@
 # comes first the handshake runs across the rebind, and the runner's check (the server's first packet on the new path carries a
 # PATH_CHALLENGE the client answers) can be met by no server: that 1-RTT packet goes out before anyone can decrypt it (0.2.0 gate,
 # kuicksilver->quiche:rebind-addr; 16 of 23 runs that day; the known picoquic rebind cells). The port answers clients only once
-# the first rebind is over, so every run is the one where the client starts after it (the scenario itself is unchanged).
+# the first rebind is over, so every run is the one where the client starts after it (the scenario itself is unchanged). The
+# rebind cells then no longer exercise a rebind in the middle of the handshake: core.PathTest's rebindDuringHandshake tests do.
 if [[ "${SCENARIO:-}" == rebind* ]]; then
   first=$(sed -n 's/.*--first-rebind=\([0-9.]*\)s.*/\1/p' <<< "$SCENARIO"); first=${first:-1}
   hold="-p tcp --dport 57832 -j REJECT --reject-with tcp-reset"
