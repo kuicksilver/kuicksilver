@@ -16,12 +16,17 @@ new path to carry a PATH_CHALLENGE and fails the cell (runs 20261008-003423 rebi
 image vs msquic, the same signature).
 
 A cell has the signature when the runner names the new path P, the downloaded files were checked, and on the server-side
-capture P is the last path the server sent to; the first packet on P is the client's, carrying CONNECTION_CLOSE; every packet
-on P either way carries only CONNECTION_CLOSE, ACK and PADDING, and the server's at most three times the client's bytes there;
+capture P is the last path the server sent to; the first packet on P is the client's, carrying CONNECTION_CLOSE; the client's close
+has error code 0; every packet on P either way carries only CONNECTION_CLOSE, ACK and PADDING; the server sent exactly one
+packet there, at most three times the client's bytes;
 every earlier path passed the runner's check (its first server packet carried a PATH_CHALLENGE, and the client-side capture
 holds a PATH_RESPONSE to each); and on the client-side capture every client packet up to its close left from one address
 (the client did not migrate itself). Any other packet on P, a server packet before the client's close, data or a challenge to
 P, a missing response on an earlier path or an undecryptable packet is no ENVIRONMENT verdict.
+
+Both roles on purpose: unlike handshake-challenge.py (which proves our own server's behaviour and so never looks at a peer
+server's cell) this rule proves the peer's or our own server's answer from the capture alone, and the client side does nothing
+it could do otherwise, so a kuicksilver server cell with the same capture gets the same verdict (ours stays silent there).
 
 Usage: closing-rebind.py CELL_DIR          decodes the cell's sim/trace_node_{right,left}.pcap with tshark
        closing-rebind.py --decoded FILE    the same analysis on a decoded summary (tools/interop/environment-test.sh)
@@ -56,15 +61,17 @@ def dissect(pcap, keys):
     out = subprocess.run(["tshark", "-r", pcap, "-o", "tls.keylog_file:" + keys, "-Y", "quic && !icmp && udp.port == " + SERVER_PORT, "-T", "fields",
                           "-E", "separator=|", "-e", "frame.number", "-e", "ip.src", "-e", "ipv6.src", "-e", "udp.srcport", "-e", "ip.dst",
                           "-e", "ipv6.dst", "-e", "udp.dstport", "-e", "udp.length", "-e", "quic.frame_type", "-e", "quic.path_challenge.data",
-                          "-e", "quic.path_response.data"], check=True, capture_output=True, text=True).stdout
+                          "-e", "quic.path_response.data", "-e", "quic.cc.error_code", "-e", "quic.cc.error_code.app"],
+                         check=True, capture_output=True, text=True).stdout
     result = []
     for line in out.splitlines():
-        n, s4, s6, sp, d4, d6, dp, length, frames, challenges, responses = (line.split("|") + [""] * 11)[:11]
+        n, s4, s6, sp, d4, d6, dp, length, frames, challenges, responses, codes, app_codes = (line.split("|") + [""] * 13)[:13]
         result.append({"n": int(n), "src": f"{s4 or s6}:{sp}", "dst": f"{d4 or d6}:{dp}", "from_server": sp == SERVER_PORT,
                        "len": max(int(length or 0) - 8, 0),  # the QUIC datagram: UDP payload
                        "frames": [int(f, 16) for f in frames.split(",") if f],
                        "challenges": [c.replace(":", "").lower() for c in challenges.split(",") if c],
-                       "responses": [c.replace(":", "").lower() for c in responses.split(",") if c]})
+                       "responses": [c.replace(":", "").lower() for c in responses.split(",") if c],
+                       "close_codes": [int(c, 0) for c in f"{codes},{app_codes}".split(",") if c]})
     return result
 
 
@@ -91,7 +98,7 @@ def decode(cell):
     client_sent = [x for x in client_side if not x["from_server"]]
     upto = next((i for i, x in enumerate(client_sent) if CLOSES & set(x["frames"])), len(client_sent) - 1)
     return {"missing_on": missing, "download_checked": checked, "runner_paths": runner_paths(server_side),
-            "on_path": [{k: x[k] for k in ("n", "from_server", "len", "frames")} for x in server_side if missing and missing in (x["src"], x["dst"])],
+            "on_path": [{k: x[k] for k in ("n", "from_server", "len", "frames", "close_codes")} for x in server_side if missing and missing in (x["src"], x["dst"])],
             "responses": sorted({r for x in client_sent for r in x["responses"]}),
             "client_sources": sorted({x["src"] for x in client_sent[:upto + 1]})}
 
@@ -106,7 +113,11 @@ def analyse(d):
     if any(not f["challenge"] or f["challenge"] not in d["responses"] for f in firsts[:-1]): return None
     # the client's close opened P, and P carried nothing but the closing exchange (an undecryptable packet has no frames)
     if on[0]["from_server"] or not CLOSES & set(on[0]["frames"]): return None
+    # a graceful close: NO_ERROR (0x1c) or application code 0 (0x1d); a client closing on an error is no environment
+    if not on[0]["close_codes"] or any(c != 0 for c in on[0]["close_codes"]): return None
     if any(not x["frames"] or not set(x["frames"]) <= CLOSING or not CLOSES & set(x["frames"]) for x in on): return None
+    # RFC 9000 10.2.2: an endpoint that receives a CONNECTION_CLOSE MAY send a single packet in answer, no more
+    if sum(1 for x in on if x["from_server"]) != 1: return None
     sent, received = (sum(x["len"] for x in on if x["from_server"] == s) for s in (True, False))
     if sent == 0 or sent > 3 * received: return None  # RFC 9000 10.2.1: at most 3x what came from an unvalidated address
     if len(d["client_sources"]) != 1: return None  # the client moved itself: not the simulator's rebind

@@ -38,7 +38,9 @@ handshake_rebind() {
 # first packet from the new path, and the server's one RFC 9000 section 10.2 answer to it is a CONNECTION_CLOSE there, no
 # PATH_CHALLENGE (0.2.0 gate 6: msquic->kuicksilver-native:rebind-port, the native transfer ends at about 11 s since the clients
 # start after the first rebind, right on the third). tools/interop/closing-rebind.py proves it from both captures, including
-# that every earlier path passed the runner's check. Prints "<server>_<client> <case>" per cell.
+# that every earlier path passed the runner's check. Both roles on purpose: the proof rests on the captures alone (the server's
+# single close answer, the client's graceful close), so our own server's cell is judged the same way (handshake_rebind, which
+# proves our server's own behaviour, looks at our server's cells only). Prints "<server>_<client> <case>" per cell.
 closing_rebind() {
   local o cell
   while IFS= read -r o; do

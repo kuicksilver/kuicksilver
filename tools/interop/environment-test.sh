@@ -68,6 +68,11 @@ check "close: the server sent to another path after it"            1 "" -- pytho
 check "close: another path than the one the runner named"          1 "" -- python3 "$cr" --decoded "$(cvar other '.missing_on = "193.167.0.100:57607"')"
 check "close: the downloaded files were not checked"               1 "" -- python3 "$cr" --decoded "$(cvar nofiles '.download_checked = false')"
 check "close: the client moved itself (two source ports)"          1 "" -- python3 "$cr" --decoded "$(cvar moved '.client_sources += ["193.167.0.100:40000"]')"
+check "close: the server challenged the new path (PATH_CHALLENGE)" 1 "" -- python3 "$cr" --decoded "$(cvar challenge "$srv.frames = [26]")"
+check "close: the client's close came with STREAM data"            1 "" -- python3 "$cr" --decoded "$(cvar closedata "$cli.frames = [29, 15]")"
+check "close: two server packets on the new path (10.2.2: one)"    1 "" -- python3 "$cr" --decoded "$(cvar twice "(.on_path += [$srv | .len = 1])")"
+check "close: the client closed with an error code"                1 "" -- python3 "$cr" --decoded "$(cvar error "$cli.close_codes = [10]")"
+check "close: the client's close code is unknown"                  1 "" -- python3 "$cr" --decoded "$(cvar nocode "$cli.close_codes = []")"
 check "close: a malformed summary cannot be analysed"              2 "cannot analyse" -- python3 "$cr" --decoded "$(cvar broken 'del(.on_path)')"
 
 # cell mode: only our own server's cells, only with the runner's verdict, and never a guess without the captures
@@ -83,11 +88,14 @@ check "a missing challenge without captures cannot be analysed" 2 "cannot analys
 mk msquic-client/msquic_kuicksilver-native rebind-port "Check of downloaded files succeeded." "First server packet on new path (('193.167.100.100', 443), ('193.167.0.100', 59022)) did not contain a PATH_CHALLENGE frame"
 check "close: a missing challenge without captures cannot be analysed" 2 "cannot analyse" -- python3 "$cr" "$tmp/res/msquic-client/msquic_kuicksilver-native/rebind-port"
 check "close: no missing challenge in the verdict"             1 "" -- python3 "$cr" "$tmp/res/quiche-client/quiche_kuicksilver/rebind-addr"
+# both roles on purpose (closing-rebind.py): our own server's cell is analysed too (here: no captures), not refused by role
+mk msquic-server/kuicksilver-native_msquic rebind-port "Check of downloaded files succeeded." "First server packet on new path (('193.167.100.100', 443), ('193.167.0.100', 59022)) did not contain a PATH_CHALLENGE frame"
+check "close: our server's cell is analysed as well"           2 "cannot analyse" -- python3 "$cr" "$tmp/res/msquic-server/kuicksilver-native_msquic/rebind-port"
 
 # environment_cells: an unflushed capture (the earlier rule) is listed with its reason, a flushed one and the cells above are not
 mk ngtcp2-server/kuicksilver_ngtcp2 amplificationlimit "Capturing on 'eth0'" "Capturing on 'eth1'" "Packets received/dropped on interface 'eth0': 71/0"
 mk ngtcp2-server/kuicksilver_ngtcp2 handshake "Capturing on 'eth0'" "Capturing on 'eth1'" "Packets received/dropped on interface 'eth0': 9/0" "Packets received/dropped on interface 'eth1': 9/0"
-for role in quiche-server quiche-client quinn-server ngtcp2-server msquic-client; do environment_cells "$tmp/res/$role"; done > "$tmp/cells.txt" 2>/dev/null
+for role in quiche-server quiche-client quinn-server ngtcp2-server msquic-client msquic-server; do environment_cells "$tmp/res/$role"; done > "$tmp/cells.txt" 2>/dev/null
 check "environment_cells lists the unflushed capture" 0 "kuicksilver_ngtcp2 amplificationlimit the sim's capture was not flushed" -- cat "$tmp/cells.txt"
 check "environment_cells lists nothing else" 0 "" -- test "$(wc -l < "$tmp/cells.txt" | tr -d ' ')" = 1
 
