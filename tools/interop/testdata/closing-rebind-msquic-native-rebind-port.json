@@ -1,0 +1,46 @@
+{
+ "missing_on": "193.167.0.100:59022",
+ "download_checked": true,
+ "runner_paths": [
+  {
+   "dst": "193.167.0.100:57607",
+   "challenge": "3a21abba4d9505c7"
+  },
+  {
+   "dst": "193.167.0.100:59022",
+   "challenge": ""
+  }
+ ],
+ "on_path": [
+  {
+   "n": 14751,
+   "from_server": false,
+   "len": 34,
+   "frames": [
+    29
+   ],
+   "close_codes": [
+    0
+   ]
+  },
+  {
+   "n": 14752,
+   "from_server": true,
+   "len": 74,
+   "frames": [
+    3,
+    28,
+    0
+   ],
+   "close_codes": [
+    0
+   ]
+  }
+ ],
+ "responses": [
+  "3a21abba4d9505c7"
+ ],
+ "client_sources": [
+  "193.167.0.100:57399"
+ ]
+}
