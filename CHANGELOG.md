@@ -643,6 +643,10 @@ TLS and native layer (`kuicksilver-tls`, `kuicksilver-native`):
 - The TCP client session cache holds at most 256 sessions (the least recently stored one is evicted and its native
   session freed) and each Ktor client engine owns its own cache, which it clears when it closes; before, one process-wide
   cache grew without bound and outlived every engine.
+- A session cache (TCP and QUIC tickets) owns what is put into it: a store cancelled while it waited for the cache lock,
+  or made after the engine or endpoint had cleared the cache on close, lost the native session and never freed it (one
+  per such race in a 40-minute Linux arm64 soak). Such an entry is now freed, and a closed cache refuses new entries
+  (`SessionCacheTest.putCancelledWhileWaitingReleasesEntry`, `.putAfterCloseReleasesEntry`).
 - A TCP session ticket is cached before the application data that followed it is delivered, so a client that reads one
   response and closes keeps the ticket for its next connection.
 - `ksl`: setting the verify name a second time with the other identifier type (host after IP literal or the reverse)
@@ -698,6 +702,13 @@ HTTP/3 (`kuicksilver-http3`):
 - QPACK with the dynamic table on: a request or response stream that the peer reset, or whose body the reader
   abandoned, after its first HEADERS sent no Stream Cancellation, so the peer's encoder kept references to entries
   that trailers still in flight might use (they could never be evicted); one is now sent (RFC 9204 section 2.2.2.2).
+- QPACK with the dynamic table on: a request stream that the client reset before the server read its HEADERS, and a
+  response stream that the server reset before the client read its HEADERS, sent no Stream Cancellation either, so the
+  peer's encoder kept references to the entries those HEADERS used; both sides now send one
+  (`QpackDynamicTest.resetBeforeHeadersSendsCancellation`, `QpackStreamCancellationTest.responseResetBeforeHeadersSendsCancellation`).
+- QUIC: a connection kept the id of every stream its peer opened until it closed (a list only a test drained), one boxed
+  `Long` per peer stream — about 36,000 on the soak's long-lived HTTP/3 connection. The list is removed
+  (`StreamManagerRetentionJvmTest`).
 - Request pseudo-headers are validated like quic-go does (RFC 9114 section 4.3.1): a `:method` that is not a token
   (`GET /admin X`), a `:path` that does not start with `/` (or is `*` for OPTIONS) or holds whitespace, userinfo in
   `:authority` (or in the `host` standing in for it) and a second `host` field make the request malformed
