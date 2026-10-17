@@ -16,7 +16,9 @@
 # incomplete pcap: the runner's verdict does not stand either way), and a rebind cell of our server failed only because the
 # client started just before the simulator's rebind at 1 s, so the handshake ran across it and nobody could read the
 # PATH_CHALLENGE the runner checks (tools/interop/handshake-challenge.py; 5 of 10 runs of kuicksilver->quiche:rebind-addr on
-# 2026-10-16). --check-required merges the reruns (a green rerun counts), --results reports such cells only.
+# 2026-10-16), and a rebind cell whose client's CONNECTION_CLOSE was the first packet from a new path, answered by the server
+# with its own close there instead of a PATH_CHALLENGE (tools/interop/closing-rebind.py; 0.2.0 gate 6,
+# msquic->kuicksilver-native:rebind-port). --check-required merges the reruns (a green rerun counts), --results reports such cells only.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/../.." && pwd)"; cd "$root"
 [ -d /Applications/Wireshark.app/Contents/MacOS ] && export PATH="$PATH:/Applications/Wireshark.app/Contents/MacOS"   # the runner needs tshark

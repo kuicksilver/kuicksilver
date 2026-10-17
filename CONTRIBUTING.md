@@ -108,8 +108,11 @@ and their `negative_*` counterparts). A cell whose verdict rests on the environm
 rerun, up to five times while the rerun hits the environment again (`tools/interop/environment.sh`; `--check-required`
 counts a green rerun): a sim capture that was not flushed before teardown, and a rebind cell of our server failed only
 because the client started just before the simulator's rebind at 1 s, so that nobody could decrypt the PATH_CHALLENGE
-the runner checks when it went out (`tools/interop/handshake-challenge.py`). `bash tools/interop/environment-test.sh`
-runs those rules on `tools/interop/testdata`.
+the runner checks when it went out (`tools/interop/handshake-challenge.py`), and a rebind cell whose client's
+CONNECTION_CLOSE was the first packet from a new path (the rebind landed between the client's last packet and its close),
+answered by the server with its own CONNECTION_CLOSE there as RFC 9000 section 10.2 allows, not a PATH_CHALLENGE
+(`tools/interop/closing-rebind.py`; every earlier path must have passed the runner's check).
+`bash tools/interop/environment-test.sh` runs those rules on `tools/interop/testdata`.
 
 The floors were measured on a local host, so the thresholds file says `"blocking": false`: a cell below its floor is a
 warning (exit 0, a `::warning::` annotation in the weekly `perf` workflow) while a failed or missing cell still fails.

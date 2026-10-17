@@ -34,9 +34,25 @@ handshake_rebind() {
   done < <(find "$1" -mindepth 3 -maxdepth 3 -name output.txt 2>/dev/null | sort)
 }
 
+# Rebind cells failed only because a rebind landed between the client's last packet and its CONNECTION_CLOSE: the close is the
+# first packet from the new path, and the server's one RFC 9000 section 10.2 answer to it is a CONNECTION_CLOSE there, no
+# PATH_CHALLENGE (0.2.0 gate 6: msquic->kuicksilver-native:rebind-port, the native transfer ends at about 11 s since the clients
+# start after the first rebind, right on the third). tools/interop/closing-rebind.py proves it from both captures, including
+# that every earlier path passed the runner's check. Prints "<server>_<client> <case>" per cell.
+closing_rebind() {
+  local o cell
+  while IFS= read -r o; do
+    grep -q "did not contain a PATH_CHALLENGE" "$o" || continue
+    cell=$(dirname "$o")
+    python3 "$interop_tools/closing-rebind.py" "$cell" > /dev/null || continue
+    cell=${cell#"$1"/}; echo "${cell%%/*} ${cell#*/}"
+  done < <(find "$1" -mindepth 3 -maxdepth 3 -name output.txt 2>/dev/null | sort)
+}
+
 # Cells of a result directory whose verdict rests on the environment: "<server>_<client> <case> <why>", one line per cell.
 environment_cells() {
   { truncated_captures "$1" | sed 's/$/ the sim'"'"'s capture was not flushed before teardown (dumpcap summary missing in output.txt), the pcap is incomplete/'
     handshake_rebind "$1" | sed 's/$/ the rebind landed inside the handshake: the PATH_CHALLENGE the runner checks went out before the client or the runner could decrypt it (handshake-challenge.py)/'
+    closing_rebind "$1" | sed 's/$/ the rebind landed just before the client'"'"'s CONNECTION_CLOSE: the server answered the close from the new path with its own close, no path left to validate (closing-rebind.py)/'
   } | sort -u -k1,2
 }
