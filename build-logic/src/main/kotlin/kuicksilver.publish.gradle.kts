@@ -44,3 +44,6 @@ mavenPublishing {
         issueManagement { system.set("GitHub"); url.set("https://github.com/kuicksilver/kuicksilver/issues") }
     }
 }
+
+// CycloneDX SBOMs of every publication (build/sbom; SbomWiring.kt): attached to the GitHub release, not uploaded to Central
+registerCyclonedxSbom(descriptions[project.name] ?: "Kotlin Multiplatform QUIC, HTTP/3 and TLS 1.3 over OpenSSL 3.5")

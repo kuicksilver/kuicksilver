@@ -13,6 +13,7 @@ kotlinter = "5.7.0"
 maven-publish = "0.37.0"
 jazzer = "0.30.0"
 kotlinx-benchmark = "0.5.0"
+cyclonedx-core-java = "13.2.0"
 
 [libraries]
 kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }
@@ -44,5 +45,7 @@ kotlinx-benchmark-runtime = { module = "org.jetbrains.kotlinx:kotlinx-benchmark-
 kotlinx-benchmark-gradle-plugin = { module = "org.jetbrains.kotlinx:kotlinx-benchmark-plugin", version.ref = "kotlinx-benchmark" }
 kotlin-allopen-gradle-plugin = { module = "org.jetbrains.kotlin:kotlin-allopen", version.ref = "kotlin" }
 maven-publish-gradle-plugin = { module = "com.vanniktech:gradle-maven-publish-plugin", version.ref = "maven-publish" }
+# validateSbom only (kuicksilver.release): loaded in an isolated class loader, never on the build-logic class path
+cyclonedx-core-java = { module = "org.cyclonedx:cyclonedx-core-java", version.ref = "cyclonedx-core-java" }
 
 [plugins]

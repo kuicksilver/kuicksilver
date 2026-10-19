@@ -151,6 +151,14 @@ operating system.
   `OpenSSL-Version` and `OpenSSL-SHA256`.
 - **Symbols.** On Kotlin/Native and in the JNI libraries the OpenSSL inside cannot clash with another OpenSSL or
   BoringSSL in the same process (prefixed symbols on Kotlin/Native, a version script for JNI; ADR-0007).
+- **FIPS.** Kuicksilver is **not FIPS-certified**: neither the library nor any artifact has a FIPS 140-2 or 140-3
+  validation, and none is planned for 0.x. The bundled OpenSSL is built **without the FIPS provider**:
+  `tools/openssl/configure-flags.txt` does not pass `enable-fips` (OpenSSL 3 leaves the provider disabled by default),
+  `no-module` rules out any loadable provider, and the build makes only `libcrypto.a` and `libssl.a` (`make
+  build_libs`). Each release build checks this from OpenSSL's own `configdata.pm` (`tools/check/openssl-no-fips.sh`), and
+  the SBOM states it (`kuicksilver:openssl:fips-provider`). OpenSSL's FIPS validations cover only its FIPS provider,
+  built and installed as the security policy of a validated release prescribes; nothing of that is in our artifacts.
+  An application that needs FIPS-validated cryptography cannot get it from Kuicksilver.
 
 ## Platforms
 

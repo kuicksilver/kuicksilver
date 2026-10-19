@@ -12,7 +12,7 @@
 #   2. OpenSSL: fetch and verify the pinned tarball; rebuild all twelve targets from it, never from build/openssl or the build
 #      cache (KSL_OPENSSL_FRESH=1): linux-x64, linux-arm64 and mingw-x64 in Docker (one container at a time, under nice;
 #      linux-x64 and mingw run emulated on Apple Silicon), the macOS, iOS, Android and Kotlin/Native Linux ones on the host;
-#      no-sslkeylog in each; the prefixed Kotlin/Native archives are made again from them.
+#      no-sslkeylog and no FIPS provider in each; the prefixed Kotlin/Native archives are made again from them.
 #   3. The five JVM libraries, each into build/release/jni-artifacts/jni-<classifier> (the layout of the CI artifacts):
 #      osx-aarch_64, osx-x86_64 (cross-built with clang -arch x86_64), linux-x86_64, linux-aarch_64 (manylinux2014),
 #      windows-x86_64 (mingw-w64, tools/ci/jni-windows.sh). Checks per library: architecture, export whitelist, the shared
@@ -22,6 +22,10 @@
 #   5. publishToMavenLocal into build/release/m2 (never ~/.m2), file count and size against the Central limits; the published
 #      AAR's three libksl.so and every Kotlin/Native klib's static archives checked as the JVM libraries are (pinned OpenSSL
 #      inside, no sanitizer or coverage instrumentation, no debug sections, the export whitelist or the ksl_ prefix).
+#      Supply chain (docs/release.md, "Supply chain"; none of it goes to Central, so the deployment count is unchanged): the
+#      CycloneDX SBOM of every publication, checked against the CycloneDX 1.6 schema, in build/release/kuicksilver-<v>-sbom.zip;
+#      the SLSA provenance v1 statement build/release/kuicksilver-<v>.intoto.json (source commit, toolchain pins, OpenSSL
+#      tarball, digests of every file of the publication); both signed with the release key as the artifacts (.asc, checked).
 #   6. publishToMavenCentral (skipped by --dry-run), then the portal steps and the checks after publishing.
 #
 # Usage: tools/release/local-release.sh <version> [--dry-run [--unsigned]] [--resume] [--repro] [--release-commit <sha>]
@@ -40,6 +44,7 @@
 #   mavenCentralUsername / mavenCentralPassword, and signing.keyId + signing.password + signing.secretKeyRingFile
 #   or signingInMemoryKey + signingInMemoryKeyId + signingInMemoryKeyPassword.
 set -euo pipefail
+started=$(date +%s); given="$*"
 root="$(cd "$(dirname "$0")/../.." && pwd)"; cd "$root"
 . tools/check/llvm-tool.sh
 
@@ -145,10 +150,12 @@ rm -rf build/openssl build/openssl-prefixed
 for t in linux-x64 linux-arm64 mingw-x64; do   # Docker, one container at a time
   step "openssl: build $t (Docker)"                            once_more nice -n 10 bash tools/openssl/build-docker.sh "$t"
   step "openssl: no-sslkeylog ($t)"                            bash tools/check/keylog-disabled.sh "build/openssl/$t/include"
+  step "openssl: no FIPS provider ($t)"                        bash tools/check/openssl-no-fips.sh "$t"
 done
 for t in macos-arm64 macos-x64 ios-arm64 ios-sim-arm64 android-arm64 android-x86_64 android-arm linux-x64-kn linux-arm64-kn; do
   step "openssl: build $t"                                     nice -n 10 bash tools/openssl/build.sh "$t"
   step "openssl: no-sslkeylog ($t)"                            bash tools/check/keylog-disabled.sh "build/openssl/$t/include"
+  step "openssl: no FIPS provider ($t)"                        bash tools/check/openssl-no-fips.sh "$t"
 done
 
 # ------------------------------------------------------------------------------------------------------- 3. JNI libraries
@@ -297,6 +304,23 @@ step "android: AAR libksl.so (OpenSSL, exports, no sanitizers)"  check_aar
 step "native: klib archives (OpenSSL, ksl_ prefix, no sanitizers)" check_klibs
 echo "     local repository for consumer checks: $m2 (bash tools/check/consumer-smoke.sh $version with KSL_MAVEN_REPO=$m2)"
 
+# supply chain: for the GitHub release, never uploaded to Central (the count above stays what Central receives)
+echo "-- SBOM and provenance (GitHub release files, not part of the Central deployment)"
+sbom_zip="$out/kuicksilver-$version-sbom.zip"; prov="$out/kuicksilver-$version.intoto.json"
+rm -f "$sbom_zip" "$sbom_zip.asc" "$prov" "$prov.asc"
+step "sbom: CycloneDX per publication, schema 1.6, archive"      "${G[@]}" "${P[@]}" sbomZip
+echo "     $sbom_zip: $(unzip -Z1 "$sbom_zip" | wc -l | tr -d ' ') documents, sha256 $(sha "$sbom_zip")"
+prov_args=(--version "$version" --m2 "$m2" --out "$prov" --started "$started" --sbom-zip "$sbom_zip" --options "$given" --gate "$stamp")
+[ "$dry" = 1 ] && prov_args+=(--dry-run); [ "$signed" = 1 ] && prov_args+=(--signed)
+step "provenance: in-toto statement, SLSA provenance v1"         python3 tools/release/provenance.py "${prov_args[@]}"
+tail -1 "$logs/$(printf '%02d' $n).log" | sed 's/^/     /'
+if [ "$signed" = 1 ]; then
+  step "sign: provenance and SBOM archive (release key)"         "${G[@]}" "${P[@]}" signReleaseFiles -Pkuicksilver.release.sign="$prov,$sbom_zip"
+  step "sign: signatures by 22C1F2E4…C8D0EC68"                   bash tools/release/verify-signature.sh "$prov" "$sbom_zip"
+else
+  echo "     not signed (no key, or --unsigned): a release signs both with the release key"
+fi
+
 # --------------------------------------------------------------------------------------------------------------- 6. upload
 if [ "$dry" = 1 ]; then
   echo; echo "dry run of $version on $short complete: nothing uploaded$([ "$problems" -gt 0 ] && echo "; $problems precondition(s) a release would refuse (WARN above)")."
@@ -313,5 +337,6 @@ Deployment uploaded; nothing is released yet. Next, by hand:
   3. Consumer check from Central: samples/realtime-telemetry against io.kuicksilver:kuicksilver-bom:$version from
      mavenCentral() only (docs/release.md, "Every release", step 5).
   4. Then, and only then: git tag -s v$version -m "Kuicksilver $version" $short && git push origin main v$version,
-     and the GitHub release from the tag with the CHANGELOG section.
+     and the GitHub release from the tag with the CHANGELOG section, with these four files attached:
+     $sbom_zip(.asc) and $prov(.asc).
 NEXT

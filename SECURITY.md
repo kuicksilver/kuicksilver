@@ -79,6 +79,12 @@ from us, so we commit to the following.
 - **System OpenSSL.** On Linux, `ksl` can also be compiled against a system OpenSSL 3.5 or newer (`KSL_SYSTEM_OPENSSL`);
   published artifacts never do this. If you build that way, your operating system vendor is responsible for patching
   OpenSSL.
+- **Not FIPS.** Kuicksilver is not FIPS-certified, and the bundled OpenSSL is built without the FIPS provider (no
+  `enable-fips`, and `no-module`); see [docs/stability.md, OpenSSL](docs/stability.md#openssl). A build against a system
+  OpenSSL that has a FIPS provider does not make Kuicksilver FIPS-validated either.
+- **SBOM and provenance.** Each release from 0.2.1 attaches to its GitHub release a CycloneDX SBOM of every publication
+  (with OpenSSL as a component: version, tarball SHA-256, CPE, configure flags) and a signed build provenance statement;
+  see [docs/release.md, Supply chain](docs/release.md#supply-chain-sbom-and-provenance).
 
 A vulnerability in OpenSSL itself should be reported to the OpenSSL project
 (<https://openssl-library.org/policies/general/security-policy/>). If it is reachable through Kuicksilver in a way
