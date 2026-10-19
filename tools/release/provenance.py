@@ -7,7 +7,8 @@ An in-toto Statement v1 with a SLSA provenance v1 predicate: the source commit, 
 and what the host actually had, the OpenSSL tarball (version, SHA-256, signing key, configure flags), the Gradle distribution,
 and as subjects the SHA-256 of every file of the local publication that goes to Maven Central (no .asc, .md5 or .sha1) plus
 the SBOM archive. Byproducts: the JNI libraries and the OpenSSL archives of every target. local-release.sh signs the file
-with the release key (a detached .asc, as the Maven artifacts). Stdlib only; deterministic for the same inputs and times.
+with the release key (a detached .asc, as the Maven artifacts). Stdlib only, Python 3.9 or newer (no tomllib);
+--options is the argument list local-release.sh was given. Deterministic for the same inputs and times.
 
 Usage: provenance.py --version V --m2 DIR --out FILE --started EPOCH [--sbom-zip FILE] [--dry-run] [--signed]
                      [--options "..."] [--gate FILE]
@@ -21,7 +22,6 @@ import platform
 import re
 import subprocess
 import sys
-import tomllib
 
 REPO = "https://github.com/kuicksilver/kuicksilver"
 
@@ -43,6 +43,24 @@ def run(*cmd):
 
 def iso(epoch):
     return datetime.datetime.fromtimestamp(int(epoch), datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def toml_tables(path):
+    """The [table] / key = "value" subset of TOML the pin files use (no tomllib: macOS's /usr/bin/python3 is 3.9)."""
+    tables, cur = {}, None
+    for line in open(path).read().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        m = re.fullmatch(r"\[([A-Za-z0-9_.-]+)\]", line)
+        if m:
+            cur = tables.setdefault(m.group(1), {})
+            continue
+        m = re.fullmatch(r'([A-Za-z0-9_-]+)\s*=\s*"([^"]*)"\s*(#.*)?', line)
+        if not m or cur is None:
+            sys.exit(f"{path}: unsupported TOML line: {line}")
+        cur[m.group(1)] = m.group(2)
+    return tables
 
 
 def toml_value(path, key):
@@ -89,10 +107,8 @@ def main():
 
     commit = run("git", "rev-parse", "HEAD")
     tree_clean = run("git", "status", "--porcelain") == ""
-    with open("gradle/toolchains.toml", "rb") as f:
-        toolchains = tomllib.load(f)
-    with open("gradle/openssl.toml", "rb") as f:
-        ossl = tomllib.load(f)["openssl"]
+    toolchains = toml_tables("gradle/toolchains.toml")
+    ossl = toml_tables("gradle/openssl.toml")["openssl"]
     wrapper = dict(l.split("=", 1) for l in open("gradle/wrapper/gradle-wrapper.properties").read().splitlines() if "=" in l)
     gradle_url = wrapper["distributionUrl"].replace("\\:", ":")
     tarball = f"https://github.com/openssl/openssl/releases/download/openssl-{ossl['version']}/openssl-{ossl['version']}.tar.gz"
@@ -160,7 +176,7 @@ def main():
                 "externalParameters": {
                     "source": {"uri": f"git+{REPO}", "digest": {"gitCommit": commit}},
                     "version": o.version,
-                    "command": f"tools/release/local-release.sh {o.version} {o.options}".strip(),
+                    "command": f"tools/release/local-release.sh {o.options}".strip(),
                 },
                 "internalParameters": {
                     "dryRun": o.dry_run,

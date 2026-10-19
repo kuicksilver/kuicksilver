@@ -127,8 +127,10 @@ abstract class CyclonedxSbomTask : DefaultTask() {
                     }
                 is ModuleComponentIdentifier -> {
                     val files = hashes[id].orEmpty().map { it.file }
-                    // the main artifact <module>-<version>.<ext>; a component with several (cinterop klibs) lists each in a property
+                    // the main artifact <module>-<version>.<ext>; the others (cinterop klibs) are listed in properties
+                    // a Kotlin/Native component resolves to its main klib (ktor-io-iosArm64Main-3.6.0.klib) and maybe cinterop klibs
                     val primary = files.firstOrNull { it.name.startsWith("${id.module}-${id.version}.") } ?: files.singleOrNull()
+                        ?: files.filter { it.extension == "klib" && !it.name.contains("Cinterop") }.singleOrNull()
                     val ext = primary?.extension?.takeIf { it != "jar" }
                     val c = component(mavenPurl(id.group, id.module, id.version, ext), id.group, id.module, id.version, null, own = false)
                     primary?.let { c.sha256 = sha256(it) }
@@ -180,8 +182,8 @@ abstract class CyclonedxSbomTask : DefaultTask() {
         val ov = opensslVersion.get()
         val url = "https://github.com/openssl/openssl/releases/download/openssl-$ov/openssl-$ov.tar.gz"
         return Component(
-            ref = "pkg:generic/openssl/openssl@$ov", group = null, name = "openssl", version = ov,
-            purl = "pkg:generic/openssl/openssl@$ov?download_url=${url.replace(":", "%3A")}&checksum=sha256%3A${opensslSha256.get()}",
+            ref = "pkg:generic/openssl@$ov", group = null, name = "openssl", version = ov,
+            purl = "pkg:generic/openssl@$ov?download_url=${url.replace(":", "%3A")}&checksum=sha256%3A${opensslSha256.get()}",
             description = "OpenSSL, built from the pinned release tarball with a reduced configuration and linked statically",
             own = false,
         ).apply {

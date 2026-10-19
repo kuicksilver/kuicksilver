@@ -139,8 +139,9 @@ included) and attached to the GitHub release. Neither goes to Maven Central.
 `validateSbom` checks every document against the CycloneDX 1.6 JSON schema with
 [cyclonedx-core-java](https://github.com/CycloneDX/cyclonedx-core-java), the reference library that carries the schema;
 it is a library in an isolated class loader, not a Gradle plugin, and is verified like every dependency
-(`gradle/verification-metadata.xml`: by signature for cyclonedx-core-java, json-schema-validator, itu and stax2-api, by
-checksum for packageurl-java, snakeyaml and the junit-bom POM, whose signing keys are on no key server). No third-party
+(`gradle/verification-metadata.xml`: by signature for cyclonedx-core-java, json-schema-validator, itu, stax2-api,
+packageurl-java and snakeyaml, each new key trusted for that one version only; by checksum for the junit-bom 6.1.3 POM,
+signed by a JUnit key the file already lists as ignored). No third-party
 SBOM plugin is used: the CycloneDX Gradle plugin makes one document per Gradle project, not per publication, and cannot
 add the statically linked OpenSSL.
 
@@ -182,7 +183,8 @@ v1](https://slsa.dev/spec/v1.0/provenance) predicate.
 
 It is signed like the Maven artifacts: Gradle's signing plugin with the same key properties (`signReleaseFiles`),
 a detached armored `.asc`. `tools/release/verify-signature.sh <file>...` checks a signature against the release key
-(`22C1F2E4FCE94B28EB2C7DB0492ABD95C8D0EC68`, from `gradle/verification-keyring.keys`); `local-release.sh` runs it after
+(`22C1F2E4FCE94B28EB2C7DB0492ABD95C8D0EC68`, in `tools/release/kuicksilver-release-key.asc`, the key
+`gradle/verification-metadata.xml` trusts for `io.kuicksilver`); `local-release.sh` runs it after
 signing. A user checks a release the same way, then compares the subjects with the files from Central:
 
 ```
@@ -198,7 +200,7 @@ the signature shows who released it, not that the build followed the statement. 
 ephemeral builds; signing material out of reach of the build) either. The statement is a plain signed JSON file, not a
 DSSE envelope, so `slsa-verifier` does not read it. Two further limits: the subjects are the files of the local
 publication, and the upload is a second Gradle invocation on the same commit and outputs (up to date, so identical
-files; the `.asc` are made again and not covered); and nothing third-party witnesses the build, which is what the
+files; the `.asc` signatures are not covered); and nothing third-party witnesses the build, which is what the
 `release` workflow below could add once it is used (GitHub's artifact attestations, SLSA Build L2).
 
 ## Alternative: the `release` workflow (not used for 0.2.0)
