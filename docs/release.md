@@ -70,7 +70,8 @@ Done for the project in October 2026, kept here so it can be repeated for a new 
      `build/openssl`, which worktrees share and CI downloads, and the build cache are deleted or bypassed, never reused):
      `linux-x64`, `linux-arm64` and `mingw-x64` in Docker (one container at a time, under `nice`; `linux-x64` and
      `mingw-x64` emulated on Apple Silicon), `macos-arm64`, `macos-x64`, `ios-arm64`, `ios-sim-arm64`, the three Android
-     ABIs and the two Kotlin/Native Linux targets on the host; `no-sslkeylog` checked for each. Each build writes
+     ABIs and the two Kotlin/Native Linux targets on the host; `no-sslkeylog` and the absence of the FIPS provider
+     (`tools/check/openssl-no-fips.sh`) checked for each. Each build writes
      `provenance.txt` (the tarball's SHA-256, the configure line, the archives' SHA-256), which
      `-Pkuicksilver.openssl.prebuilt=true` checks before Gradle reuses the build (`tools/openssl/prebuilt-test.sh` runs
      its negative controls). `mingw-x64` is the `openssl-mingw-x64` the workflow downloads.
@@ -87,6 +88,10 @@ Done for the project in October 2026, kept here so it can be repeated for a new 
      The published AAR's three `libksl.so` and the static archives in each Kotlin/Native `cinterop-ksl` klib get the
      same checks as the JVM libraries (`tools/check/native-release.sh`: the pinned OpenSSL inside, no instrumentation or
      debug sections, the export whitelist for the `.so`, the `ksl_` prefix for the archives).
+   - The supply-chain files of [Supply chain](#supply-chain-sbom-and-provenance), for the GitHub release and not for
+     Central: `build/release/kuicksilver-<version>-sbom.zip` (the CycloneDX SBOM of every publication, checked against
+     the CycloneDX 1.6 schema) and `build/release/kuicksilver-<version>.intoto.json` (the build provenance), each signed
+     with the release key (`.asc`) and the signature checked. A dry run without a key leaves them unsigned.
    - `publishToMavenCentral`: **one Gradle invocation, one deployment** (several would produce several deployments and
      inconsistent root metadata), signed, `automaticRelease = false`:
      ```
@@ -104,8 +109,97 @@ Done for the project in October 2026, kept here so it can be repeated for a new 
    `io.kuicksilver:kuicksilver-quic:0.2.0` and its transitive modules from Maven Central, without `includeBuild` or
    mavenLocal. Its tests are not run there: they need `kuicksilver-testing`, which is not published.
 6. Only after the deployment is published: `git tag -s v0.2.0 -m "Kuicksilver 0.2.0"` on the release commit, push `main`
-   and the tag, and the GitHub release from the tag with the changelog section. The version is passed to Gradle; it is
+   and the tag, and the GitHub release from the tag with the changelog section. Attach the four supply-chain files of
+   step 3: `kuicksilver-<version>-sbom.zip`, `kuicksilver-<version>.intoto.json` and their `.asc`. The version is passed to Gradle; it is
    not stored in the tree.
+
+## Supply chain: SBOM and provenance
+
+From 0.2.1 every release has a CycloneDX SBOM and a build provenance statement, both made by `local-release.sh` (dry run
+included) and attached to the GitHub release. Neither goes to Maven Central.
+
+### SBOM
+
+`./gradlew sbomZip` (the root plugin `kuicksilver.release`) runs `cyclonedxSbom` in every published module
+(`build-logic/src/main/kotlin/Sbom.kt`, `SbomWiring.kt`) and writes one CycloneDX 1.6 JSON document per publication,
+`<artifactId>-<version>.cdx.json`, 64 for 0.2.x:
+
+- each platform publication (`-jvm`, `-android`, `-iosarm64`, ...) from the resolved graph of the configuration its
+  consumers get (`jvmRuntimeClasspath`, `androidRuntimeClasspath`, `<target>CompileKlibraries`): every component with
+  its package URL, the SHA-256 of the external artifacts Gradle downloaded (already checked by dependency verification),
+  and the dependency graph. The Kuicksilver modules carry no hash there; their digests are in the provenance;
+- the root publication of each module (`kuicksilver-quic`, ...) aggregating its platform publications, and the BOM
+  listing the seven modules;
+- what Gradle cannot see: the `ksl` C shim (its ABI version, the commit) and **OpenSSL** (version, tarball SHA-256,
+  download URL, CPE `cpe:2.3:a:openssl:openssl:<version>`, the configure flags, `fips-provider: not built`), statically
+  linked, under every publication that embeds `kuicksilver-native` or depends on it. Values come from
+  `gradle/openssl.toml`, `tools/openssl/configure-flags.txt` and `ksl.h`; the timestamp is the commit's, so the same commit
+  gives the same documents.
+
+`validateSbom` checks every document against the CycloneDX 1.6 JSON schema with
+[cyclonedx-core-java](https://github.com/CycloneDX/cyclonedx-core-java), the reference library that carries the schema;
+it is a library in an isolated class loader, not a Gradle plugin, and is verified like every dependency
+(`gradle/verification-metadata.xml`: by signature for cyclonedx-core-java, json-schema-validator, itu and stax2-api, by
+checksum for packageurl-java, snakeyaml and the junit-bom POM, whose signing keys are on no key server). No third-party
+SBOM plugin is used: the CycloneDX Gradle plugin makes one document per Gradle project, not per publication, and cannot
+add the statically linked OpenSSL.
+
+**GitHub release, not Central.** Decided 2026-10-20 for 0.2.1, on this evidence:
+
+- What libraries do. On Maven Central (checked 2026-10-20) none of ktor 3.6.0, OkHttp 5.5.0, Netty 4.2.19.Final,
+  netty-tcnative 2.0.84.Final, kotlinx-coroutines 1.11.0, kotlinx-io 0.9.1, gRPC 1.85.0, Conscrypt 2.7.0, Bouncy Castle
+  1.86, Jetty 12.1.14, Tomcat 11.0.27 or Spring 7.1.0-M2 publishes an SBOM next to its artifacts. Those that do are
+  single-artifact Maven builds with the CycloneDX Maven plugin in their parent POM: Apache Commons Lang 3.21.0
+  (`-cyclonedx.json`, `-cyclonedx.xml`, `.spdx.json`), Log4j (`-cyclonedx.xml`), Jackson 2.22.4
+  (`-sbom-cyclonedx.json`, `-sbom-cyclonedx.xml`). No Kotlin Multiplatform library we know of does.
+- What Central accepts. A file with a classifier (`<artifactId>-<version>-cyclonedx.json`) is an ordinary artifact to
+  the portal; it validates with its `.asc`, `.md5` and `.sha1`. So each SBOM file costs **4 files** of the deployment.
+- The limit. The 0.2.0 deployment was 1404 files against 1167 (30 days of grace while Sonatype reviews the limits).
+  On Central the SBOMs would add: JSON per publication 64 × 4 = **256** (1660 files); JSON and XML per publication
+  **512** (1916); JSON on the eight root publications only **32** (1436); JSON and XML there **64** (1468). Any of these
+  grows a deployment that is already over the limit. On the GitHub release they cost **0** Central files; the count of
+  step 5 is unchanged.
+
+Revisit when Central raises the limit: the cheapest useful form is one `-cyclonedx.json` on each root publication (the
+aggregate document, 32 files), which tools that read SBOMs from Maven coordinates can find.
+
+### Build provenance
+
+`tools/release/provenance.py` writes `kuicksilver-<version>.intoto.json`: an [in-toto Statement
+v1](https://github.com/in-toto/attestation/blob/main/spec/v1/statement.md) with a [SLSA provenance
+v1](https://slsa.dev/spec/v1.0/provenance) predicate.
+
+- `subject`: the SHA-256 of every file of the local publication that the deployment uploads (jars, AARs, klibs, POMs,
+  Gradle module files, sources and javadoc jars; not the `.asc`, `.md5`, `.sha1`), under its repository path
+  (`io/kuicksilver/<artifactId>/<version>/<file>`), plus the SBOM archive.
+- `buildDefinition`: the source (repository and commit), the version and the command line; the toolchain pins of
+  `gradle/toolchains.toml`, the OpenSSL pin of `gradle/openssl.toml`, the Kotlin version, and what the Mac actually
+  had (macOS, Xcode, NDK, Docker); the local gate record; as `resolvedDependencies` the commit, the OpenSSL tarball
+  (SHA-256, signing key fingerprint, configure flags with their hash), the Gradle distribution (its SHA-256 from the
+  wrapper properties), `verification-metadata.xml`, the version catalog, the Windows JDK and the local Docker images.
+- `runDetails`: the builder (this document, the owner's workstation), start and end, and as byproducts the five JNI
+  libraries and the `libcrypto.a`/`libssl.a` of all twelve OpenSSL targets.
+
+It is signed like the Maven artifacts: Gradle's signing plugin with the same key properties (`signReleaseFiles`),
+a detached armored `.asc`. `tools/release/verify-signature.sh <file>...` checks a signature against the release key
+(`22C1F2E4FCE94B28EB2C7DB0492ABD95C8D0EC68`, from `gradle/verification-keyring.keys`); `local-release.sh` runs it after
+signing. A user checks a release the same way, then compares the subjects with the files from Central:
+
+```
+tools/release/verify-signature.sh kuicksilver-0.2.1.intoto.json kuicksilver-0.2.1-sbom.zip
+python3 -c 'import json,sys; [print(s["digest"]["sha256"]+"  "+s["name"]) for s in json.load(open(sys.argv[1]))["subject"]]' \
+  kuicksilver-0.2.1.intoto.json > sums.txt     # then, in a mirror of the io/kuicksilver paths: shasum -a 256 -c sums.txt
+```
+
+**What this is worth.** This is **SLSA Build Level 1**: provenance exists and says how the artifacts were built, from
+which source, with which inputs. It is not Level 2, which needs a hosted build platform that generates and signs the
+provenance itself; here the same Mac and the same person build the artifacts, write the statement and hold the key, so
+the signature shows who released it, not that the build followed the statement. It is not Level 3 (isolated,
+ephemeral builds; signing material out of reach of the build) either. The statement is a plain signed JSON file, not a
+DSSE envelope, so `slsa-verifier` does not read it. Two further limits: the subjects are the files of the local
+publication, and the upload is a second Gradle invocation on the same commit and outputs (up to date, so identical
+files; the `.asc` are made again and not covered); and nothing third-party witnesses the build, which is what the
+`release` workflow below could add once it is used (GitHub's artifact attestations, SLSA Build L2).
 
 ## Alternative: the `release` workflow (not used for 0.2.0)
 

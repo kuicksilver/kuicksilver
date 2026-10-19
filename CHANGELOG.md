@@ -12,6 +12,18 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ## [Unreleased]
 
+### Added
+
+- Supply chain (`docs/release.md`, "Supply chain: SBOM and provenance"): a CycloneDX 1.6 SBOM of every publication
+  (64 documents: each platform publication, each module, the BOM), with the statically linked OpenSSL (version, tarball
+  SHA-256, CPE, configure flags) and the `ksl` shim as components, checked against the CycloneDX schema; and an in-toto
+  / SLSA provenance v1 statement (source commit, toolchain pins, OpenSSL tarball, SHA-256 of every published file),
+  signed with the release key. `local-release.sh` makes both, dry run included; they are attached to the GitHub release
+  and not uploaded to Maven Central, so the deployment's file count is unchanged. The provenance reaches SLSA Build
+  Level 1, not more: it is produced and signed on the machine that builds.
+- `docs/stability.md` and `SECURITY.md` state that Kuicksilver is not FIPS-certified and that the bundled OpenSSL is
+  built without the FIPS provider; every release build checks the latter (`tools/check/openssl-no-fips.sh`).
+
 ## [0.2.0] - 2026-10-15
 
 The first version published on Maven Central, made on top of the 0.1.0 candidate. That candidate, frozen on 2026-10-09,

@@ -9,11 +9,14 @@ plugins {
 group = "io.kuicksilver"
 version = providers.gradleProperty("kuicksilver.version").getOrElse("0.2.0-SNAPSHOT")
 
+val bomModules = listOf("native", "tls", "ktor-network", "quic", "http3", "ktor-client", "ktor-server").map { "kuicksilver-$it" }
 dependencies {
     constraints {
-        for (m in listOf("native", "tls", "ktor-network", "quic", "http3", "ktor-client", "ktor-server")) api(project(":kuicksilver-$m"))
+        for (m in bomModules) api(project(":$m"))
     }
 }
+// its CycloneDX SBOM lists the constrained modules (SbomWiring.kt; attached to the GitHub release with the others)
+registerCyclonedxSbom("Bill of materials for the Kuicksilver modules", platformConstraints = bomModules)
 
 mavenPublishing {
     publishToMavenCentral(automaticRelease = false)
