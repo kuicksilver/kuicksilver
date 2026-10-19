@@ -53,6 +53,7 @@ import io.kuicksilver.quic.core.refreshLocalTp
 import io.kuicksilver.quic.core.release
 import io.kuicksilver.quic.core.releasePathCid
 import io.kuicksilver.quic.core.requeueForProbe
+import io.kuicksilver.quic.core.revertHandshakeMove
 import io.kuicksilver.quic.core.setMtu
 import io.kuicksilver.quic.core.settleHandshakeValidated
 import io.kuicksilver.quic.core.silentClose
@@ -428,6 +429,12 @@ public class ConnectionCore internal constructor(
 
     /** Bytes received from a client address the handshake may move the active path to (`onHandshakeAddressChange`). */
     internal var handshakeCredit: io.kuicksilver.quic.core.HandshakeCredit? = null
+
+    /** The address an Initial moved the active path away from during the handshake, until the new one is validated (`revertHandshakeMove`). */
+    internal var handshakeFallback: io.kuicksilver.quic.core.HandshakeFallback? = null
+
+    /** A handshake-time move failed its validation: the active path keeps its address until the handshake completes. */
+    internal var handshakeMovesFrozen = false
     internal var closeFrame: CloseFrame? = null
 
     /** CONNECTION_CLOSE already carried by a packet of this space since the last (re)send trigger. */
@@ -789,7 +796,10 @@ public class ConnectionCore internal constructor(
             }
         }
         if (builder.pacerWakeup < t) t = builder.pacerWakeup
-        if (state == ConnectionState.Handshaking) timers.handshakeDeadline?.let { if (it < t) t = it }
+        if (state == ConnectionState.Handshaking) {
+            timers.handshakeDeadline?.let { if (it < t) t = it }
+            handshakeFallback?.let { if (it.deadline < t) t = it.deadline }
+        }
         val idle = idleDeadline()
         if (idle < t) t = idle
         val keep = keepAliveDeadline()
@@ -849,6 +859,8 @@ public class ConnectionCore internal constructor(
                     return
                 }
             }
+            // before the path loop: an unvalidated handshake-time move is undone, not given another validation period
+            handshakeFallback?.let { if (it.deadline <= now) revertHandshakeMove(it) }
         }
         if (idleDeadline() <=
             now

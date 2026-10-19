@@ -421,6 +421,7 @@ internal fun ConnectionCore.onPathResponse(data: Long) {
             p.nextChallengeAt = TimeMark.NEVER
             p.validatedAt = now
             paths.lastValidated = p
+            if (p === paths.active) handshakeFallback = null
             // a client gives back the ID of a path it only probed; a server keeps the one it answers a client's probe with, since the
             // client probes to migrate there next, and the switch must not need another spare ID (RFC 9000 section 9.5)
             if (p !== paths.active && (role == TlsRole.Client || !p.peerProbed)) releasePathCid(p)
@@ -445,7 +446,9 @@ internal fun ConnectionCore.onPathResponse(data: Long) {
  *    kuicksilver->quiche:rebind-addr sent its whole ServerHello flight to the dead old mapping for 2 s, until the client's next PTO.
  *    An on-path attacker could copy that datagram from a spoofed source first (RFC 9000 section 9.3.3); the flight then goes to
  *    the spoofed address within 3x the bytes received from it, the client's next Initial moves the path back once the copy's
- *    address has been quiet for a PTO, and its first Handshake packet at once: a delay, once per connection, never more traffic;
+ *    address has been quiet for a PTO, and its first Handshake packet at once. An attacker that keeps racing copies keeps that
+ *    address fresh and the client's own quiet, so a move an Initial made is undone when no Handshake packet validated the new
+ *    address within a validation period ([revertHandshakeMove]): a bounded delay, once per connection, never more traffic;
  *  * any other Initial (Initial keys are public, anyone can forge one): only once the current address went quiet for a PTO, and
  *    only when the server can lead the new address with a PATH_CHALLENGE (it holds 1-RTT keys): a repeat of the first half of a
  *    two-datagram ClientHello would otherwise send its Initial ACK there first.
@@ -467,6 +470,7 @@ internal fun ConnectionCore.onHandshakeAddressChange(
     val p = paths.active
     if (socket != p.socket) return
     if (!migrationAllowedFrom(from)) return // allowMigration = false (and the loopback/link-local rule) holds during the handshake too
+    if (handshakeMovesFrozen) return // a move already failed its validation: the address stays until the handshake completes
     val credit = handshakeCredit?.takeIf { it.from == from } ?: HandshakeCredit(from).also { handshakeCredit = it }
     if (credit.lastDatagram != datagram) {
         credit.lastDatagram = datagram
@@ -477,7 +481,7 @@ internal fun ConnectionCore.onHandshakeAddressChange(
     if (initial && haveKeys && now - lastReceivedOnActivePath < pto()) return
     if (!initial || haveKeys) {
         pendingHandshakeMove = null
-        applyHandshakeMove(from, completesClientHello = false)
+        applyHandshakeMove(from, completesClientHello = false, provisional = initial)
     } else {
         pendingHandshakeMove = from // decided once TLS ran on this datagram: only a ClientHello it completed moves the path
     }
@@ -493,21 +497,40 @@ internal class HandshakeCredit(
 
 /** [afterInput]: the datagram from [from] that recorded a pending move went through TLS; it moves the path if it completed the ClientHello. */
 internal fun ConnectionCore.onHandshakeDatagramDone(from: InetSocketAddress) {
-    if (writeKeys[3] != null) applyHandshakeMove(from, completesClientHello = true)
+    if (writeKeys[3] != null) applyHandshakeMove(from, completesClientHello = true, provisional = true)
 }
 
 /**
  * Moves the active path to [from] (see [onHandshakeAddressChange]). [completesClientHello]: the server only now got its keys, so no
- * ServerHello has left yet and no PATH_CHALLENGE leads; otherwise one does.
+ * ServerHello has left yet and no PATH_CHALLENGE leads; otherwise one does. [provisional]: an Initial moved it (anyone who saw the
+ * client's Initial can send one, or race a copy of it): the address it left is kept in [ConnectionCore.handshakeFallback] until a
+ * Handshake packet or a PATH_RESPONSE validates the new one, and [revertHandshakeMove] returns there after a validation period.
  */
 internal fun ConnectionCore.applyHandshakeMove(
     from: InetSocketAddress,
     completesClientHello: Boolean,
+    provisional: Boolean,
 ) {
     if (writeKeys[3] == null || state != io.kuicksilver.quic.ConnectionState.Handshaking) return
     val p = paths.active
     if (p.isRemote(from)) return
     val old = p.remote
+    val fallback = handshakeFallback
+    if (fallback != null && fallback.isAddress(from)) {
+        handshakeFallback = null // back where the unvalidated move started (a newer packet from the client's address, section 9.3.2)
+    } else if (provisional && fallback == null) {
+        // the first unvalidated move keeps the address before it; a further one before validation keeps that address and deadline
+        handshakeFallback =
+            HandshakeFallback(
+                old,
+                validated = p.state == PathState.Validated,
+                validatedAt = p.validatedAt,
+                received = p.amplification.received,
+                sent = p.amplification.sent,
+                addressValidated = p.amplification.validated,
+                deadline = now + validationTimeout(),
+            )
+    }
     p.remote = from
     p.validatedAt = TimeMark.NEVER
     p.amplification.reset()
@@ -538,6 +561,7 @@ internal fun ConnectionCore.applyHandshakeMove(
  */
 internal fun ConnectionCore.onInitialPathValidated() {
     val p = paths.active
+    handshakeFallback = null
     p.amplification.validated = true
     if (p.state == PathState.Validating) {
         p.handshakeValidated = true
@@ -560,4 +584,67 @@ internal fun ConnectionCore.settleHandshakeValidated(p: Path) {
     p.validatedAt = now
     paths.lastValidated = p
     events += ConnectionEvent.PathValidated(p.id)
+}
+
+/**
+ * The address a handshake-time Initial moved the active path away from (see [ConnectionCore.applyHandshakeMove]), with what the
+ * server knew about it, kept until the new address is validated or [deadline] passes.
+ */
+internal class HandshakeFallback(
+    val remote: InetSocketAddress,
+    val validated: Boolean,
+    val validatedAt: TimeMark,
+    val received: Long,
+    val sent: Long,
+    val addressValidated: Boolean,
+    val deadline: TimeMark,
+) {
+    private val remoteKey = AddressClass.ipKey(remote)
+
+    fun isAddress(a: InetSocketAddress): Boolean = remote == a || (remote.port == a.port && remoteKey == AddressClass.ipKey(a))
+}
+
+/**
+ * [fallback]'s deadline passed while the handshake runs and no Handshake packet or PATH_RESPONSE came from the address an Initial
+ * moved the active path to: the move is undone (RFC 9000 section 9.3.2: "revert to using the last validated peer address when
+ * validation of a new peer address fails", with the section 8.2.4 period, max(3 x PTO, 6 x initial RTT), as for any path validation).
+ *
+ * The new address may keep sending: an off-path attacker that sees the client's datagrams races a copy of each from a spoofed source
+ * (sections 9.3.3 and 21.1.3.2), so every genuine datagram after the copy is dropped as a duplicate, the spoofed address stays fresh
+ * and the client's own looks quiet; the address that keeps sending proves nothing, the client's ability to answer our flight does.
+ * The server returns to the address it had before the move, with that address's state and budget (and whatever it received from
+ * there since), resends its handshake flight there at once, and follows no other address until the handshake completes, as quic-go,
+ * quiche, msquic and ngtcp2 never do during a handshake (section 9: "The design of QUIC relies on endpoints retaining a stable
+ * address for the duration of the handshake"). A client that rebound for real is not hurt: its Handshake packet answers the flight
+ * well inside the period.
+ */
+internal fun ConnectionCore.revertHandshakeMove(fallback: HandshakeFallback) {
+    handshakeFallback = null
+    if (state != io.kuicksilver.quic.ConnectionState.Handshaking) return
+    handshakeMovesFrozen = true
+    pendingHandshakeMove = null
+    val p = paths.active
+    if (p.amplification.validated || fallback.isAddress(p.remote)) return
+    val old = p.remote
+    p.remote = fallback.remote
+    val credit = handshakeCredit?.takeIf { fallback.isAddress(it.from) }?.bytes ?: 0L
+    handshakeCredit = null
+    p.amplification.restore(fallback.received + credit, fallback.sent, fallback.addressValidated)
+    p.forgetChallenges()
+    p.challengePending = false
+    p.handshakeValidated = false
+    p.challengeDeadline = TimeMark.NEVER
+    p.nextChallengeAt = TimeMark.NEVER
+    p.challengeRetries = 0
+    p.state = if (fallback.validated) PathState.Validated else PathState.Unknown
+    p.validatedAt = fallback.validatedAt
+    lastReceivedOnActivePath = now
+    // what went to the abandoned address goes here now, not after the PTO backoff (RFC 9002 section 6.2.4 probes)
+    for (space in arrayOf(SpaceId.Initial, SpaceId.Handshake)) {
+        if (spaceDiscarded[space.ordinal] || loss.space(space).ackElicitingInFlight <= 0) continue
+        if (probePending[space.ordinal] < 1) probePending[space.ordinal] = 1
+        requeueForProbe(space, Int.MAX_VALUE)
+    }
+    onRemoteChanged?.invoke(old, fallback.remote)
+    qlog?.metricsUpdated(stats, now)
 }
