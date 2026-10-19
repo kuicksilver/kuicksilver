@@ -1106,6 +1106,110 @@ class PathTest {
         }
     }
 
+    /**
+     * Review of dbf26e67: an attacker alternates a raced copy of a client Handshake packet from a spoofed address with the client's
+     * next packet from its own address. Each copy moves the path (provisionally) and each genuine packet restores it; a restore that
+     * resent every space at once would answer every pair with the whole outstanding flight. Only the first restore of a connection
+     * (and the deadline's revert) resends at once; later ones leave it to the PTO, so the pairs cost ACKs, not flights.
+     */
+    @Test fun negative_alternatingCopiesDoNotResendTheFlightEachTime() {
+        val p = EndpointPair()
+        var held: ByteArray? = null
+        val hv =
+            io.kuicksilver.quic.wire
+                .PacketHeaderView()
+
+        fun handshakePacketOf(d: ByteArray): IntArray? {
+            val b = PacketBuffer.of(d)
+            try {
+                var off = 0
+                while (off < d.size &&
+                    io.kuicksilver.quic.wire.PacketHeaderCodec
+                        .parse(b, off, d.size, 8, hv)
+                ) {
+                    if (d[off].toInt() and 0x80 != 0 &&
+                        (d[off].toInt() and 0x30) ushr 4 == 2
+                    ) {
+                        return intArrayOf(off, hv.pnOffset, hv.packetEnd)
+                    }
+                    off = hv.packetEnd
+                }
+                return null
+            } finally {
+                b.close()
+            }
+        }
+        p.filterToServer = { _, b ->
+            if (handshakePacketOf(b) != null) {
+                if (held == null) held = b
+                false // the server sees no client Handshake packet but the forged ones below: it stays in the handshake
+            } else {
+                true
+            }
+        }
+        try {
+            p.connect()
+            assertTrue(p.runUntil(2.seconds) { held != null })
+            val s = p.server()
+            val d = held!!
+            val (off, pnOff, end) = handshakePacketOf(d)!!
+
+            // the client's Handshake packet [pn], PING and padding only (no CRYPTO: the handshake stays open)
+            fun forged(pn: Int): ByteArray {
+                val pkt = d.copyOfRange(off, end)
+                val pnLen = (pkt[0].toInt() and 0x03) + 1
+                val at = pnOff - off
+                for (i in 0 until pnLen) pkt[at + i] = ((pn ushr (8 * (pnLen - 1 - i))) and 0xff).toByte()
+                for (i in at + pnLen until pkt.size) pkt[i] = 0
+                pkt[at + pnLen] = 0x01
+                for (i in 0 until 8) pkt[pkt.size - 8 + i] = ((pn.toLong() ushr (8 * (7 - i))) and 0xff).toByte() // the Null tag
+                return pkt
+            }
+            val attacker = InetSocketAddress("10.9.9.9", 4444)
+            var fromAttacker = 0L
+            var toAttacker = 0L
+
+            fun deliver(
+                bytes: ByteArray,
+                from: InetSocketAddress,
+            ): Long {
+                p.feedNoAdmit(p.server, bytes, from)
+                if (from == attacker) fromAttacker += bytes.size
+                var toClient = 0L
+                while (true) {
+                    p.batch.clear()
+                    val n = s.poll(p.batch, p.now)
+                    if (n == 0) break
+                    for (i in 0 until n) {
+                        val len = p.batch.length(i)
+                        if (p.batch.address(i) == attacker) toAttacker += len else toClient += len
+                    }
+                }
+                return toClient
+            }
+            deliver(forged(5), p.clientAddr) // from the client's own address, where the whole flight went: validated
+            assertTrue(s.paths.active.amplification.validated)
+            var first = 0L
+            var later = 0L
+            val pairs = 20
+            for (k in 0 until pairs) {
+                deliver(forged(10 + 2 * k), attacker)
+                assertEquals(attacker, s.remoteAddressForTest, "the copy moves the path (pair $k)")
+                val back = deliver(forged(11 + 2 * k), p.clientAddr)
+                assertEquals(p.clientAddr, s.remoteAddressForTest, "the client's newer packet takes it back (pair $k)")
+                if (k == 0) first = back else later += back
+            }
+            assertEquals(1, s.handshakeResendsAtOnceForTest, "only the first restore resends at once")
+            assertTrue(
+                later <= (pairs - 1) * 100L,
+                "$later bytes to the client over ${pairs - 1} further pairs (the first restore sent $first)",
+            )
+            assertTrue(toAttacker <= 3 * fromAttacker, "$toAttacker bytes to the spoofed address for $fromAttacker received from it")
+        } finally {
+            p.close()
+        }
+    }
+
     @Test fun natRebindDuringHandshakeIsFollowedByTheServer() {
         val p = EndpointPair()
         try {
@@ -1299,6 +1403,287 @@ class PathTest {
         }
     }
 
+    /**
+     * Review of 0.2.0 (9f35cde5): an off-path attacker that sees the client's datagrams (RFC 9000 section 21.1.3.2) races a copy of
+     * every one of them from a spoofed address, so the copy that completes the ClientHello moves the path there and every genuine
+     * datagram after it is dropped as a duplicate: the spoofed address stays fresh and the client's own looks quiet. Before, the
+     * unvalidated active path had no deadline and the handshake was held there until the handshake timeout. The move is now undone
+     * once it went a validation period (RFC 9000 section 8.2.4) without a Handshake packet from the new address (section 9.3.2:
+     * revert to the address before it), and the handshake completes with the real client within that bound.
+     */
+    @Test fun negative_spoofedAddressKeptFreshFallsBackToTheClientWithinTheValidationTimeout() {
+        val p = EndpointPair(crypto = KslQuicCrypto)
+        try {
+            val h = SplitHello(p)
+            val attacker = InetSocketAddress("10.9.9.9", 4444)
+            val first = h.flight()
+            val s = assertNotNull(p.feed(p.server, first[0], p.clientAddr))
+            for ((to, bytes) in h.serverSends(s)) if (to == p.clientAddr) p.feedNoAdmit(p.client, bytes, p.serverAddr)
+            p.drain(h.c)
+            var fromAttacker = 0L
+            var toAttacker = 0L
+
+            fun race(d: ByteArray) { // the attacker's copy wins the race while the server is in its handshake; the genuine one follows
+                if (s.state == io.kuicksilver.quic.ConnectionState.Handshaking) {
+                    p.feedNoAdmit(p.server, d, attacker)
+                    fromAttacker += d.size
+                }
+                p.feedNoAdmit(p.server, d, p.clientAddr)
+            }
+            race(first[1])
+            assertEquals(attacker, s.remoteAddressForTest, "the copy that completes the ClientHello moves the path")
+            val movedAt = p.now
+            val bound = movedAt + s.validationTimeout() + s.pto()
+            val end = movedAt + QuicConfig.Default.handshakeTimeout
+            while (p.now < end &&
+                !(h.c.state == io.kuicksilver.quic.ConnectionState.Confirmed && s.state == io.kuicksilver.quic.ConnectionState.Confirmed)
+            ) {
+                for ((to, bytes) in h.serverSends(s)) {
+                    if (to == attacker) {
+                        toAttacker += bytes.size
+                    } else if (to == p.clientAddr) {
+                        p.feedNoAdmit(p.client, bytes, p.serverAddr)
+                    }
+                }
+                p.drain(h.c)
+                p.drain(s)
+                val out = h.flight()
+                for (d in out) race(d)
+                if (out.isNotEmpty()) continue
+                p.now = maxOf(p.now + 1.milliseconds, minOf(h.c.nextTimeoutOrNever(), s.nextTimeoutOrNever()))
+                if (h.c.nextTimeoutOrNever() <= p.now) h.c.onTimeout(p.now)
+                if (s.nextTimeoutOrNever() <= p.now) s.onTimeout(p.now)
+            }
+            assertEquals(
+                io.kuicksilver.quic.ConnectionState.Confirmed,
+                h.c.state,
+                "the client confirms the handshake (server ${s.state}, ${p.closed(s)})",
+            )
+            assertEquals(io.kuicksilver.quic.ConnectionState.Confirmed, s.state)
+            assertTrue(p.now <= bound, "confirmed ${p.now - movedAt} after the move, bound ${bound - movedAt}")
+            assertEquals(p.clientAddr, s.remoteAddressForTest, "the path is back on the client's own address")
+            assertTrue(toAttacker <= 3 * fromAttacker, "$toAttacker bytes to the spoofed address for $fromAttacker received from it")
+            assertEquals(1L, p.server.stats.connectionsCreated)
+        } finally {
+            p.close()
+        }
+    }
+
+    /** True when [d] holds a long-header Handshake packet (QUIC v1), alone or coalesced. */
+    private fun hasHandshakePacket(d: ByteArray): Boolean {
+        val hv =
+            io.kuicksilver.quic.wire
+                .PacketHeaderView()
+        val b = PacketBuffer.of(d)
+        try {
+            var off = 0
+            while (off < d.size &&
+                io.kuicksilver.quic.wire.PacketHeaderCodec
+                    .parse(b, off, d.size, 8, hv)
+            ) {
+                if (d[off].toInt() and 0x80 == 0) return false
+                if ((d[off].toInt() and 0x30) ushr 4 == 2) return true
+                off = hv.packetEnd
+            }
+            return false
+        } finally {
+            b.close()
+        }
+    }
+
+    /** The client [c] and the server it creates, their datagrams handed over by hand; [route] decides where each client datagram comes from. */
+    private class HandPump(
+        val p: EndpointPair,
+        val c: ConnectionCore,
+    ) {
+        var s: ConnectionCore? = null
+
+        fun clientSends(route: (ByteArray) -> Unit): Int {
+            p.batch.clear()
+            val n = c.poll(p.batch, p.now)
+            val out = List(n) { p.batch.buffer(it).toByteArray(p.batch.length(it)) }
+            for (d in out) {
+                if (s == null) s = p.feed(p.server, d, p.clientAddr) else route(d)
+            }
+            return n
+        }
+
+        /** Everything the server sends now: [deliver] says whether the client receives a datagram sent to that address. */
+        fun serverSends(deliver: (InetSocketAddress, ByteArray) -> Boolean) {
+            val srv = s ?: return
+            while (true) {
+                p.batch.clear()
+                val n = srv.poll(p.batch, p.now)
+                if (n == 0) break
+                val all = List(n) { p.batch.address(it)!! to p.batch.buffer(it).toByteArray(p.batch.length(it)) }
+                for ((to, bytes) in all) if (deliver(to, bytes)) p.feedNoAdmit(p.client, bytes, p.serverAddr)
+            }
+            p.drain(c)
+            p.drain(srv)
+        }
+
+        /** Runs both sides' timers up to the next one due. */
+        fun advance() {
+            val srv = s!!
+            p.now = maxOf(p.now + 1.milliseconds, minOf(c.nextTimeoutOrNever(), srv.nextTimeoutOrNever()))
+            if (c.nextTimeoutOrNever() <= p.now) c.onTimeout(p.now)
+            if (srv.nextTimeoutOrNever() <= p.now) srv.onTimeout(p.now)
+        }
+    }
+
+    /**
+     * Review of 98a233f3 (0.2.1): a Handshake packet from a new address moved the path at once and validated that address (the
+     * comment said "a Handshake packet proves the client"); the path then settled as validated without a PATH_RESPONSE, so one copied
+     * datagram sent the whole connection's downlink to an address of the attacker's choosing, with no deadline. The attacker here
+     * races copies from the client's second flight on (its Handshake packets, its Finished among them), never an Initial copy. A
+     * Handshake packet now validates an address only when the whole flight went there; the move it makes is provisional and undone
+     * at the validation deadline, after the handshake completed too, and the handshake completes on the client's own address.
+     */
+    @Test fun negative_racedHandshakePacketDoesNotValidateTheSpoofedAddress() {
+        val p = EndpointPair()
+        try {
+            val h = HandPump(p, p.connect())
+            val attacker = InetSocketAddress("10.9.9.9", 4444)
+            var fromAttacker = 0L
+            var toAttacker = 0L
+            var movedAt: io.kuicksilver.quic.TimeMark? = null
+            var attackerValidated = false
+            val end = p.now + QuicConfig.Default.handshakeTimeout
+            var racing = false
+
+            fun watch() {
+                val a = h.s?.paths?.active ?: return
+                if (a.isRemote(attacker)) {
+                    if (movedAt == null) movedAt = p.now
+                    if (a.amplification.validated || a.state == PathState.Validated) attackerValidated = true
+                }
+                for (q in h.s!!.paths.all) {
+                    if (q.isRemote(attacker) &&
+                        (q.amplification.validated || q.state == PathState.Validated)
+                    ) {
+                        attackerValidated = true
+                    }
+                }
+            }
+            while (p.now < end &&
+                !(h.c.state == io.kuicksilver.quic.ConnectionState.Confirmed && h.s?.state == io.kuicksilver.quic.ConnectionState.Confirmed)
+            ) {
+                val sent =
+                    h.clientSends { d ->
+                        if (hasHandshakePacket(d)) racing = true // from the client's second flight on, every datagram is raced
+                        if (racing) {
+                            p.feedNoAdmit(p.server, d, attacker)
+                            fromAttacker += d.size
+                            watch()
+                        }
+                        p.feedNoAdmit(p.server, d, p.clientAddr)
+                        watch()
+                    }
+                h.serverSends { to, bytes ->
+                    if (to == attacker) toAttacker += bytes.size
+                    to == p.clientAddr
+                }
+                watch()
+                if (sent == 0) h.advance()
+                watch()
+            }
+            val s = assertNotNull(h.s)
+            val moved = assertNotNull(movedAt, "the raced Handshake packet moves the path")
+            assertFalse(attackerValidated, "the spoofed address is never validated")
+            assertEquals(io.kuicksilver.quic.ConnectionState.Confirmed, h.c.state, "the client confirms (server ${s.state})")
+            assertEquals(io.kuicksilver.quic.ConnectionState.Confirmed, s.state)
+            assertTrue(p.now <= moved + s.validationTimeout() + s.pto(), "confirmed ${p.now - moved} after the move")
+            assertTrue(toAttacker <= 3 * fromAttacker, "$toAttacker bytes to the spoofed address for $fromAttacker received from it")
+            assertEquals(1L, p.server.stats.connectionsCreated)
+        } finally {
+            p.close()
+        }
+    }
+
+    /**
+     * The client's mapping changes after our ServerHello left: its Handshake packet (its Finished) comes from a new address. The path
+     * follows at once, led by a PATH_CHALLENGE within 3x the bytes received there; the Handshake packet does not validate the address
+     * (the flight went to the old one), the client's answer from the new address does: its PATH_RESPONSE, or its acknowledgement of
+     * the challenge's packet (or of anything else sent there), whichever the server reads first.
+     */
+    @Test fun handshakeTimeRebindAfterTheServerHelloIsValidatedByTheClientsAnswer() {
+        val p = EndpointPair()
+        try {
+            val h = HandPump(p, p.connect())
+            val newPort = InetSocketAddress("10.0.0.1", 40002)
+            var rebound = false
+            var fromNew = 0L
+            var toNew = 0L
+            var validatedBeforeAnswer = false
+            var answered = false
+            val end = p.now + 5.seconds
+            while (p.now < end && !(answered && h.s!!.pathState(h.s!!.stats.currentPath) == PathState.Validated)) {
+                val sent =
+                    h.clientSends { d ->
+                        if (hasHandshakePacket(d)) rebound = true
+                        val src = if (rebound) newPort else p.clientAddr
+                        val s = h.s!!
+                        if (rebound && s.paths.active.isRemote(newPort) && !answered) {
+                            answered = true // the client's first datagram after the move: its answer to the challenge
+                            if (s.paths.active.amplification.validated) validatedBeforeAnswer = true
+                            assertTrue(toNew <= 3 * fromNew, "$toNew bytes to the new address for $fromNew received before its answer")
+                        }
+                        if (rebound) fromNew += d.size
+                        p.feedNoAdmit(p.server, d, src)
+                    }
+                h.serverSends { to, bytes ->
+                    if (to == newPort) toNew += bytes.size
+                    to == (if (rebound) newPort else p.clientAddr)
+                }
+                if (sent == 0) h.advance()
+            }
+            val s = assertNotNull(h.s)
+            assertTrue(rebound && answered, "the client answered from the new address")
+            assertEquals(newPort, s.remoteAddressForTest)
+            assertFalse(validatedBeforeAnswer, "the Handshake packet alone does not validate the new address")
+            assertEquals(PathState.Validated, s.pathState(s.stats.currentPath), "the answer validates it")
+            assertTrue(s.challengedAddressesForTest.contains(newPort), "a PATH_CHALLENGE led the move")
+            assertTrue(p.events[s]!!.any { it is ConnectionEvent.PathValidated }, "the client's answer validates it")
+            assertEquals(io.kuicksilver.quic.ConnectionState.Confirmed, s.state)
+            assertNull(s.handshakeFallback)
+        } finally {
+            p.close()
+        }
+    }
+
+    /**
+     * The other side of [negative_spoofedAddressKeptFreshFallsBackToTheClientWithinTheValidationTimeout]: a client that really rebound
+     * answers the flight from its new address with a Handshake packet, which validates it (RFC 9000 section 8.1), so the move stays
+     * well past the validation period the fallback waits for, and the old address is not taken back.
+     */
+    @Test fun handshakeTimeRebindValidatedByTheHandshakeOutlastsTheFallbackDeadline() {
+        val p = EndpointPair(crypto = KslQuicCrypto)
+        try {
+            val h = SplitHello(p)
+            val (s, repeat) = h.rebindWithinTheHello(delay = 500.milliseconds, repeatAfter = Duration.ZERO)
+            for (d in repeat) p.feedNoAdmit(p.server, d, h.newPort)
+            assertEquals(h.newPort, s.remoteAddressForTest, "the datagram that completes the ClientHello moves the path at once")
+            val until = p.now + s.validationTimeout() * 2
+            while (p.now < until) {
+                for ((to, bytes) in h.serverSends(s)) if (to == h.newPort) p.feedNoAdmit(p.client, bytes, p.serverAddr)
+                p.drain(h.c)
+                p.drain(s)
+                val out = h.flight()
+                for (d in out) p.feedNoAdmit(p.server, d, h.newPort)
+                if (out.isNotEmpty()) continue
+                p.now = maxOf(p.now + 1.milliseconds, minOf(until, h.c.nextTimeoutOrNever(), s.nextTimeoutOrNever()))
+                if (h.c.nextTimeoutOrNever() <= p.now) h.c.onTimeout(p.now)
+                if (s.nextTimeoutOrNever() <= p.now) s.onTimeout(p.now)
+            }
+            assertEquals(io.kuicksilver.quic.ConnectionState.Confirmed, h.c.state)
+            assertEquals(io.kuicksilver.quic.ConnectionState.Confirmed, s.state)
+            assertEquals(h.newPort, s.remoteAddressForTest, "the validated new address is kept")
+            assertNull(s.handshakeFallback)
+        } finally {
+            p.close()
+        }
+    }
+
     /** The Initial spoof guard still holds: with the keys already there, an Initial from a new address inside the PTO moves nothing. */
     @Test fun negative_initialThatCompletesNothingDoesNotMoveThePathInsideThePto() {
         val p = EndpointPair(crypto = KslQuicCrypto)
@@ -1371,8 +1756,8 @@ class PathTest {
 
     /**
      * Review of k7/f1-core: one Initial from a new address (public keys, so anyone can forge it) makes a handshaking server challenge that
-     * address; with no Handshake packet after it, the passed validation deadline must move on with the repeat instead of staying in the
-     * past and making every timer check due again until the handshake timeout.
+     * address; with no Handshake packet after it, the passed validation deadline must not stay in the past and make every timer check
+     * due again until the handshake timeout. (0.2.1: the deadline now undoes the move instead of opening a new validation period.)
      */
     @Test fun negative_spoofedInitialFromNewAddressDoesNotSpinTimers() {
         val p = EndpointPair()
@@ -1397,7 +1782,13 @@ class PathTest {
             val end = p.now + QuicConfig.Default.handshakeTimeout
             p.now = maxOf(p.now, path.challengeDeadline - 10.milliseconds)
             p.step() // the validation deadline passes while the handshake is still running
-            assertTrue(s.state == io.kuicksilver.quic.ConnectionState.Handshaking && path.state == PathState.Validating)
+            // since the 0.2.1 review the move is undone at its validation deadline (no Handshake packet came from the new address);
+            // before, a new validation period began: either way no deadline stays in the past
+            assertTrue(s.state == io.kuicksilver.quic.ConnectionState.Handshaking)
+            assertTrue(
+                path.isRemote(p.clientAddr) && path.state != PathState.Validating,
+                "the move is undone at its validation deadline (${path.remote}, ${path.state})",
+            )
             assertTrue(s.nextTimeoutOrNever() >= p.now + s.pto(), "next timer ${s.nextTimeoutOrNever()} is a PTO after ${p.now}")
             var fired = 0
             while (p.now < end && s.state == io.kuicksilver.quic.ConnectionState.Handshaking) {

@@ -29,7 +29,12 @@ internal class Path(
         set(value) {
             field = value
             remoteKey = AddressClass.ipKey(value)
+            addressEpoch++
         }
+
+    /** Counts changes of [remote]: a packet sent in this epoch went to the current address ([io.kuicksilver.quic.recovery.SentPacket.addressEpoch]). */
+    var addressEpoch: Int = 0
+        private set
     var remoteKey: AddressClass.IpKey = AddressClass.ipKey(remote)
         private set
 

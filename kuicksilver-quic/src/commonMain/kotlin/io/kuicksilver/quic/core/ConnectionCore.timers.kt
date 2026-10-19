@@ -203,6 +203,8 @@ internal class ConnectionLossListener(
         for (i in 0 until f.cryptoCount) core.cryptoStreams.send[f.cryptoLevel[i]].onAcked(f.cryptoOffset[i], f.cryptoLength[i])
         if (f.streamCount > 0 || f.idCount > 0) core.streams.onFramesAcked(f)
         if (space == SpaceId.Handshake) core.loss.peerAddressValidated = true
+        // Handshake and 1-RTT acknowledgements cannot be forged: one for a packet sent to the client's current address proves it
+        if (space != SpaceId.Initial && core.role == io.kuicksilver.tls.TlsRole.Server) core.onHandshakePathAcked(p.pathId, p.addressEpoch)
         if (f.flags and SentFrames.HANDSHAKE_DONE != 0) core.sendHandshakeDone = false
         if (space == SpaceId.Application) core.keyPhase?.onPacketAcked(p.pn, core.now)
         for (i in 0 until f.idCount) if (f.idKind[i] == SentFrames.ID_RETIRE_CONNECTION_ID) core.cids.onRetireAcked(f.idValue[i])

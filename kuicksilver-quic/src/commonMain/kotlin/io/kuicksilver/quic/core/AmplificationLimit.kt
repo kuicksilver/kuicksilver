@@ -23,6 +23,17 @@ internal class AmplificationLimit(
         validated = false
     }
 
+    /** The path's address is set back to one it had before (a reverted handshake-time move): that address's accounting returns. */
+    fun restore(
+        received: Long,
+        sent: Long,
+        validated: Boolean,
+    ) {
+        this.received = received
+        this.sent = sent
+        this.validated = validated
+    }
+
     fun onSent(bytes: Int) {
         sent += bytes
     }
