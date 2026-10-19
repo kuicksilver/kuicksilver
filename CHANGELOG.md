@@ -23,6 +23,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   Level 1, not more: it is produced and signed on the machine that builds.
 - `docs/stability.md` and `SECURITY.md` state that Kuicksilver is not FIPS-certified and that the bundled OpenSSL is
   built without the FIPS provider; every release build checks the latter (`tools/check/openssl-no-fips.sh`).
+- Interop tooling: `KSL_INTEROP_TAG` makes `build-image.sh` and `run-local.sh` build and run
+  `kuicksilver-interop[-native]:<tag>` instead of `:local`.
 
 ### Fixed
 
@@ -55,6 +57,22 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   copies of its packets from its old address keeps being taken back to the dead old address and the handshake fails at
   the handshake timeout, as it does with those implementations; challenging both candidates as separate paths is on the
   roadmap for 0.2.x.
+- Interop tooling: the `rebind-port` cells' transfers ended on the simulator's rebind at 11 s. The clients started after
+  the first rebind (0.2.0), and over the 10 Mbit/s link the transfer takes 9-10.5 s whatever the peer, so 92 of 110
+  measured rebind cells closed within 0.5 s of that rebind, and a client's CONNECTION_CLOSE could open the new path
+  (`msquic->kuicksilver-native:rebind-port`, 0.2.0 gate 6) or end the connection before it answered the server's
+  PATH_CHALLENGE there. In `rebind-port` `tools/interop/sim-entrypoint.sh` now opens the clients' port 1.25 s after the
+  first rebind: clients poll it once a second, so every client starts one second later and the transfers end between the
+  rebinds at 11 s and 16 s, at least 0.56 s from either in 33 measured runs. Half a second would not do: the emulated
+  peers' clients still start on the same poll as before. `rebind-addr` keeps the 0.2.0 start: its binding from 11 s on
+  is one ngtcp2's server never receives from, and with the later start all five
+  `ngtcp2->kuicksilver[-native]:rebind-addr` runs stalled until the next rebind (one failed). `closing-rebind.py` stays
+  as a backstop; `KSL_INTEROP_START_GATE` overrides the delay.
+- Interop tooling: a cell the runner timed out was reported as `ENVIRONMENT` (an unflushed capture) and rerun up to five
+  times (`kuicksilver->picoquic:v2`, the known picoquic defect, in every 0.2.0 gate run of the JVM image). The runner
+  cuts the simulator's output off at its timeout, so the `dumpcap` summaries are missing whatever the capture did, and
+  it fails the cell without reading a capture; `tools/interop/environment.sh` now leaves such a cell to the endpoints'
+  verdict, also when it is required, so a hang is not rerun until it happens to pass.
 
 ## [0.2.0] - 2026-10-15
 

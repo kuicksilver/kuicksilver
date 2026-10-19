@@ -5,7 +5,8 @@
 # and for sim-entrypoint.sh's rebind start gate on stubs (no runner, no Docker, no tshark; needs python3 and jq).
 # KSL_INTEROP_CELL=<a result cell directory with its pcaps> also runs the classification on that real cell (needs tshark), e.g.
 # build/interop/20261016-045713/quiche-server/kuicksilver_quiche/rebind-addr from the 0.2.0 gate; KSL_INTEROP_CLOSE_CELL the same for
-# closing-rebind.py, e.g. build/interop/20261017-054938/msquic-client/msquic_kuicksilver-native/rebind-port (0.2.0 gate 6).
+# closing-rebind.py, e.g. build/interop/20261017-054938/msquic-client/msquic_kuicksilver-native/rebind-port (0.2.0 gate 6); KSL_INTEROP_TIMEOUT_CELL
+# a cell the runner timed out, which must not be listed, e.g. build/interop/20261017-175019/picoquic-server/kuicksilver_picoquic/v2 (0.2.0 gate).
 # Usage: environment-test.sh
 set -uo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"; td="$here/testdata"; hc="$here/handshake-challenge.py"
@@ -95,9 +96,18 @@ check "close: our server's cell is analysed as well"           2 "cannot analyse
 # environment_cells: an unflushed capture (the earlier rule) is listed with its reason, a flushed one and the cells above are not
 mk ngtcp2-server/kuicksilver_ngtcp2 amplificationlimit "Capturing on 'eth0'" "Capturing on 'eth1'" "Packets received/dropped on interface 'eth0': 71/0"
 mk ngtcp2-server/kuicksilver_ngtcp2 handshake "Capturing on 'eth0'" "Capturing on 'eth1'" "Packets received/dropped on interface 'eth0': 9/0" "Packets received/dropped on interface 'eth1': 9/0"
-for role in quiche-server quiche-client quinn-server ngtcp2-server msquic-client msquic-server; do environment_cells "$tmp/res/$role"; done > "$tmp/cells.txt" 2>/dev/null
+# the runner's timeout cuts the sim's output off (no summary of either interface) and fails the cell without reading a pcap: not ENVIRONMENT
+# (0.2.0 gate, run 20261017-175019: kuicksilver->picoquic:v2, rerun five times); neither when one summary made it into the output
+mk picoquic-server/kuicksilver_picoquic v2 "Capturing on 'eth1'" "Capturing on 'eth0'" "Test failed: took longer than 60s." "invalid spec: :/www:ro: empty section between colons"
+mk picoquic-server/kuicksilver_picoquic amplificationlimit "Capturing on 'eth1'" "Capturing on 'eth0'" "Packets received/dropped on interface 'eth0': 40/0" "Test failed: took longer than 60s."
+# a check that did run on a capture whose summary is missing stays ENVIRONMENT, whatever the verdict says about time
+mk quic-go-server/kuicksilver_quic-go transfer "Capturing on 'eth0'" "Capturing on 'eth1'" "Packets received/dropped on interface 'eth1': 30/0" "Missing files: took longer than expected"
+for role in quiche-server quiche-client quinn-server ngtcp2-server msquic-client msquic-server picoquic-server quic-go-server; do environment_cells "$tmp/res/$role"; done > "$tmp/cells.txt" 2>/dev/null
 check "environment_cells lists the unflushed capture" 0 "kuicksilver_ngtcp2 amplificationlimit the sim's capture was not flushed" -- cat "$tmp/cells.txt"
-check "environment_cells lists nothing else" 0 "" -- test "$(wc -l < "$tmp/cells.txt" | tr -d ' ')" = 1
+check "environment_cells lists a missing summary without a timeout" 0 "kuicksilver_quic-go transfer the sim's capture was not flushed" -- cat "$tmp/cells.txt"
+check "a runner timeout is no unflushed capture"     1 "" -- grep -q "kuicksilver_picoquic v2" "$tmp/cells.txt"
+check "  nor with one summary present"               1 "" -- grep -q "kuicksilver_picoquic amplificationlimit" "$tmp/cells.txt"
+check "environment_cells lists nothing else" 0 "" -- test "$(wc -l < "$tmp/cells.txt" | tr -d ' ')" = 2
 
 # sim-entrypoint.sh in a rebind scenario: the ready port refuses clients until the first rebind is over (stub run.sh, iptables,
 # netstat; the scenario starts listening 0.2 s in), and in any other scenario it is never touched
@@ -112,25 +122,31 @@ cat > "$tmp/sim/bin/netstat" <<'SH'
 SH
 cat > "$tmp/sim/run.sh" <<'SH'
 #!/bin/bash
-sleep 0.2; touch "$SIM_DIR/listening"; echo "$(python3 -c 'import time; print(f"{time.time():.3f}")') listening" >> "$SIM_LOG"; sleep 3.5
+sleep 0.2; touch "$SIM_DIR/listening"; echo "$(python3 -c 'import time; print(f"{time.time():.3f}")') listening" >> "$SIM_LOG"; sleep 4.5
 SH
 chmod +x "$tmp/sim/bin/"* "$tmp/sim/run.sh"
-sim() {   # scenario -> the log of iptables calls and the moment the stub scenario listened (the stub outlives the gate)
+sim() {   # scenario [gate] -> the log of iptables calls and the moment the stub scenario listened (the stub outlives the gate)
   rm -f "$tmp/sim/listening" "$tmp/sim/log"
-  ( cd "$tmp/sim" && SIM_DIR="$tmp/sim" SIM_LOG="$tmp/sim/log" PATH="$tmp/sim/bin:$PATH" SCENARIO="$1" bash "$here/sim-entrypoint.sh" > /dev/null 2>&1 )
+  ( cd "$tmp/sim" && SIM_DIR="$tmp/sim" SIM_LOG="$tmp/sim/log" PATH="$tmp/sim/bin:$PATH" SCENARIO="$1" KSL_INTEROP_START_GATE="${2:-}" bash "$here/sim-entrypoint.sh" > /dev/null 2>&1 )
   cat "$tmp/sim/log" 2> /dev/null
 }
-sim "rebind --delay=15ms --bandwidth=10Mbps --queue=25 --first-rebind=1s --rebind-freq=5s --rebind-addr" > "$tmp/rebind.log"
-check "rebind: the ready port is closed before the scenario starts" 0 "" -- bash -c "head -1 '$tmp/rebind.log' | grep -q -- '-I INPUT -p tcp --dport 57832 -j REJECT'"
-check "rebind: and opened 1.3 s after it listens, once"            0 "" -- python3 -c "
-import sys; l = [x.split(' ', 1) for x in open('$tmp/rebind.log').read().splitlines()]
+opened() {   # log lo hi: the port was closed before the scenario, opened lo-hi s after the stub listened, once
+  python3 -c "
+import sys; l = [x.split(' ', 1) for x in open('$1').read().splitlines()]
 up = [float(t) for t, w in l if w == 'listening']; opened = [float(t) for t, w in l if w.startswith('-D INPUT -p tcp --dport 57832')]
-sys.exit(0 if len(up) == 1 and len(opened) == 1 and 1.25 <= opened[0] - up[0] <= 1.8 else 1)"
+sys.exit(0 if l and l[0][1].startswith('-I INPUT -p tcp --dport 57832 -j REJECT') and len(up) == 1 and len(opened) == 1 and $2 <= opened[0] - up[0] <= $3 else 1)"
+}
+sim "rebind --delay=15ms --bandwidth=10Mbps --queue=25 --first-rebind=1s --rebind-freq=5s" > "$tmp/rebind-port.log"
+check "rebind-port: the ready port is closed before the scenario starts" 0 "" -- bash -c "head -1 '$tmp/rebind-port.log' | grep -q -- '-I INPUT -p tcp --dport 57832 -j REJECT'"
+check "rebind-port: opened 2.25 s after it listens (first rebind + 1.25 s)" 0 "" -- opened "$tmp/rebind-port.log" 2.2 2.75
+sim "rebind --delay=15ms --bandwidth=10Mbps --queue=25 --first-rebind=1s --rebind-freq=5s --rebind-addr" > "$tmp/rebind-addr.log"
+check "rebind-addr: opened 1.3 s after it listens (first rebind + 0.3 s)" 0 "" -- opened "$tmp/rebind-addr.log" 1.25 1.8
 sim "rebind --first-rebind=2s --rebind-freq=5s" > "$tmp/rebind2.log"
-check "rebind: the delay follows --first-rebind"                  0 "" -- python3 -c "
-import sys; l = [x.split(' ', 1) for x in open('$tmp/rebind2.log').read().splitlines()]
-up = [float(t) for t, w in l if w == 'listening']; opened = [float(t) for t, w in l if w.startswith('-D INPUT')]
-sys.exit(0 if len(up) == 1 and len(opened) == 1 and 2.25 <= opened[0] - up[0] <= 2.8 else 1)"
+check "rebind-port: the delay follows --first-rebind"             0 "" -- opened "$tmp/rebind2.log" 3.2 3.75
+sim "rebind --first-rebind=1s --rebind-freq=5s" 0.3 > "$tmp/rebind3.log"
+check "rebind-port: KSL_INTEROP_START_GATE overrides the delay"   0 "" -- opened "$tmp/rebind3.log" 1.25 1.8
+sim "rebind --first-rebind=1s --rebind-freq=5s --rebind-addr" 1.25 > "$tmp/rebind4.log"
+check "rebind-addr: KSL_INTEROP_START_GATE overrides the delay"   0 "" -- opened "$tmp/rebind4.log" 2.2 2.75
 sim "simple-p2p --delay=15ms --bandwidth=10Mbps --queue=25" > "$tmp/p2p.log"
 check "other scenarios: the port is never touched"                0 "" -- bash -c "! grep -q INPUT '$tmp/p2p.log'"
 
@@ -138,6 +154,11 @@ if [ -n "${KSL_INTEROP_CELL:-}" ]; then   # the real gate cell: pcaps and key lo
   cell=${KSL_INTEROP_CELL%/}; res=$(dirname "$(dirname "$cell")")
   check "real cell: classified ENVIRONMENT" 0 "$(basename "$(dirname "$cell")") $(basename "$cell") the rebind landed inside the handshake" -- environment_cells "$res"
   check "real cell: the decoded summary matches its fixture" 0 "" -- bash -c "python3 '$hc' --dump '$cell' | jq -e --slurpfile f '$fx' '. == \$f[0]' > /dev/null"
+fi
+if [ -n "${KSL_INTEROP_TIMEOUT_CELL:-}" ]; then   # a real cell the runner timed out: its result directory lists it nowhere
+  cell=${KSL_INTEROP_TIMEOUT_CELL%/}; res=$(dirname "$(dirname "$cell")")
+  check "real timeout cell: the runner timed it out" 0 "" -- grep -q "Test failed: took longer than" "$cell/output.txt"
+  check "real timeout cell: not ENVIRONMENT" 1 "" -- bash -c "source '$here/environment.sh'; environment_cells '$res' | grep -q '^$(basename "$(dirname "$cell")") $(basename "$cell") '"
 fi
 if [ -n "${KSL_INTEROP_CLOSE_CELL:-}" ]; then   # the real gate 6 cell: pcaps and key log through tshark
   cell=${KSL_INTEROP_CLOSE_CELL%/}; res=$(dirname "$(dirname "$cell")")
