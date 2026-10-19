@@ -147,6 +147,11 @@ sim "rebind --first-rebind=1s --rebind-freq=5s" 0.3 > "$tmp/rebind3.log"
 check "rebind-port: KSL_INTEROP_START_GATE overrides the delay"   0 "" -- opened "$tmp/rebind3.log" 1.25 1.8
 sim "rebind --first-rebind=1s --rebind-freq=5s --rebind-addr" 1.25 > "$tmp/rebind4.log"
 check "rebind-addr: KSL_INTEROP_START_GATE overrides the delay"   0 "" -- opened "$tmp/rebind4.log" 2.2 2.75
+sim "rebind --first-rebind=1s --rebind-freq=5s" '1; touch /tmp/x' > "$tmp/rebind5.log"
+check "rebind-port: a KSL_INTEROP_START_GATE that is no number is ignored" 0 "" -- opened "$tmp/rebind5.log" 2.2 2.75
+sim "rebind --first-rebind=1s --rebind-freq=5s --rebind-addr" '-1' > "$tmp/rebind6.log"
+check "rebind-addr: a negative KSL_INTEROP_START_GATE is ignored"   0 "" -- opened "$tmp/rebind6.log" 1.25 1.8
+check "run-local.sh refuses a KSL_INTEROP_START_GATE that is no number" 2 "must be a number of seconds" -- env KSL_INTEROP_START_GATE='1"; x' bash "$here/run-local.sh" --results "$tmp/none"
 sim "simple-p2p --delay=15ms --bandwidth=10Mbps --queue=25" > "$tmp/p2p.log"
 check "other scenarios: the port is never touched"                0 "" -- bash -c "! grep -q INPUT '$tmp/p2p.log'"
 

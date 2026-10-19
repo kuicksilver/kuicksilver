@@ -39,7 +39,9 @@
 # overrides both.
 if [[ "${SCENARIO:-}" == rebind* ]]; then
   first=$(sed -n 's/.*--first-rebind=\([0-9.]*\)s.*/\1/p' <<< "$SCENARIO"); first=${first:-1}
-  gate=1.25; [[ "$SCENARIO" == *--rebind-addr* ]] && gate=0.3; gate=${KSL_INTEROP_START_GATE:-$gate}
+  gate=1.25; [[ "$SCENARIO" == *--rebind-addr* ]] && gate=0.3
+  if [[ "${KSL_INTEROP_START_GATE:-}" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then gate=$KSL_INTEROP_START_GATE
+  elif [ -n "${KSL_INTEROP_START_GATE:-}" ]; then echo "sim-entrypoint: KSL_INTEROP_START_GATE='$KSL_INTEROP_START_GATE' is not a number of seconds, using ${gate}s" >&2; fi
   hold="-p tcp --dport 57832 -j REJECT --reject-with tcp-reset"
   # shellcheck disable=SC2086
   iptables -I INPUT $hold

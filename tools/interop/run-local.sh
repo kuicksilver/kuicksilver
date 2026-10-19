@@ -32,6 +32,7 @@ env_reruns=${KSL_INTEROP_ENV_RERUNS:-5}   # reruns of a cell while its verdict r
 while [ $# -gt 0 ]; do case "$1" in --check-required) check=1 ;; --perf) perf=1 ;; --results) results="$2"; shift ;; --image) image="$2"; shift ;; -t) tests="$2"; shift ;; *) peers+=("$1") ;; esac; shift; done
 [ "$image" = native ] && me=kuicksilver-native
 thresholds=tools/interop/perf-thresholds.json
+[[ "${KSL_INTEROP_START_GATE:-}" =~ ^([0-9]+(\.[0-9]+)?)?$ ]] || { echo "KSL_INTEROP_START_GATE must be a number of seconds, not '$KSL_INTEROP_START_GATE'" >&2; exit 2; }
 if [ $perf -eq 1 ]; then
   [ $check -eq 0 ] || { echo "--perf and --check-required are separate runs" >&2; exit 2; }
   [ -n "$tests" ] || tests="goodput,crosstraffic"
@@ -51,7 +52,7 @@ services:
   sim:
     entrypoint: ["/bin/bash", "/kuicksilver/sim-entrypoint.sh"]
     environment:
-      - KSL_INTEROP_START_GATE=${KSL_INTEROP_START_GATE:-}
+      - "KSL_INTEROP_START_GATE=${KSL_INTEROP_START_GATE:-}"
     volumes:
       - "$root/tools/interop/sim-entrypoint.sh:/kuicksilver/sim-entrypoint.sh:ro"
 EOF

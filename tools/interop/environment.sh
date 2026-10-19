@@ -8,7 +8,8 @@ interop_tools="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Cells of one run.py result directory whose sim output lacks the dumpcap summary of eth0 or eth1 ("Packets received/dropped on
 # interface 'ethN'"): the container was torn down before that capture was flushed, so a pcap is incomplete (the 0.2.0 gate failed
 # kuicksilver->ngtcp2:amplificationlimit on a server-side pcap holding 49 of 71 packets). Prints "<server>_<client> <case>" per cell.
-# Not a cell the runner timed out ("Test failed: took longer than 60s"): the runner kills docker compose at its timeout, so the sim's
+# Not a cell the runner timed out ("Test failed: took longer than 60s"; the match is the prefix, so a test case with a longer
+# runner timeout counts too): the runner kills docker compose at its timeout, so the sim's
 # output (and with it the summaries) is cut off whatever the capture did, and it fails the cell without ever reading the pcaps
 # (interop.py runs the test's check only when compose exited): the verdict is the endpoints' and a rerun cannot change why it
 # was given (0.2.0 gate, run 20261017-175019: kuicksilver->picoquic:v2, the known picoquic v2 defect, rerun five times for nothing).
