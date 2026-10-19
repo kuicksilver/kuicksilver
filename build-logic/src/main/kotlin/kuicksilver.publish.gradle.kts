@@ -38,7 +38,7 @@ mavenPublishing {
         developers { developer { id.set("kuicksilver"); name.set("The Kuicksilver Authors"); email.set("hello@kuicksilver.io"); url.set("https://kuicksilver.io") } }
         scm {
             url.set("https://github.com/kuicksilver/kuicksilver")
-            connection.set("scm:git:git://github.com/kuicksilver/kuicksilver.git")
+            connection.set("scm:git:https://github.com/kuicksilver/kuicksilver.git")
             developerConnection.set("scm:git:ssh://git@github.com/kuicksilver/kuicksilver.git")
         }
         issueManagement { system.set("GitHub"); url.set("https://github.com/kuicksilver/kuicksilver/issues") }
