@@ -4,16 +4,20 @@
 # Runs the QUIC Interop Runner locally with kuicksilver as server and as client against the given peers, one peer at a time.
 # Usage: run-local.sh [--check-required | --perf] [--results DIR] [--image native] [-t testcases] [peer ...]   (default peers: quic-go ngtcp2 quiche picoquic quinn msquic)
 # --image native runs kuicksilver-interop-native:local (the Kotlin/Native executable) under the name kuicksilver-native.
+# KSL_INTEROP_TAG=<tag> runs the images tagged <tag> instead of local (as tools/interop/build-image.sh built them with the same variable).
 # --results DIR[,DIR...] checks existing results directories (the union of their cells) instead of running the matrix again.
 # Results: build/interop/<date>/<peer>-{server,client}/ (logs) and <peer>-{server,client}.json (matrix). With --check-required every cell listed in
 # tools/interop/required.json that this run could produce (its implementations and test cases) must be successful, otherwise exit 1; --results dir1,dir2 merges runs.
 # --perf runs only the runner's measurements (goodput, crosstraffic; -t narrows them) against the peers of tools/interop/perf-thresholds.json
 # (unless peers are given) and then tools/interop/check-perf.sh on the results: exit 1 on a measurement below its threshold or missing.
 # The sim container runs tools/interop/sim-entrypoint.sh (a compose override written next to the runner's docker-compose.yml) so its
-# dumpcaps finish writing before the container is torn down. A cell whose verdict rests on the environment (tools/interop/environment.sh)
+# dumpcaps finish writing before the container is torn down, and in the rebind cases opens the clients' ready port only
+# after the first rebind (rebind-port 1.25 s, rebind-addr 0.3 s after it, KSL_INTEROP_START_GATE overrides), so transfers end
+# away from the next rebinds (see the script). A cell whose verdict rests on the environment (tools/interop/environment.sh)
 # is reported as ENVIRONMENT and rerun into <peer>-<role>-rerun-<case>/, again into rerun<N>-<case>/ while the rerun hits the
 # environment too, at most KSL_INTEROP_ENV_RERUNS (5) times: a sim output still lacking a dumpcap summary (an unflushed,
-# incomplete pcap: the runner's verdict does not stand either way), and a rebind cell of our server failed only because the
+# incomplete pcap: the runner's verdict does not stand either way; not when the runner timed the cell out, which cuts the output
+# off and judges no capture), and a rebind cell of our server failed only because the
 # client started just before the simulator's rebind at 1 s, so the handshake ran across it and nobody could read the
 # PATH_CHALLENGE the runner checks (tools/interop/handshake-challenge.py; 5 of 10 runs of kuicksilver->quiche:rebind-addr on
 # 2026-10-16), and a rebind cell whose client's CONNECTION_CLOSE was the first packet from a new path, answered by the server
@@ -28,6 +32,7 @@ env_reruns=${KSL_INTEROP_ENV_RERUNS:-5}   # reruns of a cell while its verdict r
 while [ $# -gt 0 ]; do case "$1" in --check-required) check=1 ;; --perf) perf=1 ;; --results) results="$2"; shift ;; --image) image="$2"; shift ;; -t) tests="$2"; shift ;; *) peers+=("$1") ;; esac; shift; done
 [ "$image" = native ] && me=kuicksilver-native
 thresholds=tools/interop/perf-thresholds.json
+[[ "${KSL_INTEROP_START_GATE:-}" =~ ^([0-9]+(\.[0-9]+)?)?$ ]] || { echo "KSL_INTEROP_START_GATE must be a number of seconds, not '$KSL_INTEROP_START_GATE'" >&2; exit 2; }
 if [ $perf -eq 1 ]; then
   [ $check -eq 0 ] || { echo "--perf and --check-required are separate runs" >&2; exit 2; }
   [ -n "$tests" ] || tests="goodput,crosstraffic"
@@ -46,18 +51,20 @@ cat > "$runner/docker-compose.override.yml" <<EOF
 services:
   sim:
     entrypoint: ["/bin/bash", "/kuicksilver/sim-entrypoint.sh"]
+    environment:
+      - "KSL_INTEROP_START_GATE=${KSL_INTEROP_START_GATE:-}"
     volumes:
       - "$root/tools/interop/sim-entrypoint.sh:/kuicksilver/sim-entrypoint.sh:ro"
 EOF
 # shellcheck source=tools/interop/environment.sh
 source tools/interop/environment.sh   # truncated_captures, handshake_rebind, environment_cells
 # register our image in the runner's QUIC implementation list (a copy, the checkout stays clean)
-python3 - "$runner" <<'PY'
+python3 - "$runner" "${KSL_INTEROP_TAG:-local}" <<'PY'
 import json, sys
-p = sys.argv[1] + "/implementations_quic.json"   # the runner keeps QUIC and WebTransport lists apart
+p, tag = sys.argv[1] + "/implementations_quic.json", sys.argv[2]   # the runner keeps QUIC and WebTransport lists apart
 d = json.load(open(p))
-d["kuicksilver"] = {"image": "kuicksilver-interop:local", "url": "https://github.com/kuicksilver/kuicksilver", "role": "both"}
-d["kuicksilver-native"] = {"image": "kuicksilver-interop-native:local", "url": "https://github.com/kuicksilver/kuicksilver", "role": "both"}
+d["kuicksilver"] = {"image": f"kuicksilver-interop:{tag}", "url": "https://github.com/kuicksilver/kuicksilver", "role": "both"}
+d["kuicksilver-native"] = {"image": f"kuicksilver-interop-native:{tag}", "url": "https://github.com/kuicksilver/kuicksilver", "role": "both"}
 json.dump(d, open(p, "w"), indent=2)
 PY
 fail=0

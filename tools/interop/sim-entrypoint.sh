@@ -14,17 +14,43 @@
 # kuicksilver->quiche:rebind-addr; 16 of 23 runs that day; the known picoquic rebind cells). The port answers clients only once
 # the first rebind is over, so every run is the one where the client starts after it (the scenario itself is unchanged). The
 # rebind cells then no longer exercise a rebind in the middle of the handshake: core.PathTest's rebindDuringHandshake tests do.
+#
+# When the port opens decides when the transfer ends, and that end must stay away from the rebinds at 11 s and 16 s: a rebind in
+# the last milliseconds turns the client's CONNECTION_CLOSE into the first packet on a new path (0.2.0 gate 6,
+# msquic->kuicksilver-native:rebind-port, closing-rebind.py), or the client closes before answering the server's PATH_CHALLENGE
+# there (kuicksilver-native->picoquic:rebind-port, 2026-10-20). A client starts on the first of its wait-for-it polls (one a
+# second) after the port opens, so starts move in whole seconds, not by this delay. On the arm64 host the polls come at x.5 s
+# of scenario time for the native-arch clients (ours, quic-go, ngtcp2, quinn) and at x.8-x.0 s for the emulated amd64 ones
+# (msquic, picoquic, quiche), and the 10 MB transfer over the 10 Mbit/s link closes 9.0-10.5 s after that poll whatever the
+# peer (quinn's client sleeps 3 s more, closing 12.2-12.4 s after it). Opened at first + 0.3 s (0.2.0), every client started
+# on its first poll after 1.3 s and 92 of 110 measured cells closed within 0.5 s of the rebind at 11 s; first + 0.8 s still
+# lets the emulated clients in on their poll near 2 s (picoquic's close 0.07 s after that rebind, red).
+#
+# rebind-port: the port opens at first + 1.25 s, between the two clusters of polls, so every client starts a second later than
+# in 0.2.0. All 33 such rebind-port runs (6 peers x 2 roles x both images, two runs of each JVM cell, measured at first + 1.0 s,
+# which started every client on the same poll; quiche's server stops after the 6 s rebind, a known red cell, and is left out)
+# closed at 11.56-12.61 s and quinn's client at 14.73-14.79 s, at least 0.56 s from a rebind; a second more would put quinn's
+# close within 0.3 s of the rebind at 16 s.
+# rebind-addr keeps first + 0.3 s: the simulator's third binding there (11 s) is always 193.167.0.155:745 (its addresses come
+# from a fixed seed), and ngtcp2's server never receives a datagram from it, so a transfer still running at 11 s waits for the
+# binding at 16 s: with the later start all five ngtcp2->kuicksilver[-native]:rebind-addr runs stalled there, four finished 7-8
+# s late and one failed (our JVM client had nothing ack-eliciting left to send and idled out). From the earlier start that
+# transfer ends at 10.6-11.0 s, before the binding moves to port 745. KSL_INTEROP_START_GATE (s after the first rebind)
+# overrides both.
 if [[ "${SCENARIO:-}" == rebind* ]]; then
   first=$(sed -n 's/.*--first-rebind=\([0-9.]*\)s.*/\1/p' <<< "$SCENARIO"); first=${first:-1}
+  gate=1.25; [[ "$SCENARIO" == *--rebind-addr* ]] && gate=0.3
+  if [[ "${KSL_INTEROP_START_GATE:-}" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then gate=$KSL_INTEROP_START_GATE
+  elif [ -n "${KSL_INTEROP_START_GATE:-}" ]; then echo "sim-entrypoint: KSL_INTEROP_START_GATE='$KSL_INTEROP_START_GATE' is not a number of seconds, using ${gate}s" >&2; fi
   hold="-p tcp --dport 57832 -j REJECT --reject-with tcp-reset"
   # shellcheck disable=SC2086
   iptables -I INPUT $hold
   (
     for _ in $(seq 1 400); do netstat -ltn 2>/dev/null | grep -q ':57832 ' && break; sleep 0.05; done   # the scenario is up
-    sleep "$(awk -v f="$first" 'BEGIN { print f + 0.3 }')"
+    sleep "$(awk -v f="$first" -v g="$gate" 'BEGIN { print f + g }')"
     # shellcheck disable=SC2086
     iptables -D INPUT $hold
-    echo "sim-entrypoint: clients may connect now, after the first rebind (${first}s)"
+    echo "sim-entrypoint: clients may connect now, ${gate}s after the first rebind (${first}s)"
   ) &
 fi
 ./run.sh "$@" &

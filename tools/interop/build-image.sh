@@ -4,13 +4,15 @@
 # Builds kuicksilver-interop:local (JVM) for the host's Linux platform (both libksl.so variants are packed; KSL_INTEROP_PLATFORMS overrides),
 # or with --native kuicksilver-interop-native:local from the Kotlin/Native executables (linux/amd64 and linux/arm64).
 # KSL_CC=bbr (or newreno) builds the JVM image with that congestion controller instead of CUBIC (Dockerfile ARG KSL_CC).
+# KSL_INTEROP_TAG=<tag> tags the image <tag> instead of local (a branch's images beside the main checkout's; run-local.sh reads the same variable).
 # Prerequisites: the Linux libksl.so files (tools/ci/docker-jvm.sh step 1, or tools/build-jni.sh inside the OpenSSL images) and Docker.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/../.." && pwd)"; cd "$root"
+tag=${KSL_INTEROP_TAG:-local}
 if [ "${1:-}" = "--native" ]; then
   ./gradlew --max-workers=2 -q :kuicksilver-interop:installNativeDist
-  docker buildx build --platform "${KSL_INTEROP_PLATFORMS:-linux/$(docker version -f '{{.Server.Arch}}')}" --load -t kuicksilver-interop-native:local -f tools/interop/Dockerfile.native .
-  echo "built kuicksilver-interop-native:local"; exit 0
+  docker buildx build --platform "${KSL_INTEROP_PLATFORMS:-linux/$(docker version -f '{{.Server.Arch}}')}" --load -t "kuicksilver-interop-native:$tag" -f tools/interop/Dockerfile.native .
+  echo "built kuicksilver-interop-native:$tag"; exit 0
 fi
 platforms="${KSL_INTEROP_PLATFORMS:-linux/$(docker version -f '{{.Server.Arch}}')}"
 for cls in linux-x86_64 linux-aarch_64; do
@@ -26,5 +28,5 @@ for cls in linux-x86_64 linux-aarch_64; do
   fi
 done
 ./gradlew --max-workers=2 -q -x :kuicksilver-native:buildJniHost :kuicksilver-interop:installJvmDist   # the image carries the manylinux .so above, never a host build (review I8)
-docker buildx build --platform "$platforms" --build-arg KSL_CC="${KSL_CC:-}" --load -t kuicksilver-interop:local -f tools/interop/Dockerfile .
-echo "built kuicksilver-interop:local for $platforms"
+docker buildx build --platform "$platforms" --build-arg KSL_CC="${KSL_CC:-}" --load -t "kuicksilver-interop:$tag" -f tools/interop/Dockerfile .
+echo "built kuicksilver-interop:$tag for $platforms"
