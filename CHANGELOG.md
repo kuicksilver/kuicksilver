@@ -20,11 +20,24 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   datagrams and races a copy of each from a spoofed address (RFC 9000 sections 9.3.3 and 21.1.3.2) keeps that address
   fresh and the client's own looking quiet (every genuine datagram after a copy is a duplicate), so the flight went to
   the spoofed address within its 3x budget for as long as the attacker kept going. A move an Initial made is now undone
-  when no Handshake packet or PATH_RESPONSE validated the new address within the validation period of RFC 9000 section
+  when nothing validated the new address (see the next entry) within the validation period of RFC 9000 section
   8.2.4, max(3 x PTO, 6 x initial RTT) (section 9.3.2: revert to the address before it, with its state and budget); the
   handshake flight is resent there at once and the server follows no other address until the handshake completes, as
   quic-go, quiche, msquic and ngtcp2 never do during a handshake. A client that really rebound answers the flight with a
   Handshake packet well inside the period and keeps its new address.
+- QUIC: one copied client Handshake packet could redirect a connection's whole downlink to an address of the attacker's
+  choosing. A Handshake packet from a new address moved the server's path at once and was taken as validating that
+  address (RFC 9000 section 8.1), and the path then settled as validated without a PATH_RESPONSE; an off-path attacker
+  that races a copy of the client's Handshake packet from a spoofed address (section 9.3.3) gets its copy in first. A
+  Handshake packet shows that the client read our flight where we sent it, not where it came from: it now validates the
+  active address only when the whole handshake flight went there, an acknowledgement (Handshake or 1-RTT) of a packet
+  sent to the current address validates it, and so does a PATH_RESPONSE. The move a Handshake packet makes is led by a
+  PATH_CHALLENGE within the 3x budget and, like every handshake-time move, undone at the validation deadline when
+  nothing validated the new address, also after the handshake completed (a raced copy can carry the Finished; the
+  completion no longer validates an address the path was moved to). A client that rebinds after the server's flight left
+  keeps its new address once it answers the challenge; one whose new address gets nothing through for a whole
+  validation period ends the handshake on its old address, as with quic-go, quiche, msquic and ngtcp2, which never
+  follow a new address during a handshake.
 
 ## [0.2.0] - 2026-10-15
 

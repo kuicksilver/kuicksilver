@@ -200,7 +200,10 @@ internal fun ConnectionCore.confirmHandshake() {
     loss.handshakeConfirmed = true
     loss.peerAddressValidated = true
     paths.all[0].let {
-        if (it.state != PathState.Validated &&
+        // an address a handshake-time move took the path to is not validated by the handshake completing: a raced copy of the
+        // client's Handshake packet carries its Finished too (RFC 9000 section 9.3.3); its HandshakeFallback decides
+        if (handshakeFallback?.path !== it &&
+            it.state != PathState.Validated &&
             !(it.state == PathState.Validating && it.handshakeValidated)
         ) {
             it.state = PathState.Validated

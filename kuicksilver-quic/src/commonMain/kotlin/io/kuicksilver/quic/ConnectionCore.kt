@@ -435,6 +435,12 @@ public class ConnectionCore internal constructor(
 
     /** A handshake-time move failed its validation: the active path keeps its address until the handshake completes. */
     internal var handshakeMovesFrozen = false
+
+    /** Server: where the first CRYPTO data of our handshake flight went (`onHandshakeFlightSent`). */
+    internal var handshakeFlightTo: InetSocketAddress? = null
+
+    /** Server: some of that flight went to another address too, so a client Handshake packet no longer shows which one reached it. */
+    internal var handshakeFlightElsewhere = false
     internal var closeFrame: CloseFrame? = null
 
     /** CONNECTION_CLOSE already carried by a packet of this space since the last (re)send trigger. */
@@ -796,10 +802,8 @@ public class ConnectionCore internal constructor(
             }
         }
         if (builder.pacerWakeup < t) t = builder.pacerWakeup
-        if (state == ConnectionState.Handshaking) {
-            timers.handshakeDeadline?.let { if (it < t) t = it }
-            handshakeFallback?.let { if (it.deadline < t) t = it.deadline }
-        }
+        if (state == ConnectionState.Handshaking) timers.handshakeDeadline?.let { if (it < t) t = it }
+        handshakeFallback?.let { if (it.deadline < t) t = it.deadline }
         val idle = idleDeadline()
         if (idle < t) t = idle
         val keep = keepAliveDeadline()
@@ -859,8 +863,6 @@ public class ConnectionCore internal constructor(
                     return
                 }
             }
-            // before the path loop: an unvalidated handshake-time move is undone, not given another validation period
-            handshakeFallback?.let { if (it.deadline <= now) revertHandshakeMove(it) }
         }
         if (idleDeadline() <=
             now
@@ -874,6 +876,9 @@ public class ConnectionCore internal constructor(
             fail(TransportError.NO_ERROR, 0, "connection lifetime reached", null)
             return
         }
+        // before the path loop: an unvalidated handshake-time move is undone, not given another validation period nor failed (it may
+        // outlive the handshake when a raced copy carried the client's Finished)
+        handshakeFallback?.let { if (it.deadline <= now) revertHandshakeMove(it) }
         cids.expireRetired(now)
         if (zeroRttReadDiscardAt <= now) discardZeroRttKeys()
         for (i in 0 until paths.all.size) paths.all[i].pmtud?.onTimeout(now)
@@ -900,7 +905,8 @@ public class ConnectionCore internal constructor(
                 } else if (p === paths.active &&
                     state == ConnectionState.Handshaking
                 ) {
-                    // the handshake (or its timeout) decides this path; a new validation period keeps the timer in the future
+                    // not reached since 0.2.1: every handshake-time move that leaves the active path validating keeps a HandshakeFallback
+                    // whose deadline comes first and undoes it (revertHandshakeMove); kept so that a deadline never stays in the past
                     p.challengePending = true
                     p.challengeDeadline = now + validationTimeout()
                     p.nextChallengeAt = now + nextChallengeDelay(p)

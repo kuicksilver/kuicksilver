@@ -329,17 +329,17 @@ internal class PacketReceiver(
         if (c.path.isRemote(from) && socket == c.path.socket) {
             c.lastReceivedOnActivePath = now
         } else if ((type == PacketType.Initial || type == PacketType.Handshake) && c.role == TlsRole.Server &&
-            c.state == ConnectionState.Handshaking && pn > sp.ack.largestReceived
+            c.state == ConnectionState.Handshaking
         ) {
             // only the highest-numbered packet of its space moves the path: a delayed older one from the old address does not move it
-            // back (RFC 9000 section 9.3)
+            // back (RFC 9000 section 9.3); every one counts toward its address's budget
             c.onHandshakeAddressChange(
                 socket,
                 from,
                 datagramLength,
                 datagramSeq,
-                initial =
-                    type == PacketType.Initial,
+                initial = type == PacketType.Initial,
+                newest = pn > sp.ack.largestReceived,
             ) // a NAT rebinding in the middle of the handshake (interop rebind cases)
         }
         // which of our IDs the peer used: a server answers a new address with its current ID only if that did not change (RFC 9000
@@ -388,7 +388,7 @@ internal class PacketReceiver(
         if (type == PacketType.Handshake &&
             c.role == TlsRole.Server
         ) {
-            c.onInitialPathValidated()
+            c.onInitialPathValidated(from)
             if (!c.spaceDiscarded[0]) c.discardInitialPending = true
         }
         if (type == PacketType.OneRtt) {

@@ -705,6 +705,7 @@ internal class PacketBuilder(
         p.inFlight =
             (ackEliciting || padded) && !pmtuProbe
         p.pathId = target.id.value
+        p.addressEpoch = target.addressEpoch
         p.cc = target.cc // a PMTU probe is tracked for loss but never counts toward the window (RFC 9000 section 14.4)
         p.ecnMarked = currentMark != io.kuicksilver.quic.Ecn.NotEct
         // a test packet must be one loss detection can declare lost (appendix A.4: "if marked packets are all declared lost"):
@@ -716,6 +717,8 @@ internal class PacketBuilder(
             null
         ) {
             c.loss.onPacketSent(space, p, now)
+            // where the server's handshake flight went decides which address a client Handshake packet validates (RFC 9000 section 8.1)
+            if (space != SpaceId.Application && frames.cryptoCount > 0 && c.role == TlsRole.Server) c.onHandshakeFlightSent(target)
             if (p.inFlight) {
                 target.cc.onPacketSent(now, p.size)
                 // the delivery-rate snapshot (draft-ietf-ccwg-bbr section 4.1.2.2)

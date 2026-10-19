@@ -159,6 +159,9 @@ internal class SentPacket {
     /** The path the packet went out on (RTT samples count only for the active path; RFC 9002 section 5). */
     var pathId: Int = 0
 
+    /** That path's [io.kuicksilver.quic.core.Path.addressEpoch] when it went out: an acknowledgement proves the address it went to. */
+    var addressEpoch: Int = 0
+
     /** The congestion controller that counted this packet: a NAT rebinding moves the controller to the new path (`Paths.inheritFrom`), so the path id alone would credit the wrong window. */
     var cc: io.kuicksilver.quic.CongestionController? = null
 
