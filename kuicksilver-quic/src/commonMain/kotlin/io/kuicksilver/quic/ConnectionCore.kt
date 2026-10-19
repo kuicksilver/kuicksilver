@@ -436,6 +436,10 @@ public class ConnectionCore internal constructor(
     /** A handshake-time move failed its validation: the active path keeps its address until the handshake completes. */
     internal var handshakeMovesFrozen = false
 
+    /** Handshake-time moves undone so far (`restoreHandshakeAddress`): only the first resends at once. */
+    internal var handshakeRestores = 0
+    internal var handshakeResendsAtOnceForTest = 0
+
     /** Server: where the first CRYPTO data of our handshake flight went (`onHandshakeFlightSent`). */
     internal var handshakeFlightTo: InetSocketAddress? = null
 

@@ -105,6 +105,10 @@ release bar (each bug fixed with a test before a release).
 - CI on GitHub Actions again once the minutes reset (from 2026-11-01), alongside the local gate.
 - Longer soak (24–72 h) and fuzzing campaigns (at least 2 h per target).
 - A statement in `stability.md` that the library is not FIPS-certified.
+- QUIC server, rebind during the handshake: keep both candidate addresses as separate paths and challenge both, so that
+  a client that really rebinds while an observer races copies of its packets from the old address is not held on the
+  dead one until the handshake timeout (the known limit in `spec/rfc-compliance.md`, RFC 9000 §9 rebind row; the
+  reference implementations lose that handshake as well).
 
 ### 0.3.0 — client and server completeness
 

@@ -530,7 +530,7 @@ internal fun ConnectionCore.applyHandshakeMove(
     val fallback = handshakeFallback
     if (fallback != null && fallback.isAddress(from)) {
         // a newer packet from the address the unvalidated move left (section 9.3.2): back there as at the deadline, without the freeze
-        restoreHandshakeAddress(fallback)
+        restoreHandshakeAddress(fallback, resendAtOnce = handshakeRestores == 0)
         return
     }
     val old = p.remote
@@ -546,6 +546,7 @@ internal fun ConnectionCore.applyHandshakeMove(
                 received = p.amplification.received,
                 sent = p.amplification.sent,
                 addressValidated = p.amplification.validated,
+                flightOnlyThere = handshakeFlightTo?.let { p.isRemote(it) } == true && !handshakeFlightElsewhere,
                 deadline = now + validationTimeout(),
             )
     }
@@ -657,6 +658,7 @@ internal class HandshakeFallback(
     val received: Long,
     val sent: Long,
     val addressValidated: Boolean,
+    val flightOnlyThere: Boolean,
     val deadline: TimeMark,
 ) {
     private val remoteKey = AddressClass.ipKey(remote)
@@ -706,11 +708,21 @@ internal fun ConnectionCore.revertHandshakeMove(fallback: HandshakeFallback) {
     // a 1-RTT migration already took the connection to another path, or the address was validated meanwhile: nothing to undo
     if (p !== paths.active || p.amplification.validated || fallback.isAddress(p.remote)) return
     handshakeMovesFrozen = true
-    restoreHandshakeAddress(fallback)
+    // the handshake completed and, when the path moved, the whole flight had gone to the old address only: the client read it there
+    if (state != io.kuicksilver.quic.ConnectionState.Handshaking && fallback.flightOnlyThere) fallback.reached = true
+    restoreHandshakeAddress(fallback, resendAtOnce = true)
 }
 
-/** Puts [fallback]'s address back on its path with that address's state and budget, and resends what went to the other one there at once. */
-internal fun ConnectionCore.restoreHandshakeAddress(fallback: HandshakeFallback) {
+/**
+ * Puts [fallback]'s address back on its path with that address's state and budget. [resendAtOnce]: what went to the other address is
+ * resent here at once (the deadline's revert, and the first restore of a connection); a later restore by a newer packet leaves it to
+ * the PTO, or an attacker alternating raced copies with the client's own packets would have every pair answered with all that is
+ * outstanding.
+ */
+internal fun ConnectionCore.restoreHandshakeAddress(
+    fallback: HandshakeFallback,
+    resendAtOnce: Boolean,
+) {
     handshakeFallback = null
     pendingHandshakeMove = null
     handshakeCredit = null
@@ -737,12 +749,22 @@ internal fun ConnectionCore.restoreHandshakeAddress(fallback: HandshakeFallback)
     handshakeFlightTo = fallback.remote
     handshakeFlightElsewhere = false
     lastReceivedOnActivePath = now
+    handshakeRestores++
+    if (!resendAtOnce) return onRestored(old, fallback)
+    handshakeResendsAtOnceForTest++
     // what went to the abandoned address goes here now, not after the PTO backoff (RFC 9002 section 6.2.4 probes)
     for (space in SpaceId.entries) {
         if (spaceDiscarded[space.ordinal] || loss.space(space).ackElicitingInFlight <= 0) continue
         if (probePending[space.ordinal] < 1) probePending[space.ordinal] = 1
         requeueForProbe(space, Int.MAX_VALUE)
     }
+    onRestored(old, fallback)
+}
+
+private fun ConnectionCore.onRestored(
+    old: InetSocketAddress,
+    fallback: HandshakeFallback,
+) {
     onRemoteChanged?.invoke(old, fallback.remote)
     qlog?.metricsUpdated(stats, now)
 }

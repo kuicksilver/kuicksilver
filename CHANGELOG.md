@@ -37,7 +37,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   completion no longer validates an address the path was moved to). A client that rebinds after the server's flight left
   keeps its new address once it answers the challenge; one whose new address gets nothing through for a whole
   validation period ends the handshake on its old address, as with quic-go, quiche, msquic and ngtcp2, which never
-  follow a new address during a handshake.
+  follow a new address during a handshake. Only the first restore of a connection by a newer packet from the old address
+  resends the outstanding flight at once (later ones leave it to the PTO), so alternating raced copies with the client's
+  own packets costs ACKs, not flights. Known limit: a client that really rebinds mid-handshake while an observer races
+  copies of its packets from its old address keeps being taken back to the dead old address and the handshake fails at
+  the handshake timeout, as it does with those implementations; challenging both candidates as separate paths is on the
+  roadmap for 0.2.x.
 
 ## [0.2.0] - 2026-10-15
 

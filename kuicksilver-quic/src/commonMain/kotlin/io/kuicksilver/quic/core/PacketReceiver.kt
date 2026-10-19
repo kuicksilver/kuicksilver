@@ -332,7 +332,8 @@ internal class PacketReceiver(
             c.state == ConnectionState.Handshaking
         ) {
             // only the highest-numbered packet of its space moves the path: a delayed older one from the old address does not move it
-            // back (RFC 9000 section 9.3); every one counts toward its address's budget
+            // back (RFC 9000 section 9.3); every one counts toward its address's budget until a failed move freezes the path (then no
+            // other address matters before the handshake completes)
             c.onHandshakeAddressChange(
                 socket,
                 from,
