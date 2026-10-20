@@ -1,0 +1,81 @@
+# Copyright 2026 The Kuicksilver Authors
+# SPDX-License-Identifier: Apache-2.0
+# Two QUIC Interop Runner endpoint images joined by a plain Linux router instead of the runner's ns-3 simulator: no rate
+# limit, no added delay, kernel IP forwarding between two Docker bridges. Used by tools/bench/cpu-transfer.sh (CPU time
+# per transferred GB) and tools/bench/handshakes.sh (handshakes per second). The endpoints' /setup.sh routes
+# 193.167.0.0/16 and fd00:cafe:cafe::/48 via <own subnet>.2, so the subnets below sit inside those ranges but apart from
+# the runner's own (193.167.0.0/24, 193.167.100.0/24), which may still exist as runner_leftnet / runner_rightnet.
+# The router answers on TCP 57832, which the endpoints' run_endpoint.sh waits for (wait-for-it.sh sim:57832).
+# Variables (set by the scripts): SERVER, CLIENT (images), CLIENT_CMD (the client image's own entrypoint), TESTCASE,
+# REQUESTS, CERTS (a runner-style cert directory), WWW_VOLUME.
+name: kuicksilver-bench
+services:
+  sim:
+    # alpine:latest as the runner host had it (2026-10-20); only busybox nc and sysctl are used
+    image: alpine@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
+    container_name: bench-sim
+    hostname: sim
+    command: ["/bin/sh", "-c", "while true; do nc -l -p 57832 </dev/null >/dev/null 2>&1; done"]
+    sysctls:
+      net.ipv4.ip_forward: 1
+      net.ipv6.conf.all.forwarding: 1
+    networks:
+      leftnet: { ipv4_address: 193.167.10.2, ipv6_address: "fd00:cafe:cafe:10::2" }
+      rightnet: { ipv4_address: 193.167.110.2, ipv6_address: "fd00:cafe:cafe:110::2" }
+
+  server:
+    image: ${SERVER:?}
+    container_name: bench-server
+    hostname: server
+    environment:
+      - ROLE=server
+      - TESTCASE=${TESTCASE:?}
+    volumes:
+      - www:/www:ro
+      - ${CERTS:?}:/certs:ro
+    tmpfs: [/downloads, /logs]
+    cap_add: [NET_ADMIN]
+    ulimits: { memlock: 67108864 }
+    depends_on: [sim]
+    networks:
+      rightnet: { ipv4_address: 193.167.110.100, ipv6_address: "fd00:cafe:cafe:110::100" }
+    extra_hosts: ["server4:193.167.110.100", "server6:fd00:cafe:cafe:110::100"]
+
+  client:
+    image: ${CLIENT:?}
+    container_name: bench-client
+    hostname: client
+    # the image's own entrypoint, then the container's cgroup CPU counters (cgroup v2, the container's own cgroup) and
+    # the downloaded bytes, written into the container's own file system before the container (and its cgroup) goes away;
+    # the scripts copy them out of the stopped container (docker cp), which a bind mount did not always show in time
+    entrypoint: ["/bin/sh", "-c", "${CLIENT_CMD:?}; rc=$$?; cat /sys/fs/cgroup/cpu.stat > /ksl-bench.stat; du -sb /downloads | cut -f1 > /ksl-bench.bytes; exit $$rc"]
+    environment:
+      - ROLE=client
+      - TESTCASE=${TESTCASE:?}
+      - REQUESTS=${REQUESTS:?}
+    volumes:
+      - ${CERTS:?}:/certs:ro
+    tmpfs: [/downloads, /logs]
+    cap_add: [NET_ADMIN]
+    ulimits: { memlock: 67108864 }
+    depends_on: [sim]
+    networks:
+      leftnet: { ipv4_address: 193.167.10.100, ipv6_address: "fd00:cafe:cafe:10::100" }
+    extra_hosts: ["server4:193.167.110.100", "server6:fd00:cafe:cafe:110::100", "server46:193.167.110.100"]
+
+volumes:
+  www:
+    name: ${WWW_VOLUME:-kuicksilver-bench-www}
+    external: true
+
+networks:
+  leftnet:
+    driver: bridge
+    driver_opts: { com.docker.network.bridge.enable_ip_masquerade: "false" }
+    enable_ipv6: true
+    ipam: { config: [{ subnet: 193.167.10.0/24 }, { subnet: "fd00:cafe:cafe:10::/64" }] }
+  rightnet:
+    driver: bridge
+    driver_opts: { com.docker.network.bridge.enable_ip_masquerade: "false" }
+    enable_ipv6: true
+    ipam: { config: [{ subnet: 193.167.110.0/24 }, { subnet: "fd00:cafe:cafe:110::/64" }] }
