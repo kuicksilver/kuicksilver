@@ -1,8 +1,13 @@
 {
   "$schema": "https://context7.com/schema/context7.json",
+  "url": "https://context7.com/kuicksilver/kuicksilver",
+  "public_key": "pk_T9BBRxFWwRYBt9XhKcV32",
   "projectTitle": "Kuicksilver",
   "description": "Kotlin Multiplatform network stack: QUIC v1/v2 (RFC 9000/9001/9002/9369), HTTP/3 with QPACK, TLS 1.3 over OpenSSL 3.5, and Ktor client and server engines, for the JVM, Android, Kotlin/Native Linux, Apple (macOS, iOS) and Windows.",
-  "folders": ["docs", "samples"],
+  "folders": [
+    "docs",
+    "samples"
+  ],
   "excludeFolders": [
     "docs/plans",
     "docs/brief",
@@ -27,6 +32,8 @@
     "JS and Wasm are not targets; HTTP/2, HTTP/3 server push and WebTransport are not supported."
   ],
   "previousVersions": [
-    { "tag": "v0.2.0" }
+    {
+      "tag": "v0.2.0"
+    }
   ]
 }
