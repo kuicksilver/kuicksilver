@@ -67,6 +67,21 @@ void run_udp(void) {
           for (uint32_t i = 0; i < total; i++) { if (rl[i] != 100 + rl[i] % 37 * 0 + (rl[i] - 100)) lens_ok = 0; if (port_of(ra + i * KSL_UDP_ADDR_LEN) != port_of(la)) addr_ok = 0; if (rb[i][0] != (uint8_t)((rl[i] - 100) / 37)) data_ok = 0; }
           CHECK(lens_ok && addr_ok && data_ok, "lengths, source address and payloads match");
           for (uint32_t i = 0; i < 32; i++) free(bufs[i]); for (int i = 0; i < 64; i++) free(rb[i]); }
+        /* udp_recv_one_syscall_per_datagram: 8 datagrams sent one by one (no GSO) are taken with one recvmsg each; a call polls only
+           when it found the queue empty (a poll before every recvmsg cost a sender without GSO two system calls per datagram) */
+        { uint8_t lc[KSL_UDP_ADDR_LEN]; ksl_udp *c = open_lo(0, lc); CHECK(c != NULL, "plain socket");
+          if (c) { uint8_t *bufs[8]; uint32_t lens[8]; uint8_t addrs[8 * KSL_UDP_ADDR_LEN]; uint8_t ecns[8];
+            for (uint32_t i = 0; i < 8; i++) { lens[i] = 100 + i; bufs[i] = malloc(lens[i]); memset(bufs[i], (int)i, lens[i]); memcpy(addrs + i * KSL_UDP_ADDR_LEN, lc, KSL_UDP_ADDR_LEN); ecns[i] = 0; }
+            uint32_t sent = 0; CHECK(ksl_udp_send(a, bufs, lens, addrs, ecns, 8, &sent) == KSL_OK && sent == 8, "8 sent one by one");
+            uint8_t *rb[16]; uint32_t rc[16], rl[16]; uint8_t ra[16 * KSL_UDP_ADDR_LEN], re[16]; uint32_t total = 0, got, calls = 0; for (int i = 0; i < 16; i++) { rb[i] = malloc(1500); rc[i] = 1500; }
+            uint32_t before = ksl_udp_recv_syscalls_for_test(c);
+            for (int t = 0; t < 50 && total < 8; t++) { calls++; int r = ksl_udp_recv(c, rb + total, rc + total, rl + total, ra + total * KSL_UDP_ADDR_LEN, re + total, 16 - total, &got, 200); if (r == KSL_WANT_READ) continue; CHECK(r == KSL_OK, "recv"); total += got; }
+            uint32_t syscalls = ksl_udp_recv_syscalls_for_test(c) - before;
+            CHECK(total == 8, "8 received");
+            /* per call at most an empty recvmsg, a poll and the empty recvmsg that ends it; one recvmsg per datagram */
+            CHECK(syscalls <= total + 3 * calls, "receive system calls: one per datagram plus at most three per call");
+            if (syscalls > total + 3 * calls) printf("    %u system calls for %u datagrams in %u calls\n", syscalls, total, calls);
+            for (uint32_t i = 0; i < 8; i++) free(bufs[i]); for (int i = 0; i < 16; i++) free(rb[i]); ksl_udp_close(c); } }
         /* udp_gso_one_syscall + udp_gro_splits_segments: 8 x 1200 equal-size, same address → one sendmsg with UDP_SEGMENT; the receiver sees 8 datagrams */
         { uint32_t rl[64]; uint8_t re[64]; uint32_t before = ksl_udp_syscalls_for_test(a); uint32_t got = ping(a, b, lb, 8, 1200, 0, re, NULL, rl); CHECK(got == 8, "8 segments delivered"); int ok = 1; for (uint32_t i = 0; i < got; i++) if (rl[i] != 1200) ok = 0; CHECK(ok, "segments are 1200 each");
           if (caps & KSL_UDP_GSO) CHECK(ksl_udp_syscalls_for_test(a) - before == 1, "one sendmsg for the batch (GSO)"); }

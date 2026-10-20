@@ -53,7 +53,7 @@ struct ksl_udp {
     /* two scratch buffers: the receiver thread owns scratch (GRO train), the sender thread owns tx (joined GSO run) — they never share */
     uint8_t *scratch; uint8_t *tx; uint32_t pend_off, pend_len, pend_seg; uint8_t pend_addr[KSL_UDP_ADDR_LEN]; uint8_t pend_ecn;
     volatile int closed; volatile int in_recv;
-    uint32_t sends, recvs, gso_fallbacks;
+    uint32_t sends, recvs, gso_fallbacks, polls;
 #ifdef KSL_TEST
     int fail_next_gso, fail_next_send;   /* error injection, test builds only */
 #endif

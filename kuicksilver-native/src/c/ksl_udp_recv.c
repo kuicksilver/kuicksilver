@@ -19,18 +19,24 @@ int ksl_udp_recv(ksl_udp *u, uint8_t *const *bufs, const uint32_t *caps, uint32_
     __atomic_add_fetch(&u->in_recv, 1, __ATOMIC_SEQ_CST);
     uint32_t filled = hand_out(u, bufs, caps, lens, addrs, ecnv, n, 0);
     int rc = KSL_OK;
+    /* recvmsg first, poll only when the queue is empty and nothing was taken yet: one system call per datagram, not two (a sender
+       whose datagrams arrive one by one, without GSO, cost a poll and a recvmsg each) */
     while (filled < n) {
         if (u->closed) { rc = KSL_ERROR; break; }
-        struct pollfd pf[2] = { { u->fd, POLLIN, 0 }, { u->wake[0], POLLIN, 0 } };
-        int wait = filled ? 0 : timeout_ms;
-        int pr = poll(pf, u->wake[0] >= 0 ? 2 : 1, wait);
-        if (pr == 0) { if (!filled) rc = KSL_WANT_READ; break; }
-        if (pr < 0) { if (errno == EINTR) continue; set_err(u, errno, "poll"); rc = filled ? KSL_OK : KSL_ERROR; break; }
-        if (pf[1].revents) { rc = filled ? KSL_OK : KSL_ERROR; break; }   /* closed from another thread */
         struct sockaddr_storage ss; struct iovec iov = { u->scratch, GRO_MAX }; uint8_t cbuf[256];
         struct msghdr m; memset(&m, 0, sizeof m); m.msg_name = &ss; m.msg_namelen = sizeof ss; m.msg_iov = &iov; m.msg_iovlen = 1; m.msg_control = cbuf; m.msg_controllen = sizeof cbuf;
         ssize_t r = recvmsg(u->fd, &m, MSG_DONTWAIT); u->recvs++;
-        if (r < 0) { if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) continue; set_err(u, errno, "recvmsg"); rc = filled ? KSL_OK : KSL_ERROR; break; }
+        if (r < 0 && errno == EINTR) continue;
+        if (r < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+            if (filled || timeout_ms == 0) { if (!filled) rc = KSL_WANT_READ; break; }
+            struct pollfd pf[2] = { { u->fd, POLLIN, 0 }, { u->wake[0], POLLIN, 0 } };
+            int pr = poll(pf, u->wake[0] >= 0 ? 2 : 1, timeout_ms); u->polls++;
+            if (pr == 0) { rc = KSL_WANT_READ; break; }
+            if (pr < 0) { if (errno == EINTR) continue; set_err(u, errno, "poll"); rc = KSL_ERROR; break; }
+            if (pf[1].revents) { rc = KSL_ERROR; break; }   /* closed from another thread */
+            continue;
+        }
+        if (r < 0) { set_err(u, errno, "recvmsg"); rc = filled ? KSL_OK : KSL_ERROR; break; }
         if (m.msg_flags & MSG_TRUNC) continue;   /* bigger than the scratch: dropped whole */
         uint32_t gso = 0; uint8_t mark = 0;
         for (struct cmsghdr *c = CMSG_FIRSTHDR(&m); c; c = CMSG_NXTHDR(&m, c)) {
