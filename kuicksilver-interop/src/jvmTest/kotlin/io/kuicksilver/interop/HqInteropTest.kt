@@ -7,6 +7,15 @@ import io.kuicksilver.quic.ConnectionAdmission
 import io.kuicksilver.tls.CipherSuites
 import io.kuicksilver.tls.EarlyDataState
 import io.kuicksilver.tls.TlsIdentity
+import io.kuicksilver.quic.QuicEndpoint
+import io.kuicksilver.quic.QuicEndpointConfig
+import io.kuicksilver.quic.QuicServerConfig
+import io.kuicksilver.quic.quicConfig
+import io.kuicksilver.tls.TlsRole
+import io.kuicksilver.tls.tlsConfig
+import io.ktor.network.sockets.InetSocketAddress
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import java.io.File
 import java.nio.file.Files
@@ -49,6 +58,20 @@ class HqInteropTest {
         assertTrue(Testcases.client("transfer", Testcases.congestionController("bbr")!!)!!.quic.congestionController() is io.kuicksilver.quic.Bbr)
         assertTrue(Testcases.client("transfer", Testcases.congestionController(null)!!)!!.quic.congestionController() is io.kuicksilver.quic.Cubic)
         assertEquals(127, Interop.run(mapOf("ROLE" to "client", "TESTCASE" to "transfer", "KSL_CC" to "vegas", "REQUESTS" to "")))
+    }
+    @Test @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    fun clientExits1WhenTheConnectionIsLost() = runBlocking {
+        // a lost connection (here the server's CONNECTION_CLOSE; in the runner the idle timeout of ngtcp2->kuicksilver-native:rebind-addr)
+        // ends the client with exit 1 on the JVM and on Native alike, not with an uncaught exception (Kotlin/Native: exit 133)
+        val tls = tlsConfig(TlsRole.Server) { alpn = listOf("hq-interop"); this.identity = identity() }
+        val config = QuicEndpointConfig.Builder().apply { server = QuicServerConfig.Builder(tls).apply { quic = quicConfig { versions = Interop.v1 } }.build() }.build()
+        val ep = QuicEndpoint.bind(InetSocketAddress("127.0.0.1", 0), config)
+        try {
+            val closer = launch(Dispatchers.Default) { ep.accept().close(0x101, "go away") }
+            val downloads = Files.createTempDirectory("dl").toFile()
+            val code = Interop.run(mapOf("ROLE" to "client", "TESTCASE" to "transfer", "REQUESTS" to "https://127.0.0.1:${ep.localAddress.port}/f", "DOWNLOADS" to downloads.path))
+            assertEquals(1, code); closer.join()
+        } finally { ep.close() }
     }
     @Test fun unknownTestcaseExits127() { assertEquals(127, Interop.run(mapOf("ROLE" to "client", "TESTCASE" to "connectionmigration", "REQUESTS" to ""))); assertEquals(127, Interop.run(mapOf("ROLE" to "server", "TESTCASE" to "foo"))) }
     @Test fun keylogWrittenWhenEnvSet() = runBlocking {
