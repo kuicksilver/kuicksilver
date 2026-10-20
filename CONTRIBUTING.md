@@ -99,6 +99,8 @@ measurement) with no result; `--perf --results DIR` re-checks an earlier run. To
 (or a new peer), run `--perf` on a quiet host, review `bash tools/interop/check-perf.sh --update build/interop/<run> >
 /tmp/t.json`, copy it over the thresholds file and update the «Measurements» line of `docs/spec/rfc-compliance.md` in
 the same commit. `bash tools/interop/check-perf-test.sh` runs the checker's exit-code cases on `tools/interop/testdata`.
+The comparison with other stacks (goodput, CPU per GB, handshakes per second) is `tools/bench/run-table.sh`; its
+method and the published numbers are in `docs/benchmarks.md`.
 
 In the rebind cases `tools/interop/sim-entrypoint.sh` keeps the simulator's ready port closed until its first rebind is
 over, so the client's handshake never runs across it: the `rebind-port` and `rebind-addr` cells no longer exercise a
