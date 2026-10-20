@@ -11,6 +11,7 @@
 # times, so each client's ~0.1 s set-up and the containers' staggered starts are in it: keep <conns> large); server CPU =
 # the server container's cgroup usage over the measured batch. A warm-up batch (KSL_BENCH_HS_WARMUP connections per client,
 # default 100) runs first against the same server process.
+# KSL_BENCH_JAVA_OPTS: the JVM server's JAVA_OPTS, as in cpu-transfer.sh (a JFR recording into /profile).
 set -euo pipefail
 root="$(cd "$(dirname "$0")/../.." && pwd)"; cd "$root"
 header="server,client,clients,conns,ok_clients,handshakes,window_s,hs_per_s,server_cpu_s,server_user_s,server_sys_s,server_cpu_ms_per_hs,server_cores"
@@ -21,12 +22,14 @@ work="${KSL_BENCH_WORK:-$root/build/bench}"; mkdir -p "$work"; work="$(cd "$work
 compose=(docker compose -f "$root/tools/bench/compose.yml")
 # shellcheck source=tools/bench/lib.sh
 source "$root/tools/bench/lib.sh"
+mkdir -p "$work/profile"
+stop=1; [ -n "${KSL_BENCH_JAVA_OPTS:-}" ] && stop=30   # a JVM recording JFR writes its file on the way out
 bench_certs "$work/certs"
 bench_www 32
 urls() { for _ in $(seq 1 "$1"); do printf 'https://server4:443/f32 '; done; }
-export SERVER="$server" CLIENT="$client" TESTCASE=multiconnect CERTS="$work/certs" REQUESTS=x CLIENT_CMD=true
+export SERVER="$server" CLIENT="$client" TESTCASE=multiconnect CERTS="$work/certs" PROFILE_DIR="$work/profile" REQUESTS=x CLIENT_CMD=true
 names=(); for i in $(seq 1 "$n"); do names+=("bench-hs-$i"); done
-cleanup() { docker rm -f "${names[@]}" >/dev/null 2>&1 || true; "${compose[@]}" down --timeout 1 >/dev/null 2>&1 || true; }
+cleanup() { docker rm -f "${names[@]}" >/dev/null 2>&1 || true; "${compose[@]}" down --timeout "$stop" >/dev/null 2>&1 || true; }
 # <conns>: the clients, created first and then started together; prints how many exited 0
 batch() {
   local reqs i c ok=0; reqs=$(urls "$1"); docker rm -f "${names[@]}" >/dev/null 2>&1 || true

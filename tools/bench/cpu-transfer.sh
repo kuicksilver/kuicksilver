@@ -13,6 +13,8 @@
 # transfer's CPU from each big one's so the fixed costs cancel. The router's interface counters give the datagrams and IP
 # bytes each side sent.
 # Environment: KSL_BENCH_WORK (default build/bench) holds the certs and the client's counters; KSL_BENCH_TIMEOUT (300 s).
+# KSL_BENCH_JAVA_OPTS: the JVM server's JAVA_OPTS (e.g. -XX:StartFlightRecording=filename=/profile/x.jfr,settings=profile;
+# /profile is $KSL_BENCH_WORK/profile on the host), stopped gracefully at the end so a recording is written.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/../.." && pwd)"; cd "$root"
 header="server,client,phase,bytes,ok,wall_s,server_cpu_s,server_user_s,server_sys_s,client_cpu_s,client_user_s,client_sys_s,client_bytes,server_pkts,server_wire_bytes,client_pkts,client_wire_bytes"
@@ -22,11 +24,13 @@ work="${KSL_BENCH_WORK:-$root/build/bench}"; mkdir -p "$work"; work="$(cd "$work
 compose=(docker compose -f "$root/tools/bench/compose.yml")
 # shellcheck source=tools/bench/lib.sh
 source "$root/tools/bench/lib.sh"
+mkdir -p "$work/profile"
+stop=1; [ -n "${KSL_BENCH_JAVA_OPTS:-}" ] && stop=30   # a JVM recording JFR writes its file on the way out
 bench_certs "$work/certs"
 bench_www "$big"; bench_www "$small"
-export SERVER="$server" CLIENT="$client" TESTCASE=transfer CERTS="$work/certs" CPU_DIR="$work/cpu" REQUESTS=x CLIENT_CMD
+export SERVER="$server" CLIENT="$client" TESTCASE=transfer CERTS="$work/certs" PROFILE_DIR="$work/profile" CPU_DIR="$work/cpu" REQUESTS=x CLIENT_CMD
 CLIENT_CMD=$(image_cmd "$client"); mkdir -p "$CPU_DIR"
-trap '"${compose[@]}" down --timeout 1 >/dev/null 2>&1 || true' EXIT
+trap '"${compose[@]}" down --timeout "$stop" >/dev/null 2>&1 || true' EXIT
 "${compose[@]}" down --timeout 1 >/dev/null 2>&1 || true
 "${compose[@]}" up -d sim server >/dev/null 2>&1
 # <phase> <bytes>: one transfer by a new client container, one CSV line

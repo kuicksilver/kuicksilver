@@ -54,20 +54,29 @@ internal class HqInteropServer private constructor(private val endpoints: List<Q
     val earlyAcceptedConnections: Int get() = early.load()
     /** Request streams whose data arrived in 0-RTT packets (tests). */
     val earlyStreams: Int get() = earlyStreamCount.load()
-    private val connections = AtomicReference<List<QuicConnection>>(emptyList())
+    /**
+     * The connections being served and the key updates of those that ended, swapped as one value so [keyUpdatesSeen] never
+     * counts a connection twice; a connection leaves when it ended (a handshake benchmark accepts thousands, tools/bench/handshakes.sh).
+     */
+    private class Tracked(val live: List<QuicConnection>, val endedKeyUpdates: Long)
+    private val tracked = AtomicReference(Tracked(emptyList(), 0))
+    /** Connections accepted and not yet ended (tests). */
+    val connectionsTracked: Int get() = tracked.load().live.size
     /** Key updates observed over all accepted connections (the `keyupdate` interop case). */
-    val keyUpdatesSeen: Long get() = connections.load().sumOf { it.stats.keyUpdates }
+    val keyUpdatesSeen: Long get() = tracked.load().let { t -> t.endedKeyUpdates + t.live.sumOf { it.stats.keyUpdates } }
 
-    private fun run() { for (ep in endpoints) scope.launch { while (true) { val c = ep.accept(); accepted.incrementAndFetch(); if (c.earlyDataAccepted == true) early.incrementAndFetch(); while (true) { val l = connections.load(); if (connections.compareAndSet(l, l + c)) break }; launch { serve(c) } } } }
+    private fun update(f: (Tracked) -> Tracked) { while (true) { val t = tracked.load(); if (tracked.compareAndSet(t, f(t))) return } }
+    private fun run() { for (ep in endpoints) scope.launch { while (true) { val c = ep.accept(); accepted.incrementAndFetch(); if (c.earlyDataAccepted == true) early.incrementAndFetch(); update { Tracked(it.live + c, it.endedKeyUpdates) }; launch { serve(c) } } } }
     private suspend fun serve(c: QuicConnection) {
         try { while (true) { val st = c.acceptStream(); if (st.receivedEarly) earlyStreamCount.incrementAndFetch(); scope.launch { runCatching { handle(st) } } } } catch (_: Exception) { }
+        finally { val ended = c.stats.keyUpdates; update { t -> Tracked(t.live.filter { it !== c }, t.endedKeyUpdates + ended) } }
     }
     private suspend fun handle(st: QuicStream) {
         val line = StringBuilder(); val one = ByteArray(1)
         while (!line.endsWith("\n") && line.length < 4096) { if (st.input.readAvailable(one, 0, 1) < 0) break; line.append(one[0].toInt().toChar()) }
         val request = line.toString().trim(); val path = request.removePrefix("GET").trim().substringBefore(' ').trimStart('/')
         val file = "$www/$path"
-        if (request.startsWith("GET") && path.isNotEmpty() && Files.inside(www, file)) { Files.read(file)?.let { st.output.writeFully(it, 0, it.size) } }
+        if (request.startsWith("GET") && path.isNotEmpty() && Files.inside(www, file)) { Files.stream(file) { b, n -> st.output.writeFully(b, 0, n) } }
         st.output.flushAndClose()
     }
     override fun close() { scope.cancel(); for (ep in endpoints) ep.close() }

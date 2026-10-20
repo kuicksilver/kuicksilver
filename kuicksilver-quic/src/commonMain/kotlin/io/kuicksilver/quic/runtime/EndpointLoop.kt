@@ -44,6 +44,8 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.selects.onTimeout
+import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -348,8 +350,19 @@ internal class EndpointLoop private constructor(
         if (owner >= 0 && owner != index && !group.forward(owner, buf, length, from, ecn, asReceived = false)) core.droppedQueue++
     }
 
-    /** Receive rounds (this socket's and the forwarded ones) between two yields: timers and commands share the dispatcher with the receivers. */
+    /**
+     * Receive rounds of this socket between two yields: timers and commands share the dispatcher with the receivers. The
+     * receiver itself already lets queued work run after every 16 datagrams or 1 ms ([BatchReceiver]); this bounds a socket
+     * whose rounds never wait at all (a flood).
+     */
     private val limiter = WorkLimiter()
+
+    /**
+     * The forward loop yields after every round of [FORWARD_BATCH] datagrams, the receiver's cadence: queued work waiting for
+     * 16 rounds or 2 ms starved the application's reads, which extend a stream's flow-control credit, and slowed a fast
+     * sender 2.6 times when the receive path did it (docs/benchmarks.md).
+     */
+    private val forwardLimiter = WorkLimiter(maxRounds = 1)
 
     /** This socket's batches: on the loop's thread while datagrams keep coming, else through the blocking receive. */
     internal val receiver = BatchReceiver(io, ::now)
@@ -442,7 +455,7 @@ internal class EndpointLoop private constructor(
         try {
             // in batches like the receive loop: admission and a flush after each, then a yield, so a rebound high-rate flow cannot starve this loop's own socket, timers and commands
             var sinceRound = 0
-            limiter.start(now())
+            forwardLimiter.start(now())
             for (f in forwarded) {
                 forwardedCount.incrementAndFetch()
                 buf.copyFrom(f.bytes, 0, 0, f.bytes.size)
@@ -463,9 +476,9 @@ internal class EndpointLoop private constructor(
                 if (++sinceRound == FORWARD_BATCH || drained) {
                     sinceRound = 0
                     afterReceive(now)
-                    if (limiter.shouldYield(now) || drained) {
+                    if (forwardLimiter.shouldYield(now) || drained) {
                         yield()
-                        limiter.start(now())
+                        forwardLimiter.start(now())
                     }
                 }
             }
@@ -486,6 +499,7 @@ internal class EndpointLoop private constructor(
         } // like the receive loop: a dead timer ends the endpoint instead of escaping
     }
 
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class) // select's onTimeout
     private suspend fun timerTicks() {
         while (true) {
             val head = timers.peek()
@@ -493,7 +507,12 @@ internal class EndpointLoop private constructor(
             if (wait == null) {
                 wake.receive()
             } else if (wait > Duration.ZERO) {
-                withTimeoutOrNull(wait) { wake.receive() }
+                // not withTimeoutOrNull: its expiry creates and throws a TimeoutCancellationException, and on Kotlin/Native every
+                // throw captures a stack trace and unwinds through C++; a select's timeout clause just resumes (docs/benchmarks.md)
+                select<Unit> {
+                    wake.onReceive {}
+                    onTimeout(wait) {}
+                }
             }
             val now = now()
             while (true) {

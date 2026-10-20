@@ -30,21 +30,42 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   our own endpoint). `tools/bench/run-table.sh` regenerates it.
 - Interop tooling: `KSL_INTEROP_TAG` makes `build-image.sh` and `run-local.sh` build and run
   `kuicksilver-interop[-native]:<tag>` instead of `:local`.
+- Benchmark tooling: `KSL_BENCH_JAVA_OPTS` hands JAVA_OPTS to the JVM server of `tools/bench/cpu-transfer.sh` and
+  `handshakes.sh` (a JFR recording into `/profile`, which is `$KSL_BENCH_WORK/profile`); `ksl-ctx-bench.sh` reports the
+  server's share of a handshake with the hybrid X25519MLKEM768 key share and with X25519 alone; `kuicksilver-bench` has
+  a `macosArm64` target and a `core` configuration (`CoreThroughputBenchmark` with the Null and the `ksl` crypto), and
+  the interop endpoint a `macosArm64` executable, to profile Kotlin/Native with `sample` or Instruments
+  (`docs/benchmarks.md`, "Profiling").
 
 ### Changed
 
-- QUIC: a client receiving from a sender whose datagrams arrive spread out (paced, or one `sendmsg` each, as quinn's
-  and quiche's interop servers send) spent most of its CPU handing the socket wait to a `Dispatchers.IO` thread and
-  the batch back to the loop, once per receive batch of a few datagrams: 18 s of CPU per GB for the JVM client from
-  quinn's server, half of it system time, 0.6 million context switches. While datagrams keep coming, the endpoint
-  loop now reads the accelerated socket on its own thread (what is queued, or what arrives within 1 ms and before the
-  loop's next timer; not on Windows, whose 1 ms poll waits a 15.6 ms tick), and `ksl_udp_recv` calls `recvmsg` before
-  `poll` (Linux, Android, Apple; Windows still polls first), so a datagram costs one system call instead of two.
-  Client CPU per GB (`docs/benchmarks.md`): from quinn's server 18.2 → 8.4 (JVM) and 9.1 → 7.6 (Native), from
-  quiche's 13.9 → 5.8 and 12.2 → 5.5, Kuicksilver against itself 6.7 → 5.0 and 5.4 → 3.8; the Native server 5.4 →
-  3.9; no transfer got slower. The acknowledgement policy was not the cause and is unchanged: an ACK per receive
-  batch of at least two ack-eliciting packets, at once after a gap; the packet numbers quiche and quinn skip on
-  purpose cost at most one ACK each (`AckTrackerTest.skippedPacketNumbersCostAtMostOneAckEach`).
+- QUIC performance, client and server (`docs/benchmarks.md`, "Before and after"; `tools/bench`, the merged tree against
+  the morning's `c08bc57b` images), every cell with a Kuicksilver endpoint measured on the merged tree.
+  - The receive path. A receive went to `Dispatchers.IO` to wait for the socket and came back to the endpoint loop:
+    two thread hand-offs per receive batch, which cost more than the QUIC work when a batch holds a few datagrams (a
+    sender whose datagrams arrive spread out, paced or one `sendmsg` each, as quinn's and quiche's interop servers
+    send: 18 s of CPU per GB for the JVM client from quinn's server, half of it system time), and most on
+    Kotlin/Native, whose IO dispatcher is a pool of its own. While datagrams keep coming, the loop now reads the
+    accelerated socket on its own thread: what is queued, or what arrives within 1 ms and before the loop's next timer
+    (not on Windows, whose 1 ms poll waits a 15.6 ms tick); the loop's queued work still runs after every 16
+    datagrams or 1 ms. The loop's dispatcher, a caller-supplied one too, can therefore block for up to 1 ms
+    (`QuicEndpointConfig.dispatcher`). `ksl_udp_recv` calls `recvmsg` before `poll` (Linux, Android, Apple; Windows
+    still polls first), so a datagram costs one system call instead of two. The acknowledgement policy was not the
+    cause and is unchanged: an ACK per receive batch of at least two ack-eliciting packets, at once after a gap; the
+    packet numbers quiche and quinn skip on purpose cost at most one ACK each
+    (`AckTrackerTest.skippedPacketNumbersCostAtMostOneAckEach`).
+  - Kotlin/Native: `PacketBuffer`'s per-byte `get` and `set` check the index inline instead of calling the shared range
+    check with a `String` argument, which Kotlin/Native compiled into a call per byte: the core benchmark
+    (`CoreThroughputBenchmark`, in-memory loopback) moves 27 % more data per second with the Null crypto and 15 % more
+    with AES-GCM. `WireReader` and `WireWriter` build their exceptions out of line for the same reason.
+  - The endpoint's timer waits with `select { onTimeout }` instead of `withTimeoutOrNull`, whose expiry created and threw
+    a `TimeoutCancellationException` (on Kotlin/Native a stack trace and a C++ unwind) at every timer.
+  - A connection starts its DATAGRAM sender coroutine with its first datagram instead of at creation, so a connection
+    that sends none does not throw a `CancellationException` through it when it ends.
+- Interop endpoint (benchmark numbers): the hq server streams a file in 1 MiB writes instead of reading it whole (a
+  1 GiB array and two copies per request, 0.9 s/GB of the JVM server's CPU), and forgets a connection when it ends
+  instead of keeping every connection in a list it copied on each accept (a growing copy per handshake and 340 MB of
+  heap after 13 000 connections on the JVM).
 
 ### Fixed
 

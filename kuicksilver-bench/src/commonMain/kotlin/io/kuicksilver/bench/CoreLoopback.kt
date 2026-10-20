@@ -22,13 +22,14 @@ import kotlin.random.Random
 import kotlin.time.Duration.Companion.milliseconds
 
 /**
- * Two [ConnectionCore]s joined back to back under virtual time, with the Null crypto provider: the datagrams one core
+ * Two [ConnectionCore]s joined back to back under virtual time, with the Null crypto provider (or [crypto], e.g. `KslQuicCrypto`
+ * for AES-GCM and header protection through `ksl`): the datagrams one core
  * polls into its [PacketBatch] are handed to the other core's `handleDatagram` from that same buffer, so the transport
  * itself allocates nothing. One side (the client unless [reverse]) writes [payload] bytes per stream per [step], the
  * other reads everything readable into one pre-allocated array.
  */
 @OptIn(ExperimentalKuicksilverApi::class, DelicateKuicksilverApi::class, io.kuicksilver.annotations.InternalKuicksilverApi::class)
-public class CoreLoopback(private val streams: Int = 1, private val payload: Int = 1200, private val reverse: Boolean = false, private val useDatagrams: Boolean = false, private val quic: QuicConfig = QuicConfig.Default) : AutoCloseable {
+public class CoreLoopback(private val streams: Int = 1, private val payload: Int = 1200, private val reverse: Boolean = false, private val useDatagrams: Boolean = false, private val quic: QuicConfig = QuicConfig.Default, private val crypto: io.kuicksilver.tls.QuicCrypto = NullCryptoProvider) : AutoCloseable {
     private val clientAddr = InetSocketAddress("10.0.0.1", 40000)
     private val serverAddr = InetSocketAddress("10.0.0.2", 443)
     private val serverTls = tlsConfig(TlsRole.Server) { alpn = listOf("bench"); identity = TlsIdentity.fromDer(listOf(TestCerts.server), TestCerts.serverKey.copyOf()) }
@@ -36,7 +37,7 @@ public class CoreLoopback(private val streams: Int = 1, private val payload: Int
 
     public var now: TimeMark = TimeMark(0L)
         private set
-    public val client: ConnectionCore = ConnectionCore.client(quic, clientTls, NullCryptoProvider, serverAddr, Random(1), now)
+    public val client: ConnectionCore = ConnectionCore.client(quic, clientTls, crypto, serverAddr, Random(1), now)
     public var server: ConnectionCore? = null
         private set
     private val toServer = PacketBatch(64)
@@ -106,7 +107,7 @@ public class CoreLoopback(private val streams: Int = 1, private val payload: Int
         drain(client, true, onEvent); server?.let { drain(it, false, onEvent) }
         client.poll(toServer, now)
         if (server == null && toServer.count > 0) {
-            server = ConnectionCore.server(quic, serverTls, NullCryptoProvider, clientAddr, Random(2), now, toServer.buffer(0), toServer.length(0))
+            server = ConnectionCore.server(quic, serverTls, crypto, clientAddr, Random(2), now, toServer.buffer(0), toServer.length(0))
         }
         server?.let { it.poll(toClient, now); drain(it, false, onEvent) }
         drain(client, true, onEvent)

@@ -250,6 +250,92 @@ msquic runs emulated here, and why its congestion controller keeps that rate was
 
 **Still open: Kuicksilver's CPU per handshake** (0.94 ms Native, 1.03 ms JVM) is about twice quinn's (0.53 ms).
 
+## Where the server's time goes
+
+The two server outliers above, profiled on 2026-10-20 (branch `k8/perf-server`; how in [Profiling](#profiling)), what
+was fixed, and what remains. The tables above are still the published run of `c08bc57b`; the numbers in this section
+come from `tools/bench/cpu-transfer.sh` and `handshakes.sh` with the published images as "before" and the branch's as
+"after", the images measured one after the other in turn (three runs of each, median [min–max]); the host's numbers
+drift by a few percent between sessions, so compare within this section.
+
+### Before and after
+
+Two sessions: the published images against a build of the branch that yielded after every receive, then that build
+against the final one (they differ only in the receive loop's yields, see below). "After" is the final build:
+
+| | before | after |
+|---|---|---|
+| Native server, CPU s/GB (own client) | 5.48 [5.46–5.60] | 3.32 [3.32–3.34] |
+| JVM server, CPU s/GB (own client) | 3.96 [3.80–5.19] | 2.87 [2.64–3.40] |
+| Native client, CPU s/GB (own server) | 5.53 | 3.59 |
+| JVM client, CPU s/GB (own server) | 6.76 | 5.28 |
+| Native server, ms per handshake | 0.930 [0.927–0.979] | 0.805 [0.803–0.814] |
+| Native server, handshakes/s | 1380 [1323–1390] | 1520 [1500–1527] |
+| JVM server, ms per handshake | 1.056 [1.040–1.074] | 0.934 [0.927–0.935] |
+| JVM server, handshakes/s | 1744 [1712–1761] | 1772 [1767–1779] |
+
+The Native server's CPU per GB is now within 16 % of the JVM server's (it was 38 % above it); per handshake it is
+below the JVM's as before and 0.3 ms above quinn's (0.53 in the published run).
+
+### CPU per GB
+
+- **The receive path, Kotlin/Native above all.** Every receive went to `Dispatchers.IO` to wait for the socket and came
+  back to the endpoint loop: two dispatches per receive round, up to one round per acknowledgement (about 49 000 per GB
+  at the server). Kotlin/Native's IO dispatcher is a worker pool of its own, so each hop is a thread wake-up in each
+  direction; on the JVM, `Dispatchers.IO` shares the scheduler with the default dispatcher. A receive now takes what the
+  socket already holds on the loop's own thread (a non-blocking poll) and waits on `Dispatchers.IO` only when nothing is
+  there: the Native server's CPU per GB fell by 1.9 s (5.0 → 3.1 with the other fixes in place), the JVM server's by
+  0.3 s. Its rounds no longer suspend, so the receive loop yields after 4 rounds instead of 16 (a yield per round cost the
+  Native bulk server 0.3 s/GB; 16 rounds cost 10 % of the handshake rate).
+- **Kotlin/Native code generation in the QUIC core.** The core benchmark (`CoreThroughputBenchmark`: two cores back to
+  back in memory, one thread, M4 Max) moves 2371 MiB/s on the JVM and 586 MiB/s on Kotlin/Native with the Null crypto
+  (802 and 472 MiB/s with AES-128-GCM through `ksl`, which costs the JVM more: its JNI calls take direct buffers). In
+  the Native profile, 16 % of the time was `PacketBuffer.get`/`set`, which called the shared range check with a `String`
+  argument per byte; with the check inline, 747 and 542 MiB/s. Next in that profile: `Duration` arithmetic on the
+  per-packet paths (pacer, PTO, ACK delay), enum `==` compiled to a virtual `equals`, list index checks in
+  `ConnectionIdManager`, varints read and written byte by byte (thread-local access, 6.5 % of the samples, is a call on
+  macOS only). The core benchmark still runs 3.2 times faster on the JVM with the Null crypto, 1.5 times with AES-GCM:
+  roadmap.
+- **The interop server's whole-file read does skew it, mostly against the JVM.** Reading 1 GiB into one array per
+  request (kotlinx-io segments, then a copy) was 90 % of the JVM server's allocation and 0.9 s/GB of its CPU, 0.1 s/GB
+  of the Native server's. The server now streams in 1 MiB writes. Not in 8 KiB writes: every write into a QUIC stream is
+  a flush that ends in a short packet and sends at once, so 8 KiB writes cost the Native server 10.6 s/GB and the JVM
+  server 15.4 (2 and 4 times), with 3 % more packets and 2.8 times the acknowledgements; coalescing writes is on the
+  roadmap.
+- System time is still about half of either server's CPU (GSO sends and the receive rounds; not broken down further: the
+  images carry no `perf`). Per received packet `ksl_open` allocates, copies and wipes a buffer (a client-side cost:
+  2.4 % of the core benchmark's samples).
+
+### Handshakes
+
+On Linux the gap to quinn was user time: per handshake the Native server spent 0.72 ms of user and 0.21 ms of system
+time, quinn 0.28 and 0.24 (`benchmarks/handshakes.csv`). Of the Native server's user time (a `macosArm64` build under
+the same load, 12 000 handshakes, 3 940 samples):
+
+| where | share of user time |
+|---|---|
+| the OpenSSL handshake (`ksl_drive`: key shares, the ECDSA P-256 signature, the key schedule) | 19 % |
+| a new `SSL_CTX` per QUIC session (`KslContext.create`) | 8.5 % |
+| the interop server: a list of every connection ever accepted, copied on each accept (and kept: 340 MB of heap after 13 000 connections on the JVM) | 8 %, growing |
+| the interop server: `Files.read` and `Files.inside` per request | 10 % |
+| the Kotlin/Native garbage collector | 10 % |
+| exceptions: a `TimeoutCancellationException` per timer expiry, a `CancellationException` per connection (a stack trace and a C++ unwind each on Native) | 3 % |
+| the rest: the QUIC core, coroutine dispatch, about 80 KiB of per-connection buffers | 40 % |
+
+- **The key share is not the explanation.** The handshake client (Kuicksilver's) offers X25519MLKEM768 and X25519.
+  Kuicksilver's server picks the hybrid; quinn's and msquic's interop servers pick X25519 (`key_share` group 0x11EC vs
+  0x001D in the ServerHello; msquic also picks AES-256-GCM). In OpenSSL alone (`tools/bench/ksl-ctx-bench.sh`, M4 Max,
+  three runs) the server's share of a handshake is 131 µs with the hybrid and 102 µs with X25519: ML-KEM-768 costs the
+  server 29 µs, 3 % of 0.92 ms, plus a ClientHello in two datagrams. The per-session `SSL_CTX` costs 53 µs more; sharing
+  one per server configuration is on the roadmap.
+- Fixed: the interop server forgets a connection when it ends; the timer waits with `select { onTimeout }`, which does
+  not throw; a connection's DATAGRAM sender starts with its first datagram, so most connections never run it and do not
+  throw through it when they end. One trap on the way: a 1 MiB read buffer per 32-byte request doubled the Native
+  server's system time (0.21 → 0.47 ms per handshake; large Kotlin/Native arrays are mapped and unmapped); the buffer is
+  now no larger than the file.
+- What remains between Kuicksilver and quinn here is the Kotlin side (core, coroutines, collector, ~0.45 ms) and the
+  OpenSSL side (~0.18 ms with the per-session context).
+
 ## Reproducing
 
 From the repository root, with Docker, `jq`, `tshark` (Wireshark) and the runner's Python environment as
@@ -280,6 +366,30 @@ measured again with the script as it is now, which copies them out of the stoppe
 
 `kuicksilver-bench` (JMH: the QUIC core over an in-memory loopback, and a UDP loopback transfer) measures Kuicksilver
 alone and is not part of this table; it answers "did this change make the core slower", this page "how does it compare".
+
+### Profiling
+
+How the profiles in [Where the server's time goes](#where-the-servers-time-goes) were taken:
+
+- **The JVM server in the benchmark's container:** `KSL_BENCH_JAVA_OPTS` becomes the server's `JAVA_OPTS`, and
+  `$KSL_BENCH_WORK/profile` (default `build/bench/profile`) is mounted at `/profile`; the scripts then stop the server
+  gracefully, so the recording is written:
+  `KSL_BENCH_JAVA_OPTS="-XX:StartFlightRecording=filename=/profile/hs.jfr,settings=profile,delay=8s" bash
+  tools/bench/handshakes.sh kuicksilver-interop:bench 8 1500`, then `jfr view allocation-by-site
+  build/bench/profile/hs.jfr`. On this host JFR's execution sampler recorded almost nothing (21 samples in 71 s), its
+  native-method samples and allocation sites were usable.
+- **Kotlin/Native:** no `perf` in the images, so on the Mac: `./gradlew
+  :kuicksilver-interop:linkReleaseExecutableMacosArm64` and run `kuicksilver-interop.kexe` with `ROLE=server
+  TESTCASE=multiconnect CERTS=… WWW=…` (and a second one with `ROLE=client REQUESTS=…` against `127.0.0.1:443`), then
+  `sample <pid> 10 1 -file out.txt`. Loopback bulk transfers on macOS drop datagrams at the receiver (one `recvmsg` per
+  datagram, no GRO), so only handshakes are representative there; for the per-packet path, `./gradlew
+  :kuicksilver-bench:macosArm64CoreBenchmark` (and `jvmCoreBenchmark` for the JVM) runs `CoreThroughputBenchmark` with
+  the Null and the `ksl` crypto, and `sample macosArm64Benchmark.kexe 12 1` profiles it.
+- **OpenSSL alone:** `tools/bench/ksl-ctx-bench.sh` prints the server's share of a handshake with the hybrid key share
+  and with X25519 only, and the cost of a server `SSL_CTX`.
+- **The key-exchange group a peer picks:** `tcpdump -w` inside the client container (the interop images carry it) and
+  `tshark -r c.pcap -Y 'tls.handshake.type == 2' -T fields -e tls.handshake.extensions_key_share_group` (QUIC Initial
+  packets decrypt without keys).
 
 Versions (all digests in [benchmarks/env.txt](benchmarks/env.txt)):
 

@@ -23,12 +23,12 @@ internal class WireReader(
     val remaining: Int get() = limit - pos
 
     fun require(n: Int) {
-        if (n < 0 ||
-            remaining < n
-        ) {
-            throw QuicWireException(TransportError.FRAME_ENCODING_ERROR, frameType, "truncated: need $n bytes, $remaining left")
-        }
+        if (n < 0 || limit - pos < n) truncated(n)
     }
+
+    /** Out of line: [require] runs per field, and Kotlin/Native compiles a function that builds a String into a slower one. */
+    private fun truncated(n: Int): Nothing =
+        throw QuicWireException(TransportError.FRAME_ENCODING_ERROR, frameType, "truncated: need $n bytes, $remaining left")
 
     fun u8(): Int {
         require(1)

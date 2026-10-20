@@ -116,6 +116,29 @@ class HqInteropTest {
             assertEquals(0, code); for ((n, b) in files) assertContentEquals(b, File(downloads, n).readBytes()); assertEquals(3, srv.connectionsAccepted, "one connection per request")
         }
     }
+    /** Files.stream's boundaries: an empty file (no write, just the FIN) and a file of exactly one [io.kuicksilver.interop.Files.CHUNK] (and one byte more). */
+    @Test fun serverStreamsEmptyAndExactlyOneChunkFiles() = runBlocking {
+        val files = listOf("empty" to ByteArray(0), "chunk" to ByteArray(io.kuicksilver.interop.Files.CHUNK) { (it * 31).toByte() }, "chunk1" to ByteArray(io.kuicksilver.interop.Files.CHUNK + 1) { (it * 7).toByte() })
+        val root = www(*files.toTypedArray()); val downloads = Files.createTempDirectory("dl").toFile()
+        HqInteropServer.start(identity(), port = 0, www = root.path, versions = Interop.v1).use { srv ->
+            val code = Interop.run(mapOf("ROLE" to "client", "TESTCASE" to "multiconnect", "REQUESTS" to files.joinToString(" ") { "https://127.0.0.1:${srv.port}/${it.first}" }, "DOWNLOADS" to downloads.path))
+            assertEquals(0, code); for ((n, b) in files) assertContentEquals(b, File(downloads, n).readBytes(), n)
+        }
+    }
+    /**
+     * The server forgets a connection once it ended: it kept every accepted connection in a list it copied on each accept, so a
+     * handshake benchmark (12 000 connections, tools/bench/handshakes.sh) paid a growing copy per accept and a growing heap to mark.
+     */
+    @Test fun serverForgetsEndedConnections() = runBlocking {
+        val root = www("f" to ByteArray(32) { it.toByte() }); val downloads = Files.createTempDirectory("dl").toFile()
+        HqInteropServer.start(identity(), port = 0, www = root.path, versions = Interop.v1).use { srv ->
+            val code = Interop.run(mapOf("ROLE" to "client", "TESTCASE" to "multiconnect", "REQUESTS" to List(5) { "https://127.0.0.1:${srv.port}/f" }.joinToString(" "), "DOWNLOADS" to downloads.path))
+            assertEquals(0, code); assertEquals(5, srv.connectionsAccepted)
+            val deadline = System.nanoTime() + 5_000_000_000L
+            while (srv.connectionsTracked > 0 && System.nanoTime() < deadline) kotlinx.coroutines.delay(20)
+            assertEquals(0, srv.connectionsTracked, "connections the client closed are no longer tracked")
+        }
+    }
     /**
      * Linux only: on macOS the JVM's dual-stack `[::]` socket next to the `0.0.0.0` socket of the same port answers a `[::1]` client from
      * `127.0.0.1`, and a client now discards datagrams from an address that is not the server's (RFC 9000 section 9).
