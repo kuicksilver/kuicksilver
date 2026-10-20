@@ -30,6 +30,34 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   our own endpoint). `tools/bench/run-table.sh` regenerates it.
 - Interop tooling: `KSL_INTEROP_TAG` makes `build-image.sh` and `run-local.sh` build and run
   `kuicksilver-interop[-native]:<tag>` instead of `:local`.
+- Benchmark tooling: `KSL_BENCH_JAVA_OPTS` hands JAVA_OPTS to the JVM server of `tools/bench/cpu-transfer.sh` and
+  `handshakes.sh` (a JFR recording into `/profile`, which is `$KSL_BENCH_WORK/profile`); `ksl-ctx-bench.sh` reports the
+  server's share of a handshake with the hybrid X25519MLKEM768 key share and with X25519 alone; `kuicksilver-bench` has
+  a `macosArm64` target and a `core` configuration (`CoreThroughputBenchmark` with the Null and the `ksl` crypto), and
+  the interop endpoint a `macosArm64` executable, to profile Kotlin/Native with `sample` or Instruments
+  (`docs/benchmarks.md`, "Profiling").
+
+### Changed
+
+- Server and client CPU (`docs/benchmarks.md`, "Where the server's time goes"; `tools/bench`, before and after
+  interleaved, three runs each): the Kotlin/Native server's CPU per GB fell from 5.5 to 3.3 s and its handshake
+  cost from 0.93 to 0.81 ms; the JVM server's from 4.0 to 2.9 s/GB and from 1.06 to 0.93 ms.
+  - A receive takes what the socket already holds on the endpoint loop's own thread (a non-blocking poll) before it
+    waits on `Dispatchers.IO`: under load the next datagram is there, and the two dispatches of a blocking wait cost
+    more than the receive, most on Kotlin/Native, whose IO dispatcher is a pool of its own (−1.9 s/GB on the Native
+    server). The receive loop now yields after 4 rounds instead of 16, since its rounds no longer suspend.
+  - Kotlin/Native: `PacketBuffer`'s per-byte `get` and `set` check the index inline instead of calling the shared range
+    check with a `String` argument, which Kotlin/Native compiled into a call per byte: the core benchmark
+    (`CoreThroughputBenchmark`, in-memory loopback) moves 27 % more data per second with the Null crypto and 15 % more
+    with AES-GCM. `WireReader` and `WireWriter` build their exceptions out of line for the same reason.
+  - The endpoint's timer waits with `select { onTimeout }` instead of `withTimeoutOrNull`, whose expiry created and threw
+    a `TimeoutCancellationException` (on Kotlin/Native a stack trace and a C++ unwind) at every timer.
+  - A connection starts its DATAGRAM sender coroutine with its first datagram instead of at creation, so a connection
+    that sends none does not throw a `CancellationException` through it when it ends.
+- Interop endpoint (benchmark numbers): the hq server streams a file in 1 MiB writes instead of reading it whole (a
+  1 GiB array and two copies per request, 0.9 s/GB of the JVM server's CPU), and forgets a connection when it ends
+  instead of keeping every connection in a list it copied on each accept (a growing copy per handshake and 340 MB of
+  heap after 13 000 connections on the JVM).
 
 ### Fixed
 

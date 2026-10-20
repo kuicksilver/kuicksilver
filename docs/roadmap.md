@@ -110,6 +110,20 @@ release bar (each bug fixed with a test before a release).
   a client that really rebinds while an observer races copies of its packets from the old address is not held on the
   dead one until the handshake timeout (the known limit in `spec/rfc-compliance.md`, RFC 9000 §9 rebind row; the
   reference implementations lose that handshake as well).
+- Server CPU (`benchmarks.md`, "Where the server's time goes"), each measured with `tools/bench` before and after:
+  - one `SSL_CTX` per server configuration, shared by its QUIC sessions, instead of one per session: 53 µs of the
+    server's ~180 µs of OpenSSL work per handshake (the context is frozen after configuration; what needs care is the
+    per-context state `ksl` keeps: the last error, the SNI override, the ticket-key reference);
+  - stream writes: every write through `QuicStream.output` is a flush that ends in a packet of its own, so a server
+    writing a file in 8 KiB pieces costs two to four times the CPU per GB of one large write, on both ends (a short
+    packet per write, about 2.8 times the ACKs). Coalesce: hand writes to the core without sending while more is queued
+    and in flight (Linux TCP's autocorking), keeping a lone write's latency;
+  - the Kotlin/Native core: 3.2 times the JVM's time in the core benchmark with the Null crypto, 1.5 times with AES-GCM,
+    after the `PacketBuffer` fix (`CoreThroughputBenchmark`); next in its profile are `Duration` arithmetic on the
+    per-packet paths (pacer, PTO, ACK delay; nanoseconds as `Long` instead), enum `==` compiled to a virtual `equals`,
+    list index checks in `ConnectionIdManager`, and varints read and written byte by byte;
+  - per connection, about 80 KiB of buffers allocated up front (16 KiB in each direction per stream, the crypto streams'
+    16 KiB scratch and four 4 KiB send rings): allocate on first use.
 
 ### 0.3.0 — client and server completeness
 
