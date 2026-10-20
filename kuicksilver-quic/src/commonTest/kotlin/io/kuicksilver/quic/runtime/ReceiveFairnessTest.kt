@@ -10,6 +10,7 @@ import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.CoreFixtures
 import io.kuicksilver.quic.DatagramIo
+import io.kuicksilver.quic.DirectReceive
 import io.kuicksilver.quic.MemoryDatagramIo
 import io.kuicksilver.quic.MemoryNetwork
 import io.kuicksilver.quic.NullCryptoProvider
@@ -38,10 +39,10 @@ class ReceiveFairnessTest {
     @BeforeTest fun load() = KslLoader.ensureLoaded()
 
     /** A socket that, once [busy], answers every receive at once with 30 bytes of junk from a stranger: a flood that never lets the receiver suspend. */
-    private class BusyIo(
+    private open class BusyIo(
         private val inner: MemoryDatagramIo,
     ) : DatagramIo by inner {
-        @Volatile private var busy = false
+        @Volatile protected var busy = false
         private val stranger = InetSocketAddress("10.0.0.99", 9999)
         private val junk = ByteArray(30) { 0x5a }
 
@@ -53,6 +54,10 @@ class ReceiveFairnessTest {
 
         override suspend fun receive(into: PacketBatch): Int {
             if (!busy) return inner.receive(into)
+            return junkInto(into)
+        }
+
+        protected fun junkInto(into: PacketBatch): Int {
             if (into.count >= into.capacity) return 0
             val i = into.count
             into.buffer(i).copyFrom(junk, 0, 0, junk.size)
@@ -62,12 +67,27 @@ class ReceiveFairnessTest {
         }
     }
 
-    @Test fun timersFireUnderContinuousReceive(): Unit =
+    /** The flood through the loop's direct path (BatchReceiver): every receive on the loop's thread answers at once too. */
+    private class DirectBusyIo(
+        inner: MemoryDatagramIo,
+    ) : BusyIo(inner),
+        DirectReceive {
+        override fun receiveNow(
+            into: PacketBatch,
+            waitMs: Int,
+        ): Int = if (busy) junkInto(into) else 0
+    }
+
+    @Test fun timersFireUnderContinuousReceive() = timersFireUnderFlood { BusyIo(it) }
+
+    @Test fun timersFireUnderContinuousDirectReceive() = timersFireUnderFlood { DirectBusyIo(it) }
+
+    private fun timersFireUnderFlood(busy: (MemoryDatagramIo) -> BusyIo): Unit =
         runBlocking {
             withTimeout(30.seconds) {
                 // a deaf server: only the client's idle timer can end the connection, and it fires only if the flooded receive loop yields
                 val net = MemoryNetwork()
-                val a = BusyIo(net.open(InetSocketAddress("10.0.0.1", 1111)))
+                val a = busy(net.open(InetSocketAddress("10.0.0.1", 1111)))
                 val b = net.open(InetSocketAddress("10.0.0.2", 2222), deaf = true)
                 val server =
                     QuicEndpoint.bind(

@@ -343,6 +343,41 @@ class KslDatagramIoTest {
             }
         }
 
+    /** The loop's direct path (`BatchReceiver`): datagrams taken on the calling thread, never through `Dispatchers.IO`. */
+    @Test fun receiveNowTakesDatagramsOnTheCallingThread() =
+        runBlocking {
+            assumeTrue(ready(), "needs the accelerated socket (Linux, macOS, Windows)")
+            val a = assertNotNull(KslDatagramIo.open(lo))
+            val b = assertNotNull(KslDatagramIo.open(lo))
+            val out = PacketBatch(3)
+            val inb = PacketBatch(16)
+            try {
+                for (i in 0 until 3) {
+                    out.buffer(i).copyFrom(ByteArray(100 + i) { i.toByte() }, 0, 0, 100 + i)
+                    out.setLength(i, 100 + i)
+                    out.setAddress(i, b.localAddress)
+                }
+                assertEquals(0, b.receiveNow(inb, 0), "nothing queued: answers at once")
+                assertEquals(3, a.send(out))
+                // each call returns as soon as one datagram is there, with what else is queued behind it, without suspending
+                while (inb.count < 3) assertTrue(b.receiveNow(inb, 5000) > 0, "a datagram within 5 s")
+                for (i in 0 until 3) {
+                    assertEquals(100 + i, inb.length(i))
+                    assertContentEquals(ByteArray(100 + i) { i.toByte() }, inb.buffer(i).toByteArray(100 + i))
+                    assertEquals(a.localAddress.port, inb.address(i)!!.port)
+                }
+                assertEquals(0, b.receiveNow(inb, 0))
+                b.close()
+                inb.clear()
+                assertEquals(0, b.receiveNow(inb, 0), "a closed socket answers 0 (the blocking receive then throws)")
+            } finally {
+                out.close()
+                inb.close()
+                a.close()
+                b.close()
+            }
+        }
+
     @Test fun closeUnblocksReceive() =
         runBlocking {
             assumeTrue(ready(), "needs the accelerated socket (Linux, macOS, Windows)")

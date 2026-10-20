@@ -19,14 +19,16 @@ import kotlinx.coroutines.withContext
  * The accelerated transport (ADR-0006): one [KslUdpSocket] of `ksl` on Linux, Android, Apple and Windows. Batches go to C as the
  * slots' own [PacketBuffer]s (no copy in Kotlin); GSO runs, GRO splitting, per-datagram ECN and DF probe mode happen there.
  *
- * `receive` blocks a `Dispatchers.IO` thread in 100 ms slices, returning it between slices, until a datagram arrives or the socket is closed; peers' addresses
+ * `receive` blocks a `Dispatchers.IO` thread in 100 ms slices, returning it between slices, until a datagram arrives or the socket is closed
+ * ([receiveNow] takes datagrams on the caller's thread instead, for the loop while datagrams keep coming); peers' addresses
  * come back as the same [InetSocketAddress] instance for the same 20 address bytes (a 64-entry cache), so the core's path lookup
  * compares by reference. [capabilities] follow the kernel: GSO or ECN the kernel refused mid-way (EIO/EINVAL, handled in C
  * without loss) drop out of the reported capabilities on the next refresh (every [REFRESH] sends or a short send).
  */
 internal class KslDatagramIo private constructor(
     private val socket: KslUdpSocket,
-) : DatagramIo {
+) : DatagramIo,
+    DirectReceive {
     override val localAddress: InetSocketAddress = inetOf(socket.localAddress, 0)
     private val caps = MutableStateFlow(capsOf())
     override val capabilities: StateFlow<IoCapabilities> get() = caps
@@ -151,6 +153,24 @@ internal class KslDatagramIo private constructor(
                 Dispatchers.IO,
                 { socket.isClosed },
             ) { defunctAware { socket.receive(s.bufs, s.lens, s.addrs, s.ecn, s.n, 100) } }
+        return handOut(into, s, n)
+    }
+
+    /** On the calling thread: the loop's direct path (runtime.BatchReceiver), so no hand-off to `Dispatchers.IO` and back. */
+    override fun receiveNow(
+        into: PacketBatch,
+        waitMs: Int,
+    ): Int {
+        if (into.count >= into.capacity) return 0
+        val s = rxSlots(into)
+        return handOut(into, s, defunctAware { socket.receive(s.bufs, s.lens, s.addrs, s.ecn, s.n, waitMs) })
+    }
+
+    private fun handOut(
+        into: PacketBatch,
+        s: Slots,
+        n: Int,
+    ): Int {
         val from = s.from
         for (i in 0 until n) {
             into.setLength(from + i, s.lens[i])

@@ -61,7 +61,8 @@ import kotlin.time.TimeSource
 /**
  * The endpoint loop (docs/architecture.md, `kuicksilver-quic`): one single-threaded dispatcher owns the [EndpointCore] and every [ConnectionCore].
  * Application calls hop onto that dispatcher (`withContext`), so they queue behind the loop's own work; nothing
- * blocks inside it. Datagrams arrive from a receiver coroutine, timers from a timer coroutine, both on the dispatcher.
+ * blocks inside it but a receive on its own thread while datagrams keep coming, at most 1 ms and never past the next timer
+ * ([BatchReceiver]). Datagrams arrive from a receiver coroutine, timers from a timer coroutine, both on the dispatcher.
  *
  * A flush visits only the connections something happened to since the last one (the core's dirty list) and the timer
  * coroutine keeps a heap of deadlines, so neither costs O(connections) per datagram. Several loops of one
@@ -185,11 +186,12 @@ internal class EndpointLoop private constructor(
             val caps = launch { followCapabilities(io, path, core) }
             val batch = PacketBatch(16, SLOT_SIZE)
             val limiter = WorkLimiter()
+            val receiver = BatchReceiver(io, ::now)
             try {
                 limiter.start(now())
                 while (true) {
                     batch.clear()
-                    io.receive(batch)
+                    receiver.receive(batch, untilTimer)
                     observer.datagramsReceived += batch.count
                     val now = now()
                     for (i in 0 until batch.count) {
@@ -349,12 +351,18 @@ internal class EndpointLoop private constructor(
     /** Receive rounds (this socket's and the forwarded ones) between two yields: timers and commands share the dispatcher with the receivers. */
     private val limiter = WorkLimiter()
 
+    /** This socket's batches: on the loop's thread while datagrams keep coming, else through the blocking receive. */
+    internal val receiver = BatchReceiver(io, ::now)
+
+    /** Time left until the loop's next timer: a receive on the loop's thread waits no longer. */
+    private val untilTimer: () -> Duration = { timers.peek()?.let { it.heapDeadline - now() } ?: Duration.INFINITE }
+
     private suspend fun receiveLoop() {
         try {
             limiter.start(now())
             while (true) {
                 inBatch.clear()
-                io.receive(inBatch)
+                receiver.receive(inBatch, untilTimer)
                 observer.datagramsReceived += inBatch.count
                 val now = now()
                 for (i in 0 until inBatch.count) onDatagram(inBatch.buffer(i), inBatch.length(i), inBatch.address(i)!!, inBatch.ecn(i), now)
