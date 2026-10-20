@@ -11,6 +11,8 @@ kotlin {
     jvm()
     linuxX64 { binaries.executable { entryPoint = "io.kuicksilver.interop.main"; baseName = "kuicksilver-interop" } }
     linuxArm64 { binaries.executable { entryPoint = "io.kuicksilver.interop.main"; baseName = "kuicksilver-interop" } }
+    // not in an image: a local server or client on a Mac, for profiling with `sample` or Instruments (docs/benchmarks.md, "Profiling")
+    macosArm64 { binaries.executable { entryPoint = "io.kuicksilver.interop.main"; baseName = "kuicksilver-interop" } }
     sourceSets {
         commonMain.dependencies { implementation(project(":kuicksilver-quic")); implementation(project(":kuicksilver-http3")) }
         commonTest.dependencies { implementation(kotlin("test")) }

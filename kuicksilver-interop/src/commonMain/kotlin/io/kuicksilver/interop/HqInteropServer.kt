@@ -29,6 +29,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlin.concurrent.atomics.AtomicInt
+import kotlin.concurrent.atomics.AtomicLong
 import kotlin.concurrent.atomics.AtomicReference
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.concurrent.atomics.incrementAndFetch
@@ -54,20 +55,26 @@ internal class HqInteropServer private constructor(private val endpoints: List<Q
     val earlyAcceptedConnections: Int get() = early.load()
     /** Request streams whose data arrived in 0-RTT packets (tests). */
     val earlyStreams: Int get() = earlyStreamCount.load()
-    private val connections = AtomicReference<List<QuicConnection>>(emptyList())
+    /** The connections being served; one leaves when its connection ended (a handshake benchmark accepts thousands, tools/bench/handshakes.sh). */
+    private val live = AtomicReference<List<QuicConnection>>(emptyList())
+    private val endedKeyUpdates = AtomicLong(0)
+    /** Connections accepted and not yet ended (tests). */
+    val connectionsTracked: Int get() = live.load().size
     /** Key updates observed over all accepted connections (the `keyupdate` interop case). */
-    val keyUpdatesSeen: Long get() = connections.load().sumOf { it.stats.keyUpdates }
+    val keyUpdatesSeen: Long get() = endedKeyUpdates.load() + live.load().sumOf { it.stats.keyUpdates }
 
-    private fun run() { for (ep in endpoints) scope.launch { while (true) { val c = ep.accept(); accepted.incrementAndFetch(); if (c.earlyDataAccepted == true) early.incrementAndFetch(); while (true) { val l = connections.load(); if (connections.compareAndSet(l, l + c)) break }; launch { serve(c) } } } }
+    private fun update(f: (List<QuicConnection>) -> List<QuicConnection>) { while (true) { val l = live.load(); if (live.compareAndSet(l, f(l))) return } }
+    private fun run() { for (ep in endpoints) scope.launch { while (true) { val c = ep.accept(); accepted.incrementAndFetch(); if (c.earlyDataAccepted == true) early.incrementAndFetch(); update { it + c }; launch { serve(c) } } } }
     private suspend fun serve(c: QuicConnection) {
         try { while (true) { val st = c.acceptStream(); if (st.receivedEarly) earlyStreamCount.incrementAndFetch(); scope.launch { runCatching { handle(st) } } } } catch (_: Exception) { }
+        finally { endedKeyUpdates.addAndFetch(c.stats.keyUpdates); update { l -> l.filter { it !== c } } }
     }
     private suspend fun handle(st: QuicStream) {
         val line = StringBuilder(); val one = ByteArray(1)
         while (!line.endsWith("\n") && line.length < 4096) { if (st.input.readAvailable(one, 0, 1) < 0) break; line.append(one[0].toInt().toChar()) }
         val request = line.toString().trim(); val path = request.removePrefix("GET").trim().substringBefore(' ').trimStart('/')
         val file = "$www/$path"
-        if (request.startsWith("GET") && path.isNotEmpty() && Files.inside(www, file)) { Files.read(file)?.let { st.output.writeFully(it, 0, it.size) } }
+        if (request.startsWith("GET") && path.isNotEmpty() && Files.inside(www, file)) { Files.stream(file) { b, n -> st.output.writeFully(b, 0, n) } }
         st.output.flushAndClose()
     }
     override fun close() { scope.cancel(); for (ep in endpoints) ep.close() }
