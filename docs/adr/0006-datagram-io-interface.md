@@ -44,7 +44,11 @@ Cross-check 2026-10-02: `ktor-network` on Native closes receiving forever on an 
   count, so a use-after-free between the check and the call is ruled out. The getters (`grantedFlags`, `gsoMaxSegments`,
   `batch`, `stats`) enter through the same counter and return the last value read after `shutdown`.
 - **`KslDatagramIo`** (`kuicksilver-quic/src/commonMain`) is the `DatagramIo` over `KslUdpSocket`: `PacketBatch` slots go
-  to C as they are; `receive` blocks a `Dispatchers.IO` thread in 100 ms slices until the first datagram or close; peer
+  to C as they are; `receive` blocks a `Dispatchers.IO` thread in 100 ms slices until the first datagram or close. While
+  datagrams keep coming the endpoint loop reads it on its own thread instead (`receiveNow`, `runtime/BatchReceiver.kt`):
+  what is queued, or what arrives within 1 ms and before the loop's next timer, and the loop's queued work still runs after
+  every 16 datagrams or 1 ms; the hand-off to an I/O thread and back cost more CPU than the QUIC work of a batch of a few
+  datagrams (0.2.1, docs/benchmarks.md). `ksl_udp_recv` calls `recvmsg` first and polls only on an empty queue (not on Windows); peer
   addresses are a 64-entry cache keyed by the 20 bytes (one `InetSocketAddress` instance per peer: the core compares paths
   by reference), destination addresses a cache of the last 4 by identity. `capabilities` (a `StateFlow`) are re-read from
   `KSL_UDP_GET_CAPS` every 256 sends and after a short send, so a fallback in C shows up with that delay; the datagrams

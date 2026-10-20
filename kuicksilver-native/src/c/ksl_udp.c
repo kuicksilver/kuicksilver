@@ -175,6 +175,7 @@ void ksl_udp_close(ksl_udp *u) {
 
 #ifdef KSL_TEST
 uint32_t ksl_udp_syscalls_for_test(ksl_udp *u) { return u->sends; }
+uint32_t ksl_udp_recv_syscalls_for_test(ksl_udp *u) { return u->recvs + u->polls; }
 void ksl_udp_fail_next_gso_for_test(ksl_udp *u, int err) { u->fail_next_gso = err; }
 void ksl_udp_fail_next_send_for_test(ksl_udp *u, int err) { u->fail_next_send = err; }
 #ifdef __APPLE__
@@ -198,6 +199,7 @@ void ksl_udp_shutdown(ksl_udp *u) { (void)u; }
 void ksl_udp_close(ksl_udp *u) { (void)u; }
 #ifdef KSL_TEST
 uint32_t ksl_udp_syscalls_for_test(ksl_udp *u) { (void)u; return 0; }
+uint32_t ksl_udp_recv_syscalls_for_test(ksl_udp *u) { (void)u; return 0; }
 void ksl_udp_fail_next_gso_for_test(ksl_udp *u, int err) { (void)u; (void)err; }
 void ksl_udp_fail_next_send_for_test(ksl_udp *u, int err) { (void)u; (void)err; }
 int ksl_udp_df_mode_for_test(int fd) { (void)fd; return -1; }

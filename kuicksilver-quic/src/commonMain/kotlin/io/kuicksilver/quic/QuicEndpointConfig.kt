@@ -161,7 +161,11 @@ public class QuicEndpointConfig private constructor(
      * clients out); they are bounded by [maxConnections], [maxConnectionsPerIp] and the [ConnectionAdmission] policy.
      */
     public val acceptQueue: Int,
-    /** The single-threaded dispatcher of the endpoint loop; null means `Dispatchers.Default.limitedParallelism(1)`. */
+    /**
+     * The single-threaded dispatcher of the endpoint loop; null means `Dispatchers.Default.limitedParallelism(1)`. While
+     * datagrams keep coming, the loop waits for the next ones on this dispatcher's thread, at most 1 ms at a time and never
+     * past its next timer (not on Windows): a dispatcher supplied here, a UI one for instance, is blocked that long.
+     */
     public val dispatcher: CoroutineDispatcher?,
     /** How the loop opens its socket; null means [DatagramIo.open]. */
     public val io: (suspend (InetSocketAddress) -> DatagramIo)?,
@@ -205,7 +209,10 @@ public class QuicEndpointConfig private constructor(
         /** Default 128, at least 1; see [QuicEndpointConfig.acceptQueue]. */
         public var acceptQueue: Int = 128
 
-        /** Default null (a one-thread view of `Dispatchers.Default`); must stay null with more than one of [loops]. */
+        /**
+         * Default null (a one-thread view of `Dispatchers.Default`); must stay null with more than one of [loops]. The loop
+         * blocks it for at most 1 ms at a time in a socket wait; see [QuicEndpointConfig.dispatcher].
+         */
         public var dispatcher: CoroutineDispatcher? = null
 
         /** Default null ([DatagramIo.open]); `kuicksilver-testing`'s `MemoryNetwork.open` runs the endpoint in memory. */

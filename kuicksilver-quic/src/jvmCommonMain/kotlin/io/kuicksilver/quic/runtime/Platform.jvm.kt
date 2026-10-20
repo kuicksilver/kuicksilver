@@ -3,3 +3,10 @@
 package io.kuicksilver.quic.runtime
 
 internal actual val portableServerSupported: Boolean = true
+
+internal actual val millisecondPollWaits: Boolean =
+    !System
+        .getProperty("os.name")
+        .orEmpty()
+        .lowercase()
+        .contains("windows")
