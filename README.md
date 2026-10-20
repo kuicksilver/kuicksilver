@@ -166,6 +166,8 @@ stay green. RFC coverage, section by section, with the tests behind each row, is
 - [docs/stability.md](docs/stability.md) — what 0.2.0 promises: stable and experimental API, the ABI checks, the `ksl`
   ABI, the Ktor and OpenSSL version policies, supported platforms.
 - [docs/spec/rfc-compliance.md](docs/spec/rfc-compliance.md) — RFC coverage and the interop matrix.
+- [docs/benchmarks.md](docs/benchmarks.md) — goodput, CPU per GB and handshakes per second against quiche, quinn and
+  msquic, with the method and its caveats (one Apple Silicon host; the amd64 peer images run emulated).
 - [docs/spec/threat-model.md](docs/spec/threat-model.md) — threat model and the `negative_*` security controls.
 - [docs/adr/](docs/adr/README.md) — architecture decision records.
 - [CHANGELOG.md](CHANGELOG.md), [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md),

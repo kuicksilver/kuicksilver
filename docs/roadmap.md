@@ -100,7 +100,8 @@ release bar (each bug fixed with a test before a release).
 
 - Fixes from early user reports.
 - A run of the iOS device checklist on a physical iPhone (`guide/ios.md`, "Device checklist").
-- A published benchmark table: goodput, CPU per GB and handshakes per second against quiche, quinn and msquic.
+- A published benchmark table: goodput, CPU per GB and handshakes per second against quiche, quinn and msquic (done for
+  0.2.1, `benchmarks.md`).
 - Supply chain: an SBOM (CycloneDX) and build provenance for the published artifacts (done for 0.2.1, `release.md`).
 - CI on GitHub Actions again once the minutes reset (from 2026-11-01), alongside the local gate.
 - Longer soak (24–72 h) and fuzzing campaigns (at least 2 h per target).

@@ -23,6 +23,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   Level 1, not more: it is produced and signed on the machine that builds.
 - `docs/stability.md` and `SECURITY.md` state that Kuicksilver is not FIPS-certified and that the bundled OpenSSL is
   built without the FIPS provider; every release build checks the latter (`tools/check/openssl-no-fips.sh`).
+- `docs/benchmarks.md`: a published benchmark table — the QUIC Interop Runner's goodput and crosstraffic, CPU time per
+  transferred GB (cgroup accounting per container, over a plain router) and handshakes per second, for the JVM and
+  Kotlin/Native interop images against quiche, quinn and msquic, with the method, the raw data (`docs/benchmarks/`) and
+  the caveats (one Apple Silicon host; the amd64 peer images run under emulation, calibrated with an amd64 build of
+  our own endpoint). `tools/bench/run-table.sh` regenerates it.
 - Interop tooling: `KSL_INTEROP_TAG` makes `build-image.sh` and `run-local.sh` build and run
   `kuicksilver-interop[-native]:<tag>` instead of `:local`.
 
