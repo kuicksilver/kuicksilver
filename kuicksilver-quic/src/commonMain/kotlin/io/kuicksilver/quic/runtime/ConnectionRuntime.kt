@@ -32,6 +32,7 @@ import io.kuicksilver.tls.VerifyReason
 import io.kuicksilver.tls.VerifyResult
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -294,9 +295,13 @@ internal class ConnectionRuntime(
     override val maxDatagramSize: StateFlow<Int> get() = maxDatagramSizeFlow
     private val datagramSignal = Channel<Unit>(Channel.CONFLATED)
 
-    /** Applies queued send commands on the loop and flushes; one coroutine per connection, woken per burst. */
+    /**
+     * Applies queued send commands on the loop and flushes; one coroutine per connection, woken per burst. Started by the first
+     * datagram: a connection that sends none never runs it, so its end cancels a coroutine that never suspended (no
+     * CancellationException thrown through it; a handshake benchmark pays that per connection, docs/benchmarks.md).
+     */
     private val datagramDrainer: Job =
-        loop.scope.launch {
+        loop.scope.launch(start = CoroutineStart.LAZY) {
             try {
                 for (u in sendQueue.signal) {
                     while (true) {
@@ -335,6 +340,7 @@ internal class ConnectionRuntime(
         if (finished) return DatagramSendResult.Closed
         if (policy === DatagramPolicy.Reject && !sendQueue.hasRoom(data.size)) return DatagramSendResult.QueueFull
         sendQueue.offer(data.copyOf(), policy)
+        datagramDrainer.start()
         return DatagramSendResult.Sent
     }
 
@@ -368,6 +374,7 @@ internal class ConnectionRuntime(
         }
         if (finished) throw closedDeferred.await()
         sendQueue.offer(data.copyOf(), policy)
+        datagramDrainer.start()
     }
 
     /** Pull-based: the core's own 128-entry queue is the only buffer, so what nobody collects is dropped there and counted. */

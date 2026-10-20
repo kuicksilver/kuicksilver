@@ -146,11 +146,19 @@ internal class KslDatagramIo private constructor(
     override suspend fun receive(into: PacketBatch): Int {
         if (into.count >= into.capacity) return 0
         val s = rxSlots(into)
+        // what is already queued is taken on the caller's thread (a non-blocking poll): under load the next datagram is there, and the
+        // two dispatches of a blocking slice (to Dispatchers.IO and back to the loop) cost more than the receive itself, most on
+        // Kotlin/Native, whose IO dispatcher is a separate pool (docs/benchmarks.md)
+        val ready = if (socket.isClosed) 0 else defunctAware { socket.receive(s.bufs, s.lens, s.addrs, s.ecn, s.n, 0) }
         val n =
-            receiveInSlices(
-                Dispatchers.IO,
-                { socket.isClosed },
-            ) { defunctAware { socket.receive(s.bufs, s.lens, s.addrs, s.ecn, s.n, 100) } }
+            if (ready > 0) {
+                ready
+            } else {
+                receiveInSlices(
+                    Dispatchers.IO,
+                    { socket.isClosed },
+                ) { defunctAware { socket.receive(s.bufs, s.lens, s.addrs, s.ecn, s.n, 100) } }
+            }
         val from = s.from
         for (i in 0 until n) {
             into.setLength(from + i, s.lens[i])

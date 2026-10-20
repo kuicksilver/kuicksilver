@@ -13,8 +13,11 @@ internal class WireWriter(
     val remaining: Int get() = limit - pos
 
     private fun need(n: Int) {
-        if (remaining < n) throw IndexOutOfBoundsException("writer needs $n bytes, $remaining left")
+        if (remaining < n) noRoom(n)
     }
+
+    /** Out of line, like [WireReader.require]'s throw: [need] runs per field. */
+    private fun noRoom(n: Int): Nothing = throw IndexOutOfBoundsException("writer needs $n bytes, $remaining left")
 
     fun u8(v: Int) {
         need(1)

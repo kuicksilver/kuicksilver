@@ -44,6 +44,8 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.selects.onTimeout
+import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -346,8 +348,12 @@ internal class EndpointLoop private constructor(
         if (owner >= 0 && owner != index && !group.forward(owner, buf, length, from, ecn, asReceived = false)) core.droppedQueue++
     }
 
-    /** Receive rounds (this socket's and the forwarded ones) between two yields: timers and commands share the dispatcher with the receivers. */
-    private val limiter = WorkLimiter()
+    /**
+     * Receive rounds (this socket's and the forwarded ones) between two yields: timers and commands share the dispatcher with the
+     * receivers. Four, not the limiter's 16: a receive that finds datagrams queued no longer suspends (KslDatagramIo), so the
+     * rounds run back to back; a yield per round cost the Kotlin/Native bulk server 0.3 s/GB, 16 rounds 10 % of the handshake rate.
+     */
+    private val limiter = WorkLimiter(maxRounds = 4)
 
     private suspend fun receiveLoop() {
         try {
@@ -478,6 +484,7 @@ internal class EndpointLoop private constructor(
         } // like the receive loop: a dead timer ends the endpoint instead of escaping
     }
 
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class) // select's onTimeout
     private suspend fun timerTicks() {
         while (true) {
             val head = timers.peek()
@@ -485,7 +492,12 @@ internal class EndpointLoop private constructor(
             if (wait == null) {
                 wake.receive()
             } else if (wait > Duration.ZERO) {
-                withTimeoutOrNull(wait) { wake.receive() }
+                // not withTimeoutOrNull: its expiry creates and throws a TimeoutCancellationException, and on Kotlin/Native every
+                // throw captures a stack trace and unwinds through C++; a select's timeout clause just resumes (docs/benchmarks.md)
+                select<Unit> {
+                    wake.onReceive {}
+                    onTimeout(wait) {}
+                }
             }
             val now = now()
             while (true) {

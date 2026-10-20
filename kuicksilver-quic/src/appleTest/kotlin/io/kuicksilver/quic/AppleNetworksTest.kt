@@ -25,6 +25,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import platform.posix.AF_INET
+import platform.posix.EBADF
 import platform.posix.ENOTCONN
 import platform.posix.SOCK_STREAM
 import platform.posix.close
@@ -225,7 +226,9 @@ class AppleNetworksTest {
                     var lost: PathEvent.SocketLost? = null
                     while (lost == null) lost = events.receive() as? PathEvent.SocketLost
                     assertEquals(PathId.Initial, lost.path.id)
-                    assertEquals(ENOTCONN, lost.cause.errno)
+                    // ENOTCONN from the swapped-in socket, or EBADF when a receive on the loop's thread (it polls the socket
+                    // between waits) looks the descriptor up while dup2 is replacing it: Darwin answers EBADF in that window
+                    assertTrue(lost.cause.errno == ENOTCONN || lost.cause.errno == EBADF, "errno ${lost.cause.errno}")
                     assertFalse(c.closed.isCompleted)
                     val changed = c.rebind(InetSocketAddress("127.0.0.1", 0))
                     assertEquals(PathId.Initial, changed.old.id)
