@@ -28,18 +28,29 @@ public actual class PacketBuffer private constructor(
         what: String,
     ) = checkRange(capacity, offset, length, what)
 
+    // get and set run per byte in the packet codecs: the check stays inline and allocation-free (one unsigned compare), and
+    // what builds the exception is out of line. Through checkRange each call paid a non-inlined call with a String argument,
+    // about 16 % of the Kotlin/Native core's time in the core benchmark (docs/benchmarks.md, "CPU per GB").
     public actual operator fun get(index: Int): Byte {
-        check(index, 1, "get")
-        return address()[index].toByte()
+        val p = ptr ?: closed()
+        if (index.toUInt() >= capacity.toUInt()) getOutOfRange(index)
+        return p[index].toByte()
     }
 
     public actual operator fun set(
         index: Int,
         value: Byte,
     ) {
-        check(index, 1, "set")
-        address()[index] = value.toUByte()
+        val p = ptr ?: closed()
+        if (index.toUInt() >= capacity.toUInt()) setOutOfRange(index)
+        p[index] = value.toUByte()
     }
+
+    private fun closed(): Nothing = throw IllegalStateException("PacketBuffer is closed")
+
+    private fun getOutOfRange(index: Int): Nothing = throw IndexOutOfBoundsException("get: $index+1 outside 0..$capacity")
+
+    private fun setOutOfRange(index: Int): Nothing = throw IndexOutOfBoundsException("set: $index+1 outside 0..$capacity")
 
     public actual fun copyFrom(
         src: ByteArray,

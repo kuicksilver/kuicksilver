@@ -24,6 +24,14 @@ class PacketBufferTest {
     @Test fun boundsAreChecked() {
         PacketBuffer.allocate(4).use { b ->
             assertFailsWith<IndexOutOfBoundsException> { b[4] }
+            assertFailsWith<IndexOutOfBoundsException> { b[-1] }
+            assertFailsWith<IndexOutOfBoundsException> { b[Int.MIN_VALUE] }
+            assertFailsWith<IndexOutOfBoundsException> { b[4] = 1 }
+            assertFailsWith<IndexOutOfBoundsException> { b[-1] = 1 }
+            b[3] = 7
+            assertEquals(7, b[3])
+            b[0] = -1
+            assertEquals(-1, b[0])
             assertFailsWith<IndexOutOfBoundsException> { b.copyFrom(ByteArray(8), 0, 0, 8) }
         }
     }
@@ -46,5 +54,6 @@ class PacketBufferTest {
         b.close()
         b.close()
         assertFailsWith<IllegalStateException> { b[0] }
+        assertFailsWith<IllegalStateException> { b[0] = 1 }
     }
 }
