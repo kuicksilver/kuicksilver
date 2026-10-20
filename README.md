@@ -3,54 +3,53 @@ Copyright 2026 The Kuicksilver Authors
 SPDX-License-Identifier: Apache-2.0
 -->
 
-# Kuicksilver
+<p align="center">
+  <img src="docs/assets/kuicksilver.jpg" width="640" alt="Kuicksilver">
+</p>
 
-**Status: 0.x, experimental.** The API can change between any two 0.x releases, 0.2.0 is on Maven Central, and the CI
-described below runs on the maintainers' machines until the repository's first public build. Do not use it in production
-yet; do try it, and tell us what breaks. [docs/stability.md](docs/stability.md) says which API is stable and which is
-experimental.
+<h1 align="center">Kuicksilver</h1>
 
-Kuicksilver is a Kotlin Multiplatform network stack: QUIC v1 and v2 (RFC 9000/9001/9002/9369, datagrams of RFC 9221,
-path MTU discovery of RFC 8899), HTTP/3 with QPACK (RFC 9114/9204, priorities of RFC 9218, Extended CONNECT and
-WebSockets of RFC 9220, HTTP datagrams of RFC 9297), TLS 1.3 over TCP, and Ktor 3.6 client and server engines on top
-of them. The protocol logic is Kotlin; cryptography and certificate handling come from OpenSSL 3.5, statically linked
-behind one small C shim, `ksl`. The QUIC core is sans-IO, so the same code runs on the JVM, Android and Kotlin/Native
-and in a deterministic network simulator.
+<p align="center">
+  <b>QUIC and HTTP/3 for Kotlin Multiplatform</b>, written in Kotlin, with Ktor client and server engines.
+</p>
+
+<p align="center">
+  <a href="https://central.sonatype.com/namespace/io.kuicksilver"><img alt="Maven Central" src="https://img.shields.io/maven-central/v/io.kuicksilver/kuicksilver-quic?label=Maven%20Central"></a>
+  <a href="LICENSE"><img alt="License: Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-blue"></a>
+  <a href="gradle/libs.versions.toml"><img alt="Kotlin 2.4" src="https://img.shields.io/badge/Kotlin-2.4-7F52FF?logo=kotlin&logoColor=white"></a>
+  <a href="docs/guide/ktor.md"><img alt="Ktor 3.6" src="https://img.shields.io/badge/Ktor-3.6-087CFA"></a>
+  <img alt="Platforms" src="https://img.shields.io/badge/platforms-JVM%20%7C%20Android%20%7C%20iOS%20%7C%20macOS%20%7C%20Linux%20%7C%20Windows-555">
+  <a href="docs/spec/rfc-compliance.md"><img alt="Interop: msquic, ngtcp2, picoquic, quic-go, quiche, quinn" src="https://img.shields.io/badge/interop-6%20QUIC%20stacks-2EA44F"></a>
+</p>
+
+> **Status: 0.x, experimental.** The API can change between any two 0.x releases, and 0.2.0 is on Maven Central. Do
+> not use it in production yet; do try it, and tell us what breaks. [docs/stability.md](docs/stability.md) says which
+> API is stable and which is experimental.
 
 ```kotlin
 val client = HttpClient(Kuicksilver)          // HTTP/1.1 first, HTTP/3 once the server announces it
 embeddedServer(Kuicksilver) { /* ... */ }      // HTTP/1.1 over TLS and HTTP/3 on one port
 ```
 
-## Modules
+## Why Kuicksilver
 
-| Artifact (`io.kuicksilver:`) | What it is | Guide |
-|---|---|---|
-| `kuicksilver-native` | the `ksl` C shim with OpenSSL 3.5 inside, its JNI and cinterop bindings, the native loader | [architecture](docs/architecture.md) |
-| `kuicksilver-tls` | TLS 1.3 configuration, trust (platform, private CA, SPKI pins, TOFU), TLS over any byte channel | [tls.md](docs/guide/tls.md) |
-| `kuicksilver-ktor-network` | `Socket.tls()` / `Socket.tlsServer()` for ktor-network sockets | [tls.md](docs/guide/tls.md) |
-| `kuicksilver-quic` | QUIC transport: streams, datagrams, migration, coroutine API and sans-IO core | [quic.md](docs/guide/quic.md) |
-| `kuicksilver-http3` | HTTP/3 and QPACK over `kuicksilver-quic` | [http3.md](docs/guide/http3.md) |
-| `kuicksilver-ktor-client` | `HttpClient(Kuicksilver)`: HTTP/1.1 over TLS and HTTP/3, Alt-Svc discovery, racing, fallback | [ktor.md](docs/guide/ktor.md) |
-| `kuicksilver-ktor-server` | `embeddedServer(Kuicksilver)`: HTTP/1.1 over TLS on TCP and HTTP/3 on UDP, same port | [ktor.md](docs/guide/ktor.md) |
+- **One implementation, every Kotlin platform.** QUIC, HTTP/3 and QPACK are Kotlin code, not bindings to a different
+  library per platform: the same sans-IO core runs on the JVM, Android, iOS, macOS, Linux and Windows, and in a
+  deterministic network simulator for tests.
+- **Drop-in Ktor engines.** `HttpClient(Kuicksilver)` discovers HTTP/3 through `Alt-Svc` and falls back to HTTP/1.1;
+  `embeddedServer(Kuicksilver)` serves HTTP/1.1 over TLS and HTTP/3 on one port.
+- **Connections that survive network changes.** QUIC connection migration, and `followDefaultNetwork` on Android and
+  Apple moves a connection when the phone switches from Wi-Fi to cellular.
+- **The rest of modern QUIC.** Datagrams (RFC 9221), path MTU discovery, QUIC v2, stream priorities, WebSockets and
+  Extended CONNECT over HTTP/3, qlog; 0-RTT and BBR as opt-in, experimental features.
+- **Tested against the others.** The QUIC Interop Runner against msquic, ngtcp2, picoquic, quic-go, quiche and quinn,
+  in both roles, and a [published benchmark table](docs/benchmarks.md) against quiche, quinn and msquic.
+- **No system OpenSSL.** Cryptography and certificates come from OpenSSL 3.5, pinned, signature-checked, built by this
+  repository and statically linked behind one small C shim, `ksl`.
 
-Each module depends only on the layer directly below it (ADR-0005). `kuicksilver-testing` (network simulator and
-in-memory UDP), `kuicksilver-bench` and `kuicksilver-interop` live in this repository but are not published.
-
-## Platforms
-
-| Platform | Targets | QUIC client | QUIC server | Limits |
-|---|---|---|---|---|
-| JVM 17+ | Linux x86_64 / aarch64, macOS arm64 / x86_64, Windows x86_64 | yes | yes | Linux: glibc 2.17 or newer (the native library is built in manylinux2014); musl (Alpine) is not supported in v1. macOS 11 or newer. Accelerated UDP everywhere: on Linux (GSO/GRO, ECN, DF), macOS (ECN, DF; no GSO/GRO) and Windows (USO/URO and ECN where the Windows version grants them, DF). `loops > 1` needs Linux. The Windows JNI library is cross-built with mingw-w64; the JVM suites on Windows were verified in a local Windows 11 VM (Parallels); there is no CI run on Windows while GitHub Actions is paused. |
-| Android | `minSdk` 24; arm64-v8a, armeabi-v7a, x86_64 | yes | yes | Native libraries are aligned for 16 KiB pages; accelerated UDP as on Linux. |
-| Kotlin/Native Linux | `linuxX64`, `linuxArm64` | yes | yes | glibc of the Kotlin/Native sysroot (2.19 on x64, 2.25 on arm64). |
-| Kotlin/Native Apple | `macosArm64`, `iosArm64`, `iosSimulatorArm64` (no `macosX64`: deprecated by Kotlin; the JVM on Intel Macs is served by the JNI library) | yes | yes | macOS 12 or newer, iOS 15 or newer. The server runs on the accelerated `ksl` socket (ADR-0006): ECN and DF, no GSO/GRO (Darwin has none), `loops = 1` only (Darwin has no `SO_REUSEPORT` flow hashing). The test suites of every module run on the iOS simulator (`iosSimulatorArm64Test`), and `:kuicksilver-ktor-client:iosHostInteropTest` runs the simulator against a peer on the host (Ktor HTTP/3 and HTTP/1.1, raw QUIC in both directions, IPv4 and IPv6); network following through `NWPathMonitor` (`followDefaultNetwork`) is in `appleMain`. Not yet verified on a physical device. |
-| Kotlin/Native Windows | `mingwX64` | yes | yes | The server runs on the accelerated Winsock socket (`WSASendMsg`/`WSARecvMsg`; ECN where Windows accepts `IP_ECN`, probed when the socket opens and verified on Windows 11, USO/URO where granted), `loops = 1` only (exclusive bind, no `SO_REUSEPORT`). A `0.0.0.0` bind opens a dual-stack socket, as on Linux and Apple. `TrustConfig.Platform` verifies with CryptoAPI (the Windows root store, AIA, soft-fail revocation of the leaf). Cross-built on macOS/Linux and verified in a local Windows 11 VM (Parallels); no CI run on Windows while GitHub Actions is paused. |
-
-TLS over TCP (`TlsConnection`, `Socket.tls()`) works on every target above. JS and Wasm are not targets.
-
-Not in v1, by decision: HTTP/2 (ADR-0009), HTTP/3 server push, WebTransport, multipath, OpenSSL 4.x. 0-RTT
-is available as an opt-in, experimental API and is off by default (ADR-0015).
+In protocol terms: QUIC v1 and v2 (RFC 9000/9001/9002/9369, datagrams of RFC 9221, path MTU discovery of RFC 8899),
+HTTP/3 with QPACK (RFC 9114/9204, priorities of RFC 9218, Extended CONNECT and WebSockets of RFC 9220, HTTP datagrams
+of RFC 9297), TLS 1.3 over TCP, and Ktor 3.6 client and server engines on top of them.
 
 ## Quick start
 
@@ -131,6 +130,36 @@ connection.close(code = 0, reason = "done")
 `quic` is a `quicConfig { }`, `tlsServerConfig` / `tlsClientConfig` are `tlsConfig(TlsRole.Server / Client) { }`
 with ALPN set. Datagrams, stream priorities, connection migration and the sans-IO core are in
 [docs/guide/quic.md](docs/guide/quic.md); HTTP/3 without Ktor is in [docs/guide/http3.md](docs/guide/http3.md).
+
+## Modules
+
+| Artifact (`io.kuicksilver:`) | What it is | Guide |
+|---|---|---|
+| `kuicksilver-native` | the `ksl` C shim with OpenSSL 3.5 inside, its JNI and cinterop bindings, the native loader | [architecture](docs/architecture.md) |
+| `kuicksilver-tls` | TLS 1.3 configuration, trust (platform, private CA, SPKI pins, TOFU), TLS over any byte channel | [tls.md](docs/guide/tls.md) |
+| `kuicksilver-ktor-network` | `Socket.tls()` / `Socket.tlsServer()` for ktor-network sockets | [tls.md](docs/guide/tls.md) |
+| `kuicksilver-quic` | QUIC transport: streams, datagrams, migration, coroutine API and sans-IO core | [quic.md](docs/guide/quic.md) |
+| `kuicksilver-http3` | HTTP/3 and QPACK over `kuicksilver-quic` | [http3.md](docs/guide/http3.md) |
+| `kuicksilver-ktor-client` | `HttpClient(Kuicksilver)`: HTTP/1.1 over TLS and HTTP/3, Alt-Svc discovery, racing, fallback | [ktor.md](docs/guide/ktor.md) |
+| `kuicksilver-ktor-server` | `embeddedServer(Kuicksilver)`: HTTP/1.1 over TLS on TCP and HTTP/3 on UDP, same port | [ktor.md](docs/guide/ktor.md) |
+
+Each module depends only on the layer directly below it (ADR-0005). `kuicksilver-testing` (network simulator and
+in-memory UDP), `kuicksilver-bench` and `kuicksilver-interop` live in this repository but are not published.
+
+## Platforms
+
+| Platform | Targets | QUIC client | QUIC server | Limits |
+|---|---|---|---|---|
+| JVM 17+ | Linux x86_64 / aarch64, macOS arm64 / x86_64, Windows x86_64 | yes | yes | Linux: glibc 2.17 or newer (the native library is built in manylinux2014); musl (Alpine) is not supported in v1. macOS 11 or newer. Accelerated UDP everywhere: on Linux (GSO/GRO, ECN, DF), macOS (ECN, DF; no GSO/GRO) and Windows (USO/URO and ECN where the Windows version grants them, DF). `loops > 1` needs Linux. The Windows JNI library is cross-built with mingw-w64; the JVM suites on Windows were verified in a local Windows 11 VM (Parallels); there is no CI run on Windows while GitHub Actions is paused. |
+| Android | `minSdk` 24; arm64-v8a, armeabi-v7a, x86_64 | yes | yes | Native libraries are aligned for 16 KiB pages; accelerated UDP as on Linux. |
+| Kotlin/Native Linux | `linuxX64`, `linuxArm64` | yes | yes | glibc of the Kotlin/Native sysroot (2.19 on x64, 2.25 on arm64). |
+| Kotlin/Native Apple | `macosArm64`, `iosArm64`, `iosSimulatorArm64` (no `macosX64`: deprecated by Kotlin; the JVM on Intel Macs is served by the JNI library) | yes | yes | macOS 12 or newer, iOS 15 or newer. The server runs on the accelerated `ksl` socket (ADR-0006): ECN and DF, no GSO/GRO (Darwin has none), `loops = 1` only (Darwin has no `SO_REUSEPORT` flow hashing). The test suites of every module run on the iOS simulator (`iosSimulatorArm64Test`), and `:kuicksilver-ktor-client:iosHostInteropTest` runs the simulator against a peer on the host (Ktor HTTP/3 and HTTP/1.1, raw QUIC in both directions, IPv4 and IPv6); network following through `NWPathMonitor` (`followDefaultNetwork`) is in `appleMain`. Not yet verified on a physical device. |
+| Kotlin/Native Windows | `mingwX64` | yes | yes | The server runs on the accelerated Winsock socket (`WSASendMsg`/`WSARecvMsg`; ECN where Windows accepts `IP_ECN`, probed when the socket opens and verified on Windows 11, USO/URO where granted), `loops = 1` only (exclusive bind, no `SO_REUSEPORT`). A `0.0.0.0` bind opens a dual-stack socket, as on Linux and Apple. `TrustConfig.Platform` verifies with CryptoAPI (the Windows root store, AIA, soft-fail revocation of the leaf). Cross-built on macOS/Linux and verified in a local Windows 11 VM (Parallels); no CI run on Windows while GitHub Actions is paused. |
+
+TLS over TCP (`TlsConnection`, `Socket.tls()`) works on every target above. JS and Wasm are not targets.
+
+Not in v1, by decision: HTTP/2 (ADR-0009), HTTP/3 server push, WebTransport, multipath, OpenSSL 4.x. 0-RTT
+is available as an opt-in, experimental API and is off by default (ADR-0015).
 
 ## Security model in one line
 
