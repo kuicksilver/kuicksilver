@@ -120,7 +120,10 @@ only because the client started just before the simulator's rebind at 1 s, so th
 PATH_CHALLENGE the runner checks when it went out (`tools/interop/handshake-challenge.py`), and a rebind cell whose
 client's CONNECTION_CLOSE was the first packet from a new path (the rebind landed between the client's last packet and
 its close), answered by the server with its own CONNECTION_CLOSE there as RFC 9000 section 10.2 allows, not a
-PATH_CHALLENGE (`tools/interop/closing-rebind.py`; every earlier path must have passed the runner's check).
+PATH_CHALLENGE (`tools/interop/closing-rebind.py`; every earlier path must have passed the runner's check), and a cell
+that ran on the simulator the timed-out cell before it left running (`Container sim Running` in its output: the runner's
+`docker compose stop` after a timeout fails, and the reused simulator still sends to the previous server container's MAC;
+`run-local.sh` has compose recreate the simulator in every cell, this rule is the backstop).
 `bash tools/interop/environment-test.sh` runs those rules on `tools/interop/testdata`.
 
 The floors were measured on a local host, so the thresholds file says `"blocking": false`: a cell below its floor is a

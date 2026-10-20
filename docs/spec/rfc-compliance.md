@@ -187,6 +187,10 @@ BBR vs CUBIC (K7, `k7/bbr` at d733e20, not merged here): measurements from one i
 
 Where Kuicksilver sends, BBR keeps goodput within 2 % of CUBIC (−1.9 % quic-go, −1.3 % ngtcp2) and takes a larger share against the competing TCP CUBIC flow (+32 % and +24 %); in the client role the peer's controller sends the data and the two columns differ only by noise. Every ngtcp2 cell, BBR and CUBIC, is above its floor in `perf-thresholds.json` (quic-go has none).
 
+Harness notes (0.2.1, 2026-10-20, runs in the `k8/interop-harness` worktree):
+
+- `kuicksilver->picoquic:zerortt` (required) timed out in run 20261020-031632 right after the timed-out, not required `kuicksilver->picoquic:v2` cell: the runner's `docker compose stop` after a timeout lacks the cell's variables and fails (`invalid spec: :/www:ro`), compose reused the running simulator (`Container sim Running`), and that simulator kept sending to the previous server container's MAC address, so not one of picoquic's 13 Initials reached our new server (pcap: every Initial to the v2 server's MAC, the new server announcing another one). Reproduced every time with `-t v2,zerortt` and `-t v2,handshake`; `zerortt` alone was green 30/30 with the c193158b image and 30/30 with 49b51adc. `tools/interop/run-local.sh` now has compose recreate the simulator in every cell, and `environment.sh` classifies such a cell as ENVIRONMENT.
+
 ## Interop matrix K3 (QUIC Interop Runner 740c05a, 2026-10-08)
 
 Images: `kuicksilver-interop:local` (JVM, accelerated UDP through JNI) and `kuicksilver-interop-native:local` (Kotlin/Native linuxArm64). The host is arm64 (Docker Desktop); the quiche image is linux/amd64 under emulation. Run: `tools/interop/run-local.sh -t <cases> <peer>`, Native — `--image native`. S — kuicksilver server, C — kuicksilver client; "?" — one of the sides answers "not supported".

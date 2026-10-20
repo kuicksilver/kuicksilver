@@ -6,7 +6,8 @@
 # KSL_INTEROP_CELL=<a result cell directory with its pcaps> also runs the classification on that real cell (needs tshark), e.g.
 # build/interop/20261016-045713/quiche-server/kuicksilver_quiche/rebind-addr from the 0.2.0 gate; KSL_INTEROP_CLOSE_CELL the same for
 # closing-rebind.py, e.g. build/interop/20261017-054938/msquic-client/msquic_kuicksilver-native/rebind-port (0.2.0 gate 6); KSL_INTEROP_TIMEOUT_CELL
-# a cell the runner timed out, which must not be listed, e.g. build/interop/20261017-175019/picoquic-server/kuicksilver_picoquic/v2 (0.2.0 gate).
+# a cell the runner timed out, which must not be listed, e.g. build/interop/20261017-175019/picoquic-server/kuicksilver_picoquic/v2 (0.2.0 gate);
+# KSL_INTEROP_STALE_CELL a cell that ran on the sim of a timed-out cell, e.g. build/interop/20261020-031632/picoquic-server/kuicksilver_picoquic/zerortt.
 # Usage: environment-test.sh
 set -uo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"; td="$here/testdata"; hc="$here/handshake-challenge.py"
@@ -109,6 +110,39 @@ check "a runner timeout is no unflushed capture"     1 "" -- grep -q "kuicksilve
 check "  nor with one summary present"               1 "" -- grep -q "kuicksilver_picoquic amplificationlimit" "$tmp/cells.txt"
 check "environment_cells lists nothing else" 0 "" -- test "$(wc -l < "$tmp/cells.txt" | tr -d ' ')" = 2
 
+# a cell that ran on the sim of the cell before it, which the runner timed out: that cell's "docker compose stop" failed, the sim kept
+# running with an ARP entry for the previous server container, and no client packet reached the new server (run 20261020-031632:
+# kuicksilver->picoquic:zerortt right after the timed-out v2 cell); only when the cell just before it timed out, timed or not itself
+mk stale-server/kuicksilver_picoquic v2 "2026-10-20 03:24:10,195 Generated random file: a of size: 32" " Container sim Recreate" "Capturing on 'eth1'" "Capturing on 'eth0'" "Test failed: took longer than 60s." "invalid spec: :/www:ro: empty section between colons"
+mk stale-server/kuicksilver_picoquic zerortt "2026-10-20 03:25:10,872 Generated random file: b of size: 32" " Container sim Running" "Test failed: took longer than 60s." "invalid spec: :/www:ro: empty section between colons"
+mk stale-server/kuicksilver_picoquic amplificationlimit "2026-10-20 03:16:49,761 Generated random file: c of size: 32" " Container sim Recreate" "Capturing on 'eth1'" "Capturing on 'eth0'" "Packets received/dropped on interface 'eth0': 9/0" "Packets received/dropped on interface 'eth1': 9/0"
+mk stale-server/kuicksilver_quinn transfer "2026-10-20 04:00:00,000 Generated random file: d of size: 32" " Container sim Recreate" "Test failed: took longer than 60s." "invalid spec: :/www:ro: empty section between colons"
+mk stale-server/kuicksilver_quinn ecn "2026-10-20 04:01:00,000 Generated random file: e of size: 32" " Container sim Recreate" "Capturing on 'eth1'" "Capturing on 'eth0'" "Packets received/dropped on interface 'eth0': 9/0" "Packets received/dropped on interface 'eth1': 9/0"
+mk stale-server/kuicksilver_quinn retry "2026-10-20 04:02:00,000 Generated random file: f of size: 32" " Container sim Running" "Capturing on 'eth1'" "Capturing on 'eth0'" "Packets received/dropped on interface 'eth0': 9/0" "Packets received/dropped on interface 'eth1': 9/0"
+environment_cells "$tmp/res/stale-server" > "$tmp/stale.txt" 2>/dev/null
+check "a cell on the sim left by a timed-out cell is ENVIRONMENT" 0 "kuicksilver_picoquic zerortt the cell before it timed out" -- cat "$tmp/stale.txt"
+check "  not the timed-out cell itself"                          1 "" -- grep -q "kuicksilver_picoquic v2" "$tmp/stale.txt"
+check "  nor a reused sim after a cell that ended normally"      1 "" -- grep -q "kuicksilver_quinn retry" "$tmp/stale.txt"
+check "  and nothing else"                                       0 "" -- test "$(wc -l < "$tmp/stale.txt" | tr -d ' ')" = 1
+
+# run-local.sh's compose override: the sim's KSL_INTEROP_SIM_CELL reaches compose unexpanded and compose's interpolation of it
+# differs in every cell (same test case and client, fresh log directories), so compose never reuses a running sim
+# shellcheck disable=SC2016   # the pattern matches the literal "$runner" of run-local.sh
+sed -n '/^cat > "\$runner\/docker-compose.override.yml" <<EOF$/,/^EOF$/p' "$here/run-local.sh" > "$tmp/override.sh"
+( runner="$tmp" root=/r KSL_INTEROP_START_GATE='' bash "$tmp/override.sh" ) 2>/dev/null
+cell_value() {   # TESTCASE_SERVER TESTCASE_CLIENT SERVER_LOGS CLIENT_LOGS -> the value compose gives KSL_INTEROP_SIM_CELL
+  python3 - "$tmp/docker-compose.override.yml" "$@" <<'PYI'
+import re, sys
+line = next(l for l in open(sys.argv[1]) if "KSL_INTEROP_SIM_CELL=" in l)
+env = dict(zip(["TESTCASE_SERVER", "TESTCASE_CLIENT", "SERVER_LOGS", "CLIENT_LOGS"], sys.argv[2:]))
+print(re.sub(r"\$\{(\w+):-\}", lambda m: env.get(m.group(1), ""), line.split("KSL_INTEROP_SIM_CELL=", 1)[1].rstrip().rstrip('"')))
+PYI
+}
+# shellcheck disable=SC2016   # the literal ${...} compose interpolates
+check "override: the sim's cell value is left to compose"  0 "" -- grep -qF 'KSL_INTEROP_SIM_CELL=${TESTCASE_SERVER:-}:${TESTCASE_CLIENT:-}:${SERVER_LOGS:-}:${CLIENT_LOGS:-}' "$tmp/docker-compose.override.yml"
+check "override: two cells of one test case differ"        1 "" -- test "$(cell_value transfer transfer /tmp/logs_server_a /tmp/logs_client_a)" = "$(cell_value transfer transfer /tmp/logs_server_b /tmp/logs_client_b)"
+check "override: v2 and zerortt differ"                     1 "" -- test "$(cell_value v2 v2 /tmp/s /tmp/c)" = "$(cell_value zerortt zerortt /tmp/s /tmp/c)"
+
 # sim-entrypoint.sh in a rebind scenario: the ready port refuses clients until the first rebind is over (stub run.sh, iptables,
 # netstat; the scenario starts listening 0.2 s in), and in any other scenario it is never touched
 mkdir -p "$tmp/sim/bin"
@@ -164,6 +198,10 @@ if [ -n "${KSL_INTEROP_TIMEOUT_CELL:-}" ]; then   # a real cell the runner timed
   cell=${KSL_INTEROP_TIMEOUT_CELL%/}; res=$(dirname "$(dirname "$cell")")
   check "real timeout cell: the runner timed it out" 0 "" -- grep -q "Test failed: took longer than" "$cell/output.txt"
   check "real timeout cell: not ENVIRONMENT" 1 "" -- bash -c "source '$here/environment.sh'; environment_cells '$res' | grep -q '^$(basename "$(dirname "$cell")") $(basename "$cell") '"
+fi
+if [ -n "${KSL_INTEROP_STALE_CELL:-}" ]; then   # a real cell that ran on the sim of a timed-out cell
+  cell=${KSL_INTEROP_STALE_CELL%/}; res=$(dirname "$(dirname "$cell")")
+  check "real stale-sim cell: classified ENVIRONMENT" 0 "$(basename "$(dirname "$cell")") $(basename "$cell") the cell before it timed out" -- environment_cells "$res"
 fi
 if [ -n "${KSL_INTEROP_CLOSE_CELL:-}" ]; then   # the real gate 6 cell: pcaps and key log through tshark
   cell=${KSL_INTEROP_CLOSE_CELL%/}; res=$(dirname "$(dirname "$cell")")
