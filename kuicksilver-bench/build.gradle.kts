@@ -1,7 +1,8 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
 
-// Throughput benchmark and the steady-state allocation gate for the QUIC core (not published; JVM and Linux x64 only).
+// Throughput benchmark and the steady-state allocation gate for the QUIC core (not published; JVM, Linux x64 and, to profile
+// Kotlin/Native on a Mac with `sample` or Instruments, macOS arm64).
 plugins {
     id("org.jetbrains.kotlin.multiplatform")
     id("org.jetbrains.kotlin.plugin.allopen")
@@ -11,6 +12,7 @@ kotlin {
     jvmToolchain(21)
     jvm()
     linuxX64()
+    macosArm64()
     sourceSets {
         commonMain.dependencies {
             implementation(project(":kuicksilver-quic"))
@@ -23,9 +25,11 @@ allOpen { annotation("org.openjdk.jmh.annotations.State") }
 benchmark {
     // the benchmark plugin refuses a native target it cannot run on this host (a Linux arm64 container running the JVM suites); the JVM gate is what matters there
     val linuxArmHost = System.getProperty("os.name").lowercase().contains("linux") && System.getProperty("os.arch").lowercase() in setOf("aarch64", "arm64")
-    targets { register("jvm"); if (!linuxArmHost) register("linuxX64") }
+    targets { register("jvm"); if (!linuxArmHost) register("linuxX64"); if (System.getProperty("os.name").lowercase().contains("mac")) register("macosArm64") }
     configurations {
         named("main") { warmups = 3; iterations = 5; iterationTime = 2; iterationTimeUnit = "s"; mode = "thrpt"; outputTimeUnit = "s"; advanced("jvmForks", "1") }
+        // the QUIC core alone (in-memory loopback, Null and ksl crypto): `./gradlew :kuicksilver-bench:jvmCoreBenchmark` / `macosArm64CoreBenchmark`
+        register("core") { include("CoreThroughputBenchmark"); warmups = 3; iterations = 5; iterationTime = 2; iterationTimeUnit = "s"; mode = "thrpt"; outputTimeUnit = "s"; advanced("jvmForks", "1") }
     }
 }
 tasks.named<Test>("jvmTest") {

@@ -7,7 +7,8 @@
 # the runner's own (193.167.0.0/24, 193.167.100.0/24), which may still exist as runner_leftnet / runner_rightnet.
 # The router answers on TCP 57832, which the endpoints' run_endpoint.sh waits for (wait-for-it.sh sim:57832).
 # Variables (set by the scripts): SERVER, CLIENT (images), CLIENT_CMD (the client image's own entrypoint), TESTCASE,
-# REQUESTS, CERTS (a runner-style cert directory), WWW_VOLUME.
+# REQUESTS, CERTS (a runner-style cert directory), WWW_VOLUME, PROFILE_DIR (mounted at /profile in the server) and
+# KSL_BENCH_JAVA_OPTS (the JVM server's JAVA_OPTS, e.g. a JFR recording into /profile; docs/benchmarks.md, "Profiling").
 name: kuicksilver-bench
 services:
   sim:
@@ -30,9 +31,11 @@ services:
     environment:
       - ROLE=server
       - TESTCASE=${TESTCASE:?}
+      - JAVA_OPTS=${KSL_BENCH_JAVA_OPTS:-}
     volumes:
       - www:/www:ro
       - ${CERTS:?}:/certs:ro
+      - ${PROFILE_DIR:?}:/profile
     tmpfs: [/downloads, /logs]
     cap_add: [NET_ADMIN]
     ulimits: { memlock: 67108864 }
