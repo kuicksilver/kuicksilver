@@ -31,6 +31,21 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - Interop tooling: `KSL_INTEROP_TAG` makes `build-image.sh` and `run-local.sh` build and run
   `kuicksilver-interop[-native]:<tag>` instead of `:local`.
 
+### Changed
+
+- QUIC: a client receiving from a sender whose datagrams arrive spread out (paced, or one `sendmsg` each, as quinn's
+  and quiche's interop servers send) spent most of its CPU handing the socket wait to a `Dispatchers.IO` thread and
+  the batch back to the loop, once per receive batch of a few datagrams: 18 s of CPU per GB for the JVM client from
+  quinn's server, half of it system time, 0.6 million context switches. While datagrams keep coming, the endpoint
+  loop now reads the accelerated socket on its own thread (what is queued, or what arrives within 1 ms and before the
+  loop's next timer; not on Windows, whose 1 ms poll waits a 15.6 ms tick), and `ksl_udp_recv` calls `recvmsg` before
+  `poll`, so a datagram costs one system call instead of two. Client CPU per GB (`docs/benchmarks.md`): from quinn's
+  server 18.2 → 8.4 (JVM) and 9.1 → 7.6 (Native), from quiche's 13.9 → 5.8 and 12.2 → 5.5, Kuicksilver against itself
+  6.7 → 5.0 and 5.4 → 3.8; the Native server 5.4 → 3.9; no transfer got slower. The acknowledgement policy was not
+  the cause and is unchanged: an ACK per receive batch of at least two ack-eliciting packets, at once after a gap;
+  the packet numbers quiche and quinn skip on purpose cost at most one ACK each
+  (`AckTrackerTest.skippedPacketNumbersCostAtMostOneAckEach`).
+
 ### Fixed
 
 - QUIC: a handshake could be held on a client address the client does not own until the handshake timeout. The
