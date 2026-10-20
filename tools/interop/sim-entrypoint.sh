@@ -32,11 +32,16 @@
 # closed at 11.56-12.61 s and quinn's client at 14.73-14.79 s, at least 0.56 s from a rebind; a second more would put quinn's
 # close within 0.3 s of the rebind at 16 s.
 # rebind-addr keeps first + 0.3 s: the simulator's third binding there (11 s) is always 193.167.0.155:745 (its addresses come
-# from a fixed seed), and ngtcp2's server never receives a datagram from it, so a transfer still running at 11 s waits for the
-# binding at 16 s: with the later start all five ngtcp2->kuicksilver[-native]:rebind-addr runs stalled there, four finished 7-8
-# s late and one failed (our JVM client had nothing ack-eliciting left to send and idled out). From the earlier start that
-# transfer ends at 10.6-11.0 s, before the binding moves to port 745. KSL_INTEROP_START_GATE (s after the first rebind)
-# overrides both.
+# from a fixed seed), and ngtcp2's example server drops every datagram from a source port below 1024 (examples/server.cc checks
+# util::prohibited_port(), an anti-reflection filter, before it even logs the datagram): those datagrams do reach its link (the
+# server-side pcap has them, its log not one of them, while it logs every datagram from the other bindings), so a transfer
+# still running at 11 s waits for the binding at 16 s. With the later start (first + 1.25 s, 2026-10-20) 8 of 15
+# ngtcp2->kuicksilver[-native]:rebind-addr runs failed and the other seven finished 7-8 s late: when the binding moved, our
+# client had either an ack-eliciting packet in flight, whose PTO probes from port 745 were dropped until one left from the 16 s
+# binding, or nothing ack-eliciting left (the download only), so no PTO was armed (RFC 9002 section 6.2.1), nothing left the
+# client and it idled out after 30 s, as RFC 9000 section 10.1 has it (the interop clients of quic-go, ngtcp2 and quiche send
+# no keep-alive either). From the earlier start that transfer ends at 10.6-11.0 s, before the binding moves to port 745.
+# KSL_INTEROP_START_GATE (s after the first rebind) overrides both.
 if [[ "${SCENARIO:-}" == rebind* ]]; then
   first=$(sed -n 's/.*--first-rebind=\([0-9.]*\)s.*/\1/p' <<< "$SCENARIO"); first=${first:-1}
   gate=1.25; [[ "$SCENARIO" == *--rebind-addr* ]] && gate=0.3
