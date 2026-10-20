@@ -8,7 +8,7 @@ SPDX-License-Identifier: Apache-2.0
 Goodput, CPU time per transferred GB and handshakes per second of Kuicksilver against quiche, quinn and msquic, one
 host, 2026-10-20. Every cell with a Kuicksilver endpoint in it was measured again that evening on the 0.2.1 receive path
 (commits `78701eaa` and `af6e26d2`: the loop reads the socket on its own thread while datagrams keep coming, and
-`ksl_udp_recv` takes one system call per datagram; [Worth a look](#worth-a-look)) — all CPU and handshake cells, and the goodput cells against msquic; the
+`ksl_udp_recv` takes one system call per datagram on Linux, Android and Apple; [Worth a look](#worth-a-look)) — all CPU and handshake cells, and the goodput cells against msquic; the
 other goodput cells, the pairs of two peers and the amd64 calibration rows are from the morning run on commit
 `c08bc57b` (0.2.0 plus 17 commits: interop and release tooling and three fixes to address validation and migration
 during the handshake). They are measurements, not promises, and the comparison has limits that matter more than the
@@ -230,7 +230,8 @@ The servers' CPU fell with it (quinn's from 14.5 to 12.6 s/GB serving the JVM cl
 The fix (`runtime/BatchReceiver.kt`, ADR-0006): while datagrams keep coming the loop reads the socket on its own thread
 (what is queued, or what arrives within 1 ms and before its next timer; not on Windows, whose 1 ms poll waits a 15.6 ms
 tick), letting the work queued on the loop run after every 16 datagrams or 1 ms as the blocking receive did; and
-`ksl_udp_recv` calls `recvmsg` first and polls only when the queue is empty. The same transfer from quinn now has 98 000
+`ksl_udp_recv` calls `recvmsg` first and polls only when the queue is empty (Linux, Android, Apple; Windows still polls
+first). The same transfer from quinn now has 98 000
 context switches on the dispatcher threads and 59 000 on the reading thread. A first version that let queued work run
 only every 16 rounds or 2 ms (the loop's `WorkLimiter`) starved the application's reads, which extend the stream's
 flow-control credit, and made Kuicksilver → Kuicksilver 2.6 times slower; that is why the receiver yields as often as

@@ -102,7 +102,10 @@ ktor-network sockets as the fallback (ADR-0006).
 `tools/check/sans-io.sh` enforces it. Only `runtime` and the coroutine-level files know about them.
 
 **Architecture Invariant:** a connection is touched only by the endpoint loop that owns it (a single-threaded
-dispatcher). Application calls become commands queued to the loop; there are no locks on connection state.
+dispatcher). Application calls become commands queued to the loop; there are no locks on connection state. Nothing
+blocks on the loop's thread except a socket wait of at most 1 ms (and never past its next timer) while datagrams keep
+coming (`runtime/BatchReceiver.kt`; not on Windows); a dispatcher the caller supplies, a UI one for instance, sees that
+wait too.
 
 **Architecture Invariant:** memory per connection is bounded by explicit ceilings (windows, queues, ranges), each refused
 before allocation; there is no separate byte budget.

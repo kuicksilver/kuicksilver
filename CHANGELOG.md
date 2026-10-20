@@ -39,12 +39,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   quinn's server, half of it system time, 0.6 million context switches. While datagrams keep coming, the endpoint
   loop now reads the accelerated socket on its own thread (what is queued, or what arrives within 1 ms and before the
   loop's next timer; not on Windows, whose 1 ms poll waits a 15.6 ms tick), and `ksl_udp_recv` calls `recvmsg` before
-  `poll`, so a datagram costs one system call instead of two. Client CPU per GB (`docs/benchmarks.md`): from quinn's
-  server 18.2 → 8.4 (JVM) and 9.1 → 7.6 (Native), from quiche's 13.9 → 5.8 and 12.2 → 5.5, Kuicksilver against itself
-  6.7 → 5.0 and 5.4 → 3.8; the Native server 5.4 → 3.9; no transfer got slower. The acknowledgement policy was not
-  the cause and is unchanged: an ACK per receive batch of at least two ack-eliciting packets, at once after a gap;
-  the packet numbers quiche and quinn skip on purpose cost at most one ACK each
-  (`AckTrackerTest.skippedPacketNumbersCostAtMostOneAckEach`).
+  `poll` (Linux, Android, Apple; Windows still polls first), so a datagram costs one system call instead of two.
+  Client CPU per GB (`docs/benchmarks.md`): from quinn's server 18.2 → 8.4 (JVM) and 9.1 → 7.6 (Native), from
+  quiche's 13.9 → 5.8 and 12.2 → 5.5, Kuicksilver against itself 6.7 → 5.0 and 5.4 → 3.8; the Native server 5.4 →
+  3.9; no transfer got slower. The acknowledgement policy was not the cause and is unchanged: an ACK per receive
+  batch of at least two ack-eliciting packets, at once after a gap; the packet numbers quiche and quinn skip on
+  purpose cost at most one ACK each (`AckTrackerTest.skippedPacketNumbersCostAtMostOneAckEach`).
 
 ### Fixed
 

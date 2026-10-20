@@ -19,8 +19,10 @@ import kotlin.time.Duration.Companion.milliseconds
  *
  * So while datagrams keep coming, a socket with [DirectReceive] is read on the loop's own thread: what is queued already, or
  * what arrives within [maxWait] and before the loop's next timer. Only a longer gap goes back to the blocking receive, which
- * also releases the dispatcher's thread while the socket is idle. [maxWait] is zero where a short poll timeout is not
- * precise (Windows: whole timer ticks of 15.6 ms), so only what is already queued is taken there.
+ * also releases the dispatcher's thread while the socket is idle. The wait is in whole milliseconds and floored: a timer
+ * due within 1 ms makes it 0, so the receiver falls back to the blocking receive and its hand-offs; a paced sender whose
+ * pacing or ACK timers fall that close gets less of the gain. [maxWait] is zero where a short poll timeout is not precise
+ * (Windows: whole timer ticks of 15.6 ms), so only what is already queued is taken there.
  *
  * The work queued on the loop (timers, the application's reads and writes) runs as often as with the blocking receive,
  * which suspended after at most [YIELD_DATAGRAMS] datagrams: the receiver yields once it took that many directly, once
