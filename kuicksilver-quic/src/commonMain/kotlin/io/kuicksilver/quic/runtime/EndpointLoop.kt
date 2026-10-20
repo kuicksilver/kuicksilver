@@ -352,6 +352,8 @@ internal class EndpointLoop private constructor(
      * Receive rounds (this socket's and the forwarded ones) between two yields: timers and commands share the dispatcher with the
      * receivers. Four, not the limiter's 16: a receive that finds datagrams queued no longer suspends (KslDatagramIo), so the
      * rounds run back to back; a yield per round cost the Kotlin/Native bulk server 0.3 s/GB, 16 rounds 10 % of the handshake rate.
+     * The forward loop shares it on purpose: it too yields after 4 rounds (4 x FORWARD_BATCH datagrams), since forwarded and
+     * received datagrams compete for the same dispatcher.
      */
     private val limiter = WorkLimiter(maxRounds = 4)
 

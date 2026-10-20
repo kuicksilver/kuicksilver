@@ -116,6 +116,15 @@ class HqInteropTest {
             assertEquals(0, code); for ((n, b) in files) assertContentEquals(b, File(downloads, n).readBytes()); assertEquals(3, srv.connectionsAccepted, "one connection per request")
         }
     }
+    /** Files.stream's boundaries: an empty file (no write, just the FIN) and a file of exactly one [io.kuicksilver.interop.Files.CHUNK] (and one byte more). */
+    @Test fun serverStreamsEmptyAndExactlyOneChunkFiles() = runBlocking {
+        val files = listOf("empty" to ByteArray(0), "chunk" to ByteArray(io.kuicksilver.interop.Files.CHUNK) { (it * 31).toByte() }, "chunk1" to ByteArray(io.kuicksilver.interop.Files.CHUNK + 1) { (it * 7).toByte() })
+        val root = www(*files.toTypedArray()); val downloads = Files.createTempDirectory("dl").toFile()
+        HqInteropServer.start(identity(), port = 0, www = root.path, versions = Interop.v1).use { srv ->
+            val code = Interop.run(mapOf("ROLE" to "client", "TESTCASE" to "multiconnect", "REQUESTS" to files.joinToString(" ") { "https://127.0.0.1:${srv.port}/${it.first}" }, "DOWNLOADS" to downloads.path))
+            assertEquals(0, code); for ((n, b) in files) assertContentEquals(b, File(downloads, n).readBytes(), n)
+        }
+    }
     /**
      * The server forgets a connection once it ended: it kept every accepted connection in a list it copied on each accept, so a
      * handshake benchmark (12 000 connections, tools/bench/handshakes.sh) paid a growing copy per accept and a growing heap to mark.

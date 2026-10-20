@@ -19,7 +19,9 @@ import kotlinx.coroutines.withContext
  * The accelerated transport (ADR-0006): one [KslUdpSocket] of `ksl` on Linux, Android, Apple and Windows. Batches go to C as the
  * slots' own [PacketBuffer]s (no copy in Kotlin); GSO runs, GRO splitting, per-datagram ECN and DF probe mode happen there.
  *
- * `receive` blocks a `Dispatchers.IO` thread in 100 ms slices, returning it between slices, until a datagram arrives or the socket is closed; peers' addresses
+ * `receive` first takes what the socket already holds on the caller's thread (a non-blocking poll, no dispatch); only when nothing
+ * is queued does it block a `Dispatchers.IO` thread in 100 ms slices, returning it between slices, until a datagram arrives or the
+ * socket is closed. Peers' addresses
  * come back as the same [InetSocketAddress] instance for the same 20 address bytes (a 64-entry cache), so the core's path lookup
  * compares by reference. [capabilities] follow the kernel: GSO or ECN the kernel refused mid-way (EIO/EINVAL, handled in C
  * without loss) drop out of the reported capabilities on the next refresh (every [REFRESH] sends or a short send).

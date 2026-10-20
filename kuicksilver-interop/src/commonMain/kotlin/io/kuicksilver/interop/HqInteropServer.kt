@@ -29,7 +29,6 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlin.concurrent.atomics.AtomicInt
-import kotlin.concurrent.atomics.AtomicLong
 import kotlin.concurrent.atomics.AtomicReference
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.concurrent.atomics.incrementAndFetch
@@ -55,19 +54,22 @@ internal class HqInteropServer private constructor(private val endpoints: List<Q
     val earlyAcceptedConnections: Int get() = early.load()
     /** Request streams whose data arrived in 0-RTT packets (tests). */
     val earlyStreams: Int get() = earlyStreamCount.load()
-    /** The connections being served; one leaves when its connection ended (a handshake benchmark accepts thousands, tools/bench/handshakes.sh). */
-    private val live = AtomicReference<List<QuicConnection>>(emptyList())
-    private val endedKeyUpdates = AtomicLong(0)
+    /**
+     * The connections being served and the key updates of those that ended, swapped as one value so [keyUpdatesSeen] never
+     * counts a connection twice; a connection leaves when it ended (a handshake benchmark accepts thousands, tools/bench/handshakes.sh).
+     */
+    private class Tracked(val live: List<QuicConnection>, val endedKeyUpdates: Long)
+    private val tracked = AtomicReference(Tracked(emptyList(), 0))
     /** Connections accepted and not yet ended (tests). */
-    val connectionsTracked: Int get() = live.load().size
+    val connectionsTracked: Int get() = tracked.load().live.size
     /** Key updates observed over all accepted connections (the `keyupdate` interop case). */
-    val keyUpdatesSeen: Long get() = endedKeyUpdates.load() + live.load().sumOf { it.stats.keyUpdates }
+    val keyUpdatesSeen: Long get() = tracked.load().let { t -> t.endedKeyUpdates + t.live.sumOf { it.stats.keyUpdates } }
 
-    private fun update(f: (List<QuicConnection>) -> List<QuicConnection>) { while (true) { val l = live.load(); if (live.compareAndSet(l, f(l))) return } }
-    private fun run() { for (ep in endpoints) scope.launch { while (true) { val c = ep.accept(); accepted.incrementAndFetch(); if (c.earlyDataAccepted == true) early.incrementAndFetch(); update { it + c }; launch { serve(c) } } } }
+    private fun update(f: (Tracked) -> Tracked) { while (true) { val t = tracked.load(); if (tracked.compareAndSet(t, f(t))) return } }
+    private fun run() { for (ep in endpoints) scope.launch { while (true) { val c = ep.accept(); accepted.incrementAndFetch(); if (c.earlyDataAccepted == true) early.incrementAndFetch(); update { Tracked(it.live + c, it.endedKeyUpdates) }; launch { serve(c) } } } }
     private suspend fun serve(c: QuicConnection) {
         try { while (true) { val st = c.acceptStream(); if (st.receivedEarly) earlyStreamCount.incrementAndFetch(); scope.launch { runCatching { handle(st) } } } } catch (_: Exception) { }
-        finally { endedKeyUpdates.addAndFetch(c.stats.keyUpdates); update { l -> l.filter { it !== c } } }
+        finally { val ended = c.stats.keyUpdates; update { t -> Tracked(t.live.filter { it !== c }, t.endedKeyUpdates + ended) } }
     }
     private suspend fun handle(st: QuicStream) {
         val line = StringBuilder(); val one = ByteArray(1)

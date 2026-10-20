@@ -27,11 +27,13 @@ static ksl_ctx *server_ctx(void) {   /* KslContext.configure + quicServerTickets
     uint8_t sid[32] = {1}; ksl_ctx_set_session_context(c, sid, 32); ksl_ctx_set_option(c, KSL_OPT_NUM_TICKETS, 2); ksl_ctx_set_option(c, KSL_OPT_EARLY_DATA, 1);
     ksl_ctx_freeze(c); return c;
 }
-static ksl_ctx *client_ctx(int platform) {
-    ksl_ctx *c = ksl_ctx_new(KSL_CLIENT); ksl_ctx_set_alpn(c, ALPN, sizeof ALPN); ksl_ctx_set_ciphers(c, "TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256", NULL);
+static ksl_ctx *client_groups(int platform, const char *groups) {
+    ksl_ctx *c = ksl_ctx_new(KSL_CLIENT);
+    if (groups) { c->groups = groups; SSL_CTX_set1_groups_list(c->ctx, groups); }   /* before the freeze, like every other setting */ ksl_ctx_set_alpn(c, ALPN, sizeof ALPN); ksl_ctx_set_ciphers(c, "TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256", NULL);
     if (ksl_ctx_set_roots(c, platform ? NULL : ca, platform ? 0 : ca_len) != KSL_OK) { uint32_t e; char m[512]; ksl_ctx_last_error(c, &e, m, sizeof m); printf("roots: %s\n", m); exit(3); }
     ksl_ctx_set_option(c, KSL_OPT_VERIFY_MODE, KSL_VERIFY_OPENSSL); ksl_ctx_freeze(c); return c;
 }
+static ksl_ctx *client_ctx(int platform) { return client_groups(platform, NULL); }
 static double server_us;   /* time spent in the server's ksl calls (SSL_new, drive, provide, events, free) over all handshakes */
 static int handshake(ksl_ctx *cc, ksl_ctx *sc) {
     double t = now_us(); ksl_ssl *s = ksl_ssl_new(sc, KSL_MODE_QUIC); server_us += now_us() - t;
@@ -75,7 +77,7 @@ int main(int argc, char **argv) {
     printf("full QUIC handshake (both sides, P-256):  %8.1f us%s\n", (now_us() - t0) / hn, ok ? "" : " (FAILED)");
     printf("  the server's share (X25519MLKEM768):    %8.1f us\n", server_us / hn);
     /* a client that offers X25519 only (quinn's and msquic's interop clients, and every client without ML-KEM): the server answers with X25519 */
-    ksl_ctx *cx = client_ctx(0); cx->groups = "X25519"; SSL_CTX_set1_groups_list(cx->ctx, "X25519"); server_us = 0; t0 = now_us();
+    ksl_ctx *cx = client_groups(0, "X25519"); server_us = 0; t0 = now_us();
     for (int i = 0; i < hn; i++) ok &= handshake(cx, sc);
     printf("full QUIC handshake, X25519 only:         %8.1f us%s\n", (now_us() - t0) / hn, ok ? "" : " (FAILED)");
     printf("  the server's share (X25519):            %8.1f us\n", server_us / hn);

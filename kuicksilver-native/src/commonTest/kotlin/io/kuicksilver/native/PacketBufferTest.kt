@@ -55,5 +55,8 @@ class PacketBufferTest {
         b.close()
         assertFailsWith<IllegalStateException> { b[0] }
         assertFailsWith<IllegalStateException> { b[0] = 1 }
+        // closed wins over out of range: the closed check comes first (one null test before the index compare on Native)
+        assertFailsWith<IllegalStateException> { b[4] }
+        assertFailsWith<IllegalStateException> { b[-1] = 1 }
     }
 }
