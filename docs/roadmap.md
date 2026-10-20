@@ -110,7 +110,7 @@ release bar (each bug fixed with a test before a release).
   a client that really rebinds while an observer races copies of its packets from the old address is not held on the
   dead one until the handshake timeout (the known limit in `spec/rfc-compliance.md`, RFC 9000 §9 rebind row; the
   reference implementations lose that handshake as well).
-- Server CPU (`benchmarks.md`, "Where the server's time goes"), each measured with `tools/bench` before and after:
+- Server CPU (`benchmarks.md`, "Where the time went"), each measured with `tools/bench` before and after:
   - one `SSL_CTX` per server configuration, shared by its QUIC sessions, instead of one per session: 53 µs of the
     server's ~180 µs of OpenSSL work per handshake (the context is frozen after configuration; what needs care is the
     per-context state `ksl` keeps: the last error, the SNI override, the ticket-key reference);

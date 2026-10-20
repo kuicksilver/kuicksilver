@@ -6,13 +6,11 @@ SPDX-License-Identifier: Apache-2.0
 # Benchmarks
 
 Goodput, CPU time per transferred GB and handshakes per second of Kuicksilver against quiche, quinn and msquic, one
-host, 2026-10-20. Every cell with a Kuicksilver endpoint in it was measured again that evening on the 0.2.1 receive path
-(commits `78701eaa` and `af6e26d2`: the loop reads the socket on its own thread while datagrams keep coming, and
-`ksl_udp_recv` takes one system call per datagram on Linux, Android and Apple; [Worth a look](#worth-a-look)) — all CPU and handshake cells, and the goodput cells against msquic; the
-other goodput cells, the pairs of two peers and the amd64 calibration rows are from the morning run on commit
-`c08bc57b` (0.2.0 plus 17 commits: interop and release tooling and three fixes to address validation and migration
-during the handshake). They are measurements, not promises, and the comparison has limits that matter more than the
-numbers. Read the next section first.
+host. Every cell with a Kuicksilver endpoint was measured on 2026-10-21 on the 0.2.1 performance work (branch
+`k8/perf-merge`: the client's receive path and the server's profiling fixes, see [0.2.1: before and
+after](#021-before-and-after)); the pairs of two peers and the amd64 calibration rows are from the run of 2026-10-20 on
+commit `c08bc57b` (0.2.0 plus 17 commits), which is also the "before" of that section. They are measurements, not
+promises, and the comparison has limits that matter more than the numbers. Read the next section first.
 
 The raw data is in [benchmarks/](benchmarks/) (`goodput.csv`, `cpu.csv`, `handshakes.csv`, and `env.txt` with the host,
 Docker and every image digest). `tools/bench/run-table.sh` regenerates all of it (see [Reproducing](#reproducing)).
@@ -28,15 +26,19 @@ Docker and every image digest). `tools/bench/run-table.sh` regenerates all of it
   emulated)" below). That is our code under Rosetta, not theirs: their crypto and I/O paths may lose more or less.
   Where an emulated peer looks slower than Kuicksilver, this run does not show that Kuicksilver is faster; where it
   looks faster even emulated (msquic, below), it is.
-- **These are the peers' interop endpoints, not their tuned servers.** Each image is what the QUIC Interop Runner
-  runs: test clients and servers with the flags their maintainers chose for interop (quiche runs `--disable-gso
+- **These are the peers' interop endpoints, not their tuned servers.** Each image is what the QUIC Interop Runner runs:
+  test clients and servers with the flags their maintainers chose for interop (quiche runs `--disable-gso
   --disable-pacing` and logs to a file; quinn's image `stammw/quinn-interop:latest` was built on 2024-09-02 and logs at
-  `info`). Kuicksilver's interop endpoint is no better: its server reads the whole file into memory per request, and
-  its client buffers the whole download before writing it. None of this is how a production deployment would run.
+  `info`). Kuicksilver's interop endpoint is no better: its client buffers the whole download before writing it, and its
+  server writes a file in 1 MiB pieces (it read the whole file into memory per request until 0.2.1). None of this is how
+  a production deployment would run.
 - **Goodput is capped by the simulated link.** The runner's goodput measurements run over a 10 Mbit/s link with 15 ms
   delay each way; every implementation fills it. They show that nothing is broken and how the congestion controller
   shares the link with TCP, not which stack is faster.
-- **One host, one day.** No other build or container set ran during the measurements; the Docker VM is shared with
+- **One host, two days.** The morning images measured again in the 2026-10-21 session were within 2 % of their
+  2026-10-20 numbers (client CPU per GB from quinn 18.20 vs 18.17, Kuicksilver against itself 6.74 vs 6.68 and 5.48 vs
+  5.44; handshakes 1745–1767 vs 1748 and 1348–1384 vs 1390 per second), so the rows of the two runs compare.
+- **One host.** No other build or container set ran during the measurements; the Docker VM is shared with
   macOS. Results from Linux hosts, or from GitHub-hosted runners, will differ.
 
 ## Goodput
@@ -52,33 +54,33 @@ kbit/s per repetition: median [min–max] (n repetitions). The runner stops a ce
 
 | server | client | goodput kbit/s | crosstraffic kbit/s | failed |
 |---|---|---|---|---|
-| kuicksilver JVM | quiche (amd64, emulated) | 9257 [9237–9258] (n=5) | 5246 [5194–5729] (n=5) | 0 |
-| kuicksilver JVM | quinn | 9388 [9349–9390] (n=5) | 4234 [4063–4460] (n=5) | 0 |
-| kuicksilver JVM | msquic (amd64, emulated) | 9410 [9408–9413] (n=5) | 4207 (n=1) | 1 (see below) |
-| kuicksilver Native | quiche (amd64, emulated) | 9269 [9247–9284] (n=5) | 5465 [5344–5994] (n=5) | 0 |
-| kuicksilver Native | quinn | 9389 [9317–9394] (n=5) | 4166 [3942–5431] (n=5) | 0 |
-| kuicksilver Native | msquic (amd64, emulated) | 9423 [9419–9427] (n=5) | – | 1 (see below) |
-| quiche (amd64, emulated) | kuicksilver JVM | 9370 [9355–9385] (n=5) | 4996 [4516–5385] (n=5) | 0 |
-| quinn | kuicksilver JVM | 9315 [9293–9354] (n=5) | 3242 [2987–3557] (n=5) | 0 |
-| msquic (amd64, emulated) | kuicksilver JVM | 9341 [8964–9371] (n=5) | 7175 [6394–8884] (n=5) | 0 |
-| quiche (amd64, emulated) | kuicksilver Native | 9372 [9360–9380] (n=5) | 5371 [4945–5601] (n=5) | 0 |
-| quinn | kuicksilver Native | 9357 [9297–9422] (n=5) | 3575 [3446–4668] (n=5) | 0 |
-| msquic (amd64, emulated) | kuicksilver Native | 9395 [9245–9406] (n=5) | 8665 [7570–8963] (n=5) | 0 |
+| kuicksilver JVM | quiche (amd64, emulated) | 9273 [9265–9275] (n=5) | 5392 [5364–5956] (n=5) | 0 |
+| kuicksilver JVM | quinn | 9401 [9400–9401] (n=5) | 3903 [3743–4042] (n=5) | 0 |
+| kuicksilver JVM | msquic (amd64, emulated) | 9429 [9423–9431] (n=5) | – | 1 (see below) |
+| kuicksilver Native | quiche (amd64, emulated) | 9286 [9261–9290] (n=5) | 5812 [5458–5967] (n=5) | 0 |
+| kuicksilver Native | quinn | 9404 [9396–9409] (n=5) | 4186 [3896–4443] (n=5) | 0 |
+| kuicksilver Native | msquic (amd64, emulated) | 9434 [9430–9441] (n=5) | – | 1 (see below) |
+| quiche (amd64, emulated) | kuicksilver JVM | 9378 [9320–9387] (n=5) | 5008 [4774–5644] (n=5) | 0 |
+| quinn | kuicksilver JVM | 9313 [9277–9359] (n=5) | 3826 [3118–4471] (n=5) | 0 |
+| msquic (amd64, emulated) | kuicksilver JVM | 9204 [8849–9384] (n=5) | 7978 [6807–8686] (n=5) | 0 |
+| quiche (amd64, emulated) | kuicksilver Native | 9386 [9368–9392] (n=5) | 5378 [5042–5441] (n=5) | 0 |
+| quinn | kuicksilver Native | 9348 [9311–9355] (n=5) | 3898 [3125–4102] (n=5) | 0 |
+| msquic (amd64, emulated) | kuicksilver Native | 9248 [8970–9412] (n=5) | 8732 [7422–8868] (n=5) | 0 |
 
 - **Kuicksilver server, msquic client, crosstraffic:** msquic's interop client gives a download 50 s
-  (`-test:D -timeout:50000` in its `run_endpoint.sh`). 25 MB in 50 s needs 4.0 Mbit/s; Kuicksilver's CUBIC took
-  4.2 Mbit/s against the TCP flow in the first JVM repetition (49.8 s) and a little less in the next one, which msquic's
-  client then ended at 50 s with about 22 MB received ("Request closed incomplete"); the Native image's first
-  repetition ended the same way (about 23 MB in 50 s, 3.7 Mbit/s). These cells are censored by the peer's timeout, not failed transfers; the share
-  itself is in line with the quinn cells (4.2 Mbit/s).
-- **msquic server, Kuicksilver client, goodput:** some repetitions are 4–5 % slower, with either client: in the morning
-  run four of five with the JVM client (8.8–9.1 Mbit/s) and two of five with the Native one, in the evening run (the
-  numbers above) two of five with each. The packet captures show the cause on msquic's side; see
-  [Worth a look](#worth-a-look).
+  (`-test:D -timeout:50000` in its `run_endpoint.sh`). 25 MB in 50 s needs 4.0 Mbit/s, about what Kuicksilver's CUBIC
+  takes against the TCP flow (4.2 Mbit/s in the 2026-10-20 run); msquic's client ended the first repetition of either
+  image at 49.9 s ("Request closed incomplete"), and the runner stops a cell at its first failed repetition. These cells
+  are censored by the peer's timeout, not failed transfers.
+- **msquic server, Kuicksilver client, goodput:** some repetitions are 2–6 % slower, with either client: three of five
+  with each here, four of five (JVM) and two of five (Native) on 2026-10-20. The packet captures show the cause on
+  msquic's side; see [msquic's goodput outlier](#msquics-goodput-outlier).
 - **Against the 0.2.0 check** (`build/release-checks/perf-20261016-200424`, JVM image, quinn and ngtcp2; quinn is the
-  overlap): kuicksilver→quinn goodput median 9389 then, 9388 now; crosstraffic 4409 then, 4234 now; quinn→kuicksilver
-  goodput 9310 then, 9315 now; crosstraffic 3238 then, 3242 now. No regression; every floor in
-  `tools/interop/perf-thresholds.json` for these cells is met.
+  overlap): kuicksilver→quinn goodput median 9389 then, 9401 now; crosstraffic 4409 then, 3903 now; quinn→kuicksilver
+  goodput 9310 then, 9313 now; crosstraffic 3238 then, 3826 now. Every floor in `tools/interop/perf-thresholds.json` for
+  these cells is met. The JVM server's crosstraffic share against quinn's client is the one cell lower than on
+  2026-10-20 (3903 [3743–4042] vs 4234 [4063–4460]); the Native server's is not (4186 vs 4166), the congestion
+  controller is unchanged, and crosstraffic cells spread widely between runs, so it was not investigated.
 
 ## CPU per GB
 
@@ -104,8 +106,8 @@ Gbit/s = file bits over the client container's life (start-up included), indicat
 
 | implementation | server CPU s/GB | client CPU s/GB | server system time | datagram bytes | ACK ratio | wall Gbit/s |
 |---|---|---|---|---|---|---|
-| kuicksilver JVM | 3.76 [3.26–4.18] | 5.02 [4.92–5.40] | 50 % | 1494 | 9.6 | 2.31 |
-| kuicksilver Native | 3.88 [3.83–3.98] | 3.84 [3.79–3.85] | 52 % | 1490 | 9.3 | 1.80 |
+| kuicksilver JVM | 2.72 [2.63–3.65] | 4.91 [4.88–4.97] | 62 % | 1494 | 9.5 | 2.60 |
+| kuicksilver Native | 3.47 [3.44–3.62] | 3.64 [3.61–3.70] | 50 % | 1491 | 9.3 | 2.16 |
 | quiche (amd64, emulated) | 11.47 [11.42–12.44] | 7.38 [7.35–7.56] | 31 % | 1392 | 10.0 | 0.66 |
 | quinn | 15.56 [15.50–15.69] | 13.69 [13.59–13.83] | 71 % | 1440 | 30.2 | 0.65 |
 | msquic (amd64, emulated) | 1.86 [1.84–1.93] | 2.68 [2.66–2.71] | 67 % | 1506 | 1.0 | 1.01 |
@@ -116,14 +118,13 @@ s/GB, so emulation added 3–5 %.
 
 What this says, and what it does not:
 
-- **msquic uses about half of Kuicksilver's CPU per GB as a server even under emulation** (1.9 vs 3.8–3.9 s/GB), and
-  2.7 vs 3.8–5.0 s/GB as a client. It sends 1506-byte packets and its client acknowledges about one packet in a hundred.
+- **msquic uses less CPU per GB than Kuicksilver even under emulation**: 1.9 vs 2.7–3.5 s/GB as a server, 2.7 vs
+  3.6–4.9 s/GB as a client. It sends 1506-byte packets and its client acknowledges about one packet in a hundred.
 - Kuicksilver is below **quiche and quinn as their interop images run here** — quiche emulated, with GSO and pacing
   off; quinn from a 2024 build whose client acknowledges every third packet and whose server spends 71 % of its CPU
   in the kernel. That is a statement about these images on this host, not about quiche or quinn.
-- **Kotlin/Native and the JVM cost the same as a server** (3.9 vs 3.8 s/GB; 5.4 vs 3.9 before the 0.2.1 receive path);
-  as a client the JVM costs more (5.0 vs 3.8, which includes the JIT's compilation and the interop client's whole-file
-  buffering).
+- **Kotlin/Native costs 28 % more than the JVM as a server** (3.5 vs 2.7 s/GB; 5.4 vs 3.9 before 0.2.1); as a client
+  the JVM costs more (4.9 vs 3.6, which includes the JIT's compilation and the interop client's whole-file buffering).
 
 Every pair, median of the five big transfers (row: server, column: client; `failed`: the transfer did not complete in
 any round — quiche's client against msquic's server, a peer pair, not investigated):
@@ -132,21 +133,21 @@ Server CPU s/GB:
 
 | server \ client | kuicksilver JVM | kuicksilver Native | quiche (amd64, emulated) | quinn | msquic (amd64, emulated) |
 |---|---|---|---|---|---|
-| kuicksilver JVM | 3.76 | 3.83 | 3.21 | 4.09 | 2.87 |
-| kuicksilver Native | 4.03 | 3.88 | 3.61 | 4.48 | 3.37 |
-| quiche (amd64, emulated) | 12.06 | 12.11 | 11.47 | 13.11 | 11.34 |
-| quinn | 12.55 | 12.24 | 12.27 | 15.56 | 12.71 |
-| msquic (amd64, emulated) | 2.64 | 2.78 | failed | 2.83 | 1.86 |
+| kuicksilver JVM | 2.72 | 2.55 | 2.51 | 3.12 | 2.20 |
+| kuicksilver Native | 3.68 | 3.47 | 3.20 | 4.08 | 2.99 |
+| quiche (amd64, emulated) | 12.17 | 12.33 | 11.47 | 13.11 | 11.34 |
+| quinn | 12.65 | 12.27 | 12.27 | 15.56 | 12.71 |
+| msquic (amd64, emulated) | 2.74 | 2.71 | failed | 2.83 | 1.86 |
 
 Client CPU s/GB:
 
 | server \ client | kuicksilver JVM | kuicksilver Native | quiche (amd64, emulated) | quinn | msquic (amd64, emulated) |
 |---|---|---|---|---|---|
-| kuicksilver JVM | 5.02 | 3.72 | 5.67 | 6.43 | 2.70 |
-| kuicksilver Native | 5.10 | 3.84 | 5.51 | 6.24 | 2.42 |
-| quiche (amd64, emulated) | 5.81 | 5.46 | 7.38 | 7.34 | 3.55 |
-| quinn | 8.38 | 7.55 | 7.75 | 13.69 | 6.01 |
-| msquic (amd64, emulated) | 4.52 | 3.73 | failed | 5.26 | 2.68 |
+| kuicksilver JVM | 4.91 | 3.34 | 5.57 | 6.22 | 2.59 |
+| kuicksilver Native | 4.96 | 3.64 | 5.56 | 6.18 | 2.42 |
+| quiche (amd64, emulated) | 5.93 | 5.32 | 7.38 | 7.34 | 3.55 |
+| quinn | 8.42 | 7.37 | 7.75 | 13.69 | 6.01 |
+| msquic (amd64, emulated) | 4.65 | 3.46 | failed | 5.26 | 2.68 |
 
 The server's cost depends on its client (how often it acknowledges) and the client's on its server (how the data
 arrives), so a row or a column alone is not one implementation's cost.
@@ -163,48 +164,64 @@ times, so client start-up is in it); server CPU from its cgroup over the measure
 
 | server | handshakes/s | server CPU ms per handshake | server cores busy |
 |---|---|---|---|
-| kuicksilver JVM | 1710 [1703–1721] | 1.03 [1.03–1.05] | 1.78 |
-| kuicksilver Native | 1344 [1330–1346] | 0.94 [0.93–0.94] | 1.26 |
+| kuicksilver JVM | 1750 [1739–1753] | 0.95 [0.94–0.96] | 1.66 |
+| kuicksilver Native | 1524 [1503–1530] | 0.79 [0.79–0.80] | 1.21 |
 | quiche (amd64, emulated) | 228 [214–232] | 4.40 [4.33–4.68] | 1.00 |
 | quinn | 3452 [3427–3462] | 0.53 [0.52–0.53] | 1.82 |
 | msquic (amd64, emulated) | 3543 [3532–3567] | 0.70 [0.69–0.71] | 2.50 |
 | *calibration:* kuicksilver Native (amd64, emulated), `c08bc57b` | 1100 [1091–1108] | 1.15 [1.14–1.16] | 1.27 |
 
-- The two Kuicksilver rows are 2–3 % below the morning's (1748 and 1390/s) at the same CPU per handshake. The morning
-  images measured again in the evening session gave 1476–1748 (JVM) and 1238–1363/s (Native) in three runs each, so the
-  difference is within that session's spread; it was not investigated further.
 - This is comparative because the client side is the same for every row; it is a handshake-plus-one-request rate
   (each connection also carries a GET and a close), not a bare TLS handshake rate.
-- **quinn handshakes at half Kuicksilver's CPU and twice its rate; msquic, emulated, at 0.7 ms and 2.5 cores.** In a
-  trial with 16 clients × 750 connections, quinn's rate was within 5 % of this one, so the load generator was not
-  what held quinn back at ~3500/s; whether quinn or msquic could go higher with more load was not explored.
+- **quinn handshakes at two thirds of Kuicksilver's CPU (Native) and twice its rate; msquic, emulated, at 0.7 ms and 2.5
+  cores.** In a trial with 16 clients × 750 connections, quinn's rate was within 5 % of this one, so the load generator
+  was not what held quinn back at ~3500/s; whether quinn or msquic could go higher with more load was not explored.
 - quiche's interop server runs one thread and is pinned at 1.00 core; at 4.4 ms per handshake it was much slower here
   than in a short trial (1.25 ms with 16 × 200 connections), so its cost grows over 12 000 connections in this image.
   Under emulation; not a statement about quiche in production.
-- Kuicksilver's server loop (both builds) did not use more than about 1.3 (Native) or 1.8 (JVM, garbage collector and
+- Kuicksilver's server loop (both builds) did not use more than about 1.2 (Native) or 1.7 (JVM, garbage collector and
   JIT threads included) cores here.
 
-## Worth a look
+## 0.2.1: before and after
 
-Two outliers of the morning run, investigated the same day, and one that remains.
+Two changes, measured together: the **client's receive path** (`k8/perf-client`: the endpoint loop reads the socket on
+its own thread while datagrams keep coming, `ksl_udp_recv` takes one system call per datagram on Linux, Android and
+Apple) and the **server's profiling fixes** (`k8/perf-server`: `PacketBuffer` index checks inline on Kotlin/Native,
+timers and the DATAGRAM sender without exceptions, and the interop server streaming files and forgetting ended
+connections). "Before" is the run of 2026-10-20 on `c08bc57b`, "after" the merged tree on 2026-10-21 (the tables above);
+median of five transfers or runs.
 
-**Resolved in 0.2.1: the Kuicksilver client's CPU per GB against quiche's and quinn's servers.** As a client Kuicksilver
-cost 5.4–7.6 s/GB against Kuicksilver's and msquic's servers but 12–14 against quiche's and 9–18 against quinn's (JVM
-18.2: 19.8 s of CPU for a 9.9 s transfer, half of it system time), and sent 14–20 packets per 100 received instead of
-6.4. Morning (`c08bc57b`) and evening (0.2.1 receive path), client CPU s/GB, median of five 1 GiB transfers:
+| | before | after |
+|---|---|---|
+| client CPU s/GB: quinn → kuicksilver JVM | 18.17 | 8.42 |
+| quinn → kuicksilver Native | 9.07 | 7.37 |
+| quiche → kuicksilver JVM | 13.88 | 5.93 |
+| quiche → kuicksilver Native | 12.19 | 5.32 |
+| msquic → kuicksilver JVM | 6.81 | 4.65 |
+| msquic → kuicksilver Native | 5.09 | 3.46 |
+| kuicksilver JVM → JVM | 6.68 | 4.91 |
+| kuicksilver Native → Native | 5.44 | 3.64 |
+| server CPU s/GB: kuicksilver JVM (own client) | 3.92 | 2.72 |
+| kuicksilver Native (own client) | 5.43 | 3.47 |
+| kuicksilver JVM → quinn | 5.07 | 3.12 |
+| kuicksilver Native → quinn | 5.04 | 4.08 |
+| handshakes/s, ms per handshake: kuicksilver JVM | 1748, 1.06 | 1750, 0.95 |
+| kuicksilver Native | 1390, 0.92 | 1524, 0.79 |
+| wall s, 1 GiB: quinn → JVM, quiche → JVM, JVM → JVM, Native → Native | 9.9, 15.3, 3.9, 5.9 | 8.9, 13.9, 3.3, 4.0 |
 
-| server → client | before | after | wall s, before → after |
-|---|---|---|---|
-| quinn → kuicksilver JVM | 18.17 | 8.38 | 9.9 → 8.8 |
-| quinn → kuicksilver Native | 9.07 | 7.55 | 8.5 → 8.5 |
-| quiche → kuicksilver JVM | 13.88 | 5.81 | 15.3 → 13.7 |
-| quiche → kuicksilver Native | 12.19 | 5.46 | 15.6 → 13.8 |
-| msquic → kuicksilver JVM | 6.81 | 4.52 | 3.7 → 3.2 |
-| kuicksilver JVM → kuicksilver JVM | 6.68 | 5.02 | 3.9 → 3.7 |
-| kuicksilver Native → kuicksilver Native | 5.44 | 3.84 | 5.9 → 4.8 |
+Every CPU cell with a Kuicksilver endpoint is at or below its 2026-10-20 value and every bulk transfer is as fast or
+faster; the goodput cells are unchanged within their spread, except one crosstraffic cell (Kuicksilver JVM server,
+quinn client: 3903 vs 4234 kbit/s, see [Goodput](#goodput)). The client column is mostly the receive path (with it alone, 2026-10-20 evening: quinn → JVM 8.4,
+quiche → JVM 5.8); the server rows are both (the Native server's 5.4 s/GB was 3.9 with the receive path alone and 3.3
+with the server fixes alone, measured in their own sessions; 3.5 together); the handshake gains are the server fixes'.
 
-The servers' CPU fell with it (quinn's from 14.5 to 12.6 s/GB serving the JVM client, Kuicksilver Native's from 5.4 to
-3.9). What the cause was, and what it was not:
+## Where the time went
+
+### The client: 12–18 s/GB against quiche's and quinn's servers
+
+As a client Kuicksilver cost 5.4–7.6 s/GB against Kuicksilver's and msquic's servers but 12–14 against quiche's and
+9–18 against quinn's (JVM 18.2: 19.8 s of CPU for a 9.9 s transfer, half of it system time), and sent 14–20 packets per
+100 received instead of 6.4.
 
 - **Not the acknowledgement policy.** `recovery/AckTracker.kt` asks for an ACK after two ack-eliciting packets and at
   once after a gap (RFC 9000 §13.2.1–13.2.2), but an ACK leaves only when the loop flushes after a receive batch, so in
@@ -231,62 +248,22 @@ The fix (`runtime/BatchReceiver.kt`, ADR-0006): while datagrams keep coming the 
 (what is queued, or what arrives within 1 ms and before its next timer; not on Windows, whose 1 ms poll waits a 15.6 ms
 tick), letting the work queued on the loop run after every 16 datagrams or 1 ms as the blocking receive did; and
 `ksl_udp_recv` calls `recvmsg` first and polls only when the queue is empty (Linux, Android, Apple; Windows still polls
-first). The same transfer from quinn now has 98 000
-context switches on the dispatcher threads and 59 000 on the reading thread. A first version that let queued work run
-only every 16 rounds or 2 ms (the loop's `WorkLimiter`) starved the application's reads, which extend the stream's
-flow-control credit, and made Kuicksilver → Kuicksilver 2.6 times slower; that is why the receiver yields as often as
-the blocking receive did. The client now acknowledges more often (33 instead of 20 packets per 100 from quinn: a faster
-loop takes smaller batches), still no more than one ACK per two ack-eliciting packets.
+first). The same transfer from quinn now has 98 000 context switches on the dispatcher threads and 59 000 on the
+reading thread. A first version that let queued work run only every 16 rounds or 2 ms (the loop's `WorkLimiter`) starved
+the application's reads, which extend the stream's flow-control credit, and made Kuicksilver → Kuicksilver 2.6 times
+slower; that is why the receiver yields as often as the blocking receive did, and why the forward loop of a multi-loop
+server now yields after every 16 forwarded datagrams too. The loop's dispatcher can therefore block for up to 1 ms in a
+socket wait (`QuicEndpointConfig.dispatcher`). The client now acknowledges more often (33 instead of 20 packets per 100
+from quinn: a faster loop takes smaller batches), still no more than one ACK per two ack-eliciting packets.
 
-**msquic server → Kuicksilver client goodput: msquic's, not ours.** Some repetitions are 4–5 % slower, with either
-client (morning: four of five JVM, two of five Native; evening: two of five each). In every slow repetition the
-runner's captures show the same thing: from some point to the end of the transfer msquic sends a steady 12.7 Mbit/s
-(server side of the simulator, 250 ms bins) into the 10 Mbit/s link, and about 60 of its packets per 250 ms are dropped
-at the 25-packet queue; it never backs off. In the fast repetitions it sends 10.0 Mbit/s after slow start with a drop
-every two seconds. The client's side is the same in both: ACKs leave 0.07–0.09 ms (JVM) and 0.15–0.20 ms (Native)
-after the packet they acknowledge, every acknowledged packet number was received (none of the ~1 900 dropped packets of
-a slow repetition was acknowledged), and the stream flow-control updates match. Nothing in Kuicksilver changes it;
-msquic runs emulated here, and why its congestion controller keeps that rate was not investigated.
+### The server: CPU per GB
 
-**Still open: Kuicksilver's CPU per handshake** (0.94 ms Native, 1.03 ms JVM) is about twice quinn's (0.53 ms).
+Profiled on 2026-10-20 (how in [Profiling](#profiling)). The receive path above was the largest part on Kotlin/Native:
+its `Dispatchers.IO` is a worker pool of its own, so each hand-off was a thread wake-up in each direction, up to one
+receive round per acknowledgement (about 49 000 per GB at the server); a receive on the loop's own thread took 1.9 s/GB
+off the Native server and 0.3 off the JVM server in that session (a first form of the change, which the receive path
+above replaced).
 
-## Where the server's time goes
-
-The two server outliers above, profiled on 2026-10-20 (branch `k8/perf-server`; how in [Profiling](#profiling)), what
-was fixed, and what remains. The tables above are still the published run of `c08bc57b`; the numbers in this section
-come from `tools/bench/cpu-transfer.sh` and `handshakes.sh` with the published images as "before" and the branch's as
-"after", the images measured one after the other in turn (three runs of each, median [min–max]); the host's numbers
-drift by a few percent between sessions, so compare within this section.
-
-### Before and after
-
-Two sessions: the published images against a build of the branch that yielded after every receive, then that build
-against the final one (they differ only in the receive loop's yields, see below). "After" is the final build:
-
-| | before | after |
-|---|---|---|
-| Native server, CPU s/GB (own client) | 5.48 [5.46–5.60] | 3.32 [3.32–3.34] |
-| JVM server, CPU s/GB (own client) | 3.96 [3.80–5.19] | 2.87 [2.64–3.40] |
-| Native client, CPU s/GB (own server) | 5.53 | 3.59 |
-| JVM client, CPU s/GB (own server) | 6.76 | 5.28 |
-| Native server, ms per handshake | 0.930 [0.927–0.979] | 0.805 [0.803–0.814] |
-| Native server, handshakes/s | 1380 [1323–1390] | 1520 [1500–1527] |
-| JVM server, ms per handshake | 1.056 [1.040–1.074] | 0.934 [0.927–0.935] |
-| JVM server, handshakes/s | 1744 [1712–1761] | 1772 [1767–1779] |
-
-The Native server's CPU per GB is now within 16 % of the JVM server's (it was 38 % above it); per handshake it is
-below the JVM's as before and 0.3 ms above quinn's (0.53 in the published run).
-
-### CPU per GB
-
-- **The receive path, Kotlin/Native above all.** Every receive went to `Dispatchers.IO` to wait for the socket and came
-  back to the endpoint loop: two dispatches per receive round, up to one round per acknowledgement (about 49 000 per GB
-  at the server). Kotlin/Native's IO dispatcher is a worker pool of its own, so each hop is a thread wake-up in each
-  direction; on the JVM, `Dispatchers.IO` shares the scheduler with the default dispatcher. A receive now takes what the
-  socket already holds on the loop's own thread (a non-blocking poll) and waits on `Dispatchers.IO` only when nothing is
-  there: the Native server's CPU per GB fell by 1.9 s (5.0 → 3.1 with the other fixes in place), the JVM server's by
-  0.3 s. Its rounds no longer suspend, so the receive loop yields after 4 rounds instead of 16 (a yield per round cost the
-  Native bulk server 0.3 s/GB; 16 rounds cost 10 % of the handshake rate).
 - **Kotlin/Native code generation in the QUIC core.** The core benchmark (`CoreThroughputBenchmark`: two cores back to
   back in memory, one thread, M4 Max) moves 2371 MiB/s on the JVM and 586 MiB/s on Kotlin/Native with the Null crypto
   (802 and 472 MiB/s with AES-128-GCM through `ksl`, which costs the JVM more: its JNI calls take direct buffers). In
@@ -306,7 +283,7 @@ below the JVM's as before and 0.3 ms above quinn's (0.53 in the published run).
   images carry no `perf`). Per received packet `ksl_open` allocates, copies and wipes a buffer (a client-side cost:
   2.4 % of the core benchmark's samples).
 
-### Handshakes
+### The server: handshakes
 
 On Linux the gap to quinn was user time: per handshake the Native server spent 0.72 ms of user and 0.21 ms of system
 time, quinn 0.28 and 0.24 (`benchmarks/handshakes.csv`). Of the Native server's user time (a `macosArm64` build under
@@ -333,8 +310,30 @@ the same load, 12 000 handshakes, 3 940 samples):
   throw through it when they end. One trap on the way: a 1 MiB read buffer per 32-byte request doubled the Native
   server's system time (0.21 → 0.47 ms per handshake; large Kotlin/Native arrays are mapped and unmapped); the buffer is
   now no larger than the file.
-- What remains between Kuicksilver and quinn here is the Kotlin side (core, coroutines, collector, ~0.45 ms) and the
-  OpenSSL side (~0.18 ms with the per-session context).
+- Measured on the merged tree, the Native server is at 0.79 ms per handshake and 1524 per second, the JVM server at 0.95
+  ms and 1750 per second (quinn 0.53 ms). What remains between Kuicksilver and quinn here is the Kotlin side (core,
+  coroutines, collector, ~0.45 ms) and the OpenSSL side (~0.18 ms with the per-session context).
+
+
+## msquic's goodput outlier
+
+Some repetitions are 2–6 % slower, with either client (2026-10-20: four of five JVM, two of five
+Native in the morning, two of five each in the evening; 2026-10-21: three of five each). In every slow repetition the
+runner's captures show the same thing: from some point to the end of the transfer msquic sends a steady 12.7 Mbit/s
+(server side of the simulator, 250 ms bins) into the 10 Mbit/s link, and about 60 of its packets per 250 ms are dropped
+at the 25-packet queue; it never backs off. In the fast repetitions it sends 10.0 Mbit/s after slow start with a drop
+every two seconds. The client's side is the same in both: ACKs leave 0.07–0.09 ms (JVM) and 0.15–0.20 ms (Native)
+after the packet they acknowledge, every acknowledged packet number was received (none of the ~1 900 dropped packets of
+a slow repetition was acknowledged), and the stream flow-control updates match. Nothing in Kuicksilver changes it;
+msquic runs emulated here, and why its congestion controller keeps that rate was not investigated.
+
+## Still open
+
+- **CPU per handshake:** 0.79 ms (Native) and 0.95 ms (JVM) against quinn's 0.53 ms; the per-session `SSL_CTX` and the
+  Kotlin side are on the roadmap.
+- **The Kotlin/Native server** costs 28 % more CPU per GB than the JVM server (3.5 vs 2.7 s/GB).
+- **Acknowledgements:** fewer ACKs per byte would need the receiver side of the ack-frequency extension
+  (draft-ietf-quic-ack-frequency).
 
 ## Reproducing
 
@@ -369,7 +368,7 @@ alone and is not part of this table; it answers "did this change make the core s
 
 ### Profiling
 
-How the profiles in [Where the server's time goes](#where-the-servers-time-goes) were taken:
+How the profiles in [Where the time went](#where-the-time-went) were taken:
 
 - **The JVM server in the benchmark's container:** `KSL_BENCH_JAVA_OPTS` becomes the server's `JAVA_OPTS`, and
   `$KSL_BENCH_WORK/profile` (default `build/bench/profile`) is mounted at `/profile`; the scripts then stop the server

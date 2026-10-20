@@ -39,21 +39,24 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Changed
 
-- QUIC performance, client and server (`docs/benchmarks.md`, "Before and after"; `tools/bench`, the merged tree against
-  the morning's `c08bc57b` images), every cell with a Kuicksilver endpoint measured on the merged tree.
+- QUIC performance, client and server (`docs/benchmarks.md`, "0.2.1: before and after"; `tools/bench`, 2026-10-21
+  against the 2026-10-20 run of `c08bc57b`). Client CPU per GB: from quinn's interop server 18.2 → 8.4 s (JVM) and
+  9.1 → 7.4 (Native), from quiche's 13.9 → 5.9 and 12.2 → 5.3, Kuicksilver against itself 6.7 → 4.9 and 5.4 → 3.6.
+  Server CPU per GB 3.9 → 2.7 s (JVM) and 5.4 → 3.5 (Native); per handshake 1.06 → 0.95 ms and 0.92 → 0.79 ms (1390 →
+  1524 handshakes per second on Native). No transfer got slower.
   - The receive path. A receive went to `Dispatchers.IO` to wait for the socket and came back to the endpoint loop:
     two thread hand-offs per receive batch, which cost more than the QUIC work when a batch holds a few datagrams (a
     sender whose datagrams arrive spread out, paced or one `sendmsg` each, as quinn's and quiche's interop servers
     send: 18 s of CPU per GB for the JVM client from quinn's server, half of it system time), and most on
     Kotlin/Native, whose IO dispatcher is a pool of its own. While datagrams keep coming, the loop now reads the
     accelerated socket on its own thread: what is queued, or what arrives within 1 ms and before the loop's next timer
-    (not on Windows, whose 1 ms poll waits a 15.6 ms tick); the loop's queued work still runs after every 16
-    datagrams or 1 ms. The loop's dispatcher, a caller-supplied one too, can therefore block for up to 1 ms
-    (`QuicEndpointConfig.dispatcher`). `ksl_udp_recv` calls `recvmsg` before `poll` (Linux, Android, Apple; Windows
-    still polls first), so a datagram costs one system call instead of two. The acknowledgement policy was not the
-    cause and is unchanged: an ACK per receive batch of at least two ack-eliciting packets, at once after a gap; the
-    packet numbers quiche and quinn skip on purpose cost at most one ACK each
-    (`AckTrackerTest.skippedPacketNumbersCostAtMostOneAckEach`).
+    (not on Windows, whose 1 ms poll waits a 15.6 ms tick); the loop's queued work still runs after every 16 datagrams
+    or 1 ms, and a multi-loop server's forward loop yields after every 16 forwarded datagrams too. The loop's
+    dispatcher, a caller-supplied one too, can therefore block for up to 1 ms (`QuicEndpointConfig.dispatcher`).
+    `ksl_udp_recv` calls `recvmsg` before `poll` (Linux, Android, Apple; Windows still polls first), so a datagram
+    costs one system call instead of two. The acknowledgement policy was not the cause and is unchanged: an ACK per
+    receive batch of at least two ack-eliciting packets, at once after a gap; the packet numbers quiche and quinn skip
+    on purpose cost at most one ACK each (`AckTrackerTest.skippedPacketNumbersCostAtMostOneAckEach`).
   - Kotlin/Native: `PacketBuffer`'s per-byte `get` and `set` check the index inline instead of calling the shared range
     check with a `String` argument, which Kotlin/Native compiled into a call per byte: the core benchmark
     (`CoreThroughputBenchmark`, in-memory loopback) moves 27 % more data per second with the Null crypto and 15 % more
