@@ -112,6 +112,9 @@ Done for the project in October 2026, kept here so it can be repeated for a new 
    and the tag, and the GitHub release from the tag with the changelog section. Attach the four supply-chain files of
    step 3: `kuicksilver-<version>-sbom.zip`, `kuicksilver-<version>.intoto.json` and their `.asc`. The version is passed to Gradle; it is
    not stored in the tree.
+7. Context7 (the documentation index coding agents read, configured by `context7.json` at the root): add the new tag to
+   `previousVersions`, and point `branch` at the branch whose docs describe the newest published version (it must
+   not name a branch with unreleased API). The index refreshes from GitHub; nothing is uploaded.
 
 ## Supply chain: SBOM and provenance
 

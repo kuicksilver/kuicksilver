@@ -1,0 +1,32 @@
+{
+  "$schema": "https://context7.com/schema/context7.json",
+  "projectTitle": "Kuicksilver",
+  "description": "Kotlin Multiplatform network stack: QUIC v1/v2 (RFC 9000/9001/9002/9369), HTTP/3 with QPACK, TLS 1.3 over OpenSSL 3.5, and Ktor client and server engines, for the JVM, Android, Kotlin/Native Linux, Apple (macOS, iOS) and Windows.",
+  "folders": ["docs", "samples"],
+  "excludeFolders": [
+    "docs/plans",
+    "docs/brief",
+    "docs/upstream",
+    "docs/benchmarks",
+    "build",
+    ".gradle",
+    "samples/ios/KuicksilverSample.xcodeproj"
+  ],
+  "excludeFiles": [
+    "AGENTS.md",
+    "CODE_OF_CONDUCT.md",
+    "CONTRIBUTING.md"
+  ],
+  "rules": [
+    "Kuicksilver is 0.x and experimental: the API can change between any two 0.x releases; docs/stability.md says which API is stable and which is experimental.",
+    "Use the same version for every io.kuicksilver artifact; each module depends only on the layer directly below it (native, tls, quic, http3, then the Ktor engines).",
+    "For Ktor, use HttpClient(Kuicksilver) for the client and embeddedServer(Kuicksilver) for the server; the client starts on HTTP/1.1 over TLS and moves to HTTP/3 after the server announces it with Alt-Svc, unless configured otherwise.",
+    "OpenSSL 3.5 is statically linked inside kuicksilver-native; no system OpenSSL is needed or used. The library is not FIPS-certified.",
+    "0-RTT is opt-in and experimental (off by default); BBR is opt-in and experimental, CUBIC is the default congestion controller.",
+    "loops > 1 works only on Linux and Android; macOS, iOS and Windows run one loop per port.",
+    "JS and Wasm are not targets; HTTP/2, HTTP/3 server push and WebTransport are not supported."
+  ],
+  "previousVersions": [
+    { "tag": "v0.2.0" }
+  ]
+}

@@ -21,6 +21,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   signed with the release key. `local-release.sh` makes both, dry run included; they are attached to the GitHub release
   and not uploaded to Maven Central, so the deployment's file count is unchanged. The provenance reaches SLSA Build
   Level 1, not more: it is produced and signed on the machine that builds.
+- `context7.json`: the configuration of the Context7 documentation index (what it reads, a description, rules for coding
+  agents, the 0.2.0 tag), and a release step that keeps it on the newest published version (`docs/release.md`).
 - `docs/stability.md` and `SECURITY.md` state that Kuicksilver is not FIPS-certified and that the bundled OpenSSL is
   built without the FIPS provider; every release build checks the latter (`tools/check/openssl-no-fips.sh`).
 - `docs/benchmarks.md`: a published benchmark table — the QUIC Interop Runner's goodput and crosstraffic, CPU time per
