@@ -105,8 +105,9 @@ over, so the client's handshake never runs across it: the `rebind-port` and `reb
 rebind in the middle of the handshake. In `rebind-port` it opens the port 1.25 s after that rebind, so that every
 transfer ends between the rebinds at 11 s and 16 s instead of on the one at 11 s: clients poll the port once a second,
 so the start moves in whole seconds, and the 10 Mbit/s link, not the peer, sets how long the transfer takes. In
-`rebind-addr` it opens it 0.3 s after, as in 0.2.0: the binding from 11 s on is one ngtcp2's server never hears from, so
-the transfers there must end before it (the measurements are in the script; the poll phases were measured on an arm64
+`rebind-addr` it opens it 0.3 s after, as in 0.2.0: the simulator's binding from 11 s on is always 193.167.0.155:745
+(fixed seed), and ngtcp2's example server drops every datagram from a source port below 1024 (`prohibited_port()` in its
+`examples/server.cc`, an anti-reflection filter), so the transfers there must end before it (the measurements are in the script; the poll phases were measured on an arm64
 Docker Desktop host, where msquic, picoquic and quiche run emulated, and may differ on an amd64 host;
 `KSL_INTEROP_START_GATE` overrides both). The handshake-time rebind is covered by `core.PathTest` (the
 `rebindDuringHandshake` tests: `natRebindDuringHandshakeIsFollowedByTheServer`, `handshakeTimeRebind*`,
@@ -120,7 +121,10 @@ only because the client started just before the simulator's rebind at 1 s, so th
 PATH_CHALLENGE the runner checks when it went out (`tools/interop/handshake-challenge.py`), and a rebind cell whose
 client's CONNECTION_CLOSE was the first packet from a new path (the rebind landed between the client's last packet and
 its close), answered by the server with its own CONNECTION_CLOSE there as RFC 9000 section 10.2 allows, not a
-PATH_CHALLENGE (`tools/interop/closing-rebind.py`; every earlier path must have passed the runner's check).
+PATH_CHALLENGE (`tools/interop/closing-rebind.py`; every earlier path must have passed the runner's check), and a cell
+that ran on the simulator the timed-out cell before it left running (`Container sim Running` in its output: the runner's
+`docker compose stop` after a timeout fails, and the reused simulator still sends to the previous server container's MAC;
+`run-local.sh` has compose recreate the simulator in every cell, this rule is the backstop).
 `bash tools/interop/environment-test.sh` runs those rules on `tools/interop/testdata`.
 
 The floors were measured on a local host, so the thresholds file says `"blocking": false`: a cell below its floor is a

@@ -2,7 +2,7 @@
 # Copyright 2026 The Kuicksilver Authors
 # SPDX-License-Identifier: Apache-2.0
 # Classifies cells of a QUIC Interop Runner result directory whose verdict rests on the environment, not on the endpoints.
-# Sourced by run-local.sh (which reruns such cells once) and environment-test.sh.
+# Sourced by run-local.sh (which reruns such cells) and environment-test.sh.
 interop_tools="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Cells of one run.py result directory whose sim output lacks the dumpcap summary of eth0 or eth1 ("Packets received/dropped on
@@ -57,10 +57,29 @@ closing_rebind() {
   done < <(find "$1" -mindepth 3 -maxdepth 3 -name output.txt 2>/dev/null | sort)
 }
 
+# Cells that ran on the sim left running by the cell just before them, which the runner timed out ("Container sim Running" in
+# the output): the runner's "docker compose stop" after a timeout lacks the cell's variables and fails ("invalid spec: :/www:ro"),
+# so compose reused that sim, whose ARP entry for the server still named the previous server container's MAC, and no client
+# packet reached the new server (run 20261020-031632: kuicksilver->picoquic:zerortt right after the timed-out v2 cell; run-local.sh
+# now has compose recreate the sim in every cell, this stays as the backstop). The order of the cells is the order of the runner's
+# first log line ("2026-10-20 03:25:10,872 ...") in each output.txt. Prints "<server>_<client> <case>" per cell.
+stale_sim() {
+  local o
+  while IFS= read -r o; do
+    grep -q "Container sim Running" "$o" || continue
+    local pair prev
+    pair=$(dirname "$(dirname "$o")")
+    prev=$(for p in "$pair"/*/output.txt; do printf '%s\t%s\n' "$(head -c 23 "$p")" "$p"; done | sort | awk -F'\t' -v me="$o" '$2 == me { print last; exit } { last = $2 }')
+    if [ -z "$prev" ] || ! grep -q "Test failed: took longer than" "$prev"; then continue; fi
+    local cell=${o#"$1"/}; cell=${cell%/output.txt}; echo "${cell%%/*} ${cell#*/}"
+  done < <(find "$1" -mindepth 3 -maxdepth 3 -name output.txt 2>/dev/null | sort)
+}
+
 # Cells of a result directory whose verdict rests on the environment: "<server>_<client> <case> <why>", one line per cell.
 environment_cells() {
   { truncated_captures "$1" | sed 's/$/ the sim'"'"'s capture was not flushed before teardown (dumpcap summary missing in output.txt), the pcap is incomplete/'
     handshake_rebind "$1" | sed 's/$/ the rebind landed inside the handshake: the PATH_CHALLENGE the runner checks went out before the client or the runner could decrypt it (handshake-challenge.py)/'
+    stale_sim "$1" | sed 's/$/ the cell before it timed out and the runner could not stop its sim: compose reused it ("Container sim Running") with a stale ARP entry for the server/'
     closing_rebind "$1" | sed 's/$/ the rebind landed just before the client'"'"'s CONNECTION_CLOSE: the server answered the close from the new path with its own close, no path left to validate (closing-rebind.py)/'
   } | sort -u -k1,2
 }

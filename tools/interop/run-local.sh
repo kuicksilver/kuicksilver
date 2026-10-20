@@ -22,7 +22,9 @@
 # PATH_CHALLENGE the runner checks (tools/interop/handshake-challenge.py; 5 of 10 runs of kuicksilver->quiche:rebind-addr on
 # 2026-10-16), and a rebind cell whose client's CONNECTION_CLOSE was the first packet from a new path, answered by the server
 # with its own close there instead of a PATH_CHALLENGE (tools/interop/closing-rebind.py; 0.2.0 gate 6,
-# msquic->kuicksilver-native:rebind-port). --check-required merges the reruns (a green rerun counts), --results reports such cells only.
+# msquic->kuicksilver-native:rebind-port), and a cell that ran on the sim the timed-out cell before it left running ("Container sim
+# Running": a stale ARP entry for the server; the override below has compose recreate the sim in every cell, this is the backstop).
+# --check-required merges the reruns (a green rerun counts), --results reports such cells only.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/../.." && pwd)"; cd "$root"
 [ -d /Applications/Wireshark.app/Contents/MacOS ] && export PATH="$PATH:/Applications/Wireshark.app/Contents/MacOS"   # the runner needs tshark
@@ -46,13 +48,19 @@ runner=build/interop/runner; lock=$(cat tools/interop/runner.lock)
 [ -d "$runner" ] || git clone -q https://github.com/quic-interop/quic-interop-runner "$runner"
 git -C "$runner" fetch -q origin "$lock" 2>/dev/null || true; git -C "$runner" checkout -q "$lock"
 venv=build/interop/venv; [ -x "$venv/bin/python" ] || { python3 -m venv "$venv"; "$venv/bin/pip" -q install -r "$runner/requirements.txt"; }
-# the sim's entrypoint waits for its dumpcaps (see sim-entrypoint.sh); compose reads docker-compose.override.yml beside docker-compose.yml
+# the sim's entrypoint waits for its dumpcaps (see sim-entrypoint.sh); compose reads docker-compose.override.yml beside docker-compose.yml.
+# KSL_INTEROP_SIM_CELL is left to compose to fill in (escaped here) from the variables the runner sets for each cell, its fresh log
+# directories among them, so the sim's configuration differs in every cell and compose recreates the sim instead of reusing one
+# still running: after a runner timeout its "docker compose stop" lacks those variables and fails ("invalid spec: :/www:ro"), the
+# previous cell's sim keeps running, and its ARP entry for the server still names the previous server container's MAC, so not one
+# client packet reaches the new server (run 20261020-031632: kuicksilver->picoquic:zerortt right after the timed-out v2 cell).
 cat > "$runner/docker-compose.override.yml" <<EOF
 services:
   sim:
     entrypoint: ["/bin/bash", "/kuicksilver/sim-entrypoint.sh"]
     environment:
       - "KSL_INTEROP_START_GATE=${KSL_INTEROP_START_GATE:-}"
+      - "KSL_INTEROP_SIM_CELL=\${TESTCASE_SERVER:-}:\${TESTCASE_CLIENT:-}:\${SERVER_LOGS:-}:\${CLIENT_LOGS:-}"
     volumes:
       - "$root/tools/interop/sim-entrypoint.sh:/kuicksilver/sim-entrypoint.sh:ro"
 EOF

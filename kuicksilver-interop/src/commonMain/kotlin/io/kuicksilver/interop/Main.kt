@@ -6,12 +6,13 @@ package io.kuicksilver.interop
 
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.qlog.DirectoryQlogSink
+import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.VersionProfile
 import io.kuicksilver.tls.TlsIdentity
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.runBlocking
 
-/** The QUIC Interop Runner endpoint: ROLE, TESTCASE, REQUESTS, SSLKEYLOGFILE, QLOGDIR (and our KSL_CC) from the environment; exit 0 / 1 / 127 (unsupported). */
+/** The QUIC Interop Runner endpoint: ROLE, TESTCASE, REQUESTS, SSLKEYLOGFILE, QLOGDIR (and our KSL_CC) from the environment; exit 0 / 1 (a failed transfer or a lost connection) / 127 (unsupported). */
 internal object Interop {
     val v1: List<VersionProfile> get() = Testcases.v1
     private val keys = listOf("ROLE", "TESTCASE", "REQUESTS", "DOWNLOADS", "CERTS", "WWW", "SSLKEYLOGFILE", "QLOGDIR", "KSL_INTEROP_EXPECTED_NAME", "KSL_CC")
@@ -36,9 +37,13 @@ internal object Interop {
             "client" -> runBlocking {
                 val plan = Testcases.client(testcase, cc)!!
                 val requests = (env["REQUESTS"] ?: "").split(Regex("\\s+")).filter { it.isNotBlank() }
-                val ok = if (plan.http3) H3InteropClient.download(requests, env["DOWNLOADS"] ?: "/downloads", plan, InteropTrust.config(env), env["SSLKEYLOGFILE"], env["QLOGDIR"]?.let { DirectoryQlogSink(it) })
-                    else HqInteropClient.download(requests, env["DOWNLOADS"] ?: "/downloads", plan, InteropTrust.config(env), env["SSLKEYLOGFILE"], env["QLOGDIR"]?.let { DirectoryQlogSink(it) })
-                if (ok) 0 else 1
+                // a lost connection (idle timeout, the peer's close, a stateless reset) is a failed cell, exit 1: uncaught it ended the
+                // JVM with 1 but Kotlin/Native with 133 (ngtcp2->kuicksilver-native:rebind-addr, 2026-10-20)
+                try {
+                    val ok = if (plan.http3) H3InteropClient.download(requests, env["DOWNLOADS"] ?: "/downloads", plan, InteropTrust.config(env), env["SSLKEYLOGFILE"], env["QLOGDIR"]?.let { DirectoryQlogSink(it) })
+                        else HqInteropClient.download(requests, env["DOWNLOADS"] ?: "/downloads", plan, InteropTrust.config(env), env["SSLKEYLOGFILE"], env["QLOGDIR"]?.let { DirectoryQlogSink(it) })
+                    if (ok) 0 else 1
+                } catch (e: QuicException.ConnectionLost) { Files.log("connection lost: $e"); 1 }
             }
             else -> 127
         }
