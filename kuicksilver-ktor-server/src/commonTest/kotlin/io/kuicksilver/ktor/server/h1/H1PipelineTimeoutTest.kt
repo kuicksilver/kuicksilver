@@ -84,6 +84,31 @@ class H1PipelineTimeoutTest {
             assertTrue(response.contains("\r\nConnection: close\r\n"), response)
         }
 
+    /**
+     * Empty lines before a request line are not a request yet (RFC 9112 section 2.2: a server SHOULD ignore at least one):
+     * a client that sends only CRLF and then nothing is closed at the deadline without a 408, like a silent one.
+     */
+    @Test fun leadingEmptyLinesThenSilenceCloseWithout408() =
+        runTest {
+            val c = pipeline()
+            c.toServer.writeStringUtf8("\r\n\n\r\n")
+            c.toServer.flush()
+            advanceTimeBy(header + 1.milliseconds)
+            assertTrue(c.job.isCompleted, "the connection is still open after the deadline")
+            assertEquals("", c.received(), "empty lines alone are not a started request")
+        }
+
+    /** Empty lines before a request are skipped and the request is served. */
+    @Test fun leadingEmptyLinesBeforeARequestAreIgnored() =
+        runTest {
+            val c = pipeline()
+            c.toServer.writeStringUtf8("\r\n\r\nGET / HTTP/1.1\r\nHost: s\r\nConnection: close\r\n\r\n")
+            c.toServer.flush()
+            advanceTimeBy(1.milliseconds)
+            assertTrue(c.job.isCompleted)
+            assertEquals(OK, c.received())
+        }
+
     /** On a keep-alive connection the deadline of the next head starts when the previous response has been written. */
     @Test fun negative_idleKeepAliveConnectionClosesSilentlyAfterTheHeaderDeadline() =
         runTest {

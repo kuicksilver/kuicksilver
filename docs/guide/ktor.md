@@ -48,7 +48,8 @@ server.start(wait = true)
   and from the end of the previous response on a keep-alive connection; header bytes trickling in do not extend it. One
   that sent part of a head by then gets `408 Request Timeout` with `Connection: close`; one that sent nothing (or never
   finished the TLS handshake) is closed without a response. `connectionIdleTimeoutSeconds` (45 s) closes a connection
-  without requests in both directions. A request head (request line and header fields) above 64 KiB, the HTTP/3
+  without requests in both directions. Empty lines before a request line are skipped and do not count as a started
+  request. A request head (request line and header fields) above 64 KiB, the HTTP/3
   default `maxFieldSectionSize`, gets `431 Request Header Fields Too Large` and the connection closes; a single line
   above 8 KiB gets 400. A failing `accept()` (the descriptor table full: EMFILE, ENFILE) is logged and
   retried after 5 ms, doubling up to 1 s, instead of at once.

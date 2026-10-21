@@ -528,7 +528,7 @@ private suspend fun readRequestHeadInTime(
             try {
                 // the server stopping ends a connection that is waiting for its next head (h1-client's draining)
                 if (draining != null && !awaitRequestStart(input, draining)) return@coroutineScope null
-                started = input.awaitContent() // false: the client closed without starting a request
+                started = input.skipEmptyLines()
                 parseRequest(input)
             } finally {
                 deadline.cancel()
@@ -540,6 +540,37 @@ private suspend fun readRequestHeadInTime(
         throw e
     }
 }
+
+/**
+ * Drops the empty lines (CRLF or LF) in front of a request line, which RFC 9112 section 2.2 lets a server ignore, and
+ * returns once a byte of something else is there: true, a request has started; false when the input ended first.
+ */
+@OptIn(InternalAPI::class)
+private suspend fun ByteReadChannel.skipEmptyLines(): Boolean {
+    while (true) {
+        if (readBuffer.exhausted() && !awaitContent()) return false
+        when (readBuffer.peek().readByte()) {
+            LF -> {
+                readBuffer.skip(1)
+            }
+
+            CR -> {
+                if (!awaitContent(2)) return true
+                val pair = readBuffer.peek()
+                pair.skip(1)
+                if (pair.readByte() != LF) return true
+                readBuffer.skip(2)
+            }
+
+            else -> {
+                return true
+            }
+        }
+    }
+}
+
+private const val CR: Byte = '\r'.code.toByte()
+private const val LF: Byte = '\n'.code.toByte()
 
 private suspend fun respondBadRequest(actorChannel: Channel<ByteReadChannel>) {
     val bc = ByteChannel()

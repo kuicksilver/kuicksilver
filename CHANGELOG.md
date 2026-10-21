@@ -101,6 +101,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- Ktor server, HTTP/1.1: empty lines before a request line (RFC 9112 section 2.2) made a connection that then went
+  quiet count as a started request, which got 408 at the header deadline; they are skipped, and such a connection is
+  closed without a response like an idle one.
 - Ktor server, HTTP/1.1: the request head had no size limit. Ktor's parser bounds each line at 8 KiB but not their
   number, so a request with megabytes of header fields was buffered and served, and one fast connection could push any
   amount of data into the heap. A request head (request line and header section) larger than 64 KiB, the default
