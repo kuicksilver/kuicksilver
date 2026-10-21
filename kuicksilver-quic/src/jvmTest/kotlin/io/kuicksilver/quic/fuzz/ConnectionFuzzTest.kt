@@ -707,9 +707,9 @@ internal class ConnectionFuzz(
 
             "streamEvents" -> 20_000
 
+            // the gap limit plus the readable range at each stream's read offset, which is always taken
             "reassemblyRanges" -> cfg.limits.reassemblyRangesPerConnection + streams
 
-            // + the range at each stream's read offset
             "sendBufferedBytes" -> cfg.maxSendBuffer + 20_000
 
             "cidsLocal" -> 2L * maxOf(cfg.activeConnectionIdLimit, 8) + 2
