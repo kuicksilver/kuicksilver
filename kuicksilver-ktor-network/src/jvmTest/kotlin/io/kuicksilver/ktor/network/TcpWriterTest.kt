@@ -2,11 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.kuicksilver.ktor.network
 
+import io.ktor.network.selector.Selectable
 import io.ktor.network.selector.SelectorManager
 import io.ktor.network.sockets.InetSocketAddress
 import io.ktor.network.sockets.Socket
+import io.ktor.network.sockets.openReadChannel
 import io.ktor.network.sockets.openWriteChannel
+import io.ktor.utils.io.ByteChannel
 import io.ktor.utils.io.ByteWriteChannel
+import io.ktor.utils.io.readAvailable
 import io.ktor.utils.io.writeFully
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.tls.SessionCache
@@ -20,9 +24,13 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.io.IOException
+import java.net.StandardSocketOptions
+import java.nio.channels.SocketChannel
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.test.BeforeTest
 import kotlin.test.Test
+import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
@@ -117,6 +125,94 @@ class TcpWriterTest {
                     "writes that answered 0 and waited for the socket: $waits (a spinning writer retries without bound)",
                 )
                 c.close()
+            } finally {
+                scope.cancel()
+                peer.selector.close()
+            }
+        }
+
+    /** A peer that reads and discards everything. */
+    private suspend fun drainingPeer(scope: CoroutineScope): NeverReadingPeer =
+        neverReadingPeer(scope) { s ->
+            val input = s.openReadChannel()
+            val buf = ByteArray(64 shl 10)
+            while (input.readAvailable(buf, 0, buf.size) >= 0) Unit
+        }
+
+    /** The application ends its writes and waits for the writer before it closes: close() must still close the socket. */
+    @Test fun closeAfterTheWriterFinishedReleasesTheSocket(): Unit =
+        runBlocking {
+            val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+            val peer = drainingPeer(scope)
+            try {
+                val c = connectTcp(peer.selector, InetSocketAddress("127.0.0.1", peer.port))
+                val out = ByteChannel(autoFlush = true)
+                val writer = c.attachForWriting(out)
+                out.writeFully(ByteArray(1 shl 20), 0, 1 shl 20)
+                out.flushAndClose()
+                withTimeout(20.seconds) { writer.job.join() }
+                c.close()
+                val released = withTimeoutOrNull(10.seconds) { c.socketContext.join() }
+                assertTrue(released != null, "close() after the writer finished completes the socket")
+                assertTrue(!(c as KslNioSocket).isOpen, "and closes its descriptor")
+            } finally {
+                scope.cancel()
+                peer.selector.close()
+            }
+        }
+
+    /** The peer resets the connection during a flood: the application's write fails, and close() still releases the socket. */
+    @Test fun negative_closeAfterAPeerResetReleasesTheSocket(): Unit =
+        runBlocking {
+            val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+            val reset = CompletableDeferred<Unit>()
+            val peer =
+                neverReadingPeer(scope) { s ->
+                    reset.await()
+                    val nio = ((s as KslNioSocket).ktorSocket as Selectable).channel as SocketChannel
+                    nio.setOption(StandardSocketOptions.SO_LINGER, 0)
+                    nio.close() // RST
+                }
+            try {
+                val c = connectTcp(peer.selector, InetSocketAddress("127.0.0.1", peer.port))
+                val out = c.openWriteChannel(autoFlush = true)
+                val written = AtomicLong()
+                val flood = scope.async { runCatching { scope.flood(out, written).join() } }
+                awaitStall(written)
+                reset.complete(Unit)
+                val failure =
+                    withTimeoutOrNull(20.seconds) {
+                        val chunk = ByteArray(64 shl 10)
+                        runCatching { while (true) out.writeFully(chunk, 0, chunk.size) }.exceptionOrNull()
+                    }
+                assertTrue(failure != null, "the application's writes fail after the peer's reset")
+                flood.cancel()
+                c.close()
+                val released = withTimeoutOrNull(10.seconds) { c.socketContext.join() }
+                assertTrue(released != null, "close() after a reset completes the socket")
+                assertTrue(!(c as KslNioSocket).isOpen, "and closes its descriptor")
+            } finally {
+                scope.cancel()
+                peer.selector.close()
+            }
+        }
+
+    /** Plain TCP (an HTTP/1.1 response to a client that stopped reading): close() drops what is queued after its bound. */
+    @Test fun negative_plainCloseIsBoundedWhileThePeerDoesNotRead(): Unit =
+        runBlocking {
+            val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+            val peer = neverReadingPeer(scope)
+            try {
+                val c = connectTcp(peer.selector, InetSocketAddress("127.0.0.1", peer.port))
+                (c as KslNioSocket).closeTimeout = 300.milliseconds
+                val written = AtomicLong()
+                scope.flood(c.openWriteChannel(autoFlush = true), written)
+                awaitStall(written)
+                c.close()
+                val released = withTimeoutOrNull(20.seconds) { c.socketContext.join() }
+                assertTrue(released != null, "close() releases the socket within its bound although the peer never reads")
+                assertTrue(!c.isOpen, "and closes its descriptor")
+                assertFailsWith<IOException> { c.attachForWriting(ByteChannel()) }
             } finally {
                 scope.cancel()
                 peer.selector.close()

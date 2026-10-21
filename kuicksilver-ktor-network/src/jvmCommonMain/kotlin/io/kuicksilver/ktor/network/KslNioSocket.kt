@@ -11,15 +11,21 @@ import io.ktor.utils.io.ByteChannel
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.ReaderJob
 import io.ktor.utils.io.availableForRead
+import io.ktor.utils.io.cancel
 import io.ktor.utils.io.read
 import io.ktor.utils.io.reader
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineName
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.io.IOException
 import java.nio.channels.ClosedChannelException
 import java.nio.channels.SocketChannel
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.seconds
 
 /**
  * A ktor-network JVM TCP socket whose write side is Kuicksilver's own writer; reading stays ktor's (CIOReader selects when a
@@ -34,8 +40,10 @@ import java.util.concurrent.atomic.AtomicLong
  * costs a suspended coroutine, and cancelling the socket's job ends the wait.
  *
  * Closing: the write channel is flushed and closed, the writer drains it and shuts the output down (a FIN, as ktor's writer
- * does), and only then is the ktor socket closed, which closes the descriptor once its reader has ended. A writer that ends
- * by cancellation or failure closes the descriptor itself, so an aborted socket never stays open behind a stalled write.
+ * does), and then the ktor socket is closed, which closes the descriptor once its reader has ended; when the writer had ended
+ * already, at once. The drain is bounded (3 s): past it the writer is cancelled. A writer that is cancelled (by that bound or
+ * by the socket's job) or fails (a reset) closes the descriptor itself, so a socket never stays open behind a stalled write.
+ * Writing after [close] fails with an IOException, as with ktor's sockets.
  */
 internal class KslNioSocket(
     private val delegate: Socket,
@@ -47,6 +55,9 @@ internal class KslNioSocket(
 
     @Volatile private var writer: ReaderJob? = null
 
+    /** How long [close] lets the writer drain what is queued before it drops the rest and closes the socket (tests shorten it). */
+    internal var closeTimeout: Duration = CLOSE_TIMEOUT
+
     /** Times a write answered 0 and the writer waited for the socket to become writable (tests). */
     internal val writeWaits = AtomicLong()
 
@@ -57,17 +68,17 @@ internal class KslNioSocket(
     internal val isOpen: Boolean get() = nio.isOpen
 
     override fun attachForWriting(channel: ByteChannel): ReaderJob {
+        if (closing.get()) {
+            val e = IOException("Socket closed")
+            channel.cancel(e)
+            throw e
+        }
         check(writer == null) { "writing channel has already been set" }
         val job = delegate.reader(Dispatchers.IO + CoroutineName("ksl-tcp-writer"), channel) { writeLoop(this.channel) }
         writer = job
-        job.job.invokeOnCompletion { cause ->
-            if (cause != null) {
-                runCatching { nio.close() } // cancelled or failed: nothing will drain the rest, release the descriptor
-                delegate.close()
-            } else if (closing.get()) {
-                delegate.close() // close() waited for the drain; a writer the application ended alone only half-closed (FIN)
-            }
-        }
+        // cancelled (the socket's job, or close()'s bound): nothing will drain the rest, release the descriptor; a failed writer
+        // closed it already (writeLoop), since `reader` completes its job normally after a failure
+        job.job.invokeOnCompletion { cause -> if (cause != null) runCatching { nio.close() } }
         return job
     }
 
@@ -81,15 +92,24 @@ internal class KslNioSocket(
                 if (blocked) {
                     writeWaits.incrementAndGet()
                     selectable.interestOp(SelectInterest.WRITE, true)
-                    selector.select(selectable, SelectInterest.WRITE)
+                    try {
+                        selector.select(selectable, SelectInterest.WRITE)
+                    } finally {
+                        selectable.interestOp(SelectInterest.WRITE, false) // writable again: no wake-ups until the next 0
+                    }
                 }
             }
+        } catch (e: Throwable) {
+            // a reset or another I/O error: `reader` closes the channel with it (the application's writes fail) and completes the
+            // job normally, so the descriptor is closed here
+            if (e !is CancellationException) runCatching { nio.close() }
+            throw e
         } finally {
             selectable.interestOp(SelectInterest.WRITE, false)
             try {
                 nio.shutdownOutput()
             } catch (_: ClosedChannelException) {
-            } catch (_: java.io.IOException) {
+            } catch (_: IOException) {
             }
         }
     }
@@ -101,12 +121,30 @@ internal class KslNioSocket(
             delegate.close()
             return
         }
-        // the writer's completion closes the ktor socket (above), after what was written reached the kernel
-        delegate.launch(CoroutineName("ksl-tcp-close")) { runCatching { w.channel.flushAndClose() } }
+        // the ktor socket closes once the writer has ended, at once when it already has (a drained, failed or cancelled writer)
+        w.job.invokeOnCompletion { delegate.close() }
+        delegate.launch(CoroutineName("ksl-tcp-close")) {
+            // bounded, the flush too: a peer that stops reading would hold the drain, and with it the socket, as long as it likes
+            val drained =
+                withTimeoutOrNull(closeTimeout) {
+                    try {
+                        w.channel.flushAndClose()
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (_: Throwable) {
+                        // closed or failed already: the writer ends on its own
+                    }
+                    w.job.join()
+                }
+            if (drained == null) w.job.cancel()
+        }
     }
 
     override fun dispose(): Unit = close()
 }
+
+/** How long [KslNioSocket.close] waits for the writer to drain: as long as `TlsSocket.close` waits in all. */
+private val CLOSE_TIMEOUT: Duration = 3.seconds
 
 /** A ktor-network JVM listening socket whose accepted sockets are [KslNioSocket]s. */
 internal class KslNioServerSocket(

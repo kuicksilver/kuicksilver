@@ -201,8 +201,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - JVM and Android HTTP/1.1 and TLS over TCP: a peer that read slower than we wrote kept a `Dispatchers.IO` thread at
   100 % CPU until its window opened, and that thread could not be cancelled. ktor-network 3.6.0's socket writer retries
   a write that answers 0 without reaching its select; about 64 such peers exhaust `Dispatchers.IO`. The engines'
-  sockets now write through Kuicksilver's own writer, which waits in the selector, and an aborted or bounded close
-  releases the socket ([threat model 3.21](docs/spec/threat-model.md)).
+  sockets now write through Kuicksilver's own writer, which waits in the selector. Closing such a socket lets the
+  writer drain for at most 3 s and then drops the rest; a writer that is cancelled or fails (a reset) closes the
+  descriptor ([threat model 3.21](docs/spec/threat-model.md)).
 - ktor-network: `TlsSocket.close()` could keep the raw socket, its coroutines and the native TLS session alive for as
   long as the peer kept the connection open without reading, since the flush, `close_notify` and the raw socket's last
   write all waited on it. The close is now bounded by 3 s in all; then what is queued is dropped and the socket closed.
