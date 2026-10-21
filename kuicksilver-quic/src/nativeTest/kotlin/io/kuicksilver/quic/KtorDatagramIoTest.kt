@@ -62,8 +62,8 @@ class KtorDatagramIoTest {
         }
 
     /**
-     * The portable socket does not use ktor-network for a specific IPv6 address (Ktor issue KTOR-10017, security, under coordinated disclosure): it
-     * refuses `::1` instead of binding.
+     * The portable socket does not use ktor-network for a specific IPv6 address (Ktor issue KTOR-10017, security, under
+     * coordinated disclosure): it refuses `::1` instead of binding.
      */
     @Test fun negative_portableRefusesASpecificIpv6Address() =
         runBlocking {
@@ -89,7 +89,7 @@ class KtorDatagramIoTest {
             }
         }
 
-    /** `::` is what ktor-network binds anyway: allowed (a host without IPv6 fails with its own error). */
+    /** The IPv6 wildcard `::` is allowed (a host without IPv6 fails with its own error). */
     @Test fun portableBindsTheIpv6Wildcard() =
         runBlocking {
             val r = runCatching { DatagramIo.open(InetSocketAddress("::", 0), IoPreference.Portable).close() }

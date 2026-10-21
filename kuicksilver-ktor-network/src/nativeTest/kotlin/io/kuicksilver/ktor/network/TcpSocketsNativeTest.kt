@@ -32,7 +32,6 @@ class TcpSocketsNativeTest {
                         }
                     server.use {
                         val local = server.localAddress as InetSocketAddress
-                        // Ktor 3.6.0's native bind of ::1 reported (and listened on) ::
                         assertEquals("::1", local.hostname)
                         val accepted = async { server.accept() }
                         connectTcp(selector, InetSocketAddress("::1", local.port)).use { client ->
