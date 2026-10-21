@@ -48,7 +48,8 @@ details, and the release's `CHANGELOG.md` entry lists the fix under **Security**
 
 Kuicksilver is pre-1.0: only the latest 0.x release receives fixes. From 1.0 on, the latest minor release of each
 supported major version will receive security fixes, and a major version will be supported for at least two years
-after the next major version is released. Until the first release, fixes go to the `main` branch.
+after the next major version is released. Fixes land on `main` and ship in a patch release of the latest line, made
+from its maintenance branch (`release/<X.Y>.x`, see [docs/release.md](docs/release.md#releasing-from-a-maintenance-branch)).
 
 ## OpenSSL
 
