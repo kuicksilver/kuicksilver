@@ -282,3 +282,34 @@ The maintainers use AI coding tools in this project, and contributors may too, u
 - [ ] Docs: guides, `docs/spec/rfc-compliance.md` or `docs/spec/threat-model.md` updated where behaviour changed;
       `tools/check/links.sh` and `tools/check/doc-refs.sh` pass.
 - [ ] `CHANGELOG.md` has an `Unreleased` entry for user-visible changes.
+
+## Review checklist
+
+Reviewers (and authors, before asking for review) check every change against the classes of bugs this project has
+already shipped or nearly shipped. Each line names the question to ask of the diff.
+
+- **A deadline on every wait on a peer.** Handshakes, request heads, bodies, writes to a slow reader, graceful
+  shutdown: what ends the wait if the peer goes silent or trickles one byte at a time? Deadlines that measure
+  progress, not a fixed total, so a slow but live peer is not cut off.
+- **Backoff on every error-retry loop.** An `accept()` that fails with `EMFILE`, a read that keeps failing: does the
+  loop sleep, grow the delay and rate-limit its log, or does it spin a core?
+- **Bounded memory and CPU per peer and per run length.** Header and body limits, queue sizes, per-connection state;
+  and no work that grows with how long the process has run (a soak verdict that was quadratic in samples).
+- **Every resource closed on every path.** Sockets, file descriptors and TLS state on success, failure, cancellation
+  and timeout, including when another coroutine already ended the writer or reader.
+- **One reader and one writer per stream.** No path that lets two coroutines read the same input concurrently.
+- **Connection-reuse promises kept.** A response that leaves request bytes unread, a body still incomplete when the
+  head goes out, an unanswered `Expect: 100-continue`: the connection is drained within a limit or closed
+  (`Connection: close` and a short linger, so the peer sees a response, not a reset).
+- **Retries only where they are safe.** A timeout or failure on a pooled connection is not retried unless the request
+  is replayable and the failure proves the request was not processed.
+- **No silent fallbacks.** When a mode cannot be honoured (`H3Only` with a proxy or an `http://` URL), the call fails
+  with a clear error instead of quietly using another protocol. Fallbacks that are intended are visible to the caller.
+- **Errors say what happened and leak nothing.** Status codes match the cause (a body timeout is 408, not a
+  relabelled 500), and response bodies carry no internal messages.
+- **Documentation claims verified against the code.** Every "the engine does X" in a guide, KDoc or CHANGELOG has a
+  test or a line of code behind it; nothing points at files or features that do not exist.
+- **Tests that are not flaky by construction.** Ports for TCP and UDP pairs are reserved together, timing budgets
+  leave room for a loaded host, and negative tests own every address they assert nothing answers on.
+
+New classes of bugs found in review or after a release are added to this list.
