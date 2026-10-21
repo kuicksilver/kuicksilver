@@ -72,6 +72,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   1 GiB array and two copies per request, 0.9 s/GB of the JVM server's CPU), and forgets a connection when it ends
   instead of keeping every connection in a list it copied on each accept (a growing copy per handshake and 340 MB of
   heap after 13 000 connections on the JVM).
+- POM: `<scm><connection>` is `scm:git:https://github.com/kuicksilver/kuicksilver.git` in every module's POM and the
+  BOM's, was `scm:git:git://...`. GitHub turned the unauthenticated `git://` protocol off in 2022, so tools that read
+  the POM's SCM connection (Maven's SCM plugins, dependency dashboards, source links) could not reach it.
 
 ### Fixed
 
