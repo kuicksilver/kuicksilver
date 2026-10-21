@@ -46,10 +46,12 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.io.IOException
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
+import kotlin.time.TimeSource
 
 internal class TcpServer(
     val rootJob: Job,
@@ -128,6 +130,9 @@ internal fun KuicksilverApplicationEngine.startTcp(
         val rootJob = launch(CoroutineName("kuicksilver-server-${l.config}"), start = CoroutineStart.UNDISPATCHED) { latch.join() }
         val selector = engineSelector(coroutineContext) // a socket closed on it is released at once (EngineSelector.kt)
         val timeout = configuration.connectionIdleTimeoutSeconds.seconds
+
+        @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+        val headerTimeout = configuration.requestHeaderTimeoutSeconds.seconds
         val connections = SupervisorJob(rootJob)
         // completed when accepting ends (the engine stops): connections read no further request, idle ones close at once
         val draining: CompletableJob = Job()
@@ -149,6 +154,8 @@ internal fun KuicksilverApplicationEngine.startTcp(
                             isClosed = { server.isClosed },
                             onError = { e, pause -> environment.log.warn("Accept failed on ${l.config}: $e; retrying in $pause") },
                         ) { client ->
+                            // the request-head deadline of the first request counts from here, the TLS handshake included
+                            val accepted = TimeSource.Monotonic.markNow()
                             connectionScope.launch {
                                 val sock: Socket
                                 val peer: List<Certificate>
@@ -156,7 +163,8 @@ internal fun KuicksilverApplicationEngine.startTcp(
                                 if (tlsConfig != null) {
                                     val t =
                                         try {
-                                            client.tlsServer(tlsConfig)
+                                            withTimeoutOrNull(headerTimeout) { client.tlsServer(tlsConfig) }
+                                                ?: throw IOException("No TLS handshake within the request header timeout ($headerTimeout)")
                                         } catch (e: Throwable) {
                                             client.close()
                                             if (e !is CancellationException) {
@@ -185,7 +193,9 @@ internal fun KuicksilverApplicationEngine.startTcp(
                                     startH1Pipeline(
                                         connection,
                                         timeout,
-                                        draining,
+                                        headerTimeout,
+                                        (headerTimeout - accepted.elapsedNow()).coerceAtLeast(Duration.ZERO),
+                                        draining = draining,
                                     ) { request -> handleRequest(this, request, scheme, peer, altSvc) }.join()
                                 } finally {
                                     sock.close()

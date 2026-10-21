@@ -43,8 +43,13 @@ server.start(wait = true)
   Netty and Jetty engines. Any other HTTPS connector type fails with `TlsException.Config` rather than serving cleartext.
 - `call.request.peerCertificates` is the client certificate chain as the TLS layer validated it (empty without client
   authentication). Ktor has no equivalent.
-- A failing `accept()` (the descriptor table full: EMFILE, ENFILE) is logged and retried after 5 ms, doubling up to 1 s,
-  instead of at once.
+- Slow and silent clients (slowloris): a client has `requestHeaderTimeoutSeconds` (*experimental*, 30 s) to send a
+  complete request head, counted from the accepted TCP connection for the first request (the TLS handshake included)
+  and from the end of the previous response on a keep-alive connection; header bytes trickling in do not extend it. One
+  that sent part of a head by then gets `408 Request Timeout` with `Connection: close`; one that sent nothing (or never
+  finished the TLS handshake) is closed without a response. `connectionIdleTimeoutSeconds` (45 s) closes a connection
+  without requests in both directions. A failing `accept()` (the descriptor table full: EMFILE, ENFILE) is logged and
+  retried after 5 ms, doubling up to 1 s, instead of at once.
 - A TLS handshake failure closes only that connection. `resolvedConnectors()` reports the real ports when you bind port
   0; `stop(grace, timeout)` stops accepting, sends GOAWAY to every HTTP/3 connection at once, raises `ApplicationStopPreparing`
   and waits for running calls (HTTP/1.1 and HTTP/3) until the grace period, then cuts what is left at the timeout.

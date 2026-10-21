@@ -40,6 +40,7 @@ public final class io/kuicksilver/ktor/server/KuicksilverApplicationEngine$Confi
 	public final fun getQuicAdmission ()Lio/kuicksilver/quic/ConnectionAdmission;
 	public final fun getQuicEarlyData ()Z
 	public final fun getQuicMaxIdleTimeout-FghU774 ()Lkotlin/time/Duration;
+	public final fun getRequestHeaderTimeoutSeconds ()I
 	public final fun getUdpSocketCount ()I
 	public final fun getWebSocketsOverHttp3 ()Z
 	public final fun setAltSvc (Z)V
@@ -55,6 +56,7 @@ public final class io/kuicksilver/ktor/server/KuicksilverApplicationEngine$Confi
 	public final fun setQuicAdmission (Lio/kuicksilver/quic/ConnectionAdmission;)V
 	public final fun setQuicEarlyData (Z)V
 	public final fun setQuicMaxIdleTimeout-BwNAW2A (Lkotlin/time/Duration;)V
+	public final fun setRequestHeaderTimeoutSeconds (I)V
 	public final fun setUdpSocketCount (I)V
 	public final fun setWebSocketsOverHttp3 (Z)V
 	public final fun tlsConnector (Lio/kuicksilver/tls/TlsIdentity;Lkotlin/jvm/functions/Function1;)V

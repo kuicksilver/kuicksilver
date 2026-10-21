@@ -39,6 +39,14 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.ReceiveChannel
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.withTimeoutOrNull
@@ -163,7 +171,16 @@ internal class MalformedRequestBody(
 
 /**
  * Starts the HTTP/1.1 pipeline of [connection], invoking [handler] for every request (concurrently with reading the next
- * one, as HTTP/1.1 pipelining allows); responses are written in request order. [timeout] closes an idle connection.
+ * one, as HTTP/1.1 pipelining allows); responses are written in request order.
+ *
+ * [timeout] closes an idle connection, both directions: no response handed to the writer for that long ends the
+ * pipeline. [headerTimeout] bounds each request head, counted from the end of the previous response (the start of the
+ * pipeline for the first request, which gets [firstHeadTimeout], what is left of the deadline after the TLS handshake);
+ * bytes trickling in do not extend it. A client that sent part of a head by then gets `408 Request Timeout` with
+ * `Connection: close` (RFC 9110 section 15.5.9: the server has decided to close rather than wait). One that sent nothing
+ * is closed without a response, as Go's `net/http` (`ReadHeaderTimeout`, `IdleTimeout`) and nginx
+ * (`client_header_timeout`, `keepalive_timeout`) do: RFC 9112 section 9.5 lets a server close an inactive connection at
+ * any time, and a 408 there could cross a request the client is just sending and be taken as its answer.
  *
  * [draining] completes when the server stops: the pipeline then reads no further request. A connection waiting for the
  * first byte of its next request head ends at once (RFC 9112 section 9.5: a server MAY close an idle connection at any
@@ -174,6 +191,8 @@ internal class MalformedRequestBody(
 internal fun CoroutineScope.startH1Pipeline(
     connection: H1Connection,
     timeout: Duration,
+    headerTimeout: Duration,
+    firstHeadTimeout: Duration = headerTimeout,
     draining: Job? = null,
     handler: suspend H1RequestScope.(request: Request) -> Unit,
 ): Job =
@@ -183,16 +202,24 @@ internal fun CoroutineScope.startH1Pipeline(
                 capacity = 3,
                 onUndeliveredElement = { response -> response.cancel(IOException("Response was not delivered")) },
             )
-        startPipelineWriter(actorChannel, timeout, connection)
+        // responses handed to the writer and not yet written: the deadline of the next request head starts at zero
+        val unwritten = MutableStateFlow(0)
+        val pipelineJob = coroutineContext.job
+        startPipelineWriter(actorChannel, timeout, connection, unwritten) {
+            pipelineJob.cancel(CancellationException("HTTP/1.1 connection idle for $timeout"))
+        }
 
         val requestContext = RequestHandlerName + Dispatchers.Unconfined
 
         try {
+            var headBudget = firstHeadTimeout
             while (true) { // parse requests loop
-                if (draining != null && !awaitRequestStart(connection.input, draining)) break
                 val request =
                     try {
-                        parseRequest(connection.input)
+                        readRequestHead(connection.input, headBudget, unwritten, draining)
+                    } catch (e: RequestHeadTimeout) {
+                        if (e.partial) respondRequestTimeout(actorChannel) else actorChannel.close()
+                        break
                     } catch (_: TooLongLineException) {
                         respondBadRequest(actorChannel)
                         break
@@ -204,6 +231,7 @@ internal fun CoroutineScope.startH1Pipeline(
                         respondBadRequest(actorChannel)
                         break
                     } ?: break
+                headBudget = headerTimeout
 
                 // faulty framing: 400 and close before anything of the request is handed on (RFC 9112 sections 6.1, 6.3)
                 val framing = RequestFraming.of(request)
@@ -218,6 +246,7 @@ internal fun CoroutineScope.startH1Pipeline(
                 val version = HttpProtocolVersion.parse(request.version)
                 val connectionOptions: ConnectionOptions?
 
+                unwritten.update { it + 1 }
                 try {
                     actorChannel.send(response)
                 } catch (cause: Throwable) {
@@ -335,11 +364,13 @@ private fun CoroutineScope.startPipelineWriter(
     actorChannel: Channel<ByteReadChannel>,
     timeout: Duration,
     connection: H1Connection,
+    unwritten: MutableStateFlow<Int>,
+    onIdle: () -> Unit,
 ): Job =
     launch(context = PipelineWriterName, start = CoroutineStart.UNDISPATCHED) {
         var failure: Throwable? = null
         try {
-            pipelineWriterLoop(actorChannel, timeout, connection)
+            pipelineWriterLoop(actorChannel, timeout, connection, unwritten, onIdle)
         } catch (cause: Throwable) {
             failure = cause
         } finally {
@@ -376,6 +407,76 @@ private fun badRequestPacket(): Source =
 
 private val BAD_REQUEST_BODY = "Bad Request".encodeToByteArray()
 
+/** `408 Request Timeout` with `Connection: close` (RFC 9110 section 15.5.9). */
+private fun requestTimeoutPacket(): Source =
+    RequestResponseBuilder()
+        .apply {
+            responseLine("HTTP/1.1", 408, "Request Timeout")
+            headerLine("Connection", "close")
+            headerLine("Content-Length", "0")
+            emptyLine()
+        }.build()
+
+/** Queues the 408 behind the responses already written (the deadline starts only once they are) and ends the pipeline. */
+private suspend fun respondRequestTimeout(actorChannel: Channel<ByteReadChannel>) {
+    val bc = ByteChannel()
+    if (actorChannel.trySend(bc).isSuccess) {
+        bc.writePacket(requestTimeoutPacket())
+        bc.close()
+    }
+    actorChannel.close()
+}
+
+/** The request head did not arrive within its deadline; [partial] when some of it did. */
+private class RequestHeadTimeout(
+    val partial: Boolean,
+) : Exception("The request head did not arrive in time")
+
+/** Cancels the read of a request head at its deadline; private, so no other cancellation is mistaken for it. */
+private class HeadDeadline : CancellationException("request head deadline")
+
+/**
+ * Parses the next request head, or throws [RequestHeadTimeout] when it is not complete [budget] after every earlier
+ * response has been written ([unwritten] is zero). Waiting for the first byte separately tells an idle connection from
+ * one that started a request. Returns null, as at the end of the input, when [draining] completes before a head starts.
+ */
+@OptIn(InternalAPI::class)
+private suspend fun readRequestHead(
+    input: ByteReadChannel,
+    budget: Duration,
+    unwritten: StateFlow<Int>,
+    draining: Job?,
+): Request? {
+    if (budget == Duration.INFINITE) {
+        if (draining != null && !awaitRequestStart(input, draining)) return null
+        return parseRequest(input)
+    }
+    var started = false
+    try {
+        return coroutineScope {
+            val head = coroutineContext.job
+            val deadline =
+                launch {
+                    unwritten.first { it <= 0 }
+                    delay(budget)
+                    head.cancel(HeadDeadline())
+                }
+            try {
+                // the server stopping ends a connection that is waiting for its next head (h1-client's draining)
+                if (draining != null && !awaitRequestStart(input, draining)) return@coroutineScope null
+                started = input.awaitContent() // false: the client closed without starting a request
+                parseRequest(input)
+            } finally {
+                deadline.cancel()
+            }
+        }
+    } catch (e: CancellationException) {
+        currentCoroutineContext().ensureActive() // the connection itself was cancelled: not a deadline
+        if (e is HeadDeadline) throw RequestHeadTimeout(started)
+        throw e
+    }
+}
+
 private suspend fun respondBadRequest(actorChannel: Channel<ByteReadChannel>) {
     val bc = ByteChannel()
     if (actorChannel.trySend(bc).isSuccess) {
@@ -390,14 +491,24 @@ private suspend fun pipelineWriterLoop(
     channel: ReceiveChannel<ByteReadChannel>,
     timeout: Duration,
     connection: H1Connection,
+    unwritten: MutableStateFlow<Int>,
+    onIdle: () -> Unit,
 ) {
     while (true) {
-        val child = withTimeoutOrNull(timeout) { channel.receiveCatching().getOrNull() } ?: break
+        val next = withTimeoutOrNull(timeout) { channel.receiveCatching() }
+        if (next == null) {
+            // idle: the reader is waiting for a head that does not come, so the whole connection ends, not only this side
+            onIdle()
+            break
+        }
+        val child = next.getOrNull() ?: break
         try {
             child.copyTo(connection.output)
             connection.output.flush()
         } catch (cause: Throwable) {
             if (child is ByteWriteChannel) child.close(cause)
+        } finally {
+            unwritten.update { it - 1 }
         }
     }
 }

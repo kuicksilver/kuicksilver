@@ -35,7 +35,14 @@ class H1PipelineStopTest {
     ): Conn {
         val toServer = ByteChannel()
         val fromServer = ByteChannel()
-        val job = backgroundScope.startH1Pipeline(H1Connection(toServer, fromServer, null, null), 1.hours, draining, handler)
+        val job =
+            backgroundScope.startH1Pipeline(
+                H1Connection(toServer, fromServer, null, null),
+                1.hours,
+                1.hours,
+                draining = draining,
+                handler = handler,
+            )
         runCurrent()
         return Conn(toServer, fromServer, job)
     }

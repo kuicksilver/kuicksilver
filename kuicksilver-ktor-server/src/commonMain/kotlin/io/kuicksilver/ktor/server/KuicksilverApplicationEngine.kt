@@ -57,8 +57,28 @@ public class KuicksilverApplicationEngine(
 ) : BaseApplicationEngine(environment, monitor, developmentMode) {
     /** Engine settings; HTTP/3 knobs follow the names of Ktor's Netty engine where one exists. */
     public class Configuration : BaseApplicationEngine.Configuration() {
-        /** Seconds an idle HTTP/1.1 keep-alive connection stays open. */
+        /**
+         * Seconds an HTTP/1.1 connection stays open without a request: then it is closed, both directions. On a keep-alive
+         * connection [requestHeaderTimeoutSeconds] also runs from the end of the last response, so the smaller of the two
+         * closes an idle connection.
+         */
         public var connectionIdleTimeoutSeconds: Int = 45
+
+        /**
+         * Seconds a client has to send a complete HTTP/1.1 request head (request line and header fields), counted from the
+         * accepted TCP connection for the first request (the TLS handshake included) and from the end of the previous
+         * response for the next one on a keep-alive connection; bytes that trickle in do not extend it. A client that sent
+         * part of a head by then gets `408 Request Timeout` and the connection closes; one that sent nothing (an idle
+         * keep-alive connection, or a connection that never spoke) is closed without a response. Positive; default 30.
+         *
+         * @throws IllegalArgumentException when set to zero or less.
+         */
+        @io.kuicksilver.annotations.ExperimentalKuicksilverApi
+        public var requestHeaderTimeoutSeconds: Int = 30
+            set(value) {
+                require(value > 0) { "requestHeaderTimeoutSeconds must be positive" }
+                field = value
+            }
 
         /** When set, every plain connector (`port = ...` of embeddedServer, `connector {}`) serves TLS with this identity instead. */
         public var identity: TlsIdentity? = null

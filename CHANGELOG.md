@@ -101,6 +101,15 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- Ktor server, HTTP/1.1 (slowloris): a client that connected and sent nothing, or sent the request head a byte at a
+  time inside the idle timeout, held its connection for ever. There was no deadline for the request head or the TLS
+  handshake, and the 45 s idle timer closed only the output side while the reader kept waiting. Now a request head must
+  be complete within `requestHeaderTimeoutSeconds` (new, *experimental*, default 30 s), counted from the accepted
+  connection (TLS handshake included) or the end of the previous response; arriving bytes do not extend it. A partial
+  head gets `408 Request Timeout` and the connection closes (RFC 9110 section 15.5.9); an idle connection is closed
+  without a response (RFC 9112 section 9.5). `connectionIdleTimeoutSeconds` closes the whole connection. A keep-alive
+  connection without requests now closes after the smaller of the two timeouts (30 s by default, was 45 s). Threat
+  model section 3.21.
 - Ktor server: a failing `accept()` (EMFILE/ENFILE with the descriptor table full) was retried at once, so the accept
   loop spun at 100 % CPU while the condition lasted. Failed accepts are now logged and retried after 5 ms, doubling up
   to 1 s, back to 5 ms after a successful accept (as Go's `net/http` server); a closed listening socket and
