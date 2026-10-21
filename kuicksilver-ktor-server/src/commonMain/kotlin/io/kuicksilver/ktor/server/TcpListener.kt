@@ -13,6 +13,7 @@ import io.ktor.network.sockets.InetSocketAddress
 import io.ktor.network.sockets.ServerSocket
 import io.ktor.network.sockets.Socket
 import io.ktor.network.sockets.SocketAddress
+import io.ktor.network.sockets.isClosed
 import io.ktor.network.sockets.openReadChannel
 import io.ktor.network.sockets.openWriteChannel
 import io.ktor.server.engine.handleFailure
@@ -42,8 +43,12 @@ import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.io.IOException
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
 internal class TcpServer(
@@ -139,13 +144,11 @@ internal fun KuicksilverApplicationEngine.startTcp(
                     val connectionScope = CoroutineScope(coroutineContext + connections + CoroutineName("connection"))
                     val port = (server.localAddress as? InetSocketAddress)?.port ?: l.config.port
                     try {
-                        while (true) {
-                            val client: Socket =
-                                try {
-                                    server.accept()
-                                } catch (e: kotlinx.io.IOException) {
-                                    continue
-                                }
+                        acceptLoop(
+                            accept = { server.accept() },
+                            isClosed = { server.isClosed },
+                            onError = { e, pause -> environment.log.warn("Accept failed on ${l.config}: $e; retrying in $pause") },
+                        ) { client ->
                             connectionScope.launch {
                                 val sock: Socket
                                 val peer: List<Certificate>
@@ -190,7 +193,7 @@ internal fun KuicksilverApplicationEngine.startTcp(
                                 }
                             }
                         }
-                    } catch (e: kotlinx.io.IOException) {
+                    } catch (e: IOException) {
                         coroutineContext.cancel()
                     } finally {
                         server.close()
@@ -285,3 +288,39 @@ private fun addHandlerForExpectedHeader(
 }
 
 private fun SocketAddress.toNetworkAddress(): NetworkAddress? = (this as? InetSocketAddress)?.let { NetworkAddress(it.hostname, it.port) }
+
+/** The pause after the first of consecutive failed accepts; it doubles per failure up to [ACCEPT_BACKOFF_MAX]. */
+internal val ACCEPT_BACKOFF_MIN: Duration = 5.milliseconds
+
+/** The longest pause between failed accepts. */
+internal val ACCEPT_BACKOFF_MAX: Duration = 1.seconds
+
+/**
+ * Accepts connections and hands each to [serve] until cancelled. A failed [accept] (EMFILE or ENFILE with the
+ * descriptor table full, ENOBUFS, ENOMEM) is reported to [onError] with the pause that follows it: 5 ms, doubling per
+ * consecutive failure up to 1 s, and back to 5 ms after the next successful accept, as Go's `net/http` `Server.Serve`
+ * does for temporary accept errors. Retrying at once spins at full CPU for as long as the condition lasts. A failure
+ * while [isClosed] (the listening socket was closed) is rethrown at once; cancellation ends the loop during a pause too.
+ */
+internal suspend fun <S : Any> acceptLoop(
+    accept: suspend () -> S,
+    isClosed: () -> Boolean,
+    onError: (IOException, Duration) -> Unit,
+    serve: (S) -> Unit,
+): Nothing {
+    var pause = Duration.ZERO
+    while (true) {
+        val client =
+            try {
+                accept()
+            } catch (e: IOException) {
+                if (isClosed()) throw e
+                pause = if (pause == Duration.ZERO) ACCEPT_BACKOFF_MIN else (pause * 2).coerceAtMost(ACCEPT_BACKOFF_MAX)
+                onError(e, pause)
+                delay(pause)
+                continue
+            }
+        pause = Duration.ZERO
+        serve(client)
+    }
+}
