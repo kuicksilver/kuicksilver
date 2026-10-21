@@ -2,6 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.kuicksilver.ktor.server
 
+import io.ktor.network.selector.SelectorManager
+import io.ktor.network.sockets.aSocket
+import io.ktor.network.sockets.openReadChannel
+import io.ktor.network.sockets.openWriteChannel
 import io.ktor.server.engine.ConnectorType
 import io.ktor.server.engine.EngineConnectorBuilder
 import io.ktor.server.engine.connector
@@ -11,18 +15,24 @@ import io.ktor.server.response.respondBytesWriter
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
 import io.ktor.server.routing.routing
+import io.ktor.utils.io.readByteArray
+import io.ktor.utils.io.readLineStrict
 import io.ktor.utils.io.writeStringUtf8
+import io.kuicksilver.ktor.network.tls
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.tls.ClientAuth
 import io.kuicksilver.tls.TlsException
 import io.kuicksilver.tls.TlsIdentity
 import io.kuicksilver.tls.TrustConfig
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withTimeout
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.seconds
 
 class ServerH1Test {
     @BeforeTest fun load() = KslLoader.ensureLoaded()
@@ -191,6 +201,32 @@ class ServerH1Test {
             assertTrue(rawHttp(port, get).endsWith("ok"))
             server.stop(100, 500)
             assertFailsWith<Throwable> { rawHttp(port, get) }
+        }
+
+    /**
+     * A graceful stop does not wait for an idle keep-alive client. Before, its connection sat in the request parser until
+     * the idle timeout, so `stop(gracePeriod, ...)` took the whole grace period (here 30 s) while any keep-alive client
+     * was connected; now the connection closes as soon as accepting stops.
+     */
+    @Test fun gracefulStopClosesIdleKeepAliveConnections() =
+        serverTest {
+            val (server, port) = tlsServer { routing { get("/") { call.respondText("ok") } } }
+            val selector = SelectorManager(Dispatchers.Default)
+            try {
+                val socket = aSocket(selector).tcp().connect("127.0.0.1", port).tls(ServerFixtures.clientTls())
+                val w = socket.openWriteChannel(autoFlush = true)
+                val r = socket.openReadChannel()
+                w.writeStringUtf8("GET / HTTP/1.1\r\nHost: server.test\r\n\r\n")
+                assertEquals("HTTP/1.1 200 OK", r.readLineStrict())
+                while (r.readLineStrict()?.isNotEmpty() == true) continue // the rest of the head
+                assertEquals("ok", r.readByteArray(2).decodeToString())
+
+                withTimeout(10.seconds) { server.stopSuspend(30_000, 40_000) }
+                assertEquals(null, r.readLineStrict(), "the idle keep-alive connection is still open after the stop")
+                socket.close()
+            } finally {
+                selector.close()
+            }
         }
 
     /**

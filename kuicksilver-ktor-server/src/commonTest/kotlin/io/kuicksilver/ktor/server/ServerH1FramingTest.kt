@@ -137,7 +137,11 @@ class ServerH1FramingTest {
     @Test fun negative_missingOrRepeatedHostIsRejected() =
         serverTest {
             plainServer { port ->
-                for (head in listOf("GET / HTTP/1.1\r\n", "GET / HTTP/1.1\r\nHost: a\r\nHost: b\r\n", "GET / HTTP/1.0\r\nHost: a\r\nHost: a\r\n")) {
+                for (head in listOf(
+                    "GET / HTTP/1.1\r\n",
+                    "GET / HTTP/1.1\r\nHost: a\r\nHost: b\r\n",
+                    "GET / HTTP/1.0\r\nHost: a\r\nHost: a\r\n",
+                )) {
                     val resp = withTimeout(10.seconds) { rawHttp(port, "${head}Connection: close\r\n\r\n", tls = null) }
                     assertTrue(resp.contains(" 400 "), "[$head]: $resp")
                     assertFalse(resp.contains("root"), "[$head]: $resp")

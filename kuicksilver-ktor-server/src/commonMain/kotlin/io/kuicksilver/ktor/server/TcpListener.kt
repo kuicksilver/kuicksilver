@@ -122,6 +122,8 @@ internal fun KuicksilverApplicationEngine.startTcp(
         val selector = engineSelector(coroutineContext) // a socket closed on it is released at once (EngineSelector.kt)
         val timeout = configuration.connectionIdleTimeoutSeconds.seconds
         val connections = SupervisorJob(rootJob)
+        // completed when accepting ends (the engine stops): connections read no further request, idle ones close at once
+        val draining = Job()
         tcpConnectionsForProbe += connections
         val tlsConfig = l.tls?.tlsConfig(listOf("http/1.1"))
         val scheme = if (l.tls != null) "https" else "http"
@@ -178,6 +180,7 @@ internal fun KuicksilverApplicationEngine.startTcp(
                                     startH1Pipeline(
                                         connection,
                                         timeout,
+                                        draining,
                                     ) { request -> handleRequest(this, request, scheme, peer, altSvc) }.join()
                                 } finally {
                                     sock.close()
@@ -189,6 +192,7 @@ internal fun KuicksilverApplicationEngine.startTcp(
                         coroutineContext.cancel()
                     } finally {
                         server.close()
+                        draining.complete()
                         connections.complete()
                         connections.join()
                     }

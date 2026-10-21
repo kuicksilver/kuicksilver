@@ -35,9 +35,12 @@ import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.ReceiveChannel
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.io.EOFException
 import kotlinx.io.IOException
@@ -157,11 +160,17 @@ internal class MalformedRequestBody(
 /**
  * Starts the HTTP/1.1 pipeline of [connection], invoking [handler] for every request (concurrently with reading the next
  * one, as HTTP/1.1 pipelining allows); responses are written in request order. [timeout] closes an idle connection.
+ *
+ * [draining] completes when the server stops: the pipeline then reads no further request. A connection waiting for the
+ * first byte of its next request head ends at once (RFC 9112 section 9.5: a server MAY close an idle connection at any
+ * time; Go's `Server.Shutdown` closes idle connections the same way); a request in flight, or one whose head has started
+ * to arrive, is answered first.
  */
 @OptIn(InternalAPI::class)
 internal fun CoroutineScope.startH1Pipeline(
     connection: H1Connection,
     timeout: Duration,
+    draining: Job? = null,
     handler: suspend H1RequestScope.(request: Request) -> Unit,
 ): Job =
     launch(PipelineName) {
@@ -176,6 +185,7 @@ internal fun CoroutineScope.startH1Pipeline(
 
         try {
             while (true) { // parse requests loop
+                if (draining != null && !awaitRequestStart(connection.input, draining)) break
                 val request =
                     try {
                         parseRequest(connection.input)
@@ -291,6 +301,29 @@ internal fun CoroutineScope.startH1Pipeline(
             actorChannel.close()
         }
     }
+
+/**
+ * Waits for the first byte of the next request head: true once it is there (or the input ended, which the parser
+ * reports), false when [draining] completes first.
+ */
+@OptIn(InternalAPI::class)
+private suspend fun awaitRequestStart(
+    input: ByteReadChannel,
+    draining: Job,
+): Boolean {
+    if (!input.readBuffer.exhausted() || input.isClosedForRead) return true
+    if (draining.isCompleted) return false
+    return coroutineScope {
+        val started = async(start = CoroutineStart.UNDISPATCHED) { input.awaitContent() }
+        select {
+            started.onAwait { true }
+            draining.onJoin {
+                started.cancel()
+                false
+            }
+        }
+    }
+}
 
 @OptIn(InternalAPI::class)
 private fun CoroutineScope.startPipelineWriter(

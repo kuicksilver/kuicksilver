@@ -297,7 +297,9 @@ never fails a call.
 once (RFC 9114 section 5.2) and shuts each HTTP/3 endpoint down with the same grace period
 ([QUIC: Graceful shutdown](quic.md#graceful-shutdown)): a new QUIC client is refused at its first Initial with
 CONNECTION_REFUSED instead of waiting for a handshake timeout, a handshake already in flight still completes and its
-connection gets GOAWAY at once, and the calls in flight finish. The stop returns as soon as they have: each HTTP/3
+connection gets GOAWAY at once, and the calls in flight finish. An HTTP/1.1 connection reads no further request: one
+idle between requests (keep-alive) closes at once, one with a request in flight (or whose request head has started to
+arrive) closes after that response. The stop returns as soon as they have: each HTTP/3
 connection closes with H3_NO_ERROR once its last response is acknowledged and read — the client closes it (a
 Kuicksilver client does), or the server three seconds later. At the end of the grace period the calls still
 running are cancelled and the connections left are closed with H3_NO_ERROR; the stop then waits for those calls to end,

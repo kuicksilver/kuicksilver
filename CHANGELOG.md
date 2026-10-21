@@ -126,6 +126,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   acknowledgements and losses are binary searches, and a MAX_STREAM_DATA that raises nothing does no work, like MAX_DATA.
   A range declared lost after part of it was acknowledged is resent without the acknowledged part.
 
+- Ktor server: a graceful `stop(gracePeriod, timeout)` took the whole grace period while any HTTP/1.1 keep-alive
+  client was connected. The stop waits for every HTTP/1.1 connection, and an idle keep-alive connection sat in the
+  request parser (until the idle timeout), so it was only cut at the grace deadline. Once accepting stops, an HTTP/1.1
+  connection now reads no further request: an idle one closes at once (RFC 9112 section 9.5 lets a server close an
+  idle connection at any time; Go's `Server.Shutdown` closes idle connections the same way), one with a request in
+  flight, or whose request head has started to arrive, closes after that response.
 - HTTP/1.1 server: the 400 answer to a malformed request head echoed the header section. Its body was the parser's
   message (as in Ktor CIO), and Ktor's `ParserException` messages embed the whole header section read so far, so
   cookies, credentials and any field a front proxy added (internal authentication, client-certificate headers) were
