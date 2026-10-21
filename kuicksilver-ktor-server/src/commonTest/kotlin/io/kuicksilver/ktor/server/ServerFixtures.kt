@@ -27,6 +27,7 @@ import io.kuicksilver.tls.tlsConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
 internal object ServerFixtures {
@@ -93,6 +94,43 @@ internal suspend fun rawHttp(
                 val n = r.readAvailable(b, 0, b.size)
                 if (n < 0) break
                 out.append(b.decodeToString(0, n))
+            }
+            return out.toString()
+        } finally {
+            socket.close()
+        }
+    } finally {
+        selector.close()
+    }
+}
+
+/**
+ * [rawHttp] for a client on a slow link: it reads at most [chunk] bytes every [pause] (a paced reader, not a wait for an
+ * event), so the server's buffers fill and a response takes a while to arrive.
+ */
+internal suspend fun slowHttp(
+    port: Int,
+    request: String,
+    tls: TlsConfig? = ServerFixtures.clientTls(),
+    chunk: Int = 64 * 1024,
+    pause: kotlin.time.Duration = 20.milliseconds,
+): String {
+    val selector = SelectorManager(Dispatchers.Default)
+    try {
+        val tcp = aSocket(selector).tcp().connect("127.0.0.1", port) { receiveBufferSize = 64 * 1024 }
+        val socket: Socket = if (tls != null) tcp.tls(tls) else tcp
+        try {
+            val w = socket.openWriteChannel(autoFlush = true)
+            val r = socket.openReadChannel()
+            w.writeStringUtf8(request)
+            w.flush()
+            val out = StringBuilder()
+            val b = ByteArray(chunk)
+            while (true) {
+                val n = r.readAvailable(b, 0, b.size)
+                if (n < 0) break
+                out.append(b.decodeToString(0, n))
+                kotlinx.coroutines.delay(pause)
             }
             return out.toString()
         } finally {

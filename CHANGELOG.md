@@ -101,6 +101,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- Ktor server, HTTP/1.1: a graceful stop cut responses that were still draining to a slow client. A connection ended
+  as soon as its socket's `close()` was called, so once all of them had, the listener's job completed and closed its
+  selector under sockets still sending their last bytes: a 4 MiB response written during `stopSuspend(8000, 10000)`
+  ended after 3.5 MiB while the stop returned in 3.4 s. A connection now ends when its socket has closed (the close is
+  bounded on progress, below), so responses in flight get the grace period, as with Ktor's other engines and Go's
+  `Shutdown`; idle keep-alive connections still close at once.
 - Ktor server, HTTP/1.1 (send-side slowloris): a client that requested a large response and never read it held the
   connection and its handler for ever: the response writer waited for the socket without a deadline, and so did the
   socket's close. A response write that makes no progress for the longer of `connectionIdleTimeoutSeconds` and

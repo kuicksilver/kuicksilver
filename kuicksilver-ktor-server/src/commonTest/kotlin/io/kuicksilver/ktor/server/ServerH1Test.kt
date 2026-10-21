@@ -6,6 +6,7 @@ import io.ktor.network.selector.SelectorManager
 import io.ktor.network.sockets.aSocket
 import io.ktor.network.sockets.openReadChannel
 import io.ktor.network.sockets.openWriteChannel
+import io.ktor.server.application.Application
 import io.ktor.server.application.ApplicationStopPreparing
 import io.ktor.server.engine.ConnectorType
 import io.ktor.server.engine.EngineConnectorBuilder
@@ -18,6 +19,7 @@ import io.ktor.server.routing.get
 import io.ktor.server.routing.routing
 import io.ktor.utils.io.readByteArray
 import io.ktor.utils.io.readLineStrict
+import io.ktor.utils.io.writeFully
 import io.ktor.utils.io.writeStringUtf8
 import io.kuicksilver.ktor.network.tls
 import io.kuicksilver.native.KslLoader
@@ -230,6 +232,67 @@ class ServerH1Test {
                 socket.close()
             } finally {
                 selector.close()
+            }
+        }
+
+    /**
+     * A graceful stop waits, up to its grace period, for a response in flight, also a large one (Ktor's and Go's
+     * `Shutdown` semantics). Before, stopping cancelled the accept loop, whose wait for the connections then ended at
+     * once: the listener's job completed, its selector closed, and a 4 MiB response written during the stop was cut
+     * after a few hundred KiB while `stopSuspend(8000, 10000)` returned within milliseconds.
+     */
+    @Test fun negative_gracefulStopWaitsForALargeResponseInFlight() =
+        serverTest {
+            val size = 4 * 1024 * 1024
+            for (tls in listOf(false, true)) {
+                val inHandler = CompletableDeferred<Unit>()
+                val stopping = CompletableDeferred<Unit>()
+                val module: Application.() -> Unit = {
+                    monitor.subscribe(ApplicationStopPreparing) { stopping.complete(Unit) }
+                    routing {
+                        get("/") {
+                            inHandler.complete(Unit)
+                            stopping.await()
+                            call.respondBytesWriter(contentLength = size.toLong()) {
+                                val chunk = ByteArray(64 * 1024) { 'x'.code.toByte() }
+                                repeat(size / chunk.size) { writeFully(chunk) }
+                            }
+                        }
+                    }
+                }
+                val (server, port) =
+                    if (tls) {
+                        tlsServer(configure = { http3 = false }, module = module)
+                    } else {
+                        val s =
+                            embeddedServer(Kuicksilver, configure = {
+                                connector {
+                                    host = "127.0.0.1"
+                                    port = 0
+                                }
+                            }, module = module)
+                        s.startSuspend(false)
+                        s to
+                            s.engine
+                                .resolvedConnectors()
+                                .first()
+                                .port
+                    }
+                coroutineScope {
+                    val response =
+                        async {
+                            slowHttp(
+                                port,
+                                "GET / HTTP/1.1\r\nHost: server.test\r\n\r\n",
+                                tls = if (tls) ServerFixtures.clientTls() else null,
+                            )
+                        }
+                    inHandler.await()
+                    withTimeout(20.seconds) { server.stopSuspend(8_000, 10_000) }
+                    val text = response.await()
+                    val body = text.substringAfter("\r\n\r\n")
+                    assertEquals(size, body.length, "tls=$tls: the response in flight was cut at ${body.length} bytes")
+                }
             }
         }
 
