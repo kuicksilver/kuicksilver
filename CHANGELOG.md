@@ -110,8 +110,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - Ktor server, HTTP/1.1 (send-side slowloris): a client that requested a large response and never read it held the
   connection and its handler for ever: the response writer waited for the socket without a deadline, and so did the
   socket's close. A response write that makes no progress for the longer of `connectionIdleTimeoutSeconds` and
-  5 minutes now ends the connection and its handler (upgraded WebSocket connections too), and a connection's graceful
-  close is aborted after `connectionIdleTimeoutSeconds`, which releases its descriptor (on TLS connectors too).
+  5 minutes now ends the connection and its handler (upgraded WebSocket connections too) and aborts its socket, which
+  releases its descriptor (on TLS connectors too). Every other close is graceful while its drain makes progress, so a
+  slow reader's last `Connection: close` response is not cut, and aborted after the same deadline without progress.
   Progress counts, not the length of the response, as with nginx's `send_timeout`: the engine sees it about 1 MiB at a
   time, so the 5 minutes keep clients down to about 3.4 KiB/s (EDGE, throttled plans) served as before.
 - Ktor server, HTTP/1.1: empty lines before a request line (RFC 9112 section 2.2) made a connection that then went
@@ -130,7 +131,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   head gets `408 Request Timeout` and the connection closes (RFC 9110 section 15.5.9); an idle connection is closed
   without a response (RFC 9112 section 9.5). `connectionIdleTimeoutSeconds` closes the whole connection. A keep-alive
   connection without requests now closes after the smaller of the two timeouts (30 s by default, was 45 s). Threat
-  model section 3.21.
+  model section 3.22.
 - Ktor server: a failing `accept()` (EMFILE/ENFILE with the descriptor table full) was retried at once, so the accept
   loop spun at 100 % CPU while the condition lasted. Failed accepts are now retried after 5 ms, doubling up to 1 s,
   back to 5 ms after a successful accept (as Go's `net/http` server), and logged at most once per 10 s with the number

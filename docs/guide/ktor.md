@@ -50,8 +50,8 @@ server.start(wait = true)
   finished the TLS handshake) is closed without a response. `connectionIdleTimeoutSeconds` (45 s) closes a connection
   without requests in both directions. One whose client stopped reading its response (the socket took nothing) is
   closed after the longer of that and 5 minutes: the engine sees progress about 1 MiB at a time, and 5 minutes serve
-  clients down to about 3.4 KiB/s. A closing connection gets the idle timeout to send what is left, then it is
-  aborted.
+  clients down to about 3.4 KiB/s. A closing connection sends what is left for as long as the client takes it, and is
+  aborted after the same deadline without progress, so a slow reader's last response is not cut short.
   Empty lines before a request line are skipped and do not count as a started request. A request head (request line
   and header fields) above 64 KiB, the HTTP/3 default `maxFieldSectionSize`, gets `431 Request Header Fields Too
   Large` and the connection closes; a single line above 8 KiB gets 400. A failing `accept()` (the descriptor table

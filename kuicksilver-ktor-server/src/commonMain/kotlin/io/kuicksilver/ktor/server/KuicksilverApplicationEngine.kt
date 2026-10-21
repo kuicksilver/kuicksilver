@@ -60,10 +60,11 @@ public class KuicksilverApplicationEngine(
         /**
          * Seconds an HTTP/1.1 connection stays open without a request: then it is closed, both directions. On a keep-alive
          * connection [requestHeaderTimeoutSeconds] also runs from the end of the last response, so the smaller of the two
-         * closes an idle connection. Also the time a closing connection may take to send what is left before it is
-         * aborted. A response the client reads nothing of (its socket takes nothing) ends the connection after the longer
-         * of this and 5 minutes: the engine sees a client's reading progress about 1 MiB at a time (the buffer in front of
-         * the socket), and 1 MiB in 5 minutes keeps clients down to about 3.4 KiB/s.
+         * closes an idle connection. A response the client reads nothing of (its socket takes nothing) ends the connection
+         * after the longer of this and 5 minutes: the engine sees a client's reading progress about 1 MiB at a time (the
+         * buffer in front of the socket), and 1 MiB in 5 minutes keeps clients down to about 3.4 KiB/s. A closing
+         * connection sends what is left for as long as the client takes it, and is aborted after the same time without
+         * progress.
          */
         public var connectionIdleTimeoutSeconds: Int = 45
 
