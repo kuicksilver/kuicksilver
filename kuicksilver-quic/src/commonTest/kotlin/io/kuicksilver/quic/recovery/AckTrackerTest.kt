@@ -257,4 +257,15 @@ class AckTrackerTest {
         assertTrue(a.isDuplicate(5), "below the floor of the forgotten refusals")
         assertFalse(a.isDuplicate(41))
     }
+
+    @Test fun refusedPacketsAlreadySeenSpendNoSlot() {
+        // a refused number at or below a floor, or already kept, is a duplicate already: it must not push kept ones out
+        val a = AckTracker(64)
+        for (pn in 0L until 20) a.onPacketRefused(2 * pn) // keeps 8..38, floor at 6
+        repeat(16) { a.onPacketRefused(3) }
+        repeat(16) { a.onPacketRefused(38) }
+        assertFalse(a.isDuplicate(39), "kept refusals were evicted by numbers already seen")
+        assertFalse(a.isDuplicate(9))
+        assertTrue(a.isDuplicate(8))
+    }
 }

@@ -99,6 +99,7 @@ internal class AckTracker(
 
     /** Packet [pn] was processed in part and dropped unacknowledged: a copy of it is a duplicate from now on, and it is never acknowledged. */
     fun onPacketRefused(pn: Long) {
+        if (isDuplicate(pn)) return // seen already (below a floor, or kept): it must not push a kept refusal out
         if (refusedCount == REFUSED_KEPT) {
             var lowest = 0
             for (k in 1 until refusedCount) if (refused[k] < refused[lowest]) lowest = k
