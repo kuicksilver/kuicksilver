@@ -9,8 +9,6 @@
     "samples"
   ],
   "excludeFolders": [
-    "docs/plans",
-    "docs/brief",
     "docs/benchmarks",
     "build",
     ".gradle",
