@@ -51,6 +51,7 @@ import kotlinx.io.IOException
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
+import kotlin.time.TimeMark
 import kotlin.time.TimeSource
 
 internal class TcpServer(
@@ -148,11 +149,12 @@ internal fun KuicksilverApplicationEngine.startTcp(
                     h3Ready.join()
                     val connectionScope = CoroutineScope(coroutineContext + connections + CoroutineName("connection"))
                     val port = (server.localAddress as? InetSocketAddress)?.port ?: l.config.port
+                    val acceptFailures = AcceptFailureReporter(ACCEPT_FAILURE_LOG_INTERVAL) { environment.log.warn("${l.config}: $it") }
                     try {
                         acceptLoop(
                             accept = { server.accept() },
                             isClosed = { server.isClosed },
-                            onError = { e, pause -> environment.log.warn("Accept failed on ${l.config}: $e; retrying in $pause") },
+                            onError = acceptFailures::report,
                         ) { client ->
                             // the request-head deadline of the first request counts from here, the TLS handshake included
                             val accepted = TimeSource.Monotonic.markNow()
@@ -332,5 +334,37 @@ internal suspend fun <S : Any> acceptLoop(
             }
         pause = Duration.ZERO
         serve(client)
+    }
+}
+
+/** At most one accept-failure warning per this interval. */
+internal val ACCEPT_FAILURE_LOG_INTERVAL: Duration = 10.seconds
+
+/**
+ * Logs accept failures: the first at once, then at most one line per [interval], saying how many were left out. With
+ * the descriptor table full they come every second (the longest pause of [acceptLoop]) for as long as it lasts, and a
+ * line each would flood the log. Used from the one accept-loop coroutine only.
+ */
+internal class AcceptFailureReporter(
+    private val interval: Duration,
+    private val timeSource: TimeSource = TimeSource.Monotonic,
+    private val log: (String) -> Unit,
+) {
+    private var lastLogged: TimeMark? = null
+    private var leftOut = 0
+
+    fun report(
+        e: IOException,
+        pause: Duration,
+    ) {
+        val last = lastLogged
+        if (last != null && last.elapsedNow() < interval) {
+            leftOut++
+            return
+        }
+        val more = if (leftOut > 0) " ($leftOut more failures since the last report)" else ""
+        log("Accept failed: $e; retrying in $pause$more")
+        lastLogged = timeSource.markNow()
+        leftOut = 0
     }
 }

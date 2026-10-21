@@ -51,8 +51,8 @@ server.start(wait = true)
   without requests in both directions. Empty lines before a request line are skipped and do not count as a started
   request. A request head (request line and header fields) above 64 KiB, the HTTP/3
   default `maxFieldSectionSize`, gets `431 Request Header Fields Too Large` and the connection closes; a single line
-  above 8 KiB gets 400. A failing `accept()` (the descriptor table full: EMFILE, ENFILE) is logged and
-  retried after 5 ms, doubling up to 1 s, instead of at once.
+  above 8 KiB gets 400. A failing `accept()` (the descriptor table full: EMFILE, ENFILE) is retried after
+  5 ms, doubling up to 1 s, instead of at once, and logged at most once per 10 s with the number of failures left out.
 - A TLS handshake failure closes only that connection. `resolvedConnectors()` reports the real ports when you bind port
   0; `stop(grace, timeout)` stops accepting, sends GOAWAY to every HTTP/3 connection at once, raises `ApplicationStopPreparing`
   and waits for running calls (HTTP/1.1 and HTTP/3) until the grace period, then cuts what is left at the timeout.
