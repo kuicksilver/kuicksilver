@@ -252,8 +252,13 @@ class ServerH1BodyTest {
             }
         }
 
-    /** A small chunked body the handler does not read (a 401 to an upload) is drained too: keep-alive goes on. */
-    @Test fun smallUnreadChunkedBodyKeepsTheConnection() =
+    /**
+     * A chunked body the handler has not read by its response (here 4 MiB, more than the channel to the handler holds,
+     * so it cannot be complete then) is of unknown size: the response head says `Connection: close`, and the connection
+     * ends after it, so a request pipelined after the body is not attempted. Before, the head promised keep-alive and the
+     * connection closed after all once the drain passed 256 KiB.
+     */
+    @Test fun negative_unreadChunkedBodyClosesTheConnectionAsItsHeadSays() =
         serverTest {
             plainServer(idleSeconds = 30, module = {
                 routing {
@@ -261,8 +266,8 @@ class ServerH1BodyTest {
                     get("/next") { call.respondText("next") }
                 }
             }) { port ->
-                val chunk = "c".repeat(4096)
-                val chunked = "1000\r\n$chunk\r\n".repeat(3) + "0\r\n\r\n"
+                val chunk = "c".repeat(64 * 1024)
+                val chunked = "10000\r\n$chunk\r\n".repeat(64) + "0\r\n\r\n"
                 val r =
                     withTimeout(10.seconds) {
                         rawHttp(
@@ -272,9 +277,9 @@ class ServerH1BodyTest {
                             tls = null,
                         )
                     }
-                assertTrue(r.startsWith("HTTP/1.1 401 "), r)
-                assertFalse(r.substringBefore("\r\n\r\nno").contains("Connection: close"), r)
-                assertTrue(r.endsWith("next"), r)
+                assertTrue(r.startsWith("HTTP/1.1 401 "), r.take(200))
+                assertTrue(r.contains("\r\nConnection: close\r\n"), r.take(200))
+                assertFalse(r.contains("next"), "the pipelined request after the body was served: ${r.take(300)}")
             }
         }
 

@@ -41,6 +41,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.ReceiveChannel
 import kotlinx.coroutines.coroutineScope
@@ -416,7 +417,13 @@ internal fun CoroutineScope.startH1Pipeline(
                             // reset, which can destroy the response before the client reads it. Let the writer finish (and
                             // half-close), then read and drop for a while (Go's closeWriteAndWait, nginx `lingering_close`)
                             actorChannel.close()
-                            runCatching { withTimeoutOrNull(LINGER) { connection.input.discard() } }
+                            if (!body.continueWithheld) {
+                                try {
+                                    withTimeoutOrNull(LINGER) { connection.input.discard() }
+                                } catch (_: IOException) {
+                                    // the client went away: nothing left to protect the response from
+                                }
+                            }
                             break
                         }
 
@@ -778,10 +785,18 @@ private class RequestBody(
     private fun remaining(): Long? = if (framing.chunked) null else (framing.contentLength - input.bodyBytesArrived).coerceAtLeast(0)
 
     /**
-     * Whether the rest of the body is not worth reading: never coming (no `100 Continue`) or known to be more than the
-     * cap. A chunked rest of unknown size is drained up to the cap and only then given up ([settleUnreadBody]).
+     * Whether the rest of the body is not worth reading: never coming (no `100 Continue`), known to be more than the cap,
+     * or of unknown size (a chunked body not complete yet). The last is decided as the response head goes out, so the
+     * head says `Connection: close` whenever the connection may end. Go drains up to the cap at that point instead
+     * (chunkWriter.writeHeader), which consumes a body a handler still means to read while it responds (a streaming
+     * echo) unless the handler opted into full duplex; there is no such opt-in here, so a chunked body the handler has
+     * not read by its response ends the connection.
      */
-    fun notWorthReading(): Boolean = !complete && (continueSent?.isCompleted == false || (remaining() ?: 0) > MAX_UNREAD_BODY_BYTES)
+    fun notWorthReading(): Boolean =
+        !complete && (continueSent?.isCompleted == false || (remaining() ?: Long.MAX_VALUE) > MAX_UNREAD_BODY_BYTES)
+
+    /** No `100 Continue` went out for a request that asked for it: the client holds the body back, nothing to drain. */
+    val continueWithheld: Boolean get() = continueSent?.isCompleted == false
 
     /** At the response head: true (and decided) when the connection is to end after it, which the head then says. */
     fun endsConnectionAtResponse(): Boolean {
@@ -838,15 +853,16 @@ private suspend fun settleUnreadBody(
 ): BodyOutcome {
     if (body.endsConnection || body.notWorthReading()) {
         body.abandon()
-        reader.cancel()
+        // joined: the reader must be off the input before anything else reads it (ByteChannel has one reader)
+        reader.cancelAndJoin()
         requestBody.cancel(IOException("The handler ended before reading the request body"))
         return BodyOutcome.Abandoned
     }
     requestBody.discard(MAX_UNREAD_BODY_BYTES + 1) // a body of exactly the cap is drained in full
     if (!requestBody.isClosedForRead) {
-        // more than the cap after all (a chunked body, or the Content-Length was under the count of bytes that arrived)
+        // more than the cap after all (the Content-Length rest was larger than the count of bytes that had arrived said)
         body.abandon()
-        reader.cancel()
+        reader.cancelAndJoin()
         requestBody.cancel(IOException("The request body the handler left unread is larger than $MAX_UNREAD_BODY_BYTES bytes"))
         return BodyOutcome.Abandoned
     }
