@@ -154,6 +154,24 @@ class ServerH1FramingTest {
             }
         }
 
+    /**
+     * A malformed header line gets a 400 with a fixed body. Before, the body was Ktor's ParserException message, which
+     * embeds the whole header section read so far: cookies, credentials and any field a front proxy added were echoed to
+     * the client (the class of Apache's CVE-2012-0053).
+     */
+    @Test fun negative_badRequestDoesNotEchoTheHeaderSection() =
+        serverTest {
+            plainServer { port ->
+                val resp =
+                    withTimeout(10.seconds) {
+                        rawHttp(port, "GET / HTTP/1.1\r\nHost: s\r\nCookie: session=SECRET\r\nbad line\r\n\r\n", tls = null)
+                    }
+                assertTrue(resp.contains(" 400 "), resp)
+                assertFalse(resp.contains("SECRET"), resp)
+                assertFalse(resp.contains("Cookie"), resp)
+            }
+        }
+
     /** A transfer coding other than a final `chunked`: 400 and close (RFC 9112 section 6.3 item 4). */
     @Test fun negative_unknownTransferCodingIsRejected() =
         serverTest {

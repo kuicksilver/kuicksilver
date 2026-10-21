@@ -126,6 +126,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   acknowledgements and losses are binary searches, and a MAX_STREAM_DATA that raises nothing does no work, like MAX_DATA.
   A range declared lost after part of it was acknowledged is resent without the acknowledged part.
 
+- HTTP/1.1 server: the 400 answer to a malformed request head echoed the header section. Its body was the parser's
+  message (as in Ktor CIO), and Ktor's `ParserException` messages embed the whole header section read so far, so
+  cookies, credentials and any field a front proxy added (internal authentication, client-certificate headers) were
+  sent back to the client, the class of Apache's CVE-2012-0053. Every 400 the engine writes itself now has the fixed
+  body `Bad Request`.
 - HTTP/1.1 server: a request without Host, or with two Host fields, was served (the first value won). RFC 9112 section
   3.2: a server MUST respond with 400 to an HTTP/1.1 request that lacks Host and to any request with more than one Host
   field line; a front proxy that keys on the last line routed and cached by another host than the application saw. Both

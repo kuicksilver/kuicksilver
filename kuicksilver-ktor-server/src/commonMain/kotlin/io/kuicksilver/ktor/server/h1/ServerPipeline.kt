@@ -179,15 +179,15 @@ internal fun CoroutineScope.startH1Pipeline(
                 val request =
                     try {
                         parseRequest(connection.input)
-                    } catch (e: TooLongLineException) {
-                        respondBadRequest(actorChannel, e.message)
+                    } catch (_: TooLongLineException) {
+                        respondBadRequest(actorChannel)
                         break
                     } catch (io: IOException) {
                         throw io
                     } catch (cancelled: CancellationException) {
                         throw cancelled
-                    } catch (parseFailed: Throwable) {
-                        respondBadRequest(actorChannel, parseFailed.message)
+                    } catch (_: Throwable) {
+                        respondBadRequest(actorChannel)
                         break
                     } ?: break
 
@@ -195,7 +195,7 @@ internal fun CoroutineScope.startH1Pipeline(
                 val framing = RequestFraming.of(request)
                 if (framing.fault != null) {
                     request.release()
-                    respondBadRequest(actorChannel, framing.fault)
+                    respondBadRequest(actorChannel)
                     break
                 }
 
@@ -217,9 +217,9 @@ internal fun CoroutineScope.startH1Pipeline(
                 try {
                     connectionOptions = ConnectionOptions.parse(request.headers["Connection"])
                     expectedHttpUpgrade = !expectedHttpBody && expectHttpUpgrade(request.method, upgrade, connectionOptions)
-                } catch (e: Throwable) {
+                } catch (_: Throwable) {
                     request.release()
-                    response.writePacket(badRequestPacket(e.message))
+                    response.writePacket(badRequestPacket())
                     response.close()
                     break
                 }
@@ -275,7 +275,7 @@ internal fun CoroutineScope.startH1Pipeline(
                         throw cause
                     } catch (cause: Throwable) {
                         requestBody.close(ChannelReadException("Failed to read request body", cause))
-                        response.writePacket(badRequestPacket(cause.message))
+                        response.writePacket(badRequestPacket())
                         response.close()
                         break
                     } finally {
@@ -320,30 +320,28 @@ private fun Channel<ByteReadChannel>.cancelPendingResponses(cause: Throwable?) {
     }
 }
 
-/** `400 Bad Request` with `Connection: close` and [message] as a text body, as Ktor CIO answers. */
-private fun badRequestPacket(message: String?): Source =
+/**
+ * `400 Bad Request` with `Connection: close` and a fixed text body. Ktor CIO sends the parser's message instead, and a
+ * `ParserException` message embeds the header section read so far: cookies, credentials and the fields a front proxy
+ * added would be echoed to the client (the class of Apache's CVE-2012-0053).
+ */
+private fun badRequestPacket(): Source =
     RequestResponseBuilder()
         .apply {
             responseLine("HTTP/1.0", 400, "Bad Request")
             headerLine("Connection", "close")
-            if (message == null) {
-                emptyLine()
-            } else {
-                val bytes = message.encodeToByteArray()
-                headerLine("Content-Type", "text/plain; charset=utf-8")
-                headerLine("Content-Length", bytes.size.toString())
-                emptyLine()
-                bytes(bytes)
-            }
+            headerLine("Content-Type", "text/plain; charset=utf-8")
+            headerLine("Content-Length", BAD_REQUEST_BODY.size.toString())
+            emptyLine()
+            bytes(BAD_REQUEST_BODY)
         }.build()
 
-private suspend fun respondBadRequest(
-    actorChannel: Channel<ByteReadChannel>,
-    message: String?,
-) {
+private val BAD_REQUEST_BODY = "Bad Request".encodeToByteArray()
+
+private suspend fun respondBadRequest(actorChannel: Channel<ByteReadChannel>) {
     val bc = ByteChannel()
     if (actorChannel.trySend(bc).isSuccess) {
-        bc.writePacket(badRequestPacket(message))
+        bc.writePacket(badRequestPacket())
         bc.close()
     }
     actorChannel.close()
