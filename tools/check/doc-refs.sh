@@ -12,7 +12,8 @@
 #                   from the root; make it a link);
 #   line-ref        `file:N` beyond the end of that file;
 #   private         an internal marker: a local machine path, a private working directory, an agent ledger, an internal
-#                   milestone code (K0-K19), an internal branch name (k<n>/...), Cyrillic text, a personal mail address;
+#                   milestone code (K0-K19), an internal branch or run name (k<n>/..., k<n>-...), an internal review
+#                   code (review h-..., F<n>.<n>), Cyrillic text, a personal mail address;
 #   symbol          a project-owned name that no tracked source declares: negative_* tests, ksl_*/KSL_* C names, Type.member
 #                   of a project Kotlin type (CHANGELOG.md is skipped: history names removed symbols on purpose);
 #   gradle-task     `:module:task` that no build script registers and that is not a standard KMP/AGP task;
@@ -20,16 +21,18 @@
 # The tracked JSON files (context7.json, the interop notes) are checked for private markers too.
 # Intended exceptions go in tools/check/doc-refs.allow, one per line with its reason. Fenced code blocks are scanned as
 # well and their findings marked [code block].
-# Usage: tools/check/doc-refs.sh [--rev <commit>] [--allow <file>] [root]
-#   default: HEAD of the repository containing this script, allowlist <root>/tools/check/doc-refs.allow.
+# Usage: tools/check/doc-refs.sh [--rev <commit> | --worktree] [--allow <file>] [root]
+#   default: HEAD of the repository containing this script, allowlist <root>/tools/check/doc-refs.allow. --worktree checks
+#   the files of the index (git ls-files) as they are on disk, to try an edit before committing it.
 #   exit 0: no finding outside the allowlist; 1: findings listed on stdout as `file:line | kind | detail`; 2: usage error.
 set -euo pipefail
 rev=HEAD; allow=""; root=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --rev) rev="${2:?--rev needs a commit}"; shift 2 ;;
+    --worktree) rev=":worktree"; shift ;;
     --allow) allow="${2:?--allow needs a file}"; shift 2 ;;
-    -h|--help) sed -n '4,25p' "$0"; exit 0 ;;
+    -h|--help) sed -n '4,27p' "$0"; exit 0 ;;
     -*) echo "doc-refs: unknown option $1" >&2; exit 2 ;;
     *) root="$1"; shift ;;
   esac
@@ -45,8 +48,10 @@ root, rev, allow_file = sys.argv[1:4]
 def git(*args, **kw):
     return subprocess.run(["git", "-C", root, *args], capture_output=True, check=True, **kw).stdout
 
+worktree = rev == ":worktree"
 try:
-    tracked = set(git("ls-tree", "-r", "-z", "--name-only", rev).decode().split("\0")) - {""}
+    listing = git("ls-files", "-z") if worktree else git("ls-tree", "-r", "-z", "--name-only", rev)
+    tracked = set(listing.decode().split("\0")) - {""}
 except subprocess.CalledProcessError as e:
     sys.exit(f"doc-refs: cannot read {rev} in {root}: {e.stderr.decode().strip()}")
 tracked_dirs = set()
@@ -60,6 +65,9 @@ for f in tracked:
 _blob = {}
 _cat = subprocess.Popen(["git", "-C", root, "cat-file", "--batch"], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
 def content(path):
+    if path not in _blob and worktree:
+        try: _blob[path] = open(os.path.join(root, path), encoding="utf-8", errors="replace").read()
+        except OSError: _blob[path] = None
     if path not in _blob:
         _cat.stdin.write(f"{rev}:{path}\n".encode()); _cat.stdin.flush()
         header = _cat.stdout.readline().decode().split()
@@ -129,7 +137,8 @@ PRIVATE = [
     (re.compile(r"\.superpowers|scratchpad|docs/plans|docs/brief"), "private working directory"),
     (re.compile(r"\bledger\b", re.I), "agent ledger reference"),
     (re.compile(r"\bK(?:[0-9]|1[0-9])\b(?![-.]\d)"), "internal milestone code"),
-    (re.compile(r"\bk[1-9][0-9]?/[a-z]"), "internal branch name"),
+    (re.compile(r"\bk[1-9][0-9]?[/-][a-z]"), "internal branch or run name"),
+    (re.compile(r"\breview h-[a-z]|\bF[1-9]\.[0-9]+\b"), "internal review code"),
     (re.compile(r"[Ѐ-ӿ]{3,}"), "Cyrillic text"),
     (re.compile(r"[\w.+-]+@(?:gmail|googlemail|yahoo|hotmail|outlook|icloud|me|proton|protonmail|yandex|mail)\.[a-z]+", re.I), "personal mail address"),
 ]
@@ -288,6 +297,6 @@ for f, n, kind, detail in shown:
     print(f"{f}:{n} | {kind} | {detail}")
 for k, g, kind, text, used in rules:
     if not used: print(f"doc-refs: warning: allowlist line {k} ({g} | {kind} | {text}) matched nothing", file=sys.stderr)
-print(f"doc-refs: {len(mds)} Markdown and {len(jsons)} JSON files at {rev}, {len(shown)} finding(s), {len(out) - len(shown)} allowlisted", file=sys.stderr)
+print(f"doc-refs: {len(mds)} Markdown and {len(jsons)} JSON files at {'the working tree' if worktree else rev}, {len(shown)} finding(s), {len(out) - len(shown)} allowlisted", file=sys.stderr)
 sys.exit(1 if shown else 0)
 PY

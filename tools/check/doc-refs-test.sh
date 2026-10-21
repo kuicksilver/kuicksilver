@@ -44,7 +44,9 @@ negative ignored "a code span naming a gitignored path fails" "path-ignored" 'Th
 negative ambiguous "a span that resolves only from the file's directory fails" "path-ambiguous" 'Compare `api/ref.md` too.'
 negative lineref "a file:line past the end fails" "line-ref" 'As in `docs/guide/other.md:99`.'
 negative milestone "an internal milestone code fails" "internal milestone code" 'Done in K3.'
-negative branch "an internal branch name fails" "internal branch name" 'Measured on k8/perf-merge.'
+negative branch "an internal branch name fails" "internal branch or run name" 'Measured on k8/perf-merge.'
+negative runtag "an internal run tag fails" "internal branch or run name" 'Green in `k7-fix`.'
+negative review "an internal review code fails" "internal review code" 'As found in F4.5.'
 negative cyrillic "Cyrillic text fails" "Cyrillic text" 'Матрица.'
 negative localpath "a local machine path fails" "local machine path" 'Logs in /Users/someone/build.'
 negative ledger "an agent ledger reference fails" "agent ledger" 'See the ledger.'
@@ -62,6 +64,9 @@ repo worktree; commit worktree base
 printf 'See [new](new.md).\n' >> "$tmp/worktree/docs/guide/a.md"; commit worktree link
 printf '# New\n' > "$tmp/worktree/docs/guide/new.md"
 expect 1 "negative: a target only in the working tree still counts as missing" worktree "exists on disk, untracked"
+expect 1 "negative: --worktree still wants the target in the index" worktree "exists on disk, untracked" --worktree
+git -C "$tmp/worktree" add docs/guide/new.md
+expect 0 "--worktree takes an added file as it is on disk" worktree "0 finding(s)" --worktree
 
 repo allowed; printf 'Done in K3.\n' >> "$tmp/allowed/docs/guide/a.md"; commit allowed base
 printf 'docs/guide/a.md | private | %s # test\n' "'K3'" > "$tmp/allowed/allow"
