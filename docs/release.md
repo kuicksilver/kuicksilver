@@ -242,6 +242,9 @@ python3 -c 'import json,sys; [print(s["digest"]["sha256"]+"  "+s["name"]) for s 
   kuicksilver-0.2.1.intoto.json > sums.txt     # then, in a mirror of the io/kuicksilver paths: shasum -a 256 -c sums.txt
 ```
 
+How a user checks all of this, and rebuilds the reproducible native libraries to compare them with the published
+ones: [verifying.md](verifying.md) (`tools/verify/verify-release.sh <version>`).
+
 **What this is worth.** This is **SLSA Build Level 1**: provenance exists and says how the artifacts were built, from
 which source, with which inputs. It is not Level 2, which needs a hosted build platform that generates and signs the
 provenance itself; here the same Mac and the same person build the artifacts, write the statement and hold the key, so
