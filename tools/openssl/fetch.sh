@@ -17,16 +17,26 @@ tarball="openssl-$version.tar.gz"
 base="https://github.com/openssl/openssl/releases/download/openssl-$version"
 
 cd "$src"
-[ -f "$tarball" ] || curl -sfL -o "$tarball" "$base/$tarball"
-[ -f "$tarball.asc" ] || curl -sfL -o "$tarball.asc" "$base/$tarball.asc"
+# bounded: a stalled mirror fails the build instead of hanging it; a partial download never stays as the tarball
+dl() { if curl -sfL --retry 3 --connect-timeout 20 --max-time 600 -o "$1.part" "$2"; then mv "$1.part" "$1"; else rm -f "$1.part"; return 1; fi; }
+[ -f "$tarball" ] || dl "$tarball" "$base/$tarball"
+[ -f "$tarball.asc" ] || dl "$tarball.asc" "$base/$tarball.asc"
 
-export GNUPGHOME="${KSL_GNUPGHOME:-/tmp/kuicksilver-gnupg}"   # short path: macOS limits Unix socket paths to 104 bytes
-mkdir -p "$GNUPGHOME"; chmod 700 "$GNUPGHOME"
-# The release key is vendored (fingerprint pinned in openssl.toml); keyservers are only a fallback.
+# A keyring of this run only (KSL_GNUPGHOME names another): a shared one could hold keys another run imported.
+# Short path: macOS limits Unix socket paths to 104 bytes.
+if [ -n "${KSL_GNUPGHOME:-}" ]; then export GNUPGHOME="$KSL_GNUPGHOME"; mkdir -p "$GNUPGHOME"
+else export GNUPGHOME; GNUPGHOME=$(mktemp -d /tmp/ksl-ossl.XXXXXX); trap 'gpgconf --kill all >/dev/null 2>&1 || true; rm -rf "$GNUPGHOME"' EXIT; fi
+chmod 700 "$GNUPGHOME"
+with_timeout() { # <seconds> <command...>: the command, killed after <seconds>
+  local s="$1"; shift; "$@" & local p=$!
+  ( sleep "$s"; kill "$p" 2>/dev/null ) & local w=$!
+  wait "$p"; local rc=$?; kill "$w" 2>/dev/null || true; wait "$w" 2>/dev/null || true; return $rc
+}
+# The release key is vendored (fingerprint pinned in openssl.toml); keyservers are only a fallback, 60 s each.
 gpg --batch --import "$here/openssl-release-key.asc" >/dev/null 2>&1 || true
 if ! gpg --batch --list-keys "$fpr" >/dev/null 2>&1; then
-  gpg --batch --keyserver hkps://keys.openpgp.org --recv-keys "$fpr" \
-    || gpg --batch --keyserver hkps://keyserver.ubuntu.com --recv-keys "$fpr"
+  with_timeout 60 gpg --batch --keyserver hkps://keys.openpgp.org --recv-keys "$fpr" \
+    || with_timeout 60 gpg --batch --keyserver hkps://keyserver.ubuntu.com --recv-keys "$fpr" || true
 fi
 # Signature must be made by exactly the pinned fingerprint, not merely "some key in the ring".
 # VALIDSIG's last field is the primary key fingerprint (the signing subkey comes first).
