@@ -62,6 +62,7 @@ internal suspend fun handleRequestStream(
                 onSkipped = { glitch("unknown frame on a request stream") },
                 onBuffered = { bufferedHeaderBytes += it },
             )
+        beforeRequestHeadersForTest?.invoke(st)
         val first =
             try {
                 frames.next()

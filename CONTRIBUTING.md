@@ -310,6 +310,8 @@ already shipped or nearly shipped. Each line names the question to ask of the di
 - **Documentation claims verified against the code.** Every "the engine does X" in a guide, KDoc or CHANGELOG has a
   test or a line of code behind it; nothing points at files or features that do not exist.
 - **Tests that are not flaky by construction.** Ports for TCP and UDP pairs are reserved together, timing budgets
-  leave room for a loaded host, and negative tests own every address they assert nothing answers on.
+  leave room for a loaded host, and negative tests own every address they assert nothing answers on. No test waits
+  for something the protocol allows never to happen (a request stream reset before its HEADERS were read surfaces no
+  request), and every wait has a deadline that fails with a message naming what did not happen.
 
 New classes of bugs found in review or after a release are added to this list.
