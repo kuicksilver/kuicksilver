@@ -12,7 +12,7 @@ plugins {
 }
 
 group = "io.kuicksilver"
-version = providers.gradleProperty("kuicksilver.version").getOrElse("0.3.0-SNAPSHOT")
+version = providers.gradleProperty("kuicksilver.version").getOrElse("0.2.1-SNAPSHOT")
 
 // `<package>.<Class>.**` of the top-level @InternalKuicksilverApi classes in the main sources (see the ABI filter below)
 val internalAbiPatterns: Provider<List<String>> =

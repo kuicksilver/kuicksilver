@@ -22,7 +22,7 @@ SPDX-License-Identifier: Apache-2.0
   <a href="docs/spec/rfc-compliance.md"><img alt="Interop: msquic, ngtcp2, picoquic, quic-go, quiche, quinn" src="https://img.shields.io/badge/interop-6%20QUIC%20stacks-2EA44F"></a>
 </p>
 
-> **Status: 0.x, experimental.** The API can change between any two 0.x releases, and 0.2.0 is on Maven Central. Do
+> **Status: 0.x, experimental.** The API can change between any two 0.x releases, and 0.2.1 is on Maven Central. Do
 > not use it in production yet; do try it, and tell us what breaks. [docs/stability.md](docs/stability.md) says which
 > API is stable and which is experimental.
 
@@ -58,7 +58,7 @@ Artifacts are on Maven Central:
 ```kotlin
 // build.gradle.kts
 dependencies {
-    implementation("io.kuicksilver:kuicksilver-ktor-client:0.2.0")
+    implementation("io.kuicksilver:kuicksilver-ktor-client:0.2.1")
 }
 ```
 

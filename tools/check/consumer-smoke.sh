@@ -16,7 +16,7 @@ if [ "${1:-}" = --central ]; then
   echo "consumer smoke: samples/realtime-telemetry built from Maven Central with io.kuicksilver:*:$version"
   exit 0
 fi
-version="${1:-0.3.0-SNAPSHOT}"
+version="${1:-0.2.1-SNAPSHOT}"
 repo="${KSL_MAVEN_REPO:-$HOME/.m2/repository}"
 for m in native tls ktor-network quic http3 ktor-client ktor-server bom; do
   d="$repo/io/kuicksilver/kuicksilver-$m/$version"

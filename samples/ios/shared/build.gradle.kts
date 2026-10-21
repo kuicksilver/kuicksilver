@@ -5,7 +5,7 @@ plugins {
     kotlin("multiplatform")
 }
 
-val kuicksilver = providers.gradleProperty("kuicksilver.version").getOrElse("0.3.0-SNAPSHOT")
+val kuicksilver = providers.gradleProperty("kuicksilver.version").getOrElse("0.2.1-SNAPSHOT")
 
 kotlin {
     // One static framework for the whole app (see docs/guide/ios.md: never two Kotlin/Native frameworks in one app).

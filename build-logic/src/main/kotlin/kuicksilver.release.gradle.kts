@@ -10,7 +10,7 @@
 plugins { signing }
 
 private val publishedModules = listOf("native", "tls", "ktor-network", "quic", "http3", "ktor-client", "ktor-server", "bom").map { "kuicksilver-$it" }
-private val releaseVersion = providers.gradleProperty("kuicksilver.version").getOrElse("0.3.0-SNAPSHOT")
+private val releaseVersion = providers.gradleProperty("kuicksilver.version").getOrElse("0.2.1-SNAPSHOT")
 
 val cyclonedxValidator: Configuration by configurations.creating {
     isCanBeConsumed = false

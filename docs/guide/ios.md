@@ -32,7 +32,7 @@ kotlin {
         it.binaries.framework { baseName = "Shared"; isStatic = true }
     }
     sourceSets.commonMain.dependencies {
-        implementation("io.kuicksilver:kuicksilver-http3:0.2.0")   // or -quic, -ktor-client
+        implementation("io.kuicksilver:kuicksilver-http3:0.2.1")   // or -quic, -ktor-client
     }
 }
 ```
@@ -82,7 +82,7 @@ let package = Package(
     targets: [
         .binaryTarget(
             name: "Kuicksilver",
-            url: "https://example.com/releases/0.2.0/Kuicksilver.xcframework.zip",
+            url: "https://example.com/releases/0.2.1/Kuicksilver.xcframework.zip",
             checksum: "<contents of checksum.txt>"
         ),
     ]
