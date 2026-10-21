@@ -524,7 +524,7 @@ class ServerH3Test {
 
     /**
      * A client whose transport parameters allow fewer than the three unidirectional streams HTTP/3 needs (RFC 9114 section
-     * 6.2), connected and silent, held the HTTP/3 accept loop: no later client was served (review h-http H1).
+     * 6.2), connected and silent, held the HTTP/3 accept loop: no later client was served (0.2.1 review).
      */
     @Test fun negative_clientWithoutUniStreamCreditDoesNotStopAccepting() =
         h3ServerTest {

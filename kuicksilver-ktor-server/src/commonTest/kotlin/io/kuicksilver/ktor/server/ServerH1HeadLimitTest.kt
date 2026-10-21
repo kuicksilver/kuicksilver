@@ -20,7 +20,7 @@ class ServerH1HeadLimitTest {
 
     /**
      * 4 MiB of header fields (1024 lines of 4 KiB, each under Ktor's 8 KiB line limit) get 431 and the connection closes;
-     * before, they were buffered and the request was served (review h-http, 0.2.1). The client sends all of it before
+     * before, they were buffered and the request was served (0.2.1 review). The client sends all of it before
      * reading, so the server must drain what follows the refused head for the client to see the answer.
      */
     @Test fun negative_headerSectionSizeIsBounded() =
