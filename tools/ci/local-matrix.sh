@@ -31,8 +31,8 @@ win_jvm() { # CI's windows-jvm on the Windows 11 VM; win-jvm-test's summary does
   [ -x "$tool" ] || { echo "no $tool (the Windows VM runner)"; return 2; }
   log=$("$tool" -w "$root" 2>&1); rc=$?; printf '%s\n' "$log"; [ "$rc" = 0 ] || return "$rc"
   summary=$(printf '%s\n' "$log" | sed -n '/^== summary/,$p')
-  printf '%s\n' "$summary" | grep -Eq 'tests +[1-9]' || { echo "FAIL: no tests ran"; return 1; }
-  ! printf '%s\n' "$summary" | grep -Eq 'NO REPORT|failed +[1-9]|errors +[1-9]'
+  grep -Eq 'tests +[1-9]' <<< "$summary" || { echo "FAIL: no tests ran"; return 1; }
+  ! grep -Eq 'NO REPORT|failed +[1-9]|errors +[1-9]' <<< "$summary'
 }
 # Preflight, before step 1: the steps that run scripts rather than Gradle tasks read build/openssl/<target> directly
 # (c-tests, keylog check and double build: macos-arm64; the Docker c-tests and JNI builds: linux-x64, linux-arm64; the

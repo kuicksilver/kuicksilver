@@ -131,7 +131,7 @@ elif [[ "$branch" =~ ^release/[0-9]+\.[0-9]+\.x$ ]]; then
 else
   refuse "HEAD is ${branch:-detached} ($short), not main or $release_branch (or pass --release-commit <sha> for a commit of either)"
 fi
-git branch -r --contains HEAD --format='%(refname:short)' 2>/dev/null | grep -qxF "origin/$push_branch" \
+grep -qxF "origin/$push_branch" <<< "$(git branch -r --contains HEAD --format='%(refname:short)' 2>/dev/null)" \
   || echo "  note: $short is not on origin/$push_branch yet; push $push_branch before the tag (step 6)"
 # a branch tip behind origin would release an older commit than the branch has (a --release-commit names its commit on
 # purpose, an older one included)

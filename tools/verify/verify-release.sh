@@ -112,7 +112,7 @@ imported=$(gpg --homedir "$gh" --batch --status-fd 1 --import "$key" 2>/dev/null
 [ "$imported" = "$fpr" ] || { echo "FAIL: importing $key gave '${imported:-nothing}', not $fpr" >&2; exit 2; }
 echo "-- release key $fpr ($key)"
 good_status() { # <gpg status lines>: a good signature (not expired, not revoked), valid for the pinned primary fingerprint
-  printf '%s\n' "$1" | grep -q '^\[GNUPG:\] GOODSIG ' && printf '%s\n' "$1" | grep -Eq "^\[GNUPG:\] VALIDSIG .* $fpr\$"
+  grep -q '^\[GNUPG:\] GOODSIG ' <<< "$1" && grep -Eq "^\[GNUPG:\] VALIDSIG .* $fpr\$" <<< "$1"
 }
 sig_ok() { # <file> <signature>
   good_status "$(gpg --homedir "$gh" --batch --status-fd 1 --verify "$2" "$1" 2>/dev/null || true)"
