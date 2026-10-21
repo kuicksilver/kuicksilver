@@ -6,8 +6,8 @@ SPDX-License-Identifier: Apache-2.0
 # Benchmarks
 
 Goodput, CPU time per transferred GB and handshakes per second of Kuicksilver against quiche, quinn and msquic, one
-host. Every cell with a Kuicksilver endpoint was measured on 2026-10-21 on the 0.2.1 performance work (branch
-`k8/perf-merge`: the client's receive path and the server's profiling fixes, see [0.2.1: before and
+host. Every cell with a Kuicksilver endpoint was measured on 2026-10-21 on the 0.2.1 performance work (commit
+`01da5c08`: the client's receive path and the server's profiling fixes, see [0.2.1: before and
 after](#021-before-and-after)); the pairs of two peers and the amd64 calibration rows are from the run of 2026-10-20 on
 commit `c08bc57b` (0.2.0 plus 17 commits), which is also the "before" of that section. They are measurements, not
 promises, and the comparison has limits that matter more than the numbers. Read the next section first.
@@ -75,8 +75,8 @@ kbit/s per repetition: median [min–max] (n repetitions). The runner stops a ce
 - **msquic server, Kuicksilver client, goodput:** some repetitions are 2–6 % slower, with either client: three of five
   with each here, four of five (JVM) and two of five (Native) on 2026-10-20. The packet captures show the cause on
   msquic's side; see [msquic's goodput outlier](#msquics-goodput-outlier).
-- **Against the 0.2.0 check** (`build/release-checks/perf-20261016-200424`, JVM image, quinn and ngtcp2; quinn is the
-  overlap): kuicksilver→quinn goodput median 9389 then, 9401 now; crosstraffic 4409 then, 3903 now; quinn→kuicksilver
+- **Against the 0.2.0 check** (a local run of the 0.2.0 release check on 2026-10-16, logs not published; JVM image,
+  quinn and ngtcp2; quinn is the overlap): kuicksilver→quinn goodput median 9389 then, 9401 now; crosstraffic 4409 then, 3903 now; quinn→kuicksilver
   goodput 9310 then, 9313 now; crosstraffic 3238 then, 3826 now. Every floor in `tools/interop/perf-thresholds.json` for
   these cells is met. The JVM server's crosstraffic share against quinn's client came out lower than on 2026-10-20
   (3903 [3743–4042] vs 4234 [4063–4460]). Measured again alone, 16 rounds each of the 2026-10-20 image, the
@@ -195,9 +195,9 @@ times, so client start-up is in it); server CPU from its cgroup over the measure
 
 ## 0.2.1: before and after
 
-Two changes, measured together: the **client's receive path** (`k8/perf-client`: the endpoint loop reads the socket on
+Two changes, measured together: the **client's receive path** (the endpoint loop reads the socket on
 its own thread while datagrams keep coming, `ksl_udp_recv` takes one system call per datagram on Linux, Android and
-Apple) and the **server's profiling fixes** (`k8/perf-server`: `PacketBuffer` index checks inline on Kotlin/Native,
+Apple) and the **server's profiling fixes** (`PacketBuffer` index checks inline on Kotlin/Native,
 timers and the DATAGRAM sender without exceptions, and the interop server streaming files and forgetting ended
 connections). "Before" is the run of 2026-10-20 on `c08bc57b`, "after" the merged tree on 2026-10-21 (the tables above);
 median of five transfers or runs.
@@ -353,7 +353,7 @@ From the repository root, with Docker, `jq`, `tshark` (Wireshark) and the runner
 `tools/interop/run-local.sh` sets them up:
 
 ```bash
-# the images under test (the tables: tag k8-perf-merge; their "before" and the carried-over rows: bench-c08bc57b)
+# the images under test (the tables: the images built from 01da5c08; their "before" and the carried-over rows: from c08bc57b)
 KSL_INTEROP_TAG=bench bash tools/interop/build-image.sh
 KSL_INTEROP_TAG=bench bash tools/interop/build-image.sh --native
 KSL_INTEROP_PLATFORMS=linux/amd64 KSL_INTEROP_TAG=bench-amd64 bash tools/interop/build-image.sh --native   # calibration
@@ -406,8 +406,8 @@ Versions (all digests in [benchmarks/env.txt](benchmarks/env.txt)):
 
 | implementation | image | arch | image built |
 |---|---|---|---|
-| kuicksilver JVM | `kuicksilver-interop:k8-perf-merge` (OpenJDK 21, `libksl` 6; commit `01da5c08`; later commits change only the forward loop of multi-socket groups, which the interop image does not use, and tests and docs), measured 2026-10-21; "before": `kuicksilver-interop:bench-c08bc57b` | arm64 | 2026-10-21; 2026-10-20 |
-| kuicksilver Native | `kuicksilver-interop-native:k8-perf-merge` (commit `01da5c08`), measured 2026-10-21; "before" and the amd64 calibration: `kuicksilver-interop-native:bench-c08bc57b[-amd64]` | arm64 | 2026-10-21; 2026-10-20 |
+| kuicksilver JVM | `kuicksilver-interop` built from `01da5c08` (OpenJDK 21, `libksl` 6; later commits change only the forward loop of multi-socket groups, which the interop image does not use, and tests and docs), measured 2026-10-21; "before": `kuicksilver-interop:bench-c08bc57b` | arm64 | 2026-10-21; 2026-10-20 |
+| kuicksilver Native | `kuicksilver-interop-native` built from `01da5c08`, measured 2026-10-21; "before" and the amd64 calibration: `kuicksilver-interop-native:bench-c08bc57b[-amd64]` | arm64 | 2026-10-21; 2026-10-20 |
 | quiche | `cloudflare/quiche-qns@sha256:a960608c…` | amd64 | 2026-10-06 |
 | quinn | `stammw/quinn-interop@sha256:5205c84e…` | arm64 | 2024-09-02 |
 | msquic | `ghcr.io/microsoft/msquic/qns@sha256:ef95e1bc…` | amd64 | 2026-10-05 |
