@@ -60,10 +60,15 @@ internal class ConnectionRuntime(
 
     /**
      * Peer streams waiting for acceptStream; at most the stream limits we granted, as none of them is counted closed before it is
-     * handed out. A stream taken by an acceptStream caller cancelled while being resumed never reaches the application:
-     * [abandonUndelivered] gives it up, or its MAX_STREAMS credit would never return.
+     * handed out. A stream taken by an acceptStream caller cancelled while being resumed goes back to the queue (at its end), so
+     * an application polling acceptStream under a timeout gets it from its next call; the channel is only ever closed, never
+     * cancelled, and trySend is lock-free. Once it is closed (the connection ended) [abandonUndelivered] gives the stream up.
      */
-    private val accepted = Channel<StreamRuntime>(Channel.UNLIMITED, onUndeliveredElement = { abandonUndelivered(it) })
+    private val accepted: Channel<StreamRuntime> =
+        Channel(Channel.UNLIMITED, onUndeliveredElement = { if (!requeue(it)) abandonUndelivered(it) })
+
+    private fun requeue(s: StreamRuntime): Boolean = accepted.trySend(s).isSuccess
+
     internal val streams = HashMap<Long, StreamRuntime>() // internal for the resource probe
 
     /** Signalled after every poll: writers and stream openers retry. */
@@ -650,8 +655,8 @@ internal class ConnectionRuntime(
     }
 
     /**
-     * [s] left the accept queue but not for the application (its acceptStream caller was cancelled while being resumed): nothing will
-     * read or write it, so on the loop its reset, if one waits, is consumed and both halves are given up as an application would
+     * [s] left the accept queue but not for the application (its acceptStream caller was cancelled while being resumed) and the
+     * closed queue cannot take it back: nothing will read or write it, so on the loop its reset, if one waits, is consumed and both halves are given up as an application would
      * (STOP_SENDING, RESET_STREAM with the default code), and the stream closes and returns its credit.
      */
     private fun abandonUndelivered(s: StreamRuntime) {

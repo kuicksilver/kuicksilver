@@ -32,6 +32,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.coroutines.CoroutineContext
 import kotlin.test.BeforeTest
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -101,9 +102,10 @@ class UnacceptedStreamLimitTest {
 
     /**
      * A receiver of `accepted` cancelled while being resumed with a stream loses that element unless the channel hands it to
-     * onUndeliveredElement; a lost stream with an unread reset never returned its MAX_STREAMS credit.
+     * onUndeliveredElement; a lost stream with an unread reset never returned its MAX_STREAMS credit. The stream goes back to the
+     * queue, so an application polling acceptStream (under withTimeout, say) gets it from its next call.
      */
-    @Test fun negative_anAcceptorCancelledWhileBeingResumedLosesNoCredit() =
+    @Test fun negative_anAcceptorCancelledWhileBeingResumedLosesNoStream() =
         withPair { c, sc ->
             val steps = StepDispatcher()
             val acceptor = launch(steps, start = CoroutineStart.UNDISPATCHED) { sc.acceptStream() }
@@ -113,8 +115,27 @@ class UnacceptedStreamLimitTest {
             withContext((sc as ConnectionRuntime).loopDispatcherForTest) { resumed.run() }
             while (!acceptor.isCompleted) steps.tasks.receive().run()
             assertTrue(acceptor.isCancelled)
-            // nothing will use the undelivered stream: it is abandoned and its credit returns
-            c.openBidi()
+            val again = sc.acceptStream() // re-queued, with its reset
+            assertEquals(0L, again.id)
+            assertFailsWith<QuicException.StreamError> { again.input.readRemaining() }
+            again.reset(0)
+            c.openBidi() // its credit returned
+        }
+
+    /** Once the connection is closed the stream cannot go back to the queue: it is given up instead, and acceptStream ends. */
+    @Test fun anUndeliveredStreamOfAClosedConnectionIsGivenUp() =
+        withPair { c, sc ->
+            val steps = StepDispatcher()
+            val acceptor = launch(steps, start = CoroutineStart.UNDISPATCHED) { sc.acceptStream() }
+            c.openBidi().reset(0)
+            val resumed = steps.tasks.receive()
+            acceptor.cancel()
+            sc.close(0, "done")
+            sc.closed.await() // the accept queue is closed
+            resumed.run()
+            while (!acceptor.isCompleted) steps.tasks.receive().run()
+            assertTrue(acceptor.isCancelled)
+            assertFailsWith<QuicException.ConnectionLost> { sc.acceptStream() }
         }
 
     /** A dispatcher whose tasks wait in [tasks] until the test runs them. */
