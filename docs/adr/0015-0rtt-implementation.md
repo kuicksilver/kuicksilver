@@ -1,7 +1,7 @@
 # ADR-0015. 0-RTT implementation (0.2.0)
 
-Date: 2026-10-13. Status: accepted. Supersedes ADR-0008 for 0.2.0; implements ADR-0013 together with its "Review 2026-10
-for a later minor" section (the owner moved 0-RTT from the next minor into 0.2.0 on 2026-10-12).
+Date: 2026-10-13. Status: accepted. Supersedes ADR-0008 for 0.2.0; implements ADR-0013 together with its
+["Review 2026-10, implemented in 0.2.0"](0013-0rtt-anti-replay-design.md#review-2026-10-implemented-in-020) section (the owner moved 0-RTT from the next minor into 0.2.0 on 2026-10-12).
 
 ## Context
 
@@ -32,10 +32,10 @@ Facts of the pinned OpenSSL 3.5.9 that fix the design:
 ### ksl (ABI 6)
 
 - `KSL_OPT_EARLY_DATA` (server context): each QUIC session enables early data at creation. The context sets
-  `SSL_OP_NO_ANTI_REPLAY` and installs the allow-early-data callback. (K7: every server context installs the ticket
+  `SSL_OP_NO_ANTI_REPLAY` and installs the allow-early-data callback. (0.2.0: every server context installs the ticket
   app-data callbacks, since every ticket carries its QUIC version.)
 - `KSL_SET_EARLY_CONTEXT` (server session): bytes that are written into every ticket the session issues and compared
-  with the app data of the ticket being resumed. A mismatch rejects early data but keeps the resumption. (K7: the app
+  with the app data of the ticket being resumed. A mismatch rejects early data but keeps the resumption. (0.2.0: the app
   data starts with the negotiated QUIC version of the issuing connection; a ticket whose version is not the client's
   original version is not resumed at all, RFC 9369 section 5. The client checks the same with the version it keeps
   in the ticket's `remembered` blob, and sends 0-RTT in its original version across a compatible upgrade, RFC 9369
@@ -51,13 +51,13 @@ Facts of the pinned OpenSSL 3.5.9 that fix the design:
 
 1. **Freshness:** OpenSSL's ±10 s ticket-age check. ADR-0013's `maxEarlyDataAge` knob is dropped. The allowance is a
    compile-time constant in OpenSSL, and the client's claimed age is not exposed to a callback, so a narrower window
-   would need an OpenSSL patch (see the ledger `Ruling:`).
+   would need an OpenSSL patch, which was rejected.
 2. **Replay register:** there is one `ZeroRttReplayRegister` per process (`ProcessReplayRegister`), shared by every
    server endpoint, `LoopGroup` loop and configuration, and kept across endpoint restarts. Its scope is the ticket key:
    any endpoint of the process holding a key decrypts every ticket issued under it. The generated keys are process-wide,
    one `Http3Endpoint.bind` or Ktor connector builds its own `QuicServerConfig`, equal `SessionTicketConfig.keys` may sit
    in several configurations, and a rotated key set keeps the previous key. A register per endpoint or per configuration
-   therefore let a replay to a second listener of the same process through (security review of k7/0rtt), and a register
+   therefore let a replay to a second listener of the same process through (the 0-RTT security review), and a register
    per key-set instance would too (equal keys in two instances, a key shared by the old and the new set). The register's
    key begins with the ticket's key name, so one register per process is exactly one register per ticket key. It runs on
    the process's monotonic clock, not a loop's. It is keyed by SipHash-64 (random key per register) of the first PSK identity's
@@ -84,7 +84,7 @@ Facts of the pinned OpenSSL 3.5.9 that fix the design:
    the ALPN list, the server's §7.4.1 transport parameters (initial windows, stream limits, `active_connection_id_limit`,
    `max_datagram_frame_size`, idle timeout, `max_udp_payload_size`, `disable_active_migration`) and the application
    blob (`Http3Endpoint` passes its encoded SETTINGS). We require equality instead of quic-go's "not lower" comparison
-   (`Ruling:`). Any configuration change only costs one 1-RTT handshake, and C does not have to parse transport
+   (decided: equality is simpler and stricter). Any configuration change only costs one 1-RTT handshake, and C does not have to parse transport
    parameters.
 4. **Idempotency:** the application decides (layer 3, below).
 
@@ -105,7 +105,7 @@ a connection whose handshake does not complete. A replayer cannot complete the h
   and tickets are taken for single use. Before a cached ticket is used, the cached chain is verified again with the
   current trust (the TCP path does the same after the handshake). Each entry keeps the server's encoded transport
   parameters (RFC 9000 §7.4.1). The client does not store HTTP/3 SETTINGS: RFC 9114 §7.2.4.2 lets it use the defaults,
-  which our encoder already complies with (no dynamic table) (`Ruling:`).
+  which our encoder already complies with (no dynamic table).
 
 ### Transport
 
@@ -138,7 +138,7 @@ QuicServerConfig.Builder.earlyData: Boolean = false;  .earlyDataContext: ByteArr
 QuicEndpoint.connectEarly(remote, config): QuicConnection       // returns at 0-RTT keys, or at completion when no 0-RTT
 QuicConnection.earlyDataAccepted: Boolean?;  suspend fun awaitHandshake()
 QuicStream.receivedEarly: Boolean
-QuicException.ZeroRttRejected
+QuicException.ConnectionLost.ZeroRttRejected
 Http3Endpoint.connectEarly(...);  Http3Request.allowEarlyData = false   // safe methods only
 Http3Settings.earlyData: Http3EarlyDataPolicy = WaitForHandshake()       // | Reject425(); `replayable` predicate, default safe methods
 Http3ServerRequest.receivedEarly: Boolean
@@ -155,10 +155,11 @@ engines are opt-in: client `earlyData`, server `quicEarlyData`. 0-RTT is never o
 ## Consequences
 
 - Resumption and 0-RTT are one opt-in. With every option at its default, nothing changes on the wire.
-- ADR-0013's `negative_zeroRttReplay`, `negative_zeroRttTransportParamsShrunk`, `zeroRttRejectedRetransmitsIn1Rtt`,
-  `clientTicketIsSingleUse` and the HTTP/3 cases become tests.
-- The interop `zerortt` cell stays `not supported` until the interop image enables the options. That is a follow-up
-  outside this branch.
+- ADR-0013's planned tests become `negative_0rttReplayRejected`, `negative_0rttTransportParamsReduced`,
+  `zeroRttRejectedRetransmitsIn1Rtt`, `clientTicketIsSingleUse` and the HTTP/3 cases
+  (`negative_unsafeMethodNotProcessedInEarlyData`, `reject425PolicyAndOneRetry`).
+- The interop `zerortt` and `resumption` cases are required and green against all six peers in both roles (0.2.0),
+  except quinn's client against our server in `zerortt` (`tools/interop/required.json`).
 
 ## Alternatives rejected
 
