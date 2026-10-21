@@ -26,10 +26,48 @@ internal class SoakResult(
 
     val verdicts: List<Flatness.Verdict> by lazy {
         val w = window
-        val keys = samples.flatMap { it.values.keys }.distinct().filter { it !in UNJUDGED }
-        keys.map { k ->
-            val pts = w.filter { k in it.values }
-            boundFor(k).judge(k, pts.map { it.t }.toDoubleArray(), pts.map { it.values.getValue(k).toDouble() }.toDoubleArray())
+        metrics().filter { it !in UNJUDGED }.map { k ->
+            val t = DoubleArray(w.size)
+            val v = DoubleArray(w.size)
+            var n = 0
+            forEachValue(w, listOf(k)) { s, values ->
+                val x = values[0]
+                if (x != null) {
+                    t[n] = s.t
+                    v[n++] = x.toDouble()
+                }
+            }
+            boundFor(k).judge(k, t.copyOf(n), v.copyOf(n))
+        }
+    }
+
+    /** Every metric of the run in first-seen order; consecutive samples share their key table, so this is cheap. */
+    private fun metrics(): List<String> {
+        val seen = LinkedHashSet<String>()
+        var last: List<String>? = null
+        for (s in samples) s.metrics.let { if (it !== last) seen += it.also { last = it } }
+        return seen.toList()
+    }
+
+    /**
+     * Calls [action] with each sample of [of] and its values of [keys] (null where it has none). The column of each key is
+     * looked up once per key table, not per sample: consecutive samples share their table.
+     */
+    private inline fun forEachValue(
+        of: List<Sample>,
+        keys: List<String>,
+        action: (Sample, Array<Long?>) -> Unit,
+    ) {
+        var table: List<String>? = null
+        var columns = IntArray(0)
+        val values = arrayOfNulls<Long>(keys.size)
+        for (s in of) {
+            if (s.metrics !== table) {
+                table = s.metrics
+                columns = IntArray(keys.size) { s.metrics.indexOf(keys[it]) }
+            }
+            for (i in keys.indices) values[i] = if (columns[i] < 0) null else s.valueAt(columns[i])
+            action(s, values)
         }
     }
 
@@ -102,9 +140,13 @@ internal class SoakResult(
 
     fun csv(): String =
         buildString {
-            val keys = samples.flatMap { it.values.keys }.distinct()
+            val keys = metrics()
             appendLine((listOf("t_s") + keys).joinToString(","))
-            for (s in samples) appendLine((listOf(num(s.t)) + keys.map { s.values[it]?.toString() ?: "" }).joinToString(","))
+            forEachValue(samples, keys) { s, values ->
+                append(num(s.t))
+                for (x in values) append(',').append(x?.toString() ?: "")
+                append('\n')
+            }
         }
 
     /** Writes the report files; returns the Markdown path, or null without a report directory. */

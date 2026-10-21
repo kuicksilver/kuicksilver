@@ -78,14 +78,15 @@ internal class SoakConfig(
  */
 internal class Sample private constructor(
     val t: Double,
-    private val keys: Array<String>,
+    /** The metrics of this sample, in sampling order: the previous sample's list while the metrics do not change. */
+    val metrics: List<String>,
     private val row: LongArray,
 ) {
-    val values: Map<String, Long>
-        get() = LinkedHashMap<String, Long>(keys.size * 2).also { m -> for (i in keys.indices) m[keys[i]] = row[i] }
+    /** The value of `metrics[index]`. */
+    fun valueAt(index: Int): Long = row[index]
 
     companion object {
-        private var lastKeys: Array<String> = emptyArray()
+        private var lastKeys: List<String> = emptyList()
 
         operator fun invoke(
             t: Double,
@@ -93,7 +94,7 @@ internal class Sample private constructor(
         ): Sample {
             var keys = lastKeys
             if (keys.size != values.size || values.keys.withIndex().any { (i, k) -> keys[i] != k }) {
-                keys = values.keys.toTypedArray()
+                keys = values.keys.toList()
                 lastKeys = keys
             }
             return Sample(t, keys, LongArray(keys.size) { values.getValue(keys[it]) })
