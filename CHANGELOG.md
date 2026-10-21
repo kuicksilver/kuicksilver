@@ -114,6 +114,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   loop spun at 100 % CPU while the condition lasted. Failed accepts are now logged and retried after 5 ms, doubling up
   to 1 s, back to 5 ms after a successful accept (as Go's `net/http` server); a closed listening socket and
   cancellation still end the loop at once.
+- `docs/guide/ktor.md` said the HTTP/1.1 client tries each address a host name resolves to in turn. On the JVM and
+  Android it connects to the one address `InetAddress.getByName` returns; on Kotlin/Native it moves to the next
+  `getaddrinfo` address only when a connect fails with an error, and neither races addresses.
 - QUIC: a stream at its reassembly limit (256 gaps; the CRYPTO streams, 1024) could stall until the idle timeout. A
   STREAM or CRYPTO frame at the read offset that did not reach the first buffered range opened a new range and was
   refused; nothing was readable, so nothing ever freed a range, and every retransmission of that frame was refused too.
