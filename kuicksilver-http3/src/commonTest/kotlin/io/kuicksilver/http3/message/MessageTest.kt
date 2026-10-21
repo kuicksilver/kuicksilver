@@ -244,7 +244,7 @@ class PseudoHeadersTest {
     /**
      * `:authority` and `host` are an RFC 3986 authority, `host [":" port]` (RFC 9114 section 4.3.1, RFC 9110 section 7.2):
      * a path, query, fragment, space or bracket outside an IP literal is malformed. The value becomes Ktor's `Host`, which
-     * HTTP/1.1 refuses with these characters (review h-http L4).
+     * HTTP/1.1 refuses with these characters (0.2.1 review).
      */
     @Test fun negative_h3AuthoritySyntax() {
         for (a in listOf(

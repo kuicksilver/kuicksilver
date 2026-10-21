@@ -24,7 +24,7 @@ import kotlin.test.fail
 /**
  * RFC 9114 section 6.2: "A receiver MUST tolerate unidirectional streams being closed or reset prior to the reception of
  * the unidirectional stream header." A reset inside the type closed the whole connection with H3_INTERNAL_ERROR
- * (review h-http M1), so any peer could kill a connection on demand.
+ * (0.2.1 review), so any peer could kill a connection on demand.
  */
 class UniStreamResetTest {
     @BeforeTest fun load() = KslLoader.ensureLoaded()

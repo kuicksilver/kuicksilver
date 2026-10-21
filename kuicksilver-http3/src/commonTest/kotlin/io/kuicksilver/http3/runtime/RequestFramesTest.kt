@@ -10,7 +10,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
 
-/** The request-stream frame reader's HEADERS bound (review h-http L5). */
+/** The request-stream frame reader's HEADERS bound (0.2.1 review). */
 class RequestFramesTest {
     /**
      * With `maxFieldSectionSize` at its documented maximum of 2^30 the HEADERS bound is 2^31, which an Int cannot hold: a

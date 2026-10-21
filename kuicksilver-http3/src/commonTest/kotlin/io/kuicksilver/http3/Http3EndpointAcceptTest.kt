@@ -24,7 +24,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 
-/** `Http3Endpoint.accept` serves every client even when one of them never lets HTTP/3 start (review h-http H1). */
+/** `Http3Endpoint.accept` serves every client even when one of them never lets HTTP/3 start (0.2.1 review). */
 @OptIn(ExperimentalKuicksilverApi::class, DelicateKuicksilverApi::class)
 class Http3EndpointAcceptTest {
     @BeforeTest fun load() = KslLoader.ensureLoaded()
