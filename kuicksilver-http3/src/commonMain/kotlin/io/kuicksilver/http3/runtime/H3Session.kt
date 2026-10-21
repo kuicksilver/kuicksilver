@@ -42,6 +42,7 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.sync.Mutex
@@ -137,7 +138,17 @@ internal class H3Session(
     var goAwaySentId: Long? = null
         private set
     var maxRequestId = -1L // server: highest client stream id seen
-    private var activeRequests = 0 // server: accepted requests whose response has not ended
+
+    // server: accepted requests whose response has not ended (and request streams whose HEADERS are still being read)
+    private val activeRequestCount = MutableStateFlow(0)
+    private var activeRequests: Int
+        get() = activeRequestCount.value
+        set(v) {
+            activeRequestCount.value = v
+        }
+
+    /** Test hook: [activeRequests] as a flow, so a test can wait for every request stream to be accounted for. */
+    internal val activeRequestsForTest: StateFlow<Int> get() = activeRequestCount
 
     /** Server: how long a request stream may take to complete its HEADERS once the final GOAWAY went out; internal for tests. */
     var headerDeadlineAfterGoAway: Duration = HEADER_DEADLINE_AFTER_GOAWAY

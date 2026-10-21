@@ -23,7 +23,6 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -178,8 +177,9 @@ class LimitsTest {
 
     /**
      * A request stream reset before its HEADERS were read surfaces no request and leaves nothing behind: the stream is
-     * retired and its MAX_STREAMS credit returns. With two bidirectional streams allowed, five such requests in a row and a
-     * normal one after them all get a stream; a stream that was never credited back would leave the third waiting.
+     * retired, its MAX_STREAMS credit returns and the server's request count is back to 0. With two bidirectional streams
+     * allowed, five such requests in a row and a normal one after them all get a stream; a stream that was never credited
+     * back would leave the third waiting.
      */
     @Test fun negative_requestResetBeforeItsHeadersAreReadIsRetired() =
         h3Test {
@@ -204,6 +204,7 @@ class LimitsTest {
                             } ?: fail("request $i got no stream within 5 s: an earlier reset stream was not credited back")
                         assertTrue(e is Http3Exception.FieldSectionTooLarge, "request $i failed with $e")
                     }
+                    p.server.awaitNoActiveRequests("after the five reset requests")
                     val served =
                         async {
                             val r = p.server.acceptRequest()
@@ -224,6 +225,7 @@ class LimitsTest {
                             ?.path,
                         "a cancelled request was queued",
                     )
+                    p.server.awaitNoActiveRequests("after the answered request")
                 }
         }
 
@@ -492,9 +494,24 @@ class LimitsTest {
         return done.getOrThrow() // a null result is a result, not a timeout
     }
 
-    /** Returns once the peer's RESET_STREAM for [st] arrived (its input fails from then on). */
+    /**
+     * Returns once the peer's RESET_STREAM for [st] arrived: waiting for more content than will ever come suspends until the
+     * stream's input fails with the reset (or the stream ends, which is a failure here).
+     */
     private suspend fun awaitPeerReset(st: io.kuicksilver.quic.QuicStream) {
-        withTimeoutOrNull(WAIT) { while (st.input.closedCause == null) delay(1) } ?: fail("no reset for stream ${st.id} within $WAIT")
+        withTimeoutOrNull(WAIT) {
+            try {
+                st.input.awaitContent(Int.MAX_VALUE)
+            } catch (_: QuicException.StreamError) {
+            }
+        } ?: fail("no reset for stream ${st.id} within $WAIT")
+        assertTrue(st.input.closedCause is QuicException.StreamError, "stream ${st.id} ended without a reset")
+    }
+
+    /** Every request stream the server took is accounted for: its request count is back to 0. */
+    private suspend fun Http3Connection.awaitNoActiveRequests(what: String) {
+        withTimeoutOrNull(WAIT) { session.activeRequestsForTest.first { it == 0 } }
+            ?: fail("$what: ${session.activeRequestsForTest.value} request(s) still counted after $WAIT")
     }
 
     private companion object {
