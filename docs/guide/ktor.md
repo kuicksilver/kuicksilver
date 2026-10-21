@@ -117,7 +117,10 @@ val client = HttpClient(Kuicksilver) {
   chunked bodies, `Expect: 100-continue`, keep-alive with at most `maxIdleConnectionsPerRoute` idle connections per route
   (a pooled connection the server already closed is replaced once, transparently, for idempotent requests; a POST
   that failed on one is reported, never sent again). Requests on one connection are
-  sequential; `pipelining` is not used. Limits and idle cleanup: see "Connection pool" below.
+  sequential; `pipelining` is not used. Limits and idle cleanup: see "Connection pool" below. A response head (status
+  line and header fields) is limited to 64 KiB, the same as the HTTP/3 field section, and at most 5 interim (1xx)
+  responses are skipped before the final one (as Go's `net/http`); beyond either the request fails with Ktor's
+  `ParserException` and the connection is closed.
 - A proxy (`proxy = ProxyBuilder.http(...)`) is used for HTTP/1.1 only: `CONNECT` tunnels for `https`, absolute-form
   requests for `http`; SOCKS proxies are refused with `UnsupportedOperationException`. HTTP/3 never goes through a proxy:
   with a proxy, `Auto` and `Preferred` use HTTP/1.1 through it (no Alt-Svc), and `H3Only` fails every `https` request

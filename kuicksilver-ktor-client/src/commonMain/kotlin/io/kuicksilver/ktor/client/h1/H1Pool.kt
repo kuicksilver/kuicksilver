@@ -56,11 +56,14 @@ import kotlin.coroutines.CoroutineContext
 internal class H1Connection(
     private val socket: Socket,
     private val tls: TlsConnection?,
-    val input: ByteReadChannel,
+    rawInput: ByteReadChannel,
     val output: ByteWriteChannel,
     val key: String,
     createdAt: Long = 0,
 ) : PooledConnection(key, createdAt) {
+    /** What the server sends, with the size limit on each response head ([MAX_RESPONSE_HEAD_BYTES]). */
+    val input: HeadLimitedInput = HeadLimitedInput(rawInput, MAX_RESPONSE_HEAD_BYTES)
+
     override val isOpen: Boolean get() = !closed && !input.isClosedForRead
 
     override fun closeTransport() {
@@ -203,7 +206,7 @@ internal class H1Pool(
                         writeBody(data, output, callContext)
                     }
                     val job = bodyJob
-                    readResponse(requestTime, data, input, conn.output, callContext) { after ->
+                    readResponse(requestTime, data, input, conn.output, callContext, conn.input) { after ->
                         fun released(kept: Boolean) =
                             events.emit("connectionReleased") { connectionReleased(data, HttpProtocolVersion.HTTP_1_1, kept) }
 

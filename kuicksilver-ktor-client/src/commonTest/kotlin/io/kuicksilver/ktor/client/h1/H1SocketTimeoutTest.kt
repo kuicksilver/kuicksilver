@@ -44,32 +44,6 @@ import kotlin.time.Duration.Companion.seconds
  */
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class H1SocketTimeoutTest {
-    /** The socket under a connection whose channels the test drives; closing it ends them, as a real socket's close does. */
-    private class NoSocket(
-        private val wire: Wire,
-    ) : Socket {
-        override val socketContext: Job = Job()
-        override val coroutineContext: CoroutineContext get() = socketContext
-        override val localAddress: SocketAddress = InetSocketAddress("127.0.0.1", 1)
-        override val remoteAddress: SocketAddress = InetSocketAddress("127.0.0.1", 2)
-
-        override fun attachForReading(channel: ByteChannel): WriterJob = error("not a real socket")
-
-        override fun attachForWriting(channel: ByteChannel): ReaderJob = error("not a real socket")
-
-        override fun close() {
-            wire.toServer.cancel(null)
-            wire.fromServer.cancel(null)
-            socketContext.cancel()
-        }
-    }
-
-    /** What the client sends ([toServer]) and receives ([fromServer]). */
-    private class Wire(
-        val toServer: ByteChannel = ByteChannel(),
-        val fromServer: ByteChannel = ByteChannel(),
-    )
-
     private fun request(body: OutgoingContent): HttpRequestData =
         HttpRequestBuilder()
             .apply {
@@ -90,23 +64,6 @@ class H1SocketTimeoutTest {
                 channel.flush()
                 delay(every)
             }
-        }
-    }
-
-    private suspend fun TestScope.exchange(
-        wire: Wire,
-        data: HttpRequestData,
-    ): HttpResponseData {
-        val selector = SelectorManager(Dispatchers.Default)
-        val pool = H1Pool(KuicksilverEngineConfig(), selector)
-        pool.cleartextPermitted = { true }
-        val call = Job()
-        try {
-            val conn = H1Connection(NoSocket(wire), null, wire.fromServer, wire.toServer, "test")
-            return pool.execute(data, coroutineContext + call, H1Pool.Opened(conn, reused = false))
-        } finally {
-            call.cancel()
-            selector.close()
         }
     }
 

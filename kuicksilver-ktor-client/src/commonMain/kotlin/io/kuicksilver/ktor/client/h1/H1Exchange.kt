@@ -192,8 +192,24 @@ internal enum class AfterResponse {
 }
 
 /**
- * Parses the response head (interim 1xx heads other than 101 are skipped) and starts the body reader. [onBodyDone] runs when the body was read to its end (reuse
- * allowed) or failed; WebSocket upgrades hand the connection to the session (never reused).
+ * The largest response head (status line, header section and their line ends) the client reads: 64 KiB, the default
+ * `maxFieldSectionSize` our HTTP/3 client advertises (`Http3Settings`), so both protocols take the same headers, and the
+ * server's limit for request heads. Above it the request fails with a [ParserException] and the connection is closed.
+ */
+internal const val MAX_RESPONSE_HEAD_BYTES: Int = 65_536
+
+/**
+ * Interim (1xx) responses skipped before the final one; one more fails the request. Go's net/http stops at the same
+ * count (`max1xxResponses = 5`); without a bound a server streaming 103 Early Hints holds the request until a timeout.
+ */
+internal const val MAX_INTERIM_RESPONSES: Int = 5
+
+/**
+ * Parses the response head (interim 1xx heads other than 101 are skipped, at most [MAX_INTERIM_RESPONSES]) and starts the
+ * body reader. [onBodyDone] runs when the body was read to its end (reuse allowed) or failed; WebSocket upgrades hand
+ * the connection to the session (never reused). With [head], the connection's input under [input], every head is limited
+ * to its size limit ([MAX_RESPONSE_HEAD_BYTES] for a pooled connection): a larger one fails with [ParserException],
+ * which is not an IOException, so a pooled connection is not retried.
  */
 @OptIn(InternalAPI::class)
 internal suspend fun readResponse(
@@ -202,18 +218,23 @@ internal suspend fun readResponse(
     input: ByteReadChannel,
     output: ByteWriteChannel,
     callContext: CoroutineContext,
+    head: HeadLimitedInput? = null,
     onBodyDone: (AfterResponse) -> Unit,
 ): HttpResponseData =
     withContext(callContext) {
         var rawResponse: io.ktor.http.cio.Response
+        var interim = 0
         while (true) {
-            rawResponse = parseResponse(input)
+            rawResponse = readResponseHead(input, head)
                 ?: throw ClosedReadChannelException(
                     EOFException("Failed to parse HTTP response: the server prematurely closed the connection"),
                 )
             // an interim 1xx (100 Continue, 103 Early Hints) is not the response: drop it and read the next head (RFC 9110 section 15.2)
             if (rawResponse.status / 100 != 1 || rawResponse.status == HttpStatusCode.SwitchingProtocols.value) break
             rawResponse.release()
+            if (++interim > MAX_INTERIM_RESPONSES) {
+                throw ParserException("More than $MAX_INTERIM_RESPONSES interim (1xx) responses before the final response")
+            }
         }
 
         rawResponse.use {
@@ -293,6 +314,32 @@ internal suspend fun readResponse(
             return@withContext HttpResponseData(status, requestTime, headers, version, responseBody, callContext)
         }
     }
+
+/** One response head from [input], within [head]'s size limit when there is one. */
+@OptIn(InternalAPI::class)
+private suspend fun readResponseHead(
+    input: ByteReadChannel,
+    head: HeadLimitedInput?,
+): io.ktor.http.cio.Response? {
+    if (head == null) return parseResponse(input)
+    head.startHead()
+    val response =
+        try {
+            parseResponse(input)
+        } catch (e: Throwable) {
+            // a head cut at the limit ends like a closed connection: an EOF, a parser error or no response at all
+            if (head.exceeded) throw responseHeadTooLarge()
+            throw e
+        }
+    if (head.exceeded) {
+        response?.release()
+        throw responseHeadTooLarge()
+    }
+    head.endHead()
+    return response
+}
+
+private fun responseHeadTooLarge() = ParserException("The response head is larger than $MAX_RESPONSE_HEAD_BYTES bytes")
 
 /** HTTP CONNECT through a proxy (RFC 9110 section 9.3.6), before TLS to the origin. */
 internal suspend fun startTunnel(

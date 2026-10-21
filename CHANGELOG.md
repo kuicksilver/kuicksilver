@@ -131,6 +131,13 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   acknowledgements and losses are binary searches, and a MAX_STREAM_DATA that raises nothing does no work, like MAX_DATA.
   A range declared lost after part of it was acknowledged is resent without the acknowledged part.
 
+- Ktor client, HTTP/1.1: a server could make the client buffer a response head of any size and hold a request with
+  endless interim responses. Ktor's `parseResponse` bounds each line at 8 KiB but not their number, and the whole header
+  section is buffered (2 bytes per character) before the call sees it; interim 1xx heads were skipped without a bound,
+  so a server streaming 103 Early Hints held the request until a timeout, if any. A response head is now limited to
+  64 KiB (the field section size our HTTP/3 client advertises, and the server's limit for request heads) and at most 5
+  interim responses are skipped (Go's `net/http` stops at the same count); beyond either the request fails with Ktor's
+  `ParserException` and the connection is closed.
 - Ktor client: the socket timeout failed uploads that were still making progress. Over HTTP/1.1 (streamed bodies) and
   HTTP/3 (every body) the request body goes out while the response head is awaited, and the timeout covered that whole
   wait: with `socketTimeoutMillis = 1_000`, any upload longer than a second failed with `SocketTimeoutException`, however
