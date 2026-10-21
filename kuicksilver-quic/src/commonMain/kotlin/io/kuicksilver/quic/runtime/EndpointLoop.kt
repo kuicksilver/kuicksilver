@@ -357,13 +357,6 @@ internal class EndpointLoop private constructor(
      */
     private val limiter = WorkLimiter()
 
-    /**
-     * The forward loop yields after every round of [FORWARD_BATCH] datagrams, the receiver's cadence: queued work waiting for
-     * 16 rounds or 2 ms starved the application's reads, which extend a stream's flow-control credit, and slowed a fast
-     * sender 2.6 times when the receive path did it (docs/benchmarks.md).
-     */
-    private val forwardLimiter = WorkLimiter(maxRounds = 1)
-
     /** This socket's batches: on the loop's thread while datagrams keep coming, else through the blocking receive. */
     internal val receiver = BatchReceiver(io, ::now)
 
@@ -453,9 +446,11 @@ internal class EndpointLoop private constructor(
     private suspend fun forwardLoop() {
         val buf = PacketBuffer.allocate(FORWARD_MAX)
         try {
-            // in batches like the receive loop: admission and a flush after each, then a yield, so a rebound high-rate flow cannot starve this loop's own socket, timers and commands
+            // in batches of FORWARD_BATCH like the receiver's: admission and a flush after each, then a yield, so a rebound
+            // high-rate flow cannot starve this loop's own socket, timers and commands. Every round, not the WorkLimiter's 16
+            // rounds or 2 ms: queued work held that long starved the application's reads, which extend a stream's
+            // flow-control credit, and slowed a fast sender 2.6 times when the receive path did it (docs/benchmarks.md)
             var sinceRound = 0
-            forwardLimiter.start(now())
             for (f in forwarded) {
                 forwardedCount.incrementAndFetch()
                 buf.copyFrom(f.bytes, 0, 0, f.bytes.size)
@@ -476,10 +471,7 @@ internal class EndpointLoop private constructor(
                 if (++sinceRound == FORWARD_BATCH || drained) {
                     sinceRound = 0
                     afterReceive(now)
-                    if (forwardLimiter.shouldYield(now) || drained) {
-                        yield()
-                        forwardLimiter.start(now())
-                    }
+                    yield()
                 }
             }
         } catch (e: Throwable) {

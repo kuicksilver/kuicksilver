@@ -226,9 +226,10 @@ class AppleNetworksTest {
                     var lost: PathEvent.SocketLost? = null
                     while (lost == null) lost = events.receive() as? PathEvent.SocketLost
                     assertEquals(PathId.Initial, lost.path.id)
-                    // ENOTCONN from the swapped-in socket, or EBADF when a receive (on the loop's thread while datagrams keep
-                    // coming, BatchReceiver) looks the descriptor up while dup2 is replacing it: Darwin answers EBADF in that
-                    // window (2 of 15 runs with an earlier receive path, 0 of 15 with this one; both are a lost socket)
+                    // ENOTCONN from the swapped-in socket, or EBADF when a receive on either path (on the loop's thread via
+                    // BatchReceiver, or in a Dispatchers.IO slice) looks the descriptor up while dup2 is replacing it: Darwin
+                    // answers EBADF in that window (2 of 15 runs with an earlier receive path, 0 of 15 with this one; both are
+                    // a lost socket)
                     assertTrue(lost.cause.errno == ENOTCONN || lost.cause.errno == EBADF, "errno ${lost.cause.errno}")
                     assertFalse(c.closed.isCompleted)
                     val changed = c.rebind(InetSocketAddress("127.0.0.1", 0))
