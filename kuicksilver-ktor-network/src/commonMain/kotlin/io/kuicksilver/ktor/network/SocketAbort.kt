@@ -14,7 +14,8 @@ import io.kuicksilver.annotations.InternalKuicksilverApi
  * descriptor only once `close()` was called and both loops have ended, so loops cancelled before `close()` leave it open
  * (a TLS socket's raw socket did). This closes the socket first and then ends its write loop under it: on the JVM and
  * Android the engine socket's own writer is cancelled with `SO_LINGER` 0, so the kernel drops the unsent bytes with a
- * reset and the descriptor closes; on Kotlin/Native both directions are shut down, so both loops end.
+ * reset and the descriptor closes; on Kotlin/Native both directions are shut down, so both loops end (no `SO_LINGER` 0
+ * there: the kernel keeps the unsent bytes of the orphaned socket until TCP gives up on the peer).
  */
 @InternalKuicksilverApi
 public fun Socket.abort() {

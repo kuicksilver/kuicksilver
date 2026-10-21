@@ -197,7 +197,11 @@ internal class NativeTcpSocket(
         }
     }
 
-    /** [abort]: closed, then both directions shut down under the loops, which then fail or see the end and finish. */
+    /**
+     * [abort]: closed, then both directions shut down under the loops, which then fail or see the end and finish. There
+     * is no `SO_LINGER` 0 here: the descriptor is released, but the kernel keeps what was unsent in the orphaned socket's
+     * buffer until TCP gives up on the peer.
+     */
     fun abort() {
         close()
         tcpShutdown(descriptor, TCP_SHUT_RDWR)

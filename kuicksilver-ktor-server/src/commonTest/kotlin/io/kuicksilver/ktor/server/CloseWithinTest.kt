@@ -145,6 +145,27 @@ class CloseWithinTest {
             assertEquals(0L, abortedAt)
         }
 
+    /**
+     * A caller that is cancelled (the engine's hard stop at the end of the grace period) aborts at once, without waiting
+     * for the drain, and returns within the wait for the release.
+     */
+    @Test fun cancelledCallerAbortsAtOnce() =
+        runTest {
+            val sock = FakeSocket(finishes = false)
+            var abortedAt = -1L
+            val closing =
+                launch {
+                    closeWithin(sock, { abortedAt = currentTime }, 45.seconds)
+                }
+            advanceTimeBy(10.seconds)
+            closing.cancel()
+            runCurrent()
+            assertEquals(10_000L, abortedAt, "a hard stop did not abort at once")
+            advanceTimeBy(3.seconds + 1.milliseconds)
+            assertTrue(closing.isCompleted, "returned later than the wait for the release")
+            assertTrue(sock.socketContext.isCancelled, "the last-resort cancel after an abort that released nothing")
+        }
+
     @Test fun gracefulCloseIsNotAborted() =
         runTest {
             val sock = FakeSocket(finishes = true)

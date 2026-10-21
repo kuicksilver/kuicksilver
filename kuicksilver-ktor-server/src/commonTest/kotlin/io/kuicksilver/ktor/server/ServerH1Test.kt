@@ -38,6 +38,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
 class ServerH1Test {
@@ -236,10 +237,11 @@ class ServerH1Test {
         }
 
     /**
-     * A graceful stop waits, up to its grace period, for a response in flight, also a large one (Ktor's and Go's
-     * `Shutdown` semantics). Before, stopping cancelled the accept loop, whose wait for the connections then ended at
-     * once: the listener's job completed, its selector closed, and a 4 MiB response written during the stop was cut
-     * after a few hundred KiB while `stopSuspend(8000, 10000)` returned within milliseconds.
+     * A graceful stop waits, up to its grace period, for a response in flight, also a large one to a slow client (Ktor's
+     * and Go's `Shutdown` semantics). Before, a connection ended as soon as its socket's `close()` had been called, while
+     * the socket was still draining the response; once every connection had, the listener's job completed and closed its
+     * selector under the sockets still sending, so the response was cut (on main: at 3.5 of 4 MiB, the stop returning
+     * after 3.4 s). A connection now ends only once its socket has closed.
      */
     @Test fun negative_gracefulStopWaitsForALargeResponseInFlight() =
         serverTest {
@@ -285,6 +287,7 @@ class ServerH1Test {
                                 port,
                                 "GET / HTTP/1.1\r\nHost: server.test\r\n\r\n",
                                 tls = if (tls) ServerFixtures.clientTls() else null,
+                                pause = 5.milliseconds, // still far slower than the server writes: the drain outlasts the stop
                             )
                         }
                     inHandler.await()
