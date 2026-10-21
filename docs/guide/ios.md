@@ -169,7 +169,7 @@ therefore sets `ITSAppUsesNonExemptEncryption` to `true`:
 | `tools/check/ios-size.sh` | the size budget below, from the linker map of a Release arm64 build |
 
 Results of 2026-10-13 (Xcode 27.0, iOS 27.0 SDK and simulator): all pass. Size and imports re-measured on 2026-10-14
-after the 0.2.0 merges (`ios-size.sh`, `ios-private-api.py`): the Release arm64 app imports 647 symbols, all from
+on the 0.2.0 code (`ios-size.sh`, `ios-private-api.py`): the Release arm64 app imports 647 symbols, all from
 public SDK libraries; the Release Kotlin framework 354, likewise.
 
 ## Size
@@ -189,7 +189,7 @@ Linked bytes of `samples/ios` (Release, arm64, `-dead_strip`), from the linker m
 | **Kuicksilver's contribution** | **5.60** |
 | the sample's Swift code and the rest | 0.10 |
 
-Measured on 2026-10-14 (the 0.2.0 code, Xcode 27.0). The whole executable is 8316 KiB (8.1 MiB) before stripping and
+Measured on 2026-10-14 on the 0.2.0 code (Xcode 27.0). The whole executable is 8316 KiB (8.1 MiB) before stripping and
 5955 KiB (5.8 MiB) after (`strip -x`, as an App Store build does). A KMP app that already ships Kotlin pays only for the
 OpenSSL, `ksl` and Kuicksilver rows (about 3.4 MB); the runtime, stdlib and coroutines are shared with the rest of its
 Kotlin code. The App Store applies app thinning and compression on top.
@@ -220,4 +220,4 @@ client, run the app on two devices, or point the echo screen at `samples/realtim
    with Sample CA trust, and open the `https://` address with the HTTP/3 screen. The service is visible as
    `_kuicksilver._udp` to a Bonjour browser.
 
-Beta needs items 1, 2, 3 and 5.
+Before relying on a release on devices, run at least items 1, 2, 3 and 5.
