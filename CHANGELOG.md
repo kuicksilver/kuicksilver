@@ -101,6 +101,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- Ktor server, HTTP/1.1: the request head had no size limit. Ktor's parser bounds each line at 8 KiB but not their
+  number, so a request with megabytes of header fields was buffered and served, and one fast connection could push any
+  amount of data into the heap. A request head (request line and header section) larger than 64 KiB, the default
+  `maxFieldSectionSize` of the HTTP/3 server, now gets `431 Request Header Fields Too Large` and the connection closes
+  (RFC 6585 section 5); a single line above 8 KiB still gets 400 as before.
 - Ktor server, HTTP/1.1 (slowloris): a client that connected and sent nothing, or sent the request head a byte at a
   time inside the idle timeout, held its connection for ever. There was no deadline for the request head or the TLS
   handshake, and the 45 s idle timer closed only the output side while the reader kept waiting. Now a request head must

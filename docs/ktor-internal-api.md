@@ -9,7 +9,7 @@ then move `KtorVersionPolicy.SUPPORTED` (`kuicksilver-ktor-network`), the major.
 
 | What | Where | Why | Risk |
 |---|---|---|---|
-| `startServerConnectionPipeline` | `ktor-server-cio`, `io.ktor.server.cio.backend`, `@InternalAPI` | vendored as `h1/ServerPipeline.kt` (keep-alive, pipelining and upgrades over our TLS channels) with request framing per RFC 9112 section 6 (Content-Length with Transfer-Encoding refused with 400 and close, no framing means no body, chunked trailers accepted — `h1/ChunkedBody.kt`, vendored from `ktor-http-cio`'s `decodeChunked`) and its own connection and request scope types (`ServerRequestScope`'s constructor is internal); `ktor-server-cio` is no longer a dependency | upstream fixes must be merged by hand on Ktor upgrades |
+| `startServerConnectionPipeline` | `ktor-server-cio`, `io.ktor.server.cio.backend`, `@InternalAPI` | vendored as `h1/ServerPipeline.kt` (keep-alive, pipelining and upgrades over our TLS channels) with a deadline (408) and a 64 KiB size limit (431) per request head, request framing per RFC 9112 section 6 (Content-Length with Transfer-Encoding refused with 400 and close, no framing means no body, chunked trailers accepted — `h1/ChunkedBody.kt`, vendored from `ktor-http-cio`'s `decodeChunked`) and its own connection and request scope types (`ServerRequestScope`'s constructor is internal); `ktor-server-cio` is no longer a dependency | upstream fixes must be merged by hand on Ktor upgrades |
 | `parseRequest`, `Request`, `ConnectionOptions`, `expectHttpUpgrade`, `RequestResponseBuilder` | `ktor-http-cio`, public | the HTTP/1.1 request parser and response writer (a conscious compromise: reusing the parser beats maintaining our own) | low |
 | `CIOApplicationCall`, `CIOApplicationRequest`, `CIOApplicationResponse` | `ktor-server-cio`, `internal` | vendored as `h1/H1Call.kt`, `H1Request.kt`, `H1Response.kt` (Apache-2.0, JetBrains copyright kept) with the TLS scheme, peer certificates and `Alt-Svc` added | fixes upstream do not reach us automatically: diff them on every Ktor upgrade |
 | `BaseApplicationCall.putResponseAttribute()` | `ktor-server-core`, `protected` | wiring the response into the call, as CIO does | low |
@@ -27,7 +27,7 @@ the `HttpRequestLifecycle` plugin's close notification does not fire over HTTP/1
 | `ResponseAdapterAttributeKey`, `ResponseAdapter` | `ktor-client-core`, `@InternalAPI` | SSE bodies (the plugin installs an adapter the engine must call) | without it SSE does not work |
 | `engines.append(...)` with `@EagerInitialization` | `ktor-client-core` (Native), `@InternalAPI` | engine registration for `HttpClient()` on Kotlin/Native | API change breaks default-engine lookup on Native only |
 | `HttpClientEngineBase`, `callContext()` | `ktor-client-core`, public | the engine base class, as every Ktor engine | low |
-| `ByteReadChannel.readBuffer` | `ktor-io`, `@InternalAPI` member of a public interface | `SocketTimeoutChannel` wraps a body channel to put the socket timeout on every wait for data and delegates reads to the wrapped buffer | the `ByteReadChannel` interface changing shape |
+| `ByteReadChannel.readBuffer` | `ktor-io`, `@InternalAPI` member of a public interface | `SocketTimeoutChannel` wraps a body channel to put the socket timeout on every wait for data and delegates reads to the wrapped buffer; the server's `h1/HeadLimitedInput` implements the interface over its own buffer to cap each request head at 64 KiB before Ktor's parser sees it | the `ByteReadChannel` interface changing shape |
 
 ## Both engines (`kuicksilver-ktor-network`)
 

@@ -5,7 +5,8 @@
 // request framing per RFC 9112 section 6 ([RequestFraming]: Content-Length with Transfer-Encoding, invalid lengths and
 // unknown codings are refused with 400 and close; no framing means no body; chunked trailers are accepted); our own
 // [H1Connection] and [H1RequestScope] instead of `ServerIncomingConnection` and `ServerRequestScope` (whose constructor
-// is internal to ktor-server-cio), without its `onClose` hook.
+// is internal to ktor-server-cio), without its `onClose` hook; a deadline and a size limit for every request head (408,
+// 431) and an idle timeout that ends the whole connection, not only its output.
 package io.kuicksilver.ktor.server.h1
 
 import io.ktor.http.HttpProtocolVersion
@@ -25,6 +26,7 @@ import io.ktor.utils.io.charsets.TooLongLineException
 import io.ktor.utils.io.close
 import io.ktor.utils.io.copyAndClose
 import io.ktor.utils.io.copyTo
+import io.ktor.utils.io.discard
 import io.ktor.utils.io.writePacket
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
@@ -54,6 +56,7 @@ import kotlinx.io.EOFException
 import kotlinx.io.IOException
 import kotlinx.io.Source
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.seconds
 
 /** One accepted (TLS) TCP connection: its plaintext channels and addresses. */
 internal class H1Connection(
@@ -76,6 +79,17 @@ internal class H1RequestScope(
     val upgraded: CompletableDeferred<Boolean>?,
     val closing: () -> Boolean = { false },
 ) : CoroutineScope
+
+/**
+ * The largest request head (request line, header section, their line ends and any empty lines before it) the server
+ * reads: 64 KiB, the default `maxFieldSectionSize` of our HTTP/3 server (`Http3Settings`), so both protocols take the
+ * same headers. Above it: 431 (RFC 6585 section 5). Comparable limits: Node.js 16 KiB, nginx 4 x 8 KiB buffers, Netty
+ * and Tomcat 8 KiB, Go 1 MiB.
+ */
+internal const val MAX_REQUEST_HEAD_BYTES: Int = 65_536
+
+/** How long input after a refused head is read and dropped, so the client sees the refusal rather than a reset. */
+private val LINGER = 2.seconds
 
 private val PipelineName = CoroutineName("kuicksilver-h1-pipeline")
 private val PipelineWriterName = CoroutineName("kuicksilver-h1-pipeline-writer")
@@ -194,6 +208,7 @@ internal fun CoroutineScope.startH1Pipeline(
     headerTimeout: Duration,
     firstHeadTimeout: Duration = headerTimeout,
     draining: Job? = null,
+    maxHeadBytes: Int = MAX_REQUEST_HEAD_BYTES,
     handler: suspend H1RequestScope.(request: Request) -> Unit,
 ): Job =
     launch(PipelineName) {
@@ -202,6 +217,7 @@ internal fun CoroutineScope.startH1Pipeline(
                 capacity = 3,
                 onUndeliveredElement = { response -> response.cancel(IOException("Response was not delivered")) },
             )
+        val input = HeadLimitedInput(connection.input, maxHeadBytes)
         // responses handed to the writer and not yet written: the deadline of the next request head starts at zero
         val unwritten = MutableStateFlow(0)
         val pipelineJob = coroutineContext.job
@@ -216,9 +232,15 @@ internal fun CoroutineScope.startH1Pipeline(
             while (true) { // parse requests loop
                 val request =
                     try {
-                        readRequestHead(connection.input, headBudget, unwritten, draining)
+                        readRequestHead(input, headBudget, unwritten, draining)
                     } catch (e: RequestHeadTimeout) {
                         if (e.partial) respondRequestTimeout(actorChannel) else actorChannel.close()
+                        break
+                    } catch (_: RequestHeadTooLarge) {
+                        respondStatus(actorChannel, 431, "Request Header Fields Too Large")
+                        // closing with unread input makes the kernel send a reset, which can destroy the 431 before the
+                        // client reads it: read and drop what follows for a while first (nginx `lingering_close`)
+                        withTimeoutOrNull(LINGER) { connection.input.discard() }
                         break
                     } catch (_: TooLongLineException) {
                         respondBadRequest(actorChannel)
@@ -301,7 +323,7 @@ internal fun CoroutineScope.startH1Pipeline(
                 if (upgraded != null) {
                     if (upgraded.await()) { // suspend a pipeline until we know if the upgrade performed?
                         actorChannel.close()
-                        connection.input.copyAndClose(requestBody as ByteChannel)
+                        input.copyAndClose(requestBody as ByteChannel)
                         break
                     } else if (requestBody is ByteChannel) { // not upgraded, for example, 404
                         requestBody.close()
@@ -310,7 +332,7 @@ internal fun CoroutineScope.startH1Pipeline(
 
                 if (expectedHttpBody && requestBody is ByteChannel) {
                     try {
-                        framing.readBody(connection.input, requestBody)
+                        framing.readBody(input, requestBody)
                     } catch (cause: IOException) {
                         requestBody.close(ChannelReadException("Failed to read request body", cause))
                         throw cause
@@ -407,25 +429,41 @@ private fun badRequestPacket(): Source =
 
 private val BAD_REQUEST_BODY = "Bad Request".encodeToByteArray()
 
-/** `408 Request Timeout` with `Connection: close` (RFC 9110 section 15.5.9). */
-private fun requestTimeoutPacket(): Source =
+/** An empty [status] response with `Connection: close`. */
+private fun closingResponsePacket(
+    status: Int,
+    reason: String,
+): Source =
     RequestResponseBuilder()
         .apply {
-            responseLine("HTTP/1.1", 408, "Request Timeout")
+            responseLine("HTTP/1.1", status, reason)
             headerLine("Connection", "close")
             headerLine("Content-Length", "0")
             emptyLine()
         }.build()
 
-/** Queues the 408 behind the responses already written (the deadline starts only once they are) and ends the pipeline. */
-private suspend fun respondRequestTimeout(actorChannel: Channel<ByteReadChannel>) {
+/**
+ * Queues an empty [status] response that closes the connection behind the responses already queued and ends the
+ * pipeline; nothing is sent when the queue is full (the connection closes all the same).
+ */
+private suspend fun respondStatus(
+    actorChannel: Channel<ByteReadChannel>,
+    status: Int,
+    reason: String,
+) {
     val bc = ByteChannel()
     if (actorChannel.trySend(bc).isSuccess) {
-        bc.writePacket(requestTimeoutPacket())
+        bc.writePacket(closingResponsePacket(status, reason))
         bc.close()
     }
     actorChannel.close()
 }
+
+/** `408 Request Timeout` (RFC 9110 section 15.5.9); its deadline starts only once earlier responses are written. */
+private suspend fun respondRequestTimeout(actorChannel: Channel<ByteReadChannel>) = respondStatus(actorChannel, 408, "Request Timeout")
+
+/** The request head is larger than the limit of its [HeadLimitedInput]. */
+private class RequestHeadTooLarge : Exception("The request head is too large")
 
 /** The request head did not arrive within its deadline; [partial] when some of it did. */
 private class RequestHeadTimeout(
@@ -436,12 +474,38 @@ private class RequestHeadTimeout(
 private class HeadDeadline : CancellationException("request head deadline")
 
 /**
+ * Parses the next request head from [input] within its size limit, or throws [RequestHeadTooLarge] when it is larger.
+ */
+private suspend fun readRequestHead(
+    input: HeadLimitedInput,
+    budget: Duration,
+    unwritten: StateFlow<Int>,
+    draining: Job?,
+): Request? {
+    input.startHead()
+    val request =
+        try {
+            readRequestHeadInTime(input, budget, unwritten, draining)
+        } catch (e: Throwable) {
+            // a head cut at the limit ends like a closed connection: an EOF, a parser error or no request at all
+            if (input.exceeded && e !is RequestHeadTimeout) throw RequestHeadTooLarge()
+            throw e
+        }
+    if (input.exceeded) {
+        request?.release()
+        throw RequestHeadTooLarge()
+    }
+    input.endHead()
+    return request
+}
+
+/**
  * Parses the next request head, or throws [RequestHeadTimeout] when it is not complete [budget] after every earlier
  * response has been written ([unwritten] is zero). Waiting for the first byte separately tells an idle connection from
  * one that started a request. Returns null, as at the end of the input, when [draining] completes before a head starts.
  */
 @OptIn(InternalAPI::class)
-private suspend fun readRequestHead(
+private suspend fun readRequestHeadInTime(
     input: ByteReadChannel,
     budget: Duration,
     unwritten: StateFlow<Int>,
