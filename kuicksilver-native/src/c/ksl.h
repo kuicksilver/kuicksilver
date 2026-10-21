@@ -19,9 +19,9 @@
 extern "C" {
 #endif
 
-/* 2: ksl_ssl_set replaces ksl_ssl_set_sni/ksl_ssl_set_verify_name; QUIC version selector (K2) */
+/* 2: ksl_ssl_set replaces ksl_ssl_set_sni/ksl_ssl_set_verify_name; QUIC version selector */
 #define KSL_ABI_VERSION 6u
-/* 3 (K3): endpoint keys ksl_key_random / ksl_key_mac16 (and ksl_udp_*) */
+/* 3: endpoint keys ksl_key_random / ksl_key_mac16 (and ksl_udp_*) */
 /* 4: client sessions stay native (the session holds resumption secrets) — ksl_ssl_get1_session / ksl_session_free, ksl_ssl_set_session takes a handle,
    KSL_GET_SESSION (serialized session bytes) removed; ksl_ctx_set_session_context (a ticket resumes only under the trust configuration that issued it) */
 /* 5: identity private keys stay native — ksl_pkey_new / ksl_pkey_free / ksl_ctx_set_identity_pkey (a parsed key shared by reference

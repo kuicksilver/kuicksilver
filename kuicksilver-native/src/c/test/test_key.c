@@ -69,7 +69,7 @@ void run_key(void) {
     CHECK(ksl_key_initial(RFC9001_DCID, 8, 0, KSL_DIR_WRITE, 0xdeadbeefu) == NULL, "negative: unknown version");
     ksl_key_free(k); END();
 
-    /* K3: endpoint keys (Retry tokens, stateless reset) generated and kept inside ksl */
+    /* endpoint keys (Retry tokens, stateless reset) generated and kept inside ksl */
     { SECTION("endpoint_keys");
     ksl_key *t1 = ksl_key_random(KSL_EKEY_TOKEN), *t2 = ksl_key_random(KSL_EKEY_TOKEN), *r1 = ksl_key_random(KSL_EKEY_RESET), *r2 = ksl_key_random(KSL_EKEY_RESET);
     CHECK(t1 && t2 && r1 && r2, "random endpoint keys created");

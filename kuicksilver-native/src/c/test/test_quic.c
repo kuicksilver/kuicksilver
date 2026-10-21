@@ -183,7 +183,7 @@ static void test_secret_lengths(void) {
 }
 
 
-/* ---- QUIC v2 and RFC 9368 version choice (K2) ---- */
+/* ---- QUIC v2 and RFC 9368 version choice ---- */
 #include <openssl/evp.h>
 ksl_key *ksl_key_from_secret_for_test(int aead, const uint8_t *secret, size_t slen, uint32_t version);
 #define V2 0x6b3343cfu
