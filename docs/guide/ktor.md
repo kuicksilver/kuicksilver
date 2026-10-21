@@ -426,7 +426,8 @@ locally (`tools/ci/local-matrix.sh --with-windows`).
 **Client** (`kuicksilver-ktor-client`): `ContentTest`, `PostTest`, `UploadTest`, `DownloadTest`, `HttpRedirectTest`,
 `HttpTimeoutTest` and `WebSocketTest` against Ktor's test-server routes hosted on the Kuicksilver server engine; every
 test runs twice — `Kuicksilver-h1` (cleartext HTTP/1.1, `H1Only`) and `Kuicksilver-h3` (HTTPS, `H3Only`). 93 tests,
-90 pass in both modes, 3 are `@Ignore`d upstream. Left out:
+90 pass in both modes, 3 are `@Ignore`d upstream. Adapted: the `HttpTimeoutTest` success budgets are widened, room
+for a fresh client's handshake on a loaded host (comments in the file). Left out:
 
 - tests that need modules this project does not depend on: JSON content negotiation (`testJsonPostWithEmptyBody`),
   `ktor-client-auth` (three bearer-token WebSocket tests), kotlinx-serialization (`testWebSocketHeaders`, which over
