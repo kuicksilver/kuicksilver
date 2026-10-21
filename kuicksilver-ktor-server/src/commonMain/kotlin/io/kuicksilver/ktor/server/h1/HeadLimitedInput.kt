@@ -4,8 +4,16 @@ package io.kuicksilver.ktor.server.h1
 
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.InternalAPI
+import kotlinx.coroutines.CompletableJob
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.selects.select
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.io.Buffer
 import kotlinx.io.Source
+import kotlin.time.Duration
 
 /**
  * The input of an HTTP/1.1 connection as its pipeline reads it, with a size limit on request heads. Ktor's
@@ -13,6 +21,9 @@ import kotlinx.io.Source
  * [startHead] and [endHead] at most [maxHeadBytes] bytes, counted from the first byte of the head, can be read; a reader
  * that wants more sees the channel end and [exceeded] turns true. Outside a head (bodies, upgraded connections) reads
  * are not limited.
+ *
+ * Between [startBody] and [endBody] every wait for the socket's next bytes has a deadline: none for [bodyTimeout] fails
+ * the read with [RequestBodyTimeout]. Each wait has its own, so a body that keeps moving, however slowly, is never cut.
  *
  * The bytes pass through a buffer of this channel, which takes from [source] only what a read asks for (at least
  * [CHUNK] bytes outside a head), so what is already buffered when the next head starts stays small.
@@ -42,6 +53,61 @@ internal class HeadLimitedInput(
         headBudget = -1
     }
 
+    /** The deadline of a wait for body bytes; null outside a body (a head, an upgraded connection). */
+    private var bodyTimeout: Duration? = null
+
+    /** The deadline runs only once this completes (`100 Continue` sent, or the handler done); null: at once. */
+    private var bodyGate: Job? = null
+
+    /** Completed when the body deadline runs out, before the read fails (copies close their target with the failure). */
+    private var bodyTimedOut: CompletableJob? = null
+
+    /**
+     * A request body starts: waits for its bytes now have [timeout], once [gate] (if any) has completed; [timedOut] is
+     * completed when one runs out, before the read fails with [RequestBodyTimeout].
+     */
+    fun startBody(
+        timeout: Duration,
+        gate: Job?,
+        timedOut: CompletableJob,
+    ) {
+        bodyTimeout = timeout
+        bodyGate = gate
+        bodyTimedOut = timedOut
+    }
+
+    /** The body was read (or failed). */
+    fun endBody() {
+        bodyTimeout = null
+        bodyGate = null
+        bodyTimedOut = null
+    }
+
+    /** [source]'s `awaitContent()`, under the body deadline inside a body. */
+    private suspend fun awaitSource(): Boolean {
+        val timeout = bodyTimeout ?: return source.awaitContent()
+        val gate = bodyGate
+        if (gate != null && !gate.isCompleted) {
+            // the client may hold the body back until `100 Continue` (RFC 9110 section 10.1.1): no deadline before it
+            val arrived =
+                coroutineScope {
+                    val data = async(start = CoroutineStart.UNDISPATCHED) { source.awaitContent() }
+                    select {
+                        data.onAwait { it }
+                        gate.onJoin {
+                            data.cancel()
+                            null
+                        }
+                    }
+                }
+            if (arrived != null) return arrived
+        }
+        return withTimeoutOrNull(timeout) { source.awaitContent() } ?: run {
+            bodyTimedOut?.complete()
+            throw RequestBodyTimeout(timeout)
+        }
+    }
+
     override val closedCause: Throwable? get() = source.closedCause
 
     override val isClosedForRead: Boolean
@@ -62,7 +128,7 @@ internal class HeadLimitedInput(
                     maxOf(min - buffer.size, CHUNK)
                 }
             val from = source.readBuffer
-            if (from.exhausted() && !source.awaitContent()) return false
+            if (from.exhausted() && !awaitSource()) return false
             val moved = from.readAtMostTo(buffer, want)
             if (moved < 0) return false
             if (headBudget >= 0) headBudget -= moved

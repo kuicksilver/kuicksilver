@@ -64,7 +64,9 @@ public class KuicksilverApplicationEngine(
          * after the longer of this and 5 minutes: the engine sees a client's reading progress about 1 MiB at a time (the
          * buffer in front of the socket), and 1 MiB in 5 minutes keeps clients down to about 3.4 KiB/s. A closing
          * connection sends what is left for as long as the client takes it, and is aborted after the same time without
-         * progress.
+         * progress. A request body that sends no byte for this long (counted after `100 Continue` when the client asked
+         * for it) fails the handler's read; the client gets 408 when no response has started, and the connection closes.
+         * Each wait for body bytes has its own deadline, so a slow but moving upload is read in full.
          */
         public var connectionIdleTimeoutSeconds: Int = 45
 

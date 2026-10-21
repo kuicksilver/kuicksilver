@@ -265,11 +265,12 @@ private suspend fun KuicksilverApplicationEngine.handleRequest(
                     peer,
                     altSvc,
                     closing,
+                    bodyTimedOut,
                 )
             events.emit("requestStarted") { requestStarted(HttpProtocolVersion.HTTP_1_1, call) }
             var failure: Throwable? = null
             try {
-                addHandlerForExpectedHeader(output, call)
+                addHandlerForExpectedHeader(output, call, continueSent)
                 // forwarded from early data by a gateway and not replayable: 425, it cannot be made safe by waiting (RFC 8470 section 5.1)
                 if (request.headers[EARLY_DATA_FIELD] != null &&
                     request.method.value !in io.kuicksilver.http3.Http3EarlyDataPolicy.SAFE_METHODS
@@ -293,6 +294,7 @@ private suspend fun KuicksilverApplicationEngine.handleRequest(
 private fun addHandlerForExpectedHeader(
     output: ByteWriteChannel,
     call: H1Call,
+    continueSent: CompletableJob?,
 ) {
     val expectedHeaderPhase = PipelinePhase("ExpectedHeaderPhase")
     call.request.pipeline.insertPhaseBefore(ApplicationReceivePipeline.Before, expectedHeaderPhase)
@@ -308,6 +310,7 @@ private fun addHandlerForExpectedHeader(
         } else {
             output.writeStringUtf8("HTTP/1.1 100 Continue\r\n\r\n")
             output.flush()
+            continueSent?.complete() // the body deadline starts now: the client sends the body after this
         }
     }
 }

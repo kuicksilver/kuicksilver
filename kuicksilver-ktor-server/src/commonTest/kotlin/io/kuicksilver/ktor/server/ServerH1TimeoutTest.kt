@@ -14,9 +14,11 @@ import io.ktor.network.sockets.openWriteChannel
 import io.ktor.server.application.Application
 import io.ktor.server.engine.connector
 import io.ktor.server.engine.embeddedServer
+import io.ktor.server.request.receiveText
 import io.ktor.server.response.respondBytesWriter
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
+import io.ktor.server.routing.post
 import io.ktor.server.routing.routing
 import io.ktor.utils.io.readAvailable
 import io.ktor.utils.io.writeFully
@@ -274,6 +276,70 @@ class ServerH1TimeoutTest {
                 } finally {
                     server.stop(100, 500)
                 }
+            }
+        }
+
+    /**
+     * A request body that stops arriving (slow POST, R.U.D.Y.): after the idle timeout without a byte, the handler's read
+     * fails, the client gets `408 Request Timeout` with `Connection: close`, and the connection closes. Before, the
+     * handler waited for the rest of the body for ever.
+     */
+    @Test fun negative_stalledRequestBodyGets408() =
+        serverTest {
+            val server =
+                embeddedServer(Kuicksilver, configure = {
+                    connectionIdleTimeoutSeconds = 1
+                    connector {
+                        host = "127.0.0.1"
+                        port = 0
+                    }
+                }) { routing { post("/echo") { call.respondText(call.receiveText()) } } }
+            server.startSuspend(false)
+            try {
+                val port =
+                    server.engine
+                        .resolvedConnectors()
+                        .first()
+                        .port
+                val received =
+                    withTimeout(10.seconds) {
+                        rawHttp(port, "POST /echo HTTP/1.1\r\nHost: s\r\nContent-Length: 100\r\n\r\n0123456789", tls = null)
+                    }
+                assertTrue(received.startsWith("HTTP/1.1 408 "), received)
+                assertTrue(received.contains("\r\nConnection: close\r\n"), received)
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
+    /**
+     * `Expect: 100-continue` through the engine: the body deadline starts when the engine has sent `100 Continue` (as the
+     * handler asks for the body), so a client that then sends nothing gets 408 after the idle timeout.
+     */
+    @Test fun negative_bodyThatNeverFollowsContinueGets408() =
+        serverTest {
+            val server =
+                embeddedServer(Kuicksilver, configure = {
+                    connectionIdleTimeoutSeconds = 1
+                    connector {
+                        host = "127.0.0.1"
+                        port = 0
+                    }
+                }) { routing { post("/echo") { call.respondText(call.receiveText()) } } }
+            server.startSuspend(false)
+            try {
+                val port =
+                    server.engine
+                        .resolvedConnectors()
+                        .first()
+                        .port
+                val received =
+                    withTimeout(10.seconds) {
+                        rawHttp(port, "POST /echo HTTP/1.1\r\nHost: s\r\nExpect: 100-continue\r\nContent-Length: 4\r\n\r\n", tls = null)
+                    }
+                assertTrue(received.startsWith("HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 408 "), received)
+            } finally {
+                server.stop(100, 500)
             }
         }
 

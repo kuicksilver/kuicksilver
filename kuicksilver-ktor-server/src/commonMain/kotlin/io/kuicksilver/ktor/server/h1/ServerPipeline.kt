@@ -31,6 +31,7 @@ import io.ktor.utils.io.discard
 import io.ktor.utils.io.writePacket
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CompletableJob
 import kotlinx.coroutines.CopyableThrowable
 import kotlinx.coroutines.CoroutineName
 import kotlinx.coroutines.CoroutineScope
@@ -88,6 +89,13 @@ internal class H1RequestScope(
     val localAddress: NetworkAddress?,
     val upgraded: CompletableDeferred<Boolean>?,
     val closing: () -> Boolean = { false },
+    /**
+     * For a request with `Expect: 100-continue`: complete it once `100 Continue` went out, which starts the deadline of the
+     * body (the client may hold the body back until then). Null for other requests.
+     */
+    val continueSent: CompletableJob? = null,
+    /** True once this request's body timed out: the connection ends after its response, which goes out as 408. */
+    val bodyTimedOut: () -> Boolean = { false },
 ) : CoroutineScope
 
 /**
@@ -211,7 +219,9 @@ internal class MalformedRequestBody(
  *
  * [timeout] closes an idle connection, both directions: no response handed to the writer for that long ends the
  * pipeline. [sendTimeout] (the longer of [timeout] and [MIN_SEND_STALL_TIMEOUT] by default) ends it when the client's
- * socket took nothing of a response for that long (a client that stopped reading).
+ * socket took nothing of a response for that long (a client that stopped reading). A request body that sends no byte
+ * for [timeout] fails the handler's read with [RequestBodyTimeout] (after `100 Continue` when the request asked for it,
+ * see [H1RequestScope.continueSent]); the response then goes out as 408 and the connection ends after it.
  *
  * [headerTimeout] bounds each request head, counted from the end of the previous response (the start of the
  * pipeline for the first request, which gets [firstHeadTimeout], what is left of the deadline after the TLS handshake);
@@ -244,6 +254,8 @@ internal fun CoroutineScope.startH1Pipeline(
                 onUndeliveredElement = { response -> response.cancel(IOException("Response was not delivered")) },
             )
         val input = HeadLimitedInput(connection.input, maxHeadBytes)
+        // completed when a request body timed out: the connection ends after that request
+        val bodyTimedOut = Job()
         // responses handed to the writer and not yet written: the deadline of the next request head starts at zero
         val unwritten = MutableStateFlow(0)
         val pipelineJob = coroutineContext.job
@@ -323,6 +335,9 @@ internal fun CoroutineScope.startH1Pipeline(
                     }
 
                 val upgraded = if (expectedHttpUpgrade) CompletableDeferred<Boolean>() else null
+                // the body deadline starts after `100 Continue`, or once the handler is done when it never asks for the body
+                val continueSent =
+                    if (expectedHttpBody && expectsContinue(request, version)) Job() else null
 
                 launch(requestContext, start = CoroutineStart.UNDISPATCHED) {
                     val handlerScope =
@@ -333,7 +348,9 @@ internal fun CoroutineScope.startH1Pipeline(
                             connection.remoteAddress,
                             connection.localAddress,
                             upgraded,
-                            closing = { draining?.isCompleted == true },
+                            closing = { draining?.isCompleted == true || bodyTimedOut.isCompleted },
+                            continueSent = continueSent,
+                            bodyTimedOut = { bodyTimedOut.isCompleted },
                         )
                     try {
                         handler(handlerScope, request)
@@ -343,6 +360,7 @@ internal fun CoroutineScope.startH1Pipeline(
                     } finally {
                         response.close()
                         upgraded?.complete(false)
+                        continueSent?.complete()
                     }
                 }
 
@@ -357,8 +375,13 @@ internal fun CoroutineScope.startH1Pipeline(
                 }
 
                 if (expectedHttpBody && requestBody is ByteChannel) {
+                    input.startBody(timeout, continueSent, bodyTimedOut)
                     try {
                         framing.readBody(input, requestBody)
+                    } catch (cause: RequestBodyTimeout) {
+                        // the handler sees it through its read and answers 408 (or closes); no further request on this
+                        // connection, and its response says so (the input completed `bodyTimedOut` before failing)
+                        requestBody.close(ChannelReadException("Failed to read request body", cause))
                     } catch (cause: IOException) {
                         requestBody.close(ChannelReadException("Failed to read request body", cause))
                         throw cause
@@ -371,8 +394,10 @@ internal fun CoroutineScope.startH1Pipeline(
                         response.close()
                         break
                     } finally {
+                        input.endBody()
                         requestBody.close()
                     }
+                    if (bodyTimedOut.isCompleted) break
                 }
 
                 if (isLastHttpRequest(version, connectionOptions)) break
@@ -488,6 +513,15 @@ private suspend fun respondStatus(
 
 /** `408 Request Timeout` (RFC 9110 section 15.5.9); its deadline starts only once earlier responses are written. */
 private suspend fun respondRequestTimeout(actorChannel: Channel<ByteReadChannel>) = respondStatus(actorChannel, 408, "Request Timeout")
+
+/**
+ * No byte of a request body arrived for [timeout] (slow POST, R.U.D.Y.): the handler's read of the body fails with this
+ * (as the cause of a `ChannelReadException`); the engine answers 408 when no response has started, and the connection
+ * closes after the request.
+ */
+internal class RequestBodyTimeout(
+    timeout: Duration,
+) : IOException("No byte of the request body for $timeout")
 
 /** The request head is larger than the limit of its [HeadLimitedInput]. */
 private class RequestHeadTooLarge : Exception("The request head is too large")
@@ -669,6 +703,12 @@ private suspend fun ByteReadChannel.copyToClient(
         throw cause
     }
 }
+
+/** `Expect: 100-continue` on an HTTP/1.1 request, the case `addHandlerForExpectedHeader` answers with `100 Continue`. */
+private fun expectsContinue(
+    request: Request,
+    version: HttpProtocolVersion,
+): Boolean = version != HttpProtocolVersion.HTTP_1_0 && request.headers["Expect"]?.toString()?.lowercase() == "100-continue"
 
 private fun isLastHttpRequest(
     version: HttpProtocolVersion,

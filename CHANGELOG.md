@@ -101,6 +101,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- Ktor server, HTTP/1.1 (slow POST, R.U.D.Y.): a request body had no deadline, so a client that announced a body and
+  then sent it a byte at a time, or stopped, held its handler for ever. A body that sends no byte for
+  `connectionIdleTimeoutSeconds` now fails the handler's read; the client gets `408 Request Timeout` with
+  `Connection: close` when no response has started, and the connection closes after the request. Each wait for body
+  bytes has its own deadline (as nginx's `client_body_timeout`), so a slow but moving upload is read in full; after
+  `Expect: 100-continue` the wait starts once `100 Continue` is sent; upgraded connections are not affected.
 - Ktor server, HTTP/1.1: a graceful stop cut responses that were still draining to a slow client. A connection ended
   as soon as its socket's `close()` was called, so once all of them had, the listener's job completed and closed its
   selector under sockets still sending their last bytes: a 4 MiB response written during `stopSuspend(8000, 10000)`

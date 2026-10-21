@@ -32,11 +32,12 @@ internal class H1Call(
     peerCertificates: List<Certificate>,
     altSvc: String?,
     closing: () -> Boolean = { false },
+    bodyTimedOut: () -> Boolean = { false },
 ) : BaseApplicationCall(application),
     CoroutineScope {
     override val request = H1Request(this, remoteAddress, localAddress, input, _request, scheme)
 
-    override val response = H1Response(this, output, input, engineDispatcher, appDispatcher, upgraded, altSvc, closing)
+    override val response = H1Response(this, output, input, engineDispatcher, appDispatcher, upgraded, altSvc, closing, bodyTimedOut)
 
     internal fun release() {
         request.release()

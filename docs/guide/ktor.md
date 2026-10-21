@@ -48,7 +48,9 @@ server.start(wait = true)
   and from the end of the previous response on a keep-alive connection; header bytes trickling in do not extend it. One
   that sent part of a head by then gets `408 Request Timeout` with `Connection: close`; one that sent nothing (or never
   finished the TLS handshake) is closed without a response. `connectionIdleTimeoutSeconds` (45 s) closes a connection
-  without requests in both directions. One whose client stopped reading its response (the socket took nothing) is
+  without requests in both directions, and a request body that sends no byte for that long gets `408 Request Timeout`
+  and ends the connection (a slow but moving upload is read in full; after `Expect: 100-continue` the wait starts once
+  `100 Continue` is sent). One whose client stopped reading its response (the socket took nothing) is
   closed after the longer of that and 5 minutes: the engine sees progress about 1 MiB at a time, and 5 minutes serve
   clients down to about 3.4 KiB/s. A closing connection sends what is left for as long as the client takes it, and is
   aborted after the same deadline without progress, so a slow reader's last response is not cut short.
