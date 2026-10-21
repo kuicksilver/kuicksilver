@@ -108,4 +108,29 @@ class ReassemblyFullFlowControlTest {
         }
         assertNull(m.invariantViolationForTest(), "after the FIN")
     }
+
+    @Test fun aStreamAtItsGapLimitStillTakesTheFrameAtItsReadOffset() {
+        // review (fable): refused, nothing was readable and the stream stalled until the idle timeout
+        val config = QuicConfig.Default
+        val m =
+            StreamManager(
+                TlsRole.Server,
+                config,
+                RecvFlowController(config.initialConnectionWindow, config.maxConnectionWindow),
+                SendFlowController(1L shl 40),
+                StreamLimits(TlsRole.Server, 100, 100),
+            )
+        m.applyPeerParameters(1L shl 20, 1L shl 20, 1L shl 20, 100, 100)
+        for (k in 1..256) send(m, 0, 2L * k, 1)
+        val b = PacketBuffer.allocate(2)
+        try {
+            m.onStream(0, 0, b, 0, 1, false)
+        } finally {
+            b.close()
+        }
+        assertEquals(1, m.read(0, ByteArray(16), 0, 16))
+        for (k in 0 until 256) send(m, 0, 2L * k + 1, 1)
+        assertEquals(512, m.read(0, ByteArray(1024), 0, 1024))
+        assertNull(m.invariantViolationForTest())
+    }
 }

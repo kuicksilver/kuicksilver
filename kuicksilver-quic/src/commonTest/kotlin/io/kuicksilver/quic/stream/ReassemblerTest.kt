@@ -95,6 +95,25 @@ class ReassemblerTest {
         assertEquals(4096, n, "the 4097th range on the connection is refused")
     }
 
+    /**
+     * Review (fable): a frame at the read offset that does not reach the first buffered range opened a new range, and with the
+     * stream at its gap limit it was refused. Nothing was readable, so nothing ever freed a range, and the peer's retransmissions
+     * of that frame were refused too, until the idle timeout. A frame at the read offset makes data readable and opens no gap:
+     * it is always taken, and the transfer completes.
+     */
+    @Test fun aFrameAtTheReadOffsetIsTakenAtTheGapLimit() {
+        val r = Reassembler(256, RangeBudget(4096))
+        val data = ByteArray(513) { (it * 7 + 1).toByte() }
+        for (i in 1..256) insert(r, 2L * i, byteArrayOf(data[2 * i])) // 256 gaps: [1,2), [3,4), ...
+        assertEquals(0, r.readable)
+        assertFailsWith<ReassemblyFull> { insert(r, 600, byteArrayOf(1)) } // a new gap is still refused
+        insert(r, 0, byteArrayOf(data[0])) // at the read offset: was refused
+        assertEquals(1, r.readable)
+        assertFailsWith<ReassemblyFull> { insert(r, 600, byteArrayOf(1)) } // and the cap on gaps still holds
+        for (i in 0 until 256) insert(r, 2L * i + 1, byteArrayOf(data[2 * i + 1])) // the holes merge
+        assertContentEquals(data, readAll(r))
+    }
+
     @Test fun overlappingDataMustMatchIsAcceptedOnce() {
         val r = Reassembler(256, RangeBudget(4096))
         insert(r, 0, byteArrayOf(1, 2, 3, 4))

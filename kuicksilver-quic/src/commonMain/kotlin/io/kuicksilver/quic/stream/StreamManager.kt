@@ -218,7 +218,8 @@ internal class StreamManager(
         for (e in streams.values) streamsReceived += e.recv?.highest ?: 0L
         if (streamsReceived > connReceived) return "streams received $streamsReceived, the connection was charged $connReceived"
         if (connSend.used > connSend.maxLimit) return "connection sent ${connSend.used} beyond the peer's ${connSend.maxLimit}"
-        if (budget.used < 0 || budget.used > budget.max) return "reassembly ranges ${budget.used} outside 0..${budget.max}"
+        // each stream may hold one range beyond the gap limit: the readable one at its read offset
+        if (budget.used < 0 || budget.used > budget.max + streams.size) return "reassembly ranges ${budget.used} outside 0..${budget.max}"
         if (sendBufferedBytes < 0) return "negative send buffer $sendBufferedBytes"
         for ((id, e) in streams) {
             e.recv?.let { r ->

@@ -218,6 +218,21 @@ class HandshakeLimitsTest {
         }
     }
 
+    /** The CRYPTO streams share the reassembler: at their 1024-gap limit a frame at the read offset is still taken (review, fable). */
+    @Test fun cryptoFrameAtTheReadOffsetIsTakenAtTheGapLimit() {
+        val cs = CryptoStreams(1 shl 20, 65_536, longArrayOf(65_536, 0, 262_144, Long.MAX_VALUE))
+        val b = PacketBuffer.of(ByteArray(2))
+        try {
+            for (i in 1..1024) cs.onData(2, 2L * i, b, 0, 1, false)
+            cs.onData(2, 0, b, 0, 1, false)
+            var delivered = 0
+            assertTrue(cs.deliver(2) { _, n -> delivered += n })
+            assertEquals(1, delivered)
+        } finally {
+            b.close()
+        }
+    }
+
     /** CRYPTO bytes TLS holds unread count toward the handshake's buffers (admission). */
     @Test fun unreadTlsInputCountsTowardHandshakeBuffer() {
         val p =

@@ -21,8 +21,9 @@ internal class RangeBudget(
 
 /**
  * Orders stream data (RFC 9000 section 2.2): bytes land in a window starting at the read offset, gaps are tracked as
- * sorted (start, end) ranges — at most [maxRanges] per stream and the connection [budget] — and only the contiguous
- * prefix is readable. Refusal ([ReassemblyFull]) happens before copying.
+ * sorted (start, end) ranges — at most [maxRanges] gaps per stream and the connection [budget] (plus, per stream, the range at the
+ * read offset, which is always taken) — and only the contiguous prefix is readable. Refusal ([ReassemblyFull]) happens before
+ * copying.
  */
 internal class Reassembler(
     private val maxRanges: Int,
@@ -70,7 +71,10 @@ internal class Reassembler(
         val mergesIntoExisting = i < count && ranges[2 * i] <= end
         // wholly inside one buffered range: nothing new
         if (mergesIntoExisting && ranges[2 * i] <= start && ranges[2 * i + 1] >= end) return false
-        if (!mergesIntoExisting &&
+        // a frame at the read offset opens no gap and makes data readable, which is what frees ranges: it is always taken, or a
+        // stream at its limit with nothing readable would refuse the peer's retransmissions of it until the idle timeout. The
+        // limit counts gaps: at most one range more (the readable one at the read offset) per stream
+        if (!mergesIntoExisting && start != base &&
             (count >= maxRanges || budget.used >= budget.max)
         ) {
             throw ReassemblyFull

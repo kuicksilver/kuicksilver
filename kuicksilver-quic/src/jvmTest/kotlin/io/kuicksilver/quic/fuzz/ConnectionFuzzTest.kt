@@ -700,23 +700,42 @@ internal class ConnectionFuzz(
         val streams = 2 * (cfg.maxBidiStreams + cfg.maxUniStreams) + ConnProgram.MAX_OPS
         return when (key) {
             "events" -> 20_000
+
             "streams", "streamSendLimits", "streamsEarly" -> streams
+
             "streamControlFrames" -> 8 * streams + 64
+
             "streamEvents" -> 20_000
-            "reassemblyRanges" -> cfg.limits.reassemblyRangesPerConnection.toLong()
+
+            "reassemblyRanges" -> cfg.limits.reassemblyRangesPerConnection + streams
+
+            // + the range at each stream's read offset
             "sendBufferedBytes" -> cfg.maxSendBuffer + 20_000
+
             "cidsLocal" -> 2L * maxOf(cfg.activeConnectionIdLimit, 8) + 2
+
             "cidsPeer" -> cfg.activeConnectionIdLimit.toLong() + 1
+
             "cidsRetiredLocal", "cidsRetiredUntil" -> cfg.limits.retiredConnectionIds.toLong() + 1
+
             "cidsPendingRetire", "cidsUnackedRetire" -> 4L * cfg.limits.retiredConnectionIds + cfg.activeConnectionIdLimit
+
             "paths" -> 8
+
             "pathResponses" -> 16
+
             "sentInitial", "sentHandshake", "sentApplication" -> 50_000
+
             "ackRangesInitial", "ackRangesHandshake", "ackRangesApplication" -> cfg.limits.ackRanges.toLong() + 1
+
             "receiverBufferedBytes" -> cfg.limits.undecryptablePackets.toLong() * 65_536
+
             "cryptoBufferedBytes" -> 4L * (cfg.limits.cryptoOutOfOrderPerLevel + cfg.limits.cryptoPostHandshake)
+
             "datagramsQueued" -> cfg.datagramReceiveQueue.toLong()
+
             "challengedAddresses", "mtuUpdates" -> 64
+
             else -> throw IllegalStateException("no bound for $key")
         }
     }

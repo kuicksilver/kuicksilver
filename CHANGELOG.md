@@ -87,6 +87,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- QUIC: a stream at its reassembly limit (256 gaps; the CRYPTO streams, 1024) could stall until the idle timeout. A
+  STREAM or CRYPTO frame at the read offset that did not reach the first buffered range opened a new range and was
+  refused; nothing was readable, so nothing ever freed a range, and every retransmission of that frame was refused too.
+  A frame at the read offset opens no gap and makes data readable: it is now always taken (a stream holds at most one
+  range beyond the limit, the readable one), and the limit on gaps still holds.
+
 - QUIC: a peer could make one connection buffer far more than its connection window. A STREAM frame refused for lack
   of reassembly room (the packet is dropped unacknowledged, K7) had already raised the stream's highest offset, and the
   refusal skipped the connection-level charge; data sent later below that offset merged into a buffered range and was

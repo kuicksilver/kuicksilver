@@ -48,6 +48,7 @@ class ReassemblerFuzzTest {
                         } catch (e: ReassemblyFull) {
                             check(r.rangeCount == before) { "a refused insert changed the ranges" }
                             check(before >= 4 || budget.used >= budget.max) { "refused below the limits: ${e.message}" }
+                            check(offset > r.readOffset) { "refused a frame at the read offset" }
                             continue
                         }
                         val from = maxOf(offset, r.readOffset)
@@ -77,7 +78,8 @@ class ReassemblerFuzzTest {
                     }
                 }
                 check(r.rangeCount == runs(have)) { "ranges ${r.rangeCount}, model ${runs(have)}" }
-                check(budget.used == r.rangeCount && r.rangeCount <= 4) { "budget ${budget.used} for ${r.rangeCount} ranges" }
+                // 4 gaps plus the readable range at the read offset, which is always taken
+                check(budget.used == r.rangeCount && r.rangeCount <= 5) { "budget ${budget.used} for ${r.rangeCount} ranges" }
             }
         } finally {
             src.close()
