@@ -298,7 +298,7 @@ above replaced).
 ### The server: handshakes
 
 On Linux the gap to quinn was user time: per handshake the Native server spent 0.72 ms of user and 0.21 ms of system
-time, quinn 0.28 and 0.24 (`benchmarks/handshakes.csv`). Of the Native server's user time (a `macosArm64` build under
+time, quinn 0.28 and 0.24 ([benchmarks/handshakes.csv](benchmarks/handshakes.csv)). Of the Native server's user time (a `macosArm64` build under
 the same load, 12 000 handshakes, 3 940 samples):
 
 | where | share of user time |
