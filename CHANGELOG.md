@@ -17,8 +17,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - Supply chain (`docs/release.md`, "Supply chain: SBOM and provenance"): a CycloneDX 1.6 SBOM of every publication
   (64 documents: each platform publication, each module, the BOM), with the statically linked OpenSSL (version, tarball
   SHA-256, CPE, configure flags) and the `ksl` shim as components, checked against the CycloneDX schema; and an in-toto
-  / SLSA provenance v1 statement (source commit, toolchain pins, OpenSSL tarball, SHA-256 of every published file),
-  signed with the release key. `local-release.sh` makes both, dry run included; they are attached to the GitHub release
+  / SLSA provenance v1 statement (source commit, toolchain pins, OpenSSL tarball and configure flags, SHA-256 of every
+  published file), signed with the release key. `local-release.sh` makes both, dry run included; they are attached to the GitHub release
   and not uploaded to Maven Central, so the deployment's file count is unchanged. The provenance reaches SLSA Build
   Level 1, not more: it is produced and signed on the machine that builds.
 - `context7.json`: the configuration of the Context7 documentation index (what it reads, a description, rules for coding

@@ -201,8 +201,9 @@ v1](https://slsa.dev/spec/v1.0/provenance) predicate.
 - `buildDefinition`: the source (repository and commit), the version and the command line; the toolchain pins of
   `gradle/toolchains.toml`, the OpenSSL pin of `gradle/openssl.toml`, the Kotlin version, and what the Mac actually
   had (macOS, Xcode, NDK, Docker); the local gate record; as `resolvedDependencies` the commit, the OpenSSL tarball
-  (SHA-256, signing key fingerprint, configure flags with their hash), the Gradle distribution (its SHA-256 from the
-  wrapper properties), `verification-metadata.xml`, the version catalog, the Windows JDK and the local Docker images.
+  (SHA-256, signing key fingerprint, the configure flags as the SBOM lists them, their file and its SHA-256), the
+  Gradle distribution (its SHA-256 from the wrapper properties), `verification-metadata.xml`, the version catalog, the
+  Windows JDK and the local Docker images.
 - `runDetails`: the builder (this document, the owner's workstation), start and end, and as byproducts the five JNI
   libraries and the `libcrypto.a`/`libssl.a` of all twelve OpenSSL targets.
 

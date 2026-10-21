@@ -112,12 +112,16 @@ def main():
     wrapper = dict(l.split("=", 1) for l in open("gradle/wrapper/gradle-wrapper.properties").read().splitlines() if "=" in l)
     gradle_url = wrapper["distributionUrl"].replace("\\:", ":")
     tarball = f"https://github.com/openssl/openssl/releases/download/openssl-{ossl['version']}/openssl-{ossl['version']}.tar.gz"
+    # the flags themselves, as the SBOM's kuicksilver:openssl:configure property has them (SbomWiring.kt: comments and blank
+    # lines dropped, joined by spaces), so the statement alone says how OpenSSL was configured; the file's path and hash too
+    flags_file = ossl["configure_flags"]
+    flags = [l.strip() for l in open(flags_file).read().splitlines() if l.strip() and not l.strip().startswith("#")]
 
     deps = [
         {"uri": f"git+{REPO}@{commit}", "digest": {"gitCommit": commit}},
         {"uri": tarball, "digest": {"sha256": ossl["sha256"]},
-         "annotations": {"pgpFingerprint": ossl["pgp_fingerprint"], "configureFlags": ossl["configure_flags"],
-                         "configureFlagsSha256": sha256(ossl["configure_flags"])}},
+         "annotations": {"pgpFingerprint": ossl["pgp_fingerprint"], "configureFlags": " ".join(flags),
+                         "configureFlagsFile": flags_file, "configureFlagsSha256": sha256(flags_file)}},
         {"uri": gradle_url, "digest": {"sha256": wrapper.get("distributionSha256Sum", "")}},
         {"uri": "file:gradle/verification-metadata.xml", "digest": {"sha256": sha256("gradle/verification-metadata.xml")}},
         {"uri": "file:gradle/libs.versions.toml", "digest": {"sha256": sha256("gradle/libs.versions.toml")}},
