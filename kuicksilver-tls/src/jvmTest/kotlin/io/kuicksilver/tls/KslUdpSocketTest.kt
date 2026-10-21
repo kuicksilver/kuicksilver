@@ -34,7 +34,7 @@ class KslUdpSocketTest {
         assertEquals(accelerated, KslUdpSocket.supported, os)
     }
 
-    /** A probe that fails for any reason (an App Sandbox without network entitlements refuses bind: EPERM) means "unsupported", never an exception (review of k7/macos-server). */
+    /** A probe that fails for any reason (an App Sandbox without network entitlements refuses bind: EPERM) means "unsupported", never an exception (macOS server review). */
     @Test fun probeFailureMeansUnsupported() {
         if (!accelerated) return
         val unassigned = KslUdpSocket.encodeAddress(byteArrayOf(192.toByte(), 0, 2, 1), 0) // TEST-NET-1: bind fails with EADDRNOTAVAIL
