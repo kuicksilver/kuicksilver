@@ -79,6 +79,12 @@ internal class H3Session(
     /** Test hook: the client sends unsafe requests in 0-RTT too (to exercise the server's RFC 8470 gate). */
     internal var testSendUnsafeEarly = false
 
+    /**
+     * Test hook: runs on each request stream before its first frame is read, so a test can let a reset arrive first (a
+     * request stream reset before its HEADERS are read surfaces no request).
+     */
+    internal var beforeRequestHeadersForTest: (suspend (QuicStream) -> Unit)? = null
+
     /** Requests repeated after a 425 Too Early (RFC 8470 section 5.2). */
     internal var early425Retries = 0
 

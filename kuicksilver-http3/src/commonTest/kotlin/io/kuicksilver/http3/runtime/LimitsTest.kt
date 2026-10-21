@@ -18,17 +18,23 @@ import io.kuicksilver.http3.readAllBytes
 import io.kuicksilver.http3.useScoped
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.QuicException
+import io.kuicksilver.quic.quicConfig
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
+import kotlin.test.fail
 import kotlin.time.Duration.Companion.seconds
 
 class LimitsTest {
@@ -54,7 +60,7 @@ class LimitsTest {
                 val ok = p.client.request(get())
                 assertEquals(204, ok.status)
                 assertEquals(0L, ok.streamId, "the refused request opened no stream")
-                server.join()
+                server.joinWithin("the server's answer to the request after the refused one")
             }
         }
 
@@ -64,13 +70,13 @@ class LimitsTest {
             H3Pair.open(clientSettings = http3Settings { maxFieldSectionSize = 1000 }).useScoped { p ->
                 withTimeout(5.seconds) { p.server.peerSettings.first { it != null } }
                 val resp = async { runCatching { p.client.request(get()) } }
-                val r = p.server.acceptRequest()
+                val r = p.server.acceptWithin()
                 val e =
                     assertFailsWith<Http3Exception.FieldSectionTooLarge> {
                         r.respond(200, Http3Headers.of("x-big" to "v".repeat(2000)))
                     }
                 assertEquals(1000L, e.limit)
-                assertTrue(resp.await().isFailure, "the client never got the oversized response")
+                assertTrue(resp.awaitWithin("the client's request").isFailure, "the client never got the oversized response")
             }
         }
 
@@ -88,7 +94,7 @@ class LimitsTest {
                             response.body.readAllBytes()
                         }
                     }
-                val r = p.server.acceptRequest()
+                val r = p.server.acceptWithin()
                 val w = r.respond(200)
                 w.output.writeFully("hello".encodeToByteArray())
                 w.output.flush()
@@ -102,51 +108,123 @@ class LimitsTest {
             }
         }
 
-    /** Request trailers above the server's limit: the caller of `request` or of the response body sees FieldSectionTooLarge. */
-    @Test fun requestTrailersAbovePeerLimitReachTheCaller() =
+    /**
+     * Request trailers above the server's limit: the caller of `request` or of the response body sees FieldSectionTooLarge.
+     * The client sends HEADERS and DATA, then resets the stream (H3_REQUEST_CANCELLED) when its trailers are refused; a
+     * reset that reaches the server before it read the HEADERS discards them (RFC 9000 section 3.2) and no request
+     * surfaces, which is how a cancelled request ends (RFC 9114 section 4.1.1). The server side here serves whatever
+     * surfaces and the assertions are the caller's; [requestTrailersRefusedWhenTheResetWinsTheRace] forces that ordering
+     * (the Windows JVM gate timed out waiting for a request the reset had removed).
+     */
+    @Test fun requestTrailersAbovePeerLimitReachTheCaller() = requestTrailersAbovePeerLimit(resetFirst = false)
+
+    /** [requestTrailersAbovePeerLimitReachTheCaller] with the server reading the first request only once its reset arrived. */
+    @Test fun requestTrailersRefusedWhenTheResetWinsTheRace() = requestTrailersAbovePeerLimit(resetFirst = true)
+
+    private fun requestTrailersAbovePeerLimit(resetFirst: Boolean) =
         h3Test {
             H3Pair.open(serverSettings = http3Settings { maxFieldSectionSize = 1000 }).useScoped { p ->
                 withTimeout(5.seconds) { p.client.peerSettings.first { it != null } }
+                if (resetFirst) p.server.session.beforeRequestHeadersForTest = { st -> if (st.id == 0L) awaitPeerReset(st) }
 
-                fun post(before: CompletableDeferred<Unit>? = null) =
-                    http3Request("POST", "server.test", "/") {
-                        body = ByteReadChannel("ping")
-                        trailers = {
-                            before?.await()
-                            Http3Headers.of("x-big" to "v".repeat(2000))
+                fun post(
+                    path: String,
+                    before: CompletableDeferred<Unit>? = null,
+                ) = http3Request("POST", "server.test", path) {
+                    body = ByteReadChannel("ping")
+                    trailers = {
+                        before?.await()
+                        Http3Headers.of("x-big" to "v".repeat(2000))
+                    }
+                }
+                val responded = CompletableDeferred<Unit>()
+                val seen = ArrayList<String>()
+                // "/read-first" waits for the whole request before it answers; "/answer-first" answers, then reads
+                val server =
+                    launch {
+                        while (true) {
+                            val r = p.server.acceptRequest()
+                            seen += r.path.orEmpty()
+                            launch {
+                                if (r.path == "/answer-first") {
+                                    val w = r.respond(200)
+                                    responded.complete(Unit)
+                                    runCatching { r.body.readAllBytes() }
+                                    runCatching { w.finish() }
+                                } else {
+                                    runCatching { r.body.readAllBytes() }
+                                    runCatching { r.respond(200).finish() }
+                                }
+                            }
                         }
                     }
                 // the server waits for the whole request before it answers: `request` fails
-                val waits =
-                    launch {
-                        val r = p.server.acceptRequest()
-                        runCatching { r.body.readAllBytes() }
-                        runCatching { r.respond(200).finish() }
-                    }
-                val e1 = withTimeout(5.seconds) { runCatching { p.client.request(post()) }.exceptionOrNull() }
+                val e1 = withTimeout(5.seconds) { runCatching { p.client.request(post("/read-first")) }.exceptionOrNull() }
                 assertTrue(e1 is Http3Exception.FieldSectionTooLarge, "request() failed with $e1")
-                waits.join()
                 // the server answers first (the trailers wait for it): the response body fails
-                val responded = CompletableDeferred<Unit>()
-                val answers =
-                    launch {
-                        val r = p.server.acceptRequest()
-                        val w = r.respond(200)
-                        responded.complete(Unit)
-                        runCatching { r.body.readAllBytes() }
-                        runCatching { w.finish() }
-                    }
                 val e2 =
                     withTimeout(5.seconds) {
                         runCatching {
-                            val resp = p.client.request(post(responded))
+                            val resp = p.client.request(post("/answer-first", responded))
                             resp.body.readAllBytes()
                             resp.trailers.await()
                         }.exceptionOrNull()
                     }
                 assertTrue(e2 is Http3Exception.FieldSectionTooLarge, "the response failed with $e2")
-                answers.join()
+                server.cancel()
+                if (resetFirst) assertEquals(listOf("/answer-first"), seen, "a request reset before its HEADERS were read surfaced")
             }
+        }
+
+    /**
+     * A request stream reset before its HEADERS were read surfaces no request and leaves nothing behind: the stream is
+     * retired and its MAX_STREAMS credit returns. With two bidirectional streams allowed, five such requests in a row and a
+     * normal one after them all get a stream; a stream that was never credited back would leave the third waiting.
+     */
+    @Test fun negative_requestResetBeforeItsHeadersAreReadIsRetired() =
+        h3Test {
+            H3Pair
+                .open(
+                    serverSettings = http3Settings { maxFieldSectionSize = 1000 },
+                    serverQuic = quicConfig { maxBidiStreams = 2 },
+                ).useScoped { p ->
+                    withTimeout(5.seconds) { p.client.peerSettings.first { it != null } }
+                    p.server.session.beforeRequestHeadersForTest = { st -> if (st.id < 20L) awaitPeerReset(st) }
+                    repeat(5) { i ->
+                        val e =
+                            withTimeoutOrNull(5.seconds) {
+                                runCatching {
+                                    p.client.request(
+                                        http3Request("POST", "server.test", "/cancelled-$i") {
+                                            body = ByteReadChannel("ping")
+                                            trailers = { Http3Headers.of("x-big" to "v".repeat(2000)) }
+                                        },
+                                    )
+                                }.exceptionOrNull()
+                            } ?: fail("request $i got no stream within 5 s: an earlier reset stream was not credited back")
+                        assertTrue(e is Http3Exception.FieldSectionTooLarge, "request $i failed with $e")
+                    }
+                    val served =
+                        async {
+                            val r = p.server.acceptRequest()
+                            r.respond(204).finish()
+                            r.path
+                        }
+                    val ok =
+                        withTimeoutOrNull(5.seconds) { p.client.request(get("/ok")) }
+                            ?: fail("the request after the resets got no stream within 5 s")
+                    assertEquals(204, ok.status)
+                    assertEquals(20L, ok.streamId, "streams 0..16 went to the cancelled requests")
+                    assertEquals("/ok", served.awaitWithin("the server's next request"), "a cancelled request surfaced first")
+                    assertEquals(
+                        null,
+                        p.server.session.requests
+                            .tryReceive()
+                            .getOrNull()
+                            ?.path,
+                        "a cancelled request was queued",
+                    )
+                }
         }
 
     private val big = (0 until 7).map { "x-big-$it" to "v".repeat(10_000) } // 7 x 10039 = 70273 decoded bytes > 65536
@@ -208,7 +286,7 @@ class LimitsTest {
                     st.output.writeFully(raw.headers(st.id, post) + raw.data("x".encodeToByteArray()) + raw.headers(st.id, big))
                     st.output.flushAndClose()
                 }
-                val r = server.acceptRequest()
+                val r = server.acceptWithin()
                 val e =
                     runCatching {
                         r.body.readAllBytes()
@@ -292,7 +370,7 @@ class LimitsTest {
                 st2.output.writeFully(raw.headers(st2.id, GET))
                 st2.output.flushAndClose()
                 assertEquals("204", statusOf(st2.id, st2.input.readAllBytes()))
-                served.join()
+                served.joinWithin("the server's answer to the second request")
                 assertTrue(!server.closed.isCompleted)
             }
         }
@@ -336,7 +414,7 @@ class LimitsTest {
                         r.headers["x-big"]
                     }
                 assertEquals(204, p.client.request(get(headers = Http3Headers.of("x-big" to value))).status)
-                assertEquals(value, server.await())
+                assertEquals(value, server.awaitWithin("the server's request"))
             }
         }
 
@@ -393,11 +471,33 @@ class LimitsTest {
                 val n = FrameHeaders.write(0x21, 1L shl 40, hdr, 0)
                 st.output.writeFully(raw.headers(st.id, GET) + hdr.copyOf(n) + ByteArray(10))
                 peerMayHaveClosed { st.output.flushAndClose() }
-                val r = server.acceptRequest()
+                val r = server.acceptWithin()
                 // skipped as it streams (no 1 TiB buffer); the FIN inside it is a connection error H3_FRAME_ERROR (RFC 9114 section 7.1)
                 val e = assertFailsWith<Http3Exception.Protocol> { r.body.readAllBytes() }
                 assertEquals(Http3ErrorCode.FRAME_ERROR, e.h3Code)
                 assertEquals(Http3ErrorCode.FRAME_ERROR, peerSawClose(c))
             }
         }
+
+    /** The next request, or a failure that says the server never got one (instead of the test's 30 s timeout). */
+    private suspend fun Http3Connection.acceptWithin(): io.kuicksilver.http3.Http3ServerRequest =
+        withTimeoutOrNull(WAIT) { acceptRequest() } ?: fail("no request reached the server within $WAIT")
+
+    private suspend fun Job.joinWithin(what: String) {
+        withTimeoutOrNull(WAIT) { join() } ?: fail("$what did not finish within $WAIT")
+    }
+
+    private suspend fun <T> Deferred<T>.awaitWithin(what: String): T {
+        val done = withTimeoutOrNull(WAIT) { Result.success(await()) } ?: fail("$what did not finish within $WAIT")
+        return done.getOrThrow() // a null result is a result, not a timeout
+    }
+
+    /** Returns once the peer's RESET_STREAM for [st] arrived (its input fails from then on). */
+    private suspend fun awaitPeerReset(st: io.kuicksilver.quic.QuicStream) {
+        withTimeoutOrNull(WAIT) { while (st.input.closedCause == null) delay(1) } ?: fail("no reset for stream ${st.id} within $WAIT")
+    }
+
+    private companion object {
+        val WAIT = 5.seconds
+    }
 }
