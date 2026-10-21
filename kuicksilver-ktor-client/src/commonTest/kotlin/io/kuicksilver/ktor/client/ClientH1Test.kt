@@ -188,6 +188,18 @@ class ClientH1Test {
             }
         }
 
+    /**
+     * HTTP/3 needs `https` (RFC 9114 section 3.1), so `H3Only` fails an `http://` request instead of sending it over
+     * cleartext HTTP/1.1, which it did before (the mode promises HTTP/3 or a reported failure, never TCP).
+     */
+    @Test fun negative_h3OnlyRefusesHttpUrls() =
+        clientTest {
+            testClient(Http3DiscoveryMode.H3Only).use { c ->
+                val e = assertFailsWith<UnsupportedOperationException> { c.get("http://127.0.0.1:1/") }
+                assertTrue(e.message!!.contains("https"), e.message)
+            }
+        }
+
     @Test fun socketTimeoutMapsToKtor() =
         clientTest {
             val (server, port) =

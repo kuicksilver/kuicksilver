@@ -123,8 +123,8 @@ val client = HttpClient(Kuicksilver) {
   `ParserException` and the connection is closed. A proxy's response to `CONNECT` has the same 64 KiB limit.
 - A proxy (`proxy = ProxyBuilder.http(...)`) is used for HTTP/1.1 only: `CONNECT` tunnels for `https`, absolute-form
   requests for `http`; SOCKS proxies are refused with `UnsupportedOperationException`. HTTP/3 never goes through a proxy:
-  with a proxy, `Auto` and `Preferred` use HTTP/1.1 through it (no Alt-Svc), and `H3Only` fails every `https` request
-  with `UnsupportedOperationException` instead of falling back to TCP.
+  with a proxy, `Auto` and `Preferred` use HTTP/1.1 through it (no Alt-Svc), and `H3Only` fails every request with
+  `UnsupportedOperationException` instead of falling back to TCP.
 - Timeouts come from `HttpTimeout`: the connect timeout (TCP + TLS, or the QUIC handshake) fails with Ktor's
   `ConnectTimeoutException`, the socket timeout with `SocketTimeoutException`; the request timeout is the plugin's own.
   The socket timeout is an inactivity timeout, as Ktor defines it ("maximum time of inactivity between two data
@@ -190,7 +190,7 @@ the server closed meanwhile is detected when it is taken from the pool and repla
 |---|---|
 | `Auto` (default) | HTTP/1.1 first; HTTP/3 once the origin announced it with `Alt-Svc` (see below) |
 | `Preferred` | HTTP/3 by prior knowledge, falling back to HTTP/1.1 (like `curl --http3`); `quicHints` gives the same treatment to listed origins in `Auto` mode |
-| `H3Only` | HTTP/3 only (like `curl --http3-only`): failures are reported, never retried over TCP; with a proxy configured every `https` request fails (`UnsupportedOperationException`) |
+| `H3Only` | HTTP/3 only (like `curl --http3-only`): failures are reported, never retried over TCP; an `http://` or `ws://` request (HTTP/3 needs `https`, RFC 9114 section 3.1), and with a proxy configured every request, fails with `UnsupportedOperationException` |
 | `H1Only` | HTTP/1.1 only |
 
 HTTP/3 responses report `HttpProtocolVersion.HTTP_3_0`. One QUIC connection per origin carries all its requests; a

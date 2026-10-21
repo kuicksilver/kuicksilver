@@ -46,6 +46,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   is the code of a request stream the QUIC layer gives up before the server saw it, which a client may then retry
   (sections 4.1.1 and 8.1); every stream the HTTP/3 layer handled is reset with a code of its own. A code set
   explicitly is kept.
+- Ktor client: `Http3DiscoveryMode.H3Only` now fails an `http://` or `ws://` request with
+  `UnsupportedOperationException` ("HTTP/3 needs an https URL") instead of sending it over cleartext HTTP/1.1. HTTP/3
+  exists only for the `https` scheme (RFC 9114 section 3.1), and the mode promises HTTP/3 or a reported failure, never
+  TCP.
 - Ktor client: `Http3DiscoveryMode.H3Only` with a proxy configured now fails each `https` request with
   `UnsupportedOperationException` ("HTTP/3 cannot go through the configured proxy"), without contacting the proxy.
   It used to send the request over HTTP/1.1 through the proxy, silently breaking the mode's promise (HTTP/3 or a

@@ -136,6 +136,13 @@ internal class KuicksilverEngine(
         val url = data.url
         // H3Only promises HTTP/3 or a failure, never TCP: through a proxy there is no HTTP/3 (UDP would need CONNECT-UDP,
         // RFC 9298, or SOCKS5 UDP ASSOCIATE, neither supported), so the request fails instead of going over HTTP/1.1
+        // HTTP/3 is only for https (RFC 9114 section 3.1): an http:// or ws:// request fails too, never goes over TCP
+        if (!url.protocol.isSecure() && config.http3.discovery == Http3DiscoveryMode.H3Only) {
+            throw UnsupportedOperationException(
+                "Http3DiscoveryMode.H3Only: HTTP/3 needs an https URL (RFC 9114 section 3.1), not ${url.protocol.name}; " +
+                    "use https or another discovery mode",
+            )
+        }
         if (config.proxy != null && url.protocol.isSecure() && config.http3.discovery == Http3DiscoveryMode.H3Only) {
             throw UnsupportedOperationException(
                 "Http3DiscoveryMode.H3Only: HTTP/3 cannot go through the configured proxy (UDP through an HTTP CONNECT or " +
