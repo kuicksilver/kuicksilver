@@ -465,11 +465,9 @@ request now contains its own failure.
 
 ### IPv6 over TCP on Kotlin/Native
 
-Ktor 3.6.0's `ktor-network` sockets on Kotlin/Native (Linux, Apple, Windows) never copy the IPv6 address into the
-`sockaddr_in6` they bind or connect with (`NativeIPv6SocketAddress.nativeAddress` sets family, port, flow label and scope
-only), so every IPv6 bind and connect uses `::`. A connector on `::1` listened on every interface (and, dual-stack, on
-IPv4); a request to an IPv6 address went to `::`, which Linux and Apple route to the local host and Windows refuses
-(`WSAEADDRNOTAVAIL`, 10049). Reported to Ktor as [KTOR-10017](https://youtrack.jetbrains.com/issue/KTOR-10017).
+On Kotlin/Native (Linux, Apple, Windows) Kuicksilver binds and connects its TCP sockets itself instead of through Ktor
+3.6.0's `ktor-network`, because of a Ktor issue with IPv6 addresses reported as
+[KTOR-10017](https://youtrack.jetbrains.com/issue/KTOR-10017) (security, under coordinated disclosure).
 
 Both engines therefore open their HTTP/1.1 TCP sockets through `kuicksilver-ktor-network` (`bindTcp`, `connectTcp`): on
 the JVM and Android that is `ktor-network` as before; on Kotlin/Native it is a TCP socket of Kuicksilver on Ktor's selector
@@ -487,7 +485,7 @@ that binds and connects the address `getaddrinfo` returned. So on every platform
 HTTP/3 uses the accelerated `ksl` UDP socket, which carries the full address on every platform (the Ktor client's endpoint
 is dual-stack, ADR-0006). The portable Kotlin/Native UDP socket (`IoPreference.Portable`, or a sandbox that refuses the
 accelerated one) still uses `ktor-network`: it refuses to bind a specific IPv6 address (`UnsupportedOperationException`)
-and to send to an IPv6 address (`IOException`), instead of
-using `::`. Tests: `ServerH1Test.negative_ipv6ConnectorListensOnItsAddressOnly`,
+and to send to an IPv6 address (`IOException`), for the same reason. Tests:
+`ServerH1Test.negative_ipv6ConnectorListensOnItsAddressOnly`,
 `ClientH1Test.negative_h1ToIpv6LiteralReachesThatAddressOnly`, `ClientH1Test.plainHttpToIpv6Literal`,
 `ClientH3Test.h1ToIpv6Loopback`, `TcpSocketsTest`, `KtorDatagramIoTest`.

@@ -1219,13 +1219,11 @@ Ktor server (`kuicksilver-ktor-server`):
 
 Both Ktor engines on Kotlin/Native (`kuicksilver-ktor-network`, `kuicksilver-ktor-client`, `kuicksilver-ktor-server`):
 
-- HTTP/1.1 over IPv6 binds and connects the address it is given on Linux, Apple and Windows Native. The engines opened
-  their TCP sockets with Ktor 3.6.0's `ktor-network`, whose native sockets never copy the IPv6 address into
-  `sockaddr_in6` and so use `::` for every IPv6 bind and connect: a server connector on `::1` listened on every interface
-  (and on IPv4), a request to an IPv6 address went to the local host on Linux and Apple, and Windows Native refused it
-  with `WSAEADDRNOTAVAIL` (10049). The engines now use `kuicksilver-ktor-network`'s own native TCP sockets (`bindTcp`,
-  `connectTcp`; `ktor-network` as before on the JVM and Android). The portable Native UDP socket, which still uses
-  `ktor-network`, refuses a specific IPv6 bind address and IPv6 destinations instead. Reported to Ktor as KTOR-10017.
+- HTTP/1.1 over IPv6 binds and connects the address it is given on Linux, Apple and Windows Native. On Kotlin/Native
+  the engines now use `kuicksilver-ktor-network`'s own TCP bind and connect (`bindTcp`, `connectTcp`) instead of
+  `ktor-network`'s (`ktor-network` as before on the JVM and Android), because of a Ktor issue reported as KTOR-10017
+  (security, under coordinated disclosure). The portable Native UDP socket, which still uses `ktor-network`, refuses a
+  specific IPv6 bind address and IPv6 destinations.
 
 Samples and testing:
 
@@ -1316,10 +1314,11 @@ Pre-release API and operations review (2026-10-14):
   connection's memory without bound — the records now keep their latest 64 entries; a connection ID the peer retired
   keeps routing for 3 × PTO and is replaced at once, so a peer that retired every new ID grew the retired set and the
   endpoint's routing table without a fixed bound — at most 32 retired IDs route at once, the oldest stops early.
-- Kotlin/Native: a Ktor server connector bound to a specific IPv6 address (for example a loopback-only `::1` endpoint) no
-  longer listens on every interface and on IPv4, and a client request to an IPv6 address no longer reaches a local
-  process on the same port instead of the intended host (threat model section 3.19,
-  `negative_ipv6ConnectorListensOnItsAddressOnly`, `negative_h1ToIpv6LiteralReachesThatAddressOnly`).
+- Kotlin/Native: a Ktor server connector bound to a specific IPv6 address (for example a loopback-only `::1` endpoint)
+  listens on that address only, and a client request to an IPv6 address connects to exactly that address: the engines
+  use their own TCP bind and connect instead of `ktor-network`'s, because of a Ktor issue reported as KTOR-10017
+  (security, under coordinated disclosure; threat model section 3.19, `negative_ipv6ConnectorListensOnItsAddressOnly`,
+  `negative_h1ToIpv6LiteralReachesThatAddressOnly`).
 - `ksl`: `KSL_OPT_CLIENT_CERT` is refused on a client context (it rewrote `SSL_CTX_set_verify` and switched server
   verification off); `KSL_OPT_VERIFY_MODE` and `KSL_OPT_CLIENT_CERT` reject values outside 0..2.
 - `TrustConfig.Pinned` refuses a `Custom` base wrapped in `ExpectedName` as it already refused a bare `Custom` (the spec:

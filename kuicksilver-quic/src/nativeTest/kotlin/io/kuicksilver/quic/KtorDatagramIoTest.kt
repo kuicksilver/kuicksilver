@@ -62,8 +62,8 @@ class KtorDatagramIoTest {
         }
 
     /**
-     * ktor-network 3.6.0's Native sockets put `::` into every IPv6 sockaddr (Ktor issue KTOR-10017): the portable
-     * socket would bind `::` (every interface, IPv4 too) for `::1`. It refuses instead of binding somewhere else.
+     * The portable socket does not use ktor-network for a specific IPv6 address (Ktor issue KTOR-10017, security, under coordinated disclosure): it
+     * refuses `::1` instead of binding.
      */
     @Test fun negative_portableRefusesASpecificIpv6Address() =
         runBlocking {
@@ -71,7 +71,7 @@ class KtorDatagramIoTest {
             Unit
         }
 
-    /** ... and refuses to send to an IPv6 address, which ktor-network would send to `::` (the local host) instead. */
+    /** ... and refuses to send to an IPv6 address. */
     @Test fun negative_portableRefusesIpv6Destinations() =
         runBlocking {
             val a = DatagramIo.open(InetSocketAddress("0.0.0.0", 0), IoPreference.Portable)

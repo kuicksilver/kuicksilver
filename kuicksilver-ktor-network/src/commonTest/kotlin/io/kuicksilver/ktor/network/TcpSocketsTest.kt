@@ -25,9 +25,8 @@ import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 
 /**
- * The engines' TCP sockets ([connectTcp], [bindTcp]) bind and connect the exact address. Ktor 3.6.0's Kotlin/Native sockets
- * used `::` for every IPv6 address (Ktor issue KTOR-10017): a listener on `::1` listened on every interface (and
- * IPv4, dual-stack), and a connect to any IPv6 address went to `::`, the local host on Linux and Apple.
+ * The engines' TCP sockets ([connectTcp], [bindTcp]) bind and connect the exact address: a listener on `::1` listens on
+ * `::1` only, and a connect goes to exactly the address asked for.
  */
 class TcpSocketsTest {
     private fun tcpTest(block: suspend (SelectorManager) -> Unit) =
