@@ -154,6 +154,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   reached the connection as an internal failure and closed it with H3_INTERNAL_ERROR, which also broke peers that
   abandon their GREASE streams. Such a stream is now dropped and spends a glitch token, like an empty one, as quic-go
   drops it; a critical stream reset after its type is still H3_CLOSED_CRITICAL_STREAM.
+- HTTP/3: `:authority` and `host` were barely checked (NUL, CR, LF, whitespace at the ends, userinfo), so values such as
+  `a.example/x?y`, `a b` or `x#y` reached the application, and the Ktor server made them the `Host` header that HTTP/1.1
+  refuses. Both must now be an RFC 3986 authority, `host [":" port]` with a port up to 65535 and a host for http, https
+  and CONNECT (RFC 9114 section 4.3.1, RFC 9110 sections 4.2.1 and 7.2); anything else is a malformed request
+  (H3_MESSAGE_ERROR on its stream), and a client request carrying one fails locally with IllegalArgumentException.
+  The Ktor server's `serverHost` and `serverPort` no longer take userinfo (allowed for other schemes) for the host.
 
 ## [0.2.0] - 2026-10-15
 

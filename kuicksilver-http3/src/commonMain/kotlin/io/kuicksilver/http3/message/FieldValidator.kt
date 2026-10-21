@@ -57,6 +57,94 @@ internal object FieldValidator {
         return null
     }
 
+    private const val SUB_DELIMS = "!$&'()*+,;="
+
+    private fun isHex(c: Char): Boolean = c in '0'..'9' || c in 'a'..'f' || c in 'A'..'F'
+
+    private fun isUnreservedOrSubDelim(c: Char): Boolean = c in 'a'..'z' || c in 'A'..'Z' || c in '0'..'9' || c in "-._~" || c in SUB_DELIMS
+
+    /** `*( unreserved / pct-encoded / sub-delims )`, plus ":" when [colon] (RFC 3986 reg-name and userinfo). */
+    private fun isRegName(
+        s: String,
+        colon: Boolean,
+    ): Boolean {
+        var i = 0
+        while (i < s.length) {
+            val c = s[i]
+            when {
+                c == '%' -> {
+                    if (i + 2 >= s.length || !isHex(s[i + 1]) || !isHex(s[i + 2])) return false
+                    i += 3
+                    continue
+                }
+
+                isUnreservedOrSubDelim(c) || (colon && c == ':') -> {}
+
+                else -> {
+                    return false
+                }
+            }
+            i++
+        }
+        return true
+    }
+
+    /**
+     * What is inside the brackets of an IP-literal (RFC 3986 section 3.2.2): IPvFuture (`v` 1*HEXDIG "." 1*(unreserved /
+     * sub-delims / ":")), or IPv6 written with hex digits, ":" and "." (its finer grammar is left to whoever parses it),
+     * with an optional RFC 6874 zone `%25` 1*(unreserved / pct-encoded).
+     */
+    private fun isIpLiteralBody(s: String): Boolean {
+        if (s.startsWith('v') || s.startsWith('V')) {
+            val dot = s.indexOf('.')
+            if (dot < 2 || !s.substring(1, dot).all(::isHex)) return false
+            val rest = s.substring(dot + 1)
+            return rest.isNotEmpty() && rest.all { isUnreservedOrSubDelim(it) || it == ':' }
+        }
+        val zone = s.indexOf('%')
+        val address = if (zone < 0) s else s.substring(0, zone)
+        if (':' !in address || !address.all { isHex(it) || it == ':' || it == '.' }) return false
+        if (zone < 0) return true
+        val id = s.substring(zone)
+        return id.startsWith("%25") && id.length > 3 && isRegName(id.substring(3), colon = false) &&
+            id.substring(3).none { it in SUB_DELIMS }
+    }
+
+    /**
+     * null when [a] is an RFC 3986 authority, `[ userinfo "@" ] host [ ":" port ]` (section 3.2), else the reason. This is
+     * the syntax `:authority` and `host` carry (RFC 9114 section 4.3.1, RFC 9110 section 7.2): a path, query, fragment,
+     * whitespace or quote in them is malformed, and engines that map them to an HTTP/1.1 `Host` see only values HTTP/1.1
+     * accepts. The port is at most five digits up to 65535; [userinfo] says whether the scheme allows userinfo, and
+     * [hostRequired] whether the host may be empty (it may not for http and https, RFC 9110 section 4.2.1).
+     */
+    fun checkAuthority(
+        a: String,
+        userinfo: Boolean,
+        hostRequired: Boolean,
+    ): String? {
+        val at = a.lastIndexOf('@')
+        if (at >= 0) {
+            if (!userinfo) return "userinfo"
+            if (!isRegName(a.substring(0, at), colon = true)) return "invalid userinfo"
+        }
+        val hostStart = at + 1
+        val hostEnd: Int
+        if (a.startsWith("[", hostStart)) {
+            val close = a.indexOf(']', hostStart)
+            if (close < 0 || !isIpLiteralBody(a.substring(hostStart + 1, close))) return "invalid IP literal"
+            hostEnd = close + 1
+        } else {
+            hostEnd = a.indexOf(':', hostStart).let { if (it < 0) a.length else it }
+            if (!isRegName(a.substring(hostStart, hostEnd), colon = false)) return "invalid host"
+        }
+        if (hostRequired && hostEnd == hostStart) return "empty host"
+        if (hostEnd == a.length) return null
+        if (a[hostEnd] != ':') return "invalid character after the host"
+        val port = a.substring(hostEnd + 1)
+        if (port.length > 5 || !port.all { it in '0'..'9' } || (port.isNotEmpty() && port.toInt() > 65_535)) return "invalid port"
+        return null
+    }
+
     /**
      * `content-length` must be `1*DIGIT` and fit a Long (a larger value would read as "no length"); several values are allowed only when identical (RFC 9110 section 8.6, RFC 9114
      * section 4.1.2) and collapse to one field line for the application. Returns the fields with that collapse applied.
@@ -184,6 +272,15 @@ internal object PseudoHeaders {
             if ((scheme == "http" || scheme == "https") && authority != null && '@' in authority) {
                 throw MalformedMessage("userinfo in :authority") // deprecated for http and https URIs, RFC 9114 section 4.3.1
             }
+        }
+        // RFC 3986 syntax for both (RFC 9114 section 4.3.1); userinfo only where the scheme allows it (not http, https or
+        // the authority-form of CONNECT, RFC 9110 section 9.3.6), and a host for http, https and CONNECT
+        val classicConnect = method == "CONNECT" && protocol == null
+        val userinfo = !classicConnect && scheme != "http" && scheme != "https"
+        val hostRequired = classicConnect || scheme == "http" || scheme == "https"
+        for ((what, v) in listOf(":authority" to pseudo[":authority"], "host" to host)) {
+            if (v == null) continue
+            FieldValidator.checkAuthority(v, userinfo, hostRequired)?.let { throw MalformedMessage("$it in $what") }
         }
         return Request(method, scheme, authority ?: host, path, protocol, Http3Headers(FieldValidator.checkContentLength(regular)))
     }

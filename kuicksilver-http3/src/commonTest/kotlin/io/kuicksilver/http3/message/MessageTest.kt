@@ -225,6 +225,60 @@ class PseudoHeadersTest {
         bad(listOf(":method" to "CONNECT", ":authority" to "user@proxy:443"))
     }
 
+    /**
+     * `:authority` and `host` are an RFC 3986 authority, `host [":" port]` (RFC 9114 section 4.3.1, RFC 9110 section 7.2):
+     * a path, query, fragment, space or bracket outside an IP literal is malformed. The value becomes Ktor's `Host`, which
+     * HTTP/1.1 refuses with these characters (review h-http L4).
+     */
+    @Test fun negative_h3AuthoritySyntax() {
+        for (a in listOf(
+            "a.example/x?y",
+            "a b",
+            "x#y",
+            "a.example/",
+            "a.example?q",
+            "[::1",
+            "::1",
+            "[::1]x",
+            "a.example:8o",
+            "a.example:80:1",
+            "a.example:65536",
+            "[a/b]",
+            "a%zz.example",
+            "a\"b",
+            "a.example:-1",
+            ":443",
+            "a<b>",
+        )) {
+            bad(with(":authority", a))
+            bad(base.filter { it.first != ":authority" } + ("host" to a))
+        }
+        bad(listOf(":method" to "CONNECT", ":authority" to "proxy/x:443"))
+        bad(
+            listOf(":method" to "CONNECT", ":protocol" to "websocket", ":scheme" to "https", ":authority" to "a b", ":path" to "/"),
+            connect = true,
+        )
+        for (a in listOf(
+            "example.com",
+            "example.com:8443",
+            "EXAMPLE.com",
+            "127.0.0.1:80",
+            "[::1]",
+            "[::1]:443",
+            "[v7.fe80::1+eth0]",
+            "xn--bcher-kva.example",
+            "a-b_c~d.example",
+            "a%41.example",
+            "example.com:",
+            "!$&'()*+,;=.example",
+        )) {
+            assertEquals(a, PseudoHeaders.parseRequest(with(":authority", a), false).authority, a)
+        }
+        // userinfo stays allowed where the scheme permits it (only http and https deprecate it)
+        val ftp = listOf(":method" to "GET", ":scheme" to "ftp", ":authority" to "u:p@h", ":path" to "/")
+        assertEquals("u:p@h", PseudoHeaders.parseRequest(ftp, false).authority)
+    }
+
     /** RFC 9114 section 4.3.1: Host and :authority MUST match; a second Host is malformed too (quic-go: too many Host headers). */
     @Test fun negative_h3SecondHostRejected() {
         bad(base + ("host" to "example.com") + ("host" to "other.com"))

@@ -142,11 +142,9 @@ internal class H3ConnectionPoint(
     @Deprecated("Use localPort or serverPort instead")
     override val port: Int get() = serverPort
     override val localPort: Int get() = localAddr.port
-    override val serverPort: Int get() = h3.authority?.substringAfterLast(":", "")?.toIntOrNull() ?: 443
+    override val serverPort: Int get() = h3.authority?.let(::authorityPort) ?: 443
     override val localHost: String get() = localAddr.ipLiteral()
-    override val serverHost: String get() =
-        h3.authority?.let { if (it.startsWith("[")) it.substringBefore("]") + "]" else it.substringBeforeLast(":") }
-            ?: localHost
+    override val serverHost: String get() = h3.authority?.let(::authorityHost) ?: localHost
     override val localAddress: String get() = localAddr.ipLiteral()
 
     /** The client's address on the current path: it changes when the client migrates (RFC 9000 section 9). */
@@ -220,4 +218,20 @@ internal open class H3Response(
     override fun setStatus(statusCode: HttpStatusCode) {
         this.statusCode = statusCode
     }
+}
+
+/**
+ * The host of an RFC 3986 authority as kuicksilver-http3 admits it (`[ userinfo "@" ] host [ ":" port ]`, RFC 9114 section
+ * 4.3.1): an IP literal keeps its brackets, and userinfo (allowed for schemes other than http and https) is not part of it.
+ */
+internal fun authorityHost(authority: String): String {
+    val a = authority.substringAfterLast('@')
+    return if (a.startsWith("[")) a.substringBefore("]") + "]" else a.substringBefore(':')
+}
+
+/** The port of an authority (see [authorityHost]), or null when it has none. */
+internal fun authorityPort(authority: String): Int? {
+    val a = authority.substringAfterLast('@')
+    val hostEnd = if (a.startsWith("[")) a.indexOf(']') + 1 else a.indexOf(':').let { if (it < 0) a.length else it }
+    return a.substring(hostEnd).removePrefix(":").toIntOrNull()
 }
