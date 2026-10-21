@@ -17,3 +17,11 @@ docs/adr/0013-0rtt-anti-replay-design.md | symbol | `KSL_OPT_EARLY_DATA_MAX_AGE`
 docs/adr/0013-0rtt-anti-replay-design.md | symbol | `QuicConfig.maxEarlyDataAge` # dropped by the review and by ADR-0015
 docs/adr/0013-0rtt-anti-replay-design.md | symbol | `Config.Allow0RTT` # quic-go's option, not ours
 docs/adr/0015-0rtt-implementation.md | symbol | `KSL_WANT_EARLY` # an alternative the ADR rejects
+
+# threat-model §5 lists controls by name; those without a test of that name say so and name where they are covered.
+docs/spec/threat-model.md | symbol | `negative_perDomainNscWithoutHostFails` # a platform fact, marked in §5
+docs/spec/threat-model.md | symbol | `negative_appleHostNilRejected` # a platform fact, marked in §5
+docs/spec/threat-model.md | symbol | `negative_forgotSetHostOrVerifyPeer` # the C test test_no_verify_name, marked in §5
+docs/spec/threat-model.md | symbol | `negative_channelBindingTls12NoEms` # the C section tcp_tls12_profile_and_ems, marked in §5
+docs/spec/threat-model.md | symbol | `negative_systemOpenSslWithKeylogEnvRefused` # tools/ci/system-openssl.sh, marked in §5
+docs/spec/threat-model.md | symbol | `negative_exportedOpenSslSymbols` # the export scripts, marked in §5
