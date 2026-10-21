@@ -211,6 +211,11 @@ origin's host. The rules:
   to every HTTP/1.1 response, including the ones served while a cached alternative is broken or lost the race;
 - `ma` defaults to 86400 seconds and expired entries are ignored;
 - an alternative on an unprivileged port (1024 and up) is refused for an origin on a privileged one, as Chromium does;
+- an alternative on a loopback, link-local or private address, or a `localhost` name, is refused unless the origin is
+  on such an address too, and one on an unspecified, multicast or broadcast address always; an IPv4 address counts in
+  every form the resolvers accept without DNS (`127.1`, `2130706433`), and a numeric host in octal or hex (`0177.0.0.1`,
+  `0x7f.1`, which platforms read differently) or that is no address (`256.1.1.1`) is always refused. A DNS name is not
+  resolved for this check;
 - only `h3` alternatives are used.
 
 Entries live in `http3 { altSvcStore = ... }` — `InMemoryAltSvcStore` by default. `FileAltSvcStore(path)` keeps them

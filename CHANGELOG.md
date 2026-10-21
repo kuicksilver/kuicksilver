@@ -126,6 +126,13 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   acknowledgements and losses are binary searches, and a MAX_STREAM_DATA that raises nothing does no work, like MAX_DATA.
   A range declared lost after part of it was acknowledged is resent without the acknowledged part.
 
+- Ktor client: shorthand IPv4 literals passed the Alt-Svc local-network filter (threat model 3.14). Only the dotted
+  quad counted as an address, so `h3="127.1:443"`, `"2130706433:443"`, `"10.1:443"` or `"192.168.1:443"` were taken as
+  DNS names, while the JVM's `InetAddress` and getaddrinfo/inet_aton map them to 127.0.0.1, 10.0.0.1 and 192.168.0.1
+  without any lookup: a public origin could still aim clients' QUIC Initials at their own network. Every inet_aton form
+  with decimal parts is now classified as the address it names, on every platform; a numeric host with an octal or hex
+  part (`0177.0.0.1`, `0x7f.1`: octal or hex to inet_aton, decimal or refused by the JVM) or that is no address
+  (`256.1.1.1`, `4294967296`) is never a destination.
 - Ktor server: a graceful `stop(gracePeriod, timeout)` took the whole grace period while any HTTP/1.1 keep-alive
   client was connected. The stop waits for every HTTP/1.1 connection, and an idle keep-alive connection sat in the
   request parser (until the idle timeout), so it was only cut at the grace deadline. Once accepting stops, an HTTP/1.1
