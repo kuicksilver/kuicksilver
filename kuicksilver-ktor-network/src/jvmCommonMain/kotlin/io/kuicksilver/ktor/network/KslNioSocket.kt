@@ -36,7 +36,7 @@ import kotlin.time.Duration.Companion.seconds
  * write(buffer) } while (buffer.hasRemaining() && rc > 0) }` inside `channel.read {}`: when the kernel's send buffer is full
  * `write` answers 0 and the outer loop retries at once, so the select after it is never reached. Every peer that reads slower
  * than we write kept a `Dispatchers.IO` thread at 100 % CPU, and the loop cannot be cancelled; some 64 such peers exhaust
- * `Dispatchers.IO` (fable review of k8/native-fixes). This writer writes what the channel holds, and when `write` answers 0
+ * `Dispatchers.IO` (0.2.1 review). This writer writes what the channel holds, and when `write` answers 0
  * suspends in [SelectorManager.select] on the socket's own selector until the socket is writable again: a slow or silent peer
  * costs a suspended coroutine, and cancelling the socket's job ends the wait.
  *
