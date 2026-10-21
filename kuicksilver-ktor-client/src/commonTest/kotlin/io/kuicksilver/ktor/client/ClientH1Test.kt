@@ -128,24 +128,47 @@ class ClientH1Test {
         }
 
     /**
-     * The client connects to the address in the URL and nowhere else: a request to `[::ffff:127.0.0.1]` (where nothing
-     * listens) does not reach the server on `::1`.
+     * The client connects to the address in the URL and nowhere else: a request to `[::ffff:127.0.0.1]` (where the test's
+     * own listener closes every connection) does not reach the server on `::1`.
+     *
+     * The test owns `127.0.0.1` on the port too, with a listener that closes every connection: a port free on `::1` says
+     * nothing about `127.0.0.1`, and an unrelated server there (bound to that number after the decoy, which macOS and
+     * Linux let through) answered the request and failed the test as if the decoy had.
      */
     @Test fun negative_h1ToIpv6LiteralReachesThatAddressOnly() =
         clientTest {
-            val (server, port) =
-                runCatching { testServer(plain = true, host = "::1") { routing { get("/") { call.respondText("decoy") } } } }
-                    .getOrElse {
-                        println("negative_h1ToIpv6LiteralReachesThatAddressOnly skipped: needs an IPv6 loopback ($it)")
-                        return@clientTest
-                    }
+            val selector = SelectorManager(Dispatchers.Default)
             try {
-                testClient().use { c ->
-                    val r = runCatching { c.get("http://[::ffff:127.0.0.1]:$port/").bodyAsText() }
-                    assertTrue(r.isFailure, "a request to [::ffff:127.0.0.1]:$port reached the server on [::1]: ${r.getOrNull()}")
+                runCatching { aSocket(selector).tcp().bind("::1", 0).close() }.onFailure {
+                    println("negative_h1ToIpv6LiteralReachesThatAddressOnly skipped: needs an IPv6 loopback ($it)")
+                    return@clientTest
+                }
+                var decoyServed = 0
+                val (v4, decoy, port) =
+                    bindOnSamePort(
+                        first = { aSocket(selector).tcp().bind("127.0.0.1", 0).let { it to (it.localAddress as InetSocketAddress).port } },
+                        release = { it.close() },
+                    ) { p ->
+                        testServer(plain = true, host = "::1", port = p) {
+                            routing { get("/") { call.respondText("decoy").also { decoyServed++ } } }
+                        }.first
+                    }
+                coroutineScope {
+                    val closer = launch { while (true) v4.accept().close() }
+                    try {
+                        testClient().use { c ->
+                            val r = runCatching { c.get("http://[::ffff:127.0.0.1]:$port/").bodyAsText() }
+                            assertTrue(r.isFailure, "a request to [::ffff:127.0.0.1]:$port was answered: ${r.getOrNull()}")
+                            assertEquals(0, decoyServed, "a request to [::ffff:127.0.0.1]:$port reached the server on [::1]")
+                        }
+                    } finally {
+                        closer.cancel()
+                        v4.close()
+                        decoy.stop(100, 500)
+                    }
                 }
             } finally {
-                server.stop(100, 500)
+                selector.close()
             }
         }
 

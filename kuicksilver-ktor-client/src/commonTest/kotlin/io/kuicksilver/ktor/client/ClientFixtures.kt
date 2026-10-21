@@ -33,10 +33,14 @@ internal object ClientFixtures {
 
 internal typealias TestServer = EmbeddedServer<KuicksilverApplicationEngine, KuicksilverApplicationEngine.Configuration>
 
-/** A Kuicksilver server engine on [host] (IPv4 loopback): TLS (HTTP/1.1 + HTTP/3) unless [plain]; returns it and its port. */
+/**
+ * A Kuicksilver server engine on [host] (IPv4 loopback) and [port] (0: a free one): TLS (HTTP/1.1 + HTTP/3) unless [plain];
+ * returns it and its port. A start that fails (the port is taken) stops the engine before it rethrows.
+ */
 internal suspend fun testServer(
     plain: Boolean = false,
     host: String = "127.0.0.1",
+    port: Int = 0,
     configure: KuicksilverApplicationEngine.Configuration.() -> Unit = {},
     module: Application.() -> Unit,
 ): Pair<TestServer, Int> {
@@ -45,17 +49,22 @@ internal suspend fun testServer(
             if (plain) {
                 connector {
                     this.host = host
-                    port = 0
+                    this.port = port
                 }
             } else {
                 tlsConnector(ClientFixtures.identity()) {
                     this.host = host
-                    port = 0
+                    this.port = port
                 }
             }
             configure()
         }, module = module)
-    server.startSuspend(false)
+    try {
+        server.startSuspend(false)
+    } catch (e: Throwable) {
+        runCatching { server.stopSuspend(0, 0) }
+        throw e
+    }
     return server to
         server.engine
             .resolvedConnectors()
@@ -77,6 +86,35 @@ internal fun testClient(
         }
         block()
     }
+
+/**
+ * Two sockets on one port number, both owned by the test: [first] binds a free port and returns what it bound with the
+ * port, [second] binds that number. While [second] finds the number taken (by an unrelated process: a free port of one
+ * socket kind or address says nothing about another), the pair is released ([release]) and tried again on a new port.
+ * Ports chosen this way cannot collide with another listener the way "the same number is surely free elsewhere" can.
+ */
+internal suspend fun <A, B> bindOnSamePort(
+    first: suspend () -> Pair<A, Int>,
+    release: suspend (A) -> Unit,
+    second: suspend (port: Int) -> B,
+): Triple<A, B, Int> {
+    var last: Throwable? = null
+    repeat(SAME_PORT_ATTEMPTS) {
+        val (a, port) = first()
+        try {
+            return Triple(a, second(port), port)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            release(a)
+            throw e
+        } catch (e: Throwable) {
+            release(a)
+            last = e
+        }
+    }
+    throw IllegalStateException("no port free for both sockets after $SAME_PORT_ATTEMPTS attempts", last)
+}
+
+private const val SAME_PORT_ATTEMPTS = 20
 
 internal fun clientTest(block: suspend () -> Unit) = runBlocking { withTimeout(60.seconds) { block() } }
 
