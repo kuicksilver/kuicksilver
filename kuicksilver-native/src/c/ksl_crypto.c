@@ -50,8 +50,10 @@ int ksl_sign(int alg, const uint8_t *key_der, size_t klen, const uint8_t *msg, s
 }
 int ksl_verify(int alg, const uint8_t *pub_der, size_t plen, const uint8_t *msg, size_t mlen, const uint8_t *sig, size_t slen) {
     const unsigned char *p = pub_der; EVP_PKEY *k = d2i_PUBKEY(NULL, &p, (long)plen); if (!k || !alg_ok(alg, k)) { EVP_PKEY_free(k); return KSL_ERROR; }
-    EVP_MD_CTX *m = EVP_MD_CTX_new(); int r = m && EVP_DigestVerifyInit(m, NULL, alg == KSL_SIG_ECDSA_P256 ? EVP_sha256() : NULL, NULL, k) == 1 ? EVP_DigestVerify(m, sig, slen, msg, mlen) : -1;
-    EVP_MD_CTX_free(m); EVP_PKEY_free(k); ERR_clear_error(); return r == 1 ? 1 : r == 0 ? 0 : KSL_ERROR;
+    /* once the key parsed and the context is set up, every answer but 1 is a bad signature: EVP_DigestVerify answers -1 (not 0)
+       for an ECDSA signature that is not a DER ECDSA-Sig-Value (RFC 8446 section 4.2.3), which comes from the peer, not from us */
+    EVP_MD_CTX *m = EVP_MD_CTX_new(); int r = m && EVP_DigestVerifyInit(m, NULL, alg == KSL_SIG_ECDSA_P256 ? EVP_sha256() : NULL, NULL, k) == 1 ? (EVP_DigestVerify(m, sig, slen, msg, mlen) == 1 ? 1 : 0) : KSL_ERROR;
+    EVP_MD_CTX_free(m); EVP_PKEY_free(k); ERR_clear_error(); return r;
 }
 int ksl_spki_sha256(const uint8_t *cert_der, size_t len, uint8_t out[32]) {
     const unsigned char *p = cert_der; X509 *x = d2i_X509(NULL, &p, (long)len); if (!x) return KSL_ERROR;

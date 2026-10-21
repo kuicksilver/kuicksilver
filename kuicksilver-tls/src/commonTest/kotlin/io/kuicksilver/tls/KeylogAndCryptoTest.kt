@@ -101,6 +101,19 @@ class KslCryptoTest {
         }
     }
 
+    /** The KDoc promises false for a bad signature: one that is not a DER ECDSA-Sig-Value is a bad signature, not an error. */
+    @Test fun negative_malformedEcdsaSignatureVerifiesFalse() {
+        val msg = "kuicksilver".encodeToByteArray()
+        val spki = SpkiExtractor.spkiDer(TestCerts.server)
+        assertFalse(KslCrypto.verify(SignatureAlgorithm.EcdsaP256, spki, msg, ByteArray(8)))
+        assertFalse(KslCrypto.verify(SignatureAlgorithm.EcdsaP256, spki, msg, byteArrayOf(0x30, 0x7f, 0x02)))
+        assertFalse(KslCrypto.verify(SignatureAlgorithm.EcdsaP256, spki, msg, ByteArray(0)))
+        // a key of the wrong type still throws
+        assertFailsWith<io.kuicksilver.native.KslException.Internal> {
+            KslCrypto.verify(SignatureAlgorithm.Ed25519, spki, msg, ByteArray(64))
+        }
+    }
+
     @Test fun randomNotRepeating() {
         assertFalse(KslCrypto.randomBytes(32).contentEquals(KslCrypto.randomBytes(32)))
         assertEquals(0, KslCrypto.randomBytes(0).size)

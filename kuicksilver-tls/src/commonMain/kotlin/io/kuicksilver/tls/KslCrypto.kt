@@ -84,7 +84,10 @@ public object KslCrypto {
         return Ksl.sign(alg.ksl, privateKeyDer, data)
     }
 
-    /** Verifies with a DER SubjectPublicKeyInfo; a key of the wrong type throws, a bad signature returns false. */
+    /**
+     * Verifies with a DER SubjectPublicKeyInfo; a key of the wrong type throws, a bad signature returns false (also one that is
+     * not a DER-encoded ECDSA signature, or empty).
+     */
     public fun verify(
         alg: SignatureAlgorithm,
         publicKeyDer: ByteArray,

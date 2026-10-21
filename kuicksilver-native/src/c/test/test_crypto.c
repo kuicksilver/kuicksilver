@@ -28,6 +28,10 @@ void run_crypto(void) {
     uint8_t spki[600]; size_t spl = ksl_spki_der_for_test(cert, cl, spki, sizeof spki);
     CHECK(spl > 0 && ksl_verify(KSL_SIG_ECDSA_P256, spki, spl, msg, sizeof msg, sig, sl) == 1, "ecdsa verify with the certificate's SPKI");
     sig[10] ^= 1; CHECK(ksl_verify(KSL_SIG_ECDSA_P256, spki, spl, msg, sizeof msg, sig, sl) == 0, "negative: tampered signature");
+    /* KslCrypto.verify promises "a bad signature returns false": a signature that is not a DER ECDSA-Sig-Value is a bad signature,
+       not a wrong key (review h-native) */
+    { const uint8_t junk[8] = {0}; CHECK(ksl_verify(KSL_SIG_ECDSA_P256, spki, spl, msg, sizeof msg, junk, sizeof junk) == 0, "negative: a signature that is not DER is a bad signature (0), not an error");
+      CHECK(ksl_verify(KSL_SIG_ECDSA_P256, spki, spl, msg, sizeof msg, sig, 0) == 0, "negative: an empty signature is a bad signature (0)"); }
     uint8_t spki_hash[32]; size_t bl; uint8_t *b64 = read_file(TESTDATA "server.spki.sha256.b64", &bl);
     CHECK(ksl_spki_sha256(cert, cl, spki_hash) == KSL_OK && ksl_base64_equals_for_test(spki_hash, 32, (const char *)b64, bl), "spki sha256 matches openssl CLI");
     free(key); free(cert); free(b64);
