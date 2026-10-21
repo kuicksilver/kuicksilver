@@ -34,6 +34,24 @@ win_jvm() { # CI's windows-jvm on the Windows 11 VM; win-jvm-test's summary does
   printf '%s\n' "$summary" | grep -Eq 'tests +[1-9]' || { echo "FAIL: no tests ran"; return 1; }
   ! printf '%s\n' "$summary" | grep -Eq 'NO REPORT|failed +[1-9]|errors +[1-9]'
 }
+# Preflight, before step 1: the steps that run scripts rather than Gradle tasks read build/openssl/<target> directly
+# (c-tests, keylog check and double build: macos-arm64; the Docker c-tests and JNI builds: linux-x64, linux-arm64; the
+# mingw dll: mingw-x64). CI builds those in jobs of their own; here a fresh worktree had none, and the Docker steps failed
+# an hour into the gate (2026-10-21). The opensslBuild* tasks build what is missing or stale (the pin is one of their
+# inputs) and do nothing otherwise; a failure refuses the gate before anything ran.
+preflight=(:kuicksilver-native:opensslBuildMacosArm64)
+[ "$skip_docker" = 1 ] || preflight+=(:kuicksilver-native:opensslBuildLinuxX64 :kuicksilver-native:opensslBuildLinuxArm64 :kuicksilver-native:opensslBuildMingwX64)
+if [ "$dry" = 1 ]; then
+  echo "preflight: $G ${preflight[*]} (dry run)"
+else
+  mkdir -p build/ci; printf 'preflight: OpenSSL for the script steps (%s) ... ' "${preflight[*]##*:opensslBuild}"
+  # shellcheck disable=SC2086
+  if $G "${preflight[@]}" > build/ci/preflight.log 2>&1; then echo ok
+  else
+    echo "FAIL (see build/ci/preflight.log)"; tail -15 build/ci/preflight.log | sed 's/^/     | /'
+    echo "local matrix: refused before step 1; fix and run: ./gradlew --max-workers=2 ${preflight[*]}" >&2; exit 1
+  fi
+fi
 export SIZE_LIMIT="${SIZE_LIMIT:-3000000}"
 aar=kuicksilver-native/build/outputs/aar/kuicksilver-native.aar
 step "lint: action/image pins"                 bash tools/check/pins.sh .
