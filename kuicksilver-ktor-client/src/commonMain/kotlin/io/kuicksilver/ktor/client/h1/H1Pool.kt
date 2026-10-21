@@ -7,6 +7,7 @@ package io.kuicksilver.ktor.client.h1
 import io.ktor.client.engine.ProxyType
 import io.ktor.client.engine.resolveAddress
 import io.ktor.client.engine.type
+import io.ktor.client.network.sockets.SocketTimeoutException
 import io.ktor.client.plugins.ConnectTimeoutException
 import io.ktor.client.request.HttpRequestData
 import io.ktor.client.request.HttpResponseData
@@ -247,9 +248,11 @@ internal class H1Pool(
                 events.emit("connectionReleased") { connectionReleased(data, HttpProtocolVersion.HTTP_1_1, kept = false) }
                 bodyJob?.failure?.let { throw it }
                 // a pooled connection the server already closed: one transparent retry on a fresh connection, for an
-                // idempotent request with a replayable body only (a non-idempotent one may have been processed, RFC 9112 section 9.3.1)
+                // idempotent request with a replayable body only (a non-idempotent one may have been processed, RFC 9112 section 9.3.1);
+                // a socket timeout is an IOException too, but a slow server, not a closed connection: it is not repeated
                 if (reused && first && bodyJob == null && data.method.isIdempotent() &&
-                    (e is ClosedReadChannelException || e is kotlinx.io.IOException) && e !is TlsException
+                    (e is ClosedReadChannelException || e is kotlinx.io.IOException) && e !is TlsException &&
+                    e !is SocketTimeoutException
                 ) {
                     first = false
                     events.emit("retry") { retry(data, 2, e) }

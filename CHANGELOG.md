@@ -155,7 +155,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   timeout after its last progress. HTTP/1.1 also no longer leaves the wait for the response head running past the
   timeout: the vendored response reader runs in the call's context, which the timeout's cancellation did not reach, so
   the timeout only took effect when the head arrived or the connection closed; the connection is now closed at the
-  deadline. A byte-array body written before the response is awaited is under the same timer (it had none).
+  deadline. A byte-array body written before the response is awaited is under the same timer (it had none). A socket
+  timeout on a pooled connection is not taken for a stale connection: the request is not repeated on a new one (as an
+  `IOException`, it was, so a GET to a slow handler ran twice).
 - Ktor client: shorthand IPv4 literals passed the Alt-Svc local-network filter (threat model 3.14). Only the dotted
   quad counted as an address, so `h3="127.1:443"`, `"2130706433:443"`, `"10.1:443"` or `"192.168.1:443"` were taken as
   DNS names, while the JVM's `InetAddress` and getaddrinfo/inet_aton map them to 127.0.0.1, 10.0.0.1 and 192.168.0.1

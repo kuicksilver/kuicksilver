@@ -136,6 +136,26 @@ class H1SocketTimeoutTest {
             assertEquals(500L + SOCKET_TIMEOUT, currentTime)
         }
 
+    /**
+     * A socket timeout on a pooled (reused) connection is not the stale-connection case: the request is not repeated
+     * on a new connection. Ktor's SocketTimeoutException is an IOException, which the one transparent retry accepted,
+     * so a GET to a slow handler ran twice and failed after two timeouts. Here a retry would connect to port 1 and fail
+     * with another exception.
+     */
+    @Test fun negative_socketTimeoutOnPooledConnectionIsNotRetried() =
+        runTest(timeout = 20.seconds) {
+            val wire = Wire()
+            backgroundScope.launch { while (wire.toServer.readLineStrict()?.isNotEmpty() == true) continue } // never answers
+            val get =
+                HttpRequestBuilder()
+                    .apply {
+                        url("http://127.0.0.1:1/")
+                        timeout { socketTimeoutMillis = SOCKET_TIMEOUT }
+                    }.build()
+            assertFailsWith<SocketTimeoutException> { exchange(wire, get, reused = true) }
+            assertEquals(SOCKET_TIMEOUT, currentTime)
+        }
+
     private companion object {
         const val SOCKET_TIMEOUT = 1_000L
     }

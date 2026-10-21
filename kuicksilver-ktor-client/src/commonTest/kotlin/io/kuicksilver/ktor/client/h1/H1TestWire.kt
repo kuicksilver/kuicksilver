@@ -43,10 +43,14 @@ private class NoSocket(
     }
 }
 
-/** One exchange of [data] through [H1Pool.execute] on [wire] (cleartext allowed); the call ends when it returns. */
+/**
+ * One exchange of [data] through [H1Pool.execute] on [wire] (cleartext allowed), as a pooled connection when [reused];
+ * the call ends when it returns.
+ */
 internal suspend fun TestScope.exchange(
     wire: Wire,
     data: HttpRequestData,
+    reused: Boolean = false,
 ): HttpResponseData {
     val selector = SelectorManager(Dispatchers.Default)
     val pool = H1Pool(KuicksilverEngineConfig(), selector)
@@ -54,7 +58,7 @@ internal suspend fun TestScope.exchange(
     val call = Job()
     try {
         val conn = H1Connection(NoSocket(wire), null, wire.fromServer, wire.toServer, "test")
-        return pool.execute(data, coroutineContext + call, H1Pool.Opened(conn, reused = false))
+        return pool.execute(data, coroutineContext + call, H1Pool.Opened(conn, reused))
     } finally {
         call.cancel()
         selector.close()
