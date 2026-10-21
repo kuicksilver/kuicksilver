@@ -356,11 +356,9 @@ public actual object Ksl {
         out: ByteArray,
         outOffset: Int,
     ) {
-        if (offset < 0 || length < 0 || offset + length > input.capacity || outOffset < 0 ||
-            outOffset + 16 > out.size
-        ) {
-            throw IndexOutOfBoundsException("mac16 $offset+$length > ${input.capacity} or out $outOffset+16 > ${out.size}")
-        }
+        // checkRange: offset + length could wrap past Int.MAX_VALUE, and the native side adds the offset to the address unchecked
+        checkRange(input.capacity, offset, length, "mac16 input")
+        checkRange(out.size, outOffset, 16, "mac16 output")
         if (KslNative.keyMac16(key, input.direct(), offset, length, out, outOffset) !=
             KslConst.OK
         ) {
@@ -376,16 +374,8 @@ public actual object Ksl {
         payloadOffset: Int,
         payloadLength: Int,
     ) {
-        if (headerOffset < 0 || headerLength < 0 ||
-            headerOffset + headerLength > header.capacity
-        ) {
-            throw IndexOutOfBoundsException("header $headerOffset+$headerLength > ${header.capacity}")
-        }
-        if (payloadOffset < 0 || payloadLength < 0 ||
-            payloadOffset + payloadLength > payload.capacity
-        ) {
-            throw IndexOutOfBoundsException("payload $payloadOffset+$payloadLength > ${payload.capacity}")
-        }
+        checkRange(header.capacity, headerOffset, headerLength, "header")
+        checkRange(payload.capacity, payloadOffset, payloadLength, "payload")
     }
 
     public actual fun seal(
@@ -449,11 +439,8 @@ public actual object Ksl {
         sampleOffset: Int,
         mask: ByteArray,
     ) {
-        if (mask.size < 5 || sampleOffset < 0 ||
-            sampleOffset + 16 > sample.capacity
-        ) {
-            throw IndexOutOfBoundsException("sample $sampleOffset+16 > ${sample.capacity}")
-        }
+        if (mask.size < 5) throw IndexOutOfBoundsException("mask ${mask.size} < 5")
+        checkRange(sample.capacity, sampleOffset, 16, "sample")
         if (KslNative.headerMask(key, sample.direct(), sampleOffset, mask) < 0) internal("header mask failed")
     }
 

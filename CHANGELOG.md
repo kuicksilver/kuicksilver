@@ -198,6 +198,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   it in the start line and field lines only; the trailer section keeps accepting it). For a malformed chunked request body the engine writes no response itself: the handler's receive of
   the body fails with `BadRequestException`, which Ktor answers with 400 and a fixed text unless the application
   handles it (it was a plain IOException, answered with 500 and the parser's message), and the connection closes.
+- `PacketProtector` and `ResetKey` (`seal`, `open`, `headerMask`, `mac16`, through `Ksl`): an offset plus a length past
+  `Int.MAX_VALUE` wrapped around the bounds check, and the native call then read or wrote about 2 GiB outside the buffer
+  instead of throwing the documented `IndexOutOfBoundsException`. Not reachable from the QUIC codec, whose lengths come
+  from datagrams of at most 64 KiB.
 - `KslCrypto.verify` returns false for an ECDSA signature that is not DER-encoded, as its KDoc says of a bad signature;
   it threw `KslException.Internal` ("key does not match the algorithm") for such attacker-supplied bytes.
 - Native UDP (Linux, Apple): a trickle of empty UDP datagrams could freeze an endpoint loop. `ksl_udp_recv` re-armed its

@@ -239,6 +239,36 @@ class KslSmokeTest {
         }
     }
 
+    /**
+     * An offset plus a length past Int.MAX_VALUE must not wrap around the bounds check: the native side adds the offset to the
+     * buffer's address unchecked. The seal case comes first: before the fix it reached ksl_seal, which refused on its own, and the
+     * other cases would have read about 2 GiB past the buffer.
+     */
+    @Test fun negative_packetProtectionBoundsDoNotOverflow() {
+        val dcid = byteArrayOf(1, 2, 3, 4, 5, 6, 7, 8)
+        val w = Ksl.keyInitial(dcid, false, KslConst.DIR_WRITE, 1)
+        val r = Ksl.keyInitial(dcid, true, KslConst.DIR_READ, 1)
+        val reset = Ksl.keyRandom(KslConst.EKEY_RESET)
+        val header = PacketBuffer.allocate(8)
+        val payload = PacketBuffer.allocate(64)
+        val big = Int.MAX_VALUE
+        try {
+            assertFailsWith<IndexOutOfBoundsException> { Ksl.seal(w, 0, header, 0, 5, payload, 1, big) }
+            assertFailsWith<IndexOutOfBoundsException> { Ksl.seal(w, 0, header, 1, big, payload, 0, 16) }
+            assertFailsWith<IndexOutOfBoundsException> { Ksl.open(r, 0, header, 0, 5, payload, 1, big) }
+            assertFailsWith<IndexOutOfBoundsException> { Ksl.open(r, 0, header, big, 2, payload, 0, 32) }
+            assertFailsWith<IndexOutOfBoundsException> { Ksl.headerMask(w, payload, big - 8, ByteArray(5)) }
+            assertFailsWith<IndexOutOfBoundsException> { Ksl.keyMac16(reset, payload, 1, big, ByteArray(16), 0) }
+            assertFailsWith<IndexOutOfBoundsException> { Ksl.keyMac16(reset, payload, 0, 8, ByteArray(16), big - 8) }
+        } finally {
+            Ksl.keyFree(w)
+            Ksl.keyFree(r)
+            Ksl.keyFree(reset)
+            header.close()
+            payload.close()
+        }
+    }
+
     @Test fun cryptoHelpers() {
         assertEquals(32, Ksl.sha2(256, byteArrayOf()).size)
         assertEquals(48, Ksl.sha2(384, byteArrayOf()).size)
