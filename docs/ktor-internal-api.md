@@ -36,5 +36,6 @@ the `HttpRequestLifecycle` plugin's close notification does not fire over HTTP/1
 |---|---|---|---|
 | `Selectable`, `InterestSuspensionsMap`, `SelectorManager.select` on a selectable of our own | `ktor-network` (JVM), public but meant for Ktor's own sockets | `engineSelector()` keeps a pipe registered on the engines' `SelectorManager` so it never goes idle: an idle `ActorSelectorManager` never deregisters the key of a closed socket and NIO then never closes its descriptor (reported to Ktor as [KTOR-10016](https://youtrack.jetbrains.com/issue/KTOR-10016)) | relies on `ActorSelectorManager` selecting while an interest is pending and resuming suspensions with an error when it closes; `EngineSelectorTest` checks the effect, and the workaround goes once Ktor is fixed |
 
-The vendored engine contract tests (`src/jvmTest/.../contract` of both engine modules, `NOTICE`) are re-vendored from
-the same Ktor tag on every upgrade; their exclusions are listed in `docs/guide/ktor.md`, "Compatibility".
+The vendored engine contract tests (`src/*Test/.../contract` of both engine modules, in their common, JVM, Android and Native
+test source sets; `NOTICE`) are re-vendored from the same Ktor tag on every upgrade; their exclusions are listed in
+`docs/guide/ktor.md`, "Compatibility".
