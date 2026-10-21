@@ -45,6 +45,22 @@ class CertificatePemTest {
         assertFailsWith<TlsException.Config> { Certificate.parsePem(pem("CERTIFICATE", byteArrayOf(0x30, 4, 0x30, 2, 5, 0))) }
     }
 
+    /**
+     * A four-byte DER length past Int.MAX_VALUE (0x7fffffff, or with the top bit set: negative as an Int) must not wrap the
+     * walker's bounds check: the class promises [TlsException.Config] for a certificate it cannot read, not an index error, and
+     * a child whose end lands before its start would walk back over the same bytes.
+     */
+    @Test fun negative_derLengthPastIntMaxIsMalformed() {
+        fun cert(len: ByteArray): ByteArray {
+            val tbsBody = byteArrayOf(0x04, 0x00, 0x04, 0x84.toByte()) + len
+            val tbs = byteArrayOf(0x30, tbsBody.size.toByte()) + tbsBody
+            return byteArrayOf(0x30, tbs.size.toByte()) + tbs
+        }
+        for (len in listOf(byteArrayOf(0x7f, -1, -1, -1), byteArrayOf(-1, -1, -1, -100))) {
+            assertFailsWith<TlsException.Config> { Certificate(cert(len)).dnsNames }
+        }
+    }
+
     @Test fun parsedRootWorksAsAnchoredCa() {
         val trust = TrustConfig.AnchoredCa(Certificate.parsePem(pem("CERTIFICATE", TestCerts.testCa)))
         assertEquals(Certificate(TestCerts.testCa), trust.roots.single())

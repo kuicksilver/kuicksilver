@@ -125,7 +125,8 @@ internal object Der {
             len = 0
             repeat(n) { len = (len shl 8) or (b[i++].toInt() and 0xff) }
         }
-        if (i + len > limit) fail()
+        // a four-byte length can be negative as an Int or wrap i + len: compare against what is left instead
+        if (len < 0 || len > limit - i) fail()
         return Tlv(tag, i, i + len)
     }
 

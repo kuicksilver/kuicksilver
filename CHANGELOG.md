@@ -198,6 +198,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   it in the start line and field lines only; the trailer section keeps accepting it). For a malformed chunked request body the engine writes no response itself: the handler's receive of
   the body fails with `BadRequestException`, which Ktor answers with 400 and a fixed text unless the application
   handles it (it was a plain IOException, answered with 500 and the parser's message), and the connection closes.
+- `Certificate`: a DER length of four bytes past `Int.MAX_VALUE` wrapped the minimal walker's bounds check, so reading
+  `dnsNames`, `ipAddresses` or the validity of such bytes threw an index error instead of `TlsException.Config`, and a
+  crafted negative length could make the walker revisit the same bytes without end. Certificates that came through a
+  handshake were parsed by OpenSSL first and cannot carry such lengths.
 - `PacketProtector` and `ResetKey` (`seal`, `open`, `headerMask`, `mac16`, through `Ksl`): an offset plus a length past
   `Int.MAX_VALUE` wrapped around the bounds check, and the native call then read or wrote about 2 GiB outside the buffer
   instead of throwing the documented `IndexOutOfBoundsException`. Not reachable from the QUIC codec, whose lengths come
