@@ -8,8 +8,8 @@
 #   1. refuses unless: the version is X.Y.Z[-alpha|beta|rcN] (no -SNAPSHOT); HEAD is main or the maintenance branch
 #      release/<X.Y>.x of the version's own X.Y (or the commit named by --release-commit, contained in main or in that
 #      branch); the tree is clean; build/ci/gate/<HEAD>.stamp from tools/ci/local-matrix.sh
-#      says the full matrix (Android, Docker, interop, Windows) passed on this exact commit; CHANGELOG.md has the version;
-#      the NDK and Xcode of gradle/toolchains.toml are installed; the portal token and a signing key are configured.
+#      says the full matrix (Android, Docker, interop, Windows) passed on this exact commit; CHANGELOG.md has the version
+#      with its date; the NDK and Xcode of gradle/toolchains.toml are installed; the portal token and a signing key are configured.
 #   2. OpenSSL: fetch and verify the pinned tarball; rebuild all twelve targets from it, never from build/openssl or the build
 #      cache (KSL_OPENSSL_FRESH=1): linux-x64, linux-arm64 and mingw-x64 in Docker (one container at a time, under nice;
 #      linux-x64 and mingw run emulated on Apple Silicon), the macOS, iOS, Android and Kotlin/Native Linux ones on the host;
@@ -108,7 +108,12 @@ git branch -r --contains HEAD --format='%(refname:short)' 2>/dev/null | grep -qx
 if git rev-parse -q --verify "refs/tags/v$version" >/dev/null; then
   [ "$(git rev-parse "v$version^{commit}")" = "$head" ] || refuse "tag v$version exists and names another commit"
 fi
-grep -qE "^## \[$version\]" CHANGELOG.md || refuse "CHANGELOG.md has no '## [$version]' section (move [Unreleased] under the version)"
+if ! grep -qE "^## \[$version\]" CHANGELOG.md; then
+  refuse "CHANGELOG.md has no '## [$version]' section (move [Unreleased] under the version)"
+# a maintenance branch prepares the section before the date is known (docs/release.md): a placeholder must not ship
+elif ! grep -qE "^## \[$version\] - [0-9]{4}-[0-9]{2}-[0-9]{2}$" CHANGELOG.md; then
+  refuse "CHANGELOG.md: '$(grep -E "^## \[$version\]" CHANGELOG.md | head -1)' has no release date (## [$version] - YYYY-MM-DD)"
+fi
 # the local gate: tools/ci/local-matrix.sh writes build/ci/gate/<commit>.stamp at its end
 stamp="build/ci/gate/$head.stamp"
 gate() { sed -n "s/^$1=//p" "$stamp" 2>/dev/null | head -1; }

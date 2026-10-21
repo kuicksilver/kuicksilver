@@ -65,7 +65,7 @@ Done for the project in October 2026, kept here so it can be repeated for a new 
    ```
    The script refuses a malformed or `-SNAPSHOT` version, a branch other than `main` or the version's own
    `release/<X.Y>.x` (a detached release commit of either with `--release-commit <sha>`), a dirty tree, a missing or failed gate record for `HEAD` (or one run with
-   `--skip-*`, or without `--with-interop --with-windows`), a `CHANGELOG.md` without the version, an NDK or Xcode other
+   `--skip-*`, or without `--with-interop --with-windows`), a `CHANGELOG.md` without the version and its date (`## [0.2.0] - 2026-10-15`), an NDK or Xcode other
    than the pins (`--allow-toolchain-drift` to accept), and missing credentials or signing key. Then:
    - OpenSSL: the pinned tarball fetched and verified; **all twelve targets rebuilt from it** (`KSL_OPENSSL_FRESH=1`:
      `build/openssl`, which worktrees share and CI downloads, and the build cache are deleted or bypassed, never reused):
@@ -130,8 +130,9 @@ moves on to the next minor version. `local-release.sh` accepts that branch only 
   the test that proves it is ported to `main` if the behaviour still exists. Nothing is merged from `main` into the
   branch.
 - **CHANGELOG**: entries are written under `[Unreleased]` on `main` as usual and come to the branch with their fixes.
-  On the branch, the release commit moves what the patch ships under `## [0.2.1] - <date>` (steps 2 and 3 run there,
-  with the gate on that commit). After the release, the same section goes to `main` (cherry-pick the release commit, or
+  On the branch, what the patch ships moves under `## [0.2.1] - unreleased` as soon as the branch is made; the script
+  refuses that placeholder, and the release commit replaces it with the date (steps 2 and 3 run there, with the gate on
+  that commit: a gate on an earlier commit of the branch does not count for it). After the release, the same section goes to `main` (cherry-pick the release commit, or
   edit by hand), so `main`'s `[Unreleased]` keeps only what is not yet released. Version coordinates in the README and
   the guides follow the newest published version on both branches.
 - `context7.json` (step 7) points at the branch whose docs describe the newest published version; for a patch release
