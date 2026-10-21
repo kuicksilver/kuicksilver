@@ -9,16 +9,17 @@ import io.ktor.network.sockets.Socket
 import io.ktor.network.sockets.aSocket
 import io.kuicksilver.annotations.InternalKuicksilverApi
 
-// The JDK's sockets carry the full address: ktor-network is used as it is.
+// The JDK's sockets carry the full address: ktor-network connects and binds as it is, but writes through KslNioSocket
+// (ktor 3.6.0's writer spins at 100 % CPU while a peer's window is closed).
 @InternalKuicksilverApi
 public actual suspend fun connectTcp(
     selector: SelectorManager,
     remote: InetSocketAddress,
-): Socket = aSocket(selector).tcp().connect(remote)
+): Socket = KslNioSocket(aSocket(selector).tcp().connect(remote), selector)
 
 @InternalKuicksilverApi
 public actual suspend fun bindTcp(
     selector: SelectorManager,
     host: String,
     port: Int,
-): ServerSocket = aSocket(selector).tcp().bind(host, port)
+): ServerSocket = KslNioServerSocket(aSocket(selector).tcp().bind(host, port), selector)
