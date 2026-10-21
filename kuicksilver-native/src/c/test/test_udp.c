@@ -319,6 +319,9 @@ void run_udp(void) {
             ja.stop = 1; pthread_join(t, NULL);
             CHECK(rc == KSL_WANT_READ && got == 0, "only empty datagrams: KSL_WANT_READ");
             CHECK(ms < 200, "a 20 ms receive answers within 200 ms while empty datagrams keep arriving");
+            int64_t ns = (int64_t)(t1.tv_sec - t0.tv_sec) * 1000000000 + (t1.tv_nsec - t0.tv_nsec);
+            CHECK(ns >= 20000000, "and not before its 20 ms: the deadline is not rounded down");
+            if (ns < 20000000) printf("    the 20 ms receive answered after %lld us\n", (long long)(ns / 1000));
             if (ms >= 200) printf("    the 20 ms receive took %ld ms (it returned only when the junk sender stopped)\n", ms);
           }
           if (r) ksl_udp_close(r); }

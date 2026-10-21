@@ -14,8 +14,8 @@ static uint32_t hand_out(ksl_udp *u, uint8_t *const *bufs, const uint32_t *caps,
     }
     return filled;
 }
-/* milliseconds since an arbitrary fixed point, never going back */
-static int64_t now_ms(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return (int64_t)t.tv_sec * 1000 + t.tv_nsec / 1000000; }
+/* nanoseconds since an arbitrary fixed point, never going back */
+static int64_t now_ns(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return (int64_t)t.tv_sec * 1000000000 + t.tv_nsec; }
 /* datagrams taken in a row without filling a slot (empty, link-local source, truncated, larger than the slot) between two looks
    at the clock */
 #define DROP_CHECK 64
@@ -26,7 +26,7 @@ int ksl_udp_recv(ksl_udp *u, uint8_t *const *bufs, const uint32_t *caps, uint32_
     int rc = KSL_OK; uint32_t dropped = 0;
     /* the timeout is one deadline for the whole call, as in ksl_udp_win.c: a datagram dropped below does not restart the wait, else
        a trickle of empty datagrams (any off-path sender, spoofed or not) keeps the call from ever answering KSL_WANT_READ */
-    const int64_t deadline = timeout_ms > 0 ? now_ms() + timeout_ms : 0;
+    const int64_t deadline = timeout_ms > 0 ? now_ns() + (int64_t)timeout_ms * 1000000 : 0;
     /* recvmsg first, poll only when the queue is empty and nothing was taken yet: one system call per datagram, not two (a sender
        whose datagrams arrive one by one, without GSO, cost a poll and a recvmsg each) */
     while (filled < n) {
@@ -35,7 +35,7 @@ int ksl_udp_recv(ksl_udp *u, uint8_t *const *bufs, const uint32_t *caps, uint32_
            at the deadline; a call that may not wait (timeout 0) or already holds datagrams stops after DROP_CHECK of them. Checked
            before recvmsg: a datagram once taken is always looked at, never lost to the bound */
         if (dropped >= DROP_CHECK && timeout_ms >= 0) {
-            if (filled || timeout_ms == 0 || now_ms() >= deadline) { if (!filled) rc = KSL_WANT_READ; break; }
+            if (filled || timeout_ms == 0 || now_ns() >= deadline) { if (!filled) rc = KSL_WANT_READ; break; }
             dropped = 0;
         }
         struct sockaddr_storage ss; struct iovec iov = { u->scratch, GRO_MAX }; uint8_t cbuf[256];
@@ -45,7 +45,8 @@ int ksl_udp_recv(ksl_udp *u, uint8_t *const *bufs, const uint32_t *caps, uint32_
         if (r < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
             if (filled || timeout_ms == 0) { if (!filled) rc = KSL_WANT_READ; break; }
             int wait = timeout_ms;
-            if (timeout_ms > 0) { int64_t left = deadline - now_ms(); if (left <= 0) { rc = KSL_WANT_READ; break; } wait = (int)left; }
+            /* the time left rounded up to whole milliseconds: poll's unit; rounding down would answer before the timeout */
+            if (timeout_ms > 0) { int64_t left = deadline - now_ns(); if (left <= 0) { rc = KSL_WANT_READ; break; } wait = (int)((left + 999999) / 1000000); }
             struct pollfd pf[2] = { { u->fd, POLLIN, 0 }, { u->wake[0], POLLIN, 0 } };
             int pr = poll(pf, u->wake[0] >= 0 ? 2 : 1, wait); u->polls++;
             if (pr == 0) { rc = KSL_WANT_READ; break; }
