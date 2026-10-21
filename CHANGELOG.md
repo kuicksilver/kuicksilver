@@ -163,7 +163,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   range beyond the limit, the readable one), and the limit on gaps still holds.
 
 - QUIC: a peer could make one connection buffer far more than its connection window. A STREAM frame refused for lack
-  of reassembly room (the packet is dropped unacknowledged, K7) had already raised the stream's highest offset, and the
+  of reassembly room (the packet is dropped unacknowledged since 0.2.0) had already raised the stream's highest offset, and the
   refusal skipped the connection-level charge; data sent later below that offset merged into a buffered range and was
   stored uncharged. Three streams held 1.5 MiB against the default 768 KiB connection window, and with the default
   limits one connection could hold the sum of its stream windows (RFC 9000 section 4.1). A STREAM or RESET_STREAM frame
@@ -335,8 +335,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   resends the outstanding flight at once (later ones leave it to the PTO), so alternating raced copies with the client's
   own packets costs ACKs, not flights. Known limit: a client that really rebinds mid-handshake while an observer races
   copies of its packets from its old address keeps being taken back to the dead old address and the handshake fails at
-  the handshake timeout, as it does with those implementations; challenging both candidates as separate paths is on the
-  roadmap for 0.2.x.
+  the handshake timeout, as it does with those implementations; challenging both candidates as separate paths is planned
+  for 0.3.0.
 - Soak harness: the flatness verdict of a long run ran out of memory after the run. The Theil–Sen slope held every
   pairwise slope as a boxed `Double`, n(n−1)/2 of them: a 72-hour soak at the default `sampleSeconds=15` has ~13,800
   samples after warm-up, ~95 M pairs, more than the 1 GiB test heap, so the whole run ended without a verdict. Up to
@@ -401,7 +401,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   `serverPort` as 443 whatever the request's `:scheme` said; an `http` request over HTTP/3 (RFC 9114 section 3.1.2) was
   seen as `https` on port 443. Both now follow `:scheme`: `http` with default port 80, `https` with 443.
 
-## [0.2.0] - 2026-10-15
+## [0.2.0] - 2026-10-18
 
 The first version published on Maven Central, made on top of the 0.1.0 candidate. That candidate, frozen on 2026-10-09,
 was never published (no tag, no Central deployment); it is summarised in the last section, and its changes reach users
@@ -429,7 +429,7 @@ QUIC (`kuicksilver-quic`, `kuicksilver-native`):
   DF, dual-stack IPv6 sockets, `SO_EXCLUSIVEADDRUSE`); the JVM on Windows uses the same socket through JNI. Winsock is
   started when the Kotlin/Native runtime starts (not from a C constructor, which in a `sharedLib` would run under the
   loader lock), so address lookups before the first socket do not fail with `WSANOTINITIALISED`. Verified in a local
-  Windows 11 VM (Kotlin/Native and the JVM); GitHub Actions is not used.
+  Windows 11 VM (Kotlin/Native and the JVM); the GitHub Actions workflows are disabled.
 - `NetworkMigrator` (experimental): a client connection follows a `Flow` of networks, migrating to each new one (RFC 9000
   section 9) and closing the path it left; a failed migration keeps the old path, `disable_active_migration` is
   respected, `MigrationEvent` reports `Migrated`, `Failed`, `NetworkLost` and `SourceFailed` (the network flow threw; the
@@ -446,7 +446,7 @@ QUIC (`kuicksilver-quic`, `kuicksilver-native`):
   the default. BBR is paced even when the smoothed RTT is below 1 ms (its pacing rate is its main control); window-based
   controllers keep the sub-millisecond exemption. On a simulated 50 Mbit/s, 40 ms link with 1 % random loss BBR moved
   37-40 Mbit/s where CUBIC moved 2.7-2.9; with 1 % of packets reordered by 8 ms 43 against 3.0; in an 8 BDP buffer it
-  kept a 2.3 ms mean queue where CUBIC queued 274 ms (`guide/quic.md`). Loss detection now reports a packet declared
+  kept a 2.3 ms mean queue where CUBIC queued 274 ms (`docs/guide/quic.md`). Loss detection now reports a packet declared
   lost and acknowledged later (RFC 9002 section 6.1).
 
 - Observability, experimental (docs/guide/quic.md "Observability"): `QuicEndpoint.stats` sums `EndpointStats` over every
@@ -529,11 +529,13 @@ Testing (`kuicksilver-testing`, not published) and tooling:
   crosstraffic per peer and role, from the recorded runs minus 25 % / 40 %), `tools/interop/check-perf.sh` (measured vs
   floor, exit 1 on a regression or a missing cell, `--update` proposes new floors), `tools/interop/run-local.sh --perf`
   and the weekly `.github/workflows/perf.yml` (JVM image vs ngtcp2 and quinn, results kept 7 days, runner logs only of
-  failed runs). The floors warn instead of failing (`"blocking": false`) until re-measured on GitHub-hosted runners.
+  failed runs; disabled like the other workflows, the measurements run locally). The floors warn instead of failing
+  (`"blocking": false`) until they are measured on more hosts.
 - Reproducible builds: base images pinned by digest, the Gradle wrapper by checksum, `-ffile-prefix-map` in the native
   builds, and `tools/check/double-build.sh` (builds the native libraries from two checkout paths and compares them) and
-  `tools/check/pins.sh`; the CI scripts and OpenSSL tasks run on fresh GitHub runners.
-- Releases from the owner's Mac, no GitHub runner (`docs/release.md`): `tools/release/local-release.sh <version>`
+  `tools/check/pins.sh`; the CI scripts and OpenSSL tasks are written to run on fresh GitHub runners (not yet exercised:
+  the gate runs locally through `tools/ci/local-matrix.sh`).
+- Releases from a maintainer's Mac, no GitHub runner (`docs/release.md`): `tools/release/local-release.sh <version>`
   builds the mingw-w64 OpenSSL and the five JVM JNI libraries (manylinux2014 `.so` for x86_64 and aarch64 in Docker,
   `.dylib` for arm64 and x86_64, the mingw-w64 `.dll`), checks each as CI does (exports, imports, glibc floor, the
   pinned OpenSSL inside, `manifest.sha256`), checks that the jar carries all five, counts the deployment against the
@@ -548,8 +550,9 @@ Testing (`kuicksilver-testing`, not published) and tooling:
   `ksl_live_objects` (additive in `ksl` ABI 6) counts live native contexts, sessions, keys, key and session handles, UDP
   sockets and wake descriptors.
 - Interop endpoint: the runner's `resumption` and `zerortt` cases (session tickets and opt-in 0-RTT, ADR-0015), green
-  against quic-go, ngtcp2, quiche, picoquic, quinn and msquic in both roles with the JVM and native images; the K7
-  matrix and its analysis are in `docs/spec/rfc-compliance.md` ("Interop matrix K7"), including BBR vs CUBIC
+  against quic-go, ngtcp2, quiche, picoquic, quinn and msquic in both roles with the JVM and native images; the 0.2.0
+  matrix and its analysis are in `docs/spec/rfc-compliance.md` ("Interop matrix (0.2.0, QUIC Interop Runner 740c05a,
+  2026-10-13)"), including BBR vs CUBIC
   measurements against quic-go and ngtcp2.
 - `LinkParams.queueLimitBytes` (tail drop) and a shared bottleneck for several simulated connections; BBR property
   tests, a Jazzer target (`bbrInvariants`) and harsh BBR-versus-CUBIC simulator scenarios. The interop endpoint takes
@@ -1382,7 +1385,7 @@ Pre-release API and operations review (2026-10-14):
 ## 0.1.0 candidate (never published)
 
 The first 0.x candidate: the code frozen on 2026-10-09 for the first public release. It was never published: on
-2026-10-14 the owner made 0.2.0 the first Maven Central publication, and 0.2.0 contains everything below.
+2026-10-14 0.2.0 was made the first Maven Central publication, and 0.2.0 contains everything below.
 
 ### Changed (API freeze before 0.1.0)
 - `NullCryptoProvider` is `@InternalKuicksilverApi` (a test fixture, not a transport); `ConnectionStats` and `EndpointStats` are built by the library only.
@@ -1464,3 +1467,6 @@ Fixes from a full five-reviewer pass over the code before the first release, amo
 - TLS-over-TCP session tickets are bound to the server's client-authentication and trust configuration, so a ticket
   only resumes under the configuration that issued it.
 - Bounds checks on every buffer copy in the JNI and cinterop bindings.
+
+[Unreleased]: https://github.com/kuicksilver/kuicksilver/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/kuicksilver/kuicksilver/releases/tag/v0.2.0
