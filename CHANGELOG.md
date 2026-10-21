@@ -198,6 +198,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   it in the start line and field lines only; the trailer section keeps accepting it). For a malformed chunked request body the engine writes no response itself: the handler's receive of
   the body fails with `BadRequestException`, which Ktor answers with 400 and a fixed text unless the application
   handles it (it was a plain IOException, answered with 500 and the parser's message), and the connection closes.
+- Ktor client: an application shrunk with R8 in class-file mode (a JVM application) lost `KuicksilverEngineContainer`
+  and its `META-INF/services` entry, so `HttpClient()` without an engine argument no longer found the Kuicksilver
+  engine. The `kuicksilver-ktor-client` jar now carries a keep rule as `META-INF/proguard/kuicksilver-ktor-client.pro`,
+  and the AAR the same rule as `proguard.txt` ([troubleshooting: Android](docs/guide/troubleshooting.md#android)). A
+  new gate step, `tools/check/service-keep-rules.sh`, checks every class a published artifact names in
+  `META-INF/services` with an R8 run and a negative control.
 - Native UDP: the errno and text of a socket's last error (`KslUdpSocket`'s exception message) could mix two errors,
   or come out torn, when the sending and the receiving thread failed at the same time; the pair is now written and read
   under a short lock. Diagnostics only.

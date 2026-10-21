@@ -302,6 +302,18 @@ A JVM application that shrinks its jar (ProGuard in a Compose Desktop release bu
 rules. The `kuicksilver-native` jar carries them as `META-INF/proguard/kuicksilver-native.pro`, which R8 reads by
 itself; with ProGuard, add the lines above to its configuration unless your setup applies rules embedded in jars.
 
+The Ktor client engine is found by `HttpClient()` (without an engine argument) through `ServiceLoader`, which creates
+`io.kuicksilver.ktor.client.KuicksilverEngineContainer` by name. The `kuicksilver-ktor-client` AAR and jar carry its keep
+rule in the same way (`proguard.txt`, `META-INF/proguard/kuicksilver-ktor-client.pro`; since 0.2.1). Without it, a
+shrunk JVM application lost the class and its `META-INF/services` entry, and `HttpClient()` picked another engine or
+none. With ProGuard, or a build that ignores embedded rules, add:
+
+```proguard
+-keep class io.kuicksilver.ktor.client.KuicksilverEngineContainer {
+    public <init>();
+}
+```
+
 ## Native library
 
 ### `KslException.NativeLoad` or `KslLoader.availability()` is `Unavailable`

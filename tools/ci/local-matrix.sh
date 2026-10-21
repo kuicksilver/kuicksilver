@@ -77,6 +77,7 @@ step "android: AAR"                             $G :kuicksilver-native:bundleAnd
 step "android: size gate"                       bash tools/check/size.sh "$aar" "$SIZE_LIMIT"
 step "android: 16 KiB pages"                    bash tools/check/page-align.sh "$aar"
 step "android: consumer keep rules (R8)"        env KSL_R8_REQUIRED=1 bash tools/check/android-keep-rules.sh "$aar"   # a minified app must still load libksl (review h-native, H1)
+step "jvm/android: service keep rules (R8)"     bash -c "$G :kuicksilver-ktor-client:jvmJar :kuicksilver-ktor-client:bundleAndroidMainAar"' && env KSL_R8_REQUIRED=1 bash tools/check/service-keep-rules.sh "$(ls -t kuicksilver-ktor-client/build/libs/kuicksilver-ktor-client-jvm-*.jar | head -1)" kuicksilver-ktor-client/build/outputs/aar/kuicksilver-ktor-client.aar'   # HttpClient() must still find the engine in a shrunk app
 step "android: libksl.so exports, OpenSSL, no sanitizers"  bash tools/check/native-release.sh "$aar" aar   # all three ABIs (review 2026-10-14, finding 4)
 step "check: native-release negative controls"   bash tools/check/native-release-test.sh
 step "check: local-release refusals"             bash tools/release/local-release-test.sh
