@@ -20,7 +20,7 @@ rc=0
 for f in "$@"; do
   if [ ! -f "$f.asc" ]; then echo "FAIL: $f.asc missing"; rc=1; continue; fi
   st=$(gpg --homedir "$home" --batch --status-fd 1 --verify "$f.asc" "$f" 2>/dev/null || true)
-  if printf '%s\n' "$st" | grep -q '^\[GNUPG:\] GOODSIG ' && printf '%s\n' "$st" | grep -Eq "^\[GNUPG:\] VALIDSIG .* $fpr\$"; then
+  if grep -q '^\[GNUPG:\] GOODSIG ' <<< "$st" && grep -Eq "^\[GNUPG:\] VALIDSIG .* $fpr\$" <<< "$st"; then
     echo "OK: $(basename "$f").asc by $fpr"
   else
     echo "FAIL: $(basename "$f").asc is not a good signature by $fpr"; rc=1

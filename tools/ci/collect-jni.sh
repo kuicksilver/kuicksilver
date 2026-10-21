@@ -17,7 +17,7 @@ sha() { (sha256sum "$@" 2>/dev/null || shasum -a 256 "$@"); }
 if [ "${1:-}" = "--check-jar" ]; then
   jar="${2:?jar}"; listing=$(unzip -l "$jar"); rc=0
   for e in $libs manifest:manifest.sha256; do
-    printf '%s\n' "$listing" | grep -qE " META-INF/native/${e#*:}\$" || { echo "FAIL: META-INF/native/${e#*:} missing in $jar"; rc=1; }
+    grep -qE " META-INF/native/${e#*:}\$" <<< "$listing" || { echo "FAIL: META-INF/native/${e#*:} missing in $jar"; rc=1; }
   done
   [ "$rc" = 0 ] && echo "OK: $jar carries libksl for $(for e in $libs; do printf '%s ' "${e%%:*}"; done)"
   exit "$rc"

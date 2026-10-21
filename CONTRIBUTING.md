@@ -313,5 +313,8 @@ already shipped or nearly shipped. Each line names the question to ask of the di
   leave room for a loaded host, and negative tests own every address they assert nothing answers on. No test waits
   for something the protocol allows never to happen (a request stream reset before its HEADERS were read surfaces no
   request), and every wait has a deadline that fails with a message naming what did not happen.
+- **No pipe into `grep -q` under `pipefail`.** `grep -q` exits at its first match; a writer still writing then dies
+  of SIGPIPE and pipefail turns the match into a failure, and a writer that exits non-zero makes the test false
+  whatever it printed. Gate scripts read the output into a variable first and grep that (`grep -q x <<< "$out"`).
 
 New classes of bugs found in review or after a release are added to this list.

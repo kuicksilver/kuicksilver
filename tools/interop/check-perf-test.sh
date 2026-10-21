@@ -28,7 +28,10 @@ case_ "below a floor (non-blocking)"          0 "non-blocking"       -- "$td/per
 case_ "missing role file (non-blocking)"      1 "MISSING"            -- --expect ngtcp2 "$td/perf-result-sample.json" "$tmp/advisory.json"
 case_ "without --expect a role is out of scope" 0 "skipped"          -- "$td/perf-result-sample.json" "$tmp/blocking.json"
 case_ "no thresholds"                         1 "no threshold"       -- "$tmp/run" "$tmp/empty.json"
-if bash "$here/check-perf.sh" "$tmp/run" "$tmp/empty.json" 2>&1 | grep -qE '^[[:space:]]*$'; then
+# the output is read whole first: check-perf.sh exits 1 here, and under pipefail `check-perf.sh | grep -q` was false
+# whatever it printed, so this case could never fail
+out=$(bash "$here/check-perf.sh" "$tmp/run" "$tmp/empty.json" 2>&1)
+if grep -qE '^[[:space:]]*$' <<< "$out"; then
   echo "FAIL no thresholds: a blank row"; fails=$((fails + 1))
 else echo "ok   no thresholds: no blank row"; fi
 [ $fails -eq 0 ] && echo "all cases passed"

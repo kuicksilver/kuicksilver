@@ -40,7 +40,10 @@ if ! gpg --batch --list-keys "$fpr" >/dev/null 2>&1; then
 fi
 # Signature must be made by exactly the pinned fingerprint, not merely "some key in the ring".
 # VALIDSIG's last field is the primary key fingerprint (the signing subkey comes first).
-gpg --batch --status-fd 1 --verify "$tarball.asc" "$tarball" 2>/dev/null | grep -Eq "VALIDSIG .* $fpr\$" \
+# The status lines are read whole first: piped into `grep -q`, gpg could die of SIGPIPE writing the lines after VALIDSIG and
+# pipefail would turn a good signature into a refusal.
+status=$(gpg --batch --status-fd 1 --verify "$tarball.asc" "$tarball" 2>/dev/null || true)
+grep -Eq "VALIDSIG .* $fpr\$" <<< "$status" \
   || { echo "FAILED: PGP signature is not from $fpr" >&2; exit 1; }
 
 echo "$sha256  $tarball" | shasum -a 256 -c - || { echo "FAILED: sha256 mismatch" >&2; exit 1; }
