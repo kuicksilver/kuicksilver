@@ -7,7 +7,8 @@
 #
 #   1. refuses unless: the version is X.Y.Z[-alpha|beta|rcN] (no -SNAPSHOT); HEAD is main or the maintenance branch
 #      release/<X.Y>.x of the version's own X.Y (or the commit named by --release-commit, contained in main or in that
-#      branch); the tree is clean; build/ci/gate/<HEAD>.stamp from tools/ci/local-matrix.sh
+#      branch), and not main once that branch exists; every version fallback of the tree is <X.Y.Z>-SNAPSHOT of the version
+#      and, for a final version, the README and the iOS guide name it; the tree is clean; build/ci/gate/<HEAD>.stamp from tools/ci/local-matrix.sh
 #      says the full matrix (Android, Docker, interop, Windows) passed on this exact commit; CHANGELOG.md has the version
 #      with its date; the NDK and Xcode of gradle/toolchains.toml are installed; the portal token and a signing key are configured.
 #   2. OpenSSL: fetch and verify the pinned tarball; rebuild all twelve targets from it, never from build/openssl or the build
@@ -90,12 +91,22 @@ branch=$(git symbolic-ref --short -q HEAD || true)
 # main, or the maintenance branch of this version's X.Y (docs/release.md, "Releasing from a maintenance branch")
 release_branch="release/$(printf '%s' "$version" | cut -d. -f1-2).x"
 push_branch=main
+# once release/<X.Y>.x exists (here or fetched from origin), X.Y.* comes from it and not from main, which moves on to the
+# next minor version: main's tree would be released under the patch version
+rb_ref=""
+for r in "refs/heads/$release_branch" "refs/remotes/origin/$release_branch"; do
+  if git show-ref -q --verify "$r"; then rb_ref="$r"; break; fi
+done
+from_branch="$release_branch exists: release $version from it, not from main (docs/release.md, \"Releasing from a maintenance branch\")"
 if [ -n "$release_commit" ]; then
   [ "$(git rev-parse "$release_commit^{commit}" 2>/dev/null)" = "$head" ] || refuse "--release-commit $release_commit is not HEAD ($short)"
-  if git merge-base --is-ancestor HEAD main 2>/dev/null; then push_branch=main
-  elif git merge-base --is-ancestor HEAD "refs/heads/$release_branch" 2>/dev/null; then push_branch="$release_branch"
+  if [ -n "$rb_ref" ] && git merge-base --is-ancestor HEAD "$rb_ref" 2>/dev/null; then push_branch="$release_branch"
+  elif git merge-base --is-ancestor HEAD main 2>/dev/null; then
+    [ -z "$rb_ref" ] || refuse "release commit $short is on main but not on $release_branch; $from_branch"
   else refuse "release commit $short is not contained in main or $release_branch"; fi
-elif [ "$branch" = main ] || [ "$branch" = "$release_branch" ]; then
+elif [ "$branch" = main ]; then
+  [ -z "$rb_ref" ] || refuse "HEAD is main, but $from_branch"
+elif [ "$branch" = "$release_branch" ]; then
   push_branch="$branch"
 elif [[ "$branch" =~ ^release/[0-9]+\.[0-9]+\.x$ ]]; then
   push_branch="$branch"
@@ -113,6 +124,24 @@ if ! grep -qE "^## \[$version\]" CHANGELOG.md; then
 # a maintenance branch prepares the section before the date is known (docs/release.md): a placeholder must not ship
 elif ! grep -qE "^## \[$version\] - [0-9]{4}-[0-9]{2}-[0-9]{2}$" CHANGELOG.md; then
   refuse "CHANGELOG.md: '$(grep -E "^## \[$version\]" CHANGELOG.md | head -1)' has no release date (## [$version] - YYYY-MM-DD)"
+fi
+# the tree is the line of $version (docs/release.md, "Every release", step 2): every Gradle and sample version fallback is
+# <X.Y.Z>-SNAPSHOT of it, and for a final version the README and the iOS guide name it as the version to depend on. A
+# release commit made without that step would ship README coordinates of the previous version, or be another line's tree.
+base="${version%%-*}"
+for f in build-logic/src/main/kotlin/kuicksilver.kmp.gradle.kts build-logic/src/main/kotlin/kuicksilver.release.gradle.kts \
+    kuicksilver-bom/build.gradle.kts samples/realtime-telemetry/build.gradle.kts samples/ios/shared/build.gradle.kts \
+    samples/ios/kuicksilver-swift/build.gradle.kts samples/ios/kuicksilver-swift/src/commonMain/kotlin/io/kuicksilver/swift/Kuicksilver.kt \
+    tools/check/consumer-smoke.sh; do
+  have=$(grep -ohE '[0-9]+\.[0-9]+\.[0-9]+-SNAPSHOT' "$f" 2>/dev/null | sort -u | tr '\n' ' ' || true)
+  [ "$have" = "$base-SNAPSHOT " ] || refuse "$f names ${have:-no X.Y.Z-SNAPSHOT version }instead of $base-SNAPSHOT: this tree is not the $base line (the commit that prepares $version sets every fallback)"
+done
+if [ "$base" = "$version" ]; then
+  for f in README.md docs/guide/ios.md; do   # coordinates, the xcframework URL, "X.Y.Z is on Maven Central"
+    have=$(grep -oE 'io\.kuicksilver:kuicksilver-[a-z0-9-]+:[0-9][-.A-Za-z0-9]*|releases/[0-9][-.A-Za-z0-9]*/|[0-9]+\.[0-9]+\.[0-9]+[-.A-Za-z0-9]* is on Maven Central' "$f" 2>/dev/null \
+      | sed -E 's/^io\.kuicksilver:kuicksilver-[a-z0-9-]+://; s/^releases\/([^/]*)\/$/\1/; s/ is on Maven Central$//' | sort -u | tr '\n' ' ' || true)
+    [ "$have" = "$version " ] || refuse "$f names ${have:-no version }instead of $version (the commit that prepares $version sets the coordinates)"
+  done
 fi
 # the local gate: tools/ci/local-matrix.sh writes build/ci/gate/<commit>.stamp at its end
 stamp="build/ci/gate/$head.stamp"

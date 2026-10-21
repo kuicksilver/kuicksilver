@@ -78,6 +78,7 @@ step "android: size gate"                       bash tools/check/size.sh "$aar" 
 step "android: 16 KiB pages"                    bash tools/check/page-align.sh "$aar"
 step "android: libksl.so exports, OpenSSL, no sanitizers"  bash tools/check/native-release.sh "$aar" aar   # all three ABIs (review 2026-10-14, finding 4)
 step "check: native-release negative controls"   bash tools/check/native-release-test.sh
+step "check: local-release refusals"             bash tools/release/local-release-test.sh
 if [ "$skip_android" = 0 ]; then
 step "android: device tests (emulator)"         $G androidConnectedCheck
 fi

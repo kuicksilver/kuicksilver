@@ -131,6 +131,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   it fails the cell without reading a capture; `tools/interop/environment.sh` now leaves such a cell to the endpoints'
   verdict, also when it is required, so a hang is not rerun until it happens to pass. The trade-off: a host stall that
   times out a required cell is now a hard red, to be rerun by hand, instead of an automatic rerun.
+- Release tooling: `tools/release/local-release.sh` released a patch version from `main` after its maintenance branch
+  existed (`0.2.1` from `main` would ship 0.3.0-line code as 0.2.1), and never checked that the tree names the version
+  it releases (a `0.2.2` from `release/0.2.x` without the version bump would ship README and iOS guide coordinates of
+  0.2.1). It now refuses `main` once `release/<X.Y>.x` exists, locally or on origin, and refuses unless every version
+  fallback of the tree is `<X.Y.Z>-SNAPSHOT` of the version and, for a final version, the README and `docs/guide/ios.md`
+  name it (`docs/release.md`, "Every release", step 2); `tools/release/local-release-test.sh` covers the refusals.
 
 ## [0.2.0] - 2026-10-15
 

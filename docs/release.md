@@ -53,20 +53,29 @@ Done for the project in October 2026, kept here so it can be repeated for a new 
    interop images, the Windows VM). Its last act is the gate record `build/ci/gate/<commit>.stamp`: the commit, the
    options, every step's result, and `result=pass` only when every step passed with the tree clean and on the same
    commit from start to end. Any later commit needs a new run.
-2. `CHANGELOG.md`: move `[Unreleased]` under `## [0.2.0] - <date>`; `docs/spec/rfc-compliance.md` and
-   `docs/roadmap.md` say what the version does and does not do. Rewrite every sentence marked
-   `<!-- release-flip: ... -->` (`grep -rn release-flip README.md docs`) as its comment says, so the README no longer says
-   "not on Maven Central yet" and drops the composite-build instructions; the coordinates in the README, the guides and
-   `samples/` already name 0.2.0 and need no change. Commit, then run the gate (step 1) on that commit.
+2. The release commit. `CHANGELOG.md`: move `[Unreleased]` (or the branch's `## [<version>] - unreleased`) under
+   `## [<version>] - <date>`; `docs/spec/rfc-compliance.md` and `docs/roadmap.md` say what the version does and does not
+   do; a sentence marked `<!-- release-flip: ... -->` (`grep -rn release-flip README.md docs`) is rewritten as its
+   comment says. The version in the tree: every Gradle and sample fallback names `<X.Y.Z>-SNAPSHOT` of the version
+   (`kuicksilver.kmp.gradle.kts`, `kuicksilver.release.gradle.kts`, `kuicksilver-bom`, the three sample builds,
+   `KuicksilverInfo.VERSION` in `samples/ios/kuicksilver-swift`, `tools/check/consumer-smoke.sh`), normally set when the
+   line was started, and for a final version the README ("X.Y.Z is on Maven Central", the dependency line) and
+   `docs/guide/ios.md` (the dependency line, the xcframework URL) name the version itself (a prerelease such as
+   0.3.0-rc1 leaves them at the last final version and needs only the `0.3.0-SNAPSHOT` fallbacks). Commit, then run the gate
+   (step 1) on that commit.
 3. Dry run, then the release, from the same commit:
    ```
    tools/release/local-release.sh 0.2.0 --dry-run      # everything but the upload; refusals become warnings
    tools/release/local-release.sh 0.2.0                # uploads one deployment, not released
    ```
    The script refuses a malformed or `-SNAPSHOT` version, a branch other than `main` or the version's own
-   `release/<X.Y>.x` (a detached release commit of either with `--release-commit <sha>`), a dirty tree, a missing or failed gate record for `HEAD` (or one run with
+   `release/<X.Y>.x` (a detached release commit of either with `--release-commit <sha>`), `main` once `release/<X.Y>.x`
+   exists (locally or as `origin/release/<X.Y>.x`), a tree whose version fallbacks or (final versions) README and iOS
+   guide coordinates do not name the version (step 2), a dirty tree, a missing or failed gate record for `HEAD` (or one run with
    `--skip-*`, or without `--with-interop --with-windows`), a `CHANGELOG.md` without the version and its date (`## [0.2.0] - 2026-10-15`), an NDK or Xcode other
-   than the pins (`--allow-toolchain-drift` to accept), and missing credentials or signing key. Then:
+   than the pins (`--allow-toolchain-drift` to accept), and missing credentials or signing key
+   (`tools/release/local-release-test.sh` runs the branch, CHANGELOG and version refusals in a throwaway repository; the
+   local gate runs it). Then:
    - OpenSSL: the pinned tarball fetched and verified; **all twelve targets rebuilt from it** (`KSL_OPENSSL_FRESH=1`:
      `build/openssl` (each worktree has its own; CI downloads it) and the build cache are deleted or bypassed, never reused):
      `linux-x64`, `linux-arm64` and `mingw-x64` in Docker (one container at a time, under `nice`; `linux-x64` and
@@ -111,8 +120,9 @@ Done for the project in October 2026, kept here so it can be repeated for a new 
    mavenLocal. Its tests are not run there: they need `kuicksilver-testing`, which is not published.
 6. Only after the deployment is published: `git tag -s v0.2.0 -m "Kuicksilver 0.2.0"` on the release commit, push the
    branch it was released from (`main` or `release/<X.Y>.x`; the script's last lines name it) and the tag, and the GitHub release from the tag with the changelog section. Attach the four supply-chain files of
-   step 3: `kuicksilver-<version>-sbom.zip`, `kuicksilver-<version>.intoto.json` and their `.asc`. The version is passed to Gradle; it is
-   not stored in the tree.
+   step 3: `kuicksilver-<version>-sbom.zip`, `kuicksilver-<version>.intoto.json` and their `.asc`. The version is passed to
+   Gradle (`-Pkuicksilver.version`); the tree's `-SNAPSHOT` fallbacks only name the line, and the script checks that they
+   do.
 7. Context7 (the documentation index coding agents read, configured by `context7.json` at the root): add the new tag to
    `previousVersions`, and point `branch` at the branch whose docs describe the newest published version (it must
    not name a branch with unreleased API). The index refreshes from GitHub; nothing is uploaded.
@@ -121,7 +131,10 @@ Done for the project in October 2026, kept here so it can be repeated for a new 
 
 Patch releases of a published line come from `release/<X.Y>.x` (`release/0.2.x` for 0.2.1, 0.2.2, ...) while `main`
 moves on to the next minor version. `local-release.sh` accepts that branch only for versions of its own X.Y (0.2.1 from
-`release/0.2.x`, not 0.3.0) and names it in its "not on origin" note and in the push of step 6.
+`release/0.2.x`, not 0.3.0), and once the branch exists it refuses that X.Y from `main` (0.2.1 from `main` would ship
+0.3.0-line code as 0.2.1); it names the branch in its "not on origin" note and in the push of step 6. A further patch
+(0.2.2) needs its own preparing commit on the branch first: the fallbacks to `0.2.2-SNAPSHOT`, the README and the iOS
+guide to 0.2.2, `## [0.2.2] - unreleased` in the CHANGELOG; the script refuses the release until they say so.
 
 - **Create it** from `main` at the commit the patch line starts from: `git branch release/0.2.x <commit>` (or from the
   previous release tag when `main` already holds work that must not ship in the patch).
