@@ -5,7 +5,7 @@ SPDX-License-Identifier: Apache-2.0
 
 # API stability and support
 
-What Kuicksilver 0.2.0 promises: which API you can build on, what may still change, how the promise is checked, and
+What Kuicksilver 0.2.x promises: which API you can build on, what may still change, how the promise is checked, and
 which platforms, Ktor versions and OpenSSL releases are covered. Kuicksilver is pre-1.0 ([README](../README.md),
 [CHANGELOG](../CHANGELOG.md): Semantic Versioning, "before 1.0, any 0.x release may contain breaking changes"); this
 page says how far below that ceiling each part of the API stays.
@@ -108,7 +108,7 @@ minor release may raise this with the Kotlin it is built with, and says so in th
 
 ## Ktor versions
 
-Kuicksilver 0.2.0 supports **Ktor 3.6.x** (built and tested against 3.6.0). This holds for every module, not only the
+Kuicksilver 0.2.x supports **Ktor 3.6.x** (built and tested against 3.6.0). This holds for every module, not only the
 engines: `kuicksilver-quic`, `kuicksilver-tls`, `kuicksilver-http3` and `kuicksilver-ktor-network` expose Ktor types in
 their public API (`io.ktor.network.sockets.InetSocketAddress`, the `ByteReadChannel` / `ByteWriteChannel` of ktor-io;
 the address type by design, ADR-0004) and depend on `ktor-network` and `ktor-io` 3.6 as `api`. Only the engines check the version at
@@ -140,7 +140,7 @@ when it links. The check (in `kuicksilver-ktor-network`):
 Every artifact links OpenSSL statically; applications get OpenSSL fixes from Kuicksilver releases, not from their
 operating system.
 
-- **Branch.** OpenSSL 3.5 LTS only; OpenSSL 4.x is out of scope for now. 0.2.0 pins **3.5.9** in
+- **Branch.** OpenSSL 3.5 LTS only; OpenSSL 4.x is out of scope for now. The pin, **3.5.9** today, is in
   `gradle/openssl.toml` together with the tarball's SHA-256 and the fingerprint of the OpenSSL release signing key; the
   build verifies both before compiling (`tools/openssl/fetch.sh`).
 - **Updates** follow the commitments in [SECURITY.md, OpenSSL](../SECURITY.md#openssl): a Kuicksilver release with the
@@ -188,7 +188,7 @@ maintainers' machines. Platform limits that are part of the contract (one endpoi
 Android, no GSO/GRO on Darwin, the Windows exclusive bind) are in the [README](../README.md#platforms) and the
 [QUIC guide](guide/quic.md#binding-an-endpoint-and-connecting).
 
-## What is experimental in 0.2.0
+## What is experimental
 
 Everything not listed here (and not internal) is stable. The list follows the annotations in the code; where a whole
 type is experimental, so are its members.

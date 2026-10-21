@@ -192,7 +192,7 @@ stay green. RFC coverage, section by section, with the tests behind each row, is
   [HTTP/3](docs/guide/http3.md), [Ktor engines](docs/guide/ktor.md), [iOS](docs/guide/ios.md),
   [publishing on the App Store](docs/guide/app-store.md), the [configuration reference](docs/guide/configuration.md)
   (every option with its default) and [troubleshooting](docs/guide/troubleshooting.md).
-- [docs/stability.md](docs/stability.md) — what 0.2.0 promises: stable and experimental API, the ABI checks, the `ksl`
+- [docs/stability.md](docs/stability.md) — what 0.2.x promises: stable and experimental API, the ABI checks, the `ksl`
   ABI, the Ktor and OpenSSL version policies, supported platforms.
 - [docs/spec/rfc-compliance.md](docs/spec/rfc-compliance.md) — RFC coverage and the interop matrix.
 - [docs/benchmarks.md](docs/benchmarks.md) — goodput, CPU per GB and handshakes per second against quiche, quinn and

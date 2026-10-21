@@ -5,7 +5,7 @@ SPDX-License-Identifier: Apache-2.0
 
 # Configuration reference
 
-Every option of Kuicksilver 0.2.0 in one place: its type, its default as the code sets it, the range the builder
+Every option of Kuicksilver in one place: its type, its default as the code sets it, the range the builder
 accepts and what it does. The guides explain how the options work together; each section links its guide. Options
 marked *experimental* need `@OptIn(ExperimentalKuicksilverApi::class)`, *delicate* ones
 `@OptIn(DelicateKuicksilverApi::class)` ([stability](../stability.md)).
@@ -266,7 +266,7 @@ Guide: [Ktor: Client](ktor.md#client).
 | `shutdownGracePeriod`, `shutdownTimeout` (Ktor) | | Ktor's | `stop` sends GOAWAY and shuts the HTTP/3 endpoints down with the grace period ([Graceful stop](ktor.md#graceful-stop)) |
 
 The other `QuicEndpointConfig` limits of the HTTP/3 listener (`maxConnections`, `acceptQueue`, `maxConnectionsPerIp`, …)
-keep their defaults and are not configurable from the engine in 0.2.0. Ktor's `connectionGroupSize`,
+keep their defaults and are not configurable from the engine. Ktor's `connectionGroupSize`,
 `workerGroupSize` and `callGroupSize` are not used (the engine runs on `Dispatchers.IO`).
 
 `tlsConnector(identity) { … }` (`KuicksilverTlsConnector.Builder`):
@@ -304,7 +304,7 @@ keep their defaults and are not configurable from the engine in 0.2.0. Ktor's `c
 
 ## Fixed limits
 
-Not configurable in 0.2.0, listed so you can plan around them:
+Not configurable, listed so you can plan around them:
 
 | Limit | Value |
 |---|---|
