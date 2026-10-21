@@ -9,14 +9,14 @@ OpenSSL 3.5 introduced a QUIC TLS interface for third-party stacks (`SSL_set_qui
 ## Decision
 
 - The first backend is OpenSSL 3.5.x, linked statically into `kuicksilver-native`; a system `libssl.so.3` ≥ 3.5 is optional, Linux only.
-- BoringSSL is the fallback backend behind the same interface.
+- BoringSSL remains the planned fallback backend behind the same interface (not implemented).
 - The transport depends on the `QuicCrypto` interface (`QuicTlsSession`, `PacketProtector`), not on the native module. Tests use `NullCryptoProvider` (a provider without encryption, `@DelicateKuicksilverApi`).
 
 ## Consequences
 
 - One TLS library on Native for TLS over TCP, QUIC and `KslCrypto`.
 - Stable API/ABI within 3.x; system OpenSSL on Linux servers.
-- Risks checked in K0: the youth of the QUIC interface, APK size, CPU. OpenSSL's lifetime requirements for CRYPTO buffers and transport parameters fall on `ksl`.
+- Risks checked in the pre-implementation spike (2026-10-02): the youth of the QUIC interface, APK size, CPU. OpenSSL's lifetime requirements for CRYPTO buffers and transport parameters fall on `ksl`.
 - A second backend can be added without changing the transport.
 
 ## Rejected
