@@ -79,7 +79,10 @@ val connection = client.connect(serverAddress, clientTls /* alpn = listOf("h3") 
 `Http3Connection.client(quic)` and `Http3Connection.server(quic)` also wrap a `QuicConnection` you already have. Either
 way the control stream, the two QPACK streams and SETTINGS go out at once, without waiting for the peer's; a reserved
 setting, frame and unidirectional stream are sent too (`Http3Settings.grease`, on by default) so peers stay tolerant of
-extensions. The peer's SETTINGS are in `peerSettings` once they arrive.
+extensions. The peer's SETTINGS are in `peerSettings` once they arrive. The peer's transport parameters must let us open
+those three unidirectional streams (RFC 9114 section 6.2). `server` returns at once and opens them in the background, so
+an accept loop never waits on one client; `client` returns once its SETTINGS went out. A peer that does not allow them
+within three seconds has its connection closed with `H3_GENERAL_PROTOCOL_ERROR` (`client` throws it).
 
 ## Client requests
 

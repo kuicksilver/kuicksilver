@@ -139,6 +139,15 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   name it (`docs/release.md`, "Every release", step 2). A release (not a dry run) now also fetches origin first, so a
   maintenance branch made elsewhere counts, refuses a local branch behind origin (it would release an older commit), and
   refuses a version that is already on Maven Central. `tools/release/local-release-test.sh` covers the refusals.
+- HTTP/3: one client stopped an HTTP/3 server from accepting anyone else. `Http3Connection.server` opened the control
+  and QPACK streams before returning, and opening a stream waits for the peer's stream credit; a client whose transport
+  parameters allow fewer than the three unidirectional streams HTTP/3 needs (RFC 9114 section 6.2: they "MUST allow the
+  peer to create at least three") and that keeps its connection alive held it forever. `Http3Endpoint.accept` and the
+  Ktor server's HTTP/3 accept loop start connections one after another, so HTTP/3 was down for every later client.
+  `Http3Connection.server` now returns at once and opens those streams in the background, as quic-go serves each
+  connection in its own goroutine; when they cannot be opened within three seconds the connection closes with
+  H3_GENERAL_PROTOCOL_ERROR (RFC 9114 names no more specific code for it). `Http3Connection.client` still returns once
+  its SETTINGS went out, and against such a server it now fails with that error instead of hanging.
 
 ## [0.2.0] - 2026-10-15
 

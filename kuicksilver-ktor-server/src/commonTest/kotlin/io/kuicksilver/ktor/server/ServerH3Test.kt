@@ -21,6 +21,9 @@ import io.kuicksilver.http3.Http3Endpoint
 import io.kuicksilver.http3.http3Request
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.DatagramIo
+import io.kuicksilver.quic.QuicClientConfig
+import io.kuicksilver.quic.QuicEndpoint
+import io.kuicksilver.quic.quicConfig
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -516,6 +519,35 @@ class ServerH3Test {
                 conns.forEach { it.close() }
                 ep.close()
                 runCatching { server.stop(100, 500) }
+            }
+        }
+
+    /**
+     * A client whose transport parameters allow fewer than the three unidirectional streams HTTP/3 needs (RFC 9114 section
+     * 6.2), connected and silent, held the HTTP/3 accept loop: no later client was served (review h-http H1).
+     */
+    @Test fun negative_clientWithoutUniStreamCreditDoesNotStopAccepting() =
+        h3ServerTest {
+            val (server, port) = tlsServer { routing { get("/") { call.respondText("ok") } } }
+            val stuck = QuicEndpoint.bind(InetSocketAddress("127.0.0.1", 0))
+            try {
+                stuck.connect(
+                    InetSocketAddress("127.0.0.1", port),
+                    QuicClientConfig
+                        .Builder(ServerFixtures.clientTls(alpn = listOf("h3")))
+                        .apply { quic = quicConfig { maxUniStreams = 2 } }
+                        .build(),
+                )
+                kotlinx.coroutines.withTimeout(15.seconds) {
+                    h3(port) { c ->
+                        val r = c.request(get())
+                        assertEquals(200, r.status)
+                        assertEquals("ok", r.body.readFullBody().decodeToString())
+                    }
+                }
+            } finally {
+                stuck.close()
+                server.stop(100, 500)
             }
         }
 

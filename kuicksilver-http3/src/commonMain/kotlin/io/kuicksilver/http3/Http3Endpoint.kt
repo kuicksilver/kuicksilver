@@ -112,7 +112,10 @@ public class Http3Endpoint private constructor(
 
     private fun notH3(alpn: String?): String = "the server chose ALPN \"$alpn\", not \"$H3\""
 
-    /** The next server connection that negotiated `h3`. */
+    /**
+     * The next server connection that negotiated `h3`. Never waits on a client once its QUIC handshake is done: HTTP/3 starts
+     * in the background ([Http3Connection.server]), so one client cannot hold back the ones behind it.
+     */
     public suspend fun accept(): Http3Connection {
         while (true) {
             val c = endpoint.accept()

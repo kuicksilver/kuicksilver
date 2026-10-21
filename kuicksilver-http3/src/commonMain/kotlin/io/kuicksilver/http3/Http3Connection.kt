@@ -14,6 +14,7 @@ import io.kuicksilver.quic.StreamPriority
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import kotlin.time.Duration
 
 /** Which side of an HTTP/3 connection we are. */
 public enum class Http3Role {
@@ -27,6 +28,8 @@ public enum class Http3Role {
 /**
  * An HTTP/3 connection over a [QuicConnection] whose ALPN is `h3` (RFC 9114). Create one with [client] or [server]: both
  * open the control and QPACK streams and send SETTINGS at once, without waiting for the peer's (RFC 9114 section 6.2.1).
+ * The peer's transport parameters must allow those three unidirectional streams (section 6.2); when they cannot be opened
+ * within three seconds the connection closes with H3_GENERAL_PROTOCOL_ERROR.
  */
 public class Http3Connection private constructor(
     internal val session: H3Session,
@@ -106,25 +109,35 @@ public class Http3Connection private constructor(
 
     /** Factories that start HTTP/3 on a QUIC connection. */
     public companion object {
-        /** Starts the client side on an established QUIC connection. */
+        /**
+         * Starts the client side on an established QUIC connection; returns once our SETTINGS went out. Throws
+         * [Http3Exception.Protocol] (H3_GENERAL_PROTOCOL_ERROR) when the server's transport parameters do not let us open
+         * the control and QPACK streams (RFC 9114 section 6.2).
+         */
         public suspend fun client(
             quic: QuicConnection,
             settings: Http3Settings = Http3Settings.Default,
         ): Http3Connection = start(quic, Http3Role.Client, settings)
 
-        /** Starts the server side on an accepted QUIC connection. */
+        /**
+         * Starts the server side on an accepted QUIC connection. Returns at once, without waiting for the client: the
+         * control and QPACK streams are opened in the background, and a client whose transport parameters do not allow
+         * them (RFC 9114 section 6.2) has its connection closed with H3_GENERAL_PROTOCOL_ERROR (see [closed]).
+         */
         public suspend fun server(
             quic: QuicConnection,
             settings: Http3Settings = Http3Settings.Default,
         ): Http3Connection = start(quic, Http3Role.Server, settings)
 
-        private suspend fun start(
+        /** [client] and [server]; tests shorten [criticalStreamsDeadline]. */
+        internal suspend fun start(
             quic: QuicConnection,
             role: Http3Role,
             settings: Http3Settings,
+            criticalStreamsDeadline: Duration = H3Session.CRITICAL_STREAMS_DEADLINE,
         ): Http3Connection {
             val s = H3Session(quic, role, settings)
-            s.start()
+            s.start(criticalStreamsDeadline)
             return Http3Connection(s)
         }
     }

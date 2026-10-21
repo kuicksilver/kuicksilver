@@ -47,6 +47,7 @@ import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.random.Random
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
@@ -99,12 +100,14 @@ internal class H3Session(
         QpackRuntime(
             settings,
             { b ->
+                awaitCriticalStreams()
                 encoderLock.withLock {
                     encoderStream.output.writeFully(b)
                     encoderStream.output.flush()
                 }
             },
             { b ->
+                awaitCriticalStreams()
                 decoderLock.withLock {
                     decoderStream.output.writeFully(b)
                     decoderStream.output.flush()
@@ -159,28 +162,64 @@ internal class H3Session(
     /** Bytes of HEADERS payloads being read on request streams right now (a test hook; session dispatcher only). */
     var bufferedHeaderBytes = 0L
 
-    suspend fun start() {
-        control = quic.openUni(CRITICAL)
-        encoderStream = quic.openUni(CRITICAL)
-        decoderStream = quic.openUni(CRITICAL)
-        controlLock.withLock {
-            control.output.writeFully(VarInt.encode(StreamType.CONTROL))
-            control.output.writeFully(FrameHeaders.frame(FrameType.SETTINGS, SettingsCodec.encode(ourSettings())))
-            if (settings.grease) {
-                control.output.writeFully(
-                    FrameHeaders.frame(FrameType.grease(Random.nextLong(0, 1000)), Random.nextBytes(Random.nextInt(0, 8))),
-                )
+    /** Completes once our control and QPACK streams are open and typed and our SETTINGS went out. */
+    private val criticalStreams = CompletableDeferred<Unit>()
+
+    /**
+     * Starts the session. A coroutine of the session opens our control and QPACK streams: opening a stream waits for the
+     * peer's stream credit (RFC 9000 section 4.6), and a peer whose transport parameters allow fewer than the three
+     * unidirectional streams HTTP/3 needs (RFC 9114 section 6.2: they "MUST allow the peer to create at least three") would
+     * hold the caller forever. Without them after [criticalStreamsDeadline] the connection closes with
+     * H3_GENERAL_PROTOCOL_ERROR. A server returns at once, so an accept loop never waits on one peer; a client returns once
+     * its SETTINGS went out and throws the connection's error when the streams could not be opened.
+     */
+    suspend fun start(criticalStreamsDeadline: Duration = CRITICAL_STREAMS_DEADLINE) {
+        scope.launch {
+            val e = quic.closed.await()
+            onTransportClosed(e)
+        }
+        scope.launch { guarded { openCriticalStreams(criticalStreamsDeadline) } }
+        scope.launch { quic.pathEvents.collect { if (it is PathEvent.Changed) currentPath = it.new } }
+        scope.launch { acceptLoop() }
+        datagrams.start()
+        if (!isServer) awaitCriticalStreams()
+    }
+
+    private suspend fun openCriticalStreams(deadline: Duration) {
+        // RFC 9114 section 6.2: the critical streams first, then others (GREASE) as the peer allows
+        val opened =
+            withTimeoutOrNull(deadline) {
+                control = quic.openUni(CRITICAL)
+                encoderStream = quic.openUni(CRITICAL)
+                decoderStream = quic.openUni(CRITICAL)
+                controlLock.withLock {
+                    control.output.writeFully(VarInt.encode(StreamType.CONTROL))
+                    control.output.writeFully(FrameHeaders.frame(FrameType.SETTINGS, SettingsCodec.encode(ourSettings())))
+                    if (settings.grease) {
+                        control.output.writeFully(
+                            FrameHeaders.frame(FrameType.grease(Random.nextLong(0, 1000)), Random.nextBytes(Random.nextInt(0, 8))),
+                        )
+                    }
+                    control.output.flush()
+                }
+                encoderLock.withLock {
+                    encoderStream.output.writeFully(VarInt.encode(StreamType.QPACK_ENCODER))
+                    encoderStream.output.flush()
+                }
+                decoderLock.withLock {
+                    decoderStream.output.writeFully(VarInt.encode(StreamType.QPACK_DECODER))
+                    decoderStream.output.flush()
+                }
+                true
             }
-            control.output.flush()
+        if (opened == null) {
+            fail(
+                Http3ErrorCode.GENERAL_PROTOCOL_ERROR,
+                "control and QPACK streams not open after $deadline: the peer must allow at least three unidirectional streams",
+            )
+            return
         }
-        encoderLock.withLock {
-            encoderStream.output.writeFully(VarInt.encode(StreamType.QPACK_ENCODER))
-            encoderStream.output.flush()
-        }
-        decoderLock.withLock {
-            decoderStream.output.writeFully(VarInt.encode(StreamType.QPACK_DECODER))
-            decoderStream.output.flush()
-        }
+        criticalStreams.complete(Unit)
         // the peer stops a reserved stream at once (RFC 9114 section 6.2.3), so failures here are expected and never fatal
         if (settings.grease) {
             scope.launch {
@@ -196,13 +235,15 @@ internal class H3Session(
                 }
             }
         }
-        scope.launch {
-            val e = quic.closed.await()
-            onTransportClosed(e)
+    }
+
+    /** Waits until our control and QPACK streams exist; throws the connection's error if it closes first. */
+    private suspend fun awaitCriticalStreams() {
+        if (criticalStreams.isCompleted) return
+        select {
+            criticalStreams.onAwait { }
+            closed.onAwait { throw it }
         }
-        scope.launch { quic.pathEvents.collect { if (it is PathEvent.Changed) currentPath = it.new } }
-        scope.launch { acceptLoop() }
-        datagrams.start()
     }
 
     /** The peer's SETTINGS; waits for them, or throws the connection's error if it closes first. */
@@ -600,9 +641,12 @@ internal class H3Session(
     suspend fun sendControl(
         type: Long,
         payload: ByteArray,
-    ) = controlLock.withLock {
-        control.output.writeFully(FrameHeaders.frame(type, payload))
-        control.output.flush()
+    ) {
+        awaitCriticalStreams()
+        controlLock.withLock {
+            control.output.writeFully(FrameHeaders.frame(type, payload))
+            control.output.flush()
+        }
     }
 
     /** Connection error (RFC 9114 section 8): close with [code], fail everything waiting. */
@@ -657,6 +701,12 @@ internal class H3Session(
         /** A client that started a request before GOAWAY gets this long to finish its HEADERS (no RFC value; see docs/guide/http3.md). */
         val HEADER_DEADLINE_AFTER_GOAWAY: Duration = 10.seconds
         val GOAWAY_CLOSE_FALLBACK: Duration = 3.seconds
+
+        /**
+         * How long a new connection may take to open our control and QPACK streams. A peer that follows RFC 9114 section 6.2
+         * allows them in its transport parameters, so they open at once; only a peer that does not is held up here.
+         */
+        val CRITICAL_STREAMS_DEADLINE: Duration = 3.seconds
         val CRITICAL = StreamPriority(0)
         const val MAX_PRIORITY_UPDATE = 256
 
