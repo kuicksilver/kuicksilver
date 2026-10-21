@@ -21,8 +21,8 @@
 # The tracked JSON files (context7.json, the interop notes) are checked for private markers too.
 #   private-comment the comments and KDoc of tracked *.kt, *.kts, *.c, *.h and *.sh files are checked for a narrower set
 #                   of private markers: local machine paths, private working directories, an agent ledger, milestone
-#                   codes, k<n>/ branch names, Cyrillic text and personal mail addresses (code and string literals are not
-#                   read; this check and its test are skipped, since they name the markers).
+#                   codes, k<n>/ branch names, review codes, Cyrillic text and personal mail addresses (code and string
+#                   literals are not read; this check and its test are skipped, since they name the markers).
 # Intended exceptions go in tools/check/doc-refs.allow, one per line with its reason. Fenced code blocks are scanned as
 # well and their findings marked [code block].
 # Usage: tools/check/doc-refs.sh [--rev <commit> | --worktree] [--allow <file>] [root]
@@ -170,7 +170,7 @@ jsons = sorted(f for f in tracked if f.endswith(".json") and "/corpus/" not in f
 
 # Comments of source files: // and /* */ (KDoc included) outside string literals, # in shell outside quotes.
 COMMENT_PRIVATE = [x for x in PRIVATE if x[1] in ("local machine path", "private working directory", "agent ledger",
-                   "internal milestone code", "Cyrillic text", "personal mail address")] + \
+                   "internal milestone code", "internal review code", "Cyrillic text", "personal mail address")] + \
                   [(re.compile(r"\bk[1-9][0-9]?/[a-z]"), "internal branch name")]
 def c_comments(t, kotlin):
     i, n, line = 0, len(t), 1
