@@ -60,7 +60,7 @@ internal class KslNioSocket(
      * How long [close] lets the writer drain what is queued before it drops the rest and closes the socket; null: as long as
      * the peer takes. Owned by whoever opened the socket ([setCloseTimeout]): a client's connection 3 s (closing after the
      * response is complete drops nothing it wants), a server's accepted one none of its own, since a fixed bound would cut a
-     * slow reader's last response short; the engine bounds it from its idle and stall limits.
+     * slow reader's last response short; whoever accepted the socket bounds it (setCloseTimeout).
      */
     @Volatile internal var closeTimeout: Duration? = closeTimeout
 

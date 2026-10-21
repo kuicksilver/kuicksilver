@@ -89,7 +89,7 @@ public class TlsSocket private constructor(
     /**
      * The bound of [close] in all; null: the close waits for the peer to take what is queued (then 3 s at most for its
      * close_notify). 3 s on a client ([Socket.tls]), none on a server ([Socket.tlsServer]): a server's fixed bound cut a slow
-     * reader's last response short; the engine bounds it ([setCloseTimeout]).
+     * reader's last response short; whoever accepted the socket bounds it ([setCloseTimeout]).
      */
     @Volatile internal var closeTimeout: Duration? = null
 

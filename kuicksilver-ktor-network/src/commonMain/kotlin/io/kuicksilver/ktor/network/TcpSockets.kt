@@ -43,8 +43,9 @@ public expect suspend fun bindTcp(
  * Sets how long [Socket.close] may let what is queued drain to the peer before it drops the rest and closes the socket; null:
  * as long as the peer takes. For the engines, which own the bound of the sockets they open: [connectTcp]'s sockets and
  * [Socket.tls] start at 3 s, [bindTcp]'s accepted sockets and [Socket.tlsServer] with none, so a server's close does not cut a
- * slow reader's last response short (the engine bounds it instead). Applies to a [TlsSocket] and to the JVM's and Android's
- * engine sockets; a Kotlin/Native engine socket has no bound of its own.
+ * slow reader's last response short (whoever accepted the socket bounds it instead). Applies to a [TlsSocket] and to the
+ * JVM's and Android's engine sockets; a Kotlin/Native engine socket has no bound of its own. Governs a [Socket.close] not yet
+ * started: a close in progress keeps the bound it started with.
  */
 @InternalKuicksilverApi
 public fun Socket.setCloseTimeout(timeout: Duration?) {

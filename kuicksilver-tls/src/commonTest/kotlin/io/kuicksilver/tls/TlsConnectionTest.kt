@@ -22,8 +22,12 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.coroutines.EmptyCoroutineContext
@@ -254,6 +258,41 @@ class TlsConnectionTest {
                     TlsConnection.SHUTDOWN_TIMEOUT.inWholeMilliseconds,
                     testScheduler.currentTime,
                     "shutdown waits its bound, then closes",
+                )
+            }
+        } finally {
+            c.close()
+            s.close()
+        }
+    }
+
+    /**
+     * shutdown(drainTimeout = null), the server side of an engine that bounds the connection itself: sending what is queued
+     * has no bound (the peer reads late, nothing is dropped), and only the wait for the peer's close_notify after it is bounded
+     * by SHUTDOWN_TIMEOUT.
+     */
+    @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+    @Test
+    fun unboundedDrainStillBoundsTheCloseNotifyWait() {
+        val (c, s) = both(pair = BoundedChannelPair())
+        try {
+            runTest(timeout = 30.seconds) {
+                val data = ByteArray(3 shl 19) { it.toByte() } // more than the server's buffers take while it does not read
+                c.output.writeFully(data, 0, data.size)
+                c.output.flush()
+                val done = launch { c.shutdown(drainTimeout = null) }
+                advanceTimeBy(10 * TlsConnection.SHUTDOWN_TIMEOUT.inWholeMilliseconds)
+                runCurrent()
+                assertTrue(done.isActive, "the drain has no bound: after 10 x SHUTDOWN_TIMEOUT it still waits for the reader")
+                val drainedAt = testScheduler.currentTime
+                // the server reads it all now; it never answers with close_notify, so the client waits out SHUTDOWN_TIMEOUT
+                val got = withContext(Dispatchers.Default) { s.input.readExactly(data.size) }
+                assertContentEquals(data, got, "nothing queued was dropped")
+                done.join()
+                assertEquals(
+                    drainedAt + TlsConnection.SHUTDOWN_TIMEOUT.inWholeMilliseconds,
+                    testScheduler.currentTime,
+                    "after the drain, the wait for the peer's close_notify is bounded",
                 )
             }
         } finally {

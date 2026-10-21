@@ -203,7 +203,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   a write that answers 0 without reaching its select; about 64 such peers exhaust `Dispatchers.IO`. The engines'
   sockets now write through Kuicksilver's own writer, which waits in the selector. Closing a client connection lets
   the writer drain for at most 3 s and then drops the rest; a server's accepted socket has no bound of its own, so a
-  slow reader still gets the last response whole (the engine bounds the connection); a writer that is cancelled or
+  slow reader still gets the last response whole (whoever accepted it sets the bound, `setCloseTimeout`); a writer that is cancelled or
   fails (a reset) closes the descriptor ([threat model 3.21](docs/spec/threat-model.md)).
 - ktor-network: `TlsSocket.close()` could keep the raw socket, its coroutines and the native TLS session alive for as
   long as the peer kept the connection open without reading, since the flush, `close_notify` and the raw socket's last
