@@ -31,6 +31,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   byte with the published ones; `--offline <dir>` reads a local repository. The Linux and Windows JNI libraries and the
   Kotlin/Gradle outputs are reported as not rebuilt, with the reason. `tools/verify/verify-release-test.sh` (in the local
   gate) runs it on fixtures without network. The page also covers Gradle dependency verification for `io.kuicksilver`.
+  The tag must be signed by the release key before anything is compared with it or built from it; from 0.2.1 a missing
+  SBOM or provenance fails, and a file that does not download, a missing `.sha1` or a server-supplied name that is not
+  a plain name (BOM, module file, directory listing, provenance subject) fails rather than being skipped.
 - `context7.json`: the configuration of the Context7 documentation index (what it reads, a description, rules for coding
   agents, the 0.2.0 tag), and a release step that keeps it on the newest published version (`docs/release.md`).
 - `docs/stability.md` and `SECURITY.md` state that Kuicksilver is not FIPS-certified and that the bundled OpenSSL is

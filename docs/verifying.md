@@ -22,27 +22,41 @@ From a clone of this repository (any commit; the script rebuilds from the tag, n
 tools/verify/verify-release.sh 0.2.0
 ```
 
+The script and the release key file it checks against (`tools/release/kuicksilver-release-key.asc`) come from your
+checkout, so whoever controls your checkout controls the verdict. Before trusting the result, compare the fingerprint
+the script prints (`-- release key 22C1...`) with the one in [README.md](../README.md#security-model-in-one-line),
+[SECURITY.md](../SECURITY.md#openssl) and on a key server ([Signatures](#signatures)), and read the script: it is one
+file of shell and Python.
+
 It downloads every file of every `io.kuicksilver` publication of that version from Maven Central (`repo1.maven.org`)
 into `build/verify/<version>/`, then reports one line per check: `OK`, `DIFF`, `SKIPPED` (with the reason) or `FAIL` (a
 bad or missing signature, a missing file, a build that failed). It exits 1 on any `DIFF` or `FAIL`. The steps:
 
+0. **Tag.** `v<version>` (fetched from GitHub when your clone lacks it) must carry a good signature by the release key.
+   Only a verified tag is compared with the provenance or built from; a tag signed otherwise is a `FAIL`.
 1. **Signatures.** Every file (jars, AARs, klibs, POMs, Gradle module files, sources and javadoc jars) must have a good
-   `.asc` by the release key, and Central's `.sha1` must match.
-2. **SBOM and provenance**, when the GitHub release has them (from 0.2.1): both signed by the release key; every subject
-   digest of the provenance equal to the file from Central, no Central file missing from the subjects, and the source
-   commit equal to the commit of tag `v<version>`. For 0.2.0 this step is `SKIPPED`: that release has neither.
-3. **Rebuild.** The tag `v<version>` must be signed by the release key. Its `tools`, `gradle` and
-   `kuicksilver-native/src` are exported with `git archive`, the pinned OpenSSL tarball is downloaded and checked
-   (signature and SHA-256, `tools/openssl/fetch.sh` of the tag), and the libraries of [the table
-   below](#which-native-libraries-are-reproducible) are built with the tag's own scripts and compared with the copies
-   inside the published jar, AAR and klibs.
+   `.asc` by the release key, and Central's `.sha1` must be there and match. A file that Central lists but that does not
+   download is a `FAIL`, as is any name from the server (an artifact id in the BOM, a module file's URL, a file in a
+   directory listing) that is not a plain name: it is never downloaded.
+2. **SBOM and provenance.** Both on the GitHub release and signed by the release key; every subject digest of the
+   provenance equal to the file from Central, no Central file missing from the subjects, and the source commit equal to
+   the commit of the verified tag. Every release from 0.2.1 has them, so their absence is a `FAIL`; for 0.2.0 and older
+   the step is `SKIPPED`. No answer from GitHub (as opposed to a 404) is a `FAIL` for any version. When the provenance's
+   own signature fails, its subjects are not read.
+3. **Rebuild.** The verified tag's `tools`, `gradle` and `kuicksilver-native/src` are exported with `git archive`, the
+   pinned OpenSSL tarball is downloaded and checked (signature and SHA-256, `tools/openssl/fetch.sh` of the tag), and the
+   libraries of [the table below](#which-native-libraries-are-reproducible) are built with the tag's own scripts and
+   the pinned NDK's LLVM tools (`LLVM_OBJCOPY` and the like are ignored), and compared with the copies inside the
+   published jar, AAR and klibs.
 
-Options: `--no-rebuild` (steps 1 and 2 only, minutes instead of tens of minutes), `--targets macos-arm64,android-arm64`
+Options: `--no-rebuild` (steps 0 to 2 only, minutes instead of tens of minutes), `--targets macos-arm64,android-arm64`
 (rebuild only those OpenSSL targets), `--rebuilt <dir>` (compare against libraries you built elsewhere),
 `--allow-toolchain-drift` (build targets whose Xcode or NDK differs from the pin; a difference is then expected),
 `--offline <dir>` (read a local Maven repository instead of Central, see `--help`). It never uploads anything.
-`tools/verify/verify-release-test.sh` exercises it on fixtures (a good release, a tampered byte, a signature by another
-key, missing files, a library that differs from the rebuild) without network, and the local gate runs it.
+`tools/verify/verify-release-test.sh` exercises it on fixtures without network (a good release, a tampered byte, a
+signature by another key, a tag signed by another key, missing files and downloads, missing GitHub release files, a
+provenance naming another commit, names that try to leave the download directory, a library that differs from the
+rebuild), through a stand-in for Maven Central and GitHub for the download cases; the local gate runs it.
 
 ## Signatures
 
@@ -56,6 +70,13 @@ It is in this repository as `tools/release/kuicksilver-release-key.asc` and on `
 `keyserver.ubuntu.com`. Compare the fingerprint from at least two of these sources (and this page as rendered on
 GitHub) before trusting it; a check that takes the key from the same place as the artifacts proves little. Release tags
 (`git tag -s`) are signed with the same key: `git verify-tag v0.2.0` after importing it.
+
+The key expires on 2029-10-07. GnuPG reports a signature by an expired or revoked key as not good, and the script then
+says `FAIL` for every file, also for releases signed while the key was valid. Before it expires the project will extend
+the expiry date and publish the updated key (same fingerprint) in this repository and on the key servers; if the key is
+ever replaced, the new one will be announced in `SECURITY.md` and the release notes and signed by the old key, and
+the fingerprint pinned in `tools/verify/verify-release.sh`, `tools/release/verify-signature.sh` and
+`gradle/verification-metadata.xml` changes with it. A revoked key means: stop trusting it, and read the advisory.
 
 One file by hand, with the GnuPG you have:
 
