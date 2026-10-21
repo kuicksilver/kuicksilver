@@ -1,3 +1,8 @@
+<!--
+Copyright 2026 The Kuicksilver Authors
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # HTTP/3 with Kuicksilver
 
 Kuicksilver's HTTP/3 layer (`io.kuicksilver:kuicksilver-http3`) implements HTTP/3 (RFC 9114) with QPACK (RFC 9204),
@@ -170,8 +175,8 @@ acknowledged by the client's QUIC stack, the connection is closed with `H3_NO_ER
 idle connection after a GOAWAY once its responses are read (a Kuicksilver client always does; quic-go's server waits for
 exactly that), or by the server three seconds later if the client does not. A client that never closes (some other
 stacks) therefore has three seconds to read a response its QUIC stack has acknowledged; data still unread then is lost
-with the connection. A response handed to QUIC is not yet received:
-closing a fixed 200 ms after the last answer (before 0.2.0's last fix) cut large or slow responses short. A stream gets 10 seconds after the final GOAWAY to complete its HEADERS; after that it is reset with
+with the connection. A response handed to QUIC is not yet received, which is why the server waits for the client
+rather than closing a fixed time after the last answer. A stream gets 10 seconds after the final GOAWAY to complete its HEADERS; after that it is reset with
 `H3_REQUEST_REJECTED` (it was never processed) and no longer holds the connection open. (quic-go has no such
 per-stream deadline; it bounds the whole graceful shutdown with the caller's context.) A client receiving GOAWAY fails the requests it did not cover, and every
 new request, with `Http3Exception.RequestNotProcessed(retrySafe = true)`: they were never processed and can be sent
