@@ -132,7 +132,8 @@ internal class H3ConnectionPoint(
     private val localAddr: InetSocketAddress,
     override val method: HttpMethod,
 ) : RequestConnectionPoint {
-    override val scheme: String get() = "https"
+    /** The request's `:scheme` (`http` too, RFC 9114 section 3.1.2); `https` for a classic CONNECT, which has none. */
+    override val scheme: String get() = h3.scheme ?: "https"
     override val version: String get() = "HTTP/3"
     override val uri: String get() = h3.path ?: "/"
 
@@ -142,7 +143,7 @@ internal class H3ConnectionPoint(
     @Deprecated("Use localPort or serverPort instead")
     override val port: Int get() = serverPort
     override val localPort: Int get() = localAddr.port
-    override val serverPort: Int get() = h3.authority?.let(::authorityPort) ?: 443
+    override val serverPort: Int get() = h3.authority?.let(::authorityPort) ?: defaultPort(h3.scheme)
     override val localHost: String get() = localAddr.ipLiteral()
     override val serverHost: String get() = h3.authority?.let(::authorityHost) ?: localHost
     override val localAddress: String get() = localAddr.ipLiteral()
@@ -235,3 +236,6 @@ internal fun authorityPort(authority: String): Int? {
     val hostEnd = if (a.startsWith("[")) a.indexOf(']') + 1 else a.indexOf(':').let { if (it < 0) a.length else it }
     return a.substring(hostEnd).removePrefix(":").toIntOrNull()
 }
+
+/** The default port of [scheme] (RFC 9110 sections 4.2.1, 4.2.2): 80 for `http`, else 443 (`https`, or none for a classic CONNECT). */
+internal fun defaultPort(scheme: String?): Int = if (scheme == "http") 80 else 443

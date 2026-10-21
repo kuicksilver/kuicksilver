@@ -54,8 +54,9 @@ after which the connector serves HTTP/1.1 alone with a warning. A fixed port who
 responses then carry `Alt-Svc: h3=":<port>"; ma=86400` so clients can switch (RFC 7838) — unless the application set
 its own `Alt-Svc`, or the response is a 421; `altSvc = false` turns the header off.
 
-In an HTTP/3 call `call.request.httpVersion` is `"HTTP/3"`, `call.request.local.scheme` is `"https"`, the `:authority`
-appears as the `Host` header, and `call.request.local.remoteAddress` follows the client when it migrates to another
+In an HTTP/3 call `call.request.httpVersion` is `"HTTP/3"`, `call.request.local.scheme` is the request's `:scheme`
+(`"https"` from browsers and the Kuicksilver client; `"http"` when a client sends that), `serverPort` without a port in
+`:authority` is that scheme's default (80 or 443), the `:authority` appears as the `Host` header, and `call.request.local.remoteAddress` follows the client when it migrates to another
 network. Responses never carry `Transfer-Encoding` or other connection-specific headers: bodies of unknown length are
 simply a sequence of DATA frames.
 

@@ -174,6 +174,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   RFC 9114 section 4.4 makes it the host and port to connect to, and RFC 9110 section 9.3.6 its authority-form
   `uri-host ":" port`; such a request is now malformed (H3_MESSAGE_ERROR on its stream). Extended CONNECT (RFC 9220)
   keeps an optional port.
+- Ktor server: an HTTP/3 call reported `call.request.local.scheme` as `https` and, without a port in `:authority`,
+  `serverPort` as 443 whatever the request's `:scheme` said; an `http` request over HTTP/3 (RFC 9114 section 3.1.2) was
+  seen as `https` on port 443. Both now follow `:scheme`: `http` with default port 80, `https` with 443.
 
 ## [0.2.0] - 2026-10-15
 

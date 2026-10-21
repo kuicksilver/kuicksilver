@@ -551,6 +551,31 @@ class ServerH3Test {
             }
         }
 
+    /**
+     * `call.request.local.scheme` is the request's `:scheme`, and `serverPort` without a port in `:authority` is that
+     * scheme's default port: an `http` request over HTTP/3 (RFC 9114 section 3.1.2, a gateway or an origin that is
+     * authoritative for it) was reported as `https` on port 443.
+     */
+    @Test fun schemeAndDefaultPortFollowTheRequest() =
+        h3ServerTest {
+            val (server, port) =
+                tlsServer {
+                    routing { get("/") { call.respondText("${call.request.local.scheme} ${call.request.local.serverPort}") } }
+                }
+            try {
+                h3(port) { c ->
+                    for ((scheme, expected) in listOf("http" to "http 80", "https" to "https 443")) {
+                        val r = c.request(http3Request("GET", "server.test", "/") { this.scheme = scheme })
+                        assertEquals(expected, r.body.readFullBody().decodeToString())
+                    }
+                    val r = c.request(http3Request("GET", "server.test:8443", "/") { this.scheme = "http" })
+                    assertEquals("http 8443", r.body.readFullBody().decodeToString())
+                }
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
     /** Split `cookie` fields are one header for the application (RFC 9114 section 4.2.1). */
     @Test fun cookieCrumbsAreJoined() =
         h3ServerTest {

@@ -24,4 +24,11 @@ class H3AuthorityTest {
             assertEquals(expected, authorityHost(authority) to authorityPort(authority), authority)
         }
     }
+
+    /** Without a port in `:authority`, `serverPort` is the default port of the request's `:scheme` (RFC 9110 sections 4.2.1, 4.2.2). */
+    @Test fun defaultPortFollowsTheScheme() {
+        assertEquals(80, defaultPort("http"))
+        assertEquals(443, defaultPort("https"))
+        assertEquals(443, defaultPort(null))
+    }
 }
