@@ -30,6 +30,17 @@ internal class AckTracker(
     /** Highest packet number of a range dropped for lack of room: anything at or below it is reported as seen. */
     private var evictedBelow = -1L
 
+    /**
+     * Packets processed in part and then dropped unacknowledged (a STREAM frame refused for lack of reassembly room after the frames
+     * ahead of it were applied): seen, so a copy is a duplicate (RFC 9000 section 12.3), yet never acknowledged, as not all of
+     * their frames were processed (section 13.1). At most [REFUSED_KEPT]; the lowest goes first.
+     */
+    private val refused = LongArray(REFUSED_KEPT)
+    private var refusedCount = 0
+
+    /** Highest refused packet number dropped from [refused] for lack of room: anything at or below it is treated as seen. */
+    private var refusedBelow = -1L
+
     /** Forgets every packet seen so far: the Initial packets of a provisional server instance (an SCID the client moved away from) are not part of this connection and must not be acknowledged. */
     fun forgetAll() {
         count = 0
@@ -38,6 +49,8 @@ internal class AckTracker(
         required = false
         floor = -1L
         evictedBelow = -1L
+        refusedCount = 0
+        refusedBelow = -1L
         ecnCounts = null
     }
 
@@ -75,12 +88,24 @@ internal class AckTracker(
     val rangeCount: Int get() = count
 
     fun isDuplicate(pn: Long): Boolean {
-        if (pn <= floor || pn <= evictedBelow) return true
+        if (pn <= floor || pn <= evictedBelow || pn <= refusedBelow) return true
+        for (k in 0 until refusedCount) if (refused[k] == pn) return true
         for (i in 0 until count) {
             if (pn > ranges[2 * i + 1]) return false
             if (pn >= ranges[2 * i]) return true
         }
         return false // below every tracked range but never evicted: a reordered packet we have not seen (RFC 9000 section 13.2.3)
+    }
+
+    /** Packet [pn] was processed in part and dropped unacknowledged: a copy of it is a duplicate from now on, and it is never acknowledged. */
+    fun onPacketRefused(pn: Long) {
+        if (refusedCount == REFUSED_KEPT) {
+            var lowest = 0
+            for (k in 1 until refusedCount) if (refused[k] < refused[lowest]) lowest = k
+            if (refused[lowest] > refusedBelow) refusedBelow = refused[lowest]
+            refused[lowest] = refused[--refusedCount]
+        }
+        refused[refusedCount++] = pn
     }
 
     /** [ce]: the packet arrived marked Congestion Experienced (RFC 9000 section 13.2.1: acknowledged immediately). */
@@ -207,5 +232,10 @@ internal class AckTracker(
                 j++
             }
         }
+    }
+
+    private companion object {
+        /** Refused packets remembered one by one; beyond that the oldest becomes a floor (refusals come only under reassembly pressure). */
+        const val REFUSED_KEPT = 16
     }
 }

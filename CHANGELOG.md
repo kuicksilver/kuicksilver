@@ -93,6 +93,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   is now checked against the final size, the stream window, the connection window and the reassembly room before
   anything is committed; abandoning a stream credits only bytes that were charged. CRYPTO frames likewise count toward
   their caps only once buffered.
+- QUIC: a copy of a packet dropped for lack of reassembly room was processed again. The frames ahead of the refused
+  STREAM frame had run (a DATAGRAM delivered, a PATH_CHALLENGE answered) and the packet number was not recorded, so a
+  network duplicate or a replay delivered the DATAGRAM twice (RFC 9000 section 12.3). The packet number now counts as
+  seen and is still never acknowledged, as not all of its frames were processed (section 13.1); the peer resends the
+  data in a new packet.
 - QUIC: a packet of MAX_STREAM_DATA frames could cost the endpoint loop about 250 ms. On a stream whose receiver
   acknowledged every other packet, each frame (even one that raises nothing, which spends no glitch token) compared
   every queued retransmission with every acknowledged range, and so did every packet built for the stream. Acknowledged

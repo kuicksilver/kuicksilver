@@ -236,4 +236,25 @@ class AckTrackerTest {
             assertEquals(skips + 1, last!!.ranges.size, "offset $offset: every skipped number is a gap: ${last!!.ranges}")
         }
     }
+
+    @Test fun refusedPacketIsSeenButNeverAcknowledged() {
+        // RFC 9000 sections 12.3 and 13.1: a packet dropped after some of its frames ran is not processed again, nor acknowledged
+        val a = AckTracker(64)
+        a.onPacketReceived(0, true, t0)
+        a.onPacketRefused(1)
+        a.onPacketReceived(2, true, t0)
+        assertTrue(a.isDuplicate(1))
+        assertFalse(a.isDuplicate(3))
+        val ack = ackFrame(a, t0)
+        assertEquals(2L, ack.largest)
+        assertEquals(listOf(2L to 2L, 0L to 0L), ack.ranges, "packet 1 stays a gap in the ACK")
+    }
+
+    @Test fun refusedPacketsBeyondTheKeptOnesBecomeAFloor() {
+        val a = AckTracker(64)
+        for (pn in 0L until 20) a.onPacketRefused(2 * pn)
+        for (pn in 0L until 20) assertTrue(a.isDuplicate(2 * pn), "refused $pn")
+        assertTrue(a.isDuplicate(5), "below the floor of the forgotten refusals")
+        assertFalse(a.isDuplicate(41))
+    }
 }

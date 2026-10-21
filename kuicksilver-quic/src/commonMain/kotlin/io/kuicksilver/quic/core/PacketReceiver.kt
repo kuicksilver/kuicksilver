@@ -350,7 +350,12 @@ internal class PacketReceiver(
             try {
                 FrameDecoder.decode(reader, type, frames, ackView)
             } catch (_: ReassemblyFull) {
-                // not acknowledged, so the peer resends it; the frames before the refused one are idempotent (K7 F2.9)
+                // not acknowledged, so the peer resends its frames in a new packet (K7 F2.9; RFC 9000 section 13.1: all frames must be
+                // processed before a packet is acknowledged). The frames ahead of the refused one were applied (a DATAGRAM delivered, a
+                // PATH_CHALLENGE answered): the packet number counts as seen, so a duplicate or a replay is not processed again (section
+                // 12.3). Refusing the packet before any frame runs would need the whole packet decoded twice, and a STREAM frame
+                // ahead in the same packet may free or take the room a later one needs.
+                sp.ack.onPacketRefused(pn)
                 c.datagramsDropped++
                 return true
             } catch (e: QuicWireException) {
