@@ -57,6 +57,7 @@ aar=kuicksilver-native/build/outputs/aar/kuicksilver-native.aar
 step "lint: action/image pins"                 bash tools/check/pins.sh .
 step "lint: documentation references"          bash tools/check/doc-refs.sh
 step "lint: doc-refs negative controls"         bash tools/check/doc-refs-test.sh
+step "lint: links (Markdown, llms.txt)"         bash tools/check/links.sh
 step "lint: ktlint"                            $G lintKotlin
 step "check: dependency verification (every configuration)"  $G -I tools/check/resolve-all.init.gradle.kts -Pkuicksilver.resolveAll.strict=true --continue :build-logic:ksResolveAll ksResolveAll   # a metadata gap fails here, not in the late step resolving it
 # shellcheck disable=SC2086
