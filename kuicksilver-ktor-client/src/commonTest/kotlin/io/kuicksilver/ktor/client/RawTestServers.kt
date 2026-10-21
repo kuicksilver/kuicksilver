@@ -3,7 +3,9 @@
 package io.kuicksilver.ktor.client
 
 import io.ktor.network.selector.SelectorManager
+import io.ktor.network.sockets.BoundDatagramSocket
 import io.ktor.network.sockets.InetSocketAddress
+import io.ktor.network.sockets.ServerSocket
 import io.ktor.network.sockets.aSocket
 import io.ktor.network.sockets.openReadChannel
 import io.ktor.network.sockets.openWriteChannel
@@ -39,26 +41,59 @@ internal suspend fun readRequest(input: ByteReadChannel): String {
 }
 
 /**
- * A TLS (HTTP/1.1) listener on 127.0.0.1:[port] (0: a free one) that runs [handler] once per accepted connection with its
- * index, then closes it; with [silentUdp] the UDP port of the same number is bound and never answers (QUIC blocked).
- * Connections are accepted once [acceptAfter] completed (they wait in the backlog until then). [block] gets the port.
+ * A TLS (HTTP/1.1) listener on 127.0.0.1 that runs [handler] once per accepted connection with its index, then closes it;
+ * with [silentUdp] the UDP port of the same number is bound too and never answers (QUIC blocked): the UDP side binds a
+ * free port first and TCP takes that number ([bindOnSamePort]; a free TCP port says nothing about its UDP twin). With
+ * [listener] (not closed here) it serves on that socket instead of binding one. Connections are accepted once
+ * [acceptAfter] completed (they wait in the backlog until then). [block] gets the port.
  */
 internal suspend fun tlsH1WithSilentUdp(
-    port: Int = 0,
     silentUdp: Boolean = true,
+    listener: ServerSocket? = null,
     acceptAfter: kotlinx.coroutines.Deferred<Unit>? = null,
     handler: suspend CoroutineScope.(index: Int, input: ByteReadChannel, output: ByteWriteChannel) -> Unit,
     block: suspend (Int) -> Unit,
 ) {
+    require(listener == null || !silentUdp) { "a given listener comes with its own UDP side" }
     val tls =
         tlsConfig(TlsRole.Server) {
             identity = ClientFixtures.identity()
             alpn = listOf("http/1.1")
         }
     val selector = SelectorManager(Dispatchers.Default)
-    val listener = aSocket(selector).tcp().bind("127.0.0.1", port)
-    val bound = (listener.localAddress as InetSocketAddress).port
-    val udp = if (silentUdp) aSocket(selector).udp().bind(InetSocketAddress("127.0.0.1", bound)) else null
+    var udp: BoundDatagramSocket? = null
+    val tcp: ServerSocket
+    try {
+        tcp =
+            when {
+                listener != null -> {
+                    listener
+                }
+
+                silentUdp -> {
+                    bindOnSamePort(
+                        first = {
+                            aSocket(selector).udp().bind(InetSocketAddress("127.0.0.1", 0)).let {
+                                it to
+                                    (it.localAddress as InetSocketAddress).port
+                            }
+                        },
+                        release = { it.close() },
+                    ) { p -> aSocket(selector).tcp().bind("127.0.0.1", p) }.let { (u, t, _) ->
+                        udp = u
+                        t
+                    }
+                }
+
+                else -> {
+                    aSocket(selector).tcp().bind("127.0.0.1", 0)
+                }
+            }
+    } catch (e: Throwable) {
+        selector.close()
+        throw e
+    }
+    val bound = (tcp.localAddress as InetSocketAddress).port
     try {
         coroutineScope {
             val server =
@@ -66,7 +101,7 @@ internal suspend fun tlsH1WithSilentUdp(
                     acceptAfter?.await()
                     var index = 0
                     while (true) {
-                        val raw = listener.accept()
+                        val raw = tcp.accept()
                         val i = index++
                         launch {
                             runCatching {
@@ -81,7 +116,7 @@ internal suspend fun tlsH1WithSilentUdp(
         }
     } finally {
         udp?.close()
-        listener.close()
+        if (listener == null) tcp.close()
         selector.close()
     }
 }
@@ -141,7 +176,10 @@ private suspend fun ByteReadChannel.discardAll() {
 }
 
 /** Control of a [udpRelay]. */
-internal class UdpRelay {
+internal class UdpRelay(
+    /** With `tcpTwin`: a TCP listener on 127.0.0.1 at the relay's port number, bound with it and accepting nothing yet. */
+    val tcp: ServerSocket?,
+) {
     /** While true every datagram is dropped, both ways: QUIC is blocked on the path. */
     @kotlin.concurrent.Volatile var blocked: Boolean = false
 
@@ -151,16 +189,46 @@ internal class UdpRelay {
 
 /**
  * A UDP relay from a free port of 127.0.0.1 to 127.0.0.1:[target] (for one client address at a time); [block] gets its port
- * and its [UdpRelay] switch. Nothing listens on the TCP port of the same number.
+ * and its [UdpRelay] switch. Without [tcpTwin] nothing of ours listens on the TCP port of the same number; with it that
+ * port is bound together with the relay's ([bindOnSamePort]) and handed over as [UdpRelay.tcp], for a test that serves
+ * HTTP/1.1 on the relay's port later: binding TCP on that number only then failed with "Address already in use" whenever
+ * another process held it.
  */
 internal suspend fun udpRelay(
     target: Int,
+    tcpTwin: Boolean = false,
     block: suspend (port: Int, relay: UdpRelay) -> Unit,
 ) {
     val selector = SelectorManager(Dispatchers.Default)
-    val front = aSocket(selector).udp().bind(InetSocketAddress("127.0.0.1", 0))
-    val back = aSocket(selector).udp().bind(InetSocketAddress("127.0.0.1", 0))
-    val relay = UdpRelay()
+    val (front, tcp) =
+        try {
+            if (tcpTwin) {
+                bindOnSamePort(
+                    first = {
+                        aSocket(selector).udp().bind(InetSocketAddress("127.0.0.1", 0)).let {
+                            it to
+                                (it.localAddress as InetSocketAddress).port
+                        }
+                    },
+                    release = { it.close() },
+                ) { p -> aSocket(selector).tcp().bind("127.0.0.1", p) }.let { (u, t, _) -> u to t }
+            } else {
+                aSocket(selector).udp().bind(InetSocketAddress("127.0.0.1", 0)) to null
+            }
+        } catch (e: Throwable) {
+            selector.close()
+            throw e
+        }
+    val back =
+        try {
+            aSocket(selector).udp().bind(InetSocketAddress("127.0.0.1", 0))
+        } catch (e: Throwable) {
+            front.close()
+            tcp?.close()
+            selector.close()
+            throw e
+        }
+    val relay = UdpRelay(tcp)
     val to = InetSocketAddress("127.0.0.1", target)
     var client: io.ktor.network.sockets.SocketAddress? = null
     try {
@@ -203,6 +271,7 @@ internal suspend fun udpRelay(
     } finally {
         front.close()
         back.close()
+        tcp?.close()
         selector.close()
     }
 }
