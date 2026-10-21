@@ -198,6 +198,14 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   it in the start line and field lines only; the trailer section keeps accepting it). For a malformed chunked request body the engine writes no response itself: the handler's receive of
   the body fails with `BadRequestException`, which Ktor answers with 400 and a fixed text unless the application
   handles it (it was a plain IOException, answered with 500 and the parser's message), and the connection closes.
+- Android: an app built with R8 (`isMinifyEnabled = true`, the usual release setup) could not load `libksl`, so TLS,
+  QUIC and HTTP/3 were unavailable in release builds while debug builds worked. The 0.2.0 AAR shipped no consumer keep
+  rules: R8 renamed `PacketBuffer.buffer` and removed the `KslNative` natives the app never reached, and `JNI_OnLoad`,
+  which registers every native and reads that field by name, failed the load (`UnsatisfiedLinkError`, `KslLoader`
+  `Unavailable`). The AAR now carries the rules as `proguard.txt`, and the JVM jar as
+  `META-INF/proguard/kuicksilver-native.pro` for applications that shrink on the JVM ([troubleshooting:
+  Android](docs/guide/troubleshooting.md#android)). A new gate step, `tools/check/android-keep-rules.sh`, checks the AAR's
+  rules against the names `ksl_jni.c` looks up and runs R8 over the AAR's classes when R8 is in the Gradle cache.
 - `Certificate`: a DER length of four bytes past `Int.MAX_VALUE` wrapped the minimal walker's bounds check, so reading
   `dnsNames`, `ipAddresses` or the validity of such bytes threw an index error instead of `TlsException.Config`, and a
   crafted negative length could make the walker revisit the same bytes without end. Certificates that came through a

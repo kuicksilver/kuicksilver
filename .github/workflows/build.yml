@@ -378,7 +378,7 @@ jobs:
         with: { name: reports-apple, path: '**/build/reports/', retention-days: 7 }
 
   android:
-    # AAR with libksl.so for arm64-v8a, x86_64 and armeabi-v7a (pinned NDK), the size and 16 KiB page gates, then the device tests on the
+    # AAR with libksl.so for arm64-v8a, x86_64 and armeabi-v7a (pinned NDK), the size, 16 KiB page and consumer keep rule gates, then the device tests on the
     # x86_64 emulator at minSdk 24 and at compileSdk 35 (KVM on the Linux runner; Apple-silicon runners cannot nest it).
     strategy:
       fail-fast: false
@@ -401,6 +401,8 @@ jobs:
         run: bash tools/check/size.sh "$AAR" "$SIZE_LIMIT"
       - name: 'android: 16 KiB pages'
         run: bash tools/check/page-align.sh "$AAR"
+      - name: 'android: consumer keep rules (R8)'
+        run: bash tools/check/android-keep-rules.sh "$AAR"
       - name: 'android: free disk for the emulator'
         # Run 38287900994: both emulators exited before adb saw them and the action only reported a boot timeout. The
         # OpenSSL work tree, three Android ABIs and the AAR fill the runner before the AVD's userdata partition is

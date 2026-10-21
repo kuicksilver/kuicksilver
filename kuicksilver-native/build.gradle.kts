@@ -25,8 +25,14 @@ kotlin {
     sourceSets {
         jvmMain { resources.srcDir(layout.buildDirectory.dir("jni/resources")) }
     }
+    // JNI_OnLoad finds KslNative's natives and PacketBuffer.buffer by name: an app shrinking with R8 must keep them (proguard.txt in the AAR)
+    androidLibrary { optimization { consumerKeepRules.publish = true; consumerKeepRules.file("consumer-rules.pro") } }
 }
-tasks.matching { it.name == "jvmProcessResources" }.configureEach { dependsOn("buildJniHost") }
+tasks.matching { it.name == "jvmProcessResources" }.configureEach {
+    dependsOn("buildJniHost")
+    // the same keep rules for a JVM application that shrinks: R8 reads META-INF/proguard/ of a jar on its own, ProGuard users add the file
+    (this as ProcessResources).from("consumer-rules.pro") { into("META-INF/proguard"); rename { "kuicksilver-native.pro" } }
+}
 // Provenance of the bundled native library: the pinned OpenSSL release and its tarball hash, the ksl ABI and the source revision.
 tasks.matching { it.name == "jvmJar" }.configureEach {
     val toml = rootProject.file("gradle/openssl.toml").readText()

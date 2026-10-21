@@ -282,6 +282,26 @@ the portable socket "loops > 1 needs the accelerated transport…". Use `loops =
 `followDefaultNetwork`) come with the libraries. Doze and app standby cut network access whatever Kuicksilver does; a
 frozen background process reconnects when it runs again.
 
+Code shrinking (R8, `isMinifyEnabled` or `optimization { enable = true }`): `libksl`'s `JNI_OnLoad` finds the natives
+of `io.kuicksilver.native.KslNative` and the field `PacketBuffer.buffer` by name, so R8 must neither remove nor rename
+them. The `kuicksilver-native` AAR carries these rules as `proguard.txt`, and R8 applies them without any setup (since
+0.2.1; with 0.2.0 a minified release build failed to load the library, `KslLoader.availability()` answered
+`Unavailable` with `LoadFailed`, while debug builds worked). Add them to the app's own rules only if the build ignores
+consumer rules from dependencies:
+
+```proguard
+-keep,includedescriptorclasses class io.kuicksilver.native.KslNative {
+    native <methods>;
+}
+-keep class io.kuicksilver.native.PacketBuffer {
+    java.nio.ByteBuffer buffer;
+}
+```
+
+A JVM application that shrinks its jar (ProGuard in a Compose Desktop release build, R8 for a server) needs the same
+rules. The `kuicksilver-native` jar carries them as `META-INF/proguard/kuicksilver-native.pro`, which R8 reads by
+itself; with ProGuard, add the lines above to its configuration unless your setup applies rules embedded in jars.
+
 ## Native library
 
 ### `KslException.NativeLoad` or `KslLoader.availability()` is `Unavailable`

@@ -176,7 +176,7 @@ table once it lists Xcode 27. Apps that use Kotlin 2.4.20 may build with either.
 | Platform | Requirements | How 0.2.0 was verified |
 |---|---|---|
 | JVM | JVM 17 or newer (bytecode 17; built with JDK 21). JNI libraries for Linux x86_64 and aarch64 (glibc 2.17+, manylinux2014; not musl), macOS arm64 and x86_64 (macOS 11+), Windows x86_64 | the JVM suites on macOS, on Linux in Docker, and on Windows in a local Windows 11 VM (Parallels) |
-| Android | `minSdk` 24, `compileSdk` 35; arm64-v8a, armeabi-v7a, x86_64; libraries aligned for 16 KiB pages | device tests on the emulator (`androidConnectedCheck`), the AAR's size and 16 KiB page checks |
+| Android | `minSdk` 24, `compileSdk` 35; arm64-v8a, armeabi-v7a, x86_64; libraries aligned for 16 KiB pages | device tests on the emulator (`androidConnectedCheck`), the AAR's size and 16 KiB page checks, its consumer keep rules (an R8 run over its classes) |
 | `linuxX64`, `linuxArm64` | glibc of the Kotlin/Native sysroot (2.19 on x64, 2.25 on arm64) | the native suites in Docker; the interop runner's native image (`linuxArm64`) |
 | `macosArm64` | macOS 12 or newer (the Kotlin/Native default of Kotlin 2.4.20, and `SecTrustCopyCertificateChain` in the platform verifier) | the native suites on the macOS host |
 | `iosSimulatorArm64` | iOS 15 or newer (the Kotlin/Native default, the OpenSSL build floor and `SecTrustCopyCertificateChain`) | the suites of every module on the simulator, and `iosHostInteropTest` against a peer on the host |
