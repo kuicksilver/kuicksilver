@@ -131,6 +131,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   field line; a front proxy that keys on the last line routed and cached by another host than the application saw. Both
   now get 400 and the connection closes; an HTTP/1.0 request without Host is still served. The HTTP/3 path already
   refused a second `host`.
+- HTTP/1.1 server: `call.request.origin.serverHost` was `"[:"` for an IPv6 literal in the Host field
+  (`Host: [::1]:8443`), and `serverPort` the local port for `Host: [::1]`, as the value was split at its last colon.
+  The literal now keeps its brackets (`"[::1]"`, as over HTTP/3) and a Host without a port gives the scheme's default
+  port.
 - HTTP/1.1, server and client: a bare CR in a chunk-size line was skipped, a request smuggling vector. The parser (Ktor
   3.6.0's, KTOR-9263) ignored a CR anywhere in the line, so `1\r0\r\n` was read as size 0x10 where a recipient that
   ends the line at the CR reads 1, and `\r\r\n` was taken as the last chunk; a quote outside an extension switched on a

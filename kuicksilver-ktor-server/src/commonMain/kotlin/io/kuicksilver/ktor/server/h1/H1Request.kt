@@ -1,7 +1,8 @@
 // Copyright 2014-2021 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
 // Modifications Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
-// Vendored from Ktor 3.6.0 ktor-server-cio CIOApplicationRequest.kt (internal there), adapted: the scheme is the connector's.
+// Vendored from Ktor 3.6.0 ktor-server-cio CIOApplicationRequest.kt (internal there), adapted: the scheme is the connector's,
+// and an IPv6 literal in the Host field keeps its brackets in `serverHost` (Ktor took everything before the last colon).
 package io.kuicksilver.ktor.server.h1
 
 import io.ktor.http.Headers
@@ -77,18 +78,21 @@ internal class H1ConnectionPoint(
 ) : RequestConnectionPoint {
     private val defaultPort = URLProtocol.createOrDefault(scheme).defaultPort
 
+    /** The Host field split into `uri-host` and the port text after it, if any (RFC 9110 section 7.2). */
+    private val hostAndPort: Pair<String, String?>? = hostHeaderValue?.let(::splitHostField)
+
     @Deprecated("Use localPort or serverPort instead")
     override val host: String
         get() =
             localNetworkAddress?.hostname
-                ?: hostHeaderValue?.substringBefore(":")
+                ?: hostAndPort?.first
                 ?: "localhost"
 
     @Deprecated("Use localPort or serverPort instead")
     override val port: Int
         get() =
             localNetworkAddress?.port
-                ?: hostHeaderValue?.substringAfter(":", defaultPort.toString())?.toInt()
+                ?: hostAndPort?.let { it.second?.toIntOrNull() ?: defaultPort }
                 ?: defaultPort
 
     override val localPort: Int
@@ -96,16 +100,15 @@ internal class H1ConnectionPoint(
 
     override val serverPort: Int
         get() =
-            hostHeaderValue
-                ?.substringAfterLast(":", defaultPort.toString())
-                ?.toIntOrNull()
+            hostAndPort
+                ?.let { (_, port) -> if (port == null) defaultPort else port.toIntOrNull() }
                 ?: localPort
 
     override val localHost: String
         get() = localNetworkAddress?.hostname ?: "localhost"
 
     override val serverHost: String
-        get() = hostHeaderValue?.substringBeforeLast(":") ?: localHost
+        get() = hostAndPort?.first ?: localHost
 
     override val localAddress: String
         get() = localNetworkAddress?.address ?: "localhost"
@@ -122,4 +125,20 @@ internal class H1ConnectionPoint(
     override fun toString(): String =
         "H1ConnectionPoint(uri=$uri, method=$method, version=$version, localAddress=$localAddress, " +
             "localPort=$localPort, remoteAddress=$remoteAddress, remotePort=$remotePort)"
+}
+
+/**
+ * Splits a Host field value, `uri-host [ ":" port ]` (RFC 9110 section 7.2), into the host and the port text, if any. An
+ * IP-literal (RFC 3986 section 3.2.2) keeps its brackets, as `serverHost` over HTTP/3 does: the colons inside it are
+ * not a port separator.
+ */
+internal fun splitHostField(value: String): Pair<String, String?> {
+    if (value.startsWith("[")) {
+        val end = value.indexOf(']')
+        if (end < 0) return value to null
+        val rest = value.substring(end + 1)
+        return value.substring(0, end + 1) to (if (rest.startsWith(":")) rest.substring(1) else null)
+    }
+    val colon = value.lastIndexOf(':')
+    return if (colon < 0) value to null else value.substring(0, colon) to value.substring(colon + 1)
 }
