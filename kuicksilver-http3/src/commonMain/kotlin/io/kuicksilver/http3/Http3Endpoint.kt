@@ -168,7 +168,11 @@ public class Http3Endpoint private constructor(
         /** The ALPN token of HTTP/3. */
         public const val H3: String = "h3"
 
-        /** Binds [local]; with `config.server` set the endpoint accepts HTTP/3 connections using [settings]. */
+        /**
+         * Binds [local]; with `config.server` set the endpoint accepts HTTP/3 connections using [settings]. The server's
+         * `QuicConfig.defaultStreamErrorCode`, when left at 0, becomes H3_REQUEST_REJECTED (RFC 9114 section 4.1.1): it is the
+         * code of a request stream given up before the server saw it.
+         */
         public suspend fun bind(
             local: InetSocketAddress,
             config: QuicEndpointConfig = QuicEndpointConfig.Default,
@@ -179,23 +183,41 @@ public class Http3Endpoint private constructor(
                 requireCriticalStreams(it.quic)
             }
             val server = config.server?.let { settings.withTransport(it.quic) } ?: settings
-            return Http3Endpoint(QuicEndpoint.bind(local, config.withEarlyDataContext(server)), server)
+            return Http3Endpoint(QuicEndpoint.bind(local, config.forHttp3Server(server)), server)
         }
 
-        /** A 0-RTT server binds its SETTINGS into its tickets (RFC 9114 section 7.2.4.2): changed SETTINGS refuse early data. */
+        /**
+         * The server side of an HTTP/3 endpoint. A 0-RTT server binds its SETTINGS into its tickets (RFC 9114 section 7.2.4.2):
+         * changed SETTINGS refuse early data. A request stream the QUIC layer gives up before the server saw it (its acceptor was
+         * cancelled) is reset with `QuicConfig.defaultStreamErrorCode`: QUIC's default 0 is no HTTP/3 code (a client reads it as
+         * H3_NO_ERROR, section 9), so it becomes H3_REQUEST_REJECTED, which says the request was not processed and may be
+         * retried (sections 4.1.1 and 8.1). A code set explicitly is kept. Every stream the HTTP/3 layer handled is reset with a
+         * code of its own, never this default.
+         */
         @OptIn(ExperimentalKuicksilverApi::class)
-        private fun QuicEndpointConfig.withEarlyDataContext(settings: Http3Settings): QuicEndpointConfig {
+        internal fun QuicEndpointConfig.forHttp3Server(settings: Http3Settings): QuicEndpointConfig {
             val s = server ?: return this
-            if (!s.earlyData) return this
+            val quic =
+                if (s.quic.defaultStreamErrorCode == 0L) {
+                    s.quic
+                        .toBuilder()
+                        .apply { defaultStreamErrorCode = Http3ErrorCode.REQUEST_REJECTED }
+                        .build()
+                } else {
+                    s.quic
+                }
+            if (!s.earlyData && quic === s.quic) return this
             return toBuilder()
                 .apply {
                     server =
                         QuicServerConfig
                             .Builder(s.tls)
                             .apply {
-                                quic = s.quic
-                                earlyData = true
-                                earlyDataContext = settings.earlyDataContext()
+                                this.quic = quic
+                                if (s.earlyData) {
+                                    earlyData = true
+                                    earlyDataContext = settings.earlyDataContext()
+                                }
                             }.build()
                 }.build()
         }

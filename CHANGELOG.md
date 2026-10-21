@@ -41,6 +41,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Changed
 
+- HTTP/3 server: `QuicConfig.defaultStreamErrorCode` left at its default 0 (no HTTP/3 error code; a client reads it as
+  H3_NO_ERROR, RFC 9114 section 9) becomes H3_REQUEST_REJECTED for `Http3Endpoint` and the Ktor engine's HTTP/3 side. It
+  is the code of a request stream the QUIC layer gives up before the server saw it, which a client may then retry
+  (sections 4.1.1 and 8.1); every stream the HTTP/3 layer handled is reset with a code of its own. A code set
+  explicitly is kept.
 - QUIC performance, client and server (`docs/benchmarks.md`, "0.2.1: before and after"; `tools/bench`, 2026-10-21
   against the 2026-10-20 run of `c08bc57b`). Client CPU per GB: from quinn's interop server 18.2 → 8.4 s (JVM) and
   9.1 → 7.4 (Native), from quiche's 13.9 → 5.9 and 12.2 → 5.3, Kuicksilver against itself 6.7 → 4.9 and 5.4 → 3.6.
