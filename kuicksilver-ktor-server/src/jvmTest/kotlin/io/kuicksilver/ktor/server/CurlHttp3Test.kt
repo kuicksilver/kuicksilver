@@ -13,7 +13,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 /**
- * A real third-party HTTP/3 client against the Ktor server (K5 criterion "interop http3"): curl with HTTP/3 support from a
+ * A real third-party HTTP/3 client against the Ktor server (an interop criterion for HTTP/3): curl with HTTP/3 support from a
  * Docker image named by `KSL_CURL_H3_IMAGE` (for example `ymuski/curl-http3`, amd64), reaching the host through
  * `host.docker.internal`. Skipped when the variable is unset or Docker is unavailable; `tools/ci/local-matrix.sh
  * --with-interop` sets it.
