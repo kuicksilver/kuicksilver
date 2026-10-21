@@ -45,6 +45,20 @@ class ChunkedBodyTest {
     }
 
     /**
+     * Whitespace before the CRLF that ends the line is tolerated, as nginx and Go's net/http do (the grammar has BWS only
+     * around `;` and `=`): it cannot be read as part of the size or of an extension, so no recipient frames it differently.
+     */
+    @Test fun whitespaceBeforeTheLineEndIsTolerated() {
+        accepted("5 \r\nhello\r\n0\r\n\r\n", "hello")
+        accepted("5\t \r\nhello\r\n0 \r\n\r\n", "hello")
+        accepted("5;a=b \r\nhello\r\n0\r\n\r\n", "hello")
+        accepted("5;a \r\nhello\r\n0\r\n\r\n", "hello")
+        accepted("5;a=\"x\"\t\r\nhello\r\n0\r\n\r\n", "hello")
+        rejected("5 \rhello\r\n0\r\n\r\n")
+        rejected("5 \nhello\r\n0\r\n\r\n")
+    }
+
+    /**
      * RFC 9112 section 2.2: a bare CR MUST be treated as invalid. Before, the parser skipped a CR anywhere in the line, so
      * `1\r0` was read as 0x10 where a recipient that ends the line at the CR reads 1, and `\r\r\n` was a last chunk.
      */
@@ -69,7 +83,7 @@ class ChunkedBodyTest {
         rejected("5\r\nhello\r\n0\n\r\n")
     }
 
-    /** chunk-size = 1*HEXDIG: no empty size, no sign, no prefix, no whitespace before the digits or before CRLF. */
+    /** chunk-size = 1*HEXDIG: no empty size, no sign, no prefix, no whitespace before the digits or inside an extension. */
     @Test fun negative_malformedChunkSizeIsRejected() {
         for (line in listOf(
             "",
@@ -78,8 +92,9 @@ class ChunkedBodyTest {
             "+5",
             "-5",
             "0x5",
-            "5 ",
-            "5\t",
+            "5 x",
+            "5;a= ",
+            "5; ",
             "g",
             "5;",
             "5;a=",

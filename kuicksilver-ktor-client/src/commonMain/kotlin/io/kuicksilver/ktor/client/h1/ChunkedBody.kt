@@ -96,7 +96,7 @@ private enum class LineState {
     /** In `1*HEXDIG`. */
     SIZE,
 
-    /** In BWS before a `;` (after the size or after an extension value). */
+    /** In BWS before a `;` or the line end (after the size or after an extension value). */
     BEFORE_SEMICOLON,
 
     /** In BWS after a `;`, before `chunk-ext-name`. */
@@ -105,7 +105,7 @@ private enum class LineState {
     /** In `chunk-ext-name` (a token). */
     NAME,
 
-    /** In BWS after `chunk-ext-name`, before `=` or the next `;`. */
+    /** In BWS after `chunk-ext-name`, before `=`, the next `;` or the line end. */
     AFTER_NAME,
 
     /** In BWS after `=`, before `chunk-ext-val`. */
@@ -131,7 +131,8 @@ private enum class LineState {
  * Reads one chunk-size line strictly by the grammar of RFC 9112 section 7.1:
  * `chunk-size [ chunk-ext ] CRLF`, `chunk-size = 1*HEXDIG`,
  * `chunk-ext = *( BWS ";" BWS chunk-ext-name [ BWS "=" BWS chunk-ext-val ] )`, `chunk-ext-val = token / quoted-string`;
- * extensions are skipped. The line ends at CRLF only: a bare CR is invalid (section 2.2), and a bare LF, which section
+ * extensions are skipped. Whitespace before the CRLF is tolerated, as nginx and Go's net/http do: it cannot be taken
+ * for part of the size or an extension. The line ends at CRLF only: a bare CR is invalid (section 2.2), and a bare LF, which section
  * 2.2 lets a recipient accept in the start line and field lines only, is invalid too, as in Ktor 3.6.0 (KTOR-9263).
  * Any other byte, a size that does not fit a signed 64-bit length, or a line longer than 128 bytes fails with
  * [MalformedChunkedBodyException]: a recipient that tolerates what a front proxy reads differently (a CR skipped inside the size, a quote
@@ -169,6 +170,7 @@ private suspend fun parseChunkSize(input: ByteReadChannel): Long {
 
                 LineState.BEFORE_SEMICOLON -> {
                     when {
+                        b == CR_INT -> LineState.CR_SEEN
                         b == SEMICOLON -> LineState.BEFORE_NAME
                         isWhitespace(b) -> state
                         else -> invalid(b)
@@ -196,6 +198,7 @@ private suspend fun parseChunkSize(input: ByteReadChannel): Long {
 
                 LineState.AFTER_NAME -> {
                     when {
+                        b == CR_INT -> LineState.CR_SEEN
                         b == SEMICOLON -> LineState.BEFORE_NAME
                         b == EQUALS -> LineState.BEFORE_VALUE
                         isWhitespace(b) -> state
