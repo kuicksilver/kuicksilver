@@ -205,7 +205,8 @@ To make the floors blocking, download the `perf-<peer>` result artifacts of a fe
   internal failure is written to `<dir>` with its peer's trace); the container takes the same as `KSL_SOAK_*` variables.
   Each unexpected failure is printed with its time and scenario. A run **passes** when, after
   warm-up, every sampled series is flat — its Theil–Sen slope (the median of all pairwise slopes, robust to GC
-  saw-teeth and in-flight bursts) times the window stays within `max(absolute, relative × median)` (32 MiB / 10% for RSS,
+  saw-teeth and in-flight bursts; beyond 2,048 samples the median of 2²¹ pairs drawn from a fixed seed, so a 72-hour or
+  7-day run at the default rate is judged in 16 MiB and well under a second per series) times the window stays within `max(absolute, relative × median)` (32 MiB / 10% for RSS,
   16 MiB / 10% for heap, 8 / 10% for descriptors and threads, 5 / 25% for counts) — every countable resource (`ksl`
   objects, connections, CIDs, maps, timers, queues, handler coroutines, descriptors within 4) is back at its idle
   baseline within 90 s after the load stops, and unexpected failures stay under 0.5% of iterations. The report

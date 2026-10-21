@@ -104,6 +104,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   copies of its packets from its old address keeps being taken back to the dead old address and the handshake fails at
   the handshake timeout, as it does with those implementations; challenging both candidates as separate paths is on the
   roadmap for 0.2.x.
+- Soak harness: the flatness verdict of a long run ran out of memory after the run. The Theil–Sen slope held every
+  pairwise slope as a boxed `Double`, n(n−1)/2 of them: a 72-hour soak at the default `sampleSeconds=15` has ~13,800
+  samples after warm-up, ~95 M pairs, more than the 1 GiB test heap, so the whole run ended without a verdict. Up to
+  2,048 samples (2²¹ pairs) the slope is still the exact median of every pair, now in a primitive array; beyond that it
+  is the median of 2²¹ pairs drawn from a fixed seed, whose rank among all the slopes is within about 0.035 percentile
+  (one standard deviation). A 7-day window (32,000 samples) is judged in about 25 ms.
 - Interop tooling: the `rebind-port` cells' transfers ended on the simulator's rebind at 11 s. The clients started after
   the first rebind (0.2.0), and over the 10 Mbit/s link the transfer takes 9-10.5 s whatever the peer, so 92 of 110
   measured rebind cells closed within 0.5 s of that rebind, and a client's CONNECTION_CLOSE could open the new path
