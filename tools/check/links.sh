@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Copyright 2026 The Kuicksilver Authors
 # SPDX-License-Identifier: Apache-2.0
-# Relative link check for the Markdown files: every link or image that is not a URL must point to an existing file or
+# Relative link check for the Markdown files (and the GitHub links of llms.txt): every link or image that is not a URL must point to an existing file or
 # directory, and a #fragment into a Markdown file must match one of its headings (GitHub's anchor rules). Links inside
 # code blocks and code spans are ignored. Skipped trees: build output, .git, .gradle, .kotlin, .worktrees,
 # and local untracked working directories. Needs python3 only.
@@ -94,6 +94,24 @@ for md in markdown_files():
             if problem:
                 broken += 1
                 print(f"{rel_md}:{n}: {t}: {problem}")
+
+# llms.txt (llmstxt.org) links the docs by their GitHub URLs on main: each must name a file of this tree (and a heading)
+BLOB = "https://github.com/kuicksilver/kuicksilver/blob/main/"
+llms = os.path.join(root, "llms.txt")
+if os.path.isfile(llms):
+    for n, line in enumerate(open(llms, encoding="utf-8").read().split("\n"), 1):
+        for t in [m.group(1) for m in INLINE.finditer(line)]:
+            if not t.startswith("https://github.com/kuicksilver/kuicksilver/"): continue
+            checked += 1
+            path, _, frag = t[len(BLOB):].partition("#") if t.startswith(BLOB) else ("", "", "")
+            dest = os.path.normpath(os.path.join(root, unquote(path))) if path else ""
+            problem = None
+            if not t.startswith(BLOB): problem = f"not a {BLOB}... URL"
+            elif not os.path.isfile(dest) or os.path.relpath(dest, root).startswith(".."): problem = "no such file"
+            elif frag and dest.endswith(".md") and unquote(frag).lower() not in anchors(dest): problem = f"no heading for #{frag}"
+            if problem:
+                broken += 1
+                print(f"llms.txt:{n}: {t}: {problem}")
 
 print(f"links: {checked} relative links checked, {broken} broken")
 sys.exit(1 if broken else 0)
