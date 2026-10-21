@@ -1,3 +1,8 @@
+<!--
+Copyright 2026 The Kuicksilver Authors
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # TLS with Kuicksilver
 
 Kuicksilver's TLS layer (`io.kuicksilver:kuicksilver-tls`) runs TLS 1.3 (and, when asked, the RFC 9325 profile of
@@ -206,5 +211,5 @@ Both roles negotiate TLS 1.3 key exchange from one list: `X25519MLKEM768`, `X255
 group in one flight. A server takes the client's X25519 share when that is all the client sent, even if the client also
 lists the hybrid as supported: OpenSSL's default would answer with a HelloRetryRequest for `X25519MLKEM768`, and that
 extra round trip doubled the handshake under loss against ngtcp2, picoquic and quiche (interop `handshakeloss`). The
-list is not configurable in v1.
+list is not configurable.
 
