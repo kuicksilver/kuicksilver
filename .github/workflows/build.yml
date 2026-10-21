@@ -403,6 +403,7 @@ jobs:
         run: bash tools/check/page-align.sh "$AAR"
       - name: 'android: consumer keep rules (R8)'
         run: bash tools/check/android-keep-rules.sh "$AAR"
+        env: { KSL_R8_REQUIRED: '1' }   # R8 comes with AGP into the Gradle cache, android.jar with the SDK: the run and its negative control may not be skipped
       - name: 'android: free disk for the emulator'
         # Run 38287900994: both emulators exited before adb saw them and the action only reported a boot timeout. The
         # OpenSSL work tree, three Android ABIs and the AAR fill the runner before the AVD's userdata partition is
