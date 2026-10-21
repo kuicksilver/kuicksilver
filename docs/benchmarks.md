@@ -87,7 +87,8 @@ kbit/s per repetition: median [min–max] (n repetitions). The runner stops a ce
   follows the server's losses against the TCP flow and its mean congestion window (qlog: 88–142 losses, 26–33 kB, in
   all three), and the server's ACK-arrival-to-next-send gaps are the same in all three (median 0.16 ms, 90th
   percentile 0.34 ms, 2 % of them 1 ms or more), so the 1 ms socket wait does not delay its sends. The earlier
-  difference was this cell's spread between runs, not the code.
+  difference is within this cell's spread between runs; at 16 rounds a difference of a few percent cannot be excluded,
+  and the qlog gaps show no mechanism for one.
 
 ## CPU per GB
 
@@ -405,7 +406,7 @@ Versions (all digests in [benchmarks/env.txt](benchmarks/env.txt)):
 
 | implementation | image | arch | image built |
 |---|---|---|---|
-| kuicksilver JVM | `kuicksilver-interop:k8-perf-merge` (OpenJDK 21, `libksl` 6; commit `01da5c08`), measured 2026-10-21; "before": `kuicksilver-interop:bench-c08bc57b` | arm64 | 2026-10-21; 2026-10-20 |
+| kuicksilver JVM | `kuicksilver-interop:k8-perf-merge` (OpenJDK 21, `libksl` 6; commit `01da5c08`; later commits change only the forward loop of multi-socket groups, which the interop image does not use, and tests and docs), measured 2026-10-21; "before": `kuicksilver-interop:bench-c08bc57b` | arm64 | 2026-10-21; 2026-10-20 |
 | kuicksilver Native | `kuicksilver-interop-native:k8-perf-merge` (commit `01da5c08`), measured 2026-10-21; "before" and the amd64 calibration: `kuicksilver-interop-native:bench-c08bc57b[-amd64]` | arm64 | 2026-10-21; 2026-10-20 |
 | quiche | `cloudflare/quiche-qns@sha256:a960608c…` | amd64 | 2026-10-06 |
 | quinn | `stammw/quinn-interop@sha256:5205c84e…` | arm64 | 2024-09-02 |
