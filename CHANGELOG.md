@@ -198,6 +198,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   it in the start line and field lines only; the trailer section keeps accepting it). For a malformed chunked request body the engine writes no response itself: the handler's receive of
   the body fails with `BadRequestException`, which Ktor answers with 400 and a fixed text unless the application
   handles it (it was a plain IOException, answered with 500 and the parser's message), and the connection closes.
+- ktor-network: `TlsSocket.close()` could keep the raw socket, its coroutines and the native TLS session alive for as
+  long as the peer kept the connection open without reading, since the flush, `close_notify` and the raw socket's last
+  write all waited on it. The close is now bounded by 3 s in all; then what is queued is dropped and the socket closed.
 - TLS: `TlsConnection.shutdown()` could wait forever when the peer stopped reading. Its 3 s bound covered only the
   wait for the peer's `close_notify`; before it, the wait for the writer to send the queued data and `close_notify`
   had none, and a full transport stops that writer. The 3 s now bound the whole shutdown, after which the connection

@@ -144,6 +144,9 @@ val status = withTimeout(10.seconds) { read.readUTF8Line() }   // the status lin
 socket.close()   // sends close_notify, then closes the TCP socket
 ```
 
+`close()` returns at once and finishes in the background: it sends what is queued and `close_notify`, then closes the
+TCP socket, and after 3 s in all (a peer that stopped reading) drops what is left and closes the socket anyway.
+
 The same works on the server side with `Socket.tlsServer(config)` after `ServerSocket.accept()`.
 
 ### Resumption and trust

@@ -18,10 +18,17 @@ import io.kuicksilver.tls.TlsConfig
 import io.kuicksilver.tls.TlsConnection
 import io.kuicksilver.tls.TlsException
 import io.kuicksilver.tls.TlsRole
+import kotlinx.coroutines.DelicateCoroutinesApi
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.coroutines.CoroutineContext
 import kotlin.coroutines.EmptyCoroutineContext
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.seconds
 
 /**
  * Wraps a connected ktor-network [Socket] in TLS as a client (module `kuicksilver-ktor-network`, ADR-0005): the
@@ -75,6 +82,9 @@ public class TlsSocket private constructor(
     private var attachedWriter: ReaderJob? = null
     private var closing = false
 
+    /** The bound of [close] in all (tests shorten it). */
+    internal var closeTimeout: Duration = CLOSE_TIMEOUT
+
     override fun attachForReading(channel: ByteChannel): WriterJob = writer(coroutineContext, channel) { tls.input.copyTo(channel) }
 
     override fun attachForWriting(channel: ByteChannel): ReaderJob =
@@ -86,10 +96,25 @@ public class TlsSocket private constructor(
                 it
         }
 
-    /** Graceful: pending plaintext is encrypted and flushed, `close_notify` is sent, then the raw socket closes. Runs in the socket's scope. */
+    /**
+     * Graceful: pending plaintext is encrypted and flushed, `close_notify` is sent, then the raw socket closes. Runs in the
+     * socket's scope. Bounded: when the raw socket has not closed after 3 s in all (a peer that stopped reading holds the
+     * flush, `close_notify` and the raw socket's last write), what is still queued is dropped, the TLS session is freed and
+     * the raw socket is closed and its jobs cancelled.
+     */
     override fun close() {
         if (closing) return
         closing = true
+        val bound = closeTimeout
+        @OptIn(DelicateCoroutinesApi::class)
+        GlobalScope.launch(Dispatchers.Default) {
+            // outside the socket's scope: its job completes only after the graceful close below (a child) has ended
+            if (withTimeoutOrNull(bound) { raw.socketContext.join() } == null) {
+                tls.close()
+                raw.close() // first: the jobs cancelled next then close the descriptor when they complete
+                raw.socketContext.cancel()
+            }
+        }
         launch {
             try {
                 attachedWriter?.let { rj ->
@@ -109,6 +134,9 @@ public class TlsSocket private constructor(
 
     /** The factory behind [Socket.tls] and [Socket.tlsServer]; internal, so no empty companion is part of the public ABI. */
     internal companion object {
+        /** How long [close] may take in all before it stops waiting for the peer. */
+        internal val CLOSE_TIMEOUT: Duration = 3.seconds
+
         internal suspend fun start(
             raw: Socket,
             config: TlsConfig,

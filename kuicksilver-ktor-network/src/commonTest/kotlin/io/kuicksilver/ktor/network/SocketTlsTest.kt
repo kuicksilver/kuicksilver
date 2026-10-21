@@ -8,31 +8,45 @@ import io.ktor.network.selector.SelectorManager
 import io.ktor.network.sockets.InetSocketAddress
 import io.ktor.network.sockets.ServerSocket
 import io.ktor.network.sockets.Socket
+import io.ktor.network.sockets.SocketAddress
 import io.ktor.network.sockets.aSocket
 import io.ktor.network.sockets.openReadChannel
 import io.ktor.network.sockets.openWriteChannel
+import io.ktor.utils.io.ByteChannel
 import io.ktor.utils.io.ByteReadChannel
+import io.ktor.utils.io.ByteWriteChannel
+import io.ktor.utils.io.ReaderJob
+import io.ktor.utils.io.WriterJob
+import io.ktor.utils.io.copyTo
 import io.ktor.utils.io.readAvailable
 import io.ktor.utils.io.readUTF8Line
+import io.ktor.utils.io.reader
 import io.ktor.utils.io.writeFully
 import io.ktor.utils.io.writeStringUtf8
+import io.ktor.utils.io.writer
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.tls.Certificate
 import io.kuicksilver.tls.SessionCache
 import io.kuicksilver.tls.TestCerts
 import io.kuicksilver.tls.TlsConfig
+import io.kuicksilver.tls.TlsConnection
 import io.kuicksilver.tls.TlsException
 import io.kuicksilver.tls.TlsIdentity
 import io.kuicksilver.tls.TlsRole
 import io.kuicksilver.tls.TrustConfig
 import io.kuicksilver.tls.VerifyReason
 import io.kuicksilver.tls.tlsConfig
+import kotlinx.coroutines.CompletableJob
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.coroutines.CoroutineContext
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
@@ -40,6 +54,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
 internal val testCa = Certificate(TestCerts.testCa)
@@ -235,6 +250,32 @@ class SocketTlsTest {
             }
         }
 
+    /**
+     * The server's application never reads: once its buffers are full, the client's flush, close_notify and the raw socket's
+     * last write wait for good. close() must still release the raw socket within its bound instead of holding it, its
+     * coroutines and the native session until the peer goes away. Over [MemorySocket] the buffers are known: the server takes
+     * about 2 MiB (its transport and its plaintext channel), the client about 3 MiB more (the socket's write channel, the TLS
+     * output and the raw write channel), so a 3.5 MiB write returns and leaves the rest stuck on the client.
+     */
+    @Test fun negative_closeIsBoundedWhenThePeerStopsReading(): Unit =
+        runBlocking {
+            val raw = MemorySocket()
+            val server = async(Dispatchers.Default) { TlsConnection.server(raw.serverIn, raw.serverOut, serverConfig()) }
+            val c = withTimeout(20.seconds) { raw.tls(clientConfig()) }
+            val s = withTimeout(20.seconds) { server.await() }
+            try {
+                c.closeTimeout = 300.milliseconds
+                val out = c.openWriteChannel(autoFlush = true)
+                val data = ByteArray(7 shl 19)
+                withTimeout(20.seconds) { out.writeFully(data, 0, data.size) }
+                c.close()
+                val closed = withTimeoutOrNull(20.seconds) { c.socketContext.join() }
+                assertTrue(closed != null, "the raw socket is released within the close bound although the peer stopped reading")
+            } finally {
+                s.close()
+            }
+        }
+
     @Test fun serverRefusesWrongClientConfig(): Unit =
         runBlocking {
             val selector = SelectorManager(Dispatchers.Default)
@@ -404,4 +445,48 @@ class WssTest {
                 srv.close()
             }
         }
+}
+
+/**
+ * A [Socket] over in-memory channels, closed the way ktor's sockets close: [close] flushes and closes the write side, and the
+ * socket's job completes only once the job that hands the written bytes to the peer has finished, so a peer that stops
+ * reading keeps it open.
+ */
+internal class MemorySocket : Socket {
+    private val toServer = ByteChannel(autoFlush = true)
+    private val toClient = ByteChannel(autoFlush = true)
+    val serverIn: ByteReadChannel get() = toServer
+    val serverOut: ByteWriteChannel get() = toClient
+    override val socketContext: CompletableJob = Job()
+    override val coroutineContext: CoroutineContext get() = socketContext + Dispatchers.Default
+    override val localAddress: SocketAddress = InetSocketAddress("127.0.0.1", 1)
+    override val remoteAddress: SocketAddress = InetSocketAddress("127.0.0.1", 2)
+    private var readerJob: ReaderJob? = null
+    private var writerJob: WriterJob? = null
+    private var closed = false
+
+    override fun attachForReading(channel: ByteChannel): WriterJob =
+        writer(coroutineContext, channel) { toClient.copyTo(channel) }.also {
+            writerJob =
+                it
+        }
+
+    override fun attachForWriting(channel: ByteChannel): ReaderJob =
+        reader(coroutineContext, channel) { channel.copyTo(toServer) }.also {
+            readerJob =
+                it
+        }
+
+    override fun close() {
+        if (closed) return
+        closed = true
+        launch {
+            readerJob?.let {
+                runCatching { it.channel.flushAndClose() }
+                it.job.join()
+            }
+            writerJob?.job?.cancel()
+            socketContext.complete()
+        }
+    }
 }
