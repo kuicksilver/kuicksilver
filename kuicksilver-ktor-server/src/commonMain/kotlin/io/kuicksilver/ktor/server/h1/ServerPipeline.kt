@@ -55,7 +55,10 @@ internal class H1Connection(
     val localAddress: NetworkAddress?,
 )
 
-/** One request of an [H1Connection]: its body ([input]), its response ([output]) and, for an upgrade, whether it happened. */
+/**
+ * One request of an [H1Connection]: its body ([input]), its response ([output]), for an upgrade whether it happened, and
+ * [closing]: true once the server stops, when the connection ends after this response.
+ */
 internal class H1RequestScope(
     override val coroutineContext: kotlin.coroutines.CoroutineContext,
     val input: ByteReadChannel,
@@ -63,6 +66,7 @@ internal class H1RequestScope(
     val remoteAddress: NetworkAddress?,
     val localAddress: NetworkAddress?,
     val upgraded: CompletableDeferred<Boolean>?,
+    val closing: () -> Boolean = { false },
 ) : CoroutineScope
 
 private val PipelineName = CoroutineName("kuicksilver-h1-pipeline")
@@ -164,7 +168,7 @@ internal class MalformedRequestBody(
  * [draining] completes when the server stops: the pipeline then reads no further request. A connection waiting for the
  * first byte of its next request head ends at once (RFC 9112 section 9.5: a server MAY close an idle connection at any
  * time; Go's `Server.Shutdown` closes idle connections the same way); a request in flight, or one whose head has started
- * to arrive, is answered first.
+ * to arrive, is answered first, its response with `Connection: close` when it is written after [draining] completed.
  */
 @OptIn(InternalAPI::class)
 internal fun CoroutineScope.startH1Pipeline(
@@ -252,6 +256,7 @@ internal fun CoroutineScope.startH1Pipeline(
                             connection.remoteAddress,
                             connection.localAddress,
                             upgraded,
+                            closing = { draining?.isCompleted == true },
                         )
                     try {
                         handler(handlerScope, request)

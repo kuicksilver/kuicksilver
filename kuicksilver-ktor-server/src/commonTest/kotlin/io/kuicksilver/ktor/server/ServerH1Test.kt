@@ -6,6 +6,7 @@ import io.ktor.network.selector.SelectorManager
 import io.ktor.network.sockets.aSocket
 import io.ktor.network.sockets.openReadChannel
 import io.ktor.network.sockets.openWriteChannel
+import io.ktor.server.application.ApplicationStopPreparing
 import io.ktor.server.engine.ConnectorType
 import io.ktor.server.engine.EngineConnectorBuilder
 import io.ktor.server.engine.connector
@@ -24,7 +25,10 @@ import io.kuicksilver.tls.ClientAuth
 import io.kuicksilver.tls.TlsException
 import io.kuicksilver.tls.TlsIdentity
 import io.kuicksilver.tls.TrustConfig
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withTimeout
 import kotlin.test.BeforeTest
@@ -226,6 +230,35 @@ class ServerH1Test {
                 socket.close()
             } finally {
                 selector.close()
+            }
+        }
+
+    /**
+     * A response the server writes once a graceful stop has begun carries `Connection: close` (as Go's `Shutdown` makes
+     * its in-flight responses do), so the client knows the connection ends after it rather than finding it closed.
+     */
+    @Test fun responseDuringGracefulStopSaysConnectionClose() =
+        serverTest {
+            val inHandler = CompletableDeferred<Unit>()
+            val stopping = CompletableDeferred<Unit>()
+            val (server, port) =
+                tlsServer {
+                    monitor.subscribe(ApplicationStopPreparing) { stopping.complete(Unit) }
+                    routing {
+                        get("/") {
+                            inHandler.complete(Unit)
+                            stopping.await()
+                            call.respondText("ok")
+                        }
+                    }
+                }
+            coroutineScope {
+                val response = async { rawHttp(port, "GET / HTTP/1.1\r\nHost: server.test\r\n\r\n") }
+                inHandler.await()
+                withTimeout(10.seconds) { server.stopSuspend(30_000, 40_000) }
+                val text = response.await()
+                assertTrue(text.endsWith("ok"), text)
+                assertTrue(text.contains("Connection: close"), text)
             }
         }
 

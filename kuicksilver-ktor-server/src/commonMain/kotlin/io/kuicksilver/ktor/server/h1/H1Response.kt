@@ -1,7 +1,8 @@
 // Copyright 2014-2021 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
 // Modifications Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
-// Vendored from Ktor 3.6.0 ktor-server-cio CIOApplicationResponse.kt (internal there), adapted: Alt-Svc for HTTP/3 (RFC 7838).
+// Vendored from Ktor 3.6.0 ktor-server-cio CIOApplicationResponse.kt (internal there), adapted: Alt-Svc for HTTP/3 (RFC 7838),
+// `Connection: close` once the server is stopping.
 package io.kuicksilver.ktor.server.h1
 
 import io.ktor.http.HeadersBuilder
@@ -31,6 +32,8 @@ internal class H1Response(
     private val userDispatcher: CoroutineContext,
     private val upgraded: CompletableDeferred<Boolean>?,
     private val altSvc: String?,
+    /** True once the connection ends after this response (the server is stopping): it then says `Connection: close`. */
+    private val closing: () -> Boolean = { false },
 ) : BaseApplicationResponse(call) {
     private var statusCode: HttpStatusCode = HttpStatusCode.OK
     private val headersBuilder = HeadersBuilder()
@@ -106,6 +109,8 @@ internal class H1Response(
     private suspend fun sendResponseMessage(contentReady: Boolean) {
         // HTTP/3 on the same port is announced on every response that does not carry its own Alt-Svc (RFC 7838)
         if (altSvc != null && headersBuilder["Alt-Svc"] == null && statusCode.value != 421) headersBuilder.append("Alt-Svc", altSvc)
+        // the server is stopping and reads no further request here: say so (RFC 9112 section 9.6), as Go's Shutdown does
+        if (closing() && statusCode != HttpStatusCode.SwitchingProtocols) headersBuilder[HttpHeaders.Connection] = "close"
         val builder = RequestResponseBuilder()
         try {
             builder.responseLine("HTTP/1.1", statusCode.value, statusCode.description)

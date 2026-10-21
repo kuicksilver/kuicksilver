@@ -286,7 +286,11 @@ public class KuicksilverApplicationEngine(
                 stopRequest.join()
                 // graceful stop (RFC 9114 5.2): no new connections or requests, GOAWAY to every live HTTP/3 connection, then wait for the
                 // in-flight calls; `stopSuspend` cancels this job at the grace deadline, which closes what is left
-                servers.forEach { it.acceptJob.cancel() }
+                servers.forEach {
+                    it.acceptJob.cancel()
+                    // before ApplicationStopPreparing: a response written from here on says Connection: close
+                    it.draining.complete()
+                }
                 // every connection at once: goAway() waits 2×RTT between its two frames, one after another the k-th would wait k×50 ms
                 h3.forEach { l ->
                     // HTTP/3 accepting goes on: handshakes in flight complete, and those connections get GOAWAY at once

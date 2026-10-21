@@ -52,6 +52,8 @@ internal class TcpServer(
     val socket: CompletableDeferred<ServerSocket>,
     /** The HTTP/3 endpoint bound on the same port as [socket], completed before it; null without HTTP/3. */
     val h3Endpoint: CompletableDeferred<Http3Endpoint?>,
+    /** Completed when the server stops: its HTTP/1.1 connections read no further request ([startH1Pipeline]). */
+    val draining: CompletableJob,
 )
 
 /** `port = 0`: TCP + UDP pairs tried before HTTP/3 is given up for the connector. */
@@ -123,7 +125,7 @@ internal fun KuicksilverApplicationEngine.startTcp(
         val timeout = configuration.connectionIdleTimeoutSeconds.seconds
         val connections = SupervisorJob(rootJob)
         // completed when accepting ends (the engine stops): connections read no further request, idle ones close at once
-        val draining = Job()
+        val draining: CompletableJob = Job()
         tcpConnectionsForProbe += connections
         val tlsConfig = l.tls?.tlsConfig(listOf("http/1.1"))
         val scheme = if (l.tls != null) "https" else "http"
@@ -203,7 +205,7 @@ internal fun KuicksilverApplicationEngine.startTcp(
             latch.complete()
         }
         rootJob.invokeOnCompletion { selector.close() }
-        return TcpServer(rootJob, acceptJob, socket, h3Endpoint)
+        return TcpServer(rootJob, acceptJob, socket, h3Endpoint, draining)
     }
 }
 
@@ -234,6 +236,7 @@ private suspend fun KuicksilverApplicationEngine.handleRequest(
                     scheme,
                     peer,
                     altSvc,
+                    closing,
                 )
             events.emit("requestStarted") { requestStarted(HttpProtocolVersion.HTTP_1_1, call) }
             var failure: Throwable? = null
