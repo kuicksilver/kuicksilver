@@ -65,6 +65,7 @@ internal object HqInteropClient {
                     val rest = requests.drop(1)
                     if (rest.isNotEmpty()) {
                         val second = if (plan.zeroRtt) endpoint.connectEarly(remote, client) else endpoint.connect(remote, client)
+                        if (plan.zeroRtt) beforeZeroRttRequests(second)
                         // zerortt: connectEarly returned at the 0-RTT keys, so these requests leave in 0-RTT packets; the concurrent
                         // closes share packets (flushAndClose yields to the closes queued on the loop), so they fit the initial window
                         ok = coroutineScope { rest.map { url -> async { fetch(second, url, downloads, null) } }.awaitAll().all { it } } && ok
@@ -84,6 +85,11 @@ internal object HqInteropClient {
             }
         } finally { endpoint.close() }
     }
+    /**
+     * Runs between `connectEarly` and the `zerortt` case's 0-RTT requests (tests: force the client to write only after the
+     * server has answered its ClientHello, the order that sends the requests in 1-RTT unless the answer is held back).
+     */
+    @kotlin.concurrent.Volatile var beforeZeroRttRequests: suspend (QuicConnection) -> Unit = {}
     /** The `keyupdate` case: one key update once this many response bytes arrived (the runner wants it within the first MB). */
     private class KeyUpdateOnce(val after: Long) { var received = 0L; var done = false }
     private suspend fun fetch(conn: QuicConnection, url: String, downloads: String, progress: KeyUpdateOnce?): Boolean {

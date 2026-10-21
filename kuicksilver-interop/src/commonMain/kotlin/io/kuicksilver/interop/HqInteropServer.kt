@@ -54,6 +54,8 @@ internal class HqInteropServer private constructor(private val endpoints: List<Q
     val earlyAcceptedConnections: Int get() = early.load()
     /** Request streams whose data arrived in 0-RTT packets (tests). */
     val earlyStreams: Int get() = earlyStreamCount.load()
+    /** Called with the new count each time a request stream's data arrived in 0-RTT (tests: release a held handshake reply). */
+    @kotlin.concurrent.Volatile var onEarlyStream: ((Int) -> Unit)? = null
     /**
      * The connections being served and the key updates of those that ended, swapped as one value so [keyUpdatesSeen] never
      * counts a connection twice; a connection leaves when it ended (a handshake benchmark accepts thousands, tools/bench/handshakes.sh).
@@ -68,7 +70,7 @@ internal class HqInteropServer private constructor(private val endpoints: List<Q
     private fun update(f: (Tracked) -> Tracked) { while (true) { val t = tracked.load(); if (tracked.compareAndSet(t, f(t))) return } }
     private fun run() { for (ep in endpoints) scope.launch { while (true) { val c = ep.accept(); accepted.incrementAndFetch(); if (c.earlyDataAccepted == true) early.incrementAndFetch(); update { Tracked(it.live + c, it.endedKeyUpdates) }; launch { serve(c) } } } }
     private suspend fun serve(c: QuicConnection) {
-        try { while (true) { val st = c.acceptStream(); if (st.receivedEarly) earlyStreamCount.incrementAndFetch(); scope.launch { runCatching { handle(st) } } } } catch (_: Exception) { }
+        try { while (true) { val st = c.acceptStream(); if (st.receivedEarly) earlyStreamCount.incrementAndFetch().let { n -> onEarlyStream?.invoke(n) }; scope.launch { runCatching { handle(st) } } } } catch (_: Exception) { }
         finally { val ended = c.stats.keyUpdates; update { t -> Tracked(t.live.filter { it !== c }, t.endedKeyUpdates + ended) } }
     }
     private suspend fun handle(st: QuicStream) {

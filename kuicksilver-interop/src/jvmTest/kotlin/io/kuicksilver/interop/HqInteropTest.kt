@@ -189,11 +189,21 @@ class HqInteropTest {
         val files = (1..6).map { "z$it-" + "x".repeat(200) to ByteArray(32) { b -> (b + it).toByte() } }; val root = www(*files.toTypedArray()); val downloads = Files.createTempDirectory("dl").toFile(); val keylog = File(downloads, "keys.log")
         val plan = Testcases.server("zerortt")!!
         HqInteropServer.start(identity(), port = 0, www = root.path, versions = plan.versions, earlyData = plan.earlyData).use { srv ->
-            val code = Interop.run(mapOf("ROLE" to "client", "TESTCASE" to "zerortt", "REQUESTS" to files.joinToString(" ") { "https://127.0.0.1:${srv.port}/${it.first}" }, "DOWNLOADS" to downloads.path, "SSLKEYLOGFILE" to keylog.path))
-            assertEquals(0, code); for ((n, b) in files) assertContentEquals(b, File(downloads, n).readBytes())
-            assertEquals(2, srv.connectionsAccepted); assertEquals(1, srv.earlyAcceptedConnections)
-            assertEquals(files.size - 1, srv.earlyStreams, "every request after the first arrived in 0-RTT")
-            assertTrue(keylog.readText().contains("CLIENT_EARLY_TRAFFIC_SECRET"), "the runner decrypts 0-RTT with the client's key log")
+            // on loopback the server answers the ClientHello within a millisecond, so whether the requests left before the client
+            // had the 1-RTT keys was scheduling (1 failure in 6 runs, 2026-10-21); the relay holds the server's answer on the 0-RTT
+            // connection until the requests arrived, as the runner's 30 ms round trip does, and the client is made to write only
+            // once that answer exists, the order that used to send them in 1-RTT
+            HandshakeHoldRelay(srv.port).use { relay ->
+                srv.onEarlyStream = { n -> if (n == files.size - 1) relay.release() }
+                HqInteropClient.beforeZeroRttRequests = { relay.answerSettled.await() }
+                try {
+                    val code = Interop.run(mapOf("ROLE" to "client", "TESTCASE" to "zerortt", "REQUESTS" to files.joinToString(" ") { "https://127.0.0.1:${relay.port}/${it.first}" }, "DOWNLOADS" to downloads.path, "SSLKEYLOGFILE" to keylog.path))
+                    assertEquals(0, code); for ((n, b) in files) assertContentEquals(b, File(downloads, n).readBytes())
+                    assertEquals(2, srv.connectionsAccepted); assertEquals(1, srv.earlyAcceptedConnections)
+                    assertEquals(files.size - 1, srv.earlyStreams, "every request after the first arrived in 0-RTT")
+                    assertTrue(keylog.readText().contains("CLIENT_EARLY_TRAFFIC_SECRET"), "the runner decrypts 0-RTT with the client's key log")
+                } finally { HqInteropClient.beforeZeroRttRequests = {}; srv.onEarlyStream = null }
+            }
         }
     }
 }
