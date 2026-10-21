@@ -336,6 +336,17 @@ void run_udp(void) {
             CHECK(ksl_udp_recv(r, bufs, caps, lens, ra, re, 1, &got, 0) == KSL_WANT_READ && got == 0, "timeout 0: a run of 64 dropped datagrams ends the call");
             int calls = 1; while (got == 0 && calls < 4) { (void)ksl_udp_recv(r, bufs, caps, lens, ra, re, 1, &got, 100); calls++; }
             CHECK(got == 1 && lens[0] == 1 && buf[0] == 'q', "the datagram behind the dropped run is received by a later call");
+            /* the bound never costs a datagram it already took (fable review): 63 empty ones and a real one, then 64 and 127 empty ones
+               and a real one, each read only with timeout 0 as BatchReceiver starts every batch */
+            const int runs[3] = { 63, 64, 127 };
+            for (int k = 0; k < 3; k++) {
+              for (int i = 0; i < runs[k]; i++) (void)sendto(s, "", 0, 0, (struct sockaddr *)&to, sizeof to);
+              (void)sendto(s, "q", 1, 0, (struct sockaddr *)&to, sizeof to);
+              got = 0; buf[0] = 0; int tries = 0; while (got == 0 && tries < 4) { (void)ksl_udp_recv(r, bufs, caps, lens, ra, re, 1, &got, 0); tries++; }
+              CHECK(got == 1 && lens[0] == 1 && buf[0] == 'q', "timeout 0: the real datagram behind a dropped run is never lost");
+              if (runs[k] == 63) CHECK(tries == 1, "63 dropped datagrams and a real one: the first call delivers it");
+              if (got != 1 || buf[0] != 'q') printf("    lost the datagram behind %d empty ones\n", runs[k]);
+            }
           }
           if (s >= 0) close(s); if (r) ksl_udp_close(r); }
         /* udp_error_text_matches_its_errno: the sender and the receiver thread both record errors; the errno and the text read

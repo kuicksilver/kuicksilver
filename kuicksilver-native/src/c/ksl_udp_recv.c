@@ -31,6 +31,13 @@ int ksl_udp_recv(ksl_udp *u, uint8_t *const *bufs, const uint32_t *caps, uint32_
        whose datagrams arrive one by one, without GSO, cost a poll and a recvmsg each) */
     while (filled < n) {
         if (u->closed) { rc = KSL_ERROR; break; }
+        /* a run of datagrams that all get dropped (from a sender faster than the drain, so recvmsg never answers EAGAIN) still ends
+           at the deadline; a call that may not wait (timeout 0) or already holds datagrams stops after DROP_CHECK of them. Checked
+           before recvmsg: a datagram once taken is always looked at, never lost to the bound */
+        if (dropped >= DROP_CHECK && timeout_ms >= 0) {
+            if (filled || timeout_ms == 0 || now_ms() >= deadline) { if (!filled) rc = KSL_WANT_READ; break; }
+            dropped = 0;
+        }
         struct sockaddr_storage ss; struct iovec iov = { u->scratch, GRO_MAX }; uint8_t cbuf[256];
         struct msghdr m; memset(&m, 0, sizeof m); m.msg_name = &ss; m.msg_namelen = sizeof ss; m.msg_iov = &iov; m.msg_iovlen = 1; m.msg_control = cbuf; m.msg_controllen = sizeof cbuf;
         ssize_t r = recvmsg(u->fd, &m, MSG_DONTWAIT); u->recvs++;
@@ -47,10 +54,7 @@ int ksl_udp_recv(ksl_udp *u, uint8_t *const *bufs, const uint32_t *caps, uint32_
             continue;
         }
         if (r < 0) { set_err(u, errno, "recvmsg"); rc = filled ? KSL_OK : KSL_ERROR; break; }
-        /* a run of datagrams that all get dropped (from a sender faster than the drain, so recvmsg never answers EAGAIN) still ends
-           at the deadline; a call that may not wait (timeout 0) or already holds datagrams stops after DROP_CHECK of them */
-        if (++dropped % DROP_CHECK == 0 && timeout_ms >= 0 && (filled || timeout_ms == 0 || now_ms() >= deadline)) { if (!filled) rc = KSL_WANT_READ; break; }
-        if (m.msg_flags & MSG_TRUNC) continue;   /* bigger than the scratch: dropped whole */
+        if (m.msg_flags & MSG_TRUNC) { dropped++; continue; }   /* bigger than the scratch: dropped whole */
         uint32_t gso = 0; uint8_t mark = 0;
         for (struct cmsghdr *c = CMSG_FIRSTHDR(&m); c; c = CMSG_NXTHDR(&m, c)) {
 #ifdef __linux__
@@ -61,10 +65,10 @@ int ksl_udp_recv(ksl_udp *u, uint8_t *const *bufs, const uint32_t *caps, uint32_
             if ((c->cmsg_level == IPPROTO_IP && (c->cmsg_type == IP_TOS || c->cmsg_type == IP_RECVTOS)) || (c->cmsg_level == IPPROTO_IPV6 && c->cmsg_type == IPV6_TCLASS)) { int tos = 0; if (c->cmsg_len >= CMSG_LEN(sizeof(int))) memcpy(&tos, CMSG_DATA(c), sizeof tos); else tos = *(uint8_t *)CMSG_DATA(c); mark = (uint8_t)(tos & 3); }
         }
         u->pend_off = 0; u->pend_len = (uint32_t)r; u->pend_seg = gso; from_sockaddr(&ss, u->pend_addr); u->pend_ecn = mark;
-        if (r == 0) { u->pend_len = 0; continue; }   /* an empty datagram carries nothing for QUIC */
-        if (ss.ss_family == AF_INET6 && IN6_IS_ADDR_LINKLOCAL(&((struct sockaddr_in6 *)&ss)->sin6_addr)) { u->pend_len = 0; continue; }   /* the address format has no scope id: no reply could reach a link-local peer */
+        if (r == 0) { u->pend_len = 0; dropped++; continue; }   /* an empty datagram carries nothing for QUIC */
+        if (ss.ss_family == AF_INET6 && IN6_IS_ADDR_LINKLOCAL(&((struct sockaddr_in6 *)&ss)->sin6_addr)) { u->pend_len = 0; dropped++; continue; }   /* the address format has no scope id: no reply could reach a link-local peer */
         uint32_t before = filled; filled = hand_out(u, bufs, caps, lens, addrs, ecnv, n, filled);
-        if (filled > before) dropped = 0;
+        if (filled > before) dropped = 0; else dropped++;   /* every segment larger than its slot */
     }
     *received = filled;
     __atomic_sub_fetch(&u->in_recv, 1, __ATOMIC_SEQ_CST);

@@ -343,6 +343,13 @@ int ksl_udp_recv(ksl_udp *u, uint8_t *const *bufs, const uint32_t *caps, uint32_
     int rc = KSL_OK; ULONGLONG deadline = timeout_ms < 0 ? 0 : GetTickCount64() + (ULONGLONG)timeout_ms; uint32_t dropped = 0;
     while (filled < n) {
         if (u->closed) { rc = filled ? KSL_OK : KSL_ERROR; break; }
+        /* a run of datagrams that all get dropped (from a sender faster than the drain, so the poll never times out) still ends at
+           the deadline; a call that may not wait (timeout 0) or already holds datagrams stops after DROP_CHECK of them. Checked
+           before the receive: a datagram once taken is always looked at (as in ksl_udp_recv.c) */
+        if (dropped >= DROP_CHECK && timeout_ms >= 0) {
+            if (filled || timeout_ms == 0 || GetTickCount64() >= deadline) { if (!filled) rc = KSL_WANT_READ; break; }
+            dropped = 0;
+        }
         int wait;
         if (filled) wait = 0;
         else if (timeout_ms < 0) wait = -1;
@@ -383,19 +390,16 @@ int ksl_udp_recv(ksl_udp *u, uint8_t *const *bufs, const uint32_t *caps, uint32_
         if (u->recv_msg(u->fd, &m, &r, NULL, NULL) == SOCKET_ERROR) got_err = WSAGetLastError();
         if (got_err) {
             int e = got_err;
-            if (e == WSAEWOULDBLOCK || e == WSAEINTR || e == WSAEMSGSIZE || e == WSAECONNRESET || e == WSAENETRESET) continue;   /* WSAEMSGSIZE: truncated, dropped whole */
+            if (e == WSAEMSGSIZE) { dropped++; continue; }   /* truncated, dropped whole */
+            if (e == WSAEWOULDBLOCK || e == WSAEINTR || e == WSAECONNRESET || e == WSAENETRESET) continue;
             if (u->closed) { rc = filled ? KSL_OK : KSL_ERROR; break; }
             if (recv_transient(e)) { if (filled) break; idle_slice(u, timeout_ms, deadline); rc = KSL_WANT_READ; break; }   /* nothing received this slice */
             set_err(u, e, "WSARecvMsg"); rc = filled ? KSL_OK : KSL_ERROR; break;
         }
-        /* a run of datagrams that all get dropped (from a sender faster than the drain, so the poll never times out) still ends at
-           the deadline; a call that may not wait (timeout 0) or already holds datagrams stops after DROP_CHECK of them (as in
-           ksl_udp_recv.c) */
-        if (++dropped % DROP_CHECK == 0 && timeout_ms >= 0 && (filled || timeout_ms == 0 || GetTickCount64() >= deadline)) { if (!filled) rc = KSL_WANT_READ; break; }
-        if (m.dwFlags & MSG_TRUNC) continue;
-        if (!take_datagram(u, &m, (uint32_t)r, &ss)) continue;
+        if (m.dwFlags & MSG_TRUNC) { dropped++; continue; }
+        if (!take_datagram(u, &m, (uint32_t)r, &ss)) { dropped++; continue; }   /* empty, or from a link-local source */
         uint32_t before = filled; filled = hand_out(u, bufs, caps, lens, addrs, ecnv, n, filled);
-        if (filled > before) dropped = 0;
+        if (filled > before) dropped = 0; else dropped++;   /* every segment larger than its slot */
     }
     *received = filled;
     __atomic_sub_fetch(&u->in_recv, 1, __ATOMIC_SEQ_CST);
