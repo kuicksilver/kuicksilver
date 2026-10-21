@@ -9,6 +9,7 @@ import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpProtocolVersion
 import io.ktor.network.sockets.InetSocketAddress
+import io.ktor.server.application.Application
 import io.ktor.server.response.header
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
@@ -98,31 +99,52 @@ class ClientFallbackTest {
             }
         }
 
-    /**
-     * A raw HTTP/3 server on the UDP side of [port] that fails every request after reading it (H3_INTERNAL_ERROR), except
-     * [okPaths] (200): by resetting the stream, or with [closeConnection] by closing the whole connection.
-     */
-    private suspend fun CoroutineScope.failingH3(
-        port: Int,
-        okPaths: Set<String> = emptySet(),
-        closeConnection: Boolean = false,
-    ): Http3Endpoint {
+    /** A raw HTTP/3 server endpoint on a free UDP port of 127.0.0.1. */
+    private suspend fun h3Endpoint(): Http3Endpoint {
         val tls =
             tlsConfig(TlsRole.Server) {
                 alpn = listOf("h3")
                 identity =
                     TlsIdentity.fromDer(listOf(TestCerts.server), TestCerts.serverKey.copyOf())
             }
-        val ep =
-            Http3Endpoint.bind(
-                InetSocketAddress("127.0.0.1", port),
-                QuicEndpointConfig
-                    .Builder()
-                    .apply {
-                        this.server =
-                            QuicServerConfig.Builder(tls).build()
-                    }.build(),
-            )
+        return Http3Endpoint.bind(
+            InetSocketAddress("127.0.0.1", 0),
+            QuicEndpointConfig
+                .Builder()
+                .apply {
+                    this.server =
+                        QuicServerConfig.Builder(tls).build()
+                }.build(),
+        )
+    }
+
+    /**
+     * An HTTP/1.1 [testServer] (no HTTP/3 of its own) running [module] on the TCP side of a port and [h3] on its UDP side:
+     * the UDP endpoint binds a free port first and the TCP server takes the same number, a new pair when that is taken.
+     * A free TCP port says nothing about its UDP twin: binding UDP on the port the TCP server got failed with "Address
+     * already in use" whenever another process held that UDP port.
+     */
+    private suspend fun h1AndH3(
+        module: Application.() -> Unit,
+        h3: suspend () -> Http3Endpoint,
+    ): Triple<TestServer, Http3Endpoint, Int> {
+        val (ep, server, port) =
+            bindOnSamePort(
+                first = { h3().let { it to it.localAddress.port } },
+                release = { it.close() },
+            ) { p -> testServer(configure = { http3 = false }, port = p, module = module).first }
+        return Triple(server, ep, port)
+    }
+
+    /**
+     * A raw HTTP/3 server on a free UDP port that fails every request after reading it (H3_INTERNAL_ERROR), except
+     * [okPaths] (200): by resetting the stream, or with [closeConnection] by closing the whole connection.
+     */
+    private suspend fun CoroutineScope.failingH3(
+        okPaths: Set<String> = emptySet(),
+        closeConnection: Boolean = false,
+    ): Http3Endpoint {
+        val ep = h3Endpoint()
         launch {
             runCatching {
                 while (true) {
@@ -187,9 +209,9 @@ class ClientFallbackTest {
     /** HTTP/3 failed at connection level while HTTP/1.1 served the request: the alternative is marked broken (RFC 7838 section 2.4). */
     @Test fun h3FailureWithH1SuccessMarksBroken() =
         h3Test {
-            val (server, port) = testServer(configure = { http3 = false }) { routing { get("/") { call.respondText("h1") } } }
             kotlinx.coroutines.coroutineScope {
-                val ep = failingH3(port, closeConnection = true)
+                val (server, ep, port) =
+                    h1AndH3({ routing { get("/") { call.respondText("h1") } } }) { failingH3(closeConnection = true) }
                 try {
                     testClient(Http3DiscoveryMode.Preferred).use { c ->
                         // the first request may be won by HTTP/1.1 outright; the HTTP/3 setup outlives the race and serves the next one
@@ -212,9 +234,9 @@ class ClientFallbackTest {
     /** A single stream reset on a working HTTP/3 connection falls back for that request but does not mark the alternative broken. */
     @Test fun streamErrorDoesNotMarkAlternativeBroken() =
         h3Test {
-            val (server, port) = testServer(configure = { http3 = false }) { routing { get("/") { call.respondText("h1") } } }
             kotlinx.coroutines.coroutineScope {
-                val ep = failingH3(port, okPaths = setOf("/warmup"))
+                val (server, ep, port) =
+                    h1AndH3({ routing { get("/") { call.respondText("h1") } } }) { failingH3(okPaths = setOf("/warmup")) }
                 try {
                     testClient(Http3DiscoveryMode.Preferred).use { c ->
                         val engine = c.engine as KuicksilverEngine
@@ -240,17 +262,16 @@ class ClientFallbackTest {
     @Test fun idempotentRetriedOnH1() =
         h3Test {
             var h1Calls = 0
-            val (server, port) =
-                testServer(configure = { http3 = false }) {
-                    routing {
-                        get("/") {
-                            h1Calls++
-                            call.respondText("h1")
-                        }
-                    }
-                }
             kotlinx.coroutines.coroutineScope {
-                val ep = failingH3(port)
+                val (server, ep, port) =
+                    h1AndH3({
+                        routing {
+                            get("/") {
+                                h1Calls++
+                                call.respondText("h1")
+                            }
+                        }
+                    }) { failingH3() }
                 try {
                     testClient(Http3DiscoveryMode.Preferred).use { c ->
                         val r = c.get("https://127.0.0.1:$port/")
@@ -268,17 +289,16 @@ class ClientFallbackTest {
     @Test fun nonIdempotentNotRetriedAfterHeadersSent() =
         h3Test {
             var h1Calls = 0
-            val (server, port) =
-                testServer(configure = { http3 = false }) {
-                    routing {
-                        post("/") {
-                            h1Calls++
-                            call.respondText("h1")
-                        }
-                    }
-                }
             kotlinx.coroutines.coroutineScope {
-                val ep = failingH3(port, okPaths = setOf("/warmup"))
+                val (server, ep, port) =
+                    h1AndH3({
+                        routing {
+                            post("/") {
+                                h1Calls++
+                                call.respondText("h1")
+                            }
+                        }
+                    }) { failingH3(okPaths = setOf("/warmup")) }
                 try {
                     testClient(Http3DiscoveryMode.Preferred).use { c ->
                         // set up the HTTP/3 connection first (the first request may race to HTTP/1.1), so the POST goes over HTTP/3;
@@ -304,68 +324,50 @@ class ClientFallbackTest {
     @Test fun streamedBodyNotReplayedAfterMidUploadFailure() =
         h3Test {
             var h1Calls = 0
-            val (server, port) =
-                testServer(configure = { http3 = false }) {
-                    routing {
-                        put("/") {
-                            h1Calls++
-                            call.respondText("h1")
-                        }
-                    }
-                }
             kotlinx.coroutines.coroutineScope {
-                val tls =
-                    tlsConfig(TlsRole.Server) {
-                        alpn = listOf("h3")
-                        identity =
-                            TlsIdentity.fromDer(listOf(TestCerts.server), TestCerts.serverKey.copyOf())
-                    }
-                val ep =
-                    Http3Endpoint.bind(
-                        InetSocketAddress("127.0.0.1", port),
-                        QuicEndpointConfig
-                            .Builder()
-                            .apply {
-                                this.server =
-                                    QuicServerConfig.Builder(tls).build()
-                            }.build(),
-                    )
-                launch {
-                    runCatching {
-                        while (true) {
-                            val conn = ep.accept()
+                val (server, ep, port) =
+                    h1AndH3({
+                        routing {
+                            put("/") {
+                                h1Calls++
+                                call.respondText("h1")
+                            }
+                        }
+                    }) {
+                        // reads part of the body, then fails the stream
+                        h3Endpoint().also { ep ->
                             launch {
                                 runCatching {
                                     while (true) {
-                                        val r = conn.acceptRequest()
-                                        if (r.path == "/warmup") {
-                                            launch { runCatching { r.respond(200).finish() } }
-                                            continue
-                                        }
+                                        val conn = ep.accept()
                                         launch {
                                             runCatching {
-                                                val b = ByteArray(65_536)
-                                                var got = 0
-                                                while (got <
-                                                    b.size
-                                                ) {
-                                                    val n = r.body.readAvailable(b, 0, b.size - got)
-                                                    if (n <
-                                                        0
-                                                    ) {
-                                                        break
+                                                while (true) {
+                                                    val r = conn.acceptRequest()
+                                                    if (r.path == "/warmup") {
+                                                        launch { runCatching { r.respond(200).finish() } }
+                                                        continue
                                                     }
-                                                    got += n
+                                                    launch {
+                                                        runCatching {
+                                                            val b = ByteArray(65_536)
+                                                            var got = 0
+                                                            while (got < b.size) {
+                                                                val n = r.body.readAvailable(b, 0, b.size - got)
+                                                                if (n < 0) break
+                                                                got += n
+                                                            }
+                                                        }
+                                                        r.reset(Http3ErrorCode.INTERNAL_ERROR)
+                                                    }
                                                 }
                                             }
-                                            ; r.reset(Http3ErrorCode.INTERNAL_ERROR)
                                         }
                                     }
                                 }
                             }
                         }
                     }
-                } // reads part of the body, then fails the stream
                 try {
                     testClient(Http3DiscoveryMode.Preferred).use { c ->
                         runCatching { c.get("https://127.0.0.1:$port/warmup") }
