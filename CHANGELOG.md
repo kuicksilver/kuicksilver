@@ -98,6 +98,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   network duplicate or a replay delivered the DATAGRAM twice (RFC 9000 section 12.3). The packet number now counts as
   seen and is still never acknowledged, as not all of its frames were processed (section 13.1); the peer resends the
   data in a new packet.
+- QUIC: RESET_STREAM (with STOP_SENDING on a bidirectional stream) returned MAX_STREAMS credit for streams the
+  application never accepted: the runtime consumed the reset itself while the stream waited in the accept queue (about
+  33 KiB each), so a peer could open streams without bound (500 against `maxBidiStreams = 10`) while the application
+  did not call `acceptStream()`. The reset of a queued stream is now consumed when `acceptStream()` hands it out (as
+  quic-go counts a reset stream completed only once the application read the error), for bidirectional and
+  unidirectional streams.
 - QUIC: a packet of MAX_STREAM_DATA frames could cost the endpoint loop about 250 ms. On a stream whose receiver
   acknowledged every other packet, each frame (even one that raises nothing, which spends no glitch token) compared
   every queued retransmission with every acknowledged range, and so did every packet built for the stream. Acknowledged

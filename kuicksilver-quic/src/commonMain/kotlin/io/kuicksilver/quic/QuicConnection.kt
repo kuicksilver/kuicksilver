@@ -19,7 +19,10 @@ public interface QuicConnection : AutoCloseable {
     /** Opens a unidirectional stream (only its `output` exists), with the same waiting and failure rules as [openBidi]. */
     public suspend fun openUni(priority: StreamPriority = StreamPriority.Default): QuicStream
 
-    /** The next stream the peer opened, in id order. */
+    /**
+     * The next stream the peer opened, in id order. A peer stream counts against the limits we grant (`QuicConfig.maxBidiStreams`,
+     * `maxUniStreams`) until it was handed out here and is done: read to its end or its reset surfaced, and our half finished.
+     */
     public suspend fun acceptStream(): QuicStream
 
     /** A snapshot of the connection's counters, readable from any thread; fields are read without a lock, so they need not all come from one instant. */

@@ -36,6 +36,7 @@ import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
@@ -48,7 +49,7 @@ import kotlinx.coroutines.withContext
 import kotlin.concurrent.Volatile
 
 /** The runtime half of one connection: events → deferreds and channels, application calls → commands on the loop. */
-@OptIn(ExperimentalKuicksilverApi::class)
+@OptIn(ExperimentalKuicksilverApi::class, kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
 internal class ConnectionRuntime(
     private val loop: EndpointLoop,
     override val core: ConnectionCore,
@@ -56,7 +57,9 @@ internal class ConnectionRuntime(
     internal val handshake = CompletableDeferred<Unit>()
     private val closedDeferred = CompletableDeferred<QuicException.ConnectionLost>()
     override val closed: Deferred<QuicException.ConnectionLost> get() = closedDeferred
-    private val accepted = Channel<QuicStream>(Channel.UNLIMITED)
+
+    /** Peer streams waiting for acceptStream; at most the stream limits we granted, as none of them is counted closed before it is handed out. */
+    private val accepted = Channel<StreamRuntime>(Channel.UNLIMITED)
     internal val streams = HashMap<Long, StreamRuntime>() // internal for the resource probe
 
     /** Signalled after every poll: writers and stream openers retry. */
@@ -434,7 +437,12 @@ internal class ConnectionRuntime(
                 }
 
                 is ConnectionEvent.StreamOpened -> {
-                    accepted.trySend(stream(e.id).also { it.receivedEarly = core.streamReceivedEarly(e.id) })
+                    accepted.trySend(
+                        stream(e.id).also {
+                            it.receivedEarly = core.streamReceivedEarly(e.id)
+                            it.handOut.store(StreamRuntime.QUEUED)
+                        },
+                    )
                 }
 
                 is ConnectionEvent.StreamReadable -> {
@@ -446,11 +454,13 @@ internal class ConnectionRuntime(
                 }
 
                 is ConnectionEvent.StreamReset -> {
-                    streams[e.id]?.peerReset(e.code)
-                    core.readStream(e.id, NO_BYTES, 0, 0)
+                    val s = streams[e.id]
+                    s?.peerReset(e.code)
+                    if (s == null || !s.deferReset()) core.readStream(e.id, NO_BYTES, 0, 0)
                 }
 
-                // the reset is surfaced: acknowledge it in the core (ResetRecvd -> ResetRead) so the half retires, MAX_STREAMS credit returns and StreamFinished follows
+                // the reset is surfaced: acknowledge it in the core (ResetRecvd -> ResetRead) so the half retires, MAX_STREAMS credit returns and
+                // StreamFinished follows; for a stream still waiting for acceptStream that happens when acceptStream hands it out
                 is ConnectionEvent.StopSendingReceived -> {
                     streams[e.id]?.peerStopped(e.code)
                 }
@@ -619,7 +629,18 @@ internal class ConnectionRuntime(
 
     override suspend fun openUni(priority: StreamPriority): QuicStream = open(false, priority)
 
-    override suspend fun acceptStream(): QuicStream = accepted.receive()
+    override suspend fun acceptStream(): QuicStream {
+        val s = accepted.receive()
+        if (s.handOut.exchange(StreamRuntime.HANDED_OUT) == StreamRuntime.RESET_UNREAD) {
+            // the application now holds the stream and its reset: consume the reset so the core counts it closed (MAX_STREAMS credit),
+            // even if the caller is cancelled meanwhile
+            withContext(loop.dispatcher + NonCancellable) {
+                core.readStream(s.id, NO_BYTES, 0, 0)
+                loop.flush(core)
+            }
+        }
+        return s
+    }
 
     override val stats: ConnectionStats get() = core.stats
     override val peerCertificates: List<Certificate> get() = certificates

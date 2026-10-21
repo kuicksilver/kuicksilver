@@ -34,7 +34,7 @@ Transport settings of a connection: `quicConfig { }` (`QuicConfig.Builder`), `Qu
 | `initialConnectionWindow` | `Long` (bytes) | 786 432 (768 KiB) | 1..`maxConnectionWindow` | receive window of the connection at its start (`initial_max_data`); kept at least 1.5 x the largest stream window |
 | `maxStreamWindow` | `Long` (bytes) | 6 291 456 (6 MiB) | at least `initialStreamWindow` | ceiling of a stream's receive window: the most unread data one stream holds |
 | `maxConnectionWindow` | `Long` (bytes) | 15 728 640 (15 MiB) | at least `initialConnectionWindow` | ceiling of the connection's receive window |
-| `maxBidiStreams` | `Long` | 100 | 0..2^60 | bidirectional streams the peer may have open at once (`initial_max_streams_bidi`); raised by MAX_STREAMS as streams close |
+| `maxBidiStreams` | `Long` | 100 | 0..2^60 | bidirectional streams the peer may have open at once (`initial_max_streams_bidi`); raised by MAX_STREAMS as streams close. A stream counts as closed once the application took it from `acceptStream()` and consumed it (read to the end or saw its reset), so a peer cannot open more streams than this while the application accepts none |
 | `maxUniStreams` | `Long` | 100 | 0..2^60 | the same for unidirectional streams; HTTP/3 needs at least 3 (RFC 9114 §6.2): `Http3Endpoint` and the Ktor engines with HTTP/3 refuse less |
 | `maxSendBuffer` | `Long` (bytes) | 4 194 304 (4 MiB) | 1..2^62 | unacknowledged send data the connection buffers over all streams; writers wait beyond it |
 | `maxAckDelay` | `Duration` | 25 ms | below 2^14 ms | our `max_ack_delay` |

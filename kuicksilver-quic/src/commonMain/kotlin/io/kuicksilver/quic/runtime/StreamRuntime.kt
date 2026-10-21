@@ -12,6 +12,8 @@ import io.kuicksilver.quic.StreamPriority
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
 import kotlin.concurrent.Volatile
+import kotlin.concurrent.atomics.AtomicInt
+import kotlin.concurrent.atomics.ExperimentalAtomicApi
 
 /**
  * One stream of the core as two ktor-io channels. The input pulls from the core only when the application
@@ -57,6 +59,20 @@ internal class StreamRuntime(
         done.complete(Unit)
     }
 
+    /**
+     * Where a peer-initiated stream is on its way to the application: [QUEUED] in the accept queue, [RESET_UNREAD] queued with a
+     * RESET_STREAM the runtime has not consumed for it, [HANDED_OUT] returned by acceptStream (and every stream we opened).
+     * The core counts a peer stream closed for MAX_STREAMS only once its reset was consumed; consuming it for a stream still in
+     * the queue let a peer open streams without bound by resetting them (review h-quic). The loop thread moves QUEUED to
+     * RESET_UNREAD, acceptStream moves either to HANDED_OUT and consumes a pending reset itself: exactly one of them consumes it.
+     */
+    @OptIn(ExperimentalAtomicApi::class)
+    internal val handOut = AtomicInt(HANDED_OUT)
+
+    /** On the loop: a reset arrived for a stream still waiting for acceptStream; true when its consumption is now left to [handOut]'s taker. */
+    @OptIn(ExperimentalAtomicApi::class)
+    internal fun deferReset(): Boolean = handOut.compareAndSet(QUEUED, RESET_UNREAD)
+
     internal fun peerReset(code: Long) {
         inChannel?.closeWith(QuicException.StreamError.Reset(id, code, Initiator.Peer))
     }
@@ -85,5 +101,11 @@ internal class StreamRuntime(
             conn.core.stopSending(id, code)
             loop.flush(conn.core)
         }
+    }
+
+    internal companion object {
+        const val HANDED_OUT = 0
+        const val QUEUED = 1
+        const val RESET_UNREAD = 2
     }
 }
