@@ -29,8 +29,8 @@ case_ "missing role file (non-blocking)"      1 "MISSING"            -- --expect
 case_ "without --expect a role is out of scope" 0 "skipped"          -- "$td/perf-result-sample.json" "$tmp/blocking.json"
 case_ "no thresholds"                         1 "no threshold"       -- "$tmp/run" "$tmp/empty.json"
 # the output is read whole first: check-perf.sh exits 1 here, and under pipefail `check-perf.sh | grep -q` was false
-# whatever it printed, so this case could never fail
-out=$(bash "$here/check-perf.sh" "$tmp/run" "$tmp/empty.json" 2>&1)
+# whatever it printed, so this case could never fail; the trailing x keeps a blank last row that $() would strip
+out=$(bash "$here/check-perf.sh" "$tmp/run" "$tmp/empty.json" 2>&1; echo x); out=${out%x}; out=${out%$'\n'}
 if grep -qE '^[[:space:]]*$' <<< "$out"; then
   echo "FAIL no thresholds: a blank row"; fails=$((fails + 1))
 else echo "ok   no thresholds: no blank row"; fi
