@@ -32,11 +32,11 @@ import io.kuicksilver.tls.VerifyReason
 import io.kuicksilver.tls.VerifyResult
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
@@ -58,8 +58,12 @@ internal class ConnectionRuntime(
     private val closedDeferred = CompletableDeferred<QuicException.ConnectionLost>()
     override val closed: Deferred<QuicException.ConnectionLost> get() = closedDeferred
 
-    /** Peer streams waiting for acceptStream; at most the stream limits we granted, as none of them is counted closed before it is handed out. */
-    private val accepted = Channel<StreamRuntime>(Channel.UNLIMITED)
+    /**
+     * Peer streams waiting for acceptStream; at most the stream limits we granted, as none of them is counted closed before it is
+     * handed out. A stream taken by an acceptStream caller cancelled while being resumed never reaches the application:
+     * [abandonUndelivered] gives it up, or its MAX_STREAMS credit would never return.
+     */
+    private val accepted = Channel<StreamRuntime>(Channel.UNLIMITED, onUndeliveredElement = { abandonUndelivered(it) })
     internal val streams = HashMap<Long, StreamRuntime>() // internal for the resource probe
 
     /** Signalled after every poll: writers and stream openers retry. */
@@ -90,6 +94,9 @@ internal class ConnectionRuntime(
 
     /** Live stream wrappers (test hook): finished streams leave the map. */
     internal val streamCountForTest: Int get() = streams.size
+
+    /** The loop's dispatcher (tests that order work against the loop). */
+    internal val loopDispatcherForTest: CoroutineDispatcher get() = loop.dispatcher
     internal val tickerCountForTest: Int get() = tickers.size
     internal val pathCountForTest: Int get() = pathList.size
     internal val streamIdsForTest: List<Long> get() = streams.keys.toList()
@@ -631,15 +638,29 @@ internal class ConnectionRuntime(
 
     override suspend fun acceptStream(): QuicStream {
         val s = accepted.receive()
+        // the application now holds the stream and its reset: the reset is consumed on the loop so the core counts the stream closed
+        // (MAX_STREAMS credit). No suspension point follows the receive: a caller cancelled here would drop a stream already taken
         if (s.handOut.exchange(StreamRuntime.HANDED_OUT) == StreamRuntime.RESET_UNREAD) {
-            // the application now holds the stream and its reset: consume the reset so the core counts it closed (MAX_STREAMS credit),
-            // even if the caller is cancelled meanwhile
-            withContext(loop.dispatcher + NonCancellable) {
+            loop.scope.launch {
                 core.readStream(s.id, NO_BYTES, 0, 0)
                 loop.flush(core)
             }
         }
         return s
+    }
+
+    /**
+     * [s] left the accept queue but not for the application (its acceptStream caller was cancelled while being resumed): nothing will
+     * read or write it, so on the loop its reset, if one waits, is consumed and both halves are given up as an application would
+     * (STOP_SENDING, RESET_STREAM with the default code), and the stream closes and returns its credit.
+     */
+    private fun abandonUndelivered(s: StreamRuntime) {
+        loop.scope.launch {
+            if (s.handOut.exchange(StreamRuntime.HANDED_OUT) == StreamRuntime.RESET_UNREAD) core.readStream(s.id, NO_BYTES, 0, 0)
+            core.stopSending(s.id, defaultCode())
+            core.resetStream(s.id, defaultCode())
+            loop.flush(core)
+        }
     }
 
     override val stats: ConnectionStats get() = core.stats

@@ -105,7 +105,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   33 KiB each), so a peer could open streams without bound (500 against `maxBidiStreams = 10`) while the application
   did not call `acceptStream()`. The reset of a queued stream is now consumed when `acceptStream()` hands it out (as
   quic-go counts a reset stream completed only once the application read the error), for bidirectional and
-  unidirectional streams.
+  unidirectional streams. An `acceptStream()` caller cancelled while being resumed with a stream no longer loses it
+  silently: the stream is given up (STOP_SENDING, RESET_STREAM with the default code) and returns its credit, where
+  before it stayed open until the connection closed.
 - QUIC: a packet of MAX_STREAM_DATA frames could cost the endpoint loop about 250 ms. On a stream whose receiver
   acknowledged every other packet, each frame (even one that raises nothing, which spends no glitch token) compared
   every queued retransmission with every acknowledged range, and so did every packet built for the stream. Acknowledged

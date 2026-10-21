@@ -18,10 +18,18 @@ import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.QuicServerConfig
 import io.kuicksilver.quic.QuicStream
 import io.kuicksilver.quic.quicConfig
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Runnable
 import kotlinx.coroutines.async
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.coroutines.CoroutineContext
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertFailsWith
@@ -66,14 +74,96 @@ class UnacceptedStreamLimitTest {
         }
 
     /**
+     * Review (fable) of this fix: the acceptStream caller is cancelled while acceptStream consumes a pending reset. A hop to the
+     * loop resumed the caller cancellably, so the stream, already taken from the queue with its reset consumed, was dropped
+     * unseen and its send half stayed open until the connection closed. The acceptor's dispatcher is a queue the test steps
+     * by hand, so the cancellation lands exactly at that hop (a fixed version has no hop: the caller gets the stream).
+     */
+    @Test fun negative_anAcceptorCancelledWhileTheResetIsConsumedLosesNoStream() =
+        withPair { c, sc ->
+            val steps = StepDispatcher()
+            var got: QuicStream? = null
+            val acceptor = launch(steps, start = CoroutineStart.UNDISPATCHED) { got = sc.acceptStream() }
+            c.openBidi().reset(0) // RESET_STREAM opens the stream: StreamOpened and StreamReset in one drain of the server loop
+            val resumed = steps.tasks.receive()
+            // run the acceptor after that drain, so the reset was deferred to it (RESET_UNREAD)
+            withContext((sc as ConnectionRuntime).loopDispatcherForTest) { resumed.run() }
+            if (!acceptor.isCompleted) {
+                val back = steps.tasks.receive() // the hop back from the loop
+                acceptor.cancel()
+                back.run()
+            }
+            acceptor.join()
+            got?.reset(0) // an application that got the stream abandons it
+            // the stream must close (credit for one more of the one allowed) whether or not the acceptor saw it
+            c.openBidi()
+        }
+
+    /**
+     * A receiver of `accepted` cancelled while being resumed with a stream loses that element unless the channel hands it to
+     * onUndeliveredElement; a lost stream with an unread reset never returned its MAX_STREAMS credit.
+     */
+    @Test fun negative_anAcceptorCancelledWhileBeingResumedLosesNoCredit() =
+        withPair { c, sc ->
+            val steps = StepDispatcher()
+            val acceptor = launch(steps, start = CoroutineStart.UNDISPATCHED) { sc.acceptStream() }
+            c.openBidi().reset(0)
+            val resumed = steps.tasks.receive() // the stream was handed to the suspended acceptor
+            acceptor.cancel()
+            withContext((sc as ConnectionRuntime).loopDispatcherForTest) { resumed.run() }
+            while (!acceptor.isCompleted) steps.tasks.receive().run()
+            assertTrue(acceptor.isCancelled)
+            // nothing will use the undelivered stream: it is abandoned and its credit returns
+            c.openBidi()
+        }
+
+    /** A dispatcher whose tasks wait in [tasks] until the test runs them. */
+    private class StepDispatcher : CoroutineDispatcher() {
+        val tasks = Channel<Runnable>(Channel.UNLIMITED)
+
+        override fun dispatch(
+            context: CoroutineContext,
+            block: Runnable,
+        ) {
+            tasks.trySend(block)
+        }
+    }
+
+    /**
      * The client fills the server's limit of 10 with streams the server application has not accepted; an 11th open waits. Each
      * acceptStream then hands a stream (and its reset) to the application; once five were consumed the server grants five more.
      */
     private fun againstUnacceptingServer(
         reset: Boolean = true,
         open: suspend (QuicConnection) -> QuicStream,
+    ) = withPair(10) { c, sc ->
+        repeat(10) { open(c) }
+        // the 11th waits for credit the server must not give while its application accepted nothing (was: 500 in ~130 ms)
+        val eleventh = async { open(c) }
+        assertNull(
+            withTimeoutOrNull(1.seconds) { eleventh.await() },
+            "an 11th stream opened; the server application accepted none of 10",
+        )
+        // handing a stream out lets its credit go once the application consumed it (here: the reset it sees on reading, or
+        // the whole stream); the server grants more once half of its limit closed
+        repeat(5) {
+            val st = sc.acceptStream()
+            if (reset) {
+                assertFailsWith<QuicException.StreamError> { st.input.readRemaining() }
+            } else {
+                assertTrue(st.input.readRemaining().exhausted())
+                st.output.flushAndClose()
+            }
+        }
+        eleventh.await()
+    }
+
+    /** A client connection [c] to a server connection [sc] whose stream limits are [maxStreams], in memory. */
+    private fun withPair(
+        maxStreams: Long = 1,
+        block: suspend CoroutineScope.(c: QuicConnection, sc: QuicConnection) -> Unit,
     ) = runBlocking {
-        withTimeout(60.seconds) {
+        withTimeout(30.seconds) {
             val net = MemoryNetwork()
             val serverAddr = InetSocketAddress("10.0.0.2", 2222)
             val sio = net.open(serverAddr)
@@ -90,8 +180,8 @@ class UnacceptedStreamLimitTest {
                                     .apply {
                                         quic =
                                             quicConfig {
-                                                maxBidiStreams = 10
-                                                maxUniStreams = 10
+                                                maxBidiStreams = maxStreams
+                                                maxUniStreams = maxStreams
                                             }
                                     }.build()
                             crypto = NullCryptoProvider
@@ -111,26 +201,7 @@ class UnacceptedStreamLimitTest {
             try {
                 val accepted = async { server.accept() }
                 val c = client.connect(serverAddr, QuicClientConfig.Builder(CoreFixtures.client()).build())
-                val sc = accepted.await()
-                repeat(10) { open(c) }
-                // the 11th waits for credit the server must not give while its application accepted nothing (was: 500 in ~130 ms)
-                val eleventh = async { open(c) }
-                assertNull(
-                    withTimeoutOrNull(1.seconds) { eleventh.await() },
-                    "an 11th stream opened; the server application accepted none of 10",
-                )
-                // handing a stream out lets its credit go once the application consumed it (here: the reset it sees on reading, or
-                // the whole stream); the server grants more once half of its limit closed
-                repeat(5) {
-                    val st = sc.acceptStream()
-                    if (reset) {
-                        assertFailsWith<QuicException.StreamError> { st.input.readRemaining() }
-                    } else {
-                        assertTrue(st.input.readRemaining().exhausted())
-                        st.output.flushAndClose()
-                    }
-                }
-                eleventh.await()
+                block(c, accepted.await())
                 c.close()
             } finally {
                 client.close()
