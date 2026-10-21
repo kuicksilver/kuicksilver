@@ -153,7 +153,7 @@ class BbrHarshScenarioTest {
     @Test fun thinnedAcks() {
         // 3 of 4 ACK datagrams lost: every ACK frame that gets through acknowledges about 8 packets (stretch ACKs). The flow-control
         // windows are large: with the defaults a lost MAX_STREAM_DATA stalls both controllers for ~10 s behind the server's PTO
-        // backoff (a flow-control finding, not congestion control; see the k7/bbr ledger)
+        // backoff (a flow-control finding, not congestion control)
         val (b, _) =
             compare("ACK thinning 75 %") { q, s ->
                 single(q.withWindows(), s, link(), acks = LinkParams(delay = oneWay, lossRate = 0.75))
