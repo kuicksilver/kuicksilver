@@ -86,6 +86,10 @@ from us, so we commit to the following.
 - **SBOM and provenance.** Each release from 0.2.1 attaches to its GitHub release a CycloneDX SBOM of every publication
   (with OpenSSL as a component: version, tarball SHA-256, CPE, configure flags) and a signed build provenance statement;
   see [docs/release.md, Supply chain](docs/release.md#supply-chain-sbom-and-provenance).
+- **Verifying a release.** [docs/verifying.md](docs/verifying.md) shows how to check the signatures (release key
+  `22C1F2E4FCE94B28EB2C7DB0492ABD95C8D0EC68`), the SBOM and provenance, and how to rebuild the native libraries that are
+  reproducible and compare them with the published ones (`tools/verify/verify-release.sh`). A signature that does not
+  verify, or a reproducible library that differs, is a vulnerability report.
 
 A vulnerability in OpenSSL itself should be reported to the OpenSSL project
 (<https://openssl-library.org/policies/general/security-policy/>). If it is reachable through Kuicksilver in a way

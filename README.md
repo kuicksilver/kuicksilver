@@ -169,6 +169,11 @@ unless both sides opt in, and then guarded against replay (ADR-0015); packet key
 built by this repository. The full model is in [docs/spec/threat-model.md](docs/spec/threat-model.md), and
 vulnerabilities are reported privately as described in [SECURITY.md](SECURITY.md).
 
+Supply chain: every artifact on Maven Central is signed with the release key (`22C1F2E4FCE94B28EB2C7DB0492ABD95C8D0EC68`),
+and `tools/verify/verify-release.sh <version>` checks those signatures, the SBOM and provenance of the GitHub release
+(from 0.2.1), and rebuilds from the signed tag the native libraries that are reproducible on your host, comparing them
+byte for byte with the published ones. What is and is not reproducible yet: [docs/verifying.md](docs/verifying.md).
+
 ## Interoperability
 
 The QUIC Interop Runner (pinned in `tools/interop/runner.lock`) is run against msquic, ngtcp2, picoquic, quic-go,
@@ -199,6 +204,8 @@ stay green. RFC coverage, section by section, with the tests behind each row, is
 - [docs/benchmarks.md](docs/benchmarks.md) — goodput, CPU per GB and handshakes per second against quiche, quinn and
   msquic, with the method and its caveats (one Apple Silicon host; the amd64 peer images run emulated).
 - [docs/spec/threat-model.md](docs/spec/threat-model.md) — threat model and the `negative_*` security controls.
+- [docs/verifying.md](docs/verifying.md) — verifying a release: signatures, Gradle dependency verification, SBOM and
+  provenance, rebuilding the native libraries.
 - [docs/adr/](docs/adr/README.md) — architecture decision records.
 - [CHANGELOG.md](CHANGELOG.md), [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md),
   [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).

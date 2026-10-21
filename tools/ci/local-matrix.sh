@@ -83,6 +83,7 @@ step "jvm/android: service keep rules (R8)"     bash -c "$G :kuicksilver-ktor-cl
 step "android: libksl.so exports, OpenSSL, no sanitizers"  bash tools/check/native-release.sh "$aar" aar   # all three ABIs (review 2026-10-14, finding 4)
 step "check: native-release negative controls"   bash tools/check/native-release-test.sh
 step "check: local-release refusals"             bash tools/release/local-release-test.sh
+step "check: verify-release negative controls"   bash tools/verify/verify-release-test.sh   # offline fixtures: signatures, provenance, rebuilt libraries
 if [ "$skip_android" = 0 ]; then
 step "android: device tests (emulator)"         $G androidConnectedCheck
 fi

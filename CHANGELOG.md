@@ -21,6 +21,14 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   published file), signed with the release key. `local-release.sh` makes both, dry run included; they are attached to the GitHub release
   and not uploaded to Maven Central, so the deployment's file count is unchanged. The provenance reaches SLSA Build
   Level 1, not more: it is produced and signed on the machine that builds.
+- Verifying a release (`docs/verifying.md`): `tools/verify/verify-release.sh <version>` downloads a version from Maven
+  Central, checks every file's signature against the pinned release key and Central's `.sha1`, checks the GitHub
+  release's SBOM and provenance when present (signatures, every subject digest, the source commit against the tag), and
+  rebuilds from the signed tag the native libraries this host can build (on macOS: the two macOS JNI dylibs, the static
+  archives of the Apple and Kotlin/Native Linux cinterop klibs, the three Android `libksl.so`), comparing them byte for
+  byte with the published ones; `--offline <dir>` reads a local repository. The Linux and Windows JNI libraries and the
+  Kotlin/Gradle outputs are reported as not rebuilt, with the reason. `tools/verify/verify-release-test.sh` (in the local
+  gate) runs it on fixtures without network. The page also covers Gradle dependency verification for `io.kuicksilver`.
 - `context7.json`: the configuration of the Context7 documentation index (what it reads, a description, rules for coding
   agents, the 0.2.0 tag), and a release step that keeps it on the newest published version (`docs/release.md`).
 - `docs/stability.md` and `SECURITY.md` state that Kuicksilver is not FIPS-certified and that the bundled OpenSSL is
