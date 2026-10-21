@@ -83,7 +83,7 @@ bash tools/c-test.sh                                             # the ksl C tes
 ./gradlew checkKotlinAbi                                         # public ABI against the dumps in <module>/api/
 ./gradlew updateKotlinAbi                                        # regenerate the dumps after an intended API change
 bash tools/check/links.sh                                        # relative links in the Markdown files
-tools/ci/local-matrix.sh --dry-run                               # list the full CI matrix; drop --dry-run to run it
+tools/ci/local-matrix.sh --dry-run                               # list the gate's steps; drop --dry-run to run them
 ```
 
 `checkKotlinAbi` over all modules covers every Kotlin/Native target, so it needs every OpenSSL build, including the
@@ -97,7 +97,7 @@ Throughput: `bash tools/interop/run-local.sh --perf` runs only the runner's `goo
 `tools/interop/check-perf.sh` compares them with the floors there and exits 1 on a regression or on a cell (peer, role,
 measurement) with no result; `--perf --results DIR` re-checks an earlier run. To move the floors after an intended change
 (or a new peer), run `--perf` on a quiet host, review `bash tools/interop/check-perf.sh --update build/interop/<run> >
-/tmp/t.json`, copy it over the thresholds file and update the «Measurements» line of `docs/spec/rfc-compliance.md` in
+/tmp/t.json`, copy it over the thresholds file and update the "Measurements" line of `docs/spec/rfc-compliance.md` in
 the same commit. `bash tools/interop/check-perf-test.sh` runs the checker's exit-code cases on `tools/interop/testdata`.
 The comparison with other stacks (goodput, CPU per GB, handshakes per second) is `tools/bench/run-table.sh`; its
 method and the published numbers are in `docs/benchmarks.md`.
@@ -130,10 +130,11 @@ that ran on the simulator the timed-out cell before it left running (`Container 
 `bash tools/interop/environment-test.sh` runs those rules on `tools/interop/testdata`.
 
 The floors were measured on a local host, so the thresholds file says `"blocking": false`: a cell below its floor is a
-warning (exit 0, a `::warning::` annotation in the weekly `perf` workflow) while a failed or missing cell still fails.
-To make the floors blocking, download the `perf-<peer>` result artifacts of a few weekly runs, fold them in with
-`check-perf.sh --update <dir>[,<dir>...]` (it keeps the best mean per cell), commit the new floors and set
-`"blocking": true` in the same commit.
+warning (exit 0) while a failed or missing cell still fails. To make the floors blocking, run `run-local.sh --perf` a
+few times on quiet hosts, fold the runs in with `check-perf.sh --update <dir>[,<dir>...]` (it keeps the best mean per
+cell), commit the new floors and set `"blocking": true` in the same commit. The weekly `perf` workflow
+(`.github/workflows/perf.yml`) does the same on GitHub-hosted runners, but the GitHub Actions workflows are disabled;
+the gate is `tools/ci/local-matrix.sh`.
 
 ## Style
 
@@ -158,8 +159,9 @@ To make the floors blocking, download the `perf-<peer>` result artifacts of a fe
   otherwise.
 - **Commits.** `<type>(<scope>): <what>` on the first line (`feat`, `fix`, `test`, `docs`, `build`, `ci`, `refactor`,
   `chore`; scope is the module or area, for example `quic`, `tls`, `http3`, `ksl`), then a body that says why.
-- **Documentation.** The code blocks of `docs/guide/tls.md`, `quic.md`, `http3.md` and `ktor.md` are compiled and run by
-  `GuideSamplesTest` (marked `// guide:<module>:<name>`); change both together. Behaviour that touches an RFC or a
+- **Documentation.** The code blocks of `docs/guide/tls.md`, `docs/guide/quic.md`, `docs/guide/http3.md` and
+  `docs/guide/ktor.md` are compiled and run by `GuideSamplesTest` (marked `// guide:<module>:<name>`); change both
+  together. Behaviour that touches an RFC or a
   threat updates `docs/spec/rfc-compliance.md` or `docs/spec/threat-model.md` in the same pull request.
 
 ## Tests
@@ -174,8 +176,8 @@ To make the floors blocking, download the `perf-<peer>` result artifacts of a fe
   a generous timeout. A test that is flaky is a bug; report the seed.
 - **Platforms.** Common behaviour is tested in `commonTest` so it runs on the JVM, Android and Native. Tests that need a
   Linux-only facility (GSO/GRO, `SO_REUSEPORT` flow hashing) skip themselves elsewhere and run in the Docker steps; the
-  accelerated UDP socket itself also runs on macOS and Windows (Windows tests need a Windows host: the CI `windows` jobs
-  or a local Windows VM).
+  accelerated UDP socket itself also runs on macOS and Windows (Windows tests need a Windows host or VM:
+  `tools/ci/local-matrix.sh --with-windows`).
 - **Coverage.** `./gradlew --max-workers=2 -Pkuicksilver.coverage :koverHtmlReportJvmTests` runs the JVM tests of the
   published modules under Kover and merges their line and branch coverage into `build/reports/kover/htmlJvmTests/index.html`.
   `:koverXmlReportJvmTests` writes the same data as XML to `build/reports/kover/reportJvmTests.xml`, and
@@ -221,7 +223,7 @@ To make the floors blocking, download the `perf-<peer>` result artifacts of a fe
   `src/jvmTest/.../fuzz` (among them `ConnectionFuzzTest`, a stateful fuzzer of a client/server `ConnectionCore` pair, and
   the 0-RTT targets); `tools/fuzz/ksl/` holds the libFuzzer harness of the `ksl` parsing code. Their committed inputs run
   as regression tests in `jvmTest`. `tools/fuzz/gen-seeds.sh` regenerates the seed corpora, `tools/fuzz/ksl/build.sh
-  --seeds` the ksl seeds. Long runs use `tools/fuzz/campaign.sh` (this project does not use ClusterFuzzLite): it fuzzes
+  --seeds` the ksl seeds. Long runs use `tools/fuzz/campaign.sh`: it fuzzes
   every target in slices of at most 20 minutes at background priority (`taskpolicy -b`, `nice 19`, one thread), pauses
   between slices, resumes where it stopped (state in `build/fuzz-campaign/`) and gives each slice to the target with the
   least time so far. `tools/fuzz/campaign.sh status` prints hours, executions and coverage per target;
@@ -231,7 +233,9 @@ To make the floors blocking, download the `perf-<peer>` result artifacts of a fe
   `--targets id,...` (`tools/fuzz/campaign.sh list`). A crash you find becomes a `crash-*` input next to the seeds, a unit test that
   reproduces it and a fix; delete `build/fuzz-campaign/crashed-<target>` so the campaign takes the target again. A timeout
   is replayed first: one whose input runs in time alone (a slice starved on a busy machine) is recorded as `load-timeout`
-  in `build/fuzz-campaign/load-timeouts/` and is not a finding.
+  in `build/fuzz-campaign/load-timeouts/` and is not a finding. ClusterFuzzLite is not used: `.clusterfuzzlite/` and
+  `.github/workflows/cflite_pr.yml` are a setup that was prepared but never run, kept disabled, and they cover fewer
+  targets than the campaigns.
 
 ## Proposing a change
 
@@ -274,5 +278,6 @@ The maintainers use AI coding tools in this project, and contributors may too, u
 - [ ] `checkSpdxHeaders`, `checkLayerDependencies`, the architecture checks and the affected module tests pass locally.
 - [ ] Public API: KDoc written, `./gradlew updateKotlinAbi` run and the `api/` diff reviewed; new API is
       `@ExperimentalKuicksilverApi`.
-- [ ] Docs: guides, `rfc-compliance.md` or `threat-model.md` updated where behaviour changed; `tools/check/links.sh` passes.
+- [ ] Docs: guides, `docs/spec/rfc-compliance.md` or `docs/spec/threat-model.md` updated where behaviour changed;
+      `tools/check/links.sh` passes.
 - [ ] `CHANGELOG.md` has an `Unreleased` entry for user-visible changes.
