@@ -85,6 +85,13 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- QUIC: a packet of MAX_STREAM_DATA frames could cost the endpoint loop about 250 ms. On a stream whose receiver
+  acknowledged every other packet, each frame (even one that raises nothing, which spends no glitch token) compared
+  every queued retransmission with every acknowledged range, and so did every packet built for the stream. Acknowledged
+  bytes now leave the retransmission queue when the ACK arrives (as quic-go drops acknowledged frames from its queue),
+  acknowledgements and losses are binary searches, and a MAX_STREAM_DATA that raises nothing does no work, like MAX_DATA.
+  A range declared lost after part of it was acknowledged is resent without the acknowledged part.
+
 - QUIC: a handshake could be held on a client address the client does not own until the handshake timeout. The
   datagram that completes the ClientHello moves the server's path at once (0.2.0), and an Initial may move it after the
   old address has been quiet for a PTO; neither move had a deadline. An off-path attacker that sees the client's

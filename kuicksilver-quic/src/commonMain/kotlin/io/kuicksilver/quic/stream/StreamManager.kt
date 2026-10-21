@@ -246,6 +246,9 @@ internal class StreamManager(
     /** Fuzzing probe: (streams, queued control frames, pending events) held by this manager. */
     internal fun sizesForTest(): IntArray = intArrayOf(streams.size, control.size, events.size, sendLimit.size, early.size)
 
+    /** Range comparisons made by the send half of stream [id] (complexity tests). */
+    internal fun sendRangeStepsForTest(id: Long): Long = streams[id]?.send?.rangeStepsForTest ?: -1
+
     /** How often a stream was handed to the scheduler, for the complexity tests. */
     internal val schedulerTouchesForTest: Long get() = scheduler.addsForTest
 
@@ -442,9 +445,10 @@ internal class StreamManager(
         val s =
             e.send ?: throw QuicWireException(TransportError.STREAM_STATE_ERROR, 0x11, "MAX_STREAM_DATA on our receive-only stream $id")
         val grew = sendLimit[id]!!.onMaxUpdate(max)
+        if (!grew) return false // like MAX_DATA: a frame that raises nothing costs no work (it spends no glitch token either)
         if (s.hasPending) scheduler.add(s)
-        if (grew && s.sentEnd < s.written) events += e.writable // data was waiting for this credit
-        return grew
+        if (s.sentEnd < s.written) events += e.writable // data was waiting for this credit
+        return true
     }
 
     /** Connection-level credit for bytes the application consumed or will never read. */

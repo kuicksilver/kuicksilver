@@ -88,4 +88,39 @@ class SendStreamTest {
         val fin = s.take(2000)!!
         assertEquals(Triple(100L, 0, true), Triple(fin.offset, fin.length, fin.fin))
     }
+
+    @Test fun anAcknowledgementRemovesItsBytesFromTheLostQueue() {
+        // a range declared lost (spuriously, or its first copy late) and then acknowledged is not sent again
+        val s = stream(100)
+        s.take(100)
+        s.onLost(0, 100)
+        s.onAcked(0, 40)
+        s.onAcked(60, 10)
+        val first = s.take(100)!!
+        assertEquals(40L to 20, first.offset to first.length)
+        val second = s.take(100)!!
+        assertEquals(70L to 30, second.offset to second.length)
+        assertFalse(s.hasPending, "nothing left: the acknowledged bytes are not queued for retransmission")
+    }
+
+    @Test fun aLossOfPartlyAcknowledgedBytesQueuesOnlyTheGaps() {
+        val s = stream(100)
+        s.take(100)
+        s.onAcked(10, 20)
+        s.onAcked(50, 10)
+        s.onLost(0, 100)
+        val got = generateSequence { s.take(100)?.let { it.offset to it.length } }.toList()
+        assertEquals(listOf(0L to 10, 30L to 20, 60L to 40), got)
+    }
+
+    @Test fun lostRangesFullyAcknowledgedLeaveNothingPending() {
+        val s = stream(30)
+        s.take(30)
+        s.onLost(0, 10)
+        s.onLost(20, 10)
+        assertTrue(s.hasPending)
+        s.onAcked(0, 30)
+        assertFalse(s.hasRetransmit)
+        assertFalse(s.hasPending)
+    }
 }

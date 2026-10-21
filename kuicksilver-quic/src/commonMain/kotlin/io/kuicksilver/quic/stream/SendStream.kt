@@ -42,10 +42,20 @@ internal class SendStream(
     /** New data below this offset has been sent at least once. */
     var sentEnd: Long = 0
         private set
+
+    /** Acknowledged bytes above the released prefix: disjoint, non-adjacent (start, end) pairs, ascending. */
     private var ackedRanges = LongArray(16)
     private var ackedCount = 0
+
+    /**
+     * Bytes to retransmit: disjoint (start, end) pairs, ascending, none of them acknowledged. [onAcked] takes acknowledged bytes
+     * out at once and [onLost] queues only unacknowledged ones, so [hasPending] and [nextRange] need no pass over the queue: a
+     * receiver that acknowledges every other packet leaves thousands of ranges on each side, and a pass per MAX_STREAM_DATA cost
+     * O(lost x acknowledged) per frame (review h-quic; quic-go likewise drops acknowledged frames from its retransmission queue
+     * when the ACK arrives).
+     */
     private var lost = LongArray(8)
-    private var lostCount = 0 // (start, end) pairs ascending
+    private var lostCount = 0
     var finQueued: Boolean = false
         private set
     var finSent: Boolean = false
@@ -55,6 +65,10 @@ internal class SendStream(
 
     /** Bytes still buffered (not yet released by acknowledgement). */
     var buffered: Long = 0
+        private set
+
+    /** Test hook: range comparisons made by the lost/acknowledged bookkeeping, to prove its cost per call stays bounded. */
+    internal var rangeStepsForTest: Long = 0
         private set
 
     val hasRetransmit: Boolean get() = lostCount > 0
@@ -68,7 +82,6 @@ internal class SendStream(
         ) {
             return false
         }
-        pruneLost()
         return lostCount > 0 || sentEnd < written || (finQueued && !finSent)
     }
 
@@ -104,7 +117,6 @@ internal class SendStream(
         max: Int,
         out: SendRange,
     ): Boolean {
-        pruneLost()
         if (lostCount >
             0
         ) {
@@ -185,22 +197,44 @@ internal class SendStream(
         }
     }
 
-    /** Drops queued retransmissions that were acknowledged (or released) in the meantime. */
-    private fun pruneLost() {
-        var i = 0
-        while (i < lostCount) {
-            if (lost[2 * i] < releasedUpTo) lost[2 * i] = releasedUpTo
-            if (lost[2 * i + 1] <= lost[2 * i] || isAcked(lost[2 * i], lost[2 * i + 1])) removeLost(i) else i++
-        }
+    private fun removeLost(i: Int) = removeLost(i, i + 1)
+
+    /** Removes the pairs [from] until [to] of [lost]. */
+    private fun removeLost(
+        from: Int,
+        to: Int,
+    ) {
+        if (to <= from) return
+        lost.copyInto(lost, 2 * from, 2 * to, 2 * lostCount)
+        lostCount -= to - from
     }
 
-    private fun removeLost(i: Int) {
-        for (k in i until lostCount - 1) {
-            lost[2 * k] = lost[2 * (k + 1)]
-            lost[2 * k + 1] =
-                lost[2 * (k + 1) + 1]
+    private fun insertLost(
+        i: Int,
+        start: Long,
+        end: Long,
+    ) {
+        if (2 * lostCount + 2 > lost.size) lost = lost.copyOf(lost.size * 2)
+        lost.copyInto(lost, 2 * i + 2, 2 * i, 2 * lostCount)
+        lost[2 * i] = start
+        lost[2 * i + 1] = end
+        lostCount++
+    }
+
+    /** The index of the first of [count] ascending (start, end) pairs in [ranges] that ends above [pos]; [count] when none does. */
+    private fun firstEndingAbove(
+        ranges: LongArray,
+        count: Int,
+        pos: Long,
+    ): Int {
+        var lo = 0
+        var hi = count
+        while (lo < hi) {
+            rangeStepsForTest++
+            val mid = (lo + hi) ushr 1
+            if (ranges[2 * mid + 1] > pos) hi = mid else lo = mid + 1
         }
-        lostCount--
+        return lo
     }
 
     fun onLost(
@@ -209,28 +243,20 @@ internal class SendStream(
         fin: Boolean = false,
     ) {
         if (state == SendState.ResetSent || state == SendState.ResetRecvd) return
-        if (len > 0 && !isAcked(offset, offset + len)) {
-            // the same range can be declared lost twice (an original and its PTO probe): keep the queue a set of disjoint
-            // ranges, or one packet would carry the bytes twice and a peer like quiche fails the handshake on the duplicate
-            var start = offset
-            var end = offset + len
-            var i = 0
-            while (i < lostCount && lost[2 * i + 1] < start) i++
-            while (i < lostCount &&
-                lost[2 * i] <= end
-            ) {
-                start = minOf(start, lost[2 * i])
-                end = maxOf(end, lost[2 * i + 1])
-                removeLost(i)
+        // queue only what is not acknowledged: the gaps between the acknowledged ranges inside [offset, offset + len)
+        var start = maxOf(offset, releasedUpTo)
+        val end = offset + len
+        var a = firstEndingAbove(ackedRanges, ackedCount, start)
+        while (start < end) {
+            rangeStepsForTest++
+            if (a < ackedCount && ackedRanges[2 * a] <= start) {
+                start = ackedRanges[2 * a + 1]
+                a++
+                continue
             }
-            if (2 * lostCount + 2 > lost.size) lost = lost.copyOf(lost.size * 2)
-            for (k in lostCount downTo i + 1) {
-                lost[2 * k] = lost[2 * (k - 1)]
-                lost[2 * k + 1] = lost[2 * (k - 1) + 1]
-            }
-            lost[2 * i] = start
-            lost[2 * i + 1] = end
-            lostCount++
+            val gapEnd = if (a < ackedCount) minOf(end, ackedRanges[2 * a]) else end
+            addLost(start, gapEnd)
+            start = gapEnd
         }
         if (fin && !finAcked) {
             finSent = false
@@ -238,18 +264,56 @@ internal class SendStream(
         }
     }
 
-    private fun isAcked(
+    /**
+     * Queues [start, end) for retransmission, merged with the ranges it overlaps or touches. The same range can be declared lost
+     * twice (an original and its PTO probe): the queue stays a set of disjoint ranges, or one packet would carry the bytes twice
+     * and a peer like quiche fails the handshake on the duplicate.
+     */
+    private fun addLost(
         start: Long,
         end: Long,
-    ): Boolean {
-        for (i in 0 until ackedCount) {
-            if (ackedRanges[2 * i] <= start &&
-                ackedRanges[2 * i + 1] >= end
-            ) {
-                return true
-            }
+    ) {
+        var s = start
+        var e = end
+        val i = firstEndingAbove(lost, lostCount, s - 1) // the first range ending at or after s
+        var j = i
+        while (j < lostCount && lost[2 * j] <= e) {
+            rangeStepsForTest++
+            s = minOf(s, lost[2 * j])
+            e = maxOf(e, lost[2 * j + 1])
+            j++
         }
-        return false
+        if (j == i) {
+            insertLost(i, s, e)
+            return
+        }
+        lost[2 * i] = s
+        lost[2 * i + 1] = e
+        removeLost(i + 1, j)
+    }
+
+    /** Takes the acknowledged [start, end) out of the retransmission queue: what was lost and then acknowledged is not resent. */
+    private fun removeAckedFromLost(
+        start: Long,
+        end: Long,
+    ) {
+        var i = firstEndingAbove(lost, lostCount, start)
+        if (i < lostCount && lost[2 * i] < start) {
+            if (lost[2 * i + 1] > end) { // the acknowledged bytes are inside this range: split it
+                insertLost(i + 1, end, lost[2 * i + 1])
+                lost[2 * i + 1] = start
+                return
+            }
+            lost[2 * i + 1] = start
+            i++
+        }
+        var j = i
+        while (j < lostCount && lost[2 * j + 1] <= end) {
+            rangeStepsForTest++
+            j++
+        }
+        removeLost(i, j)
+        if (i < lostCount && lost[2 * i] < end) lost[2 * i] = end
     }
 
     /** Returns the number of buffered bytes released. */
@@ -259,7 +323,10 @@ internal class SendStream(
         fin: Boolean = false,
     ): Long {
         if (fin) finAcked = true
-        if (len > 0) addAcked(offset, offset + len)
+        if (len > 0) {
+            addAcked(offset, offset + len)
+            if (lostCount > 0) removeAckedFromLost(offset, offset + len)
+        }
         var released = 0L
         if (ackedCount > 0 && ackedRanges[0] <= releasedUpTo &&
             ackedRanges[1] > releasedUpTo
@@ -277,36 +344,26 @@ internal class SendStream(
         start: Long,
         end: Long,
     ) {
-        if (2 * ackedCount + 2 > ackedRanges.size) ackedRanges = ackedRanges.copyOf(ackedRanges.size * 2)
-        var i = 0
-        while (i < ackedCount && ackedRanges[2 * i + 1] < start) i++
-        if (i < ackedCount && ackedRanges[2 * i] <= end) {
-            var s = minOf(start, ackedRanges[2 * i])
-            var e = maxOf(end, ackedRanges[2 * i + 1])
-            var j = i + 1
-            while (j < ackedCount && ackedRanges[2 * j] <= e) {
-                e = maxOf(e, ackedRanges[2 * j + 1])
-                j++
-            }
-            val removed = j - i - 1
-            ackedRanges[2 * i] = s
-            ackedRanges[2 * i + 1] = e
-            for (k in i + 1 until ackedCount - removed) {
-                ackedRanges[2 * k] = ackedRanges[2 * (k + removed)]
-                ackedRanges[2 * k + 1] =
-                    ackedRanges[2 * (k + removed) + 1]
-            }
-            ackedCount -= removed
-            return
+        val i = firstEndingAbove(ackedRanges, ackedCount, start - 1) // the first range ending at or after start
+        var j = i
+        var s = start
+        var e = end
+        while (j < ackedCount && ackedRanges[2 * j] <= e) {
+            rangeStepsForTest++
+            s = minOf(s, ackedRanges[2 * j])
+            e = maxOf(e, ackedRanges[2 * j + 1])
+            j++
         }
-        for (k in ackedCount downTo i + 1) {
-            ackedRanges[2 * k] = ackedRanges[2 * (k - 1)]
-            ackedRanges[2 * k + 1] =
-                ackedRanges[2 * (k - 1) + 1]
+        if (j == i) {
+            if (2 * ackedCount + 2 > ackedRanges.size) ackedRanges = ackedRanges.copyOf(ackedRanges.size * 2)
+            ackedRanges.copyInto(ackedRanges, 2 * i + 2, 2 * i, 2 * ackedCount)
+            ackedCount++
+        } else if (j > i + 1) {
+            ackedRanges.copyInto(ackedRanges, 2 * i + 2, 2 * j, 2 * ackedCount)
+            ackedCount -= j - i - 1
         }
-        ackedRanges[2 * i] = start
-        ackedRanges[2 * i + 1] = end
-        ackedCount++
+        ackedRanges[2 * i] = s
+        ackedRanges[2 * i + 1] = e
     }
 
     /** Abandons the stream (RESET_STREAM): pending data is dropped; returns the buffered bytes released. */
