@@ -37,8 +37,8 @@ Done for the project in October 2026, kept here so it can be repeated for a new 
    seven Kotlin Multiplatform modules with up to nine publications each, plus the BOM; the deployment holds every
    artifact with its `.asc`, `.md5` and `.sha1` (the plugin leaves out `maven-metadata` and checksums of signatures).
    `local-release.sh` counts it from a local publication before every upload and refuses above the limits
-   (`--allow-over-limit` within the grace); its defaults are Sonatype's (`KSL_CENTRAL_MAX_FILES=1167`,
-   `KSL_CENTRAL_MAX_BYTES=78000000`), so set the namespace's limits there (2620 files, 100000000 bytes). Size: the `kuicksilver-native` AAR is about 3.6 MB with its three ABIs; the
+   (`--allow-over-limit` within the grace); its defaults are the namespace's granted limits (2620 files,
+   100000000 bytes; `KSL_CENTRAL_MAX_FILES` and `KSL_CENTRAL_MAX_BYTES` override them). Size: the `kuicksilver-native` AAR is about 3.6 MB with its three ABIs; the
    `kuicksilver-native` JVM jar carries the five JNI libraries.
 5. **Toolchains** of `gradle/toolchains.toml` on the Mac: the pinned NDK (`sdkmanager --install "ndk;<pin>"`) and Xcode
    (`xcode-select -s`); Docker with the `tools/openssl/docker` images (built on first use); a Windows 11 VM (Parallels)

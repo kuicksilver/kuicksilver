@@ -43,7 +43,7 @@
 #   --allow-over-limit       publish although the count is above the Central limits (30 days of grace, then refused).
 #   --allow-toolchain-drift  warn instead of refusing when the NDK or Xcode differs from gradle/toolchains.toml.
 # Env: KSL_GRADLE  the Gradle launcher, which sets its own --max-workers (default ./gradlew --max-workers=2)
-#      KSL_CENTRAL_MAX_FILES (1167), KSL_CENTRAL_MAX_BYTES (78000000)  the portal's limits for this namespace
+#      KSL_CENTRAL_MAX_FILES (2620), KSL_CENTRAL_MAX_BYTES (100000000)  the portal's limits for this namespace
 # Credentials (never in the repository, never printed): ~/.gradle/gradle.properties or ORG_GRADLE_PROJECT_* variables,
 #   mavenCentralUsername / mavenCentralPassword, and signing.keyId + signing.password + signing.secretKeyRingFile
 #   or signingInMemoryKey + signingInMemoryKeyId + signingInMemoryKeyPassword.
@@ -62,7 +62,8 @@ while [ $# -gt 0 ]; do case "$1" in
 esac; shift; done
 [ -n "$version" ] || { echo "usage: $0 <version> [--dry-run] [--resume] [--repro] (see --help)" >&2; exit 2; }
 
-max_files="${KSL_CENTRAL_MAX_FILES:-1167}"; max_bytes="${KSL_CENTRAL_MAX_BYTES:-78000000}"
+# io.kuicksilver's grant of 2026-10-20: 7 releases, 100 MB and 2620 files per month (Sonatype's default is 1167 files, 78 MB)
+max_files="${KSL_CENTRAL_MAX_FILES:-2620}"; max_bytes="${KSL_CENTRAL_MAX_BYTES:-100000000}"
 if [ -n "${KSL_GRADLE:-}" ]; then read -r -a G <<< "$KSL_GRADLE"; else G=(./gradlew --max-workers=2); fi   # a launcher sets its own --max-workers
 out=build/release; logs="$out/logs"; art="$out/jni-artifacts"; m2="$root/$out/m2"
 mkdir -p "$logs"
