@@ -8,7 +8,7 @@ plugins {
     kotlin("multiplatform")
 }
 
-val kuicksilver = providers.gradleProperty("kuicksilver.version").getOrElse("0.2.0-SNAPSHOT")
+val kuicksilver = providers.gradleProperty("kuicksilver.version").getOrElse("0.3.0-SNAPSHOT")
 
 // Kuicksilver.xcframework for Swift-only applications (docs/guide/ios.md, "Swift-only"): a dynamic framework, so each
 // slice carries its own dSYM and its own PrivacyInfo.xcprivacy, distributed as a SwiftPM binaryTarget.

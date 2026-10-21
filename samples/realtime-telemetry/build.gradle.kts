@@ -5,7 +5,7 @@ plugins {
     kotlin("multiplatform") version "2.4.20"
 }
 
-val kuicksilver = providers.gradleProperty("kuicksilver.version").getOrElse("0.2.0-SNAPSHOT")   // the version under test; the composite build substitutes it unless -Pkuicksilver.fromMavenLocal=true
+val kuicksilver = providers.gradleProperty("kuicksilver.version").getOrElse("0.3.0-SNAPSHOT")   // the version under test; the composite build substitutes it unless -Pkuicksilver.fromMavenLocal=true
 
 kotlin {
     jvmToolchain(21)

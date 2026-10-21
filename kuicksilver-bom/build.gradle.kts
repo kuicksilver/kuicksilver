@@ -7,7 +7,7 @@ plugins {
     id("com.vanniktech.maven.publish")
 }
 group = "io.kuicksilver"
-version = providers.gradleProperty("kuicksilver.version").getOrElse("0.2.0-SNAPSHOT")
+version = providers.gradleProperty("kuicksilver.version").getOrElse("0.3.0-SNAPSHOT")
 
 val bomModules = listOf("native", "tls", "ktor-network", "quic", "http3", "ktor-client", "ktor-server").map { "kuicksilver-$it" }
 dependencies {
