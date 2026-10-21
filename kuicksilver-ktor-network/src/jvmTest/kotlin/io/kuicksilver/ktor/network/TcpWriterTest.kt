@@ -41,7 +41,7 @@ import kotlin.time.Duration.Companion.seconds
  * The engines' JVM TCP sockets write through Kuicksilver's own writer, not ktor-network's: ktor 3.6.0's `cio-to-nio-writer`
  * (CIOWriter.kt, attachForWritingDirectImpl) retries `SocketChannel.write` in a loop that never reaches its select while the
  * kernel's send buffer is full, so every peer that reads slower than we write kept a `Dispatchers.IO` thread at 100 % CPU,
- * uncancellable (fable review of k8/native-fixes). The peer here accepts and never reads.
+ * uncancellable (found in the 0.2.1 review). The peer here accepts and never reads.
  */
 class TcpWriterTest {
     @BeforeTest fun load() {
@@ -225,7 +225,7 @@ class TcpWriterTest {
      * A server's last response (4 MiB, 8 MiB under TLS: more than every buffer on the way holds) to a client that reads slowly
      * (about 640 KiB/s here): close() right after writing it must not
      * cut it short. The server-accepted socket has no close bound of its own (the engine owns it); a fixed 3 s one truncated
-     * the response silently, the client seeing a clean EOF after part of it (k8/tcp-hardening review).
+     * the response silently, the client seeing a clean EOF after part of it (TCP hardening review, 0.2.1).
      */
     private fun slowReaderGetsEverything(
         tls: Boolean,

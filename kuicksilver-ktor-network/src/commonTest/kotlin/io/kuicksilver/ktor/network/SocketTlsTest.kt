@@ -293,7 +293,7 @@ class SocketTlsTest {
 class HttpsGetTest {
     @BeforeTest fun load() = KslLoader.ensureLoaded()
 
-    /** The K1 acceptance check: HTTPS over our TLS on this platform with a pinned SPKI. */
+    /** The TLS layer's acceptance check: HTTPS over our TLS on this platform with a pinned SPKI. */
     @Test fun httpsGetAgainstLocalServerWithPin(): Unit =
         runBlocking {
             val body = "ok"
