@@ -48,8 +48,10 @@ server.start(wait = true)
   and from the end of the previous response on a keep-alive connection; header bytes trickling in do not extend it. One
   that sent part of a head by then gets `408 Request Timeout` with `Connection: close`; one that sent nothing (or never
   finished the TLS handshake) is closed without a response. `connectionIdleTimeoutSeconds` (45 s) closes a connection
-  without requests in both directions, and one whose client stopped reading its response (the socket took nothing for
-  that long; the engine sees progress about 1 MiB at a time, so raise it for clients slower than about 20 KiB/s).
+  without requests in both directions. One whose client stopped reading its response (the socket took nothing) is
+  closed after the longer of that and 5 minutes: the engine sees progress about 1 MiB at a time, and 5 minutes serve
+  clients down to about 3.4 KiB/s. A closing connection gets the idle timeout to send what is left, then it is
+  aborted.
   Empty lines before a request line are skipped and do not count as a started request. A request head (request line
   and header fields) above 64 KiB, the HTTP/3 default `maxFieldSectionSize`, gets `431 Request Header Fields Too
   Large` and the connection closes; a single line above 8 KiB gets 400. A failing `accept()` (the descriptor table

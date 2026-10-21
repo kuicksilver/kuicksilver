@@ -249,7 +249,7 @@ Guide: [Ktor: Client](ktor.md#client).
 |---|---|---|---|
 | `tlsConnector(identity) { … }` | | | a TLS connector: HTTP/1.1 over TLS on TCP and HTTP/3 on UDP on the same port (below) |
 | `identity` | `TlsIdentity?` | `null` | turns every plain connector (`port = …`, `connector { }`) into a TLS connector |
-| `connectionIdleTimeoutSeconds` | `Int` | 45 | an HTTP/1.1 connection without requests for this long is closed (both directions), and so is one whose socket took none of a response for this long (a client that stopped reading; progress shows about 1 MiB at a time) |
+| `connectionIdleTimeoutSeconds` | `Int` | 45 | an HTTP/1.1 connection without requests for this long is closed (both directions), a closing connection gets this long to send what is left before it is aborted; a response the client's socket takes nothing of ends the connection after the longer of this and 5 minutes (progress shows about 1 MiB at a time: about 3.4 KiB/s at least) |
 | `requestHeaderTimeoutSeconds` (*experimental*) | `Int` | 30 | positive; the time to send a complete HTTP/1.1 request head, from the accepted connection (TLS handshake included) or the end of the previous response; then `408 Request Timeout` and close when part of a head arrived, a close without a response when nothing did ([Server](ktor.md#server)) |
 | `http3` | `Boolean` | `true` | serve HTTP/3 on every TLS connector |
 | `altSvc` | `Boolean` | `true` | add `Alt-Svc: h3=":<port>"; ma=86400` to HTTP/1.1 responses over TLS (not when the application set its own, not on 421) |

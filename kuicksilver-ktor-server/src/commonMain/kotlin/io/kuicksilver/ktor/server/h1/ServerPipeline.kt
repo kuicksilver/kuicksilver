@@ -55,8 +55,10 @@ import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.io.EOFException
 import kotlinx.io.IOException
+import kotlinx.io.InternalIoApi
 import kotlinx.io.Source
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 
 /** One accepted (TLS) TCP connection: its plaintext channels and addresses. */
@@ -88,6 +90,18 @@ internal class H1RequestScope(
  * and Tomcat 8 KiB, Go 1 MiB.
  */
 internal const val MAX_REQUEST_HEAD_BYTES: Int = 65_536
+
+/**
+ * The shortest time a response write may wait for a client that reads nothing before the connection is closed. The
+ * engine sees a client's progress only when the `ByteChannel` in front of the socket takes its buffer, about 1 MiB at a
+ * time (Ktor's `CHANNEL_MAX_SIZE`; the flush does not suspend below it), so the deadline sets the slowest rate it
+ * serves: 1 MiB in 5 minutes, about 3.4 KiB/s, below EDGE and GPRS-class links and throttled plans (1 MiB at 4 KiB/s
+ * takes 4.3 minutes). The 45 s idle timeout as the deadline would cut every client below about 23 KiB/s.
+ */
+internal val MIN_SEND_STALL_TIMEOUT: Duration = 5.minutes
+
+/** The send-stall deadline for an idle timeout of [idle]: the longer of the two. */
+internal fun sendStallTimeout(idle: Duration): Duration = maxOf(idle, MIN_SEND_STALL_TIMEOUT)
 
 /** How long input after a refused head is read and dropped, so the client sees the refusal rather than a reset. */
 private val LINGER = 2.seconds
@@ -189,7 +203,10 @@ internal class MalformedRequestBody(
  * one, as HTTP/1.1 pipelining allows); responses are written in request order.
  *
  * [timeout] closes an idle connection, both directions: no response handed to the writer for that long ends the
- * pipeline, and so does a response the client's socket took nothing of for that long (a client that stopped reading). [headerTimeout] bounds each request head, counted from the end of the previous response (the start of the
+ * pipeline. [sendTimeout] (the longer of [timeout] and [MIN_SEND_STALL_TIMEOUT] by default) ends it when the client's
+ * socket took nothing of a response for that long (a client that stopped reading).
+ *
+ * [headerTimeout] bounds each request head, counted from the end of the previous response (the start of the
  * pipeline for the first request, which gets [firstHeadTimeout], what is left of the deadline after the TLS handshake);
  * bytes trickling in do not extend it. A client that sent part of a head by then gets `408 Request Timeout` with
  * `Connection: close` (RFC 9110 section 15.5.9: the server has decided to close rather than wait). One that sent nothing
@@ -210,6 +227,7 @@ internal fun CoroutineScope.startH1Pipeline(
     firstHeadTimeout: Duration = headerTimeout,
     draining: Job? = null,
     maxHeadBytes: Int = MAX_REQUEST_HEAD_BYTES,
+    sendTimeout: Duration = sendStallTimeout(timeout),
     handler: suspend H1RequestScope.(request: Request) -> Unit,
 ): Job =
     launch(PipelineName) {
@@ -222,8 +240,8 @@ internal fun CoroutineScope.startH1Pipeline(
         // responses handed to the writer and not yet written: the deadline of the next request head starts at zero
         val unwritten = MutableStateFlow(0)
         val pipelineJob = coroutineContext.job
-        startPipelineWriter(actorChannel, timeout, connection, unwritten) {
-            pipelineJob.cancel(CancellationException("HTTP/1.1 connection idle for $timeout"))
+        startPipelineWriter(actorChannel, timeout, sendTimeout, connection, unwritten) { why ->
+            pipelineJob.cancel(CancellationException(why))
         }
 
         val requestContext = RequestHandlerName + Dispatchers.Unconfined
@@ -386,14 +404,15 @@ private suspend fun awaitRequestStart(
 private fun CoroutineScope.startPipelineWriter(
     actorChannel: Channel<ByteReadChannel>,
     timeout: Duration,
+    sendTimeout: Duration,
     connection: H1Connection,
     unwritten: MutableStateFlow<Int>,
-    onIdle: () -> Unit,
+    onEnd: (String) -> Unit,
 ): Job =
     launch(context = PipelineWriterName, start = CoroutineStart.UNDISPATCHED) {
         var failure: Throwable? = null
         try {
-            pipelineWriterLoop(actorChannel, timeout, connection, unwritten, onIdle)
+            pipelineWriterLoop(actorChannel, timeout, sendTimeout, connection, unwritten, onEnd)
         } catch (cause: Throwable) {
             failure = cause
         } finally {
@@ -546,20 +565,19 @@ private suspend fun readRequestHeadInTime(
  * Drops the empty lines (CRLF or LF) in front of a request line, which RFC 9112 section 2.2 lets a server ignore, and
  * returns once a byte of something else is there: true, a request has started; false when the input ended first.
  */
-@OptIn(InternalAPI::class)
+@OptIn(InternalAPI::class, InternalIoApi::class)
 private suspend fun ByteReadChannel.skipEmptyLines(): Boolean {
     while (true) {
         if (readBuffer.exhausted() && !awaitContent()) return false
-        when (readBuffer.peek().readByte()) {
+        // read the buffered bytes in place, as Ktor's own line reader does (no peek source per line)
+        when (readBuffer.buffer[0]) {
             LF -> {
                 readBuffer.skip(1)
             }
 
             CR -> {
                 if (!awaitContent(2)) return true
-                val pair = readBuffer.peek()
-                pair.skip(1)
-                if (pair.readByte() != LF) return true
+                if (readBuffer.buffer[1] != LF) return true
                 readBuffer.skip(2)
             }
 
@@ -586,25 +604,26 @@ private suspend fun respondBadRequest(actorChannel: Channel<ByteReadChannel>) {
 private suspend fun pipelineWriterLoop(
     channel: ReceiveChannel<ByteReadChannel>,
     timeout: Duration,
+    sendTimeout: Duration,
     connection: H1Connection,
     unwritten: MutableStateFlow<Int>,
-    onIdle: () -> Unit,
+    onEnd: (String) -> Unit,
 ) {
     while (true) {
         val next = withTimeoutOrNull(timeout) { channel.receiveCatching() }
         if (next == null) {
             // idle: the reader is waiting for a head that does not come, so the whole connection ends, not only this side
-            onIdle()
+            onEnd("HTTP/1.1 connection idle for $timeout")
             break
         }
         val child = next.getOrNull() ?: break
         try {
-            child.copyToClient(connection.output, timeout)
+            child.copyToClient(connection.output, sendTimeout)
         } catch (cause: Throwable) {
             if (child is ByteWriteChannel) child.close(cause)
             if (cause is ClientNotReading) {
-                // the socket has taken nothing for [timeout]: end the connection, its handler (blocked on this response) too
-                onIdle()
+                // the socket has taken nothing for [sendTimeout]: end the connection, its handler (blocked on this response) too
+                onEnd(cause.message ?: "HTTP/1.1 client stopped reading")
                 break
             }
         } finally {
@@ -613,10 +632,10 @@ private suspend fun pipelineWriterLoop(
     }
 }
 
-/** The client took no bytes of a response for the whole idle timeout. */
+/** The client took no bytes of a response for [timeout]. */
 private class ClientNotReading(
     timeout: Duration,
-) : IOException("The client read nothing of the response for $timeout")
+) : IOException("HTTP/1.1 client stopped reading: nothing of the response taken for $timeout")
 
 /**
  * Ktor's `copyTo`, with a deadline on every hand-over to the connection's [output]: a flush that does not return within

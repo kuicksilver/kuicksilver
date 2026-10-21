@@ -25,6 +25,7 @@ import io.kuicksilver.ktor.network.tls
 import io.kuicksilver.native.KslLoader
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.withTimeout
 import kotlinx.io.IOException
 import kotlin.test.BeforeTest
@@ -112,6 +113,7 @@ class ServerH1TimeoutTest {
                 }
                 val configure: KuicksilverApplicationEngine.Configuration.() -> Unit = {
                     connectionIdleTimeoutSeconds = 1
+                    sendStallTimeoutForTest = 1.seconds
                     eventListener = events
                 }
                 val (server, port) =
@@ -157,6 +159,85 @@ class ServerH1TimeoutTest {
                 }
             }
         }
+
+    /**
+     * Connections cut because their clients do not read release their sockets, on a plain and on a TLS connector, and
+     * `connectionClosed` comes only after that. Before, the abort of a TLS connection cancelled the raw socket's job
+     * before the raw socket was closed, so it never closed its descriptor (review of bb8fcb4a: 9 of 16 TLS sockets still
+     * open after their `connectionClosed`).
+     */
+    @Test fun negative_abortedConnectionsReleaseTheirSockets() =
+        serverTest {
+            for (tls in listOf(false, true)) {
+                val clients = 16
+                val closed = Channel<Unit>(Channel.UNLIMITED)
+                val events =
+                    object : KuicksilverServerEventListener() {
+                        override fun connectionClosed(
+                            protocol: HttpProtocolVersion,
+                            remote: InetSocketAddress?,
+                        ) {
+                            closed.trySend(Unit)
+                        }
+                    }
+                val (server, port) =
+                    largeResponseServer(tls) {
+                        connectionIdleTimeoutSeconds = 1
+                        sendStallTimeoutForTest = 1.seconds
+                        eventListener = events
+                    }
+                val selector = SelectorManager(Dispatchers.Default)
+                val sockets = ArrayList<Socket>()
+                try {
+                    repeat(clients) {
+                        val tcp = aSocket(selector).tcp().connect("127.0.0.1", port)
+                        val socket: Socket = if (tls) tcp.tls(ServerFixtures.clientTls()) else tcp
+                        sockets += socket
+                        val w = socket.openWriteChannel(autoFlush = true)
+                        w.writeStringUtf8("GET /large HTTP/1.1\r\nHost: s\r\n\r\n")
+                        w.flush()
+                    }
+                    withTimeout(30.seconds) { repeat(clients) { closed.receive() } }
+                    assertEquals(0, server.engine.openTcpSockets.value, "server sockets still open after connectionClosed (tls=$tls)")
+                } finally {
+                    sockets.forEach { it.close() }
+                    selector.close()
+                    server.stop(100, 500)
+                }
+            }
+        }
+
+    /** A server with `GET /large`, 256 MiB, on a plain or a TLS connector; returns it and its port. */
+    private suspend fun largeResponseServer(
+        tls: Boolean,
+        configure: KuicksilverApplicationEngine.Configuration.() -> Unit,
+    ): Pair<Server, Int> {
+        val large: Application.() -> Unit = {
+            routing {
+                get("/large") {
+                    call.respondBytesWriter {
+                        val chunk = ByteArray(64 * 1024)
+                        repeat(4096) { writeFully(chunk) }
+                    }
+                }
+            }
+        }
+        if (tls) return tlsServer(configure, module = large)
+        val s =
+            embeddedServer(Kuicksilver, configure = {
+                configure()
+                connector {
+                    host = "127.0.0.1"
+                    port = 0
+                }
+            }, module = large)
+        s.startSuspend(false)
+        return s to
+            s.engine
+                .resolvedConnectors()
+                .first()
+                .port
+    }
 
     @Test fun requestHeaderTimeoutMustBePositive() {
         val c = KuicksilverApplicationEngine.Configuration()

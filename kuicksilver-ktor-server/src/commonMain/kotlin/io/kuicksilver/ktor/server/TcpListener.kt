@@ -26,12 +26,14 @@ import io.ktor.utils.io.ByteWriteChannel
 import io.ktor.utils.io.InternalAPI
 import io.ktor.utils.io.writeStringUtf8
 import io.kuicksilver.http3.Http3Endpoint
+import io.kuicksilver.ktor.network.abort
 import io.kuicksilver.ktor.network.bindTcp
 import io.kuicksilver.ktor.network.engineSelector
 import io.kuicksilver.ktor.network.tlsServer
 import io.kuicksilver.ktor.server.h1.H1Call
 import io.kuicksilver.ktor.server.h1.H1Connection
 import io.kuicksilver.ktor.server.h1.H1RequestScope
+import io.kuicksilver.ktor.server.h1.sendStallTimeout
 import io.kuicksilver.ktor.server.h1.startH1Pipeline
 import io.kuicksilver.tls.Certificate
 import kotlinx.coroutines.CancellationException
@@ -41,9 +43,11 @@ import kotlinx.coroutines.CoroutineName
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
@@ -134,6 +138,7 @@ internal fun KuicksilverApplicationEngine.startTcp(
 
         @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
         val headerTimeout = configuration.requestHeaderTimeoutSeconds.seconds
+        val sendTimeout = configuration.sendStallTimeoutForTest ?: sendStallTimeout(timeout)
         val connections = SupervisorJob(rootJob)
         // completed when accepting ends (the engine stops): connections read no further request, idle ones close at once
         val draining: CompletableJob = Job()
@@ -158,6 +163,8 @@ internal fun KuicksilverApplicationEngine.startTcp(
                         ) { client ->
                             // the request-head deadline of the first request counts from here, the TLS handshake included
                             val accepted = TimeSource.Monotonic.markNow()
+                            openTcpSockets.update { it + 1 }
+                            client.socketContext.invokeOnCompletion { openTcpSockets.update { it - 1 } }
                             connectionScope.launch {
                                 val sock: Socket
                                 val peer: List<Certificate>
@@ -198,9 +205,10 @@ internal fun KuicksilverApplicationEngine.startTcp(
                                         headerTimeout,
                                         (headerTimeout - accepted.elapsedNow()).coerceAtLeast(Duration.ZERO),
                                         draining = draining,
+                                        sendTimeout = sendTimeout,
                                     ) { request -> handleRequest(this, request, scheme, peer, altSvc) }.join()
                                 } finally {
-                                    closeWithin(sock, timeout)
+                                    closeWithin(sock, { sock.abort() }, timeout)
                                     events.emit("connectionClosed") { connectionClosed(HttpProtocolVersion.HTTP_1_1, remote) }
                                 }
                             }
@@ -338,12 +346,15 @@ internal suspend fun <S : Any> acceptLoop(
 }
 
 /**
- * Closes [sock] gracefully (what was written is still sent, then TLS `close_notify` and FIN) and aborts it when that has
- * not finished within [timeout]: the socket's write loop waits for a client that does not read for ever, and holds the
- * descriptor. Cancelling the socket's job ends its loops, after which it closes. A cancelled caller aborts at once.
+ * Closes [sock] gracefully (what was written is still sent, then TLS `close_notify` and FIN) and, when that has not
+ * finished within [timeout], aborts it with [abort]: the socket's write loop waits for a client that does not read for
+ * ever, and holds the descriptor. A cancelled caller (the engine's hard stop) aborts at once. Returns once the socket's
+ * job has completed, which is when its descriptor is released, or after at most [ABORT_WAIT] more, so the engine
+ * reports a connection closed only when it is.
  */
 internal suspend fun closeWithin(
     sock: Socket,
+    abort: () -> Unit,
     timeout: Duration,
 ) {
     sock.close()
@@ -353,8 +364,14 @@ internal suspend fun closeWithin(
         } catch (_: CancellationException) {
             false
         }
-    if (!closed) sock.socketContext.cancel()
+    if (closed) return
+    abort()
+    val released = withContext(NonCancellable) { withTimeoutOrNull(ABORT_WAIT) { sock.socketContext.join() } } != null
+    if (!released) sock.socketContext.cancel() // the last resort; the descriptor may then wait for the loops to notice
 }
+
+/** How long [closeWithin] waits for an aborted socket to release its descriptor. */
+private val ABORT_WAIT: Duration = 1.seconds
 
 /** At most one accept-failure warning per this interval. */
 internal val ACCEPT_FAILURE_LOG_INTERVAL: Duration = 10.seconds

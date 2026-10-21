@@ -10,12 +10,15 @@ import io.ktor.utils.io.ReaderJob
 import io.ktor.utils.io.WriterJob
 import kotlinx.coroutines.CompletableJob
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.currentTime
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlin.coroutines.CoroutineContext
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.milliseconds
@@ -51,21 +54,61 @@ class CloseWithinTest {
     @Test fun negative_closeThatDoesNotFinishIsAbortedAfterTheTimeout() =
         runTest {
             val sock = FakeSocket(finishes = false)
-            val closing = launch { closeWithin(sock, 45.seconds) }
+            var abortedAt = -1L
+            val closing =
+                launch {
+                    closeWithin(sock, {
+                        abortedAt = currentTime
+                        sock.socketContext.complete() // an abort that releases the socket
+                    }, 45.seconds)
+                }
             runCurrent()
             assertTrue(sock.closed, "no graceful close first")
             advanceTimeBy(45.seconds - 1.milliseconds)
-            assertFalse(sock.socketContext.isCancelled, "aborted before the timeout")
+            assertEquals(-1L, abortedAt, "aborted before the timeout")
             advanceTimeBy(2.milliseconds)
-            assertTrue(sock.socketContext.isCancelled, "a close that does not finish leaves the socket open for ever")
+            assertEquals(45_000L, abortedAt, "a close that does not finish leaves the socket open for ever")
+            runCurrent()
             assertTrue(closing.isCompleted)
+            assertFalse(sock.socketContext.isCancelled, "released by the abort, no last-resort cancel")
+        }
+
+    /** The engine reports a connection closed when [closeWithin] returns: only once the aborted socket is released. */
+    @Test fun returnsOnceTheAbortedSocketIsReleased() =
+        runTest {
+            val sock = FakeSocket(finishes = false)
+            val closing =
+                launch {
+                    closeWithin(sock, {
+                        launch {
+                            delay(500.milliseconds)
+                            sock.socketContext.complete()
+                        }
+                    }, 45.seconds)
+                }
+            advanceTimeBy(45.seconds + 499.milliseconds)
+            assertTrue(closing.isActive, "returned before the socket was released")
+            advanceTimeBy(2.milliseconds)
+            assertTrue(closing.isCompleted)
+        }
+
+    /** An abort that does not release the socket is followed by a cancel of its job, after a bounded wait. */
+    @Test fun abortThatDoesNotReleaseEndsInACancel() =
+        runTest {
+            val sock = FakeSocket(finishes = false)
+            val closing = launch { closeWithin(sock, {}, 45.seconds) }
+            advanceTimeBy(46.seconds + 1.milliseconds)
+            assertTrue(closing.isCompleted)
+            assertTrue(sock.socketContext.isCancelled)
         }
 
     @Test fun gracefulCloseIsNotAborted() =
         runTest {
             val sock = FakeSocket(finishes = true)
-            closeWithin(sock, 45.seconds)
+            var aborted = false
+            closeWithin(sock, { aborted = true }, 45.seconds)
             assertTrue(sock.socketContext.isCompleted)
             assertFalse(sock.socketContext.isCancelled)
+            assertFalse(aborted)
         }
 }
