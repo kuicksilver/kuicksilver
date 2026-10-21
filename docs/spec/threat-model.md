@@ -299,7 +299,7 @@ Pre-release status (Alt-Svc): the client engine learns `Alt-Svc` only from respo
 
 Pre-release status (fallback): the fallback from HTTP/3 to HTTP/1.1 uses the same `TlsConfig` (trust, pins, TLS 1.3): with h3 unavailable and a pin that does not match the server key, the request ends with `TlsException` rather than succeeding over TCP (`ClientFallbackTest.negative_fallbackKeepsPins`); ALPN on TCP is strictly `http/1.1`, on QUIC `h3` (a mismatch — `no_application_protocol`, `negative_alpnMismatchClosesConnection`); a non-idempotent request that went out over h3 is not retried over h1.1 (`nonIdempotentNotRetriedAfterHeadersSent`).
 
-### 3.19 Bind and connect misdirection on Kotlin/Native TCP
+### 3.19 Kotlin/Native TCP bind and connect addresses
 
 - **Threats:** a server connector meant for one address (a loopback-only admin endpoint on `::1`) reachable from other addresses; a client request meant for one host answered by another (cleartext `http://` is answered by it; with TLS, host-name verification fails).
 - **Mitigations:** the engines' TCP sockets come from `kuicksilver-ktor-network` (`bindTcp`, `connectTcp`): on Kotlin/Native they pass the `sockaddr` from `getaddrinfo` to `bind`/`connect` unchanged, instead of `ktor-network`'s own bind and connect (a Ktor issue reported as [KTOR-10017](https://youtrack.jetbrains.com/issue/KTOR-10017), security, under coordinated disclosure); on the JVM and Android `ktor-network` binds and connects, its writer replaced (3.21). The portable Native UDP socket, still on `ktor-network`, fails closed: it refuses a specific IPv6 bind address and IPv6 destinations.
