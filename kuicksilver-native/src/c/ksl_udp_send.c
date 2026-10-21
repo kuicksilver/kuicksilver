@@ -46,7 +46,7 @@ int ksl_udp_send(ksl_udp *u, uint8_t *const *bufs, const uint32_t *lens, const u
            which a narrower link answers with EINVAL; the last segment of a run may be shorter (kernel rule) */
         if (u->gso_on && !gso_probe && i + 1 < n && lens[i + 1] == lens[i]) while (i + run < n && run < u->gso_max && lens[i + run] <= lens[i] && !memcmp(addrs + (i + run) * KSL_UDP_ADDR_LEN, addrs + i * KSL_UDP_ADDR_LEN, KSL_UDP_ADDR_LEN) && ecn[i + run] == ecn[i]) { run++; if (lens[i + run - 1] < lens[i]) break; }
         if (run > 1 && lens[i] > 0) {
-            uint8_t *joined = u->tx; size_t total = 0; for (uint32_t k = 0; k < run; k++) { if (total + lens[i + k] > GRO_MAX) { run = k; break; } memcpy(joined + total, bufs[i + k], lens[i + k]); total += lens[i + k]; }
+            uint8_t *joined = u->tx; size_t total = 0, cap = GSO_JOIN_MAX(addrs + i * KSL_UDP_ADDR_LEN); for (uint32_t k = 0; k < run; k++) { if (total + lens[i + k] > cap) { run = k; break; } memcpy(joined + total, bufs[i + k], lens[i + k]); total += lens[i + k]; }
             int e = 0;
             if (run > 1 && send_one(u, joined, (uint32_t)total, addrs + i * KSL_UDP_ADDR_LEN, ecn[i], (uint16_t)lens[i], &e) == 0) { i += run; *sent += run; continue; }
             if (run > 1) {

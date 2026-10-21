@@ -42,6 +42,9 @@
 
 #define GRO_MAX 65535
 #define GSO_SEGMENTS 64
+/* the most UDP payload one IP datagram carries, which a GSO send must not exceed: IPv4 65535 - 20 (IP header) - 8 (UDP header)
+   (Linux __ip_append_data answers EMSGSIZE above it), IPv6 65535 - 8 (the payload length counts the UDP header) */
+#define GSO_JOIN_MAX(addr) ((addr)[0] == 4 ? 65507u : 65527u)
 
 struct ksl_udp {
     int fd; int family; int dual; int wake[2];   /* dual: AF_INET6 on :: with IPV6_V6ONLY off, IPv4 peers as v4-mapped addresses */

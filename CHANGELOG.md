@@ -198,6 +198,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   it in the start line and field lines only; the trailer section keeps accepting it). For a malformed chunked request body the engine writes no response itself: the handler's receive of
   the body fails with `BadRequestException`, which Ktor answers with 400 and a fixed text unless the application
   handles it (it was a plain IOException, answered with 500 and the parser's message), and the connection closes.
+- Native UDP (Linux GSO, Windows USO): a run of equal datagrams was joined up to 65535 bytes, but one IPv4 datagram
+  carries at most 65507 bytes of UDP payload (65527 over IPv6). The kernel refused such a send with `EMSGSIZE`, which
+  for segments of at most 1200 bytes switched GSO off for the socket. A join now stops at the limit of the peer's
+  family. The endpoint loop sends at most 32 datagrams per batch, so no 0.2.x caller reached it.
 - Android: an app built with R8 (`isMinifyEnabled = true`, the usual release setup) could not load `libksl`, so TLS,
   QUIC and HTTP/3 were unavailable in release builds while debug builds worked. The 0.2.0 AAR shipped no consumer keep
   rules: R8 renamed `PacketBuffer.buffer` and removed the `KslNative` natives the app never reached, and `JNI_OnLoad`,

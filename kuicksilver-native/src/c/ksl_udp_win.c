@@ -60,6 +60,8 @@
 #endif
 
 #define GRO_MAX 65535
+/* the most UDP payload one IP datagram carries, which a USO send must not exceed: IPv4 65535 - 20 - 8, IPv6 65535 - 8 */
+#define GSO_JOIN_MAX(addr) ((addr)[0] == 4 ? 65507u : 65527u)
 #define URO_MAX (GRO_MAX - 48)   /* coalesced payload never exceeds the scratch buffer (IPv6 + UDP headers off 64 KiB) */
 #define GSO_SEGMENTS 64
 #define WAKE_SLICE_MS 50         /* without a wake socket, a blocked receive notices a shutdown within one slice */
@@ -261,7 +263,7 @@ int ksl_udp_send(ksl_udp *u, uint8_t *const *bufs, const uint32_t *lens, const u
         uint32_t run = 1;
         if (u->gso_on && !gso_probe && !solo && i + 1 < n && lens[i + 1] == lens[i]) while (i + run < n && run < u->gso_max && lens[i + run] <= lens[i] && !memcmp(addrs + (i + run) * KSL_UDP_ADDR_LEN, addrs + i * KSL_UDP_ADDR_LEN, KSL_UDP_ADDR_LEN) && ecn[i + run] == ecn[i]) { run++; if (lens[i + run - 1] < lens[i]) break; }
         if (run > 1 && lens[i] > 0) {
-            size_t total = 0; for (uint32_t k = 0; k < run; k++) { if (total + lens[i + k] > GRO_MAX) { run = k; break; } memcpy(u->tx + total, bufs[i + k], lens[i + k]); total += lens[i + k]; }
+            size_t total = 0, cap = GSO_JOIN_MAX(addrs + i * KSL_UDP_ADDR_LEN); for (uint32_t k = 0; k < run; k++) { if (total + lens[i + k] > cap) { run = k; break; } memcpy(u->tx + total, bufs[i + k], lens[i + k]); total += lens[i + k]; }
             int e = 0;
             if (run > 1 && send_one(u, u->tx, (uint32_t)total, addrs + i * KSL_UDP_ADDR_LEN, ecn[i], lens[i], &e) == 0) { i += run; *sent += run; continue; }
             if (run > 1) {

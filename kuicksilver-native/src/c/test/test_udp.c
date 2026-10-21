@@ -117,6 +117,13 @@ void run_udp(void) {
         { uint8_t *bufs[1]; uint32_t lens[1] = {1400}; uint8_t addrs[KSL_UDP_ADDR_LEN]; uint8_t ecns[1] = {0}; bufs[0] = malloc(1400); memset(bufs[0], 7, 1400); memcpy(addrs, lb, KSL_UDP_ADDR_LEN); uint32_t sent = 0;
           CHECK(ksl_udp_send(a, bufs, lens, addrs, ecns, 1, &sent) == KSL_OK && sent == 1, "big one sent"); uint8_t *rb[1]; uint32_t rc[1] = {1000}; uint32_t rl[1]; uint8_t ra[KSL_UDP_ADDR_LEN]; uint8_t re[1]; uint32_t got = 0; rb[0] = malloc(1000);
           int r = ksl_udp_recv(b, rb, rc, rl, ra, re, 1, &got, 300); CHECK((r == KSL_OK && got == 0) || r == KSL_WANT_READ, "truncated datagram dropped"); free(bufs[0]); free(rb[0]); }
+        /* udp_gso_join_fits_an_ipv4_datagram: 60 x 1092 = 65520 bytes fit the 64 KiB scratch, but an IPv4 datagram carries at
+           most 65507 bytes of UDP payload (65535 - 20 - 8; Linux __ip_append_data answers EMSGSIZE), and EMSGSIZE for segments of
+           at most 1200 bytes switched GSO off for the socket; the join stops at the limit and GSO stays on */
+        if (caps & KSL_UDP_GSO) { uint8_t st[12]; size_t sn = 0; CHECK(ksl_udp_get(a, KSL_UDP_GET_STATS, st, 12, &sn) == KSL_OK && sn == 12, "stats"); uint32_t fb0 = ((uint32_t)st[8] << 24) | ((uint32_t)st[9] << 16) | ((uint32_t)st[10] << 8) | st[11];
+          uint32_t rl[64]; uint32_t got = ping(a, b, lb, 60, 1092, 0, NULL, NULL, rl); CHECK(got == 60, "all sixty delivered");
+          CHECK(ksl_udp_get(a, KSL_UDP_GET_STATS, st, 12, &sn) == KSL_OK, "stats after"); uint32_t fb1 = ((uint32_t)st[8] << 24) | ((uint32_t)st[9] << 16) | ((uint32_t)st[10] << 8) | st[11];
+          CHECK(fb1 == fb0 && (caps_of(a, NULL) & KSL_UDP_GSO), "a run over 65507 bytes to an IPv4 peer keeps GSO on"); }
         /* udp_gso_eio_falls_back_and_resends: the first GSO sendmsg fails with EIO → GSO off, every segment resent one by one, caps lose GSO */
         if (caps & KSL_UDP_GSO) { ksl_udp_fail_next_gso_for_test(a, EIO); uint32_t rl[64]; uint32_t got = ping(a, b, lb, 6, 1000, 0, NULL, NULL, rl); CHECK(got == 6, "all six delivered after the fallback"); CHECK(!(caps_of(a, NULL) & KSL_UDP_GSO), "GSO withdrawn from the caps"); }
         /* udp_concurrent_send_recv_same_socket: one thread sends GSO batches on b while another receives trains on b (the loop and the

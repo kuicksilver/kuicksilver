@@ -167,7 +167,8 @@ platform, so it covers:
 
 - Runs of slots with the same address, mark and length (the last one may be shorter) go out in one `sendmsg` with
   `UDP_SEGMENT`; a run starts only with two equal lengths, so a datagram larger than the following ones (a PMTU probe)
-  never sets the `gso_size` of the whole run. Receiving is `recvmsg` with `UDP_GRO` into a 64 KiB buffer; the segments are
+  never sets the `gso_size` of the whole run. A run holds at most 64 segments and as many bytes as one IP datagram carries
+  (65507 to an IPv4 peer, 65527 to an IPv6 one; the kernel refuses more with `EMSGSIZE`, 0.2.1). Receiving is `recvmsg` with `UDP_GRO` into a 64 KiB buffer; the segments are
   spread over the slots inside C, the remainder waits for the next call (`PacketBatch`/`handleDatagram` see no offsets).
 - ECN: the per-datagram mark is the `IP_TOS`/`IPV6_TCLASS` cmsg (not `setsockopt`, so a batch with different marks costs no
   extra syscalls), received through `IP_RECVTOS`/`IPV6_RECVTCLASS`.
