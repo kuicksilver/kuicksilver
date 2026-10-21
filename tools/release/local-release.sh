@@ -5,8 +5,9 @@
 # and the JNI jobs of build.yml do, with no GitHub runner. One Gradle publish invocation, so one Central deployment, which
 # stops at VALIDATED (automaticRelease = false): the owner presses Publish in the portal. This script never tags or pushes.
 #
-#   1. refuses unless: the version is X.Y.Z[-alpha|beta|rcN] (no -SNAPSHOT); HEAD is main (or the commit named by
-#      --release-commit, contained in main); the tree is clean; build/ci/gate/<HEAD>.stamp from tools/ci/local-matrix.sh
+#   1. refuses unless: the version is X.Y.Z[-alpha|beta|rcN] (no -SNAPSHOT); HEAD is main or the maintenance branch
+#      release/<X.Y>.x of the version's own X.Y (or the commit named by --release-commit, contained in main or in that
+#      branch); the tree is clean; build/ci/gate/<HEAD>.stamp from tools/ci/local-matrix.sh
 #      says the full matrix (Android, Docker, interop, Windows) passed on this exact commit; CHANGELOG.md has the version;
 #      the NDK and Xcode of gradle/toolchains.toml are installed; the portal token and a signing key are configured.
 #   2. OpenSSL: fetch and verify the pinned tarball; rebuild all twelve targets from it, never from build/openssl or the build
@@ -35,7 +36,8 @@
 #   --unsigned   (with --dry-run) -Pkuicksilver.sign=false even with a key configured.
 #   --resume     reuse the JNI libraries a previous run built and checked for this same commit (build/release/jni-artifacts).
 #   --repro      build every JNI library and the jar a second time and compare them byte for byte (report only).
-#   --release-commit <sha>   release a detached checkout of <sha> (an ancestor of main) instead of the tip of main.
+#   --release-commit <sha>   release a detached checkout of <sha> (an ancestor of main or of release/<X.Y>.x) instead of
+#                            the tip of a branch.
 #   --allow-over-limit       publish although the count is above the Central limits (30 days of grace, then refused).
 #   --allow-toolchain-drift  warn instead of refusing when the NDK or Xcode differs from gradle/toolchains.toml.
 # Env: KSL_GRADLE  the Gradle launcher, which sets its own --max-workers (default ./gradlew --max-workers=2)
@@ -85,13 +87,24 @@ echo "-- preconditions"
 [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta|rc)\.?[0-9]+)?$ ]] || { echo "REFUSED: version '$version' is not X.Y.Z[-alpha|beta|rcN]" >&2; exit 1; }
 [ -z "$(git status --porcelain)" ] || refuse "the working tree is not clean (git status)"
 branch=$(git symbolic-ref --short -q HEAD || true)
+# main, or the maintenance branch of this version's X.Y (docs/release.md, "Releasing from a maintenance branch")
+release_branch="release/$(printf '%s' "$version" | cut -d. -f1-2).x"
+push_branch=main
 if [ -n "$release_commit" ]; then
   [ "$(git rev-parse "$release_commit^{commit}" 2>/dev/null)" = "$head" ] || refuse "--release-commit $release_commit is not HEAD ($short)"
-  git merge-base --is-ancestor HEAD main 2>/dev/null || refuse "release commit $short is not contained in main"
-elif [ "$branch" != main ]; then
-  refuse "HEAD is ${branch:-detached} ($short), not main (or pass --release-commit <sha> for a commit of main)"
+  if git merge-base --is-ancestor HEAD main 2>/dev/null; then push_branch=main
+  elif git merge-base --is-ancestor HEAD "refs/heads/$release_branch" 2>/dev/null; then push_branch="$release_branch"
+  else refuse "release commit $short is not contained in main or $release_branch"; fi
+elif [ "$branch" = main ] || [ "$branch" = "$release_branch" ]; then
+  push_branch="$branch"
+elif [[ "$branch" =~ ^release/[0-9]+\.[0-9]+\.x$ ]]; then
+  push_branch="$branch"
+  refuse "HEAD is $branch ($short), the maintenance branch of ${branch#release/}, not of $version (that is $release_branch)"
+else
+  refuse "HEAD is ${branch:-detached} ($short), not main or $release_branch (or pass --release-commit <sha> for a commit of either)"
 fi
-git branch -r --contains HEAD 2>/dev/null | grep -qE '^ *origin/main$' || echo "  note: $short is not on origin/main yet; push main before the tag (step 6)"
+git branch -r --contains HEAD --format='%(refname:short)' 2>/dev/null | grep -qxF "origin/$push_branch" \
+  || echo "  note: $short is not on origin/$push_branch yet; push $push_branch before the tag (step 6)"
 if git rev-parse -q --verify "refs/tags/v$version" >/dev/null; then
   [ "$(git rev-parse "v$version^{commit}")" = "$head" ] || refuse "tag v$version exists and names another commit"
 fi
@@ -336,7 +349,7 @@ Deployment uploaded; nothing is released yet. Next, by hand:
   2. Press Publish. It reads PUBLISHING, then PUBLISHED (minutes); repo1.maven.org follows within about an hour.
   3. Consumer check from Central: samples/realtime-telemetry against io.kuicksilver:kuicksilver-bom:$version from
      mavenCentral() only (docs/release.md, "Every release", step 5).
-  4. Then, and only then: git tag -s v$version -m "Kuicksilver $version" $short && git push origin main v$version,
+  4. Then, and only then: git tag -s v$version -m "Kuicksilver $version" $short && git push origin $push_branch v$version,
      and the GitHub release from the tag with the CHANGELOG section, with these four files attached:
      $sbom_zip(.asc) and $prov(.asc).
 NEXT

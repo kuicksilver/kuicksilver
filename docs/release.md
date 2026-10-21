@@ -44,7 +44,8 @@ Done for the project in October 2026, kept here so it can be repeated for a new 
 
 ## Every release
 
-1. Branch `main`, clean, the full local gate green **on the release commit**:
+1. Branch `main` (or the version's maintenance branch, see [below](#releasing-from-a-maintenance-branch)), clean, the
+   full local gate green **on the release commit**:
    ```
    tools/ci/local-matrix.sh --with-interop --with-windows
    ```
@@ -62,8 +63,8 @@ Done for the project in October 2026, kept here so it can be repeated for a new 
    tools/release/local-release.sh 0.2.0 --dry-run      # everything but the upload; refusals become warnings
    tools/release/local-release.sh 0.2.0                # uploads one deployment, not released
    ```
-   The script refuses a malformed or `-SNAPSHOT` version, a branch other than `main` (a detached release commit of
-   `main` with `--release-commit <sha>`), a dirty tree, a missing or failed gate record for `HEAD` (or one run with
+   The script refuses a malformed or `-SNAPSHOT` version, a branch other than `main` or the version's own
+   `release/<X.Y>.x` (a detached release commit of either with `--release-commit <sha>`), a dirty tree, a missing or failed gate record for `HEAD` (or one run with
    `--skip-*`, or without `--with-interop --with-windows`), a `CHANGELOG.md` without the version, an NDK or Xcode other
    than the pins (`--allow-toolchain-drift` to accept), and missing credentials or signing key. Then:
    - OpenSSL: the pinned tarball fetched and verified; **all twelve targets rebuilt from it** (`KSL_OPENSSL_FRESH=1`:
@@ -108,13 +109,33 @@ Done for the project in October 2026, kept here so it can be repeated for a new 
    0.2.0` builds the main source sets of `samples/realtime-telemetry` (JVM and macosArm64) against
    `io.kuicksilver:kuicksilver-quic:0.2.0` and its transitive modules from Maven Central, without `includeBuild` or
    mavenLocal. Its tests are not run there: they need `kuicksilver-testing`, which is not published.
-6. Only after the deployment is published: `git tag -s v0.2.0 -m "Kuicksilver 0.2.0"` on the release commit, push `main`
-   and the tag, and the GitHub release from the tag with the changelog section. Attach the four supply-chain files of
+6. Only after the deployment is published: `git tag -s v0.2.0 -m "Kuicksilver 0.2.0"` on the release commit, push the
+   branch it was released from (`main` or `release/<X.Y>.x`; the script's last lines name it) and the tag, and the GitHub release from the tag with the changelog section. Attach the four supply-chain files of
    step 3: `kuicksilver-<version>-sbom.zip`, `kuicksilver-<version>.intoto.json` and their `.asc`. The version is passed to Gradle; it is
    not stored in the tree.
 7. Context7 (the documentation index coding agents read, configured by `context7.json` at the root): add the new tag to
    `previousVersions`, and point `branch` at the branch whose docs describe the newest published version (it must
    not name a branch with unreleased API). The index refreshes from GitHub; nothing is uploaded.
+
+## Releasing from a maintenance branch
+
+Patch releases of a published line come from `release/<X.Y>.x` (`release/0.2.x` for 0.2.1, 0.2.2, ...) while `main`
+moves on to the next minor version. `local-release.sh` accepts that branch only for versions of its own X.Y (0.2.1 from
+`release/0.2.x`, not 0.3.0) and names it in its "not on origin" note and in the push of step 6.
+
+- **Create it** from `main` at the commit the patch line starts from: `git branch release/0.2.x <commit>` (or from the
+  previous release tag when `main` already holds work that must not ship in the patch).
+- **Fixes land on `main` first**, reviewed there, and are cherry-picked to the branch (`git cherry-pick -x <sha>`, which
+  records the origin). A fix that only applies to the branch (the code it fixes is gone from `main`) is made there, and
+  the test that proves it is ported to `main` if the behaviour still exists. Nothing is merged from `main` into the
+  branch.
+- **CHANGELOG**: entries are written under `[Unreleased]` on `main` as usual and come to the branch with their fixes.
+  On the branch, the release commit moves what the patch ships under `## [0.2.1] - <date>` (steps 2 and 3 run there,
+  with the gate on that commit). After the release, the same section goes to `main` (cherry-pick the release commit, or
+  edit by hand), so `main`'s `[Unreleased]` keeps only what is not yet released. Version coordinates in the README and
+  the guides follow the newest published version on both branches.
+- `context7.json` (step 7) points at the branch whose docs describe the newest published version; for a patch release
+  of the newest line that is the maintenance branch until the next minor version is released from `main`.
 
 ## Supply chain: SBOM and provenance
 
