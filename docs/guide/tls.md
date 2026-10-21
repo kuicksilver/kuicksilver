@@ -160,7 +160,8 @@ at most `SessionTicketConfig.ticketLifetime`.
 
 `TlsConnection.client(transportIn, transportOut, config)` and `TlsConnection.server(...)` run TLS over any pair of
 ktor-io channels, so a TLS session can live inside a QUIC stream or a test harness. `input` and `output` carry
-plaintext; `shutdown()` sends `close_notify`.
+plaintext; `shutdown()` sends what is still queued and `close_notify`, waits for the peer's, and closes after 3 s in
+all at the latest, also when the peer stopped reading.
 
 ## Key logging
 

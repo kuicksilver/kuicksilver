@@ -23,6 +23,7 @@ import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.coroutines.EmptyCoroutineContext
@@ -234,6 +235,32 @@ class TlsConnectionTest {
                 s.close()
             }
         }
+
+    /**
+     * The peer stops reading: once its transport and its plaintext buffer are full the writer pump waits on the transport for
+     * good, and shutdown() must still return at its bound (the KDoc says bounded) instead of waiting for the writer forever.
+     */
+    @Test fun negative_shutdownIsBoundedWhenThePeerStopsReading() {
+        val (c, s) = both(pair = BoundedChannelPair())
+        try {
+            runTest(timeout = 30.seconds) {
+                // more than the server's plaintext buffer (about 1 MiB, its application never reads) and the few KiB of the
+                // transport take, less than the client's own output buffer also holds: the write returns, the rest stays queued
+                val data = ByteArray(3 shl 19)
+                c.output.writeFully(data, 0, data.size)
+                c.output.flush()
+                c.shutdown()
+                assertEquals(
+                    TlsConnection.SHUTDOWN_TIMEOUT.inWholeMilliseconds,
+                    testScheduler.currentTime,
+                    "shutdown waits its bound, then closes",
+                )
+            }
+        } finally {
+            c.close()
+            s.close()
+        }
+    }
 
     @Test fun negative_truncatedTlsStreamIsError(): Unit =
         runBlocking {

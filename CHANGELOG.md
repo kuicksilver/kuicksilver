@@ -198,6 +198,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   it in the start line and field lines only; the trailer section keeps accepting it). For a malformed chunked request body the engine writes no response itself: the handler's receive of
   the body fails with `BadRequestException`, which Ktor answers with 400 and a fixed text unless the application
   handles it (it was a plain IOException, answered with 500 and the parser's message), and the connection closes.
+- TLS: `TlsConnection.shutdown()` could wait forever when the peer stopped reading. Its 3 s bound covered only the
+  wait for the peer's `close_notify`; before it, the wait for the writer to send the queued data and `close_notify`
+  had none, and a full transport stops that writer. The 3 s now bound the whole shutdown, after which the connection
+  closes, as the KDoc said.
 - Ktor client: an application shrunk with R8 in class-file mode (a JVM application) lost `KuicksilverEngineContainer`
   and its `META-INF/services` entry, so `HttpClient()` without an engine argument no longer found the Kuicksilver
   engine. The `kuicksilver-ktor-client` jar now carries a keep rule as `META-INF/proguard/kuicksilver-ktor-client.pro`,

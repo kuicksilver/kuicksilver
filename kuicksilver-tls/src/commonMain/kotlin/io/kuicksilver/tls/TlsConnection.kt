@@ -28,6 +28,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.coroutines.CoroutineContext
 import kotlin.coroutines.EmptyCoroutineContext
+import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 
 /**
@@ -513,14 +514,18 @@ public class TlsConnection private constructor(
         lock.withLock { Ksl.sslKeyUpdate(s(), requestPeer) }
     }
 
-    /** Sends `close_notify` and waits (bounded) for the peer's; then releases the native session. */
+    /**
+     * Sends what the application wrote and `close_notify`, waits for the peer's, then releases the native session. The wait is
+     * bounded: after 3 s in all, also when the peer stopped reading and the transport is full, the connection is closed
+     * ([close]) with whatever was not sent.
+     */
     public suspend fun shutdown() {
         if (closed) return
-        outputChannel.flushAndClose()
-        writerJob?.join() // the writer pump sends close_notify after draining the output channel
-        withTimeoutOrNull(3.seconds) {
-            readerJob?.join()
-        } // the reader pump ends on the peer's close_notify; never read the input channel here (its consumer may be mid-read)
+        withTimeoutOrNull(SHUTDOWN_TIMEOUT) {
+            outputChannel.flushAndClose()
+            writerJob?.join() // the writer pump sends close_notify after draining the output channel; a peer that stops reading stops it
+            readerJob?.join() // ends on the peer's close_notify; never read the input channel here (its consumer may be mid-read)
+        }
         close()
     }
 
@@ -563,6 +568,9 @@ public class TlsConnection private constructor(
 
     /** Factories that run the handshake: [client] and [server]. */
     public companion object {
+        /** How long [shutdown] waits for the pumps in all: the writer's last ciphertext and close_notify, then the peer's close_notify. */
+        internal val SHUTDOWN_TIMEOUT: Duration = 3.seconds
+
         /**
          * Runs a client handshake over [transportIn]/[transportOut] and returns once it completed and the server passed
          * [TlsConfig.trust] and the host name check. A cached session for the same name and trust is resumed automatically
