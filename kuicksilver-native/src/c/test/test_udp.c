@@ -304,7 +304,7 @@ void run_udp(void) {
         { uint8_t lc[KSL_UDP_ADDR_LEN]; ksl_udp *c = open_lo(0, lc); CHECK(c != NULL, "socket for shutdown test");
           if (c) { ksl_udp_shutdown(c); uint8_t buf[8] = {0}; uint8_t *bufs[1] = { buf }; uint32_t lens[1] = { 8 }, caps[1] = { 8 }, got = 0, sent = 0; uint8_t e[1] = { 0 };
             CHECK(ksl_udp_send(c, bufs, lens, lb, e, 1, &sent) == KSL_ERROR, "send after shutdown is an error"); CHECK(ksl_udp_recv(c, bufs, caps, lens, lc, e, 1, &got, 1000) == KSL_ERROR && got == 0, "recv after shutdown is an error, at once"); ksl_udp_close(c); } }
-        /* negative_udp_dropped_datagrams_keep_the_timeout (review h-native): datagrams ksl drops without handing them out (empty ones,
+        /* negative_udp_dropped_datagrams_keep_the_timeout (0.2.1 review): datagrams ksl drops without handing them out (empty ones,
            here) must not restart the wait. A sender of one empty datagram every 5 ms (200 datagrams/s, 28 bytes each on the wire)
            must not keep a receive with a 20 ms timeout from answering KSL_WANT_READ: the loop's direct receive (BatchReceiver) runs
            on the loop's thread, so a receive that never returns starves its timers and commands */
@@ -339,7 +339,7 @@ void run_udp(void) {
             CHECK(ksl_udp_recv(r, bufs, caps, lens, ra, re, 1, &got, 0) == KSL_WANT_READ && got == 0, "timeout 0: a run of 64 dropped datagrams ends the call");
             int calls = 1; while (got == 0 && calls < 4) { (void)ksl_udp_recv(r, bufs, caps, lens, ra, re, 1, &got, 100); calls++; }
             CHECK(got == 1 && lens[0] == 1 && buf[0] == 'q', "the datagram behind the dropped run is received by a later call");
-            /* the bound never costs a datagram it already took (fable review): 63 empty ones and a real one, then 64 and 127 empty ones
+            /* the bound never costs a datagram it already took (review): 63 empty ones and a real one, then 64 and 127 empty ones
                and a real one, each read only with timeout 0 as BatchReceiver starts every batch */
             const int runs[3] = { 63, 64, 127 };
             for (int k = 0; k < 3; k++) {
