@@ -143,7 +143,7 @@ The Ktor engines (`io.kuicksilver.ktor.client`, `io.kuicksilver.ktor.server`). T
 `Http3DiscoveryMode` (`Auto` learns `Alt-Svc`, `Preferred`, `H3Only`, `H1Only`), a connection race (`ProtocolRace`), a
 broken-alternative memory (`BrokenAltSvc`) and fallback rules that never replay a consumed body. The server serves
 HTTP/1.1 over TLS on TCP and HTTP/3 on UDP on the same port (`KuicksilverApplicationEngine` starts and stops the
-listeners, `TcpListener.kt` holds the TCP/TLS accept loop, `Http3Listener.kt` the HTTP/3 one; `H3Call` maps requests into Ktor's model, `WebSocketOverH3`
+listeners, `TcpListener.kt` (`TcpServer`, started by `startTcp`) holds the TCP/TLS accept loop, `Http3Listener.kt` the HTTP/3 one; `H3Call` maps requests into Ktor's model, `WebSocketOverH3`
 implements RFC 9220), advertises `Alt-Svc`, and stops gracefully with GOAWAY. Neither engine sees `kuicksilver-quic`
 directly (ADR-0014).
 
@@ -156,8 +156,8 @@ applications without sockets. Not published yet.
 ### `kuicksilver-interop`, `kuicksilver-bench`, `samples/`
 
 The QUIC Interop Runner endpoint (`kuicksilver-interop`, Docker image in `tools/interop`), benchmarks and allocation
-gates (`kuicksilver-bench`), and `samples/realtime-telemetry`, a separate Gradle build that consumes the library as an
-outside project would.
+gates (`kuicksilver-bench`), `samples/realtime-telemetry`, a separate Gradle build that consumes the library as an
+outside project would, and `samples/ios`, an Xcode app over the library's XCFramework ([iOS guide](guide/ios.md)).
 
 ## Cross-Cutting Concerns
 
