@@ -145,7 +145,9 @@ socket.close()   // sends close_notify, then closes the TCP socket
 ```
 
 `close()` returns at once and finishes in the background: it sends what is queued and `close_notify`, then closes the
-TCP socket, and after 3 s in all (a peer that stopped reading) drops what is left and closes the socket anyway.
+TCP socket. On a client (`Socket.tls`) it drops what is left after 3 s in all (a peer that stopped reading) and closes the
+socket anyway; on a server (`Socket.tlsServer`) it waits for the client to take everything, however slowly it reads, so
+bound the connection yourself (an idle or stall timeout) where a client may never read.
 
 The same works on the server side with `Socket.tlsServer(config)` after `ServerSocket.accept()`.
 

@@ -41,13 +41,14 @@ import kotlin.time.Duration.Companion.seconds
  *
  * Closing: the write channel is flushed and closed, the writer drains it and shuts the output down (a FIN, as ktor's writer
  * does), and then the ktor socket is closed, which closes the descriptor once its reader has ended; when the writer had ended
- * already, at once. The drain is bounded (3 s): past it the writer is cancelled. A writer that is cancelled (by that bound or
+ * already, at once. The drain is bounded by [closeTimeout] when one is set: past it the writer is cancelled. A writer that is cancelled (by that bound or
  * by the socket's job) or fails (a reset) closes the descriptor itself, so a socket never stays open behind a stalled write.
  * Writing after [close] fails with an IOException, as with ktor's sockets.
  */
 internal class KslNioSocket(
     private val delegate: Socket,
     private val selector: SelectorManager,
+    closeTimeout: Duration?,
 ) : Socket by delegate {
     private val selectable = delegate as Selectable
     private val nio = selectable.channel as SocketChannel
@@ -55,8 +56,13 @@ internal class KslNioSocket(
 
     @Volatile private var writer: ReaderJob? = null
 
-    /** How long [close] lets the writer drain what is queued before it drops the rest and closes the socket (tests shorten it). */
-    internal var closeTimeout: Duration = CLOSE_TIMEOUT
+    /**
+     * How long [close] lets the writer drain what is queued before it drops the rest and closes the socket; null: as long as
+     * the peer takes. Owned by whoever opened the socket ([setCloseTimeout]): a client's connection 3 s (closing after the
+     * response is complete drops nothing it wants), a server's accepted one none of its own, since a fixed bound would cut a
+     * slow reader's last response short; the engine bounds it from its idle and stall limits.
+     */
+    @Volatile internal var closeTimeout: Duration? = closeTimeout
 
     /** Times a write answered 0 and the writer waited for the socket to become writable (tests). */
     internal val writeWaits = AtomicLong()
@@ -125,33 +131,37 @@ internal class KslNioSocket(
         w.job.invokeOnCompletion { delegate.close() }
         delegate.launch(CoroutineName("ksl-tcp-close")) {
             // bounded, the flush too: a peer that stops reading would hold the drain, and with it the socket, as long as it likes
-            val drained =
-                withTimeoutOrNull(closeTimeout) {
-                    try {
-                        w.channel.flushAndClose()
-                    } catch (e: CancellationException) {
-                        throw e
-                    } catch (_: Throwable) {
-                        // closed or failed already: the writer ends on its own
-                    }
-                    w.job.join()
+            val drain: suspend () -> Unit = {
+                try {
+                    w.channel.flushAndClose()
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Throwable) {
+                    // closed or failed already: the writer ends on its own
                 }
-            if (drained == null) w.job.cancel()
+                w.job.join()
+            }
+            val bound = closeTimeout
+            if (bound == null) {
+                drain()
+            } else if (withTimeoutOrNull(bound) { drain() } == null) {
+                w.job.cancel()
+            }
         }
     }
 
     override fun dispose(): Unit = close()
 }
 
-/** How long [KslNioSocket.close] waits for the writer to drain: as long as `TlsSocket.close` waits in all. */
-private val CLOSE_TIMEOUT: Duration = 3.seconds
+/** How long a client connection's [KslNioSocket.close] waits for the writer to drain: as long as `TlsSocket.close` waits. */
+internal val CLIENT_CLOSE_TIMEOUT: Duration = 3.seconds
 
 /** A ktor-network JVM listening socket whose accepted sockets are [KslNioSocket]s. */
 internal class KslNioServerSocket(
     private val delegate: ServerSocket,
     private val selector: SelectorManager,
 ) : ServerSocket by delegate {
-    override suspend fun accept(): Socket = KslNioSocket(delegate.accept(), selector)
+    override suspend fun accept(): Socket = KslNioSocket(delegate.accept(), selector, closeTimeout = null) // the engine owns the bound
 
     override fun dispose(): Unit = delegate.close()
 }

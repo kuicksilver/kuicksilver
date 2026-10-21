@@ -519,12 +519,29 @@ public class TlsConnection private constructor(
      * bounded: after 3 s in all, also when the peer stopped reading and the transport is full, the connection is closed
      * ([close]) with whatever was not sent.
      */
-    public suspend fun shutdown() {
+    public suspend fun shutdown(): Unit = shutdown(SHUTDOWN_TIMEOUT)
+
+    /**
+     * [shutdown] with the bound owned by the caller: [drainTimeout] bounds the whole shutdown, or, when null, sending what is
+     * queued is not bounded (a slow reader gets the last response whole; the caller bounds the connection) and only the wait
+     * for the peer's close_notify after it is (3 s).
+     */
+    @InternalKuicksilverApi
+    public suspend fun shutdown(drainTimeout: Duration?) {
         if (closed) return
-        withTimeoutOrNull(SHUTDOWN_TIMEOUT) {
+        val drain: suspend () -> Unit = {
             outputChannel.flushAndClose()
             writerJob?.join() // the writer pump sends close_notify after draining the output channel; a peer that stops reading stops it
-            readerJob?.join() // ends on the peer's close_notify; never read the input channel here (its consumer may be mid-read)
+        }
+        // the reader pump ends on the peer's close_notify; never read the input channel here (its consumer may be mid-read)
+        if (drainTimeout != null) {
+            withTimeoutOrNull(drainTimeout) {
+                drain()
+                readerJob?.join()
+            }
+        } else {
+            drain()
+            withTimeoutOrNull(SHUTDOWN_TIMEOUT) { readerJob?.join() }
         }
         close()
     }

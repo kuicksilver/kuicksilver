@@ -49,6 +49,7 @@ import kotlin.concurrent.atomics.AtomicBoolean
 import kotlin.concurrent.atomics.AtomicReference
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.coroutines.CoroutineContext
+import kotlin.time.Duration
 
 /** The listen backlog of ktor-network's native TCP server socket. */
 private const val BACKLOG = 50
@@ -314,3 +315,6 @@ internal class NativeTcpSocket(
             else -> e1.also { it.addSuppressed(e2) }
         }
 }
+
+// Kuicksilver's Native TCP socket closes once its writer has drained, with no bound of its own; TlsSocket bounds itself
+internal actual fun Socket.setRawCloseTimeout(timeout: Duration?) {}

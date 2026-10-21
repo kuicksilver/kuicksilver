@@ -20,6 +20,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -30,6 +31,7 @@ import java.nio.channels.SocketChannel
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.test.BeforeTest
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.milliseconds
@@ -218,6 +220,60 @@ class TcpWriterTest {
                 peer.selector.close()
             }
         }
+
+    /**
+     * A server's last response (4 MiB, 8 MiB under TLS: more than every buffer on the way holds) to a client that reads slowly
+     * (about 640 KiB/s here): close() right after writing it must not
+     * cut it short. The server-accepted socket has no close bound of its own (the engine owns it); a fixed 3 s one truncated
+     * the response silently, the client seeing a clean EOF after part of it (k8/tcp-hardening review).
+     */
+    private fun slowReaderGetsEverything(
+        tls: Boolean,
+        size: Int,
+    ): Unit =
+        runBlocking {
+            val selector = SelectorManager(Dispatchers.IO)
+            val server = bindTcp(selector, "127.0.0.1", 0)
+            val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+            try {
+                scope.launch {
+                    val accepted = server.accept()
+                    val s: Socket = if (tls) accepted.tlsServer(serverConfig()) else accepted
+                    val out = s.openWriteChannel(autoFlush = true)
+                    out.writeFully(ByteArray(size), 0, size)
+                    out.flushAndClose()
+                    s.close() // the response is complete: close at once, as an engine does after `Connection: close`
+                }
+                val raw = connectTcp(selector, InetSocketAddress("127.0.0.1", (server.localAddress as InetSocketAddress).port))
+                val c: Socket = if (tls) withTimeout(20.seconds) { raw.tls(clientConfig()) } else raw
+                val input = c.openReadChannel()
+                val buf = ByteArray(64 shl 10)
+                var got = 0L
+                var paced = 0L
+                withTimeout(60.seconds) {
+                    while (true) {
+                        val n = input.readAvailable(buf, 0, buf.size)
+                        if (n < 0) break
+                        got += n
+                        if (got - paced >= buf.size) { // the slow reader: 64 KiB per 100 ms, the rate is the point of the test
+                            paced = got
+                            delay(100)
+                        }
+                    }
+                }
+                assertEquals(size.toLong(), got, "the slow reader received the whole response before EOF")
+                c.close()
+            } finally {
+                scope.cancel()
+                server.close()
+                selector.close()
+            }
+        }
+
+    @Test fun negative_slowReaderGetsTheWholeResponseThroughClose() = slowReaderGetsEverything(tls = false, size = 4 shl 20)
+
+    @Test fun negative_slowReaderGetsTheWholeTlsResponseThroughClose() =
+        slowReaderGetsEverything(tls = true, size = 8 shl 20) // TLS buffers more on both sides
 
     @Test fun negative_tlsCloseReleasesTheSocketWhileThePeerDoesNotRead(): Unit =
         runBlocking {

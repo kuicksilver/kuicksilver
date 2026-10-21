@@ -1,5 +1,7 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
+@file:OptIn(InternalKuicksilverApi::class)
+
 package io.kuicksilver.ktor.network
 
 import io.ktor.network.sockets.Socket
@@ -13,6 +15,7 @@ import io.ktor.utils.io.WriterJob
 import io.ktor.utils.io.copyTo
 import io.ktor.utils.io.reader
 import io.ktor.utils.io.writer
+import io.kuicksilver.annotations.InternalKuicksilverApi
 import io.kuicksilver.tls.Certificate
 import io.kuicksilver.tls.TlsConfig
 import io.kuicksilver.tls.TlsConnection
@@ -25,6 +28,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.concurrent.Volatile
 import kotlin.coroutines.CoroutineContext
 import kotlin.coroutines.EmptyCoroutineContext
 import kotlin.time.Duration
@@ -82,8 +86,12 @@ public class TlsSocket private constructor(
     private var attachedWriter: ReaderJob? = null
     private var closing = false
 
-    /** The bound of [close] in all (tests shorten it). */
-    internal var closeTimeout: Duration = CLOSE_TIMEOUT
+    /**
+     * The bound of [close] in all; null: the close waits for the peer to take what is queued (then 3 s at most for its
+     * close_notify). 3 s on a client ([Socket.tls]), none on a server ([Socket.tlsServer]): a server's fixed bound cut a slow
+     * reader's last response short; the engine bounds it ([setCloseTimeout]).
+     */
+    @Volatile internal var closeTimeout: Duration? = null
 
     override fun attachForReading(channel: ByteChannel): WriterJob = writer(coroutineContext, channel) { tls.input.copyTo(channel) }
 
@@ -98,21 +106,24 @@ public class TlsSocket private constructor(
 
     /**
      * Graceful: pending plaintext is encrypted and flushed, `close_notify` is sent, then the raw socket closes. Runs in the
-     * socket's scope. Bounded: when the raw socket has not closed after 3 s in all (a peer that stopped reading holds the
-     * flush, `close_notify` and the raw socket's last write), what is still queued is dropped, the TLS session is freed and
-     * the raw socket is closed and its jobs cancelled.
+     * socket's scope. On a client ([Socket.tls]) bounded: when the raw socket has not closed after 3 s in all (a peer that
+     * stopped reading holds the flush, `close_notify` and the raw socket's last write), what is still queued is dropped, the
+     * TLS session is freed and the raw socket is closed and its jobs cancelled. On a server ([Socket.tlsServer]) the close
+     * waits for the client to take the last response, however slowly it reads; whoever accepted the socket bounds it.
      */
     override fun close() {
         if (closing) return
         closing = true
         val bound = closeTimeout
-        @OptIn(DelicateCoroutinesApi::class)
-        GlobalScope.launch(Dispatchers.Default) {
-            // outside the socket's scope: its job completes only after the graceful close below (a child) has ended
-            if (withTimeoutOrNull(bound) { raw.socketContext.join() } == null) {
-                tls.close()
-                raw.close() // first: the jobs cancelled next then close the descriptor when they complete
-                raw.socketContext.cancel()
+        if (bound != null) {
+            @OptIn(DelicateCoroutinesApi::class)
+            GlobalScope.launch(Dispatchers.Default) {
+                // outside the socket's scope: its job completes only after the graceful close below (a child) has ended
+                if (withTimeoutOrNull(bound) { raw.socketContext.join() } == null) {
+                    tls.close()
+                    raw.close() // first: the jobs cancelled next then close the descriptor when they complete
+                    raw.socketContext.cancel()
+                }
             }
         }
         launch {
@@ -121,7 +132,7 @@ public class TlsSocket private constructor(
                     runCatching { rj.channel.flushAndClose() }
                     rj.job.join()
                 }
-                tls.shutdown()
+                tls.shutdown(drainTimeout = bound)
             } finally {
                 tls.close()
                 runCatching { rawOut.flushAndClose() } // everything handed to the socket's write channel reaches the wire before FIN
@@ -134,7 +145,7 @@ public class TlsSocket private constructor(
 
     /** The factory behind [Socket.tls] and [Socket.tlsServer]; internal, so no empty companion is part of the public ABI. */
     internal companion object {
-        /** How long [close] may take in all before it stops waiting for the peer. */
+        /** How long a client's [close] may take in all before it stops waiting for the peer. */
         internal val CLOSE_TIMEOUT: Duration = 3.seconds
 
         internal suspend fun start(
@@ -159,7 +170,7 @@ public class TlsSocket private constructor(
                     raw.close()
                     throw t
                 }
-            return TlsSocket(raw, rawOut, tls, ctx)
+            return TlsSocket(raw, rawOut, tls, ctx).also { if (config.role == TlsRole.Client) it.closeTimeout = CLOSE_TIMEOUT }
         }
     }
 }
