@@ -134,6 +134,14 @@ internal class KuicksilverEngine(
         callContext: CoroutineContext,
     ): HttpResponseData {
         val url = data.url
+        // H3Only promises HTTP/3 or a failure, never TCP: through a proxy there is no HTTP/3 (UDP would need CONNECT-UDP,
+        // RFC 9298, or SOCKS5 UDP ASSOCIATE, neither supported), so the request fails instead of going over HTTP/1.1
+        if (config.proxy != null && url.protocol.isSecure() && config.http3.discovery == Http3DiscoveryMode.H3Only) {
+            throw UnsupportedOperationException(
+                "Http3DiscoveryMode.H3Only: HTTP/3 cannot go through the configured proxy (UDP through an HTTP CONNECT or " +
+                    "SOCKS5 proxy is not supported); remove the proxy or use another discovery mode",
+            )
+        }
         // HTTP/3 needs TLS and no proxy (through a proxy only HTTP/1.1)
         if (!url.protocol.isSecure() || config.proxy != null ||
             config.http3.discovery == Http3DiscoveryMode.H1Only

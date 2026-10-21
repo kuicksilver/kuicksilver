@@ -7,6 +7,7 @@ import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpHeaders
+import io.ktor.http.HttpProtocolVersion
 import io.ktor.http.Url
 import io.ktor.network.selector.SelectorManager
 import io.ktor.network.sockets.InetSocketAddress
@@ -27,6 +28,8 @@ import kotlinx.coroutines.launch
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 
 /** HTTPS through an HTTP proxy: a CONNECT tunnel (RFC 9110 section 9.3.6) to the TLS origin. */
@@ -82,6 +85,46 @@ class ClientProxyTest {
                     }).use { c ->
                         assertEquals("through", c.get("https://127.0.0.1:$port/").bodyAsText())
                     }
+                }
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
+    /**
+     * HTTP/3 cannot go through the proxy (no UDP over HTTP CONNECT or SOCKS5), so `H3Only` with a proxy fails the request
+     * without contacting the proxy. Before, the request silently went over HTTP/1.1 through the proxy, the opposite of
+     * what `H3Only` promises (failures are reported, never retried over TCP).
+     */
+    @Test fun negative_h3OnlyWithAProxyFails() =
+        clientTest {
+            val (server, port) = testServer { routing { get("/") { call.respondText("through") } } }
+            try {
+                tunnelProxy(port) { proxyPort, connectHead ->
+                    testClient(Http3DiscoveryMode.H3Only, engine = { proxy = ProxyBuilder.http(Url("http://127.0.0.1:$proxyPort")) })
+                        .use { c ->
+                            val e = assertFailsWith<UnsupportedOperationException> { c.get("https://127.0.0.1:$port/").bodyAsText() }
+                            assertTrue(e.message!!.contains("HTTP/3") && e.message!!.contains("proxy"), e.message)
+                            assertEquals(emptyList<String>(), connectHead(), "the proxy was contacted")
+                        }
+                }
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
+    /** `Auto` with a proxy keeps using HTTP/1.1 through it (HTTP/3 is not attempted, Alt-Svc is not used). */
+    @Test fun autoWithAProxyUsesHttp11ThroughIt() =
+        clientTest {
+            val (server, port) = testServer { routing { get("/") { call.respondText("through") } } }
+            try {
+                tunnelProxy(port) { proxyPort, _ ->
+                    testClient(Http3DiscoveryMode.Auto, engine = { proxy = ProxyBuilder.http(Url("http://127.0.0.1:$proxyPort")) })
+                        .use { c ->
+                            val r = c.get("https://127.0.0.1:$port/")
+                            assertEquals("through", r.bodyAsText())
+                            assertEquals(HttpProtocolVersion.HTTP_1_1, r.version)
+                        }
                 }
             } finally {
                 server.stop(100, 500)
