@@ -1,7 +1,7 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
 
-// Line coverage of the JVM tests, reported without a threshold (K7 D). Applied by every library module through
+// Line coverage of the JVM tests, reported without a threshold (by decision). Applied by every library module through
 // kuicksilver.kmp and by the root project. The custom variant `jvmTests` holds the JVM target only:
 // `koverHtmlReportJvmTests` in a module, and in the root `koverHtmlReportJvmTests` / `koverXmlReportJvmTests` merge the
 // published modules. Kover's total variant would also run `testAndroidHostTest`, and the host JVM cannot load the
