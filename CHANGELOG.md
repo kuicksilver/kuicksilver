@@ -198,6 +198,13 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   it in the start line and field lines only; the trailer section keeps accepting it). For a malformed chunked request body the engine writes no response itself: the handler's receive of
   the body fails with `BadRequestException`, which Ktor answers with 400 and a fixed text unless the application
   handles it (it was a plain IOException, answered with 500 and the parser's message), and the connection closes.
+- Native UDP (Linux, Apple): a trickle of empty UDP datagrams could freeze an endpoint loop. `ksl_udp_recv` re-armed its
+  full `poll` timeout after every datagram it dropped (empty, from a link-local IPv6 source, truncated, larger than the
+  slot), so the timeout counted from the last dropped datagram rather than from the call. Since 0.2.1 the loop reads the
+  socket on its own thread with a 1 ms wait while datagrams keep coming; an off-path sender of about 1,000 empty
+  datagrams a second (spoofed sources are fine) kept that wait from ending, and every timer and application command of
+  the loop's connections with it. The timeout is now one deadline for the call (as `ksl_udp_win.c` already did), and a
+  run of 64 dropped datagrams in a row ends a call that may not wait or already holds datagrams, on Windows too.
 - QUIC: a handshake could be held on a client address the client does not own until the handshake timeout. The
   datagram that completes the ClientHello moves the server's path at once (0.2.0), and an Initial may move it after the
   old address has been quiet for a PTO; neither move had a deadline. An off-path attacker that sees the client's

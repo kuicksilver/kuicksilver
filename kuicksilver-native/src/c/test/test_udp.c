@@ -2,9 +2,13 @@
  * SPDX-License-Identifier: Apache-2.0 */
 /* ksl_udp_*: batched UDP with GSO, GRO, ECN, DF and REUSEPORT (ADR-0006; threat-model 3.12, 3.16). Linux and Apple (no GSO/GRO there);
  * elsewhere ksl_udp_open answers KSL_E_NOT_SUPPORTED. */
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE 1   /* clock_gettime, nanosleep under -std=c11 on glibc */
+#endif
 #include "test_common.h"
 #include <errno.h>
 #include <pthread.h>
+#include <time.h>
 #include <unistd.h>
 #if defined(__linux__) || defined(__APPLE__)
 #include <arpa/inet.h>
@@ -42,6 +46,17 @@ static void *sender_thread(void *arg) {
     for (uint32_t i = 0; i < 4; i++) { bufs[i] = malloc(1200); memset(bufs[i], 0x70, 1200); lens[i] = 1200; memcpy(addrs + i * KSL_UDP_ADDR_LEN, sa->to, KSL_UDP_ADDR_LEN); ecn[i] = 0; }
     while (!sa->stop) { uint32_t sent = 0; ksl_udp_send(sa->u, bufs, lens, addrs, ecn, 4, &sent); }
     for (uint32_t i = 0; i < 4; i++) free(bufs[i]); return NULL;
+}
+/* sends an empty datagram to 127.0.0.1:port every 5 ms for at most 1.5 s, until stop */
+struct junk_args { uint16_t port; volatile int stop; };
+static void *junk_thread(void *arg) {
+    struct junk_args *ja = arg; int s = socket(AF_INET, SOCK_DGRAM, 0); if (s < 0) return NULL;
+    struct sockaddr_in to; memset(&to, 0, sizeof to); to.sin_family = AF_INET; to.sin_port = htons(ja->port); to.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+#ifdef __APPLE__
+    to.sin_len = sizeof to;
+#endif
+    for (int i = 0; i < 300 && !ja->stop; i++) { (void)sendto(s, "", 0, 0, (struct sockaddr *)&to, sizeof to); struct timespec w = { 0, 5000000 }; nanosleep(&w, NULL); }
+    close(s); return NULL;
 }
 #endif
 
@@ -279,6 +294,40 @@ void run_udp(void) {
         { uint8_t lc[KSL_UDP_ADDR_LEN]; ksl_udp *c = open_lo(0, lc); CHECK(c != NULL, "socket for shutdown test");
           if (c) { ksl_udp_shutdown(c); uint8_t buf[8] = {0}; uint8_t *bufs[1] = { buf }; uint32_t lens[1] = { 8 }, caps[1] = { 8 }, got = 0, sent = 0; uint8_t e[1] = { 0 };
             CHECK(ksl_udp_send(c, bufs, lens, lb, e, 1, &sent) == KSL_ERROR, "send after shutdown is an error"); CHECK(ksl_udp_recv(c, bufs, caps, lens, lc, e, 1, &got, 1000) == KSL_ERROR && got == 0, "recv after shutdown is an error, at once"); ksl_udp_close(c); } }
+        /* negative_udp_dropped_datagrams_keep_the_timeout (review h-native): datagrams ksl drops without handing them out (empty ones,
+           here) must not restart the wait. A sender of one empty datagram every 5 ms (200 datagrams/s, 28 bytes each on the wire)
+           must not keep a receive with a 20 ms timeout from answering KSL_WANT_READ: the loop's direct receive (BatchReceiver) runs
+           on the loop's thread, so a receive that never returns starves its timers and commands */
+        { uint8_t lr[KSL_UDP_ADDR_LEN]; ksl_udp *r = open_lo(0, lr); CHECK(r != NULL, "receiver for the dropped-datagram test");
+          if (r) {
+            struct junk_args ja = { port_of(lr), 0 }; pthread_t t; CHECK(pthread_create(&t, NULL, junk_thread, &ja) == 0, "junk sender");
+            struct timespec w = { 0, 20000000 }; nanosleep(&w, NULL);   /* the flood is on */
+            uint8_t buf[1500]; uint8_t *bufs[1] = { buf }; uint32_t caps[1] = { sizeof buf }, lens[1], got = 0; uint8_t ra[KSL_UDP_ADDR_LEN], re[1];
+            struct timespec t0, t1; clock_gettime(CLOCK_MONOTONIC, &t0);
+            int rc = ksl_udp_recv(r, bufs, caps, lens, ra, re, 1, &got, 20);
+            clock_gettime(CLOCK_MONOTONIC, &t1); long ms = (long)((t1.tv_sec - t0.tv_sec) * 1000 + (t1.tv_nsec - t0.tv_nsec) / 1000000);
+            ja.stop = 1; pthread_join(t, NULL);
+            CHECK(rc == KSL_WANT_READ && got == 0, "only empty datagrams: KSL_WANT_READ");
+            CHECK(ms < 200, "a 20 ms receive answers within 200 ms while empty datagrams keep arriving");
+            if (ms >= 200) printf("    the 20 ms receive took %ld ms (it returned only when the junk sender stopped)\n", ms);
+          }
+          if (r) ksl_udp_close(r); }
+        /* negative_udp_dropped_run_is_bounded_per_call: a queue of dropped datagrams longer than the drain (recvmsg never answers
+           EAGAIN) still ends a receive that may not wait; the datagram behind them comes out on a later call */
+        { uint8_t lr[KSL_UDP_ADDR_LEN]; ksl_udp *r = open_lo(0, lr); int s = socket(AF_INET, SOCK_DGRAM, 0); CHECK(r != NULL && s >= 0, "sockets for the dropped-run test");
+          if (r && s >= 0) {
+            struct sockaddr_in to; memset(&to, 0, sizeof to); to.sin_family = AF_INET; to.sin_port = htons(port_of(lr)); to.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+#ifdef __APPLE__
+            to.sin_len = sizeof to;
+#endif
+            for (int i = 0; i < 100; i++) (void)sendto(s, "", 0, 0, (struct sockaddr *)&to, sizeof to);
+            (void)sendto(s, "q", 1, 0, (struct sockaddr *)&to, sizeof to);
+            uint8_t buf[64]; uint8_t *bufs[1] = { buf }; uint32_t caps[1] = { sizeof buf }, lens[1], got = 0; uint8_t ra[KSL_UDP_ADDR_LEN], re[1];
+            CHECK(ksl_udp_recv(r, bufs, caps, lens, ra, re, 1, &got, 0) == KSL_WANT_READ && got == 0, "timeout 0: a run of 64 dropped datagrams ends the call");
+            int calls = 1; while (got == 0 && calls < 4) { (void)ksl_udp_recv(r, bufs, caps, lens, ra, re, 1, &got, 100); calls++; }
+            CHECK(got == 1 && lens[0] == 1 && buf[0] == 'q', "the datagram behind the dropped run is received by a later call");
+          }
+          if (s >= 0) close(s); if (r) ksl_udp_close(r); }
         ksl_udp_close(a); ksl_udp_close(b);
     }
 #elif defined(_WIN32)

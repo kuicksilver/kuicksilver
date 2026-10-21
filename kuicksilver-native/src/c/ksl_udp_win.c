@@ -321,13 +321,16 @@ static void idle_slice(ksl_udp *u, int timeout_ms, ULONGLONG deadline) {
     if (w <= 0) return;
     if (u->wake != INVALID_SOCKET) { WSAPOLLFD p; memset(&p, 0, sizeof p); p.fd = u->wake; p.events = POLLRDNORM; WSAPoll(&p, 1, w); } else Sleep((DWORD)w);
 }
+/* datagrams taken in a row without filling a slot (empty, link-local source, truncated, larger than the slot) between two looks
+   at the clock */
+#define DROP_CHECK 64
 /* the network is down or out of buffers right now: nothing arrives this slice, the socket itself is fine */
 static int recv_transient(int e) { return e == WSAENETDOWN || e == WSAENOBUFS; }
 int ksl_udp_recv(ksl_udp *u, uint8_t *const *bufs, const uint32_t *caps, uint32_t *lens, uint8_t *addrs, uint8_t *ecnv, uint32_t n, uint32_t *received, int timeout_ms) {
     if (!u || u->closed) { if (received) *received = 0; return KSL_ERROR; } *received = 0; if (!n) return KSL_OK;
     __atomic_add_fetch(&u->in_recv, 1, __ATOMIC_SEQ_CST);
     uint32_t filled = hand_out(u, bufs, caps, lens, addrs, ecnv, n, 0);
-    int rc = KSL_OK; ULONGLONG deadline = timeout_ms < 0 ? 0 : GetTickCount64() + (ULONGLONG)timeout_ms;
+    int rc = KSL_OK; ULONGLONG deadline = timeout_ms < 0 ? 0 : GetTickCount64() + (ULONGLONG)timeout_ms; uint32_t dropped = 0;
     while (filled < n) {
         if (u->closed) { rc = filled ? KSL_OK : KSL_ERROR; break; }
         int wait;
@@ -375,9 +378,14 @@ int ksl_udp_recv(ksl_udp *u, uint8_t *const *bufs, const uint32_t *caps, uint32_
             if (recv_transient(e)) { if (filled) break; idle_slice(u, timeout_ms, deadline); rc = KSL_WANT_READ; break; }   /* nothing received this slice */
             set_err(u, e, "WSARecvMsg"); rc = filled ? KSL_OK : KSL_ERROR; break;
         }
+        /* a run of datagrams that all get dropped (from a sender faster than the drain, so the poll never times out) still ends at
+           the deadline; a call that may not wait (timeout 0) or already holds datagrams stops after DROP_CHECK of them (as in
+           ksl_udp_recv.c) */
+        if (++dropped % DROP_CHECK == 0 && timeout_ms >= 0 && (filled || timeout_ms == 0 || GetTickCount64() >= deadline)) { if (!filled) rc = KSL_WANT_READ; break; }
         if (m.dwFlags & MSG_TRUNC) continue;
         if (!take_datagram(u, &m, (uint32_t)r, &ss)) continue;
-        filled = hand_out(u, bufs, caps, lens, addrs, ecnv, n, filled);
+        uint32_t before = filled; filled = hand_out(u, bufs, caps, lens, addrs, ecnv, n, filled);
+        if (filled > before) dropped = 0;
     }
     *received = filled;
     __atomic_sub_fetch(&u->in_recv, 1, __ATOMIC_SEQ_CST);

@@ -267,7 +267,7 @@ int      ksl_udp_send(ksl_udp *, uint8_t *const *bufs, const uint32_t *lens, con
             skipped (counted), never an error of the socket; EAGAIN -> KSL_OK with *sent so far. Link-local IPv6 is not supported: the address has no
             scope id, so ksl_udp_recv drops datagrams from fe80::/10 and a send there is a lost slot */
 int      ksl_udp_recv(ksl_udp *, uint8_t *const *bufs, const uint32_t *caps, uint32_t *lens, uint8_t *addrs, uint8_t *ecn, uint32_t n, uint32_t *received, int timeout_ms);
-         /* recvmsg + UDP_GRO into a scratch buffer, segments split into consecutive slots (leftovers wait for the next call); MSG_TRUNC and oversized segments drop; KSL_WANT_READ on timeout */
+         /* recvmsg + UDP_GRO into a scratch buffer, segments split into consecutive slots (leftovers wait for the next call); MSG_TRUNC and oversized segments drop; KSL_WANT_READ on timeout. timeout_ms is one deadline for the call (dropped datagrams do not restart it); with timeout 0 or a slot already filled, 64 drops in a row end the call */
 int      ksl_udp_get(ksl_udp *, int what, uint8_t *out, size_t cap, size_t *len);
 void     ksl_udp_shutdown(ksl_udp *);   /* wakes a blocked ksl_udp_recv and closes the socket; later send/recv answer KSL_ERROR at once; the object stays until ksl_udp_close */
 void     ksl_udp_close(ksl_udp *);      /* shutdown (when not done yet), waits for a receiver still inside, frees; never while another thread may still call in */

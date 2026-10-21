@@ -113,7 +113,10 @@ public class KslUdpSocket private constructor(
     /**
      * Receives up to `n` datagrams into the first slots, waiting at most [timeoutMs] (0 polls, negative waits without limit) for the
      * first one; `lens`, `addrs` and `ecn` describe the filled slots. Returns 0 on timeout and after [shutdown] (check [isClosed]).
-     * A datagram larger than its slot, or than the receive scratch, is dropped whole, never truncated. Throws [KslException.Internal]
+     * [timeoutMs] is one deadline for the whole call: datagrams dropped meanwhile do not restart it, and a call that already filled
+     * a slot or has [timeoutMs] 0 returns after at most 64 dropped datagrams in a row, so a non-negative timeout bounds the call
+     * whatever the peer sends. A datagram larger than its slot, or than the receive scratch, is dropped whole, never truncated;
+     * empty datagrams and (with the address format having no scope id) IPv6 link-local sources are dropped too. Throws [KslException.Internal]
      * (errno in [KslException.Internal.alert]) when `poll`/`recvmsg` fails on a socket that was not shut down: a broken socket is
      * never reported as an endless run of timeouts.
      */
