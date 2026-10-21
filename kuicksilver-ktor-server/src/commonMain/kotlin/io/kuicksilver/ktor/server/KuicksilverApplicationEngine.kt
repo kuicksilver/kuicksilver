@@ -69,7 +69,11 @@ public class KuicksilverApplicationEngine(
         /** Serve HTTP/3 on UDP on the port of every TLS connector. */
         public var http3: Boolean = true
 
-        /** QUIC transport settings of the HTTP/3 listener; [QuicConfig.Default] until assigned. */
+        /**
+         * QUIC transport settings of the HTTP/3 listener; [QuicConfig.Default] until assigned. With [http3] on,
+         * `maxUniStreams` must be at least 3 (RFC 9114 section 6.2): a smaller value fails the start with
+         * IllegalArgumentException.
+         */
         public var quic: QuicConfig = QuicConfig.Default
             set(value) {
                 field = value

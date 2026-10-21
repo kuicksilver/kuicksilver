@@ -26,6 +26,8 @@ import kotlin.time.Duration
  * configurations must offer ALPN `h3` (RFC 9114 section 3.1); an accepted connection that negotiated anything else is
  * closed, and [connect]/[connectEarly] fail with H3_GENERAL_PROTOCOL_ERROR ([Http3Exception.Protocol]) when the server chose
  * another protocol the client offered. `SETTINGS_H3_DATAGRAM` follows the transport: it is 1 only when [QuicConfig.maxDatagramFrameSize] is not 0.
+ * [QuicConfig.maxUniStreams] must be at least 3, so the peer can open its control and QPACK streams (RFC 9114 section
+ * 6.2): [bind], [connect] and [connectEarly] throw IllegalArgumentException for a smaller value.
  */
 public class Http3Endpoint private constructor(
     private val endpoint: QuicEndpoint,
@@ -42,6 +44,7 @@ public class Http3Endpoint private constructor(
         settings: Http3Settings = Http3Settings.Default,
     ): Http3Connection {
         require(H3 in tls.alpn) { "the TLS configuration must offer ALPN \"h3\"" }
+        requireCriticalStreams(quic)
         val c = endpoint.connect(remote, QuicClientConfig.Builder(tls).apply { this.quic = quic }.build())
         return try {
             requireH3(c)
@@ -67,6 +70,7 @@ public class Http3Endpoint private constructor(
         earlyData: EarlyDataState = EarlyDataState.Allowed,
     ): Http3Connection {
         require(H3 in tls.alpn) { "the TLS configuration must offer ALPN \"h3\"" }
+        requireCriticalStreams(quic)
         require(earlyData != EarlyDataState.Disabled) { "connectEarly needs earlyData Allowed or Required" }
         val c =
             endpoint.connectEarly(
@@ -170,7 +174,10 @@ public class Http3Endpoint private constructor(
             config: QuicEndpointConfig = QuicEndpointConfig.Default,
             settings: Http3Settings = Http3Settings.Default,
         ): Http3Endpoint {
-            config.server?.let { require(H3 in it.tls.alpn) { "the server TLS configuration must offer ALPN \"h3\"" } }
+            config.server?.let {
+                require(H3 in it.tls.alpn) { "the server TLS configuration must offer ALPN \"h3\"" }
+                requireCriticalStreams(it.quic)
+            }
             val server = config.server?.let { settings.withTransport(it.quic) } ?: settings
             return Http3Endpoint(QuicEndpoint.bind(local, config.withEarlyDataContext(server)), server)
         }
@@ -191,6 +198,17 @@ public class Http3Endpoint private constructor(
                                 earlyDataContext = settings.earlyDataContext()
                             }.build()
                 }.build()
+        }
+
+        /**
+         * RFC 9114 section 6.2: our transport parameters "MUST allow the peer to create at least three unidirectional
+         * streams" (its control and QPACK streams). A configuration that grants fewer is refused, never raised quietly.
+         */
+        private fun requireCriticalStreams(q: QuicConfig) {
+            require(q.maxUniStreams >= 3) {
+                "HTTP/3 needs QuicConfig.maxUniStreams >= 3 (RFC 9114 section 6.2: the peer opens its control and QPACK " +
+                    "streams), not ${q.maxUniStreams}"
+            }
         }
 
         private fun Http3Settings.withTransport(q: QuicConfig): Http3Settings =

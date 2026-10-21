@@ -31,6 +31,7 @@ import io.kuicksilver.http3.Http3Response
 import io.kuicksilver.http3.http3Request
 import io.kuicksilver.ktor.client.EngineEvents
 import io.kuicksilver.ktor.client.H3BodyConsumed
+import io.kuicksilver.ktor.client.Http3DiscoveryMode
 import io.kuicksilver.ktor.client.KuicksilverEngineConfig
 import io.kuicksilver.ktor.client.connectTimeoutMillis
 import io.kuicksilver.ktor.client.h1.toMillisOrMax
@@ -155,6 +156,17 @@ internal class H3Pool(
                     }.build()
             }
         }
+
+    init {
+        // RFC 9114 section 6.2: refused when the engine is created, not clamped (Http3Endpoint.connect refuses it too)
+        if (config.http3.discovery != Http3DiscoveryMode.H1Only) {
+            require(quic.maxUniStreams >= 3) {
+                "HTTP/3 needs quic.maxUniStreams >= 3 (RFC 9114 section 6.2: the server opens its control and QPACK streams), " +
+                    "not ${quic.maxUniStreams}; Http3DiscoveryMode.H1Only does not use HTTP/3"
+            }
+        }
+    }
+
     private var endpoint: Http3Endpoint? = null
     private val connections = HashMap<String, H3Entry>()
 

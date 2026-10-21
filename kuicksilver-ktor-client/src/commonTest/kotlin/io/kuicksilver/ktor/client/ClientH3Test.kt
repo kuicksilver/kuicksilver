@@ -138,6 +138,19 @@ class ClientH3Test {
         )
     }
 
+    /**
+     * HTTP/3 needs the server to be able to open three unidirectional streams (RFC 9114 section 6.2): an engine whose QUIC
+     * settings grant fewer is refused when it is created, unless it never speaks HTTP/3.
+     */
+    @Test fun negative_fewerThanThreeUniStreamsAreRefused() {
+        val e =
+            assertFailsWith<IllegalArgumentException> {
+                testClient(Http3DiscoveryMode.Preferred, engine = { quic = io.kuicksilver.quic.quicConfig { maxUniStreams = 2 } }).close()
+            }
+        assertTrue("RFC 9114 section 6.2" in e.message.orEmpty(), e.message)
+        testClient(Http3DiscoveryMode.H1Only, engine = { quic = io.kuicksilver.quic.quicConfig { maxUniStreams = 2 } }).close()
+    }
+
     /** The client's endpoint binds 0.0.0.0:0; that socket is dual-stack, so an IPv6 server is reachable over h3 (review of k7/macos-server). */
     @Test fun h3ToIpv6Loopback() =
         h3Test {

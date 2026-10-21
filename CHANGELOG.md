@@ -75,6 +75,13 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - POM: `<scm><connection>` is `scm:git:https://github.com/kuicksilver/kuicksilver.git` in every module's POM and the
   BOM's, was `scm:git:git://...`. GitHub turned the unauthenticated `git://` protocol off in 2022, so tools that read
   the POM's SCM connection (Maven's SCM plugins, dependency dashboards, source links) could not reach it.
+- HTTP/3: a QUIC configuration that lets the peer open fewer than three unidirectional streams is refused with
+  IllegalArgumentException instead of being used: by `Http3Endpoint.bind` (server), `connect` and `connectEarly`, by
+  the Ktor server when it starts with `http3` on, and by the Ktor client engine when it is created (unless its discovery
+  mode is `H1Only`). RFC 9114 section 6.2: the transport parameters "MUST allow the peer to create at least three
+  unidirectional streams" (its control and QPACK streams); a peer of such a configuration could not start HTTP/3, and a
+  Kuicksilver peer now closes the connection after three seconds. A configuration that used to start now fails fast;
+  the value is not raised quietly.
 
 ### Fixed
 

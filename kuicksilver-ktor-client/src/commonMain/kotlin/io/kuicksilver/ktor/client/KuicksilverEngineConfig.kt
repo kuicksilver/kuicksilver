@@ -120,7 +120,8 @@ public class KuicksilverEngineConfig : HttpClientEngineConfig() {
 
     /**
      * QUIC transport settings of HTTP/3 connections. A `connectionIdLength` set here is used by the engine's endpoint too
-     * ([Http3ClientConfig.endpoint]).
+     * ([Http3ClientConfig.endpoint]). `maxUniStreams` must be at least 3 (RFC 9114 section 6.2) unless the discovery mode is
+     * `H1Only`: the engine refuses a smaller value with IllegalArgumentException when it is created.
      */
     public var quic: QuicConfig = QuicConfig.Default
 

@@ -20,6 +20,8 @@ import kotlinx.coroutines.withTimeout
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 
 /** `Http3Endpoint.accept` serves every client even when one of them never lets HTTP/3 start (review h-http H1). */
@@ -89,6 +91,48 @@ class Http3EndpointAcceptTest {
                     stuck.close()
                     server.close()
                 }
+            }
+        }
+
+    /**
+     * RFC 9114 section 6.2: our transport parameters "MUST allow the peer to create at least three unidirectional streams".
+     * A configuration that grants fewer is refused before anything is bound or sent, on both sides, never clamped.
+     */
+    @Test fun negative_fewerThanThreeUniStreamsIsRefused(): Unit =
+        runBlocking {
+            val net = MemoryNet()
+            val serverIo = net.open(InetSocketAddress("10.0.0.2", 443))
+            val two = quicConfig { maxUniStreams = 2 }
+            val e =
+                assertFailsWith<IllegalArgumentException> {
+                    Http3Endpoint.bind(
+                        serverIo.localAddress,
+                        QuicEndpointConfig
+                            .Builder()
+                            .apply {
+                                this.server = QuicServerConfig.Builder(H3Fixtures.server()).apply { quic = two }.build()
+                                crypto = NullCryptoProvider
+                                io = { serverIo }
+                            }.build(),
+                    )
+                }
+            assertTrue("RFC 9114 section 6.2" in e.message.orEmpty(), e.message)
+            val clientIo = net.open(InetSocketAddress("10.0.0.1", 1111))
+            val client =
+                Http3Endpoint.bind(
+                    clientIo.localAddress,
+                    QuicEndpointConfig
+                        .Builder()
+                        .apply {
+                            crypto = NullCryptoProvider
+                            io = { clientIo }
+                        }.build(),
+                )
+            try {
+                assertFailsWith<IllegalArgumentException> { client.connect(serverIo.localAddress, H3Fixtures.client(), two) }
+                assertFailsWith<IllegalArgumentException> { client.connectEarly(serverIo.localAddress, H3Fixtures.client(), two) }
+            } finally {
+                client.close()
             }
         }
 }

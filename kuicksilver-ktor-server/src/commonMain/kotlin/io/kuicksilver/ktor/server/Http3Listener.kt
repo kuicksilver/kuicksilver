@@ -61,6 +61,12 @@ internal class H3Listener(
  */
 internal fun KuicksilverApplicationEngine.http3Binder(tls: KuicksilverTlsConnector): (suspend (Int) -> Http3Endpoint)? {
     if (!configuration.http3) return null
+    // RFC 9114 section 6.2: refused when the engine starts, not clamped (Http3Endpoint.bind refuses it too)
+    configuration.http3Quic().maxUniStreams.let { n ->
+        require(n >= 3) {
+            "HTTP/3 needs quic.maxUniStreams >= 3 (RFC 9114 section 6.2: the client opens its control and QPACK streams), not $n"
+        }
+    }
     if (tls.sniSelector != null) {
         environment.log.warn("HTTP/3 is not served on ${tls.host}:${tls.port}: sniSelector is not supported by QUIC in v1")
         return null
