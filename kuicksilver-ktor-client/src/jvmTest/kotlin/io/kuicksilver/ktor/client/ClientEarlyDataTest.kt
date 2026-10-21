@@ -66,9 +66,11 @@ class ClientEarlyDataTest {
         }
 
     /**
-     * HTTP/3 works and a ticket is kept (nothing listens on TCP: HTTP/3 wins the race), then QUIC is blocked on the path and
-     * HTTP/1.1 appears on TCP; it accepts connections only once the client's first QUIC datagram was dropped, so the
-     * HTTP/3 setup has been under way first. Runs [phase2] with the URL, the client and its engine.
+     * HTTP/3 works and a ticket is kept (TCP accepts nothing yet: a connection waits in the backlog, and HTTP/3 wins the
+     * race), then QUIC is blocked on the path and HTTP/1.1 is served on TCP; it accepts connections only once the client's
+     * first QUIC datagram was dropped, so the HTTP/3 setup has been under way first. Runs [phase2] with the URL, the client
+     * and its engine. The TCP port is bound with the relay's UDP port, before the ticket names it: binding it only for
+     * phase 2 failed with "Address already in use" whenever another process held that TCP port.
      */
     private suspend fun ticketThenUdpBlocked(
         connectTimeout: kotlin.time.Duration,
@@ -78,7 +80,7 @@ class ClientEarlyDataTest {
     ) = kotlinx.coroutines.coroutineScope {
         val ep = h3Origin(earlyData = true)
         try {
-            udpRelay(ep.localAddress.port) { port, relay ->
+            udpRelay(ep.localAddress.port, tcpTwin = true) { port, relay ->
                 val url = "https://127.0.0.1:$port/"
                 testClient(Http3DiscoveryMode.Preferred, engine = {
                     this.connectTimeout = connectTimeout
@@ -94,7 +96,7 @@ class ClientEarlyDataTest {
                     engine.h3.dropConnectionsForTest().forEach { it.close() }
                     relay.blocked = true
                     onBlocked()
-                    tlsH1WithSilentUdp(port, silentUdp = false, acceptAfter = relay.dropped, handler = { _, input, output ->
+                    tlsH1WithSilentUdp(silentUdp = false, listener = relay.tcp, acceptAfter = relay.dropped, handler = { _, input, output ->
                         while (readRequest(input).isNotEmpty()) {
                             output.writeStringUtf8("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nh1")
                         }
