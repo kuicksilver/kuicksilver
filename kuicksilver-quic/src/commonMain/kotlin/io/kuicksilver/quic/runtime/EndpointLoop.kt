@@ -188,7 +188,7 @@ internal class EndpointLoop private constructor(
             val caps = launch { followCapabilities(io, path, core) }
             val batch = PacketBatch(16, SLOT_SIZE)
             val limiter = WorkLimiter()
-            val receiver = BatchReceiver(io, ::now)
+            val receiver = BatchReceiver(io, ::now, directWait)
             try {
                 limiter.start(now())
                 while (true) {
@@ -357,8 +357,15 @@ internal class EndpointLoop private constructor(
      */
     private val limiter = WorkLimiter()
 
+    /**
+     * How long a receive may wait on the loop's thread for the next datagrams: never on a dispatcher the caller supplied, which
+     * other work shares (two endpoints on one dispatcher would each stall the other's sends for 1 ms per quiet gap; review d-quic);
+     * what is already queued is still taken there.
+     */
+    private val directWait: Duration = if (config.dispatcher != null) Duration.ZERO else BatchReceiver.PLATFORM_WAIT
+
     /** This socket's batches: on the loop's thread while datagrams keep coming, else through the blocking receive. */
-    internal val receiver = BatchReceiver(io, ::now)
+    internal val receiver = BatchReceiver(io, ::now, directWait)
 
     /** Time left until the loop's next timer: a receive on the loop's thread waits no longer. */
     private val untilTimer: () -> Duration = { timers.peek()?.let { it.heapDeadline - now() } ?: Duration.INFINITE }

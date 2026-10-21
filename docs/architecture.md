@@ -104,8 +104,8 @@ ktor-network sockets as the fallback (ADR-0006).
 **Architecture Invariant:** a connection is touched only by the endpoint loop that owns it (a single-threaded
 dispatcher). Application calls become commands queued to the loop; there are no locks on connection state. Nothing
 blocks on the loop's thread except a socket wait of at most 1 ms (and never past its next timer) while datagrams keep
-coming (`runtime/BatchReceiver.kt`; not on Windows); a dispatcher the caller supplies, a UI one for instance, sees that
-wait too.
+coming (`runtime/BatchReceiver.kt`; not on Windows), and only on the loop's own dispatcher: on one the caller supplies (a
+UI one, or one shared by two endpoints) the loop takes what is queued and never waits.
 
 **Architecture Invariant:** memory per connection is bounded by explicit ceilings (windows, queues, ranges), each refused
 before allocation; there is no separate byte budget.

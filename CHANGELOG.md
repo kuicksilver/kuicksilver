@@ -54,8 +54,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
     Kotlin/Native, whose IO dispatcher is a pool of its own. While datagrams keep coming, the loop now reads the
     accelerated socket on its own thread: what is queued, or what arrives within 1 ms and before the loop's next timer
     (not on Windows, whose 1 ms poll waits a 15.6 ms tick); the loop's queued work still runs after every 16 datagrams
-    or 1 ms, and a multi-loop server's forward loop yields after every 16 forwarded datagrams too. The loop's
-    dispatcher, a caller-supplied one too, can therefore block for up to 1 ms (`QuicEndpointConfig.dispatcher`).
+    or 1 ms, and a multi-loop server's forward loop yields after every 16 forwarded datagrams too. The loop's own
+    dispatcher can therefore block for up to 1 ms; on a caller-supplied `QuicEndpointConfig.dispatcher` the loop takes
+    what is queued and never waits, as other work shares that thread (two endpoints on one dispatcher would otherwise
+    each hold up the other's sends for 1 ms per quiet gap).
     `ksl_udp_recv` calls `recvmsg` before `poll` (Linux, Android, Apple; Windows still polls first), so a datagram
     costs one system call instead of two. The acknowledgement policy was not the cause and is unchanged: an ACK per
     receive batch of at least two ack-eliciting packets, at once after a gap; the packet numbers quiche and quinn skip

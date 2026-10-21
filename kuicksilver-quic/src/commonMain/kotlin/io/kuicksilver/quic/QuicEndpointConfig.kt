@@ -163,8 +163,10 @@ public class QuicEndpointConfig private constructor(
     public val acceptQueue: Int,
     /**
      * The single-threaded dispatcher of the endpoint loop; null means `Dispatchers.Default.limitedParallelism(1)`. While
-     * datagrams keep coming, the loop waits for the next ones on this dispatcher's thread, at most 1 ms at a time and never
-     * past its next timer (not on Windows): a dispatcher supplied here, a UI one for instance, is blocked that long.
+     * datagrams keep coming, the loop reads the ones already queued at the socket on this dispatcher's thread. On its own
+     * dispatcher (null here) it also waits there for the next ones, at most 1 ms at a time and never past its next timer (not
+     * on Windows); on a dispatcher supplied here it never waits, as other work shares the thread (a UI, or a second endpoint
+     * whose datagram it would be waiting for).
      */
     public val dispatcher: CoroutineDispatcher?,
     /** How the loop opens its socket; null means [DatagramIo.open]. */
@@ -211,7 +213,7 @@ public class QuicEndpointConfig private constructor(
 
         /**
          * Default null (a one-thread view of `Dispatchers.Default`); must stay null with more than one of [loops]. The loop
-         * blocks it for at most 1 ms at a time in a socket wait; see [QuicEndpointConfig.dispatcher].
+         * never waits in a socket on a dispatcher set here; see [QuicEndpointConfig.dispatcher].
          */
         public var dispatcher: CoroutineDispatcher? = null
 

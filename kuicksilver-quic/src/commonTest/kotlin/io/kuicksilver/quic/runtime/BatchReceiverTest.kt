@@ -6,11 +6,18 @@ package io.kuicksilver.quic.runtime
 
 import io.ktor.network.sockets.InetSocketAddress
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
+import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.DatagramIo
 import io.kuicksilver.quic.DirectReceive
 import io.kuicksilver.quic.IoCapabilities
+import io.kuicksilver.quic.MemoryNetwork
+import io.kuicksilver.quic.NullCryptoProvider
 import io.kuicksilver.quic.PacketBatch
+import io.kuicksilver.quic.QuicEndpoint
+import io.kuicksilver.quic.QuicEndpointConfig
 import io.kuicksilver.quic.TimeMark
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
@@ -193,5 +200,42 @@ class BatchReceiverTest {
             val r = receiver(PortableIo(inner))
             repeat(2) { r.receive(batch, noTimer) }
             assertEquals(listOf("blocking", "blocking"), inner.calls)
+        }
+
+    /**
+     * Review d-quic: two endpoints on one caller-supplied dispatcher each held the shared thread for 1 ms in a socket wait per
+     * quiet gap, while the other could not send the datagram being waited for. The loop waits only on its own dispatcher.
+     */
+    @Test fun aSuppliedDispatcherIsNeverHeldInASocketWait() =
+        runBlocking {
+            KslLoader.ensureLoaded()
+            val net = MemoryNetwork()
+
+            suspend fun bind(
+                port: Int,
+                on: CoroutineDispatcher?,
+            ) = QuicEndpoint.bind(
+                InetSocketAddress("10.0.0.1", port),
+                QuicEndpointConfig
+                    .Builder()
+                    .apply {
+                        crypto = NullCryptoProvider
+                        io = { net.open(it) }
+                        dispatcher = on
+                    }.build(),
+            ) as EndpointLoop
+            val own = bind(1, null)
+            val shared = Dispatchers.Default.limitedParallelism(1)
+            val first = bind(2, shared)
+            val second = bind(3, shared)
+            try {
+                assertEquals(BatchReceiver.PLATFORM_WAIT, own.receiver.maxWait)
+                assertEquals(Duration.ZERO, first.receiver.maxWait)
+                assertEquals(Duration.ZERO, second.receiver.maxWait)
+            } finally {
+                own.close()
+                first.close()
+                second.close()
+            }
         }
 }

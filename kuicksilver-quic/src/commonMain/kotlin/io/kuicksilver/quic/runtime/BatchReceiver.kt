@@ -22,7 +22,9 @@ import kotlin.time.Duration.Companion.milliseconds
  * also releases the dispatcher's thread while the socket is idle. The wait is in whole milliseconds and floored: a timer
  * due within 1 ms makes it 0, so the receiver falls back to the blocking receive and its hand-offs; a paced sender whose
  * pacing or ACK timers fall that close gets less of the gain. [maxWait] is zero where a short poll timeout is not precise
- * (Windows: whole timer ticks of 15.6 ms), so only what is already queued is taken there.
+ * (Windows: whole timer ticks of 15.6 ms), so only what is already queued is taken there, and on a dispatcher the caller
+ * supplied (`QuicEndpointConfig.dispatcher`): other work shares its thread (a second endpoint, whose datagram this one would
+ * be waiting for, or a UI), and a wait there would hold that work up for every quiet gap.
  *
  * The work queued on the loop (timers, the application's reads and writes) runs as often as with the blocking receive,
  * which suspended after at most [YIELD_DATAGRAMS] datagrams: the receiver yields once it took that many directly, once
@@ -34,7 +36,7 @@ import kotlin.time.Duration.Companion.milliseconds
 internal class BatchReceiver(
     private val io: DatagramIo,
     private val now: () -> TimeMark,
-    private val maxWait: Duration = if (millisecondPollWaits) DEFAULT_WAIT else Duration.ZERO,
+    internal val maxWait: Duration = PLATFORM_WAIT,
 ) {
     private val direct = io as? DirectReceive
 
@@ -84,6 +86,9 @@ internal class BatchReceiver(
     companion object {
         /** Long enough for the gaps between a paced sender's bursts (under 0.2 ms from quinn at 0.9 Gbit/s), short for a command. */
         val DEFAULT_WAIT: Duration = 1.milliseconds
+
+        /** [DEFAULT_WAIT] where the platform's poll timeout is precise to the millisecond, else zero (Windows). */
+        val PLATFORM_WAIT: Duration get() = if (millisecondPollWaits) DEFAULT_WAIT else Duration.ZERO
 
         /** The blocking receive's batch (the loop's 16 slots): queued work ran at least this often. */
         const val YIELD_DATAGRAMS = 16
