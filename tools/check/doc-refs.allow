@@ -1,0 +1,19 @@
+# Copyright 2026 The Kuicksilver Authors
+# SPDX-License-Identifier: Apache-2.0
+# Intended exceptions of tools/check/doc-refs.sh, one per line: `<file glob> | <kind> | <text the detail contains>`,
+# then ` # <reason>`. Keep each entry as narrow as it can be; the check warns about entries that match nothing.
+
+# Outputs of documented commands, not references to tracked files.
+CONTRIBUTING.md | path-ignored | kuicksilver-soak/build/soak # the soak report's default directory, written by the run
+docs/guide/ios.md | path-ignored | samples/ios/kuicksilver-swift/build/XCFrameworks/ # the XCFramework the build writes
+docs/benchmarks.md | path-missing | tables.md (missing # a file run-table.sh writes into its --out directory
+
+# ADR-0013 is a design record: its test plan and API sketch name what was planned, and a note after them names what
+# landed (ADR-0015). Rejected or dropped options are recorded on purpose.
+docs/adr/0013-0rtt-anti-replay-design.md | symbol | `negative_zeroRtt # planned test names, superseded (see the note)
+docs/adr/0013-0rtt-anti-replay-design.md | symbol | `negative_unsafeMethodEarlyWaitsForHandshake` # planned, superseded
+docs/adr/0013-0rtt-anti-replay-design.md | symbol | `negative_h3SettingsChangedRejects0Rtt` # planned, superseded
+docs/adr/0013-0rtt-anti-replay-design.md | symbol | `KSL_OPT_EARLY_DATA_MAX_AGE` # a knob the review drops explicitly
+docs/adr/0013-0rtt-anti-replay-design.md | symbol | `QuicConfig.maxEarlyDataAge` # dropped by the review and by ADR-0015
+docs/adr/0013-0rtt-anti-replay-design.md | symbol | `Config.Allow0RTT` # quic-go's option, not ours
+docs/adr/0015-0rtt-implementation.md | symbol | `KSL_WANT_EARLY` # an alternative the ADR rejects

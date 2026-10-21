@@ -48,6 +48,10 @@ jobs:
         with: { persist-credentials: false }
       - name: 'lint: action/image pins'
         run: bash tools/check/pins.sh .
+      - name: 'lint: documentation references'
+        run: bash tools/check/doc-refs.sh
+      - name: 'lint: doc-refs negative controls'
+        run: bash tools/check/doc-refs-test.sh
       - name: 'lint: SPDX headers'
         run: bash tools/check/spdx.sh .
       - name: 'lint: shell syntax'

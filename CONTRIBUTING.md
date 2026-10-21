@@ -22,7 +22,7 @@ every commit. This document says how to build, test and propose changes. By part
 | Docker (with `linux/amd64` and `linux/arm64`) | OpenSSL and `libksl` for Linux (manylinux2014, glibc 2.17) and Windows (mingw-w64), Linux test runs |
 | Android SDK with NDK r28+ (r27 works: the scripts pass the 16 KiB page flags) | the Android AAR; set `ANDROID_NDK_ROOT` or let the scripts pick the newest NDK in the SDK |
 | macOS with Xcode | Apple targets (cinterop needs a Mac host) |
-| Python 3 | tools under `tools/` (symbol maps, QPACK tables, link check) |
+| Python 3 | tools under `tools/` (symbol maps, QPACK tables, link and reference checks) |
 
 The Gradle wrapper (`./gradlew`) downloads Gradle; Kotlin/Native downloads its toolchain into `~/.konan` on the first
 native build. Please keep builds polite on shared machines: `--max-workers=2` is what the scripts use.
@@ -83,6 +83,7 @@ bash tools/c-test.sh                                             # the ksl C tes
 ./gradlew checkKotlinAbi                                         # public ABI against the dumps in <module>/api/
 ./gradlew updateKotlinAbi                                        # regenerate the dumps after an intended API change
 bash tools/check/links.sh                                        # relative links in the Markdown files
+bash tools/check/doc-refs.sh                                     # paths, anchors, symbols and private markers in the committed docs
 tools/ci/local-matrix.sh --dry-run                               # list the gate's steps; drop --dry-run to run them
 ```
 
@@ -279,5 +280,5 @@ The maintainers use AI coding tools in this project, and contributors may too, u
 - [ ] Public API: KDoc written, `./gradlew updateKotlinAbi` run and the `api/` diff reviewed; new API is
       `@ExperimentalKuicksilverApi`.
 - [ ] Docs: guides, `docs/spec/rfc-compliance.md` or `docs/spec/threat-model.md` updated where behaviour changed;
-      `tools/check/links.sh` passes.
+      `tools/check/links.sh` and `tools/check/doc-refs.sh` pass.
 - [ ] `CHANGELOG.md` has an `Unreleased` entry for user-visible changes.
