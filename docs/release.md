@@ -2,14 +2,14 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 # Releasing
 
-How a version reaches Maven Central. The owner starts it; nothing is released without the owner pressing *Publish*.
+How a version reaches Maven Central. A maintainer starts it; nothing is released until a maintainer presses *Publish*.
 
 The first published version is **0.2.0**. 0.1.0 was a candidate, frozen on 2026-10-09 and never published; no
 `v0.1.0` tag or Central deployment exists, and none will.
 
-Since 2026-10-14 a release is built, checked, signed and uploaded **from the owner's Mac** with
-`tools/release/local-release.sh`, with no GitHub runner. The `release` workflow below stays as an alternative for later
-(the GitHub Actions minutes reset on 2026-11-01); it is not used for 0.2.0.
+Since 2026-10-14 a release is built, checked, signed and uploaded **from a maintainer's Mac** with
+`tools/release/local-release.sh`, with no GitHub runner; the gate is `tools/ci/local-matrix.sh` on the same machine.
+The GitHub Actions workflows are disabled; the `release` workflow below remains an alternative if hosted CI is enabled.
 
 ## Once: accounts, keys, DNS
 
@@ -31,16 +31,19 @@ Done for the project in October 2026, kept here so it can be repeated for a new 
    `…KeyPassword`, `ORG_GRADLE_PROJECT_mavenCentralUsername`, `…Password` (the workflow takes them from the repository
    secrets `SIGNING_KEY`, `SIGNING_KEY_ID`, `SIGNING_KEY_PASSWORD`, `MAVEN_CENTRAL_USERNAME`, `MAVEN_CENTRAL_PASSWORD`).
    `local-release.sh` checks that they are present and never prints them.
-4. **Publishing limits**: Central grants a free organisation 1167 files, 78 MB and 7 releases per month (30 days of
-   grace above that); higher limits come after a first publication (Sonatype ticket #128575). A Kuicksilver release is
+4. **Publishing limits**: Central grants this namespace 1167 files and 78 MB per deployment (30 days of grace above
+   that), and the project plans at most one release a month; higher limits come after a first publication. A Kuicksilver release is
    seven Kotlin Multiplatform modules with up to nine publications each, plus the BOM; the deployment holds every
    artifact with its `.asc`, `.md5` and `.sha1` (the plugin leaves out `maven-metadata` and checksums of signatures).
    `local-release.sh` counts it from a local publication before every upload and refuses above the limits
    (`--allow-over-limit` within the grace). Size: the `kuicksilver-native` AAR is about 3.6 MB with its three ABIs; the
    `kuicksilver-native` JVM jar carries the five JNI libraries.
 5. **Toolchains** of `gradle/toolchains.toml` on the Mac: the pinned NDK (`sdkmanager --install "ndk;<pin>"`) and Xcode
-   (`xcode-select -s`); Docker with the `tools/openssl/docker` images (built on first use); the Windows 11 VM in
-   Parallels with `~/.kuicksilver-tools/win-jvm-test` for the Windows JVM suites.
+   (`xcode-select -s`); Docker with the `tools/openssl/docker` images (built on first use); a Windows 11 VM (Parallels)
+   and a runner for it, named by `KSL_WIN_JVM_TEST`, for the Windows JVM suites. The runner is a maintainer-local script,
+   not in the repository: it runs the JVM suites of the given tree (`-w <root>`) in the VM against the mingw-w64 dll and
+   ends its output with a `== summary` block of tests, failures and errors per module, which
+   `tools/ci/local-matrix.sh --with-windows` reads (no tests run, or any failure, fails the step).
 
 ## Every release
 
@@ -49,14 +52,13 @@ Done for the project in October 2026, kept here so it can be repeated for a new 
    ```
    tools/ci/local-matrix.sh --with-interop --with-windows
    ```
-   Hours: the CI matrix of `build.yml` on this Mac (Docker for Linux and mingw, the Android emulator running, the
+   Hours: the steps of `build.yml`'s matrix on this Mac (Docker for Linux and mingw, the Android emulator running, the
    interop images, the Windows VM). Its last act is the gate record `build/ci/gate/<commit>.stamp`: the commit, the
    options, every step's result, and `result=pass` only when every step passed with the tree clean and on the same
    commit from start to end. Any later commit needs a new run.
 2. The release commit. `CHANGELOG.md`: move `[Unreleased]` (or the branch's `## [<version>] - unreleased`) under
    `## [<version>] - <date>`; `docs/spec/rfc-compliance.md` and `docs/roadmap.md` say what the version does and does not
-   do; a sentence marked `<!-- release-flip: ... -->` (`grep -rn release-flip README.md docs`) is rewritten as its
-   comment says. The version in the tree: every Gradle and sample fallback names `<X.Y.Z>-SNAPSHOT` of the version
+   do. The version in the tree: every Gradle and sample fallback names `<X.Y.Z>-SNAPSHOT` of the version
    (`kuicksilver.kmp.gradle.kts`, `kuicksilver.release.gradle.kts`, `kuicksilver-bom`, the three sample builds,
    `KuicksilverInfo.VERSION` in `samples/ios/kuicksilver-swift`, `tools/check/consumer-smoke.sh`), normally set when the
    line was started, and for a final version the README ("X.Y.Z is on Maven Central", the dependency line) and
@@ -65,8 +67,8 @@ Done for the project in October 2026, kept here so it can be repeated for a new 
    (step 1) on that commit.
 3. Dry run, then the release, from the same commit:
    ```
-   tools/release/local-release.sh 0.2.0 --dry-run      # everything but the upload; refusals become warnings
-   tools/release/local-release.sh 0.2.0                # uploads one deployment, not released
+   tools/release/local-release.sh <version> --dry-run      # everything but the upload; refusals become warnings
+   tools/release/local-release.sh <version>                # uploads one deployment, not released
    ```
    The script refuses a malformed or `-SNAPSHOT` version, a branch other than `main` or the version's own
    `release/<X.Y>.x` (a detached release commit of either with `--release-commit <sha>`), `main` once `release/<X.Y>.x`
@@ -75,13 +77,13 @@ Done for the project in October 2026, kept here so it can be repeated for a new 
    Central (a release asks `repo1.maven.org` for the BOM's POM and refuses on 200, or when it gets no 200 or 404; a dry
    run does not ask), a tree whose version fallbacks or (final versions) README and iOS
    guide coordinates do not name the version (step 2), a dirty tree, a missing or failed gate record for `HEAD` (or one run with
-   `--skip-*`, or without `--with-interop --with-windows`), a `CHANGELOG.md` without the version and its date (`## [0.2.0] - 2026-10-15`), an NDK or Xcode other
+   `--skip-*`, or without `--with-interop --with-windows`), a `CHANGELOG.md` without the version and its date (`## [0.2.0] - 2026-10-18`), an NDK or Xcode other
    than the pins (`--allow-toolchain-drift` to accept), and missing credentials or signing key
    (`tools/release/local-release-test.sh` runs the branch, origin, Central, CHANGELOG and version refusals in a
    throwaway repository with a stubbed Central, and the version checks on the repository's own files; the local gate
    runs it). Then:
    - OpenSSL: the pinned tarball fetched and verified; **all twelve targets rebuilt from it** (`KSL_OPENSSL_FRESH=1`:
-     `build/openssl` (each worktree has its own; CI downloads it) and the build cache are deleted or bypassed, never reused):
+     `build/openssl` (each worktree has its own) and the build cache are deleted or bypassed, never reused):
      `linux-x64`, `linux-arm64` and `mingw-x64` in Docker (one container at a time, under `nice`; `linux-x64` and
      `mingw-x64` emulated on Apple Silicon), `macos-arm64`, `macos-x64`, `ios-arm64`, `ios-sim-arm64`, the three Android
      ABIs and the two Kotlin/Native Linux targets on the host; `no-sslkeylog` and the absence of the FIPS provider
@@ -89,7 +91,7 @@ Done for the project in October 2026, kept here so it can be repeated for a new 
      `provenance.txt` (the tarball's SHA-256, the configure line, the archives' SHA-256), which
      `-Pkuicksilver.openssl.prebuilt=true` checks before Gradle reuses the build (`tools/openssl/prebuilt-test.sh` runs
      its negative controls). `mingw-x64` is the `openssl-mingw-x64` the workflow downloads.
-   - The five JVM libraries, as the CI jobs build them, each into `build/release/jni-artifacts/jni-<classifier>`:
+   - The five JVM libraries, as `build.yml`'s jobs build them, each into `build/release/jni-artifacts/jni-<classifier>`:
      `osx-aarch_64` and `osx-x86_64` (`.dylib`, the second cross-built with `clang -arch x86_64`), `linux-x86_64` and
      `linux-aarch_64` (manylinux2014 `.so`), `windows-x86_64` (mingw-w64 `.dll`, `tools/ci/jni-windows.sh`). Each is
      checked: architecture, export whitelist (`tools/check/exports.sh`), imported libraries (system ones only), glibc
@@ -109,7 +111,7 @@ Done for the project in October 2026, kept here so it can be repeated for a new 
    - `publishToMavenCentral`: **one Gradle invocation, one deployment** (several would produce several deployments and
      inconsistent root metadata), signed, `automaticRelease = false`:
      ```
-     ./gradlew --max-workers=2 -Pkuicksilver.version=0.2.0 -Pkuicksilver.openssl.prebuilt=true \
+     ./gradlew --max-workers=2 -Pkuicksilver.version=<version> -Pkuicksilver.openssl.prebuilt=true \
        -x :kuicksilver-native:buildJniHost publishToMavenCentral
      ```
    Logs: `build/release/logs/<step>.log`. `--resume` reuses the JNI libraries an interrupted run already built and
@@ -119,10 +121,10 @@ Done for the project in October 2026, kept here so it can be repeated for a new 
    every platform publication, the BOM, signatures and checksums). Then press *Publish*. A deployment that fails
    validation is dropped in the portal and the script runs again after the fix; nothing was released.
 5. Consumer check from Central (allow the sync to `repo1.maven.org` an hour): `tools/check/consumer-smoke.sh --central
-   0.2.0` builds the main source sets of `samples/realtime-telemetry` (JVM and macosArm64) against
-   `io.kuicksilver:kuicksilver-quic:0.2.0` and its transitive modules from Maven Central, without `includeBuild` or
+   <version>` builds the main source sets of `samples/realtime-telemetry` (JVM and macosArm64) against
+   `io.kuicksilver:kuicksilver-quic:<version>` and its transitive modules from Maven Central, without `includeBuild` or
    mavenLocal. Its tests are not run there: they need `kuicksilver-testing`, which is not published.
-6. Only after the deployment is published: `git tag -s v0.2.0 -m "Kuicksilver 0.2.0"` on the release commit, push the
+6. Only after the deployment is published: `git tag -s v<version> -m "Kuicksilver <version>"` on the release commit, push the
    branch it was released from (`main` or `release/<X.Y>.x`; the script's last lines name it) and the tag, and the GitHub release from the tag with the changelog section. Attach the four supply-chain files of
    step 3: `kuicksilver-<version>-sbom.zip`, `kuicksilver-<version>.intoto.json` and their `.asc`. The version is passed to
    Gradle (`-Pkuicksilver.version`); the tree's `-SNAPSHOT` fallbacks only name the line, and the script checks that they
@@ -221,7 +223,7 @@ v1](https://slsa.dev/spec/v1.0/provenance) predicate.
   (SHA-256, signing key fingerprint, the configure flags as the SBOM lists them, their file and its SHA-256), the
   Gradle distribution (its SHA-256 from the wrapper properties), `verification-metadata.xml`, the version catalog, the
   Windows JDK and the local Docker images.
-- `runDetails`: the builder (this document, the owner's workstation), start and end, and as byproducts the five JNI
+- `runDetails`: the builder (this document, the maintainer's workstation), start and end, and as byproducts the five JNI
   libraries and the `libcrypto.a`/`libssl.a` of all twelve OpenSSL targets.
 
 It is signed like the Maven artifacts: Gradle's signing plugin with the same key properties (`signReleaseFiles`),
@@ -246,10 +248,10 @@ publication, and the upload is a second Gradle invocation on the same commit and
 files; the `.asc` signatures are not covered); and nothing third-party witnesses the build, which is what the
 `release` workflow below could add once it is used (GitHub's artifact attestations, SLSA Build L2).
 
-## Alternative: the `release` workflow (not used for 0.2.0)
+## Alternative: the `release` workflow (disabled)
 
-`.github/workflows/release.yml` does the same on GitHub-hosted runners, once Actions minutes are available again (they
-reset on 2026-11-01) and the owner chooses to use them. *Actions → release → Run workflow* on `main` with the version:
+`.github/workflows/release.yml` does the same on GitHub-hosted runners. The workflows are disabled; this is the
+alternative if hosted CI is enabled. *Actions → release → Run workflow* on `main` with the version:
 the `gate` job refuses a malformed or `-SNAPSHOT` version, another branch, or a commit without a green `build` run (from
 a push, the weekly schedule or a manual dispatch; a pull-request run builds the merge commit and does not count);
 `publish`, on one macOS runner, downloads that run's `jni-*` and `openssl-mingw-x64` artifacts into `build/` (they live
@@ -262,7 +264,7 @@ step names, same lists from `tools/ci/matrix.sh`); its `jvm-jar` job fails unles
 
 - `-Pkuicksilver.sign=false` publishes unsigned (to count files, or on a machine without the key); a release never uses
   it, and `local-release.sh` refuses when a `gradle.properties` sets it.
-- `tools/check/consumer-smoke.sh 0.2.0` builds `samples/realtime-telemetry` from a local publication;
+- `tools/check/consumer-smoke.sh <version>` builds `samples/realtime-telemetry` from a local publication;
   `KSL_MAVEN_REPO=build/release/m2` points it at the dry run's repository instead of `~/.m2`.
 - The published jars and AARs carry `META-INF/LICENSE`, `META-INF/NOTICE` and the OpenSSL license under
   `META-INF/licenses/<module>/`; the native jar's manifest names the OpenSSL version and its SHA-256.
