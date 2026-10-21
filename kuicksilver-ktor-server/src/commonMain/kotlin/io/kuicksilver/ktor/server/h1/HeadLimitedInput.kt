@@ -143,9 +143,13 @@ internal class HeadLimitedInput(
         return true
     }
 
+    /**
+     * Drops what is buffered. The socket's channel is not cancelled: copies cancel their source when they fail or are
+     * stopped (a body the handler left unread), and the pipeline may then still read and drop the rest of the input
+     * before it closes the connection, which it always does after such a failure.
+     */
     override fun cancel(cause: Throwable?) {
         buffer.clear()
-        source.cancel(cause)
     }
 
     private companion object {

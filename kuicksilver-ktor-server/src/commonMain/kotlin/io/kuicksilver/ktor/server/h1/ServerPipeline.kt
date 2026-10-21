@@ -143,13 +143,23 @@ internal class RequestFraming private constructor(
     /** Whether the request has body bytes to read. */
     val hasBody: Boolean get() = fault == null && (chunked || contentLength > 0)
 
+    /** Copies the body from [input] to [out]; [onComplete] runs once all of it has been read, before [out] is closed. */
     suspend fun readBody(
         input: ByteReadChannel,
         out: ByteWriteChannel,
+        onComplete: () -> Unit = {},
     ) {
-        if (chunked) return decodeChunkedBody(input, out) { if (it is MalformedChunkedBodyException) MalformedRequestBody(it) else it }
+        if (chunked) {
+            return decodeChunkedBody(
+                input,
+                out,
+                readerFailure = { if (it is MalformedChunkedBodyException) MalformedRequestBody(it) else it },
+                onComplete = onComplete,
+            )
+        }
         val copied = input.copyTo(out, contentLength)
         if (copied < contentLength) throw EOFException("The connection closed after $copied of $contentLength body bytes")
+        onComplete()
     }
 
     companion object {
@@ -393,9 +403,26 @@ internal fun CoroutineScope.startH1Pipeline(
                         } ?: settleUnreadBody(body, reader, requestBody)
                     input.endBody()
                     when (outcome) {
-                        is BodyOutcome.ClientGone -> throw outcome.cause
-                        BodyOutcome.Complete -> if (body.endsConnection) break
-                        else -> break
+                        is BodyOutcome.ClientGone -> {
+                            throw outcome.cause
+                        }
+
+                        BodyOutcome.Complete -> {
+                            if (body.endsConnection) break
+                        }
+
+                        BodyOutcome.Abandoned -> {
+                            // the client may still be sending the body: closing over unread input makes the kernel send a
+                            // reset, which can destroy the response before the client reads it. Let the writer finish (and
+                            // half-close), then read and drop for a while (Go's closeWriteAndWait, nginx `lingering_close`)
+                            actorChannel.close()
+                            runCatching { withTimeoutOrNull(LINGER) { connection.input.discard() } }
+                            break
+                        }
+
+                        else -> {
+                            break
+                        }
                     }
                 }
 
@@ -750,9 +777,11 @@ private class RequestBody(
     /** Bytes of the body that may still come: null when not known (chunked). */
     private fun remaining(): Long? = if (framing.chunked) null else (framing.contentLength - input.bodyBytesArrived).coerceAtLeast(0)
 
-    /** Whether the rest of the body is not worth reading: more than the cap, of unknown size, or never coming. */
-    fun notWorthReading(): Boolean =
-        !complete && (continueSent?.isCompleted == false || (remaining() ?: Long.MAX_VALUE) > MAX_UNREAD_BODY_BYTES)
+    /**
+     * Whether the rest of the body is not worth reading: never coming (no `100 Continue`) or known to be more than the
+     * cap. A chunked rest of unknown size is drained up to the cap and only then given up ([settleUnreadBody]).
+     */
+    fun notWorthReading(): Boolean = !complete && (continueSent?.isCompleted == false || (remaining() ?: 0) > MAX_UNREAD_BODY_BYTES)
 
     /** At the response head: true (and decided) when the connection is to end after it, which the head then says. */
     fun endsConnectionAtResponse(): Boolean {
@@ -775,8 +804,8 @@ private suspend fun readRequestBody(
     response: ByteChannel,
 ): BodyOutcome =
     try {
-        body.framing.readBody(body.input, requestBody)
-        body.complete = true
+        // complete before the handler can see the end: a chunked decoder closes its output itself
+        body.framing.readBody(body.input, requestBody) { body.complete = true }
         BodyOutcome.Complete
     } catch (cause: RequestBodyTimeout) {
         // the handler sees it through its read and is answered 408 (H1CallPhase); no further request on this connection,
@@ -813,7 +842,7 @@ private suspend fun settleUnreadBody(
         requestBody.cancel(IOException("The handler ended before reading the request body"))
         return BodyOutcome.Abandoned
     }
-    requestBody.discard(MAX_UNREAD_BODY_BYTES)
+    requestBody.discard(MAX_UNREAD_BODY_BYTES + 1) // a body of exactly the cap is drained in full
     if (!requestBody.isClosedForRead) {
         // more than the cap after all (a chunked body, or the Content-Length was under the count of bytes that arrived)
         body.abandon()

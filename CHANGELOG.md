@@ -110,8 +110,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   upgraded connections are not affected.
 - Ktor server, HTTP/1.1: a request body the handler did not read was read to its end after the response, however
   large (Ktor's default engine phase discards it), and a large one could stall the connection. Now at most 256 KiB of
-  it are read and dropped (as Go's net/http `maxPostHandlerReadBytes`); a larger or chunked rest ends the connection
-  after the response, which says `Connection: close`. A request with `Expect: 100-continue` answered without
+  it are read and dropped (as Go's net/http `maxPostHandlerReadBytes`, chunked bodies too); a larger rest ends the
+  connection after the response, which says `Connection: close`, and what the client still sends is read and dropped
+  for up to 2 s before the close so that a client writing its whole body first is not reset before it reads the
+  answer. A handler that starts its response before reading a body of more than 256 KiB therefore gets
+  `Connection: close` on it (as with Go). A request with `Expect: 100-continue` answered without
   `100 Continue` is not waited for: its response says `Connection: close` and the connection ends (RFC 9110 section
   10.1.1, as Go).
 - Ktor server, HTTP/1.1: a graceful stop cut responses that were still draining to a slow client. A connection ended

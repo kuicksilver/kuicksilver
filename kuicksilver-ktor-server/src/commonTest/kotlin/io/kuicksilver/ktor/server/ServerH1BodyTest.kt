@@ -42,11 +42,13 @@ class ServerH1BodyTest {
 
     private suspend fun plainServer(
         idleSeconds: Int = 1,
+        configure: KuicksilverApplicationEngine.Configuration.() -> Unit = {},
         module: Application.() -> Unit,
         block: suspend (Int) -> Unit,
     ) {
         val server =
             embeddedServer(Kuicksilver, configure = {
+                configure()
                 connectionIdleTimeoutSeconds = idleSeconds
                 connector {
                     host = "127.0.0.1"
@@ -65,52 +67,6 @@ class ServerH1BodyTest {
             server.stop(100, 500)
         }
     }
-
-    /**
-     * Sends [head] and then [bodySize] bytes from a coroutine of their own (a write the server refuses to take is not an
-     * error here) while reading what the server sends until it closes; returns that.
-     */
-    private suspend fun writingClient(
-        port: Int,
-        head: String,
-        bodySize: Int,
-    ): String =
-        coroutineScope {
-            val selector = SelectorManager(Dispatchers.Default)
-            try {
-                val socket = aSocket(selector).tcp().connect("127.0.0.1", port)
-                val w = socket.openWriteChannel(autoFlush = false)
-                val r = socket.openReadChannel()
-                val writer =
-                    launch {
-                        runCatching {
-                            w.writeStringUtf8(head)
-                            val chunk = ByteArray(64 * 1024) { 'b'.code.toByte() }
-                            var left = bodySize
-                            while (left > 0) {
-                                val n = minOf(left, chunk.size)
-                                w.writeFully(chunk, 0, n)
-                                w.flush()
-                                left -= n
-                            }
-                        }
-                    }
-                val out = StringBuilder()
-                val b = ByteArray(8192)
-                runCatching {
-                    while (true) {
-                        val n = r.readAvailable(b, 0, b.size)
-                        if (n < 0) break
-                        out.append(b.decodeToString(0, n))
-                    }
-                }
-                writer.cancel()
-                socket.close()
-                out.toString()
-            } finally {
-                selector.close()
-            }
-        }
 
     private val stalledPost = "POST /body HTTP/1.1\r\nHost: s\r\nContent-Length: 100\r\n\r\n0123456789"
 
@@ -190,20 +146,60 @@ class ServerH1BodyTest {
         }
 
     /**
-     * A body the handler does not read: one larger than 256 KiB (here 4 MiB, sent by a client that writes it all) is not
-     * read to its end; the response says `Connection: close` and the connection closes after it, as Go's net/http does
-     * past its 256 KiB. Before, the pipeline waited for a reader of the body that never came.
+     * A body the handler does not read: one larger than 256 KiB (here 32 MiB) is not read to its end; the response says
+     * `Connection: close` and the connection closes after it, as Go's net/http does past its 256 KiB, and the client still
+     * reads the whole response after the server has closed (`connectionClosed`). Before, the pipeline waited for a reader
+     * of the body that never came. That the server drains for a while before it closes, so a client that writes its whole
+     * body first is not reset, is `UnreadBodyLingerJvmTest` (a blocking socket, JVM only).
      */
     @Test fun negative_largeUnreadBodyClosesTheConnection() =
         serverTest {
-            plainServer(idleSeconds = 30, module = { routing { post("/ignore") { call.respondText("ignored") } } }) { port ->
-                val size = 4 * 1024 * 1024
-                val r =
-                    withTimeout(
-                        10.seconds,
-                    ) { writingClient(port, "POST /ignore HTTP/1.1\r\nHost: s\r\nContent-Length: $size\r\n\r\n", size) }
-                assertTrue(r.startsWith("HTTP/1.1 200 "), r.take(200))
-                assertTrue(r.contains("\r\nConnection: close\r\n"), r.take(200))
+            val closed = CompletableDeferred<Unit>()
+            val events =
+                @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+                object : KuicksilverServerEventListener() {
+                    override fun connectionClosed(
+                        protocol: io.ktor.http.HttpProtocolVersion,
+                        remote: io.ktor.network.sockets.InetSocketAddress?,
+                    ) {
+                        closed.complete(Unit)
+                    }
+                }
+            plainServer(
+                idleSeconds = 30,
+                configure = {
+                    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+                    eventListener = events
+                },
+                module = { routing { post("/ignore") { call.respondText("ignored") } } },
+            ) { port ->
+                val size = 32 * 1024 * 1024
+                val selector = SelectorManager(Dispatchers.Default)
+                try {
+                    val socket = aSocket(selector).tcp().connect("127.0.0.1", port)
+                    val w = socket.openWriteChannel(autoFlush = true)
+                    val r = socket.openReadChannel()
+                    w.writeStringUtf8("POST /ignore HTTP/1.1\r\nHost: s\r\nContent-Length: $size\r\n\r\n")
+                    w.writeFully(ByteArray(size) { 'b'.code.toByte() })
+                    w.flush()
+                    withTimeout(15.seconds) { closed.await() }
+                    val out = StringBuilder()
+                    val b = ByteArray(8192)
+                    withTimeout(10.seconds) {
+                        while (true) {
+                            val n = r.readAvailable(b, 0, b.size)
+                            if (n < 0) break
+                            out.append(b.decodeToString(0, n))
+                        }
+                    }
+                    val text = out.toString()
+                    assertTrue(text.startsWith("HTTP/1.1 200 "), text.take(200))
+                    assertTrue(text.contains("\r\nConnection: close\r\n"), text.take(200))
+                    assertTrue(text.endsWith("\r\n\r\nignored"), text.take(300))
+                    socket.close()
+                } finally {
+                    selector.close()
+                }
             }
         }
 
@@ -228,6 +224,56 @@ class ServerH1BodyTest {
                     }
                 assertTrue(r.startsWith("HTTP/1.1 200 "), r)
                 assertFalse(r.substringBefore("ignored").contains("Connection: close"), r)
+                assertTrue(r.endsWith("next"), r)
+            }
+        }
+
+    /** A body of exactly 256 KiB the handler does not read is drained in full: the cap is inclusive. */
+    @Test fun unreadBodyOfExactlyTheCapKeepsTheConnection() =
+        serverTest {
+            plainServer(idleSeconds = 30, module = {
+                routing {
+                    post("/ignore") { call.respondText("ignored") }
+                    get("/next") { call.respondText("next") }
+                }
+            }) { port ->
+                val body = "b".repeat(256 * 1024)
+                val r =
+                    withTimeout(10.seconds) {
+                        rawHttp(
+                            port,
+                            "POST /ignore HTTP/1.1\r\nHost: s\r\nContent-Length: ${body.length}\r\n\r\n$body" +
+                                "GET /next HTTP/1.1\r\nHost: s\r\nConnection: close\r\n\r\n",
+                            tls = null,
+                        )
+                    }
+                assertFalse(r.substringBefore("ignored").contains("Connection: close"), r)
+                assertTrue(r.endsWith("next"), r)
+            }
+        }
+
+    /** A small chunked body the handler does not read (a 401 to an upload) is drained too: keep-alive goes on. */
+    @Test fun smallUnreadChunkedBodyKeepsTheConnection() =
+        serverTest {
+            plainServer(idleSeconds = 30, module = {
+                routing {
+                    post("/ignore") { call.respondText("no", status = HttpStatusCode.Unauthorized) }
+                    get("/next") { call.respondText("next") }
+                }
+            }) { port ->
+                val chunk = "c".repeat(4096)
+                val chunked = "1000\r\n$chunk\r\n".repeat(3) + "0\r\n\r\n"
+                val r =
+                    withTimeout(10.seconds) {
+                        rawHttp(
+                            port,
+                            "POST /ignore HTTP/1.1\r\nHost: s\r\nTransfer-Encoding: chunked\r\n\r\n$chunked" +
+                                "GET /next HTTP/1.1\r\nHost: s\r\nConnection: close\r\n\r\n",
+                            tls = null,
+                        )
+                    }
+                assertTrue(r.startsWith("HTTP/1.1 401 "), r)
+                assertFalse(r.substringBefore("\r\n\r\nno").contains("Connection: close"), r)
                 assertTrue(r.endsWith("next"), r)
             }
         }

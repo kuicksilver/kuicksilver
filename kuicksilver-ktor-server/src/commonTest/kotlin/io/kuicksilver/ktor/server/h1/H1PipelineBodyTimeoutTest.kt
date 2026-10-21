@@ -152,6 +152,26 @@ class H1PipelineBodyTimeoutTest {
             assertTrue(c.job.isCompleted, "a client that never sends the body holds the connection")
         }
 
+    /**
+     * A chunked body the handler read to its end is complete when the handler answers: its response does not say
+     * `Connection: close`. Before, the decoder closed the handler's channel (the handler saw the end and answered) before
+     * the pipeline had marked the body complete, so every such response ended its connection.
+     */
+    @Test fun negative_fullyReadChunkedBodyKeepsTheConnection() =
+        runTest {
+            var closingAtResponse: Boolean? = null
+            val c =
+                pipeline { request ->
+                    request.release()
+                    input.readRemaining()
+                    closingAtResponse = closing()
+                    respondOk()
+                }
+            c.send("POST / HTTP/1.1\r\nHost: s\r\nTransfer-Encoding: chunked\r\n\r\n4\r\nabcd\r\n0\r\n\r\n")
+            runCurrent()
+            assertEquals(false, closingAtResponse, "a fully read chunked body ends its connection")
+        }
+
     /** An upgraded connection has no body deadline: its bytes are the protocol's, quiet as long as it likes. */
     @Test fun upgradedConnectionHasNoBodyDeadline() =
         runTest {

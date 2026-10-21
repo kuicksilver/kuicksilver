@@ -51,8 +51,8 @@ server.start(wait = true)
   without requests in both directions, and a request body that sends no byte for that long gets `408 Request Timeout`
   and ends the connection, unless the application or StatusPages answers the failed read itself (a slow but moving
   upload is read in full; after `Expect: 100-continue` the wait starts once `100 Continue` is sent). A body the handler
-  leaves unread is dropped up to 256 KiB; a larger or chunked rest, or a request answered without the `100 Continue` it
-  asked for, ends the connection after a response that says `Connection: close`. One whose client stopped reading its response (the socket took nothing) is
+  leaves unread is dropped up to 256 KiB; a larger rest, or a request answered without the `100 Continue` it asked for,
+  ends the connection after a response that says `Connection: close`. One whose client stopped reading its response (the socket took nothing) is
   closed after the longer of that and 5 minutes: the engine sees progress about 1 MiB at a time, and 5 minutes serve
   clients down to about 3.4 KiB/s. A closing connection sends what is left for as long as the client takes it, and is
   aborted after the same deadline without progress, so a slow reader's last response is not cut short.

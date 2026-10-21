@@ -32,17 +32,20 @@ internal class MalformedChunkedBodyException(
  * discard the trailer fields); it is limited to [MAX_TRAILER_SECTION] bytes. A message that ends before its last chunk
  * is incomplete (section 8) and fails with [EOFException]; a body that breaks the grammar fails with
  * [MalformedChunkedBodyException]. [out] is closed with [readerFailure] of the failure, which its reader sees.
+ * [onComplete] runs once the whole body has been read, before [out] is closed (its reader may act on the end at once).
  */
 internal suspend fun decodeChunkedBody(
     input: ByteReadChannel,
     out: ByteWriteChannel,
     readerFailure: (Throwable) -> Throwable = { it },
+    onComplete: () -> Unit = {},
 ) {
     try {
         while (true) {
             val chunkSize = parseChunkSize(input)
             if (chunkSize == 0L) {
                 skipTrailerSection(input)
+                onComplete()
                 break
             }
             val copied = input.copyTo(out, chunkSize)
