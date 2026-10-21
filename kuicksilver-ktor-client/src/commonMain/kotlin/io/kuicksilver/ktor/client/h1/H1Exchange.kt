@@ -341,7 +341,10 @@ private suspend fun readResponseHead(
 
 private fun responseHeadTooLarge() = ParserException("The response head is larger than $MAX_RESPONSE_HEAD_BYTES bytes")
 
-/** HTTP CONNECT through a proxy (RFC 9110 section 9.3.6), before TLS to the origin. */
+/**
+ * HTTP CONNECT through a proxy (RFC 9110 section 9.3.6), before TLS to the origin. The proxy's response head is limited
+ * to [MAX_RESPONSE_HEAD_BYTES] ([ParserException] beyond); any status but 2xx, a 1xx included, fails the tunnel.
+ */
 internal suspend fun startTunnel(
     url: Url,
     userAgent: String?,
@@ -361,8 +364,25 @@ internal suspend fun startTunnel(
         output.writePacket(builder.build())
         output.flush()
 
+        // the proxy's head within the response-head limit, read byte by byte: the bytes after it are the tunnel's
+        val head = ExactHeadInput(input, MAX_RESPONSE_HEAD_BYTES)
         val rawResponse =
-            parseResponse(input) ?: throw ClosedReadChannelException(EOFException("Failed to parse CONNECT response: unexpected EOF"))
+            try {
+                parseResponse(head)
+            } catch (e: Throwable) {
+                if (head.exceeded) throw responseHeadTooLarge()
+                throw e
+            } ?: throw (
+                if (head.exceeded) {
+                    responseHeadTooLarge()
+                } else {
+                    ClosedReadChannelException(EOFException("Failed to parse CONNECT response: unexpected EOF"))
+                }
+            )
+        if (head.exceeded) {
+            rawResponse.release()
+            throw responseHeadTooLarge()
+        }
         rawResponse.use {
             // a 2xx makes the connection a tunnel at the end of the head: Content-Length and Transfer-Encoding are ignored
             // (RFC 9110 section 9.3.6), the bytes that follow are the origin's

@@ -138,6 +138,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   64 KiB (the field section size our HTTP/3 client advertises, and the server's limit for request heads) and at most 5
   interim responses are skipped (Go's `net/http` stops at the same count); beyond either the request fails with Ktor's
   `ParserException` and the connection is closed.
+- Ktor client: the proxy's response to `CONNECT` had no size limit either (the same Ktor parser). It is read with the
+  same 64 KiB limit, one byte at a time so that no byte of the tunnel after the head is consumed; a larger head fails
+  the request with `ParserException` and the connection to the proxy is closed.
 - Ktor client: the socket timeout failed uploads that were still making progress. Over HTTP/1.1 (streamed bodies) and
   HTTP/3 (every body) the request body goes out while the response head is awaited, and the timeout covered that whole
   wait: with `socketTimeoutMillis = 1_000`, any upload longer than a second failed with `SocketTimeoutException`, however

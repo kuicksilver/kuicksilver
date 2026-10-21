@@ -9,6 +9,7 @@ import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpProtocolVersion
 import io.ktor.http.Url
+import io.ktor.http.cio.ParserException
 import io.ktor.network.selector.SelectorManager
 import io.ktor.network.sockets.InetSocketAddress
 import io.ktor.network.sockets.aSocket
@@ -23,8 +24,10 @@ import io.ktor.utils.io.readUTF8Line
 import io.ktor.utils.io.writeStringUtf8
 import io.kuicksilver.native.KslLoader
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeout
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -110,6 +113,45 @@ class ClientProxyTest {
                 }
             } finally {
                 server.stop(100, 500)
+            }
+        }
+
+    /**
+     * A proxy that answers the CONNECT with a 4 MiB head: the client stops reading at 64 KiB, fails the request with a
+     * ParserException naming the limit and closes the connection. Before, the CONNECT response head had no size limit.
+     */
+    @Test fun negative_hugeConnectResponseHeadFails() =
+        clientTest {
+            val selector = SelectorManager(Dispatchers.Default)
+            val listener = aSocket(selector).tcp().bind("127.0.0.1", 0)
+            try {
+                coroutineScope {
+                    val proxyClosedBy =
+                        async {
+                            listener.accept().use { s ->
+                                val input = s.openReadChannel()
+                                val output = s.openWriteChannel(autoFlush = false)
+                                while (input.readUTF8Line()?.isNotEmpty() == true) continue
+                                runCatching {
+                                    output.writeStringUtf8("HTTP/1.1 200 Connection established\r\n")
+                                    repeat(1024) { output.writeStringUtf8("X-Pad: " + "p".repeat(4000) + "\r\n") }
+                                    output.writeStringUtf8("\r\n")
+                                    output.flush()
+                                }
+                                // the client closes its side once it gives up on the head
+                                withTimeout(10.seconds) { input.awaitContent() }
+                            }
+                        }
+                    val proxyPort = (listener.localAddress as InetSocketAddress).port
+                    testClient(engine = { proxy = ProxyBuilder.http(Url("http://127.0.0.1:$proxyPort")) }).use { c ->
+                        val e = assertFailsWith<ParserException> { c.get("https://127.0.0.1:1/").bodyAsText() }
+                        assertTrue(e.message!!.contains("65536"), e.message)
+                    }
+                    assertEquals(false, proxyClosedBy.await(), "the client kept the proxy connection open")
+                }
+            } finally {
+                listener.close()
+                selector.close()
             }
         }
 
