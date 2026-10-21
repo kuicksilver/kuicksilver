@@ -74,7 +74,13 @@ internal class HeadLimitedInput(
         bodyTimeout = timeout
         bodyGate = gate
         bodyTimedOut = timedOut
+        bodyBytesArrived = buffer.size
     }
+
+    /** Bytes of the current body that have arrived (were buffered at its start or taken from [source] since). */
+    @kotlin.concurrent.Volatile
+    var bodyBytesArrived: Long = 0
+        private set
 
     /** The body was read (or failed). */
     fun endBody() {
@@ -132,6 +138,7 @@ internal class HeadLimitedInput(
             val moved = from.readAtMostTo(buffer, want)
             if (moved < 0) return false
             if (headBudget >= 0) headBudget -= moved
+            if (bodyTimeout != null) bodyBytesArrived += moved
         }
         return true
     }

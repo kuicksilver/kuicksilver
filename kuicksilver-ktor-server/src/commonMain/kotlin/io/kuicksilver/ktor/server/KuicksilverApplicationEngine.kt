@@ -16,6 +16,7 @@ import io.ktor.server.engine.EngineConnectorConfig
 import io.ktor.server.engine.withPort
 import io.kuicksilver.http3.Http3Endpoint
 import io.kuicksilver.http3.Http3Settings
+import io.kuicksilver.ktor.server.h1.installH1CallHandling
 import io.kuicksilver.quic.ConnectionAdmission
 import io.kuicksilver.quic.ConnectionListener
 import io.kuicksilver.quic.KuicksilverLogger
@@ -199,6 +200,8 @@ public class KuicksilverApplicationEngine(
     private var serverJob: Job = Job()
 
     init {
+        // HTTP/1.1 calls: a body timeout answered 408, an unread body left to the connection (h1/H1CallPhase.kt)
+        pipeline.installH1CallHandling()
         serverJob = initServerJob()
         serverJob.invokeOnCompletion { cause ->
             cause?.let { stopRequest.completeExceptionally(cause) }

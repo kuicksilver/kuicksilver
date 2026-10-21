@@ -36,6 +36,7 @@ import kotlinx.coroutines.CopyableThrowable
 import kotlinx.coroutines.CoroutineName
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
@@ -94,8 +95,6 @@ internal class H1RequestScope(
      * body (the client may hold the body back until then). Null for other requests.
      */
     val continueSent: CompletableJob? = null,
-    /** True once this request's body timed out: the connection ends after its response, which goes out as 408. */
-    val bodyTimedOut: () -> Boolean = { false },
 ) : CoroutineScope
 
 /**
@@ -335,34 +334,36 @@ internal fun CoroutineScope.startH1Pipeline(
                     }
 
                 val upgraded = if (expectedHttpUpgrade) CompletableDeferred<Boolean>() else null
-                // the body deadline starts after `100 Continue`, or once the handler is done when it never asks for the body
+                // completed when `100 Continue` has been written (the engine's `addHandlerForExpectedHeader`)
                 val continueSent =
                     if (expectedHttpBody && expectsContinue(request, version)) Job() else null
+                val body = if (expectedHttpBody) RequestBody(framing, input, continueSent) else null
 
-                launch(requestContext, start = CoroutineStart.UNDISPATCHED) {
-                    val handlerScope =
-                        H1RequestScope(
-                            coroutineContext,
-                            requestBody,
-                            response,
-                            connection.remoteAddress,
-                            connection.localAddress,
-                            upgraded,
-                            closing = { draining?.isCompleted == true || bodyTimedOut.isCompleted },
-                            continueSent = continueSent,
-                            bodyTimedOut = { bodyTimedOut.isCompleted },
-                        )
-                    try {
-                        handler(handlerScope, request)
-                    } catch (cause: Throwable) {
-                        response.close(cause)
-                        upgraded?.completeExceptionally(cause)
-                    } finally {
-                        response.close()
-                        upgraded?.complete(false)
-                        continueSent?.complete()
+                val handlerJob =
+                    launch(requestContext, start = CoroutineStart.UNDISPATCHED) {
+                        val handlerScope =
+                            H1RequestScope(
+                                coroutineContext,
+                                requestBody,
+                                response,
+                                connection.remoteAddress,
+                                connection.localAddress,
+                                upgraded,
+                                closing = {
+                                    draining?.isCompleted == true || bodyTimedOut.isCompleted || body?.endsConnectionAtResponse() == true
+                                },
+                                continueSent = continueSent,
+                            )
+                        try {
+                            handler(handlerScope, request)
+                        } catch (cause: Throwable) {
+                            response.close(cause)
+                            upgraded?.completeExceptionally(cause)
+                        } finally {
+                            response.close()
+                            upgraded?.complete(false)
+                        }
                     }
-                }
 
                 if (upgraded != null) {
                     if (upgraded.await()) { // suspend a pipeline until we know if the upgrade performed?
@@ -374,30 +375,28 @@ internal fun CoroutineScope.startH1Pipeline(
                     }
                 }
 
-                if (expectedHttpBody && requestBody is ByteChannel) {
-                    input.startBody(timeout, continueSent, bodyTimedOut)
-                    try {
-                        framing.readBody(input, requestBody)
-                    } catch (cause: RequestBodyTimeout) {
-                        // the handler sees it through its read and answers 408 (or closes); no further request on this
-                        // connection, and its response says so (the input completed `bodyTimedOut` before failing)
-                        requestBody.close(ChannelReadException("Failed to read request body", cause))
-                    } catch (cause: IOException) {
-                        requestBody.close(ChannelReadException("Failed to read request body", cause))
-                        throw cause
-                    } catch (cause: CancellationException) {
-                        requestBody.close(ChannelReadException("Failed to read request body", cause))
-                        throw cause
-                    } catch (cause: Throwable) {
-                        requestBody.close(ChannelReadException("Failed to read request body", cause))
-                        response.writePacket(badRequestPacket())
-                        response.close()
-                        break
-                    } finally {
-                        input.endBody()
-                        requestBody.close()
+                if (body != null && requestBody is ByteChannel) {
+                    // the deadline of the body starts once `100 Continue` is written, or when the handler ends without it
+                    val gate =
+                        continueSent?.let { sent ->
+                            Job().also { g ->
+                                sent.invokeOnCompletion { g.complete() }
+                                handlerJob.invokeOnCompletion { g.complete() }
+                            }
+                        }
+                    input.startBody(timeout, gate, bodyTimedOut)
+                    val reader = async(start = CoroutineStart.UNDISPATCHED) { readRequestBody(body, requestBody, response) }
+                    val outcome =
+                        select {
+                            reader.onAwait { it }
+                            handlerJob.onJoin { null }
+                        } ?: settleUnreadBody(body, reader, requestBody)
+                    input.endBody()
+                    when (outcome) {
+                        is BodyOutcome.ClientGone -> throw outcome.cause
+                        BodyOutcome.Complete -> if (body.endsConnection) break
+                        else -> break
                     }
-                    if (bodyTimedOut.isCompleted) break
                 }
 
                 if (isLastHttpRequest(version, connectionOptions)) break
@@ -709,6 +708,121 @@ private fun expectsContinue(
     request: Request,
     version: HttpProtocolVersion,
 ): Boolean = version != HttpProtocolVersion.HTTP_1_0 && request.headers["Expect"]?.toString()?.lowercase() == "100-continue"
+
+/** How the read of a request body ended. */
+private sealed interface BodyOutcome {
+    data object Complete : BodyOutcome
+
+    /** No byte for the deadline ([RequestBodyTimeout]); the handler answers 408. */
+    data object TimedOut : BodyOutcome
+
+    /** The framing was broken (a bad chunk); a 400 was written. */
+    data object Malformed : BodyOutcome
+
+    /** The handler ended with the body unread and the connection ends instead of reading it ([settleUnreadBody]). */
+    data object Abandoned : BodyOutcome
+
+    class ClientGone(
+        val cause: IOException,
+    ) : BodyOutcome
+}
+
+/**
+ * A request body as the pipeline reads it, for what happens when the handler leaves it unread. Go's net/http reads at
+ * most 256 KiB of such a body (`maxPostHandlerReadBytes`) and otherwise closes the connection after the response; so
+ * does this, and a request that asked for `100 Continue` and was answered without it is not waited for at all (RFC 9110
+ * section 10.1.1: the client may never send the body).
+ */
+private class RequestBody(
+    val framing: RequestFraming,
+    val input: HeadLimitedInput,
+    val continueSent: Job?,
+) {
+    /** The whole body has been read. */
+    @kotlin.concurrent.Volatile
+    var complete: Boolean = false
+
+    /** Decided: the connection ends after this response (it said `Connection: close`). */
+    @kotlin.concurrent.Volatile
+    var endsConnection: Boolean = false
+        private set
+
+    /** Bytes of the body that may still come: null when not known (chunked). */
+    private fun remaining(): Long? = if (framing.chunked) null else (framing.contentLength - input.bodyBytesArrived).coerceAtLeast(0)
+
+    /** Whether the rest of the body is not worth reading: more than the cap, of unknown size, or never coming. */
+    fun notWorthReading(): Boolean =
+        !complete && (continueSent?.isCompleted == false || (remaining() ?: Long.MAX_VALUE) > MAX_UNREAD_BODY_BYTES)
+
+    /** At the response head: true (and decided) when the connection is to end after it, which the head then says. */
+    fun endsConnectionAtResponse(): Boolean {
+        if (!endsConnection && notWorthReading()) endsConnection = true
+        return endsConnection
+    }
+
+    fun abandon() {
+        endsConnection = true
+    }
+}
+
+/** The most of a body the handler left unread that the pipeline reads (and drops) to keep the connection. */
+internal const val MAX_UNREAD_BODY_BYTES: Long = 256 * 1024
+
+/** Reads [body] into [requestBody] for the handler; never throws but for a cancellation. */
+private suspend fun readRequestBody(
+    body: RequestBody,
+    requestBody: ByteChannel,
+    response: ByteChannel,
+): BodyOutcome =
+    try {
+        body.framing.readBody(body.input, requestBody)
+        body.complete = true
+        BodyOutcome.Complete
+    } catch (cause: RequestBodyTimeout) {
+        // the handler sees it through its read and is answered 408 (H1CallPhase); no further request on this connection,
+        // and its response says so (the input completed `bodyTimedOut` before failing)
+        requestBody.close(ChannelReadException("Failed to read request body", cause))
+        BodyOutcome.TimedOut
+    } catch (cause: IOException) {
+        requestBody.close(ChannelReadException("Failed to read request body", cause))
+        BodyOutcome.ClientGone(cause)
+    } catch (cause: CancellationException) {
+        requestBody.close(ChannelReadException("Failed to read request body", cause))
+        throw cause
+    } catch (cause: Throwable) {
+        requestBody.close(ChannelReadException("Failed to read request body", cause))
+        response.writePacket(badRequestPacket())
+        response.close()
+        BodyOutcome.Malformed
+    } finally {
+        requestBody.close()
+    }
+
+/**
+ * The handler has ended while its body was still being read: a rest that is not worth reading ends the connection (the
+ * reader is stopped); a small one is read and dropped, up to [MAX_UNREAD_BODY_BYTES], so the next request can follow.
+ */
+private suspend fun settleUnreadBody(
+    body: RequestBody,
+    reader: Deferred<BodyOutcome>,
+    requestBody: ByteChannel,
+): BodyOutcome {
+    if (body.endsConnection || body.notWorthReading()) {
+        body.abandon()
+        reader.cancel()
+        requestBody.cancel(IOException("The handler ended before reading the request body"))
+        return BodyOutcome.Abandoned
+    }
+    requestBody.discard(MAX_UNREAD_BODY_BYTES)
+    if (!requestBody.isClosedForRead) {
+        // more than the cap after all (a chunked body, or the Content-Length was under the count of bytes that arrived)
+        body.abandon()
+        reader.cancel()
+        requestBody.cancel(IOException("The request body the handler left unread is larger than $MAX_UNREAD_BODY_BYTES bytes"))
+        return BodyOutcome.Abandoned
+    }
+    return reader.await()
+}
 
 private fun isLastHttpRequest(
     version: HttpProtocolVersion,

@@ -103,10 +103,17 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 - Ktor server, HTTP/1.1 (slow POST, R.U.D.Y.): a request body had no deadline, so a client that announced a body and
   then sent it a byte at a time, or stopped, held its handler for ever. A body that sends no byte for
-  `connectionIdleTimeoutSeconds` now fails the handler's read; the client gets `408 Request Timeout` with
-  `Connection: close` when no response has started, and the connection closes after the request. Each wait for body
-  bytes has its own deadline (as nginx's `client_body_timeout`), so a slow but moving upload is read in full; after
-  `Expect: 100-continue` the wait starts once `100 Continue` is sent; upgraded connections are not affected.
+  `connectionIdleTimeoutSeconds` now fails the handler's read; when neither the application nor StatusPages answers the
+  failure, the client gets `408 Request Timeout` (body "Request Timeout") with `Connection: close`, and the connection
+  closes after the request. Each wait for body bytes has its own deadline (as nginx's `client_body_timeout`), so a
+  slow but moving upload is read in full; after `Expect: 100-continue` the wait starts once `100 Continue` is sent;
+  upgraded connections are not affected.
+- Ktor server, HTTP/1.1: a request body the handler did not read was read to its end after the response, however
+  large (Ktor's default engine phase discards it), and a large one could stall the connection. Now at most 256 KiB of
+  it are read and dropped (as Go's net/http `maxPostHandlerReadBytes`); a larger or chunked rest ends the connection
+  after the response, which says `Connection: close`. A request with `Expect: 100-continue` answered without
+  `100 Continue` is not waited for: its response says `Connection: close` and the connection ends (RFC 9110 section
+  10.1.1, as Go).
 - Ktor server, HTTP/1.1: a graceful stop cut responses that were still draining to a slow client. A connection ended
   as soon as its socket's `close()` was called, so once all of them had, the listener's job completed and closed its
   selector under sockets still sending their last bytes: a 4 MiB response written during `stopSuspend(8000, 10000)`

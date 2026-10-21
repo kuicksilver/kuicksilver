@@ -34,8 +34,6 @@ internal class H1Response(
     private val altSvc: String?,
     /** True once the connection ends after this response (the server is stopping): it then says `Connection: close`. */
     private val closing: () -> Boolean = { false },
-    /** True once this request's body timed out ([RequestBodyTimeout]): an error response to it goes out as 408. */
-    private val bodyTimedOut: () -> Boolean = { false },
 ) : BaseApplicationResponse(call) {
     private var statusCode: HttpStatusCode = HttpStatusCode.OK
     private val headersBuilder = HeadersBuilder()
@@ -113,9 +111,6 @@ internal class H1Response(
         if (altSvc != null && headersBuilder["Alt-Svc"] == null && statusCode.value != 421) headersBuilder.append("Alt-Svc", altSvc)
         // the server is stopping and reads no further request here: say so (RFC 9112 section 9.6), as Go's Shutdown does
         if (closing() && statusCode != HttpStatusCode.SwitchingProtocols) headersBuilder[HttpHeaders.Connection] = "close"
-        // Ktor maps no exception to 408, so the failed body read reaches here as its default 500: the client stopped sending
-        // the body, which is a 408 (RFC 9110 section 15.5.9), and the connection closes after it (`closing`)
-        if (bodyTimedOut() && statusCode == HttpStatusCode.InternalServerError) statusCode = HttpStatusCode.RequestTimeout
         val builder = RequestResponseBuilder()
         try {
             builder.responseLine("HTTP/1.1", statusCode.value, statusCode.description)
