@@ -46,7 +46,7 @@ import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 
 /**
- * The runner's `http3` case on the server side (K5): `GET /path` over HTTP/3 answers 200 with the file from
+ * The runner's `http3` case on the server side: `GET /path` over HTTP/3 answers 200 with the file from
  * `www` (`content-length` set), 404 otherwise; IPv4 and, when the host has it, IPv6 on the same port like [HqInteropServer].
  */
 @OptIn(ExperimentalAtomicApi::class)

@@ -156,7 +156,7 @@ class HqInteropTest {
     }
     @Test fun unsupportedCasesExit127() { for (t in listOf("connectionmigration", "versionnegotiation", "foo")) { assertEquals(127, Interop.run(mapOf("ROLE" to "client", "TESTCASE" to t, "REQUESTS" to "")), t); assertEquals(127, Interop.run(mapOf("ROLE" to "server", "TESTCASE" to t)), t) } }
 
-    // ---- K5 tail: the runner's `http3` case (an H3 transaction per file, one connection, ALPN h3)
+    // ---- the runner's `http3` case (an H3 transaction per file, one connection, ALPN h3)
     @Test fun http3CaseDownloadsOverH3() = runBlocking {
         val files = listOf("a.bin" to ByteArray(5_000) { (it * 3).toByte() }, "b.bin" to ByteArray(500_000) { (it * 5).toByte() }); val root = www(*files.toTypedArray()); val downloads = Files.createTempDirectory("dl").toFile()
         H3InteropServer.start(identity(), port = 0, www = root.path, versions = Interop.v1).use { srv ->
