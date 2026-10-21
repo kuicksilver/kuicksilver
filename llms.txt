@@ -1,0 +1,27 @@
+# Kuicksilver
+
+> QUIC, HTTP/3, Kotlin Multiplatform: a QUIC and HTTP/3 library with a Ktor client and server engine, for Android, iOS, JVM, Native (Linux, macOS, Windows), on a statically linked, signature-checked OpenSSL 3.5 LTS.
+
+Published on Maven Central under `io.kuicksilver` (Apache-2.0). Modules: kuicksilver-native (the `ksl` C shim and OpenSSL), kuicksilver-tls, kuicksilver-ktor-network, kuicksilver-quic, kuicksilver-http3, kuicksilver-ktor-client (`HttpClient(Kuicksilver)`), kuicksilver-ktor-server (`embeddedServer(Kuicksilver)`), and the kuicksilver-bom.
+
+## Docs
+
+- [README](https://github.com/kuicksilver/kuicksilver/blob/main/README.md): what Kuicksilver is, quick start for the Ktor client, Ktor server and raw QUIC, modules, platforms
+- [TLS guide](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/tls.md): TLS configuration, trust (platform verifier, RFC 9525 host name check, pins), TLS over sockets, key logging
+- [QUIC guide](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/quic.md): QUIC connections, streams, datagrams, migration, the coroutine API
+- [HTTP/3 guide](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/http3.md): HTTP/3 and QPACK over kuicksilver-quic
+- [Ktor engines](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ktor.md): the Ktor client and server engines, Alt-Svc discovery, fallback to HTTP/1.1
+- [iOS guide](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/ios.md): using Kuicksilver from iOS and Swift
+- [App Store](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/app-store.md): publishing an app that embeds Kuicksilver on the App Store
+- [Configuration reference](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/configuration.md): every option with its default
+- [Troubleshooting](https://github.com/kuicksilver/kuicksilver/blob/main/docs/guide/troubleshooting.md): common errors and what to do
+
+## Policies
+
+- [API stability](https://github.com/kuicksilver/kuicksilver/blob/main/docs/stability.md): stable and experimental API, ABI checks, supported platforms, Ktor and OpenSSL policies
+- [Verifying a release](https://github.com/kuicksilver/kuicksilver/blob/main/docs/verifying.md): signatures, Gradle dependency verification, SBOM and provenance, reproducible native libraries
+
+## Optional
+
+- [Security policy](https://github.com/kuicksilver/kuicksilver/blob/main/SECURITY.md): reporting vulnerabilities, OpenSSL update commitments
+- [Changelog](https://github.com/kuicksilver/kuicksilver/blob/main/CHANGELOG.md): changes per release
