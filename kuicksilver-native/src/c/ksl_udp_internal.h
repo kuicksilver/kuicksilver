@@ -24,7 +24,6 @@
 #include <fcntl.h>
 #include <poll.h>
 #include <pthread.h>
-#include <sched.h>
 #include <time.h>
 #ifdef __linux__
 #ifndef UDP_SEGMENT
@@ -51,7 +50,7 @@ struct ksl_udp {
     int fd; int family; int dual; int wake[2];   /* dual: AF_INET6 on :: with IPV6_V6ONLY off, IPv4 peers as v4-mapped addresses */
     uint32_t requested, granted; uint16_t gso_max; uint16_t batch;
     int gso_on, tos_cmsg_on, eperm_retried;
-    uint32_t last_errno; char last_msg[KSL_MSG]; int err_busy;   /* err_busy: the lock of the pair (err_lock) */
+    uint32_t last_errno; char last_msg[KSL_MSG]; pthread_mutex_t err_mu;   /* err_mu guards the pair; initialised in ksl_udp_open */
     uint8_t local[KSL_UDP_ADDR_LEN];
     /* GRO scratch: one received message and the segments of it not yet handed out */
     /* two scratch buffers: the receiver thread owns scratch (GRO train), the sender thread owns tx (joined GSO run) — they never share */
@@ -63,12 +62,18 @@ struct ksl_udp {
 #endif
 };
 
-/* the sender and the receiver thread both record errors and ksl_udp_get reads them: a short spin lock keeps errno and text one
-   error's (the text is formatted outside it, so the lock is held for a copy of KSL_MSG bytes) */
-static inline void err_lock(ksl_udp *u) { while (__atomic_exchange_n(&u->err_busy, 1, __ATOMIC_ACQUIRE)) sched_yield(); }
-static inline void err_unlock(ksl_udp *u) { __atomic_store_n(&u->err_busy, 0, __ATOMIC_RELEASE); }
+/* strerror is not thread-safe; strerror_r is the XSI one (int) or, with _GNU_SOURCE on glibc and on bionic from API 23, the GNU one
+   (char *, maybe not buf): _Generic picks the matching reader, NULL when the XSI call failed */
+static inline const char *ksl_sr_gnu(char *r, char *buf) { (void)buf; return r; }
+static inline const char *ksl_sr_xsi(int r, char *buf) { return r == 0 ? buf : NULL; }
+#define ksl_strerror_r(e, buf, n) _Generic(strerror_r((e), (buf), (n)), char *: ksl_sr_gnu, default: ksl_sr_xsi)(strerror_r((e), (buf), (n)), (buf))
+static inline void ksl_errtext(int e, char *buf, size_t n) { char t[128]; const char *s = ksl_strerror_r(e, t, sizeof t); if (s) snprintf(buf, n, "%s", s); else snprintf(buf, n, "errno %d", e); }
+/* the sender and the receiver thread both record errors and ksl_udp_get reads them: err_mu keeps errno and text one error's (the
+   text is formatted outside it, so the lock is held for a copy of KSL_MSG bytes) */
+static inline void err_lock(ksl_udp *u) { pthread_mutex_lock(&u->err_mu); }
+static inline void err_unlock(ksl_udp *u) { pthread_mutex_unlock(&u->err_mu); }
 static inline void set_err(ksl_udp *u, int e, const char *what) {
-    char m[KSL_MSG]; snprintf(m, sizeof m, "%s: %s", what, strerror(e));
+    char t[128], m[KSL_MSG]; ksl_errtext(e, t, sizeof t); snprintf(m, sizeof m, "%s: %s", what, t);
     err_lock(u); u->last_errno = (uint32_t)e; memcpy(u->last_msg, m, KSL_MSG); err_unlock(u);
 }
 

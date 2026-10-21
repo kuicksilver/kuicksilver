@@ -73,7 +73,7 @@ struct ksl_udp {
     uint32_t requested, granted; uint16_t gso_max; uint16_t batch;
     int gso_on, ecn_cmsg_on, df_probe, dual;   /* df_probe: IP_MTU_DISCOVER = PROBE taken; dual: AF_INET6 on :: for a 0.0.0.0 bind */
     int ce_refused;   /* Windows refused the CE codepoint in the IP_ECN / IPV6_ECN cmsg (WSAEINVAL): CE leaves unmarked, ECT stays on */
-    uint32_t last_errno; char last_msg[KSL_MSG]; LONG err_busy;   /* err_busy: the lock of the pair (err_lock) */
+    uint32_t last_errno; char last_msg[KSL_MSG]; SRWLOCK err_mu;   /* err_mu guards the pair; initialised in ksl_udp_open */
     uint8_t local[KSL_UDP_ADDR_LEN];
     /* the receiver thread owns scratch (a URO train and its segments not yet handed out), the sender thread owns tx (a joined USO run) */
     uint8_t *scratch; uint8_t *tx; uint32_t pend_off, pend_len, pend_seg; uint8_t pend_addr[KSL_UDP_ADDR_LEN]; uint8_t pend_ecn;
@@ -86,10 +86,10 @@ struct ksl_udp {
 
 static void be32(uint8_t *p, uint32_t v) { p[0] = (uint8_t)(v >> 24); p[1] = (uint8_t)(v >> 16); p[2] = (uint8_t)(v >> 8); p[3] = (uint8_t)v; }
 static void be16(uint8_t *p, uint16_t v) { p[0] = (uint8_t)(v >> 8); p[1] = (uint8_t)v; }
-/* the sender and the receiver thread both record errors and ksl_udp_get reads them: a short spin lock keeps errno and text one
-   error's (as in ksl_udp_internal.h) */
-static void err_lock(ksl_udp *u) { while (InterlockedExchange(&u->err_busy, 1)) SwitchToThread(); }
-static void err_unlock(ksl_udp *u) { InterlockedExchange(&u->err_busy, 0); }
+/* the sender and the receiver thread both record errors and ksl_udp_get reads them: err_mu keeps errno and text one error's (as in
+   ksl_udp_internal.h; an SRWLOCK needs no destruction) */
+static void err_lock(ksl_udp *u) { AcquireSRWLockExclusive(&u->err_mu); }
+static void err_unlock(ksl_udp *u) { ReleaseSRWLockExclusive(&u->err_mu); }
 static void set_err(ksl_udp *u, int e, const char *what) {
     char m[KSL_MSG]; snprintf(m, sizeof m, "%s: WSA error %d", what, e);
     err_lock(u); u->last_errno = (uint32_t)e; memcpy(u->last_msg, m, KSL_MSG); err_unlock(u);
@@ -183,6 +183,7 @@ ksl_udp *ksl_udp_open(const uint8_t addr[KSL_UDP_ADDR_LEN], int flags, uint32_t 
     if (!addr || (addr[0] != 4 && addr[0] != 6)) { if (err) *err = KSL_E_BAD_ARG; if (msg && msglen) snprintf(msg, msglen, "ksl_udp: bad address"); return NULL; }
     if (!wsa_ready()) { fail(err, KSL_E_NOT_SUPPORTED, msg, msglen, "WSAStartup", 0); return NULL; }
     ksl_udp *u = calloc(1, sizeof *u); if (!u) { if (err) *err = KSL_E_BAD_ARG; return NULL; }
+    InitializeSRWLock(&u->err_mu);
     u->requested = (uint32_t)flags; u->wake = INVALID_SOCKET;
     /* 0.0.0.0 takes both families on one dual-stack socket on :: (ksl_udp.c does the same on Linux and Apple); without IPv6, or
        with :: refused, the requested family alone */

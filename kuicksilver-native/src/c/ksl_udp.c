@@ -88,14 +88,15 @@ static int bind_socket(ksl_udp *u, const uint8_t addr[KSL_UDP_ADDR_LEN], int dua
     int e = errno; close(fd); errno = e; return -1;
 }
 static ksl_udp *open_failed(ksl_udp *u, uint32_t code, const char *what, int e, uint32_t *err, char *msg, size_t msglen) {
-    if (err) *err = code; if (msg && msglen) snprintf(msg, msglen, "%s: %s", what, strerror(e));
+    if (err) *err = code; if (msg && msglen) { char t[128]; ksl_errtext(e, t, sizeof t); snprintf(msg, msglen, "%s: %s", what, t); }
     if (u->fd >= 0) close(u->fd); if (u->wake[0] >= 0) close(u->wake[0]); if (u->wake[1] >= 0) close(u->wake[1]);
-    free(u->scratch); free(u->tx); free(u); return NULL;
+    pthread_mutex_destroy(&u->err_mu); free(u->scratch); free(u->tx); free(u); return NULL;
 }
 
 ksl_udp *ksl_udp_open(const uint8_t addr[KSL_UDP_ADDR_LEN], int flags, uint32_t *err, char *msg, size_t msglen) {
     if (!addr || (addr[0] != 4 && addr[0] != 6)) { if (err) *err = KSL_E_BAD_ARG; if (msg && msglen) snprintf(msg, msglen, "ksl_udp: bad address"); return NULL; }
     ksl_udp *u = calloc(1, sizeof *u); if (!u) { if (err) *err = KSL_E_BAD_ARG; return NULL; }
+    if (pthread_mutex_init(&u->err_mu, NULL) != 0) { free(u); if (err) *err = KSL_E_BAD_ARG; return NULL; }
     u->requested = (uint32_t)flags; u->wake[0] = u->wake[1] = -1; u->fd = -1;
     /* a wildcard (0.0.0.0 or ::) takes both families on one dual-stack socket, as NIO's DatagramChannel: a client bound to 0.0.0.0
        reaches IPv6 servers and a server on 0.0.0.0 answers IPv6 clients. Without IPv6 (or with :: taken) the requested family alone. */
@@ -171,7 +172,7 @@ void ksl_udp_close(ksl_udp *u) {
     for (int i = 0; i < 1000 && __atomic_load_n(&u->in_recv, __ATOMIC_SEQ_CST) > 0; i++) { struct timespec ts = { 0, 1000000 }; nanosleep(&ts, NULL); }   /* a receiver woke up and leaves the object */
     ksl_live_add(KSL_LIVE_UDP, -1); ksl_live_add(KSL_LIVE_WAKE, -((u->wake[0] >= 0) + (u->wake[1] >= 0)));
     if (u->fd >= 0) close(u->fd); if (u->wake[0] >= 0) close(u->wake[0]); if (u->wake[1] >= 0) close(u->wake[1]);
-    free(u->scratch); free(u->tx); memset(u, 0, sizeof *u); free(u);
+    pthread_mutex_destroy(&u->err_mu); free(u->scratch); free(u->tx); memset(u, 0, sizeof *u); free(u);
 }
 
 #ifdef KSL_TEST
