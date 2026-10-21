@@ -1,6 +1,6 @@
 # ADR-0014. The Ktor engines see the transport only through `Http3Endpoint`
 
-Date: 2026-10-08. Status: accepted (adopted during K5 as an implementation ruling; approved by the owner when K5 was merged into `main` 2026-10-08).
+Date: 2026-10-08. Status: accepted (adopted while building the Ktor engines as an implementation ruling; approved by the owner when they were merged into `main` 2026-10-08).
 
 ## Context
 
@@ -22,7 +22,7 @@ H3_DATAGRAM settings from the transport, closing connections with a foreign ALPN
 
 - The transport can change without touching the engines as long as `Http3Endpoint` is stable.
 - QUIC settings that are not in `QuicConfig`/`QuicEndpointConfig` (for example, UDP buffer sizes) cannot be declared by an engine —
-  the QUIC layer has to add them first (K5 ruling: `udpReceiveBufferSize` is not declared).
+  the QUIC layer has to add them first (ruling of 2026-10-08: `udpReceiveBufferSize` is not declared).
 - The engine tests (the vendored Ktor contract) may depend on other engine modules only in test
   configurations.
 
