@@ -85,6 +85,14 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- QUIC: a peer could make one connection buffer far more than its connection window. A STREAM frame refused for lack
+  of reassembly room (the packet is dropped unacknowledged, K7) had already raised the stream's highest offset, and the
+  refusal skipped the connection-level charge; data sent later below that offset merged into a buffered range and was
+  stored uncharged. Three streams held 1.5 MiB against the default 768 KiB connection window, and with the default
+  limits one connection could hold the sum of its stream windows (RFC 9000 section 4.1). A STREAM or RESET_STREAM frame
+  is now checked against the final size, the stream window, the connection window and the reassembly room before
+  anything is committed; abandoning a stream credits only bytes that were charged. CRYPTO frames likewise count toward
+  their caps only once buffered.
 - QUIC: a packet of MAX_STREAM_DATA frames could cost the endpoint loop about 250 ms. On a stream whose receiver
   acknowledged every other packet, each frame (even one that raises nothing, which spends no glitch token) compared
   every queued retransmission with every acknowledged range, and so did every packet built for the stream. Acknowledged

@@ -209,10 +209,14 @@ internal class StreamManager(
     /**
      * Fuzzing probe (stateful connection fuzzer): the first broken flow-control or stream-state invariant, or null. Data
      * received on the connection and on each stream stays within what we advertised, data we sent within what the peer
-     * allowed, a final size bounds what was received, and the peer opened no more streams than we granted.
+     * allowed, a final size bounds what was received, every byte a stream received was charged to the connection, and the peer
+     * opened no more streams than we granted.
      */
     internal fun invariantViolationForTest(): String? {
         if (connReceived > connFlow.limit) return "connection received $connReceived beyond the advertised ${connFlow.limit}"
+        var streamsReceived = 0L
+        for (e in streams.values) streamsReceived += e.recv?.highest ?: 0L
+        if (streamsReceived > connReceived) return "streams received $streamsReceived, the connection was charged $connReceived"
         if (connSend.used > connSend.maxLimit) return "connection sent ${connSend.used} beyond the peer's ${connSend.maxLimit}"
         if (budget.used < 0 || budget.used > budget.max) return "reassembly ranges ${budget.used} outside 0..${budget.max}"
         if (sendBufferedBytes < 0) return "negative send buffer $sendBufferedBytes"
@@ -385,11 +389,7 @@ internal class StreamManager(
         val e = peerStream(id, 0x08, receiving = true) ?: return
         val r = e.recv ?: throw QuicWireException(TransportError.STREAM_STATE_ERROR, 0x08, "STREAM frame on our send-only stream $id")
         val before = r.readable
-        val advanced = r.onData(offset, data, off, len, fin)
-        if (advanced > 0) {
-            connFlow.onData(connReceived + advanced) // checked first: a FLOW_CONTROL_ERROR leaves the total within the limit
-            connReceived += advanced
-        }
+        connReceived += r.onData(offset, data, off, len, fin, connFlow, connReceived) // checks both windows before it changes anything
         if (r.stopped) {
             creditConnection(r.abandon())
             if (r.finished) maybeClose(id)
@@ -408,11 +408,7 @@ internal class StreamManager(
             peerStream(id, 0x04, receiving = true) ?: return
         val r =
             e.recv ?: throw QuicWireException(TransportError.STREAM_STATE_ERROR, 0x04, "RESET_STREAM on our send-only stream $id")
-        val advanced = r.onReset(code, finalSize)
-        if (advanced > 0) {
-            connFlow.onData(connReceived + advanced) // checked first: a FLOW_CONTROL_ERROR leaves the total within the limit
-            connReceived += advanced
-        }
+        connReceived += r.onReset(code, finalSize, connFlow, connReceived)
         creditConnection(r.abandon())
         events += ConnectionEvent.StreamReset(id, code)
         if (r.stopped) maybeClose(id) // a stopped half has no reader to surface the reset to

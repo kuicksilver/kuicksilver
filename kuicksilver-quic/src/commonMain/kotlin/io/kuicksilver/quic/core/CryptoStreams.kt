@@ -69,11 +69,9 @@ internal class CryptoStreams(
         ) {
             throw QuicWireException(TransportError.CRYPTO_BUFFER_EXCEEDED, 0x06, "CRYPTO data beyond the $outOfOrderCap-byte buffer")
         }
-        if (handshakeDone &&
-            level == 3
-        ) {
-            postHandshakeBytes += len
-            if (postHandshakeBytes >
+        val postHandshake = handshakeDone && level == 3
+        if (postHandshake) {
+            if (postHandshakeBytes + len >
                 postHandshakeCap
             ) {
                 throw QuicWireException(
@@ -83,8 +81,9 @@ internal class CryptoStreams(
                 )
             }
         }
+        r.insert(offset, data, off, len) // may refuse the frame (ReassemblyFull): nothing below is counted for a dropped packet
+        if (postHandshake) postHandshakeBytes += len
         if (end > received[level]) received[level] = end
-        r.insert(offset, data, off, len)
     }
 
     /**

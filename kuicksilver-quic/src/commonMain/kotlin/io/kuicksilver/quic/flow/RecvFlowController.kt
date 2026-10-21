@@ -24,18 +24,16 @@ internal class RecvFlowController(
     var limit: Long = initialWindow
         private set
     private var consumed: Long = 0
-    private var received: Long = 0
     private var epochStart: TimeMark = TimeMark.NEVER
     private var epochStartOffset: Long = 0
 
-    /** The highest offset (or total) the peer has sent; above [limit] it is a FLOW_CONTROL_ERROR. */
+    /** Checks the highest offset (or total) the peer would have sent: above [limit] it is a FLOW_CONTROL_ERROR. Changes nothing (the caller keeps the count). */
     fun onData(endOffset: Long) {
         if (endOffset >
             limit
         ) {
             throw QuicWireException(TransportError.FLOW_CONTROL_ERROR, 0, "data beyond the flow control limit: $endOffset > $limit")
         }
-        if (endOffset > received) received = endOffset
     }
 
     /** The application took [bytes]; returns the new limit to advertise, or -1 when no update is due (no boxing on the read path). */

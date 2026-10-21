@@ -45,13 +45,22 @@ internal class RecvStream(
         reassembler.clear()
     }
 
-    /** Returns how far the highest received offset advanced (for the connection-level flow accounting). */
+    /**
+     * Takes a STREAM frame. Every check comes first: the final size, the stream window, then the connection window ([conn], of
+     * which [connReceived] bytes were charged), then the reassembly buffer, which may refuse the frame with [ReassemblyFull].
+     * Only then are [highest], the final size and the state committed: a refused frame leaves the stream as it was, so bytes
+     * buffered later below its offset are still charged to the connection (RFC 9000 section 4.1; review h-quic: a refused frame
+     * used to raise [highest] uncharged, and a stream then held its whole window outside the connection limit). Returns how far
+     * [highest] advanced, which the caller adds to its connection total.
+     */
     fun onData(
         offset: Long,
         data: PacketBuffer,
         off: Int,
         len: Int,
         fin: Boolean,
+        conn: RecvFlowController,
+        connReceived: Long,
     ): Long {
         val end = offset + len
         if (finalSize >= 0 &&
@@ -59,21 +68,21 @@ internal class RecvStream(
         ) {
             throw QuicWireException(TransportError.FINAL_SIZE_ERROR, 0x08, "stream $id: data beyond or final size changed")
         }
-        if (fin) {
-            if (end <
-                highest
-            ) {
-                throw QuicWireException(TransportError.FINAL_SIZE_ERROR, 0x08, "stream $id: final size below received data")
-            }
-            finalSize =
-                end
-            if (state == RecvState.Recv) state = RecvState.SizeKnown
+        if (fin &&
+            end < highest
+        ) {
+            throw QuicWireException(TransportError.FINAL_SIZE_ERROR, 0x08, "stream $id: final size below received data")
         }
         if (state == RecvState.ResetRecvd || state == RecvState.ResetRead) return 0
         flow.onData(end)
         val advanced = if (end > highest) end - highest else 0L
-        if (end > highest) highest = end
+        if (advanced > 0) conn.onData(connReceived + advanced) // a FLOW_CONTROL_ERROR leaves the total within the limit
         if (!stopped) reassembler.insert(offset, data, off, len)
+        if (advanced > 0) highest = end
+        if (fin) {
+            finalSize = end
+            if (state == RecvState.Recv) state = RecvState.SizeKnown
+        }
         if (finalSize >= 0 && reassembler.readOffset + reassembler.readable == finalSize &&
             state == RecvState.SizeKnown
         ) {
@@ -82,9 +91,12 @@ internal class RecvStream(
         return advanced
     }
 
+    /** RESET_STREAM: checked against the final size and both windows ([conn], [connReceived] as in [onData]) before it is applied. */
     fun onReset(
         code: Long,
         size: Long,
+        conn: RecvFlowController,
+        connReceived: Long,
     ): Long {
         if (size < highest ||
             (finalSize >= 0 && size != finalSize)
@@ -94,6 +106,7 @@ internal class RecvStream(
         if (state == RecvState.ResetRecvd || state == RecvState.ResetRead || state == RecvState.DataRead) return 0
         flow.onData(size) // a final size beyond the stream window is FLOW_CONTROL_ERROR (RFC 9000 sections 4.1, 4.5, 19.10)
         val advanced = size - highest
+        if (advanced > 0) conn.onData(connReceived + advanced)
         finalSize = size
         highest = size
         resetCode = code
