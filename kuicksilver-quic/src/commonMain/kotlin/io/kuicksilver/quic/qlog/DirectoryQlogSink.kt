@@ -28,7 +28,7 @@ import kotlin.random.Random
  * never truncated, followed or blocked on), with a random suffix so a client reusing another connection's ID gets a file of
  * its own. Two ceilings bound what a flood of connections can write through this sink: at most [maxOpenTraces] traces open
  * at once (further connections are not traced), and at most [maxTotalBytes] written over the sink's lifetime (after that, no
- * new trace opens and open ones stop writing). `QuicLimits.qlogBytes` still bounds each connection. Files are opened and
+ * new trace opens and open ones stop writing). A fixed 64 MiB per connection still bounds each trace. Files are opened and
  * written on the endpoint loop, so a slow disk stalls every connection of that loop: on a busy server wrap the sink in
  * [AsyncQlogSink].
  *

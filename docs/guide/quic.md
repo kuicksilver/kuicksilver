@@ -1,3 +1,8 @@
+<!--
+Copyright 2026 The Kuicksilver Authors
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # QUIC with Kuicksilver
 
 Kuicksilver's QUIC layer (`io.kuicksilver:kuicksilver-quic`) implements QUIC v1 (RFC 9000/9001/9002) and, when
@@ -26,7 +31,7 @@ val quic = quicConfig {
 ```
 
 QUIC is stricter than TLS over TCP about the `TlsConfig` it accepts (RFC 9001 section 4): TLS 1.3 only, a non-empty
-`alpn` list, no `TLS_AES_128_CCM_8_SHA256`, and no `sniSelector` in v1. Building a `QuicClientConfig` or
+`alpn` list, no `TLS_AES_128_CCM_8_SHA256`, and no `sniSelector` (not supported for QUIC yet). Building a `QuicClientConfig` or
 `QuicServerConfig` from a config that breaks one of these throws `TlsException.Config` right away, not at the first
 `connect`.
 
@@ -467,7 +472,7 @@ route. No entitlement or `Info.plist` key is needed for a client; a server on th
 ### Suspended apps and lost sockets
 
 iOS reclaims the sockets of an app it suspends: back in the foreground, `sendmsg` and `recvmsg` fail with `ENOTCONN`,
-`EBADF` or `EPIPE`, and an interface that went away answers `ENETDOWN`, `ENETUNREACH` or `EHOSTUNREACH`. Both transports
+`EBADF`, `EPIPE` or `ENOTSOCK`, and an interface that went away answers `ENETDOWN`, `ENETUNREACH` or `EHOSTUNREACH`. Both transports
 (the accelerated `ksl` socket and the portable `ktor-network` one) turn these errors into `SocketDefunctException`; a custom
 `DatagramIo` throws it for the same conditions. The endpoint loop then stops reading and writing that socket, without
 retrying it in a loop, and every connection reports `PathEvent.SocketLost(path, cause)` for its paths on it; the
@@ -734,7 +739,7 @@ client chooses that CID, so the sink treats the name as hostile: the directory i
 and refused when it is a symbolic link, belongs to another user, or is writable by group or others without the sticky
 bit (keep it out of `/tmp`); every file is created exclusively and never through a link, and the random suffix gives a
 client that reuses a CID a file of its own. qlog on a public server is a disk-exhaustion surface, so the sink has two
-ceilings besides `QuicLimits.qlogBytes` per connection: at most `maxOpenTraces` traces open at once (256) and
+ceilings besides the fixed 64 MiB per connection ([fixed limits](configuration.md#fixed-limits)): at most `maxOpenTraces` traces open at once (256) and
 `maxTotalBytes` written over its lifetime (1 GiB); beyond them connections are not traced
 (`DirectoryQlogSink(dir, maxOpenTraces, maxTotalBytes)`, *experimental*).
 
