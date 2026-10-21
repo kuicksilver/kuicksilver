@@ -34,7 +34,7 @@ import io.kuicksilver.tls.Certificate
 import kotlinx.coroutines.CoroutineScope
 import kotlin.coroutines.CoroutineContext
 
-/** One HTTP/3 request as a Ktor call: version "HTTP/3", scheme "https", no Transfer-Encoding. */
+/** One HTTP/3 request as a Ktor call: version "HTTP/3", the scheme from `:scheme` ("https" for a classic CONNECT), no Transfer-Encoding. */
 internal class H3Call(
     application: Application,
     val h3: Http3ServerRequest,
