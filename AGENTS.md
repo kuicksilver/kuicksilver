@@ -11,7 +11,7 @@ These rules apply to any AI agent working in this repository. Human contributors
 
 - Architecture, invariants and the code map: [docs/architecture.md](docs/architecture.md). Read it first.
 - Decisions: [docs/adr/](docs/adr/README.md). User guides: `docs/guide/` (with the option reference
-  `configuration.md` and `troubleshooting.md`); API stability levels and version policies: [docs/stability.md](docs/stability.md). RFC coverage and interop results:
+  `docs/guide/configuration.md` and `docs/guide/troubleshooting.md`); API stability levels and version policies: [docs/stability.md](docs/stability.md). RFC coverage and interop results:
   [docs/spec/rfc-compliance.md](docs/spec/rfc-compliance.md). Threat model and the `negative_*` controls:
   [docs/spec/threat-model.md](docs/spec/threat-model.md).
 - Modules: `kuicksilver-native` (C shim `ksl` in `src/c`, JNI in `src/jni`) → `kuicksilver-tls` → `kuicksilver-quic` →
