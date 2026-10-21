@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Copyright 2026 The Kuicksilver Authors
 # SPDX-License-Identifier: Apache-2.0
-# Consumer smoke test (spec 8.7, K6 E2): the published artifacts, not the composite build, must be enough for an application.
+# Consumer smoke test : the published artifacts, not the composite build, must be enough for an application.
 # Usage: tools/check/consumer-smoke.sh [version]   — after `./gradlew publishToMavenLocal [-Pkuicksilver.version=<version>]`.
 #        tools/check/consumer-smoke.sh --central <version>   — after a release: the artifacts from Maven Central only.
 # Builds samples/realtime-telemetry's main source sets from mavenLocal() (its tests need kuicksilver-testing, which is not published).

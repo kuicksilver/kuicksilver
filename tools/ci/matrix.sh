@@ -29,7 +29,7 @@ KSL_ARCH_CHECKS="checkQuicArchitecture checkHttp3Architecture"
 KSL_FUZZ_ARGS=(:kuicksilver-quic:jvmTest --tests "io.kuicksilver.quic.fuzz.*" :kuicksilver-http3:jvmTest --tests "io.kuicksilver.http3.fuzz.*")
 KSL_SIM_ARGS=(:kuicksilver-testing:jvmTest -Pkuicksilver.sim.runs=200 --tests "io.kuicksilver.testing.MonteCarloTest")
 
-# Runtime image for the linuxArm64 test.kexe: the K/N arm64 sysroot needs glibc 2.25 > manylinux2014 (K1 ruling, task 14).
+# Runtime image for the linuxArm64 test.kexe: the K/N arm64 sysroot needs glibc 2.25 > manylinux2014.
 KSL_UBUNTU_IMAGE="ubuntu:24.04@sha256:534baea6a22c03a63003dbc8dbe78fe34bc0d7e595d9a9dc9834884ff530eb55"
 
 # QUIC Interop Runner: the full case list for the JVM image, the subset for the Kotlin/Native image, the peers.

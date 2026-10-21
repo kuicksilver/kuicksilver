@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Layer rule for kuicksilver-quic (approved K1 deviation 2): from kuicksilver-native only PacketBuffer and the annotations may be imported.
+# Layer rule for kuicksilver-quic (an approved deviation, ADR-0004): from kuicksilver-native only PacketBuffer and the annotations may be imported.
 # Copyright 2026 The Kuicksilver Authors
 # SPDX-License-Identifier: Apache-2.0
 set -uo pipefail

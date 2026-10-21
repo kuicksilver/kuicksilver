@@ -3,8 +3,8 @@
 # SPDX-License-Identifier: Apache-2.0
 # Relative link check for the Markdown files: every link or image that is not a URL must point to an existing file or
 # directory, and a #fragment into a Markdown file must match one of its headings (GitHub's anchor rules). Links inside
-# code blocks and code spans are ignored. Skipped trees: build output, .git, .gradle, .kotlin, .worktrees, .superpowers,
-# and the private docs/plans and docs/brief. Needs python3 only.
+# code blocks and code spans are ignored. Skipped trees: build output, .git, .gradle, .kotlin, .worktrees,
+# and local untracked working directories. Needs python3 only.
 # Usage: tools/check/links.sh [root]   (exit 1 and one line per broken link when something is broken)
 set -euo pipefail
 root="$(cd "${1:-$(dirname "$0")/../..}" && pwd)"

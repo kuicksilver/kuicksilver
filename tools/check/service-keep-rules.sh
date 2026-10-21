@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Every class a published artifact names in META-INF/services must survive an application's shrinker: ServiceLoader creates it
 # by name (kuicksilver-ktor-client's KuicksilverEngineContainer: HttpClient() finds the engine that way; R8 in class-file mode
-# removed it and emptied the services file, fable review of k8/native-fixes). Usage: service-keep-rules.sh <jar|aar>...
+# removed it and emptied the services file, found in the 0.2.1 review). Usage: service-keep-rules.sh <jar|aar>...
 # 1. The artifact's keep rules (proguard.txt in an AAR, META-INF/proguard/*.pro in a jar) keep every such class.
 # 2. When R8 is in the Gradle cache (nothing is installed), R8 shrinks the artifact's classes in class-file mode with only those
 #    rules (a jar's embedded rules as R8 reads them itself): each class and its services entry must survive. Negative control:
