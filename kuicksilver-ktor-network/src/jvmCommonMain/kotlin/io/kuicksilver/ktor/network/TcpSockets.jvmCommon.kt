@@ -25,6 +25,8 @@ public actual suspend fun bindTcp(
     port: Int,
 ): ServerSocket = KslNioServerSocket(aSocket(selector).tcp().bind(host, port), selector)
 
+internal actual fun Socket.rawBytesSent(): Long? = (this as? KslNioSocket)?.bytesWritten?.get()
+
 internal actual fun Socket.setRawCloseTimeout(timeout: Duration?) {
     if (this is KslNioSocket) closeTimeout = timeout
 }

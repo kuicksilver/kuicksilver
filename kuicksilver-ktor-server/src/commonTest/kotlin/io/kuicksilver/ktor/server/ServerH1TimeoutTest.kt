@@ -33,6 +33,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
 /**
@@ -207,7 +208,7 @@ class ServerH1TimeoutTest {
             }
         }
 
-    /** A server with `GET /large`, 256 MiB, on a plain or a TLS connector; returns it and its port. */
+    /** A server with `GET /large?mib=N` (N MiB, 256 by default), on a plain or a TLS connector without HTTP/3. */
     private suspend fun largeResponseServer(
         tls: Boolean,
         configure: KuicksilverApplicationEngine.Configuration.() -> Unit,
@@ -215,14 +216,20 @@ class ServerH1TimeoutTest {
         val large: Application.() -> Unit = {
             routing {
                 get("/large") {
-                    call.respondBytesWriter {
-                        val chunk = ByteArray(64 * 1024)
-                        repeat(4096) { writeFully(chunk) }
+                    val mib = call.request.queryParameters["mib"]?.toInt() ?: 256
+                    call.respondBytesWriter(contentLength = mib * 1024L * 1024) {
+                        val chunk = ByteArray(64 * 1024) { 'x'.code.toByte() }
+                        repeat(mib * 16) { writeFully(chunk) }
                     }
                 }
             }
         }
-        if (tls) return tlsServer(configure, module = large)
+        if (tls) {
+            return tlsServer({
+                http3 = false
+                configure()
+            }, module = large)
+        }
         val s =
             embeddedServer(Kuicksilver, configure = {
                 configure()
@@ -238,6 +245,37 @@ class ServerH1TimeoutTest {
                 .first()
                 .port
     }
+
+    /**
+     * A slow client's last response is not cut by the close: with a 1 s idle timeout, a client reading about 64 KiB every
+     * 10 ms through a 64 KiB receive buffer gets the whole of a 4 MiB (plain) or 8 MiB (TLS) `Connection: close`
+     * response, which takes seconds to drain after the engine has handed it all to the socket. The close bound is the
+     * stall deadline on progress (3 s here), not a fixed time. Before, the close was aborted after the idle timeout.
+     */
+    @Test fun negative_slowReaderGetsTheWholeClosingResponse() =
+        serverTest {
+            for (tls in listOf(false, true)) {
+                val mib = if (tls) 8 else 4
+                val (server, port) =
+                    largeResponseServer(tls) {
+                        connectionIdleTimeoutSeconds = 1
+                        sendStallTimeoutForTest = 3.seconds
+                    }
+                try {
+                    val text =
+                        slowHttp(
+                            port,
+                            "GET /large?mib=$mib HTTP/1.1\r\nHost: s\r\nConnection: close\r\n\r\n",
+                            tls = if (tls) ServerFixtures.clientTls() else null,
+                            pause = 10.milliseconds,
+                        )
+                    val body = text.substringAfter("\r\n\r\n").length
+                    assertEquals(mib * 1024 * 1024, body, "tls=$tls: the closing response was cut at $body bytes")
+                } finally {
+                    server.stop(100, 500)
+                }
+            }
+        }
 
     @Test fun requestHeaderTimeoutMustBePositive() {
         val c = KuicksilverApplicationEngine.Configuration()

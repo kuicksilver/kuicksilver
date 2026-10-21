@@ -68,6 +68,9 @@ internal class KslNioSocket(
     /** Times a write answered 0 and the writer waited for the socket to become writable (tests). */
     internal val writeWaits = AtomicLong()
 
+    /** Bytes the kernel has taken from the writer ([bytesSent]): the progress of a drain. */
+    internal val bytesWritten = AtomicLong()
+
     /** The ktor socket underneath, for what only it offers ([Selectable.channel], e.g. an abort with SO_LINGER 0). */
     internal val ktorSocket: Socket get() = delegate
 
@@ -95,7 +98,10 @@ internal class KslNioSocket(
             while (true) {
                 if (channel.availableForRead == 0 && !channel.awaitContent()) break
                 var blocked = false
-                channel.read { buffer -> if (nio.write(buffer) == 0) blocked = true }
+                channel.read { buffer ->
+                    val n = nio.write(buffer)
+                    if (n == 0) blocked = true else bytesWritten.addAndGet(n.toLong())
+                }
                 if (blocked) {
                     writeWaits.incrementAndGet()
                     selectable.interestOp(SelectInterest.WRITE, true)

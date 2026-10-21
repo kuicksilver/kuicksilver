@@ -46,6 +46,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.io.IOException
 import kotlin.concurrent.atomics.AtomicBoolean
+import kotlin.concurrent.atomics.AtomicLong
 import kotlin.concurrent.atomics.AtomicReference
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.coroutines.CoroutineContext
@@ -179,6 +180,9 @@ internal class NativeTcpSocket(
     override val localAddress: SocketAddress by lazy { tcpAddressOf(descriptor, peer = false).toInet() }
 
     private val closeFlag = AtomicBoolean(false)
+
+    /** Bytes the kernel has taken from the write loop ([bytesSent]): the progress of a drain. */
+    val bytesWritten = AtomicLong(0L)
     private val actualCloseFlag = AtomicBoolean(false)
     private val readerJob = AtomicReference<ReaderJob?>(null)
     private val writerJob = AtomicReference<WriterJob?>(null)
@@ -272,6 +276,7 @@ internal class NativeTcpSocket(
                         break
                     } else {
                         offset += sent
+                        bytesWritten.addAndFetch(sent.toLong())
                     }
                 }
             }
@@ -324,6 +329,8 @@ internal class NativeTcpSocket(
 
 // Kuicksilver's Native TCP socket closes once its writer has drained, with no bound of its own; TlsSocket bounds itself
 internal actual fun Socket.setRawCloseTimeout(timeout: Duration?) {}
+
+internal actual fun Socket.rawBytesSent(): Long? = (this as? NativeTcpSocket)?.bytesWritten?.load()
 
 internal actual fun Socket.abortTcp() {
     if (this is NativeTcpSocket) {

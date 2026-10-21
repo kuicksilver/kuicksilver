@@ -28,7 +28,9 @@ import io.ktor.utils.io.writeStringUtf8
 import io.kuicksilver.http3.Http3Endpoint
 import io.kuicksilver.ktor.network.abort
 import io.kuicksilver.ktor.network.bindTcp
+import io.kuicksilver.ktor.network.bytesSent
 import io.kuicksilver.ktor.network.engineSelector
+import io.kuicksilver.ktor.network.setCloseTimeout
 import io.kuicksilver.ktor.network.tlsServer
 import io.kuicksilver.ktor.server.h1.H1Call
 import io.kuicksilver.ktor.server.h1.H1Connection
@@ -164,6 +166,7 @@ internal fun KuicksilverApplicationEngine.startTcp(
                             // the request-head deadline of the first request counts from here, the TLS handshake included
                             val accepted = TimeSource.Monotonic.markNow()
                             openTcpSockets.update { it + 1 }
+                            client.setCloseTimeout(null) // the engine bounds the close (closeWithin), on progress
                             client.socketContext.invokeOnCompletion { openTcpSockets.update { it - 1 } }
                             connectionScope.launch {
                                 val sock: Socket
@@ -183,6 +186,7 @@ internal fun KuicksilverApplicationEngine.startTcp(
                                             }
                                             return@launch
                                         } // a failed handshake ends only this connection
+                                    t.setCloseTimeout(null)
                                     sock = t
                                     peer = t.peerCertificates
                                 } else {
@@ -208,7 +212,7 @@ internal fun KuicksilverApplicationEngine.startTcp(
                                         sendTimeout = sendTimeout,
                                     ) { request -> handleRequest(this, request, scheme, peer, altSvc) }.join()
                                 } finally {
-                                    closeWithin(sock, { sock.abort() }, timeout)
+                                    closeWithin(sock, { sock.abort() }, sendTimeout)
                                     events.emit("connectionClosed") { connectionClosed(HttpProtocolVersion.HTTP_1_1, remote) }
                                 }
                             }
@@ -346,21 +350,25 @@ internal suspend fun <S : Any> acceptLoop(
 }
 
 /**
- * Closes [sock] gracefully (what was written is still sent, then TLS `close_notify` and FIN) and, when that has not
- * finished within [timeout], aborts it with [abort]: the socket's write loop waits for a client that does not read for
- * ever, and holds the descriptor. A cancelled caller (the engine's hard stop) aborts at once. Returns once the socket's
- * job has completed, which is when its descriptor is released, or after at most [ABORT_WAIT] more, so the engine
- * reports a connection closed only when it is.
+ * Closes [sock] gracefully (what was written is still sent, then TLS `close_notify` and FIN) for as long as the drain
+ * makes progress, and aborts it with [abort] once nothing has moved for [stall]: a slow reader's last response is never
+ * cut short, a client that reads nothing cannot hold the descriptor. The engine owns this bound (its sockets have none of
+ * their own, `setCloseTimeout(null)` at accept): progress is [progress] (the bytes the kernel has taken, `bytesSent`),
+ * looked at every [poll]; where it is not known, [stall] bounds the whole close. A cancelled caller (the engine's hard
+ * stop) aborts at once. Returns once the socket's job has completed, which is when its descriptor is released, or after
+ * at most [ABORT_WAIT] more, so the engine reports a connection closed only when it is.
  */
 internal suspend fun closeWithin(
     sock: Socket,
     abort: () -> Unit,
-    timeout: Duration,
+    stall: Duration,
+    progress: () -> Long? = { sock.bytesSent },
+    poll: Duration = minOf(CLOSE_POLL, stall),
 ) {
     sock.close()
     val closed =
         try {
-            withTimeoutOrNull(timeout) { sock.socketContext.join() } != null
+            drainedWhileMoving(sock, stall, progress, poll)
         } catch (_: CancellationException) {
             false
         }
@@ -370,8 +378,33 @@ internal suspend fun closeWithin(
     if (!released) sock.socketContext.cancel() // the last resort; the descriptor may then wait for the loops to notice
 }
 
+/** Waits for [sock] to close; false once [progress] has not moved for [stall] (counted in steps of [poll]). */
+private suspend fun drainedWhileMoving(
+    sock: Socket,
+    stall: Duration,
+    progress: () -> Long?,
+    poll: Duration,
+): Boolean {
+    var last = progress()
+    var quiet = Duration.ZERO
+    while (true) {
+        if (withTimeoutOrNull(poll) { sock.socketContext.join() } != null) return true
+        val now = progress()
+        if (now == null || now == last) {
+            quiet += poll
+            if (quiet >= stall) return false
+        } else {
+            last = now
+            quiet = Duration.ZERO
+        }
+    }
+}
+
+/** How often [closeWithin] looks at a closing socket's progress. */
+private val CLOSE_POLL: Duration = 1.seconds
+
 /** How long [closeWithin] waits for an aborted socket to release its descriptor. */
-private val ABORT_WAIT: Duration = 1.seconds
+private val ABORT_WAIT: Duration = 3.seconds
 
 /** At most one accept-failure warning per this interval. */
 internal val ACCEPT_FAILURE_LOG_INTERVAL: Duration = 10.seconds

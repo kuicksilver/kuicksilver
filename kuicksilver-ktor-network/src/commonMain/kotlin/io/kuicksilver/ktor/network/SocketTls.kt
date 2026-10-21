@@ -138,6 +138,9 @@ public class TlsSocket private constructor(
 
     override fun dispose(): Unit = close()
 
+    /** The socket under the TLS session ([bytesSent]). */
+    internal val rawSocket: Socket get() = raw
+
     /**
      * Ends the connection at once ([abort], and [close] past its bound): the TLS session is released without
      * `close_notify`, which ends the pumps, and the raw socket is aborted. Cancelling the raw socket's job is not enough:

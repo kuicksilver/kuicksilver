@@ -97,9 +97,40 @@ class CloseWithinTest {
         runTest {
             val sock = FakeSocket(finishes = false)
             val closing = launch { closeWithin(sock, {}, 45.seconds) }
-            advanceTimeBy(46.seconds + 1.milliseconds)
+            advanceTimeBy(48.seconds + 1.milliseconds) // the stall, then 3 s for the aborted socket to go
             assertTrue(closing.isCompleted)
             assertTrue(sock.socketContext.isCancelled)
+        }
+
+    /**
+     * The bound is on progress, not on the close: a drain that keeps moving (a slow reader taking its last response) is
+     * never aborted, however long it takes; once it stops moving, the abort comes [stall] later.
+     */
+    @Test fun negative_aDrainThatMovesIsNotCutOnlyOneThatStops() =
+        runTest {
+            val sock = FakeSocket(finishes = false)
+            var sent = 0L
+            var abortedAt = -1L
+            val mover =
+                launch {
+                    repeat(10) {
+                        delay(10.seconds)
+                        sent += 4096 // the client took some more
+                    }
+                }
+            val closing =
+                launch {
+                    closeWithin(sock, {
+                        abortedAt = currentTime
+                        sock.socketContext.complete()
+                    }, 45.seconds, progress = { sent })
+                }
+            advanceTimeBy(100.seconds)
+            assertEquals(-1L, abortedAt, "a drain that moves was aborted")
+            mover.join()
+            advanceTimeBy(46.seconds)
+            assertEquals(145_000L, abortedAt, "a drain that stopped at 100 s is aborted 45 s later")
+            assertTrue(closing.isCompleted)
         }
 
     @Test fun gracefulCloseIsNotAborted() =

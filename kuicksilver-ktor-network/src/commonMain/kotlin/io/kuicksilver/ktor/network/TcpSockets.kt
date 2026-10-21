@@ -53,3 +53,14 @@ public fun Socket.setCloseTimeout(timeout: Duration?) {
 }
 
 internal expect fun Socket.setRawCloseTimeout(timeout: Duration?)
+
+/**
+ * Bytes this socket has handed to the kernel so far (of a [TlsSocket], its raw socket's, TLS records included), or null
+ * where the socket does not count them (a socket not opened by [connectTcp] or [bindTcp]). An engine watches it to tell
+ * a close that drains slowly from one that does not drain at all.
+ */
+@InternalKuicksilverApi
+public val Socket.bytesSent: Long?
+    get() = if (this is TlsSocket) rawSocket.rawBytesSent() else rawBytesSent()
+
+internal expect fun Socket.rawBytesSent(): Long?
