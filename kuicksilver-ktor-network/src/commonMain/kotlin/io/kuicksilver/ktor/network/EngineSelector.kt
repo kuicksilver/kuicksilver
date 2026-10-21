@@ -12,7 +12,7 @@ import kotlin.coroutines.CoroutineContext
  * registered with a selector until that selector's next select, and an `ActorSelectorManager` with no interest pending
  * waits for a new interest instead of selecting, so the descriptor stayed open, half-closed, with its unread data, until
  * some other socket of the selector did something; the peer, writing into a zero window, never saw the connection end
- * (docs/upstream/ktor-selector-close.md). Here the selector always has one interest pending (a pipe nobody
+ * (Ktor issue KTOR-10016). Here the selector always has one interest pending (a pipe nobody
  * writes to), so it keeps selecting and every select flushes the deferred closes. Kotlin/Native's selector closes the
  * descriptor itself: nothing is added there.
  */

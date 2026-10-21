@@ -11,7 +11,6 @@
   "excludeFolders": [
     "docs/plans",
     "docs/brief",
-    "docs/upstream",
     "docs/benchmarks",
     "build",
     ".gradle",

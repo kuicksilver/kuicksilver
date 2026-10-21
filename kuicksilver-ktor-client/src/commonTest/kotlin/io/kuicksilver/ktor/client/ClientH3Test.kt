@@ -186,7 +186,7 @@ class ClientH3Test {
      * The same IPv6 server over HTTP/1.1 (TCP only). Ktor keeps the brackets in `Url.host` ("[::1]"); the JVM resolver accepts
      * them, Kotlin/Native's `getaddrinfo` does not (EAI_NONAME, reported as "POSIX error 0").
      *
-     * Under Ktor 3.6.0's Kotlin/Native TCP sockets every IPv6 bind and connect went to `::` (docs/upstream/ktor-native-ipv6.md):
+     * Under Ktor 3.6.0's Kotlin/Native TCP sockets every IPv6 bind and connect went to `::` (Ktor issue KTOR-10017):
      * Linux and Apple route a connect to `::` to the local host, so this passed there by accident, and Windows refused it
      * with WSAEADDRNOTAVAIL (10049). The engines' own native TCP sockets carry the address on every platform.
      */

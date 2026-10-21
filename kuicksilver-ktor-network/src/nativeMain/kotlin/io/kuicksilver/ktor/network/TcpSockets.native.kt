@@ -4,7 +4,7 @@
 // Adapted from Ktor 3.6.0 ktor-network (SocketBase, NativeSocketImpl, CIOReader, CIOWriter, TCPSocketNative,
 // TCPServerSocketNative, ConnectUtilsNative; internal there): the same socket life cycle on ktor-network's public selector API,
 // over this module's system calls (TcpSys.kt), which bind and connect the address itself; Ktor 3.6.0's NativeIPv6SocketAddress
-// puts `::` into every IPv6 sockaddr (docs/upstream/ktor-native-ipv6.md). Reads and writes go through a buffer of their own
+// puts `::` into every IPv6 sockaddr (Ktor issue KTOR-10017). Reads and writes go through a buffer of their own
 // instead of the channel's internal memory.
 @file:OptIn(ExperimentalAtomicApi::class)
 

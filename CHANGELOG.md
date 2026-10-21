@@ -1112,8 +1112,7 @@ Both Ktor engines on Kotlin/Native (`kuicksilver-ktor-network`, `kuicksilver-kto
   (and on IPv4), a request to an IPv6 address went to the local host on Linux and Apple, and Windows Native refused it
   with `WSAEADDRNOTAVAIL` (10049). The engines now use `kuicksilver-ktor-network`'s own native TCP sockets (`bindTcp`,
   `connectTcp`; `ktor-network` as before on the JVM and Android). The portable Native UDP socket, which still uses
-  `ktor-network`, refuses a specific IPv6 bind address and IPv6 destinations instead. An upstream report is drafted in
-  `docs/upstream/ktor-native-ipv6.md`.
+  `ktor-network`, refuses a specific IPv6 bind address and IPv6 destinations instead. Reported to Ktor as KTOR-10017.
 
 Samples and testing:
 

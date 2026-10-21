@@ -62,7 +62,7 @@ class KtorDatagramIoTest {
         }
 
     /**
-     * ktor-network 3.6.0's Native sockets put `::` into every IPv6 sockaddr (docs/upstream/ktor-native-ipv6.md): the portable
+     * ktor-network 3.6.0's Native sockets put `::` into every IPv6 sockaddr (Ktor issue KTOR-10017): the portable
      * socket would bind `::` (every interface, IPv4 too) for `::1`. It refuses instead of binding somewhere else.
      */
     @Test fun negative_portableRefusesASpecificIpv6Address() =

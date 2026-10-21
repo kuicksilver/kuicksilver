@@ -23,7 +23,7 @@ import kotlin.time.Duration.Companion.seconds
 
 /**
  * A socket closed on an [engineSelector] is released at once, also when that selector has nothing else to wait for
- * (docs/upstream/ktor-selector-close.md). With a plain ktor-network 3.6.0 `SelectorManager` on the JVM it was not:
+ * (Ktor issue KTOR-10016). With a plain ktor-network 3.6.0 `SelectorManager` on the JVM it was not:
  * NIO defers the close of a registered channel until the next select, and an idle `ActorSelectorManager` waits for new
  * interests instead of selecting, so the descriptor stayed open, half-closed, with the unread data in it. The peer, still
  * writing into a zero window, never learned that the connection was gone (a server handler writing an abandoned

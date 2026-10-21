@@ -130,7 +130,7 @@ class ClientH1Test {
     /**
      * The client connects to the address in the URL and nowhere else. Ktor 3.6.0's Kotlin/Native connect sent every IPv6
      * address as `::`, which Linux and Apple route to the local host: a request to `[::ffff:127.0.0.1]` (where nothing
-     * listens) reached the server on `::1` instead (docs/upstream/ktor-native-ipv6.md).
+     * listens) reached the server on `::1` instead (Ktor issue KTOR-10017).
      */
     @Test fun negative_h1ToIpv6LiteralReachesThatAddressOnly() =
         clientTest {

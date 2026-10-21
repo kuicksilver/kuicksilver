@@ -444,7 +444,7 @@ Ktor 3.6.0's `ktor-network` sockets on Kotlin/Native (Linux, Apple, Windows) nev
 `sockaddr_in6` they bind or connect with (`NativeIPv6SocketAddress.nativeAddress` sets family, port, flow label and scope
 only), so every IPv6 bind and connect uses `::`. A connector on `::1` listened on every interface (and, dual-stack, on
 IPv4); a request to an IPv6 address went to `::`, which Linux and Apple route to the local host and Windows refuses
-(`WSAEADDRNOTAVAIL`, 10049). Details and the upstream report draft: [ktor-native-ipv6.md](../upstream/ktor-native-ipv6.md).
+(`WSAEADDRNOTAVAIL`, 10049). Reported to Ktor as [KTOR-10017](https://youtrack.jetbrains.com/issue/KTOR-10017).
 
 Both engines therefore open their HTTP/1.1 TCP sockets through `kuicksilver-ktor-network` (`bindTcp`, `connectTcp`): on
 the JVM and Android that is `ktor-network` as before; on Kotlin/Native it is a TCP socket of Kuicksilver on Ktor's selector
