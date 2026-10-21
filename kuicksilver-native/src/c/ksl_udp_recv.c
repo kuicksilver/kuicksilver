@@ -69,7 +69,7 @@ int ksl_udp_recv(ksl_udp *u, uint8_t *const *bufs, const uint32_t *caps, uint32_
         if (r == 0) { u->pend_len = 0; dropped++; continue; }   /* an empty datagram carries nothing for QUIC */
         if (ss.ss_family == AF_INET6 && IN6_IS_ADDR_LINKLOCAL(&((struct sockaddr_in6 *)&ss)->sin6_addr)) { u->pend_len = 0; dropped++; continue; }   /* the address format has no scope id: no reply could reach a link-local peer */
         uint32_t before = filled; filled = hand_out(u, bufs, caps, lens, addrs, ecnv, n, filled);
-        if (filled > before) dropped = 0; else dropped++;   /* every segment larger than its slot */
+        if (filled > before) dropped = 0; else dropped++;   /* a datagram whose every segment was larger than its slot: one drop */
     }
     *received = filled;
     __atomic_sub_fetch(&u->in_recv, 1, __ATOMIC_SEQ_CST);

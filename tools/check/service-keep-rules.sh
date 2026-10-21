@@ -21,6 +21,7 @@ r8_keeps() {
     || { echo "FAIL: R8 failed ($name)"; tail -5 "$tmp/$name.log"; return 2; }
   unzip -Z1 "$out" 2>/dev/null | grep -qx "${cls//.//}.class" && unzip -p "$out" "$svc" 2>/dev/null | grep -qx "$cls"
 }
+[ -n "$r8" ] && echo "R8: $r8 (version $(java -cp "$r8" com.android.tools.r8.R8 --version 2>/dev/null | head -1)); JDK: $jdk"
 n=0
 for art in "$@"; do
   [ -f "$art" ] || { echo "FAIL: no artifact at $art"; rc=1; continue; }

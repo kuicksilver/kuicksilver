@@ -400,7 +400,7 @@ int ksl_udp_recv(ksl_udp *u, uint8_t *const *bufs, const uint32_t *caps, uint32_
         if (m.dwFlags & MSG_TRUNC) { dropped++; continue; }
         if (!take_datagram(u, &m, (uint32_t)r, &ss)) { dropped++; continue; }   /* empty, or from a link-local source */
         uint32_t before = filled; filled = hand_out(u, bufs, caps, lens, addrs, ecnv, n, filled);
-        if (filled > before) dropped = 0; else dropped++;   /* every segment larger than its slot */
+        if (filled > before) dropped = 0; else dropped++;   /* a datagram whose every segment was larger than its slot: one drop */
     }
     *received = filled;
     __atomic_sub_fetch(&u->in_recv, 1, __ATOMIC_SEQ_CST);

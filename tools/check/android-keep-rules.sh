@@ -53,6 +53,7 @@ cat > "$tmp/app.pro" <<'EOF'
 -keep class io.kuicksilver.native.KslLoader { public *; }
 -dontwarn **
 EOF
+echo "R8: $r8 (version $(java -cp "$r8" com.android.tools.r8.R8 --version 2>/dev/null | head -1)); android.jar: $android_jar"
 natives_before=$(javap -cp "$tmp/aar/classes.jar" -p io.kuicksilver.native.KslNative | grep -c ' native ')
 # r8_run <name> <extra R8 options...>: shrinks to class files (javap reads them), then answers 0 when every native and
 # PacketBuffer.buffer kept their names, 1 when not, 2 when R8 itself failed
