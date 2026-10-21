@@ -29,8 +29,9 @@ server.start(wait = true)
   engine's connection pipeline handle requests, so keep-alive, pipelining, chunked bodies and `100-continue` behave as
   in the CIO engine. Request framing follows RFC 9112 section 6 more strictly than CIO: a request with both
   Content-Length and Transfer-Encoding is refused with 400 and the connection closed, a request with neither has no
-  body (also with `Connection: close`), and a chunked trailer section is accepted (its fields are discarded). ALPN on
-  TCP is `http/1.1`.
+  body (also with `Connection: close`), and a chunked trailer section is accepted (its fields are discarded). A
+  chunk-size line must follow RFC 9112 section 7.1 exactly (hex digits, extensions by their grammar, CRLF); anything
+  else, such as a bare CR or LF in it, gets 400 and the connection closed. ALPN on TCP is `http/1.1`.
 - `configuration.identity = ...` turns plain connectors into TLS ones, so `embeddedServer(Kuicksilver, port = 443,
   configure = { identity = ... })` works as expected. Without an identity a plain `connector { port = ... }` serves
   cleartext HTTP/1.1 (behind a TLS-terminating proxy, for tests).
@@ -405,7 +406,9 @@ Ktor 3.6.0's (test scope only). On the JVM: 143 tests, 136 pass, 7 skip: `@Http2
 `@Http1Only` over HTTP/3 (the two keep-alive tests and chunked encoding), and two tests `@Ignore`d upstream. The
 multipart uploads (streamed bodies of unknown length, chunked over HTTP/1.1) run over HTTP/3 too. Adapted: the test base (ports from the engine's resolved
 connectors, the TLS identity from the test CA, real time instead of virtual time), the paths of the local-file and
-static-resource tests (this module's layout and package). Not vendored: `HttpServerJvmTestSuite`,
+static-resource tests (this module's layout and package), and `funkyChunked`, which expects a CRLF inside a quoted
+chunk extension to be part of it: RFC 9110 section 5.6.4 allows neither CR nor LF in a quoted-string, so the server
+answers 400. Not vendored: `HttpServerJvmTestSuite`,
 `SustainabilityTestSuite`, `ClientCertTestSuite` and the other JVM suites — they rely on `HttpURLConnection`, JKS key
 stores and the Apache/OkHttp clients. Off the JVM, `PortableContentTestSuite` carries the 13 `ContentTestSuite` tests
 that need no `java.io` (with `respondBytesWriter` and `ChannelWriterContent` for the JVM writers) in its place.

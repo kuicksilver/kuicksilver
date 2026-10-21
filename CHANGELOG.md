@@ -126,6 +126,17 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   acknowledgements and losses are binary searches, and a MAX_STREAM_DATA that raises nothing does no work, like MAX_DATA.
   A range declared lost after part of it was acknowledged is resent without the acknowledged part.
 
+- HTTP/1.1, server and client: a bare CR in a chunk-size line was skipped, a request smuggling vector. The parser (Ktor
+  3.6.0's, KTOR-9263) ignored a CR anywhere in the line, so `1\r0\r\n` was read as size 0x10 where a recipient that
+  ends the line at the CR reads 1, and `\r\r\n` was taken as the last chunk; a quote outside an extension switched on a
+  quoted mode that swallowed the line end, and 16 hex digits from `8000000000000000` up became a negative size. RFC 9112
+  section 2.2 makes a bare CR invalid, and section 7.1 defines the line as `1*HEXDIG [ chunk-ext ] CRLF`; a front proxy
+  that reads such a line differently frames the body differently (the "funky chunks" class). Both engines now parse the
+  line by that grammar: hex digits, extensions as `;` name `=` token or quoted-string with optional whitespace around
+  the separators, CRLF only, a size that fits a signed 64-bit length, 128 bytes at most. A bare LF stays invalid on a
+  chunk line (section 2.2 lets a recipient accept it in the start line and field lines only; the trailer section keeps
+  accepting it). The server answers a malformed chunked request body with 400 and a fixed text (it was 500 with the
+  parser's message) and closes the connection.
 - QUIC: a handshake could be held on a client address the client does not own until the handshake timeout. The
   datagram that completes the ClientHello moves the server's path at once (0.2.0), and an Initial may move it after the
   old address has been quiet for a PTO; neither move had a deadline. An off-path attacker that sees the client's

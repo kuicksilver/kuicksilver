@@ -103,6 +103,29 @@ class ServerH1FramingTest {
             }
         }
 
+    /**
+     * RFC 9112 section 2.2: a bare CR MUST be treated as invalid. The chunk-size parser skipped a CR anywhere in the line:
+     * `1\r0` was read as 0x10 (a recipient that ends the line at the CR reads 1) and `\r\r\n` as the last chunk, so the
+     * server answered `body=0123456789abcdef`. Unit cases of the line grammar: `h1.ChunkedBodyTest`.
+     */
+    @Test fun negative_bareCrInChunkSizeIsRejected() =
+        serverTest {
+            plainServer { port ->
+                for (sizeLine in listOf("1\r0\r\n", "\r\r\n")) {
+                    val resp =
+                        withTimeout(10.seconds) {
+                            rawHttp(
+                                port,
+                                "POST /echo HTTP/1.1\r\nHost: s\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n" +
+                                    sizeLine + "0123456789abcdef\r\n0\r\n\r\n",
+                                tls = null,
+                            )
+                        }
+                    assertTrue(resp.contains(" 400 "), "${sizeLine.replace("\r", "\\r")}: $resp")
+                }
+            }
+        }
+
     /** A transfer coding other than a final `chunked`: 400 and close (RFC 9112 section 6.3 item 4). */
     @Test fun negative_unknownTransferCodingIsRejected() =
         serverTest {

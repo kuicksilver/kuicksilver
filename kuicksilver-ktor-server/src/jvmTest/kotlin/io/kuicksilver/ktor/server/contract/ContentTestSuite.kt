@@ -408,6 +408,11 @@ abstract class ContentTestSuite<TEngine : ApplicationEngine, TConfiguration : Ap
             }
         }
 
+    /**
+     * Adapted: upstream expects the quoted CRLF in `ext="pwned\r\nlol"` to be part of the extension and the body echoed.
+     * RFC 9110 section 5.6.4 does not allow CR or LF in a quoted-string, and a front proxy that ends the line at the first
+     * CRLF frames the body differently, so Kuicksilver rejects the line (RFC 9112 section 7.1) with 400.
+     */
     @Test
     open fun funkyChunked() =
         runTest {
@@ -437,26 +442,7 @@ abstract class ContentTestSuite<TEngine : ApplicationEngine, TConfiguration : Ap
                     out.flush()
 
                     val firstLine = input.readLine()
-                    assertEquals("HTTP/1.1 200 OK", firstLine)
-                    val sb = StringBuilder()
-                    var line = input.readLine()
-                    var contentLength = 0
-                    while (true) {
-                        sb.appendLine(line)
-                        if (':' in line) {
-                            if (line.startsWith("Content-Length:")) {
-                                contentLength = line.substringAfter(":").trim().toInt()
-                            }
-                            line = input.readLine()
-                        } else if (line.isEmpty()) {
-                            val actual =
-                                CharArray(contentLength)
-                                    .also { input.read(it) }
-                                    .let { String(it) }
-                            assertEquals("hello", actual, "Expected echoed content; Response:\n:$sb\n$actual")
-                            break
-                        }
-                    }
+                    assertEquals("HTTP/1.1 400 Bad Request", firstLine)
                 } finally {
                     out.close()
                     input.close()

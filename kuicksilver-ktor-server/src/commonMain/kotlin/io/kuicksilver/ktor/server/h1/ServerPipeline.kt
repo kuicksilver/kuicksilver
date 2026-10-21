@@ -14,6 +14,7 @@ import io.ktor.http.cio.Request
 import io.ktor.http.cio.RequestResponseBuilder
 import io.ktor.http.cio.expectHttpUpgrade
 import io.ktor.http.cio.parseRequest
+import io.ktor.server.plugins.BadRequestException
 import io.ktor.util.cio.ChannelReadException
 import io.ktor.util.network.NetworkAddress
 import io.ktor.utils.io.ByteChannel
@@ -27,10 +28,12 @@ import io.ktor.utils.io.copyTo
 import io.ktor.utils.io.writePacket
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CopyableThrowable
 import kotlinx.coroutines.CoroutineName
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.ReceiveChannel
@@ -83,7 +86,7 @@ internal class RequestFraming private constructor(
         input: ByteReadChannel,
         out: ByteWriteChannel,
     ) {
-        if (chunked) return decodeChunkedBody(input, out)
+        if (chunked) return decodeChunkedBody(input, out) { if (it is MalformedChunkedBodyException) MalformedRequestBody(it) else it }
         val copied = input.copyTo(out, contentLength)
         if (copied < contentLength) throw EOFException("The connection closed after $copied of $contentLength body bytes")
     }
@@ -127,6 +130,20 @@ internal class RequestFraming private constructor(
             return result
         }
     }
+}
+
+/**
+ * What the handler's receive sees for a chunked body that breaks the grammar (RFC 9112 section 7.1): a client error, so
+ * Ktor answers 400 (it maps [BadRequestException]) with this fixed message, not 500 with the parser's. Copyable, as the
+ * request body channel hands its reader a copy of a [CopyableThrowable] close cause and wraps any other. The pipeline
+ * closes the connection after the response, since where the next request would start is unknown.
+ */
+@OptIn(ExperimentalCoroutinesApi::class)
+internal class MalformedRequestBody(
+    cause: Throwable?,
+) : BadRequestException("Malformed chunked request body", cause),
+    CopyableThrowable<MalformedRequestBody> {
+    override fun createCopy(): MalformedRequestBody = MalformedRequestBody(this)
 }
 
 /**
