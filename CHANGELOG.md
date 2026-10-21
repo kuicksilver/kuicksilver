@@ -148,6 +148,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   connection in its own goroutine; when they cannot be opened within three seconds the connection closes with
   H3_GENERAL_PROTOCOL_ERROR (RFC 9114 names no more specific code for it). `Http3Connection.client` still returns once
   its SETTINGS went out, and against such a server it now fails with that error instead of hanging.
+- HTTP/3: any peer could close a connection on demand by resetting a unidirectional stream before its type
+  (RFC 9114 section 6.2: "A receiver MUST tolerate unidirectional streams being closed or reset prior to the reception of
+  the unidirectional stream header"). Only a stream that ended cleanly was dropped; a RESET_STREAM inside the type
+  reached the connection as an internal failure and closed it with H3_INTERNAL_ERROR, which also broke peers that
+  abandon their GREASE streams. Such a stream is now dropped and spends a glitch token, like an empty one, as quic-go
+  drops it; a critical stream reset after its type is still H3_CLOSED_CRITICAL_STREAM.
 
 ## [0.2.0] - 2026-10-15
 

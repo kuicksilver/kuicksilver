@@ -181,8 +181,8 @@ again on a new connection (the Ktor engine does that by itself). Once the reques
 `Http3Endpoint.close()` ends every connection at once, without GOAWAY, with `H3_NO_ERROR` (a QUIC endpoint's `close()`
 sends application code 0, which HTTP/3 does not define); `Http3Endpoint.shutdown(grace)` is the graceful way.
 
-A peer that keeps sending frames nobody needs (unknown frames on the control stream or on a request stream — reserved GREASE types on a request stream are free — empty
-unidirectional streams, PRIORITY_UPDATE floods) spends tokens of a glitch bucket (1000 tokens, 33 per second); an empty bucket closes the
+A peer that keeps sending frames nobody needs (unknown frames on the control stream or on a request stream — reserved GREASE types on a request stream are free —
+unidirectional streams that end or are reset before their type, PRIORITY_UPDATE floods) spends tokens of a glitch bucket (1000 tokens, 33 per second); an empty bucket closes the
 connection with `H3_EXCESSIVE_LOAD`. `Http3Settings.glitchProtection = false` turns this off.
 
 ## Priorities

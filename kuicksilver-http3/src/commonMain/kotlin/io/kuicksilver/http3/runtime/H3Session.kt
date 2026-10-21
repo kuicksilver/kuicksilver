@@ -115,6 +115,12 @@ internal class H3Session(
             },
         )
     private val peerUni = HashSet<Long>() // stream types seen: one control, one encoder, one decoder
+
+    /** The peer's critical streams whose type was read (a test hook). */
+    val criticalStreamsSeen = MutableStateFlow(0)
+
+    /** The peer's unidirectional streams dropped unread: ended or reset before their type, or of an unknown type (a test hook). */
+    val discardedUniStreams = MutableStateFlow(0)
     private val glitch = if (settings.glitchProtection) GlitchLimiter() else null
     private val clock = TimeSource.Monotonic.markNow()
 
@@ -311,19 +317,32 @@ internal class H3Session(
         }
     }
 
+    /**
+     * One of the peer's unidirectional streams. A stream that ends or is reset before its type is dropped: RFC 9114 section
+     * 6.2 says "A receiver MUST tolerate unidirectional streams being closed or reset prior to the reception of the
+     * unidirectional stream header" (quic-go's `handleUnidirectionalStream` returns the same way). Each such stream spends
+     * a glitch token, so a peer that only opens and abandons streams still meets H3_EXCESSIVE_LOAD (section 10.5).
+     */
     private suspend fun readUni(st: QuicStream) {
         val type =
             try {
                 st.input.readVarIntOrNull()
             } catch (_: IncompleteFrame) {
                 null
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                if (transportCause(e) !is QuicException.StreamError) throw e
+                null
             } ?: run {
-                glitch("empty unidirectional stream")
+                discardedUniStreams.value++
+                glitch("unidirectional stream ended or reset before its type")
                 return
             }
         when (type) {
             StreamType.CONTROL, StreamType.QPACK_ENCODER, StreamType.QPACK_DECODER -> {
                 if (!peerUni.add(type)) throw H3ProtocolError(Http3ErrorCode.STREAM_CREATION_ERROR, "second stream of type $type")
+                criticalStreamsSeen.value++
                 try {
                     when (type) {
                         StreamType.CONTROL -> readControl(st)
@@ -349,6 +368,7 @@ internal class H3Session(
 
             else -> {
                 st.stopSending(Http3ErrorCode.STREAM_CREATION_ERROR)
+                discardedUniStreams.value++
             } // unknown or reserved type: not a connection error (RFC 9114 section 6.2)
         }
     }
