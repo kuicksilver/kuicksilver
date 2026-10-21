@@ -15,13 +15,15 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.io.IOException
 import kotlinx.io.readByteArray
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
-import kotlin.test.assertTrue
+import kotlin.test.assertNull
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
 /**
@@ -96,25 +98,54 @@ class TcpSocketsTest {
             }
         }
 
-    /** Another address of this host (IPv4 loopback) on the port of the `::1` listener is not that listener. */
-    @Test fun negative_ipv6ListenerDoesNotAcceptIpv4() =
-        tcpTest { selector ->
-            val server = ipv6Listener(selector) ?: return@tcpTest
-            server.use {
-                val v4 = runCatching { connectTcp(selector, InetSocketAddress("127.0.0.1", server.boundPort)).close() }
-                assertTrue(v4.isFailure, "127.0.0.1:${server.boundPort} reached the listener on ::1")
+    /**
+     * A listener on `::1` and a decoy listener of ours on 127.0.0.1 at the same port number, or null where the host has no
+     * IPv6 loopback. The negative tests below connect to 127.0.0.1 on the listener's port: with nothing of ours there, any
+     * other process listening on that number answered and failed them; with the decoy they own the address they connect to.
+     * The decoy binds a free port first and `::1` takes the number, a new pair when that is taken.
+     */
+    private suspend fun ipv6ListenerWithIpv4Decoy(selector: SelectorManager): Pair<ServerSocket, ServerSocket>? {
+        ipv6Listener(selector)?.close() ?: return null
+        var last: Throwable? = null
+        repeat(20) {
+            val decoy = bindTcp(selector, "127.0.0.1", 0)
+            try {
+                return bindTcp(selector, "::1", decoy.boundPort) to decoy
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                decoy.close()
+                throw e
+            } catch (e: Throwable) {
+                decoy.close()
+                last = e
             }
         }
+        throw IllegalStateException("no port free on both 127.0.0.1 and ::1 after 20 attempts", last)
+    }
 
-    /** A connect goes to the address asked for: `::ffff:127.0.0.1`, where nothing listens, never reaches the `::1` listener. */
-    @Test fun negative_connectToAnotherIpv6AddressDoesNotReachTheListener() =
-        tcpTest { selector ->
-            val server = ipv6Listener(selector) ?: return@tcpTest
-            server.use {
-                val other = runCatching { connectTcp(selector, InetSocketAddress("::ffff:127.0.0.1", server.boundPort)).close() }
-                assertTrue(other.isFailure, "a connect to [::ffff:127.0.0.1]:${server.boundPort} reached the listener on ::1")
+    /** [address] on the listener's port reached our decoy and not the `::1` listener. */
+    private suspend fun assertReachesTheDecoyOnly(
+        selector: SelectorManager,
+        address: String,
+    ) {
+        val (server, decoy) = ipv6ListenerWithIpv4Decoy(selector) ?: return
+        server.use {
+            decoy.use {
+                connectTcp(selector, InetSocketAddress(address, server.boundPort)).use {
+                    withTimeout(5.seconds) { decoy.accept() }.close()
+                    val reached = withTimeoutOrNull(300.milliseconds) { server.accept() }
+                    reached?.close()
+                    assertNull(reached, "a connect to $address:${server.boundPort} reached the listener on ::1")
+                }
             }
         }
+    }
+
+    /** Another address of this host (IPv4 loopback) on the port of the `::1` listener is not that listener. */
+    @Test fun negative_ipv6ListenerDoesNotAcceptIpv4() = tcpTest { selector -> assertReachesTheDecoyOnly(selector, "127.0.0.1") }
+
+    /** A connect goes to the address asked for: `::ffff:127.0.0.1` (our IPv4 decoy) never reaches the `::1` listener. */
+    @Test fun negative_connectToAnotherIpv6AddressDoesNotReachTheListener() =
+        tcpTest { selector -> assertReachesTheDecoyOnly(selector, "::ffff:127.0.0.1") }
 
     /** An IPv4-mapped literal reaches the IPv4 listener (as on the JVM), also on Windows, whose IPv6 sockets are IPv6-only. */
     @Test fun ipv4MappedLiteralReachesTheIpv4Listener() =
