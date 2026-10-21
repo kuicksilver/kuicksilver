@@ -73,7 +73,7 @@ struct ksl_udp {
     uint32_t requested, granted; uint16_t gso_max; uint16_t batch;
     int gso_on, ecn_cmsg_on, df_probe, dual;   /* df_probe: IP_MTU_DISCOVER = PROBE taken; dual: AF_INET6 on :: for a 0.0.0.0 bind */
     int ce_refused;   /* Windows refused the CE codepoint in the IP_ECN / IPV6_ECN cmsg (WSAEINVAL): CE leaves unmarked, ECT stays on */
-    uint32_t last_errno; char last_msg[KSL_MSG];
+    uint32_t last_errno; char last_msg[KSL_MSG]; LONG err_busy;   /* err_busy: the lock of the pair (err_lock) */
     uint8_t local[KSL_UDP_ADDR_LEN];
     /* the receiver thread owns scratch (a URO train and its segments not yet handed out), the sender thread owns tx (a joined USO run) */
     uint8_t *scratch; uint8_t *tx; uint32_t pend_off, pend_len, pend_seg; uint8_t pend_addr[KSL_UDP_ADDR_LEN]; uint8_t pend_ecn;
@@ -86,7 +86,14 @@ struct ksl_udp {
 
 static void be32(uint8_t *p, uint32_t v) { p[0] = (uint8_t)(v >> 24); p[1] = (uint8_t)(v >> 16); p[2] = (uint8_t)(v >> 8); p[3] = (uint8_t)v; }
 static void be16(uint8_t *p, uint16_t v) { p[0] = (uint8_t)(v >> 8); p[1] = (uint8_t)v; }
-static void set_err(ksl_udp *u, int e, const char *what) { u->last_errno = (uint32_t)e; snprintf(u->last_msg, KSL_MSG, "%s: WSA error %d", what, e); }
+/* the sender and the receiver thread both record errors and ksl_udp_get reads them: a short spin lock keeps errno and text one
+   error's (as in ksl_udp_internal.h) */
+static void err_lock(ksl_udp *u) { while (InterlockedExchange(&u->err_busy, 1)) SwitchToThread(); }
+static void err_unlock(ksl_udp *u) { InterlockedExchange(&u->err_busy, 0); }
+static void set_err(ksl_udp *u, int e, const char *what) {
+    char m[KSL_MSG]; snprintf(m, sizeof m, "%s: WSA error %d", what, e);
+    err_lock(u); u->last_errno = (uint32_t)e; memcpy(u->last_msg, m, KSL_MSG); err_unlock(u);
+}
 static void fail(uint32_t *err, uint32_t code, char *msg, size_t msglen, const char *what, int wsa) { if (err) *err = code; if (msg && msglen) snprintf(msg, msglen, "%s: WSA error %d", what, wsa); }
 
 /* WSAStartup once per process (reference counted by Winsock; never undone, like the OpenSSL init). Kotlin/Native code reaches
@@ -223,7 +230,8 @@ int ksl_udp_get(ksl_udp *u, int what, uint8_t *out, size_t cap, size_t *len) {
     case KSL_UDP_GET_CAPS: if (cap < 8) return KSL_ERROR; be32(out, u->granted); be16(out + 4, u->gso_on ? u->gso_max : 0); be16(out + 6, u->batch); *len = 8; return KSL_OK;
     case KSL_UDP_GET_LOCAL: if (cap < KSL_UDP_ADDR_LEN) return KSL_ERROR; memcpy(out, u->local, KSL_UDP_ADDR_LEN); *len = KSL_UDP_ADDR_LEN; return KSL_OK;
     case KSL_UDP_GET_STATS: if (cap < 12) return KSL_ERROR; be32(out, u->sends); be32(out + 4, u->recvs); be32(out + 8, u->gso_fallbacks); *len = 12; return KSL_OK;
-    case KSL_UDP_GET_ERROR: { if (cap < 4) return KSL_ERROR; be32(out, u->last_errno); size_t m = strlen(u->last_msg); if (m > cap - 4) m = cap - 4; memcpy(out + 4, u->last_msg, m); *len = 4 + m; return KSL_OK; }
+    case KSL_UDP_GET_ERROR: { if (cap < 4) return KSL_ERROR; char msg[KSL_MSG]; err_lock(u); uint32_t e = u->last_errno; memcpy(msg, u->last_msg, KSL_MSG); err_unlock(u);
+        msg[KSL_MSG - 1] = 0; be32(out, e); size_t m = strlen(msg); if (m > cap - 4) m = cap - 4; memcpy(out + 4, msg, m); *len = 4 + m; return KSL_OK; }
     default: return KSL_ERROR;
     }
 }
@@ -414,6 +422,7 @@ void ksl_udp_close(ksl_udp *u) {
 uint32_t ksl_udp_syscalls_for_test(ksl_udp *u) { return u->sends; }
 void ksl_udp_fail_next_gso_for_test(ksl_udp *u, int err) { u->fail_next_gso = err; }
 void ksl_udp_fail_next_send_for_test(ksl_udp *u, int err) { u->fail_next_send = err; }
+void ksl_udp_set_err_for_test(ksl_udp *u, int e, const char *what) { set_err(u, e, what); }
 /* IP_MTU_DISCOVER of the socket's IPv4 half (3 = PROBE); -1 where the system refuses the option */
 int ksl_udp_df_mode_for_test(int fd) { DWORD v = 0; int l = (int)sizeof v; if (getsockopt((SOCKET)(UINT_PTR)(uint32_t)fd, IPPROTO_IP, IP_MTU_DISCOVER, (char *)&v, &l) != 0) return -1; return (int)v; }
 /* IP_DONTFRAGMENT of the socket's IPv4 half: 1 when set, 0 when clear, -1 when it cannot be read */

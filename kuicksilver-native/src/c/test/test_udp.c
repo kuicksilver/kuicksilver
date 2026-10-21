@@ -58,6 +58,9 @@ static void *junk_thread(void *arg) {
     for (int i = 0; i < 300 && !ja->stop; i++) { (void)sendto(s, "", 0, 0, (struct sockaddr *)&to, sizeof to); struct timespec w = { 0, 5000000 }; nanosleep(&w, NULL); }
     close(s); return NULL;
 }
+/* writes one error into the socket over and over, as a failing sender or receiver thread would */
+struct err_args { ksl_udp *u; int e; const char *what; };
+static void *err_writer(void *arg) { struct err_args *ea = arg; for (int i = 0; i < 100000; i++) ksl_udp_set_err_for_test(ea->u, ea->e, ea->what); return NULL; }
 #endif
 
 void run_udp(void) {
@@ -335,6 +338,25 @@ void run_udp(void) {
             CHECK(got == 1 && lens[0] == 1 && buf[0] == 'q', "the datagram behind the dropped run is received by a later call");
           }
           if (s >= 0) close(s); if (r) ksl_udp_close(r); }
+        /* udp_error_text_matches_its_errno: the sender and the receiver thread both record errors; the errno and the text read
+           together (KSL_UDP_GET_ERROR) must always be one error's, never one's number with the other's text or a torn text */
+        { uint8_t lr[KSL_UDP_ADDR_LEN]; ksl_udp *r = open_lo(0, lr); CHECK(r != NULL, "socket for the error-text test");
+          if (r) {
+            char want_send[256], want_recv[256]; snprintf(want_send, sizeof want_send, "sendmsg: %s", strerror(EINVAL)); snprintf(want_recv, sizeof want_recv, "recvmsg: %s", strerror(ENOBUFS));
+            struct err_args w1 = { r, EINVAL, "sendmsg" }, w2 = { r, ENOBUFS, "recvmsg" }; pthread_t t1, t2;
+            CHECK(pthread_create(&t1, NULL, err_writer, &w1) == 0 && pthread_create(&t2, NULL, err_writer, &w2) == 0, "error writers");
+            int torn = 0;
+            for (int i = 0; i < 100000; i++) {
+              uint8_t out[4 + 512]; size_t n = 0; if (ksl_udp_get(r, KSL_UDP_GET_ERROR, out, sizeof out, &n) != KSL_OK || n < 4) { torn++; continue; }
+              uint32_t e = ((uint32_t)out[0] << 24) | ((uint32_t)out[1] << 16) | ((uint32_t)out[2] << 8) | out[3]; size_t ml = n - 4;
+              const char *want = e == EINVAL ? want_send : e == ENOBUFS ? want_recv : "";
+              if (strlen(want) != ml || memcmp(out + 4, want, ml) != 0) torn++;
+            }
+            pthread_join(t1, NULL); pthread_join(t2, NULL);
+            CHECK(torn == 0, "every error read is one error's number and text");
+            if (torn) printf("    %d of 100000 reads mixed two errors\n", torn);
+          }
+          if (r) ksl_udp_close(r); }
         ksl_udp_close(a); ksl_udp_close(b);
     }
 #elif defined(_WIN32)

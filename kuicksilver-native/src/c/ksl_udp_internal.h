@@ -24,6 +24,7 @@
 #include <fcntl.h>
 #include <poll.h>
 #include <pthread.h>
+#include <sched.h>
 #include <time.h>
 #ifdef __linux__
 #ifndef UDP_SEGMENT
@@ -50,7 +51,7 @@ struct ksl_udp {
     int fd; int family; int dual; int wake[2];   /* dual: AF_INET6 on :: with IPV6_V6ONLY off, IPv4 peers as v4-mapped addresses */
     uint32_t requested, granted; uint16_t gso_max; uint16_t batch;
     int gso_on, tos_cmsg_on, eperm_retried;
-    uint32_t last_errno; char last_msg[KSL_MSG];
+    uint32_t last_errno; char last_msg[KSL_MSG]; int err_busy;   /* err_busy: the lock of the pair (err_lock) */
     uint8_t local[KSL_UDP_ADDR_LEN];
     /* GRO scratch: one received message and the segments of it not yet handed out */
     /* two scratch buffers: the receiver thread owns scratch (GRO train), the sender thread owns tx (joined GSO run) — they never share */
@@ -62,7 +63,14 @@ struct ksl_udp {
 #endif
 };
 
-static inline void set_err(ksl_udp *u, int e, const char *what) { u->last_errno = (uint32_t)e; snprintf(u->last_msg, KSL_MSG, "%s: %s", what, strerror(e)); }
+/* the sender and the receiver thread both record errors and ksl_udp_get reads them: a short spin lock keeps errno and text one
+   error's (the text is formatted outside it, so the lock is held for a copy of KSL_MSG bytes) */
+static inline void err_lock(ksl_udp *u) { while (__atomic_exchange_n(&u->err_busy, 1, __ATOMIC_ACQUIRE)) sched_yield(); }
+static inline void err_unlock(ksl_udp *u) { __atomic_store_n(&u->err_busy, 0, __ATOMIC_RELEASE); }
+static inline void set_err(ksl_udp *u, int e, const char *what) {
+    char m[KSL_MSG]; snprintf(m, sizeof m, "%s: %s", what, strerror(e));
+    err_lock(u); u->last_errno = (uint32_t)e; memcpy(u->last_msg, m, KSL_MSG); err_unlock(u);
+}
 
 static inline socklen_t to_sockaddr(const uint8_t a[KSL_UDP_ADDR_LEN], struct sockaddr_storage *ss) {
     memset(ss, 0, sizeof *ss);

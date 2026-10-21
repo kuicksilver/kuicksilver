@@ -154,7 +154,8 @@ int ksl_udp_get(ksl_udp *u, int what, uint8_t *out, size_t cap, size_t *len) {
     case KSL_UDP_GET_CAPS: if (cap < 8) return KSL_ERROR; be32(out, u->granted); be16(out + 4, u->gso_on ? u->gso_max : 0); be16(out + 6, u->batch); *len = 8; return KSL_OK;
     case KSL_UDP_GET_LOCAL: if (cap < KSL_UDP_ADDR_LEN) return KSL_ERROR; memcpy(out, u->local, KSL_UDP_ADDR_LEN); *len = KSL_UDP_ADDR_LEN; return KSL_OK;
     case KSL_UDP_GET_STATS: if (cap < 12) return KSL_ERROR; be32(out, u->sends); be32(out + 4, u->recvs); be32(out + 8, u->gso_fallbacks); *len = 12; return KSL_OK;
-    case KSL_UDP_GET_ERROR: { if (cap < 4) return KSL_ERROR; be32(out, u->last_errno); size_t m = strlen(u->last_msg); if (m > cap - 4) m = cap - 4; memcpy(out + 4, u->last_msg, m); *len = 4 + m; return KSL_OK; }
+    case KSL_UDP_GET_ERROR: { if (cap < 4) return KSL_ERROR; char msg[KSL_MSG]; err_lock(u); uint32_t e = u->last_errno; memcpy(msg, u->last_msg, KSL_MSG); err_unlock(u);
+        msg[KSL_MSG - 1] = 0; be32(out, e); size_t m = strlen(msg); if (m > cap - 4) m = cap - 4; memcpy(out + 4, msg, m); *len = 4 + m; return KSL_OK; }
     default: return KSL_ERROR;
     }
 }
@@ -178,6 +179,7 @@ uint32_t ksl_udp_syscalls_for_test(ksl_udp *u) { return u->sends; }
 uint32_t ksl_udp_recv_syscalls_for_test(ksl_udp *u) { return u->recvs + u->polls; }
 void ksl_udp_fail_next_gso_for_test(ksl_udp *u, int err) { u->fail_next_gso = err; }
 void ksl_udp_fail_next_send_for_test(ksl_udp *u, int err) { u->fail_next_send = err; }
+void ksl_udp_set_err_for_test(ksl_udp *u, int e, const char *what) { set_err(u, e, what); }
 #ifdef __APPLE__
 int ksl_udp_df_mode_for_test(int fd) { int v = -1; socklen_t l = sizeof v; if (getsockopt(fd, IPPROTO_IP, IP_DONTFRAG, &v, &l) != 0 && getsockopt(fd, IPPROTO_IPV6, IPV6_DONTFRAG, &v, (l = sizeof v, &l)) != 0) return -1; return v; }   /* AF_INET6: IPV6_DONTFRAG */
 #else
@@ -202,6 +204,7 @@ uint32_t ksl_udp_syscalls_for_test(ksl_udp *u) { (void)u; return 0; }
 uint32_t ksl_udp_recv_syscalls_for_test(ksl_udp *u) { (void)u; return 0; }
 void ksl_udp_fail_next_gso_for_test(ksl_udp *u, int err) { (void)u; (void)err; }
 void ksl_udp_fail_next_send_for_test(ksl_udp *u, int err) { (void)u; (void)err; }
+void ksl_udp_set_err_for_test(ksl_udp *u, int e, const char *what) { (void)u; (void)e; (void)what; }
 int ksl_udp_df_mode_for_test(int fd) { (void)fd; return -1; }
 int ksl_udp_close_wakes_for_test(ksl_udp *u) { (void)u; return 0; }
 void ksl_udp_no_ipv6_for_test(int on) { (void)on; }

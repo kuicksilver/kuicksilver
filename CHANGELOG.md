@@ -198,6 +198,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   it in the start line and field lines only; the trailer section keeps accepting it). For a malformed chunked request body the engine writes no response itself: the handler's receive of
   the body fails with `BadRequestException`, which Ktor answers with 400 and a fixed text unless the application
   handles it (it was a plain IOException, answered with 500 and the parser's message), and the connection closes.
+- Native UDP: the errno and text of a socket's last error (`KslUdpSocket`'s exception message) could mix two errors,
+  or come out torn, when the sending and the receiving thread failed at the same time; the pair is now written and read
+  under a short lock. Diagnostics only.
 - Native UDP (Linux GSO, Windows USO): a run of equal datagrams was joined up to 65535 bytes, but one IPv4 datagram
   carries at most 65507 bytes of UDP payload (65527 over IPv6). The kernel refused such a send with `EMSGSIZE`, which
   for segments of at most 1200 bytes switched GSO off for the socket. A join now stops at the limit of the peer's
