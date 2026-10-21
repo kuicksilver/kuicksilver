@@ -101,6 +101,13 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- Ktor server, HTTP/1.1 (send-side slowloris): a client that requested a large response and never read it held the
+  connection and its handler for ever: the response writer waited for the socket without a deadline, and so did the
+  socket's close. A response write that makes no progress for `connectionIdleTimeoutSeconds` now ends the connection
+  and its handler (upgraded WebSocket connections too), and a connection's graceful close is aborted after the same
+  time. Progress counts, not the length of the response: a client that keeps reading keeps its response, as with
+  nginx's `send_timeout`; the engine sees progress about 1 MiB at a time, so a client must read about that much per
+  timeout.
 - Ktor server, HTTP/1.1: empty lines before a request line (RFC 9112 section 2.2) made a connection that then went
   quiet count as a started request, which got 408 at the header deadline; they are skipped, and such a connection is
   closed without a response like an idle one.

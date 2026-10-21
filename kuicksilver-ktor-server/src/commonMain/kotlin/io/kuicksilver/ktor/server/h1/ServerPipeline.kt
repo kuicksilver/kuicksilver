@@ -6,7 +6,8 @@
 // unknown codings are refused with 400 and close; no framing means no body; chunked trailers are accepted); our own
 // [H1Connection] and [H1RequestScope] instead of `ServerIncomingConnection` and `ServerRequestScope` (whose constructor
 // is internal to ktor-server-cio), without its `onClose` hook; a deadline and a size limit for every request head (408,
-// 431) and an idle timeout that ends the whole connection, not only its output.
+// 431), an idle timeout that ends the whole connection, not only its output, and a deadline on response writes that
+// make no progress.
 package io.kuicksilver.ktor.server.h1
 
 import io.ktor.http.HttpProtocolVersion
@@ -188,7 +189,7 @@ internal class MalformedRequestBody(
  * one, as HTTP/1.1 pipelining allows); responses are written in request order.
  *
  * [timeout] closes an idle connection, both directions: no response handed to the writer for that long ends the
- * pipeline. [headerTimeout] bounds each request head, counted from the end of the previous response (the start of the
+ * pipeline, and so does a response the client's socket took nothing of for that long (a client that stopped reading). [headerTimeout] bounds each request head, counted from the end of the previous response (the start of the
  * pipeline for the first request, which gets [firstHeadTimeout], what is left of the deadline after the TLS handshake);
  * bytes trickling in do not extend it. A client that sent part of a head by then gets `408 Request Timeout` with
  * `Connection: close` (RFC 9110 section 15.5.9: the server has decided to close rather than wait). One that sent nothing
@@ -598,13 +599,47 @@ private suspend fun pipelineWriterLoop(
         }
         val child = next.getOrNull() ?: break
         try {
-            child.copyTo(connection.output)
-            connection.output.flush()
+            child.copyToClient(connection.output, timeout)
         } catch (cause: Throwable) {
             if (child is ByteWriteChannel) child.close(cause)
+            if (cause is ClientNotReading) {
+                // the socket has taken nothing for [timeout]: end the connection, its handler (blocked on this response) too
+                onIdle()
+                break
+            }
         } finally {
             unwritten.update { it - 1 }
         }
+    }
+}
+
+/** The client took no bytes of a response for the whole idle timeout. */
+private class ClientNotReading(
+    timeout: Duration,
+) : IOException("The client read nothing of the response for $timeout")
+
+/**
+ * Ktor's `copyTo`, with a deadline on every hand-over to the connection's [output]: a flush that does not return within
+ * [stall] (the socket and the channel in front of it full, the client not reading) throws [ClientNotReading]. The deadline
+ * is on progress, not on the response: each flush returns as soon as the socket takes data again, so a client that reads
+ * slowly keeps its response, as nginx's `send_timeout` ("only between two successive write operations"). Waiting for the
+ * application's next bytes has no deadline (a server-sent event stream may be quiet for long).
+ */
+@OptIn(InternalAPI::class)
+private suspend fun ByteReadChannel.copyToClient(
+    output: ByteWriteChannel,
+    stall: Duration,
+) {
+    try {
+        while (!isClosedForRead) {
+            readBuffer.transferTo(output.writeBuffer)
+            withTimeoutOrNull(stall) { output.flush() } ?: throw ClientNotReading(stall)
+            awaitContent()
+        }
+    } catch (cause: Throwable) {
+        cancel(cause)
+        output.close(cause)
+        throw cause
     }
 }
 

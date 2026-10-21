@@ -200,7 +200,7 @@ internal fun KuicksilverApplicationEngine.startTcp(
                                         draining = draining,
                                     ) { request -> handleRequest(this, request, scheme, peer, altSvc) }.join()
                                 } finally {
-                                    sock.close()
+                                    closeWithin(sock, timeout)
                                     events.emit("connectionClosed") { connectionClosed(HttpProtocolVersion.HTTP_1_1, remote) }
                                 }
                             }
@@ -335,6 +335,25 @@ internal suspend fun <S : Any> acceptLoop(
         pause = Duration.ZERO
         serve(client)
     }
+}
+
+/**
+ * Closes [sock] gracefully (what was written is still sent, then TLS `close_notify` and FIN) and aborts it when that has
+ * not finished within [timeout]: the socket's write loop waits for a client that does not read for ever, and holds the
+ * descriptor. Cancelling the socket's job ends its loops, after which it closes. A cancelled caller aborts at once.
+ */
+internal suspend fun closeWithin(
+    sock: Socket,
+    timeout: Duration,
+) {
+    sock.close()
+    val closed =
+        try {
+            withTimeoutOrNull(timeout) { sock.socketContext.join() } != null
+        } catch (_: CancellationException) {
+            false
+        }
+    if (!closed) sock.socketContext.cancel()
 }
 
 /** At most one accept-failure warning per this interval. */
