@@ -1,6 +1,6 @@
 # ADR-0013. Anti-replay design for 0-RTT
 
-Date: 2026-10-08, reviewed 2026-10. Status: **accepted as revised** by the section «Review 2026-10, implemented in 0.2.0» below, which takes precedence where the two differ. 0-RTT stays disabled in 0.1.0 (ADR-0008) and is implemented in 0.2.0: the owner moved it into 0.2.0, replacing the 2026-10-08 decision "designed now, implemented after v1". The implementation's own decisions are recorded in a separate ADR.
+Date: 2026-10-08, reviewed 2026-10. Status: **accepted as revised** by the section "Review 2026-10, implemented in 0.2.0" below, which takes precedence where the two differ. 0-RTT stays disabled in 0.1.0 (ADR-0008) and is implemented in 0.2.0: the owner moved it into 0.2.0, replacing the 2026-10-08 decision "designed now, implemented after v1". The implementation's own decisions are recorded in a separate ADR.
 
 ## Context
 
@@ -10,7 +10,7 @@ ADR-0008: 0-RTT is disabled in v1 — `early_data` is not enabled, incoming 0-RT
 
 Protection in three layers, all on the server; the client only marks what may be replayed.
 
-1. **Ticket freshness** (RFC 8446 §8.3) is checked when a ClientHello with `early_data` arrives: the ticket must be within its lifetime, and the ticket age the client reports (`obfuscated_ticket_age − ticket_age_add`) must match the age the server computes from the issue time within a small allowance. The ticket age itself may run up to the ticket lifetime; the allowance only bounds the gap between the reported and the computed age, and because a replayed ClientHello carries a fixed reported age, that allowance is the replay window which sizes the register of item 2. (The 2026-10-08 text compared the ticket age with a 10 s `maxEarlyDataAge`, which mixed the two up; see the review.) A failed check rejects the early data but continues the handshake (`early_data` is not sent in EncryptedExtensions). Not a single new function in `ksl.h` for K3: the flag goes into `ksl_ctx_set_option` (`KSL_OPT_EARLY_DATA_MAX_AGE`), the early secret into the existing `KSL_EV_KEY` events with a new level `KSL_LEVEL_EARLY` (levels are 0–3 today; level 1 — 0-RTT — is already reserved in `ksl_quic_provide`/`KslEvent`).
+1. **Ticket freshness** (RFC 8446 §8.3) is checked when a ClientHello with `early_data` arrives: the ticket must be within its lifetime, and the ticket age the client reports (`obfuscated_ticket_age − ticket_age_add`) must match the age the server computes from the issue time within a small allowance. The ticket age itself may run up to the ticket lifetime; the allowance only bounds the gap between the reported and the computed age, and because a replayed ClientHello carries a fixed reported age, that allowance is the replay window which sizes the register of item 2. (The 2026-10-08 text compared the ticket age with a 10 s `maxEarlyDataAge`, which mixed the two up; see the review.) A failed check rejects the early data but continues the handshake (`early_data` is not sent in EncryptedExtensions). Not a single new function in `ksl.h` for this step: the flag goes into `ksl_ctx_set_option` (`KSL_OPT_EARLY_DATA_MAX_AGE`), the early secret into the existing `KSL_EV_KEY` events with a new level `KSL_LEVEL_EARLY` (levels are 0–3 today; level 1 — 0-RTT — is already reserved in `ksl_quic_provide`/`KslEvent`).
 2. **Single use within the window** (RFC 8446 §8.2 "single-use tickets" in a soft form): `EndpointCore` keeps a window of accepted ClientHellos keyed by `(hash(ticket nonce), time)` — a ring sized `replay window (the allowance) × expected rate`, by default 65 536 entries in a Bloom filter with two rotating halves (as in RFC 8446 §8.2 and Go `crypto/tls`): a repeated ClientHello with the same ticket inside the window → the early data is rejected. The filter is per endpoint loop (like the Retry and reset keys, ADR-0003); with `loops > 1` a client replayed into another loop passes only the freshness check — an accepted residue that the application closes with idempotency (item 3). Memory, within the per-connection resource ceilings (threat-model 3.2): ≤ 1 MiB per loop.
 3. **Idempotency decided by the application**: the client marks requests `EarlyDataState.Allowed` only for what is safe to replay; a `QuicStream`/HTTP/3 request gets a `sentEarly` flag; the server exposes `receivedEarly` on the stream to the application, and the HTTP/3 layer answers `425 Too Early` to everything the application has not declared idempotent (RFC 8470), as quic-go/nghttp3 do.
 
@@ -29,7 +29,7 @@ What is rejected and how: early data rejected by the server is retransmitted by 
 
 ## Open questions
 
-Whether a filter shared between loops is needed (threading model, docs/architecture.md): to be decided from measurements after v1. Encoding `425` in HTTP/3 — together with K5.
+Whether a filter shared between loops is needed (threading model, docs/architecture.md): to be decided from measurements after v1. Encoding `425` in HTTP/3 — together with the HTTP/3 layer.
 
 ## Review 2026-10, implemented in 0.2.0
 
@@ -103,7 +103,9 @@ and ngtcp2 trees. Verdict: the three-layer shape stands, and 0-RTT is implemente
    `earlyDataLoopsFallBackToFreshness` with `negative_zeroRttReplayAcrossLoops`. Cap: ≤ 1 MiB per server. Across
    processes or hosts, the ticket keys must be per process (the default random key), or the operator must accept the
    documented residue. A pluggable `ReplayRegister` interface is out of scope.
-3. **Client tickets are single-use.** The per-engine `SessionCache` from F4.5 (LRU, 256) takes a ticket out when it is
+   *Amended by ADR-0015:* there is no `QuicServer` class; the register is one per process (`ProcessReplayRegister`),
+   shared by every server endpoint, after the security review found a replay into a second listener of the same process.
+3. **Client tickets are single-use.** The per-engine `SessionCache` (LRU, 256) takes a ticket out when it is
    used for 0-RTT (RFC 8446 §C.4) instead of reading it. The server issues two tickets per handshake
    (`ksl_ssl_new_session_ticket` ×2 after the pin verdict, OpenSSL's own default count) so the next connection still
    has one. The cache entry gains
@@ -126,6 +128,10 @@ and ngtcp2 trees. Verdict: the three-layer shape stands, and 0-RTT is implemente
    connection.
 
 ### API surface sketch (all `@ExperimentalKuicksilverApi`)
+
+Superseded by the API in ADR-0015: `Http3Request.allowEarlyData` and `Http3Settings.earlyData: Http3EarlyDataPolicy`
+replace `Http3RequestOptions`, `Http3ServerConfig` and `EarlyDataPolicy`; there is no `maxTicketAge`, and the exception
+is `QuicException.ConnectionLost.ZeroRttRejected`.
 
 ```kotlin
 enum class EarlyDataState { Disabled, Allowed, Required }            // entries added; document `else ->` in when-expressions
@@ -150,6 +156,14 @@ Http3ServerConfig.earlyData: EarlyDataPolicy                         // WaitForH
   `negative_h3SettingsChangedRejects0Rtt`.
 - **C (`tools/c-test.sh`):** the early-data callback and `SSL_OP_NO_ANTI_REPLAY`.
 - **Interop:** `zerortt` against quic-go, ngtcp2, quinn and quiche, as a required cell.
+
+As implemented (ADR-0015), the planned names above did not land as such: the tests are
+`negative_0rttReplayRejected` (QUIC core and TLS), `negative_0rttReplayToSecondEndpointRejected`,
+`concurrentSameTicketGetsEarlyDataOnce`, `negative_0rttTransportParamsReduced`,
+`negative_0rttMaxDatagramFrameSizeReduced`, `contextMismatchRejectsEarlyDataButResumes`,
+`zeroRttRejectedRetransmitsIn1Rtt`, `zeroRttBeforeInitialIsBuffered`, `clientTicketIsSingleUse`,
+`negative_unsafeMethodNotProcessedInEarlyData`, `unsafeRequestWaitsForHandshakeOnTheClient` and
+`reject425PolicyAndOneRetry`.
 
 ### Size
 
