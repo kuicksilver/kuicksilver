@@ -54,6 +54,13 @@ negative mail "a personal mail address fails" "personal mail address" 'Write to 
 negative symbol "a negative_* name no source declares fails" "| symbol |" 'Covered by `negative_missingCheck`.'
 negative member "a member a project type lacks fails" "member gone does not" 'Call `Real.gone`.'
 
+repo kcomment; printf '/** Done in K3. */\nclass A\n' > "$tmp/kcomment/mod/src/A.kt"; commit kcomment base
+expect 1 "negative: a milestone code in a KDoc comment fails" kcomment "mod/src/A.kt:1 | private-comment"
+repo shcomment; printf '#!/bin/sh\necho hi  # see k7/ci\n' > "$tmp/shcomment/tools/run.sh"; commit shcomment base
+expect 1 "negative: a branch name in a shell comment fails" shcomment "tools/run.sh:2 | private-comment"
+repo literal; printf 'val a = "K3 // k7/ci"\nval b = 1 // plain\n' > "$tmp/literal/mod/src/B.kt"; printf 'echo "# K3"\n' > "$tmp/literal/tools/x.sh"; commit literal base
+expect 0 "string literals and code are not read as comments" literal "0 finding(s)"
+
 repo placeholder; printf 'Keys in `/Users/<you>/.gnupg`.\n' >> "$tmp/placeholder/docs/guide/a.md"; commit placeholder base
 expect 0 "a /Users/<you> placeholder passes" placeholder "0 finding(s)"
 

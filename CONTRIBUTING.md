@@ -83,7 +83,7 @@ bash tools/c-test.sh                                             # the ksl C tes
 ./gradlew checkKotlinAbi                                         # public ABI against the dumps in <module>/api/
 ./gradlew updateKotlinAbi                                        # regenerate the dumps after an intended API change
 bash tools/check/links.sh                                        # relative links in the Markdown files
-bash tools/check/doc-refs.sh                                     # paths, anchors, symbols and private markers in the committed docs
+bash tools/check/doc-refs.sh                                     # docs: paths, anchors, symbols; docs and comments: private markers
 tools/ci/local-matrix.sh --dry-run                               # list the gate's steps; drop --dry-run to run them
 ```
 

@@ -19,6 +19,10 @@
 #   gradle-task     `:module:task` that no build script registers and that is not a standard KMP/AGP task;
 #   script-flag     a --flag on a line naming a tools/ script, when no tools/ script or build file handles it.
 # The tracked JSON files (context7.json, the interop notes) are checked for private markers too.
+#   private-comment the comments and KDoc of tracked *.kt, *.kts, *.c, *.h and *.sh files are checked for a narrower set
+#                   of private markers: local machine paths, private working directories, an agent ledger, milestone
+#                   codes, k<n>/ branch names, Cyrillic text and personal mail addresses (code and string literals are not
+#                   read; this check and its test are skipped, since they name the markers).
 # Intended exceptions go in tools/check/doc-refs.allow, one per line with its reason. Fenced code blocks are scanned as
 # well and their findings marked [code block].
 # Usage: tools/check/doc-refs.sh [--rev <commit> | --worktree] [--allow <file>] [root]
@@ -32,7 +36,7 @@ while [ $# -gt 0 ]; do
     --rev) rev="${2:?--rev needs a commit}"; shift 2 ;;
     --worktree) rev=":worktree"; shift ;;
     --allow) allow="${2:?--allow needs a file}"; shift 2 ;;
-    -h|--help) sed -n '4,27p' "$0"; exit 0 ;;
+    -h|--help) sed -n '4,31p' "$0"; exit 0 ;;
     -*) echo "doc-refs: unknown option $1" >&2; exit 2 ;;
     *) root="$1"; shift ;;
   esac
@@ -163,6 +167,50 @@ def resolve(md, p):
 
 mds = sorted(f for f in tracked if f.endswith(".md"))
 jsons = sorted(f for f in tracked if f.endswith(".json") and "/corpus/" not in f and "/testdata/" not in f)
+
+# Comments of source files: // and /* */ (KDoc included) outside string literals, # in shell outside quotes.
+COMMENT_PRIVATE = [x for x in PRIVATE if x[1] in ("local machine path", "private working directory", "agent ledger",
+                   "internal milestone code", "Cyrillic text", "personal mail address")] + \
+                  [(re.compile(r"\bk[1-9][0-9]?/[a-z]"), "internal branch name")]
+def c_comments(t, kotlin):
+    i, n, line = 0, len(t), 1
+    while i < n:
+        ch = t[i]
+        if ch == "\n":
+            line += 1; i += 1; continue
+        if t.startswith("//", i):
+            j = t.find("\n", i); j = n if j < 0 else j
+            yield line, t[i:j]; i = j; continue
+        if t.startswith("/*", i):
+            j = t.find("*/", i + 2); j = n if j < 0 else j + 2
+            seg = t[i:j]
+            for k, l in enumerate(seg.split("\n")): yield line + k, l
+            line += seg.count("\n"); i = j; continue
+        if kotlin and t.startswith('"""', i):
+            j = t.find('"""', i + 3); j = n if j < 0 else j + 3
+            line += t[i:j].count("\n"); i = j; continue
+        if ch in "\"'":
+            j = i + 1
+            while j < n and t[j] != ch and t[j] != "\n":
+                j += 2 if t[j] == "\\" else 1
+            i = j + 1; continue
+        i += 1
+def sh_comments(t):
+    for k, l in enumerate(t.split("\n"), 1):
+        if l.startswith("#!"): continue
+        bare = re.sub(r"'[^']*'|\"(?:\\.|[^\"\\])*\"", lambda m: " " * len(m.group(0)), l)
+        m = re.search(r"(^|\s)#", bare)
+        if m: yield k, l[m.end() - 1:]
+SELF = {"tools/check/doc-refs.sh", "tools/check/doc-refs-test.sh"}
+sources = sorted(f for f in tracked if f.endswith((".kt", ".kts", ".c", ".h", ".sh")) and f not in SELF
+                 and "/corpus/" not in f and "/testdata/" not in f)
+for f in sources:
+    t = content(f)
+    if t is None: continue
+    for n, c in (sh_comments(t) if f.endswith(".sh") else c_comments(t, f.endswith((".kt", ".kts")))):
+        for rx, what in COMMENT_PRIVATE:
+            for m in rx.finditer(c):
+                report(f, n, "private-comment", f"{what}: {m.group(0)!r}")
 
 for js in jsons:
     for n, line in enumerate((content(js) or "").split("\n"), 1):
@@ -297,6 +345,6 @@ for f, n, kind, detail in shown:
     print(f"{f}:{n} | {kind} | {detail}")
 for k, g, kind, text, used in rules:
     if not used: print(f"doc-refs: warning: allowlist line {k} ({g} | {kind} | {text}) matched nothing", file=sys.stderr)
-print(f"doc-refs: {len(mds)} Markdown and {len(jsons)} JSON files at {'the working tree' if worktree else rev}, {len(shown)} finding(s), {len(out) - len(shown)} allowlisted", file=sys.stderr)
+print(f"doc-refs: {len(mds)} Markdown, {len(jsons)} JSON and {len(sources)} source files at {'the working tree' if worktree else rev}, {len(shown)} finding(s), {len(out) - len(shown)} allowlisted", file=sys.stderr)
 sys.exit(1 if shown else 0)
 PY

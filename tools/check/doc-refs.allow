@@ -17,3 +17,6 @@ docs/adr/0013-0rtt-anti-replay-design.md | symbol | `KSL_OPT_EARLY_DATA_MAX_AGE`
 docs/adr/0013-0rtt-anti-replay-design.md | symbol | `QuicConfig.maxEarlyDataAge` # dropped by the review and by ADR-0015
 docs/adr/0013-0rtt-anti-replay-design.md | symbol | `Config.Allow0RTT` # quic-go's option, not ours
 docs/adr/0015-0rtt-implementation.md | symbol | `KSL_WANT_EARLY` # an alternative the ADR rejects
+
+# Pending: k8/tcp-hardening changes this file; its comment is cleaned up after that branch merges.
+kuicksilver-ktor-network/src/jvmCommonMain/kotlin/io/kuicksilver/ktor/network/KslNioSocket.kt | private-comment | internal branch name # pending the tcp-hardening merge

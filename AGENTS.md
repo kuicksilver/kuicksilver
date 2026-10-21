@@ -29,7 +29,7 @@ bash tools/c-test.sh                                         # ksl C tests (ASan
 ./gradlew checkSpdxHeaders checkLayerDependencies :kuicksilver-quic:checkQuicArchitecture :kuicksilver-http3:checkHttp3Architecture
 ./gradlew :<module>:checkKotlinAbi                           # :<module>:updateKotlinAbi after an intended API change
 bash tools/check/links.sh                                    # Markdown links
-bash tools/check/doc-refs.sh                                 # doc paths, anchors, symbols, private markers (committed tree)
+bash tools/check/doc-refs.sh                                 # doc paths, anchors, symbols; private markers in docs and comments
 ```
 
 Always pass `--max-workers=2`. The first build of a module compiles OpenSSL for the host; Linux and mingw OpenSSL builds
