@@ -66,12 +66,11 @@ class GuideSamplesTest {
         assertEquals(100.milliseconds, lossyMobile.initialRtt)
     }
 
-    /** A free UDP port on the loopback, so the sample can bind and connect to the same `addr`. */
-    private fun freeUdpPort(): Int = java.net.DatagramSocket(0, java.net.InetAddress.getLoopbackAddress()).use { it.localPort }
-
     @Test fun zeroRttSample(): Unit =
         runBlocking {
-            val addr = InetSocketAddress("127.0.0.1", freeUdpPort())
+            // the server binds a free port and the sample connects to the address it got: a port found free and closed
+            // first could be taken by another process before the bind
+            var addr = InetSocketAddress("127.0.0.1", 0)
             val safeRequest = "GET /".encodeToByteArray()
             withTimeout(60.seconds) {
                 // guide:quic:zero-rtt
@@ -82,6 +81,7 @@ class GuideSamplesTest {
                             this.server = quicServerConfig(tlsServerConfig) { earlyData = true } // tickets that allow 0-RTT
                         },
                     )
+                addr = server.localAddress
                 val client = QuicEndpoint.bind(InetSocketAddress("127.0.0.1", 0))
                 try {
                     val serving =
