@@ -28,3 +28,12 @@ public actual suspend fun bindTcp(
 internal actual fun Socket.setRawCloseTimeout(timeout: Duration?) {
     if (this is KslNioSocket) closeTimeout = timeout
 }
+
+internal actual fun Socket.abortTcp() {
+    if (this is KslNioSocket) {
+        abort()
+    } else {
+        close()
+        socketContext.cancel()
+    }
+}

@@ -25,7 +25,6 @@ import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.concurrent.Volatile
@@ -108,7 +107,7 @@ public class TlsSocket private constructor(
      * Graceful: pending plaintext is encrypted and flushed, `close_notify` is sent, then the raw socket closes. Runs in the
      * socket's scope. On a client ([Socket.tls]) bounded: when the raw socket has not closed after 3 s in all (a peer that
      * stopped reading holds the flush, `close_notify` and the raw socket's last write), what is still queued is dropped, the
-     * TLS session is freed and the raw socket is closed and its jobs cancelled. On a server ([Socket.tlsServer]) the close
+     * TLS session is freed and the raw socket is aborted as by [abort], which releases its descriptor. On a server ([Socket.tlsServer]) the close
      * waits for the client to take the last response, however slowly it reads; whoever accepted the socket bounds it.
      */
     override fun close() {
@@ -119,11 +118,7 @@ public class TlsSocket private constructor(
             @OptIn(DelicateCoroutinesApi::class)
             GlobalScope.launch(Dispatchers.Default) {
                 // outside the socket's scope: its job completes only after the graceful close below (a child) has ended
-                if (withTimeoutOrNull(bound) { raw.socketContext.join() } == null) {
-                    tls.close()
-                    raw.close() // first: the jobs cancelled next then close the descriptor when they complete
-                    raw.socketContext.cancel()
-                }
+                if (withTimeoutOrNull(bound) { raw.socketContext.join() } == null) abortTls()
             }
         }
         launch {
@@ -142,6 +137,19 @@ public class TlsSocket private constructor(
     }
 
     override fun dispose(): Unit = close()
+
+    /**
+     * Ends the connection at once ([abort], and [close] past its bound): the TLS session is released without
+     * `close_notify`, which ends the pumps, and the raw socket is aborted. Cancelling the raw socket's job is not enough:
+     * its descriptor closes only once `close()` was called and both of its loops have ended, and on the JVM a write loop
+     * facing a full send buffer does not see a cancellation (it spins in `SocketChannel.write`).
+     */
+    internal fun abortTls() {
+        closing = true
+        tls.close()
+        @OptIn(InternalKuicksilverApi::class)
+        raw.abort()
+    }
 
     /** The factory behind [Socket.tls] and [Socket.tlsServer]; internal, so no empty companion is part of the public ABI. */
     internal companion object {

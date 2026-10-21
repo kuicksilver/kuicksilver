@@ -193,6 +193,12 @@ internal class NativeTcpSocket(
         }
     }
 
+    /** [abort]: closed, then both directions shut down under the loops, which then fail or see the end and finish. */
+    fun abort() {
+        close()
+        tcpShutdown(descriptor, TCP_SHUT_RDWR)
+    }
+
     override fun attachForReading(channel: ByteChannel): WriterJob = attachFor("reading", channel, writerJob) { readLoop(it) }
 
     override fun attachForWriting(channel: ByteChannel): ReaderJob = attachFor("writing", channel, readerJob) { writeLoop(it) }
@@ -318,3 +324,12 @@ internal class NativeTcpSocket(
 
 // Kuicksilver's Native TCP socket closes once its writer has drained, with no bound of its own; TlsSocket bounds itself
 internal actual fun Socket.setRawCloseTimeout(timeout: Duration?) {}
+
+internal actual fun Socket.abortTcp() {
+    if (this is NativeTcpSocket) {
+        abort()
+    } else {
+        close()
+        socketContext.cancel()
+    }
+}

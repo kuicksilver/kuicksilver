@@ -20,6 +20,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.io.IOException
+import java.net.StandardSocketOptions
 import java.nio.channels.ClosedChannelException
 import java.nio.channels.SocketChannel
 import java.util.concurrent.atomic.AtomicBoolean
@@ -151,6 +152,16 @@ internal class KslNioSocket(
     }
 
     override fun dispose(): Unit = close()
+
+    /**
+     * [abort]: closes at once, dropping what is queued with a reset (`SO_LINGER` 0): the writer is cancelled, which closes
+     * the descriptor, and the ktor socket then closes as after any writer.
+     */
+    internal fun abort() {
+        runCatching { nio.setOption(StandardSocketOptions.SO_LINGER, 0) }
+        close()
+        writer?.job?.cancel()
+    }
 }
 
 /** How long a client connection's [KslNioSocket.close] waits for the writer to drain: as long as `TlsSocket.close` waits. */
