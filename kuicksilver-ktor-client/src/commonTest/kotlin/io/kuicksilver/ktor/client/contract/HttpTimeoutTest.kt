@@ -29,7 +29,11 @@ class HttpTimeoutTest : ClientLoader(timeout = 30.seconds) {
     fun testGet() =
         clientTests {
             config {
-                install(HttpTimeout) { requestTimeoutMillis = 1000 }
+                // Kuicksilver: 10 s instead of Ktor's 1 s, still far above the nominal 20 ms server delay. The test is that a response
+                // inside the request timeout completes, and the timeout covers the connection setup: a fresh client's first
+                // TLS (or QUIC + TLS) handshake in a cold JVM took 130 ms idle, up to 0.8 s with five busy loops per core and
+                // over 1 s on a starved host (failed over HTTP/3 in a loaded jvmTest run, 5-7/10 with the JVM given 1/7 of the CPU)
+                install(HttpTimeout) { requestTimeoutMillis = 10_000 }
             }
 
             test { client ->
@@ -190,7 +194,11 @@ class HttpTimeoutTest : ClientLoader(timeout = 30.seconds) {
     fun testGetWithSeparateReceive() =
         clientTests {
             config {
-                install(HttpTimeout) { requestTimeoutMillis = 1000 }
+                // Kuicksilver: 10 s instead of Ktor's 1 s, still far above the nominal 10 ms server delay. The test is that a response
+                // inside the request timeout completes, and the timeout covers the connection setup: a fresh client's first
+                // TLS (or QUIC + TLS) handshake in a cold JVM took 130 ms idle, up to 0.8 s with five busy loops per core and
+                // over 1 s on a starved host (failed over HTTP/3 in a loaded jvmTest run, 5-7/10 with the JVM given 1/7 of the CPU)
+                install(HttpTimeout) { requestTimeoutMillis = 10_000 }
             }
 
             test { client ->
@@ -218,7 +226,8 @@ class HttpTimeoutTest : ClientLoader(timeout = 30.seconds) {
                         method = HttpMethod.Get
                         parameter("delay", 10)
 
-                        timeout { requestTimeoutMillis = 1000 }
+                        // Kuicksilver: 10 s instead of Ktor's 1 s, as in testGetWithSeparateReceive (the handshake of a fresh client)
+                        timeout { requestTimeoutMillis = 10_000 }
                     }
                 val result: String = response.body()
 
