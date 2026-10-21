@@ -43,7 +43,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   against the 2026-10-20 run of `c08bc57b`). Client CPU per GB: from quinn's interop server 18.2 → 8.4 s (JVM) and
   9.1 → 7.4 (Native), from quiche's 13.9 → 5.9 and 12.2 → 5.3, Kuicksilver against itself 6.7 → 4.9 and 5.4 → 3.6.
   Server CPU per GB 3.9 → 2.7 s (JVM) and 5.4 → 3.5 (Native); per handshake 1.06 → 0.95 ms and 0.92 → 0.79 ms (1390 →
-  1524 handshakes per second on Native). No transfer got slower.
+  1524 handshakes per second on Native). No bulk transfer got slower, and the runner's goodput and crosstraffic
+  cells are unchanged within their spread (one crosstraffic cell measured again, 16 interleaved rounds per image).
   - The receive path. A receive went to `Dispatchers.IO` to wait for the socket and came back to the endpoint loop:
     two thread hand-offs per receive batch, which cost more than the QUIC work when a batch holds a few datagrams (a
     sender whose datagrams arrive spread out, paced or one `sendmsg` each, as quinn's and quiche's interop servers

@@ -78,9 +78,16 @@ kbit/s per repetition: median [min–max] (n repetitions). The runner stops a ce
 - **Against the 0.2.0 check** (`build/release-checks/perf-20261016-200424`, JVM image, quinn and ngtcp2; quinn is the
   overlap): kuicksilver→quinn goodput median 9389 then, 9401 now; crosstraffic 4409 then, 3903 now; quinn→kuicksilver
   goodput 9310 then, 9313 now; crosstraffic 3238 then, 3826 now. Every floor in `tools/interop/perf-thresholds.json` for
-  these cells is met. The JVM server's crosstraffic share against quinn's client is the one cell lower than on
-  2026-10-20 (3903 [3743–4042] vs 4234 [4063–4460]); the Native server's is not (4186 vs 4166), the congestion
-  controller is unchanged, and crosstraffic cells spread widely between runs, so it was not investigated.
+  these cells is met. The JVM server's crosstraffic share against quinn's client came out lower than on 2026-10-20
+  (3903 [3743–4042] vs 4234 [4063–4460]). Measured again alone, 16 rounds each of the 2026-10-20 image, the
+  receive-path image and the merged image interleaved (A, B, C, A, B, C, …; one repetition each, laptop on AC power,
+  `pmset` every 30 s: 100 % charged, no thermal or performance warnings in 172 samples), the three overlap: median
+  4100, 4089 and 3961 kbit/s, ranges 3693–4542, 3568–4436 and 3596–4319; the merged image was below the 2026-10-20 one
+  in 8 of 16 rounds (two-sided permutation test p = 0.26; the receive-path image p = 0.96). Per repetition the share
+  follows the server's losses against the TCP flow and its mean congestion window (qlog: 88–142 losses, 26–33 kB, in
+  all three), and the server's ACK-arrival-to-next-send gaps are the same in all three (median 0.16 ms, 90th
+  percentile 0.34 ms, 2 % of them 1 ms or more), so the 1 ms socket wait does not delay its sends. The earlier
+  difference was this cell's spread between runs, not the code.
 
 ## CPU per GB
 
@@ -123,6 +130,9 @@ What this says, and what it does not:
 - Kuicksilver is below **quiche and quinn as their interop images run here** — quiche emulated, with GSO and pacing
   off; quinn from a 2024 build whose client acknowledges every third packet and whose server spends 71 % of its CPU
   in the kernel. That is a statement about these images on this host, not about quiche or quinn.
+- **The JVM server's system-time share rose from 53 to 62 %** because its user time fell (1.85 → 1.03 s/GB: the
+  whole-file read and the receive hand-offs are gone) while its system time, mostly `sendmsg` and `recvmsg`, fell less
+  (2.05 → 1.73 s/GB).
 - **Kotlin/Native costs 28 % more than the JVM as a server** (3.5 vs 2.7 s/GB; 5.4 vs 3.9 before 0.2.1); as a client
   the JVM costs more (4.9 vs 3.6, which includes the JIT's compilation and the interop client's whole-file buffering).
 
@@ -210,10 +220,11 @@ median of five transfers or runs.
 | wall s, 1 GiB: quinn → JVM, quiche → JVM, JVM → JVM, Native → Native | 9.9, 15.3, 3.9, 5.9 | 8.9, 13.9, 3.3, 4.0 |
 
 Every CPU cell with a Kuicksilver endpoint is at or below its 2026-10-20 value and every bulk transfer is as fast or
-faster; the goodput cells are unchanged within their spread, except one crosstraffic cell (Kuicksilver JVM server,
-quinn client: 3903 vs 4234 kbit/s, see [Goodput](#goodput)). The client column is mostly the receive path (with it alone, 2026-10-20 evening: quinn → JVM 8.4,
-quiche → JVM 5.8); the server rows are both (the Native server's 5.4 s/GB was 3.9 with the receive path alone and 3.3
-with the server fixes alone, measured in their own sessions; 3.5 together); the handshake gains are the server fixes'.
+faster, and the goodput and crosstraffic cells are unchanged within their spread (one crosstraffic cell that came out
+lower was measured again and is spread, see [Goodput](#goodput)). The client column is mostly the receive path (with it
+alone, 2026-10-20 evening: quinn → JVM 8.4, quiche → JVM 5.8); the server rows are both (the Native server's 5.4 s/GB
+was 3.9 with the receive path alone and 3.3 with the server fixes alone, measured in their own sessions; 3.5 together);
+the handshake gains are the server fixes'.
 
 ## Where the time went
 
@@ -341,7 +352,7 @@ From the repository root, with Docker, `jq`, `tshark` (Wireshark) and the runner
 `tools/interop/run-local.sh` sets them up:
 
 ```bash
-# the images under test (the morning run used the tag bench-c08bc57b, the evening one k8-perf-client)
+# the images under test (the tables: tag k8-perf-merge; their "before" and the carried-over rows: bench-c08bc57b)
 KSL_INTEROP_TAG=bench bash tools/interop/build-image.sh
 KSL_INTEROP_TAG=bench bash tools/interop/build-image.sh --native
 KSL_INTEROP_PLATFORMS=linux/amd64 KSL_INTEROP_TAG=bench-amd64 bash tools/interop/build-image.sh --native   # calibration
@@ -394,8 +405,8 @@ Versions (all digests in [benchmarks/env.txt](benchmarks/env.txt)):
 
 | implementation | image | arch | image built |
 |---|---|---|---|
-| kuicksilver JVM | `kuicksilver-interop:bench-c08bc57b` (OpenJDK 21, `libksl` 6); evening: `kuicksilver-interop:k8-perf-client` | arm64 | 2026-10-20 |
-| kuicksilver Native | `kuicksilver-interop-native:bench-c08bc57b`; evening: `kuicksilver-interop-native:k8-perf-client` | arm64 | 2026-10-20 |
+| kuicksilver JVM | `kuicksilver-interop:k8-perf-merge` (OpenJDK 21, `libksl` 6; commit `01da5c08`), measured 2026-10-21; "before": `kuicksilver-interop:bench-c08bc57b` | arm64 | 2026-10-21; 2026-10-20 |
+| kuicksilver Native | `kuicksilver-interop-native:k8-perf-merge` (commit `01da5c08`), measured 2026-10-21; "before" and the amd64 calibration: `kuicksilver-interop-native:bench-c08bc57b[-amd64]` | arm64 | 2026-10-21; 2026-10-20 |
 | quiche | `cloudflare/quiche-qns@sha256:a960608c…` | amd64 | 2026-10-06 |
 | quinn | `stammw/quinn-interop@sha256:5205c84e…` | arm64 | 2024-09-02 |
 | msquic | `ghcr.io/microsoft/msquic/qns@sha256:ef95e1bc…` | amd64 | 2026-10-05 |
