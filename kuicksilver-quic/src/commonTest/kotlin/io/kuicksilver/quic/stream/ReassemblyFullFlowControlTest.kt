@@ -110,7 +110,7 @@ class ReassemblyFullFlowControlTest {
     }
 
     @Test fun aStreamAtItsGapLimitStillTakesTheFrameAtItsReadOffset() {
-        // review (fable): refused, nothing was readable and the stream stalled until the idle timeout
+        // review: refused, nothing was readable and the stream stalled until the idle timeout
         val config = QuicConfig.Default
         val m =
             StreamManager(

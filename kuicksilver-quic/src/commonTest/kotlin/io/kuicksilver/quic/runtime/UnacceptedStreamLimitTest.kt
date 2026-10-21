@@ -75,7 +75,7 @@ class UnacceptedStreamLimitTest {
         }
 
     /**
-     * Review (fable) of this fix: the acceptStream caller is cancelled while acceptStream consumes a pending reset. A hop to the
+     * A review of this fix: the acceptStream caller is cancelled while acceptStream consumes a pending reset. A hop to the
      * loop resumed the caller cancellably, so the stream, already taken from the queue with its reset consumed, was dropped
      * unseen and its send half stayed open until the connection closed. The acceptor's dispatcher is a queue the test steps
      * by hand, so the cancellation lands exactly at that hop (a fixed version has no hop: the caller gets the stream).

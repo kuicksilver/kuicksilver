@@ -51,7 +51,7 @@ internal class SendStream(
      * Bytes to retransmit: disjoint (start, end) pairs, ascending, none of them acknowledged. [onAcked] takes acknowledged bytes
      * out at once and [onLost] queues only unacknowledged ones, so [hasPending] and [nextRange] need no pass over the queue: a
      * receiver that acknowledges every other packet leaves thousands of ranges on each side, and a pass per MAX_STREAM_DATA cost
-     * O(lost x acknowledged) per frame (review h-quic; quic-go likewise drops acknowledged frames from its retransmission queue
+     * O(lost x acknowledged) per frame (0.2.1 review; quic-go likewise drops acknowledged frames from its retransmission queue
      * when the ACK arrives).
      */
     private var lost = LongArray(8)

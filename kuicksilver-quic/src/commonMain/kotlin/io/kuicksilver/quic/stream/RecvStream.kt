@@ -49,7 +49,7 @@ internal class RecvStream(
      * Takes a STREAM frame. Every check comes first: the final size, the stream window, then the connection window ([conn], of
      * which [connReceived] bytes were charged), then the reassembly buffer, which may refuse the frame with [ReassemblyFull].
      * Only then are [highest], the final size and the state committed: a refused frame leaves the stream as it was, so bytes
-     * buffered later below its offset are still charged to the connection (RFC 9000 section 4.1; review h-quic: a refused frame
+     * buffered later below its offset are still charged to the connection (RFC 9000 section 4.1; 0.2.1 review: a refused frame
      * used to raise [highest] uncharged, and a stream then held its whole window outside the connection limit). Returns how far
      * [highest] advanced, which the caller adds to its connection total.
      */

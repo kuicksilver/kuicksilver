@@ -96,7 +96,7 @@ class ReassemblerTest {
     }
 
     /**
-     * Review (fable): a frame at the read offset that does not reach the first buffered range opened a new range, and with the
+     * Review: a frame at the read offset that does not reach the first buffered range opened a new range, and with the
      * stream at its gap limit it was refused. Nothing was readable, so nothing ever freed a range, and the peer's retransmissions
      * of that frame were refused too, until the idle timeout. A frame at the read offset makes data readable and opens no gap:
      * it is always taken, and the transfer completes.
