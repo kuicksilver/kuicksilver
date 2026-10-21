@@ -151,7 +151,7 @@ class ClientH3Test {
         testClient(Http3DiscoveryMode.H1Only, engine = { quic = io.kuicksilver.quic.quicConfig { maxUniStreams = 2 } }).close()
     }
 
-    /** The client's endpoint binds 0.0.0.0:0; that socket is dual-stack, so an IPv6 server is reachable over h3 (review of k7/macos-server). */
+    /** The client's endpoint binds 0.0.0.0:0; that socket is dual-stack, so an IPv6 server is reachable over h3 (macOS server review). */
     @Test fun h3ToIpv6Loopback() =
         h3Test {
             val server =
