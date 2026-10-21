@@ -67,7 +67,7 @@ class ConnectionIdTest {
     }
 
     @Test fun suppressedNewCidIsDroppedLocallyAfterThreePto() {
-        // review of k7/f1-core, RFC 9000 section 5.1.2: a lost NEW_CONNECTION_ID below our retire_prior_to is not resent, so the peer
+        // core review before 0.2.0, RFC 9000 section 5.1.2: a lost NEW_CONNECTION_ID below our retire_prior_to is not resent, so the peer
         // may never learn (and never retire) that ID; it stops routing 3 x PTO after the loss instead of staying registered forever
         val removed = ArrayList<ConnectionId>()
         val registrar =

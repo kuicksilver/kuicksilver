@@ -415,7 +415,7 @@ class EndpointCoreTest {
 
     // ---- final review fix pass ----
     @Test fun undecryptableInitialsLeaveNoConnection() {
-        // forged Initials (valid header, garbage payload) must not occupy connection or accept-queue slots (threat-model 3.2; K3 final review, Critical 1)
+        // forged Initials (valid header, garbage payload) must not occupy connection or accept-queue slots (threat-model 3.2; a critical finding of the pre-release review)
         val srv = server()
         val cep = clientEndpoint()
         val good = firstInitial(cep.connect(clientConfig(), a2, now))

@@ -82,7 +82,7 @@ class KslDatagramIoTest {
             }
         }
 
-    /** A wildcard bind is dual-stack, as NIO: a client on 0.0.0.0:0 reaches an IPv6 server and an IPv4 one, and IPv4 peers come back as IPv4 (review of k7/macos-server). */
+    /** A wildcard bind is dual-stack, as NIO: a client on 0.0.0.0:0 reaches an IPv6 server and an IPv4 one, and IPv4 peers come back as IPv4 (macOS server review). */
     @Test fun wildcardBindReachesBothFamilies() =
         runBlocking {
             assumeTrue(ready(), "needs the accelerated socket (Linux, macOS)")
@@ -142,7 +142,7 @@ class KslDatagramIoTest {
             }
         }
 
-    /** A refused accelerated socket (a sandbox, limits) falls back to the portable one instead of failing the bind (review of k7/macos-server). */
+    /** A refused accelerated socket (a sandbox, limits) falls back to the portable one instead of failing the bind (macOS server review). */
     @Test fun refusedSocketFallsBackToPortable() =
         runBlocking {
             assumeTrue(ready(), "needs the accelerated socket (Linux, macOS)")

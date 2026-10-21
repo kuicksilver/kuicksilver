@@ -166,7 +166,7 @@ class LossDetectionTest {
     }
 
     @Test fun ackOfTombstoneRangeIsSublinear() {
-        // review of k7/f1-core (RFC 9000 section 21.6): a peer repeating an ACK over a range already acknowledged must not make every
+        // core review before 0.2.0 (RFC 9000 section 21.6): a peer repeating an ACK over a range already acknowledged must not make every
         // frame walk the tombstones that range left behind. The packet threshold (RFC 9002 section 6.1.1) declares every packet more
         // than 3 below the largest acknowledged lost on that same ACK, so the front skip removes the run below 999 at once and no
         // tombstone run can sit under a live packet older than largest - 2.
@@ -489,7 +489,7 @@ class LossDetectionTest {
     }
 
     @Test fun anAckReportsItsPacketsDeliveredBeforeItsLosses() {
-        // review of k7/bbr: the rate sampler sees C.delivered of this ACK before the losses it reveals (TCP's order)
+        // BBR review: the rate sampler sees C.delivered of this ACK before the losses it reveals (TCP's order)
         val (ld, l) = ld()
         ld.handshakeConfirmed = true
         for (pn in 0L..5L) send(ld, SpaceId.Application, pn, t0)

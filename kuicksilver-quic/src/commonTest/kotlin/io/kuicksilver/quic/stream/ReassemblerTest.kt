@@ -76,7 +76,7 @@ class ReassemblerTest {
         val r = Reassembler(256, RangeBudget(4096))
         for (i in 0 until 256) insert(r, 2L * i + 2, byteArrayOf(1)) // gaps keep every fragment its own range
         assertEquals(256, r.rangeCount)
-        // refused without a connection error: loss alone can get a peer here (K7 F2.9); the packet goes unacknowledged
+        // refused without a connection error: loss alone can get a peer here; the packet goes unacknowledged
         assertFailsWith<ReassemblyFull> { insert(r, 2L * 256 + 2, byteArrayOf(1)) }
         assertEquals(256, r.rangeCount)
         insert(r, 3, byteArrayOf(1)) // filling a hole merges and is always taken

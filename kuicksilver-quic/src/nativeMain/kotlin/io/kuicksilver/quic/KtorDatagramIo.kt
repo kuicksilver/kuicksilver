@@ -17,9 +17,9 @@ import kotlinx.io.IOException
 import kotlinx.io.readByteArray
 
 /**
- * Portable Native transport over ktor-network's datagram socket (ADR-0006), client use in K2: an empty incoming
- * datagram stops ktor's receive loop for good (known ktor behaviour, not worked around here), and the server side
- * waits for the accelerated `DatagramIo` of K3.
+ * Portable Native transport over ktor-network's datagram socket (ADR-0006), client use: an empty incoming
+ * datagram stops ktor's receive loop for good (known ktor behaviour, not worked around here), and a server needs
+ * the accelerated `DatagramIo`.
  *
  * ktor-network 3.6.0 puts `::` into every IPv6 sockaddr on Native (Ktor issue KTOR-10017): a bind of `::1` would
  * listen on every interface, and a datagram to any IPv6 address would go to `::`, the local host. This socket fails closed

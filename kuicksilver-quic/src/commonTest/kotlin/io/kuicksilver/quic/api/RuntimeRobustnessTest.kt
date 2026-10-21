@@ -266,7 +266,7 @@ class RuntimeRobustnessTest {
         runBlocking {
             ApiPair.open().use { p ->
                 withTimeout(20.seconds) {
-                    // a closed connection does not answer QueueFull (a caller retrying on it would spin): the terminal answer is Closed (K6 D1)
+                    // a closed connection does not answer QueueFull (a caller retrying on it would spin): the terminal answer is Closed
                     val (c, s) = p.connect()
                     c.close(0, "done")
                     withTimeout(5.seconds) { c.closed.await() }
@@ -280,7 +280,7 @@ class RuntimeRobustnessTest {
         runBlocking {
             ApiPair.open().use { p ->
                 withTimeout(20.seconds) {
-                    // I7 (K5 report): the peer's STOP_SENDING surfaces as StreamError.Stopped on the writer, never as an IllegalStateException from the core
+                    // the peer's STOP_SENDING surfaces as StreamError.Stopped on the writer, never as an IllegalStateException from the core
                     val (c, s) = p.connect()
                     val st = c.openBidi()
                     st.output.writeFully(ByteArray(100), 0, 100)

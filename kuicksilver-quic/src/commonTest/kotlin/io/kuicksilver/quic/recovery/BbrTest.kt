@@ -357,7 +357,7 @@ class BbrTest {
     }
 
     @Test fun startupDoesNotEndOnABurstOfLossBeforeAFullRoundInRecovery() {
-        // review of k7/bbr (section 5.3.1.3): the high-loss exit needs a whole round in recovery, judged at the end of the loss round;
+        // BBR review (section 5.3.1.3): the high-loss exit needs a whole round in recovery, judged at the end of the loss round;
         // a one-off burst whose round ends clean keeps Startup going
         val b = Bottleneck(bbr(), rate * 100, rtt)
         b.drop = { it in 100L until 120L && it % 2 == 0L } // 10 discontiguous losses on one ACK, then none
@@ -367,7 +367,7 @@ class BbrTest {
     }
 
     @Test fun aPtoProbePastAFullWindowIsNotCwndLimited() {
-        // review of k7/bbr: probes bypass the window; they must not let inflight_longterm grow as if the window limited the flow
+        // BBR review: probes bypass the window; they must not let inflight_longterm grow as if the window limited the flow
         val cc = bbr()
         val t = TimeMark(1_000_000_000L)
         repeat(9) { cc.onPacketSent(t, 1200) } // 10 800 of 12 000
@@ -389,7 +389,7 @@ class BbrTest {
     }
 
     @Test fun jumboDatagramsKeepTwoInTheSendQuantum() {
-        // review of k7/bbr: coerceIn(2 x mss, 64 KiB) threw once 2 datagrams exceeded 64 KiB (loopback PMTUD reaches ~65 K)
+        // BBR review: coerceIn(2 x mss, 64 KiB) threw once 2 datagrams exceeded 64 KiB (loopback PMTUD reaches ~65 K)
         val b = Bottleneck(Bbr(60_000, Random(7)), 125_000_000L, 2.milliseconds, mss = 60_000)
         b.run(1.seconds)
         assertTrue(b.cc.sendQuantum >= 120_000, "quantum ${b.cc.sendQuantum}")

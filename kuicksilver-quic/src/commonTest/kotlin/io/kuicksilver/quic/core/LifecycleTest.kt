@@ -184,7 +184,7 @@ class LifecycleTest {
 
     @Test fun applicationCloseBeforeConfirmedCarriesCodeIn1Rtt() {
         // RFC 9000 section 10.2.3: Initial/Handshake copies become 0x1c APPLICATION_ERROR without the reason; the 1-RTT copy keeps the application's code.
-        // The server here has confirmed and dropped its Handshake keys, so it reads the 1-RTT copy (K2 review leftover: the code was lost everywhere).
+        // The server here has confirmed and dropped its Handshake keys, so it reads the 1-RTT copy (pre-release review leftover: the code was lost everywhere).
         val p = CorePair(crypto = ksl)
         try {
             p.runUntil { p.client.hasHandshakeKeys && p.server?.state == ConnectionState.Confirmed }

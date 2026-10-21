@@ -23,7 +23,7 @@ import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 
 class PacketProtectionTest {
-    // ---- K3: header protection and AEAD as two steps (the Key Phase bit is read in between) ----
+    // ---- header protection and AEAD as two steps (the Key Phase bit is read in between) ----
     @Test fun splitUnprotectEqualsK2Unprotect() =
         with(Rfc9001Packets) {
             val (r, _) = KslQuicCrypto.initialProtectors(DCID, VersionProfile.V1.version, TlsRole.Server)

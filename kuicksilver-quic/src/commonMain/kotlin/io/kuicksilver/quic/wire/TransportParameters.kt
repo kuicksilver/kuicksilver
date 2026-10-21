@@ -42,7 +42,7 @@ internal class TransportParameters {
 
 /**
  * Our transport parameters for a connection (RFC 9000 section 18.2). Choices: `max_udp_payload_size` 1452 advertised;
- * the server disables active migration and sends no stateless reset token (both K3); `version_information` is always
+ * the server disables active migration and sends no stateless reset token; `version_information` is always
  * sent (RFC 9368 section 3 recommends it so downgrade prevention works after a Version Negotiation packet).
  */
 internal fun QuicConfig.localTransportParameters(

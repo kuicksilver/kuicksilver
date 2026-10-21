@@ -29,7 +29,7 @@ import kotlin.time.Duration.Companion.seconds
 
 @OptIn(ExperimentalKuicksilverApi::class, DelicateKuicksilverApi::class)
 class ClientVersionNegotiationTest {
-    // ---- K2 review leftover (VN restart kept the first flight in bytesInFlight) ----
+    // ---- pre-release review leftover (VN restart kept the first flight in bytesInFlight) ----
     @Test fun vnRestartResetsCongestionState() {
         val p = CorePair(clientQuic = quicConfig { versions = listOf(VersionProfile.V2, VersionProfile.V1) }, crypto = ksl)
         var fed = false

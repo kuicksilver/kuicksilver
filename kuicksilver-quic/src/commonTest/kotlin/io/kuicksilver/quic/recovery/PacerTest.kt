@@ -140,7 +140,7 @@ class PacerTest {
     }
 
     @Test fun aLongIdleGapAtTenGbitPerSecondRefillsTheBucket() {
-        drainThenIdle(FixedRate(1_250_000_000L), 10.seconds) // review of k7/bbr: rate x elapsed wrapped negative and never refilled
+        drainThenIdle(FixedRate(1_250_000_000L), 10.seconds) // BBR review: rate x elapsed wrapped negative and never refilled
         drainThenIdle(FixedRate(12_500_000_000L), 100.seconds) // 100 Gbit/s
     }
 
@@ -152,7 +152,7 @@ class PacerTest {
     }
 
     @Test fun bbrIsPacedEvenBelow1msSrtt() {
-        // review of k7/bbr: at 0.2 ms the window-only exemption made BBR's pacing gains do nothing on a LAN
+        // BBR review: at 0.2 ms the window-only exemption made BBR's pacing gains do nothing on a LAN
         val cc = Bbr(1200)
         val p = Pacer()
         val srtt = 0.2.milliseconds

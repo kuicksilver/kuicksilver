@@ -317,7 +317,7 @@ class MigrationApiTest {
         runBlocking {
             ApiPair.open().use { p ->
                 withTimeout(30.seconds) {
-                    // K4 feedback N4: migrate() returns the same event type the pathEvents flow emits, declared beside Validated and Failed
+                    // early user feedback: migrate() returns the same event type the pathEvents flow emits, declared beside Validated and Failed
                     val (c, s) = p.connect()
                     val io2 = p.net.open(newAddr)
                     val change: PathEvent = c.migrate(io2)

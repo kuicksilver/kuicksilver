@@ -25,7 +25,7 @@ import kotlin.time.Duration.Companion.seconds
 
 class StreamStateTest {
     @Test fun connectionWindowFollowsStreamWindow() {
-        // the connection window is kept at least 1.5x the stream window (K2 review leftover: ensureWindowAtLeast was never wired)
+        // the connection window is kept at least 1.5x the stream window (pre-release review leftover: ensureWindowAtLeast was never wired)
         val m =
             StreamManager(
                 TlsRole.Server,

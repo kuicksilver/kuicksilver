@@ -8,7 +8,7 @@ import io.kuicksilver.native.PacketBuffer
  * Buffering a frame would exceed the range limits. Not a protocol error: a peer that stayed within flow control gets
  * there through ordinary loss (every other packet lost within one round trip leaves one hole each), so the packet is
  * dropped unacknowledged instead (the peer resends it; data that fills a hole always merges and is always taken), and
- * memory stays bounded by the limits (RFC 9000 section 21.7; K7 F2.9).
+ * memory stays bounded by the limits (RFC 9000 section 21.7).
  */
 internal object ReassemblyFull : RuntimeException("too many reassembly ranges")
 

@@ -45,7 +45,7 @@ class EndpointLifecycleTest {
         runBlocking {
             val p = ApiPair.open()
             withTimeout(30.seconds) {
-                // close() is asynchronous (CONNECTION_CLOSE and the socket close happen on the loop); closeAndJoin() waits for them (K4 feedback E8)
+                // close() is asynchronous (CONNECTION_CLOSE and the socket close happen on the loop); closeAndJoin() waits for them (early user feedback)
                 val (c, s) = p.connect()
                 p.client.closeAndJoin()
                 assertTrue(p.clientIo.closed, "the socket is closed when closeAndJoin returns")

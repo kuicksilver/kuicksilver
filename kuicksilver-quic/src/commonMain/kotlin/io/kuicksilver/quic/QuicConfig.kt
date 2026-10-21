@@ -93,7 +93,7 @@ public class QuicConfig private constructor(
      * `QuicEndpointConfig.connectionIdLength`.
      */
     public val connectionIdLength: Int,
-    /** Advertised `max_udp_payload_size`; datagrams stay at 1200 bytes until PMTUD (K3). The coroutine runtime ([QuicEndpoint]) handles datagrams of up to 1500 bytes and refuses a larger value at `bind`/`connect`; the sans-IO core takes up to 65527 with batches sized for it. */
+    /** Advertised `max_udp_payload_size`; datagrams stay at 1200 bytes until PMTUD. The coroutine runtime ([QuicEndpoint]) handles datagrams of up to 1500 bytes and refuses a larger value at `bind`/`connect`; the sans-IO core takes up to 65527 with batches sized for it. */
     public val maxUdpPayloadSize: Int,
     /** Versions in preference order (RFC 9368 section 3: the client's Available Versions). Default is v1 only. */
     public val versions: List<VersionProfile>,

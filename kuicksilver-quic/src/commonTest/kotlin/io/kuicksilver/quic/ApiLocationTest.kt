@@ -5,7 +5,7 @@ package io.kuicksilver.quic
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
-/** K6 D1: configuration types live in the root package; the deprecated `wire` aliases were removed before 0.2.0. */
+/** Configuration types live in the root package; the deprecated `wire` aliases were removed before 0.2.0. */
 class ApiLocationTest {
     @Test fun versionProfileLivesInTheRootPackage() {
         val v1: io.kuicksilver.quic.VersionProfile = io.kuicksilver.quic.VersionProfile.V1

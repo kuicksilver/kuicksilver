@@ -99,7 +99,7 @@ class DatagramApiTest {
         runBlocking {
             ApiPair.open().use { p ->
                 withTimeout(30.seconds) {
-                    // a try-method answers, it does not throw: a caller that loops on QueueFull must see a terminal answer instead (K4 feedback E9)
+                    // a try-method answers, it does not throw: a caller that loops on QueueFull must see a terminal answer instead (early user feedback)
                     val (c, s) = p.connect()
                     c.close()
                     c.closed.await()

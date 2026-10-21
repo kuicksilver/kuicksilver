@@ -166,7 +166,7 @@ class SocketLostTest {
                     val loop = p.client as io.kuicksilver.quic.runtime.EndpointLoop
                     assertEquals(1, loop.defunctCountForTest())
                     // the connection ends on the lost path: its sockets are released when it reaches Closed, after the closing
-                    // period (k7/ci keeps them until then), and the loop must not keep remembering the lost one
+                    // period (the runtime keeps them until then), and the loop must not keep remembering the lost one
                     c.close()
                     c.closed.await()
                     withTimeout(10.seconds) {

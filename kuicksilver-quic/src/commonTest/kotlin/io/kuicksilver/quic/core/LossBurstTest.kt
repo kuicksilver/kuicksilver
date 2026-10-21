@@ -21,7 +21,7 @@ import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 
 /**
- * A receiver that drops every other datagram (a receive buffer overflowing, K7 F2.9: two sockets during a migration)
+ * A receiver that drops every other datagram (a receive buffer overflowing, or two sockets during a migration)
  * on a long return path sees one hole per lost packet. A peer that only sent within flow control has broken no
  * rule (RFC 9000 section 4.1), so the reassembly range limit must not close the connection over it.
  */

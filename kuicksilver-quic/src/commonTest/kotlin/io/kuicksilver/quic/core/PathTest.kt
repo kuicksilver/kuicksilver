@@ -623,7 +623,7 @@ class PathTest {
     }
 
     /**
-     * K7 F1.10: a client that moves four times before any of its new addresses could answer (each old NAT mapping dies at once) fills
+     * A client that moves four times before any of its new addresses could answer (each old NAT mapping dies at once) fills
      * every path slot with validations of dead addresses; RFC 9000 section 8.2.4 lets a migration abandon those, so the newest address
      * still becomes the active path and validates.
      */
@@ -1755,7 +1755,7 @@ class PathTest {
     }
 
     /**
-     * Review of k7/f1-core: one Initial from a new address (public keys, so anyone can forge it) makes a handshaking server challenge that
+     * Core review before 0.2.0: one Initial from a new address (public keys, so anyone can forge it) makes a handshaking server challenge that
      * address; with no Handshake packet after it, the passed validation deadline must not stay in the past and make every timer check
      * due again until the handshake timeout. (0.2.1: the deadline now undoes the move instead of opening a new validation period.)
      */
@@ -1873,7 +1873,7 @@ class PathTest {
     /** RFC 9000 section 9.5: a probe on a new path never carries the connection ID the active path uses, on either side. */
 
     /**
-     * K7 F1.10 (F2 trace of `MigrationApiTest.migrateMovesTrafficToNewIo`): after the client's active migration the server re-validates
+     * From a trace of `MigrationApiTest.migrateMovesTrafficToNewIo`: after the client's active migration the server re-validates
      * the client's old address (RFC 9000 section 9.3.3); the client must answer the first PATH_CHALLENGE there, not only a repeat.
      */
     @Test fun firstRevalidationChallengeIsAnswered() {

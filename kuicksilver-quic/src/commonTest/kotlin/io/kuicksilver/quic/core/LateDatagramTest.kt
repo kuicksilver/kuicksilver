@@ -29,7 +29,7 @@ import kotlin.time.Duration.Companion.seconds
  * RFC 9000 section 17.1 and appendix A.3: a datagram that arrives more than half a packet-number window late is decoded
  * to the wrong packet number, which only packet protection catches (the AEAD nonce is the packet number, RFC 9001
  * section 5.3). The test protection must catch it as well, or the receiver acknowledges a packet number the peer never
- * sent and the peer closes with PROTOCOL_VIOLATION (K7 F2.9: two sockets during a migration reorder that much).
+ * sent and the peer closes with PROTOCOL_VIOLATION (two sockets during a migration reorder that much).
  */
 @OptIn(ExperimentalKuicksilverApi::class, DelicateKuicksilverApi::class)
 class LateDatagramTest {
