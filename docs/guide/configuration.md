@@ -150,7 +150,7 @@ Guide: [TLS: Trust](tls.md#trust).
 | Variant | Parameters (defaults) | Checks | What it does |
 |---|---|---|---|
 | `TrustConfig.Platform` | | Linux Native: a CA store must exist when the client config is built | the operating system's verifier ([Platform trust](tls.md#platform-trust)) |
-| `TrustConfig.AnchoredCa(roots)` | `roots: List<Certificate>` | at least one root | only these roots, verified inside `ksl`; the only trust for client certificates in v1 |
+| `TrustConfig.AnchoredCa(roots)` | `roots: List<Certificate>` | at least one root | only these roots, verified inside `ksl`; the only trust for client certificates |
 | `TrustConfig.ExpectedName(name, base)` | `base = Platform` | non-blank `name`; `base` is `Platform`, `AnchoredCa` or `Custom` | verify another name than the one connected to (proxies) |
 | `TrustConfig.Pinned(pins, scope, base)` | `scope = PinScope.Leaf`, `base = Platform` | at least one pin; not around `Tofu`, `Custom` or another `Pinned` | SPKI pins checked on top of `base`; `PinScope.AnyInValidatedChain` matches any certificate of the validated chain |
 | `TrustConfig.Tofu(store)` | `store: TofuStore` | clients only | trust on first use |
@@ -315,6 +315,7 @@ Not configurable, listed so you can plan around them:
 | Glitch bucket | 1000 tokens, 33 back per second (QUIC and HTTP/3) |
 | Connection ID rotation | every migration and every 10 000 1-RTT packets |
 | Reassembly | 256 gaps per stream, 4096 per connection |
+| qlog per connection | 64 MiB; after that the connection is not traced further |
 | TCP client session cache | 256 sessions per Ktor client engine (one process-wide cache for `Socket.tls` and `TlsConnection.client`) |
 | Alt-Svc | 8 alternatives per origin, 1000 origins; default `ma` 86 400 s; broken marks 5 min doubling up to 2 days |
 | Ktor client race head start | 100 ms..2 s when derived from the RTT |
