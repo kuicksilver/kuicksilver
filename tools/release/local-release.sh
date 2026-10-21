@@ -7,7 +7,8 @@
 #
 #   1. refuses unless: the version is X.Y.Z[-alpha|beta|rcN] (no -SNAPSHOT); HEAD is main or the maintenance branch
 #      release/<X.Y>.x of the version's own X.Y (or the commit named by --release-commit, contained in main or in that
-#      branch), and not main once that branch exists; every version fallback of the tree is <X.Y.Z>-SNAPSHOT of the version
+#      branch), and not main once that branch exists (release mode fetches origin first), nor a branch behind origin; the
+#      version is not on Maven Central yet (release mode); every version fallback of the tree is <X.Y.Z>-SNAPSHOT of the version
 #      and, for a final version, the README and the iOS guide name it; the tree is clean; build/ci/gate/<HEAD>.stamp from tools/ci/local-matrix.sh
 #      says the full matrix (Android, Docker, interop, Windows) passed on this exact commit; CHANGELOG.md has the version
 #      with its date; the NDK and Xcode of gradle/toolchains.toml are installed; the portal token and a signing key are configured.
@@ -87,6 +88,21 @@ echo "== Kuicksilver $version from $short ($([ "$dry" = 1 ] && echo "DRY RUN, no
 echo "-- preconditions"
 [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta|rc)\.?[0-9]+)?$ ]] || { echo "REFUSED: version '$version' is not X.Y.Z[-alpha|beta|rcN]" >&2; exit 1; }
 [ -z "$(git status --porcelain)" ] || refuse "the working tree is not clean (git status)"
+if [ "$dry" = 0 ]; then   # a dry run may be offline: it uses what was fetched last
+  # Maven Central never takes a version twice, and a second deployment of a published one only fails in the portal;
+  # repo1 answers 200 for a published POM, 404 otherwise (up to an hour after Publish it may still say 404).
+  # KSL_CENTRAL_PROBE: a command that prints the HTTP status for a URL (tools/release/local-release-test.sh stubs it)
+  pom="https://repo1.maven.org/maven2/io/kuicksilver/kuicksilver-bom/$version/kuicksilver-bom-$version.pom"
+  if [ -n "${KSL_CENTRAL_PROBE:-}" ]; then status=$("$KSL_CENTRAL_PROBE" "$pom" 2>/dev/null || true)
+  else status=$(curl -s -o /dev/null -I -w '%{http_code}' --connect-timeout 10 --max-time 30 "$pom" 2>/dev/null || true); fi
+  case "$status" in
+    404) echo "  Maven Central: $version is not published" ;;
+    200) refuse "$version is already on Maven Central ($pom)" ;;
+    *) refuse "could not ask Maven Central whether $version is published (HTTP ${status:-no answer} for $pom)" ;;
+  esac
+  # the branch checks below read origin's branches: a maintenance branch made elsewhere, a branch pushed from elsewhere
+  git fetch -q --prune origin || refuse "git fetch origin failed: the branch checks need origin's current branches"
+fi
 branch=$(git symbolic-ref --short -q HEAD || true)
 # main, or the maintenance branch of this version's X.Y (docs/release.md, "Releasing from a maintenance branch")
 release_branch="release/$(printf '%s' "$version" | cut -d. -f1-2).x"
@@ -116,6 +132,12 @@ else
 fi
 git branch -r --contains HEAD --format='%(refname:short)' 2>/dev/null | grep -qxF "origin/$push_branch" \
   || echo "  note: $short is not on origin/$push_branch yet; push $push_branch before the tag (step 6)"
+# a branch tip behind origin would release an older commit than the branch has (a --release-commit names its commit on
+# purpose, an older one included)
+if [ -z "$release_commit" ] && [ -n "$branch" ] && git show-ref -q --verify "refs/remotes/origin/$branch"; then
+  behind=$(git rev-list --count "HEAD..refs/remotes/origin/$branch" 2>/dev/null || echo 0)
+  [ "$behind" = 0 ] || refuse "local $branch is behind origin by $behind commit(s); pull first (it would release $short, older than origin/$branch)"
+fi
 if git rev-parse -q --verify "refs/tags/v$version" >/dev/null; then
   [ "$(git rev-parse "v$version^{commit}")" = "$head" ] || refuse "tag v$version exists and names another commit"
 fi

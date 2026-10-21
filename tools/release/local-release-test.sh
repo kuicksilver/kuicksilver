@@ -1,23 +1,34 @@
 #!/usr/bin/env bash
 # Copyright 2026 The Kuicksilver Authors
 # SPDX-License-Identifier: Apache-2.0
-# The branch, CHANGELOG and version refusals of tools/release/local-release.sh (step 1), in a throwaway repository with
-# main, two maintenance branches, a feature branch and an origin: the script runs as committed up to its local-gate check,
-# where a stub line stops it (nothing is built, signed or uploaded). Each case expects "ok" or "refuse", optionally with a
-# pattern its output must contain. Usage: local-release-test.sh
+# The branch, origin, Maven Central, CHANGELOG and version refusals of tools/release/local-release.sh (step 1), in a
+# throwaway repository with main, maintenance branches, a feature branch and a local bare origin: the script runs as
+# committed up to its local-gate check, where a stub line stops it (nothing is built, signed or uploaded). Maven Central is
+# a stub (KSL_CENTRAL_PROBE) and a curl that fails on PATH, so no case reaches the network. Each case expects "ok" or
+# "refuse", optionally with a pattern its output must contain; a last case runs the version checks on the repository's own
+# version files. Usage: local-release-test.sh
 set -uo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; root="$(cd "$here/../.." && pwd)"
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
-git init -q --bare "$tmp/origin.git"; git init -q -b main "$tmp/repo"; cd "$tmp/repo" || exit 2
-git config user.email t@example.invalid; git config user.name t; git config commit.gpgsign false; git config core.hooksPath /dev/null
-mkdir -p tools/release tools/check kuicksilver-native/src/c gradle
-cp "$root/tools/check/llvm-tool.sh" tools/check/
-cp "$root/kuicksilver-native/src/c/ksl.h" kuicksilver-native/src/c/; cp "$root/gradle/openssl.toml" gradle/
+# Maven Central: 0.2.0 is published, nothing else; KSL_CENTRAL_STATUS forces an answer (000: no answer)
+mkdir -p "$tmp/bin"
+printf '#!/bin/sh\nif [ -n "${KSL_CENTRAL_STATUS:-}" ]; then echo "$KSL_CENTRAL_STATUS"; exit 0; fi\ncase "$1" in */kuicksilver-bom/0.2.0/kuicksilver-bom-0.2.0.pom) echo 200 ;; *) echo 404 ;; esac\n' > "$tmp/bin/central"
+printf '#!/bin/sh\necho "curl called in a test: $*" >&2; exit 7\n' > "$tmp/bin/curl"
+chmod +x "$tmp/bin/central" "$tmp/bin/curl"
+export KSL_CENTRAL_PROBE="$tmp/bin/central" PATH="$tmp/bin:$PATH"
 marker='^# the local gate: tools/ci/local-matrix.sh writes'
 grep -qE "$marker" "$root/tools/release/local-release.sh" || { echo "FAIL: the local-gate marker line is gone from local-release.sh"; exit 2; }
-awk -v m="$marker" '$0 ~ m {print "echo \"STOPPED-BEFORE-GATE push_branch=$push_branch problems=$problems\"; exit 0"} {print}' \
-  "$root/tools/release/local-release.sh" > tools/release/local-release.sh
-printf 'build/\n' > .gitignore
+new_repo() { # <dir>: a repository with what the script reads before the gate, and the script stopped there
+  git init -q -b main "$1"; cd "$1" || exit 2
+  git config user.email t@example.invalid; git config user.name t; git config commit.gpgsign false; git config core.hooksPath /dev/null
+  mkdir -p tools/release tools/check kuicksilver-native/src/c gradle
+  cp "$root/tools/check/llvm-tool.sh" tools/check/
+  cp "$root/kuicksilver-native/src/c/ksl.h" kuicksilver-native/src/c/; cp "$root/gradle/openssl.toml" gradle/
+  awk -v m="$marker" '$0 ~ m {print "echo \"STOPPED-BEFORE-GATE push_branch=$push_branch problems=$problems\"; exit 0"} {print}' \
+    "$root/tools/release/local-release.sh" > tools/release/local-release.sh
+  printf 'build/\n' > .gitignore
+}
+git init -q --bare "$tmp/origin.git"; new_repo "$tmp/repo"
 
 tree_version() { # <X.Y.Z of every -SNAPSHOT fallback> <version the README and the iOS guide name> [<file to leave behind>]
   local s="$1-SNAPSHOT" p="$2" f
@@ -39,7 +50,7 @@ commit() { git add -A; git commit -qm "$1"; }
 # base: the 0.2.1 line prepared (the fork point of release/0.2.x); main then moves to 0.3.0
 printf '# Changelog\n\n## [0.8.0] - 2027-06-01\n\n## [0.7.0] - 2027-05-01\n\n## [0.6.0] - 2027-04-01\n\n## [0.5.0] - 2027-03-01\n\n## [0.4.0-rc1] - 2027-02-01\n\n## [0.3.1] - 2027-01-15\n\n## [0.3.0] - 2026-12-01\n\n## [0.2.2] - 2026-11-25\n\n## [0.2.2-rc1] - 2026-11-20\n\n## [0.2.1] - 2026-11-03\n\n## [1.2.1] - 2027-01-01\n\n## [0.2.9] - unreleased\n\n## [0.2.8]\n' > CHANGELOG.md
 tree_version 0.2.1 0.2.1; commit base
-git remote add origin ../origin.git; git push -q origin main
+git remote add origin "$tmp/origin.git"; git push -q origin main
 git branch release/0.2.x
 tree_version 0.3.0 0.3.0; commit "main: prepare 0.3.0"
 git checkout -q release/0.2.x; echo c > h; commit branch-only; git checkout -q main
@@ -101,15 +112,50 @@ t "dry run: release/0.2.x, 0.2.2 without the bump"       "ok:WARN.*0.2.1-SNAPSHO
 git push -q origin release/0.2.x
 t "release/0.2.x after push: no note"                    ok                             release/0.2.x 0.2.1
 t "--release-commit pushed branch tip: no note"          ok                             "--detach $B" 0.2.1 --release-commit $B
-# a maintenance branch only on origin counts as well
-git push -q origin release/0.1.x:release/0.3.x; git fetch -q origin
-t "main, 0.3.0 while origin/release/0.3.x exists"        "refuse:release/0.3.x exists"  main 0.3.0
+# a maintenance branch only on origin counts as well, fetched by the script in release mode
+git push -q origin release/0.1.x:release/0.3.x; git update-ref -d refs/remotes/origin/release/0.3.x
+t "main, 0.3.0, origin/release/0.3.x exists, not fetched" "refuse:release/0.3.x exists" main 0.3.0
+git fetch -q origin
+t "main, 0.3.0 while origin/release/0.3.x is fetched"        "refuse:release/0.3.x exists"  main 0.3.0
 git push -q origin :release/0.3.x; git fetch -q --prune origin
+t "main, 0.3.0 after origin/release/0.3.x is deleted"    ok:push_branch=main            main 0.3.0
+# a local branch behind origin would release an older commit
+git checkout -q -b ahead release/0.2.x; echo d > d; commit "pushed from elsewhere"; git push -q origin ahead:release/0.2.x
+git checkout -q release/0.2.x; git branch -q -D ahead; git update-ref refs/remotes/origin/release/0.2.x "$B"   # not fetched yet
+t "release/0.2.x behind origin (not fetched yet)"        "refuse:behind origin by 1 commit" release/0.2.x 0.2.1
+t "--release-commit of the older tip: by design"         ok:push_branch=release/0.2.x   "--detach $B" 0.2.1 --release-commit $B
+git fetch -q origin
+t "dry run: behind origin, fetched (warning only)"      "ok:WARN.*behind origin by 1"  release/0.2.x 0.2.1 --dry-run
+git push -q -f origin release/0.2.x; git fetch -q origin
+t "release/0.2.x level with origin again"                ok:push_branch=release/0.2.x   release/0.2.x 0.2.1
+# Maven Central (release mode only; a dry run may be offline)
+t "0.2.0, already on Maven Central"                      "refuse:0.2.0 is already on Maven Central" release/0.2.x 0.2.0
+t "dry run: 0.2.0, Central not asked"                    ok                             release/0.2.x 0.2.0 --dry-run
+KSL_CENTRAL_STATUS=000 t "Central does not answer"        "refuse:could not ask Maven Central" release/0.2.x 0.2.1
+KSL_CENTRAL_STATUS=503 t "Central answers 503"            "refuse:could not ask Maven Central" release/0.2.x 0.2.1
 # CHANGELOG
 t "CHANGELOG 0.2.9 - unreleased (placeholder)"           "refuse:no release date"       release/0.2.x 0.2.9
 t "CHANGELOG [0.2.8] without date"                       "refuse:no release date"       release/0.2.x 0.2.8
 t "CHANGELOG without 0.2.7"                              "refuse:has no '## \[0.2.7\]'" release/0.2.x 0.2.7
 t "dry run: placeholder date (warning only)"             ok:WARN                        release/0.2.x 0.2.9 --dry-run
 git checkout -q main
+
+# the repository's own version files, so a pattern that drifts from their real layout is caught: the tree passes for the
+# version of its fallbacks, except that before the release commit the README and the iOS guide name the last published one
+new_repo "$tmp/real"
+for f in build-logic/src/main/kotlin/kuicksilver.kmp.gradle.kts build-logic/src/main/kotlin/kuicksilver.release.gradle.kts \
+    kuicksilver-bom/build.gradle.kts samples/realtime-telemetry/build.gradle.kts samples/ios/shared/build.gradle.kts \
+    samples/ios/kuicksilver-swift/build.gradle.kts samples/ios/kuicksilver-swift/src/commonMain/kotlin/io/kuicksilver/swift/Kuicksilver.kt \
+    tools/check/consumer-smoke.sh README.md docs/guide/ios.md; do
+  mkdir -p "$(dirname "$f")"; cp "$root/$f" "$f" || { echo "FAIL: $f is gone from the repository"; exit 2; }
+done
+line=$(sed -n 's/.*getOrElse("\([0-9]*\.[0-9]*\.[0-9]*\)-SNAPSHOT").*/\1/p' build-logic/src/main/kotlin/kuicksilver.kmp.gradle.kts)
+published=$(sed -n 's/.*"io\.kuicksilver:kuicksilver-ktor-client:\([^"]*\)".*/\1/p' README.md | head -1)
+printf '# Changelog\n\n## [%s] - 2026-01-01\n' "$line" > CHANGELOG.md; git add -A; git commit -qm real
+want=""; [ "$published" = "$line" ] || want=$(printf 'README.md names %s instead of %s\ndocs/guide/ios.md names %s instead of %s' "$published" "$line" "$published" "$line" | sort)
+out=$(bash tools/release/local-release.sh "$line" --dry-run 2>&1)
+have=$(grep 'WARN' <<< "$out" | sed -e 's/^ *WARN (a release would refuse): //' -e 's/ (the commit that prepares.*//' | sort)
+if [ -n "$line" ] && [ -n "$published" ] && [ "$have" = "$want" ]; then verdict=ok; pass=$((pass+1)); else verdict=FAIL; fail=$((fail+1)); fi
+printf '%-4s %-58s line=%s published=%s | %s\n' "$verdict" "the repository's own version files" "$line" "$published" "$(tr '\n' ' ' <<< "${have:-no warning}")"
 echo "passed $pass, failed $fail"
 [ "$fail" = 0 ]

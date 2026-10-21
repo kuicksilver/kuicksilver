@@ -70,12 +70,16 @@ Done for the project in October 2026, kept here so it can be repeated for a new 
    ```
    The script refuses a malformed or `-SNAPSHOT` version, a branch other than `main` or the version's own
    `release/<X.Y>.x` (a detached release commit of either with `--release-commit <sha>`), `main` once `release/<X.Y>.x`
-   exists (locally or as `origin/release/<X.Y>.x`), a tree whose version fallbacks or (final versions) README and iOS
+   exists (locally or on origin: a release fetches origin first, a dry run uses what was fetched last), a branch behind
+   its `origin` counterpart (pull first; a `--release-commit` may be older on purpose), a version already on Maven
+   Central (a release asks `repo1.maven.org` for the BOM's POM and refuses on 200, or when it gets no 200 or 404; a dry
+   run does not ask), a tree whose version fallbacks or (final versions) README and iOS
    guide coordinates do not name the version (step 2), a dirty tree, a missing or failed gate record for `HEAD` (or one run with
    `--skip-*`, or without `--with-interop --with-windows`), a `CHANGELOG.md` without the version and its date (`## [0.2.0] - 2026-10-15`), an NDK or Xcode other
    than the pins (`--allow-toolchain-drift` to accept), and missing credentials or signing key
-   (`tools/release/local-release-test.sh` runs the branch, CHANGELOG and version refusals in a throwaway repository; the
-   local gate runs it). Then:
+   (`tools/release/local-release-test.sh` runs the branch, origin, Central, CHANGELOG and version refusals in a
+   throwaway repository with a stubbed Central, and the version checks on the repository's own files; the local gate
+   runs it). Then:
    - OpenSSL: the pinned tarball fetched and verified; **all twelve targets rebuilt from it** (`KSL_OPENSSL_FRESH=1`:
      `build/openssl` (each worktree has its own; CI downloads it) and the build cache are deleted or bypassed, never reused):
      `linux-x64`, `linux-arm64` and `mingw-x64` in Docker (one container at a time, under `nice`; `linux-x64` and

@@ -136,7 +136,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   it releases (a `0.2.2` from `release/0.2.x` without the version bump would ship README and iOS guide coordinates of
   0.2.1). It now refuses `main` once `release/<X.Y>.x` exists, locally or on origin, and refuses unless every version
   fallback of the tree is `<X.Y.Z>-SNAPSHOT` of the version and, for a final version, the README and `docs/guide/ios.md`
-  name it (`docs/release.md`, "Every release", step 2); `tools/release/local-release-test.sh` covers the refusals.
+  name it (`docs/release.md`, "Every release", step 2). A release (not a dry run) now also fetches origin first, so a
+  maintenance branch made elsewhere counts, refuses a local branch behind origin (it would release an older commit), and
+  refuses a version that is already on Maven Central. `tools/release/local-release-test.sh` covers the refusals.
 
 ## [0.2.0] - 2026-10-15
 
