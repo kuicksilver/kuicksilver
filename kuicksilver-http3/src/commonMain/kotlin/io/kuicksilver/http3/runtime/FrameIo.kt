@@ -139,6 +139,12 @@ internal class RequestFrames(
     private val onSkipped: () -> Unit = {},
     private val onBuffered: (Long) -> Unit = {},
 ) {
+    /**
+     * [maxHeadersFrame], at most Int.MAX_VALUE: the payload is read into one array. At the largest `maxFieldSectionSize`
+     * (2^30) the bound is 2^31, and a length of 2^31 compared as a Long but read as an Int was negative.
+     */
+    private val headersLimit = minOf(maxHeadersFrame, Int.MAX_VALUE.toLong())
+
     suspend fun next(): RequestFrame {
         while (true) {
             val type = input.readVarIntOrNull() ?: return RequestFrame.End
@@ -151,7 +157,7 @@ internal class RequestFrames(
 
                 FrameAction.Process -> {
                     return when {
-                        type == FrameType.HEADERS && len > maxHeadersFrame -> RequestFrame.HeadersTooLarge(len)
+                        type == FrameType.HEADERS && len > headersLimit -> RequestFrame.HeadersTooLarge(len)
                         type == FrameType.HEADERS -> RequestFrame.Headers(readGrowing(len.toInt()))
                         else -> RequestFrame.Data(len)
                     }

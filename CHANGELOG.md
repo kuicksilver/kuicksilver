@@ -160,6 +160,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   and CONNECT (RFC 9114 section 4.3.1, RFC 9110 sections 4.2.1 and 7.2); anything else is a malformed request
   (H3_MESSAGE_ERROR on its stream), and a client request carrying one fails locally with IllegalArgumentException.
   The Ktor server's `serverHost` and `serverPort` no longer take userinfo (allowed for other schemes) for the host.
+- HTTP/3: with `maxFieldSectionSize` at its maximum of 2^30, a HEADERS frame declaring 2^31 bytes passed the size check
+  (2 x `maxFieldSectionSize`) and its length became negative as an Int, closing the connection with H3_INTERNAL_ERROR.
+  Such a frame is now refused unread as too large (431 on a server), as any other HEADERS frame above the bound.
 
 ## [0.2.0] - 2026-10-15
 
