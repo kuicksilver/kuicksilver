@@ -73,6 +73,9 @@ private val RequestHandlerName = CoroutineName("kuicksilver-h1-request")
  * Transfer-Encoding (section 6.1: the server MUST close the connection after responding; it is refused here), a
  * transfer coding other than a final `chunked` (item 4), Transfer-Encoding in an HTTP/1.0 request (section 6.1), or
  * Content-Length values that are not `1*DIGIT` or differ (item 5; identical repeats are one length, RFC 9110 section 8.6).
+ * It is also set for a request whose Host is missing (HTTP/1.1) or repeated (section 3.2: the server MUST respond with
+ * 400; Ktor's parser checks only the syntax of a Host value): a front proxy that keys on another Host line than ours
+ * routes and caches by another host.
  */
 internal class RequestFraming private constructor(
     val chunked: Boolean,
@@ -93,6 +96,11 @@ internal class RequestFraming private constructor(
 
     companion object {
         fun of(request: Request): RequestFraming {
+            val hosts = request.headers.getAll("Host").count()
+            if (hosts > 1) return faulty("More than one Host field")
+            if (hosts == 0 && HttpProtocolVersion.parse(request.version) == HttpProtocolVersion.HTTP_1_1) {
+                return faulty("No Host field in an HTTP/1.1 request")
+            }
             val te = request.headers.getAll("Transfer-Encoding").toList()
             val cl = request.headers.getAll("Content-Length").toList()
             if (te.isNotEmpty()) {

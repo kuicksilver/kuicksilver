@@ -126,6 +126,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   acknowledgements and losses are binary searches, and a MAX_STREAM_DATA that raises nothing does no work, like MAX_DATA.
   A range declared lost after part of it was acknowledged is resent without the acknowledged part.
 
+- HTTP/1.1 server: a request without Host, or with two Host fields, was served (the first value won). RFC 9112 section
+  3.2: a server MUST respond with 400 to an HTTP/1.1 request that lacks Host and to any request with more than one Host
+  field line; a front proxy that keys on the last line routed and cached by another host than the application saw. Both
+  now get 400 and the connection closes; an HTTP/1.0 request without Host is still served. The HTTP/3 path already
+  refused a second `host`.
 - HTTP/1.1, server and client: a bare CR in a chunk-size line was skipped, a request smuggling vector. The parser (Ktor
   3.6.0's, KTOR-9263) ignored a CR anywhere in the line, so `1\r0\r\n` was read as size 0x10 where a recipient that
   ends the line at the CR reads 1, and `\r\r\n` was taken as the last chunk; a quote outside an extension switched on a

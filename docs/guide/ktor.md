@@ -31,7 +31,8 @@ server.start(wait = true)
   Content-Length and Transfer-Encoding is refused with 400 and the connection closed, a request with neither has no
   body (also with `Connection: close`), and a chunked trailer section is accepted (its fields are discarded). A
   chunk-size line must follow RFC 9112 section 7.1 exactly (hex digits, extensions by their grammar, CRLF); anything
-  else, such as a bare CR or LF in it, gets 400 and the connection closed. ALPN on TCP is `http/1.1`.
+  else, such as a bare CR or LF in it, gets 400 and the connection closed, as does an HTTP/1.1 request without a Host
+  field or any request with two (RFC 9112 section 3.2). ALPN on TCP is `http/1.1`.
 - `configuration.identity = ...` turns plain connectors into TLS ones, so `embeddedServer(Kuicksilver, port = 443,
   configure = { identity = ... })` works as expected. Without an identity a plain `connector { port = ... }` serves
   cleartext HTTP/1.1 (behind a TLS-terminating proxy, for tests).

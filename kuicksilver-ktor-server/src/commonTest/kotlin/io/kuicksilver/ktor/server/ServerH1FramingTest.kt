@@ -19,7 +19,10 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 
-/** How the server finds the end of an HTTP/1.1 request and whether the connection carries another (RFC 9112 sections 6, 7). */
+/**
+ * How the server checks an HTTP/1.1 request (RFC 9112 section 3.2), finds its end and whether the connection carries another
+ * (sections 6, 7).
+ */
 class ServerH1FramingTest {
     @BeforeTest fun load() = KslLoader.ensureLoaded()
 
@@ -123,6 +126,31 @@ class ServerH1FramingTest {
                         }
                     assertTrue(resp.contains(" 400 "), "${sizeLine.replace("\r", "\\r")}: $resp")
                 }
+            }
+        }
+
+    /**
+     * RFC 9112 section 3.2: a server MUST respond with 400 to an HTTP/1.1 request without Host and to any request with more
+     * than one Host field line. Both were served with 200, the first value winning, while a front proxy that keys on the
+     * last one routes and caches by another host.
+     */
+    @Test fun negative_missingOrRepeatedHostIsRejected() =
+        serverTest {
+            plainServer { port ->
+                for (head in listOf("GET / HTTP/1.1\r\n", "GET / HTTP/1.1\r\nHost: a\r\nHost: b\r\n", "GET / HTTP/1.0\r\nHost: a\r\nHost: a\r\n")) {
+                    val resp = withTimeout(10.seconds) { rawHttp(port, "${head}Connection: close\r\n\r\n", tls = null) }
+                    assertTrue(resp.contains(" 400 "), "[$head]: $resp")
+                    assertFalse(resp.contains("root"), "[$head]: $resp")
+                }
+            }
+        }
+
+    /** An HTTP/1.0 request needs no Host (section 3.2 requires it of HTTP/1.1 only). */
+    @Test fun http10RequestWithoutHostIsServed() =
+        serverTest {
+            plainServer { port ->
+                val resp = withTimeout(10.seconds) { rawHttp(port, "GET / HTTP/1.0\r\n\r\n", tls = null) }
+                assertTrue(resp.contains(" 200 ") && resp.endsWith("root"), resp)
             }
         }
 
