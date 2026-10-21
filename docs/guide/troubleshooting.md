@@ -25,8 +25,9 @@ counter or a qlog trace than by guessing.
 | Ktor server events | `eventListener = object : KuicksilverServerEventListener() { … }` | connections per protocol, `tlsHandshakeFailed`, requests with their failure |
 | Key log | `tlsConfig(…) { keylog = keylogFile(path) }` (`@DelicateKuicksilverApi`) | TLS secrets for Wireshark; see [Key logging is refused](#key-logging-is-refused) |
 
-The logger, listeners and counters are experimental API (`@ExperimentalKuicksilverApi`, see
-[stability](../stability.md)); they cost nothing per packet. Details: [QUIC: Observability](quic.md#observability),
+The logger, the listeners and the newer `EndpointStats` counters are experimental API (`@ExperimentalKuicksilverApi`, see
+[stability](../stability.md)); `QuicConnection.stats` and the first `EndpointStats` counters are stable. None of it costs
+anything per packet. Details: [QUIC: Observability](quic.md#observability),
 [QUIC: qlog](quic.md#qlog), [Ktor: Observability](ktor.md#observability-experimental).
 
 A failed connection's cause is always a `QuicException`: `QuicConnection.closed` completes with it, and every waiting
