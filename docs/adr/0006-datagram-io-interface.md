@@ -1,7 +1,7 @@
 # ADR-0006. UDP behind the `DatagramIo` interface: portable and accelerated implementations
 
-Date: 2026-10-02. Status: accepted (approved by the owner 2026-10-02). Implemented in K2 (portable side), K3 (accelerated
-Linux and Android) and K7 / 0.2.0 (accelerated Apple and Windows, 2026-10-13); the history is at the end.
+Date: 2026-10-02. Status: accepted (approved by the owner 2026-10-02). Implemented in stages: the portable side (2026-10-02), the
+accelerated socket on Linux and Android (2026-10-08) and on Apple and Windows (0.2.0, 2026-10-13); the history is at the end.
 
 ## Context
 
@@ -18,11 +18,11 @@ Cross-check 2026-10-02: `ktor-network` on Native closes receiving forever on an 
 ## Consequences
 
 - The transport does not depend on the platform socket; active migration is simply a new `DatagramIo`.
-- The native surface grows by a handful of `ksl_udp_*` functions (57 functions in `ksl.h` after K3, see the history).
+- The native surface grows by a handful of `ksl_udp_*` functions (57 functions in `ksl.h` after the 2026-10-08 work, see the history).
 - Every target of the library has the accelerated socket since 0.2.0, so a QUIC server runs on all of them; the portable
   socket remains the fallback and the explicit choice (`IoPreference.Portable`).
 
-## Design as of 0.2.0
+## Design (0.2.0, with the 0.2.1 receive path)
 
 ### The `ksl_udp` contract
 
@@ -44,11 +44,11 @@ Cross-check 2026-10-02: `ktor-network` on Native closes receiving forever on an 
   count, so a use-after-free between the check and the call is ruled out. The getters (`grantedFlags`, `gsoMaxSegments`,
   `batch`, `stats`) enter through the same counter and return the last value read after `shutdown`.
 - **`KslDatagramIo`** (`kuicksilver-quic/src/commonMain`) is the `DatagramIo` over `KslUdpSocket`: `PacketBatch` slots go
-  to C as they are; `receive` blocks a `Dispatchers.IO` thread in 100 ms slices until the first datagram or close. While
+  to C as they are; `receive` blocks a `Dispatchers.IO` thread in 100 ms slices until the first datagram or close. Since 0.2.1, while
   datagrams keep coming the endpoint loop reads it on its own thread instead (`receiveNow`, `runtime/BatchReceiver.kt`):
   what is queued, or what arrives within 1 ms and before the loop's next timer, and the loop's queued work still runs after
   every 16 datagrams or 1 ms; the hand-off to an I/O thread and back cost more CPU than the QUIC work of a batch of a few
-  datagrams (0.2.1, docs/benchmarks.md). `ksl_udp_recv` calls `recvmsg` first and polls only on an empty queue (not on Windows); peer
+  datagrams (docs/benchmarks.md). Also since 0.2.1, `ksl_udp_recv` calls `recvmsg` first and polls only on an empty queue (not on Windows); peer
   addresses are a 64-entry cache keyed by the 20 bytes (one `InetSocketAddress` instance per peer: the core compares paths
   by reference), destination addresses a cache of the last 4 by identity. `capabilities` (a `StateFlow`) are re-read from
   `KSL_UDP_GET_CAPS` every 256 sends and after a short send, so a fallback in C shows up with that delay; the datagrams
@@ -90,7 +90,7 @@ Every send error falls into one of four classes, on every platform (POSIX codes 
 `ksl_udp_win.c`):
 
 1. **Backpressure** — the queue is full: `EAGAIN`/`EWOULDBLOCK` and `ENOBUFS` (Linux's qdisc or Darwin's interface queue;
-   backpressure since the review of k7/macos-server). `KSL_OK` with a partial `sent`; the caller sends the rest later.
+   backpressure since the macOS server review, 2026-10-13). `KSL_OK` with a partial `sent`; the caller sends the rest later.
 2. **Slot loss** — this datagram is lost on the wire, the socket lives on and loss detection repairs it: destination errors
    (`EINVAL` caused by the destination, `EAFNOSUPPORT`, `EADDRNOTAVAIL`, `EDESTADDRREQ`: port 0, link-local IPv6, a family the
    socket cannot reach) and transient ones (`EMSGSIZE`, `EPERM` after one retry, `EACCES`, `ENETUNREACH`, `EHOSTUNREACH`,
@@ -114,8 +114,8 @@ and `SIO_UDP_CONNRESET`/`SIO_UDP_NETRESET` are off (an ICMP unreachable must not
 
 ### Dual-stack binds
 
-NIO's `DatagramChannel.open()` is dual-stack and takes `0.0.0.0` as `::`; the accelerated socket matches it (review of
-k7/macos-server). On Linux and Apple a wildcard (`0.0.0.0` or `::`) opens one `AF_INET6` socket bound to `::` with
+NIO's `DatagramChannel.open()` is dual-stack and takes `0.0.0.0` as `::`; the accelerated socket matches it (macOS server
+review, 2026-10-13). On Linux and Apple a wildcard (`0.0.0.0` or `::`) opens one `AF_INET6` socket bound to `::` with
 `IPV6_V6ONLY = 0`: an IPv4 destination leaves as `::ffff:a.b.c.d`, a v4-mapped source is reported as IPv4 (family 4), and a
 `0.0.0.0` request still reports `0.0.0.0` as its local address. A specific address keeps its own family, and IPv6 ones stay
 `IPV6_V6ONLY`. When the dual-stack socket cannot be made (no IPv6 in the kernel, `::` taken), `0.0.0.0` falls back to an
@@ -195,7 +195,8 @@ platform, so it covers:
   `SO_NOSIGPIPE`; `SO_RCVBUF`/`SO_SNDBUF` start at 7 MB and halve until the kernel accepts them (`kern.ipc.maxsockbuf` is
   8 MB including overhead).
 - **iOS.** The same C compiles for `iosArm64`/`iosSimulatorArm64`, and `bind` with a server is not refused there: nothing in
-  the platform forbids a listening UDP socket in an app. iOS is compiled and linked only; its tests have not run.
+  the platform forbids a listening UDP socket in an app. Every module's suite runs on the iOS simulator; `iosArm64` is compiled and linked but has not run on a
+  device.
 
 ### Windows (`mingwX64` and the JVM's JNI `.dll`)
 
@@ -275,45 +276,46 @@ Android the server also worked on NIO; `AndroidServerTest.serverOnDeviceServesLo
   `ClientH3Test.h3ToIpv6Loopback`; on Windows `udp_win_dual_stack`, `udp_win_wildcard_dual_stack` and
   `udp_win_wildcard_without_ipv6_falls_back`.
 - **Windows:** cross-compiled on macOS with the Kotlin/Native llvm + mingw sysroot (`tools/c-test.sh mingw-x64`, `-Werror`)
-  and with the Ubuntu mingw-w64 gcc 13 of the JNI build, and verified on the owner's local Windows 11 VM (4 cores):
+  and with the Ubuntu mingw-w64 gcc 13 of the JNI build, and verified in a local Windows 11 VM (4 cores):
   `test_udp_win.c` (batch, USO in one call, two senders, ECN round trip when granted, DF probe, truncation, USO fallback,
   transient and destination errors, dual-stack, wildcard dual-stack and its IPv4 fallback, exclusive bind, wake-up
   < 100 ms, shutdown, `udp_win_send_while_recv_blocks`), kuicksilver-quic native 628/628 (with `WinsockReadyTest` and
   `NativeServerLoopbackTest.nativeServerServes10MiB`, a real Winsock server and client), kuicksilver-ktor-server native
   146/146, kuicksilver-ktor-client `ClientH3Test` 15/15 on Native and on the JVM against the JNI `.dll`. Early CI runs
-  found the Winsock start defect fixed above; GitHub Actions is not used for Windows.
+  found the Winsock start defect fixed above; the GitHub Actions workflows are now disabled, and the Windows suites run
+  in the VM through `tools/ci/local-matrix.sh --with-windows`.
 
 ## History
 
-- **K2 (2026-10-02): portable side only.** `NioDatagramIo` (JVM/Android, `kuicksilver-quic/src/jvmCommonMain`) reads
+- **2026-10-02: portable side only.** `NioDatagramIo` (JVM/Android, `kuicksilver-quic/src/jvmCommonMain`) reads
   through a `DatagramChannel` with a selector, receiving datagrams in batches within one loop pass — this removed the loss
   of bursts at the socket buffer boundary found by the real-UDP tests; writes remain one datagram per call
   (`capabilities.batch = 1`). `KtorDatagramIo` (Kotlin/Native) uses `ktor-network`, client side only (see the
   cross-check), and `NativeServerGuardTest` pinned the refusal of a Native server. `PacketBuffer` got a public JVM accessor
   `asByteBuffer()` so that NIO reads and writes without copies; the import rule (ADR-0004) still lets only `PacketBuffer`
   through. The throughput of the portable path is measured as a fact, not a promise.
-- **K3: accelerated UDP on Linux.** `ksl_udp_*` under `#ifdef __linux__`; on Apple `ksl_udp_open` returned `NULL` +
+- **2026-10-08: accelerated UDP on Linux.** `ksl_udp_*` under `#ifdef __linux__`; on Apple `ksl_udp_open` returned `NULL` +
   `KSL_E_NOT_SUPPORTED` and the stack stayed on the portable implementation. The safe close with a blocked receiver cost
   the 57th function in `ksl.h` (`ksl_udp_shutdown`; 56 with a single `close` were planned). A Native server ran on Linux
   only; on Apple and Windows `bind` with a server threw `UnsupportedOperationException`. A separate receiver coroutine
   with a ring of two batches, as originally planned, was not needed: the endpoint loop waits on `receive` anyway.
-- **K3 final review (2026-10-08).** The GSO run rule for a larger first datagram; transient send errors lose only their
+- **Final review of the Linux socket (2026-10-08).** The GSO run rule for a larger first datagram; transient send errors lose only their
   datagram; destination `EINVAL` no longer switches ECN and GSO off forever (native-tls review), and link-local IPv6
   sources are dropped; the `KslUdpSocket` getters go through the call counter; the `EndpointLoop.close()` order
   (`RuntimeRobustnessTest.closeWaitsForTheReceiverBeforeFreeingItsBatch`, `receiveFailureClosesTheEndpoint`,
   `oneFailedSendDoesNotKillTheEndpoint`).
-- **K7, Apple (2026-10-13).** `ksl_udp` builds and runs on Apple (`KSL_UDP_ACCEL`); the QUIC server and the Ktor engine's
+- **0.2.0, Apple (2026-10-13).** `ksl_udp` builds and runs on Apple (`KSL_UDP_ACCEL`); the QUIC server and the Ktor engine's
   HTTP/3 run on Kotlin/Native macOS, and the JVM on macOS uses `KslDatagramIo` by default instead of NIO. Its review made
   wildcard binds dual-stack (Linux and Apple), made `ENOBUFS` backpressure, made `EHOSTDOWN`/`ENETDOWN` a slot loss, and
   made a Darwin socket without its wake pipe fail to open.
-- **K7, Windows (0.2.0).** `ksl_udp_win.c` over Winsock; `KslUdpSocket.supported` is true on Windows, so the Native server
+- **0.2.0, Windows.** `ksl_udp_win.c` over Winsock; `KslUdpSocket.supported` is true on Windows, so the Native server
   guard no longer applies there and the JVM on Windows uses the accelerated socket. Its reviews made the wake socket
   exclusive, kept USO on transient errors, idled the receive on `POLLERR` and transient errors, and moved the Winsock start
   from a C constructor (which ran in static binaries only) to the Kotlin/Native runtime start, with a restart after a
   host's extra `WSACleanup`.
-- **K7, Windows trust and sockets (win-trust, 2026-10-13).** The first runs in the local Windows 11 VM found a send that
+- **0.2.0, Windows trust and sockets (2026-10-13).** The first runs in the local Windows 11 VM found a send that
   waited behind the receiver's `WSAPoll` (sockets are now `WSA_FLAG_OVERLAPPED`), a `0.0.0.0` bind that was IPv4-only
   (now dual-stack as on Linux and Apple), a PROBE that Windows 11 refuses (DF alone, as msquic), and a NIO socket on the
   Windows JVM that claimed ECT(0) it could not send (`ecnSend = false`).
-- **K7, both platforms.** The `loops > 1` check moved from the platform to the `KSL_UDP_REUSEPORT` grant; a refused
+- **0.2.0, both platforms.** The `loops > 1` check moved from the platform to the `KSL_UDP_REUSEPORT` grant; a refused
   accelerated socket falls back to the portable one instead of failing the bind.
