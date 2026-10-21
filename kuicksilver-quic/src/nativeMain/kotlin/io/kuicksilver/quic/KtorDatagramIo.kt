@@ -21,9 +21,10 @@ import kotlinx.io.readByteArray
  * datagram stops ktor's receive loop for good (known ktor behaviour, not worked around here), and a server needs
  * the accelerated `DatagramIo`.
  *
- * This socket does not use ktor-network for IPv6 addresses on Native (Ktor issue KTOR-10017, security, under coordinated disclosure) and fails closed:
- * [open] refuses a specific IPv6 address (UnsupportedOperationException; the wildcard `::` is accepted) and a send to an
- * IPv6 address throws an IOException. The accelerated socket (`ksl`, every Native platform) carries the full address.
+ * This socket does not use ktor-network for IPv6 addresses on Native (Ktor issue KTOR-10017, security, under
+ * coordinated disclosure) and fails closed: [open] refuses a specific IPv6 address (UnsupportedOperationException; the
+ * wildcard `::` is accepted) and a send to an IPv6 address throws an IOException. The accelerated socket (`ksl`, every
+ * Native platform) carries the full address.
  */
 @OptIn(ExperimentalKuicksilverApi::class)
 internal class KtorDatagramIo private constructor(
@@ -110,12 +111,12 @@ internal class KtorDatagramIo private constructor(
     private fun refuseIpv6Destinations(batch: PacketBatch) {
         for (i in 0 until batch.count) {
             val a = batch.address(i) ?: continue
-            if (a.ipBytes()?.size == 16) throw IOException(misdirected(a))
+            if (a.ipBytes()?.size == 16) throw IOException(unsupportedIpv6(a))
         }
     }
 
     companion object {
-        private fun misdirected(a: InetSocketAddress): String =
+        private fun unsupportedIpv6(a: InetSocketAddress): String =
             "the portable Kotlin/Native UDP socket does not support the IPv6 address ${a.hostname} (Ktor issue KTOR-10017); " +
                 "use the accelerated socket (IoPreference.Accelerated)"
 
@@ -138,7 +139,7 @@ internal class KtorDatagramIo private constructor(
 
         suspend fun open(local: InetSocketAddress): KtorDatagramIo {
             val ip = local.ipBytes()
-            if (ip != null && ip.size == 16 && ip.any { it.toInt() != 0 }) throw UnsupportedOperationException(misdirected(local))
+            if (ip != null && ip.size == 16 && ip.any { it.toInt() != 0 }) throw UnsupportedOperationException(unsupportedIpv6(local))
             val selector = SelectorManager()
             val s =
                 try {

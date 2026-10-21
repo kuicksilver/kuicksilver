@@ -466,7 +466,7 @@ request now contains its own failure.
 ### IPv6 over TCP on Kotlin/Native
 
 On Kotlin/Native (Linux, Apple, Windows) Kuicksilver binds and connects its TCP sockets itself instead of through Ktor
-3.6.0's `ktor-network`, because of a Ktor issue with IPv6 addresses reported as
+3.6.0's `ktor-network`, because of a Ktor issue reported as
 [KTOR-10017](https://youtrack.jetbrains.com/issue/KTOR-10017) (security, under coordinated disclosure).
 
 Both engines therefore open their HTTP/1.1 TCP sockets through `kuicksilver-ktor-network` (`bindTcp`, `connectTcp`): on
