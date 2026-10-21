@@ -31,7 +31,7 @@ server.start(wait = true)
   Content-Length and Transfer-Encoding is refused with 400 and the connection closed, a request with neither has no
   body (also with `Connection: close`), and a chunked trailer section is accepted (its fields are discarded). A
   chunk-size line must follow RFC 9112 section 7.1 exactly (hex digits, extensions by their grammar, optional
-  whitespace, CRLF): anything else, such as a bare CR or LF in it, makes the handler's receive of the body fail with
+  whitespace before the CRLF): anything else, such as a bare CR or LF in it, makes the handler's receive of the body fail with
   `BadRequestException` (Ktor answers 400 unless the application handles it) and the connection closes. An HTTP/1.1
   request without a Host field, or any request with two, gets 400 and the connection closed (RFC 9112 section 3.2). The engine's own 400 has the fixed body `Bad Request`
   (Ktor CIO sends the parser's message, which can quote the request's header fields). ALPN on TCP is `http/1.1`.
