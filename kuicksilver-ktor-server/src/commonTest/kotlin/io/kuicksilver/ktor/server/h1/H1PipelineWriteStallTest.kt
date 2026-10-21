@@ -37,6 +37,7 @@ class H1PipelineWriteStallTest {
         val toServer: ByteChannel,
         val fromServer: ByteChannel,
         val job: Job,
+        val connection: H1Connection,
     ) {
         /** Why the pipeline ended; null while it runs or when it ended normally. */
         var cause: Throwable? = null
@@ -45,9 +46,10 @@ class H1PipelineWriteStallTest {
     private fun TestScope.pipeline(handler: suspend H1RequestScope.(Request) -> Unit): Conn {
         val toServer = ByteChannel()
         val fromServer = ByteChannel()
-        val job = backgroundScope.startH1Pipeline(H1Connection(toServer, fromServer, null, null), idle, 30.seconds, handler = handler)
+        val connection = H1Connection(toServer, fromServer, null, null)
+        val job = backgroundScope.startH1Pipeline(connection, idle, 30.seconds, handler = handler)
         runCurrent()
-        return Conn(toServer, fromServer, job).also { c -> job.invokeOnCompletion { c.cause = it } }
+        return Conn(toServer, fromServer, job, connection).also { c -> job.invokeOnCompletion { c.cause = it } }
     }
 
     private suspend fun Conn.send(text: String) {
@@ -75,6 +77,7 @@ class H1PipelineWriteStallTest {
             assertTrue(handlerDone.isCompleted, "the handler is still blocked on the response")
             val cause = c.cause?.message.orEmpty()
             assertTrue(cause.contains("stopped reading"), "the cause names the stall, not the idle timeout: $cause")
+            assertTrue(c.connection.clientStoppedReading, "the engine is not told to skip the drain of the close")
         }
 
     /** The same over an upgraded connection (WebSocket), whose output goes through the same writer. */

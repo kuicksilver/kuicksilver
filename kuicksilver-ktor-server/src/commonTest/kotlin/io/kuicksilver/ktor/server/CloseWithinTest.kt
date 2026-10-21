@@ -133,6 +133,18 @@ class CloseWithinTest {
             assertTrue(closing.isCompleted)
         }
 
+    /** With no stall deadline left (the client was cut for not reading), the close aborts at once. */
+    @Test fun aZeroDeadlineAbortsAtOnce() =
+        runTest {
+            val sock = FakeSocket(finishes = false)
+            var abortedAt = -1L
+            closeWithin(sock, {
+                abortedAt = currentTime
+                sock.socketContext.complete()
+            }, kotlin.time.Duration.ZERO)
+            assertEquals(0L, abortedAt)
+        }
+
     @Test fun gracefulCloseIsNotAborted() =
         runTest {
             val sock = FakeSocket(finishes = true)

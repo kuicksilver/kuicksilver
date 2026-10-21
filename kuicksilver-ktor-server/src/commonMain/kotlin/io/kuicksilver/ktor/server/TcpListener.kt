@@ -195,14 +195,14 @@ internal fun KuicksilverApplicationEngine.startTcp(
                                 }
                                 val altSvc = if (l.tls != null && configuration.altSvc) http3AltSvc(port) else null
                                 events.emit("connectionOpened") { connectionOpened(HttpProtocolVersion.HTTP_1_1, remote) }
+                                val connection =
+                                    H1Connection(
+                                        sock.openReadChannel(),
+                                        sock.openWriteChannel(),
+                                        sock.remoteAddress.toNetworkAddress(),
+                                        sock.localAddress.toNetworkAddress(),
+                                    )
                                 try {
-                                    val connection =
-                                        H1Connection(
-                                            sock.openReadChannel(),
-                                            sock.openWriteChannel(),
-                                            sock.remoteAddress.toNetworkAddress(),
-                                            sock.localAddress.toNetworkAddress(),
-                                        )
                                     startH1Pipeline(
                                         connection,
                                         timeout,
@@ -212,7 +212,8 @@ internal fun KuicksilverApplicationEngine.startTcp(
                                         sendTimeout = sendTimeout,
                                     ) { request -> handleRequest(this, request, scheme, peer, altSvc) }.join()
                                 } finally {
-                                    closeWithin(sock, { sock.abort() }, sendTimeout)
+                                    // a client cut for not reading has had the stall deadline already: no second one for the close
+                                    closeWithin(sock, { sock.abort() }, if (connection.clientStoppedReading) Duration.ZERO else sendTimeout)
                                     events.emit("connectionClosed") { connectionClosed(HttpProtocolVersion.HTTP_1_1, remote) }
                                 }
                             }

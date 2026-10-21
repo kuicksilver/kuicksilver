@@ -67,7 +67,14 @@ internal class H1Connection(
     val output: ByteWriteChannel,
     val remoteAddress: NetworkAddress?,
     val localAddress: NetworkAddress?,
-)
+) {
+    /**
+     * Set when the pipeline ended because the client took nothing of a response for the send-stall deadline: its close
+     * need not wait for a drain that has already been given that long.
+     */
+    @kotlin.concurrent.Volatile
+    var clientStoppedReading: Boolean = false
+}
 
 /**
  * One request of an [H1Connection]: its body ([input]), its response ([output]), for an upgrade whether it happened, and
@@ -623,6 +630,7 @@ private suspend fun pipelineWriterLoop(
             if (child is ByteWriteChannel) child.close(cause)
             if (cause is ClientNotReading) {
                 // the socket has taken nothing for [sendTimeout]: end the connection, its handler (blocked on this response) too
+                connection.clientStoppedReading = true
                 onEnd(cause.message ?: "HTTP/1.1 client stopped reading")
                 break
             }
