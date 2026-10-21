@@ -151,6 +151,22 @@ class PseudoHeadersTest {
         bad(listOf(":method" to "CONNECT"))
     }
 
+    /**
+     * A classic CONNECT names the host and port to connect to (RFC 9114 section 4.4): its `:authority` is the authority-form
+     * `uri-host ":" port` (RFC 9110 section 9.3.6), so a missing, empty or zero port is malformed. Extended CONNECT
+     * (RFC 9220) carries a URI authority, whose port stays optional.
+     */
+    @Test fun negative_classicConnectNeedsAPort() {
+        for (a in listOf("proxy", "proxy:", "[::1]", "[::1]:", "proxy:0", "proxy:00")) {
+            bad(listOf(":method" to "CONNECT", ":authority" to a))
+        }
+        for (a in listOf("proxy:443", "[::1]:8443", "127.0.0.1:1")) {
+            assertEquals(a, PseudoHeaders.parseRequest(listOf(":method" to "CONNECT", ":authority" to a), false).authority)
+        }
+        val extended = listOf(":method" to "CONNECT", ":protocol" to "websocket", ":scheme" to "https", ":authority" to "a", ":path" to "/")
+        assertEquals("a", PseudoHeaders.parseRequest(extended, true).authority)
+    }
+
     @Test fun extendedConnectNeedsSetting() {
         val f = listOf(":method" to "CONNECT", ":protocol" to "websocket", ":scheme" to "https", ":authority" to "a", ":path" to "/chat")
         bad(f, connect = false)

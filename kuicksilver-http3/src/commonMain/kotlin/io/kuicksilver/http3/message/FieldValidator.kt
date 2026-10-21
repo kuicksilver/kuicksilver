@@ -115,12 +115,14 @@ internal object FieldValidator {
      * the syntax `:authority` and `host` carry (RFC 9114 section 4.3.1, RFC 9110 section 7.2): a path, query, fragment,
      * whitespace or quote in them is malformed, and engines that map them to an HTTP/1.1 `Host` see only values HTTP/1.1
      * accepts. The port is at most five digits up to 65535; [userinfo] says whether the scheme allows userinfo, and
-     * [hostRequired] whether the host may be empty (it may not for http and https, RFC 9110 section 4.2.1).
+     * [hostRequired] whether the host may be empty (it may not for http and https, RFC 9110 section 4.2.1), and
+     * [portRequired] whether a port from 1 to 65535 must follow it (the authority-form of CONNECT, RFC 9110 section 9.3.6).
      */
     fun checkAuthority(
         a: String,
         userinfo: Boolean,
         hostRequired: Boolean,
+        portRequired: Boolean = false,
     ): String? {
         val at = a.lastIndexOf('@')
         if (at >= 0) {
@@ -138,10 +140,11 @@ internal object FieldValidator {
             if (!isRegName(a.substring(hostStart, hostEnd), colon = false)) return "invalid host"
         }
         if (hostRequired && hostEnd == hostStart) return "empty host"
-        if (hostEnd == a.length) return null
+        if (hostEnd == a.length) return if (portRequired) "no port" else null
         if (a[hostEnd] != ':') return "invalid character after the host"
         val port = a.substring(hostEnd + 1)
         if (port.length > 5 || !port.all { it in '0'..'9' } || (port.isNotEmpty() && port.toInt() > 65_535)) return "invalid port"
+        if (portRequired && (port.isEmpty() || port.toInt() == 0)) return "no port"
         return null
     }
 
@@ -274,13 +277,20 @@ internal object PseudoHeaders {
             }
         }
         // RFC 3986 syntax for both (RFC 9114 section 4.3.1); userinfo only where the scheme allows it (not http, https or
-        // the authority-form of CONNECT, RFC 9110 section 9.3.6), and a host for http, https and CONNECT
+        // the authority-form of CONNECT, RFC 9110 section 9.3.6), a host for http, https and CONNECT, and a port for a
+        // classic CONNECT (its authority-form is `uri-host ":" port`; Extended CONNECT carries a URI authority, RFC 9220)
         val classicConnect = method == "CONNECT" && protocol == null
         val userinfo = !classicConnect && scheme != "http" && scheme != "https"
         val hostRequired = classicConnect || scheme == "http" || scheme == "https"
         for ((what, v) in listOf(":authority" to pseudo[":authority"], "host" to host)) {
             if (v == null) continue
-            FieldValidator.checkAuthority(v, userinfo, hostRequired)?.let { throw MalformedMessage("$it in $what") }
+            FieldValidator
+                .checkAuthority(
+                    v,
+                    userinfo,
+                    hostRequired,
+                    portRequired = classicConnect,
+                )?.let { throw MalformedMessage("$it in $what") }
         }
         return Request(method, scheme, authority ?: host, path, protocol, Http3Headers(FieldValidator.checkContentLength(regular)))
     }

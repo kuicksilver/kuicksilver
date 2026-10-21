@@ -170,6 +170,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - HTTP/3: with `maxFieldSectionSize` at its maximum of 2^30, a HEADERS frame declaring 2^31 bytes passed the size check
   (2 x `maxFieldSectionSize`) and its length became negative as an Int, closing the connection with H3_INTERNAL_ERROR.
   Such a frame is now refused unread as too large (431 on a server), as any other HEADERS frame above the bound.
+- HTTP/3: a classic CONNECT whose `:authority` had no port, an empty one or port 0 (`proxy`, `proxy:`) was accepted.
+  RFC 9114 section 4.4 makes it the host and port to connect to, and RFC 9110 section 9.3.6 its authority-form
+  `uri-host ":" port`; such a request is now malformed (H3_MESSAGE_ERROR on its stream). Extended CONNECT (RFC 9220)
+  keeps an optional port.
 
 ## [0.2.0] - 2026-10-15
 

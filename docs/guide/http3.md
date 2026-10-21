@@ -42,8 +42,9 @@ val client = Http3Connection.client(quicConnection, settings)
 Requests and responses are validated as RFC 9114 sections 4.2-4.3 require. A malformed message (a field name that is
 not a lowercase token, CR, LF or NUL anywhere, whitespace at either end of a value, a connection-specific field such
 as `transfer-encoding`, `te` other than `trailers` or `te` in a response, a missing or duplicated pseudo-header,
-`:authority` and `host` that disagree or are not `host[:port]`, DATA on a response to HEAD or with status 204 or 304)
-is a *stream* error: the stream is reset with `H3_MESSAGE_ERROR` and the connection keeps serving other requests.
+`:authority` and `host` that disagree or are not `host[:port]`, a classic CONNECT without a port, DATA on a response
+to HEAD or with status 204 or 304) is a *stream* error: the stream is reset with `H3_MESSAGE_ERROR` and the connection
+keeps serving other requests.
 
 Failures surface as `Http3Exception`:
 
