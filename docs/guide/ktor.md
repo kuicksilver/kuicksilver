@@ -1,3 +1,8 @@
+<!--
+Copyright 2026 The Kuicksilver Authors
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # Ktor engines
 
 Kuicksilver plugs into Ktor 3.6 as a server engine (`io.kuicksilver:kuicksilver-ktor-server`) and a client engine
@@ -90,7 +95,7 @@ Knobs, named after Ktor's Netty engine where one exists: `http3` (on), `quic` (t
 The engine serves HTTP/3 on every target, Kotlin/Native Linux, Apple and Windows included (the accelerated `ksl` socket,
 ADR-0006); `udpSocketCount > 1` needs Linux or Android. Where a QUIC server cannot run, the engine logs a warning and serves
 HTTP/1.1 only, without `Alt-Svc`. The same applies to a `tlsConnector` with a `sniSelector`: QUIC cannot pick an
-identity per SNI name in v1, so that connector skips HTTP/3 with a warning instead of failing to start.
+identity per SNI name (not supported for QUIC yet), so that connector skips HTTP/3 with a warning instead of failing to start.
 
 ### WebSockets over HTTP/3
 
@@ -153,7 +158,7 @@ val client = HttpClient(Kuicksilver) {
   long it takes, and one that stalls (the server stops reading, the application stops writing) fails that long after its
   last progress; every read of the response body then has it on its own. Without `HttpTimeout` the engine's `connectTimeout` (10 s) applies.
 - Capabilities: `HttpTimeoutCapability`, `WebSocketCapability`, `SSECapability`. `WebSocketExtensionsCapability` is not
-  declared (no extension negotiation in v1), nor Unix sockets.
+  declared (no extension negotiation; permessage-deflate is planned for 0.3.0), nor Unix sockets.
 - `HttpClient()` without an engine finds Kuicksilver through `ServiceLoader` on the JVM with priority 0.5 (below OkHttp
   and the platform engines at 1.0, above CIO at 0.0) and through Ktor's engine list on Kotlin/Native.
 
@@ -415,7 +420,8 @@ the JVM, Android, Linux, macOS, iOS and Windows. The HTTP/3 runs, like the engin
 need a QUIC server peer and run where one can bind, which since 0.2.0 is every target with the accelerated socket: the
 JVM, Android, Linux, macOS, the iOS simulator and Windows (where a probe finds no server, they pass without running). iOS
 runs them on the simulator (`iosSimulatorArm64Test`), not yet on a device. Windows (Kotlin/Native and the JVM) was
-verified in a local Windows 11 VM (Parallels); there is no CI run on Windows while GitHub Actions is paused.
+verified in a local Windows 11 VM (Parallels); the GitHub Actions workflows are disabled, and the release gate runs
+locally (`tools/ci/local-matrix.sh --with-windows`).
 
 **Client** (`kuicksilver-ktor-client`): `ContentTest`, `PostTest`, `UploadTest`, `DownloadTest`, `HttpRedirectTest`,
 `HttpTimeoutTest` and `WebSocketTest` against Ktor's test-server routes hosted on the Kuicksilver server engine; every
