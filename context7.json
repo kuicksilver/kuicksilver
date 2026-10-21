@@ -25,10 +25,10 @@
     "Kuicksilver is 0.x and experimental: the API can change between any two 0.x releases; docs/stability.md says which API is stable and which is experimental.",
     "Use the same version for every io.kuicksilver artifact; each module depends only on the layer directly below it (native, tls, quic, http3, then the Ktor engines).",
     "For Ktor, use HttpClient(Kuicksilver) for the client and embeddedServer(Kuicksilver) for the server; the client starts on HTTP/1.1 over TLS and moves to HTTP/3 after the server announces it with Alt-Svc, unless configured otherwise.",
-    "OpenSSL 3.5 is statically linked inside kuicksilver-native; no system OpenSSL is needed or used. The library is not FIPS-certified.",
+    "OpenSSL 3.5 is statically linked inside kuicksilver-native; the published artifacts need no system OpenSSL and never load one (building against the system libssl is only a Linux build option, ADR-0002). The library is not FIPS-certified.",
     "0-RTT is opt-in and experimental (off by default); BBR is opt-in and experimental, CUBIC is the default congestion controller.",
     "loops > 1 works only on Linux and Android; macOS, iOS and Windows run one loop per port.",
-    "JS and Wasm are not targets; HTTP/2, HTTP/3 server push and WebTransport are not supported."
+    "JS and Wasm are not targets; HTTP/2 and HTTP/3 server push are not supported. WebTransport is not in 0.2.x: it is planned for 0.3.0, as experimental API."
   ],
   "previousVersions": [
     {
