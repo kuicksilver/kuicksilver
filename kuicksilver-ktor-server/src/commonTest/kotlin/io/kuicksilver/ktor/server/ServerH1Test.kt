@@ -329,9 +329,7 @@ class ServerH1Test {
         }
 
     /**
-     * A connector on `::1` listens on `::1` only. Ktor 3.6.0's Kotlin/Native bind never copied the address into `sockaddr_in6`,
-     * so this connector listened on `::`: every IPv6 interface and, dual-stack on Linux and Apple, IPv4 too. An IPv4 connect
-     * to its port (another address of this host) must be refused (Ktor issue KTOR-10017).
+     * A connector on `::1` listens on `::1` only: an IPv4 connect to its port (another address of this host) is refused.
      */
     @Test fun negative_ipv6ConnectorListensOnItsAddressOnly() =
         serverTest {

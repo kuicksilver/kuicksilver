@@ -313,7 +313,7 @@ internal class H1Pool(
                 )
             }
         // the address itself, not `hostname`: on the JVM that is a reverse lookup (::1 -> "localhost" -> 127.0.0.1);
-        // connectTcp, not ktor-network's native connect, which sends every IPv6 address as :: (Ktor issue KTOR-10017)
+        // connectTcp, not ktor-network's native connect (Ktor issue KTOR-10017, security, under coordinated disclosure)
         val tcp = connectTcp(selector, target)
         try {
             val rawIn = tcp.openReadChannel()

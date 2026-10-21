@@ -111,7 +111,7 @@ class ClientH1Test {
             }
         }
 
-    /** Cleartext HTTP/1.1 to an IPv6 literal on every platform (Windows Native refused it with WSAEADDRNOTAVAIL under Ktor 3.6.0's sockets). */
+    /** Cleartext HTTP/1.1 to an IPv6 literal on every platform, Windows Native included. */
     @Test fun plainHttpToIpv6Literal() =
         clientTest {
             val (server, port) =
@@ -128,9 +128,8 @@ class ClientH1Test {
         }
 
     /**
-     * The client connects to the address in the URL and nowhere else. Ktor 3.6.0's Kotlin/Native connect sent every IPv6
-     * address as `::`, which Linux and Apple route to the local host: a request to `[::ffff:127.0.0.1]` (where nothing
-     * listens) reached the server on `::1` instead (Ktor issue KTOR-10017).
+     * The client connects to the address in the URL and nowhere else: a request to `[::ffff:127.0.0.1]` (where nothing
+     * listens) does not reach the server on `::1`.
      */
     @Test fun negative_h1ToIpv6LiteralReachesThatAddressOnly() =
         clientTest {

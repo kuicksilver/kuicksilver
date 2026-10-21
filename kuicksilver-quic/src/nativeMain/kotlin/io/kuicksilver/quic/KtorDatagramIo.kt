@@ -21,10 +21,9 @@ import kotlinx.io.readByteArray
  * datagram stops ktor's receive loop for good (known ktor behaviour, not worked around here), and a server needs
  * the accelerated `DatagramIo`.
  *
- * ktor-network 3.6.0 puts `::` into every IPv6 sockaddr on Native (Ktor issue KTOR-10017): a bind of `::1` would
- * listen on every interface, and a datagram to any IPv6 address would go to `::`, the local host. This socket fails closed
- * instead: [open] refuses a specific IPv6 address (UnsupportedOperationException; `::` itself is what ktor binds) and a send to
- * an IPv6 address throws an IOException. The accelerated socket (`ksl`, every Native platform) carries the full address.
+ * This socket does not use ktor-network for IPv6 addresses on Native (Ktor issue KTOR-10017, security, under coordinated disclosure) and fails closed:
+ * [open] refuses a specific IPv6 address (UnsupportedOperationException; the wildcard `::` is accepted) and a send to an
+ * IPv6 address throws an IOException. The accelerated socket (`ksl`, every Native platform) carries the full address.
  */
 @OptIn(ExperimentalKuicksilverApi::class)
 internal class KtorDatagramIo private constructor(
@@ -117,8 +116,8 @@ internal class KtorDatagramIo private constructor(
 
     companion object {
         private fun misdirected(a: InetSocketAddress): String =
-            "the portable Kotlin/Native UDP socket cannot use the IPv6 address ${a.hostname}: ktor-network 3.6.0 would use :: " +
-                "instead (Ktor issue KTOR-10017); use the accelerated socket (IoPreference.Accelerated)"
+            "the portable Kotlin/Native UDP socket does not support the IPv6 address ${a.hostname} (Ktor issue KTOR-10017); " +
+                "use the accelerated socket (IoPreference.Accelerated)"
 
         /** The address bytes ktor-network would resolve [this] to (literals without DNS); null when it does not resolve. */
         private fun InetSocketAddress.ipBytes(): ByteArray? = ipBytesNoDns() ?: runCatching { resolveAddress() }.getOrNull()
