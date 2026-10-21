@@ -4,7 +4,6 @@ package io.kuicksilver.ktor.client.h3
 
 import io.ktor.client.engine.mergeHeaders
 import io.ktor.client.plugins.ConnectTimeoutException
-import io.ktor.client.plugins.SocketTimeoutException
 import io.ktor.client.plugins.websocket.WEBSOCKETS_KEY
 import io.ktor.client.request.HttpRequestData
 import io.ktor.client.request.HttpResponseData
@@ -29,6 +28,8 @@ import io.kuicksilver.http3.Http3Exception
 import io.kuicksilver.http3.Http3Headers
 import io.kuicksilver.http3.Http3Response
 import io.kuicksilver.http3.http3Request
+import io.kuicksilver.ktor.client.Activity
+import io.kuicksilver.ktor.client.ConsumedBody
 import io.kuicksilver.ktor.client.EngineEvents
 import io.kuicksilver.ktor.client.H3BodyConsumed
 import io.kuicksilver.ktor.client.Http3DiscoveryMode
@@ -38,6 +39,7 @@ import io.kuicksilver.ktor.client.h1.toMillisOrMax
 import io.kuicksilver.ktor.client.socketHost
 import io.kuicksilver.ktor.client.socketTimeoutMillis
 import io.kuicksilver.ktor.client.tlsConfigFor
+import io.kuicksilver.ktor.client.withSocketInactivityTimeout
 import io.kuicksilver.ktor.client.withSocketTimeout
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
@@ -531,12 +533,15 @@ internal class H3Pool(
     ): HttpResponseData {
         val requestTime = GMTDate()
         val body = data.body.unwrap()
+        // the socket timeout measures inactivity (Ktor: "maximum time of inactivity between two data packets"): the body
+        // goes out while the response is awaited, and every piece of it the stream takes restarts the timer
+        val activity = data.socketTimeoutMillis()?.let { Activity() }
         val response: Http3Response =
-            withSocketTimeout(data) {
+            withSocketInactivityTimeout(data, activity) {
                 conn.request(
                     http3Request(data.method.value, data.url.authority(), data.url.h3Path()) {
                         headers = headersOf(data, body) + Http3Headers(extraHeaders)
-                        this.body = bodyChannel(body, callContext)
+                        this.body = bodyChannel(body, callContext)?.let { b -> activity?.let { ConsumedBody(b, it) } ?: b }
                         @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
                         allowEarlyData = config.http3.earlyData
                     },
@@ -602,18 +607,6 @@ internal class H3Pool(
             session,
             callContext,
         )
-    }
-
-    private suspend fun <T> withSocketTimeout(
-        data: HttpRequestData,
-        block: suspend () -> T,
-    ): T {
-        val t = data.socketTimeoutMillis() ?: return block()
-        return try {
-            withTimeout(t) { block() }
-        } catch (e: TimeoutCancellationException) {
-            throw SocketTimeoutException(data, e)
-        }
     }
 
     internal companion object {

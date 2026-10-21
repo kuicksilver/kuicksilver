@@ -121,8 +121,12 @@ val client = HttpClient(Kuicksilver) {
 - A proxy (`proxy = ProxyBuilder.http(...)`) is used for HTTP/1.1 only: `CONNECT` tunnels for `https`, absolute-form
   requests for `http`; SOCKS proxies are refused with `UnsupportedOperationException`. HTTP/3 never goes through a proxy.
 - Timeouts come from `HttpTimeout`: the connect timeout (TCP + TLS, or the QUIC handshake) fails with Ktor's
-  `ConnectTimeoutException`, the socket timeout (any wait for data: the response head and every body read) with
-  `SocketTimeoutException`; the request timeout is the plugin's own. Without `HttpTimeout` the engine's `connectTimeout` (10 s) applies.
+  `ConnectTimeoutException`, the socket timeout with `SocketTimeoutException`; the request timeout is the plugin's own.
+  The socket timeout is an inactivity timeout, as Ktor defines it ("maximum time of inactivity between two data
+  packets"): while the request body goes out and the response head is awaited, every piece of the body the connection
+  takes and every byte of the response that arrives restarts it, so an upload that keeps moving never times out however
+  long it takes, and one that stalls (the server stops reading, the application stops writing) fails that long after its
+  last progress; every read of the response body then has it on its own. Without `HttpTimeout` the engine's `connectTimeout` (10 s) applies.
 - Capabilities: `HttpTimeoutCapability`, `WebSocketCapability`, `SSECapability`. `WebSocketExtensionsCapability` is not
   declared (no extension negotiation in v1), nor Unix sockets.
 - `HttpClient()` without an engine finds Kuicksilver through `ServiceLoader` on the JVM with priority 0.5 (below OkHttp
@@ -166,7 +170,7 @@ the server closed meanwhile is detected when it is taken from the pool and repla
 - **HTTP/3.** One QUIC connection per origin (and alternative) carries all requests. When the server's MAX_STREAMS
   credit is used up, a request waits for the next credit on that connection instead of failing or opening another
   connection; the request timeout bounds the wait (`HttpRequestTimeoutException`), and so does the socket timeout,
-  which covers every wait until the response head. A connection without requests for `idleTimeout` is closed (QUIC's
+  which covers the time without progress until the response head. A connection without requests for `idleTimeout` is closed (QUIC's
   own idle timeout, `quic = quicConfig { maxIdleTimeout = ... }` and the server's, may end it first); one past `maxConnectionLifetime` takes
   no new requests and closes once its requests are done.
 - **Cleanup.** A background task of the engine closes expired connections; it sleeps until the next expiry, at most

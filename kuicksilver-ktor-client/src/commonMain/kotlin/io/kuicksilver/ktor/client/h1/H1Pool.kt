@@ -8,7 +8,6 @@ import io.ktor.client.engine.ProxyType
 import io.ktor.client.engine.resolveAddress
 import io.ktor.client.engine.type
 import io.ktor.client.plugins.ConnectTimeoutException
-import io.ktor.client.plugins.SocketTimeoutException
 import io.ktor.client.request.HttpRequestData
 import io.ktor.client.request.HttpResponseData
 import io.ktor.http.HttpHeaders
@@ -27,6 +26,9 @@ import io.ktor.util.network.port
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.ByteWriteChannel
 import io.ktor.utils.io.ClosedReadChannelException
+import io.kuicksilver.ktor.client.Activity
+import io.kuicksilver.ktor.client.ActivityInput
+import io.kuicksilver.ktor.client.ActivityOutput
 import io.kuicksilver.ktor.client.EngineEvents
 import io.kuicksilver.ktor.client.KuicksilverEngineConfig
 import io.kuicksilver.ktor.client.connectTimeoutMillis
@@ -35,6 +37,7 @@ import io.kuicksilver.ktor.client.platformCleartextPermitted
 import io.kuicksilver.ktor.client.socketHost
 import io.kuicksilver.ktor.client.socketTimeoutMillis
 import io.kuicksilver.ktor.client.tlsConfigFor
+import io.kuicksilver.ktor.client.withSocketInactivityTimeout
 import io.kuicksilver.ktor.network.connectTcp
 import io.kuicksilver.tls.SessionCache
 import io.kuicksilver.tls.TlsConnection
@@ -185,21 +188,22 @@ internal class H1Pool(
             var bodyJob: BodySender? = null
             try {
                 val requestTime = GMTDate()
-                writeHeaders(data, conn.output, overProxy = proxy != null && !secure, tunneled = proxy != null && secure)
-                // a streamed body is sent while the response is read (as the CIO engine): the server may answer first
-                if (data.body.isStreamed()) {
-                    bodyJob =
-                        sendBodyConcurrently(
-                            data,
-                            conn,
-                            callContext,
-                        )
-                } else {
-                    writeBody(data, conn.output, callContext)
-                }
-                val job = bodyJob
-                return withSocketTimeout(data) {
-                    readResponse(requestTime, data, conn.input, conn.output, callContext) { after ->
+                // the socket timeout measures inactivity in both directions (Ktor: "maximum time of inactivity between two
+                // data packets"): sending the request and waiting for the response head share one timer, which every
+                // flushed piece of the request and every arriving byte of the response restarts
+                val activity = data.socketTimeoutMillis()?.let { Activity() }
+                val output = activity?.let { ActivityOutput(conn.output, it) } ?: conn.output
+                val input = activity?.let { ActivityInput(conn.input, it) } ?: conn.input
+                return withSocketInactivityTimeout(data, activity, onExpiry = { conn.close() }) {
+                    writeHeaders(data, output, overProxy = proxy != null && !secure, tunneled = proxy != null && secure)
+                    // a streamed body is sent while the response is read (as the CIO engine): the server may answer first
+                    if (data.body.isStreamed()) {
+                        bodyJob = sendBodyConcurrently(data, conn, output, callContext)
+                    } else {
+                        writeBody(data, output, callContext)
+                    }
+                    val job = bodyJob
+                    readResponse(requestTime, data, input, conn.output, callContext) { after ->
                         fun released(kept: Boolean) =
                             events.emit("connectionReleased") { connectionReleased(data, HttpProtocolVersion.HTTP_1_1, kept) }
 
@@ -258,13 +262,14 @@ internal class H1Pool(
     private fun sendBodyConcurrently(
         data: HttpRequestData,
         conn: H1Connection,
+        output: ByteWriteChannel,
         callContext: CoroutineContext,
     ): BodySender {
         val sender = BodySender()
         sender.job =
             GlobalScope.launch(callContext.minusKey(Job) + CoroutineName("kuicksilver-h1-request-body")) {
                 try {
-                    writeBody(data, conn.output, callContext)
+                    writeBody(data, output, callContext)
                 } catch (
                     e: Throwable,
                 ) {
@@ -281,18 +286,6 @@ internal class H1Pool(
         lateinit var job: Job
 
         @kotlin.concurrent.Volatile var failure: Throwable? = null
-    }
-
-    private suspend fun <T> withSocketTimeout(
-        data: HttpRequestData,
-        block: suspend () -> T,
-    ): T {
-        val t = data.socketTimeoutMillis() ?: return block()
-        return try {
-            withTimeout(t) { block() }
-        } catch (e: TimeoutCancellationException) {
-            throw SocketTimeoutException(data, e)
-        }
     }
 
     /** TCP, the proxy tunnel and TLS; runs under [obtain]'s connect timeout. */
