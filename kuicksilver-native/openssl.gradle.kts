@@ -10,7 +10,7 @@ val dockerTargets = setOf("linux-x64", "linux-arm64", "mingw-x64")
 fun String.camel() = split('-').joinToString("") { it.replaceFirstChar(Char::uppercase) }
 
 // -Pkuicksilver.openssl.prebuilt=true: an existing build/openssl/<target> is reused instead of running tools/openssl/*.sh when
-// it is current (CI downloads it as an artifact; worktrees share one read-only). Current = both archives present, the pinned
+// it is current (CI downloads it as an artifact; each worktree builds its own). Current = both archives present, the pinned
 // version in include/openssl/opensslv.h, the configure-flags.txt that tools/openssl/build.sh copies next to them equal to
 // tools/openssl/configure-flags.txt, its configure-target.txt equal (paths aside) to what build.sh --print-target says for
 // the target (so an OPT=-O0 -fsanitize=... or another target's build is refused), and its provenance.txt naming the pinned

@@ -160,7 +160,7 @@ P=(-Pkuicksilver.version="$version" -Pkuicksilver.openssl.prebuilt=true -x :kuic
 # ------------------------------------------------------------------------------------------------------------- 2. OpenSSL
 echo "-- OpenSSL $ossl (all twelve targets rebuilt from the verified tarball)"
 step "openssl: fetch and verify"                               bash tools/openssl/fetch.sh
-# security review 2026-10-14, finding 3: nothing of build/openssl (shared between worktrees, downloaded by CI) or of the build
+# security review 2026-10-14, finding 3: nothing of build/openssl (a worktree's own, or downloaded by CI) or of the build
 # cache is trusted for a release; -Pkuicksilver.openssl.prebuilt=true below then reuses exactly these builds, after checking
 # their provenance.txt (openssl.gradle.kts)
 export KSL_OPENSSL_FRESH=1
