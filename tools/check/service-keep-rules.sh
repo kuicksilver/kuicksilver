@@ -23,6 +23,7 @@ trap 'if [ "$rc" = 0 ]; then rm -rf "$work"; else echo "kept for diagnosis: $wor
 trap 'rc=130; exit 130' INT TERM HUP
 r8="${KSL_R8_JAR:-$( (ls "$HOME"/.gradle/caches/modules-2/files-2.1/com.android.tools/r8/*/*/r8-*.jar 2>/dev/null || true) | grep -v sources | sort -V | tail -1)}"
 jdk="${JAVA_HOME:-$(/usr/libexec/java_home 2>/dev/null || dirname "$(dirname "$(readlink -f "$(command -v java)")")")}"
+sha() { sha256sum "$1" 2>/dev/null || shasum -a 256 "$1"; }
 # lists <file>: the entry names of a zip, one per line (read whole, so no pipe ends early)
 lists() { unzip -Z1 "$1" 2>/dev/null; }
 # r8_keeps <classes jar> <out name> <class> <service file> [R8 options]: 0 when the class, its services file and the entry
@@ -52,7 +53,7 @@ for art in "$@"; do
     *) cp "$art" "$d/classes.jar"; classes="$d/classes.jar"; rules="$d/embedded.pro"; embedded=1; : > "$rules"
        for p in $(lists "$classes" | grep '^META-INF/proguard/' | grep -v '/$'); do unzip -p "$classes" "$p" >> "$rules"; done ;;
   esac
-  echo "$(basename "$art"): $(wc -c < "$art" | tr -d ' ') bytes, sha256 $(shasum -a 256 "$classes" | cut -d' ' -f1) (copied to $classes)"
+  echo "$(basename "$art"): $(wc -c < "$art" | tr -d ' ') bytes, sha256 $(sha "$classes" | cut -d' ' -f1) (copied to $classes)"
   services=$(lists "$classes" | grep '^META-INF/services/' | grep -v '/$')
   [ -n "$services" ] || { echo "$(basename "$art"): no META-INF/services"; continue; }
   for svc in $services; do

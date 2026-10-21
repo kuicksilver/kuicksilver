@@ -12,7 +12,7 @@
 # only when every step passed and the tree was clean and on the same commit from start to end). tools/release/local-release.sh
 # releases only a commit whose stamp says pass with no --skip-* and with --with-interop --with-windows.
 set -uo pipefail
-root="$(cd "$(dirname "$0")/../.." && pwd)"; cd "$root"
+root="$(cd "$(dirname "$0")/../.." && pwd)"; cd "$root" || exit 2
 . tools/ci/matrix.sh
 dry=0; skip_android=0; skip_docker=0; with_interop=0; with_windows=0
 for a in "$@"; do case "$a" in --dry-run) dry=1 ;; --skip-android) skip_android=1 ;; --skip-docker) skip_docker=1 ;; --with-interop) with_interop=1 ;; --with-windows) with_windows=1 ;; esac; done
@@ -32,7 +32,7 @@ win_jvm() { # CI's windows-jvm on the Windows 11 VM; win-jvm-test's summary does
   log=$("$tool" -w "$root" 2>&1); rc=$?; printf '%s\n' "$log"; [ "$rc" = 0 ] || return "$rc"
   summary=$(printf '%s\n' "$log" | sed -n '/^== summary/,$p')
   grep -Eq 'tests +[1-9]' <<< "$summary" || { echo "FAIL: no tests ran"; return 1; }
-  ! grep -Eq 'NO REPORT|failed +[1-9]|errors +[1-9]' <<< "$summary'
+  ! grep -Eq 'NO REPORT|failed +[1-9]|errors +[1-9]' <<< "$summary"
 }
 # Preflight, before step 1: the steps that run scripts rather than Gradle tasks read build/openssl/<target> directly
 # (c-tests, keylog check and double build: macos-arm64; the Docker c-tests and JNI builds: linux-x64, linux-arm64; the
