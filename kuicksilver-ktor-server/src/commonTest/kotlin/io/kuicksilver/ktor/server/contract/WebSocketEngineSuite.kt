@@ -865,9 +865,10 @@ abstract class WebSocketEngineSuite<TEngine : ApplicationEngine, TConfiguration 
 
     private suspend inline fun useSocket(block: Connection.() -> Unit) {
         SelectorManager().use { selector ->
+            // the address EngineTestBase binds: "localhost" may resolve to ::1 first, where another process may listen
             aSocket(selector)
                 .tcp()
-                .connect("localhost", port) {
+                .connect("127.0.0.1", port) {
                     noDelay = true
                     socketTimeout = 4.minutes.inWholeMilliseconds
                 }.use { socket ->
