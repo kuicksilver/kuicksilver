@@ -15,6 +15,8 @@ import io.kuicksilver.http3.frame.VarInt
  *   arrive and counted in [skippedDatagrams] (section 3.5: an endpoint that cannot handle a datagram drops it).
  * - Other types are skipped as their bytes arrive, never buffered (section 3.2: unknown types are silently dropped).
  * - A stream that ends inside a capsule, value or header, is a malformed message (section 3.3): [endOfStream] throws.
+ * - A delivered capsule of a type in [terminal] must be the stream's last: any byte after it, even of a capsule type
+ *   that would be skipped, is a malformed message (WebTransport's WT_CLOSE_SESSION, draft-ietf-webtrans-http3 section 6).
  *
  * At most one capsule value is held at a time, so memory is bounded by `max(maxCapsuleLength, maxDatagramLength)`
  * whatever lengths the peer announces.
@@ -23,7 +25,11 @@ internal class CapsuleParser(
     private val maxCapsuleLength: Long = 65_536,
     private val maxDatagramLength: Long = 65_536,
     private val known: Set<Long> = setOf(DATAGRAM),
+    private val terminal: Set<Long> = emptySet(),
 ) {
+    /** A capsule of a [terminal] type was delivered: nothing may follow it. */
+    private var ended = false
+
     private val header = ByteArray(16)
     private var headerLen = 0
     private var type = -1L
@@ -71,6 +77,7 @@ internal class CapsuleParser(
         var p = off
         val end = off + len
         while (p < end) {
+            if (ended) throw H3ProtocolError(Http3ErrorCode.MESSAGE_ERROR, "data after a terminal capsule")
             if (type < 0) { // collect the two varints
                 header[headerLen++] = bytes[p++]
                 val t = VarInt.read(header, 0, headerLen)
@@ -131,6 +138,7 @@ internal class CapsuleParser(
         type = -1
         payload = null
         if (skipping || b == null) return false
+        if (t in terminal) ended = true
         out(t, b)
         return true
     }

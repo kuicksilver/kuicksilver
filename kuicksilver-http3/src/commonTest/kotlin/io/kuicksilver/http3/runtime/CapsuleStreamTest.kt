@@ -30,14 +30,17 @@ import kotlinx.coroutines.flow.take
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFails
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
 private const val WT_TYPE = 0x2843L
@@ -368,6 +371,83 @@ class CapsuleStreamTest {
             }
         }
 
+    /**
+     * A terminal capsule (WebTransport's WT_CLOSE_SESSION, draft-ietf-webtrans-http3 section 6) is delivered; a capsule
+     * after it, even of an unknown type, resets the stream with H3_MESSAGE_ERROR and fails the flow.
+     */
+    @Test fun negative_capsuleAfterTerminalCapsule() =
+        h3Test {
+            H3Pair.open(serverSettings = connectOn).useScoped { p ->
+                val terminal = CapsuleConfig(knownTypes = setOf(WT_TYPE), terminalTypes = setOf(WT_TYPE))
+                val server =
+                    async {
+                        p.server
+                            .acceptRequest()
+                            .acceptConnect()
+                            .useCapsuleProtocol(terminal)
+                    }
+                val c = p.client.connect(connectReq(), "test-capsules")
+                launch {
+                    peerMayHaveClosed {
+                        c.output.writeFully(capsuleBytes(WT_TYPE, "close".encodeToByteArray()) + capsuleBytes(0x2a, ByteArray(4)))
+                        c.output.flush()
+                    }
+                }
+                val s = withTimeout(5.seconds) { server.await() }
+                val got = ArrayList<Capsule>()
+                assertFailsWith<Http3Exception.MessageError> { withTimeout(5.seconds) { s.capsules.collect { got += it } } }
+                assertEquals(listOf(Capsule(WT_TYPE, "close".encodeToByteArray())), got)
+                assertEquals(Http3ErrorCode.MESSAGE_ERROR, peerResetCode(c))
+            }
+        }
+
+    /** A terminal capsule followed by the FIN is a clean end. */
+    @Test fun terminalCapsuleThenFinEndsCleanly() =
+        h3Test {
+            H3Pair.open(serverSettings = connectOn).useScoped { p ->
+                val terminal =
+                    capsuleConfig {
+                        knownTypes = setOf(WT_TYPE)
+                        terminalTypes = setOf(WT_TYPE)
+                    }
+                val server =
+                    async {
+                        p.server
+                            .acceptRequest()
+                            .acceptConnect()
+                            .useCapsuleProtocol(terminal)
+                    }
+                val c = p.client.connect(connectReq(), "test-capsules").useCapsuleProtocol(terminal)
+                c.send(Capsule(WT_TYPE, "close".encodeToByteArray()))
+                c.close()
+                val s = withTimeout(5.seconds) { server.await() }
+                assertEquals(listOf(Capsule(WT_TYPE, "close".encodeToByteArray())), withTimeout(5.seconds) { s.capsules.toList() })
+            }
+        }
+
+    /**
+     * A peer that never reads holds close() (no deadline of its own); resetting the stream ends the writer, and close()
+     * then fails instead of waiting.
+     */
+    @Test fun resetEndsAWriterBlockedByThePeer() =
+        h3Test {
+            H3Pair.open(serverSettings = connectOn).useScoped { p ->
+                launch { p.server.acceptRequest().acceptConnect() } // never reads
+                val c = p.client.connect(connectReq(), "test-capsules").useCapsuleProtocol(known)
+                // 9.6 MB: more than the stream window, the send buffer and the capsule queue together
+                val sender = launch { runCatching { repeat(160) { c.send(Capsule(WT_TYPE, ByteArray(60_000))) } } }
+                assertEquals(
+                    null,
+                    withTimeoutOrNull(500.milliseconds) { sender.join() },
+                    "every send completed though the peer reads nothing",
+                )
+                assertEquals(null, withTimeoutOrNull(300.milliseconds) { c.close() }, "close() returned though the peer reads nothing")
+                c.stream.reset(Http3ErrorCode.REQUEST_CANCELLED)
+                assertFails { withTimeout(5.seconds) { c.close() } }
+                withTimeout(5.seconds) { sender.join() }
+            }
+        }
+
     @Test fun capsuleEqualityAndConfigRanges() {
         assertEquals(Capsule(1, byteArrayOf(1, 2)), Capsule(1, byteArrayOf(1, 2)))
         assertEquals(Capsule(1, byteArrayOf(1, 2)).hashCode(), Capsule(1, byteArrayOf(1, 2)).hashCode())
@@ -379,6 +459,8 @@ class CapsuleStreamTest {
         assertFailsWith<IllegalArgumentException> { CapsuleConfig(maxCapsuleLength = 1_048_577) }
         assertFailsWith<IllegalArgumentException> { CapsuleConfig(knownTypes = setOf(1L shl 62)) }
         assertFailsWith<IllegalArgumentException> { CapsuleConfig(receiveQueue = 0) }
+        assertFailsWith<IllegalArgumentException> { CapsuleConfig(terminalTypes = setOf(WT_TYPE)) } // not a known type
+        assertFailsWith<IllegalArgumentException> { CapsuleConfig(knownTypes = setOf(0), terminalTypes = setOf(0)) }
         val c =
             capsuleConfig {
                 knownTypes = setOf(WT_TYPE)

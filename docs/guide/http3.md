@@ -261,16 +261,21 @@ The stream is checked against RFC 9297 section 3.2 first: a peer message with `c
 `transfer-encoding`, or a 204, 205 or 206 response, is malformed, so the stream is reset with `H3_MESSAGE_ERROR` and
 `useCapsuleProtocol` throws `Http3Exception.MessageError`. The same happens later when the peer's FIN cuts a capsule in
 two or a known capsule is longer than `maxCapsuleLength`: `capsules` fails with `MessageError` instead of ending, so a cut
-stream is never mistaken for a clean end. The connection lives on in every case.
+stream is never mistaken for a clean end. A protocol whose last capsule closes the stream (WebTransport's
+WT_CLOSE_SESSION) lists it in `terminalTypes`: the capsule is delivered, and anything after it is malformed the same way.
+The connection lives on in every case.
 
 Datagrams work as on a plain stream, plus DATAGRAM capsules (RFC 9297 section 3.5): those the peer sends arrive in
 `datagrams` together with QUIC datagrams, and a DATAGRAM capsule longer than `maxDatagramLength` is dropped unread. When
 HTTP/3 datagrams are unsupported on the connection (either side's `SETTINGS_H3_DATAGRAM` is 0), `trySendDatagram` and
-`sendDatagram` send a DATAGRAM capsule instead, unless `datagramFallback = false`; a datagram too large for a QUIC
+`sendDatagram` send a DATAGRAM capsule instead, unless `datagramFallback = false` (until the peer's SETTINGS arrive,
+datagrams count as unsupported); a datagram too large for a QUIC
 DATAGRAM frame is answered `TooLarge`, not sent as a capsule. `CapsuleProtocol.isEnabled(headers)` reads the
 `Capsule-Protocol` header field (section 3.4) and `CapsuleProtocol.Enabled` writes it; the stream does not require it.
 
 Reading pauses while `receiveQueue` capsules (16) wait for the collector, which holds the peer back through flow control,
-so collect `capsules` even when only datagrams matter, or list no `knownTypes`. Options:
+so collect `capsules` even when only datagrams matter, or list no `knownTypes`. `send`, `close()` and a falling-back
+`sendDatagram` have no deadline of their own while the peer withholds flow-control credit; cancelling `close()` leaves
+the writer running in the connection, so bound them with `withTimeout` and `reset` the stream when it expires. Options:
 [configuration reference](configuration.md#capsuleconfig-experimental). The Capsule Protocol is only available on HTTP/3;
 HTTP/1.1 and HTTP/2 upgrades are not supported.

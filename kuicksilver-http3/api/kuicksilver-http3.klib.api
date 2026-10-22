@@ -123,7 +123,7 @@ final class io.kuicksilver.http3/Capsule { // io.kuicksilver.http3/Capsule|null[
 }
 
 final class io.kuicksilver.http3/CapsuleConfig { // io.kuicksilver.http3/CapsuleConfig|null[0]
-    constructor <init>(kotlin.collections/Set<kotlin/Long> = ..., kotlin/Int = ..., kotlin/Int = ..., kotlin/Boolean = ..., kotlin/Int = ..., kotlin/Int = ...) // io.kuicksilver.http3/CapsuleConfig.<init>|<init>(kotlin.collections.Set<kotlin.Long>;kotlin.Int;kotlin.Int;kotlin.Boolean;kotlin.Int;kotlin.Int){}[0]
+    constructor <init>(kotlin.collections/Set<kotlin/Long> = ..., kotlin/Int = ..., kotlin/Int = ..., kotlin/Boolean = ..., kotlin/Int = ..., kotlin/Int = ..., kotlin.collections/Set<kotlin/Long> = ...) // io.kuicksilver.http3/CapsuleConfig.<init>|<init>(kotlin.collections.Set<kotlin.Long>;kotlin.Int;kotlin.Int;kotlin.Boolean;kotlin.Int;kotlin.Int;kotlin.collections.Set<kotlin.Long>){}[0]
 
     final val datagramFallback // io.kuicksilver.http3/CapsuleConfig.datagramFallback|{}datagramFallback[0]
         final fun <get-datagramFallback>(): kotlin/Boolean // io.kuicksilver.http3/CapsuleConfig.datagramFallback.<get-datagramFallback>|<get-datagramFallback>(){}[0]
@@ -137,6 +137,8 @@ final class io.kuicksilver.http3/CapsuleConfig { // io.kuicksilver.http3/Capsule
         final fun <get-receiveQueue>(): kotlin/Int // io.kuicksilver.http3/CapsuleConfig.receiveQueue.<get-receiveQueue>|<get-receiveQueue>(){}[0]
     final val sendQueue // io.kuicksilver.http3/CapsuleConfig.sendQueue|{}sendQueue[0]
         final fun <get-sendQueue>(): kotlin/Int // io.kuicksilver.http3/CapsuleConfig.sendQueue.<get-sendQueue>|<get-sendQueue>(){}[0]
+    final val terminalTypes // io.kuicksilver.http3/CapsuleConfig.terminalTypes|{}terminalTypes[0]
+        final fun <get-terminalTypes>(): kotlin.collections/Set<kotlin/Long> // io.kuicksilver.http3/CapsuleConfig.terminalTypes.<get-terminalTypes>|<get-terminalTypes>(){}[0]
 
     final fun toBuilder(): io.kuicksilver.http3/CapsuleConfig.Builder // io.kuicksilver.http3/CapsuleConfig.toBuilder|toBuilder(){}[0]
 
@@ -161,6 +163,9 @@ final class io.kuicksilver.http3/CapsuleConfig { // io.kuicksilver.http3/Capsule
         final var sendQueue // io.kuicksilver.http3/CapsuleConfig.Builder.sendQueue|{}sendQueue[0]
             final fun <get-sendQueue>(): kotlin/Int // io.kuicksilver.http3/CapsuleConfig.Builder.sendQueue.<get-sendQueue>|<get-sendQueue>(){}[0]
             final fun <set-sendQueue>(kotlin/Int) // io.kuicksilver.http3/CapsuleConfig.Builder.sendQueue.<set-sendQueue>|<set-sendQueue>(kotlin.Int){}[0]
+        final var terminalTypes // io.kuicksilver.http3/CapsuleConfig.Builder.terminalTypes|{}terminalTypes[0]
+            final fun <get-terminalTypes>(): kotlin.collections/Set<kotlin/Long> // io.kuicksilver.http3/CapsuleConfig.Builder.terminalTypes.<get-terminalTypes>|<get-terminalTypes>(){}[0]
+            final fun <set-terminalTypes>(kotlin.collections/Set<kotlin/Long>) // io.kuicksilver.http3/CapsuleConfig.Builder.terminalTypes.<set-terminalTypes>|<set-terminalTypes>(kotlin.collections.Set<kotlin.Long>){}[0]
 
         final fun build(): io.kuicksilver.http3/CapsuleConfig // io.kuicksilver.http3/CapsuleConfig.Builder.build|build(){}[0]
     }

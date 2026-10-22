@@ -112,4 +112,25 @@ class CapsuleParserTest {
         assertEquals(100, got.single().size)
         assertEquals(0L, p.skippedDatagrams)
     }
+
+    /** After a capsule of a terminal type, any byte is a malformed message, even one of a type that would be skipped. */
+    @Test fun negative_dataAfterTerminalCapsule() {
+        val got = ArrayList<Long>()
+        val p = CapsuleParser(known = setOf(0x2843), terminal = setOf(0x2843))
+        val bytes = capsule(0x2843, byteArrayOf(1)) + capsule(0x2a, ByteArray(3))
+        val e = assertFailsWith<H3ProtocolError> { p.feedAll(bytes) { t, _ -> got += t } }
+        assertEquals(Http3ErrorCode.MESSAGE_ERROR, e.code)
+        assertEquals(listOf(0x2843L), got) // the terminal capsule itself was delivered
+
+        val oneByOne = CapsuleParser(known = setOf(0x2843), terminal = setOf(0x2843))
+        val first = capsule(0x2843, ByteArray(0))
+        assertEquals(first.size, oneByOne.feedOne(first + byteArrayOf(0x2a), 0, first.size + 1) { _, _ -> })
+        assertFailsWith<H3ProtocolError> { oneByOne.feedAll(byteArrayOf(0x2a)) }
+    }
+
+    @Test fun terminalCapsuleThenFinIsClean() {
+        val p = CapsuleParser(known = setOf(0x2843), terminal = setOf(0x2843))
+        p.feedAll(capsule(0x2a, ByteArray(5)) + capsule(0x2843, byteArrayOf(1)))
+        p.endOfStream()
+    }
 }

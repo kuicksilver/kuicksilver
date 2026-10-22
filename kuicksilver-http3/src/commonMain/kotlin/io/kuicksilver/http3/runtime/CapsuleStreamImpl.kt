@@ -47,6 +47,7 @@ internal class CapsuleStreamImpl(
             maxCapsuleLength = config.maxCapsuleLength.toLong(),
             maxDatagramLength = config.maxDatagramLength.toLong(),
             known = config.knownTypes + CapsuleProtocol.DATAGRAM,
+            terminal = config.terminalTypes,
         )
     private val incoming = Channel<Capsule>(config.receiveQueue)
     private val datagramQueue = Channel<ByteArray>(DatagramDemux.QUEUE, BufferOverflow.DROP_OLDEST)
@@ -177,7 +178,11 @@ internal class CapsuleStreamImpl(
         }
     }
 
-    /** Whether a datagram goes as a DATAGRAM capsule: HTTP/3 datagrams are unsupported and the fallback is on. */
+    /**
+     * Whether a datagram goes as a DATAGRAM capsule: HTTP/3 datagrams are unsupported and the fallback is on. Before the
+     * peer's SETTINGS arrive they count as unsupported (`PeerDoesNotSupport`), as for a plain stream: only a server that
+     * accepted a CONNECT ahead of the client's SETTINGS sees that, and then sends capsules, which every peer accepts.
+     */
     private fun viaCapsule(): Boolean = config.datagramFallback && stream.datagramsUnsupported() != null
 
     override fun trySendDatagram(payload: ByteArray): DatagramSendResult {

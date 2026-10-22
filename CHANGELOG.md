@@ -54,7 +54,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   `knownTypes` (64 KiB each at most by default) and skips other types without buffering them, `send` writes whole
   capsules, `close()` writes what is queued and then FIN. A FIN inside a capsule, a known capsule above the limit, or a
   message that uses capsules with `content-length`, `content-type`, `transfer-encoding` or a 204/205/206 status resets
-  the stream with `H3_MESSAGE_ERROR` and fails with `Http3Exception.MessageError`; the connection lives on. DATAGRAM
+  the stream with `H3_MESSAGE_ERROR` and fails with `Http3Exception.MessageError`, as does any byte after a capsule of
+  `terminalTypes` (for WebTransport's WT_CLOSE_SESSION); the connection lives on. DATAGRAM
   capsules are received together with QUIC datagrams, dropped unread above `maxDatagramLength`, and sent instead of QUIC
   datagrams when HTTP/3 datagrams are unsupported (`datagramFallback`). `CapsuleProtocol` reads and writes the
   `Capsule-Protocol` header field. See `docs/guide/http3.md`, "Capsules".

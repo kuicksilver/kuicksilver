@@ -9,14 +9,15 @@ public final class io/kuicksilver/http3/Capsule {
 
 public final class io/kuicksilver/http3/CapsuleConfig {
 	public fun <init> ()V
-	public fun <init> (Ljava/util/Set;IIZII)V
-	public synthetic fun <init> (Ljava/util/Set;IIZIIILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun <init> (Ljava/util/Set;IIZIILjava/util/Set;)V
+	public synthetic fun <init> (Ljava/util/Set;IIZIILjava/util/Set;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public final fun getDatagramFallback ()Z
 	public final fun getKnownTypes ()Ljava/util/Set;
 	public final fun getMaxCapsuleLength ()I
 	public final fun getMaxDatagramLength ()I
 	public final fun getReceiveQueue ()I
 	public final fun getSendQueue ()I
+	public final fun getTerminalTypes ()Ljava/util/Set;
 	public final fun toBuilder ()Lio/kuicksilver/http3/CapsuleConfig$Builder;
 }
 
@@ -29,12 +30,14 @@ public final class io/kuicksilver/http3/CapsuleConfig$Builder {
 	public final fun getMaxDatagramLength ()I
 	public final fun getReceiveQueue ()I
 	public final fun getSendQueue ()I
+	public final fun getTerminalTypes ()Ljava/util/Set;
 	public final fun setDatagramFallback (Z)V
 	public final fun setKnownTypes (Ljava/util/Set;)V
 	public final fun setMaxCapsuleLength (I)V
 	public final fun setMaxDatagramLength (I)V
 	public final fun setReceiveQueue (I)V
 	public final fun setSendQueue (I)V
+	public final fun setTerminalTypes (Ljava/util/Set;)V
 }
 
 public final class io/kuicksilver/http3/CapsuleProtocol {

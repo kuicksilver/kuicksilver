@@ -70,11 +70,19 @@ public object CapsuleProtocol {
  *   buffered (RFC 9297 section 3.5). 1..1 048 576; 65 536 by default.
  * @property datagramFallback send a datagram as a DATAGRAM capsule when HTTP/3 datagrams are unsupported on the
  *   connection (either side's `SETTINGS_H3_DATAGRAM` is 0); true by default. A datagram too large for a QUIC DATAGRAM
- *   frame is never turned into a capsule.
+ *   frame is never turned into a capsule. Until the peer's SETTINGS arrive, HTTP/3 datagrams count as unsupported
+ *   (`PeerDoesNotSupport`), though the peer may still turn them on: with the fallback such datagrams go as capsules,
+ *   without it they are refused. A client's `connect` returns only after the server's SETTINGS, so only a server that
+ *   accepts a CONNECT before the client's SETTINGS arrived sees this.
  * @property receiveQueue received capsules held for [CapsuleStream.capsules] before reading the stream pauses, which
  *   holds back the peer through flow control; 1..4096, 16 by default.
  * @property sendQueue capsules (DATAGRAM capsules included) waiting to be written before [CapsuleStream.send] suspends
  *   and a fallback [CapsuleStream.trySendDatagram] answers QueueFull; 1..4096, 32 by default.
+ * @property terminalTypes types of [knownTypes] whose capsule ends the stream's data: it is delivered, and any byte
+ *   after it (a capsule of any type, even one that would be skipped) is a malformed message, so the stream is reset
+ *   with H3_MESSAGE_ERROR and [CapsuleStream.capsules] fails with [Http3Exception.MessageError]. For WebTransport's
+ *   WT_CLOSE_SESSION (draft-ietf-webtrans-http3 section 6). Each must be in [knownTypes] and not DATAGRAM; empty by
+ *   default.
  */
 @ExperimentalKuicksilverApi
 public class CapsuleConfig(
@@ -84,6 +92,7 @@ public class CapsuleConfig(
     public val datagramFallback: Boolean = true,
     public val receiveQueue: Int = 16,
     public val sendQueue: Int = 32,
+    public val terminalTypes: Set<Long> = emptySet(),
 ) {
     init {
         require(knownTypes.all { it in 0..CapsuleRules.MAX_TYPE }) { "knownTypes must be 0..2^62-1" }
@@ -91,6 +100,9 @@ public class CapsuleConfig(
         require(maxDatagramLength in 1..MAX_LENGTH) { "maxDatagramLength must be 1..$MAX_LENGTH" }
         require(receiveQueue in 1..MAX_QUEUE) { "receiveQueue must be 1..$MAX_QUEUE" }
         require(sendQueue in 1..MAX_QUEUE) { "sendQueue must be 1..$MAX_QUEUE" }
+        require(terminalTypes.all { it in knownTypes && it != CapsuleProtocol.DATAGRAM }) {
+            "terminalTypes must be among knownTypes and not DATAGRAM"
+        }
     }
 
     /** Mutable form of [CapsuleConfig], used through [capsuleConfig] or [toBuilder]; ranges are checked by [build]. */
@@ -114,9 +126,12 @@ public class CapsuleConfig(
         /** Capsules waiting to be written before sending suspends, 1..4096; 32 by default. */
         public var sendQueue: Int = 32
 
+        /** Known types whose capsule must be the stream's last; empty by default. */
+        public var terminalTypes: Set<Long> = emptySet()
+
         /** The immutable configuration; throws [IllegalArgumentException] when a value is outside its range. */
         public fun build(): CapsuleConfig =
-            CapsuleConfig(knownTypes, maxCapsuleLength, maxDatagramLength, datagramFallback, receiveQueue, sendQueue)
+            CapsuleConfig(knownTypes, maxCapsuleLength, maxDatagramLength, datagramFallback, receiveQueue, sendQueue, terminalTypes)
     }
 
     /** A builder pre-filled with these values. */
@@ -128,6 +143,7 @@ public class CapsuleConfig(
             it.datagramFallback = datagramFallback
             it.receiveQueue = receiveQueue
             it.sendQueue = sendQueue
+            it.terminalTypes = terminalTypes
         }
 
     private companion object {
@@ -146,9 +162,10 @@ public inline fun capsuleConfig(block: CapsuleConfig.Builder.() -> Unit): Capsul
  * DATAGRAM capsules. Once this object exists, [stream]'s `input`, `output` and `datagrams` belong to it: use [capsules],
  * [send], [datagrams] and the datagram senders here instead.
  *
- * [send], [sendDatagram] when it falls back to a capsule, and [close] wait for the peer's flow-control credit, which a
- * peer that stops reading may withhold for as long as it keeps the connection alive; a reset of the stream or a closed
- * connection fails them. Bound them with `withTimeout` and [Http3Stream.reset] the stream when it expires.
+ * [send], [sendDatagram] when it falls back to a capsule, and [close] have no deadline of their own: they wait for the
+ * peer's flow-control credit, which a peer that stops reading may withhold for as long as it keeps the connection alive;
+ * only a reset of the stream or a closed connection fails them. Bound them with `withTimeout` and [Http3Stream.reset]
+ * the stream when it expires.
  */
 @ExperimentalKuicksilverApi
 public interface CapsuleStream {
@@ -158,7 +175,8 @@ public interface CapsuleStream {
     /**
      * Capsules of [CapsuleConfig.knownTypes] from the peer, in order. One collector at a time. The flow ends normally at
      * the peer's FIN on a capsule boundary; it fails with [Http3Exception.MessageError] when the FIN cuts a capsule (RFC
-     * 9297 section 3.3) or a known capsule exceeds [CapsuleConfig.maxCapsuleLength], after the stream was reset and
+     * 9297 section 3.3), a known capsule exceeds [CapsuleConfig.maxCapsuleLength], or anything follows a capsule of
+     * [CapsuleConfig.terminalTypes] (which is delivered first), after the stream was reset and
      * stopped with H3_MESSAGE_ERROR; and with the stream's or connection's error when the peer reset the stream or the
      * connection closed. While nobody collects, reading pauses after [CapsuleConfig.receiveQueue] capsules, DATAGRAM
      * capsules behind them included.
@@ -168,7 +186,8 @@ public interface CapsuleStream {
     /**
      * Sends [capsule], whole and never interleaved with another; suspends while [CapsuleConfig.sendQueue] capsules wait.
      * Throws IllegalStateException after [close], and the write's error once writing failed (a reset, STOP_SENDING, a
-     * closed connection).
+     * closed connection). No deadline of its own: bound it with `withTimeout` and [Http3Stream.reset] the stream when it
+     * expires; a capsule already queued when the caller gives up may still be written.
      */
     public suspend fun send(capsule: Capsule)
 
@@ -188,13 +207,18 @@ public interface CapsuleStream {
 
     /**
      * [trySendDatagram] that waits for room: in the transport's queue, or in the capsule queue when falling back. Throws
-     * as [Http3Stream.sendDatagram] does, and IllegalStateException after [close].
+     * as [Http3Stream.sendDatagram] does, and IllegalStateException after [close]. When falling back it may wait for
+     * the peer's flow-control credit: bound it with `withTimeout` and [Http3Stream.reset] the stream when it expires.
      */
     public suspend fun sendDatagram(payload: ByteArray)
 
     /**
      * Writes the capsules still queued, then ends our side of the stream (FIN); [capsules] keeps reading the peer's
      * side. Throws the write's error if the queue could not be written. Calling it again does nothing more.
+     *
+     * The writing runs in the connection's scope: cancelling `close()` (a `withTimeout` that expired) stops only the
+     * wait, the writer keeps draining the queue until it is done, the stream is reset or the connection closes. Bound it
+     * with `withTimeout` and [Http3Stream.reset] the stream when it expires, which ends the writer.
      */
     public suspend fun close()
 }

@@ -212,9 +212,10 @@ How an Extended CONNECT stream speaks the Capsule Protocol (RFC 9297 section 3) 
 | `knownTypes` | `Set<Long>` | empty | each 0..2^62-1 | capsule types delivered in `CapsuleStream.capsules`; other types are skipped as their bytes arrive. DATAGRAM (0x00) always goes to `datagrams` |
 | `maxCapsuleLength` | `Int` (bytes) | 65 536 (64 KiB) | 1..1 048 576 | longest capsule of a known type; a longer one resets and stops the stream with `H3_MESSAGE_ERROR` |
 | `maxDatagramLength` | `Int` (bytes) | 65 536 (64 KiB) | 1..1 048 576 | longest DATAGRAM capsule; a longer one is dropped without being buffered |
-| `datagramFallback` | `Boolean` | `true` | | send datagrams as DATAGRAM capsules when HTTP/3 datagrams are unsupported (either side's `SETTINGS_H3_DATAGRAM` is 0); a datagram too large for QUIC never falls back |
+| `datagramFallback` | `Boolean` | `true` | | send datagrams as DATAGRAM capsules when HTTP/3 datagrams are unsupported (either side's `SETTINGS_H3_DATAGRAM` is 0, or the peer's SETTINGS have not arrived yet); a datagram too large for QUIC never falls back |
 | `receiveQueue` | `Int` | 16 | 1..4096 | received capsules held for the collector; when full, reading the stream pauses (flow control holds the peer back) |
 | `sendQueue` | `Int` | 32 | 1..4096 | capsules waiting to be written; when full, `send` suspends and a fallback `trySendDatagram` answers `QueueFull` |
+| `terminalTypes` | `Set<Long>` | empty | among `knownTypes`, not DATAGRAM | a capsule of such a type must be the stream's last: it is delivered, and any byte after it resets the stream with `H3_MESSAGE_ERROR` (WebTransport's WT_CLOSE_SESSION) |
 
 ## Ktor client engine
 
