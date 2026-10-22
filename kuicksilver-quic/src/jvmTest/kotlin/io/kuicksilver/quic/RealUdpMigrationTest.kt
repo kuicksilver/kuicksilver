@@ -117,8 +117,11 @@ class RealUdpMigrationTest {
                                     st.output.writeFully(got, 0, got.size)
                                     st.output.flushAndClose()
                                 }
-                            } catch (_: QuicException.ConnectionLost) {
-                                // the client's close ends the accept loop
+                            } catch (e: Throwable) {
+                                // the client's close ends the loop wherever it finds it: in acceptStream, or in the echo's
+                                // flushAndClose (a ClosedWriteChannelException caused by the loss), since the echoed bytes go
+                                // out with writeFully and the client can read them and close before the FIN is queued
+                                if (generateSequence(e) { it.cause }.none { it is QuicException.ConnectionLost }) throw e
                             }
                         }
 
