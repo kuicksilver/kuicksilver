@@ -129,6 +129,9 @@ public class QuicConfig private constructor(
     public val allowMigrationToLoopback: Boolean,
     /** Probe the path MTU above 1200 bytes with DPLPMTUD (RFC 8899) on sockets that set DF; off keeps 1200. */
     public val pmtud: Boolean,
+    /** Let validated ICMP Packet Too Big messages and EMSGSIZE speed up DPLPMTUD as hints; see [Builder.pmtudIcmpHints]. */
+    @property:ExperimentalKuicksilverApi
+    public val pmtudIcmpHints: Boolean,
     /** `max_datagram_frame_size` we advertise (RFC 9221 section 3); 0 does not advertise it and refuses DATAGRAM frames. */
     public val maxDatagramFrameSize: Long,
     /** Received datagrams the core holds for the application; a full queue drops the oldest. */
@@ -209,6 +212,7 @@ public class QuicConfig private constructor(
             allowMigration,
             allowMigrationToLoopback,
             pmtud,
+            pmtudIcmpHints,
             maxDatagramFrameSize,
             datagramReceiveQueue,
             datagramSendQueue,
@@ -311,6 +315,17 @@ public class QuicConfig private constructor(
         /** Default true; see [QuicConfig.pmtud] (RFC 8899). */
         public var pmtud: Boolean = true
 
+        /**
+         * Default true. Where the socket reports them, an ICMP Packet Too Big (Linux and Android with the accelerated socket) and a
+         * send the kernel refused as too large (EMSGSIZE, every accelerated socket) speed up DPLPMTUD as hints (RFC 8899 section 4.6,
+         * RFC 9000 section 14.2.1): a Packet Too Big must quote one of this connection's packets on its active path and report at
+         * least 1200 bytes of payload, at most 64 a second per endpoint are looked at, and it only ends larger probes early or asks
+         * for a confirmation probe; the MTU in use is lowered only when probes of it are lost. Without such a socket it changes
+         * nothing; false ignores them.
+         */
+        @ExperimentalKuicksilverApi
+        public var pmtudIcmpHints: Boolean = true
+
         /** Default 65 535, the largest allowed; 0 turns datagrams off (RFC 9221 section 3). See [QuicConfig.maxDatagramFrameSize]. */
         public var maxDatagramFrameSize: Long = 65_535
 
@@ -357,6 +372,7 @@ public class QuicConfig private constructor(
                 allowMigration,
                 allowMigrationToLoopback,
                 pmtud,
+                pmtudIcmpHints,
                 maxDatagramFrameSize,
                 datagramReceiveQueue,
                 datagramSendQueue,
@@ -395,6 +411,7 @@ public class QuicConfig private constructor(
             it.allowMigration = allowMigration
             it.allowMigrationToLoopback = allowMigrationToLoopback
             it.pmtud = pmtud
+            it.pmtudIcmpHints = pmtudIcmpHints
             it.maxDatagramFrameSize = maxDatagramFrameSize
             it.datagramReceiveQueue = datagramReceiveQueue
             it.datagramSendQueue = datagramSendQueue

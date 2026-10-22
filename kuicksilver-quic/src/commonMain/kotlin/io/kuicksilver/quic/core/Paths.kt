@@ -46,6 +46,9 @@ internal class Path(
 
     /** Datagram size in use; 1200 until PMTUD raises it. */
     var mtu: Int = 1200
+
+    /** The largest packet sent on this path: a Packet Too Big that claims a smaller one was too large is about another path, or forged. */
+    var largestSent: Int = 0
     var rtt: RttEstimator = RttEstimator(initialRtt)
     var pacer: Pacer = Pacer()
 

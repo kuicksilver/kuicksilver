@@ -12,6 +12,7 @@ import io.kuicksilver.quic.DatagramIo
 import io.kuicksilver.quic.Ecn
 import io.kuicksilver.quic.EndpointCore
 import io.kuicksilver.quic.EndpointStats
+import io.kuicksilver.quic.KslDatagramIo
 import io.kuicksilver.quic.LogLevel
 import io.kuicksilver.quic.PacketBatch
 import io.kuicksilver.quic.PathId
@@ -25,6 +26,7 @@ import io.kuicksilver.quic.TimeMark
 import io.kuicksilver.quic.TransportError
 import io.kuicksilver.quic.core.fail
 import io.kuicksilver.quic.core.failInternal
+import io.kuicksilver.quic.core.onEmsgsize
 import io.kuicksilver.quic.core.zeroRttWritable
 import io.kuicksilver.quic.emit
 import io.kuicksilver.quic.ipLiteral
@@ -209,6 +211,7 @@ internal class EndpointLoop private constructor(
                             path,
                         )
                     }
+                    drainPacketTooBig(io, path, now)
                     flush()
                     if (limiter.shouldYield(now)) {
                         yield()
@@ -312,6 +315,14 @@ internal class EndpointLoop private constructor(
                     // again: the flush holds flushLock, so each wait would stall ACKs and timers of every other connection
                     val full = fullThisFlush.any { it === target }
                     val sent = (if (full) target.trySend(batch) else target.send(batch)).coerceIn(0, batch.count)
+                    // a datagram of this connection the kernel refused as too large: a DPLPMTUD hint (RFC 8899 section 4.6)
+                    if (rt != null && target is KslDatagramIo) {
+                        val tooBig = target.takeEmsgsize()
+                        if (tooBig > 0) {
+                            rt.core.onEmsgsize(tooBig)
+                            core.markDirty(rt.core)
+                        }
+                    }
                     if (sent < batch.count && !full) fullThisFlush.add(target)
                     observer.datagramsSent += sent
                     batch.count - sent
@@ -438,8 +449,19 @@ internal class EndpointLoop private constructor(
     @Volatile internal var afterReceiveCount: Long = 0
         private set
 
+    /** The ICMP Packet Too Big messages [io] queued (Linux and Android), as hints for the connections' DPLPMTUD. */
+    private fun drainPacketTooBig(
+        io: DatagramIo,
+        socket: PathId,
+        now: TimeMark,
+    ) {
+        if (io !is KslDatagramIo) return
+        io.drainPacketTooBig { quote, len, dst, mtu -> core.handlePacketTooBig(quote, len, dst, mtu, now, socket) }
+    }
+
     private suspend fun afterReceive(now: TimeMark) {
         afterReceiveCount++
+        drainPacketTooBig(io, PathId.Initial, now)
         core.processPending(now) // admission runs once per receive batch
         while (true) {
             val c = core.nextAccepted() ?: break

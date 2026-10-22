@@ -16,7 +16,12 @@ import kotlin.time.Duration.Companion.seconds
  * full-size packets lost while later full-size ones arrive. A verdict is undone when a full-size packet sent after the
  * packets it rested on is acknowledged later on (the path carried it: a peer that stalled for a few PTOs, delayed ACKs),
  * see [onPacketAcked]. Probes are ack-eliciting but outside congestion control, and their loss is
- * not a congestion signal (section 14.4). The core has no ICMP input (threat-model 3.16).
+ * not a congestion signal (section 14.4).
+ *
+ * ICMP Packet Too Big and a local EMSGSIZE are hints, never facts (RFC 8899 section 4.6, RFC 9000 section 14.2.1; threat-model
+ * 3.16): the caller validates the message first ([onPtb]). A size reported above [current] only ends the probes above it at once;
+ * one below [current] starts a confirmation (probes of [current]): an acknowledged one forgets the hint, [maxProbes] lost ones lower
+ * [current] to the reported size (never below the base, no pause). Nothing else of this class trusts ICMP.
  */
 internal class Pmtud(
     private val base: Int = 1200,
@@ -56,6 +61,57 @@ internal class Pmtud(
     private var undoResearchAt: TimeMark = TimeMark.NEVER
     private var undoAfterPn = -1L
 
+    /** A PTB below [current] being confirmed: the payload it reported (0: none), and the confirmation probes lost so far. */
+    private var confirmPtb = 0
+    private var confirmLosses = 0
+    private var confirming = false
+
+    internal val probeInFlightForTest: Int get() = if (probeInFlight) probeSize else 0
+    internal val confirmingForTest: Int get() = confirmPtb
+    internal val pausedForTest: Boolean get() = pausedUntil != TimeMark.NEVER
+
+    /**
+     * A validated Packet Too Big reporting [payload] bytes of UDP payload (already at least the base: the caller drops smaller
+     * ones). At or above [current]: the probes above it are settled at once (RFC 8899 section 4.6.2), the one in flight included.
+     * Below [current]: nothing is lowered; probes of [current] confirm the size ([onProbeAcked], [onProbeLost]).
+     */
+    fun onPtb(
+        payload: Int,
+        now: TimeMark,
+    ) {
+        if (payload < base) return
+        if (payload >= current) {
+            if (payload < high) high = payload
+            if (probeInFlight && !confirming && probeSize > payload) {
+                // the probe in flight is too large: settled now, not after maxProbes x PTO; its late loss or ACK is still handled
+                probeInFlight = false
+                probeLosses = 0
+            }
+            if (high - low < step && high <= current) finish(now)
+            return
+        }
+        if (confirmPtb == 0 || payload < confirmPtb) confirmPtb = payload
+    }
+
+    /**
+     * The kernel refused a datagram of [size] bytes as larger than the MTU it knows (EMSGSIZE): when it was the probe in flight, that
+     * size is settled at once, as if lost [maxProbes] times. Local, so not spoofable; still only about probes, never [current].
+     */
+    fun onEmsgsize(
+        size: Int,
+        now: TimeMark,
+    ) {
+        if (!probeInFlight || confirming || size != probeSize || size <= current) return
+        probeInFlight = false
+        probeLosses = 0
+        if (finalProbe) {
+            finish(now)
+            return
+        }
+        high = size - 1
+        if (high - low < step && high <= current) finish(now)
+    }
+
     /** The peer's `max_udp_payload_size` lowers the range (RFC 9000 section 14.3). */
     fun limitUpperBound(peerMax: Int) {
         if (peerMax < upperBound) {
@@ -66,7 +122,15 @@ internal class Pmtud(
 
     /** The size of the probe to send now, 0 when none is due (one in flight, search done, or paused). */
     fun nextProbeSize(now: TimeMark): Int {
-        if (probeInFlight || searchDone) return 0
+        if (probeInFlight) return 0
+        if (confirmPtb > 0) {
+            // a PTB below the size in use: a probe of that size, before anything else and whatever the search state
+            confirming = true
+            probeSize = current
+            probeInFlight = true
+            return current
+        }
+        if (searchDone) return 0
         if (pausedUntil != TimeMark.NEVER) {
             if (now < pausedUntil) return 0
             pausedUntil = TimeMark.NEVER
@@ -93,6 +157,21 @@ internal class Pmtud(
         size: Int,
         now: TimeMark,
     ) {
+        if (confirming && size == probeSize) {
+            // the size in use still gets through: the PTB was wrong (or stale)
+            confirming = false
+            probeInFlight = false
+            confirmPtb = 0
+            confirmLosses = 0
+            return
+        }
+        if (size > high) high = size // an ACK outweighs any hint that said this size could not pass
+        if (probeInFlight && size != probeSize) {
+            // the ACK of a probe a hint already settled: it proves its size, the probe in flight stays in flight
+            if (size > current) current = size
+            low = maxOf(low, size)
+            return
+        }
         probeInFlight = false
         probeLosses = 0
         if (size > current) current = size
@@ -103,20 +182,42 @@ internal class Pmtud(
         } // one more try at the top
     }
 
+    /** A probe of [size] was lost; true when [current] changed (a confirmed PTB lowered it). */
     fun onProbeLost(
         size: Int,
         now: TimeMark,
-    ) {
+    ): Boolean {
+        if (confirming && size == probeSize) {
+            probeInFlight = false
+            confirming = false
+            if (++confirmLosses < maxProbes) return false
+            // maxProbes probes of the size in use lost after a PTB: the path carries no more than the PTB said (RFC 8899 section
+            // 4.6.2); to its size, a multiple of the step above the base, and the search goes on from there without a pause
+            val to = maxOf(base, base + (confirmPtb - base) / step * step)
+            confirmPtb = 0
+            confirmLosses = 0
+            if (to >= current) return false
+            current = to
+            low = to
+            high = maxOf(to, minOf(high, to + step - 1).coerceAtMost(upperBound))
+            searchDone = false
+            finalProbe = false
+            probeLosses = 0
+            return true
+        }
+        // a probe a hint settled, or one that is not the probe in flight: its loss is already accounted
+        if (!probeInFlight || size != probeSize) return false
         probeInFlight = false
         probeLosses++
-        if (probeLosses < maxProbes) return
+        if (probeLosses < maxProbes) return false
         probeLosses = 0
         if (finalProbe) {
             finish(now)
-            return
+            return false
         }
         high = size - 1
         if (high - low < step && high <= current) finish(now)
+        return false
     }
 
     /**
@@ -197,6 +298,9 @@ internal class Pmtud(
         }
         bigLost = 0
         firstBigLostPn = -1L
+        confirmPtb = 0
+        confirmLosses = 0
+        confirming = false
         current = base
         low = base
         high = upperBound

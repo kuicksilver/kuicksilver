@@ -9,6 +9,7 @@ import io.kuicksilver.native.of
 import io.kuicksilver.quic.VersionProfile
 import io.kuicksilver.quic.core.AddressClass
 import io.kuicksilver.quic.core.CidRegistrar
+import io.kuicksilver.quic.core.acceptPacketTooBig
 import io.kuicksilver.quic.core.checkStatelessReset
 import io.kuicksilver.quic.core.failInternal
 import io.kuicksilver.quic.core.refreshLocalTp
@@ -235,6 +236,8 @@ public class EndpointCore internal constructor(
             newTokensIssued = newTokensIssued,
             newTokensAccepted = newTokensAccepted,
             newTokensRejected = newTokensRejected,
+            ptbAccepted = ptbAccepted,
+            ptbIgnored = ptbIgnored,
         )
 
     /** A new client connection to [remote]; its first [ConnectionCore.poll] produces the Initial datagrams. */
@@ -320,6 +323,53 @@ public class EndpointCore internal constructor(
     public fun clearDirty() {
         for (i in 0 until dirty.size) dirty[i].dirty = false
         dirty.clear()
+    }
+
+    internal var ptbAccepted = 0L
+    internal var ptbIgnored = 0L
+    private var ptbWindowStart = TimeMark.NEVER
+    private var ptbInWindow = 0
+
+    /**
+     * An ICMP Packet Too Big the socket [socket] reported (RFC 8899 section 4.6, RFC 9000 section 14.2.1; threat-model 3.16): [quote]
+     * holds the first [len] bytes of the datagram the message says was too large, [to] where it went, [mtu] the IP packet size the
+     * message reports. ICMP is spoofable, so it is a hint only: at most [PTB_PER_SECOND] a second are looked at, the UDP payload left
+     * by [mtu] must be at least 1200 bytes, and the connection to [to] must recognise the quote as one of its packets on its active
+     * path ([acceptPacketTooBig]). Counted in `EndpointStats.ptbAccepted` / `ptbIgnored`.
+     */
+    internal fun handlePacketTooBig(
+        quote: ByteArray,
+        len: Int,
+        to: InetSocketAddress,
+        mtu: Int,
+        now: TimeMark,
+        socket: PathId,
+    ) {
+        if (ptbWindowStart == TimeMark.NEVER || now - ptbWindowStart >= 1.seconds) {
+            ptbWindowStart = now
+            ptbInWindow = 0
+        }
+        if (++ptbInWindow > PTB_PER_SECOND) {
+            ptbIgnored++
+            return
+        }
+        val payload = mtu - if (AddressClass.ipBytes(to).size == 4) 28 else 48 // IPv4 + UDP headers, IPv6 + UDP headers
+        if (payload < 1200 || len <= 0 || len > quote.size) { // below QUIC's minimum: "MUST ignore" (RFC 9000 section 14.2.1)
+            ptbIgnored++
+            return
+        }
+        val l = byRemote[AddressClass.addrKey(to)]
+        if (l != null) {
+            for (i in l.indices) {
+                val c = l[i]
+                if (c.acceptPacketTooBig(quote, len, to, payload, socket)) {
+                    ptbAccepted++
+                    markDirty(c)
+                    return
+                }
+            }
+        }
+        ptbIgnored++
     }
 
     /** The connection to [from] whose peer token ends the datagram (a Stateless Reset, RFC 9000 section 10.3.1), or null. */
@@ -569,6 +619,9 @@ public class EndpointCore internal constructor(
 
         /** Server addresses whose last RTT a client endpoint remembers. */
         const val RTT_MEMORY = 256
+
+        /** ICMP Packet Too Big messages an endpoint looks at per second; the rest are only counted. */
+        const val PTB_PER_SECOND = 64
     }
 
     private var tokensReleased = false

@@ -46,6 +46,49 @@ internal fun ConnectionCore.setMtu(
     qlog?.metricsUpdated(stats, now)
 }
 
+/**
+ * A Packet Too Big about a datagram of this connection (RFC 8899 section 4.6, RFC 9000 section 14.2.1), [payload] bytes of UDP payload
+ * already at least 1200: true when it passes as a hint for the active path's DPLPMTUD. It must be about the active path (the socket
+ * it came on and the destination it quotes), quote the start of one of our packets there (a short header with the peer ID that path
+ * uses, or a long header with our ID as source), and claim a size this path did send something larger than. ICMP is spoofable:
+ * even then it only settles probes or asks for confirmation ([Pmtud.onPtb]).
+ */
+internal fun ConnectionCore.acceptPacketTooBig(
+    quote: ByteArray,
+    len: Int,
+    to: InetSocketAddress,
+    payload: Int,
+    socket: PathId,
+): Boolean {
+    if (!config.pmtudIcmpHints || len < 1) return false
+    val p = paths.active
+    val m = p.pmtud ?: return false
+    if (p.socket != socket || !p.isRemote(to) || p.largestSent <= payload) return false
+    val first = quote[0].toInt() and 0xff
+    val ours =
+        if (first and 0x80 == 0) {
+            val d = dcidFor(p) ?: return false
+            len >= 1 + d.length && d.contentEquals(quote, 1, d.length)
+        } else {
+            // version(4) | dcid len | dcid | scid len | scid: the source is our ID, the destination the peer's
+            if (len < 6) return false
+            val dl = quote[5].toInt() and 0xff
+            if (len < 7 + dl) return false
+            val sl = quote[6 + dl].toInt() and 0xff
+            len >= 7 + dl + sl && remoteCid.length == dl && remoteCid.contentEquals(quote, 6, dl) && localCid.length == sl &&
+                localCid.contentEquals(quote, 7 + dl, sl)
+        }
+    if (!ours) return false
+    m.onPtb(payload, now)
+    return true
+}
+
+/** The socket refused a datagram of [size] bytes as larger than the MTU the kernel knows (EMSGSIZE): settles a probe of that size. */
+internal fun ConnectionCore.onEmsgsize(size: Int) {
+    if (!config.pmtudIcmpHints) return
+    paths.active.pmtud?.onEmsgsize(size, now)
+}
+
 internal fun ConnectionCore.ecnCeReceived(): Long {
     var n = 0L
     for (i in 0 until 3) {

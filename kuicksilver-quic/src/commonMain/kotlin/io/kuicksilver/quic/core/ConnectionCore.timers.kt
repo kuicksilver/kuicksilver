@@ -281,7 +281,7 @@ internal class ConnectionLossListener(
                 if (p.frames.flags and SentFrames.PMTU_PROBE !=
                     0
                 ) {
-                    m.onProbeLost(p.size, core.now)
+                    if (m.onProbeLost(p.size, core.now)) core.setMtu(path, m.current) // a Packet Too Big confirmed by lost probes
                 } else {
                     m.onPacketLost(p.size, p.pn)
                 }

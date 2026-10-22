@@ -565,4 +565,221 @@ class PmtudTest {
             p.close()
         }
     }
+
+    // ---- ICMP Packet Too Big and EMSGSIZE as hints (RFC 8899 section 4.6, RFC 9000 section 14.2.1) ----
+
+    /** The start of a 1-RTT datagram [c] sends on its active path, as an ICMP message quotes it: first byte and DCID, then anything. */
+    private fun quoteOf(
+        c: ConnectionCore,
+        dcid: ByteArray = c.remoteCid.toByteArray(),
+    ): ByteArray = byteArrayOf(0x43) + dcid + ByteArray(24) { (it * 13).toByte() }
+
+    /** A PTB to the client about its datagram to [to] reporting [mtu] (IP packet size). */
+    private fun ptb(
+        p: EndpointPair,
+        c: ConnectionCore,
+        mtu: Int,
+        quote: ByteArray = quoteOf(c),
+        to: InetSocketAddress = p.serverAddr,
+        socket: PathId = PathId.Initial,
+    ) = p.client.handlePacketTooBig(quote, quote.size, to, mtu, p.now, socket)
+
+    /** Starts the client's DPLPMTUD now (DF granted after the handshake) and runs until it sends a probe larger than [above]; its size. */
+    private fun probeAbove(
+        p: EndpointPair,
+        c: ConnectionCore,
+        above: Int,
+    ): Int {
+        var seen = 0
+        p.filterToServer = { _, b ->
+            if (seen == 0 && b.size > above && c.path.pmtud?.probeInFlightForTest == b.size) seen = b.size
+            true
+        }
+        c.setPathCapabilities(PathId.Initial, df)
+        assertTrue(p.runUntil(10.seconds) { seen > 0 }, "no probe above $above")
+        p.filterToServer = { _, _ -> true }
+        return seen
+    }
+
+    @Test fun ptbQuotingAProbeEndsThatSizeAtOnce() {
+        // a 1350-byte link: the probe above it is lost; a PTB reporting 1378 (payload 1350) ends it at once, and the next probe is at
+        // most 1350 bytes, without the three-probe, 3 x PTO wait
+        val (p, c) = pair(linkMtu = 1350, caps = IoCapabilities.Portable)
+        try {
+            val probe = probeAbove(p, c, 1350)
+            val sizesBefore = p.clientDatagramSizes.size
+            val t0 = p.now
+            ptb(p, c, 1378)
+            assertEquals(1L, p.client.stats.ptbAccepted)
+            assertTrue(
+                p.runUntil(5.seconds) { p.clientDatagramSizes.drop(sizesBefore).any { it in 1201..1350 } },
+                "a probe of at most 1350 after the PTB (the lost one was $probe)",
+            )
+            assertTrue(p.now - t0 < c.stats.smoothedRtt * 3 + 100.milliseconds, "without waiting for the lost probe: ${p.now - t0}")
+            assertTrue(p.clientDatagramSizes.drop(sizesBefore).none { it > 1350 && it != probe }, "nothing above the reported size again")
+        } finally {
+            p.close()
+        }
+    }
+
+    @Test fun negative_ptbBelowQuicMinimumIgnored() {
+        // RFC 9000 section 14.2.1: "MUST ignore an ICMP message that claims the PMTU has decreased below QUIC's smallest allowed
+        // maximum datagram size": an IPv4 MTU of 1227 leaves 1199 bytes of UDP payload
+        val (p, c) = pair()
+        try {
+            transfer(p, c)
+            assertTrue(p.runUntil(20.seconds) { c.stats.pathMtu == 1452 })
+            ptb(p, c, 1227)
+            assertEquals(0L, p.client.stats.ptbAccepted)
+            assertEquals(1L, p.client.stats.ptbIgnored)
+            assertEquals(0, c.path.pmtud!!.confirmingForTest)
+            transfer(p, c, 50_000)
+            assertEquals(1452, c.stats.pathMtu)
+        } finally {
+            p.close()
+        }
+    }
+
+    @Test fun negative_ptbWithForeignCidIgnored() {
+        // the quote must be one of our datagrams on that path: an off-path attacker who does not know the connection ID cannot aim one
+        val (p, c) = pair()
+        try {
+            transfer(p, c)
+            assertTrue(p.runUntil(20.seconds) { c.stats.pathMtu == 1452 })
+            ptb(p, c, 1328, quote = quoteOf(c, ByteArray(c.remoteCid.length) { 0x5a }))
+            ptb(p, c, 1328, quote = byteArrayOf(0x43, 1, 2)) // too short to hold the ID
+            ptb(p, c, 1328, quote = byteArrayOf(0xc3.toByte()) + ByteArray(30)) // a long header that is not ours
+            assertEquals(0L, p.client.stats.ptbAccepted)
+            assertEquals(3L, p.client.stats.ptbIgnored)
+            assertEquals(0, c.path.pmtud!!.confirmingForTest)
+        } finally {
+            p.close()
+        }
+    }
+
+    @Test fun negative_ptbNeverLowersMtuWithoutConfirmation() {
+        // a PTB below the current size lowers nothing by itself: a probe of the current size goes out, and its ACK forgets the PTB
+        val (p, c) = pair()
+        try {
+            transfer(p, c)
+            assertTrue(p.runUntil(20.seconds) { c.stats.pathMtu == 1452 })
+            val sizesBefore = p.clientDatagramSizes.size
+            ptb(p, c, 1328)
+            assertEquals(1L, p.client.stats.ptbAccepted)
+            assertEquals(1452, c.stats.pathMtu, "not lowered by the PTB")
+            assertTrue(p.runUntil(5.seconds) { c.path.pmtud!!.confirmingForTest == 0 }, "the confirmation probe was acknowledged")
+            assertTrue(p.clientDatagramSizes.drop(sizesBefore).contains(1452), "a 1452-byte confirmation probe went out")
+            transfer(p, c, 50_000)
+            assertEquals(1452, c.stats.pathMtu)
+        } finally {
+            p.close()
+        }
+    }
+
+    @Test fun ptbConfirmedByLostProbesLowersToPtbSize() {
+        // the link narrows to 1320 and a PTB says 1328 (payload 1300): three lost confirmation probes of 1452 lower the MTU to the
+        // reported 1300 (a multiple of the 20-byte step above the base), with no 60 s black-hole pause before the search goes on
+        val (p, c) = pair(clientQuic = noIdle, serverQuic = noIdle)
+        try {
+            transfer(p, c)
+            assertTrue(p.runUntil(20.seconds) { c.stats.pathMtu == 1452 })
+            assertTrue(p.runUntil(10.seconds) { !c.streams.hasStreamData() && c.stats.bytesInFlight == 0L }, "the transfer drained")
+            p.linkMtuToServer = 1320
+            p.linkMtuToClient = 1320
+            val before = p.events[c]!!.filterIsInstance<ConnectionEvent.MtuUpdated>().size
+            ptb(p, c, 1328)
+            // a trickle of small packets, as an application keeps sending: their ACKs show each confirmation probe lost within an
+            // RTT (RFC 9002 section 6.1), before the PTOs or full-size losses that would call it a black hole
+            val id = c.openStream(true)
+
+            fun changes() =
+                p.events[c]!!
+                    .filterIsInstance<ConnectionEvent.MtuUpdated>()
+                    .drop(before)
+                    .map { it.mtu }
+            val ok =
+                p.runUntil(10.seconds) {
+                    c.writeStream(id, ByteArray(100), 0, 100, false)
+                    1300 in changes()
+                }
+            assertTrue(ok, "lowered to the PTB size: ${changes()}")
+            assertEquals(1300, changes().first(), "straight to the PTB size, not to the base")
+            val m = c.path.pmtud!!
+            assertTrue(m.pausedForTest.not(), "no black-hole pause")
+            transfer(p, c, 50_000)
+            assertTrue(c.stats.pathMtu in 1300..1320, "the search goes on from there: ${c.stats.pathMtu}")
+            assertEquals(null, p.closed(c))
+        } finally {
+            p.close()
+        }
+    }
+
+    @Test fun negative_ptbFloodIsRateLimited() {
+        // 10 000 valid-looking PTB messages in one second: at most 64 are looked at, the rest only counted
+        val (p, c) = pair()
+        try {
+            transfer(p, c)
+            assertTrue(p.runUntil(20.seconds) { c.stats.pathMtu == 1452 })
+            val start = p.now
+            for (i in 0 until 10_000) {
+                p.now = start + (i * 100).toLong().let { kotlin.time.Duration.parse("${it}us") }
+                ptb(p, c, 1440)
+            }
+            val s = p.client.stats
+            assertTrue(s.ptbAccepted + s.ptbIgnored == 10_000L, "$s")
+            assertTrue(s.ptbAccepted <= 64, "at most 64 a second: ${s.ptbAccepted}")
+            assertTrue(s.ptbIgnored >= 9_936, "${s.ptbIgnored}")
+        } finally {
+            p.close()
+        }
+    }
+
+    @Test fun negative_ptbForNonActivePathIgnored() {
+        // a PTB about a datagram to another address, or one that arrived on another socket, says nothing about the active path
+        val (p, c) = pair()
+        try {
+            transfer(p, c)
+            assertTrue(p.runUntil(20.seconds) { c.stats.pathMtu == 1452 })
+            ptb(p, c, 1328, to = InetSocketAddress("10.0.0.99", 443))
+            ptb(p, c, 1328, socket = PathId(7))
+            assertEquals(0L, p.client.stats.ptbAccepted)
+            assertEquals(2L, p.client.stats.ptbIgnored)
+            assertEquals(0, c.path.pmtud!!.confirmingForTest)
+        } finally {
+            p.close()
+        }
+    }
+
+    @Test fun negative_ptbIgnoredWhenHintsAreOff() {
+        val (p, c) = pair(clientQuic = quicConfig { pmtudIcmpHints = false })
+        try {
+            transfer(p, c)
+            assertTrue(p.runUntil(20.seconds) { c.stats.pathMtu == 1452 })
+            ptb(p, c, 1328)
+            assertEquals(0L, p.client.stats.ptbAccepted)
+            assertEquals(1L, p.client.stats.ptbIgnored)
+        } finally {
+            p.close()
+        }
+    }
+
+    @Test fun emsgsizeOnProbeCountsAsLost() {
+        // the kernel refused the probe as larger than the MTU it knows (EMSGSIZE): that size is settled at once, like a probe lost
+        // three times, and the next probe is smaller
+        val (p, c) = pair(linkMtu = 1350, caps = IoCapabilities.Portable)
+        try {
+            val probe = probeAbove(p, c, 1350)
+            val sizesBefore = p.clientDatagramSizes.size
+            val t0 = p.now
+            c.onEmsgsize(probe)
+            assertTrue(
+                p.runUntil(5.seconds) { p.clientDatagramSizes.drop(sizesBefore).any { it in 1201 until probe } },
+                "a smaller probe next",
+            )
+            assertTrue(p.now - t0 < c.stats.smoothedRtt * 3 + 100.milliseconds, "without waiting: ${p.now - t0}")
+            assertTrue(p.clientDatagramSizes.drop(sizesBefore).none { it >= probe }, "the refused size is not tried again")
+        } finally {
+            p.close()
+        }
+    }
 }

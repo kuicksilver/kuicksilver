@@ -43,6 +43,17 @@ internal class ConnectionId(
         return true
     }
 
+    /** Whether [len] bytes of [arr] at [off] are this ID. */
+    fun contentEquals(
+        arr: ByteArray,
+        off: Int,
+        len: Int,
+    ): Boolean {
+        if (len != bytes.size || off < 0 || off + len > arr.size) return false
+        for (i in 0 until len) if (arr[off + i] != bytes[i]) return false
+        return true
+    }
+
     override fun equals(other: Any?): Boolean = other is ConnectionId && other.bytes.contentEquals(bytes)
 
     override fun hashCode(): Int = bytes.contentHashCode()

@@ -331,6 +331,21 @@ dropped (`stats.datagramsDroppedSend`). `pmtud = false` keeps 1200. The portable
 stays 1200; the accelerated socket sets DF (in probe mode on Linux, Android and Windows; Darwin has no probe mode) and the
 search runs (1452 on loopback).
 
+ICMP helps only as a hint (`pmtudIcmpHints`, experimental, on by default; RFC 8899 section 4.6). On Linux and Android the
+accelerated socket reads ICMP Packet Too Big messages, and every accelerated socket reports a send the kernel refused as
+too large (EMSGSIZE). A Packet Too Big counts only when it quotes one of the connection's own packets on its active path
+and leaves at least 1200 bytes of payload, and an endpoint looks at no more than 64 a second (`EndpointStats.ptbAccepted`,
+`ptbIgnored`). A reported size above the one in use ends the larger probes at once instead of after three lost tries; one
+below it never lowers the MTU by itself: the connection sends probes of its current size, keeps it when one is
+acknowledged, and moves down to the reported size (without the minute's pause) only when three are lost. EMSGSIZE on a
+probe settles that size at once. ICMP is easy to forge, so nothing else trusts it.
+
+| Platform | Hints |
+|---|---|
+| Linux, Android (accelerated socket) | Packet Too Big and EMSGSIZE |
+| macOS, iOS, Windows (accelerated socket) | EMSGSIZE only (no usable ICMP for an unconnected socket) |
+| Portable socket (NIO, ktor-network) | none (no DF) |
+
 ## ECN
 
 Each path validates ECN before relying on it (RFC 9000 section 13.4): the first ten packets go out with ECT(0); the peer's

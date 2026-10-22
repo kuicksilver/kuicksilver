@@ -198,8 +198,19 @@ internal class KslDatagramIo private constructor(
         }
     }
 
-    /** Datagrams the socket lost to EMSGSIZE so far, the latest one's length in `lastSize[0]` (every platform with DF). */
-    internal fun emsgsize(lastSize: IntArray): Long = socket.emsgsize(lastSize)
+    private val emsgLast = IntArray(1)
+    private var emsgSeen = 0L
+
+    /**
+     * The length of the latest datagram the kernel refused as too large (EMSGSIZE) since the previous call, or 0 (every accelerated
+     * socket). The loop asks after each connection's send, so the refusal belongs to that connection. The loop's thread only.
+     */
+    internal fun takeEmsgsize(): Int {
+        val n = socket.emsgsize(emsgLast)
+        if (n == emsgSeen) return 0
+        emsgSeen = n
+        return emsgLast[0]
+    }
 
     private var sends = 0
 

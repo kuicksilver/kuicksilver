@@ -729,6 +729,7 @@ internal class PacketBuilder(
             null
         ) {
             c.loss.onPacketSent(space, p, now)
+            if (p.size > target.largestSent) target.largestSent = p.size // what a Packet Too Big about this path may claim was too large
             // where the server's handshake flight went decides which address a client Handshake packet validates (RFC 9000 section 8.1)
             if (space != SpaceId.Application && frames.cryptoCount > 0 && c.role == TlsRole.Server) c.onHandshakeFlightSent(target)
             if (p.inFlight) {

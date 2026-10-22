@@ -115,6 +115,12 @@ public class EndpointStats internal constructor(
     /** Client Initials with a NEW_TOKEN-type token that did not validate (forged, expired, another IP, replayed): treated as no token. */
     @property:ExperimentalKuicksilverApi
     public val newTokensRejected: Long = 0,
+    /** ICMP Packet Too Big messages taken as a DPLPMTUD hint (they quoted a packet of a connection's active path; RFC 8899 section 4.6). */
+    @property:ExperimentalKuicksilverApi
+    public val ptbAccepted: Long = 0,
+    /** ICMP Packet Too Big messages ignored: over the 64-a-second budget, below 1200 bytes of payload, or about no packet of ours. */
+    @property:ExperimentalKuicksilverApi
+    public val ptbIgnored: Long = 0,
 ) {
     /** Field by field sum: a loop group's endpoint statistics. */
     internal operator fun plus(o: EndpointStats): EndpointStats =
@@ -154,6 +160,8 @@ public class EndpointStats internal constructor(
             newTokensIssued + o.newTokensIssued,
             newTokensAccepted + o.newTokensAccepted,
             newTokensRejected + o.newTokensRejected,
+            ptbAccepted + o.ptbAccepted,
+            ptbIgnored + o.ptbIgnored,
         )
 
     @OptIn(ExperimentalKuicksilverApi::class)
@@ -171,5 +179,5 @@ public class EndpointStats internal constructor(
             "datagramsDroppedUndecryptable=$datagramsDroppedUndecryptable, datagramsDroppedStateless=$datagramsDroppedStateless, " +
             "pathValidations=$pathValidations, pathValidationFailures=$pathValidationFailures, uncaughtFailures=$uncaughtFailures, " +
             "sendFailures=$sendFailures, listenerFailures=$listenerFailures, newTokensIssued=$newTokensIssued, " +
-            "newTokensAccepted=$newTokensAccepted, newTokensRejected=$newTokensRejected)"
+            "newTokensAccepted=$newTokensAccepted, newTokensRejected=$newTokensRejected, ptbAccepted=$ptbAccepted, ptbIgnored=$ptbIgnored)"
 }

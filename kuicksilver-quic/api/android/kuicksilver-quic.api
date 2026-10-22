@@ -470,7 +470,7 @@ public final class io/kuicksilver/quic/EndpointCore {
 }
 
 public final class io/kuicksilver/quic/EndpointStats {
-	public synthetic fun <init> (JJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJIILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public synthetic fun <init> (JJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJIILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public final fun getAdmissionContractViolations ()J
 	public final fun getConnectionsAccepted ()J
 	public final fun getConnectionsActive ()J
@@ -497,6 +497,8 @@ public final class io/kuicksilver/quic/EndpointStats {
 	public final fun getNewTokensRejected ()J
 	public final fun getPathValidationFailures ()J
 	public final fun getPathValidations ()J
+	public final fun getPtbAccepted ()J
+	public final fun getPtbIgnored ()J
 	public final fun getRetriesSent ()J
 	public final fun getSendFailures ()J
 	public final fun getStatelessRateLimited ()J
@@ -787,6 +789,7 @@ public final class io/kuicksilver/quic/QuicConfig {
 	public final fun getMaxUdpPayloadSize ()I
 	public final fun getMaxUniStreams ()J
 	public final fun getPmtud ()Z
+	public final fun getPmtudIcmpHints ()Z
 	public final fun getQlog ()Lio/kuicksilver/quic/QlogSink;
 	public final fun getResetStreamAt ()Z
 	public final fun getVersions ()Ljava/util/List;
@@ -824,6 +827,7 @@ public final class io/kuicksilver/quic/QuicConfig$Builder {
 	public final fun getMaxUdpPayloadSize ()I
 	public final fun getMaxUniStreams ()J
 	public final fun getPmtud ()Z
+	public final fun getPmtudIcmpHints ()Z
 	public final fun getQlog ()Lio/kuicksilver/quic/QlogSink;
 	public final fun getResetStreamAt ()Z
 	public final fun getVersions ()Ljava/util/List;
@@ -855,6 +859,7 @@ public final class io/kuicksilver/quic/QuicConfig$Builder {
 	public final fun setMaxUdpPayloadSize (I)V
 	public final fun setMaxUniStreams (J)V
 	public final fun setPmtud (Z)V
+	public final fun setPmtudIcmpHints (Z)V
 	public final fun setQlog (Lio/kuicksilver/quic/QlogSink;)V
 	public final fun setResetStreamAt (Z)V
 	public final fun setVersions (Ljava/util/List;)V
