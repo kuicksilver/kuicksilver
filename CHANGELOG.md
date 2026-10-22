@@ -220,6 +220,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   past its grace period) is reset without a FIN ahead of the reset: the JVM writer shut its output down first, and the
   Kotlin/Native socket shut both directions down instead of resetting, so the kernel kept the unsent bytes until TCP
   gave up on the peer.
+- TLS sockets of the engines (`kuicksilver-ktor-network`): a TLS session that failed (a reset, a TLS error) could end
+  the application's read channel cleanly instead of failing it. When the failure was there before the application
+  opened its channel, or landed between two reads of the copy after the last bytes, ktor's `copyTo` returned normally
+  and the channel closed without a cause, so a response delimited by the connection's close could pass cut for whole.
+  The channel now fails with the session's error.
 - Ktor server, HTTP/1.1 (slow POST, R.U.D.Y.): a request body had no deadline, so a client that announced a body and
   then sent it a byte at a time, or stopped, held its handler for ever. A body that sends no byte for
   `connectionIdleTimeoutSeconds` now fails the handler's read; when neither the application nor StatusPages answers the
