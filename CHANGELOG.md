@@ -131,6 +131,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Changed
 
+- HTTP/3 scheduling (RFC 9218): a CONNECT tunnel without a priority signal, a WebSocket over HTTP/3 among them, is now
+  scheduled incremental on both sides, so it shares bandwidth with the other streams instead of holding back every
+  response of the same urgency. A `priority` header on a request now schedules the client's own stream too, and a
+  `priority` field in a server's response is merged into the client's signal and applied to the response's scheduling.
 - QUIC: `ConnectionAdmission.default()` lets in every attempt whose address a token already validated
   (`ConnectionAttempt.addressValidated`: a Retry token, or from 0.3.0 a NEW_TOKEN token), whatever the handshakes in
   flight and their buffers. Before, under load it asked such a client for a Retry: a NEW_TOKEN holder lost the round

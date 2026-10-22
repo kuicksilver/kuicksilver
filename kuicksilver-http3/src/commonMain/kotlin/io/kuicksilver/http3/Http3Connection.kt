@@ -212,7 +212,11 @@ public interface Http3ServerRequest {
     )
 
     /**
-     * Sends the final response HEADERS; the body goes through the returned writer. [priority] overrides the client's signal.
+     * Sends the final response HEADERS; the body goes through the returned writer. [priority] overrides the client's signal
+     * for the scheduling of the response; without it a `priority` field in [headers] is sent and merged into the client's
+     * signal (RFC 9218 section 8: a parameter it leaves out keeps the client's value). Either way later PRIORITY_UPDATEs
+     * from the client no longer change the scheduling. A CONNECT without a signal from its client is scheduled
+     * incremental (sections 10.1, 11).
      * A response to HEAD, and a 204 or 304, has no content (RFC 9110 sections 9.3.2, 15.3.5, 15.4.5): what is written to
      * its writer is dropped, while its `content-length` is sent as given.
      */

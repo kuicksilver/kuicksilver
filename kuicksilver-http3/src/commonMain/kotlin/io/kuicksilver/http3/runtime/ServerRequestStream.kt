@@ -1,6 +1,10 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
-@file:OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class, kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+@file:OptIn(
+    io.kuicksilver.annotations.InternalKuicksilverApi::class,
+    io.kuicksilver.annotations.ExperimentalKuicksilverApi::class,
+    kotlin.concurrent.atomics.ExperimentalAtomicApi::class,
+)
 
 package io.kuicksilver.http3.runtime
 
@@ -259,7 +263,11 @@ internal class ServerRequestImpl(
     override val trailers: Deferred<Http3Headers?> get() = trailersDeferred
 
     /** The client's signal: an early PRIORITY_UPDATE beats the header (RFC 9218 section 7.1). */
-    private val priorityFlow = MutableStateFlow(session.takeEarlyPriority(st.id) ?: PriorityField.parse(parsed.regular["priority"]))
+    private val earlyPriority = session.takeEarlyPriority(st.id)
+
+    /** The client gave a signal: the `priority` field or a PRIORITY_UPDATE that came first. */
+    private val signalled = earlyPriority != null || parsed.regular["priority"] != null
+    private val priorityFlow = MutableStateFlow(earlyPriority ?: PriorityField.parse(parsed.regular["priority"]))
     private var serverPriority: StreamPriority? = null
     internal val stream: QuicStream get() = st
     override val priority: StateFlow<StreamPriority> get() = priorityFlow
@@ -315,7 +323,8 @@ internal class ServerRequestImpl(
     }
 
     init {
-        st.priority = priorityFlow.value
+        // a tunnel without a signal shares bandwidth (RFC 9218 sections 10.1, 11); the client's signal itself stays the default
+        st.priority = if (!signalled && method == "CONNECT") TUNNEL_PRIORITY else priorityFlow.value
         session.activeServerRequests[st.id] = this
     }
 
@@ -421,7 +430,9 @@ internal class ServerRequestImpl(
         responseStarted = true
         tunnel = method == "CONNECT" && status in 200..299
         return withContext(session.dispatcher) {
-            priority?.let {
+            // an explicit priority wins; else the response's own `priority` field merged into the client's signal (RFC 9218
+            // section 8: a parameter it leaves out keeps the client's value), as h2o does
+            (priority ?: headers["priority"]?.let { PriorityField.merge(priorityFlow.value, it) })?.let {
                 serverPriority = it
                 st.priority = it
             }

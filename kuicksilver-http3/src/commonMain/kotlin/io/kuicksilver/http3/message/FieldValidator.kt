@@ -1,7 +1,10 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
+@file:OptIn(InternalKuicksilverApi::class)
+
 package io.kuicksilver.http3.message
 
+import io.kuicksilver.annotations.InternalKuicksilverApi
 import io.kuicksilver.http3.Http3Headers
 import io.kuicksilver.http3.Http3Request
 import io.kuicksilver.quic.StreamPriority
@@ -365,12 +368,27 @@ internal object PseudoHeaders {
     ): List<Pair<String, String>> = listOf(":status" to status.toString()) + headers.fields
 }
 
-/** The `Priority` field of RFC 9218 section 4 (a Structured Fields dictionary; only `u` and `i` matter). */
-internal object PriorityField {
-    fun parse(value: String?): StreamPriority {
-        if (value.isNullOrBlank()) return StreamPriority.Default
-        var u = 3
-        var i = false
+/**
+ * The `Priority` field (RFC 9218 section 4): a Structured Fields dictionary with `u` (urgency, 0..7) and `i`
+ * (incremental). Unknown keys, out-of-range values and malformed members are ignored, so a garbled field reads as the
+ * defaults. Shared with the Ktor engines, hence public under [InternalKuicksilverApi].
+ */
+@InternalKuicksilverApi
+public object PriorityField {
+    /** The priority [value] signals, the defaults (u=3, i=?0) for what it leaves out or does not say validly. */
+    public fun parse(value: String?): StreamPriority = merge(StreamPriority.Default, value)
+
+    /**
+     * [base] with the parameters [value] gives (RFC 9218 section 8: a parameter left out keeps its value, "disinterest to
+     * change"); [base] unchanged for null, blank or invalid members.
+     */
+    public fun merge(
+        base: StreamPriority,
+        value: String?,
+    ): StreamPriority {
+        if (value.isNullOrBlank()) return base
+        var u = base.urgency
+        var i = base.incremental
         for (member in value.split(',')) {
             val item = member.substringBefore(';').trim()
             if (item.isEmpty()) continue
@@ -399,8 +417,8 @@ internal object PriorityField {
         return StreamPriority(u, i)
     }
 
-    /** null for the default (u=3, i=false): nothing to send. */
-    fun format(p: StreamPriority): String? {
+    /** The field value for [p]; null for the default (u=3, i=?0): nothing to send. */
+    public fun format(p: StreamPriority): String? {
         val parts =
             buildList {
                 if (p.urgency != 3) add("u=${p.urgency}")

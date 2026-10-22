@@ -350,6 +350,16 @@ class PriorityFieldTest {
         assertNull(PriorityField.format(StreamPriority.Default))
     }
 
+    /** RFC 9218 section 8: a parameter the field leaves out keeps the value it had ("disinterest to change"). */
+    @Test fun mergeKeepsAbsentParameters() {
+        val base = StreamPriority(5, true)
+        assertEquals(StreamPriority(1, true), PriorityField.merge(base, "u=1"))
+        assertEquals(StreamPriority(5, false), PriorityField.merge(base, "i=?0"))
+        assertEquals(base, PriorityField.merge(base, "garbage"))
+        assertEquals(base, PriorityField.merge(base, null))
+        assertEquals(base, PriorityField.merge(base, "u=99, i=7, ;;"))
+    }
+
     @Test fun parsesUAndI() {
         assertEquals(StreamPriority(1, true), PriorityField.parse("u=1, i"))
         assertEquals(StreamPriority(5, false), PriorityField.parse("u=5"))

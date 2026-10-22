@@ -1,6 +1,6 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
-@file:OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+@file:OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class, io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
 
 package io.kuicksilver.http3.runtime
 
@@ -176,7 +176,7 @@ private suspend fun H3Session.requestOnDispatcher(
         checkPeerFieldLimit(-1, fields)
         val st =
             try {
-                quic.openBidi(r.priority ?: StreamPriority.Default)
+                quic.openBidi(localPriority(r))
             } catch (e: QuicException) {
                 throw map(e)
             }
@@ -354,6 +354,18 @@ private suspend fun H3Session.exchange(
         throw sendFailure.failureOr(map(e)) // transport failures (possibly wrapped by ktor-io) become HTTP/3 exceptions
     }
 }
+
+/**
+ * How our own sending on the request stream is scheduled (RFC 9218): the request's [Http3Request.priority], else the
+ * `priority` field it carries as a header (the signal the server gets), else the defaults; a CONNECT without a signal is
+ * a tunnel and goes incremental, so a long-lived one does not hold back every other stream (sections 10.1, 11).
+ */
+internal fun localPriority(r: Http3Request): StreamPriority =
+    r.priority ?: r.headers["priority"]?.let { PriorityField.parse(it) }
+        ?: if (r.method == "CONNECT") TUNNEL_PRIORITY else StreamPriority.Default
+
+/** A tunnel's scheduling without a signal from its client: the default urgency, incremental (h2o does the same). */
+internal val TUNNEL_PRIORITY = StreamPriority(3, incremental = true)
 
 /** The sender's own failure when it abandoned the request, else [e]. */
 private fun CompletableDeferred<Unit>.failureOr(e: Throwable): Throwable = getFailureOrNull() ?: e

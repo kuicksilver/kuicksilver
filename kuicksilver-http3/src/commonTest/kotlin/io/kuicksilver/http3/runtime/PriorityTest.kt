@@ -176,4 +176,91 @@ class PriorityTest {
                 resp.cancel()
             }
         }
+
+    /** A `priority` field given as a header schedules the client's own stream too, and goes out once. */
+    @Test fun headerFieldDrivesClientScheduling() =
+        h3Test {
+            H3Pair.open().useScoped { p ->
+                val seen = kotlinx.coroutines.CompletableDeferred<List<String>>()
+                launch {
+                    val r = p.server.acceptRequest()
+                    seen.complete(r.headers.getAll("priority"))
+                    r.respond(200).finish()
+                }
+                val resp =
+                    p.client.request(
+                        http3Request("GET", "server.test", "/") {
+                            headers =
+                                io.kuicksilver.http3.Http3Headers
+                                    .of("priority" to "u=1, i")
+                        },
+                    )
+                assertEquals(StreamPriority(1, true), (resp as ResponseImpl).stream.priority)
+                assertEquals(listOf("u=1, i"), withTimeout(5.seconds) { seen.await() })
+            }
+        }
+
+    /** RFC 9218 section 8: the response's `priority` field merges into the client's signal for our own scheduling. */
+    @Test fun responseFieldMergesIntoServerScheduling() =
+        h3Test {
+            QuicPair.open().use { q ->
+                val (c, s) = q.connect()
+                val server = Http3Connection.server(s)
+                val raw = RawPeer(c)
+                raw.openControl()
+                val id = raw.request(GET + ("priority" to "u=5, i"))
+                val r = server.acceptRequest()
+                r.respond(
+                    200,
+                    io.kuicksilver.http3.Http3Headers
+                        .of("priority" to "u=1"),
+                )
+                assertEquals(StreamPriority(1, true), (r as ServerRequestImpl).stream.priority)
+                raw.priorityUpdate(id, "u=6") // the server's choice stays, as with an explicit priority
+                withTimeout(5.seconds) { r.priority.first { it == StreamPriority(6) } }
+                assertEquals(StreamPriority(1, true), r.stream.priority)
+                // an explicit argument is stronger than the field
+                raw.request(GET + ("priority" to "u=5, i"))
+                val r2 = server.acceptRequest()
+                r2.respond(
+                    200,
+                    io.kuicksilver.http3.Http3Headers
+                        .of("priority" to "u=1"),
+                    priority = StreamPriority(4),
+                )
+                assertEquals(StreamPriority(4), (r2 as ServerRequestImpl).stream.priority)
+            }
+        }
+
+    /** RFC 9218 sections 10.1, 11: a tunnel without a signal shares bandwidth (incremental) on both sides. */
+    @Test fun connectTunnelDefaultsToIncremental() =
+        h3Test {
+            H3Pair.open(serverSettings = io.kuicksilver.http3.http3Settings { enableConnectProtocol = true }).useScoped { p ->
+                val plain = kotlinx.coroutines.CompletableDeferred<Http3ServerRequest>()
+                val explicit = kotlinx.coroutines.CompletableDeferred<Http3ServerRequest>()
+                launch {
+                    for (d in listOf(plain, explicit)) {
+                        val r = p.server.acceptRequest()
+                        r.acceptConnect()
+                        d.complete(r)
+                    }
+                }
+                val tunnel = p.client.connect(connectReq(), "echo")
+                assertEquals(StreamPriority(3, true), tunnel.priority)
+                val r = withTimeout(5.seconds) { plain.await() }
+                assertEquals(StreamPriority.Default, r.priority.value) // the client's signal is not rewritten
+                assertEquals(StreamPriority(3, true), (r as ServerRequestImpl).stream.priority)
+                val u2 =
+                    p.client.connect(
+                        http3Request("CONNECT", "server.test", "/chat") {
+                            headers =
+                                io.kuicksilver.http3.Http3Headers
+                                    .of("priority" to "u=2")
+                        },
+                        "echo",
+                    )
+                assertEquals(StreamPriority(2, false), u2.priority)
+                assertEquals(StreamPriority(2, false), (withTimeout(5.seconds) { explicit.await() } as ServerRequestImpl).stream.priority)
+            }
+        }
 }
