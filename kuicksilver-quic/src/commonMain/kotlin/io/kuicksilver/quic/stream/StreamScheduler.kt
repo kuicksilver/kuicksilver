@@ -2,9 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.kuicksilver.quic.stream
 
+import io.kuicksilver.quic.StreamPriority
+
 /**
- * Chooses the next stream to send from (RFC 9218 at the transport): strict urgency order; within a level
- * retransmissions first, then non-incremental streams by ascending id, then incremental streams round-robin.
+ * Chooses the next stream to send from (RFC 9218 at the transport): streams opened with [StreamPriority.Critical] first
+ * (retransmissions, then by ascending id), then strict urgency order; within a level retransmissions first, then
+ * non-incremental streams by ascending id, then incremental streams round-robin.
  *
  * The peer's stream limit decides how many streams can be live (RFC 9000 section 21.6), so nothing here walks them all: every
  * (urgency, retransmission, incremental) pair is a queue of its own — a binary min-heap by id for non-incremental streams, an
@@ -19,7 +22,7 @@ internal class StreamScheduler {
     private val tails = arrayOfNulls<SendStream>(QUEUES)
 
     /** Bit `q` is set while queue `q` is non-empty. */
-    private var nonEmpty = 0
+    private var nonEmpty = 0L
 
     /** Stream comparisons made by the heaps, for the complexity tests. */
     internal var comparisonsForTest = 0L
@@ -45,10 +48,10 @@ internal class StreamScheduler {
         insert(s, q)
     }
 
-    val isEmpty: Boolean get() = nonEmpty == 0
+    val isEmpty: Boolean get() = nonEmpty == 0L
 
     fun next(): SendStream? {
-        while (nonEmpty != 0) {
+        while (nonEmpty != 0L) {
             val q = nonEmpty.countTrailingZeroBits()
             val s = if (q and 1 == 0) heaps[q]!![0] else heads[q]!!
             if (!s.hasPending) {
@@ -73,8 +76,14 @@ internal class StreamScheduler {
         insert(s, queueOf(s))
     }
 
+    /** Queues 0 and 2 (heaps) hold the critical streams; the eight urgencies follow from 4, four queues each. */
+    @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
     private fun queueOf(s: SendStream): Int =
-        s.priority.urgency * 4 + (if (s.hasRetransmit) 0 else 2) + (if (s.priority.incremental) 1 else 0)
+        if (s.priority === StreamPriority.Critical) {
+            if (s.hasRetransmit) 0 else 2
+        } else {
+            CRITICAL_QUEUES + s.priority.urgency * 4 + (if (s.hasRetransmit) 0 else 2) + (if (s.priority.incremental) 1 else 0)
+        }
 
     private fun insert(
         s: SendStream,
@@ -92,7 +101,7 @@ internal class StreamScheduler {
             tails[q] = s
             if (heads[q] == null) heads[q] = s
         }
-        nonEmpty = nonEmpty or (1 shl q)
+        nonEmpty = nonEmpty or (1L shl q)
     }
 
     private fun detach(s: SendStream) {
@@ -108,7 +117,7 @@ internal class StreamScheduler {
                 siftDown(h, i)
                 siftUp(h, last.schedIndex)
             }
-            if (h.isEmpty()) nonEmpty = nonEmpty and (1 shl q).inv()
+            if (h.isEmpty()) nonEmpty = nonEmpty and (1L shl q).inv()
         } else {
             val p = s.schedPrev
             val n = s.schedNext
@@ -116,7 +125,7 @@ internal class StreamScheduler {
             if (n == null) tails[q] = p else n.schedPrev = p
             s.schedPrev = null
             s.schedNext = null
-            if (heads[q] == null) nonEmpty = nonEmpty and (1 shl q).inv()
+            if (heads[q] == null) nonEmpty = nonEmpty and (1L shl q).inv()
         }
     }
 
@@ -160,7 +169,10 @@ internal class StreamScheduler {
     }
 
     private companion object {
-        /** Eight urgencies times (retransmission, incremental). */
-        const val QUEUES = 32
+        /** The critical streams' (retransmission, new data) heaps, with the two list slots between them unused. */
+        const val CRITICAL_QUEUES = 4
+
+        /** The critical queues, then eight urgencies times (retransmission, incremental); fits the Long mask. */
+        const val QUEUES = CRITICAL_QUEUES + 32
     }
 }

@@ -140,6 +140,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Changed
 
+- HTTP/3 scheduling: the control and QPACK streams are now sent before every request stream, whatever urgency the peer
+  asks for. Before, they were urgency 0 like any other stream, so a request at u=0 (non-incremental) with a lower
+  stream id had its whole response sent ahead of them: a QPACK insert that the response's own header or trailer
+  section needed, or a GOAWAY, waited behind the body.
 - HTTP/3 scheduling (RFC 9218): a CONNECT tunnel without a priority signal, a WebSocket over HTTP/3 among them, is now
   scheduled incremental on both sides, so it shares bandwidth with the other streams instead of holding back every
   response of the same urgency. A `priority` header on a request now schedules the client's own stream too, and a

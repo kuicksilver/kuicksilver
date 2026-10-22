@@ -850,7 +850,9 @@ internal class H3Session(
          * allows them in its transport parameters, so they open at once; only a peer that does not is held up here.
          */
         val CRITICAL_STREAMS_DEADLINE: Duration = 3.seconds
-        val CRITICAL = StreamPriority(0)
+
+        /** Control and QPACK streams: sent before every request stream, whatever urgency a peer asks for. */
+        val CRITICAL = StreamPriority.Critical
 
         /** A peer that speaks HTTP/3 sends SETTINGS first thing (RFC 9114 section 6.2.1): ten seconds is plenty. */
         val WT_DEADLINE: Duration = 10.seconds
