@@ -56,6 +56,9 @@ internal class KslNioSocket(
     private val nio = selectable.channel as SocketChannel
     private val closing = AtomicBoolean(false)
 
+    /** Set by [abort] before it cancels the writer: the writer then ends without shutting the output down. */
+    @Volatile private var aborted = false
+
     @Volatile private var writer: ReaderJob? = null
 
     /**
@@ -125,10 +128,13 @@ internal class KslNioSocket(
             throw e
         } finally {
             selectable.interestOp(SelectInterest.WRITE, false)
-            try {
-                nio.shutdownOutput()
-            } catch (_: ClosedChannelException) {
-            } catch (_: IOException) {
+            // an aborted socket ends with the reset of its close: a FIN first would reach the peer as a clean end
+            if (!aborted) {
+                try {
+                    nio.shutdownOutput()
+                } catch (_: ClosedChannelException) {
+                } catch (_: IOException) {
+                }
             }
         }
     }
@@ -170,6 +176,7 @@ internal class KslNioSocket(
      * the descriptor, and the ktor socket then closes as after any writer.
      */
     internal fun abort() {
+        aborted = true
         runCatching { nio.setOption(StandardSocketOptions.SO_LINGER, 0) }
         close()
         writer?.job?.cancel()

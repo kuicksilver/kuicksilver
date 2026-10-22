@@ -4,6 +4,7 @@ package io.kuicksilver.ktor.network
 
 import io.ktor.network.selector.SelectorManager
 import io.ktor.network.sockets.InetSocketAddress
+import io.ktor.network.sockets.Socket
 import io.ktor.network.sockets.openReadChannel
 import io.ktor.network.sockets.openWriteChannel
 import io.ktor.utils.io.close
@@ -84,10 +85,34 @@ class TcpSocketsNativeTest {
     /**
      * The application's stream fails mid-response (a handler that threw): the write loop ends the connection with a reset,
      * so a peer reading to the end gets an error. Before, the loop shut the output down and the peer saw a clean end of a
-     * cut stream, which for a close-delimited body is indistinguishable from the whole one. The peer reads with the raw
-     * system calls, so what it sees is the kernel's verdict, not a channel's.
+     * cut stream, which for a close-delimited body is indistinguishable from the whole one.
      */
     @Test fun negative_aFailedStreamResetsTheConnection() =
+        resetTest { sock ->
+            val out = sock.openWriteChannel()
+            out.writeFully(ByteArray(64 shl 10))
+            out.flush()
+            out.close(IOException("the handler failed"))
+        }
+
+    /**
+     * [abort] resets the connection (`SO_LINGER` 0, no shutdown), as on the JVM. Before, it shut both directions down and
+     * the peer saw a clean end; the kernel kept the unsent bytes until TCP gave up on the peer.
+     */
+    @Test fun negative_abortResetsTheConnection() =
+        resetTest { sock ->
+            val out = sock.openWriteChannel()
+            out.writeFully(ByteArray(64 shl 10))
+            out.flush()
+            sock.abort()
+            assertNull((sock as NativeTcpSocket).resetFailure, "SO_LINGER 0 could not be set")
+        }
+
+    /**
+     * Accepts one connection, runs [cut] on it and asserts that the peer, reading to the end with the raw system calls (the
+     * kernel's verdict, not a channel's), saw the connection reset rather than end.
+     */
+    private fun resetTest(cut: suspend (Socket) -> Unit) =
         runBlocking {
             val selector = SelectorManager(Dispatchers.Default)
             try {
@@ -105,8 +130,8 @@ class TcpSocketsNativeTest {
                                 if (!tcpConnect(fd, to)) {
                                     while (runCatching { tcpAddressOf(fd, peer = true) }.isFailure) delay(5.milliseconds)
                                 }
-                                // the server fails its stream only now: reset before the connect completed, the peer would
-                                // not see it as a connection's end
+                                // the server cuts the connection only now: reset before the connect completed, the peer
+                                // would not see it as a connection's end
                                 connected.complete(Unit)
                                 val buf = ByteArray(8192)
                                 var got = 0L
@@ -130,12 +155,9 @@ class TcpSocketsNativeTest {
                         }
                     val sock = server.accept()
                     connected.await()
-                    val out = sock.openWriteChannel()
-                    out.writeFully(ByteArray(64 shl 10))
-                    out.flush()
-                    out.close(IOException("the handler failed"))
+                    cut(sock)
                     val seen = peer.await()
-                    assertNull(seen, "the peer of a failed stream saw $seen, not a reset")
+                    assertNull(seen, "the peer of a cut connection saw $seen, not a reset")
                     sock.close()
                     server.close()
                 }
