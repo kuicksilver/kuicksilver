@@ -277,6 +277,7 @@ Guide: [Ktor: Client](ktor.md#client).
 | `quicAdmission` | `ConnectionAdmission?` | `null` (`ConnectionAdmission.default()`) | Retry policy |
 | `http3Settings` | `Http3Settings` | `Http3Settings.Default` | HTTP/3 settings |
 | `webSocketsOverHttp3` | `Boolean` | `true` | accept RFC 9220 WebSockets (turns `enableConnectProtocol` on) |
+| `webTransport` (*experimental*) | `Boolean` | `false` | serve WebTransport to `webTransport(path) { }` routes (turns `http3Settings.webTransport` and `enableConnectProtocol` on; needs QUIC datagrams) ([WebTransport](ktor.md#webtransport-over-http3-experimental)) |
 | `quicEarlyData` (*experimental*) | `Boolean` | `false` | accept 0-RTT; requests are handled by `http3Settings.earlyData` |
 | `logger` (*experimental*) | `KuicksilverLogger?` | `null` (the endpoint default, `KuicksilverLogger.Stderr`) | the HTTP/3 endpoints' diagnostics |
 | `qlog` (*experimental*) | `QlogSink?` | `null` | added to `quic` |

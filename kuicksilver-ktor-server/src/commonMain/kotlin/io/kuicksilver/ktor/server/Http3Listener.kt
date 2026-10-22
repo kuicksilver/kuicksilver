@@ -74,16 +74,19 @@ internal fun KuicksilverApplicationEngine.http3Binder(tls: KuicksilverTlsConnect
     return { port -> configuration.http3Bind(InetSocketAddress(tls.host, port), http3EndpointConfig(tls), http3Settings()) }
 }
 
-private fun KuicksilverApplicationEngine.http3Settings(): Http3Settings =
-    configuration.http3Settings.let {
-        if (configuration.webSocketsOverHttp3 &&
-            !it.enableConnectProtocol
-        ) {
-            it.toBuilder().apply { enableConnectProtocol = true }.build()
-        } else {
-            it
-        }
-    }
+@OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+private fun KuicksilverApplicationEngine.http3Settings(): Http3Settings {
+    val s = configuration.http3Settings
+    val connect = (configuration.webSocketsOverHttp3 || configuration.webTransport) && !s.enableConnectProtocol
+    val wt = configuration.webTransport && !s.webTransport
+    if (!connect && !wt) return s
+    return s
+        .toBuilder()
+        .apply {
+            if (connect) enableConnectProtocol = true
+            if (wt) webTransport = true
+        }.build()
+}
 
 @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
 private fun KuicksilverApplicationEngine.http3EndpointConfig(tls: KuicksilverTlsConnector): QuicEndpointConfig {
@@ -192,9 +195,12 @@ private suspend fun KuicksilverApplicationEngine.handleHttp3(
     local: InetSocketAddress,
     peer: List<Certificate>,
 ) {
-    // Extended CONNECT (RFC 9220): WebSockets go through Ktor's pipeline; other protocols are not served here
+    // Extended CONNECT (RFC 9220): WebSockets and WebTransport go through Ktor's pipeline; other protocols are not served here
     val webSocket = req.method == "CONNECT" && req.protocol == WebSocketOverH3.PROTOCOL
-    if (req.method == "CONNECT" && !webSocket) {
+
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    val webTransport = configuration.webTransport && req.isWebTransport
+    if (req.method == "CONNECT" && !webSocket && !webTransport) {
         runCatching { req.respond(501).finish() }
         return
     }
@@ -216,6 +222,7 @@ private suspend fun KuicksilverApplicationEngine.handleHttp3(
                 engineDispatcher,
                 userDispatcher,
                 webSocket,
+                webTransport,
             )
         events.emit("requestStarted") { requestStarted(HttpProtocolVersion.HTTP_3_0, call) }
         var failure: Throwable? = null

@@ -78,6 +78,9 @@ final class io.kuicksilver.ktor.server/KuicksilverApplicationEngine : io.ktor.se
         final var webSocketsOverHttp3 // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration.webSocketsOverHttp3|{}webSocketsOverHttp3[0]
             final fun <get-webSocketsOverHttp3>(): kotlin/Boolean // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration.webSocketsOverHttp3.<get-webSocketsOverHttp3>|<get-webSocketsOverHttp3>(){}[0]
             final fun <set-webSocketsOverHttp3>(kotlin/Boolean) // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration.webSocketsOverHttp3.<set-webSocketsOverHttp3>|<set-webSocketsOverHttp3>(kotlin.Boolean){}[0]
+        final var webTransport // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration.webTransport|{}webTransport[0]
+            final fun <get-webTransport>(): kotlin/Boolean // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration.webTransport.<get-webTransport>|<get-webTransport>(){}[0]
+            final fun <set-webTransport>(kotlin/Boolean) // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration.webTransport.<set-webTransport>|<set-webTransport>(kotlin.Boolean){}[0]
 
         final fun tlsConnector(io.kuicksilver.tls/TlsIdentity, kotlin/Function1<io.kuicksilver.ktor.server/KuicksilverTlsConnector.Builder, kotlin/Unit> = ...) // io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration.tlsConnector|tlsConnector(io.kuicksilver.tls.TlsIdentity;kotlin.Function1<io.kuicksilver.ktor.server.KuicksilverTlsConnector.Builder,kotlin.Unit>){}[0]
     }
@@ -144,7 +147,13 @@ final object io.kuicksilver.ktor.server/Kuicksilver : io.ktor.server.engine/Appl
     final fun create(io.ktor.server.application/ApplicationEnvironment, io.ktor.events/Events, kotlin/Boolean, io.kuicksilver.ktor.server/KuicksilverApplicationEngine.Configuration, kotlin/Function0<io.ktor.server.application/Application>): io.kuicksilver.ktor.server/KuicksilverApplicationEngine // io.kuicksilver.ktor.server/Kuicksilver.create|create(io.ktor.server.application.ApplicationEnvironment;io.ktor.events.Events;kotlin.Boolean;io.kuicksilver.ktor.server.KuicksilverApplicationEngine.Configuration;kotlin.Function0<io.ktor.server.application.Application>){}[0]
 }
 
+final const val io.kuicksilver.ktor.server/WEB_TRANSPORT_HANDLER_FAILED // io.kuicksilver.ktor.server/WEB_TRANSPORT_HANDLER_FAILED|{}WEB_TRANSPORT_HANDLER_FAILED[0]
+    final fun <get-WEB_TRANSPORT_HANDLER_FAILED>(): kotlin/Long // io.kuicksilver.ktor.server/WEB_TRANSPORT_HANDLER_FAILED.<get-WEB_TRANSPORT_HANDLER_FAILED>|<get-WEB_TRANSPORT_HANDLER_FAILED>(){}[0]
+
 final val io.kuicksilver.ktor.server/peerCertificates // io.kuicksilver.ktor.server/peerCertificates|@io.ktor.server.request.ApplicationRequest{}peerCertificates[0]
     final fun (io.ktor.server.request/ApplicationRequest).<get-peerCertificates>(): kotlin.collections/List<io.kuicksilver.tls/Certificate> // io.kuicksilver.ktor.server/peerCertificates.<get-peerCertificates>|<get-peerCertificates>@io.ktor.server.request.ApplicationRequest(){}[0]
 final val io.kuicksilver.ktor.server/receivedEarly // io.kuicksilver.ktor.server/receivedEarly|@io.ktor.server.request.ApplicationRequest{}receivedEarly[0]
     final fun (io.ktor.server.request/ApplicationRequest).<get-receivedEarly>(): kotlin/Boolean // io.kuicksilver.ktor.server/receivedEarly.<get-receivedEarly>|<get-receivedEarly>@io.ktor.server.request.ApplicationRequest(){}[0]
+
+final fun (io.ktor.server.routing/Route).io.kuicksilver.ktor.server/webTransport(kotlin/String, kotlin.collections/List<kotlin/String> = ..., kotlin/Function2<kotlin/String?, io.ktor.server.application/ApplicationCall, kotlin/Boolean> = ..., kotlin.coroutines/SuspendFunction1<io.kuicksilver.http3/WebTransportSession, kotlin/Unit>): io.ktor.server.routing/Route // io.kuicksilver.ktor.server/webTransport|webTransport@io.ktor.server.routing.Route(kotlin.String;kotlin.collections.List<kotlin.String>;kotlin.Function2<kotlin.String?,io.ktor.server.application.ApplicationCall,kotlin.Boolean>;kotlin.coroutines.SuspendFunction1<io.kuicksilver.http3.WebTransportSession,kotlin.Unit>){}[0]
+final fun io.kuicksilver.ktor.server/sameHostOrigin(kotlin/String?, io.ktor.server.application/ApplicationCall): kotlin/Boolean // io.kuicksilver.ktor.server/sameHostOrigin|sameHostOrigin(kotlin.String?;io.ktor.server.application.ApplicationCall){}[0]

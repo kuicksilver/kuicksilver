@@ -103,8 +103,37 @@ With `webSocketsOverHttp3 = true` (the default) the HTTP/3 listener advertises `
 accepts Extended CONNECT with `:protocol = websocket` (RFC 9220). Such a request reaches Ktor's pipeline as the HTTP/1.1
 upgrade request the `WebSockets` plugin knows — `GET` with `Connection: Upgrade`, `Upgrade: websocket` and a
 `Sec-WebSocket-Key` — so ordinary `webSocket("/path") {}` routes serve it unchanged; the upgrade is answered with
-`:status 200` and the frames travel on the request stream. Extended CONNECT with any other protocol is answered 501. A
+`:status 200` and the frames travel on the request stream. Extended CONNECT with any other protocol is answered 501 (WebTransport aside when it is on, below). A
 plain HTTP/1.1 `Upgrade` on an HTTP/3 request is meaningless (RFC 9114 section 4.5) and gets 501 too.
+
+### WebTransport over HTTP/3 (experimental)
+
+With `webTransport = true` the HTTP/3 listener speaks WebTransport (draft-ietf-webtrans-http3-16, plus the SETTINGS of
+draft-02 and draft-14 that browsers send; see the [HTTP/3 guide](http3.md#webtransport-experimental)), and a
+`webTransport("/path") { session -> }` route serves the sessions. It matches only a WebTransport Extended CONNECT over
+HTTP/3, never an HTTP/1.1 request; a WebTransport request no route matches gets Ktor's 404. The route checks the
+`origin` field first: `checkOrigin` refuses with 403, and its default, `sameHostOrigin`, admits the server's own
+origin and clients that send none (browsers always send one; pass your own check for a page served elsewhere). The
+server picks the first of the route's `protocols` the client offers. Then the session is accepted and the handler
+runs; when it returns the session is closed with code 0, when it throws with `WEB_TRANSPORT_HANDLER_FAILED` (1) and
+an empty reason. One session per connection: there is no WebTransport flow control yet.
+
+```kotlin
+// guide:ktor:webtransport-server
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+val server = embeddedServer(Kuicksilver, configure = {
+    tlsConnector(identity) { port = 443 }
+    webTransport = true
+}) {
+    routing {
+        webTransport("/echo", protocols = listOf("echo-v1")) { session ->
+            val stream = session.acceptBidi()
+            stream.input.copyTo(stream.output)
+            stream.output.flushAndClose()
+        }                                          // returning closes the session with code 0
+    }
+}
+```
 
 ### EngineMain and configuration keys
 

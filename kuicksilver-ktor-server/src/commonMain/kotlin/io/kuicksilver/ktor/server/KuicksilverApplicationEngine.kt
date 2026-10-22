@@ -133,6 +133,14 @@ public class KuicksilverApplicationEngine(
         public var webSocketsOverHttp3: Boolean = true
 
         /**
+         * Serve WebTransport over HTTP/3 (draft-ietf-webtrans-http3-16) to `webTransport(path) { }` routes: turns on
+         * `Http3Settings.webTransport` and `enableConnectProtocol`; false by default. Needs QUIC datagrams (the default
+         * `quic` has them): the engine refuses to start otherwise.
+         */
+        @io.kuicksilver.annotations.ExperimentalKuicksilverApi
+        public var webTransport: Boolean = false
+
+        /**
          * Accept 0-RTT on HTTP/3 (off by default; ADR-0015). Early requests can be replayed by an attacker: by default only
          * GET, HEAD and OPTIONS run before the handshake completes (`http3Settings.earlyData` decides), every other request
          * waits for it. Handlers of early requests must be free of side effects; see `ApplicationRequest.receivedEarly`. A

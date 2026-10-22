@@ -11,6 +11,7 @@ import io.ktor.server.engine.embeddedServer
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
 import io.ktor.server.routing.routing
+import io.ktor.utils.io.copyTo
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.http3.Http3EarlyDataPolicy
 import io.kuicksilver.http3.http3Settings
@@ -45,6 +46,7 @@ class GuideSamplesTest {
                 it.parentFile
             }.map { File(it, "docs/guide/ktor.md") }.first { it.exists() }.readText()
         assertTrue("guide:ktor:server" in guide, "marker server")
+        assertTrue("guide:ktor:webtransport-server" in guide, "marker webtransport-server")
     }
 
     private object Metrics {
@@ -88,6 +90,25 @@ class GuideSamplesTest {
                 http3Settings = http3Settings { earlyData = Http3EarlyDataPolicy.Reject425() } // or keep the default: safe methods early
             }, module = Application::module)
         assertTrue(server.engine.configuration.http3Settings.earlyData is Http3EarlyDataPolicy.Reject425)
+    }
+
+    @Test fun webTransportSample() {
+        val identity = TlsIdentity.fromPem(chainPem, keyPem.toCharArray())
+        // guide:ktor:webtransport-server
+        val server =
+            embeddedServer(Kuicksilver, configure = {
+                tlsConnector(identity) { port = 0 }
+                webTransport = true
+            }) {
+                routing {
+                    webTransport("/echo", protocols = listOf("echo-v1")) { session ->
+                        val stream = session.acceptBidi()
+                        stream.input.copyTo(stream.output)
+                        stream.output.flushAndClose()
+                    }
+                }
+            }
+        assertTrue(server.engine.configuration.webTransport) // ServerWebTransportTest runs such a route
     }
 
     @Test fun serverSample() {

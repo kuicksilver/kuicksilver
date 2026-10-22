@@ -70,6 +70,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   unidirectional streams, sends and receives datagrams, closes with an application code and reason
   (WT_CLOSE_SESSION, then FIN) and drains; application error codes are mapped into the HTTP/3 space;
   `Http3ErrorCode` has the WebTransport codes.
+- Ktor server (experimental): `webTransport = true` and `Route.webTransport(path, protocols, checkOrigin) { session -> }`
+  serve WebTransport sessions over HTTP/3 (`docs/guide/ktor.md`, "WebTransport over HTTP/3"): the route matches only a
+  WebTransport Extended CONNECT, refuses a foreign `origin` with 403 (`sameHostOrigin` by default), picks the
+  protocol, and closes the session when the handler returns (code 0) or throws (`WEB_TRANSPORT_HANDLER_FAILED`).
 - Ktor client: Happy Eyeballs for HTTP/1.1's TCP connects, to the origin and to an HTTP proxy (RFC 8305 sections 4 to 6;
   `docs/guide/ktor.md`, "IPv6 over TCP on Kotlin/Native"). Every address of a host name is tried, IPv6 and IPv4
   alternating, a new attempt every `connectionAttemptDelay` (*experimental*, 250 ms; 10 ms to 2 s, or

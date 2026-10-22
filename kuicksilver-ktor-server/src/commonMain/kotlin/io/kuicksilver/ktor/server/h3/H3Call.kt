@@ -29,6 +29,8 @@ import io.kuicksilver.http3.Http3ServerRequest
 import io.kuicksilver.ktor.server.EARLY_DATA_FIELD
 import io.kuicksilver.ktor.server.PeerCertificatesKey
 import io.kuicksilver.ktor.server.ReceivedEarlyKey
+import io.kuicksilver.ktor.server.WebTransportRequestKey
+import io.kuicksilver.ktor.server.WebTransportUpgrade
 import io.kuicksilver.quic.ipLiteral
 import io.kuicksilver.tls.Certificate
 import kotlinx.coroutines.CoroutineScope
@@ -45,6 +47,8 @@ internal class H3Call(
     userDispatcher: CoroutineContext,
     /** An Extended CONNECT for `websocket`: presented as Ktor's HTTP/1.1 upgrade request (RFC 9220). */
     webSocket: Boolean = false,
+    /** A WebTransport CONNECT: a CONNECT call marked for `webTransport(path)` routes. */
+    webTransport: Boolean = false,
 ) : BaseApplicationCall(application),
     CoroutineScope {
     override val request =
@@ -56,7 +60,9 @@ internal class H3Call(
             if (webSocket) HttpMethod.Get else HttpMethod.parse(h3.method),
         )
     override val response: H3Response =
-        if (webSocket) {
+        if (webTransport) {
+            H3WebTransportResponse(this, h3)
+        } else if (webSocket) {
             H3UpgradeResponse(
                 this,
                 h3,
@@ -69,6 +75,7 @@ internal class H3Call(
 
     init {
         putResponseAttribute()
+        if (webTransport) attributes.put(WebTransportRequestKey, h3)
         attributes.put(PeerCertificatesKey, peerCertificates)
         // in 0-RTT here, or forwarded from early data by a gateway (RFC 8470 section 5.1)
         val gatewayMarked = h3.headers[EARLY_DATA_FIELD.lowercase()] != null
@@ -239,3 +246,14 @@ internal fun authorityPort(authority: String): Int? {
 
 /** The default port of [scheme] (RFC 9110 sections 4.2.1, 4.2.2): 80 for `http`, else 443 (`https`, or none for a classic CONNECT). */
 internal fun defaultPort(scheme: String?): Int = if (scheme == "http") 80 else 443
+
+/** The response of a WebTransport call: the route's [WebTransportUpgrade] accepts the session and runs its handler. */
+internal class H3WebTransportResponse(
+    call: PipelineCall,
+    h3: Http3ServerRequest,
+) : H3Response(call, h3) {
+    override suspend fun respondUpgrade(upgrade: OutgoingContent.ProtocolUpgrade) {
+        if (upgrade !is WebTransportUpgrade) return super.respondUpgrade(upgrade)
+        upgrade.acceptAndRun(h3, Http3Headers(h3Headers().fields.filter { it.first != "content-length" }))
+    }
+}

@@ -43,6 +43,7 @@ public final class io/kuicksilver/ktor/server/KuicksilverApplicationEngine$Confi
 	public final fun getRequestHeaderTimeoutSeconds ()I
 	public final fun getUdpSocketCount ()I
 	public final fun getWebSocketsOverHttp3 ()Z
+	public final fun getWebTransport ()Z
 	public final fun setAltSvc (Z)V
 	public final fun setConnectionIdleTimeoutSeconds (I)V
 	public final fun setConnectionListener (Lio/kuicksilver/quic/ConnectionListener;)V
@@ -59,6 +60,7 @@ public final class io/kuicksilver/ktor/server/KuicksilverApplicationEngine$Confi
 	public final fun setRequestHeaderTimeoutSeconds (I)V
 	public final fun setUdpSocketCount (I)V
 	public final fun setWebSocketsOverHttp3 (Z)V
+	public final fun setWebTransport (Z)V
 	public final fun tlsConnector (Lio/kuicksilver/tls/TlsIdentity;Lkotlin/jvm/functions/Function1;)V
 	public static synthetic fun tlsConnector$default (Lio/kuicksilver/ktor/server/KuicksilverApplicationEngine$Configuration;Lio/kuicksilver/tls/TlsIdentity;Lkotlin/jvm/functions/Function1;ILjava/lang/Object;)V
 }
@@ -108,5 +110,12 @@ public final class io/kuicksilver/ktor/server/KuicksilverTlsConnector$Builder {
 
 public final class io/kuicksilver/ktor/server/PeerCertificatesKt {
 	public static final fun getPeerCertificates (Lio/ktor/server/request/ApplicationRequest;)Ljava/util/List;
+}
+
+public final class io/kuicksilver/ktor/server/WebTransportRoutingKt {
+	public static final field WEB_TRANSPORT_HANDLER_FAILED J
+	public static final fun sameHostOrigin (Ljava/lang/String;Lio/ktor/server/application/ApplicationCall;)Z
+	public static final fun webTransport (Lio/ktor/server/routing/Route;Ljava/lang/String;Ljava/util/List;Lkotlin/jvm/functions/Function2;Lkotlin/jvm/functions/Function2;)Lio/ktor/server/routing/Route;
+	public static synthetic fun webTransport$default (Lio/ktor/server/routing/Route;Ljava/lang/String;Ljava/util/List;Lkotlin/jvm/functions/Function2;Lkotlin/jvm/functions/Function2;ILjava/lang/Object;)Lio/ktor/server/routing/Route;
 }
 
