@@ -256,6 +256,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   slow reader's last `Connection: close` response is not cut, and aborted after the same deadline without progress.
   Progress counts, not the length of the response, as with nginx's `send_timeout`: the engine sees it about 1 MiB at a
   time, so the 5 minutes keep clients down to about 3.4 KiB/s (EDGE, throttled plans) served as before.
+- Ktor server, HTTP/1.1: a pipelined response whose handler failed before the writer reached it (it waited behind an
+  earlier response) was skipped: the writer took the failed channel for an ended one, wrote nothing for it and went on,
+  so the client took the next request's response for the failed one's. Such a response now ends the connection with
+  its failure, as one that fails while it is written does.
 - Ktor server, HTTP/1.1: empty lines before a request line (RFC 9112 section 2.2) made a connection that then went
   quiet count as a started request, which got 408 at the header deadline; they are skipped, and such a connection is
   closed without a response like an idle one.
