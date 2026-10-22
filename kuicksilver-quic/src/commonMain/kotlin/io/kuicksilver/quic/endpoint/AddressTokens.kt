@@ -10,6 +10,7 @@ import io.kuicksilver.quic.wire.ConnectionId
 import io.kuicksilver.tls.QuicCrypto
 import io.kuicksilver.tls.TokenKey
 import kotlin.concurrent.atomics.AtomicInt
+import kotlin.concurrent.atomics.AtomicReference
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.concurrent.atomics.decrementAndFetch
 import kotlin.random.Random
@@ -112,9 +113,9 @@ internal class AddressTokens(
 
     /**
      * One fingerprint per accepted NEW_TOKEN nonce for as long as the token lives (entries last between one and two lifetimes); made
-     * on the first token shown, so a server nobody returns to holds no 1 MiB for it.
+     * on the first token shown, outside the lock (1 MiB), so a server nobody returns to holds no memory for it.
      */
-    private var replay: ZeroRttReplayRegister? = register
+    private val replay = AtomicReference(register)
 
     init {
         keys[0] = crypto.newTokenKey()
@@ -122,7 +123,9 @@ internal class AddressTokens(
     }
 
     private inline fun <T> locked(block: () -> T): T {
-        while (!lock.compareAndSet(0, 1)) { /* a seal or an open per holder: spin */ }
+        // held for one AEAD seal or open (a microsecond) and a few array writes, never across a suspension or a key setup: a
+        // blocking lock would cost more than the wait
+        while (!lock.compareAndSet(0, 1)) { /* spin */ }
         try {
             check(!closed) { "address tokens closed" }
             return block()
@@ -131,21 +134,40 @@ internal class AddressTokens(
         }
     }
 
-    /** Moves to the key generation of [now] (the loops' clocks may differ by microseconds: never backwards). */
-    private fun rotate(now: TimeMark) {
+    /** The key generation of [now], or -1 when the current one covers it (the loops' clocks may differ by microseconds: never backwards). */
+    private fun generationToMake(now: TimeMark): Long {
         if (epoch == TimeMark.NEVER) {
             epoch = now
-            return
+            return -1
         }
         val elapsed = now - epoch
-        if (!elapsed.isPositive()) return
+        if (!elapsed.isPositive()) return -1
         val g = elapsed.inWholeNanoseconds / rotateEvery.inWholeNanoseconds
-        if (g <= current) return
-        current = g
-        val slot = (g % ring).toInt()
-        keys[slot]?.close()
-        keys[slot] = crypto.newTokenKey()
-        generations[slot] = g
+        return if (g <= current) -1 else g
+    }
+
+    /**
+     * Moves to the key generation of [now]. The new key is made, and the one it replaces freed, outside the lock: the lock only
+     * ever covers an AEAD seal or open and a few array writes, never an OpenSSL key setup.
+     */
+    private fun rotate(now: TimeMark) {
+        val g = locked { generationToMake(now) }
+        if (g < 0) return
+        val made = crypto.newTokenKey()
+        val unused =
+            locked {
+                if (g <= current) {
+                    made // another loop moved there first
+                } else {
+                    current = g
+                    val slot = (g % ring).toInt()
+                    val old = keys[slot]
+                    keys[slot] = made
+                    generations[slot] = g
+                    old // out of reach now: every use of a key happens under the lock
+                }
+            }
+        unused?.close()
     }
 
     private fun key(generation: Long): TokenKey? {
@@ -203,9 +225,9 @@ internal class AddressTokens(
         client: InetSocketAddress,
         version: Int,
         now: TimeMark,
-    ): ByteArray =
-        locked {
-            rotate(now)
+    ): ByteArray {
+        rotate(now)
+        return locked {
             val nonce = random.nextLong()
             val plain = ByteArray(8 + 1 + odcid.length + 1 + retryScid.length)
             issuedAt(now).copyInto(plain, 0)
@@ -215,18 +237,20 @@ internal class AddressTokens(
             retryScid.copyToArray(plain, 10 + odcid.length)
             token(RETRY, nonce, key(current)!!.seal(nonce, retryAad(client, version), plain))
         }
+    }
 
     /** A NEW_TOKEN token for [client]'s IP (RFC 9000 section 19.7); only when [newTokenLifetime] is set. */
     fun mintNewToken(
         client: InetSocketAddress,
         now: TimeMark,
-    ): ByteArray =
-        locked {
-            checkNotNull(newTokenLifetime) { "this server issues no NEW_TOKEN tokens" }
-            rotate(now)
+    ): ByteArray {
+        checkNotNull(newTokenLifetime) { "this server issues no NEW_TOKEN tokens" }
+        rotate(now)
+        return locked {
             val nonce = ((current and 0xff) shl 56) or (random.nextLong() ushr 8)
             token(NEW_TOKEN, nonce, key(current)!!.seal(nonce, newTokenAad(client), issuedAt(now)))
         }
+    }
 
     fun check(
         token: PacketBuffer,
@@ -266,9 +290,9 @@ internal class AddressTokens(
         val sealed = ByteArray(len - 9)
         token.copyTo(sealed, off + 9, 0, sealed.size)
         val a = retryAad(client, version)
+        rotate(now)
         val plain =
             locked {
-                rotate(now)
                 key(current)?.open(nonce, a, sealed) ?: key(current - 1)?.open(nonce, a, sealed)
             } ?: return TokenCheck.Invalid
         if (plain.size < 10) return TokenCheck.Invalid
@@ -297,9 +321,9 @@ internal class AddressTokens(
         val nonce = nonceOf(token, off)
         val sealed = ByteArray(len - 9)
         token.copyTo(sealed, off + 9, 0, sealed.size)
+        rotate(now)
         val plain =
             locked {
-                rotate(now)
                 // the newest generation whose low byte the nonce names
                 val generation = current - ((current - (nonce ushr 56)) and 0xff)
                 key(generation)?.open(nonce, newTokenAad(client), sealed)
@@ -327,13 +351,19 @@ internal class AddressTokens(
         now: TimeMark,
     ): Boolean {
         val lifetime = newTokenLifetime ?: return false
-        val r = locked { replay ?: ZeroRttReplayRegister(random, halfSpan = lifetime).also { replay = it } }
+        val r =
+            replay.load() ?: run {
+                val k0 = locked { random.nextLong() } // the SipHash keys: [random] is shared, the rest happens unlocked
+                val k1 = locked { random.nextLong() }
+                val made = ZeroRttReplayRegister(k0, k1, halfSpan = lifetime)
+                if (replay.compareAndSet(null, made)) made else replay.load()!!
+            }
         return r.admit(nonceBytes(nonce), now)
     }
 
     /** Forgets [nonce]: the Initial that carried it created no connection, so the client may show it again. */
     fun releaseNewToken(nonce: Long) {
-        locked { replay }?.release(nonceBytes(nonce))
+        replay.load()?.release(nonceBytes(nonce))
     }
 
     /** Called once by every owner (each loop's endpoint core); the last one frees the keys. */

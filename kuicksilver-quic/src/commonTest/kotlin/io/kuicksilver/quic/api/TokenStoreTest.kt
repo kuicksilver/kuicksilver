@@ -367,6 +367,37 @@ class TokenStoreTest {
             }
         }
 
+    @Test fun negative_hangingStoreDoesNotHoldConnect(): Unit =
+        runBlocking {
+            // a store whose calls never return: connect goes on without a token after the bound, and says so once
+            setup(admission = ConnectionAdmission.default()).use { s ->
+                withTimeout(20.seconds) {
+                    val puts = Channel<Unit>(Channel.UNLIMITED)
+                    val store =
+                        object : QuicTokenStore {
+                            override suspend fun put(
+                                key: String,
+                                token: ByteArray,
+                            ) {
+                                try {
+                                    kotlinx.coroutines.awaitCancellation()
+                                } finally {
+                                    puts.trySend(Unit) // cancelled by the bound
+                                }
+                            }
+
+                            override suspend fun take(key: String): ByteArray? = kotlinx.coroutines.awaitCancellation()
+                        }
+                    connectOnce(s, store)
+                    puts.receive()
+                    connectOnce(s, store)
+                    val warned = generateSequence { s.warnings.tryReceive().getOrNull() }.toList()
+                    assertEquals(1, warned.count { "took more than" in it }, "logged once per endpoint loop: $warned")
+                    assertEquals(0L, s.client.stats.uncaughtFailures)
+                }
+            }
+        }
+
     @Test fun tokenFromOneLoopValidOnAnother(): Unit =
         runBlocking {
             // a group's loops share their token keys: the token loop 0 issued validates the client on loop 1 (another socket)

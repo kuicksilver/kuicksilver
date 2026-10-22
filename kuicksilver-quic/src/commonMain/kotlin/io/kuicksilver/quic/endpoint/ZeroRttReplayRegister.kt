@@ -21,7 +21,9 @@ import kotlin.time.Duration.Companion.seconds
  */
 @OptIn(ExperimentalAtomicApi::class)
 internal class ZeroRttReplayRegister(
-    random: Random,
+    /** The SipHash key of the fingerprints, from a CSPRNG. */
+    private val k0: Long,
+    private val k1: Long,
     /** Stripes (a power of two); tests and the fuzzer shrink the layout so that fills and rotations are cheap to reach. */
     private val stripeCount: Int = STRIPES,
     /** Slots per half (a power of two). */
@@ -38,11 +40,16 @@ internal class ZeroRttReplayRegister(
         require(halfSpan.isPositive()) { "halfSpan must be positive" }
     }
 
+    /** A register keyed from [random] (two values, in this order). */
+    constructor(
+        random: Random,
+        stripeCount: Int = STRIPES,
+        slots: Int = SLOTS,
+        halfSpan: Duration = HALF_SPAN,
+    ) : this(random.nextLong(), random.nextLong(), stripeCount, slots, halfSpan)
+
     /** Fingerprints (live plus tombstones) a half holds before it compacts or fails closed: 3/4 of [slots]. */
     private val limit = slots * 3 / 4
-
-    private val k0 = random.nextLong()
-    private val k1 = random.nextLong()
 
     private class Stripe(
         slots: Int,

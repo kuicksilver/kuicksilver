@@ -635,7 +635,13 @@ internal class EndpointLoop private constructor(
         // started even when the scope is cancelled meanwhile, like storeTicket: a token that arrived is still offered to the store
         scope.launch(start = kotlinx.coroutines.CoroutineStart.ATOMIC) {
             try {
-                store.put(key, token)
+                // bounded like take: a store that hangs must not keep coroutines (and tokens) around for good
+                var done = false
+                withTimeoutOrNull(TOKEN_STORE_TIMEOUT) {
+                    store.put(key, token)
+                    done = true
+                }
+                if (!done) tokenStoreSlow("put", key)
             } catch (e: Throwable) {
                 // the loop's own cancellation goes on; anything else, a CancellationException of the store's included, is its failure
                 if (e is CancellationException) currentCoroutineContext().ensureActive()
@@ -644,13 +650,35 @@ internal class EndpointLoop private constructor(
         }
     }
 
-    /** A token for the next connection to [key] from the configured store (in the caller's coroutine), or null; a failing store is logged and ignored. */
+    private val tokenStoreSlowLogged = AtomicInt(0)
+
+    /** A token store call ran past [TOKEN_STORE_TIMEOUT]: the connection goes on without it; logged once per endpoint loop. */
+    private fun tokenStoreSlow(
+        call: String,
+        key: String,
+    ) {
+        if (!tokenStoreSlowLogged.compareAndSet(0, 1)) return
+        observer.logger.emit(LogLevel.Warn) {
+            "token store $call for $key took more than $TOKEN_STORE_TIMEOUT; going on without it (logged once per endpoint loop)"
+        }
+    }
+
+    /**
+     * A token for the next connection to [key] from the configured store (in the caller's coroutine), or null: a store that fails
+     * or takes longer than [TOKEN_STORE_TIMEOUT] is logged and the connection goes on without a token.
+     */
     private suspend fun takeToken(
         store: io.kuicksilver.quic.QuicTokenStore,
         key: String,
     ): ByteArray? =
         try {
-            store.take(key)?.takeIf { it.isNotEmpty() && it.size <= ConnectionCore.MAX_KEPT_TOKEN }
+            var done = false
+            val token =
+                withTimeoutOrNull(TOKEN_STORE_TIMEOUT) {
+                    store.take(key).also { done = true }
+                }
+            if (!done) tokenStoreSlow("take", key)
+            token?.takeIf { it.isNotEmpty() && it.size <= ConnectionCore.MAX_KEPT_TOKEN }
         } catch (e: Throwable) {
             if (e is CancellationException) currentCoroutineContext().ensureActive() // the caller's cancellation goes on
             observer.logger.emit(LogLevel.Warn, e) { "token store take failed for $key; connecting without a token" }
@@ -909,6 +937,9 @@ internal class EndpointLoop private constructor(
         /** Bytes per datagram slot of the runtime's batches: the largest UDP payload it sends or receives. */
         const val SLOT_SIZE: Int = 1500
         const val FORWARD_MAX: Int = SLOT_SIZE
+
+        /** How long `connect` waits for `QuicTokenStore.take` (and a stored token for `put`) before going on without it. */
+        val TOKEN_STORE_TIMEOUT: Duration = Duration.parse("250ms")
 
         /** The runtime's slots bound what may be advertised as `max_udp_payload_size` (and so what PMTUD probes): refused above, never silently truncated. */
         internal fun checkPayloadSize(quic: io.kuicksilver.quic.QuicConfig) =

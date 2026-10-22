@@ -119,6 +119,36 @@ class AdmissionTest {
         }
     }
 
+    @Test fun defaultAllowsValidatedAttemptsAboveThresholds() {
+        // the address is already proven (a Retry token or a NEW_TOKEN token): a Retry would only add a round trip, and for a
+        // Retry-token holder it would be a contract violation the endpoint drops
+        assertEquals(
+            AdmissionDecision.Allow,
+            ConnectionAdmission.default().admit(attempt(inflight = 10_000, buffer = Long.MAX_VALUE, validated = true)),
+        )
+    }
+
+    @Test fun defaultUnderLoadAdmitsRetryTokenAndNewTokenHolders() {
+        // maxInflightHandshakes = 0: every unvalidated client gets a Retry; the one that answers it, and one with a NEW_TOKEN, get in
+        val p = EndpointPair(crypto = KslQuicCrypto) { admission = ConnectionAdmission.default(maxInflightHandshakes = 0) }
+        try {
+            val c = p.connect()
+            assertTrue(p.confirmed(c), "the Retry-token holder connects: ${p.closed(c)}")
+            assertEquals(0L, p.server.stats.admissionContractViolations, "no Retry asked of a client that answered one")
+            val retries = p.server.stats.retriesSent
+            assertTrue(retries >= 1)
+            val s = p.server.connections().single()
+            assertTrue(p.runUntil { s.newTokenSendsForTest.isNotEmpty() })
+            val c2 = p.connect()
+            c2.initialToken = s.newTokenSendsForTest[0]
+            assertTrue(p.confirmed(c2), "the NEW_TOKEN holder connects: ${p.closed(c2)}")
+            assertEquals(retries, p.server.stats.retriesSent, "without a Retry")
+            assertEquals(1L, p.server.stats.newTokensAccepted)
+        } finally {
+            p.close()
+        }
+    }
+
     @Test fun handshakeBufferBytesTriggersRetry() {
         assertEquals(AdmissionDecision.Retry, ConnectionAdmission.default().admit(attempt(buffer = 8_388_609)))
         assertEquals(AdmissionDecision.Retry, ConnectionAdmission.default(maxHandshakeBufferBytes = 10).admit(attempt(buffer = 11)))

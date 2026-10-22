@@ -82,9 +82,12 @@ public fun interface ConnectionAdmission {
     /** The ready-made policies: [default] and [AlwaysRetry]. */
     public companion object {
         /**
-         * The default policy: [AdmissionDecision.Retry] when the attempt would be more than [maxInflightHandshakes]
-         * concurrent handshakes (the 257th with the defaults) or the unfinished handshakes already hold more than
-         * [maxHandshakeBufferBytes]; [AdmissionDecision.Allow] otherwise.
+         * The default policy: [AdmissionDecision.Allow] for an attempt whose address a token already validated
+         * ([ConnectionAttempt.addressValidated]: a Retry or NEW_TOKEN token), since a Retry would only cost it a round trip;
+         * otherwise [AdmissionDecision.Retry] when the attempt would be more than [maxInflightHandshakes] concurrent
+         * handshakes (the 257th with the defaults) or the unfinished handshakes already hold more than
+         * [maxHandshakeBufferBytes], and [AdmissionDecision.Allow] below that. The hard limits (`maxConnections`,
+         * `maxConnectionsPerIp`, `acceptQueue`) still apply to validated clients.
          */
         public fun default(
             maxInflightHandshakes: Int = 256,
@@ -94,8 +97,8 @@ public fun interface ConnectionAdmission {
                 "maxInflightHandshakes and maxHandshakeBufferBytes must not be negative"
             }
             return ConnectionAdmission { a ->
-                if (a.inflightHandshakes >= maxInflightHandshakes ||
-                    a.handshakeBufferBytes > maxHandshakeBufferBytes
+                if (!a.addressValidated &&
+                    (a.inflightHandshakes >= maxInflightHandshakes || a.handshakeBufferBytes > maxHandshakeBufferBytes)
                 ) {
                     AdmissionDecision.Retry
                 } else {

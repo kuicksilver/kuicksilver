@@ -214,8 +214,13 @@ val next = client.connect(addr, config)     // its Initials carry the token: no 
 - **Bounds.** A connection keeps at most eight NEW_TOKEN tokens of at most 1024 bytes each; every further NEW_TOKEN
   frame spends a glitch token ([Glitch protection](#glitch-protection)). `MemoryTokenStore` keeps the newest
   `tokensPerServer` per key and the `maxServers` keys used most recently (quic-go's LRU store).
-- **Your own store.** `take` runs in the coroutine that calls `connect` (which waits for it), `put` on the endpoint
-  loop; both should be quick. A store that throws is logged as a warning and the connection goes on without a token. A token presented to a server that no
+- **Your own store.** `take` runs in the coroutine that calls `connect`, `put` on the endpoint loop; both should be
+  quick. A call that has not returned after 250 ms is cancelled (a warning, once per endpoint loop), and a store that
+  throws is logged as a warning: either way the connection goes on without a token, so `connect` never waits longer
+  than that for the store.
+- **One process.** A server's token keys live only in its process: a token survives neither a server restart nor a
+  move to another server instance behind the same name (no shared keys between processes in 0.3.0). Such a token is
+  treated as absent, so the client only loses the round trip it would have saved. A token presented to a server that no
   longer accepts it (another process, an expired one) costs nothing: the server treats it as absent.
 
 ## Serving many connections
@@ -597,8 +602,9 @@ val config = quicEndpointConfig {
 }
 ```
 
-The default policy asks for a Retry when the attempt would be more than `maxInflightHandshakes` concurrent handshakes
-or the unfinished handshakes already hold more than `maxHandshakeBufferBytes`; `ConnectionAdmission.AlwaysRetry` makes
+The default policy asks an unvalidated client for a Retry when the attempt would be more than `maxInflightHandshakes`
+concurrent handshakes or the unfinished handshakes already hold more than `maxHandshakeBufferBytes`, and always lets in
+a client whose Retry or NEW_TOKEN token already validated its address (the hard limits still apply); `ConnectionAdmission.AlwaysRetry` makes
 every unvalidated client prove its address first. A `Retry` for an attempt whose Retry token already validated the
 address is a contract violation: the endpoint drops the Initial and counts it in `EndpointStats.admissionContractViolations`
 instead of sending a second Retry. An exception out of `admit` is treated as `Drop` and counted the same way. Stateless
@@ -611,7 +617,8 @@ counter, summed over the loops (see [Observability](#observability)).
 connection. A client that shows such a token on a later connection from the same IP address arrives as a validated
 `ConnectionAttempt` (`addressValidated = true`): `AlwaysRetry` lets it in without a Retry, and the server's first flight
 is not held to three times what the client sent. The token is `0x02 | nonce | AEAD(issuedAt)` under keys that live only
-in this process (shared by every loop, rotated hourly), bound to the client's IP address but not its port, valid for
+in this process (shared by every loop, rotated hourly; tokens do not survive a restart and do not work on another
+instance), bound to the client's IP address but not its port, valid for
 `QuicServerConfig.newTokenLifetime` (24 hours; null issues none) and accepted once: a register of the nonces it saw
 (1 MiB, entries kept for the whole lifetime) treats a second use as no token, and so does a full register. A token
 that does not validate (forged, expired, another IP, used before) is never refused with INVALID_TOKEN; the Initial is

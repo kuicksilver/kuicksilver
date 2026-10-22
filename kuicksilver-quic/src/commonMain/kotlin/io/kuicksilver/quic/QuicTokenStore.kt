@@ -20,8 +20,9 @@ import kotlinx.coroutines.sync.withLock
  *
  * The endpoint calls [take] before each connection to the server named by the key, in the coroutine that calls `connect`,
  * and uses what it gets once; it calls [put] on the endpoint loop for each token the server sends (at most eight per
- * connection, each at most 1024 bytes). Neither should block or wait long: `connect` waits for [take]. An exception from
- * either is logged and the connection goes on without a token. Keys are
+ * connection, each at most 1024 bytes). Neither should block: a call that has not finished after 250 ms is cancelled
+ * and the connection goes on without the token (logged once per endpoint loop), so `connect` never waits longer for the
+ * store. An exception from either is logged and the connection goes on without a token. Keys are
  * `"<server name>:<port>"`, or `"<IP literal>:<port>"` without a server name (an IPv6 literal in brackets), so a token is
  * never sent to another server name on the same address (RFC 9000 section 8.1.3: "MUST NOT include a token that is not
  * applicable to the server").

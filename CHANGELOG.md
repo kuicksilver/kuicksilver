@@ -104,6 +104,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Changed
 
+- QUIC: `ConnectionAdmission.default()` lets in every attempt whose address a token already validated
+  (`ConnectionAttempt.addressValidated`: a Retry token, or from 0.3.0 a NEW_TOKEN token), whatever the handshakes in
+  flight and their buffers. Before, under load it asked such a client for a Retry: a NEW_TOKEN holder lost the round
+  trip the token was for, and a client that had just answered a Retry was dropped as a contract violation
+  (`admissionContractViolations`) until the load fell. The hard limits (`maxConnections`, `maxConnectionsPerIp`,
+  `acceptQueue`) still apply.
 - `Http3ErrorCode.isKnown` and `normalize` recognise the WebTransport codes (`WT_SESSION_GONE` and the others now in
   `Http3ErrorCode`): an `Http3Exception` carrying one keeps it instead of reading as `H3_NO_ERROR`.
 - Ktor engines: a WebSocket peer that masks in the wrong direction (a client sending unmasked frames, a server masked
@@ -116,7 +122,6 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - Ktor client: name lookups run at most 8 at a time on their own share of `Dispatchers.IO`, one per name however many
   requests wait for it; an IP address literal is never looked up, and a dotted-decimal string with an octet above 255
   is a name, not an address (one with a leading-zero octet, octal to `inet_aton`, goes to the platform as before).
-
 - HTTP/3 server: `QuicConfig.defaultStreamErrorCode` left at its default 0 (no HTTP/3 error code; a client reads it as
   H3_NO_ERROR, RFC 9114 section 9) becomes H3_REQUEST_REJECTED for `Http3Endpoint` and the Ktor engine's HTTP/3 side. It
   is the code of a request stream the QUIC layer gives up before the server saw it, which a client may then retry
