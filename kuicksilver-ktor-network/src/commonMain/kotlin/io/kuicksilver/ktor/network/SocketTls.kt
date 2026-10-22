@@ -10,6 +10,7 @@ import io.ktor.network.sockets.openReadChannel
 import io.ktor.network.sockets.openWriteChannel
 import io.ktor.utils.io.ByteChannel
 import io.ktor.utils.io.ByteWriteChannel
+import io.ktor.utils.io.InternalAPI
 import io.ktor.utils.io.ReaderJob
 import io.ktor.utils.io.WriterJob
 import io.ktor.utils.io.copyTo
@@ -21,6 +22,7 @@ import io.kuicksilver.tls.TlsConfig
 import io.kuicksilver.tls.TlsConnection
 import io.kuicksilver.tls.TlsException
 import io.kuicksilver.tls.TlsRole
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.GlobalScope
@@ -94,9 +96,29 @@ public class TlsSocket private constructor(
 
     override fun attachForReading(channel: ByteChannel): WriterJob = writer(coroutineContext, channel) { tls.input.copyTo(channel) }
 
+    /**
+     * The application's plaintext goes through the TLS session to the raw socket. When the application's channel fails
+     * (a handler that threw mid-response), or the pump does, the connection is aborted ([abortTls]: no `close_notify`,
+     * the raw socket reset): a `close_notify` and a FIN would end the stream as if complete, and a peer reading a body
+     * delimited by the connection's close would take the cut one for the whole. A channel closed normally ends with
+     * `close_notify` on [close].
+     */
+    @OptIn(InternalAPI::class)
     override fun attachForWriting(channel: ByteChannel): ReaderJob =
         reader(coroutineContext, channel) {
-            channel.copyTo(tls.output)
+            try {
+                // ktor's copyTo, without its close of the destination with the failure: closing the TLS output sends
+                // close_notify, which would race the abort
+                while (true) {
+                    if (channel.readBuffer.exhausted() && !channel.awaitContent()) break
+                    channel.readBuffer.transferTo(tls.output.writeBuffer)
+                    tls.output.flush()
+                }
+                channel.closedCause?.let { throw it }
+            } catch (e: Throwable) {
+                if (e !is CancellationException) abortTls()
+                throw e
+            }
             tls.output.flushAndClose()
         }.also {
             attachedWriter =
@@ -149,9 +171,11 @@ public class TlsSocket private constructor(
      */
     internal fun abortTls() {
         closing = true
-        tls.close()
+        // the raw socket first: the session's close ends its output, and a raw writer still draining would send a FIN
+        // ahead of the reset
         @OptIn(InternalKuicksilverApi::class)
         raw.abort()
+        tls.close()
     }
 
     /** The factory behind [Socket.tls] and [Socket.tlsServer]; internal, so no empty companion is part of the public ABI. */
