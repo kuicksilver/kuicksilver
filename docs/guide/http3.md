@@ -318,7 +318,8 @@ are plain byte channels, and sends and receives datagrams (`trySendDatagram`, `s
 newest 32 kept), which may be lost like any QUIC datagram. Application error codes are 0..2^32-1, for streams
 (`reset`, `stopSending`, reported as `WebTransportException.StreamReset` and `StreamStopped`) and for the session;
 on the wire they travel mapped into the HTTP/3 code space (section 4.4). `close(code, reason)` sends
-WT_CLOSE_SESSION (the reason cut to 1024 bytes of UTF-8), then FIN, and stops the peer's side; either side's close,
+WT_CLOSE_SESSION (the reason cut to 1024 bytes of UTF-8), then FIN, and waits for the peer's FIN (stopping the peer
+after five seconds without it); either side's close,
 the peer's FIN or a failure completes `closed` with the code, the reason or the cause, resets the session's streams
 with `WT_SESSION_GONE`, and frees the connection for a next session. `drain()` asks the peer to wind down;
 `drainRequested` turns true on the peer's request or an HTTP/3 GOAWAY. Writing the close waits at most five seconds

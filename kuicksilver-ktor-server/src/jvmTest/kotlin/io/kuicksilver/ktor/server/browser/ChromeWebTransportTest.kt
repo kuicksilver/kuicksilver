@@ -97,40 +97,50 @@ class ChromeWebTransportTest {
                         webTransport("/wt/server-close") { session -> session.close(9, "server-bye") }
                     }
                 }
-            val profile = Files.createTempDirectory("kuicksilver-chrome").toFile()
-            val output = File(profile, "chrome.log")
-            val process =
-                ProcessBuilder(
-                    listOf(
-                        chrome!!,
-                        "--headless=new",
-                        "--user-data-dir=${profile.absolutePath}",
-                        "--no-first-run",
-                        "--no-default-browser-check",
-                        "--enable-quic",
-                        "--origin-to-force-quic-on=127.0.0.1:$port",
-                        "--ignore-certificate-errors-spki-list=${spkiHash()}",
-                    ) + extraFlags + "https://127.0.0.1:$port/wt/index.html",
-                ).redirectErrorStream(true)
-                    .redirectOutput(output)
-                    .start()
+            var profile: File? = null
+            var process: Process? = null
+            // Ctrl-C or a stopped Gradle daemon must not leave the browser running
+            val reaper = Thread { process?.destroyForcibly() }
+            Runtime.getRuntime().addShutdownHook(reaper)
             try {
-                // the only real-time wait: an external browser process
-                val json = withTimeout(45.seconds) { result.await() }
-                println("Chrome WebTransport result: $json")
-                for (step in listOf("connect", "bidiEcho1MB", "uniFromServer", "datagrams", "clientClose", "serverClose")) {
-                    assertTrue("\"$step\":\"ok\"" in json, "step $step in $json")
+                profile = Files.createTempDirectory("kuicksilver-chrome").toFile()
+                val output = File(profile, "chrome.log")
+                process =
+                    ProcessBuilder(
+                        listOf(
+                            chrome!!,
+                            "--headless=new",
+                            "--user-data-dir=${profile.absolutePath}",
+                            "--no-first-run",
+                            "--no-default-browser-check",
+                            "--enable-quic",
+                            "--origin-to-force-quic-on=127.0.0.1:$port",
+                            "--ignore-certificate-errors-spki-list=${spkiHash()}",
+                        ) + extraFlags + "https://127.0.0.1:$port/wt/index.html",
+                    ).redirectErrorStream(true)
+                        .redirectOutput(output)
+                        .start()
+                try {
+                    // the only real-time wait: an external browser process
+                    val json = withTimeout(45.seconds) { result.await() }
+                    println("Chrome WebTransport result: $json")
+                    for (step in listOf("connect", "bidiEcho1MB", "uniFromServer", "datagrams", "clientClose", "serverClose")) {
+                        assertTrue("\"$step\":\"ok\"" in json, "step $step in $json")
+                    }
+                    assertTrue("\"closeInfo\":{\"code\":9,\"reason\":\"server-bye\"}" in json, json)
+                    val seen = withTimeout(10.seconds) { clientClose.await() }
+                    assertEquals(7L to "bye", seen.code to seen.reason)
+                    assertTrue(withTimeout(10.seconds) { draft02.await() }, "Chrome did not use draft-02")
+                } catch (e: Throwable) {
+                    throw AssertionError("Chrome WebTransport run failed; Chrome's output:\n${output.readText().takeLast(4000)}", e)
                 }
-                assertTrue("\"closeInfo\":{\"code\":9,\"reason\":\"server-bye\"}" in json, json)
-                val seen = withTimeout(10.seconds) { clientClose.await() }
-                assertEquals(7L to "bye", seen.code to seen.reason)
-                assertTrue(withTimeout(10.seconds) { draft02.await() }, "Chrome did not use draft-02")
-            } catch (e: Throwable) {
-                throw AssertionError("Chrome WebTransport run failed; Chrome's output:\n${output.readText().takeLast(4000)}", e)
             } finally {
-                process.destroy()
-                if (!process.waitFor(10, java.util.concurrent.TimeUnit.SECONDS)) process.destroyForcibly()
-                profile.deleteRecursively()
+                process?.let { p ->
+                    p.destroy()
+                    if (!p.waitFor(10, java.util.concurrent.TimeUnit.SECONDS)) p.destroyForcibly()
+                }
+                runCatching { Runtime.getRuntime().removeShutdownHook(reaper) }
+                profile?.deleteRecursively()
                 server.stop(100, 1000)
             }
         }

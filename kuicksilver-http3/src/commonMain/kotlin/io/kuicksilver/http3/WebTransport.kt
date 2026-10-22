@@ -73,9 +73,11 @@ public interface WebTransportSession {
 
     /**
      * Closes the session (section 6): WT_CLOSE_SESSION with [code] (0..2^32-1) and [reason] (cut to 1024 bytes of UTF-8
-     * at a character boundary), then FIN, then STOP_SENDING WT_SESSION_GONE on the CONNECT stream; the session's streams
-     * are reset with WT_SESSION_GONE. Writing the capsule waits at most five seconds for the peer's flow-control credit,
-     * after which the CONNECT stream is reset instead. Calling it on a closed session does nothing.
+     * at a character boundary), then FIN; the session's streams are reset with WT_SESSION_GONE. Returns once the peer's
+     * FIN answered, which ends the CONNECT stream both ways; a peer that does not answer within five seconds is stopped
+     * with STOP_SENDING WT_SESSION_GONE. Writing the capsule waits at most five seconds for the peer's flow-control
+     * credit, after which the CONNECT stream is reset instead. Cancelling the call stops only its wait. Calling it on a
+     * closed session does nothing.
      */
     public suspend fun close(
         code: Long = 0,

@@ -150,7 +150,8 @@ Safari by hand, serve that page and the test's two routes (`/wt/echo`, `/wt/serv
 certificate is valid for at most 14 days and not RSA (browsers pin such a certificate by hash), for example
 `openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -days 13 -nodes -subj /CN=localhost -addext
 subjectAltName=DNS:localhost -keyout wt.key -out wt.pem`, and open `https://localhost:<port>/wt/index.html?hash=<b64>`
-with `<b64>` from `openssl x509 -in wt.pem -outform der | openssl dgst -sha256 -binary | base64`; each step prints
+with `<b64>` from `openssl x509 -in wt.pem -outform der | openssl dgst -sha256 -binary | base64`, accepting the
+browser's certificate warning for the page itself (`serverCertificateHashes` only covers the WebTransport session); each step prints
 `ok` on the page. Record the result in `docs/spec/rfc-compliance.md`, "Interop WebTransport".
 
 ### EngineMain and configuration keys

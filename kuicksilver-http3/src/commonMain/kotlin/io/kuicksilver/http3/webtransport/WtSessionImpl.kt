@@ -171,7 +171,8 @@ internal class WtSessionImpl(
                 for (s in streams.toList()) s.gone()
                 streams.clear()
                 datagramsIn.close()
-                watchers.forEach { if (it !== caller) it.cancel() }
+                // the capsule reader (the first watcher) goes on to the peer's FIN, which ends the CONNECT stream's other side
+                watchers.drop(1).forEach { if (it !== caller) it.cancel() }
                 when (end) {
                     // in the connection's scope: cancelling close() stops only its wait, the CONNECT is ended all the same
                     End.Locally -> {
@@ -196,8 +197,9 @@ internal class WtSessionImpl(
 
     /**
      * Ends the CONNECT stream: [closeCapsule] if any, then FIN, both within [CLOSE_TIMEOUT] (the peer's flow-control
-     * credit has no deadline of its own: the stream is reset when it runs out), then STOP_SENDING WT_SESSION_GONE, so the
-     * receive side ends too even when the peer never sends its FIN.
+     * credit has no deadline of its own: the stream is reset when it runs out); then waits as long for the peer's FIN,
+     * and only when it does not come sends STOP_SENDING WT_SESSION_GONE, so the receive side ends either way. Stopping at
+     * once raced the peer's reading of our capsule: Chrome then reported a lost connection instead of the close code.
      */
     private suspend fun endConnect(closeCapsule: ByteArray?) {
         val written =
@@ -213,11 +215,9 @@ internal class WtSessionImpl(
                 true
             }
         if (written == null) runCatching { stream.reset(Http3ErrorCode.WT_SESSION_GONE) }
-        if (closeCapsule == null) {
-            // the peer closed: give its FIN the same time to arrive before stopping it; once it came there is nothing to stop
-            withTimeoutOrNull(CLOSE_TIMEOUT) { watchers.firstOrNull()?.join() }
-            if (peerFinished) return
-        }
+        // the peer's FIN answers a close (ours or its own capsule's): once it came there is nothing to stop
+        withTimeoutOrNull(CLOSE_TIMEOUT) { watchers.firstOrNull()?.join() }
+        if (peerFinished) return
         runCatching { stream.stopSending(Http3ErrorCode.WT_SESSION_GONE) }
     }
 

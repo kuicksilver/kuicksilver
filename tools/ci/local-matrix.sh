@@ -4,18 +4,20 @@
 # The CI matrix on the owner's macOS host: the same steps as .github/workflows/build.yml, with the same names and
 # the same module and interop case lists (tools/ci/matrix.sh), so moving to GitHub Actions is a change of runner, not of scripts. Docker provides Linux and mingw; the Android
 # emulator must be running for the device steps.
-# Usage: [KSL_GATE_WORKERS=n] tools/ci/local-matrix.sh [--dry-run] [--skip-android] [--skip-docker] [--with-interop] [--with-windows]
+# Usage: [KSL_GATE_WORKERS=n] tools/ci/local-matrix.sh [--dry-run] [--skip-android] [--skip-docker] [--with-interop] [--with-windows] [--with-browser]
 # --with-interop also runs the QUIC Interop Runner against every peer with both images (tools/interop/run-local.sh --check-required): hours, needs the peer images.
 # --with-windows also runs the JVM suites in the owner's Windows 11 VM against the mingw-w64 dll (CI's windows-jvm job) with
 #   $KSL_WIN_JVM_TEST (default ~/.kuicksilver-tools/win-jvm-test, Parallels; outside the repository).
+# --with-browser also runs ChromeWebTransportTest against the installed Chrome (headless; skipped by the test itself
+#   when no Chrome or Chromium is installed).
 # Gate record: every run but a dry run writes build/ci/gate/<commit>.stamp (commit, options, each step's result, result=pass
 # only when every step passed and the tree was clean and on the same commit from start to end). tools/release/local-release.sh
 # releases only a commit whose stamp says pass with no --skip-* and with --with-interop --with-windows.
 set -uo pipefail
 root="$(cd "$(dirname "$0")/../.." && pwd)"; cd "$root" || exit 2
 . tools/ci/matrix.sh
-dry=0; skip_android=0; skip_docker=0; with_interop=0; with_windows=0
-for a in "$@"; do case "$a" in --dry-run) dry=1 ;; --skip-android) skip_android=1 ;; --skip-docker) skip_docker=1 ;; --with-interop) with_interop=1 ;; --with-windows) with_windows=1 ;; esac; done
+dry=0; skip_android=0; skip_docker=0; with_interop=0; with_windows=0; with_browser=0
+for a in "$@"; do case "$a" in --dry-run) dry=1 ;; --skip-android) skip_android=1 ;; --skip-docker) skip_docker=1 ;; --with-interop) with_interop=1 ;; --with-windows) with_windows=1 ;; --with-browser) with_browser=1 ;; esac; done
 # Kotlin incremental compilation is off: a gate must not trust compiler state left by earlier builds in this checkout
 # (Kotlin 2.4.20's classpath-snapshot diff failed on stale state in a gate run, 2026-10-16).
 G="./gradlew --max-workers=${KSL_GATE_WORKERS:-2} -q -Pkotlin.incremental=false"; failed=0; n=0; results=""
@@ -125,6 +127,9 @@ fi
 if [ "$with_windows" = 1 ]; then
 step "windows: jvm module tests (VM, mingw dll)"  win_jvm
 fi
+if [ "$with_browser" = 1 ]; then
+step "browser: Chrome WebTransport (headless)"  $G :kuicksilver-ktor-server:jvmTest --tests '*ChromeWebTransportTest*' -Pkuicksilver.browserTests=true
+fi
 if [ "$dry" = 0 ]; then   # the gate record (see the header)
   head1=$(git rev-parse HEAD 2>/dev/null || echo unknown); dirty1=$(git status --porcelain 2>/dev/null | head -5)
   tree=clean; [ -z "$dirty0$dirty1" ] || tree=dirty; [ "$head0" = "$head1" ] || tree="moved to $head1"
@@ -132,7 +137,7 @@ if [ "$dry" = 0 ]; then   # the gate record (see the header)
   mkdir -p build/ci/gate
   { echo "commit=$head0"; echo "result=$result"; echo "tree=$tree"; echo "started=$started"; echo "finished=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     echo "host=$(uname -sm)"; echo "skip_android=$skip_android"; echo "skip_docker=$skip_docker"; echo "with_interop=$with_interop"
-    echo "with_windows=$with_windows"; echo "steps=$n"; echo "failed=$failed"; printf '%s' "$results"; } > "build/ci/gate/$head0.stamp"
+    echo "with_windows=$with_windows"; echo "with_browser=$with_browser"; echo "steps=$n"; echo "failed=$failed"; printf '%s' "$results"; } > "build/ci/gate/$head0.stamp"
   echo "gate record: build/ci/gate/$head0.stamp (result=$result, tree $tree)"
 fi
 echo; if [ "$failed" = 0 ]; then echo "local matrix: all $n steps passed"; else echo "local matrix: $failed of $n steps failed"; exit 1; fi
