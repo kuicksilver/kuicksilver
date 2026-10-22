@@ -106,6 +106,7 @@ internal class KuicksilverEngine(
     }
 
     override fun close() {
+        h3.refuseDedicated() // at once, so a WebTransport call after close() fails instead of binding an endpoint
         reaper.cancel()
         engineJob.complete()
         super.close()

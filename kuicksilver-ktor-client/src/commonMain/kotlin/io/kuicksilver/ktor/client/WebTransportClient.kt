@@ -51,8 +51,6 @@ public suspend fun HttpClient.webTransport(
             ?: throw IllegalStateException("webTransport needs the Kuicksilver engine, not ${engine::class.simpleName}")
     val url = Url(urlString)
     require(url.protocol == URLProtocol.HTTPS) { "WebTransport needs an https URL, not ${url.protocol.name}" }
-    // after HttpClient.close() the engine's pools are being torn down: a session would bind an endpoint nothing closes
-    check(engine.coroutineContext[kotlinx.coroutines.Job]?.isActive != false) { "the client is closed" }
     // NOTE(U.2a): the HTTP/3 kill switch must refuse WebTransport here the same way
     if (engine.config.http3.discovery == Http3DiscoveryMode.H1Only) {
         throw UnsupportedOperationException("WebTransport needs HTTP/3, which http3 { discovery = H1Only } turns off")

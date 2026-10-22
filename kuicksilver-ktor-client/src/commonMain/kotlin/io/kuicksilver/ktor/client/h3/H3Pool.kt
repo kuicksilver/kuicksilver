@@ -176,6 +176,7 @@ internal class H3Pool(
         }
     }
 
+    @kotlin.concurrent.Volatile
     private var endpoint: Http3Endpoint? = null
     private val connections = HashMap<String, H3Entry>()
 
@@ -275,6 +276,7 @@ internal class H3Pool(
         port: Int,
         connectTimeoutMillis: Long,
     ): Http3Connection {
+        check(!refusingDedicated && !closed) { "the client is closed" }
         while (true) {
             val n = dedicatedCount.value
             check(n < maxDedicated) { "maxWebTransportSessions ($maxDedicated) WebTransport sessions are open on this client" }
@@ -310,8 +312,10 @@ internal class H3Pool(
                 .markNow()
         val tls = config.tlsConfigFor(originHost, listOf(Http3Endpoint.H3))
         var last: Throwable? = null
+        // set inside the timeouts: a handshake that completes as a timeout fires still lands here, never orphaned
+        var made: Http3Connection? = null
         try {
-            return withTimeout(connectTimeoutMillis) {
+            withTimeout(connectTimeoutMillis) {
                 val addresses = config.newRequestDns().lookup(originHost, port)
                 for ((i, a) in addresses.withIndex()) {
                     val left = connectTimeoutMillis - start.elapsedNow().inWholeMilliseconds
@@ -319,24 +323,39 @@ internal class H3Pool(
                     val share = maxOf(1L, left / (addresses.size - i))
                     val q = quicWithin(share).let { if (it.resetStreamAt) it else it.toBuilder().apply { resetStreamAt = true }.build() }
                     try {
-                        withTimeoutOrNull(
-                            share,
-                        ) { ep.connect(InetSocketAddress(a.hostText, a.port), tls, q, settings) }?.let { return@withTimeout it }
+                        withTimeoutOrNull(share) { made = ep.connect(InetSocketAddress(a.hostText, a.port), tls, q, settings) }
                     } catch (e: CancellationException) {
                         throw e
                     } catch (e: Throwable) {
                         last = e // this address failed: the next one gets the rest of the time
                     }
+                    if (made != null) return@withTimeout
                 }
-                // every address failed or ran out of its share: the last failure, or the connect timeout
-                throw last ?: ConnectTimeoutException("https://$originHost:$port", connectTimeoutMillis, null)
             }
         } catch (e: TimeoutCancellationException) {
-            throw ConnectTimeoutException("https://$originHost:$port", connectTimeoutMillis, last ?: e)
+            if (made == null) throw ConnectTimeoutException("https://$originHost:$port", connectTimeoutMillis, last ?: e)
+        } catch (e: Throwable) {
+            made?.let { withContext(NonCancellable) { runCatching { it.close(io.kuicksilver.http3.Http3ErrorCode.NO_ERROR, "") } } }
+            throw e
         }
+        // every address failed or ran out of its share: the last failure, or the connect timeout
+        return made ?: throw (last ?: ConnectTimeoutException("https://$originHost:$port", connectTimeoutMillis, null))
+    }
+
+    /**
+     * Set by the engine's `close()` itself, before its asynchronous cleanup: no new WebTransport session starts then.
+     * Requests already running keep the endpoint until the cleanup ([close]) ends it.
+     */
+    @kotlin.concurrent.Volatile
+    private var refusingDedicated = false
+
+    /** The client is closing: [dedicated] refuses from now on. */
+    fun refuseDedicated() {
+        refusingDedicated = true
     }
 
     fun close() {
+        refusingDedicated = true
         closed = true
         endpoint?.close()
         endpoint = null
@@ -402,14 +421,16 @@ internal class H3Pool(
             }
         val d = e.deferred
         if (connect) {
+            // set inside the timeout: a handshake that completes as the timeout fires is closed, never orphaned
+            var made: Http3Connection? = null
             try {
                 beforeSetupForTest?.invoke()
-                val c =
-                    withTimeout(data.connectTimeoutMillis(config)) {
-                        // the first address of the request's resolution (the h3/h1 race covers a broken family; no
-                        // race between addresses over QUIC), as a literal the endpoint does not look up again
-                        val remote = dns.lookup(t.host, t.port).first().let { InetSocketAddress(it.hostText, it.port) }
-                        @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+                withTimeout(data.connectTimeoutMillis(config)) {
+                    // the first address of the request's resolution (the h3/h1 race covers a broken family; no
+                    // race between addresses over QUIC), as a literal the endpoint does not look up again
+                    val remote = dns.lookup(t.host, t.port).first().let { InetSocketAddress(it.hostText, it.port) }
+                    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+                    made =
                         if (config.http3.earlyData) {
                             // returns as soon as 0-RTT keys exist: the connect timeout still bounds the setup, through
                             // the handshake timer (a request sent early then fails, and falls back, at that time)
@@ -427,7 +448,8 @@ internal class H3Pool(
                                 config.http3.settings,
                             )
                         }
-                    }
+                }
+                val c = made!!
                 e.idleSince.store(clock())
                 if (events.enabled) {
                     lock.withLock {
@@ -439,16 +461,19 @@ internal class H3Pool(
             } catch (
                 x: TimeoutCancellationException,
             ) {
+                made?.close()
                 d.completeExceptionally(ConnectTimeoutException(data, x))
                 forget(t, e)
             } catch (
                 x: CancellationException,
             ) {
+                made?.close()
                 // only this caller is cancelled: the others waiting on d start a new setup (cancelling d would cancel them too)
                 d.completeExceptionally(SetupAbandoned(x))
                 withContext(NonCancellable) { forget(t, e) }
                 throw x
             } catch (x: Throwable) {
+                if (!d.isCompleted) made?.close()
                 d.completeExceptionally(x)
                 forget(t, e)
             }

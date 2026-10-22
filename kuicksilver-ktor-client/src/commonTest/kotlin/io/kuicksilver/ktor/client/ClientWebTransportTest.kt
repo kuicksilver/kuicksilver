@@ -160,8 +160,9 @@ class ClientWebTransportTest {
         clientTest {
             val client = testClient(Http3DiscoveryMode.Auto)
             val engine = client.engine as KuicksilverEngine
-            client.close()
-            assertFailsWith<IllegalStateException> { client.webTransport("https://127.0.0.1:1/wt") }
+            client.close() // refuses at once, before the engine's asynchronous cleanup
+            val e = assertFailsWith<IllegalStateException> { client.webTransport("https://127.0.0.1:1/wt") }
+            assertEquals("the client is closed", e.message)
             assertFalse(engine.h3.endpointBoundForTest)
             assertEquals(0, engine.dedicated().value)
         }
