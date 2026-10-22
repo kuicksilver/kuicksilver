@@ -50,17 +50,21 @@ class H3FrameFuzzTest {
         }
     }
 
-    /** Capsules (RFC 9297 section 3.2) split at an input-chosen point: the parser never holds more than one known capsule. */
+    /**
+     * Capsules (RFC 9297 section 3.2) split at an input-chosen point, then the stream's FIN: the parser never holds more
+     * than one capsule within its limits, and a cut capsule is only ever an H3ProtocolError.
+     */
     @FuzzTest(maxDuration = "60s")
     fun capsules(data: ByteArray) {
         if (data.isEmpty()) return
         val cut = (data[0].toInt() and 0xff) % data.size
-        val parser = CapsuleParser(maxCapsuleLength = 4096)
+        val parser = CapsuleParser(maxCapsuleLength = 4096, maxDatagramLength = 1024, known = setOf(0x00, 0x2843))
         try {
             parser.feed(data, 1, maxOf(0, cut - 1)) { _, _ -> }
-            parser.feed(data, maxOf(1, cut), data.size - maxOf(1, cut)) { _, b ->
-                assertTrue(b.size <= 4096)
+            parser.feed(data, maxOf(1, cut), data.size - maxOf(1, cut)) { t, b ->
+                assertTrue(b.size <= if (t == CapsuleParser.DATAGRAM) 1024 else 4096)
             }
+            parser.endOfStream()
         } catch (_: H3ProtocolError) {
         }
         assertTrue(parser.maxBuffered <= 4096)

@@ -7,12 +7,21 @@ import io.kuicksilver.http3.frame.H3ProtocolError
 import io.kuicksilver.http3.frame.VarInt
 
 /**
- * The Capsule Protocol of RFC 9297 section 3.2 over the data of a stream: type, length, value. Known capsules (DATAGRAM,
- * 0x00) are delivered whole up to [maxCapsuleLength]; unknown ones are skipped as their bytes arrive, never buffered
- * (section 3.2: unknown types are silently dropped). Base for WebTransport after v1.
+ * The Capsule Protocol of RFC 9297 section 3.2 over the data of a stream: type, length, value. Sans-IO: the caller feeds
+ * the stream's bytes as they arrive and calls [endOfStream] at its FIN.
+ *
+ * - Types in [known] are delivered whole; one longer than [maxCapsuleLength] is a stream error H3_MESSAGE_ERROR.
+ * - A DATAGRAM capsule (0x00) in [known] is bounded by [maxDatagramLength] alone: a longer one is skipped as its bytes
+ *   arrive and counted in [skippedDatagrams] (section 3.5: an endpoint that cannot handle a datagram drops it).
+ * - Other types are skipped as their bytes arrive, never buffered (section 3.2: unknown types are silently dropped).
+ * - A stream that ends inside a capsule, value or header, is a malformed message (section 3.3): [endOfStream] throws.
+ *
+ * At most one capsule value is held at a time, so memory is bounded by `max(maxCapsuleLength, maxDatagramLength)`
+ * whatever lengths the peer announces.
  */
 internal class CapsuleParser(
     private val maxCapsuleLength: Long = 65_536,
+    private val maxDatagramLength: Long = 65_536,
     private val known: Set<Long> = setOf(DATAGRAM),
 ) {
     private val header = ByteArray(16)
@@ -23,15 +32,19 @@ internal class CapsuleParser(
     private var payload: ByteArray? = null
     private var filled = 0
 
-    /** Largest buffer held at once (tests check that unknown capsules are not buffered). */
+    /** Largest buffer held at once (tests check that unknown and oversized capsules are not buffered). */
     var maxBuffered: Int = 0
+        private set
+
+    /** DATAGRAM capsules longer than `maxDatagramLength`, dropped without buffering. */
+    var skippedDatagrams: Long = 0
         private set
 
     fun feed(
         bytes: ByteArray,
         off: Int,
         len: Int,
-        out: (type: Long, payload: ByteArray) -> Unit,
+        out: (type: Long, value: ByteArray) -> Unit,
     ) {
         var p = off
         val end = off + len
@@ -46,13 +59,25 @@ internal class CapsuleParser(
                 headerLen = 0
                 type = t
                 remaining = l
-                skipping = t !in known
-                if (!skipping) {
-                    if (l >
-                        maxCapsuleLength
-                    ) {
-                        throw H3ProtocolError(Http3ErrorCode.MESSAGE_ERROR, "capsule of $l bytes above $maxCapsuleLength")
+                skipping =
+                    when {
+                        t !in known -> {
+                            true
+                        }
+
+                        t == DATAGRAM -> {
+                            (l > maxDatagramLength).also { if (it) skippedDatagrams++ }
+                        }
+
+                        l > maxCapsuleLength -> {
+                            throw H3ProtocolError(Http3ErrorCode.MESSAGE_ERROR, "capsule of $l bytes above $maxCapsuleLength")
+                        }
+
+                        else -> {
+                            false
+                        }
                     }
+                if (!skipping) {
                     payload = ByteArray(l.toInt())
                     filled = 0
                     maxBuffered = maxOf(maxBuffered, l.toInt())
@@ -71,16 +96,17 @@ internal class CapsuleParser(
         }
     }
 
+    /** The stream's FIN: throws H3_MESSAGE_ERROR when it cut a capsule (RFC 9297 section 3.3); a boundary is a clean end. */
+    fun endOfStream() {
+        if (headerLen != 0 || type >= 0) throw H3ProtocolError(Http3ErrorCode.MESSAGE_ERROR, "truncated capsule")
+    }
+
     private fun finish(out: (Long, ByteArray) -> Unit) {
         val t = type
         val b = payload
         type = -1
         payload = null
-        if (!skipping &&
-            b != null
-        ) {
-            out(t, b)
-        }
+        if (!skipping && b != null) out(t, b)
     }
 
     companion object {

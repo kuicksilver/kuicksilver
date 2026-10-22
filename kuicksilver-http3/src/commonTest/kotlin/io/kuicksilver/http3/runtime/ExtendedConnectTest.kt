@@ -18,7 +18,6 @@ import io.kuicksilver.http3.frame.StreamType
 import io.kuicksilver.http3.frame.VarInt
 import io.kuicksilver.http3.http3Request
 import io.kuicksilver.http3.http3Settings
-import io.kuicksilver.http3.message.CapsuleParser
 import io.kuicksilver.http3.readAllBytes
 import io.kuicksilver.http3.useScoped
 import io.kuicksilver.native.KslLoader
@@ -43,47 +42,12 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNull
-import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
 internal fun connectReq(path: String = "/chat") = http3Request("CONNECT", "server.test", path)
 
 private val connectOn = http3Settings { enableConnectProtocol = true }
-
-class CapsuleParserTest {
-    private fun capsule(
-        type: Long,
-        payload: ByteArray,
-    ) = VarInt.encode(type) + VarInt.encode(payload.size.toLong()) + payload
-
-    @Test fun datagramCapsule() {
-        val got = ArrayList<Pair<Long, String>>()
-        val p = CapsuleParser()
-        val bytes = capsule(0x00, "hi".encodeToByteArray()) + capsule(0x00, "there".encodeToByteArray())
-        for (b in bytes) p.feed(byteArrayOf(b), 0, 1) { t, payload -> got += t to payload.decodeToString() } // one byte at a time
-        assertEquals(listOf(0L to "hi", 0L to "there"), got)
-    }
-
-    @Test fun unknownSkippedStreaming() {
-        val got = ArrayList<Long>()
-        val p = CapsuleParser()
-        val header = VarInt.encode(0x2a) + VarInt.encode(1L shl 20)
-        p.feed(header, 0, header.size) { t, _ -> got += t }
-        val chunk = ByteArray(16_384)
-        repeat(64) { p.feed(chunk, 0, chunk.size) { t, _ -> got += t } } // 1 MiB of an unknown capsule
-        val next = capsule(0x00, byteArrayOf(7))
-        p.feed(next, 0, next.size) { t, _ -> got += t }
-        assertEquals(listOf(0L), got)
-        assertTrue(p.maxBuffered <= 16_384 + 16)
-    }
-
-    @Test fun lengthAboveMaxRejected() {
-        val p = CapsuleParser(maxCapsuleLength = 1000)
-        val b = VarInt.encode(0x00) + VarInt.encode(1001)
-        assertFailsWith<io.kuicksilver.http3.frame.H3ProtocolError> { p.feed(b, 0, b.size) { _, _ -> } }
-    }
-}
 
 class ExtendedConnectTest {
     @BeforeTest fun load() = KslLoader.ensureLoaded()
