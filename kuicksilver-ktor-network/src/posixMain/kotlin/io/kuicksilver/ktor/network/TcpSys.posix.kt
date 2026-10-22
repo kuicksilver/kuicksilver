@@ -27,6 +27,7 @@ import kotlinx.io.IOException
 import platform.posix.AF_INET
 import platform.posix.AF_INET6
 import platform.posix.AF_UNSPEC
+import platform.posix.AI_NUMERICHOST
 import platform.posix.AI_NUMERICSERV
 import platform.posix.EAGAIN
 import platform.posix.ECONNABORTED
@@ -72,12 +73,13 @@ internal actual fun tcpStartup() {}
 internal actual fun tcpResolve(
     host: String,
     port: Int,
+    numericHost: Boolean,
 ): List<Sockaddr> =
     memScoped {
         val hints = alloc<addrinfo>()
         hints.ai_family = AF_UNSPEC
         hints.ai_socktype = SOCK_STREAM
-        hints.ai_flags = AI_NUMERICSERV
+        hints.ai_flags = if (numericHost) AI_NUMERICSERV or AI_NUMERICHOST else AI_NUMERICSERV
         val result = alloc<CPointerVar<addrinfo>>()
         val rc = getaddrinfo(host, port.toString(), hints.ptr, result.ptr)
         if (rc != 0) throw IOException("Failed to resolve address for $host: ${gai_strerror(rc)?.toKString()} ($rc)")

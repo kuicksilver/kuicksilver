@@ -16,13 +16,16 @@ import io.ktor.util.AttributeKey
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.readByte
 import io.ktor.utils.io.readByteArray
+import io.ktor.utils.io.readRemaining
 import io.ktor.utils.io.readUTF8Line
 import io.ktor.utils.io.writeFully
 import io.ktor.utils.io.writeStringUtf8
+import io.ktor.websocket.CloseReason
 import io.ktor.websocket.Frame
 import io.ktor.websocket.WebSocketExtension
 import io.ktor.websocket.WebSocketExtensionFactory
 import io.ktor.websocket.WebSocketExtensionHeader
+import io.ktor.websocket.close
 import io.ktor.websocket.readText
 import io.kuicksilver.http3.Http3Endpoint
 import io.kuicksilver.http3.Http3Headers
@@ -33,10 +36,13 @@ import io.kuicksilver.quic.QuicServerConfig
 import io.kuicksilver.tls.TlsIdentity
 import io.kuicksilver.tls.TlsRole
 import io.kuicksilver.tls.tlsConfig
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
 import kotlin.test.BeforeTest
 import kotlin.test.Test
@@ -144,6 +150,42 @@ class ClientWebSocketExtensionsTest {
             assertEquals(1002, reply)
         }
 
+    /**
+     * A call that ends with a cause after its session sent the Close frame and finished its send side (the caller is
+     * cancelled during the closing handshake) does not reset the HTTP/3 stream: the Close and the FIN still in flight
+     * reach the peer, not a reset. The relay holds the client's packets until the call has ended, so the Close is still
+     * unacknowledged when the call ends; before, the engine reset the send side then and the peer never got the Close.
+     */
+    @Test fun closeSentBeforeACancelledCallIsNotResetH3() =
+        h3Test {
+            val reply =
+                rawH3WebSocketServer(extensions = null, frames = ByteArray(0), endsWithFin = true) { port, served ->
+                    udpRelay(port) { relayPort, relay ->
+                        testClient(Http3DiscoveryMode.H3Only, block = { install(WebSockets) }).use { c ->
+                            val closeSent = CompletableDeferred<Unit>()
+                            coroutineScope {
+                                val call =
+                                    launch {
+                                        c.webSocket("wss://127.0.0.1:$relayPort/ws") {
+                                            relay.blocked = true
+                                            close(CloseReason(CloseReason.Codes.GOING_AWAY, "bye"))
+                                            flush() // returns once the writer wrote the Close and finished the send side
+                                            closeSent.complete(Unit)
+                                            awaitCancellation()
+                                        }
+                                    }
+                                withTimeout(10.seconds) { closeSent.await() }
+                                call.cancel()
+                                call.join()
+                            }
+                            relay.blocked = false
+                            withTimeout(10.seconds) { served.await() }
+                        }
+                    }
+                }
+            assertEquals(1001, reply)
+        }
+
     /** RFC 6455 section 5.1: a client fails the connection on a masked frame from the server, with 1002. */
     @Test fun negative_maskedFrameFromServerClosesWith1002() =
         clientTest {
@@ -246,6 +288,7 @@ class ClientWebSocketExtensionsTest {
     private suspend fun rawH3WebSocketServer(
         extensions: String?,
         frames: ByteArray,
+        endsWithFin: Boolean = false,
         block: suspend (port: Int, served: Deferred<Int>) -> Unit,
     ): Int {
         val serverTls =
@@ -273,7 +316,9 @@ class ClientWebSocketExtensionsTest {
                             )
                         s.output.writeFully(frames)
                         s.output.flush()
-                        closeCodeOfFirstFrame(s.input)
+                        val code = closeCodeOfFirstFrame(s.input)
+                        // with endsWithFin, the client's send side must end with its FIN after the Close, not a reset
+                        if (endsWithFin && runCatching { s.input.readRemaining() }.isFailure) -2 else code
                     }
                 try {
                     withTimeout(20.seconds) { block(ep.localAddress.port, served) }

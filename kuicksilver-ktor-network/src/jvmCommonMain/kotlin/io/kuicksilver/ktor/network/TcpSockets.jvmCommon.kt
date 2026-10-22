@@ -31,10 +31,17 @@ public actual suspend fun connectTcpAddress(
 internal actual fun platformResolveTcp(
     name: String,
     port: Int,
-): List<TcpAddress> =
-    java.net.InetAddress.getAllByName(name).map { a ->
+    numericHost: Boolean,
+): List<TcpAddress> {
+    // getAllByName parses a host that starts with a hex digit or ':' and contains ':' as an IPv6 literal and fails on an
+    // invalid one without a lookup; any other host with a ':' would be looked up, so it is refused here
+    if (numericHost && !(name.isNotEmpty() && (name[0] == ':' || Character.digit(name[0], 16) >= 0) && ':' in name)) {
+        throw java.net.UnknownHostException("$name: not an IP address literal")
+    }
+    return java.net.InetAddress.getAllByName(name).map { a ->
         TcpAddress(a.address, port, (a as? java.net.Inet6Address)?.scopeId ?: 0)
     }
+}
 
 @InternalKuicksilverApi
 public actual suspend fun bindTcp(

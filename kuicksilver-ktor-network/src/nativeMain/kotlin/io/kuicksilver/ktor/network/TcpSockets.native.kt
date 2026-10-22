@@ -115,9 +115,10 @@ public actual suspend fun connectTcpAddress(
 internal actual fun platformResolveTcp(
     name: String,
     port: Int,
+    numericHost: Boolean,
 ): List<TcpAddress> {
     tcpStartup()
-    return tcpResolve(name, port).map { it.toTcpAddress() }
+    return tcpResolve(name, port, numericHost).map { it.toTcpAddress() }
 }
 
 @InternalKuicksilverApi

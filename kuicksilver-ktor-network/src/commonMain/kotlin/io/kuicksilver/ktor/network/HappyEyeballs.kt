@@ -9,11 +9,15 @@ import io.ktor.network.sockets.Socket
 import io.kuicksilver.annotations.InternalKuicksilverApi
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.IO
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelChildren
 import kotlinx.coroutines.channels.Channel
@@ -21,7 +25,11 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.selects.onTimeout
 import kotlinx.coroutines.selects.select
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlinx.io.IOException
+import kotlin.concurrent.Volatile
 import kotlin.time.Duration
 
 /*
@@ -72,11 +80,20 @@ public class TcpAddress(
 
 /**
  * The addresses [host] resolves to for [port], in the resolver's order (RFC 6724 destination address selection where the
- * platform does it; on the JVM, `java.net.preferIPv6Addresses` decides which family comes first, IPv4 by default). An
- * address literal (brackets allowed) is returned as it is, without a lookup. A name is resolved on [Dispatchers.IO] by
- * `InetAddress.getAllByName` (JVM, Android) or `getaddrinfo` (Kotlin/Native), in a lookup the caller does not wait for
- * once it is cancelled: a connect timeout ends a slow resolution as it ends a slow connect. Fails with an [IOException]
- * when the name does not resolve or resolves to no address.
+ * platform does it; on the JVM, `java.net.preferIPv6Addresses` decides which family comes first, IPv4 by default).
+ *
+ * - An address literal (brackets allowed) never reaches the resolver: a dotted-decimal IPv4 address (four octets
+ *   0..255) is parsed here, an IPv6 one (anything with a `:`) by `getaddrinfo` with `AI_NUMERICHOST` or the JVM's literal
+ *   parser, which do not look anything up; an invalid one fails with an [IOException].
+ * - A name is resolved by `InetAddress.getAllByName` (JVM, Android) or `getaddrinfo` (Kotlin/Native), which block a
+ *   thread and cannot be interrupted. Lookups run on a view of [Dispatchers.IO] limited to [MAX_CONCURRENT_LOOKUPS]
+ *   threads, so a resolver that stalls holds at most that many and never the threads the socket loops run on (the rest
+ *   of `Dispatchers.IO`, threat model 3.21); and one lookup of a name is in flight at a time, shared by every caller
+ *   that asks for it meanwhile, so a storm of requests to one stalled name holds one thread. A caller does not wait for
+ *   a lookup once it is cancelled: a connect timeout ends a slow resolution as it ends a slow connect, while the lookup
+ *   itself finishes on its thread and is then forgotten (nothing is cached past it).
+ *
+ * Fails with an [IOException] when the name does not resolve or resolves to no address.
  */
 @InternalKuicksilverApi
 public suspend fun resolveTcp(
@@ -85,27 +102,88 @@ public suspend fun resolveTcp(
 ): List<TcpAddress> {
     require(port in 0..0xffff) { "port out of range: $port" }
     val name = if (host.length >= 2 && host.first() == '[' && host.last() == ']') host.substring(1, host.length - 1) else host
-    val found = if (isIpLiteral(name)) platformResolveTcp(name, port) else resolveDetached(name, port)
+    parseIpv4Literal(name)?.let { return listOf(TcpAddress(it, port)) }
+    val found =
+        if (':' in name) {
+            platformResolveTcp(name, port, numericHost = true) // an IPv6 literal: parsed, never looked up
+        } else {
+            sharedLookup(name).map { it.withPort(port) }
+        }
     if (found.isEmpty()) throw IOException("$name resolved to no address")
     return found.distinct()
 }
 
-/** A blocking lookup run where the caller can leave it: getaddrinfo cannot be interrupted, so it finishes on its own. */
+/**
+ * How many name lookups run at once, process-wide. `getaddrinfo` and `getAllByName` block their thread for as long as
+ * the system resolver takes (a stalled DNS server: tens of seconds), and [Dispatchers.IO] (64 threads by default) also
+ * runs the engines' socket loops; 8 leaves those loops nearly all of it while lookups of different names still proceed
+ * in parallel (Chromium runs 6 system lookups at once).
+ */
+internal const val MAX_CONCURRENT_LOOKUPS: Int = 8
+
+@OptIn(ExperimentalCoroutinesApi::class)
+private val lookupDispatcher = Dispatchers.IO.limitedParallelism(MAX_CONCURRENT_LOOKUPS)
+
+/** The lookups in flight, by name; each removes itself when it completes. */
+private val lookupLock = Mutex()
+private val lookupsInFlight = HashMap<String, Deferred<List<TcpAddress>>>()
+
+/** Replaces the platform's blocking lookup of a name (tests: a resolver that stalls); null in production. */
+@Volatile
+internal var blockingLookupForTest: ((String) -> List<TcpAddress>)? = null
+
+/**
+ * The addresses of [name] (port 0) from the lookup in flight for it, or a new one on [lookupDispatcher]. The lookup is
+ * not a child of the caller: a cancelled caller leaves it to the others waiting for it, or to finish on its own.
+ */
 @OptIn(DelicateCoroutinesApi::class)
-private suspend fun resolveDetached(
-    name: String,
-    port: Int,
-): List<TcpAddress> = GlobalScope.async(Dispatchers.IO) { platformResolveTcp(name, port) }.await()
+private suspend fun sharedLookup(name: String): List<TcpAddress> {
+    val lookup =
+        lookupLock.withLock {
+            lookupsInFlight[name] ?: GlobalScope
+                .async(lookupDispatcher, CoroutineStart.LAZY) {
+                    try {
+                        blockingLookupForTest?.invoke(name) ?: platformResolveTcp(name, 0, numericHost = false)
+                    } finally {
+                        val self = coroutineContext[Job]
+                        withContext(NonCancellable) {
+                            lookupLock.withLock { if (lookupsInFlight[name] === self) lookupsInFlight.remove(name) }
+                        }
+                    }
+                }.also {
+                    lookupsInFlight[name] = it
+                    it.start()
+                }
+        }
+    return lookup.await()
+}
 
-/** Whether [name] is an IP address literal (IPv6 with an optional zone, or dotted-decimal IPv4), which needs no lookup. */
-internal fun isIpLiteral(name: String): Boolean = ':' in name || IPV4_LITERAL.matches(name)
+/** The lookups in flight (tests). */
+internal suspend fun lookupsInFlightForTest(): Int = lookupLock.withLock { lookupsInFlight.size }
 
-private val IPV4_LITERAL = Regex("""\d{1,3}(\.\d{1,3}){3}""")
+/** The four bytes of a dotted-decimal IPv4 literal (each octet 0..255, at most three digits), or null. */
+internal fun parseIpv4Literal(name: String): ByteArray? {
+    val parts = name.split('.')
+    if (parts.size != 4) return null
+    val out = ByteArray(4)
+    for ((i, p) in parts.withIndex()) {
+        if (p.isEmpty() || p.length > 3 || !p.all { it in '0'..'9' }) return null
+        val v = p.toInt()
+        if (v > 255) return null
+        out[i] = v.toByte()
+    }
+    return out
+}
 
-/** The platform's blocking resolution of [name] (a name or a literal) for [port]: `getAllByName` or `getaddrinfo`. */
+/**
+ * The platform's blocking resolution of [name] for [port]: `getAllByName` or `getaddrinfo`. With [numericHost], [name]
+ * is an address literal that must not be looked up (`AI_NUMERICHOST`; on the JVM a literal parse), and an invalid one
+ * fails with an [IOException].
+ */
 internal expect fun platformResolveTcp(
     name: String,
     port: Int,
+    numericHost: Boolean,
 ): List<TcpAddress>
 
 /**

@@ -59,6 +59,7 @@ import platform.posix.recv
 import platform.posix.send
 import platform.posix.setsockopt
 import platform.posix.shutdown
+import platform.windows.AI_NUMERICHOST
 import platform.windows.AI_NUMERICSERV
 import platform.windows.GetHandleInformation
 import platform.windows.HANDLE_FLAG_INHERIT
@@ -86,12 +87,13 @@ internal actual fun tcpStartup() {
 internal actual fun tcpResolve(
     host: String,
     port: Int,
+    numericHost: Boolean,
 ): List<Sockaddr> =
     memScoped {
         val hints = alloc<addrinfo>()
         hints.ai_family = AF_UNSPEC
         hints.ai_socktype = SOCK_STREAM
-        hints.ai_flags = AI_NUMERICSERV
+        hints.ai_flags = if (numericHost) AI_NUMERICSERV or AI_NUMERICHOST else AI_NUMERICSERV
         val result = alloc<CPointerVar<addrinfo>>()
         val rc = getaddrinfo(host, port.toString(), hints.ptr, result.ptr)
         if (rc != 0) throw IOException("Failed to resolve address for $host: getaddrinfo error $rc")

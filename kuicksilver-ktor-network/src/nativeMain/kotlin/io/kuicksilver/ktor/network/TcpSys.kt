@@ -24,10 +24,14 @@ internal expect val bsdSockaddr: Boolean
 /** Starts the socket library once (Winsock); nothing elsewhere. */
 internal expect fun tcpStartup()
 
-/** The `sockaddr`s `getaddrinfo` gives for [host] (an address literal or a name) and [port], stream sockets, in its order. */
+/**
+ * The `sockaddr`s `getaddrinfo` gives for [host] (an address literal or a name) and [port], stream sockets, in its order;
+ * with [numericHost], `AI_NUMERICHOST`: [host] is a literal and is never looked up.
+ */
 internal expect fun tcpResolve(
     host: String,
     port: Int,
+    numericHost: Boolean = false,
 ): List<Sockaddr>
 
 /** A non-blocking stream socket of [family] (close-on-exec, no SIGPIPE). */

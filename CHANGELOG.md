@@ -85,6 +85,17 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Changed
 
+- Ktor engines: a WebSocket peer that masks in the wrong direction (a client sending unmasked frames, a server masked
+  ones, RFC 6455 section 5.1), sets RSV bits no negotiated extension defines, or sends RSV1 on a later fragment of a
+  compressed message (as Ktor's own `WebSocketDeflateExtension` does, RFC 7692 section 6.1) is now closed with 1002;
+  before, both engines took such frames.
+- Ktor client on the JVM and Android: an HTTP/1.1 connection to a host name now tries every address the name resolves
+  to (Happy Eyeballs), not only the first; on Kotlin/Native the addresses are tried 250 ms apart instead of one after the
+  other. `connectionAttemptDelay = Duration.INFINITE` restores one address after another.
+- Ktor client: name lookups run at most 8 at a time on their own share of `Dispatchers.IO`, one per name however many
+  requests wait for it; an IP address literal is never looked up, and a dotted-decimal string with an octet above 255
+  is a name, not an address.
+
 - HTTP/3 server: `QuicConfig.defaultStreamErrorCode` left at its default 0 (no HTTP/3 error code; a client reads it as
   H3_NO_ERROR, RFC 9114 section 9) becomes H3_REQUEST_REJECTED for `Http3Endpoint` and the Ktor engine's HTTP/3 side. It
   is the code of a request stream the QUIC layer gives up before the server saw it, which a client may then retry

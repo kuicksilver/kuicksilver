@@ -173,7 +173,9 @@ public class KuicksilverEngineConfig : HttpClientEngineConfig() {
      * previous attempt failed, and the first connection wins (the others are cancelled or closed). 250 ms by default, as
      * RFC 8305 section 8 recommends; 10 ms to 2 s is allowed, or [Duration.INFINITE] to try one address after another as
      * in 0.2. Any other value fails the engine's creation with [IllegalArgumentException]. [connectTimeout] bounds all
-     * attempts together. HTTP/3 connects to the first address of the same resolution (no race between addresses).
+     * attempts together. HTTP/3 connects to the first address of the same resolution (no race between addresses): a
+     * broken first family loses the h3/h1 race, but with `Http3DiscoveryMode.H3Only` there is no race and such a request
+     * fails at the connect timeout.
      */
     @ExperimentalKuicksilverApi
     public var connectionAttemptDelay: Duration = 250.milliseconds

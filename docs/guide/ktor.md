@@ -457,13 +457,15 @@ HTTP/3 did not reach the client.
 tests drive raw TCP sockets, so an HTTP/3 run would repeat them unchanged; WebSockets over HTTP/3 are covered by the
 engine's tests and by the client contract's `WebSocketTest` in `Kuicksilver-h3` mode. The test client is
 `HttpClient(Kuicksilver)` (a test-only dependency on `kuicksilver-ktor-client`), the plugins the suites install are
-Ktor 3.6.0's (test scope only). On the JVM: 143 tests, 136 pass, 7 skip: `@Http2Only` (server push, no HTTP/2 in Kuicksilver),
-`@Http1Only` over HTTP/3 (the two keep-alive tests and chunked encoding), and two tests `@Ignore`d upstream. The
+Ktor 3.6.0's (test scope only). On the JVM: 143 tests, 135 pass, 8 skip: `@Http2Only` (server push, no HTTP/2 in Kuicksilver),
+`@Http1Only` over HTTP/3 (the two keep-alive tests and chunked encoding), two tests `@Ignore`d upstream, and `testFragmentedFlagsFromTheFirstFrame` (below). The
 multipart uploads (streamed bodies of unknown length, chunked over HTTP/1.1) run over HTTP/3 too. Adapted: the test base (ports from the engine's resolved
 connectors, the TLS identity from the test CA, real time instead of virtual time), the paths of the local-file and
 static-resource tests (this module's layout and package), and `funkyChunked`, which expects a CRLF inside a quoted
 chunk extension to be part of it: RFC 9110 section 5.6.4 allows neither CR nor LF in a quoted-string, so the server
-answers 400. Not vendored: `HttpServerJvmTestSuite`,
+answers 400. The WebSocket suite's test client masks its frames (RFC 6455 section 5.1; the engine fails an unmasked
+one), and `testFragmentedFlagsFromTheFirstFrame` is `@Ignore`d: it sends RSV1 without negotiating an extension and
+expects the server to take it, which the engine refuses with 1002 (threat model 3.20.1). Not vendored: `HttpServerJvmTestSuite`,
 `SustainabilityTestSuite`, `ClientCertTestSuite` and the other JVM suites — they rely on `HttpURLConnection`, JKS key
 stores and the Apache/OkHttp clients. Off the JVM, `PortableContentTestSuite` carries the 13 `ContentTestSuite` tests
 that need no `java.io` (with `respondBytesWriter` and `ChannelWriterContent` for the JVM writers) in its place.
@@ -473,6 +475,15 @@ and the HTTP/1.1 client sent a streamed request body completely before reading t
 first, then reads the body, deadlocked). On Linux Native the client contract found that a failed HTTP/3 request (a peer
 resetting a WebSocket stream) escaped as an uncaught coroutine exception, which aborts a Kotlin/Native process; each
 request now contains its own failure.
+
+**Other WebSocket peers.** The engines check every frame against the handshake (RFC 6455 sections 5.1 and 5.2, RFC
+7692 section 6.1), stricter than Ktor's own engines:
+
+- Ktor's `WebSocketDeflateExtension` sets RSV1 on every fragment of a compressed message, not only the first. A peer
+  that uses it and fragments a compressed message (a message larger than its frame size) is closed with 1002; unfragmented
+  messages, the common case, pass.
+- A client that does not mask its frames, or a server that masks them, is closed with 1002, as the RFC requires; Ktor's
+  own frame readers accept either.
 
 ### IPv6 over TCP on Kotlin/Native
 
@@ -496,7 +507,11 @@ that binds and connects the address `getaddrinfo` returned. So on every platform
   costs 250 ms, not the request's connect timeout, which bounds all attempts together. `connectionAttemptDelay =
   Duration.INFINITE` tries one address after another, as 0.2 did on Kotlin/Native.
 - HTTP/3 connects to the first address of the same resolution (one lookup per request for both sides of the h3/h1
-  race); it does not race addresses: a family that drops UDP loses the h3/h1 race instead.
+  race); it does not race addresses: a family that drops UDP loses the h3/h1 race instead. With `H3Only` there is no
+  race, so when the first address's family is broken (UDP dropped on it) the request fails at the connect timeout.
+- Name lookups block a thread (`getaddrinfo`, `getAllByName`): at most 8 run at once, on their own share of
+  `Dispatchers.IO`, and a name has one lookup in flight however many requests wait for it, so a stalled resolver cannot
+  take the threads the sockets run on (threat model 3.21). An address literal is never looked up.
 
 HTTP/3 uses the accelerated `ksl` UDP socket, which carries the full address on every platform (the Ktor client's endpoint
 is dual-stack, ADR-0006). The portable Kotlin/Native UDP socket (`IoPreference.Portable`, or a sandbox that refuses the

@@ -596,7 +596,9 @@ internal class H3Pool(
         // reply may still be on its way to the stream): a RESET_STREAM could overtake it and discard that reply. The closing
         // handshake can end before the peer's FIN arrives (it may trail the peer's Close frame): only the read side is abandoned
         callContext[Job]?.invokeOnCompletion { cause ->
-            val sentCleanly = cause == null && stream.output.isClosedForWrite && stream.output.closedCause == null
+            // a send side the session finished (its Close and FIN queued) keeps them even when the call itself failed after
+            // (the application threw once the Close was out): a reset would discard what is still in flight
+            val sentCleanly = stream.output.isClosedForWrite && stream.output.closedCause == null
             val readToEnd = stream.input.isClosedForRead && stream.input.closedCause == null
             if (!sentCleanly) stream.reset(io.kuicksilver.http3.Http3ErrorCode.REQUEST_CANCELLED)
             if (!readToEnd) stream.stopSending(io.kuicksilver.http3.Http3ErrorCode.REQUEST_CANCELLED)
