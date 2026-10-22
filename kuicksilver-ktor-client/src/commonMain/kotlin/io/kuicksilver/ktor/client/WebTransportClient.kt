@@ -1,6 +1,6 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
-@file:OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+@file:OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class, io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
 
 package io.kuicksilver.ktor.client
 
@@ -28,8 +28,17 @@ import kotlinx.coroutines.withContext
  * the server's SETTINGS and its answer to the CONNECT are waited for up to ten seconds each. A server without
  * WebTransport fails with [io.kuicksilver.http3.Http3Exception.Settings], a refusal with
  * [io.kuicksilver.http3.Http3Exception.ConnectRejected]; there is no fallback to HTTP/1.1 or HTTP/2, which carry no
- * WebTransport here. Needs the Kuicksilver engine (IllegalStateException otherwise) and no proxy: the session needs a
- * direct UDP path (IllegalStateException when the engine has a proxy).
+ * WebTransport here. Needs the Kuicksilver engine (IllegalStateException otherwise) and an open client
+ * (IllegalStateException after `close()`).
+ *
+ * Refused with UnsupportedOperationException: under `http3 { discovery = H1Only }`, which turns HTTP/3 off, and when a
+ * proxy applies to the URL (WebTransport runs over UDP, which an HTTP proxy does not carry) unless
+ * `http3 { webTransportIgnoresProxy = true }` asks to connect directly. At most `http3 { maxWebTransportSessions }`
+ * (64) sessions are open at once; one more fails at once with IllegalStateException.
+ *
+ * The connection goes straight to the URL's host and port: Alt-Svc is not consulted, and it is never set up in 0-RTT.
+ * The resolved addresses are tried in order within the connect timeout. Closing the client ends the sessions still open
+ * with their connections, without a close capsule.
  */
 @ExperimentalKuicksilverApi
 public suspend fun HttpClient.webTransport(
@@ -42,7 +51,19 @@ public suspend fun HttpClient.webTransport(
             ?: throw IllegalStateException("webTransport needs the Kuicksilver engine, not ${engine::class.simpleName}")
     val url = Url(urlString)
     require(url.protocol == URLProtocol.HTTPS) { "WebTransport needs an https URL, not ${url.protocol.name}" }
-    check(engine.config.proxy == null) { "WebTransport needs a direct UDP path to the server; the engine has a proxy" }
+    // after HttpClient.close() the engine's pools are being torn down: a session would bind an endpoint nothing closes
+    check(engine.coroutineContext[kotlinx.coroutines.Job]?.isActive != false) { "the client is closed" }
+    // NOTE(U.2a): the HTTP/3 kill switch must refuse WebTransport here the same way
+    if (engine.config.http3.discovery == Http3DiscoveryMode.H1Only) {
+        throw UnsupportedOperationException("WebTransport needs HTTP/3, which http3 { discovery = H1Only } turns off")
+    }
+    if (engine.effectiveProxyFor(url) != null && !engine.config.http3.webTransportIgnoresProxy) {
+        throw UnsupportedOperationException(
+            "WebTransport runs over UDP and cannot go through the proxy that applies to ${url.host}: exempt the host from the " +
+                "proxy (the proxy's bypass list), configure no proxy for it, or set http3 { webTransportIgnoresProxy = true } " +
+                "to connect directly",
+        )
+    }
     val connection = engine.h3.dedicated(url.host, url.port, engine.config.connectTimeout.inWholeMilliseconds)
     try {
         val host = if (':' in url.host && !url.host.startsWith("[")) "[${url.host}]" else url.host // an IPv6 literal
@@ -55,3 +76,12 @@ public suspend fun HttpClient.webTransport(
         throw e
     }
 }
+
+/**
+ * The proxy that applies to [url], or null for a direct connection. Today only the engine's explicit `proxy`.
+ * TODO(C.2/C.3): extend with the environment and system proxy resolvers and their bypass lists (NO_PROXY, localhost),
+ * so WebTransport refuses exactly the URLs a request would send through a proxy.
+ */
+internal fun KuicksilverEngine.effectiveProxyFor(
+    @Suppress("UNUSED_PARAMETER") url: Url,
+): io.ktor.client.engine.ProxyConfig? = config.proxy

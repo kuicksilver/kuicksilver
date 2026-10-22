@@ -353,6 +353,7 @@ internal class KuicksilverEngine(
             "client.h1Waiters" to h1Pool.waiterCount.toLong(),
             "client.h1Sessions" to h1.sessions.size().toLong(),
             "client.h3Connections" to h3.connectionsForProbe().toLong(),
+            "client.h3Dedicated" to h3.dedicatedCount.value.toLong(),
             "client.brokenAltSvc" to broken.toLong(),
             "client.srtt" to rtts.toLong(),
         )

@@ -262,6 +262,8 @@ Guide: [Ktor: Client](ktor.md#client).
 | `earlyData` (*experimental*) | `Boolean` | `false` | 0-RTT for GET, HEAD and OPTIONS without a body on resumed connections |
 | `qlog` (*experimental*) | `QlogSink?` | `null` (keeps `quic.qlog`) | a qlog trace per HTTP/3 connection |
 | `connectionListener` (*experimental*) | `ConnectionListener?` | `null` (keeps `endpoint.listener`) | lifecycle of every QUIC connection |
+| `webTransportIgnoresProxy` (*experimental*) | `Boolean` | `false` | `HttpClient.webTransport` connects directly although a proxy applies to the URL; otherwise such a call fails with `UnsupportedOperationException` ([WebTransport on the client](ktor.md#webtransport-on-the-client-experimental)) |
+| `maxWebTransportSessions` (*experimental*) | `Int` | 64 | WebTransport sessions open at once, each on its own QUIC connection; at least 1; one more fails at once with `IllegalStateException` |
 
 ## Ktor server engine
 

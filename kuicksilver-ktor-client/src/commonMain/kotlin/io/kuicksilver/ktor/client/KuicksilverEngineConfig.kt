@@ -102,6 +102,21 @@ public class Http3ClientConfig {
     /** Hears the lifecycle of every QUIC connection of the engine (`QuicEndpointConfig.listener`); null keeps [endpoint]'s. */
     @io.kuicksilver.annotations.ExperimentalKuicksilverApi
     public var connectionListener: ConnectionListener? = null
+
+    /**
+     * `HttpClient.webTransport` connects directly even when a proxy applies to the URL; false by default, so such a call
+     * fails with UnsupportedOperationException (WebTransport runs over UDP, which an HTTP proxy does not carry). Turn it on
+     * only when a direct path to those servers is wanted despite the proxy.
+     */
+    @io.kuicksilver.annotations.ExperimentalKuicksilverApi
+    public var webTransportIgnoresProxy: Boolean = false
+
+    /**
+     * WebTransport sessions (`HttpClient.webTransport`) open at once on this client, each on a QUIC connection of its own;
+     * one more fails at once with IllegalStateException, nothing waits. 64 by default, at least 1.
+     */
+    @io.kuicksilver.annotations.ExperimentalKuicksilverApi
+    public var maxWebTransportSessions: Int = 64
 }
 
 /** Configuration of `HttpClient(Kuicksilver)`. */

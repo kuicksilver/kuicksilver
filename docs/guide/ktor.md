@@ -342,8 +342,15 @@ outside the pool: without WebTransport flow control a connection carries one ses
 the session ended in both directions (after its close reached the server). The engine's trust, identity and QUIC
 settings apply, with WebTransport, Extended CONNECT and `reset_stream_at` turned on for that connection;
 `connectTimeout` bounds the setup, then the server's SETTINGS and its answer to the CONNECT get ten seconds each.
-There is no fallback: a server without WebTransport fails with `Http3Exception.Settings`, and an engine with a proxy
-refuses the call (WebTransport needs a direct UDP path). Only the Kuicksilver engine supports it.
+There is no fallback: a server without WebTransport fails with `Http3Exception.Settings`. Refused with
+`UnsupportedOperationException`: `discovery = H1Only` (HTTP/3 is off), and a proxy that applies to the URL —
+WebTransport runs over UDP, which an HTTP proxy does not carry — unless the host is exempt from the proxy or
+`http3 { webTransportIgnoresProxy = true }` asks to connect directly. At most `http3 { maxWebTransportSessions }` (64)
+sessions are open at once; one more fails at once with `IllegalStateException`, nothing waits. The connection goes
+straight to the URL's host and port: Alt-Svc is not consulted and 0-RTT is never used; the resolved addresses are tried
+in order within `connectTimeout`, so one whose handshake fails or stalls gives way to the next. Closing the client ends
+the sessions still open with their connections, without a close capsule, and a call after `close()` fails with
+`IllegalStateException`. Only the Kuicksilver engine supports it.
 
 ```kotlin
 val client = HttpClient(Kuicksilver)

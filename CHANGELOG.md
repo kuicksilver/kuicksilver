@@ -108,7 +108,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   server advertises it with `webTransport`.
 - Ktor client (experimental): `HttpClient.webTransport(url, protocols, headers)` opens a WebTransport session on a
   dedicated HTTP/3 connection of the Kuicksilver engine, outside the pool, closed with the session
-  (`docs/guide/ktor.md`, "WebTransport on the client"); no fallback, no proxy.
+  (`docs/guide/ktor.md`, "WebTransport on the client"); no fallback; refused under `H1Only` and through a proxy unless
+  `http3 { webTransportIgnoresProxy = true }`; at most `http3 { maxWebTransportSessions }` (64) at once.
 - WebTransport interop with a real browser: `ChromeWebTransportTest` (opt-in, `-Pkuicksilver.browserTests=true`)
   drives an installed Chrome headless through streams, datagrams and both closes against the Ktor server; results and
   a manual check for Firefox and Safari in `docs/spec/rfc-compliance.md`, "Interop WebTransport".

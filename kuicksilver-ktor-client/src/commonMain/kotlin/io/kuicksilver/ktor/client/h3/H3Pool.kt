@@ -58,6 +58,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.coroutines.CoroutineContext
 import kotlin.time.Duration.Companion.milliseconds
 
@@ -206,10 +207,22 @@ internal class H3Pool(
     /** Connections set up and not yet used by an exchange: the first one to use it reports it as new (under [lock]). */
     private val fresh = HashSet<Http3Connection>()
 
+    /** Set by [close]: nothing binds a new endpoint after it (a request or session after the client closed). */
+    @kotlin.concurrent.Volatile
+    private var closed = false
+
     private suspend fun endpoint(): Http3Endpoint =
         lock.withLock {
-            endpoint
-                ?: Http3Endpoint.bind(InetSocketAddress("0.0.0.0", 0), endpointConfig, config.http3.settings).also { endpoint = it }
+            check(!closed) { "the client is closed" }
+            endpoint ?: Http3Endpoint.bind(InetSocketAddress("0.0.0.0", 0), endpointConfig, config.http3.settings).also {
+                endpoint = it
+                // a close that ran during the bind did not see this endpoint: it goes now
+                if (closed) {
+                    it.close()
+                    endpoint = null
+                    throw IllegalStateException("the client is closed")
+                }
+            }
         }
 
     /** Test hook: the open connections, then forgets them so the next request connects again (a 0-RTT resumption). */
@@ -232,17 +245,54 @@ internal class H3Pool(
     /** Test hook: the (origin, alternative) entries tracked, retired ones included. */
     internal suspend fun entryCountForTest(): Int = lock.withLock { connections.size + retired.size }
 
-    /** Dedicated connections of WebTransport sessions that are still open (a test hook and the resource probe). */
+    /** Test hook: whether the endpoint is bound. */
+    internal val endpointBoundForTest: Boolean get() = endpoint != null
+
+    /** Dedicated connections of WebTransport sessions, open or being set up (a test hook and the resource probe). */
     internal val dedicatedCount = kotlinx.coroutines.flow.MutableStateFlow(0)
+
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    private val maxDedicated = config.http3.maxWebTransportSessions
+
+    init {
+        @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+        require(config.http3.maxWebTransportSessions >= 1) {
+            "http3.maxWebTransportSessions must be at least 1, not ${config.http3.maxWebTransportSessions}"
+        }
+    }
 
     /**
      * A QUIC connection to [originHost]:[port] for one WebTransport session, outside the pool: never shared with requests
      * and closed with its session. The engine's endpoint, trust and QUIC settings, with WebTransport, Extended CONNECT and
-     * `reset_stream_at` turned on (draft-ietf-webtrans-http3-16 sections 3.1, 4.4); [connectTimeoutMillis] bounds the
-     * lookup and the handshake.
+     * `reset_stream_at` turned on (draft-ietf-webtrans-http3-16 sections 3.1, 4.4). [connectTimeoutMillis] bounds the lookup
+     * and the handshakes: the resolved addresses are tried in order, each with an equal share of what is left, so an
+     * address whose handshake fails or stalls gives way to the next. At most `maxWebTransportSessions` such connections
+     * exist at once; one more fails at once (IllegalStateException), nothing queues.
      */
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
     suspend fun dedicated(
+        originHost: String,
+        port: Int,
+        connectTimeoutMillis: Long,
+    ): Http3Connection {
+        while (true) {
+            val n = dedicatedCount.value
+            check(n < maxDedicated) { "maxWebTransportSessions ($maxDedicated) WebTransport sessions are open on this client" }
+            if (dedicatedCount.compareAndSet(n, n + 1)) break
+        }
+        var handedOut = false
+        try {
+            val c = connectDedicated(originHost, port, connectTimeoutMillis)
+            c.closed.invokeOnCompletion { dedicatedCount.update { it - 1 } }
+            handedOut = true
+            return c
+        } finally {
+            if (!handedOut) dedicatedCount.update { it - 1 }
+        }
+    }
+
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    private suspend fun connectDedicated(
         originHost: String,
         port: Int,
         connectTimeoutMillis: Long,
@@ -255,27 +305,39 @@ internal class H3Pool(
                     enableConnectProtocol = true
                     webTransport = true
                 }.build()
-        val q = quicWithin(connectTimeoutMillis).let { if (it.resetStreamAt) it else it.toBuilder().apply { resetStreamAt = true }.build() }
-        val c =
-            try {
-                withTimeout(connectTimeoutMillis) {
-                    val remote =
-                        config
-                            .newRequestDns()
-                            .lookup(originHost, port)
-                            .first()
-                            .let { InetSocketAddress(it.hostText, it.port) }
-                    ep.connect(remote, config.tlsConfigFor(originHost, listOf(Http3Endpoint.H3)), q, settings)
+        val start =
+            kotlin.time.TimeSource.Monotonic
+                .markNow()
+        val tls = config.tlsConfigFor(originHost, listOf(Http3Endpoint.H3))
+        var last: Throwable? = null
+        try {
+            return withTimeout(connectTimeoutMillis) {
+                val addresses = config.newRequestDns().lookup(originHost, port)
+                for ((i, a) in addresses.withIndex()) {
+                    val left = connectTimeoutMillis - start.elapsedNow().inWholeMilliseconds
+                    if (left <= 0) break
+                    val share = maxOf(1L, left / (addresses.size - i))
+                    val q = quicWithin(share).let { if (it.resetStreamAt) it else it.toBuilder().apply { resetStreamAt = true }.build() }
+                    try {
+                        withTimeoutOrNull(
+                            share,
+                        ) { ep.connect(InetSocketAddress(a.hostText, a.port), tls, q, settings) }?.let { return@withTimeout it }
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Throwable) {
+                        last = e // this address failed: the next one gets the rest of the time
+                    }
                 }
-            } catch (e: TimeoutCancellationException) {
-                throw ConnectTimeoutException("https://$originHost:$port", connectTimeoutMillis, e)
+                // every address failed or ran out of its share: the last failure, or the connect timeout
+                throw last ?: ConnectTimeoutException("https://$originHost:$port", connectTimeoutMillis, null)
             }
-        dedicatedCount.update { it + 1 }
-        c.closed.invokeOnCompletion { dedicatedCount.update { it - 1 } }
-        return c
+        } catch (e: TimeoutCancellationException) {
+            throw ConnectTimeoutException("https://$originHost:$port", connectTimeoutMillis, last ?: e)
+        }
     }
 
     fun close() {
+        closed = true
         endpoint?.close()
         endpoint = null
         fresh.clear()

@@ -79,7 +79,7 @@ class GuideSamplesTest {
                     }
                 }
             try {
-                testClient().use { client ->
+                testClient(Http3DiscoveryMode.Auto).use { client ->
                     val url = "https://127.0.0.1:$port/echo"
                     // guide:ktor:webtransport-client
                     val session = client.webTransport(url, protocols = listOf("echo-v1"))

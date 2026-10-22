@@ -49,10 +49,12 @@ public final class io/kuicksilver/ktor/client/Http3ClientConfig {
 	public final fun getEarlyData ()Z
 	public final fun getEndpoint ()Lio/kuicksilver/quic/QuicEndpointConfig;
 	public final fun getHardDelay-FghU774 ()Lkotlin/time/Duration;
+	public final fun getMaxWebTransportSessions ()I
 	public final fun getNetworkId ()Lkotlin/jvm/functions/Function0;
 	public final fun getQlog ()Lio/kuicksilver/quic/QlogSink;
 	public final fun getQuicHints ()Ljava/util/Set;
 	public final fun getSettings ()Lio/kuicksilver/http3/Http3Settings;
+	public final fun getWebTransportIgnoresProxy ()Z
 	public final fun setAltSvcStore (Lio/kuicksilver/ktor/client/AltSvcStore;)V
 	public final fun setClearOnNetworkChange (Z)V
 	public final fun setConnectionListener (Lio/kuicksilver/quic/ConnectionListener;)V
@@ -60,10 +62,12 @@ public final class io/kuicksilver/ktor/client/Http3ClientConfig {
 	public final fun setEarlyData (Z)V
 	public final fun setEndpoint (Lio/kuicksilver/quic/QuicEndpointConfig;)V
 	public final fun setHardDelay-BwNAW2A (Lkotlin/time/Duration;)V
+	public final fun setMaxWebTransportSessions (I)V
 	public final fun setNetworkId (Lkotlin/jvm/functions/Function0;)V
 	public final fun setQlog (Lio/kuicksilver/quic/QlogSink;)V
 	public final fun setQuicHints (Ljava/util/Set;)V
 	public final fun setSettings (Lio/kuicksilver/http3/Http3Settings;)V
+	public final fun setWebTransportIgnoresProxy (Z)V
 }
 
 public final class io/kuicksilver/ktor/client/Http3DiscoveryMode : java/lang/Enum {
