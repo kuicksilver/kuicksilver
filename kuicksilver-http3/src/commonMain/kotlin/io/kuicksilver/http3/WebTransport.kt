@@ -219,7 +219,8 @@ public suspend fun Http3Connection.webTransport(
  * Server: accepts a WebTransport session ([Http3ServerRequest.isWebTransport] must be true, IllegalStateException
  * otherwise). Waits up to ten seconds for the client's SETTINGS (section 7.1); without them, or without
  * `SETTINGS_H3_DATAGRAM=1`, the request is malformed (section 3.1): it is answered with 400 and
- * [Http3Exception.Settings] is thrown.
+ * [Http3Exception.Settings] is thrown. A request with `content-length`, `content-type` or `transfer-encoding` cannot carry the session's
+ * capsules (RFC 9297 section 3.2): it is answered with 400 and [Http3Exception.MessageError] is thrown.
  * Then answers 200 with [headers], `WT-Protocol` when [protocol] is set (it must be one of
  * [Http3ServerRequest.availableProtocols], IllegalArgumentException otherwise) and, for a draft-02 client, the
  * `sec-webtransport-http3-draft: draft02` field it requires. Streams the client opened for the session before this are

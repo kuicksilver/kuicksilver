@@ -19,6 +19,7 @@ import io.kuicksilver.http3.Http3Stream
 import io.kuicksilver.http3.WebTransportSession
 import io.kuicksilver.http3.frame.FrameType
 import io.kuicksilver.http3.frame.H3ProtocolError
+import io.kuicksilver.http3.message.CapsuleRules
 import io.kuicksilver.http3.message.FieldValidator
 import io.kuicksilver.http3.message.MalformedMessage
 import io.kuicksilver.http3.message.PriorityField
@@ -354,6 +355,12 @@ internal class ServerRequestImpl(
             // a request the client could not make (section 3.1): malformed, answered with 400 so it learns why
             runCatching { respond(400).finish() }
             throw Http3Exception.Settings(missing)
+        }
+        // the session speaks capsules on this stream: a request that rules them out is malformed (RFC 9297 section 3.2),
+        // answered with 400 before any 200
+        CapsuleRules.violation(this.headers, null)?.let { reason ->
+            runCatching { respond(400).finish() }
+            throw Http3Exception.MessageError(st.id, reason)
         }
         val fields =
             buildList {

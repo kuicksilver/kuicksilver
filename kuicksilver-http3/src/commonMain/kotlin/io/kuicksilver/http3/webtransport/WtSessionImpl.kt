@@ -33,13 +33,16 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.time.Duration
@@ -75,6 +78,9 @@ internal class WtSessionImpl(
     private val drainFlow = MutableStateFlow(false)
     private val closedInfo = CompletableDeferred<WebTransportCloseInfo>()
     private val watchers = ArrayList<Job>()
+
+    /** The peer's FIN was read (session dispatcher only). */
+    private var peerFinished = false
     override val drainRequested: StateFlow<Boolean> get() = drainFlow
     override val closed: Deferred<WebTransportCloseInfo> get() = closedInfo
 
@@ -125,7 +131,8 @@ internal class WtSessionImpl(
                     }
                 }
             }
-            terminate(WebTransportCloseInfo(0, "", null), End.ByPeer) // the peer's FIN without a capsule: code 0 (section 6)
+            peerFinished = true // the peer's FIN on a capsule boundary: its side of the CONNECT stream is over
+            terminate(WebTransportCloseInfo(0, "", null), End.ByPeer) // without a capsule before it: code 0 (section 6)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Throwable) {
@@ -152,34 +159,38 @@ internal class WtSessionImpl(
     ): Boolean {
         if (!closedInfo.complete(info)) return false
         val caller = currentCoroutineContext()[Job] // the capsule reader when the peer ended the session: it reads on to the FIN
-        withContext(h3.dispatcher) {
-            bidiIn.close()
-            uniIn.close()
-            for (ch in listOf(bidiIn to true, uniIn to false)) {
-                while (true) goneRaw(ch.first.tryReceive().getOrNull() ?: break, ch.second)
-            }
-            for (s in streams.toList()) s.gone()
-            streams.clear()
-            datagramsIn.close()
-            watchers.forEach { if (it !== caller) it.cancel() }
-        }
-        when (end) {
-            End.Locally -> {
-                endConnect(WtCloseCapsule.encode(info.code, info.reason))
-            }
+        // not cancellable: [closed] is already complete, so a caller cancelled from here on must not leave the rest
+        // undone (withContext also throws a caller's cancellation when it returns, so everything is started inside)
+        val connectEnd =
+            withContext(NonCancellable + h3.dispatcher) {
+                bidiIn.close()
+                uniIn.close()
+                for (ch in listOf(bidiIn to true, uniIn to false)) {
+                    while (true) goneRaw(ch.first.tryReceive().getOrNull() ?: break, ch.second)
+                }
+                for (s in streams.toList()) s.gone()
+                streams.clear()
+                datagramsIn.close()
+                watchers.forEach { if (it !== caller) it.cancel() }
+                when (end) {
+                    // in the connection's scope: cancelling close() stops only its wait, the CONNECT is ended all the same
+                    End.Locally -> {
+                        h3.scope.launch { endConnect(WtCloseCapsule.encode(info.code, info.reason)) }
+                    }
 
-            // our FIN answers the peer's; its own FIN follows its capsule, and a peer that never sends it is stopped
-            End.ByPeer -> {
-                h3.scope.launch {
-                    endConnect(null)
+                    // our FIN answers the peer's; its own FIN follows its capsule, and a peer that never sends it is stopped
+                    End.ByPeer -> {
+                        h3.scope.launch { endConnect(null) }
+                    }
+
+                    End.Failed -> {
+                        runCatching { stream.reset(Http3ErrorCode.WT_SESSION_GONE) }
+                        runCatching { stream.stopSending(Http3ErrorCode.WT_SESSION_GONE) }
+                        null
+                    }
                 }
             }
-
-            End.Failed -> {
-                runCatching { stream.reset(Http3ErrorCode.WT_SESSION_GONE) }
-                runCatching { stream.stopSending(Http3ErrorCode.WT_SESSION_GONE) }
-            }
-        }
+        if (end == End.Locally) connectEnd?.join()
         return true
     }
 
@@ -203,8 +214,9 @@ internal class WtSessionImpl(
             }
         if (written == null) runCatching { stream.reset(Http3ErrorCode.WT_SESSION_GONE) }
         if (closeCapsule == null) {
-            // the peer closed: give its FIN the same time to arrive before stopping it
+            // the peer closed: give its FIN the same time to arrive before stopping it; once it came there is nothing to stop
             withTimeoutOrNull(CLOSE_TIMEOUT) { watchers.firstOrNull()?.join() }
+            if (peerFinished) return
         }
         runCatching { stream.stopSending(Http3ErrorCode.WT_SESSION_GONE) }
     }
@@ -238,7 +250,7 @@ internal class WtSessionImpl(
         readable: Boolean,
         writable: Boolean,
     ): WtStreamImpl =
-        withContext(h3.dispatcher) {
+        withContext(NonCancellable + h3.dispatcher) {
             val s = WtStreamImpl(h3.scope, st, readable, writable) { done -> h3.scope.launch { streams.remove(done) } }
             if (closedInfo.isCompleted) {
                 s.gone()
@@ -250,11 +262,34 @@ internal class WtSessionImpl(
 
     private suspend fun open(bidi: Boolean): WtStreamImpl {
         if (closedInfo.isCompleted) throw sessionClosed()
+        // the wait for stream credit ends when the session does
         val st =
-            try {
-                if (bidi) h3.quic.openBidi() else h3.quic.openUni()
-            } catch (e: QuicException) {
-                throw h3.map(e)
+            coroutineScope {
+                val opening =
+                    async {
+                        try {
+                            if (bidi) h3.quic.openBidi() else h3.quic.openUni()
+                        } catch (e: QuicException) {
+                            throw h3.map(e)
+                        }
+                    }
+                select {
+                    opening.onAwait { it }
+                    closedInfo.onAwait {
+                        opening.cancel()
+                        // opened just as the session closed: the stream is not handed out, so it is ended here
+                        opening.invokeOnCompletion { e ->
+                            if (e == null) {
+                                @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+                                opening.getCompleted().let { st ->
+                                    runCatching { st.reset(Http3ErrorCode.WT_SESSION_GONE) }
+                                    if (bidi) runCatching { st.stopSending(Http3ErrorCode.WT_SESSION_GONE) }
+                                }
+                            }
+                        }
+                        throw sessionClosed()
+                    }
+                }
             }
         try {
             st.output.writeFully(VarInt.encode(if (bidi) FrameType.WT_STREAM else StreamType.WT_UNI) + VarInt.encode(sessionId))

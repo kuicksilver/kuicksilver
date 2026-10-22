@@ -256,4 +256,12 @@ internal class H3WebTransportResponse(
         if (upgrade !is WebTransportUpgrade) return super.respondUpgrade(upgrade)
         upgrade.acceptAndRun(h3, Http3Headers(h3Headers().fields.filter { it.first != "content-length" }))
     }
+
+    /**
+     * A 2xx that does not come from a `webTransport` route (another route on the path answered the CONNECT) would tell
+     * the client a session exists that nobody accepted: it is answered 501 instead. Errors pass as they are.
+     */
+    override fun setStatus(statusCode: HttpStatusCode) {
+        super.setStatus(if (statusCode.value in 200..299) HttpStatusCode.NotImplemented else statusCode)
+    }
 }

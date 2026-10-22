@@ -5,6 +5,8 @@
 package io.kuicksilver.ktor.server
 
 import io.ktor.network.sockets.InetSocketAddress
+import io.ktor.server.response.respondText
+import io.ktor.server.routing.route
 import io.ktor.server.routing.routing
 import io.ktor.utils.io.copyTo
 import io.ktor.utils.io.readRemaining
@@ -206,8 +208,39 @@ class ServerWebTransportTest {
             val (server, port) = tlsServer({ webTransport = true }) { routing { webTransport("/wt") { ran.complete(Unit) } } }
             try {
                 val resp = rawHttp(port, "GET /wt HTTP/1.1\r\nHost: server.test\r\nConnection: close\r\n\r\n")
-                assertTrue(resp.startsWith("HTTP/1.1 404") || resp.startsWith("HTTP/1.1 405"), resp.lineSequence().first())
+                // Ktor's answer when the path matches a route of another method (the route is a CONNECT route)
+                assertEquals("HTTP/1.1 405 Method Not Allowed", resp.lineSequence().first().trim())
                 assertFalse(ran.isCompleted)
+            } finally {
+                server.stopSuspend(100, 1000)
+            }
+        }
+
+    /** The opaque origin `null` (a sandboxed page) and other schemes are refused by the default check. */
+    @Test fun negative_opaqueOriginIs403() =
+        h3ServerTest {
+            val (server, port) = tlsServer({ webTransport = true }) { routing { webTransport("/wt") { } } }
+            try {
+                h3(port) { c ->
+                    for (origin in listOf("null", "file://server.test", "chrome-extension://server.test")) {
+                        val e = assertFailsWith<Http3Exception.ConnectRejected>(origin) { c.webTransport(wtReq(origin = origin)) }
+                        assertEquals(403, e.status, origin)
+                    }
+                }
+            } finally {
+                server.stopSuspend(100, 1000)
+            }
+        }
+
+    /** Another route that answers the WebTransport CONNECT with a 2xx would fake a session: it is turned into 501. */
+    @Test fun negative_plainRouteCannotFakeASession() =
+        h3ServerTest {
+            val (server, port) =
+                tlsServer({ webTransport = true }) {
+                    routing { route("/wt") { handle { call.respondText("not a session") } } }
+                }
+            try {
+                h3(port) { c -> assertEquals(501, assertFailsWith<Http3Exception.ConnectRejected> { c.webTransport(wtReq()) }.status) }
             } finally {
                 server.stopSuspend(100, 1000)
             }

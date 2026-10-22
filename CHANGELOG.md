@@ -92,6 +92,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Changed
 
+- `Http3ErrorCode.isKnown` and `normalize` recognise the WebTransport codes (`WT_SESSION_GONE` and the others now in
+  `Http3ErrorCode`): an `Http3Exception` carrying one keeps it instead of reading as `H3_NO_ERROR`.
 - Ktor engines: a WebSocket peer that masks in the wrong direction (a client sending unmasked frames, a server masked
   ones, RFC 6455 section 5.1), sets RSV bits no negotiated extension defines, or sends RSV1 on a later fragment of a
   compressed message (as Ktor's own `WebSocketDeflateExtension` does, RFC 7692 section 6.1) is now closed with 1002;

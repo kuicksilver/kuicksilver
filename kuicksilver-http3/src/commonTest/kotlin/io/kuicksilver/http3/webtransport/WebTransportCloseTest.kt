@@ -23,6 +23,7 @@ import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.QuicStream
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
@@ -214,6 +215,28 @@ class WebTransportCloseTest {
                 p.server.close()
                 val seen = withTimeout(5.seconds) { client.closed.await() }
                 assertTrue(seen.cause != null)
+            }
+        }
+
+    /** A close() cancelled right after it began (a caller's timeout) still ends the session completely. */
+    @Test fun cancelledCloseStillEndsTheSession() =
+        h3Test {
+            H3Pair.open(clientSettings = wtOn, serverSettings = wtOn).useScoped { p ->
+                val (client, server) = sessions(p)
+                val closing = launch(start = CoroutineStart.UNDISPATCHED) { client.close(3, "cancelled") }
+                closing.cancel()
+                assertEquals(3L, withTimeout(5.seconds) { server.closed.await() }.code) // the capsule went out
+                assertIs<WebTransportException.SessionClosed>(
+                    runCatching { withTimeout(5.seconds) { client.receiveDatagram() } }.exceptionOrNull(),
+                )
+                withTimeout(5.seconds) {
+                    p.client.session.wtIdle
+                        .first { it }
+                }
+                withTimeout(5.seconds) {
+                    p.server.session.wtIdle
+                        .first { it }
+                }
             }
         }
 }

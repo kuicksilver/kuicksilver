@@ -4,7 +4,9 @@
 
 package io.kuicksilver.http3.webtransport
 
+import io.ktor.utils.io.cancel
 import io.ktor.utils.io.copyTo
+import io.ktor.utils.io.readFully
 import io.ktor.utils.io.writeFully
 import io.kuicksilver.http3.H3Pair
 import io.kuicksilver.http3.WebTransportException
@@ -16,6 +18,7 @@ import io.kuicksilver.http3.useScoped
 import io.kuicksilver.http3.webTransport
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.DatagramSendResult
+import io.kuicksilver.quic.quicConfig
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.async
@@ -141,6 +144,55 @@ class WebTransportStreamsTest {
                 val st = client.openBidi()
                 assertFailsWith<IllegalArgumentException> { st.reset(0x1_0000_0000L) }
                 assertFailsWith<IllegalArgumentException> { client.close(0x1_0000_0000L) }
+            }
+        }
+
+    /** The application cancelling its output abandons the stream: the peer sees a reset with code 0. */
+    @Test fun outputCancelResetsStream() =
+        h3Test {
+            H3Pair.open(clientSettings = wtOn, serverSettings = wtOn).useScoped { p ->
+                val (client, server) = sessions(p)
+                val st = client.openBidi()
+                st.output.writeFully("x".encodeToByteArray())
+                st.output.flush()
+                val peer = withTimeout(5.seconds) { server.acceptBidi() }
+                st.output.cancel(kotlinx.io.IOException("the application gives up"))
+                assertEquals(0L, causeOf<WebTransportException.StreamReset> { withTimeout(5.seconds) { peer.input.readAllBytes() } }.code)
+            }
+        }
+
+    /** The application cancelling its input stops the peer at once (code 0), without waiting for more data. */
+    @Test fun inputCancelStopsStream() =
+        h3Test {
+            H3Pair.open(clientSettings = wtOn, serverSettings = wtOn).useScoped { p ->
+                val (client, server) = sessions(p)
+                val st = client.openBidi()
+                st.output.writeFully("x".encodeToByteArray())
+                st.output.flush()
+                val peer = withTimeout(5.seconds) { server.acceptBidi() }
+                withTimeout(5.seconds) { peer.input.readFully(ByteArray(1)) }
+                peer.input.cancel()
+                val stopped =
+                    causeOf<WebTransportException.StreamStopped> {
+                        withTimeout(5.seconds) {
+                            while (true) {
+                                st.output.writeFully(ByteArray(1024))
+                                st.output.flush()
+                            }
+                        }
+                    }
+                assertEquals(0L, stopped.code)
+            }
+        }
+
+    /** Waiting for the peer's stream credit ends with the session. */
+    @Test fun openWaitingForCreditEndsWithSession() =
+        h3Test {
+            H3Pair.open(clientSettings = wtOn, serverSettings = wtOn, serverQuic = quicConfig { maxBidiStreams = 1 }).useScoped { p ->
+                val (client, _) = sessions(p) // the CONNECT took the only bidirectional stream
+                val opening = async { runCatching { client.openBidi() } }
+                client.close()
+                assertIs<WebTransportException.SessionClosed>(withTimeout(5.seconds) { opening.await() }.exceptionOrNull())
             }
         }
 }

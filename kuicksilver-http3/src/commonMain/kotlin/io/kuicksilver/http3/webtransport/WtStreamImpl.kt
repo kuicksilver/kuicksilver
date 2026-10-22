@@ -13,6 +13,7 @@ import io.ktor.utils.io.writeFully
 import io.kuicksilver.http3.Http3ErrorCode
 import io.kuicksilver.http3.WebTransportBidiStream
 import io.kuicksilver.http3.WebTransportException
+import io.kuicksilver.http3.runtime.BodyReadChannel
 import io.kuicksilver.http3.runtime.H3Session
 import io.kuicksilver.quic.Initiator
 import io.kuicksilver.quic.QuicException
@@ -30,8 +31,9 @@ import kotlin.concurrent.atomics.decrementAndFetch
  * channels of their own, pumped to and from the QUIC stream, so its errors reach the application in WebTransport terms:
  * the peer's RESET_STREAM as [WebTransportException.StreamReset], its STOP_SENDING as
  * [WebTransportException.StreamStopped], with the application code mapped back from the HTTP/3 space (section 4.4).
- * Each pump holds at most one chunk beyond the channel's own buffer, and the transport's flow control holds the peer
- * back while the application does not read.
+ * Each direction buffers what ktor-io's `ByteChannel` holds before a writer suspends (1 MiB) plus one 16 KiB chunk, on
+ * top of the transport's stream window, which holds the peer back once that buffer is full. The application cancelling
+ * [input] sends STOP_SENDING, and cancelling [output] RESET_STREAM, with application code 0.
  */
 internal class WtStreamImpl(
     scope: CoroutineScope,
@@ -43,7 +45,15 @@ internal class WtStreamImpl(
     override val streamId: Long get() = st.id
     private val inCh = ByteChannel()
     private val outCh = ByteChannel()
-    override val input: ByteReadChannel get() = inCh
+
+    /** The application cancelling its input stops the peer at once (code 0), not only when the peer sends more. */
+    override val input: ByteReadChannel =
+        BodyReadChannel(inCh) {
+            if (readable && inPump?.isCompleted == false) {
+                runCatching { st.stopSending(WtErrorCodes.toHttp3(0)) }
+                inPump?.cancel()
+            }
+        }
     override val output: ByteWriteChannel get() = outCh
     private val inPump: Job?
     private val outPump: Job?
@@ -75,6 +85,10 @@ internal class WtStreamImpl(
             inCh.cancel(IOException("the WebTransport stream $streamId stopped reading", e))
             throw e
         } catch (e: Throwable) {
+            if (H3Session.transportCause(e) == null) {
+                // the application cancelled its input while the pump wrote into it: stop the peer (code 0)
+                runCatching { st.stopSending(WtErrorCodes.toHttp3(0)) }
+            }
             inCh.cancel(map(e))
         }
     }
@@ -98,6 +112,10 @@ internal class WtStreamImpl(
             outCh.cancel(IOException("the WebTransport stream $streamId stopped writing", e))
             throw e
         } catch (e: Throwable) {
+            if (H3Session.transportCause(e) == null) {
+                // the application cancelled its output while the pump waited on it: the stream is abandoned (code 0)
+                runCatching { st.reset(WtErrorCodes.toHttp3(0)) }
+            }
             outCh.cancel(map(e))
         }
     }

@@ -111,7 +111,9 @@ plain HTTP/1.1 `Upgrade` on an HTTP/3 request is meaningless (RFC 9114 section 4
 With `webTransport = true` the HTTP/3 listener speaks WebTransport (draft-ietf-webtrans-http3-16, plus the SETTINGS of
 draft-02 and draft-14 that browsers send; see the [HTTP/3 guide](http3.md#webtransport-experimental)), and a
 `webTransport("/path") { session -> }` route serves the sessions. It matches only a WebTransport Extended CONNECT over
-HTTP/3, never an HTTP/1.1 request; a WebTransport request no route matches gets Ktor's 404. The route checks the
+HTTP/3, never an HTTP/1.1 request (a request of another method to the path gets Ktor's 405); a WebTransport request
+no route matches gets Ktor's 404, and one that another route answers with a 2xx gets 501 instead, since no session
+was accepted. The route checks the
 `origin` field first: `checkOrigin` refuses with 403, and its default, `sameHostOrigin`, admits the server's own
 origin and clients that send none (browsers always send one; pass your own check for a page served elsewhere). The
 server picks the first of the route's `protocols` the client offers. Then the session is accepted and the handler

@@ -21,6 +21,7 @@ import io.ktor.util.AttributeKey
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.ByteWriteChannel
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
+import io.kuicksilver.http3.Http3Exception
 import io.kuicksilver.http3.Http3Headers
 import io.kuicksilver.http3.Http3ServerRequest
 import io.kuicksilver.http3.WebTransportSession
@@ -33,7 +34,8 @@ import kotlin.coroutines.CoroutineContext
 
 /**
  * The application code a session ends with when its [webTransport] handler throws; the reason is empty, so nothing of
- * the exception reaches the client.
+ * the exception reaches the client. It shares the application's code space (0..2^32-1): a handler that closes with 1
+ * itself looks the same to the client, so applications that tell the two apart use other codes for their own closes.
  */
 @ExperimentalKuicksilverApi
 public const val WEB_TRANSPORT_HANDLER_FAILED: Long = 1
@@ -42,7 +44,7 @@ public const val WEB_TRANSPORT_HANDLER_FAILED: Long = 1
  * Serves WebTransport sessions (draft-ietf-webtrans-http3-16) on [path]: an Extended CONNECT whose `:protocol` is
  * `webtransport-h3` or `webtransport`, over HTTP/3, on an engine with `webTransport = true`. Nothing else matches the
  * route: HTTP/1.1 requests and other CONNECTs go on to the routes that follow, and a WebTransport request without a
- * matching route gets Ktor's 404.
+ * matching route gets Ktor's 404 (one that another route answers with a 2xx gets 501: no session was accepted).
  *
  * [checkOrigin] sees the request's `origin` field (null when absent) and refuses the session with 403 when it returns
  * false; the default, [sameHostOrigin], admits the server's own origin and clients that send none (browsers always
@@ -70,8 +72,9 @@ public fun Route.webTransport(
     }
 
 /**
- * The default origin check of [webTransport]: no `origin` field (a client that is no browser), or an origin whose host
- * and port are the request's (`:authority`, default ports filled in by scheme).
+ * The default origin check of [webTransport]: no `origin` field (a client that is no browser), or an `http` or `https`
+ * origin whose host and port are the request's (`:authority`, default ports filled in by scheme). The opaque origin
+ * `null` (a sandboxed page, a `file:` page) and other schemes are refused.
  */
 @ExperimentalKuicksilverApi
 public fun sameHostOrigin(
@@ -79,6 +82,7 @@ public fun sameHostOrigin(
     call: ApplicationCall,
 ): Boolean {
     if (origin == null) return true
+    if (!origin.startsWith("https://") && !origin.startsWith("http://")) return false // "null" and other schemes
     val u =
         try {
             Url(origin)
@@ -125,7 +129,14 @@ internal class WebTransportUpgrade(
         request: Http3ServerRequest,
         headers: Http3Headers,
     ) {
-        val session = request.acceptWebTransport(headers, protocol)
+        val session =
+            try {
+                request.acceptWebTransport(headers, protocol)
+            } catch (_: Http3Exception.Settings) {
+                return // the client's fault (no SETTINGS or datagrams): it was answered with 400
+            } catch (_: Http3Exception.MessageError) {
+                return // the client's fault (a request that rules out capsules): answered with 400
+            }
         try {
             handler(session)
         } catch (e: Throwable) {

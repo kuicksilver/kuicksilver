@@ -421,4 +421,21 @@ class WebTransportSessionTest {
 
 private suspend fun kotlinx.coroutines.flow.StateFlow<Int>.awaitValue(n: Int) {
     first { it == n }
+
+    /** RFC 9297 section 3.2: a CONNECT with content-type rules out capsules: 400, never 200 and then a reset. */
+    @Test fun negative_capsuleIncompatibleRequestIs400() =
+        h3Test {
+            QuicPair.open().useScoped { q ->
+                val (c, s) = q.connect()
+                val server = Http3Connection.server(s, wtOn)
+                val raw = RawPeer(c)
+                raw.openControl(wtClientSettings)
+                val st = c.openBidi()
+                st.output.writeFully(raw.wtConnect(st, WtTokens.H3, "content-type" to "text/plain"))
+                st.output.flush()
+                val r = withTimeout(5.seconds) { server.acceptRequest() }
+                assertFailsWith<Http3Exception.MessageError> { r.acceptWebTransport() }
+                assertEquals("400", readHeaders(st)[":status"])
+            }
+        }
 }
