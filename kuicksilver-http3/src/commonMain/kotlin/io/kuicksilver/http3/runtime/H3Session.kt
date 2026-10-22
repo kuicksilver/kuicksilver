@@ -24,6 +24,7 @@ import io.kuicksilver.http3.message.PriorityField
 import io.kuicksilver.http3.qpack.QpackError
 import io.kuicksilver.http3.qpack.entrySize
 import io.kuicksilver.http3.webtransport.WtSettings
+import io.kuicksilver.http3.webtransport.WtStreamRouter
 import io.kuicksilver.http3.webtransport.WtVersion
 import io.kuicksilver.quic.Initiator
 import io.kuicksilver.quic.PathEvent
@@ -75,6 +76,9 @@ internal class H3Session(
     val peerSettings = MutableStateFlow<Http3PeerSettings?>(null)
     private val peerSettingsArrived = CompletableDeferred<Http3PeerSettings>()
     val datagrams = DatagramDemux(this)
+
+    /** WebTransport streams to their sessions (only used with [Http3Settings.webTransport]). */
+    val wt = WtStreamRouter(this)
     val goAwayReceived = MutableStateFlow<Long?>(null)
     val closed = CompletableDeferred<Throwable>()
     val requests = Channel<ServerRequestImpl>(Channel.UNLIMITED)
@@ -335,11 +339,39 @@ internal class H3Session(
                 scope.launch { guarded { readUni(st) } }
             } else if (isServer) {
                 scope.launch { guarded { handleRequestStream(this@H3Session, st) } }
+            } else if (settings.webTransport) {
+                scope.launch { guarded { serverBidi(st) } }
             } else {
                 fail(Http3ErrorCode.STREAM_CREATION_ERROR, "server-initiated bidirectional stream ${st.id}")
                 return
             }
         }
+    }
+
+    /**
+     * Client with WebTransport: a server-initiated bidirectional stream is a WebTransport stream, which starts with the
+     * `WT_STREAM` signal (draft-ietf-webtrans-http3-16 section 4.3); anything else is H3_STREAM_CREATION_ERROR as without
+     * WebTransport (RFC 9114 section 6.1). One that ends or is reset before its first bytes is dropped.
+     */
+    private suspend fun serverBidi(st: QuicStream) {
+        val first =
+            try {
+                st.input.readVarIntOrNull()
+            } catch (_: IncompleteFrame) {
+                null
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                if (transportCause(e) !is QuicException.StreamError) throw e
+                null
+            } ?: run {
+                glitch("server-initiated bidirectional stream ended before its first bytes")
+                return
+            }
+        if (first != FrameType.WT_STREAM) {
+            throw H3ProtocolError(Http3ErrorCode.STREAM_CREATION_ERROR, "server-initiated bidirectional stream ${st.id}")
+        }
+        wt.onBidi(st)
     }
 
     /**
@@ -386,6 +418,15 @@ internal class H3Session(
                 throw H3ProtocolError(Http3ErrorCode.CLOSED_CRITICAL_STREAM, "critical stream $type closed")
             }
 
+            StreamType.WT_UNI -> {
+                if (settings.webTransport) {
+                    wt.onUni(st)
+                } else {
+                    st.stopSending(Http3ErrorCode.STREAM_CREATION_ERROR)
+                    discardedUniStreams.value++
+                }
+            }
+
             // no push: a client never sent MAX_PUSH_ID (so any push ID is too large); a server never receives push streams
             StreamType.PUSH -> {
                 throw H3ProtocolError(if (isServer) Http3ErrorCode.STREAM_CREATION_ERROR else Http3ErrorCode.ID_ERROR, "push stream")
@@ -420,7 +461,7 @@ internal class H3Session(
         while (true) {
             val type = st.input.readVarIntOrNull() ?: return
             val len = st.input.readVarInt()
-            when (FrameRules.checkControl(type, first, isServer)) {
+            when (FrameRules.checkControl(type, first, isServer, settings.webTransport)) {
                 FrameAction.Skip -> {
                     glitch("unknown frame on the control stream")
                     st.input.skipExact(len)

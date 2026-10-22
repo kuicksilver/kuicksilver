@@ -41,6 +41,27 @@ internal suspend fun handleRequestStream(
     session: H3Session,
     st: QuicStream,
 ) = with(session) {
+    // WebTransport: a bidirectional stream that starts with WT_STREAM is no request (draft-ietf-webtrans-http3-16 section
+    // 4.3). Read before anything a request does: such a stream does not count as one, and our GOAWAY does not refuse it
+    val firstType =
+        if (settings.webTransport) {
+            try {
+                st.input.readVarIntOrNull()
+            } catch (_: IncompleteFrame) {
+                truncated(st, null, null)
+                return@with
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Throwable) {
+                null // a reset or a lost connection: the request path below meets it again and handles it as before
+            }
+        } else {
+            null
+        }
+    if (firstType == FrameType.WT_STREAM) {
+        wt.onBidi(st)
+        return@with
+    }
     if (st.id > maxRequestId) maxRequestId = st.id
     goAwaySentId?.let {
         if (st.id >= it || headerDeadlinePassed) {
@@ -61,6 +82,8 @@ internal suspend fun handleRequestStream(
                 maxHeadersFrame = maxHeadersFrame,
                 onSkipped = { glitch("unknown frame on a request stream") },
                 onBuffered = { bufferedHeaderBytes += it },
+                firstType = firstType,
+                webTransport = settings.webTransport,
             )
         beforeRequestHeadersForTest?.invoke(st)
         val first =

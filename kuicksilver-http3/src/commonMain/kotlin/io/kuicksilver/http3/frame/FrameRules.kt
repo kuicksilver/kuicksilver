@@ -14,12 +14,20 @@ internal object FrameRules {
 
     private fun unexpected(what: String): Nothing = throw H3ProtocolError(Http3ErrorCode.FRAME_UNEXPECTED, what)
 
-    /** A frame on the peer's control stream; [first] is its first frame; [isServer] is our role. */
+    private fun wtStreamMisplaced(where: String): Nothing =
+        throw H3ProtocolError(Http3ErrorCode.FRAME_ERROR, "WebTransport WT_STREAM signal inside $where")
+
+    /**
+     * A frame on the peer's control stream; [first] is its first frame; [isServer] is our role; [webTransport] says
+     * whether we speak WebTransport, which makes its `WT_STREAM` signal a frame error here.
+     */
     fun checkControl(
         type: Long,
         first: Boolean,
         isServer: Boolean,
+        webTransport: Boolean = false,
     ): FrameAction {
+        if (webTransport && type == FrameType.WT_STREAM) wtStreamMisplaced("the control stream")
         if (first &&
             type != FrameType.SETTINGS
         ) {
@@ -67,12 +75,21 @@ internal object FrameRules {
         }
     }
 
-    /** A frame on a request stream; [isServerSide] means we read a request (we are the server). */
+    /**
+     * A frame on a request stream; [isServerSide] means we read a request (we are the server). With [webTransport] the
+     * `WT_STREAM` signal is only valid as the first bytes of a bidirectional stream, which the caller reads before this;
+     * anywhere else it is H3_FRAME_ERROR (draft-ietf-webtrans-http3-16 section 4.3).
+     */
     fun checkRequest(
         type: Long,
         isServerSide: Boolean,
+        webTransport: Boolean = false,
     ): FrameAction =
         when (type) {
+            FrameType.WT_STREAM -> {
+                if (webTransport) wtStreamMisplaced("a request stream") else FrameAction.Skip
+            }
+
             FrameType.DATA, FrameType.HEADERS -> {
                 FrameAction.Process
             }

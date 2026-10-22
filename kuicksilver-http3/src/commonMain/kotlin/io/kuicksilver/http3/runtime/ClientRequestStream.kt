@@ -239,6 +239,7 @@ private suspend fun H3Session.exchange(
                 maxHeadersFrame = maxHeadersFrame,
                 onSkipped = { glitch("unknown frame on a request stream") },
                 onBuffered = { bufferedHeaderBytes += it },
+                webTransport = settings.webTransport,
             )
         var interim = 0
         while (true) {

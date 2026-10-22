@@ -138,7 +138,13 @@ internal class RequestFrames(
     private val maxHeadersFrame: Long,
     private val onSkipped: () -> Unit = {},
     private val onBuffered: (Long) -> Unit = {},
+    /** The first frame type, when the caller already read it to tell a request from a WebTransport stream. */
+    firstType: Long? = null,
+    /** WebTransport is on: its `WT_STREAM` signal is a frame error here (see [FrameRules.checkRequest]). */
+    private val webTransport: Boolean = false,
 ) {
+    private var pendingType = firstType
+
     /**
      * [maxHeadersFrame], at most Int.MAX_VALUE: the payload is read into one array. At the largest `maxFieldSectionSize`
      * (2^30) the bound is 2^31, and a length of 2^31 compared as a Long but read as an Int was negative.
@@ -147,9 +153,11 @@ internal class RequestFrames(
 
     suspend fun next(): RequestFrame {
         while (true) {
-            val type = input.readVarIntOrNull() ?: return RequestFrame.End
+            val type = pendingType?.also { pendingType = null } ?: input.readVarIntOrNull() ?: return RequestFrame.End
+            // checked before the length is read: after the WT_STREAM signal comes a Session ID, not a length
+            val action = FrameRules.checkRequest(type, isServerSide, webTransport)
             val len = input.readVarInt()
-            when (FrameRules.checkRequest(type, isServerSide)) {
+            when (action) {
                 FrameAction.Skip -> {
                     if (!FrameType.isGrease(type)) onSkipped()
                     input.skipExact(len)
