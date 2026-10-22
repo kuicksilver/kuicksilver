@@ -95,6 +95,7 @@ public final class io/kuicksilver/ktor/client/Kuicksilver : io/ktor/client/engin
 public final class io/kuicksilver/ktor/client/KuicksilverEngineConfig : io/ktor/client/engine/HttpClientEngineConfig {
 	public fun <init> ()V
 	public final fun getConnectTimeout-UwyO8pc ()J
+	public final fun getConnectionAttemptDelay-UwyO8pc ()J
 	public final fun getEventListener ()Lio/kuicksilver/ktor/client/KuicksilverEventListener;
 	public final fun getHttp3 ()Lio/kuicksilver/ktor/client/Http3ClientConfig;
 	public final fun getIdentity ()Lio/kuicksilver/tls/TlsIdentity;
@@ -109,6 +110,7 @@ public final class io/kuicksilver/ktor/client/KuicksilverEngineConfig : io/ktor/
 	public final fun getTrust ()Lio/kuicksilver/tls/TrustConfig;
 	public final fun http3 (Lkotlin/jvm/functions/Function1;)V
 	public final fun setConnectTimeout-LRDsOJo (J)V
+	public final fun setConnectionAttemptDelay-LRDsOJo (J)V
 	public final fun setEventListener (Lio/kuicksilver/ktor/client/KuicksilverEventListener;)V
 	public final fun setIdentity (Lio/kuicksilver/tls/TlsIdentity;)V
 	public final fun setIdleTimeout-LRDsOJo (J)V

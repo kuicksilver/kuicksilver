@@ -6,7 +6,7 @@
 // over this module's system calls (TcpSys.kt), which bind and connect the address itself instead of ktor-network's native
 // bind and connect (Ktor issue KTOR-10017, security, under coordinated disclosure). Reads and writes go through a buffer
 // of their own instead of the channel's internal memory.
-@file:OptIn(ExperimentalAtomicApi::class)
+@file:OptIn(ExperimentalAtomicApi::class, InternalKuicksilverApi::class)
 
 package io.kuicksilver.ktor.network
 
@@ -68,37 +68,56 @@ public actual suspend fun connectTcp(
     selector: SelectorManager,
     remote: InetSocketAddress,
 ): Socket {
-    tcpStartup()
     var last: Throwable? = null
-    for (resolved in tcpResolve(remote.hostname.unbracketed(), remote.port)) {
-        val to = resolved.unmapped()
-        val fd =
-            try {
-                tcpOpen(to.family)
-            } catch (e: PosixException) {
-                last = e
-                continue
-            }
-        val socket = NativeTcpSocket(selector, fd, to.toInet(), null)
+    for (address in resolveTcp(remote.hostname, remote.port)) {
         try {
-            if (!tcpConnect(fd, to)) {
-                while (true) {
-                    selector.select(socket, SelectInterest.CONNECT)
-                    val error = tcpPendingError(fd)
-                    if (error == 0) break
-                    if (!tcpWouldBlock(error)) throw PosixException.forErrno(error, "connect")
-                }
-            }
-            return socket
-        } catch (e: PosixException) {
-            socket.close()
+            return connectTcpAddress(selector, address)
+        } catch (e: IOException) {
             last = e
-        } catch (e: Throwable) {
-            socket.close()
-            throw e
         }
     }
     throw IOException("Failed to connect to $remote.", last)
+}
+
+@InternalKuicksilverApi
+public actual suspend fun connectTcpAddress(
+    selector: SelectorManager,
+    address: TcpAddress,
+): Socket {
+    tcpStartup()
+    val to = Sockaddr.of(address)
+    val fd =
+        try {
+            tcpOpen(to.family)
+        } catch (e: PosixException) {
+            throw IOException("Failed to connect to $address.", e)
+        }
+    val socket = NativeTcpSocket(selector, fd, to.toInet(), null)
+    try {
+        if (!tcpConnect(fd, to)) {
+            while (true) {
+                selector.select(socket, SelectInterest.CONNECT)
+                val error = tcpPendingError(fd)
+                if (error == 0) break
+                if (!tcpWouldBlock(error)) throw PosixException.forErrno(error, "connect")
+            }
+        }
+        return socket
+    } catch (e: PosixException) {
+        socket.close()
+        throw IOException("Failed to connect to $address.", e)
+    } catch (e: Throwable) {
+        socket.close() // cancelled (a Happy Eyeballs loser, a connect timeout): the descriptor goes with it
+        throw e
+    }
+}
+
+internal actual fun platformResolveTcp(
+    name: String,
+    port: Int,
+): List<TcpAddress> {
+    tcpStartup()
+    return tcpResolve(name, port).map { it.toTcpAddress() }
 }
 
 @InternalKuicksilverApi
@@ -146,7 +165,7 @@ internal class NativeTcpServerSocket(
                 continue
             }
             return try {
-                NativeTcpSocket(selector, fd, TcpAddress(peer).toInet(), socketContext)
+                NativeTcpSocket(selector, fd, Sockaddr(peer).toInet(), socketContext)
             } catch (e: Throwable) {
                 tcpClose(fd)
                 throw e

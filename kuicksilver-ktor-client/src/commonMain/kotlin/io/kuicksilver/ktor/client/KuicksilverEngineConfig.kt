@@ -15,6 +15,7 @@ import io.kuicksilver.tls.TlsConfig
 import io.kuicksilver.tls.TlsIdentity
 import io.kuicksilver.tls.TrustConfig
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 
@@ -165,6 +166,21 @@ public class KuicksilverEngineConfig : HttpClientEngineConfig() {
 
     /** Connect timeout when `HttpTimeout` sets none (TCP + TLS, or the QUIC handshake). */
     public var connectTimeout: Duration = 10.seconds
+
+    /**
+     * Happy Eyeballs (RFC 8305) for HTTP/1.1's TCP connects, to the origin and to a proxy: the addresses a name resolves to
+     * are tried with the IPv6 and IPv4 families alternating, starting the next attempt when this delay has passed or the
+     * previous attempt failed, and the first connection wins (the others are cancelled or closed). 250 ms by default, as
+     * RFC 8305 section 8 recommends; 10 ms to 2 s is allowed, or [Duration.INFINITE] to try one address after another as
+     * in 0.2. Any other value fails the engine's creation with [IllegalArgumentException]. [connectTimeout] bounds all
+     * attempts together. HTTP/3 connects to the first address of the same resolution (no race between addresses).
+     */
+    @ExperimentalKuicksilverApi
+    public var connectionAttemptDelay: Duration = 250.milliseconds
+
+    /** Replaces the system resolver for both pools (tests: names and addresses the test owns). */
+    @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+    internal var resolverForTest: (suspend (String, Int) -> List<io.kuicksilver.ktor.network.TcpAddress>)? = null
 
     /** HTTP/3 discovery, racing and connection settings; change it with [http3]. */
     public val http3: Http3ClientConfig = Http3ClientConfig()

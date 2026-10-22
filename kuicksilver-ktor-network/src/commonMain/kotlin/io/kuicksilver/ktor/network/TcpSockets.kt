@@ -10,7 +10,9 @@ import io.kuicksilver.annotations.InternalKuicksilverApi
 import kotlin.time.Duration
 
 /**
- * Opens a TCP connection to [remote], trying each address its host resolves to in turn, for the engines' HTTP/1.1.
+ * Opens a TCP connection to [remote]: on the JVM and Android to the one address `java.net.InetSocketAddress` resolves,
+ * on Kotlin/Native to each address its host resolves to in turn. The engines' HTTP/1.1 connects use [connectTcpRacing]
+ * (Happy Eyeballs) instead.
  *
  * On the JVM and Android this is ktor-network's `aSocket(selector).tcp().connect(remote)`, writing through Kuicksilver's own
  * writer (ktor-network 3.6.0's spins at 100 % CPU while the peer's window is closed; threat model 3.21). On Kotlin/Native it is a socket of

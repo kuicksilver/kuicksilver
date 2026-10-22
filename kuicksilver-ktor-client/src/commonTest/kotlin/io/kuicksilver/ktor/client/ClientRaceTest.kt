@@ -6,6 +6,7 @@ import io.ktor.client.request.get
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpProtocolVersion
 import io.ktor.utils.io.writeStringUtf8
+import io.kuicksilver.ktor.network.TcpAddress
 import io.kuicksilver.native.KslLoader
 import kotlin.test.BeforeTest
 import kotlin.test.Test
@@ -42,5 +43,32 @@ class ClientRaceTest {
                 }
             }
             assertEquals(listOf("0:GET /1 HTTP/1.1", "0:GET /2 HTTP/1.1", "1:GET /2 HTTP/1.1"), served)
+        }
+
+    /**
+     * Happy Eyeballs: both sides of the h3/h1 race connect to what one resolution gave (RFC 8305 section 3 resolves once
+     * per connection attempt), not one lookup each.
+     */
+    @Test fun raceResolvesTheNameOnce() =
+        clientTest {
+            val lookups = ArrayList<Pair<String, Int>>()
+            tlsH1WithSilentUdp(handler = { _, input, output ->
+                readRequest(input)
+                output.writeStringUtf8("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok")
+                readRequest(input)
+            }) { port ->
+                testClient(Http3DiscoveryMode.Preferred, engine = {
+                    connectTimeout = 30.seconds
+                    resolverForTest = { host, p ->
+                        lookups += host to p
+                        listOf(TcpAddress(byteArrayOf(127, 0, 0, 1), p))
+                    }
+                }).use { c ->
+                    val r = c.get("https://127.0.0.1:$port/")
+                    assertEquals(HttpProtocolVersion.HTTP_1_1, r.version)
+                    assertEquals("ok", r.bodyAsText())
+                }
+            }
+            assertEquals(1, lookups.size, "lookups: $lookups")
         }
 }

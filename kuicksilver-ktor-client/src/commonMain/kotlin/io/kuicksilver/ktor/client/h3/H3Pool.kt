@@ -1,5 +1,7 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
+@file:OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+
 package io.kuicksilver.ktor.client.h3
 
 import io.ktor.client.engine.mergeHeaders
@@ -34,9 +36,10 @@ import io.kuicksilver.ktor.client.EngineEvents
 import io.kuicksilver.ktor.client.H3BodyConsumed
 import io.kuicksilver.ktor.client.Http3DiscoveryMode
 import io.kuicksilver.ktor.client.KuicksilverEngineConfig
+import io.kuicksilver.ktor.client.RequestDns
 import io.kuicksilver.ktor.client.connectTimeoutMillis
 import io.kuicksilver.ktor.client.h1.toMillisOrMax
-import io.kuicksilver.ktor.client.socketHost
+import io.kuicksilver.ktor.client.newRequestDns
 import io.kuicksilver.ktor.client.socketTimeoutMillis
 import io.kuicksilver.ktor.client.tlsConfigFor
 import io.kuicksilver.ktor.client.withSocketInactivityTimeout
@@ -240,15 +243,17 @@ internal class H3Pool(
     suspend fun connection(
         t: H3Target,
         data: HttpRequestData,
-    ): Http3Connection = connectionEntry(t, data).second
+        dns: RequestDns = config.newRequestDns(),
+    ): Http3Connection = connectionEntry(t, data, dns).second
 
     private suspend fun connectionEntry(
         t: H3Target,
         data: HttpRequestData,
+        dns: RequestDns,
     ): Pair<H3Entry, Http3Connection> {
         while (true) {
             try {
-                return connectionEntryOnce(t, data)
+                return connectionEntryOnce(t, data, dns)
             } catch (_: SetupAbandoned) {
                 // the caller that was setting the connection up was cancelled: not a failure of the origin, so this caller
                 // starts (or joins) a new setup instead of failing or falling back
@@ -267,6 +272,7 @@ internal class H3Pool(
     private suspend fun connectionEntryOnce(
         t: H3Target,
         data: HttpRequestData,
+        dns: RequestDns,
     ): Pair<H3Entry, Http3Connection> {
         val ep = endpoint()
         val (e, connect) =
@@ -292,19 +298,22 @@ internal class H3Pool(
                 beforeSetupForTest?.invoke()
                 val c =
                     withTimeout(data.connectTimeoutMillis(config)) {
+                        // the first address of the request's resolution (the h3/h1 race covers a broken family; no
+                        // race between addresses over QUIC), as a literal the endpoint does not look up again
+                        val remote = dns.lookup(t.host, t.port).first().let { InetSocketAddress(it.hostText, it.port) }
                         @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
                         if (config.http3.earlyData) {
                             // returns as soon as 0-RTT keys exist: the connect timeout still bounds the setup, through
                             // the handshake timer (a request sent early then fails, and falls back, at that time)
                             ep.connectEarly(
-                                InetSocketAddress(socketHost(t.host), t.port),
+                                remote,
                                 config.tlsConfigFor(t.originHost, listOf(Http3Endpoint.H3)),
                                 quicWithin(data.connectTimeoutMillis(config)),
                                 config.http3.settings,
                             )
                         } else {
                             ep.connect(
-                                InetSocketAddress(socketHost(t.host), t.port),
+                                remote,
                                 config.tlsConfigFor(t.originHost, listOf(Http3Endpoint.H3)),
                                 quic,
                                 config.http3.settings,
@@ -353,9 +362,10 @@ internal class H3Pool(
     private suspend fun acquire(
         t: H3Target,
         data: HttpRequestData,
+        dns: RequestDns,
     ): Pair<H3Entry, Http3Connection> {
         while (true) {
-            val (e, c) = connectionEntry(t, data)
+            val (e, c) = connectionEntry(t, data, dns)
             val counted =
                 lock.withLock {
                     if ((connections[t.key] === e || e in retired) && !c.closed.isCompleted) {
@@ -454,12 +464,13 @@ internal class H3Pool(
         data: HttpRequestData,
         callContext: CoroutineContext,
         extraHeaders: List<Pair<String, String>> = emptyList(),
+        dns: RequestDns = config.newRequestDns(),
     ): HttpResponseData {
         var attempts = 0
         while (true) {
             val (entry, conn) =
                 try {
-                    acquire(t, data)
+                    acquire(t, data, dns)
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Throwable) {

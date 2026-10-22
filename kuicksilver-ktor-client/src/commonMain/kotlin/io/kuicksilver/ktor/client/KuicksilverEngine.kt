@@ -236,18 +236,20 @@ internal class KuicksilverEngine(
     ): HttpResponseData {
         val origin = originKey(data.url)
         val alt = "${t.host}:${t.port}"
+        // one resolution for both sides of the race and a fallback after it (RFC 8305 section 3)
+        val dns = config.newRequestDns()
         val (broken, confirmed, rtt) =
             altSvcLock.withLock {
                 Triple(brokenAltSvc.isBroken(origin, alt), brokenAltSvc.quicConfirmedOn(network), srtt[origin])
             }
         if (broken) {
             selected(data, HttpProtocolVersion.HTTP_1_1, ProtocolReason.BrokenAlternative)
-            return h1.execute(data, callContext)
+            return h1.execute(data, callContext, dns = dns)
         }
         // an established HTTP/3 connection is used as is: the race is about setting one up
         if (h3.existing(t) != null) {
             selected(data, HttpProtocolVersion.HTTP_3_0, ProtocolReason.ExistingConnection)
-            return h3WithFallback(t, data, callContext, extraHeaders)
+            return h3WithFallback(t, data, callContext, extraHeaders, dns)
         }
         // the HTTP/3 attempt outlives a lost race: it fills the pool for the next request, or marks the alternative broken.
         // A 0-RTT connection is usable before its handshake, but on a network where QUIC was never seen working it must
@@ -255,10 +257,10 @@ internal class KuicksilverEngine(
         // HTTP/1.1 at once instead of holding the request until the connect timeout
         val h3Attempt =
             engineScope.async {
-                h3.connection(t, data).also { if (!confirmed) it.quic.awaitHandshake() }
+                h3.connection(t, data, dns).also { if (!confirmed) it.quic.awaitHandshake() }
             }
         val result =
-            race.race<Any>({ h3Attempt.await() }, { h1.open(data) }, rtt, confirmed, onLoser = {
+            race.race<Any>({ h3Attempt.await() }, { h1.open(data, dns) }, rtt, confirmed, onLoser = {
                 (it as? H1Pool.Opened)?.let { o -> h1.recycle(o.connection) } // unused: back to the pool
             })
         val winner = if (result.winner == Protocol.H3) HttpProtocolVersion.HTTP_3_0 else HttpProtocolVersion.HTTP_1_1
@@ -280,7 +282,7 @@ internal class KuicksilverEngine(
                         }
                     }
                 }
-                h3WithFallback(t, data, callContext, extraHeaders)
+                h3WithFallback(t, data, callContext, extraHeaders, dns)
             }
 
             Protocol.H1 -> {
@@ -306,7 +308,7 @@ internal class KuicksilverEngine(
                         }
                     }
                 }
-                h1.execute(data, callContext, result.value as H1Pool.Opened)
+                h1.execute(data, callContext, result.value as H1Pool.Opened, dns)
             }
         }
     }
@@ -429,9 +431,10 @@ internal class KuicksilverEngine(
         data: HttpRequestData,
         callContext: CoroutineContext,
         extraHeaders: List<Pair<String, String>> = emptyList(),
+        dns: RequestDns = config.newRequestDns(),
     ): HttpResponseData =
         try {
-            h3.execute(target, data, callContext, extraHeaders)
+            h3.execute(target, data, callContext, extraHeaders, dns)
         } catch (
             e: CancellationException,
         ) {
@@ -439,14 +442,14 @@ internal class KuicksilverEngine(
         } catch (
             e: H3NotSent,
         ) {
-            fallbackToH1(target, data, callContext, e)
+            fallbackToH1(target, data, callContext, e, dns)
         } catch (
             e: Throwable,
         ) {
             if (data.method.isIdempotent() && (e is QuicException || e is Http3Exception) &&
                 data.body.isReplayable()
             ) {
-                fallbackToH1(target, data, callContext, e)
+                fallbackToH1(target, data, callContext, e, dns)
             } else {
                 throw e
             }
@@ -457,11 +460,12 @@ internal class KuicksilverEngine(
         data: HttpRequestData,
         callContext: CoroutineContext,
         h3Failure: Throwable,
+        dns: RequestDns,
     ): HttpResponseData {
         val cause = if (h3Failure is H3NotSent) h3Failure.cause ?: h3Failure else h3Failure
         events.emit("fallback") { fallback(data, cause) }
         selected(data, HttpProtocolVersion.HTTP_1_1, ProtocolReason.Fallback)
-        val r = h1.execute(data, callContext)
+        val r = h1.execute(data, callContext, dns = dns)
         if (marksAlternativeBroken(h3Failure)) {
             val origin = originKey(data.url)
             val alt = "${target.host}:${target.port}"

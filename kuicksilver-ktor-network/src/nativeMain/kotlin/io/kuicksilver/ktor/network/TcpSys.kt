@@ -1,5 +1,7 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
+@file:OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+
 package io.kuicksilver.ktor.network
 
 import io.ktor.network.sockets.InetSocketAddress
@@ -26,7 +28,7 @@ internal expect fun tcpStartup()
 internal expect fun tcpResolve(
     host: String,
     port: Int,
-): List<TcpAddress>
+): List<Sockaddr>
 
 /** A non-blocking stream socket of [family] (close-on-exec, no SIGPIPE). */
 internal expect fun tcpOpen(family: Int): Int
@@ -34,7 +36,7 @@ internal expect fun tcpOpen(family: Int): Int
 /** Starts connecting [fd] to [to]: true when connected at once, false while the connect is in progress. */
 internal expect fun tcpConnect(
     fd: Int,
-    to: TcpAddress,
+    to: Sockaddr,
 ): Boolean
 
 /** `SO_ERROR` of [fd]: 0 once a pending connect has succeeded. */
@@ -46,7 +48,7 @@ internal expect fun tcpWouldBlock(error: Int): Boolean
 /** Binds [fd] to [to] and listens with [backlog]. */
 internal expect fun tcpBindListen(
     fd: Int,
-    to: TcpAddress,
+    to: Sockaddr,
     backlog: Int,
 )
 
@@ -74,7 +76,7 @@ internal expect fun tcpSend(
 internal expect fun tcpAddressOf(
     fd: Int,
     peer: Boolean,
-): TcpAddress
+): Sockaddr
 
 /** `shutdown` of the receiving ([TCP_SHUT_RD]), sending ([TCP_SHUT_WR]) or both ([TCP_SHUT_RDWR]) directions; errors ignored. */
 internal expect fun tcpShutdown(
@@ -98,18 +100,27 @@ internal const val SOCKADDR_STORAGE = 128
 
 /**
  * A `sockaddr_in` or `sockaddr_in6` as bytes. Both layouts put the port (network order) at offset 2, the IPv4 address at 4
- * and the IPv6 address at 8; the family is a byte at offset 1 (BSD, after the length byte) or a little-endian 16-bit value
- * at 0 (Linux and Windows; every Kotlin/Native target of this library is little-endian).
+ * and the IPv6 address at 8 (its scope id at 24); the family is a byte at offset 1 (BSD, after the length byte) or a
+ * little-endian 16-bit value at 0 (Linux and Windows; every Kotlin/Native target of this library is little-endian).
  */
-internal class TcpAddress(
+internal class Sockaddr(
     val bytes: ByteArray,
 ) {
     val family: Int get() = if (bsdSockaddr) bytes[1].u() else bytes[0].u() or (bytes[1].u() shl 8)
     val port: Int get() = (bytes[2].u() shl 8) or bytes[3].u()
     val ip: ByteArray get() = if (family == afInet6) bytes.copyOfRange(8, 24) else bytes.copyOfRange(4, 8)
 
+    /** The `sin6_scope_id` of an IPv6 address (host order), 0 for IPv4. */
+    val scopeId: Int
+        get() =
+            if (family != afInet6 || bytes.size < 28) {
+                0
+            } else {
+                bytes[24].u() or (bytes[25].u() shl 8) or (bytes[26].u() shl 16) or (bytes[27].u() shl 24)
+            }
+
     /** An IPv4-mapped IPv6 address (`::ffff:a.b.c.d`) as the IPv4 `sockaddr_in` it stands for; any other address as it is. */
-    fun unmapped(): TcpAddress {
+    fun unmapped(): Sockaddr {
         if (family != afInet6) return this
         for (i in 8 until 18) if (bytes[i].toInt() != 0) return this
         if (bytes[18].u() != 0xff || bytes[19].u() != 0xff) return this
@@ -118,59 +129,54 @@ internal class TcpAddress(
 
     fun toInet(): InetSocketAddress = InetSocketAddress(ipText(ip), port)
 
+    /** This address as the engines' [TcpAddress] (an IPv4-mapped one as IPv4). */
+    fun toTcpAddress(): TcpAddress = unmapped().let { TcpAddress(it.ip, it.port, it.scopeId) }
+
     companion object {
         /** A `sockaddr_in` of the 4-byte [ip] and [port]. */
         fun v4(
             ip: ByteArray,
             port: Int,
-        ): TcpAddress {
+        ): Sockaddr {
             val b = ByteArray(16)
+            header(b, afInet, 16, port)
+            ip.copyInto(b, 4)
+            return Sockaddr(b)
+        }
+
+        /** A `sockaddr_in6` of the 16-byte [ip], [port] and [scopeId] (flow info 0). */
+        fun v6(
+            ip: ByteArray,
+            port: Int,
+            scopeId: Int,
+        ): Sockaddr {
+            val b = ByteArray(28)
+            header(b, afInet6, 28, port)
+            ip.copyInto(b, 8)
+            for (i in 0 until 4) b[24 + i] = (scopeId ushr (8 * i)).toByte()
+            return Sockaddr(b)
+        }
+
+        /** The `sockaddr` of [a]. */
+        fun of(a: TcpAddress): Sockaddr = if (a.isIpv6) v6(a.bytes, a.port, a.scopeId) else v4(a.bytes, a.port)
+
+        private fun header(
+            b: ByteArray,
+            family: Int,
+            length: Int,
+            port: Int,
+        ) {
             if (bsdSockaddr) {
-                b[0] = 16
-                b[1] = afInet.toByte()
+                b[0] = length.toByte()
+                b[1] = family.toByte()
             } else {
-                b[0] = afInet.toByte()
-                b[1] = (afInet shr 8).toByte()
+                b[0] = family.toByte()
+                b[1] = (family shr 8).toByte()
             }
             b[2] = (port shr 8).toByte()
             b[3] = port.toByte()
-            ip.copyInto(b, 4)
-            return TcpAddress(b)
         }
     }
 }
 
 private fun Byte.u(): Int = toInt() and 0xff
-
-/**
- * The text of the IPv4 (4 bytes) or IPv6 (16 bytes) address [ip]: dotted decimal, or RFC 5952 (lower-case hex, the longest
- * run of zero groups as `::`, an IPv4-mapped address as `::ffff:a.b.c.d`).
- */
-internal fun ipText(ip: ByteArray): String {
-    if (ip.size == 4) return ip.joinToString(".") { it.u().toString() }
-    // an IPv4-mapped peer of a dual-stack listener, written as inet_ntop (and ktor-network) does
-    if ((0 until 10).all { ip[it].toInt() == 0 } && ip[10].u() == 0xff && ip[11].u() == 0xff) {
-        return "::ffff:" + ipText(ip.copyOfRange(12, 16))
-    }
-    val groups = IntArray(8) { (ip[2 * it].u() shl 8) or ip[2 * it + 1].u() }
-    var bestStart = -1
-    var bestLength = 1 // RFC 5952 4.2.2: a single zero group is not compressed
-    var i = 0
-    while (i < 8) {
-        if (groups[i] != 0) {
-            i++
-            continue
-        }
-        var j = i
-        while (j < 8 && groups[j] == 0) j++
-        if (j - i > bestLength) {
-            bestStart = i
-            bestLength = j - i
-        }
-        i = j
-    }
-    if (bestStart < 0) return groups.joinToString(":") { it.toString(16) }
-    val head = (0 until bestStart).joinToString(":") { groups[it].toString(16) }
-    val tail = (bestStart + bestLength until 8).joinToString(":") { groups[it].toString(16) }
-    return "$head::$tail"
-}

@@ -17,7 +17,6 @@ import io.ktor.http.Url
 import io.ktor.http.content.OutgoingContent
 import io.ktor.http.isSecure
 import io.ktor.network.selector.SelectorManager
-import io.ktor.network.sockets.InetSocketAddress
 import io.ktor.network.sockets.Socket
 import io.ktor.network.sockets.openReadChannel
 import io.ktor.network.sockets.openWriteChannel
@@ -32,14 +31,16 @@ import io.kuicksilver.ktor.client.ActivityInput
 import io.kuicksilver.ktor.client.ActivityOutput
 import io.kuicksilver.ktor.client.EngineEvents
 import io.kuicksilver.ktor.client.KuicksilverEngineConfig
+import io.kuicksilver.ktor.client.RequestDns
 import io.kuicksilver.ktor.client.connectTimeoutMillis
 import io.kuicksilver.ktor.client.isIdempotent
+import io.kuicksilver.ktor.client.newRequestDns
 import io.kuicksilver.ktor.client.platformCleartextPermitted
 import io.kuicksilver.ktor.client.socketHost
 import io.kuicksilver.ktor.client.socketTimeoutMillis
 import io.kuicksilver.ktor.client.tlsConfigFor
 import io.kuicksilver.ktor.client.withSocketInactivityTimeout
-import io.kuicksilver.ktor.network.connectTcp
+import io.kuicksilver.ktor.network.connectTcpRacing
 import io.kuicksilver.tls.SessionCache
 import io.kuicksilver.tls.TlsConnection
 import io.kuicksilver.tls.TlsException
@@ -52,6 +53,8 @@ import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
 import kotlin.coroutines.CoroutineContext
+import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
 
 /** One HTTP/1.1 connection: TCP, optionally a CONNECT tunnel, optionally TLS; its pool slot comes back when it closes. */
 internal class H1Connection(
@@ -87,6 +90,15 @@ internal class H1Pool(
     private val events: EngineEvents = EngineEvents(null, io.kuicksilver.quic.KuicksilverLogger.None),
     private val clock: () -> Long = monotonicMillis(),
 ) {
+    init {
+        @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+        val delay = config.connectionAttemptDelay
+        // RFC 8305 section 8: at least 10 ms (100 ms recommended as the floor), at most 2 s
+        require(delay.isInfinite() || delay in MIN_ATTEMPT_DELAY..MAX_ATTEMPT_DELAY) {
+            "connectionAttemptDelay must be 10 ms..2 s or Duration.INFINITE (RFC 8305 section 8), was $delay"
+        }
+    }
+
     /** The platform's cleartext policy (Android Network Security Configuration); replaced by tests. */
     internal var cleartextPermitted: (String) -> Boolean = { host -> platformCleartextPermitted(host) }
 
@@ -116,7 +128,10 @@ internal class H1Pool(
      * A connection for [data]: an idle pooled one, else a new one (the HTTP/1.1 side of the h3/h1 race). [Opened.reused]
      * travels with it to [execute], so a pooled connection the server closed still earns the stale-connection retry.
      */
-    suspend fun open(data: HttpRequestData): Opened = obtain(data, keyOf(data)).let { Opened(it.first, it.second) }
+    suspend fun open(
+        data: HttpRequestData,
+        dns: RequestDns = config.newRequestDns(),
+    ): Opened = obtain(data, keyOf(data), dns).let { Opened(it.first, it.second) }
 
     /** A connection [open] handed out and whether it came from the idle pool. */
     class Opened(
@@ -131,6 +146,7 @@ internal class H1Pool(
     private suspend fun obtain(
         data: HttpRequestData,
         key: String,
+        dns: RequestDns,
     ): Pair<H1Connection, Boolean> {
         var conn: H1Connection? = null
         var reused = false
@@ -142,7 +158,9 @@ internal class H1Pool(
                     reused = true
                 } else {
                     try {
-                        conn = connect(data, data.url, data.url.protocol.isSecure(), config.proxy != null, key).also { pool.adopt(it) }
+                        conn =
+                            connect(data, data.url, data.url.protocol.isSecure(), config.proxy != null, key, dns)
+                                .also { pool.adopt(it) }
                     } catch (e: Throwable) {
                         pool.releasePermit(key)
                         throw e
@@ -158,11 +176,12 @@ internal class H1Pool(
         return conn!! to reused
     }
 
-    /** One exchange; [preopened] is a connection the race already obtained ([open]). */
+    /** One exchange; [preopened] is a connection the race already obtained ([open]), [dns] the request's name resolution. */
     suspend fun execute(
         data: HttpRequestData,
         callContext: CoroutineContext,
         preopened: Opened? = null,
+        dns: RequestDns = config.newRequestDns(),
     ): HttpResponseData {
         val url = data.url
         val secure = url.protocol.isSecure()
@@ -186,7 +205,7 @@ internal class H1Pool(
         var given = preopened
         while (true) {
             // a connection the race just opened is fresh and never earns the stale retry; an idle one it took from the pool does
-            val (conn, reused) = given?.let { it.connection to it.reused } ?: obtain(data, key)
+            val (conn, reused) = given?.let { it.connection to it.reused } ?: obtain(data, key, dns)
             given = null
             events.emit("connectionAcquired") { connectionAcquired(data, HttpProtocolVersion.HTTP_1_1, reused) }
             var bodyJob: BodySender? = null
@@ -301,20 +320,19 @@ internal class H1Pool(
         secure: Boolean,
         viaProxy: Boolean,
         key: String,
+        dns: RequestDns,
     ): H1Connection {
-        val target =
+        val (host, port) =
             if (viaProxy) {
-                // a NetworkAddress (java.net's on the JVM, ktor-utils' on Native), not ktor-network's InetSocketAddress
-                config.proxy!!.resolveAddress().let { InetSocketAddress(socketHost(it.address), it.port) }
+                // a NetworkAddress (java.net's on the JVM, ktor-utils' on Native): its address, not a reverse lookup of it
+                config.proxy!!.resolveAddress().let { socketHost(it.address) to it.port }
             } else {
-                InetSocketAddress(
-                    socketHost(url.host),
-                    url.port,
-                )
+                url.host to url.port
             }
-        // the address itself, not `hostname`: on the JVM that is a reverse lookup (::1 -> "localhost" -> 127.0.0.1);
-        // connectTcp, not ktor-network's native connect (Ktor issue KTOR-10017, security, under coordinated disclosure)
-        val tcp = connectTcp(selector, target)
+        // every address of the host, IPv6 and IPv4 alternating (RFC 8305); this module's connects on Kotlin/Native, not
+        // ktor-network's (Ktor issue KTOR-10017, security, under coordinated disclosure)
+        @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+        val tcp = connectTcpRacing(selector, host, port, config.connectionAttemptDelay, dns::lookup)
         try {
             val rawIn = tcp.openReadChannel()
             val rawOut = tcp.openWriteChannel(autoFlush = true)
@@ -379,3 +397,7 @@ private fun OutgoingContent.isStreamed(): Boolean =
         is OutgoingContent.ReadChannelContent, is OutgoingContent.WriteChannelContent -> true
         else -> false
     }
+
+/** RFC 8305 section 8: the connection attempt delay is at least 10 ms and at most 2 s. */
+private val MIN_ATTEMPT_DELAY = 10.milliseconds
+private val MAX_ATTEMPT_DELAY = 2.seconds

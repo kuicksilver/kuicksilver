@@ -31,7 +31,7 @@ import kotlin.test.assertTrue
 
 /** The Winsock TCP sockets: no handle reaches a child process, and no other socket binds over a listener (as msquic, Go). */
 class WindowsTcpSocketTest {
-    private fun loopback(port: Int) = TcpAddress.v4(byteArrayOf(127, 0, 0, 1), port)
+    private fun loopback(port: Int) = Sockaddr.v4(byteArrayOf(127, 0, 0, 1), port)
 
     @Test fun listenersAreExclusiveAndNoSocketIsInheritable() {
         tcpStartup()

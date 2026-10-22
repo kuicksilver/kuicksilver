@@ -1,5 +1,7 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
+@file:OptIn(InternalKuicksilverApi::class)
+
 package io.kuicksilver.ktor.network
 
 import io.ktor.network.selector.SelectorManager
@@ -17,6 +19,22 @@ public actual suspend fun connectTcp(
     selector: SelectorManager,
     remote: InetSocketAddress,
 ): Socket = KslNioSocket(aSocket(selector).tcp().connect(remote), selector, CLIENT_CLOSE_TIMEOUT)
+
+@InternalKuicksilverApi
+public actual suspend fun connectTcpAddress(
+    selector: SelectorManager,
+    address: TcpAddress,
+): Socket =
+    // a literal: java.net.InetSocketAddress parses it without a lookup
+    KslNioSocket(aSocket(selector).tcp().connect(InetSocketAddress(address.hostText, address.port)), selector, CLIENT_CLOSE_TIMEOUT)
+
+internal actual fun platformResolveTcp(
+    name: String,
+    port: Int,
+): List<TcpAddress> =
+    java.net.InetAddress.getAllByName(name).map { a ->
+        TcpAddress(a.address, port, (a as? java.net.Inet6Address)?.scopeId ?: 0)
+    }
 
 @InternalKuicksilverApi
 public actual suspend fun bindTcp(

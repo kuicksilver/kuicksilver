@@ -477,11 +477,16 @@ that binds and connects the address `getaddrinfo` returned. So on every platform
 - a server connector with a specific `host` (`::1`, `127.0.0.1`, a global address) listens on that address only; `::` and
   `0.0.0.0` stay the wildcards;
 - the client's HTTP/1.1 connection (and its connection to an HTTP proxy) goes to the address in the URL; an
-  IPv4-mapped literal (`[::ffff:127.0.0.1]`) is connected over IPv4, as the JVM does. For a host name, the JVM and
-  Android connect to the one address `InetAddress.getByName` returns (the first the resolver lists) and fail when it
-  fails; Kotlin/Native takes the addresses `getaddrinfo` returns in order and moves to the next only when a connect fails
-  with an error (refused, unreachable). Neither races addresses (no Happy Eyeballs, RFC 8305), and an address that
-  drops the connection attempt silently uses up the request's connect timeout on its own.
+  IPv4-mapped literal (`[::ffff:127.0.0.1]`) is connected over IPv4, as the JVM does. A host name is resolved to all its
+  addresses (`InetAddress.getAllByName` on the JVM and Android, `getaddrinfo` on Kotlin/Native, off the caller's thread
+  and within the connect timeout) and connected with Happy Eyeballs (RFC 8305): IPv6 and IPv4 addresses alternate,
+  starting with the family the resolver listed first (on the JVM `java.net.preferIPv6Addresses` decides, IPv4 first by
+  default); a new attempt starts every `connectionAttemptDelay` (250 ms) or as soon as the previous one failed, the first
+  connection wins and the other attempts are cancelled or closed. So an address that drops connection attempts silently
+  costs 250 ms, not the request's connect timeout, which bounds all attempts together. `connectionAttemptDelay =
+  Duration.INFINITE` tries one address after another, as 0.2 did on Kotlin/Native.
+- HTTP/3 connects to the first address of the same resolution (one lookup per request for both sides of the h3/h1
+  race); it does not race addresses: a family that drops UDP loses the h3/h1 race instead.
 
 HTTP/3 uses the accelerated `ksl` UDP socket, which carries the full address on every platform (the Ktor client's endpoint
 is dual-stack, ADR-0006). The portable Kotlin/Native UDP socket (`IoPreference.Portable`, or a sandbox that refuses the

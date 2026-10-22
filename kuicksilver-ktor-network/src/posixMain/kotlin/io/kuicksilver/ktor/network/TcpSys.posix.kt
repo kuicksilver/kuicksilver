@@ -72,7 +72,7 @@ internal actual fun tcpStartup() {}
 internal actual fun tcpResolve(
     host: String,
     port: Int,
-): List<TcpAddress> =
+): List<Sockaddr> =
     memScoped {
         val hints = alloc<addrinfo>()
         hints.ai_family = AF_UNSPEC
@@ -82,13 +82,13 @@ internal actual fun tcpResolve(
         val rc = getaddrinfo(host, port.toString(), hints.ptr, result.ptr)
         if (rc != 0) throw IOException("Failed to resolve address for $host: ${gai_strerror(rc)?.toKString()} ($rc)")
         try {
-            val out = ArrayList<TcpAddress>()
+            val out = ArrayList<Sockaddr>()
             var ai = result.value
             while (ai != null) {
                 val a = ai.pointed
                 val sa = a.ai_addr
                 if (sa != null && (a.ai_family == AF_INET || a.ai_family == AF_INET6)) {
-                    out += TcpAddress(sa.reinterpret<ByteVar>().readBytes(a.ai_addrlen.convert()))
+                    out += Sockaddr(sa.reinterpret<ByteVar>().readBytes(a.ai_addrlen.convert()))
                 }
                 ai = a.ai_next
             }
@@ -117,7 +117,7 @@ internal actual fun tcpOpen(family: Int): Int {
 
 internal actual fun tcpConnect(
     fd: Int,
-    to: TcpAddress,
+    to: Sockaddr,
 ): Boolean {
     val rc = to.bytes.usePinned { connect(fd, it.addressOf(0).reinterpret(), to.bytes.size.convert()) }
     if (rc == 0) return true
@@ -139,7 +139,7 @@ internal actual fun tcpWouldBlock(error: Int): Boolean = error == EAGAIN || erro
 
 internal actual fun tcpBindListen(
     fd: Int,
-    to: TcpAddress,
+    to: Sockaddr,
     backlog: Int,
 ) {
     if (to.bytes.usePinned { bind(fd, it.addressOf(0).reinterpret(), to.bytes.size.convert()) } != 0) {
@@ -205,7 +205,7 @@ internal actual fun tcpSend(
 internal actual fun tcpAddressOf(
     fd: Int,
     peer: Boolean,
-): TcpAddress {
+): Sockaddr {
     val storage = ByteArray(SOCKADDR_STORAGE)
     val rc =
         memScoped {
@@ -224,7 +224,7 @@ internal actual fun tcpAddressOf(
             }
         }
     if (rc != 0) throw PosixException.forErrno(errno, if (peer) "getpeername" else "getsockname")
-    return TcpAddress(storage)
+    return Sockaddr(storage)
 }
 
 internal actual fun tcpShutdown(

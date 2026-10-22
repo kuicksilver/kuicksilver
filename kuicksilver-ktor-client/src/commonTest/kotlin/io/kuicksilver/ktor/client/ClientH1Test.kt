@@ -44,6 +44,7 @@ import io.ktor.utils.io.readUTF8Line
 import io.ktor.utils.io.writeStringUtf8
 import io.ktor.websocket.Frame
 import io.ktor.websocket.readText
+import io.kuicksilver.ktor.network.TcpAddress
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.tls.SpkiSha256
 import io.kuicksilver.tls.TlsException
@@ -57,6 +58,8 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
 import io.ktor.server.sse.SSE as ServerSSE
 import io.ktor.server.sse.sse as serverSse
 import io.ktor.server.websocket.WebSockets as ServerWebSockets
@@ -521,6 +524,54 @@ class ClientH1Test {
         } finally {
             listener.close()
             selector.close()
+        }
+    }
+
+    /**
+     * Happy Eyeballs (RFC 8305): the first address the name resolves to fails and the engine connects to the next one at
+     * once, within one connection. The failing address is port 0 of `::1`: no socket can listen there, so the attempt
+     * fails on every host whatever else runs on it (without IPv6 it fails as well, with "unreachable").
+     */
+    @Test fun h1FallsBackToSecondAddress() =
+        clientTest {
+            val (server, port) = testServer(plain = true) { routing { get("/") { call.respondText("second") } } }
+            try {
+                val asked = mutableListOf<Pair<String, Int>>()
+                var acquired = 0
+                testClient(engine = {
+                    resolverForTest = { host, p ->
+                        asked += host to p
+                        listOf(TcpAddress(ByteArray(16).also { it[15] = 1 }, 0), TcpAddress(byteArrayOf(127, 0, 0, 1), p))
+                    }
+                    eventListener =
+                        object : KuicksilverEventListener() {
+                            override fun connectionAcquired(
+                                request: io.ktor.client.request.HttpRequestData,
+                                protocol: HttpProtocolVersion,
+                                reused: Boolean,
+                            ) {
+                                acquired++
+                            }
+                        }
+                }).use { c ->
+                    val r = c.get("http://origin.test:$port/")
+                    assertEquals(200, r.status.value)
+                    assertEquals("second", r.bodyAsText())
+                }
+                assertEquals(listOf("origin.test" to port), asked)
+                assertEquals(1, acquired)
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
+    /** RFC 8305 section 8: the connection attempt delay is 10 ms..2 s, or infinite for one address after another. */
+    @Test fun negative_connectionAttemptDelayOutOfRangeRefused() {
+        for (bad in listOf(kotlin.time.Duration.ZERO, 9.milliseconds, 2001.milliseconds)) {
+            assertFailsWith<IllegalArgumentException>("$bad") { testClient(engine = { connectionAttemptDelay = bad }).close() }
+        }
+        for (good in listOf(10.milliseconds, 2.seconds, kotlin.time.Duration.INFINITE)) {
+            testClient(engine = { connectionAttemptDelay = good }).close()
         }
     }
 

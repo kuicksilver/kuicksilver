@@ -67,6 +67,14 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   server's SETTINGS and for the answer) and
   `Http3ServerRequest.isWebTransport`, `availableProtocols` and `acceptWebTransport` accept one. One session per
   connection, no WebTransport flow control. Streams and datagrams of a session, close and drain follow.
+- Ktor client: Happy Eyeballs for HTTP/1.1's TCP connects, to the origin and to an HTTP proxy (RFC 8305 sections 4 to 6;
+  `docs/guide/ktor.md`, "IPv6 over TCP on Kotlin/Native"). Every address of a host name is tried, IPv6 and IPv4
+  alternating, a new attempt every `connectionAttemptDelay` (*experimental*, 250 ms; 10 ms to 2 s, or
+  `Duration.INFINITE` for one address after another) or at once when the previous one failed; the first connection
+  wins and the others are cancelled or closed. An address that drops connection attempts now costs 250 ms instead of
+  the request's connect timeout, and the JVM and Android no longer connect only to the first address of a name. The
+  name is resolved once per request for both sides of the h3/h1 race (HTTP/3 takes the first address), off the
+  caller's thread and within the connect timeout.
 
 ### Changed
 
