@@ -253,7 +253,9 @@ internal class H1Pool(
                             settle(after)
                         } else {
                             // reusable once the body is out
-                            job.job.invokeOnCompletion { c -> settle(if (c == null) AfterResponse.Reuse else AfterResponse.Close) }
+                            job.job.invokeOnCompletion { c ->
+                                settle(if (c == null && job.failure == null) AfterResponse.Reuse else AfterResponse.Close)
+                            }
                         }
                     }
                 }
@@ -268,7 +270,9 @@ internal class H1Pool(
                 bodyJob?.failure?.let { throw it }
                 // a pooled connection the server already closed: one transparent retry on a fresh connection, for an
                 // idempotent request with a replayable body only (a non-idempotent one may have been processed, RFC 9112 section 9.3.1);
-                // a socket timeout is an IOException too, but a slow server, not a closed connection: it is not repeated
+                // a socket timeout is an IOException too, but a slow server, not a closed connection: it is not repeated.
+                // `e !is TlsException` is intentionally not reached for a TLS failure read through the connection's channel
+                // (it arrives wrapped): a TLS failure on a reused connection is the stale-connection case this retry is for
                 if (reused && first && bodyJob == null && data.method.isIdempotent() &&
                     (e is ClosedReadChannelException || e is kotlinx.io.IOException) && e !is TlsException &&
                     e !is SocketTimeoutException
@@ -285,7 +289,9 @@ internal class H1Pool(
     /**
      * Writes the body in its own coroutine; a failure closes the connection (so the response read fails too) and is
      * reported through the call ([BodySender.failure]). It is not rethrown: this coroutine has no parent, so a failure
-     * thrown out of it went to the uncaught-exception handler as well (printed on the JVM, fatal to an Android app).
+     * thrown out of it went to the uncaught-exception handler as well (printed on the JVM, fatal to an Android app). It is
+     * logged at [io.kuicksilver.quic.LogLevel.Debug]: when the response was already complete (a server that answered before the whole body),
+     * the call does not fail and nothing else reports it.
      */
     @OptIn(DelicateCoroutinesApi::class)
     private fun sendBodyConcurrently(
@@ -304,6 +310,12 @@ internal class H1Pool(
                 } catch (e: Throwable) {
                     sender.failure = e
                     conn.close()
+                    val logger = events.logger
+                    runCatching {
+                        if (logger.isEnabled(io.kuicksilver.quic.LogLevel.Debug)) {
+                            logger.log(io.kuicksilver.quic.LogLevel.Debug, "HTTP/1.1 request body of ${data.method.value} ${data.url.protocol.name}://${data.url.host}:${data.url.port} failed; its connection is closed", e)
+                        }
+                    }
                 }
             }
         sender.job.invokeOnCompletion { c -> if (c != null) conn.close() }
