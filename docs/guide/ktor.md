@@ -388,6 +388,24 @@ get("/report") {
 }
 ```
 
+On the client, `priority(urgency, incremental)` in a request builder gives the request its priority: over HTTP/3 it is
+sent as the `priority` field (no field for the default, u=3 non-incremental) and the request's own stream is scheduled
+with it, a WebSocket over HTTP/3 included; over HTTP/1.1 only the `Priority` field is sent. It replaces a `Priority`
+header set on the same request, so the server sees one signal. `response.updatePriority(urgency, incremental)` sends a
+PRIORITY_UPDATE while the response is still coming (RFC 9218 section 7) and returns true; it returns false over
+HTTP/1.1, which has no such signal, and once the call is over or the body was read to the end. The server reschedules
+the rest of the response unless it set a priority of its own.
+
+```kotlin
+// guide:ktor:priority-client
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+val page = client.get("$origin/index.html") { priority(urgency = 1) }
+client.prepareGet("$origin/video.mp4") { priority(urgency = 5, incremental = true) }.execute { response ->
+    response.updatePriority(urgency = 2, incremental = true) // now in view: more urgent
+    response.bodyAsChannel().discard()
+}
+```
+
 ## Observability (experimental)
 
 Both engines report what they do without a logging dependency (the API is `@ExperimentalKuicksilverApi`). The QUIC side

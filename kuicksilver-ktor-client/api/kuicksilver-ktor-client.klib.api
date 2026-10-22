@@ -213,4 +213,9 @@ final object io.kuicksilver.ktor.client/Kuicksilver : io.ktor.client.engine/Http
     final fun toString(): kotlin/String // io.kuicksilver.ktor.client/Kuicksilver.toString|toString(){}[0]
 }
 
+final val io.kuicksilver.ktor.client/priority // io.kuicksilver.ktor.client/priority|@io.ktor.client.request.HttpRequestBuilder{}priority[0]
+    final fun (io.ktor.client.request/HttpRequestBuilder).<get-priority>(): io.kuicksilver.quic/StreamPriority? // io.kuicksilver.ktor.client/priority.<get-priority>|<get-priority>@io.ktor.client.request.HttpRequestBuilder(){}[0]
+
+final fun (io.ktor.client.request/HttpRequestBuilder).io.kuicksilver.ktor.client/priority(kotlin/Int = ..., kotlin/Boolean = ...) // io.kuicksilver.ktor.client/priority|priority@io.ktor.client.request.HttpRequestBuilder(kotlin.Int;kotlin.Boolean){}[0]
+final suspend fun (io.ktor.client.statement/HttpResponse).io.kuicksilver.ktor.client/updatePriority(kotlin/Int, kotlin/Boolean): kotlin/Boolean // io.kuicksilver.ktor.client/updatePriority|updatePriority@io.ktor.client.statement.HttpResponse(kotlin.Int;kotlin.Boolean){}[0]
 final suspend fun (io.ktor.client/HttpClient).io.kuicksilver.ktor.client/webTransport(kotlin/String, kotlin.collections/List<kotlin/String> = ..., io.kuicksilver.http3/Http3Headers = ...): io.kuicksilver.http3/WebTransportSession // io.kuicksilver.ktor.client/webTransport|webTransport@io.ktor.client.HttpClient(kotlin.String;kotlin.collections.List<kotlin.String>;io.kuicksilver.http3.Http3Headers){}[0]

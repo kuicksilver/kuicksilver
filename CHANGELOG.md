@@ -133,6 +133,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   and `call.response.priority(urgency, incremental)` sets the response's `Priority` field with only the given
   parameters; over HTTP/3 they are merged into the client's signal and schedule the response. Over HTTP/1.1 the field
   is read and sent only.
+- Ktor client: RFC 9218 priorities (experimental). `priority(urgency, incremental)` in a request builder sends the
+  `priority` field and, over HTTP/3, schedules the request's stream with it (a WebSocket over HTTP/3 included); it
+  replaces a `Priority` header on the same request. `response.updatePriority(urgency, incremental)` sends a
+  PRIORITY_UPDATE while the response is coming and returns false over HTTP/1.1 or once the call is over.
 
 ### Changed
 

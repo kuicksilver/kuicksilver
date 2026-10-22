@@ -34,12 +34,14 @@ import io.kuicksilver.ktor.client.Activity
 import io.kuicksilver.ktor.client.ConsumedBody
 import io.kuicksilver.ktor.client.EngineEvents
 import io.kuicksilver.ktor.client.H3BodyConsumed
+import io.kuicksilver.ktor.client.H3ExchangeKey
 import io.kuicksilver.ktor.client.Http3DiscoveryMode
 import io.kuicksilver.ktor.client.KuicksilverEngineConfig
 import io.kuicksilver.ktor.client.RequestDns
 import io.kuicksilver.ktor.client.connectTimeoutMillis
 import io.kuicksilver.ktor.client.h1.toMillisOrMax
 import io.kuicksilver.ktor.client.newRequestDns
+import io.kuicksilver.ktor.client.priority
 import io.kuicksilver.ktor.client.socketTimeoutMillis
 import io.kuicksilver.ktor.client.tlsConfigFor
 import io.kuicksilver.ktor.client.webSocketRsvAfterHandshake
@@ -688,9 +690,11 @@ internal class H3Pool(
                         this.body = bodyChannel(body, callContext)?.let { b -> activity?.let { ConsumedBody(b, it) } ?: b }
                         @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
                         allowEarlyData = config.http3.earlyData
+                        priority = data.priority
                     },
                 )
             }
+        data.attributes.put(H3ExchangeKey, response) // for HttpResponse.updatePriority
         callContext[Job]?.invokeOnCompletion { cause ->
             // the call is over: an unread rest of the body is abandoned (STOP_SENDING); a reader still waiting sees why
             // (the request timeout, the caller's exception), not the stream's cancellation (found by the vendored contract)
@@ -720,7 +724,10 @@ internal class H3Pool(
         val headers = Http3Headers(headersOf(data, data.body.unwrap()).fields.filter { it.first !in WS_HOP_BY_HOP } + extraHeaders)
         val stream =
             conn.connect(
-                http3Request("CONNECT", data.url.authority(), data.url.h3Path()) { this.headers = headers },
+                http3Request("CONNECT", data.url.authority(), data.url.h3Path()) {
+                    this.headers = headers
+                    priority = data.priority
+                },
                 "websocket",
             )
         // each direction on its own when the call is over. A send side the session closed cleanly ends with its FIN (the Close
@@ -806,11 +813,12 @@ internal class H3Pool(
             body: OutgoingContent,
         ): Http3Headers {
             val out = ArrayList<Pair<String, String>>()
+            val ownPriority = data.priority != null // HttpRequestBuilder.priority replaces a raw field: one signal
             mergeHeaders(data.headers, data.body) { k, v ->
                 val n = k.lowercase()
                 // Ktor allows OWS around a value (its WebSocket plugin writes `Sec-WebSocket-Extensions: x-test `); an
                 // HTTP/3 field value carries none (RFC 9110 section 5.5), as on the server side
-                if (n !in HOP_BY_HOP) out += n to v.trim { it == ' ' || it == '\t' }
+                if (n !in HOP_BY_HOP && !(ownPriority && n == "priority")) out += n to v.trim { it == ' ' || it == '\t' }
             }
             if (out.none { it.first == "content-length" }) {
                 body.contentLength?.let {

@@ -7,9 +7,16 @@ package io.kuicksilver.ktor.client
 import io.ktor.client.HttpClient
 import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.request.HttpRequestData
+import io.ktor.client.request.get
+import io.ktor.client.request.prepareGet
+import io.ktor.client.statement.bodyAsChannel
+import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpProtocolVersion
+import io.ktor.server.response.respondText
+import io.ktor.server.routing.get
 import io.ktor.server.routing.routing
 import io.ktor.utils.io.copyTo
+import io.ktor.utils.io.discard
 import io.ktor.utils.io.readRemaining
 import io.ktor.utils.io.writeFully
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
@@ -36,6 +43,7 @@ class GuideSamplesTest {
         assertTrue("guide:ktor:client" in guide, "marker client")
         assertTrue("guide:ktor:pool" in guide, "marker pool")
         assertTrue("guide:ktor:webtransport-client" in guide, "marker webtransport-client")
+        assertTrue("guide:ktor:priority-client" in guide, "marker priority-client")
     }
 
     @Test fun observabilityAndZeroRttSamples() {
@@ -89,6 +97,31 @@ class GuideSamplesTest {
                     println(stream.input.readRemaining().readString())
                     session.close(0, "done")
                     assertEquals("echo-v1", session.protocol)
+                }
+            } finally {
+                server.stopSuspend(100, 1000)
+            }
+        }
+
+    @Test fun priorityClientSample() =
+        h3Test {
+            val (server, port) =
+                testServer {
+                    routing {
+                        get("/index.html") { call.respondText("${call.request.headers["priority"]}") }
+                        get("/video.mp4") { call.respondText("video") }
+                    }
+                }
+            try {
+                testClient(Http3DiscoveryMode.H3Only).use { client ->
+                    val origin = "https://127.0.0.1:$port"
+                    // guide:ktor:priority-client
+                    val page = client.get("$origin/index.html") { priority(urgency = 1) }
+                    client.prepareGet("$origin/video.mp4") { priority(urgency = 5, incremental = true) }.execute { response ->
+                        response.updatePriority(urgency = 2, incremental = true) // now in view: more urgent
+                        response.bodyAsChannel().discard()
+                    }
+                    assertEquals("u=1", page.bodyAsText())
                 }
             } finally {
                 server.stopSuspend(100, 1000)

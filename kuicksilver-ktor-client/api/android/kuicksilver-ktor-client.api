@@ -150,6 +150,13 @@ public abstract class io/kuicksilver/ktor/client/KuicksilverEventListener {
 	public fun retry (Lio/ktor/client/request/HttpRequestData;ILjava/lang/Throwable;)V
 }
 
+public final class io/kuicksilver/ktor/client/PriorityKt {
+	public static final fun getPriority (Lio/ktor/client/request/HttpRequestBuilder;)Lio/kuicksilver/quic/StreamPriority;
+	public static final fun priority (Lio/ktor/client/request/HttpRequestBuilder;IZ)V
+	public static synthetic fun priority$default (Lio/ktor/client/request/HttpRequestBuilder;IZILjava/lang/Object;)V
+	public static final fun updatePriority (Lio/ktor/client/statement/HttpResponse;IZLkotlin/coroutines/Continuation;)Ljava/lang/Object;
+}
+
 public final class io/kuicksilver/ktor/client/ProtocolReason : java/lang/Enum {
 	public static final field BrokenAlternative Lio/kuicksilver/ktor/client/ProtocolReason;
 	public static final field Configuration Lio/kuicksilver/ktor/client/ProtocolReason;

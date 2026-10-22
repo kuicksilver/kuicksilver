@@ -2,7 +2,7 @@
 // Modifications Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
 // Vendored from Ktor 3.6.0 ktor-client-cio utils.kt (internal there), adapted: keep-alive release hook, no Unix sockets,
-// WebSocket extension and RSV checks.
+// WebSocket extension and RSV checks, the request's priority field.
 @file:OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
 
 package io.kuicksilver.ktor.client.h1
@@ -43,6 +43,8 @@ import io.ktor.utils.io.writeFully
 import io.ktor.utils.io.writePacket
 import io.ktor.utils.io.writer
 import io.ktor.websocket.RawWebSocket
+import io.kuicksilver.http3.message.PriorityField
+import io.kuicksilver.ktor.client.priority
 import io.kuicksilver.ktor.client.webSocketRsvAfterHandshake
 import io.kuicksilver.ktor.client.withSocketTimeout
 import io.kuicksilver.ktor.network.guardWebSocketInput
@@ -94,11 +96,15 @@ internal suspend fun writeHeaders(
             if (method.supportsRequestBody || hasContent) builder.headerLine(HttpHeaders.ContentLength, contentLength)
         }
 
+        val ownPriority = request.priority // HttpRequestBuilder.priority replaces a raw field: one signal
         mergeHeaders(headers, body) { key, value ->
             if (key == HttpHeaders.ContentLength || key == HttpHeaders.Expect) return@mergeHeaders
+            if (ownPriority != null && key.equals("Priority", true)) return@mergeHeaders
             if (tunneled && (key.equals(HttpHeaders.ProxyAuthorization, true) || key.equals("Proxy-Connection", true))) return@mergeHeaders
             builder.headerLine(key, value)
         }
+
+        ownPriority?.let { p -> PriorityField.format(p)?.let { builder.headerLine("Priority", it) } }
 
         if (chunked && contentEncoding == null && responseEncoding == null &&
             hasContent
