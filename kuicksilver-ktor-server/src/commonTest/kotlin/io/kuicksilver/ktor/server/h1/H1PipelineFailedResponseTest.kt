@@ -7,6 +7,7 @@ import io.ktor.utils.io.ByteChannel
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.readAvailable
 import io.ktor.utils.io.writeStringUtf8
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runCurrent
@@ -66,6 +67,41 @@ class H1PipelineFailedResponseTest {
             // /a's response may be cut by the reset that ends the connection; /c's must never stand in for /b's
             assertTrue(responses == listOf("a") || responses.isEmpty(), "the client got these bodies for /a, /b and /c: $responses")
             assertTrue(failed, "the connection ended cleanly after a failed response")
+        }
+
+    /**
+     * An upgraded connection (a WebSocket) whose client side fails (a reset) fails the handler's input, which the engine
+     * copies from the connection with ktor's `copyAndClose`: that copy rethrows a cause after its loop, so the input is
+     * not closed as if the client had ended it. The control for the class of bug above, on the upgraded path.
+     */
+    @Test fun aResetUnderAnUpgradedConnectionFailsTheHandlersInput() =
+        runTest {
+            val ended = CompletableDeferred<String>()
+            val (toServer, _) =
+                pipeline { request ->
+                    request.release()
+                    output.writeStringUtf8("HTTP/1.1 101 Switching Protocols\r\nUpgrade: test\r\nConnection: Upgrade\r\n\r\n")
+                    output.flush()
+                    upgraded!!.complete(true)
+                    val outcome =
+                        try {
+                            val buf = ByteArray(4096)
+                            while (true) {
+                                val n = input.readAvailable(buf, 0, buf.size)
+                                if (n < 0) break
+                            }
+                            input.closedCause?.let { "a failure: ${it.message}" } ?: "a clean end"
+                        } catch (e: Exception) {
+                            "a failure: ${e.message}"
+                        }
+                    ended.complete(outcome)
+                }
+            toServer.writeStringUtf8("GET /ws HTTP/1.1\r\nHost: s\r\nUpgrade: test\r\nConnection: Upgrade\r\n\r\nsome bytes")
+            toServer.flush()
+            runCurrent()
+            toServer.cancel(IOException("connection reset"))
+            val outcome = ended.await()
+            assertTrue(outcome.startsWith("a failure"), "the handler of an upgraded connection that was reset saw $outcome")
         }
 
     /** What the client got before the connection ended, and whether it ended with a failure. */
