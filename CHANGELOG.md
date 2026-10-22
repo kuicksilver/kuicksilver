@@ -302,6 +302,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   write all waited on it. A client's close (`Socket.tls`) is now bounded by 3 s in all; then what is queued is dropped
   and the socket closed. A server's (`Socket.tlsServer`) waits for the client to take the last response however slowly
   it reads: a fixed bound there cut such a response short with a clean EOF; whoever accepted the socket bounds it.
+- TLS: a `TlsConnection` whose output the application failed (cancelled with a cause, a stream that failed midway) could
+  still send `close_notify`, so the peer saw a clean end of a cut stream. ktor's `readAvailable` answers -1 for a failed
+  channel as for a closed one when the failure is there before the call, and the writer pump, busy on a full transport
+  when the failure came, took that for the end. A failed output now ends the session without `close_notify`.
 - TLS: `TlsConnection.shutdown()` could wait forever when the peer stopped reading. Its 3 s bound covered only the
   wait for the peer's `close_notify`; before it, the wait for the writer to send the queued data and `close_notify`
   had none, and a full transport stops that writer. The 3 s now bound the whole shutdown, after which the connection

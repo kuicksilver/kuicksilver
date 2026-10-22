@@ -411,6 +411,9 @@ public class TlsConnection private constructor(
             while (true) {
                 val n = outputChannel.readAvailable(buf, 0, buf.size)
                 if (n < 0) {
+                    // ktor answers -1 for an output failed with a cause as for one closed: a failed one (the application's
+                    // stream failed) gets no close_notify, which would end the stream for the peer as if complete
+                    outputChannel.closedCause?.let { throw it }
                     shutdownSend()
                     return
                 }
