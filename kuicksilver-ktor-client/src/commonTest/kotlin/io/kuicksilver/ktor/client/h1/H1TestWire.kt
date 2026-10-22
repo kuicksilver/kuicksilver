@@ -51,14 +51,22 @@ internal suspend fun TestScope.exchange(
     wire: Wire,
     data: HttpRequestData,
     reused: Boolean = false,
-): HttpResponseData {
+): HttpResponseData = exchange(wire, data, reused) { it }
+
+/** [exchange], with the call kept open while [block] uses the response (reads its body). */
+internal suspend fun <T> TestScope.exchange(
+    wire: Wire,
+    data: HttpRequestData,
+    reused: Boolean = false,
+    block: suspend (HttpResponseData) -> T,
+): T {
     val selector = SelectorManager(Dispatchers.Default)
     val pool = H1Pool(KuicksilverEngineConfig(), selector)
     pool.cleartextPermitted = { true }
     val call = Job()
     try {
         val conn = H1Connection(NoSocket(wire), null, wire.fromServer, wire.toServer, "test")
-        return pool.execute(data, coroutineContext + call, H1Pool.Opened(conn, reused))
+        return block(pool.execute(data, coroutineContext + call, H1Pool.Opened(conn, reused)))
     } finally {
         call.cancel()
         selector.close()

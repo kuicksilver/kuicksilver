@@ -223,6 +223,14 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   acknowledgements and losses are binary searches, and a MAX_STREAM_DATA that raises nothing does no work, like MAX_DATA.
   A range declared lost after part of it was acknowledged is resent without the acknowledged part.
 
+- Ktor client, HTTP/1.1: a failure was taken for an end in both directions, because ktor's `copyTo` returns normally on
+  a source closed with a cause. A response delimited by the connection's close, cut by a reset while the client waited
+  for the application to read, ended cleanly, so a cut body passed for the whole; it now fails with the connection's
+  error. A request body whose channel failed was sent as complete: chunked, with its last chunk (the server took the cut
+  body for the whole); with a Content-Length, short, and the call waited for a response that could not come. Such a
+  request now fails with the body's error and its connection is closed without the last chunk. A request body's
+  failure also reached the uncaught-exception handler (printed on the JVM, fatal to an Android app); it now fails only
+  its call.
 - Ktor client, HTTP/1.1: a server could make the client buffer a response head of any size and hold a request with
   endless interim responses. Ktor's `parseResponse` bounds each line at 8 KiB but not their number, and the whole header
   section is buffered (2 bytes per character) before the call sees it; interim 1xx heads were skipped without a bound,
