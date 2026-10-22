@@ -11,7 +11,9 @@ import io.ktor.network.sockets.SocketAddress
 import io.ktor.utils.io.ByteChannel
 import io.ktor.utils.io.ReaderJob
 import io.ktor.utils.io.WriterJob
+import io.kuicksilver.ktor.client.EngineEvents
 import io.kuicksilver.ktor.client.KuicksilverEngineConfig
+import io.kuicksilver.quic.KuicksilverLogger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.test.TestScope
@@ -58,10 +60,11 @@ internal suspend fun <T> TestScope.exchange(
     wire: Wire,
     data: HttpRequestData,
     reused: Boolean = false,
+    events: EngineEvents = EngineEvents(null, KuicksilverLogger.None),
     block: suspend (HttpResponseData) -> T,
 ): T {
     val selector = SelectorManager(Dispatchers.Default)
-    val pool = H1Pool(KuicksilverEngineConfig(), selector)
+    val pool = H1Pool(KuicksilverEngineConfig(), selector, events)
     pool.cleartextPermitted = { true }
     val call = Job()
     try {

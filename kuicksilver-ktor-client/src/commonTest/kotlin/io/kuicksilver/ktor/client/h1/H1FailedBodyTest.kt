@@ -8,6 +8,7 @@ import io.ktor.client.request.HttpRequestData
 import io.ktor.client.request.setBody
 import io.ktor.client.request.url
 import io.ktor.http.HttpMethod
+import io.ktor.http.HttpProtocolVersion
 import io.ktor.http.content.OutgoingContent
 import io.ktor.utils.io.ByteChannel
 import io.ktor.utils.io.ByteReadChannel
@@ -17,7 +18,12 @@ import io.ktor.utils.io.readByteArray
 import io.ktor.utils.io.readLineStrict
 import io.ktor.utils.io.writeFully
 import io.ktor.utils.io.writeStringUtf8
+import io.kuicksilver.ktor.client.EngineEvents
+import io.kuicksilver.ktor.client.KuicksilverEventListener
+import io.kuicksilver.quic.KuicksilverLogger
+import io.kuicksilver.quic.LogLevel
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceUntilIdle
@@ -162,6 +168,65 @@ class H1FailedBodyTest {
             backgroundScope.launch { while (wire.toServer.readLineStrict()?.isNotEmpty() == true) continue }
             val call = runCatching { exchange(wire, post(body)) { it.statusCode } }
             assertTrue(call.isFailure, "a request whose body failed completed with ${call.getOrNull()}")
+        }
+
+    /**
+     * A server that answers before the whole request body (allowed, RFC 9112 section 9.3) and a body that then fails: the
+     * call has its response and does not fail, so the failure is logged at Debug, and the connection is not kept. Before,
+     * nothing reported it.
+     */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    @Test fun aBodyThatFailsAfterACompleteResponseIsLogged() =
+        runTest {
+            val bodyMayFail = Job()
+            val body =
+                object : OutgoingContent.WriteChannelContent() {
+                    override suspend fun writeTo(channel: ByteWriteChannel) {
+                        channel.writeFully(ByteArray(100))
+                        channel.flush()
+                        bodyMayFail.join()
+                        throw IOException("the application's body failed")
+                    }
+                }
+            val logged = ArrayList<String>()
+            val releases = ArrayList<Boolean>()
+            val logger =
+                object : KuicksilverLogger {
+                    override fun isEnabled(level: LogLevel): Boolean = true
+
+                    override fun log(
+                        level: LogLevel,
+                        message: String,
+                        cause: Throwable?,
+                    ) {
+                        logged += "$level $message: ${cause?.message}"
+                    }
+                }
+            val listener =
+                object : KuicksilverEventListener() {
+                    override fun connectionReleased(
+                        request: HttpRequestData,
+                        protocol: HttpProtocolVersion,
+                        kept: Boolean,
+                    ) {
+                        releases += kept
+                    }
+                }
+            val wire = Wire()
+            backgroundScope.launch {
+                while (wire.toServer.readLineStrict()?.isNotEmpty() == true) continue
+                wire.fromServer.writeStringUtf8("HTTP/1.1 204 No Content\r\n\r\n")
+                wire.fromServer.flush()
+                runCatching { while (wire.toServer.readLineStrict() != null) continue }
+            }
+            val status = exchange(wire, post(body), events = EngineEvents(listener, logger)) { r ->
+                bodyMayFail.complete()
+                advanceUntilIdle()
+                r.statusCode.value
+            }
+            assertEquals(204, status)
+            assertTrue(logged.any { it.startsWith("Debug") && it.contains("request body") && it.contains("the application's body failed") }, "logged: $logged")
+            assertEquals(listOf(false), releases, "the connection of a failed body was kept")
         }
 
     /** A chunked request body that completes ends with its last chunk (the control for the two above). */
