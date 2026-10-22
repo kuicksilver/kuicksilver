@@ -503,6 +503,39 @@ class RetryTest {
         }
     }
 
+    @Test fun negative_retryTokenNoncesNeverRepeatUnderOneKey() {
+        // AES-GCM under one key must never see a nonce twice (a repeat gives away the GHASH key: forged tokens for any address). 64
+        // random bits cross NIST's 2^-32 collision bound at about 92,000 tokens per key; a counter never repeats
+        val tokens = RetryTokens(KslQuicCrypto, Random(1))
+        val client = InetSocketAddress("10.0.0.1", 40000)
+        val odcid = ConnectionId(ByteArray(8) { 1 })
+        val retryScid = ConnectionId(ByteArray(8) { 2 })
+        val t0 = TimeMark(1_000_000_000L)
+
+        fun nonce(t: ByteArray): Long {
+            var n = 0L
+            for (i in 0 until 8) n = (n shl 8) or (t[1 + i].toLong() and 0xff)
+            return n
+        }
+        try {
+            val n = (1 shl 16) + 10
+            val nonces = LongArray(n) { nonce(tokens.mint(odcid, retryScid, client, 1, t0)) }
+            for (i in 1 until n) assertEquals(nonces[i - 1] + 1, nonces[i], "a counter, +1 per token ($i)")
+            assertTrue(nonces[0] in 0 until (1L shl 62), "from a random start below 2^62")
+            tokens.counterForTest = Long.MAX_VALUE
+            val last = tokens.mint(odcid, retryScid, client, 1, t0)
+            val b = PacketBuffer.of(last)
+            try {
+                assertIs<TokenCheck.Valid>(tokens.check(b, 0, last.size, client, 1, t0), "a spent counter moves to a new key at once")
+            } finally {
+                b.close()
+            }
+            assertTrue(nonce(last) in 0 until (1L shl 62))
+        } finally {
+            tokens.close()
+        }
+    }
+
     @Test fun tokenSurvivesOneRotationNotTwo() {
         val tokens = RetryTokens(KslQuicCrypto, Random(1), lifetime = 10.hours, rotateEvery = 1.hours)
         val client = InetSocketAddress("10.0.0.1", 40000)

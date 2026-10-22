@@ -38,6 +38,10 @@ internal sealed interface TokenCheck {
  * SCID binds the token to the one Initial that may carry it (section 8.1.3: the server checks it against the Destination
  * Connection ID). Keys rotate every [rotateEvery]; the previous key still checks. A token is checked by the process that minted
  * it (process time).
+ *
+ * The nonce is a counter per key, from a random start below 2^62: AES-GCM never sees a nonce twice under one key. Random 64-bit
+ * nonces would cross NIST's 2^-32 collision bound at about 92,000 tokens per key (93 s at the default stateless rate limit), and
+ * one repeat gives away the GHASH key, that is forged tokens for any address under that key. A spent counter moves to a new key.
  */
 internal class RetryTokens(
     private val crypto: QuicCrypto,
@@ -49,16 +53,31 @@ internal class RetryTokens(
     private var previous: TokenKey? = null
     private var currentSince: TimeMark = TimeMark.NEVER
 
+    /** The next nonce under [current]; -1 until its first token draws a random start. */
+    private var counter = -1L
+
+    /** Test hook: the next nonce under the current key. */
+    internal var counterForTest: Long
+        get() = counter
+        set(v) {
+            counter = v
+        }
+
+    private fun newKey(now: TimeMark) {
+        previous?.close()
+        previous = current
+        current = crypto.newTokenKey()
+        currentSince = now
+        counter = -1
+    }
+
     private fun rotate(now: TimeMark) {
         if (currentSince == TimeMark.NEVER) {
             currentSince = now
             return
         }
         if (now - currentSince < rotateEvery) return
-        previous?.close()
-        previous = current
-        current = crypto.newTokenKey()
-        currentSince = now
+        newKey(now)
     }
 
     private fun aad(
@@ -87,7 +106,9 @@ internal class RetryTokens(
         now: TimeMark,
     ): ByteArray {
         rotate(now)
-        val nonce = random.nextLong()
+        if (counter == Long.MAX_VALUE) newKey(now) // never wrap under one key
+        if (counter < 0) counter = random.nextLong() ushr 2 // a random start: the clear nonce does not show the absolute count
+        val nonce = counter++
         val plain = ByteArray(8 + 1 + odcid.length + 1 + retryScid.length)
         for (i in 0 until 8) plain[i] = (now.nanos ushr (8 * (7 - i))).toByte()
         plain[8] =
