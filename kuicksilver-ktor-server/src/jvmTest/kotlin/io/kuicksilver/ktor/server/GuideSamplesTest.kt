@@ -47,6 +47,7 @@ class GuideSamplesTest {
             }.map { File(it, "docs/guide/ktor.md") }.first { it.exists() }.readText()
         assertTrue("guide:ktor:server" in guide, "marker server")
         assertTrue("guide:ktor:webtransport-server" in guide, "marker webtransport-server")
+        assertTrue("guide:ktor:priority-server" in guide, "marker priority-server")
     }
 
     private object Metrics {
@@ -110,6 +111,29 @@ class GuideSamplesTest {
             }
         assertTrue(server.engine.configuration.webTransport) // ServerWebTransportTest runs such a route
     }
+
+    @Test fun prioritySample() =
+        runBlocking {
+            withTimeout(30.seconds) {
+                fun buildReport() = "report"
+                val (server, port) =
+                    tlsServer {
+                        routing {
+                            // guide:ktor:priority-server
+                            get("/report") {
+                                if (call.request.priority.urgency < 4) call.response.priority(urgency = 4) // bulk: never ahead of the pages
+                                call.respondText(buildReport())
+                            }
+                        }
+                    }
+                try {
+                    val resp = rawHttp(port, "GET /report HTTP/1.1\r\nHost: s\r\nPriority: u=1\r\nConnection: close\r\n\r\n")
+                    assertTrue(resp.lowercase().contains("\r\npriority: u=4\r\n") && resp.endsWith("report"), resp)
+                } finally {
+                    server.stop(100, 500)
+                }
+            }
+        }
 
     @Test fun serverSample() {
         // guide:ktor:server

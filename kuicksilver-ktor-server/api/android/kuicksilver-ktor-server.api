@@ -112,6 +112,13 @@ public final class io/kuicksilver/ktor/server/PeerCertificatesKt {
 	public static final fun getPeerCertificates (Lio/ktor/server/request/ApplicationRequest;)Ljava/util/List;
 }
 
+public final class io/kuicksilver/ktor/server/PriorityKt {
+	public static final fun getPriority (Lio/ktor/server/request/ApplicationRequest;)Lio/kuicksilver/quic/StreamPriority;
+	public static final fun getPriorityUpdates (Lio/ktor/server/request/ApplicationRequest;)Lkotlinx/coroutines/flow/StateFlow;
+	public static final fun priority (Lio/ktor/server/response/ApplicationResponse;Ljava/lang/Integer;Ljava/lang/Boolean;)V
+	public static synthetic fun priority$default (Lio/ktor/server/response/ApplicationResponse;Ljava/lang/Integer;Ljava/lang/Boolean;ILjava/lang/Object;)V
+}
+
 public final class io/kuicksilver/ktor/server/WebTransportRoutingKt {
 	public static final field WEB_TRANSPORT_HANDLER_FAILED J
 	public static final fun sameHostOrigin (Ljava/lang/String;Lio/ktor/server/application/ApplicationCall;)Z

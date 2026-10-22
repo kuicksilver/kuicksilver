@@ -1,7 +1,7 @@
 // Copyright 2014-2021 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
 // Modifications Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
-// Vendored from Ktor 3.6.0 ktor-server-cio CIOApplicationCall.kt (internal there), adapted: TLS scheme, peer certificates.
+// Vendored from Ktor 3.6.0 ktor-server-cio CIOApplicationCall.kt (internal there), adapted: TLS scheme, peer certificates, the priority signal.
 package io.kuicksilver.ktor.server.h1
 
 import io.ktor.http.cio.Request
@@ -11,6 +11,8 @@ import io.ktor.util.network.NetworkAddress
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.ByteWriteChannel
 import io.kuicksilver.ktor.server.PeerCertificatesKey
+import io.kuicksilver.ktor.server.RequestPriorityKey
+import io.kuicksilver.ktor.server.h1Priority
 import io.kuicksilver.tls.Certificate
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -45,6 +47,7 @@ internal class H1Call(
     init {
         putResponseAttribute()
         attributes.put(PeerCertificatesKey, peerCertificates)
+        attributes.put(RequestPriorityKey, h1Priority(request.headers.getAll("Priority")))
         // a gateway forwarded it from early data (RFC 8470 section 5.1)
         if (_request.headers[io.kuicksilver.ktor.server.EARLY_DATA_FIELD] != null) {
             attributes.put(io.kuicksilver.ktor.server.ReceivedEarlyKey, true)

@@ -365,6 +365,29 @@ println(stream.input.readRemaining().readString())
 session.close(0, "done")                           // the session's own connection closes with it
 ```
 
+## Priorities (experimental)
+
+Both engines read and write RFC 9218 extensible priorities (the API is `@ExperimentalKuicksilverApi`). Over HTTP/3 the
+priority decides the order in which response streams of one connection are sent: lower urgency first, streams of the
+same urgency one after another, or interleaved when incremental. Over HTTP/1.1 a connection carries one response at a
+time, so there the field is only read and sent, never used for scheduling.
+
+On the server, `call.request.priority` is the client's current signal (urgency 3, not incremental, when it sent none; a
+malformed parameter reads as its default), and `call.request.priorityUpdates` is the same as a `StateFlow` that follows
+the client's PRIORITY_UPDATE frames over HTTP/3 (over HTTP/1.1 it never changes). `call.response.priority(urgency,
+incremental)` sets the response's `Priority` field with only the parameters given: over HTTP/3 the engine merges them
+into the client's signal (a parameter left out keeps the client's value, RFC 9218 section 8) and schedules the response
+with the result, and later updates from the client no longer change it.
+
+```kotlin
+// guide:ktor:priority-server
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+get("/report") {
+    if (call.request.priority.urgency < 4) call.response.priority(urgency = 4) // bulk: never ahead of the pages
+    call.respondText(buildReport())
+}
+```
+
 ## Observability (experimental)
 
 Both engines report what they do without a logging dependency (the API is `@ExperimentalKuicksilverApi`). The QUIC side

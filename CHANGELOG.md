@@ -128,6 +128,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   with `WebSocketException`. Both engines end a session whose peer sets an RSV bit no negotiated extension defines, or
   uses a reserved opcode, or masks its frames in the wrong direction (RFC 6455 section 5.1), with a Close frame with code
   1002 (threat model 3.20.1).
+- Ktor server: RFC 9218 priorities (experimental). `call.request.priority` is the client's signal (the `priority`
+  field, over HTTP/3 also its PRIORITY_UPDATE frames, which `call.request.priorityUpdates` follows as a `StateFlow`),
+  and `call.response.priority(urgency, incremental)` sets the response's `Priority` field with only the given
+  parameters; over HTTP/3 they are merged into the client's signal and schedule the response. Over HTTP/1.1 the field
+  is read and sent only.
 
 ### Changed
 

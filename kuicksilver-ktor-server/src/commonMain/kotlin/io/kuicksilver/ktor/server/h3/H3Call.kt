@@ -29,6 +29,7 @@ import io.kuicksilver.http3.Http3ServerRequest
 import io.kuicksilver.ktor.server.EARLY_DATA_FIELD
 import io.kuicksilver.ktor.server.PeerCertificatesKey
 import io.kuicksilver.ktor.server.ReceivedEarlyKey
+import io.kuicksilver.ktor.server.RequestPriorityKey
 import io.kuicksilver.ktor.server.WebTransportRequestKey
 import io.kuicksilver.ktor.server.WebTransportUpgrade
 import io.kuicksilver.quic.ipLiteral
@@ -77,6 +78,7 @@ internal class H3Call(
         putResponseAttribute()
         if (webTransport) attributes.put(WebTransportRequestKey, h3)
         attributes.put(PeerCertificatesKey, peerCertificates)
+        attributes.put(RequestPriorityKey, h3.priority)
         // in 0-RTT here, or forwarded from early data by a gateway (RFC 8470 section 5.1)
         val gatewayMarked = h3.headers[EARLY_DATA_FIELD.lowercase()] != null
         @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
