@@ -408,7 +408,12 @@ validated the client's address there too (until then everything non-probing leav
 `PathChangeReason.PreferredAddress` and closes the original path. Nothing else happens on a preferred socket: a new
 connection is never started there, and nothing is answered statelessly. With `allowMigration = false` a move to the
 preferred address is still taken, but only from the client's current address. With several loops every loop listens on
-the preferred addresses with `SO_REUSEPORT`, like on the main one.
+the preferred addresses with `SO_REUSEPORT`, like on the main one. Each preferred socket binds the literal address it
+advertises (there is no NAT indirection: behind a NAT, advertise an address the server owns), which must not be the
+endpoint's own (`bind` refuses the same IP and port, or the port of a socket bound to `0.0.0.0` or `::`) nor use a
+reflection port (53, 123, 1900, 5353, 11211). If a preferred socket fails later, the endpoint degrades rather than
+failing: that loop stops offering the address to new connections, closes the connections that had moved there, logs a
+warning and counts it in `EndpointStats.preferredAddressFailures`; everything on the main socket goes on.
 
 A client follows a server's preferred address by default (`followPreferredAddress`, experimental; RFC 9000 section 9.6):
 once the handshake is confirmed it validates a path to the address of the family it uses, with the server's

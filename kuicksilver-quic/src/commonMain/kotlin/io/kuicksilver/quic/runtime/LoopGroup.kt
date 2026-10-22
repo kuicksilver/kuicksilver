@@ -190,7 +190,7 @@ internal class LoopGroup private constructor(
             try {
                 repeat(config.loops) {
                     preferred +=
-                        EndpointLoop.openPreferred(config) { at ->
+                        EndpointLoop.openPreferred(config, first.io.localAddress) { at ->
                             val s =
                                 open(at)
                                     ?: throw UnsupportedOperationException(

@@ -3,6 +3,8 @@
 package io.kuicksilver.quic.runtime
 
 import io.ktor.network.sockets.InetSocketAddress
+import io.ktor.utils.io.readRemaining
+import io.ktor.utils.io.writeFully
 import io.kuicksilver.annotations.DelicateKuicksilverApi
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.native.KslLoader
@@ -27,6 +29,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.io.IOException
+import kotlinx.io.readByteArray
 import kotlin.concurrent.Volatile
 import kotlin.test.BeforeTest
 import kotlin.test.Test
@@ -122,6 +125,84 @@ class LoopGroupTest {
                     client.connect(serverAddr, clientConfig)
                     withTimeout(5.seconds) { accepted.await() }
                     Unit
+                } finally {
+                    client.close()
+                    group.close()
+                }
+            }
+        }
+
+    /** The second socket on a port shared with SO_REUSEPORT: it sends with [real]'s address and receives nothing (the kernel hashed the flow onto [real]). */
+    private class SharedPortTwin(
+        val real: MemoryDatagramIo,
+    ) : DatagramIo by real {
+        override suspend fun receive(into: PacketBatch): Int = kotlinx.coroutines.awaitCancellation()
+
+        override fun close() {}
+    }
+
+    @Test fun movedConnectionOnAnotherLoopsPreferredSocketIsForwardedAsPreferred() =
+        runBlocking {
+            withTimeout(30.seconds) {
+                // the connection lives on loop 1; its client moves to the preferred address, which the kernel hashes onto loop 0's
+                // preferred socket: loop 0 forwards the datagrams with their socket kind, loop 1 handles them as the preferred path
+                val net = MemoryNetwork()
+                val pref = InetSocketAddress("10.0.0.4", 4433)
+                val pref0 = net.open(pref)
+                val withPreferred =
+                    QuicEndpointConfig
+                        .Builder()
+                        .apply {
+                            server =
+                                QuicServerConfig
+                                    .Builder(CoreFixtures.server())
+                                    .apply { preferredAddress = io.kuicksilver.quic.PreferredAddress(pref, null) }
+                                    .build()
+                            crypto = NullCryptoProvider
+                            loops = 2
+                        }.build()
+                val group =
+                    LoopGroup.create(
+                        withPreferred,
+                        listOf(net.open(serverAddr), net.open(otherAddr)),
+                        preferred = listOf(listOf(pref0), listOf(SharedPortTwin(pref0))),
+                    )
+                val client = QuicEndpoint.bind(clientAddr, client(net.open(clientAddr)))
+                try {
+                    val accepted = async { group.accept() }
+                    val c = client.connect(otherAddr, clientConfig) // loop 1's socket: the connection is loop 1's
+                    val s = accepted.await()
+                    while (c.paths.singleOrNull()?.let {
+                            it.remoteAddress == pref &&
+                                it.state.value == io.kuicksilver.quic.PathState.Validated
+                        } !=
+                        true
+                    ) {
+                        kotlinx.coroutines.yield()
+                    }
+                    val st = c.openBidi()
+                    st.output.writeFully(ByteArray(20_000) { 7 })
+                    st.output.flushAndClose()
+                    val got =
+                        s
+                            .acceptStream()
+                            .input
+                            .readRemaining()
+                            .readByteArray()
+                    assertEquals(20_000, got.size, "data over the forwarded preferred path")
+                    assertTrue(group.forwardedForTest(1) > 0, "loop 0 forwarded the preferred-socket datagrams to loop 1")
+                    assertEquals(1, group.connectionsPerLoopForTest()[1])
+                    assertEquals(
+                        io.kuicksilver.quic.PREFERRED_SOCKET,
+                        group
+                            .loopForTest(1)
+                            .core
+                            .connections()
+                            .single()
+                            .path.socket,
+                        "handled as the preferred path",
+                    )
+                    c.close()
                 } finally {
                     client.close()
                     group.close()

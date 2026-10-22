@@ -92,7 +92,7 @@ internal class EndpointLoop private constructor(
     /** A group's Retry and NEW_TOKEN keys, shared by its loops (RFC 9000 section 8.1); null: the endpoint core makes its own. */
     tokens: io.kuicksilver.quic.endpoint.AddressTokens? = null,
     /** The sockets on the server's preferred addresses, one per family offered ([PREFERRED_SOCKET]). */
-    private val preferredIos: List<DatagramIo> = emptyList(),
+    preferredIos: List<DatagramIo> = emptyList(),
 ) : QuicEndpoint {
     /** Last-resort failures of coroutines the loop launched (none is expected to throw): counted, never handed to the thread's uncaught handler, which on Android kills the process. */
     internal val uncaughtFailures = AtomicLong(0)
@@ -100,6 +100,9 @@ internal class EndpointLoop private constructor(
         CoroutineScope(
             SupervisorJob() + dispatcher + kotlinx.coroutines.CoroutineExceptionHandler { _, _ -> uncaughtFailures.incrementAndFetch() },
         )
+
+    /** The preferred-address sockets; emptied when one fails ([preferredFailed]). Loop dispatcher only. */
+    private var preferredIos: List<DatagramIo> = preferredIos
 
     // one unsynchronised CSPRNG stream per loop: every call into the core stays on this loop's thread
     internal val core = EndpointCore(config, KslRandom.newSource(), index, tokens)
@@ -319,12 +322,41 @@ internal class EndpointLoop private constructor(
             }
         } catch (e: CancellationException) {
             currentCoroutineContext().ensureActive()
-            if (!closing) fatal("preferred-address transport failed", e)
+            if (!closing) preferredFailed(p, e)
         } catch (e: Throwable) {
-            if (!closing) fatal("preferred-address transport failed", e)
+            if (!closing) preferredFailed(p, e)
         } finally {
             batch.close()
         }
+    }
+
+    /**
+     * A preferred-address socket failed: the endpoint degrades instead of failing (owner decision). Every preferred socket of this
+     * loop closes, new connections no longer get the offer, and the connections whose active path is on a preferred socket are closed
+     * at once (an INTERNAL_ERROR close is attempted; their packets have no socket left), counted in
+     * `EndpointStats.preferredAddressFailures`. Connections on the main socket go on. Loop dispatcher only.
+     */
+    private suspend fun preferredFailed(
+        failed: DatagramIo,
+        e: Throwable,
+    ) {
+        if (preferredIos.isEmpty()) return // the other family's socket already took the preferred address down
+        observer.logger.emit(LogLevel.Warn, e) {
+            "endpoint ${io.localAddress} loop $index: the preferred-address socket ${failed.localAddress} failed; no longer offering " +
+                "the preferred address, closing the connections that moved there"
+        }
+        val down = preferredIos
+        preferredIos = emptyList()
+        core.preferredDown = true
+        core.preferredAddressFailures++
+        for (p in down) p.close()
+        for (rt in runtimes.values.toList()) {
+            if (rt.core.path.socket == PREFERRED_SOCKET) {
+                rt.core.fail(TransportError.INTERNAL_ERROR, 0, "the server's preferred-address socket failed", null)
+                core.markDirty(rt.core)
+            }
+        }
+        flush()
     }
 
     private val single = PacketBatch(1, SLOT_SIZE)
@@ -1033,6 +1065,25 @@ internal class EndpointLoop private constructor(
         /** Rounds one flush runs over connections that became dirty during it; more go to the next flush. */
         const val FLUSH_ROUNDS: Int = 4
 
+        /**
+         * A preferred address must not be the endpoint's own: the same port on the same IP, or on any IP of a socket bound to an
+         * unspecified address (which also takes the other family on a dual-stack socket). With SO_REUSEPORT the kernel would hash part
+         * of the new clients' Initials onto the preferred sockets, where a connection never starts.
+         */
+        internal fun checkNotOwnAddress(
+            pa: io.kuicksilver.quic.PreferredAddress,
+            main: InetSocketAddress,
+        ) {
+            val m = AddressClass.ipBytes(main)
+            val unspecified = m.all { it == 0.toByte() }
+            for (a in listOfNotNull(pa.ipv4, pa.ipv6)) {
+                if (a.port != main.port) continue
+                if (unspecified || m.contentEquals(AddressClass.ipBytes(a))) {
+                    throw IllegalArgumentException("preferred address $a is the endpoint's own address ($main)")
+                }
+            }
+        }
+
         /** Forwarded datagrams handled before admission, flush and a yield. */
         const val FORWARD_BATCH: Int = 16
 
@@ -1058,7 +1109,10 @@ internal class EndpointLoop private constructor(
             }
             val preferred =
                 try {
-                    openPreferred(config) { at -> config.io?.invoke(at) ?: openDatagramIo(at, IoPreference.Accelerated, config.logger) }
+                    openPreferred(config, io.localAddress) { at ->
+                        config.io?.invoke(at)
+                            ?: openDatagramIo(at, IoPreference.Accelerated, config.logger)
+                    }
                 } catch (e: Throwable) {
                     io.close()
                     throw e
@@ -1069,9 +1123,11 @@ internal class EndpointLoop private constructor(
         /** The server's preferred-address sockets ([io.kuicksilver.quic.QuicServerConfig.preferredAddress]), opened with [open]; all or none. */
         internal suspend fun openPreferred(
             config: QuicEndpointConfig,
+            main: InetSocketAddress,
             open: suspend (InetSocketAddress) -> DatagramIo,
         ): List<DatagramIo> {
             val pa = config.server?.preferredAddress ?: return emptyList()
+            checkNotOwnAddress(pa, main)
             val out = ArrayList<DatagramIo>(2)
             try {
                 for (a in listOfNotNull(pa.ipv4, pa.ipv6)) out += open(a)

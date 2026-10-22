@@ -916,6 +916,8 @@ final class io.kuicksilver.quic/EndpointStats { // io.kuicksilver.quic/EndpointS
         final fun <get-pathValidationFailures>(): kotlin/Long // io.kuicksilver.quic/EndpointStats.pathValidationFailures.<get-pathValidationFailures>|<get-pathValidationFailures>(){}[0]
     final val pathValidations // io.kuicksilver.quic/EndpointStats.pathValidations|{}pathValidations[0]
         final fun <get-pathValidations>(): kotlin/Long // io.kuicksilver.quic/EndpointStats.pathValidations.<get-pathValidations>|<get-pathValidations>(){}[0]
+    final val preferredAddressFailures // io.kuicksilver.quic/EndpointStats.preferredAddressFailures|{}preferredAddressFailures[0]
+        final fun <get-preferredAddressFailures>(): kotlin/Long // io.kuicksilver.quic/EndpointStats.preferredAddressFailures.<get-preferredAddressFailures>|<get-preferredAddressFailures>(){}[0]
     final val ptbAccepted // io.kuicksilver.quic/EndpointStats.ptbAccepted|{}ptbAccepted[0]
         final fun <get-ptbAccepted>(): kotlin/Long // io.kuicksilver.quic/EndpointStats.ptbAccepted.<get-ptbAccepted>|<get-ptbAccepted>(){}[0]
     final val ptbIgnored // io.kuicksilver.quic/EndpointStats.ptbIgnored|{}ptbIgnored[0]

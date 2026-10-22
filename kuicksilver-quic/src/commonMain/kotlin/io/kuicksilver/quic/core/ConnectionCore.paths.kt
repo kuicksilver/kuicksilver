@@ -301,6 +301,7 @@ internal fun ConnectionCore.startPreferredProbe() {
     val target = (if (v4) tp.preferredIpv4 else tp.preferredIpv6) ?: return
     if (active.isRemote(target)) return
     if (AddressClass.isUnsafeDestination(target, originLocal = AddressClass.isLocalNetwork(active.remote))) return
+    if (AddressClass.isReflectivePort(target.port)) return // a server must not aim our probes at a DNS, NTP or other reflector
     val p = paths.add(active.socket, target, config.congestionController(), config.newPathInitialRtt, evict = false) ?: return
     p.amplification.validated = true // our own probe toward the server: nothing to amplify against
     p.preferred = true

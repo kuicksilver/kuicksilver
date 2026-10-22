@@ -207,17 +207,14 @@ private fun EndpointCore.admitValidated(
             tokens.mintNewToken(client, core.now)
         }
     }
-    if (testForgeRetryScidInTp && retryScid != null) {
-        core.testForgeRetryScid = true
-        core.refreshLocalTp()
-    }
     config.maxConnectionLifetime?.let { core.lifetimeDeadline = now + it }
     attach(core)
-    server.preferredAddress?.let {
-        // after attach: the sequence-1 ID it issues must route here (the registrar is set) before the first packet
-        core.preferredAddress = it
-        core.refreshLocalTp()
-    }
+    // after attach: the sequence-1 ID a preferred address issues must route here (the registrar is set) before the first packet;
+    // one re-encoding of the transport parameters for both changes. A preferred socket that failed is no longer offered
+    val preferred = server.preferredAddress?.takeIf { !preferredDown }
+    if (preferred != null) core.preferredAddress = preferred
+    if (testForgeRetryScidInTp && retryScid != null) core.testForgeRetryScid = true
+    if (preferred != null || core.testForgeRetryScid) core.refreshLocalTp()
     if (retryScid == null) {
         registry.add(core.odcid, core)
     } else if (retryScid != cid) {

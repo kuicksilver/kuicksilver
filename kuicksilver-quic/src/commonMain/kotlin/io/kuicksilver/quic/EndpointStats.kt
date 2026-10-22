@@ -121,6 +121,12 @@ public class EndpointStats internal constructor(
     /** ICMP Packet Too Big messages ignored: over the 64-a-second budget, below 1200 bytes of payload, or about no packet of ours. */
     @property:ExperimentalKuicksilverApi
     public val ptbIgnored: Long = 0,
+    /**
+     * Times a loop's preferred-address sockets failed (`QuicServerConfig.preferredAddress`): that loop then stops offering the address
+     * and closes the connections that had moved there; the endpoint goes on.
+     */
+    @property:ExperimentalKuicksilverApi
+    public val preferredAddressFailures: Long = 0,
 ) {
     /** Field by field sum: a loop group's endpoint statistics. */
     internal operator fun plus(o: EndpointStats): EndpointStats =
@@ -162,6 +168,7 @@ public class EndpointStats internal constructor(
             newTokensRejected + o.newTokensRejected,
             ptbAccepted + o.ptbAccepted,
             ptbIgnored + o.ptbIgnored,
+            preferredAddressFailures + o.preferredAddressFailures,
         )
 
     @OptIn(ExperimentalKuicksilverApi::class)
@@ -179,5 +186,6 @@ public class EndpointStats internal constructor(
             "datagramsDroppedUndecryptable=$datagramsDroppedUndecryptable, datagramsDroppedStateless=$datagramsDroppedStateless, " +
             "pathValidations=$pathValidations, pathValidationFailures=$pathValidationFailures, uncaughtFailures=$uncaughtFailures, " +
             "sendFailures=$sendFailures, listenerFailures=$listenerFailures, newTokensIssued=$newTokensIssued, " +
-            "newTokensAccepted=$newTokensAccepted, newTokensRejected=$newTokensRejected, ptbAccepted=$ptbAccepted, ptbIgnored=$ptbIgnored)"
+            "newTokensAccepted=$newTokensAccepted, newTokensRejected=$newTokensRejected, ptbAccepted=$ptbAccepted, " +
+            "ptbIgnored=$ptbIgnored, preferredAddressFailures=$preferredAddressFailures)"
 }

@@ -238,6 +238,7 @@ public class EndpointCore internal constructor(
             newTokensRejected = newTokensRejected,
             ptbAccepted = ptbAccepted,
             ptbIgnored = ptbIgnored,
+            preferredAddressFailures = preferredAddressFailures,
         )
 
     /** A new client connection to [remote]; its first [ConnectionCore.poll] produces the Initial datagrams. */
@@ -324,6 +325,10 @@ public class EndpointCore internal constructor(
         for (i in 0 until dirty.size) dirty[i].dirty = false
         dirty.clear()
     }
+
+    /** The preferred-address sockets failed ([io.kuicksilver.quic.runtime.EndpointLoop]): new connections no longer get the offer. */
+    internal var preferredDown = false
+    internal var preferredAddressFailures = 0L
 
     internal var ptbAccepted = 0L
     internal var ptbIgnored = 0L

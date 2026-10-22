@@ -9,6 +9,8 @@ import io.kuicksilver.annotations.DelicateKuicksilverApi
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.CoreFixtures
+import io.kuicksilver.quic.KuicksilverLogger
+import io.kuicksilver.quic.LogLevel
 import io.kuicksilver.quic.MemoryDatagramIo
 import io.kuicksilver.quic.MemoryNetwork
 import io.kuicksilver.quic.PathChangeReason
@@ -21,6 +23,7 @@ import io.kuicksilver.quic.QuicEndpoint
 import io.kuicksilver.quic.QuicEndpointConfig
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.QuicServerConfig
+import io.kuicksilver.quic.SocketDefunctException
 import io.kuicksilver.quic.quicConfig
 import io.kuicksilver.quic.runtime.ConnectionRuntime
 import io.kuicksilver.tls.KslQuicCrypto
@@ -164,6 +167,114 @@ class MigrationApiTest {
                     assertTrue(prefIo!!.received - before > 500, "through the preferred socket: ${prefIo!!.received - before} datagrams")
                     c.close()
                     s.close()
+                }
+            } finally {
+                client.close()
+                server.close()
+            }
+        }
+
+    @Test fun negative_preferredAddressThatIsTheEndpointsOwnIsRefused() =
+        runBlocking {
+            // with SO_REUSEPORT the kernel would hash part of the new clients' Initials onto a preferred socket on the endpoint's own
+            // address, where no connection ever starts: refused at bind, the main socket closed again
+            val pa4 = PreferredAddress(InetSocketAddress("10.0.0.2", 2222), null)
+            for (case in listOf("10.0.0.2" to pa4, "0.0.0.0" to pa4, "::" to PreferredAddress(InetSocketAddress("10.0.0.3", 2222), null))) {
+                val net = MemoryNetwork()
+                val main = net.open(InetSocketAddress(case.first, 2222))
+                val e =
+                    assertFailsWith<IllegalArgumentException>(case.first) {
+                        QuicEndpoint.bind(
+                            main.localAddress,
+                            QuicEndpointConfig
+                                .Builder()
+                                .apply {
+                                    server =
+                                        QuicServerConfig.Builder(CoreFixtures.server()).apply { preferredAddress = case.second }.build()
+                                    io = { at -> if (at == main.localAddress) main else net.open(at) }
+                                }.build(),
+                        )
+                    }
+                assertTrue("the endpoint's own address" in (e.message ?: ""), "${e.message}")
+                assertTrue(main.closed, "${case.first}: the main socket is closed again")
+            }
+            // another port on the same IP is fine
+            io.kuicksilver.quic.runtime.EndpointLoop.checkNotOwnAddress(
+                PreferredAddress(InetSocketAddress("10.0.0.2", 2223), null),
+                InetSocketAddress("10.0.0.2", 2222),
+            )
+        }
+
+    @Test fun preferredSocketFailureDegradesTheEndpoint() =
+        runBlocking {
+            // owner decision: a failed preferred-address socket does not end the endpoint. The connections that moved there close,
+            // new ones are no longer offered the address, the rest go on
+            val net = MemoryNetwork()
+            val a = net.open(InetSocketAddress("10.0.0.1", 1111))
+            val b = net.open(InetSocketAddress("10.0.0.2", 2222))
+            val pref = InetSocketAddress("10.0.0.3", 4433)
+            var prefIo: MemoryDatagramIo? = null
+            val warnings = kotlinx.coroutines.channels.Channel<String>(kotlinx.coroutines.channels.Channel.UNLIMITED)
+            val server =
+                QuicEndpoint.bind(
+                    b.localAddress,
+                    QuicEndpointConfig
+                        .Builder()
+                        .apply {
+                            this.server =
+                                QuicServerConfig
+                                    .Builder(CoreFixtures.server())
+                                    .apply { preferredAddress = PreferredAddress(pref, null) }
+                                    .build()
+                            crypto = KslQuicCrypto
+                            io = { at -> if (at == pref) net.open(pref).also { prefIo = it } else b }
+                            logger =
+                                object : KuicksilverLogger {
+                                    override fun isEnabled(level: LogLevel) = level >= LogLevel.Warn
+
+                                    override fun log(
+                                        level: LogLevel,
+                                        message: String,
+                                        cause: Throwable?,
+                                    ) {
+                                        warnings.trySend(message)
+                                    }
+                                }
+                        }.build(),
+                )
+            val client =
+                QuicEndpoint.bind(
+                    a.localAddress,
+                    QuicEndpointConfig
+                        .Builder()
+                        .apply {
+                            crypto = KslQuicCrypto
+                            io = { a }
+                        }.build(),
+                )
+            try {
+                withTimeout(30.seconds) {
+                    val accepted = async { server.accept() }
+                    val c = client.connect(server.localAddress, QuicClientConfig.Builder(CoreFixtures.client()).build())
+                    val s = accepted.await()
+                    while (c.paths.singleOrNull()?.let { it.remoteAddress.port == 4433 && it.state.value == PathState.Validated } != true) {
+                        kotlinx.coroutines.yield()
+                    }
+                    // the server moves its end once it validated the client there: only then is the connection on the preferred socket
+                    while ((s as ConnectionRuntime).core.path.socket != io.kuicksilver.quic.PREFERRED_SOCKET) kotlinx.coroutines.yield()
+                    assertNotNull(prefIo).failWith(SocketDefunctException("gone", 9))
+                    withTimeout(10.seconds) { s.closed.await() }
+                    assertEquals(1L, server.stats.preferredAddressFailures)
+                    val warned = generateSequence { warnings.tryReceive().getOrNull() }.toList()
+                    assertTrue(warned.any { "preferred-address socket" in it }, "$warned")
+                    // a new connection: no preferred address offered, it works on the main socket
+                    val accepted2 = async { server.accept() }
+                    val c2 = client.connect(server.localAddress, QuicClientConfig.Builder(CoreFixtures.client()).build())
+                    val s2 = accepted2.await()
+                    assertTrue(echo(c2, s2, 64 shl 10), "the endpoint goes on")
+                    assertEquals(false, (c2 as ConnectionRuntime).core.peerTp?.preferredAddressPresent, "no longer offered")
+                    c.close()
+                    c2.close()
                 }
             } finally {
                 client.close()

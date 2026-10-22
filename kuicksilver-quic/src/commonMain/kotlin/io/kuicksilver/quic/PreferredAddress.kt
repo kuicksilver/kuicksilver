@@ -8,7 +8,8 @@ import io.kuicksilver.quic.core.AddressClass
 
 /**
  * A server's preferred address (RFC 9000 sections 9.6 and 18.2): where it asks clients to move after the handshake, one address
- * per family it offers. The endpoint opens a socket on each (with every loop of a group sharing the port, as for the main
+ * per family it offers. Each is bound literally (no NAT indirection: the address advertised is the address the socket binds),
+ * must differ from the endpoint's own address, and may not use a reflection port (53, 123, 1900, 5353, 11211). The endpoint opens a socket on each (with every loop of a group sharing the port, as for the main
  * socket) and advertises them with its sequence-1 connection ID. A client moves only to the address of the family it already
  * uses, only after it validated the path, and only from a server whose own address is public when the preferred one is local
  * (threat-model 3.14).
@@ -35,11 +36,17 @@ public class PreferredAddress internal constructor(
         ipv4?.let {
             require(AddressClass.ipBytes(it).size == 4) { "ipv4 is not an IPv4 literal: ${it.hostname}" }
             require(it.port in 1..65535) { "ipv4 needs a port" }
+            require(
+                !AddressClass.isReflectivePort(it.port),
+            ) { "ipv4 port ${it.port} is a reflection port (DNS, NTP, SSDP, mDNS, memcached)" }
             require(!AddressClass.isUnsafeDestination(it, originLocal = true)) { "ipv4 is unspecified, multicast or broadcast" }
         }
         ipv6?.let {
             require(AddressClass.ipBytes(it).size == 16) { "ipv6 is not an IPv6 literal: ${it.hostname}" }
             require(it.port in 1..65535) { "ipv6 needs a port" }
+            require(
+                !AddressClass.isReflectivePort(it.port),
+            ) { "ipv6 port ${it.port} is a reflection port (DNS, NTP, SSDP, mDNS, memcached)" }
             require(!AddressClass.isUnsafeDestination(it, originLocal = true)) { "ipv6 is unspecified or multicast" }
         }
     }

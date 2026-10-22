@@ -157,6 +157,25 @@ class PreferredAddressTest {
         }
     }
 
+    @Test fun negative_preferredAddressOnReflectionPortIgnored() {
+        // a server must not aim the client's probes at a DNS, NTP, SSDP, mDNS or memcached port (threat-model 3.1, 3.14)
+        assertFailsWith<IllegalArgumentException> { PreferredAddress(InetSocketAddress("10.0.0.3", 53), null) }
+        val p =
+            EndpointPair(
+                crypto = KslQuicCrypto,
+                serverPreferred = PreferredAddress(InetSocketAddress("10.0.0.3", 123), null, check = false),
+            )
+        try {
+            val c = p.connect()
+            assertTrue(p.confirmed(c))
+            p.runUntil(2.seconds) { false }
+            assertEquals(1, c.pathCountForTest)
+            assertTrue(p.toServerSockets.none { it == io.kuicksilver.quic.PREFERRED_SOCKET })
+        } finally {
+            p.close()
+        }
+    }
+
     @Test fun negative_noNonProbingToPreferredBeforeValidation() {
         // RFC 9000 sections 9.6.2 and 21.5.3: until the preferred path is validated only probing packets go there, so an
         // unvalidated preferred address (one the server's attacker chose) gets nothing an application sent
