@@ -88,6 +88,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   serve WebTransport sessions over HTTP/3 (`docs/guide/ktor.md`, "WebTransport over HTTP/3"): the route matches only a
   WebTransport Extended CONNECT, refuses a foreign `origin` with 403 (`sameHostOrigin` by default), picks the
   protocol, and closes the session when the handler returns (code 0) or throws (`WEB_TRANSPORT_HANDLER_FAILED`).
+- WebTransport interop with a real browser: `ChromeWebTransportTest` (opt-in, `-Pkuicksilver.browserTests=true`)
+  drives an installed Chrome headless through streams, datagrams and both closes against the Ktor server; results and
+  a manual check for Firefox and Safari in `docs/spec/rfc-compliance.md`, "Interop WebTransport".
 - Ktor client: Happy Eyeballs for HTTP/1.1's TCP connects, to the origin and to an HTTP proxy (RFC 8305 sections 4 to 6;
   `docs/guide/ktor.md`, "IPv6 over TCP on Kotlin/Native"). Every address of a host name is tried, IPv6 and IPv4
   alternating, a new attempt every `connectionAttemptDelay` (*experimental*, 250 ms; 10 ms to 2 s, or

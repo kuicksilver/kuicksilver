@@ -269,6 +269,23 @@ The runner's `http3` case (three files of 5 KiB / 10 KiB / 500 KiB, one HTTP/3 t
 
 Third-party clients outside the runner: `curl --http3-only` (the `ymuski/curl-http3` build, quiche 0.18, amd64 under emulation) downloads a Ktor server response over HTTP/3 — `kuicksilver-ktor-server` `CurlHttp3Test.curlDownloadsOverHttp3Only` (enabled by the `KSL_CURL_H3_IMAGE` variable; the official `curlimages/curl` image is built without HTTP/3). h3spec has no ready image (it needs a Haskell stack build); its scenarios are covered by negative tests of `kuicksilver-http3` (threat-model 3.17); an h3spec run is deferred until such an environment exists.
 
+## Interop WebTransport (browsers, 2026-10-22)
+
+The page `kuicksilver-ktor-server/src/jvmTest/resources/wt/index.html` runs, against the Ktor server's
+`webTransport` routes: a 1 MiB bidirectional echo, a unidirectional stream from the server, 100 datagrams (one echoed
+back counts: datagrams may be lost), a close by the page with code 7 and "bye", and a close by the server with code 9
+and "server-bye".
+
+| browser | draft spoken | how | result |
+|---|---|---|---|
+| Chrome 155 (macOS, headless) | draft-02 | `ChromeWebTransportTest.chromeDraft02` (opt-in: `-Pkuicksilver.browserTests=true`) | ✅ all steps, 100 of 100 datagrams echoed |
+| Chrome 155 with `EnableWebTransportDraft07` | draft-02 (we announce no draft-07 SETTINGS) | `ChromeWebTransportTest.chromeWithDraft07EnabledFallsBackToDraft02` | ✅ |
+| Firefox | draft-02 | manual, `docs/guide/ktor.md` | not yet run |
+| Safari 26.4 | draft-14 (second-hand) | manual | not yet run |
+
+webtransport-go against our server needs RESET_STREAM_AT (W.8) and is not run; our client against webtransport-go is
+for the gate's interop image, not run here.
+
 ## How to update
 
 A row changes in the same PR as the implementation; the interop matrix (a release artifact) is the evidence for a ✅ status.

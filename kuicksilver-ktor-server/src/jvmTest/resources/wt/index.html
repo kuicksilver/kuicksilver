@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<!--
+Copyright 2026 The Kuicksilver Authors
+SPDX-License-Identifier: Apache-2.0
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Kuicksilver WebTransport check</title>
+</head>
+<body>
+<h1>Kuicksilver WebTransport check</h1>
+<p>Runs each step against this server's <code>/wt/echo</code> and <code>/wt/server-close</code> routes and posts the
+result to <code>/result</code>. With <code>?hash=&lt;base64 SHA-256 of the certificate&gt;</code> the sessions use
+<code>serverCertificateHashes</code> (a certificate valid for at most 14 days, not RSA).</p>
+<pre id="log"></pre>
+<script>
+"use strict";
+const log = (line) => { document.getElementById("log").textContent += line + "\n"; };
+const hash = new URLSearchParams(location.search).get("hash");
+const options = hash
+  ? { serverCertificateHashes: [{ algorithm: "sha-256", value: Uint8Array.from(atob(hash), (c) => c.charCodeAt(0)) }] }
+  : {};
+const url = (path) => `https://${location.host}${path}`;
+const result = { steps: {} };
+const step = async (name, run) => {
+  try {
+    result.steps[name] = (await run()) || "ok";
+  } catch (e) {
+    result.steps[name] = "failed: " + e;
+  }
+  log(`${name}: ${result.steps[name]}`);
+};
+const readAll = async (readable) => {
+  const reader = readable.getReader();
+  const chunks = [];
+  let n = 0;
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    n += value.length;
+  }
+  const out = new Uint8Array(n);
+  let o = 0;
+  for (const c of chunks) { out.set(c, o); o += c.length; }
+  return out;
+};
+const withDeadline = (p, ms, what) =>
+  Promise.race([p, new Promise((_, reject) => setTimeout(() => reject(new Error(what + " timed out")), ms))]);
+
+(async () => {
+  const wt = new WebTransport(url("/wt/echo"), options);
+  await step("connect", async () => { await withDeadline(wt.ready, 10000, "ready"); });
+  await step("bidiEcho1MB", async () => {
+    const payload = new Uint8Array(1 << 20);
+    for (let i = 0; i < payload.length; i++) payload[i] = i & 0xff;
+    const s = await wt.createBidirectionalStream();
+    const echoed = readAll(s.readable);
+    const w = s.writable.getWriter();
+    await w.write(payload);
+    await w.close();
+    const got = await withDeadline(echoed, 20000, "echo");
+    if (got.length !== payload.length) return `got ${got.length} bytes`;
+    for (let i = 0; i < got.length; i++) if (got[i] !== payload[i]) return `byte ${i} differs`;
+  });
+  await step("uniFromServer", async () => {
+    const reader = wt.incomingUnidirectionalStreams.getReader();
+    const { value } = await withDeadline(reader.read(), 10000, "incoming uni");
+    const text = new TextDecoder().decode(await readAll(value));
+    if (text !== "uni-hello") return `got "${text}"`;
+  });
+  await step("datagrams", async () => {
+    const reader = wt.datagrams.readable.getReader();
+    const writer = wt.datagrams.writable.getWriter();
+    for (let i = 0; i < 100; i++) await writer.write(new Uint8Array([i]));
+    let got = 0;
+    try {
+      for (;;) {
+        await withDeadline(reader.read(), got === 0 ? 5000 : 500, "datagram");
+        if (++got === 100) break;
+      }
+    } catch (e) {
+      if (got === 0) throw e;
+    }
+    result.datagramsEchoed = got; // datagrams may be lost: at least one counts
+  });
+  await step("clientClose", async () => {
+    wt.close({ closeCode: 7, reason: "bye" });
+    await withDeadline(wt.closed, 10000, "closed");
+  });
+  const wt2 = new WebTransport(url("/wt/server-close"), options);
+  await step("serverClose", async () => {
+    await withDeadline(wt2.ready, 10000, "ready");
+    const info = await withDeadline(wt2.closed, 10000, "closed");
+    result.closeInfo = { code: info.closeCode, reason: info.reason };
+  });
+  await fetch("/result", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(result) });
+  log("result posted");
+})().catch(async (e) => {
+  result.fatal = String(e);
+  log("fatal: " + e);
+  await fetch("/result", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(result) });
+});
+</script>
+</body>
+</html>

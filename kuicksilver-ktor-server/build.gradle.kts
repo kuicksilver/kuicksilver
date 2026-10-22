@@ -34,4 +34,8 @@ kotlin {
         }
     }
 }
-tasks.named<Test>("jvmTest") { useJUnitPlatform() }
+tasks.named<Test>("jvmTest") {
+    useJUnitPlatform()
+    // -Pkuicksilver.browserTests=true runs ChromeWebTransportTest against an installed Chrome (docs/guide/ktor.md)
+    providers.gradleProperty("kuicksilver.browserTests").orNull?.let { systemProperty("kuicksilver.browserTests", it) }
+}

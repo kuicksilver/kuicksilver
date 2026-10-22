@@ -137,6 +137,22 @@ val server = embeddedServer(Kuicksilver, configure = {
 }
 ```
 
+A real browser is checked by `ChromeWebTransportTest` (`kuicksilver-ktor-server` jvmTest), which runs only on request
+and only with an installed Chrome or Chromium:
+
+```sh
+./gradlew :kuicksilver-ktor-server:jvmTest --tests '*ChromeWebTransportTest*' -Pkuicksilver.browserTests=true
+```
+
+It starts Chrome headless with a throw-away profile, QUIC forced for the test origin and the test certificate admitted
+by its SPKI hash, and the page `wt/index.html` from the test resources posts its results back. To check Firefox or
+Safari by hand, serve that page and the test's two routes (`/wt/echo`, `/wt/server-close`) from a server whose
+certificate is valid for at most 14 days and not RSA (browsers pin such a certificate by hash), for example
+`openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -days 13 -nodes -subj /CN=localhost -addext
+subjectAltName=DNS:localhost -keyout wt.key -out wt.pem`, and open `https://localhost:<port>/wt/index.html?hash=<b64>`
+with `<b64>` from `openssl x509 -in wt.pem -outform der | openssl dgst -sha256 -binary | base64`; each step prints
+`ok` on the page. Record the result in `docs/spec/rfc-compliance.md`, "Interop WebTransport".
+
 ### EngineMain and configuration keys
 
 `io.kuicksilver.ktor.server.EngineMain` reads the usual `ktor.deployment.*` keys (and on the JVM `-sslPort` with
