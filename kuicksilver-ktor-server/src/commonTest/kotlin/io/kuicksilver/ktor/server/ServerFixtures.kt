@@ -25,10 +25,13 @@ import io.kuicksilver.tls.TlsRole
 import io.kuicksilver.tls.TrustConfig
 import io.kuicksilver.tls.tlsConfig
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
+import kotlin.time.TimeSource
 
 internal object ServerFixtures {
     val testCa = Certificate(TestCerts.testCa)
@@ -105,15 +108,17 @@ internal suspend fun rawHttp(
 }
 
 /**
- * [rawHttp] for a client on a slow link: it reads at most [chunk] bytes every [pause] (a paced reader, not a wait for an
- * event), so the server's buffers fill and a response takes a while to arrive.
+ * [rawHttp] for a client on a slow link: it reads at [bytesPerSecond] on average, so the server's buffers fill and a
+ * response takes a while to arrive. The pace is kept on the total read, not by a fixed pause per read: a read returns at
+ * most one 8 KiB segment, and a sleep is rounded up to the host's timer tick (15.6 ms on Windows), so a pause per read
+ * made the same test read about four times slower on Windows than on macOS (0.2.1 gate). Behind the pace, it reads
+ * without pausing.
  */
 internal suspend fun slowHttp(
     port: Int,
     request: String,
     tls: TlsConfig? = ServerFixtures.clientTls(),
-    chunk: Int = 64 * 1024,
-    pause: kotlin.time.Duration = 20.milliseconds,
+    bytesPerSecond: Long = 1024L * 1024,
 ): String {
     val selector = SelectorManager(Dispatchers.Default)
     try {
@@ -125,12 +130,16 @@ internal suspend fun slowHttp(
             w.writeStringUtf8(request)
             w.flush()
             val out = StringBuilder()
-            val b = ByteArray(chunk)
+            val b = ByteArray(64 * 1024)
+            val start = TimeSource.Monotonic.markNow()
+            var total = 0L
             while (true) {
                 val n = r.readAvailable(b, 0, b.size)
                 if (n < 0) break
                 out.append(b.decodeToString(0, n))
-                kotlinx.coroutines.delay(pause)
+                total += n
+                val ahead = (total * 1000 / bytesPerSecond).milliseconds - start.elapsedNow()
+                if (ahead > Duration.ZERO) delay(ahead)
             }
             return out.toString()
         } finally {
