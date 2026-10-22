@@ -17,11 +17,20 @@ import io.kuicksilver.quic.core.AddressClass
  * @property ipv6 The IPv6 address and port, or null when none is offered.
  */
 @ExperimentalKuicksilverApi
-public class PreferredAddress(
+public class PreferredAddress internal constructor(
     public val ipv4: InetSocketAddress?,
     public val ipv6: InetSocketAddress?,
+    check: Boolean,
 ) {
+    /** A preferred address of [ipv4] and/or [ipv6]: IP literals with a port, not unspecified, multicast or broadcast. */
+    public constructor(ipv4: InetSocketAddress?, ipv6: InetSocketAddress?) : this(ipv4, ipv6, true)
+
     init {
+        // tests build a hostile server's addresses with check = false
+        if (check) validate()
+    }
+
+    private fun validate() {
         require(ipv4 != null || ipv6 != null) { "a preferred address needs IPv4 or IPv6" }
         ipv4?.let {
             require(AddressClass.ipBytes(it).size == 4) { "ipv4 is not an IPv4 literal: ${it.hostname}" }

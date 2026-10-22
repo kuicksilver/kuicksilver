@@ -8,13 +8,22 @@ import io.ktor.utils.io.writeFully
 import io.kuicksilver.annotations.DelicateKuicksilverApi
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.native.KslLoader
+import io.kuicksilver.quic.CoreFixtures
+import io.kuicksilver.quic.MemoryDatagramIo
+import io.kuicksilver.quic.MemoryNetwork
 import io.kuicksilver.quic.PathChangeReason
 import io.kuicksilver.quic.PathEvent
 import io.kuicksilver.quic.PathState
+import io.kuicksilver.quic.PreferredAddress
+import io.kuicksilver.quic.QuicClientConfig
 import io.kuicksilver.quic.QuicConnection
+import io.kuicksilver.quic.QuicEndpoint
+import io.kuicksilver.quic.QuicEndpointConfig
 import io.kuicksilver.quic.QuicException
+import io.kuicksilver.quic.QuicServerConfig
 import io.kuicksilver.quic.quicConfig
 import io.kuicksilver.quic.runtime.ConnectionRuntime
+import io.kuicksilver.tls.KslQuicCrypto
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
@@ -29,6 +38,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 
@@ -96,6 +106,69 @@ class MigrationApiTest {
             writer.join()
             server.join()
             off == size && got.contentEquals(data)
+        }
+
+    @Test fun clientFollowsServerPreferredAddress() =
+        runBlocking {
+            // the runtime end to end: the server endpoint listens on its preferred address, the client moves there after the handshake
+            // (RFC 9000 section 9.6) and the data then flows through that socket
+            val net = MemoryNetwork()
+            val a = net.open(InetSocketAddress("10.0.0.1", 1111))
+            val b = net.open(InetSocketAddress("10.0.0.2", 2222))
+            val pref = InetSocketAddress("10.0.0.3", 4433)
+            var prefIo: MemoryDatagramIo? = null
+            val server =
+                QuicEndpoint.bind(
+                    b.localAddress,
+                    QuicEndpointConfig
+                        .Builder()
+                        .apply {
+                            this.server =
+                                QuicServerConfig
+                                    .Builder(CoreFixtures.server())
+                                    .apply { preferredAddress = PreferredAddress(pref, null) }
+                                    .build()
+                            crypto = KslQuicCrypto
+                            io = { at -> if (at == pref) net.open(pref).also { prefIo = it } else b }
+                        }.build(),
+                )
+            val client =
+                QuicEndpoint.bind(
+                    a.localAddress,
+                    QuicEndpointConfig
+                        .Builder()
+                        .apply {
+                            crypto = KslQuicCrypto
+                            io = { a }
+                        }.build(),
+                )
+            try {
+                withTimeout(30.seconds) {
+                    val accepted = async { server.accept() }
+                    val c =
+                        client.connect(
+                            server.localAddress,
+                            QuicClientConfig.Builder(CoreFixtures.client()).build(),
+                        )
+                    val s = accepted.await()
+                    // the move closes the original path: only the validated preferred one is left
+                    withTimeout(10.seconds) {
+                        while (c.paths.singleOrNull()?.let { it.remoteAddress.port == 4433 && it.state.value == PathState.Validated } !=
+                            true
+                        ) {
+                            kotlinx.coroutines.yield()
+                        }
+                    }
+                    val before = assertNotNull(prefIo).received
+                    assertTrue(echo(c, s, 1 shl 20), "1 MiB echoed after the move")
+                    assertTrue(prefIo!!.received - before > 500, "through the preferred socket: ${prefIo!!.received - before} datagrams")
+                    c.close()
+                    s.close()
+                }
+            } finally {
+                client.close()
+                server.close()
+            }
         }
 
     @Test fun migrateMovesTrafficToNewIo() =

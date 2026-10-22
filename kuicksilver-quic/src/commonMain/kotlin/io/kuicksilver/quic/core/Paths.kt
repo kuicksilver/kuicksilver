@@ -47,6 +47,9 @@ internal class Path(
     /** Datagram size in use; 1200 until PMTUD raises it. */
     var mtu: Int = 1200
 
+    /** Client: the path to the server's preferred address (RFC 9000 section 9.6), switched to once validated. */
+    var preferred: Boolean = false
+
     /** Server: the client's non-probing packets arrived on this preferred-socket path before its validation finished (RFC 9000 section 9.6.1). */
     var preferredMovePending: Boolean = false
 

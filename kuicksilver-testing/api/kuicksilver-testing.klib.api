@@ -113,6 +113,8 @@ final class io.kuicksilver.testing/SimResult { // io.kuicksilver.testing/SimResu
 final class io.kuicksilver.testing/Simulator { // io.kuicksilver.testing/Simulator|null[0]
     constructor <init>(kotlin/Long, io.kuicksilver.testing/LinkParams, io.kuicksilver.testing/LinkParams = ..., io.kuicksilver.tls/QuicCrypto = ..., io.kuicksilver.quic/IoCapabilities = ...) // io.kuicksilver.testing/Simulator.<init>|<init>(kotlin.Long;io.kuicksilver.testing.LinkParams;io.kuicksilver.testing.LinkParams;io.kuicksilver.tls.QuicCrypto;io.kuicksilver.quic.IoCapabilities){}[0]
 
+    final val preferredDelivered // io.kuicksilver.testing/Simulator.preferredDelivered|{}preferredDelivered[0]
+        final fun <get-preferredDelivered>(): kotlin/Long // io.kuicksilver.testing/Simulator.preferredDelivered.<get-preferredDelivered>|<get-preferredDelivered>(){}[0]
     final val seed // io.kuicksilver.testing/Simulator.seed|{}seed[0]
         final fun <get-seed>(): kotlin/Long // io.kuicksilver.testing/Simulator.seed.<get-seed>|<get-seed>(){}[0]
 
@@ -133,6 +135,7 @@ final class io.kuicksilver.testing/Simulator { // io.kuicksilver.testing/Simulat
 
     final fun addClientPath(io.ktor.network.sockets/InetSocketAddress, io.kuicksilver.testing/LinkParams): kotlin/Int // io.kuicksilver.testing/Simulator.addClientPath|addClientPath(io.ktor.network.sockets.InetSocketAddress;io.kuicksilver.testing.LinkParams){}[0]
     final fun connect(io.kuicksilver.quic/QuicConfig = ..., io.kuicksilver.quic/QuicConfig = ..., io.kuicksilver.tls/TlsConfig, io.kuicksilver.tls/TlsConfig): io.kuicksilver.testing/SimConnection // io.kuicksilver.testing/Simulator.connect|connect(io.kuicksilver.quic.QuicConfig;io.kuicksilver.quic.QuicConfig;io.kuicksilver.tls.TlsConfig;io.kuicksilver.tls.TlsConfig){}[0]
+    final fun connect(io.kuicksilver.quic/QuicConfig = ..., io.kuicksilver.quic/QuicConfig = ..., io.kuicksilver.tls/TlsConfig, io.kuicksilver.tls/TlsConfig, io.kuicksilver.quic/PreferredAddress?): io.kuicksilver.testing/SimConnection // io.kuicksilver.testing/Simulator.connect|connect(io.kuicksilver.quic.QuicConfig;io.kuicksilver.quic.QuicConfig;io.kuicksilver.tls.TlsConfig;io.kuicksilver.tls.TlsConfig;io.kuicksilver.quic.PreferredAddress?){}[0]
     final fun pathDelivered(kotlin/Int): kotlin/Long // io.kuicksilver.testing/Simulator.pathDelivered|pathDelivered(kotlin.Int){}[0]
     final fun rebindClient(kotlin/Int? = ..., kotlin/String? = ...) // io.kuicksilver.testing/Simulator.rebindClient|rebindClient(kotlin.Int?;kotlin.String?){}[0]
     final fun runUntil(kotlin.time/Duration, kotlin/Function0<kotlin/Boolean>): io.kuicksilver.testing/SimResult // io.kuicksilver.testing/Simulator.runUntil|runUntil(kotlin.time.Duration;kotlin.Function0<kotlin.Boolean>){}[0]

@@ -779,6 +779,7 @@ public final class io/kuicksilver/quic/QuicConfig {
 	public final fun getDatagramSendQueueBytes ()J
 	public final fun getDefaultStreamErrorCode ()J
 	public final fun getFirstVersion ()Lio/kuicksilver/quic/VersionProfile;
+	public final fun getFollowPreferredAddress ()Z
 	public final fun getGlitchProtection ()Z
 	public final fun getGreaseQuicBit ()Z
 	public final fun getHandshakeTimeout-UwyO8pc ()J
@@ -817,6 +818,7 @@ public final class io/kuicksilver/quic/QuicConfig$Builder {
 	public final fun getDatagramSendQueue ()I
 	public final fun getDatagramSendQueueBytes ()J
 	public final fun getDefaultStreamErrorCode ()J
+	public final fun getFollowPreferredAddress ()Z
 	public final fun getGlitchProtection ()Z
 	public final fun getGreaseQuicBit ()Z
 	public final fun getHandshakeTimeout-UwyO8pc ()J
@@ -849,6 +851,7 @@ public final class io/kuicksilver/quic/QuicConfig$Builder {
 	public final fun setDatagramSendQueue (I)V
 	public final fun setDatagramSendQueueBytes (J)V
 	public final fun setDefaultStreamErrorCode (J)V
+	public final fun setFollowPreferredAddress (Z)V
 	public final fun setGlitchProtection (Z)V
 	public final fun setGreaseQuicBit (Z)V
 	public final fun setHandshakeTimeout-LRDsOJo (J)V

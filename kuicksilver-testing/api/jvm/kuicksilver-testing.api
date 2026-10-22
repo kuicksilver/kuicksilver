@@ -91,12 +91,15 @@ public final class io/kuicksilver/testing/Simulator {
 	public synthetic fun <init> (JLio/kuicksilver/testing/LinkParams;Lio/kuicksilver/testing/LinkParams;Lio/kuicksilver/tls/QuicCrypto;Lio/kuicksilver/quic/IoCapabilities;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public final fun addClientPath (Lio/ktor/network/sockets/InetSocketAddress;Lio/kuicksilver/testing/LinkParams;)I
 	public final fun connect (Lio/kuicksilver/quic/QuicConfig;Lio/kuicksilver/quic/QuicConfig;Lio/kuicksilver/tls/TlsConfig;Lio/kuicksilver/tls/TlsConfig;)Lio/kuicksilver/testing/SimConnection;
+	public final fun connect (Lio/kuicksilver/quic/QuicConfig;Lio/kuicksilver/quic/QuicConfig;Lio/kuicksilver/tls/TlsConfig;Lio/kuicksilver/tls/TlsConfig;Lio/kuicksilver/quic/PreferredAddress;)Lio/kuicksilver/testing/SimConnection;
 	public static synthetic fun connect$default (Lio/kuicksilver/testing/Simulator;Lio/kuicksilver/quic/QuicConfig;Lio/kuicksilver/quic/QuicConfig;Lio/kuicksilver/tls/TlsConfig;Lio/kuicksilver/tls/TlsConfig;ILjava/lang/Object;)Lio/kuicksilver/testing/SimConnection;
+	public static synthetic fun connect$default (Lio/kuicksilver/testing/Simulator;Lio/kuicksilver/quic/QuicConfig;Lio/kuicksilver/quic/QuicConfig;Lio/kuicksilver/tls/TlsConfig;Lio/kuicksilver/tls/TlsConfig;Lio/kuicksilver/quic/PreferredAddress;ILjava/lang/Object;)Lio/kuicksilver/testing/SimConnection;
 	public final fun getClientAddress ()Lio/ktor/network/sockets/InetSocketAddress;
 	public final fun getDropNextClientToServer ()Z
 	public final fun getLastClientSourceSeenByServer ()Lio/ktor/network/sockets/InetSocketAddress;
 	public final fun getMisrouted ()J
 	public final fun getNow-Jjb1_Os ()J
+	public final fun getPreferredDelivered ()J
 	public final fun getProgress ()J
 	public final fun getSeed ()J
 	public final fun pathDelivered (I)J

@@ -112,6 +112,40 @@ class SimulatorTest {
         assertEquals(40001, sim.lastClientSourceSeenByServer!!.port)
     }
 
+    @Test fun preferredAddressMidTransferKeepsTransfer() {
+        // the server offers a preferred address: the client validates it after confirmation and moves while 10 MiB flow, with no
+        // loss of data and no stall against the same transfer without the offer (RFC 9000 section 9.6)
+        val plain = SimScenario.transfer(Simulator(seed = 23, LinkParams(delay = 20.milliseconds)), 10 shl 20)
+        ok(plain, "no preferred address")
+        val sim = Simulator(seed = 23, LinkParams(delay = 20.milliseconds))
+        val (ct, st) = SimScenario.defaultTls!!()
+        val conn =
+            sim.connect(
+                tlsClient = ct,
+                tlsServer = st,
+                preferredAddress =
+                    io.kuicksilver.quic.PreferredAddress(
+                        io.ktor.network.sockets
+                            .InetSocketAddress("10.0.0.3", 4433),
+                        null,
+                    ),
+            )
+        val r = SimScenario.transfer(sim, 10 shl 20, connection = conn)
+        ok(r, "preferred address")
+        val moves = conn.clientEvents.filterIsInstance<io.kuicksilver.quic.ConnectionEvent.PathChanged>()
+        assertEquals(listOf(io.kuicksilver.quic.PathChangeReason.PreferredAddress), moves.map { it.reason }, "the client moved once")
+        assertEquals(
+            io.kuicksilver.quic.PathChangeReason.PreferredAddress,
+            conn.serverEvents
+                .filterIsInstance<io.kuicksilver.quic.ConnectionEvent.PathChanged>()
+                .singleOrNull()
+                ?.reason,
+            "and so did the server",
+        )
+        assertTrue(sim.preferredDelivered > 1000, "the transfer went through the preferred address: ${sim.preferredDelivered}")
+        assertTrue(r.elapsed <= plain.elapsed * 1.25, "no stall: ${r.elapsed} vs ${plain.elapsed} without the move")
+    }
+
     @Test fun periodicAddressRebindDownloadKeepsThroughput() {
         // the interop runner's rebind-addr case: a 10 MiB download while the client's IP changes every 5 s; each change is a peer migration with a fresh congestion state
         val link = LinkParams(delay = 15.milliseconds, bandwidthBitsPerSecond = 10_000_000)

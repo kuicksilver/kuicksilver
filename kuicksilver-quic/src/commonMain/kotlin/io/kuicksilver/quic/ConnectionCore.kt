@@ -24,6 +24,7 @@ import io.kuicksilver.quic.core.Path
 import io.kuicksilver.quic.core.Paths
 import io.kuicksilver.quic.core.Pmtud
 import io.kuicksilver.quic.core.Timers
+import io.kuicksilver.quic.core.abandonPreferredProbe
 import io.kuicksilver.quic.core.armBlockedRepeat
 import io.kuicksilver.quic.core.buildLocalTp
 import io.kuicksilver.quic.core.checkPmtuBlackHoles
@@ -582,6 +583,10 @@ public class ConnectionCore internal constructor(
     /** (level, offset, length): inject one CRYPTO frame of zeros into the next packet of that level. */
     internal var testInjectCrypto: Triple<Int, Long, Int>? = null
     internal var testAdvertisePreferredAddress = false
+
+    /** Client: the preferred-address probe was considered (it runs once per connection), and the move to it happened. */
+    internal var preferredProbeStarted = false
+    internal var movedToPreferred = false
 
     /** Server: the endpoint's preferred address, advertised in the transport parameters (RFC 9000 section 9.6); null: none. */
     internal var preferredAddress: PreferredAddress? = null
@@ -1164,10 +1169,12 @@ public class ConnectionCore internal constructor(
     ): PathId {
         check(role == TlsRole.Client) { "only a client migrates (RFC 9000 section 9)" }
         check(state == ConnectionState.Confirmed) { "migration before the handshake is confirmed (RFC 9000 section 9)" }
-        check(peerTp?.disableActiveMigration != true) { "the peer advertised disable_active_migration" }
+        // RFC 9000 section 18.2: disable_active_migration does not cover the preferred address, and once there the client may move on
+        check(peerTp?.disableActiveMigration != true || movedToPreferred) { "the peer advertised disable_active_migration" }
         // RFC 9000 section 9.5: traffic on a new path to a peer without connection IDs is trivially linkable to the old one
         check(remoteCid.length != 0) { "the peer uses a zero-length connection ID (RFC 9000 section 9.5)" }
         this.now = now
+        abandonPreferredProbe() // the application's own move wins over a preferred address still under validation
         val p =
             paths.add(socket, remote, config.congestionController(), config.newPathInitialRtt, evict = false)
                 ?: throw IllegalStateException("at most 4 paths")

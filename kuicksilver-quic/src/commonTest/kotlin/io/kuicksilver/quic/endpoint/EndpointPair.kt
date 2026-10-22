@@ -44,10 +44,14 @@ internal class EndpointPair(
     sharedTokens: AddressTokens? = null,
     /** The server's `preferred_address`: datagrams to it reach the server on [io.kuicksilver.quic.PREFERRED_SOCKET], its answers come from it. */
     val serverPreferred: io.kuicksilver.quic.PreferredAddress? = null,
+    /** The server's address (a public one for the tests of what a public server may point a client at). */
+    val serverAddr: InetSocketAddress = InetSocketAddress("10.0.0.2", 443),
     configure: QuicEndpointConfig.Builder.() -> Unit = {},
 ) {
     val clientAddr: InetSocketAddress = InetSocketAddress("10.0.0.1", 40000)
-    val serverAddr: InetSocketAddress = InetSocketAddress("10.0.0.2", 443)
+
+    /** Datagrams to the preferred address are lost (it does not answer). */
+    var dropToPreferred: Boolean = false
     var now: TimeMark = TimeMark(1_000_000_000L)
     val server: EndpointCore =
         EndpointCore(
@@ -201,7 +205,10 @@ internal class EndpointPair(
             if (toServer) {
                 val sk = sockets[k]
                 if (sk != PathId.Initial) src = clientSocketSources[sk] ?: clientSource
-                if (dest == serverPreferred?.ipv4 || dest == serverPreferred?.ipv6) socket = io.kuicksilver.quic.PREFERRED_SOCKET
+                if (dest == serverPreferred?.ipv4 || dest == serverPreferred?.ipv6) {
+                    if (dropToPreferred) continue
+                    socket = io.kuicksilver.quic.PREFERRED_SOCKET
+                }
                 toServerSockets += socket
             } else {
                 if (sockets[k] == io.kuicksilver.quic.PREFERRED_SOCKET) {

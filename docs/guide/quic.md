@@ -410,6 +410,14 @@ connection is never started there, and nothing is answered statelessly. With `al
 preferred address is still taken, but only from the client's current address. With several loops every loop listens on
 the preferred addresses with `SO_REUSEPORT`, like on the main one.
 
+A client follows a server's preferred address by default (`followPreferredAddress`, experimental; RFC 9000 section 9.6):
+once the handshake is confirmed it validates a path to the address of the family it uses, with the server's
+sequence-1 connection ID, and moves there when the server answers. Only probes go there before that, and a failed
+validation leaves the connection where it was. A server reached on a public address cannot send the client to a
+loopback, link-local or private address, and nobody to an unspecified, multicast or broadcast one (the `Alt-Svc` rule).
+The server's `disable_active_migration` does not stop the move, and after it the client may migrate. A `migrate` while
+the preferred address is still being validated cancels that validation.
+
 A server follows a client that changes address (RFC 9000 section 9). The first 1-RTT packet from a new address opens a
 path under validation: the server sends a `PATH_CHALLENGE` there (and to the previous address, against an off-path
 attacker replaying the client's packets), limits what it sends to the unvalidated address to three times what it

@@ -71,6 +71,14 @@ public class Simulator(
     private val c2s = SimLink(clientToServer, Random(seed * 31 + 1), "c2s")
     private val s2c = SimLink(serverToClient, Random(seed * 31 + 2), "s2c")
 
+    /** The links to and from the server's preferred address ([connect] with `preferredAddress`): the same impairments. */
+    private val c2sPreferred = SimLink(clientToServer, Random(seed * 31 + 3), "c2s-preferred")
+    private val s2cPreferred = SimLink(serverToClient, Random(seed * 31 + 4), "s2c-preferred")
+    private var preferred: InetSocketAddress? = null
+
+    /** The socket id the server endpoint uses for its preferred address (`PREFERRED_SOCKET` inside kuicksilver-quic). */
+    private val preferredSocket = io.kuicksilver.quic.PathId(-1)
+
     /** The client's current source address as the server sees it; [rebindClient] changes it (NAT rebind). */
     public var clientAddress: InetSocketAddress = InetSocketAddress("10.0.0.1", 40000)
         internal set
@@ -143,6 +151,10 @@ public class Simulator(
         return k
     }
 
+    /** Datagrams delivered through the server's preferred address so far (both directions). */
+    @ExperimentalKuicksilverApi
+    public val preferredDelivered: Long get() = c2sPreferred.delivered + s2cPreferred.delivered
+
     /** Datagrams delivered on path [index] so far (both directions). */
     public fun pathDelivered(index: Int): Long =
         if (index ==
@@ -158,14 +170,30 @@ public class Simulator(
         server: QuicConfig = QuicConfig.Default,
         tlsClient: TlsConfig,
         tlsServer: TlsConfig,
+    ): SimConnection = connect(client, server, tlsClient, tlsServer, null)
+
+    /** [connect] to a server that offers [preferredAddress] (RFC 9000 section 9.6), reached through links of its own with the same impairments. */
+    @ExperimentalKuicksilverApi
+    public fun connect(
+        client: QuicConfig = QuicConfig.Default,
+        server: QuicConfig = QuicConfig.Default,
+        tlsClient: TlsConfig,
+        tlsServer: TlsConfig,
+        preferredAddress: io.kuicksilver.quic.PreferredAddress?,
     ): SimConnection {
+        preferred = preferredAddress?.ipv4 ?: preferredAddress?.ipv6
         serverEndpoint =
             EndpointCore(
                 QuicEndpointConfig
                     .Builder()
                     .apply {
                         this.server =
-                            QuicServerConfig.Builder(tlsServer).apply { quic = server }.build()
+                            QuicServerConfig
+                                .Builder(tlsServer)
+                                .apply {
+                                    quic = server
+                                    this.preferredAddress = preferredAddress
+                                }.build()
                         ; this.crypto = this@Simulator.crypto
                     }.build(),
                 Random(seed + 5),
@@ -211,6 +239,7 @@ public class Simulator(
         link: SimLink,
         from: InetSocketAddress,
         dir: Int,
+        socket: io.kuicksilver.quic.PathId = io.kuicksilver.quic.PathId.Initial,
     ): ConnectionCore? {
         var last: ConnectionCore? = null
         for (d in link.due(now)) {
@@ -223,7 +252,7 @@ public class Simulator(
             val b = PacketBuffer.allocate(d.bytes.size)
             try {
                 b.copyFrom(d.bytes, 0, 0, d.bytes.size)
-                ep.handleDatagram(b, d.bytes.size, from, d.ecn, now)?.let {
+                ep.handleDatagram(b, d.bytes.size, from, d.ecn, now, socket)?.let {
                     last =
                         it
                 }
@@ -244,7 +273,15 @@ public class Simulator(
         ep: EndpointCore,
         link: SimLink,
     ) {
-        for (core in ep.connections()) poll(core, link)
+        for (core in ep.connections()) {
+            batch.clear()
+            val n = core.poll(batch, now)
+            for (i in 0 until n) {
+                val bytes = batch.buffer(i).toByteArray(batch.length(i))
+                // a client datagram to the server's preferred address takes that address's link
+                (if (preferred != null && batch.address(i) == preferred) c2sPreferred else link).send(bytes, batch.ecn(i), now)
+            }
+        }
         batch.clear()
         val n = ep.pollStateless(batch)
         for (i in 0 until
@@ -258,7 +295,14 @@ public class Simulator(
         for (core in ep.connections()) {
             batch.clear()
             val n = core.poll(batch, now)
-            for (i in 0 until n) routeToClient(batch.buffer(i).toByteArray(batch.length(i)), batch.ecn(i), batch.address(i)!!)
+            for (i in 0 until n) {
+                val bytes = batch.buffer(i).toByteArray(batch.length(i))
+                if (batch.path(i) == preferredSocket) {
+                    if (batch.address(i) == clientAddress) s2cPreferred.send(bytes, batch.ecn(i), now) else misrouted++
+                } else {
+                    routeToClient(bytes, batch.ecn(i), batch.address(i)!!)
+                }
+            }
         }
         batch.clear()
         val n = ep.pollStateless(batch)
@@ -314,9 +358,11 @@ public class Simulator(
             }
         }
         for (p in extraPaths) deliver(sep, p.c2s, p.local, 1)?.let { if (c.server == null) c.server = it }
+        deliver(sep, c2sPreferred, clientAddress, 1, preferredSocket)
         c.server?.let { drain(it, c.serverEvents) }
         deliver(clientEndpoint, s2c, serverAddr, 2)
         for (p in extraPaths) deliver(clientEndpoint, p.s2c, serverAddr, 2)
+        preferred?.let { deliver(clientEndpoint, s2cPreferred, it, 2) }
         drain(c.client, c.clientEvents)
         pollEndpoint(clientEndpoint, c2s)
         pollServer(sep)
@@ -347,6 +393,8 @@ public class Simulator(
             consider(c.server?.nextTimeout())
             consider(c2s.nextArrival())
             consider(s2c.nextArrival())
+            consider(c2sPreferred.nextArrival())
+            consider(s2cPreferred.nextArrival())
             for (p in extraPaths) {
                 consider(p.c2s.nextArrival())
                 consider(p.s2c.nextArrival())
@@ -354,7 +402,7 @@ public class Simulator(
             val n = next
             // idle gaps advance in bounded steps so scenarios can inject work
             now = if (n == null || n > now + 50.milliseconds) now + 50.milliseconds else n
-            if (c.closed() != null && c2s.pending == 0 && s2c.pending == 0 &&
+            if (c.closed() != null && c2s.pending == 0 && s2c.pending == 0 && c2sPreferred.pending == 0 && s2cPreferred.pending == 0 &&
                 !done()
             ) {
                 return SimResult(false, now - start, traceHash, invariants.violations + listOf("connection closed: ${c.closed()}"))

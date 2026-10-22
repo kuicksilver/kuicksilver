@@ -907,7 +907,7 @@ class EndpointCoreTest {
         // client's address there; until then they keep leaving the original socket
         val p = EndpointPair(crypto = io.kuicksilver.tls.KslQuicCrypto, serverPreferred = preferred)
         try {
-            val c = p.connect()
+            val c = p.connect(quicConfig { followPreferredAddress = false }) // moved by hand, step by step
             assertTrue(p.confirmed(c), "${p.closed(c)}")
             val s = p.server.connections().single()
             moveClientToPreferred(p, c)
@@ -953,7 +953,7 @@ class EndpointCoreTest {
         val p = EndpointPair(crypto = io.kuicksilver.tls.KslQuicCrypto, serverPreferred = preferred, serverQuic = noMigration)
         val captured = ArrayList<ByteArray>()
         try {
-            val c = p.connect()
+            val c = p.connect(quicConfig { followPreferredAddress = false })
             assertTrue(p.confirmed(c), "${p.closed(c)}")
             val s = p.server.connections().single()
             p.filterToServer = { _, b ->

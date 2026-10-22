@@ -53,6 +53,7 @@ Transport settings of a connection: `quicConfig { }` (`QuicConfig.Builder`), `Qu
 | `allowMigration` | `Boolean` | `true` | | server: follow a client to a new address; `false` advertises `disable_active_migration` and drops datagrams from other addresses |
 | `allowMigrationToLoopback` | `Boolean` | `false` | | server: accept a move to a loopback or link-local address from a connection that did not start on one |
 | `pmtud` | `Boolean` | `true` | | DPLPMTUD (RFC 8899) on sockets that set DF; `false` keeps 1200 bytes |
+| `followPreferredAddress` (*experimental*) | `Boolean` | `true` | | client: move to the server's preferred address after the handshake, once the path there is validated ([Migration and paths](quic.md#migration-and-paths)) |
 | `pmtudIcmpHints` (*experimental*) | `Boolean` | `true` | | validated ICMP Packet Too Big (Linux, Android) and EMSGSIZE speed up DPLPMTUD as hints, never lowering the MTU without lost probes ([Path MTU](quic.md#path-mtu)) |
 | `maxDatagramFrameSize` | `Long` | 65 535 | 0..65 535 | our `max_datagram_frame_size` (RFC 9221); 0 turns datagrams off |
 | `resetStreamAt` (*experimental*) | `Boolean` | `false` | | advertise `reset_stream_at`: `QuicStream.resetAt` keeps a stream's first bytes when the peer advertised it too ([quic.md](quic.md#reliable-stream-reset-experimental)) |

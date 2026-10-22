@@ -132,6 +132,9 @@ public class QuicConfig private constructor(
     /** Let validated ICMP Packet Too Big messages and EMSGSIZE speed up DPLPMTUD as hints; see [Builder.pmtudIcmpHints]. */
     @property:ExperimentalKuicksilverApi
     public val pmtudIcmpHints: Boolean,
+    /** Client: move to the server's preferred address after the handshake; see [Builder.followPreferredAddress]. */
+    @property:ExperimentalKuicksilverApi
+    public val followPreferredAddress: Boolean,
     /** `max_datagram_frame_size` we advertise (RFC 9221 section 3); 0 does not advertise it and refuses DATAGRAM frames. */
     public val maxDatagramFrameSize: Long,
     /** Received datagrams the core holds for the application; a full queue drops the oldest. */
@@ -213,6 +216,7 @@ public class QuicConfig private constructor(
             allowMigrationToLoopback,
             pmtud,
             pmtudIcmpHints,
+            followPreferredAddress,
             maxDatagramFrameSize,
             datagramReceiveQueue,
             datagramSendQueue,
@@ -326,6 +330,17 @@ public class QuicConfig private constructor(
         @ExperimentalKuicksilverApi
         public var pmtudIcmpHints: Boolean = true
 
+        /**
+         * Default true (RFC 9000 section 9.6: a client SHOULD). A client whose server advertises a preferred address of the family
+         * it uses validates a path there once the handshake is confirmed, with the server's sequence-1 connection ID, and moves the
+         * connection there when the server answers ([PathChangeReason.PreferredAddress]); the original path then closes. Until then
+         * only probes go there, and a failed validation leaves the connection where it is. A public server's preferred address on a
+         * loopback, link-local or private address, or any unspecified, multicast or broadcast one, is ignored (threat-model 3.14).
+         * The server's `disable_active_migration` does not stop the move, and after it the client may migrate. False stays put.
+         */
+        @ExperimentalKuicksilverApi
+        public var followPreferredAddress: Boolean = true
+
         /** Default 65 535, the largest allowed; 0 turns datagrams off (RFC 9221 section 3). See [QuicConfig.maxDatagramFrameSize]. */
         public var maxDatagramFrameSize: Long = 65_535
 
@@ -373,6 +388,7 @@ public class QuicConfig private constructor(
                 allowMigrationToLoopback,
                 pmtud,
                 pmtudIcmpHints,
+                followPreferredAddress,
                 maxDatagramFrameSize,
                 datagramReceiveQueue,
                 datagramSendQueue,
@@ -412,6 +428,7 @@ public class QuicConfig private constructor(
             it.allowMigrationToLoopback = allowMigrationToLoopback
             it.pmtud = pmtud
             it.pmtudIcmpHints = pmtudIcmpHints
+            it.followPreferredAddress = followPreferredAddress
             it.maxDatagramFrameSize = maxDatagramFrameSize
             it.datagramReceiveQueue = datagramReceiveQueue
             it.datagramSendQueue = datagramSendQueue

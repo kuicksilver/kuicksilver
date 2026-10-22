@@ -284,6 +284,36 @@ private fun ConnectionCore.moveToPreferredSocket(p: Path) {
     }
 }
 
+/**
+ * Client, once the handshake is confirmed (RFC 9000 section 9.6): a path to the server's preferred address of the family in use,
+ * under validation with the server's sequence-1 ID. Once only; nothing when [QuicConfig.followPreferredAddress] is off, the server
+ * offers no address of this family, uses zero-length IDs, or points a client that reached it on a public address at a local one
+ * (or any connection at an unspecified, multicast or broadcast address: threat-model 3.14).
+ */
+internal fun ConnectionCore.startPreferredProbe() {
+    if (preferredProbeStarted) return
+    preferredProbeStarted = true
+    if (!config.followPreferredAddress) return
+    val tp = peerTp ?: return
+    if (!tp.preferredAddressPresent || remoteCid.length == 0) return
+    val active = paths.active
+    val v4 = AddressClass.ipBytes(active.remote).size == 4
+    val target = (if (v4) tp.preferredIpv4 else tp.preferredIpv6) ?: return
+    if (active.isRemote(target)) return
+    if (AddressClass.isUnsafeDestination(target, originLocal = AddressClass.isLocalNetwork(active.remote))) return
+    val p = paths.add(active.socket, target, config.congestionController(), config.newPathInitialRtt, evict = false) ?: return
+    p.amplification.validated = true // our own probe toward the server: nothing to amplify against
+    p.preferred = true
+    startValidation(p)
+}
+
+/** Client: a preferred-address path still under validation is closed (an application's own migration replaces it; never retried). */
+internal fun ConnectionCore.abandonPreferredProbe() {
+    val p = paths.all.firstOrNull { it.preferred && it !== paths.active } ?: return
+    paths.remove(p)
+    releasePathCid(p)
+}
+
 /** Server: records whether the 1-RTT packet just received on [p] carries another of our IDs than the active path's packets. */
 private fun ConnectionCore.notePeerDcid(p: Path) {
     if (p !== paths.active && rxDcidSeq >= 0 && activeDcidSeq >= 0) p.peerChangedDcid = rxDcidSeq != activeDcidSeq
@@ -431,7 +461,11 @@ internal fun ConnectionCore.onPathFailed(
         now + validationTimeout()
     releasePathCid(p)
     events += ConnectionEvent.PathFailed(p.id, reason)
-    if (p !== paths.active) return
+    if (p !== paths.active) {
+        // RFC 9000 section 9.6.1: a preferred address that does not validate is given up; the connection stays where it was
+        if (p.preferred) paths.remove(p)
+        return
+    }
     val back = paths.fallback(p)
     if (back != null) {
         // RFC 9000 section 9.3.2: the most recently validated path
@@ -493,10 +527,22 @@ internal fun ConnectionCore.onPathResponse(data: Long) {
             // a client gives back the ID of a path it only probed; a server keeps the one it answers a client's probe with, since the
             // client probes to migrate there next, and the switch must not need another spare ID (RFC 9000 section 9.5)
             val preferredMove = role == TlsRole.Server && p.preferredMovePending && p !== paths.active
-            if (p !== paths.active && !preferredMove && (role == TlsRole.Client || !p.peerProbed)) releasePathCid(p)
+            val toPreferred = role == TlsRole.Client && p.preferred && p !== paths.active
+            if (p !== paths.active && !preferredMove && !toPreferred && (role == TlsRole.Client || !p.peerProbed)) releasePathCid(p)
             events += ConnectionEvent.PathValidated(p.id)
             if (preferredMove) {
                 moveToPreferredSocket(p)
+                return
+            }
+            if (toPreferred) {
+                // RFC 9000 section 9.6.2: the move happens on the validated path, which keeps the sequence-1 ID it probed with
+                val old = paths.active
+                switchPath(p, PathChangeReason.PreferredAddress, challengeOld = false)
+                movedToPreferred = true
+                if (old !== paths.active) {
+                    paths.remove(old)
+                    releasePathCid(old)
+                }
                 return
             }
             // a client validated on a new IP gets a token for it (ngtcp2's NGTCP2_PATH_VALIDATION_FLAG_NEW_TOKEN)

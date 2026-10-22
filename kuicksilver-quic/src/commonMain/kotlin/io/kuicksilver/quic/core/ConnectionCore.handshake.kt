@@ -219,7 +219,7 @@ internal fun ConnectionCore.confirmHandshake() {
         // until answered or settled
     }
     discardHandshakeKeysAfterPacket = true
-    if (role == TlsRole.Server) issueNewToken(paths.active.remote)
+    if (role == TlsRole.Server) issueNewToken(paths.active.remote) else startPreferredProbe()
 }
 
 /**
