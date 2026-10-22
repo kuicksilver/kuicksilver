@@ -184,6 +184,20 @@ static jint j_udp_recv(JNIEnv *e, jclass c, jlong h, jobjectArray bufs, jintArra
     return (jint)got;
 }
 static jbyteArray j_udp_get(JNIEnv *e, jclass c, jlong h, jint what) { (void)c; uint8_t out[300]; size_t n = 0; if (ksl_udp_get(P(ksl_udp, h), what, out, sizeof out, &n) != KSL_OK) return NULL; return new_bytes(e, out, n); }
+/* quote (at least KSL_UDP_PTB_QUOTE bytes), meta[0] = quote length, meta[1] = MTU, dst (KSL_UDP_ADDR_LEN bytes) */
+static jboolean j_udp_take_ptb(JNIEnv *e, jclass c, jlong h, jbyteArray quote, jintArray meta, jbyteArray dst) {
+    (void)c; if (!quote || !meta || !dst || (*e)->GetArrayLength(e, quote) < KSL_UDP_PTB_QUOTE || (*e)->GetArrayLength(e, meta) < 2 || (*e)->GetArrayLength(e, dst) < KSL_UDP_ADDR_LEN) return JNI_FALSE;
+    uint8_t q[KSL_UDP_PTB_QUOTE], d[KSL_UDP_ADDR_LEN]; uint32_t ql = 0, mtu = 0;
+    if (!ksl_udp_take_ptb(P(ksl_udp, h), q, sizeof q, &ql, d, &mtu)) return JNI_FALSE;
+    jint m[2] = { (jint)ql, (jint)mtu };
+    (*e)->SetByteArrayRegion(e, quote, 0, (jsize)ql, (const jbyte *)q); (*e)->SetIntArrayRegion(e, meta, 0, 2, m); (*e)->SetByteArrayRegion(e, dst, 0, KSL_UDP_ADDR_LEN, (const jbyte *)d);
+    return JNI_TRUE;
+}
+static jlong j_udp_emsgsize(JNIEnv *e, jclass c, jlong h, jintArray last) {
+    (void)c; uint32_t l = 0; uint64_t n = ksl_udp_emsgsize(P(ksl_udp, h), &l);
+    if (last && (*e)->GetArrayLength(e, last) >= 1) { jint v = (jint)l; (*e)->SetIntArrayRegion(e, last, 0, 1, &v); }
+    return (jlong)n;
+}
 static void j_udp_shutdown(JNIEnv *e, jclass c, jlong h) { (void)e; (void)c; ksl_udp_shutdown(P(ksl_udp, h)); }
 static void j_udp_close(JNIEnv *e, jclass c, jlong h) { (void)e; (void)c; ksl_udp_close(P(ksl_udp, h)); }
 static jint j_live_objects(JNIEnv *e, jclass c, jlongArray out) {
@@ -214,6 +228,7 @@ static const JNINativeMethod methods[] = {
     {"rand", "(I)[B", (void *)j_rand}, {"sha2", "(I[B)[B", (void *)j_sha2}, {"hkdfExpandLabel", "(I[B" S_STR "[BI)[B", (void *)j_hkdf}, {"sign", "(I[B[B)[B", (void *)j_sign}, {"verify", "(I[B[B[B)I", (void *)j_verify}, {"spkiSha256", "([B)[B", (void *)j_spki},
     {"udpOpen", "([BI[I[Ljava/lang/String;)J", (void *)j_udp_open}, {"udpSend", "(J[Lio/kuicksilver/native/PacketBuffer;[I[B[BI)I", (void *)j_udp_send}, {"udpRecv", "(J[Lio/kuicksilver/native/PacketBuffer;[I[B[BII)I", (void *)j_udp_recv},
     {"udpGet", "(JI)[B", (void *)j_udp_get}, {"udpShutdown", "(J)V", (void *)j_udp_shutdown}, {"udpClose", "(J)V", (void *)j_udp_close},
+    {"udpTakePtb", "(J[B[I[B)Z", (void *)j_udp_take_ptb}, {"udpEmsgsize", "(J[I)J", (void *)j_udp_emsgsize},
     {"liveObjects", "([J)I", (void *)j_live_objects},
 };
 

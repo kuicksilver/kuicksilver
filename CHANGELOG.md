@@ -14,6 +14,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Added
 
+- Native (`ksl` ABI 7): on Linux and Android the accelerated UDP socket reads the ICMP error queue (`IP_RECVERR` /
+  `IPV6_RECVERR`, set with DF) and keeps ICMP Packet Too Big messages, with the quoted start of the datagram and its
+  destination, as hints for path MTU discovery (`ksl_udp_take_ptb`); every platform counts sends lost to `EMSGSIZE`
+  (`ksl_udp_emsgsize`). A queued ICMP error (a port unreachable, real or forged) is a dropped datagram for the receive,
+  never a socket error, and the drain is bounded so a flood cannot spin it. The library file name carries the new ABI
+  (`libksl_7_…`).
 - QUIC: the server issues NEW_TOKEN address-validation tokens (RFC 9000 section 8.1.3; experimental
   `QuicServerConfig.newTokenLifetime`, 24 hours by default, null issues none). One token after the handshake is confirmed
   and one after the client is validated on a new IP address, at most four per connection; a client that presents one on a

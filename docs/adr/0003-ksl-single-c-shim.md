@@ -55,3 +55,10 @@ re-verifies a cached chain when a session resumes (ADR-0011); it was added befor
 0-RTT controls (`KSL_OPT_EARLY_DATA`, `KSL_SET_EARLY_CONTEXT`, `KSL_SET_EARLY_DATA`, `KSL_GET_EARLY_DATA`, ADR-0015) that
 made ABI 6 incompatible with ABI 5. `ksl_win_sockets_start` and `ksl_win_sockets_started_by` start Winsock once per
 process and record who started it (ADR-0006, Windows); they are additive. 70 functions.
+
+## ABI 7 (0.3.0): ICMP hints for PMTUD
+
+`ksl_udp_take_ptb` (Packet Too Big from the Linux error queue) and `ksl_udp_emsgsize` (sends lost to EMSGSIZE), and a
+`ksl_udp_recv` that no longer answers `KSL_ERROR` for a queued ICMP error (ADR-0006, "Linux and Android"). The functions
+alone would be additive, but the receive behaviour changes and the 0.3.0 plan bumps once for every `ksl.h` change of the
+release: `KSL_ABI_VERSION 7`, and later 0.3.0 additions go under 7. 72 functions.

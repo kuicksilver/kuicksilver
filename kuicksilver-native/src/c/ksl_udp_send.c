@@ -34,10 +34,13 @@ static int dest_error(int e) { return e == EINVAL || e == EAFNOSUPPORT || e == E
 /* the kernel's queue is full (EAGAIN; ENOBUFS when Darwin's interface queue or Linux's qdisc is): stop, the caller sends the rest later */
 static int backpressure(int e) { return e == EAGAIN || e == EWOULDBLOCK || e == ENOBUFS; }
 /* this datagram is lost on the wire: the socket lives, loss detection repairs it */
+/* an ICMP error about an earlier datagram that the kernel reports on this send (sk_err with IP_RECVERR), not this datagram's fault */
+static int pending_icmp(int e) { return e == ECONNREFUSED || e == EHOSTUNREACH || e == ENETUNREACH || e == EHOSTDOWN; }
+static void count_emsgsize(ksl_udp *u, uint32_t len) { __atomic_add_fetch(&u->emsgsize, 1, __ATOMIC_RELAXED); __atomic_store_n(&u->emsgsize_last, len, __ATOMIC_RELAXED); }
 static int slot_lost(int e) { return dest_error(e) || e == EMSGSIZE || e == EPERM || e == EACCES || e == ENETUNREACH || e == EHOSTUNREACH || e == ENETDOWN || e == EHOSTDOWN || e == ENOMEM || e == ECONNREFUSED; }
 
 int ksl_udp_send(ksl_udp *u, uint8_t *const *bufs, const uint32_t *lens, const uint8_t *addrs, const uint8_t *ecn, uint32_t n, uint32_t *sent) {
-    if (!u || u->closed) return KSL_ERROR; *sent = 0; uint32_t i = 0;
+    if (!u || u->closed) return KSL_ERROR; *sent = 0; uint32_t i = 0; int icmp_retried = 0;
     int gso_probe = 0;   /* a GSO send failed with EINVAL: the first datagram of that run, sent alone, tells GSO's fault from the destination's */
     while (i < n) {
         /* a run of equal-size datagrams to one address with one mark leaves in a single sendmsg when GSO is on */
@@ -55,20 +58,24 @@ int ksl_udp_send(ksl_udp *u, uint8_t *const *bufs, const uint32_t *lens, const u
                 else if (e == EINVAL) gso_probe = 1;   /* GSO, the TOS cmsg or the destination: decided by the single send below */
                 else if (e == EIO || e == ENOTSUP || e == EOPNOTSUPP) gso_off(u);
                 else if (e == EPERM && !u->eperm_retried) { u->eperm_retried = 1; }
+                else if (u->recverr && pending_icmp(e)) { /* sk_err of an ICMP message about another datagram: the run goes one by one, GSO stays */ }
                 else { set_err(u, e, "sendmsg(gso)"); gso_off(u); }
             }
             /* fall through: the segments go one by one */
         }
         int e = 0;
-        if (send_one(u, bufs[i], lens[i], addrs + i * KSL_UDP_ADDR_LEN, ecn[i], 0, &e) == 0) { if (gso_probe) gso_off(u); gso_probe = 0; i++; (*sent)++; u->eperm_retried = 0; continue; }
+        if (send_one(u, bufs[i], lens[i], addrs + i * KSL_UDP_ADDR_LEN, ecn[i], 0, &e) == 0) { if (gso_probe) gso_off(u); gso_probe = 0; i++; (*sent)++; u->eperm_retried = 0; icmp_retried = 0; continue; }
         if (backpressure(e)) return KSL_OK;
         if (e == EINVAL && u->tos_cmsg_on && ecn[i]) {   /* the TOS cmsg or the destination: the same datagram without the mark decides */
-            if (send_one(u, bufs[i], lens[i], addrs + i * KSL_UDP_ADDR_LEN, 0, 0, &e) == 0) { u->tos_cmsg_on = 0; u->granted &= ~(uint32_t)KSL_UDP_ECN; gso_probe = 0; i++; (*sent)++; u->eperm_retried = 0; continue; }   /* the kernel rejected the TOS cmsg: never send it again */
+            if (send_one(u, bufs[i], lens[i], addrs + i * KSL_UDP_ADDR_LEN, 0, 0, &e) == 0) { u->tos_cmsg_on = 0; u->granted &= ~(uint32_t)KSL_UDP_ECN; gso_probe = 0; i++; (*sent)++; u->eperm_retried = 0; icmp_retried = 0; continue; }   /* the kernel rejected the TOS cmsg: never send it again */
             if (backpressure(e)) return KSL_OK;
         }
         gso_probe = 0;   /* the datagram failed alone too: GSO was not the cause */
         if (e == EPERM && !u->eperm_retried) { u->eperm_retried = 1; continue; }   /* a filter hiccup: one retry, then the datagram is given up like any other transient error */
-        if (slot_lost(e)) { i++; (*sent)++; continue; }
+        /* sk_err from an ICMP message about another datagram is reported (and cleared) by this send: the datagram goes once more */
+        if (u->recverr && pending_icmp(e) && !icmp_retried) { icmp_retried = 1; continue; }
+        if (e == EMSGSIZE) count_emsgsize(u, lens[i]);   /* larger than the path MTU the kernel knows: a DPLPMTUD hint (ksl_udp_emsgsize) */
+        if (slot_lost(e)) { i++; (*sent)++; icmp_retried = 0; continue; }
         set_err(u, e, "sendmsg"); return KSL_ERROR;
     }
     return KSL_OK;

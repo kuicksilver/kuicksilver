@@ -20,7 +20,7 @@ extern "C" {
 #endif
 
 /* 2: ksl_ssl_set replaces ksl_ssl_set_sni/ksl_ssl_set_verify_name; QUIC version selector */
-#define KSL_ABI_VERSION 6u
+#define KSL_ABI_VERSION 7u
 /* 3: endpoint keys ksl_key_random / ksl_key_mac16 (and ksl_udp_*) */
 /* 4: client sessions stay native (the session holds resumption secrets) — ksl_ssl_get1_session / ksl_session_free, ksl_ssl_set_session takes a handle,
    KSL_GET_SESSION (serialized session bytes) removed; ksl_ctx_set_session_context (a ticket resumes only under the trust configuration that issued it) */
@@ -30,6 +30,9 @@ extern "C" {
    ksl_ctx_verify_chain (resumption re-verifies the cached chain, ADR-0011; added before 6 was published) */
 /*    additive in 6 (ADR-0003): session ticket keys stay native — ksl_ctx_use_default_ticket_keys (generated and rotated in ksl),
    ksl_ticket_keys_register / ksl_ctx_use_ticket_keys (explicit keys copied in once, referred to by id) */
+/* 7: ICMP hints for DPLPMTUD (ADR-0006) — ksl_udp_take_ptb (Packet Too Big read from the Linux error queue, IP_RECVERR with DF) and
+   ksl_udp_emsgsize (sends the kernel refused as too large); a queued ICMP error no longer fails ksl_udp_recv. The one ABI bump of 0.3.0:
+   later 0.3.0 additions go under 7 */
 
 /* return codes */
 #define KSL_OK 0
@@ -269,6 +272,17 @@ int      ksl_udp_send(ksl_udp *, uint8_t *const *bufs, const uint32_t *lens, con
 int      ksl_udp_recv(ksl_udp *, uint8_t *const *bufs, const uint32_t *caps, uint32_t *lens, uint8_t *addrs, uint8_t *ecn, uint32_t n, uint32_t *received, int timeout_ms);
          /* recvmsg + UDP_GRO into a scratch buffer, segments split into consecutive slots (leftovers wait for the next call); MSG_TRUNC and oversized segments drop; KSL_WANT_READ on timeout. timeout_ms is one deadline for the call (dropped datagrams do not restart it); with timeout 0 or a slot already filled, 64 drops in a row end the call */
 int      ksl_udp_get(ksl_udp *, int what, uint8_t *out, size_t cap, size_t *len);
+#define KSL_UDP_PTB_QUOTE 64        /* bytes of the quoted datagram kept per Packet Too Big */
+int      ksl_udp_take_ptb(ksl_udp *, uint8_t *quote, uint32_t cap, uint32_t *quote_len, uint8_t dst[KSL_UDP_ADDR_LEN], uint32_t *mtu);
+         /* 1: the oldest queued ICMP Packet Too Big (IPv4 type 3 code 4, ICMPv6 type 2; Linux and Android only, from the error queue IP_RECVERR /
+            IPV6_RECVERR fills with DF on), else 0. quote: the start of our datagram the ICMP message quoted (UDP payload, at most
+            KSL_UDP_PTB_QUOTE and cap bytes); dst: where that datagram went; mtu: the MTU the message reports (IP packet size). A ring of
+            16 inside the socket, newer messages dropped when it is full. ICMP is spoofable: a hint for the caller to validate (RFC 8899
+            section 4.6, RFC 9000 section 14.2.1), never acted on here. Apple and Windows give no usable message (no error queue; no
+            MTU or quote), so 0 there */
+uint64_t ksl_udp_emsgsize(ksl_udp *, uint32_t *last_size);
+         /* datagrams ksl_udp_send lost to EMSGSIZE (larger than the path MTU the kernel knows, with DF), every platform; *last_size: the
+            length of the latest one */
 void     ksl_udp_shutdown(ksl_udp *);   /* wakes a blocked ksl_udp_recv and closes the socket; later send/recv answer KSL_ERROR at once; the object stays until ksl_udp_close */
 void     ksl_udp_close(ksl_udp *);      /* shutdown (when not done yet), waits for a receiver still inside, frees; never while another thread may still call in */
 #ifdef _WIN32

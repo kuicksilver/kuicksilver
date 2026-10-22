@@ -39,8 +39,13 @@
 #ifndef IPV6_DONTFRAG
 #define IPV6_DONTFRAG 62
 #endif
+#ifdef __linux__
+#include <linux/errqueue.h>
+#endif
 
 #define GRO_MAX 65535
+#define PTB_RING 16      /* Packet Too Big messages kept between two ksl_udp_take_ptb calls */
+#define ERRQUEUE_BATCH 16   /* error-queue messages read per drain */
 #define GSO_SEGMENTS 64
 /* the most UDP payload one IP datagram carries, which a GSO send must not exceed: IPv4 65535 - 20 (IP header) - 8 (UDP header)
    (Linux __ip_append_data answers EMSGSIZE above it), IPv6 65535 - 8 (the payload length counts the UDP header) */
@@ -57,10 +62,18 @@ struct ksl_udp {
     uint8_t *scratch; uint8_t *tx; uint32_t pend_off, pend_len, pend_seg; uint8_t pend_addr[KSL_UDP_ADDR_LEN]; uint8_t pend_ecn;
     volatile int closed; volatile int in_recv;
     uint32_t sends, recvs, gso_fallbacks, polls;
+    /* ICMP hints (ADR-0006): recverr is on with DF on Linux; the receiver fills the Packet Too Big ring, ksl_udp_take_ptb empties it
+       (ptb_mu); the sender counts EMSGSIZE (atomics) */
+    int recverr; pthread_mutex_t ptb_mu;
+    struct ksl_ptb { uint8_t quote[KSL_UDP_PTB_QUOTE]; uint32_t quote_len, mtu; uint8_t dst[KSL_UDP_ADDR_LEN]; } ptb[PTB_RING];
+    uint32_t ptb_head, ptb_count, ptb_dropped, errqueue_reads;
+    uint64_t emsgsize; uint32_t emsgsize_last;
 #ifdef KSL_TEST
     int fail_next_gso, fail_next_send;   /* error injection, test builds only */
 #endif
 };
+
+void ksl_udp_push_ptb(ksl_udp *u, const uint8_t *quote, uint32_t len, const uint8_t dst[KSL_UDP_ADDR_LEN], uint32_t mtu);   /* ksl_udp.c */
 
 /* strerror is not thread-safe; strerror_r is the XSI one (int) or, with _GNU_SOURCE on glibc and on bionic from API 23, the GNU one
    (char *, maybe not buf): _Generic picks the matching reader, NULL when the XSI call failed */

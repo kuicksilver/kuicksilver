@@ -99,7 +99,7 @@ internal class KslDatagramIo private constructor(
         return Slots(b, 0).also { tx = it }
     }
 
-    // peers seen on receive: 64 entries of 20 bytes, round-robin replacement; the same bytes answer the same instance
+    // peers seen on receive (and the destinations of Packet Too Big messages): 64 entries of 20 bytes, round-robin replacement; the same bytes answer the same instance
     private val peerKeys = ByteArray(PEERS * KslUdpSocket.ADDR_LEN)
     private val peers = arrayOfNulls<InetSocketAddress>(PEERS)
     private var peerNext = 0
@@ -182,6 +182,25 @@ internal class KslDatagramIo private constructor(
 
     override suspend fun send(batch: PacketBatch): Int = trySend(batch)
 
+    private val ptbQuote = ByteArray(KslUdpSocket.PTB_QUOTE)
+    private val ptbMeta = IntArray(2)
+    private val ptbDst = ByteArray(KslUdpSocket.ADDR_LEN)
+
+    /**
+     * Hands [sink] the ICMP Packet Too Big messages the socket queued since the last call, at most [PTB_PER_DRAIN] (Linux and Android
+     * with DF; none elsewhere): the quoted start of our datagram (valid for [sink]'s call only), its length, the datagram's
+     * destination and the MTU the message reports. Spoofable hints the core validates (RFC 8899 section 4.6). The loop's thread only.
+     */
+    internal fun drainPacketTooBig(sink: (quote: ByteArray, len: Int, dst: InetSocketAddress, mtu: Int) -> Unit) {
+        for (k in 0 until PTB_PER_DRAIN) {
+            if (!socket.takePacketTooBig(ptbQuote, ptbMeta, ptbDst)) return
+            sink(ptbQuote, ptbMeta[0], peerOf(ptbDst, 0), ptbMeta[1])
+        }
+    }
+
+    /** Datagrams the socket lost to EMSGSIZE so far, the latest one's length in `lastSize[0]` (every platform with DF). */
+    internal fun emsgsize(lastSize: IntArray): Long = socket.emsgsize(lastSize)
+
     private var sends = 0
 
     override fun trySend(batch: PacketBatch): Int {
@@ -235,6 +254,9 @@ internal class KslDatagramIo private constructor(
     companion object {
         private const val PEERS = 64
         private const val REFRESH = 256
+
+        /** Packet Too Big messages taken per [drainPacketTooBig]: the ring in ksl holds 16. */
+        internal const val PTB_PER_DRAIN = 16
 
         /**
          * Opens the accelerated socket on [local]; null where `ksl_udp` cannot open its socket or the address cannot be resolved.

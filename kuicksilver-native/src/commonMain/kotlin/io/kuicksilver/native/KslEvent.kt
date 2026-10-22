@@ -120,6 +120,9 @@ public object KslConst {
     public const val UDP_GET_ERROR: Int = 4
     public const val UDP_GET_STATS: Int = 5
     public const val UDP_MAX_BATCH: Int = 64
+
+    /** Bytes of the quoted datagram a Packet Too Big keeps (`KSL_UDP_PTB_QUOTE`, ABI 7). */
+    public const val UDP_PTB_QUOTE: Int = 64
     public const val E_TRUNCATED: Int = 0xff0009
     public const val E_TOO_LATE: Int = 0xff000a
 

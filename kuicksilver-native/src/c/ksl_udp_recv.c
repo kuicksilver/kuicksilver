@@ -14,6 +14,33 @@ static uint32_t hand_out(ksl_udp *u, uint8_t *const *bufs, const uint32_t *caps,
     }
     return filled;
 }
+/* An error the kernel queued for this socket rather than a fault of it: an ICMP message about a datagram we sent (port or host
+   unreachable, Packet Too Big; with IP_RECVERR it also sets sk_err, which recvmsg reports once) */
+static int icmp_errno(int e) { return e == ECONNREFUSED || e == EHOSTUNREACH || e == ENETUNREACH || e == EMSGSIZE || e == EHOSTDOWN; }
+#ifdef __linux__
+/* Reads at most ERRQUEUE_BATCH messages of the error queue (MSG_ERRQUEUE never blocks). Packet Too Big from an ICMP or ICMPv6 sender
+   goes to the ring with the quoted start of our datagram and its destination; every other entry (port unreachable, our own local
+   EMSGSIZE, other ICMP) is only taken off the queue. Without this a queued error kept POLLERR raised and the receive loop spinning. */
+static void drain_errqueue(ksl_udp *u) {
+    for (int i = 0; i < ERRQUEUE_BATCH; i++) {
+        uint8_t data[KSL_UDP_PTB_QUOTE]; struct sockaddr_storage ss; struct iovec iov = { data, sizeof data }; uint8_t cbuf[512];
+        struct msghdr m; memset(&m, 0, sizeof m); memset(&ss, 0, sizeof ss); m.msg_name = &ss; m.msg_namelen = sizeof ss; m.msg_iov = &iov; m.msg_iovlen = 1; m.msg_control = cbuf; m.msg_controllen = sizeof cbuf;
+        ssize_t r = recvmsg(u->fd, &m, MSG_ERRQUEUE | MSG_DONTWAIT); u->errqueue_reads++;
+        if (r < 0) { if (errno == EINTR) continue; return; }   /* EAGAIN: the queue is empty */
+        for (struct cmsghdr *c = CMSG_FIRSTHDR(&m); c; c = CMSG_NXTHDR(&m, c)) {
+            if (!((c->cmsg_level == IPPROTO_IP && c->cmsg_type == IP_RECVERR) || (c->cmsg_level == IPPROTO_IPV6 && c->cmsg_type == IPV6_RECVERR))) continue;
+            if (c->cmsg_len < CMSG_LEN(sizeof(struct sock_extended_err))) continue;
+            struct sock_extended_err ee; memcpy(&ee, CMSG_DATA(c), sizeof ee);
+            int ptb = (ee.ee_origin == SO_EE_ORIGIN_ICMP && ee.ee_type == 3 && ee.ee_code == 4) || (ee.ee_origin == SO_EE_ORIGIN_ICMP6 && ee.ee_type == 2);
+            if (!ptb || ee.ee_info < 68 || ee.ee_info > 65535 || m.msg_namelen == 0) continue;
+            uint8_t dst[KSL_UDP_ADDR_LEN]; from_sockaddr(&ss, dst);
+            ksl_udp_push_ptb(u, data, (uint32_t)r < sizeof data ? (uint32_t)r : (uint32_t)sizeof data, dst, ee.ee_info);
+        }
+    }
+}
+#else
+static void drain_errqueue(ksl_udp *u) { (void)u; }   /* Apple: no error queue; an unconnected socket gets no ICMP */
+#endif
 /* nanoseconds since an arbitrary fixed point, never going back */
 static int64_t now_ns(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return (int64_t)t.tv_sec * 1000000000 + t.tv_nsec; }
 /* datagrams taken in a row without filling a slot (empty, link-local source, truncated, larger than the slot) between two looks
@@ -52,8 +79,13 @@ int ksl_udp_recv(ksl_udp *u, uint8_t *const *bufs, const uint32_t *caps, uint32_
             if (pr == 0) { rc = KSL_WANT_READ; break; }
             if (pr < 0) { if (errno == EINTR) continue; set_err(u, errno, "poll"); rc = KSL_ERROR; break; }
             if (pf[1].revents) { rc = KSL_ERROR; break; }   /* closed from another thread */
+            /* POLLERR: the error queue holds something; draining it is progress, and it counts toward the drop bound so a flood of
+               ICMP still ends the call at its deadline */
+            if (pf[0].revents & POLLERR) { drain_errqueue(u); dropped++; }
             continue;
         }
+        /* an ICMP error about an earlier datagram (sk_err), not a broken socket: drain the queue it came with and go on */
+        if (r < 0 && icmp_errno(errno)) { drain_errqueue(u); dropped++; continue; }
         if (r < 0) { set_err(u, errno, "recvmsg"); rc = filled ? KSL_OK : KSL_ERROR; break; }
         if (m.msg_flags & MSG_TRUNC) { dropped++; continue; }   /* bigger than the scratch: dropped whole */
         uint32_t gso = 0; uint8_t mark = 0;

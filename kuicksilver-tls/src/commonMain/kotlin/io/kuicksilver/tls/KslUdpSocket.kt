@@ -139,6 +139,35 @@ public class KslUdpSocket private constructor(
         }
     }
 
+    /**
+     * The oldest ICMP Packet Too Big the socket queued (Linux and Android, with [DF]; never elsewhere): true when one was taken,
+     * [quote] (at least [PTB_QUOTE] bytes) then holds the start of our datagram the message quoted, `meta[0]` its length,
+     * `meta[1]` the MTU the message reports, and [dst] ([ADDR_LEN] bytes) where that datagram went. False after [shutdown].
+     * ICMP is spoofable: a hint to validate (RFC 8899 section 4.6, RFC 9000 section 14.2.1).
+     */
+    public fun takePacketTooBig(
+        quote: ByteArray,
+        meta: IntArray,
+        dst: ByteArray,
+    ): Boolean {
+        if (!enter()) return false
+        try {
+            return Ksl.udpTakePtb(handle, quote, meta, dst)
+        } finally {
+            leave()
+        }
+    }
+
+    /** Datagrams [send] lost to EMSGSIZE so far (larger than the path MTU the kernel knows), the latest one's length in `lastSize[0]`. */
+    public fun emsgsize(lastSize: IntArray): Long {
+        if (!enter()) return 0
+        try {
+            return Ksl.udpEmsgsize(handle, lastSize)
+        } finally {
+            leave()
+        }
+    }
+
     /** Wakes a blocked [receive] and closes the socket; every later [send]/[receive] answers 0. Idempotent. */
     public fun shutdown() {
         while (true) {
@@ -189,6 +218,7 @@ public class KslUdpSocket private constructor(
         public const val REUSEPORT: Int = KslConst.UDP_REUSEPORT
         public const val ADDR_LEN: Int = KslConst.UDP_ADDR_LEN
         public const val MAX_BATCH: Int = KslConst.UDP_MAX_BATCH
+        public const val PTB_QUOTE: Int = KslConst.UDP_PTB_QUOTE
         private const val SHUT = 1 shl 30
         private const val CLOSED = 1 shl 29
         private const val COUNT = CLOSED - 1

@@ -564,5 +564,22 @@ public actual object Ksl {
 
     public actual fun udpClose(udp: Long): Unit = KslNative.udpClose(udp)
 
+    public actual fun udpTakePtb(
+        udp: Long,
+        quote: ByteArray,
+        meta: IntArray,
+        dst: ByteArray,
+    ): Boolean {
+        require(
+            quote.size >= KslConst.UDP_PTB_QUOTE && meta.size >= 2 && dst.size >= KslConst.UDP_ADDR_LEN,
+        ) { "udpTakePtb buffers too small" }
+        return KslNative.udpTakePtb(udp, quote, meta, dst)
+    }
+
+    public actual fun udpEmsgsize(
+        udp: Long,
+        lastSize: IntArray,
+    ): Long = KslNative.udpEmsgsize(udp, lastSize)
+
     public actual fun liveObjects(): LongArray = LongArray(KslConst.LIVE_COUNT).also { KslNative.liveObjects(it) }
 }

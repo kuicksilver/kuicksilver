@@ -90,13 +90,14 @@ static int bind_socket(ksl_udp *u, const uint8_t addr[KSL_UDP_ADDR_LEN], int dua
 static ksl_udp *open_failed(ksl_udp *u, uint32_t code, const char *what, int e, uint32_t *err, char *msg, size_t msglen) {
     if (err) *err = code; if (msg && msglen) { char t[128]; ksl_errtext(e, t, sizeof t); snprintf(msg, msglen, "%s: %s", what, t); }
     if (u->fd >= 0) close(u->fd); if (u->wake[0] >= 0) close(u->wake[0]); if (u->wake[1] >= 0) close(u->wake[1]);
-    pthread_mutex_destroy(&u->err_mu); free(u->scratch); free(u->tx); free(u); return NULL;
+    pthread_mutex_destroy(&u->err_mu); pthread_mutex_destroy(&u->ptb_mu); free(u->scratch); free(u->tx); free(u); return NULL;
 }
 
 ksl_udp *ksl_udp_open(const uint8_t addr[KSL_UDP_ADDR_LEN], int flags, uint32_t *err, char *msg, size_t msglen) {
     if (!addr || (addr[0] != 4 && addr[0] != 6)) { if (err) *err = KSL_E_BAD_ARG; if (msg && msglen) snprintf(msg, msglen, "ksl_udp: bad address"); return NULL; }
     ksl_udp *u = calloc(1, sizeof *u); if (!u) { if (err) *err = KSL_E_BAD_ARG; return NULL; }
     if (pthread_mutex_init(&u->err_mu, NULL) != 0) { free(u); if (err) *err = KSL_E_BAD_ARG; return NULL; }
+    if (pthread_mutex_init(&u->ptb_mu, NULL) != 0) { pthread_mutex_destroy(&u->err_mu); free(u); if (err) *err = KSL_E_BAD_ARG; return NULL; }
     u->requested = (uint32_t)flags; u->wake[0] = u->wake[1] = -1; u->fd = -1;
     /* a wildcard (0.0.0.0 or ::) takes both families on one dual-stack socket, as NIO's DatagramChannel: a client bound to 0.0.0.0
        reaches IPv6 servers and a server on 0.0.0.0 answers IPv6 clients. Without IPv6 (or with :: taken) the requested family alone. */
@@ -127,6 +128,14 @@ ksl_udp *ksl_udp_open(const uint8_t addr[KSL_UDP_ADDR_LEN], int flags, uint32_t 
         int probe = IP_PMTUDISC_PROBE, p6 = IPV6_PMTUDISC_PROBE;
         if (v4) ok = ok && setsockopt(u->fd, IPPROTO_IP, IP_MTU_DISCOVER, &probe, sizeof probe) == 0;   /* on AF_INET6: the v4-mapped half */
         if (v6) { ok = ok && setsockopt(u->fd, IPPROTO_IPV6, IPV6_MTU_DISCOVER, &p6, sizeof p6) == 0; if (ok) setsockopt(u->fd, IPPROTO_IPV6, IPV6_DONTFRAG, &one, sizeof one); }
+        /* ICMP errors into the error queue (ADR-0006): Packet Too Big as a DPLPMTUD hint (RFC 8899 section 4.6), validated by the caller.
+           The queue also takes port and host unreachable, which set sk_err: ksl_udp_recv drains it and never fails on such an error */
+        if (ok) {
+            int rv = 1;
+            if (v4) rv = rv && setsockopt(u->fd, IPPROTO_IP, IP_RECVERR, &one, sizeof one) == 0;
+            if (v6) rv = rv && setsockopt(u->fd, IPPROTO_IPV6, IPV6_RECVERR, &one, sizeof one) == 0;
+            u->recverr = rv;
+        }
 #endif
         if (ok) u->granted |= KSL_UDP_DF;
     }
@@ -172,10 +181,37 @@ void ksl_udp_close(ksl_udp *u) {
     for (int i = 0; i < 1000 && __atomic_load_n(&u->in_recv, __ATOMIC_SEQ_CST) > 0; i++) { struct timespec ts = { 0, 1000000 }; nanosleep(&ts, NULL); }   /* a receiver woke up and leaves the object */
     ksl_live_add(KSL_LIVE_UDP, -1); ksl_live_add(KSL_LIVE_WAKE, -((u->wake[0] >= 0) + (u->wake[1] >= 0)));
     if (u->fd >= 0) close(u->fd); if (u->wake[0] >= 0) close(u->wake[0]); if (u->wake[1] >= 0) close(u->wake[1]);
-    pthread_mutex_destroy(&u->err_mu); free(u->scratch); free(u->tx); memset(u, 0, sizeof *u); free(u);
+    pthread_mutex_destroy(&u->err_mu); pthread_mutex_destroy(&u->ptb_mu); free(u->scratch); free(u->tx); memset(u, 0, sizeof *u); free(u);
+}
+
+int ksl_udp_take_ptb(ksl_udp *u, uint8_t *quote, uint32_t cap, uint32_t *quote_len, uint8_t dst[KSL_UDP_ADDR_LEN], uint32_t *mtu) {
+    if (!u || !quote_len || !dst || !mtu || (cap && !quote)) return 0;
+    pthread_mutex_lock(&u->ptb_mu);
+    if (!u->ptb_count) { pthread_mutex_unlock(&u->ptb_mu); return 0; }
+    const struct ksl_ptb *p = &u->ptb[u->ptb_head];
+    uint32_t n = p->quote_len < cap ? p->quote_len : cap; memcpy(quote, p->quote, n); *quote_len = n; memcpy(dst, p->dst, KSL_UDP_ADDR_LEN); *mtu = p->mtu;
+    u->ptb_head = (u->ptb_head + 1) % PTB_RING; u->ptb_count--;
+    pthread_mutex_unlock(&u->ptb_mu); return 1;
+}
+uint64_t ksl_udp_emsgsize(ksl_udp *u, uint32_t *last_size) {
+    if (!u) return 0;
+    if (last_size) *last_size = __atomic_load_n(&u->emsgsize_last, __ATOMIC_RELAXED);
+    return __atomic_load_n(&u->emsgsize, __ATOMIC_RELAXED);
+}
+/* the receiver's side of the ring (ksl_udp_recv.c): a full ring keeps the older messages, a flood only costs the newest */
+void ksl_udp_push_ptb(ksl_udp *u, const uint8_t *quote, uint32_t len, const uint8_t dst[KSL_UDP_ADDR_LEN], uint32_t mtu) {
+    pthread_mutex_lock(&u->ptb_mu);
+    if (u->ptb_count == PTB_RING) { u->ptb_dropped++; pthread_mutex_unlock(&u->ptb_mu); return; }
+    struct ksl_ptb *p = &u->ptb[(u->ptb_head + u->ptb_count) % PTB_RING];
+    p->quote_len = len < KSL_UDP_PTB_QUOTE ? len : KSL_UDP_PTB_QUOTE; memcpy(p->quote, quote, p->quote_len); memcpy(p->dst, dst, KSL_UDP_ADDR_LEN); p->mtu = mtu;
+    u->ptb_count++; pthread_mutex_unlock(&u->ptb_mu);
 }
 
 #ifdef KSL_TEST
+void ksl_udp_push_ptb_for_test(ksl_udp *u, const uint8_t *quote, uint32_t len, const uint8_t dst[KSL_UDP_ADDR_LEN], uint32_t mtu) { ksl_udp_push_ptb(u, quote, len, dst, mtu); }
+uint32_t ksl_udp_ptb_dropped_for_test(ksl_udp *u) { pthread_mutex_lock(&u->ptb_mu); uint32_t d = u->ptb_dropped; pthread_mutex_unlock(&u->ptb_mu); return d; }
+uint32_t ksl_udp_errqueue_reads_for_test(ksl_udp *u) { return u->errqueue_reads; }
+int ksl_udp_recverr_for_test(ksl_udp *u) { return u->recverr; }
 uint32_t ksl_udp_syscalls_for_test(ksl_udp *u) { return u->sends; }
 uint32_t ksl_udp_recv_syscalls_for_test(ksl_udp *u) { return u->recvs + u->polls; }
 void ksl_udp_fail_next_gso_for_test(ksl_udp *u, int err) { u->fail_next_gso = err; }
@@ -200,7 +236,13 @@ ksl_udp *ksl_udp_open(const uint8_t addr[KSL_UDP_ADDR_LEN], int flags, uint32_t 
 int ksl_udp_get(ksl_udp *u, int what, uint8_t *out, size_t cap, size_t *len) { (void)u; (void)what; (void)out; (void)cap; (void)len; return KSL_ERROR; }
 void ksl_udp_shutdown(ksl_udp *u) { (void)u; }
 void ksl_udp_close(ksl_udp *u) { (void)u; }
+int ksl_udp_take_ptb(ksl_udp *u, uint8_t *quote, uint32_t cap, uint32_t *quote_len, uint8_t dst[KSL_UDP_ADDR_LEN], uint32_t *mtu) { (void)u; (void)quote; (void)cap; (void)quote_len; (void)dst; (void)mtu; return 0; }
+uint64_t ksl_udp_emsgsize(ksl_udp *u, uint32_t *last_size) { (void)u; if (last_size) *last_size = 0; return 0; }
 #ifdef KSL_TEST
+void ksl_udp_push_ptb_for_test(ksl_udp *u, const uint8_t *quote, uint32_t len, const uint8_t dst[KSL_UDP_ADDR_LEN], uint32_t mtu) { (void)u; (void)quote; (void)len; (void)dst; (void)mtu; }
+uint32_t ksl_udp_ptb_dropped_for_test(ksl_udp *u) { (void)u; return 0; }
+uint32_t ksl_udp_errqueue_reads_for_test(ksl_udp *u) { (void)u; return 0; }
+int ksl_udp_recverr_for_test(ksl_udp *u) { (void)u; return 0; }
 uint32_t ksl_udp_syscalls_for_test(ksl_udp *u) { (void)u; return 0; }
 uint32_t ksl_udp_recv_syscalls_for_test(ksl_udp *u) { (void)u; return 0; }
 void ksl_udp_fail_next_gso_for_test(ksl_udp *u, int err) { (void)u; (void)err; }

@@ -79,6 +79,7 @@ struct ksl_udp {
     uint8_t *scratch; uint8_t *tx; uint32_t pend_off, pend_len, pend_seg; uint8_t pend_addr[KSL_UDP_ADDR_LEN]; uint8_t pend_ecn;
     volatile int closed; volatile int in_recv;
     uint32_t sends, recvs, gso_fallbacks;
+    volatile LONG64 emsgsize; volatile LONG emsgsize_last;   /* sends lost to WSAEMSGSIZE (ksl_udp_emsgsize) */
 #ifdef KSL_TEST
     int fail_next_gso, fail_next_send, fail_next_recv, fake_pollerr; uint32_t polls;   /* error injection, test builds only */
 #endif
@@ -297,6 +298,7 @@ int ksl_udp_send(ksl_udp *u, uint8_t *const *bufs, const uint32_t *lens, const u
             if (e == WSAEWOULDBLOCK) return KSL_OK;
         }
         gso_probe = 0;
+        if (e == WSAEMSGSIZE) { InterlockedIncrement64(&u->emsgsize); InterlockedExchange(&u->emsgsize_last, (LONG)lens[i]); }   /* a DPLPMTUD hint */
         if (slot_lost(e)) { i++; (*sent)++; continue; }
         set_err(u, e, "WSASendMsg"); return KSL_ERROR;
     }
@@ -423,7 +425,20 @@ void ksl_udp_close(ksl_udp *u) {
     free(u->scratch); free(u->tx); memset(u, 0, sizeof *u); free(u);
 }
 
+/* Windows reports ICMP through IP_RECVERR as ICMP_ERROR_INFO without the MTU or a quote of our datagram: nothing a caller could
+   validate (RFC 9000 section 14.2.1), so no Packet Too Big here; WSAEMSGSIZE on a send is the only hint */
+int ksl_udp_take_ptb(ksl_udp *u, uint8_t *quote, uint32_t cap, uint32_t *quote_len, uint8_t dst[KSL_UDP_ADDR_LEN], uint32_t *mtu) { (void)u; (void)quote; (void)cap; (void)quote_len; (void)dst; (void)mtu; return 0; }
+uint64_t ksl_udp_emsgsize(ksl_udp *u, uint32_t *last_size) {
+    if (!u) return 0;
+    if (last_size) *last_size = (uint32_t)InterlockedCompareExchange(&u->emsgsize_last, 0, 0);
+    return (uint64_t)InterlockedCompareExchange64(&u->emsgsize, 0, 0);
+}
+
 #ifdef KSL_TEST
+void ksl_udp_push_ptb_for_test(ksl_udp *u, const uint8_t *quote, uint32_t len, const uint8_t dst[KSL_UDP_ADDR_LEN], uint32_t mtu) { (void)u; (void)quote; (void)len; (void)dst; (void)mtu; }
+uint32_t ksl_udp_ptb_dropped_for_test(ksl_udp *u) { (void)u; return 0; }
+uint32_t ksl_udp_errqueue_reads_for_test(ksl_udp *u) { (void)u; return 0; }
+int ksl_udp_recverr_for_test(ksl_udp *u) { (void)u; return 0; }
 uint32_t ksl_udp_syscalls_for_test(ksl_udp *u) { return u->sends; }
 void ksl_udp_fail_next_gso_for_test(ksl_udp *u, int err) { u->fail_next_gso = err; }
 void ksl_udp_fail_next_send_for_test(ksl_udp *u, int err) { u->fail_next_send = err; }

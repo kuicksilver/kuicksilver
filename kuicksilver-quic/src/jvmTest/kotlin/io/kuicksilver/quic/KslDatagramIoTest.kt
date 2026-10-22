@@ -50,6 +50,46 @@ class KslDatagramIoTest {
         return KslUdpSocket.supported
     }
 
+    @Test fun negative_icmpPortUnreachableDoesNotKillTheSocket() =
+        runBlocking {
+            // a datagram to a closed port draws an ICMP port unreachable; on Linux the error queue (IP_RECVERR with DF) sets sk_err,
+            // which recvmsg used to report as a socket error, ending the endpoint's receive loop. It is a timeout now, and the next
+            // datagram arrives. macOS and Windows deliver no such error to an unconnected socket: the test passes there trivially
+            assumeTrue(ready(), "needs the accelerated socket (Linux, macOS, Windows)")
+            val closed = assertNotNull(KslDatagramIo.open(lo)).let { it.localAddress.also { _ -> it.close() } }
+            val a = assertNotNull(KslDatagramIo.open(lo))
+            val b = assertNotNull(KslDatagramIo.open(lo))
+            val out = PacketBatch(1)
+            val inb = PacketBatch(4)
+            try {
+                repeat(3) {
+                    out.clear()
+                    out.buffer(0).copyFrom(ByteArray(100) { 7 }, 0, 0, 100)
+                    out.setLength(0, 100)
+                    out.setAddress(0, closed)
+                    assertEquals(1, a.send(out), "a send to the closed port is not an error")
+                    inb.clear()
+                    assertEquals(0, a.receiveNow(inb, 100), "the ICMP error is a timeout, not a socket error")
+                }
+                var ptb = 0
+                a.drainPacketTooBig { _, _, _, _ -> ptb++ }
+                assertEquals(0, ptb, "port unreachable is no Packet Too Big")
+                out.clear()
+                out.buffer(0).copyFrom(ByteArray(50) { 9 }, 0, 0, 50)
+                out.setLength(0, 50)
+                out.setAddress(0, a.localAddress)
+                assertEquals(1, b.send(out))
+                inb.clear()
+                withTimeout(5.seconds) { while (inb.count == 0) a.receive(inb) }
+                assertEquals(50, inb.length(0), "the socket still receives")
+            } finally {
+                out.close()
+                inb.close()
+                a.close()
+                b.close()
+            }
+        }
+
     @Test fun loopbackBatchSendReceive() =
         runBlocking {
             assumeTrue(ready(), "needs the accelerated socket (Linux, macOS, Windows)")

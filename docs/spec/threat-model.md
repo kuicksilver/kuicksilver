@@ -247,6 +247,8 @@ Status (core review): skipped packet numbers, all CIDs (the client's ODCID/SCID,
 
 ### 3.16 PMTUD and ICMP (RFC 8899 §8)
 
+0.3.0 status (ksl ABI 7): on Linux and Android the socket sets `IP_RECVERR`/`IPV6_RECVERR` with DF and `ksl_udp_recv` drains the ICMP error queue (at most 16 per drain, counted toward its drop bound): an ICMP port or host unreachable, real or forged, used to set `sk_err`, which `recvmsg` reported as a socket error (the endpoint's receive failed) and which kept `poll` answering `POLLERR`; it is now a dropped datagram (`test_udp.c` `udp_recverr_port_unreachable_keeps_socket`, `KslDatagramIoTest.negative_icmpPortUnreachableDoesNotKillTheSocket`), and a send that meets a pending error goes once more. Only ICMP-origin "fragmentation needed" and ICMPv6 Packet Too Big are kept, in a ring of 16 (a flood drops the newest), as hints for the core to validate; nothing in ksl acts on them. Apple delivers no ICMP to an unconnected socket and Windows none we could validate.
+
 Pre-release status: the core has no ICMP PTB input — the path size is learned only from acknowledged probes (`core.PmtudTest.probeLossNotCongestion`, `blackHoleFallsBackTo1200AndPauses60s`, `atMostThreeLostProbesPerSize`); a probe never exceeds the peer's `max_udp_payload_size` (`peerMaxUdpPayloadCapsSearch`).
 
 - **Threat:** a forged ICMP "Packet Too Big" with `IP_PMTUDISC_DO` produces `EMSGSIZE` and a broken connection (quic-go CVE-2024-53259); black holes.

@@ -175,6 +175,17 @@ platform, so it covers:
 - DF: `IP_PMTUDISC_PROBE` + `IPV6_DONTFRAG`, never `_DO`: the kernel does not substitute the size from its PMTU cache, and a
   forged ICMP PTB does not break sending (quic-go CVE-2024-53259).
 - `SO_RCVBUF`/`SO_SNDBUF` 7 MB, `SO_REUSEPORT` by flag.
+- ICMP error queue (ksl ABI 7, 0.3.0): with DF the socket also sets `IP_RECVERR`/`IPV6_RECVERR`. The kernel then queues the
+  ICMP errors about datagrams we sent and sets `sk_err`, which the next `recvmsg` reports once (`ECONNREFUSED`,
+  `EHOSTUNREACH`, `ENETUNREACH`, `EMSGSIZE`, `EHOSTDOWN`) and which kept `poll` answering `POLLERR`. `ksl_udp_recv` drains
+  the queue with `MSG_ERRQUEUE` (16 messages per drain, counted toward its drop bound, so a flood of ICMP still ends the call
+  at its deadline) and treats such an error as a dropped datagram, never as a broken socket; a send that meets a pending
+  ICMP error goes once more. Only ICMP-origin "fragmentation needed" (type 3 code 4) and ICMPv6 Packet Too Big (type 2) with
+  an MTU of 68–65535 are kept: a ring of 16 in the socket (newer ones dropped when it is full) with the first 64 bytes of
+  the quoted datagram and its destination, read with `ksl_udp_take_ptb`. They are hints for DPLPMTUD that the QUIC core
+  validates (RFC 8899 §4.6, RFC 9000 §14.2.1); ksl never acts on them. Port unreachable, our own `SO_EE_ORIGIN_LOCAL`
+  `EMSGSIZE` and the rest are only taken off the queue. `ksl_udp_emsgsize` counts the sends lost to `EMSGSIZE` with the
+  latest size, on every platform.
 
 ### Apple (macOS, iOS)
 

@@ -83,8 +83,9 @@ Nothing is deprecated in 0.2.0. The two type aliases deprecated before 0.1.0, wh
 
 ## The native library ABI (`ksl`)
 
-The C shim `ksl` (`kuicksilver-native/src/c/ksl.h`) has its own version, `KSL_ABI_VERSION`, **6 in 0.2.0** (ABI 5 kept
-identity keys in OpenSSL, ABI 6 added the early-data controls for 0-RTT and the live-object counters). It is bumped on
+The C shim `ksl` (`kuicksilver-native/src/c/ksl.h`) has its own version, `KSL_ABI_VERSION`, **6 in 0.2.0, 7 in 0.3.0** (ABI 5 kept
+identity keys in OpenSSL, ABI 6 added the early-data controls for 0-RTT and the live-object counters, ABI 7 the ICMP
+hints for PMTUD: `ksl_udp_take_ptb`, `ksl_udp_emsgsize`, and a receive that no longer fails on a queued ICMP error). It is bumped on
 any incompatible change of the C interface. The Kotlin side expects one exact value (an internal constant of
 `kuicksilver-native`), and the loader refuses any other: `KslException.AbiMismatch(native, kotlin)` with the message
 "ksl ABI <n> in the native library, <m> expected", older or newer alike. On the JVM the check runs right after the

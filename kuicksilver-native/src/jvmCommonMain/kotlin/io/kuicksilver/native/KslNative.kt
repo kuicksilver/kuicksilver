@@ -341,6 +341,18 @@ internal object KslNative {
 
     @JvmStatic external fun udpClose(udp: Long)
 
+    @JvmStatic external fun udpTakePtb(
+        udp: Long,
+        quote: ByteArray,
+        meta: IntArray,
+        dst: ByteArray,
+    ): Boolean
+
+    @JvmStatic external fun udpEmsgsize(
+        udp: Long,
+        lastSize: IntArray,
+    ): Long
+
     /** ksl_live_objects into [out]; returns KSL_LIVE_COUNT */
     @JvmStatic external fun liveObjects(out: LongArray): Int
 }

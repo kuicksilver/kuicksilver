@@ -364,6 +364,24 @@ public expect object Ksl {
     public fun udpClose(udp: Long)
 
     /**
+     * `ksl_udp_take_ptb`: the oldest queued ICMP Packet Too Big (Linux and Android only; ABI 7). True when one was taken: [quote]
+     * (at least [KslConst.UDP_PTB_QUOTE] bytes) holds the start of our datagram the message quoted, `meta[0]` its length, `meta[1]`
+     * the MTU the message reports, [dst] (`UDP_ADDR_LEN` bytes) where that datagram went. A spoofable hint the caller validates.
+     */
+    public fun udpTakePtb(
+        udp: Long,
+        quote: ByteArray,
+        meta: IntArray,
+        dst: ByteArray,
+    ): Boolean
+
+    /** `ksl_udp_emsgsize`: the datagrams sends lost to EMSGSIZE so far, the latest one's length in `lastSize[0]` (ABI 7). */
+    public fun udpEmsgsize(
+        udp: Long,
+        lastSize: IntArray,
+    ): Long
+
+    /**
      * `ksl_live_objects`: the process-wide counts of native objects alive now, indexed by `KslConst.LIVE_*` (contexts,
      * sessions, keys, key and session handles, UDP sockets, wake descriptors). For soak and leak tests; a snapshot, never
      * a synchronisation point.
@@ -375,7 +393,7 @@ public expect object Ksl {
  * The ABI the Kotlin side was written against (`KSL_ABI_VERSION` in `ksl.h`); checked against [Ksl.abiVersion] on load.
  * Internal: an application sees it as [KslException.AbiMismatch.kotlin] when the check fails.
  */
-internal const val KSL_ABI_VERSION: Int = 6
+internal const val KSL_ABI_VERSION: Int = 7
 
 /**
  * Loads the native library once per process and checks the ABI. [availability] answers without throwing whether the

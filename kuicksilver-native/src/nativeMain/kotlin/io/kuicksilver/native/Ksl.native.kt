@@ -818,6 +818,41 @@ public actual object Ksl {
 
     public actual fun udpClose(udp: Long): Unit = ksl_udp_close(udp(udp))
 
+    public actual fun udpTakePtb(
+        udp: Long,
+        quote: ByteArray,
+        meta: IntArray,
+        dst: ByteArray,
+    ): Boolean {
+        require(
+            quote.size >= KslConst.UDP_PTB_QUOTE && meta.size >= 2 && dst.size >= KslConst.UDP_ADDR_LEN,
+        ) { "udpTakePtb buffers too small" }
+        return memScoped {
+            val q = allocArray<UByteVar>(KslConst.UDP_PTB_QUOTE)
+            val d = allocArray<UByteVar>(KslConst.UDP_ADDR_LEN)
+            val ql = alloc<UIntVar>()
+            val mtu = alloc<UIntVar>()
+            if (ksl_udp_take_ptb(udp(udp), q, KslConst.UDP_PTB_QUOTE.toUInt(), ql.ptr, d, mtu.ptr) != 1) return@memScoped false
+            val n = ql.value.toInt()
+            for (i in 0 until n) quote[i] = q[i].toByte()
+            for (i in 0 until KslConst.UDP_ADDR_LEN) dst[i] = d[i].toByte()
+            meta[0] = n
+            meta[1] = mtu.value.toInt()
+            true
+        }
+    }
+
+    public actual fun udpEmsgsize(
+        udp: Long,
+        lastSize: IntArray,
+    ): Long =
+        memScoped {
+            val last = alloc<UIntVar>()
+            val n = ksl_udp_emsgsize(udp(udp), last.ptr)
+            if (lastSize.isNotEmpty()) lastSize[0] = last.value.toInt()
+            n.toLong()
+        }
+
     public actual fun liveObjects(): LongArray =
         memScoped {
             val out = allocArray<LongVar>(KslConst.LIVE_COUNT)

@@ -18,6 +18,13 @@
 #if defined(__linux__) || defined(__APPLE__)
 #include <sys/resource.h> /* RLIMIT_NOFILE for udp_open_without_wake_pipe */
 #endif
+#ifdef __linux__
+#include <sched.h>        /* unshare: a user and network namespace for the ICMP injection test */
+#include <sys/wait.h>
+#include <sys/ioctl.h>
+#include <net/if.h>
+#include <netinet/ip_icmp.h>
+#endif
 
 static void v4(uint8_t a[KSL_UDP_ADDR_LEN], uint16_t port) { memset(a, 0, KSL_UDP_ADDR_LEN); a[0] = 4; a[1] = (uint8_t)(port >> 8); a[2] = (uint8_t)port; a[3] = 127; a[4] = 0; a[5] = 0; a[6] = 1; }
 #if defined(__linux__) || defined(__APPLE__)
@@ -58,6 +65,64 @@ static void *junk_thread(void *arg) {
     for (int i = 0; i < 300 && !ja->stop; i++) { (void)sendto(s, "", 0, 0, (struct sockaddr *)&to, sizeof to); struct timespec w = { 0, 5000000 }; nanosleep(&w, NULL); }
     close(s); return NULL;
 }
+/* one datagram of [len] bytes from u to [to]; the number ksl_udp_send reports as sent */
+static uint32_t send1(ksl_udp *u, const uint8_t to[KSL_UDP_ADDR_LEN], uint32_t len) {
+    uint8_t *buf = malloc(len); memset(buf, 0x41, len); uint8_t *bufs[1] = { buf }; uint32_t lens[1] = { len }; uint8_t ecn[1] = { 0 }; uint32_t sent = 0;
+    int r = ksl_udp_send(u, bufs, lens, to, ecn, 1, &sent); free(buf); return r == KSL_OK ? sent : 0;
+}
+/* receives one datagram within timeout_ms: its length, 0 on KSL_WANT_READ, -1 on KSL_ERROR */
+static int recv1(ksl_udp *u, int timeout_ms) {
+    uint8_t buf[2048]; uint8_t *bufs[1] = { buf }; uint32_t caps[1] = { sizeof buf }, lens[1], got = 0; uint8_t ra[KSL_UDP_ADDR_LEN], re[1];
+    int r = ksl_udp_recv(u, bufs, caps, lens, ra, re, 1, &got, timeout_ms); if (r == KSL_ERROR) return -1; return got ? (int)lens[0] : 0;
+}
+#ifdef __linux__
+static uint16_t csum16(const uint8_t *p, size_t n) { uint32_t s = 0; for (size_t i = 0; i + 1 < n; i += 2) s += (uint32_t)(p[i] << 8 | p[i + 1]); if (n & 1) s += (uint32_t)(p[n - 1] << 8); while (s >> 16) s = (s & 0xffff) + (s >> 16); return (uint16_t)~s; }
+static int lo_set(int up, int mtu) {
+    int s = socket(AF_INET, SOCK_DGRAM, 0); if (s < 0) return -1; struct ifreq r; memset(&r, 0, sizeof r); snprintf(r.ifr_name, IFNAMSIZ, "lo");
+    int ok = 1;
+    if (up) { if (ioctl(s, SIOCGIFFLAGS, &r) != 0) ok = 0; r.ifr_flags |= IFF_UP; if (ok && ioctl(s, SIOCSIFFLAGS, &r) != 0) ok = 0; }
+    if (ok && mtu) { r.ifr_mtu = mtu; if (ioctl(s, SIOCSIFMTU, &r) != 0) ok = 0; }
+    close(s); return ok ? 0 : -1;
+}
+/* In a child inside a fresh user and network namespace (no root needed where unprivileged user namespaces are allowed):
+   (1) a datagram over the interface MTU with DF is a local EMSGSIZE: counted by ksl_udp_emsgsize, its SO_EE_ORIGIN_LOCAL entry drained
+       and never a Packet Too Big; (2) an ICMP "fragmentation needed" (MTU 1300) quoting a datagram of our socket, injected through a raw
+       socket, reaches ksl_udp_take_ptb with the MTU, the quoted payload and the original destination. Exit 0 pass, 77 skip, else the
+       failed step. */
+static int ptb_child(void) {
+    if (unshare(CLONE_NEWUSER | CLONE_NEWNET) != 0) return 77;
+    if (lo_set(1, 1280) != 0) return 77;
+    uint8_t la[KSL_UDP_ADDR_LEN], lb[KSL_UDP_ADDR_LEN]; ksl_udp *a = open_lo(KSL_UDP_DF, la), *b = open_lo(0, lb); if (!a || !b) return 2;
+    if (!ksl_udp_recverr_for_test(a)) return 3;
+    /* udp_recverr_local_emsgsize_queued */
+    uint32_t last = 0; uint64_t e0 = ksl_udp_emsgsize(a, &last);
+    if (send1(a, lb, 1400) != 1) return 4;   /* the slot is lost, not an error */
+    if (ksl_udp_emsgsize(a, &last) != e0 + 1 || last != 1400) return 5;
+    if (recv1(a, 50) != 0) return 6;          /* the local entry is drained, no datagram, no error */
+    uint8_t q[KSL_UDP_PTB_QUOTE], dst[KSL_UDP_ADDR_LEN]; uint32_t ql = 0, mtu = 0;
+    if (ksl_udp_take_ptb(a, q, sizeof q, &ql, dst, &mtu) != 0) return 7;   /* only ICMP-origin entries are Packet Too Big */
+    if (lo_set(0, 65536) != 0) return 8;
+    /* udp_recverr_ptb_parsed: ICMP type 3 code 4, next-hop MTU 1300, quoting IP + UDP header of a datagram 127.0.0.1:port(a) -> 127.0.0.1:4433 */
+    int raw = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP); if (raw < 0) return 77;
+    uint8_t pkt[8 + 20 + 8 + 32]; memset(pkt, 0, sizeof pkt);
+    pkt[0] = 3; pkt[1] = 4; pkt[6] = 1300 >> 8; pkt[7] = 1300 & 0xff;
+    uint8_t *ip = pkt + 8; ip[0] = 0x45; ip[2] = 0; ip[3] = 20 + 8 + 1400 > 255 ? 0 : 0; uint16_t tot = 20 + 8 + 1400; ip[2] = (uint8_t)(tot >> 8); ip[3] = (uint8_t)tot;
+    ip[6] = 0x40; ip[8] = 64; ip[9] = IPPROTO_UDP; ip[12] = 127; ip[15] = 1; ip[16] = 127; ip[19] = 1;
+    uint16_t ic = csum16(ip, 20); ip[10] = (uint8_t)(ic >> 8); ip[11] = (uint8_t)ic;
+    uint8_t *uh = ip + 20; uh[0] = la[1]; uh[1] = la[2]; uh[2] = 4433 >> 8; uh[3] = 4433 & 0xff; uh[4] = (uint8_t)((8 + 1400) >> 8); uh[5] = (uint8_t)(8 + 1400);
+    for (int i = 0; i < 32; i++) uh[8 + i] = (uint8_t)(0x40 + i);
+    uint16_t c = csum16(pkt, sizeof pkt); pkt[2] = (uint8_t)(c >> 8); pkt[3] = (uint8_t)c;
+    struct sockaddr_in to; memset(&to, 0, sizeof to); to.sin_family = AF_INET; to.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    if (sendto(raw, pkt, sizeof pkt, 0, (struct sockaddr *)&to, sizeof to) != (ssize_t)sizeof pkt) { close(raw); return 9; }
+    close(raw);
+    int got = 0; for (int i = 0; i < 20 && !got; i++) { if (recv1(a, 50) < 0) return 10; got = ksl_udp_take_ptb(a, q, sizeof q, &ql, dst, &mtu); }
+    if (!got) return 11;
+    if (mtu != 1300 || ql != 32 || q[0] != 0x40 || q[31] != 0x40 + 31) return 12;
+    if (dst[0] != 4 || ((dst[1] << 8) | dst[2]) != 4433 || dst[3] != 127 || dst[6] != 1) return 13;
+    if (send1(b, la, 100) != 1 || recv1(a, 500) != 100) return 14;   /* the socket still receives */
+    ksl_udp_close(a); ksl_udp_close(b); return 0;
+}
+#endif
 /* writes one error into the socket over and over, as a failing sender or receiver thread would */
 struct err_args { ksl_udp *u; int e; const char *what; };
 static void *err_writer(void *arg) { struct err_args *ea = arg; for (int i = 0; i < 100000; i++) ksl_udp_set_err_for_test(ea->u, ea->e, ea->what); return NULL; }
@@ -371,6 +436,52 @@ void run_udp(void) {
             if (torn) printf("    %d of 100000 reads mixed two errors\n", torn);
           }
           if (r) ksl_udp_close(r); }
+        /* udp_ptb_ring: 16 Packet Too Big messages are kept in order between two takes, a flood beyond that drops the newest, quotes
+           are cut to KSL_UDP_PTB_QUOTE and to the caller's buffer (the receiver fills the ring on Linux; the ring is the same everywhere) */
+        { uint8_t q[100], dst[KSL_UDP_ADDR_LEN], out[KSL_UDP_PTB_QUOTE], od[KSL_UDP_ADDR_LEN]; uint32_t ql = 0, mtu = 0; memset(q, 0x55, sizeof q);
+          for (uint32_t i = 0; i < 20; i++) { v4(dst, (uint16_t)(1000 + i)); ksl_udp_push_ptb_for_test(a, q, sizeof q, dst, 1280 + i); }
+          int order = 1; uint32_t taken = 0;
+          while (ksl_udp_take_ptb(a, out, sizeof out, &ql, od, &mtu)) { if (mtu != 1280 + taken || port_of(od) != 1000 + taken || ql != KSL_UDP_PTB_QUOTE) order = 0; taken++; }
+          CHECK(taken == 16 && order, "the ring keeps the 16 oldest, in order, quotes cut to 64 bytes");
+          CHECK(ksl_udp_ptb_dropped_for_test(a) == 4, "four newer ones dropped");
+          ksl_udp_push_ptb_for_test(a, q, sizeof q, dst, 1300); CHECK(ksl_udp_take_ptb(a, out, 10, &ql, od, &mtu) == 1 && ql == 10, "the caller's capacity bounds the quote");
+          CHECK(ksl_udp_take_ptb(a, out, sizeof out, &ql, od, &mtu) == 0, "empty again"); }
+        /* udp_recverr_port_unreachable_keeps_socket: a datagram to a closed local port draws an ICMP port unreachable (Linux queues it
+           with IP_RECVERR and sets sk_err, which recvmsg used to report as a socket error); the receive answers a timeout, takes no
+           Packet Too Big, does not spin on POLLERR, and the next datagram is received. Apple delivers no ICMP to an unconnected socket */
+        { uint8_t lc[KSL_UDP_ADDR_LEN], ld[KSL_UDP_ADDR_LEN], le[KSL_UDP_ADDR_LEN]; ksl_udp *c = open_lo(0, lc), *d = open_lo(KSL_UDP_DF, ld), *e = open_lo(0, le);
+          CHECK(c && d && e, "sockets for the port-unreachable test");
+          if (c && d && e) { ksl_udp_close(c); c = NULL;
+            CHECK(send1(d, lc, 100) == 1, "datagram to the closed port");
+            uint32_t s0 = ksl_udp_recv_syscalls_for_test(d);
+            int r = recv1(d, 200); CHECK(r == 0, "a queued ICMP error is a timeout, not a socket error");
+            if (r < 0) { uint8_t eo[300]; size_t en = 0; ksl_udp_get(d, KSL_UDP_GET_ERROR, eo, sizeof eo, &en); printf("    recv error: %.*s\n", (int)(en > 4 ? en - 4 : 0), eo + 4); }
+            CHECK(ksl_udp_recv_syscalls_for_test(d) - s0 < 64, "no spin on POLLERR");
+            CHECK(send1(d, lc, 100) == 1, "and the next send to it is not an error either");
+            uint8_t out[KSL_UDP_PTB_QUOTE], od[KSL_UDP_ADDR_LEN]; uint32_t ql = 0, mtu = 0; (void)recv1(d, 50);
+            CHECK(ksl_udp_take_ptb(d, out, sizeof out, &ql, od, &mtu) == 0, "port unreachable is no Packet Too Big");
+            CHECK(send1(e, ld, 100) == 1 && recv1(d, 500) == 100, "the socket still receives");
+#ifdef __linux__
+            CHECK(ksl_udp_recverr_for_test(d) == 1 && ksl_udp_errqueue_reads_for_test(d) > 0, "IP_RECVERR on with DF, the error queue drained");
+#endif
+          }
+          if (c) ksl_udp_close(c); if (d) ksl_udp_close(d); if (e) ksl_udp_close(e); }
+#ifdef __APPLE__
+        /* udp_emsgsize_counted: a datagram larger than lo0's MTU (16384) with DF set is refused with EMSGSIZE: a lost slot, counted
+           with its size for DPLPMTUD (ksl_udp_emsgsize); the socket is fine */
+        { uint32_t last = 0; uint64_t e0 = ksl_udp_emsgsize(a, &last);
+          CHECK(send1(a, lb, 20000) == 1, "the oversized slot counts as sent (lost)");
+          CHECK(ksl_udp_emsgsize(a, &last) == e0 + 1 && last == 20000, "EMSGSIZE counted with the datagram's size");
+          CHECK(send1(a, lb, 100) == 1 && recv1(b, 500) == 100, "the socket still sends"); }
+#endif
+#ifdef __linux__
+        { pid_t pid = fork();
+          if (pid == 0) _exit(ptb_child());
+          int st = 0; waitpid(pid, &st, 0); int code = WIFEXITED(st) ? WEXITSTATUS(st) : 100;
+          if (code == 77) printf("udp_recverr_ptb_parsed: SKIP (no unprivileged user namespace)\n");
+          else CHECK(code == 0, "udp_recverr_local_emsgsize_queued + udp_recverr_ptb_parsed (child exit = failed step)");
+          if (code != 0 && code != 77) printf("    ptb child failed at step %d\n", code); }
+#endif
         ksl_udp_close(a); ksl_udp_close(b);
     }
 #elif defined(_WIN32)
