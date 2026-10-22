@@ -4,27 +4,58 @@
 
 package io.kuicksilver.http3.webtransport
 
+import io.ktor.utils.io.writeFully
+import io.kuicksilver.http3.Capsule
+import io.kuicksilver.http3.CapsuleConfig
+import io.kuicksilver.http3.CapsuleStream
 import io.kuicksilver.http3.Http3ErrorCode
 import io.kuicksilver.http3.Http3Exception
 import io.kuicksilver.http3.Http3Headers
 import io.kuicksilver.http3.Http3Request
 import io.kuicksilver.http3.Http3Stream
+import io.kuicksilver.http3.WebTransportBidiStream
+import io.kuicksilver.http3.WebTransportCloseInfo
 import io.kuicksilver.http3.WebTransportException
+import io.kuicksilver.http3.WebTransportReceiveStream
+import io.kuicksilver.http3.WebTransportSendStream
 import io.kuicksilver.http3.WebTransportSession
+import io.kuicksilver.http3.frame.FrameType
+import io.kuicksilver.http3.frame.StreamType
+import io.kuicksilver.http3.frame.VarInt
+import io.kuicksilver.http3.runtime.DatagramDemux
 import io.kuicksilver.http3.runtime.H3Session
 import io.kuicksilver.http3.runtime.connect
+import io.kuicksilver.quic.DatagramSendResult
+import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.QuicStream
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.seconds
 
 /**
- * One WebTransport session: the Extended CONNECT [stream] and the WebTransport streams routed to it. The peer's streams
- * wait in [incoming] until the application takes them; how many can be open at once is bounded by the QUIC stream limits
- * we grant (`maxBidiStreams`, `maxUniStreams`), since a stream counts against them until it is finished.
+ * One WebTransport session (draft-ietf-webtrans-http3-16): the Extended CONNECT [stream], spoken as the Capsule Protocol,
+ * and the WebTransport streams routed to it.
+ *
+ * Capsules: WT_CLOSE_SESSION (terminal, at most 4 + 1024 bytes) and WT_DRAIN_SESSION (empty) are read, every other type
+ * (flow-control capsules included, section 5.1) is skipped unbuffered by the capsule stream. The peer's streams wait in
+ * [bidiIn] and [uniIn] until the application accepts them; how many can be open at once is bounded by the QUIC stream
+ * limits we grant (`maxBidiStreams`, `maxUniStreams`), since a stream counts against them until it is finished.
+ *
+ * State that the router and the stream pumps share ([streams], the channels' contents at close) is touched on the
+ * session's dispatcher only.
  */
 internal class WtSessionImpl(
     private val h3: H3Session,
@@ -35,38 +66,260 @@ internal class WtSessionImpl(
     WtSessionSink {
     override val sessionId: Long get() = stream.streamId
 
-    /** The peer's streams routed here, with whether each is bidirectional. */
-    internal val incoming = Channel<Pair<QuicStream, Boolean>>(Channel.UNLIMITED)
+    /** The CONNECT stream as capsules; built first, so a peer message that cannot carry capsules fails the accept. */
+    internal val capsules: CapsuleStream = stream.useCapsuleProtocol(CAPSULES)
+    private val bidiIn = Channel<QuicStream>(Channel.UNLIMITED)
+    private val uniIn = Channel<QuicStream>(Channel.UNLIMITED)
+    private val streams = HashSet<WtStreamImpl>()
+    private val datagramsIn = Channel<ByteArray>(DatagramDemux.QUEUE, BufferOverflow.DROP_OLDEST)
+    private val drainFlow = MutableStateFlow(false)
+    private val closedInfo = CompletableDeferred<WebTransportCloseInfo>()
+    private val watchers = ArrayList<Job>()
+    override val drainRequested: StateFlow<Boolean> get() = drainFlow
+    override val closed: Deferred<WebTransportCloseInfo> get() = closedInfo
+
+    /** Starts reading capsules and datagrams; session dispatcher only, right after the router registration. */
+    fun start() {
+        watchers += h3.scope.launch { readCapsules() }
+        watchers +=
+            h3.scope.launch {
+                try {
+                    capsules.datagrams.collect { datagramsIn.trySend(it) }
+                } finally {
+                    datagramsIn.close()
+                }
+            }
+        // the connection's end cancels the session's coroutines with it: the session is over with the connection's reason
+        h3.closed.invokeOnCompletion {
+            val cause = if (h3.closed.isCompleted && !h3.closed.isCancelled) h3.closed.getCompleted() else it
+            if (closedInfo.complete(WebTransportCloseInfo(0, "", cause ?: sessionClosed()))) {
+                bidiIn.close()
+                uniIn.close()
+                datagramsIn.close()
+            }
+        }
+        // an HTTP/3 GOAWAY asks every session to wind down (section 4.7)
+        watchers += h3.scope.launch { h3.goAwayReceived.first { it != null }.let { drainFlow.value = true } }
+    }
 
     override fun onStream(
         stream: QuicStream,
         bidi: Boolean,
     ) {
-        if (incoming.trySend(stream to bidi).isFailure) gone(stream, bidi)
+        if ((if (bidi) bidiIn else uniIn).trySend(stream).isFailure) goneRaw(stream, bidi)
+    }
+
+    private suspend fun readCapsules() {
+        try {
+            capsules.capsules.collect { c ->
+                when (c.type) {
+                    WtCloseCapsule.TYPE -> {
+                        val (code, reason) =
+                            WtCloseCapsule.decode(c.value) ?: malformed("WT_CLOSE_SESSION with a malformed code or reason")
+                        terminate(WebTransportCloseInfo(code, reason, null), End.ByPeer)
+                    }
+
+                    WT_DRAIN_SESSION -> {
+                        if (c.value.isNotEmpty()) malformed("WT_DRAIN_SESSION with a value")
+                        drainFlow.value = true
+                    }
+                }
+            }
+            terminate(WebTransportCloseInfo(0, "", null), End.ByPeer) // the peer's FIN without a capsule: code 0 (section 6)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            terminate(WebTransportCloseInfo(0, "", e), End.Failed)
+        }
+    }
+
+    /** A malformed message on the CONNECT stream (section 6): reset and stopped with H3_MESSAGE_ERROR. */
+    private fun malformed(reason: String): Nothing {
+        stream.reset(Http3ErrorCode.MESSAGE_ERROR)
+        stream.stopSending(Http3ErrorCode.MESSAGE_ERROR)
+        throw Http3Exception.MessageError(sessionId, reason)
+    }
+
+    private enum class End { Locally, ByPeer, Failed }
+
+    /**
+     * The session is over: [closed] completes with [info], the session's streams end with WT_SESSION_GONE, and the CONNECT
+     * stream is ended in both directions so the connection's session slot frees. The first call wins.
+     */
+    private suspend fun terminate(
+        info: WebTransportCloseInfo,
+        end: End,
+    ): Boolean {
+        if (!closedInfo.complete(info)) return false
+        val caller = currentCoroutineContext()[Job] // the capsule reader when the peer ended the session: it reads on to the FIN
+        withContext(h3.dispatcher) {
+            bidiIn.close()
+            uniIn.close()
+            for (ch in listOf(bidiIn to true, uniIn to false)) {
+                while (true) goneRaw(ch.first.tryReceive().getOrNull() ?: break, ch.second)
+            }
+            for (s in streams.toList()) s.gone()
+            streams.clear()
+            datagramsIn.close()
+            watchers.forEach { if (it !== caller) it.cancel() }
+        }
+        when (end) {
+            End.Locally -> {
+                endConnect(WtCloseCapsule.encode(info.code, info.reason))
+            }
+
+            // our FIN answers the peer's; its own FIN follows its capsule, and a peer that never sends it is stopped
+            End.ByPeer -> {
+                h3.scope.launch {
+                    endConnect(null)
+                }
+            }
+
+            End.Failed -> {
+                runCatching { stream.reset(Http3ErrorCode.WT_SESSION_GONE) }
+                runCatching { stream.stopSending(Http3ErrorCode.WT_SESSION_GONE) }
+            }
+        }
+        return true
     }
 
     /**
-     * The CONNECT stream ended both ways: the session is over (section 6). Streams nobody took are stopped (and reset)
-     * with WT_SESSION_GONE; later ones are rejected by the router. Session dispatcher only.
+     * Ends the CONNECT stream: [closeCapsule] if any, then FIN, both within [CLOSE_TIMEOUT] (the peer's flow-control
+     * credit has no deadline of its own: the stream is reset when it runs out), then STOP_SENDING WT_SESSION_GONE, so the
+     * receive side ends too even when the peer never sends its FIN.
      */
-    fun ended() {
-        incoming.close()
-        while (true) {
-            val (st, bidi) = incoming.tryReceive().getOrNull() ?: break
-            gone(st, bidi)
+    private suspend fun endConnect(closeCapsule: ByteArray?) {
+        val written =
+            withTimeoutOrNull(CLOSE_TIMEOUT) {
+                try {
+                    closeCapsule?.let { capsules.send(Capsule(WtCloseCapsule.TYPE, it)) }
+                    capsules.close()
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Throwable) {
+                    // the stream was reset or the connection closed: nothing more to end
+                }
+                true
+            }
+        if (written == null) runCatching { stream.reset(Http3ErrorCode.WT_SESSION_GONE) }
+        if (closeCapsule == null) {
+            // the peer closed: give its FIN the same time to arrive before stopping it
+            withTimeoutOrNull(CLOSE_TIMEOUT) { watchers.firstOrNull()?.join() }
         }
-        h3.wt.unregister(sessionId)
+        runCatching { stream.stopSending(Http3ErrorCode.WT_SESSION_GONE) }
     }
 
-    private fun gone(
+    /**
+     * The CONNECT stream ended both ways (its exchange is over): the session is over if nothing ended it before, and its
+     * id is forgotten by the router, which rejects late streams. Session dispatcher only.
+     */
+    fun ended() {
+        h3.wt.unregister(sessionId)
+        if (!closedInfo.isCompleted) {
+            h3.scope.launch {
+                terminate(WebTransportCloseInfo(0, "", WebTransportException.SessionClosed("the CONNECT stream ended")), End.Failed)
+            }
+        }
+    }
+
+    private fun goneRaw(
         st: QuicStream,
         bidi: Boolean,
     ) {
-        runCatching { st.stopSending(WtCodes.SESSION_GONE) }
-        if (bidi) runCatching { st.reset(WtCodes.SESSION_GONE) }
+        runCatching { st.stopSending(Http3ErrorCode.WT_SESSION_GONE) }
+        if (bidi) runCatching { st.reset(Http3ErrorCode.WT_SESSION_GONE) }
+    }
+
+    private fun sessionClosed() = WebTransportException.SessionClosed("WebTransport session $sessionId is closed")
+
+    /** Wraps [st] and tracks it until both its directions ended; a session that closed meanwhile ends it at once. */
+    private suspend fun track(
+        st: QuicStream,
+        readable: Boolean,
+        writable: Boolean,
+    ): WtStreamImpl =
+        withContext(h3.dispatcher) {
+            val s = WtStreamImpl(h3.scope, st, readable, writable) { done -> h3.scope.launch { streams.remove(done) } }
+            if (closedInfo.isCompleted) {
+                s.gone()
+                throw sessionClosed()
+            }
+            streams += s
+            s
+        }
+
+    private suspend fun open(bidi: Boolean): WtStreamImpl {
+        if (closedInfo.isCompleted) throw sessionClosed()
+        val st =
+            try {
+                if (bidi) h3.quic.openBidi() else h3.quic.openUni()
+            } catch (e: QuicException) {
+                throw h3.map(e)
+            }
+        try {
+            st.output.writeFully(VarInt.encode(if (bidi) FrameType.WT_STREAM else StreamType.WT_UNI) + VarInt.encode(sessionId))
+            st.output.flush()
+        } catch (e: Throwable) {
+            runCatching { st.reset(Http3ErrorCode.WT_SESSION_GONE) }
+            throw if (e is CancellationException) e else h3.map(e)
+        }
+        return track(st, readable = bidi, writable = true)
+    }
+
+    override suspend fun openBidi(): WebTransportBidiStream = open(bidi = true)
+
+    override suspend fun openUni(): WebTransportSendStream = open(bidi = false)
+
+    override suspend fun acceptBidi(): WebTransportBidiStream =
+        track(bidiIn.receiveCatching().getOrNull() ?: throw sessionClosed(), readable = true, writable = true)
+
+    override suspend fun acceptUni(): WebTransportReceiveStream =
+        track(uniIn.receiveCatching().getOrNull() ?: throw sessionClosed(), readable = true, writable = false)
+
+    override fun trySendDatagram(payload: ByteArray): DatagramSendResult =
+        if (closedInfo.isCompleted) DatagramSendResult.Closed else capsules.trySendDatagram(payload)
+
+    override suspend fun sendDatagram(payload: ByteArray) {
+        if (closedInfo.isCompleted) throw sessionClosed()
+        capsules.sendDatagram(payload)
+    }
+
+    override suspend fun receiveDatagram(): ByteArray = datagramsIn.receiveCatching().getOrNull() ?: throw sessionClosed()
+
+    override suspend fun drain() {
+        if (closedInfo.isCompleted) throw sessionClosed()
+        val sent = withTimeoutOrNull(CLOSE_TIMEOUT) { capsules.send(Capsule(WT_DRAIN_SESSION, ByteArray(0))) }
+        if (sent == null) {
+            val e = WebTransportException.Timeout("WT_DRAIN_SESSION not written within $CLOSE_TIMEOUT: the session was reset")
+            terminate(WebTransportCloseInfo(0, "", e), End.Failed)
+            throw e
+        }
+    }
+
+    override suspend fun close(
+        code: Long,
+        reason: String,
+    ) {
+        require(code in 0..WtErrorCodes.MAX_APPLICATION_CODE) { "WebTransport error code $code is not in 0..2^32-1" }
+        val (c, r) = WtCloseCapsule.decode(WtCloseCapsule.encode(code, reason))!!
+        terminate(WebTransportCloseInfo(c, r, null), End.Locally)
     }
 
     override fun toString(): String = "WebTransportSession($sessionId, protocol=$protocol)"
+
+    companion object {
+        /** WebTransport's capsules on the CONNECT stream; HTTP datagrams always go as QUIC datagrams (section 4.5). */
+        val CAPSULES: CapsuleConfig =
+            CapsuleConfig(
+                knownTypes = setOf(WtCloseCapsule.TYPE, WT_DRAIN_SESSION),
+                terminalTypes = setOf(WtCloseCapsule.TYPE),
+                maxCapsuleLength = 4 + WtCloseCapsule.MAX_REASON,
+                datagramFallback = false,
+            )
+
+        /** How long ending the CONNECT stream may wait for the peer: its flow-control credit, then its FIN. */
+        val CLOSE_TIMEOUT: Duration = 5.seconds
+    }
 }
 
 /** The client side of `Http3Connection.webTransport` (draft-ietf-webtrans-http3-16 sections 3.2, 3.3, 5.1). */
@@ -109,14 +362,15 @@ internal suspend fun H3Session.webTransport(
         val selected =
             stream.headers[WtProtocols.SELECTED_FIELD]?.let { WtProtocols.parseItem(it) }?.also { p ->
                 if (p !in protocols) {
-                    stream.reset(WtCodes.ALPN_ERROR)
-                    stream.stopSending(WtCodes.ALPN_ERROR)
+                    stream.reset(Http3ErrorCode.WT_ALPN_ERROR)
+                    stream.stopSending(Http3ErrorCode.WT_ALPN_ERROR)
                     throw WebTransportException.Alpn(protocols, p)
                 }
             }
         val s = WtSessionImpl(this, stream, stream.headers, selected)
         withContext(dispatcher) {
             wt.register(stream.streamId, s)
+            s.start()
             scope.launch {
                 ended.await()
                 s.ended()

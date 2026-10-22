@@ -368,6 +368,7 @@ internal class ServerRequestImpl(
             } else {
                 wtSession = s
                 session.wt.register(st.id, s)
+                s.start()
             }
         }
         return s

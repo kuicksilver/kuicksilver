@@ -88,9 +88,20 @@ internal class H3Session(
      * 5.1). Session dispatcher only.
      */
     var wtSessionStream: Long? = null
+        set(v) {
+            field = v
+            wtIdle.value = v == null
+        }
 
     /** Client: a WebTransport session is being opened or is open on this connection (one at a time). Dispatcher only. */
     var wtClientBusy = false
+        set(v) {
+            field = v
+            wtIdle.value = !v
+        }
+
+    /** No WebTransport session holds this connection's slot (a test hook). */
+    val wtIdle = MutableStateFlow(true)
 
     /**
      * How long each step of opening or accepting a WebTransport session may wait for the peer: its SETTINGS, and (client)

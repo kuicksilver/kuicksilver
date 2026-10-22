@@ -66,7 +66,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   token follows the server's draft, `WT-Available-Protocols`/`WT-Protocol` negotiation, ten-second deadlines for the
   server's SETTINGS and for the answer) and
   `Http3ServerRequest.isWebTransport`, `availableProtocols` and `acceptWebTransport` accept one. One session per
-  connection, no WebTransport flow control. Streams and datagrams of a session, close and drain follow.
+  connection, no WebTransport flow control. A `WebTransportSession` opens and accepts bidirectional and
+  unidirectional streams, sends and receives datagrams, closes with an application code and reason
+  (WT_CLOSE_SESSION, then FIN) and drains; application error codes are mapped into the HTTP/3 space;
+  `Http3ErrorCode` has the WebTransport codes.
 - Ktor client: Happy Eyeballs for HTTP/1.1's TCP connects, to the origin and to an HTTP proxy (RFC 8305 sections 4 to 6;
   `docs/guide/ktor.md`, "IPv6 over TCP on Kotlin/Native"). Every address of a host name is tried, IPv6 and IPv4
   alternating, a new attempt every `connectionAttemptDelay` (*experimental*, 250 ms; 10 ms to 2 s, or

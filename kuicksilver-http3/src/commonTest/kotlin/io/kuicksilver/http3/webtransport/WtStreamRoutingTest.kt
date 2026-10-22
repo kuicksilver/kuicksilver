@@ -204,7 +204,7 @@ class WtStreamRoutingTest {
                 val waiting = (1..WtStreamRouter.MAX_BUFFERED_STREAMS).map { c.wtBidi(4, fin = false) }
                 server.awaitBuffered(WtStreamRouter.MAX_BUFFERED_STREAMS)
                 val extra = c.wtBidi(4, fin = false)
-                assertEquals(WtCodes.BUFFERED_STREAM_REJECTED, resetCode(extra))
+                assertEquals(Http3ErrorCode.WT_BUFFERED_STREAM_REJECTED, resetCode(extra))
                 assertEquals(WtStreamRouter.MAX_BUFFERED_STREAMS, server.session.wt.bufferedCount.value)
                 // the ones that waited are delivered once the session is there
                 val sink = QueueSink()
@@ -255,7 +255,7 @@ class WtStreamRoutingTest {
                 val st = c.wtBidi(4, fin = false)
                 assertEquals(5.seconds, withTimeout(5.seconds) { asked.await() })
                 expire.complete(Unit)
-                assertEquals(WtCodes.BUFFERED_STREAM_REJECTED, resetCode(st))
+                assertEquals(Http3ErrorCode.WT_BUFFERED_STREAM_REJECTED, resetCode(st))
                 server.awaitBuffered(0)
             }
         }
@@ -269,9 +269,9 @@ class WtStreamRoutingTest {
                 val early = c.wtBidi(4, fin = false)
                 server.awaitBuffered(1)
                 server.unregister(4) // refused: what waited for it is rejected
-                assertEquals(WtCodes.BUFFERED_STREAM_REJECTED, resetCode(early))
+                assertEquals(Http3ErrorCode.WT_BUFFERED_STREAM_REJECTED, resetCode(early))
                 val late = c.wtBidi(4, fin = false) // and what comes later, at once
-                assertEquals(WtCodes.BUFFERED_STREAM_REJECTED, resetCode(late))
+                assertEquals(Http3ErrorCode.WT_BUFFERED_STREAM_REJECTED, resetCode(late))
                 assertEquals(0, server.session.wt.bufferedCount.value)
             }
         }

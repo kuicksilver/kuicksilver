@@ -6,6 +6,8 @@ package io.kuicksilver.http3
 
 import io.ktor.network.sockets.InetSocketAddress
 import io.ktor.utils.io.copyTo
+import io.ktor.utils.io.readRemaining
+import io.ktor.utils.io.writeFully
 import io.ktor.utils.io.writeStringUtf8
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.native.KslLoader
@@ -17,6 +19,7 @@ import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import kotlinx.io.readString
 import java.io.File
 import kotlin.test.BeforeTest
 import kotlin.test.Test
@@ -47,6 +50,8 @@ class GuideSamplesTest {
             "capsules (client)",
             "webtransport (server)",
             "webtransport (client)",
+            "webtransport-echo (server)",
+            "webtransport-echo (client)",
         )) {
             assertTrue("guide:http3:$m" in guide, "marker $m")
         }
@@ -204,6 +209,49 @@ class GuideSamplesTest {
                 val session = client.webTransport(request, protocols = listOf("chat-v1"))
                 println(session.protocol)
                 assertEquals("chat-v1", session.protocol)
+                serving.join()
+                client.close()
+                serverConnection.close()
+                q.close()
+            }
+        }
+
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    @Test
+    fun webTransportEchoSample() =
+        runBlocking {
+            withTimeout(30.seconds) {
+                val q = QuicPair.open()
+                val (quicConnection, serverQuic) = q.connect()
+                val wt =
+                    http3Settings {
+                        enableConnectProtocol = true
+                        webTransport = true
+                    }
+                val serverConnection = Http3Connection.server(serverQuic, wt)
+                val client = Http3Connection.client(quicConnection, wt)
+                val reason = CompletableDeferred<String>()
+                val serving =
+                    launch {
+                        val session = serverConnection.acceptRequest().acceptWebTransport()
+                        // guide:http3:webtransport-echo (server)
+                        val stream = session.acceptBidi()
+                        stream.input.copyTo(stream.output)
+                        stream.output.flushAndClose()
+                        session.sendDatagram(session.receiveDatagram())
+                        println(session.closed.await().reason)
+                        reason.complete(session.closed.await().reason)
+                    }
+                val session = client.webTransport(http3Request("CONNECT", "example.com", "/wt"))
+                // guide:http3:webtransport-echo (client)
+                val stream = session.openBidi()
+                stream.output.writeFully("ping".encodeToByteArray())
+                stream.output.flushAndClose()
+                println(stream.input.readRemaining().readString())
+                session.trySendDatagram(byteArrayOf(1, 2, 3))
+                println(session.receiveDatagram().size)
+                session.close(0, "done")
+                assertEquals("done", reason.await())
                 serving.join()
                 client.close()
                 serverConnection.close()

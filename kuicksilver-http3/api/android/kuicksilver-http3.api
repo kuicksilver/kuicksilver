@@ -152,6 +152,11 @@ public final class io/kuicksilver/http3/Http3ErrorCode {
 	public static final field SETTINGS_ERROR J
 	public static final field STREAM_CREATION_ERROR J
 	public static final field VERSION_FALLBACK J
+	public static final field WT_ALPN_ERROR J
+	public static final field WT_BUFFERED_STREAM_REJECTED J
+	public static final field WT_FLOW_CONTROL_ERROR J
+	public static final field WT_REQUIREMENTS_NOT_MET J
+	public static final field WT_SESSION_GONE J
 	public final fun isKnown (J)Z
 	public final fun name (J)Ljava/lang/String;
 	public final fun normalize (J)J
@@ -441,6 +446,19 @@ public final class io/kuicksilver/http3/Http3Stream$DefaultImpls {
 	public static synthetic fun useCapsuleProtocol$default (Lio/kuicksilver/http3/Http3Stream;Lio/kuicksilver/http3/CapsuleConfig;ILjava/lang/Object;)Lio/kuicksilver/http3/CapsuleStream;
 }
 
+public abstract interface class io/kuicksilver/http3/WebTransportBidiStream : io/kuicksilver/http3/WebTransportReceiveStream, io/kuicksilver/http3/WebTransportSendStream {
+}
+
+public final class io/kuicksilver/http3/WebTransportCloseInfo {
+	public fun <init> (JLjava/lang/String;Ljava/lang/Throwable;)V
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getCause ()Ljava/lang/Throwable;
+	public final fun getCode ()J
+	public final fun getReason ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
 public abstract class io/kuicksilver/http3/WebTransportException : java/io/IOException {
 	public synthetic fun <init> (Ljava/lang/String;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
 }
@@ -449,6 +467,20 @@ public final class io/kuicksilver/http3/WebTransportException$Alpn : io/kuicksil
 	public fun <init> (Ljava/util/List;Ljava/lang/String;)V
 	public final fun getOffered ()Ljava/util/List;
 	public final fun getSelected ()Ljava/lang/String;
+}
+
+public final class io/kuicksilver/http3/WebTransportException$SessionClosed : io/kuicksilver/http3/WebTransportException {
+	public fun <init> (Ljava/lang/String;)V
+}
+
+public final class io/kuicksilver/http3/WebTransportException$StreamReset : io/kuicksilver/http3/WebTransportException {
+	public fun <init> (Ljava/lang/Long;)V
+	public final fun getCode ()Ljava/lang/Long;
+}
+
+public final class io/kuicksilver/http3/WebTransportException$StreamStopped : io/kuicksilver/http3/WebTransportException {
+	public fun <init> (Ljava/lang/Long;)V
+	public final fun getCode ()Ljava/lang/Long;
 }
 
 public final class io/kuicksilver/http3/WebTransportException$Timeout : io/kuicksilver/http3/WebTransportException {
@@ -462,9 +494,37 @@ public final class io/kuicksilver/http3/WebTransportKt {
 	public static synthetic fun webTransport$default (Lio/kuicksilver/http3/Http3Connection;Lio/kuicksilver/http3/Http3Request;Ljava/util/List;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 }
 
+public abstract interface class io/kuicksilver/http3/WebTransportReceiveStream {
+	public abstract fun getInput ()Lio/ktor/utils/io/ByteReadChannel;
+	public abstract fun getStreamId ()J
+	public abstract fun stopSending (J)V
+}
+
+public abstract interface class io/kuicksilver/http3/WebTransportSendStream {
+	public abstract fun getOutput ()Lio/ktor/utils/io/ByteWriteChannel;
+	public abstract fun getStreamId ()J
+	public abstract fun reset (J)V
+}
+
 public abstract interface class io/kuicksilver/http3/WebTransportSession {
+	public abstract fun acceptBidi (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public abstract fun acceptUni (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public abstract fun close (JLjava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static synthetic fun close$default (Lio/kuicksilver/http3/WebTransportSession;JLjava/lang/String;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+	public abstract fun drain (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public abstract fun getClosed ()Lkotlinx/coroutines/Deferred;
+	public abstract fun getDrainRequested ()Lkotlinx/coroutines/flow/StateFlow;
 	public abstract fun getHeaders ()Lio/kuicksilver/http3/Http3Headers;
 	public abstract fun getProtocol ()Ljava/lang/String;
 	public abstract fun getSessionId ()J
+	public abstract fun openBidi (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public abstract fun openUni (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public abstract fun receiveDatagram (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public abstract fun sendDatagram ([BLkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public abstract fun trySendDatagram ([B)Lio/kuicksilver/quic/DatagramSendResult;
+}
+
+public final class io/kuicksilver/http3/WebTransportSession$DefaultImpls {
+	public static synthetic fun close$default (Lio/kuicksilver/http3/WebTransportSession;JLjava/lang/String;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 }
 

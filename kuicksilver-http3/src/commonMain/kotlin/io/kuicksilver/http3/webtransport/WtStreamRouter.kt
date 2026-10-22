@@ -153,8 +153,8 @@ internal class WtStreamRouter(
         st: QuicStream,
         bidi: Boolean,
     ) {
-        runCatching { st.stopSending(WtCodes.BUFFERED_STREAM_REJECTED) }
-        if (bidi) runCatching { st.reset(WtCodes.BUFFERED_STREAM_REJECTED) }
+        runCatching { st.stopSending(Http3ErrorCode.WT_BUFFERED_STREAM_REJECTED) }
+        if (bidi) runCatching { st.reset(Http3ErrorCode.WT_BUFFERED_STREAM_REJECTED) }
     }
 
     companion object {
@@ -167,16 +167,4 @@ internal class WtStreamRouter(
         /** Closed or refused sessions remembered, so their late streams are rejected at once instead of buffered. */
         const val MAX_CLOSED_REMEMBERED = 16
     }
-}
-
-/** HTTP/3 error codes of draft-ietf-webtrans-http3-16 section 9.5 used by the runtime. */
-internal object WtCodes {
-    /** A stream for a session that is not (or no longer) there, or over the buffering limits (section 4.6). */
-    const val BUFFERED_STREAM_REJECTED: Long = 0x3994bd84
-
-    /** A session's streams after it closed (section 6). */
-    const val SESSION_GONE: Long = 0x170d7b68
-
-    /** The server chose a `WT-Protocol` the client did not offer (section 3.3). */
-    const val ALPN_ERROR: Long = 0x0817b3dd
 }

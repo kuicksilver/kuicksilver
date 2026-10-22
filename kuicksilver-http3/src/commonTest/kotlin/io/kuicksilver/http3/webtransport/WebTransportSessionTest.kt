@@ -169,7 +169,7 @@ class WebTransportSessionTest {
                 assertEquals(Http3ErrorCode.REQUEST_REJECTED, resetCode(second))
                 // the first lives on: its streams still reach it
                 raw.uni(StreamType.WT_UNI, VarInt.encode(first.id) + "still".encodeToByteArray(), fin = true)
-                val (st, _) = withTimeout(5.seconds) { (accepted.await() as WtSessionImpl).incoming.receive() }
+                val st = withTimeout(5.seconds) { accepted.await().acceptUni() }
                 assertEquals("still", st.input.readAllBytes().decodeToString())
                 assertFalse(server.closed.isCompleted)
             }
@@ -186,7 +186,7 @@ class WebTransportSessionTest {
                 val uni = p.client.quic.openUni()
                 uni.output.writeFully(VarInt.encode(StreamType.WT_UNI) + VarInt.encode(first.sessionId) + "alive".encodeToByteArray())
                 uni.output.flushAndClose()
-                val (st, _) = withTimeout(5.seconds) { (serverSide.await() as WtSessionImpl).incoming.receive() }
+                val st = withTimeout(5.seconds) { serverSide.await().acceptUni() }
                 assertEquals("alive", st.input.readAllBytes().decodeToString())
             }
         }
@@ -202,7 +202,7 @@ class WebTransportSessionTest {
                 launch {
                     repeat(2) {
                         val session = server.acceptRequest().acceptWebTransport() as WtSessionImpl
-                        if (it == 0) session.stream.output.flushAndClose() // the server's side of the first session ends
+                        if (it == 0) session.capsules.close() // the server's side of the first session ends
                     }
                 }
                 val first = c.openBidi()
@@ -216,7 +216,7 @@ class WebTransportSessionTest {
                 second.output.flush()
                 assertEquals("200", readHeaders(second)[":status"])
                 val late = c.wtBidi(first.id, fin = false)
-                assertEquals(WtCodes.BUFFERED_STREAM_REJECTED, resetCode(late))
+                assertEquals(Http3ErrorCode.WT_BUFFERED_STREAM_REJECTED, resetCode(late))
             }
         }
 
@@ -259,7 +259,7 @@ class WebTransportSessionTest {
                     assertEquals("\"chat\"", readHeaders(st)["wt-available-protocols"])
                     st.output.writeFully(raw.headers(st.id, listOf(":status" to "200", "wt-protocol" to "\"other\"")))
                     st.output.flush()
-                    assertEquals(WtCodes.ALPN_ERROR, resetCode(st))
+                    assertEquals(Http3ErrorCode.WT_ALPN_ERROR, resetCode(st))
                 }
                 val e = assertFailsWith<WebTransportException.Alpn> { client.webTransport(wtReq(), listOf("chat")) }
                 assertEquals("other", e.selected)
@@ -412,9 +412,8 @@ class WebTransportSessionTest {
                 }
                 connect.output.writeFully(raw.wtConnect(connect))
                 connect.output.flush()
-                val session = server.acceptRequest().acceptWebTransport() as WtSessionImpl
-                val (st, bidi) = withTimeout(5.seconds) { session.incoming.receive() }
-                assertFalse(bidi)
+                val session = server.acceptRequest().acceptWebTransport()
+                val st = withTimeout(5.seconds) { session.acceptUni() }
                 assertEquals("early", st.input.readAllBytes().decodeToString())
             }
         }

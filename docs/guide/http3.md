@@ -282,8 +282,8 @@ HTTP/1.1 and HTTP/2 upgrades are not supported.
 
 ## WebTransport (experimental)
 
-WebTransport over HTTP/3 (draft-ietf-webtrans-http3-16) is in progress for 0.3.0; what exists today is session
-establishment, under `@ExperimentalKuicksilverApi`. Both sides set `webTransport = true` in `http3Settings` (it needs
+WebTransport over HTTP/3 (draft-ietf-webtrans-http3-16) is experimental (`@ExperimentalKuicksilverApi`): sessions,
+their streams and datagrams, close and drain. Both sides set `webTransport = true` in `http3Settings` (it needs
 `enableConnectProtocol` and `h3Datagram`; `Http3Endpoint.bind` refuses it when QUIC datagrams are off). Browsers do not
 speak draft-16 yet, so a server announces the SETTINGS of draft-02 (Chrome, Firefox) and draft-14 (Safari) too and
 accepts both `:protocol` tokens, `webtransport-h3` and `webtransport`; a client picks the token from the server's
@@ -311,4 +311,36 @@ if (request.isWebTransport && request.headers["origin"] == "https://app.example"
 val request = http3Request("CONNECT", "example.com", "/wt") { headers = Http3Headers.of("origin" to "https://app.example") }
 val session = client.webTransport(request, protocols = listOf("chat-v1"))
 println(session.protocol)                          // "chat-v1" when the server chose it
+```
+
+A session opens and accepts streams (`openBidi`, `openUni`, `acceptBidi`, `acceptUni`) whose `input` and `output`
+are plain byte channels, and sends and receives datagrams (`trySendDatagram`, `sendDatagram`, `receiveDatagram`, the
+newest 32 kept), which may be lost like any QUIC datagram. Application error codes are 0..2^32-1, for streams
+(`reset`, `stopSending`, reported as `WebTransportException.StreamReset` and `StreamStopped`) and for the session;
+on the wire they travel mapped into the HTTP/3 code space (section 4.4). `close(code, reason)` sends
+WT_CLOSE_SESSION (the reason cut to 1024 bytes of UTF-8), then FIN, and stops the peer's side; either side's close,
+the peer's FIN or a failure completes `closed` with the code, the reason or the cause, resets the session's streams
+with `WT_SESSION_GONE`, and frees the connection for a next session. `drain()` asks the peer to wind down;
+`drainRequested` turns true on the peer's request or an HTTP/3 GOAWAY. Writing the close waits at most five seconds
+for the peer's flow-control credit; opening a stream waits for the peer's stream credit without a deadline, so bound
+it with `withTimeout`. WebTransport's own flow control (`WT_MAX_DATA` and the like) is not implemented: those capsules
+are ignored, and the QUIC limits (`maxBidiStreams`, `maxUniStreams`, the stream and connection windows) bound a
+session. RESET_STREAM_AT (section 4.4) is not used yet: a reset WebTransport stream goes as a plain RESET_STREAM.
+
+```kotlin
+// guide:http3:webtransport-echo (server)
+val stream = session.acceptBidi()                 // the client's stream
+stream.input.copyTo(stream.output)                // echo until its FIN
+stream.output.flushAndClose()
+session.sendDatagram(session.receiveDatagram())   // and one datagram back
+println(session.closed.await().reason)            // "done" once the client closed
+
+// guide:http3:webtransport-echo (client)
+val stream = session.openBidi()
+stream.output.writeFully("ping".encodeToByteArray())
+stream.output.flushAndClose()
+println(stream.input.readRemaining().readString())  // "ping"
+session.trySendDatagram(byteArrayOf(1, 2, 3))
+println(session.receiveDatagram().size)
+session.close(0, "done")
 ```

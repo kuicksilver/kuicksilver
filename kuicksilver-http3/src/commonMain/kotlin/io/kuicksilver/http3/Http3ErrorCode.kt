@@ -3,7 +3,8 @@
 package io.kuicksilver.http3
 
 /**
- * HTTP/3 and QPACK application error codes (RFC 9114 section 8.1, RFC 9204 section 6, RFC 9297 section 5.2). They travel in
+ * HTTP/3, QPACK and WebTransport application error codes (RFC 9114 section 8.1, RFC 9204 section 6, RFC 9297 section 5.2,
+ * draft-ietf-webtrans-http3-16 section 9.5). They travel in
  * CONNECTION_CLOSE 0x1d, RESET_STREAM and STOP_SENDING; an unknown code means [NO_ERROR] (RFC 9114 section 9).
  */
 public object Http3ErrorCode {
@@ -61,6 +62,24 @@ public object Http3ErrorCode {
     /** H3_DATAGRAM_ERROR: a malformed HTTP datagram or capsule, such as an unparsable quarter stream ID (RFC 9297 section 5.2). */
     public const val DATAGRAM_ERROR: Long = 0x33
 
+    /**
+     * WT_BUFFERED_STREAM_REJECTED: a WebTransport stream whose session is not there, over the buffering limits, or of a
+     * closed session (draft-ietf-webtrans-http3-16 section 4.6). Experimental, as WebTransport is.
+     */
+    public const val WT_BUFFERED_STREAM_REJECTED: Long = 0x3994bd84
+
+    /** WT_SESSION_GONE: resets and stops the streams of a WebTransport session that closed (section 6). */
+    public const val WT_SESSION_GONE: Long = 0x170d7b68
+
+    /** WT_FLOW_CONTROL_ERROR: WebTransport flow control was violated (section 5); not sent by this library, which has none. */
+    public const val WT_FLOW_CONTROL_ERROR: Long = 0x045d4487
+
+    /** WT_ALPN_ERROR: the server chose a `WT-Protocol` the client did not offer (section 3.3). */
+    public const val WT_ALPN_ERROR: Long = 0x0817b3dd
+
+    /** WT_REQUIREMENTS_NOT_MET: the peer does not meet a WebTransport requirement (section 3.1); not sent by this library. */
+    public const val WT_REQUIREMENTS_NOT_MET: Long = 0x212c0d48
+
     /** QPACK_DECOMPRESSION_FAILED: a field section could not be decoded, or too many streams were blocked (RFC 9204 section 6). */
     public const val QPACK_DECOMPRESSION_FAILED: Long = 0x200
 
@@ -90,6 +109,11 @@ public object Http3ErrorCode {
             CONNECT_ERROR to "H3_CONNECT_ERROR",
             VERSION_FALLBACK to "H3_VERSION_FALLBACK",
             DATAGRAM_ERROR to "H3_DATAGRAM_ERROR",
+            WT_BUFFERED_STREAM_REJECTED to "WT_BUFFERED_STREAM_REJECTED",
+            WT_SESSION_GONE to "WT_SESSION_GONE",
+            WT_FLOW_CONTROL_ERROR to "WT_FLOW_CONTROL_ERROR",
+            WT_ALPN_ERROR to "WT_ALPN_ERROR",
+            WT_REQUIREMENTS_NOT_MET to "WT_REQUIREMENTS_NOT_MET",
             QPACK_DECOMPRESSION_FAILED to "QPACK_DECOMPRESSION_FAILED",
             QPACK_ENCODER_STREAM_ERROR to "QPACK_ENCODER_STREAM_ERROR",
             QPACK_DECODER_STREAM_ERROR to "QPACK_DECODER_STREAM_ERROR",

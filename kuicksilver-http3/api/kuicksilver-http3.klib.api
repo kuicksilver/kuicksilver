@@ -113,13 +113,47 @@ abstract interface io.kuicksilver.http3/Http3Stream { // io.kuicksilver.http3/Ht
     open fun useCapsuleProtocol(io.kuicksilver.http3/CapsuleConfig = ...): io.kuicksilver.http3/CapsuleStream // io.kuicksilver.http3/Http3Stream.useCapsuleProtocol|useCapsuleProtocol(io.kuicksilver.http3.CapsuleConfig){}[0]
 }
 
+abstract interface io.kuicksilver.http3/WebTransportBidiStream : io.kuicksilver.http3/WebTransportReceiveStream, io.kuicksilver.http3/WebTransportSendStream // io.kuicksilver.http3/WebTransportBidiStream|null[0]
+
+abstract interface io.kuicksilver.http3/WebTransportReceiveStream { // io.kuicksilver.http3/WebTransportReceiveStream|null[0]
+    abstract val input // io.kuicksilver.http3/WebTransportReceiveStream.input|{}input[0]
+        abstract fun <get-input>(): io.ktor.utils.io/ByteReadChannel // io.kuicksilver.http3/WebTransportReceiveStream.input.<get-input>|<get-input>(){}[0]
+    abstract val streamId // io.kuicksilver.http3/WebTransportReceiveStream.streamId|{}streamId[0]
+        abstract fun <get-streamId>(): kotlin/Long // io.kuicksilver.http3/WebTransportReceiveStream.streamId.<get-streamId>|<get-streamId>(){}[0]
+
+    abstract fun stopSending(kotlin/Long) // io.kuicksilver.http3/WebTransportReceiveStream.stopSending|stopSending(kotlin.Long){}[0]
+}
+
+abstract interface io.kuicksilver.http3/WebTransportSendStream { // io.kuicksilver.http3/WebTransportSendStream|null[0]
+    abstract val output // io.kuicksilver.http3/WebTransportSendStream.output|{}output[0]
+        abstract fun <get-output>(): io.ktor.utils.io/ByteWriteChannel // io.kuicksilver.http3/WebTransportSendStream.output.<get-output>|<get-output>(){}[0]
+    abstract val streamId // io.kuicksilver.http3/WebTransportSendStream.streamId|{}streamId[0]
+        abstract fun <get-streamId>(): kotlin/Long // io.kuicksilver.http3/WebTransportSendStream.streamId.<get-streamId>|<get-streamId>(){}[0]
+
+    abstract fun reset(kotlin/Long) // io.kuicksilver.http3/WebTransportSendStream.reset|reset(kotlin.Long){}[0]
+}
+
 abstract interface io.kuicksilver.http3/WebTransportSession { // io.kuicksilver.http3/WebTransportSession|null[0]
+    abstract val closed // io.kuicksilver.http3/WebTransportSession.closed|{}closed[0]
+        abstract fun <get-closed>(): kotlinx.coroutines/Deferred<io.kuicksilver.http3/WebTransportCloseInfo> // io.kuicksilver.http3/WebTransportSession.closed.<get-closed>|<get-closed>(){}[0]
+    abstract val drainRequested // io.kuicksilver.http3/WebTransportSession.drainRequested|{}drainRequested[0]
+        abstract fun <get-drainRequested>(): kotlinx.coroutines.flow/StateFlow<kotlin/Boolean> // io.kuicksilver.http3/WebTransportSession.drainRequested.<get-drainRequested>|<get-drainRequested>(){}[0]
     abstract val headers // io.kuicksilver.http3/WebTransportSession.headers|{}headers[0]
         abstract fun <get-headers>(): io.kuicksilver.http3/Http3Headers // io.kuicksilver.http3/WebTransportSession.headers.<get-headers>|<get-headers>(){}[0]
     abstract val protocol // io.kuicksilver.http3/WebTransportSession.protocol|{}protocol[0]
         abstract fun <get-protocol>(): kotlin/String? // io.kuicksilver.http3/WebTransportSession.protocol.<get-protocol>|<get-protocol>(){}[0]
     abstract val sessionId // io.kuicksilver.http3/WebTransportSession.sessionId|{}sessionId[0]
         abstract fun <get-sessionId>(): kotlin/Long // io.kuicksilver.http3/WebTransportSession.sessionId.<get-sessionId>|<get-sessionId>(){}[0]
+
+    abstract fun trySendDatagram(kotlin/ByteArray): io.kuicksilver.quic/DatagramSendResult // io.kuicksilver.http3/WebTransportSession.trySendDatagram|trySendDatagram(kotlin.ByteArray){}[0]
+    abstract suspend fun acceptBidi(): io.kuicksilver.http3/WebTransportBidiStream // io.kuicksilver.http3/WebTransportSession.acceptBidi|acceptBidi(){}[0]
+    abstract suspend fun acceptUni(): io.kuicksilver.http3/WebTransportReceiveStream // io.kuicksilver.http3/WebTransportSession.acceptUni|acceptUni(){}[0]
+    abstract suspend fun close(kotlin/Long = ..., kotlin/String = ...) // io.kuicksilver.http3/WebTransportSession.close|close(kotlin.Long;kotlin.String){}[0]
+    abstract suspend fun drain() // io.kuicksilver.http3/WebTransportSession.drain|drain(){}[0]
+    abstract suspend fun openBidi(): io.kuicksilver.http3/WebTransportBidiStream // io.kuicksilver.http3/WebTransportSession.openBidi|openBidi(){}[0]
+    abstract suspend fun openUni(): io.kuicksilver.http3/WebTransportSendStream // io.kuicksilver.http3/WebTransportSession.openUni|openUni(){}[0]
+    abstract suspend fun receiveDatagram(): kotlin/ByteArray // io.kuicksilver.http3/WebTransportSession.receiveDatagram|receiveDatagram(){}[0]
+    abstract suspend fun sendDatagram(kotlin/ByteArray) // io.kuicksilver.http3/WebTransportSession.sendDatagram|sendDatagram(kotlin.ByteArray){}[0]
 }
 
 final class io.kuicksilver.http3/Capsule { // io.kuicksilver.http3/Capsule|null[0]
@@ -418,6 +452,21 @@ final class io.kuicksilver.http3/Http3Settings { // io.kuicksilver.http3/Http3Se
     }
 }
 
+final class io.kuicksilver.http3/WebTransportCloseInfo { // io.kuicksilver.http3/WebTransportCloseInfo|null[0]
+    constructor <init>(kotlin/Long, kotlin/String, kotlin/Throwable?) // io.kuicksilver.http3/WebTransportCloseInfo.<init>|<init>(kotlin.Long;kotlin.String;kotlin.Throwable?){}[0]
+
+    final val cause // io.kuicksilver.http3/WebTransportCloseInfo.cause|{}cause[0]
+        final fun <get-cause>(): kotlin/Throwable? // io.kuicksilver.http3/WebTransportCloseInfo.cause.<get-cause>|<get-cause>(){}[0]
+    final val code // io.kuicksilver.http3/WebTransportCloseInfo.code|{}code[0]
+        final fun <get-code>(): kotlin/Long // io.kuicksilver.http3/WebTransportCloseInfo.code.<get-code>|<get-code>(){}[0]
+    final val reason // io.kuicksilver.http3/WebTransportCloseInfo.reason|{}reason[0]
+        final fun <get-reason>(): kotlin/String // io.kuicksilver.http3/WebTransportCloseInfo.reason.<get-reason>|<get-reason>(){}[0]
+
+    final fun equals(kotlin/Any?): kotlin/Boolean // io.kuicksilver.http3/WebTransportCloseInfo.equals|equals(kotlin.Any?){}[0]
+    final fun hashCode(): kotlin/Int // io.kuicksilver.http3/WebTransportCloseInfo.hashCode|hashCode(){}[0]
+    final fun toString(): kotlin/String // io.kuicksilver.http3/WebTransportCloseInfo.toString|toString(){}[0]
+}
+
 sealed class io.kuicksilver.http3/Http3EarlyDataPolicy { // io.kuicksilver.http3/Http3EarlyDataPolicy|null[0]
     final val replayable // io.kuicksilver.http3/Http3EarlyDataPolicy.replayable|{}replayable[0]
         final fun <get-replayable>(): kotlin/Function1<io.kuicksilver.http3/Http3ServerRequest, kotlin/Boolean> // io.kuicksilver.http3/Http3EarlyDataPolicy.replayable.<get-replayable>|<get-replayable>(){}[0]
@@ -524,6 +573,24 @@ sealed class io.kuicksilver.http3/WebTransportException : kotlinx.io/IOException
             final fun <get-selected>(): kotlin/String // io.kuicksilver.http3/WebTransportException.Alpn.selected.<get-selected>|<get-selected>(){}[0]
     }
 
+    final class SessionClosed : io.kuicksilver.http3/WebTransportException { // io.kuicksilver.http3/WebTransportException.SessionClosed|null[0]
+        constructor <init>(kotlin/String) // io.kuicksilver.http3/WebTransportException.SessionClosed.<init>|<init>(kotlin.String){}[0]
+    }
+
+    final class StreamReset : io.kuicksilver.http3/WebTransportException { // io.kuicksilver.http3/WebTransportException.StreamReset|null[0]
+        constructor <init>(kotlin/Long?) // io.kuicksilver.http3/WebTransportException.StreamReset.<init>|<init>(kotlin.Long?){}[0]
+
+        final val code // io.kuicksilver.http3/WebTransportException.StreamReset.code|{}code[0]
+            final fun <get-code>(): kotlin/Long? // io.kuicksilver.http3/WebTransportException.StreamReset.code.<get-code>|<get-code>(){}[0]
+    }
+
+    final class StreamStopped : io.kuicksilver.http3/WebTransportException { // io.kuicksilver.http3/WebTransportException.StreamStopped|null[0]
+        constructor <init>(kotlin/Long?) // io.kuicksilver.http3/WebTransportException.StreamStopped.<init>|<init>(kotlin.Long?){}[0]
+
+        final val code // io.kuicksilver.http3/WebTransportException.StreamStopped.code|{}code[0]
+            final fun <get-code>(): kotlin/Long? // io.kuicksilver.http3/WebTransportException.StreamStopped.code.<get-code>|<get-code>(){}[0]
+    }
+
     final class Timeout : io.kuicksilver.http3/WebTransportException { // io.kuicksilver.http3/WebTransportException.Timeout|null[0]
         constructor <init>(kotlin/String) // io.kuicksilver.http3/WebTransportException.Timeout.<init>|<init>(kotlin.String){}[0]
     }
@@ -584,6 +651,16 @@ final object io.kuicksilver.http3/Http3ErrorCode { // io.kuicksilver.http3/Http3
         final fun <get-STREAM_CREATION_ERROR>(): kotlin/Long // io.kuicksilver.http3/Http3ErrorCode.STREAM_CREATION_ERROR.<get-STREAM_CREATION_ERROR>|<get-STREAM_CREATION_ERROR>(){}[0]
     final const val VERSION_FALLBACK // io.kuicksilver.http3/Http3ErrorCode.VERSION_FALLBACK|{}VERSION_FALLBACK[0]
         final fun <get-VERSION_FALLBACK>(): kotlin/Long // io.kuicksilver.http3/Http3ErrorCode.VERSION_FALLBACK.<get-VERSION_FALLBACK>|<get-VERSION_FALLBACK>(){}[0]
+    final const val WT_ALPN_ERROR // io.kuicksilver.http3/Http3ErrorCode.WT_ALPN_ERROR|{}WT_ALPN_ERROR[0]
+        final fun <get-WT_ALPN_ERROR>(): kotlin/Long // io.kuicksilver.http3/Http3ErrorCode.WT_ALPN_ERROR.<get-WT_ALPN_ERROR>|<get-WT_ALPN_ERROR>(){}[0]
+    final const val WT_BUFFERED_STREAM_REJECTED // io.kuicksilver.http3/Http3ErrorCode.WT_BUFFERED_STREAM_REJECTED|{}WT_BUFFERED_STREAM_REJECTED[0]
+        final fun <get-WT_BUFFERED_STREAM_REJECTED>(): kotlin/Long // io.kuicksilver.http3/Http3ErrorCode.WT_BUFFERED_STREAM_REJECTED.<get-WT_BUFFERED_STREAM_REJECTED>|<get-WT_BUFFERED_STREAM_REJECTED>(){}[0]
+    final const val WT_FLOW_CONTROL_ERROR // io.kuicksilver.http3/Http3ErrorCode.WT_FLOW_CONTROL_ERROR|{}WT_FLOW_CONTROL_ERROR[0]
+        final fun <get-WT_FLOW_CONTROL_ERROR>(): kotlin/Long // io.kuicksilver.http3/Http3ErrorCode.WT_FLOW_CONTROL_ERROR.<get-WT_FLOW_CONTROL_ERROR>|<get-WT_FLOW_CONTROL_ERROR>(){}[0]
+    final const val WT_REQUIREMENTS_NOT_MET // io.kuicksilver.http3/Http3ErrorCode.WT_REQUIREMENTS_NOT_MET|{}WT_REQUIREMENTS_NOT_MET[0]
+        final fun <get-WT_REQUIREMENTS_NOT_MET>(): kotlin/Long // io.kuicksilver.http3/Http3ErrorCode.WT_REQUIREMENTS_NOT_MET.<get-WT_REQUIREMENTS_NOT_MET>|<get-WT_REQUIREMENTS_NOT_MET>(){}[0]
+    final const val WT_SESSION_GONE // io.kuicksilver.http3/Http3ErrorCode.WT_SESSION_GONE|{}WT_SESSION_GONE[0]
+        final fun <get-WT_SESSION_GONE>(): kotlin/Long // io.kuicksilver.http3/Http3ErrorCode.WT_SESSION_GONE.<get-WT_SESSION_GONE>|<get-WT_SESSION_GONE>(){}[0]
 
     final fun isKnown(kotlin/Long): kotlin/Boolean // io.kuicksilver.http3/Http3ErrorCode.isKnown|isKnown(kotlin.Long){}[0]
     final fun name(kotlin/Long): kotlin/String // io.kuicksilver.http3/Http3ErrorCode.name|name(kotlin.Long){}[0]
