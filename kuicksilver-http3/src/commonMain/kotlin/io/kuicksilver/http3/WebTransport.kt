@@ -5,6 +5,7 @@ package io.kuicksilver.http3
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.ByteWriteChannel
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
+import io.kuicksilver.annotations.InternalKuicksilverApi
 import io.kuicksilver.http3.runtime.ServerRequestImpl
 import io.kuicksilver.http3.webtransport.webTransport
 import io.kuicksilver.quic.DatagramSendResult
@@ -215,6 +216,22 @@ public suspend fun Http3Connection.webTransport(
 ): WebTransportSession {
     check(role == Http3Role.Client) { "webTransport() is client-only" }
     return session.webTransport(request, protocols)
+}
+
+/**
+ * [webTransport] on a connection opened for this session alone (the Ktor client engine's dedicated connections): the
+ * connection closes with H3_NO_ERROR once the session's CONNECT stream ended in both directions, after the close
+ * capsule and FIN went out and were answered, so the peer sees the session's close code rather than a lost
+ * connection. The caller closes the connection itself when this throws.
+ */
+@InternalKuicksilverApi
+@ExperimentalKuicksilverApi
+public suspend fun Http3Connection.webTransportOwningConnection(
+    request: Http3Request,
+    protocols: List<String> = emptyList(),
+): WebTransportSession {
+    check(role == Http3Role.Client) { "webTransport() is client-only" }
+    return session.webTransport(request, protocols, ownsConnection = true)
 }
 
 /**

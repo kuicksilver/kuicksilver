@@ -53,6 +53,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -230,6 +231,49 @@ internal class H3Pool(
 
     /** Test hook: the (origin, alternative) entries tracked, retired ones included. */
     internal suspend fun entryCountForTest(): Int = lock.withLock { connections.size + retired.size }
+
+    /** Dedicated connections of WebTransport sessions that are still open (a test hook and the resource probe). */
+    internal val dedicatedCount = kotlinx.coroutines.flow.MutableStateFlow(0)
+
+    /**
+     * A QUIC connection to [originHost]:[port] for one WebTransport session, outside the pool: never shared with requests
+     * and closed with its session. The engine's endpoint, trust and QUIC settings, with WebTransport, Extended CONNECT and
+     * `reset_stream_at` turned on (draft-ietf-webtrans-http3-16 sections 3.1, 4.4); [connectTimeoutMillis] bounds the
+     * lookup and the handshake.
+     */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    suspend fun dedicated(
+        originHost: String,
+        port: Int,
+        connectTimeoutMillis: Long,
+    ): Http3Connection {
+        val ep = endpoint()
+        val settings =
+            config.http3.settings
+                .toBuilder()
+                .apply {
+                    enableConnectProtocol = true
+                    webTransport = true
+                }.build()
+        val q = quicWithin(connectTimeoutMillis).let { if (it.resetStreamAt) it else it.toBuilder().apply { resetStreamAt = true }.build() }
+        val c =
+            try {
+                withTimeout(connectTimeoutMillis) {
+                    val remote =
+                        config
+                            .newRequestDns()
+                            .lookup(originHost, port)
+                            .first()
+                            .let { InetSocketAddress(it.hostText, it.port) }
+                    ep.connect(remote, config.tlsConfigFor(originHost, listOf(Http3Endpoint.H3)), q, settings)
+                }
+            } catch (e: TimeoutCancellationException) {
+                throw ConnectTimeoutException("https://$originHost:$port", connectTimeoutMillis, e)
+            }
+        dedicatedCount.update { it + 1 }
+        c.closed.invokeOnCompletion { dedicatedCount.update { it - 1 } }
+        return c
+    }
 
     fun close() {
         endpoint?.close()

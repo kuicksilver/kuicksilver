@@ -333,6 +333,31 @@ back to HTTP/1.1 after the HTTP/3 connection failed as a whole: setup, QUIC tran
 single stream reset or a malformed response falls back for that request only) — per origin and alternative, never "UDP is blocked" for everything: 5 minutes, doubling up to 2 days, and forgotten when `networkId()` reports a new
 network. Broken alternatives are skipped (straight to HTTP/1.1).
 
+### WebTransport on the client (experimental)
+
+`HttpClient.webTransport(url)` opens a WebTransport session (draft-ietf-webtrans-http3-16) to an `https` URL and
+returns the `WebTransportSession` of `kuicksilver-http3` (streams, datagrams, close; see the
+[HTTP/3 guide](http3.md#webtransport-experimental)). Like a browser, each session gets a QUIC connection of its own,
+outside the pool: without WebTransport flow control a connection carries one session, and the connection closes once
+the session ended in both directions (after its close reached the server). The engine's trust, identity and QUIC
+settings apply, with WebTransport, Extended CONNECT and `reset_stream_at` turned on for that connection;
+`connectTimeout` bounds the setup, then the server's SETTINGS and its answer to the CONNECT get ten seconds each.
+There is no fallback: a server without WebTransport fails with `Http3Exception.Settings`, and an engine with a proxy
+refuses the call (WebTransport needs a direct UDP path). Only the Kuicksilver engine supports it.
+
+```kotlin
+val client = HttpClient(Kuicksilver)
+val url = "https://example.com/echo"
+// guide:ktor:webtransport-client
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+val session = client.webTransport(url, protocols = listOf("echo-v1"))
+val stream = session.openBidi()
+stream.output.writeFully("ping".encodeToByteArray())
+stream.output.flushAndClose()
+println(stream.input.readRemaining().readString())
+session.close(0, "done")                           // the session's own connection closes with it
+```
+
 ## Observability (experimental)
 
 Both engines report what they do without a logging dependency (the API is `@ExperimentalKuicksilverApi`). The QUIC side

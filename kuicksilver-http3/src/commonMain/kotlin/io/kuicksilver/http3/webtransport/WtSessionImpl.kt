@@ -363,6 +363,7 @@ internal class WtSessionImpl(
 internal suspend fun H3Session.webTransport(
     r: Http3Request,
     protocols: List<String>,
+    ownsConnection: Boolean = false,
 ): WebTransportSession {
     check(settings.webTransport) {
         "Http3Settings.webTransport is off on this connection: the session's streams could not be received"
@@ -412,6 +413,8 @@ internal suspend fun H3Session.webTransport(
                 ended.await()
                 s.ended()
                 wtClientBusy = false
+                // a connection opened for this session alone ends with it, once both directions of the CONNECT did
+                if (ownsConnection) close(Http3ErrorCode.NO_ERROR, "")
             }
         }
         made = null

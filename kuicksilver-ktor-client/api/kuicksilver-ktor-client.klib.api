@@ -206,3 +206,5 @@ final object io.kuicksilver.ktor.client/Kuicksilver : io.ktor.client.engine/Http
     final fun hashCode(): kotlin/Int // io.kuicksilver.ktor.client/Kuicksilver.hashCode|hashCode(){}[0]
     final fun toString(): kotlin/String // io.kuicksilver.ktor.client/Kuicksilver.toString|toString(){}[0]
 }
+
+final suspend fun (io.ktor.client/HttpClient).io.kuicksilver.ktor.client/webTransport(kotlin/String, kotlin.collections/List<kotlin/String> = ..., io.kuicksilver.http3/Http3Headers = ...): io.kuicksilver.http3/WebTransportSession // io.kuicksilver.ktor.client/webTransport|webTransport@io.ktor.client.HttpClient(kotlin.String;kotlin.collections.List<kotlin.String>;io.kuicksilver.http3.Http3Headers){}[0]

@@ -106,6 +106,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   still delivering its first bytes when the peer advertised it too, and fall back to RESET_STREAM otherwise. WebTransport
   resets the streams it opened this way, keeping their header (draft-ietf-webtrans-http3-16 section 4.4), and the Ktor
   server advertises it with `webTransport`.
+- Ktor client (experimental): `HttpClient.webTransport(url, protocols, headers)` opens a WebTransport session on a
+  dedicated HTTP/3 connection of the Kuicksilver engine, outside the pool, closed with the session
+  (`docs/guide/ktor.md`, "WebTransport on the client"); no fallback, no proxy.
 - WebTransport interop with a real browser: `ChromeWebTransportTest` (opt-in, `-Pkuicksilver.browserTests=true`)
   drives an installed Chrome headless through streams, datagrams and both closes against the Ktor server; results and
   a manual check for Firefox and Safari in `docs/spec/rfc-compliance.md`, "Interop WebTransport".
