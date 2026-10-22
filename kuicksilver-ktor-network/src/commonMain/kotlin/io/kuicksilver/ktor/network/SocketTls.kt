@@ -94,7 +94,18 @@ public class TlsSocket private constructor(
      */
     @Volatile internal var closeTimeout: Duration? = null
 
-    override fun attachForReading(channel: ByteChannel): WriterJob = writer(coroutineContext, channel) { tls.input.copyTo(channel) }
+    /**
+     * The peer's plaintext goes to the application's channel. A session that failed (a reset, a TLS error) fails that
+     * channel, not ends it: ktor's `copyTo` ends its loop on a source closed with a failure as on one closed cleanly and
+     * returns normally, so a reset before the application opened its channel, or landing between two of its reads after
+     * the last bytes, reached the application as a clean end, and a body delimited by the connection's close passed cut
+     * for whole.
+     */
+    override fun attachForReading(channel: ByteChannel): WriterJob =
+        writer(coroutineContext, channel) {
+            tls.input.copyTo(channel)
+            tls.input.closedCause?.let { throw it }
+        }
 
     /**
      * The application's plaintext goes through the TLS session to the raw socket. When the application's channel fails
