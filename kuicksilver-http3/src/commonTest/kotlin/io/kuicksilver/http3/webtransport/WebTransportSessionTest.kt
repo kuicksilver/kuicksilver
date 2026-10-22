@@ -34,18 +34,21 @@ import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.QuicStream
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
-import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
-import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 
 internal fun wtReq(
@@ -175,9 +178,16 @@ class WebTransportSessionTest {
     @Test fun clientRefusesSecondSession() =
         h3Test {
             H3Pair.open(clientSettings = wtOn, serverSettings = wtOn).useScoped { p ->
-                launch { p.server.acceptRequest().acceptWebTransport() }
-                p.client.webTransport(wtReq())
+                val serverSide = CompletableDeferred<WebTransportSession>()
+                launch { serverSide.complete(p.server.acceptRequest().acceptWebTransport()) }
+                val first = p.client.webTransport(wtReq())
                 assertFailsWith<IllegalStateException> { p.client.webTransport(wtReq()) }
+                // the first lives on: a stream the client opens for it reaches the server's session
+                val uni = p.client.quic.openUni()
+                uni.output.writeFully(VarInt.encode(StreamType.WT_UNI) + VarInt.encode(first.sessionId) + "alive".encodeToByteArray())
+                uni.output.flushAndClose()
+                val (st, _) = withTimeout(5.seconds) { (serverSide.await() as WtSessionImpl).incoming.receive() }
+                assertEquals("alive", st.input.readAllBytes().decodeToString())
             }
         }
 
@@ -262,9 +272,15 @@ class WebTransportSessionTest {
             QuicPair.open().useScoped { q ->
                 val (c, s) = q.connect()
                 val client = Http3Connection.client(c, wtOn)
+                val waiting = CompletableDeferred<Unit>()
+                client.session.wtTimer = {
+                    waiting.complete(Unit)
+                    awaitCancellation()
+                }
                 val raw = RawPeer(s)
                 val session = async { client.webTransport(wtReq()) }
-                assertNull(withTimeoutOrNull(300.milliseconds) { s.acceptBidi() })
+                withTimeout(5.seconds) { waiting.await() } // the client waits for SETTINGS ...
+                assertTrue(withContext(client.session.dispatcher) { client.session.clientStreams.isEmpty() }) // ... with no CONNECT out
                 raw.openControl(listOf(SettingsId.ENABLE_CONNECT_PROTOCOL to 1L) + wtClientSettings)
                 val st = withTimeout(5.seconds) { s.acceptBidi() }
                 assertEquals(WtTokens.H3, readHeaders(st)[":protocol"])
@@ -288,20 +304,78 @@ class WebTransportSessionTest {
             }
         }
 
-    /** Section 7.1: the server waits for the client's SETTINGS before it accepts a session, and not forever. */
+    /** Sections 3.1, 7.1: the server waits for the client's SETTINGS, and not forever; without them the request is malformed. */
     @Test fun negative_acceptWithoutClientSettingsFails() =
         h3Test {
             QuicPair.open().useScoped { q ->
                 val (c, s) = q.connect()
                 val server = Http3Connection.server(s, wtOn)
-                server.session.wtSettingsDeadline = 200.milliseconds
+                val asked = CompletableDeferred<Duration>()
+                server.session.wtTimer = { asked.complete(it) } // the deadline passes at once
                 val raw = RawPeer(c)
                 val st = c.openBidi()
                 st.output.writeFully(raw.wtConnect(st))
                 st.output.flush()
                 val r = withTimeout(5.seconds) { server.acceptRequest() }
                 assertFailsWith<Http3Exception.Settings> { r.acceptWebTransport() }
-                assertEquals(WtCodes.REQUIREMENTS_NOT_MET, resetCode(st))
+                assertEquals(10.seconds, asked.await())
+                assertEquals("400", readHeaders(st)[":status"])
+            }
+        }
+
+    @Test fun negative_acceptWithoutClientDatagramsIs400() =
+        h3Test {
+            QuicPair.open().useScoped { q ->
+                val (c, s) = q.connect()
+                val server = Http3Connection.server(s, wtOn)
+                val raw = RawPeer(c)
+                raw.openControl(listOf(SettingsId.WT_ENABLED to 1L))
+                val st = c.openBidi()
+                st.output.writeFully(raw.wtConnect(st))
+                st.output.flush()
+                val r = withTimeout(5.seconds) { server.acceptRequest() }
+                assertFailsWith<Http3Exception.Settings> { r.acceptWebTransport() }
+                assertEquals("400", readHeaders(st)[":status"])
+            }
+        }
+
+    /** The answer to the CONNECT has a deadline too: an unanswered CONNECT is reset and the call fails. */
+    @Test fun negative_unansweredConnectTimesOut() =
+        h3Test {
+            QuicPair.open().useScoped { q ->
+                val (c, s) = q.connect()
+                val raw = RawPeer(s)
+                raw.openControl(listOf(SettingsId.ENABLE_CONNECT_PROTOCOL to 1L) + wtClientSettings)
+                val client = Http3Connection.client(c, wtOn)
+                withTimeout(5.seconds) { client.peerSettings.filterNotNull().first() }
+                val expire = CompletableDeferred<Unit>()
+                client.session.wtTimer = { expire.await() }
+                val call = async { runCatching { client.webTransport(wtReq()) } }
+                val st = withTimeout(5.seconds) { s.acceptBidi() }
+                readHeaders(st) // the CONNECT is out; the server never answers
+                expire.complete(Unit)
+                assertIs<WebTransportException.Timeout>(withTimeout(5.seconds) { call.await() }.exceptionOrNull())
+                assertEquals(Http3ErrorCode.REQUEST_CANCELLED, resetCode(st))
+                // the slot is free again
+                assertFalse(withContext(client.session.dispatcher) { client.session.wtClientBusy })
+            }
+        }
+
+    /** Section 3.3: a `WT-Protocol` that is no Structured Field String is ignored, as if absent. */
+    @Test fun malformedWtProtocolIsIgnored() =
+        h3Test {
+            QuicPair.open().useScoped { q ->
+                val (c, s) = q.connect()
+                val raw = RawPeer(s)
+                raw.openControl(listOf(SettingsId.ENABLE_CONNECT_PROTOCOL to 1L) + wtClientSettings)
+                val client = Http3Connection.client(c, wtOn)
+                launch {
+                    val st = withTimeout(5.seconds) { s.acceptBidi() }
+                    readHeaders(st)
+                    st.output.writeFully(raw.headers(st.id, listOf(":status" to "200", "wt-protocol" to "chat")))
+                    st.output.flush()
+                }
+                assertNull(client.webTransport(wtReq(), listOf("chat")).protocol)
             }
         }
 

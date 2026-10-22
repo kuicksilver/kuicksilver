@@ -20,7 +20,6 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * One WebTransport session: the Extended CONNECT [stream] and the WebTransport streams routed to it. The peer's streams
@@ -80,8 +79,8 @@ internal suspend fun H3Session.webTransport(
     }
     for (p in protocols) require(WtProtocols.isValid(p)) { "WebTransport protocol '$p' is not a non-empty printable ASCII string" }
     val ps =
-        withTimeoutOrNull(wtSettingsDeadline) { awaitPeerSettings() }
-            ?: throw Http3Exception.Settings("no SETTINGS from the server within $wtSettingsDeadline")
+        withinWtDeadline { awaitPeerSettings() }
+            ?: throw Http3Exception.Settings("no SETTINGS from the server within $wtDeadline")
     val version =
         peerWtVersion() ?: throw Http3Exception.Settings("the server does not offer WebTransport in its SETTINGS")
     if (!ps.h3Datagram) throw Http3Exception.Settings("the server did not send SETTINGS_H3_DATAGRAM=1, which WebTransport needs")
@@ -100,18 +99,20 @@ internal suspend fun H3Session.webTransport(
                 if (protocols.isNotEmpty()) add(WtProtocols.AVAILABLE_FIELD to WtProtocols.formatList(protocols))
             }
         val ended = CompletableDeferred<Unit>()
+        val req = r.toBuilder().apply { headers = Http3Headers(fields) }.build()
+        // the answer has a deadline too; a CONNECT still unanswered then is reset by the cancellation (REQUEST_CANCELLED)
         val stream =
-            connect(r.toBuilder().apply { headers = Http3Headers(fields) }.build(), version.protocolToken, ended)
+            withinWtDeadline { connect(req, version.protocolToken, ended) }
+                ?: throw WebTransportException.Timeout("no answer to the WebTransport CONNECT within $wtDeadline")
         made = stream
+        // a WT-Protocol that is no valid Structured Field String is ignored, as if absent (section 3.3)
         val selected =
-            stream.headers[WtProtocols.SELECTED_FIELD]?.let { raw ->
-                val p = WtProtocols.parseItem(raw)
-                if (p == null || p !in protocols) {
+            stream.headers[WtProtocols.SELECTED_FIELD]?.let { WtProtocols.parseItem(it) }?.also { p ->
+                if (p !in protocols) {
                     stream.reset(WtCodes.ALPN_ERROR)
                     stream.stopSending(WtCodes.ALPN_ERROR)
-                    throw WebTransportException.Alpn(protocols, p ?: raw)
+                    throw WebTransportException.Alpn(protocols, p)
                 }
-                p
             }
         val s = WtSessionImpl(this, stream, stream.headers, selected)
         withContext(dispatcher) {

@@ -183,6 +183,7 @@ DER.
 | `maxFieldSectionSize` | `Long` | 65 536 (64 KiB) | 1..2^30 | largest decoded header or trailer section we accept (and so the longest single field; above it: 431, the connection lives), advertised as `SETTINGS_MAX_FIELD_SECTION_SIZE` |
 | `enableConnectProtocol` | `Boolean` | `false` | | advertise Extended CONNECT (RFC 9220) |
 | `h3Datagram` | `Boolean` | `true` | | `SETTINGS_H3_DATAGRAM` (always sent); `Http3Endpoint` sends 0 when `QuicConfig.maxDatagramFrameSize` is 0 |
+| `webTransport` | `Boolean` | `false` | needs `enableConnectProtocol` and `h3Datagram` | experimental: WebTransport over HTTP/3 (draft-ietf-webtrans-http3-16, with the draft-02 and draft-14 SETTINGS browsers use); `Http3Endpoint.bind` refuses it when `QuicConfig.maxDatagramFrameSize` is 0 |
 | `grease` | `Boolean` | `true` | | send a reserved setting, frame and stream type |
 | `maxInformationalResponses` | `Int` | 5 | at least 0 | 1xx responses a client accepts per request; one more fails it with `H3_EXCESSIVE_LOAD` |
 | `maxEarlyPriorityUpdates` | `Int` | 32 | at least 0 | PRIORITY_UPDATE frames remembered for streams not yet open |

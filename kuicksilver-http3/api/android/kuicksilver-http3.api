@@ -451,6 +451,10 @@ public final class io/kuicksilver/http3/WebTransportException$Alpn : io/kuicksil
 	public final fun getSelected ()Ljava/lang/String;
 }
 
+public final class io/kuicksilver/http3/WebTransportException$Timeout : io/kuicksilver/http3/WebTransportException {
+	public fun <init> (Ljava/lang/String;)V
+}
+
 public final class io/kuicksilver/http3/WebTransportKt {
 	public static final fun acceptWebTransport (Lio/kuicksilver/http3/Http3ServerRequest;Lio/kuicksilver/http3/Http3Headers;Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public static synthetic fun acceptWebTransport$default (Lio/kuicksilver/http3/Http3ServerRequest;Lio/kuicksilver/http3/Http3Headers;Ljava/lang/String;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;

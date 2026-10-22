@@ -179,7 +179,4 @@ internal object WtCodes {
 
     /** The server chose a `WT-Protocol` the client did not offer (section 3.3). */
     const val ALPN_ERROR: Long = 0x0817b3dd
-
-    /** The peer's SETTINGS lack what a WebTransport session needs (section 3.1). */
-    const val REQUIREMENTS_NOT_MET: Long = 0x212c0d48
 }

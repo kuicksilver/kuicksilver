@@ -63,7 +63,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   advertises the SETTINGS of draft-ietf-webtrans-http3-16 and of the draft-02 and draft-14 codepoints browsers still
   use; WebTransport streams (`0x54` uni, `0x41` bidi) are routed to their session, those that arrive before it wait in
   a bounded buffer (16 per connection, 5 s each); `Http3Connection.webTransport` opens a session (the `:protocol`
-  token follows the server's draft, `WT-Available-Protocols`/`WT-Protocol` negotiation) and
+  token follows the server's draft, `WT-Available-Protocols`/`WT-Protocol` negotiation, ten-second deadlines for the
+  server's SETTINGS and for the answer) and
   `Http3ServerRequest.isWebTransport`, `availableProtocols` and `acceptWebTransport` accept one. One session per
   connection, no WebTransport flow control. Streams and datagrams of a session, close and drain follow.
 

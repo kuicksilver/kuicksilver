@@ -23,7 +23,6 @@ import io.kuicksilver.http3.message.FieldValidator
 import io.kuicksilver.http3.message.MalformedMessage
 import io.kuicksilver.http3.message.PriorityField
 import io.kuicksilver.http3.message.PseudoHeaders
-import io.kuicksilver.http3.webtransport.WtCodes
 import io.kuicksilver.http3.webtransport.WtProtocols
 import io.kuicksilver.http3.webtransport.WtSessionImpl
 import io.kuicksilver.http3.webtransport.WtTokens
@@ -39,7 +38,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.concurrent.atomics.incrementAndFetch
 
 /** A request stream accepted by a server: HEADERS first, then the body pump (RFC 9114 section 4.1). */
@@ -75,8 +73,9 @@ internal suspend fun handleRequestStream(
             return@with
         }
     }
-    // in flight from the first byte, not from the parsed HEADERS: a request below the GOAWAY id whose HEADERS are
-    // still arriving must keep the idle close away (RFC 9114 section 5.2), until the header deadline after GOAWAY
+    // in flight from its first frame type (its first byte; with WebTransport, once that type was read above), not from
+    // the parsed HEADERS: a request below the GOAWAY id whose HEADERS are still arriving must keep the idle close away
+    // (RFC 9114 section 5.2), until the header deadline after GOAWAY
     requestStarted()
     pendingHeaders[st.id] = st to currentCoroutineContext()[Job]!!
     var handedOff = false
@@ -340,19 +339,16 @@ internal class ServerRequestImpl(
         require(protocol == null || protocol in availableProtocols) {
             "WebTransport protocol '$protocol' is not one the client offered: $availableProtocols"
         }
-        val ps = withTimeoutOrNull(session.wtSettingsDeadline) { session.awaitPeerSettings() }
+        val ps = session.withinWtDeadline { session.awaitPeerSettings() }
         val missing =
             when {
-                ps == null -> "no SETTINGS from the client within ${session.wtSettingsDeadline}"
+                ps == null -> "no SETTINGS from the client within ${session.wtDeadline}"
                 !ps.h3Datagram -> "the client did not send SETTINGS_H3_DATAGRAM=1, which WebTransport needs"
                 else -> null
             }
         if (missing != null) {
-            withContext(session.dispatcher) {
-                runCatching { st.reset(WtCodes.REQUIREMENTS_NOT_MET) }
-                runCatching { st.stopSending(WtCodes.REQUIREMENTS_NOT_MET) }
-                done()
-            }
+            // a request the client could not make (section 3.1): malformed, answered with 400 so it learns why
+            runCatching { respond(400).finish() }
             throw Http3Exception.Settings(missing)
         }
         val fields =

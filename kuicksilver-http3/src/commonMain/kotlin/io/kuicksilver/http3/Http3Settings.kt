@@ -186,5 +186,5 @@ public class Http3PeerSettings internal constructor(
     public val webTransport: Boolean = false,
 ) {
     override fun toString(): String =
-        "Http3PeerSettings(qpack=$qpackMaxTableCapacity/$qpackBlockedStreams, maxFieldSectionSize=$maxFieldSectionSize, connect=$enableConnectProtocol, datagram=$h3Datagram)"
+        "Http3PeerSettings(qpack=$qpackMaxTableCapacity/$qpackBlockedStreams, maxFieldSectionSize=$maxFieldSectionSize, connect=$enableConnectProtocol, datagram=$h3Datagram, webTransport=$webTransport)"
 }

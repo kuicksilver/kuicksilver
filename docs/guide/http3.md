@@ -288,10 +288,12 @@ establishment, under `@ExperimentalKuicksilverApi`. Both sides set `webTransport
 speak draft-16 yet, so a server announces the SETTINGS of draft-02 (Chrome, Firefox) and draft-14 (Safari) too and
 accepts both `:protocol` tokens, `webtransport-h3` and `webtransport`; a client picks the token from the server's
 SETTINGS. A request with either token is `isWebTransport`; `acceptWebTransport` answers 200 once the client's SETTINGS
-arrived (ten seconds at most, then the request is reset with `WT_REQUIREMENTS_NOT_MET`), and a 4xx from `respond`
-refuses the session. Check the `origin` field before accepting a browser's session. The client offers application
+arrived (ten seconds at most; without them, or without HTTP datagrams, the request is answered with 400 and
+`acceptWebTransport` throws `Http3Exception.Settings`), and a 4xx from `respond` refuses the session. The client waits
+ten seconds for the server's SETTINGS and ten more for the answer to its CONNECT (`WebTransportException.Timeout`). Check the `origin` field before accepting a browser's session. The client offers application
 protocols in `WT-Available-Protocols` and the server picks one of `availableProtocols`; a choice the client did not
-offer fails `webTransport` with `WebTransportException.Alpn`.
+offer fails `webTransport` with `WebTransportException.Alpn` (a `WT-Protocol` that is not a valid Structured Field
+String is ignored).
 
 There is no WebTransport flow control, so a connection carries one session: a client refuses a second one with
 `IllegalStateException`, a server resets a second CONNECT with `H3_REQUEST_REJECTED` before the application sees it.

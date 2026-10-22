@@ -41,7 +41,9 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -90,8 +92,35 @@ internal class H3Session(
     /** Client: a WebTransport session is being opened or is open on this connection (one at a time). Dispatcher only. */
     var wtClientBusy = false
 
-    /** How long opening or accepting a WebTransport session waits for the peer's SETTINGS; settable by tests. */
-    var wtSettingsDeadline: Duration = WT_SETTINGS_DEADLINE
+    /**
+     * How long each step of opening or accepting a WebTransport session may wait for the peer: its SETTINGS, and (client)
+     * the answer to the CONNECT. Ten seconds.
+     */
+    val wtDeadline: Duration = WT_DEADLINE
+
+    /** How a WebTransport wait measures [wtDeadline]; a test replaces it to end the wait without real time passing. */
+    var wtTimer: suspend (Duration) -> Unit = { delay(it) }
+
+    /**
+     * [block], or null when [wtDeadline] (measured by [wtTimer]) passed first; [block] is then cancelled, and this returns
+     * once its cancellation finished (a CONNECT in flight is reset by it).
+     */
+    suspend fun <T : Any> withinWtDeadline(block: suspend () -> T): T? =
+        coroutineScope {
+            val work = async { block() }
+            val timer = launch { wtTimer(wtDeadline) }
+            select {
+                work.onAwait {
+                    timer.cancel()
+                    it
+                }
+                timer.onJoin {
+                    work.cancel()
+                    null
+                }
+            }
+        }
+
     val goAwayReceived = MutableStateFlow<Long?>(null)
     val closed = CompletableDeferred<Throwable>()
     val requests = Channel<ServerRequestImpl>(Channel.UNLIMITED)
@@ -811,7 +840,7 @@ internal class H3Session(
         val CRITICAL = StreamPriority(0)
 
         /** A peer that speaks HTTP/3 sends SETTINGS first thing (RFC 9114 section 6.2.1): ten seconds is plenty. */
-        val WT_SETTINGS_DEADLINE: Duration = 10.seconds
+        val WT_DEADLINE: Duration = 10.seconds
         const val MAX_PRIORITY_UPDATE = 256
 
         fun transportCause(e: Throwable): QuicException? =

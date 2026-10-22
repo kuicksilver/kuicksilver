@@ -523,6 +523,10 @@ sealed class io.kuicksilver.http3/WebTransportException : kotlinx.io/IOException
         final val selected // io.kuicksilver.http3/WebTransportException.Alpn.selected|{}selected[0]
             final fun <get-selected>(): kotlin/String // io.kuicksilver.http3/WebTransportException.Alpn.selected.<get-selected>|<get-selected>(){}[0]
     }
+
+    final class Timeout : io.kuicksilver.http3/WebTransportException { // io.kuicksilver.http3/WebTransportException.Timeout|null[0]
+        constructor <init>(kotlin/String) // io.kuicksilver.http3/WebTransportException.Timeout.<init>|<init>(kotlin.String){}[0]
+    }
 }
 
 final object io.kuicksilver.http3/CapsuleProtocol { // io.kuicksilver.http3/CapsuleProtocol|null[0]

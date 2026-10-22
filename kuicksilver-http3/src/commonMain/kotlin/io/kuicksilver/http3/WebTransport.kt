@@ -35,22 +35,31 @@ public sealed class WebTransportException(
      * WT_ALPN_ERROR.
      *
      * @property offered the protocols the client offered in `WT-Available-Protocols`.
-     * @property selected the server's `WT-Protocol`, as received when it is no valid Structured Field String.
+     * @property selected the protocol the server's `WT-Protocol` names. A `WT-Protocol` that is no valid Structured Field
+     *   String is ignored instead, as if the server chose none (section 3.3).
      */
     public class Alpn(
         public val offered: List<String>,
         public val selected: String,
     ) : WebTransportException("the server chose WebTransport protocol '$selected', not one of $offered")
+
+    /** The peer did not answer within the deadline of a session's handshake (ten seconds per step); the CONNECT was reset. */
+    public class Timeout(
+        message: String,
+    ) : WebTransportException(message)
 }
 
 /**
  * Client: opens a WebTransport session with an Extended CONNECT to [request]'s authority and path (its method is replaced
  * by CONNECT). Needs `Http3Settings.webTransport` on this connection (IllegalStateException otherwise) and waits up to
  * ten seconds for the server's SETTINGS, which must offer WebTransport, Extended CONNECT and HTTP datagrams
- * ([Http3Exception.Settings] otherwise). The draft the server speaks picks the `:protocol` token: `webtransport-h3` for
- * draft-15 and later, else `webtransport` with `sec-webtransport-http3-draft02: 1`. [protocols] are offered in
- * `WT-Available-Protocols` (printable ASCII each); a `WT-Protocol` answer outside them closes the session with
- * WT_ALPN_ERROR and throws [WebTransportException.Alpn]. A non-2xx answer throws [Http3Exception.ConnectRejected]
+ * ([Http3Exception.Settings] otherwise), then up to ten seconds for the answer to the CONNECT
+ * ([WebTransportException.Timeout] otherwise; the CONNECT is reset with H3_REQUEST_CANCELLED). The draft the server
+ * speaks picks the `:protocol` token: `webtransport-h3` for draft-15 and later, else `webtransport` with
+ * `sec-webtransport-http3-draft02: 1`. [protocols] are offered in `WT-Available-Protocols` (printable ASCII each); a
+ * `WT-Protocol` answer that names another protocol closes the session with WT_ALPN_ERROR and throws
+ * [WebTransportException.Alpn], one that is no valid Structured Field String is ignored ([WebTransportSession.protocol]
+ * is null). A non-2xx answer throws [Http3Exception.ConnectRejected]
  * (redirects are not followed, section 3.2). A second session while one is open throws IllegalStateException (one
  * session per connection, section 5.1).
  */
@@ -66,7 +75,8 @@ public suspend fun Http3Connection.webTransport(
 /**
  * Server: accepts a WebTransport session ([Http3ServerRequest.isWebTransport] must be true, IllegalStateException
  * otherwise). Waits up to ten seconds for the client's SETTINGS (section 7.1); without them, or without
- * `SETTINGS_H3_DATAGRAM=1`, the request is reset with WT_REQUIREMENTS_NOT_MET and [Http3Exception.Settings] is thrown.
+ * `SETTINGS_H3_DATAGRAM=1`, the request is malformed (section 3.1): it is answered with 400 and
+ * [Http3Exception.Settings] is thrown.
  * Then answers 200 with [headers], `WT-Protocol` when [protocol] is set (it must be one of
  * [Http3ServerRequest.availableProtocols], IllegalArgumentException otherwise) and, for a draft-02 client, the
  * `sec-webtransport-http3-draft: draft02` field it requires. Streams the client opened for the session before this are
