@@ -201,6 +201,21 @@ Endpoint and request parameters:
 | `Http3Endpoint.shutdown(grace, code, reason)` (*experimental*) | `code = H3_NO_ERROR`, `reason = "shutdown"` |
 | `http3Request(method, authority, path) { ... }` (`Http3Request.Builder`) | `scheme = "https"`, `headers = Http3Headers.Empty`, `body = null` (no body), `trailers = null`, `priority = null` (the default `u=3`), `protocol = null`, `onInformational = null`, `allowEarlyData = false` (*experimental*; GET, HEAD and OPTIONS without a body only) |
 
+### CapsuleConfig (*experimental*)
+
+How an Extended CONNECT stream speaks the Capsule Protocol (RFC 9297 section 3) once
+`Http3Stream.useCapsuleProtocol(config)` is called: the constructor, `capsuleConfig { }` (`CapsuleConfig.Builder`),
+`toBuilder()`. Guide: [HTTP/3, capsules](http3.md#capsules-experimental).
+
+| Option | Type | Default | Range | What it does |
+|---|---|---|---|---|
+| `knownTypes` | `Set<Long>` | empty | each 0..2^62-1 | capsule types delivered in `CapsuleStream.capsules`; other types are skipped as their bytes arrive. DATAGRAM (0x00) always goes to `datagrams` |
+| `maxCapsuleLength` | `Int` (bytes) | 65 536 (64 KiB) | 1..1 048 576 | longest capsule of a known type; a longer one resets and stops the stream with `H3_MESSAGE_ERROR` |
+| `maxDatagramLength` | `Int` (bytes) | 65 536 (64 KiB) | 1..1 048 576 | longest DATAGRAM capsule; a longer one is dropped without being buffered |
+| `datagramFallback` | `Boolean` | `true` | | send datagrams as DATAGRAM capsules when HTTP/3 datagrams are unsupported (either side's `SETTINGS_H3_DATAGRAM` is 0); a datagram too large for QUIC never falls back |
+| `receiveQueue` | `Int` | 16 | 1..4096 | received capsules held for the collector; when full, reading the stream pauses (flow control holds the peer back) |
+| `sendQueue` | `Int` | 32 | 1..4096 | capsules waiting to be written; when full, `send` suspends and a fallback `trySendDatagram` answers `QueueFull` |
+
 ## Ktor client engine
 
 `HttpClient(Kuicksilver) { engine { … } }` (`KuicksilverEngineConfig`). Values are checked when the engine is created.

@@ -1,3 +1,64 @@
+public final class io/kuicksilver/http3/Capsule {
+	public fun <init> (J[B)V
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getType ()J
+	public final fun getValue ()[B
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/kuicksilver/http3/CapsuleConfig {
+	public fun <init> ()V
+	public fun <init> (Ljava/util/Set;IIZII)V
+	public synthetic fun <init> (Ljava/util/Set;IIZIIILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun getDatagramFallback ()Z
+	public final fun getKnownTypes ()Ljava/util/Set;
+	public final fun getMaxCapsuleLength ()I
+	public final fun getMaxDatagramLength ()I
+	public final fun getReceiveQueue ()I
+	public final fun getSendQueue ()I
+	public final fun toBuilder ()Lio/kuicksilver/http3/CapsuleConfig$Builder;
+}
+
+public final class io/kuicksilver/http3/CapsuleConfig$Builder {
+	public fun <init> ()V
+	public final fun build ()Lio/kuicksilver/http3/CapsuleConfig;
+	public final fun getDatagramFallback ()Z
+	public final fun getKnownTypes ()Ljava/util/Set;
+	public final fun getMaxCapsuleLength ()I
+	public final fun getMaxDatagramLength ()I
+	public final fun getReceiveQueue ()I
+	public final fun getSendQueue ()I
+	public final fun setDatagramFallback (Z)V
+	public final fun setKnownTypes (Ljava/util/Set;)V
+	public final fun setMaxCapsuleLength (I)V
+	public final fun setMaxDatagramLength (I)V
+	public final fun setReceiveQueue (I)V
+	public final fun setSendQueue (I)V
+}
+
+public final class io/kuicksilver/http3/CapsuleProtocol {
+	public static final field DATAGRAM J
+	public static final field FIELD Ljava/lang/String;
+	public static final field INSTANCE Lio/kuicksilver/http3/CapsuleProtocol;
+	public final fun getEnabled ()Lkotlin/Pair;
+	public final fun isEnabled (Lio/kuicksilver/http3/Http3Headers;)Z
+}
+
+public abstract interface class io/kuicksilver/http3/CapsuleStream {
+	public abstract fun close (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public abstract fun getCapsules ()Lkotlinx/coroutines/flow/Flow;
+	public abstract fun getDatagrams ()Lkotlinx/coroutines/flow/Flow;
+	public abstract fun getStream ()Lio/kuicksilver/http3/Http3Stream;
+	public abstract fun send (Lio/kuicksilver/http3/Capsule;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public abstract fun sendDatagram ([BLkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public abstract fun trySendDatagram ([B)Lio/kuicksilver/quic/DatagramSendResult;
+}
+
+public final class io/kuicksilver/http3/CapsulesKt {
+	public static final fun capsuleConfig (Lkotlin/jvm/functions/Function1;)Lio/kuicksilver/http3/CapsuleConfig;
+}
+
 public final class io/kuicksilver/http3/Http3Connection : java/lang/AutoCloseable {
 	public static final field Companion Lio/kuicksilver/http3/Http3Connection$Companion;
 	public final fun acceptRequest (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
@@ -360,5 +421,12 @@ public abstract interface class io/kuicksilver/http3/Http3Stream {
 	public abstract fun setPriority (Lio/kuicksilver/quic/StreamPriority;)V
 	public abstract fun stopSending (J)V
 	public abstract fun trySendDatagram ([B)Lio/kuicksilver/quic/DatagramSendResult;
+	public fun useCapsuleProtocol (Lio/kuicksilver/http3/CapsuleConfig;)Lio/kuicksilver/http3/CapsuleStream;
+	public static synthetic fun useCapsuleProtocol$default (Lio/kuicksilver/http3/Http3Stream;Lio/kuicksilver/http3/CapsuleConfig;ILjava/lang/Object;)Lio/kuicksilver/http3/CapsuleStream;
+}
+
+public final class io/kuicksilver/http3/Http3Stream$DefaultImpls {
+	public static fun useCapsuleProtocol (Lio/kuicksilver/http3/Http3Stream;Lio/kuicksilver/http3/CapsuleConfig;)Lio/kuicksilver/http3/CapsuleStream;
+	public static synthetic fun useCapsuleProtocol$default (Lio/kuicksilver/http3/Http3Stream;Lio/kuicksilver/http3/CapsuleConfig;ILjava/lang/Object;)Lio/kuicksilver/http3/CapsuleStream;
 }
 

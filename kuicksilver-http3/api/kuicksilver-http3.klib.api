@@ -17,6 +17,20 @@ final enum class io.kuicksilver.http3/Http3Role : kotlin/Enum<io.kuicksilver.htt
     final fun values(): kotlin/Array<io.kuicksilver.http3/Http3Role> // io.kuicksilver.http3/Http3Role.values|values#static(){}[0]
 }
 
+abstract interface io.kuicksilver.http3/CapsuleStream { // io.kuicksilver.http3/CapsuleStream|null[0]
+    abstract val capsules // io.kuicksilver.http3/CapsuleStream.capsules|{}capsules[0]
+        abstract fun <get-capsules>(): kotlinx.coroutines.flow/Flow<io.kuicksilver.http3/Capsule> // io.kuicksilver.http3/CapsuleStream.capsules.<get-capsules>|<get-capsules>(){}[0]
+    abstract val datagrams // io.kuicksilver.http3/CapsuleStream.datagrams|{}datagrams[0]
+        abstract fun <get-datagrams>(): kotlinx.coroutines.flow/Flow<kotlin/ByteArray> // io.kuicksilver.http3/CapsuleStream.datagrams.<get-datagrams>|<get-datagrams>(){}[0]
+    abstract val stream // io.kuicksilver.http3/CapsuleStream.stream|{}stream[0]
+        abstract fun <get-stream>(): io.kuicksilver.http3/Http3Stream // io.kuicksilver.http3/CapsuleStream.stream.<get-stream>|<get-stream>(){}[0]
+
+    abstract fun trySendDatagram(kotlin/ByteArray): io.kuicksilver.quic/DatagramSendResult // io.kuicksilver.http3/CapsuleStream.trySendDatagram|trySendDatagram(kotlin.ByteArray){}[0]
+    abstract suspend fun close() // io.kuicksilver.http3/CapsuleStream.close|close(){}[0]
+    abstract suspend fun send(io.kuicksilver.http3/Capsule) // io.kuicksilver.http3/CapsuleStream.send|send(io.kuicksilver.http3.Capsule){}[0]
+    abstract suspend fun sendDatagram(kotlin/ByteArray) // io.kuicksilver.http3/CapsuleStream.sendDatagram|sendDatagram(kotlin.ByteArray){}[0]
+}
+
 abstract interface io.kuicksilver.http3/Http3Response { // io.kuicksilver.http3/Http3Response|null[0]
     abstract val body // io.kuicksilver.http3/Http3Response.body|{}body[0]
         abstract fun <get-body>(): io.ktor.utils.io/ByteReadChannel // io.kuicksilver.http3/Http3Response.body.<get-body>|<get-body>(){}[0]
@@ -92,6 +106,64 @@ abstract interface io.kuicksilver.http3/Http3Stream { // io.kuicksilver.http3/Ht
     abstract fun stopSending(kotlin/Long) // io.kuicksilver.http3/Http3Stream.stopSending|stopSending(kotlin.Long){}[0]
     abstract fun trySendDatagram(kotlin/ByteArray): io.kuicksilver.quic/DatagramSendResult // io.kuicksilver.http3/Http3Stream.trySendDatagram|trySendDatagram(kotlin.ByteArray){}[0]
     abstract suspend fun sendDatagram(kotlin/ByteArray) // io.kuicksilver.http3/Http3Stream.sendDatagram|sendDatagram(kotlin.ByteArray){}[0]
+    open fun useCapsuleProtocol(io.kuicksilver.http3/CapsuleConfig = ...): io.kuicksilver.http3/CapsuleStream // io.kuicksilver.http3/Http3Stream.useCapsuleProtocol|useCapsuleProtocol(io.kuicksilver.http3.CapsuleConfig){}[0]
+}
+
+final class io.kuicksilver.http3/Capsule { // io.kuicksilver.http3/Capsule|null[0]
+    constructor <init>(kotlin/Long, kotlin/ByteArray) // io.kuicksilver.http3/Capsule.<init>|<init>(kotlin.Long;kotlin.ByteArray){}[0]
+
+    final val type // io.kuicksilver.http3/Capsule.type|{}type[0]
+        final fun <get-type>(): kotlin/Long // io.kuicksilver.http3/Capsule.type.<get-type>|<get-type>(){}[0]
+    final val value // io.kuicksilver.http3/Capsule.value|{}value[0]
+        final fun <get-value>(): kotlin/ByteArray // io.kuicksilver.http3/Capsule.value.<get-value>|<get-value>(){}[0]
+
+    final fun equals(kotlin/Any?): kotlin/Boolean // io.kuicksilver.http3/Capsule.equals|equals(kotlin.Any?){}[0]
+    final fun hashCode(): kotlin/Int // io.kuicksilver.http3/Capsule.hashCode|hashCode(){}[0]
+    final fun toString(): kotlin/String // io.kuicksilver.http3/Capsule.toString|toString(){}[0]
+}
+
+final class io.kuicksilver.http3/CapsuleConfig { // io.kuicksilver.http3/CapsuleConfig|null[0]
+    constructor <init>(kotlin.collections/Set<kotlin/Long> = ..., kotlin/Int = ..., kotlin/Int = ..., kotlin/Boolean = ..., kotlin/Int = ..., kotlin/Int = ...) // io.kuicksilver.http3/CapsuleConfig.<init>|<init>(kotlin.collections.Set<kotlin.Long>;kotlin.Int;kotlin.Int;kotlin.Boolean;kotlin.Int;kotlin.Int){}[0]
+
+    final val datagramFallback // io.kuicksilver.http3/CapsuleConfig.datagramFallback|{}datagramFallback[0]
+        final fun <get-datagramFallback>(): kotlin/Boolean // io.kuicksilver.http3/CapsuleConfig.datagramFallback.<get-datagramFallback>|<get-datagramFallback>(){}[0]
+    final val knownTypes // io.kuicksilver.http3/CapsuleConfig.knownTypes|{}knownTypes[0]
+        final fun <get-knownTypes>(): kotlin.collections/Set<kotlin/Long> // io.kuicksilver.http3/CapsuleConfig.knownTypes.<get-knownTypes>|<get-knownTypes>(){}[0]
+    final val maxCapsuleLength // io.kuicksilver.http3/CapsuleConfig.maxCapsuleLength|{}maxCapsuleLength[0]
+        final fun <get-maxCapsuleLength>(): kotlin/Int // io.kuicksilver.http3/CapsuleConfig.maxCapsuleLength.<get-maxCapsuleLength>|<get-maxCapsuleLength>(){}[0]
+    final val maxDatagramLength // io.kuicksilver.http3/CapsuleConfig.maxDatagramLength|{}maxDatagramLength[0]
+        final fun <get-maxDatagramLength>(): kotlin/Int // io.kuicksilver.http3/CapsuleConfig.maxDatagramLength.<get-maxDatagramLength>|<get-maxDatagramLength>(){}[0]
+    final val receiveQueue // io.kuicksilver.http3/CapsuleConfig.receiveQueue|{}receiveQueue[0]
+        final fun <get-receiveQueue>(): kotlin/Int // io.kuicksilver.http3/CapsuleConfig.receiveQueue.<get-receiveQueue>|<get-receiveQueue>(){}[0]
+    final val sendQueue // io.kuicksilver.http3/CapsuleConfig.sendQueue|{}sendQueue[0]
+        final fun <get-sendQueue>(): kotlin/Int // io.kuicksilver.http3/CapsuleConfig.sendQueue.<get-sendQueue>|<get-sendQueue>(){}[0]
+
+    final fun toBuilder(): io.kuicksilver.http3/CapsuleConfig.Builder // io.kuicksilver.http3/CapsuleConfig.toBuilder|toBuilder(){}[0]
+
+    final class Builder { // io.kuicksilver.http3/CapsuleConfig.Builder|null[0]
+        constructor <init>() // io.kuicksilver.http3/CapsuleConfig.Builder.<init>|<init>(){}[0]
+
+        final var datagramFallback // io.kuicksilver.http3/CapsuleConfig.Builder.datagramFallback|{}datagramFallback[0]
+            final fun <get-datagramFallback>(): kotlin/Boolean // io.kuicksilver.http3/CapsuleConfig.Builder.datagramFallback.<get-datagramFallback>|<get-datagramFallback>(){}[0]
+            final fun <set-datagramFallback>(kotlin/Boolean) // io.kuicksilver.http3/CapsuleConfig.Builder.datagramFallback.<set-datagramFallback>|<set-datagramFallback>(kotlin.Boolean){}[0]
+        final var knownTypes // io.kuicksilver.http3/CapsuleConfig.Builder.knownTypes|{}knownTypes[0]
+            final fun <get-knownTypes>(): kotlin.collections/Set<kotlin/Long> // io.kuicksilver.http3/CapsuleConfig.Builder.knownTypes.<get-knownTypes>|<get-knownTypes>(){}[0]
+            final fun <set-knownTypes>(kotlin.collections/Set<kotlin/Long>) // io.kuicksilver.http3/CapsuleConfig.Builder.knownTypes.<set-knownTypes>|<set-knownTypes>(kotlin.collections.Set<kotlin.Long>){}[0]
+        final var maxCapsuleLength // io.kuicksilver.http3/CapsuleConfig.Builder.maxCapsuleLength|{}maxCapsuleLength[0]
+            final fun <get-maxCapsuleLength>(): kotlin/Int // io.kuicksilver.http3/CapsuleConfig.Builder.maxCapsuleLength.<get-maxCapsuleLength>|<get-maxCapsuleLength>(){}[0]
+            final fun <set-maxCapsuleLength>(kotlin/Int) // io.kuicksilver.http3/CapsuleConfig.Builder.maxCapsuleLength.<set-maxCapsuleLength>|<set-maxCapsuleLength>(kotlin.Int){}[0]
+        final var maxDatagramLength // io.kuicksilver.http3/CapsuleConfig.Builder.maxDatagramLength|{}maxDatagramLength[0]
+            final fun <get-maxDatagramLength>(): kotlin/Int // io.kuicksilver.http3/CapsuleConfig.Builder.maxDatagramLength.<get-maxDatagramLength>|<get-maxDatagramLength>(){}[0]
+            final fun <set-maxDatagramLength>(kotlin/Int) // io.kuicksilver.http3/CapsuleConfig.Builder.maxDatagramLength.<set-maxDatagramLength>|<set-maxDatagramLength>(kotlin.Int){}[0]
+        final var receiveQueue // io.kuicksilver.http3/CapsuleConfig.Builder.receiveQueue|{}receiveQueue[0]
+            final fun <get-receiveQueue>(): kotlin/Int // io.kuicksilver.http3/CapsuleConfig.Builder.receiveQueue.<get-receiveQueue>|<get-receiveQueue>(){}[0]
+            final fun <set-receiveQueue>(kotlin/Int) // io.kuicksilver.http3/CapsuleConfig.Builder.receiveQueue.<set-receiveQueue>|<set-receiveQueue>(kotlin.Int){}[0]
+        final var sendQueue // io.kuicksilver.http3/CapsuleConfig.Builder.sendQueue|{}sendQueue[0]
+            final fun <get-sendQueue>(): kotlin/Int // io.kuicksilver.http3/CapsuleConfig.Builder.sendQueue.<get-sendQueue>|<get-sendQueue>(){}[0]
+            final fun <set-sendQueue>(kotlin/Int) // io.kuicksilver.http3/CapsuleConfig.Builder.sendQueue.<set-sendQueue>|<set-sendQueue>(kotlin.Int){}[0]
+
+        final fun build(): io.kuicksilver.http3/CapsuleConfig // io.kuicksilver.http3/CapsuleConfig.Builder.build|build(){}[0]
+    }
 }
 
 final class io.kuicksilver.http3/Http3Connection : kotlin/AutoCloseable { // io.kuicksilver.http3/Http3Connection|null[0]
@@ -417,6 +489,18 @@ sealed class io.kuicksilver.http3/Http3Exception : kotlinx.coroutines/CopyableTh
     }
 }
 
+final object io.kuicksilver.http3/CapsuleProtocol { // io.kuicksilver.http3/CapsuleProtocol|null[0]
+    final const val DATAGRAM // io.kuicksilver.http3/CapsuleProtocol.DATAGRAM|{}DATAGRAM[0]
+        final fun <get-DATAGRAM>(): kotlin/Long // io.kuicksilver.http3/CapsuleProtocol.DATAGRAM.<get-DATAGRAM>|<get-DATAGRAM>(){}[0]
+    final const val FIELD // io.kuicksilver.http3/CapsuleProtocol.FIELD|{}FIELD[0]
+        final fun <get-FIELD>(): kotlin/String // io.kuicksilver.http3/CapsuleProtocol.FIELD.<get-FIELD>|<get-FIELD>(){}[0]
+
+    final val Enabled // io.kuicksilver.http3/CapsuleProtocol.Enabled|{}Enabled[0]
+        final fun <get-Enabled>(): kotlin/Pair<kotlin/String, kotlin/String> // io.kuicksilver.http3/CapsuleProtocol.Enabled.<get-Enabled>|<get-Enabled>(){}[0]
+
+    final fun isEnabled(io.kuicksilver.http3/Http3Headers): kotlin/Boolean // io.kuicksilver.http3/CapsuleProtocol.isEnabled|isEnabled(io.kuicksilver.http3.Http3Headers){}[0]
+}
+
 final object io.kuicksilver.http3/Http3ErrorCode { // io.kuicksilver.http3/Http3ErrorCode|null[0]
     final const val CLOSED_CRITICAL_STREAM // io.kuicksilver.http3/Http3ErrorCode.CLOSED_CRITICAL_STREAM|{}CLOSED_CRITICAL_STREAM[0]
         final fun <get-CLOSED_CRITICAL_STREAM>(): kotlin/Long // io.kuicksilver.http3/Http3ErrorCode.CLOSED_CRITICAL_STREAM.<get-CLOSED_CRITICAL_STREAM>|<get-CLOSED_CRITICAL_STREAM>(){}[0]
@@ -466,5 +550,6 @@ final object io.kuicksilver.http3/Http3ErrorCode { // io.kuicksilver.http3/Http3
     final fun normalize(kotlin/Long): kotlin/Long // io.kuicksilver.http3/Http3ErrorCode.normalize|normalize(kotlin.Long){}[0]
 }
 
+final inline fun io.kuicksilver.http3/capsuleConfig(kotlin/Function1<io.kuicksilver.http3/CapsuleConfig.Builder, kotlin/Unit>): io.kuicksilver.http3/CapsuleConfig // io.kuicksilver.http3/capsuleConfig|capsuleConfig(kotlin.Function1<io.kuicksilver.http3.CapsuleConfig.Builder,kotlin.Unit>){}[0]
 final inline fun io.kuicksilver.http3/http3Request(kotlin/String, kotlin/String?, kotlin/String?, kotlin/Function1<io.kuicksilver.http3/Http3Request.Builder, kotlin/Unit> = ...): io.kuicksilver.http3/Http3Request // io.kuicksilver.http3/http3Request|http3Request(kotlin.String;kotlin.String?;kotlin.String?;kotlin.Function1<io.kuicksilver.http3.Http3Request.Builder,kotlin.Unit>){}[0]
 final inline fun io.kuicksilver.http3/http3Settings(kotlin/Function1<io.kuicksilver.http3/Http3Settings.Builder, kotlin/Unit>): io.kuicksilver.http3/Http3Settings // io.kuicksilver.http3/http3Settings|http3Settings(kotlin.Function1<io.kuicksilver.http3.Http3Settings.Builder,kotlin.Unit>){}[0]

@@ -205,9 +205,8 @@ of them); one that arrives after the field replaces it.
 
 A server that accepts Extended CONNECT (RFC 9220) sets `enableConnectProtocol = true`; a client calls `connect`, which
 waits for the server's SETTINGS and fails with `Http3Exception.Settings` if the server did not opt in. The result is an
-`Http3Stream`: a byte stream both ways (WebSocket frames for `:protocol = websocket`, the protocol's own framing otherwise:
-Kuicksilver does not implement the Capsule Protocol of RFC 9297 section 3, so capsules are bytes the application writes and parses)
-plus HTTP datagrams bound to the stream (RFC 9297). `Http3Stream.headers` holds the peer's fields: the CONNECT request's on
+`Http3Stream`: a byte stream both ways (WebSocket frames for `:protocol = websocket`, the protocol's own framing otherwise,
+or capsules, see [Capsules](#capsules-experimental)) plus HTTP datagrams bound to the stream (RFC 9297). `Http3Stream.headers` holds the peer's fields: the CONNECT request's on
 the server, the 2xx response's on the client (for example `sec-websocket-protocol`, RFC 9220 section 3). Each
 direction ends on its own: closing `output` sends FIN and leaves `input` readable until the peer's FIN (a TCP-style
 half-close, RFC 9114 section 4.4); the stream is released once both directions ended or the stream was reset. Datagrams
@@ -233,3 +232,45 @@ stream.datagrams.collect { println(it.size) }
 datagrams on. A peer that announces it without QUIC datagram support is a connection error `H3_SETTINGS_ERROR`.
 Datagrams for streams nobody registered are dropped silently; a datagram whose quarter stream ID cannot be parsed
 closes the connection with `H3_DATAGRAM_ERROR`. Each stream keeps the newest 32 datagrams nobody has collected.
+
+### Capsules (experimental)
+
+Protocols such as WebTransport and CONNECT-UDP frame the stream's data as capsules (RFC 9297 section 3): a type, a
+length and a value. `Http3Stream.useCapsuleProtocol(config)` turns a stream into a `CapsuleStream`; from then on the
+stream's `input`, `output` and `datagrams` belong to it. `capsules` delivers the capsule types listed in
+`CapsuleConfig.knownTypes` (64 KiB each at most by default) and skips every other type as its bytes arrive; `send`
+writes one capsule whole, never interleaved with another; `close()` writes what is queued and then sends FIN, while
+`capsules` keeps reading the peer's side.
+
+```kotlin
+// guide:http3:capsules (server)
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+val config = capsuleConfig { knownTypes = setOf(0x2843) }   // the capsule types the protocol defines
+val tunnel = request.acceptConnect().useCapsuleProtocol(config)
+tunnel.capsules.collect { tunnel.send(it) }                 // echo each capsule until the client's FIN
+tunnel.close()                                              // the queued capsules, then FIN
+
+// guide:http3:capsules (client)
+val capsules = client.connect(http3Request("CONNECT", "example.com", "/chat"), protocol = "echo").useCapsuleProtocol(config)
+capsules.send(Capsule(0x2843, "hello".encodeToByteArray()))
+capsules.close()
+val echoed = capsules.capsules.toList()                     // ends at the server's FIN
+```
+
+The stream is checked against RFC 9297 section 3.2 first: a peer message with `content-length`, `content-type` or
+`transfer-encoding`, or a 204, 205 or 206 response, is malformed, so the stream is reset with `H3_MESSAGE_ERROR` and
+`useCapsuleProtocol` throws `Http3Exception.MessageError`. The same happens later when the peer's FIN cuts a capsule in
+two or a known capsule is longer than `maxCapsuleLength`: `capsules` fails with `MessageError` instead of ending, so a cut
+stream is never mistaken for a clean end. The connection lives on in every case.
+
+Datagrams work as on a plain stream, plus DATAGRAM capsules (RFC 9297 section 3.5): those the peer sends arrive in
+`datagrams` together with QUIC datagrams, and a DATAGRAM capsule longer than `maxDatagramLength` is dropped unread. When
+HTTP/3 datagrams are unsupported on the connection (either side's `SETTINGS_H3_DATAGRAM` is 0), `trySendDatagram` and
+`sendDatagram` send a DATAGRAM capsule instead, unless `datagramFallback = false`; a datagram too large for a QUIC
+DATAGRAM frame is answered `TooLarge`, not sent as a capsule. `CapsuleProtocol.isEnabled(headers)` reads the
+`Capsule-Protocol` header field (section 3.4) and `CapsuleProtocol.Enabled` writes it; the stream does not require it.
+
+Reading pauses while `receiveQueue` capsules (16) wait for the collector, which holds the peer back through flow control,
+so collect `capsules` even when only datagrams matter, or list no `knownTypes`. Options:
+[configuration reference](configuration.md#capsuleconfig-experimental). The Capsule Protocol is only available on HTTP/3;
+HTTP/1.1 and HTTP/2 upgrades are not supported.

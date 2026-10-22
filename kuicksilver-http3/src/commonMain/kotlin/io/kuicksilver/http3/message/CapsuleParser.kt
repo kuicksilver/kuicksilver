@@ -40,12 +40,34 @@ internal class CapsuleParser(
     var skippedDatagrams: Long = 0
         private set
 
+    /** Parses all of `bytes[off, off + len)`, calling [out] for each complete capsule of a known type. */
     fun feed(
         bytes: ByteArray,
         off: Int,
         len: Int,
         out: (type: Long, value: ByteArray) -> Unit,
     ) {
+        parse(bytes, off, len, out, stopAfterOne = false)
+    }
+
+    /**
+     * Like [feed], but stops right after the first capsule it delivers to [out]; returns the bytes consumed. A reader that
+     * suspends to hand each capsule on holds at most one at a time this way, whatever number fit in its read buffer.
+     */
+    fun feedOne(
+        bytes: ByteArray,
+        off: Int,
+        len: Int,
+        out: (type: Long, value: ByteArray) -> Unit,
+    ): Int = parse(bytes, off, len, out, stopAfterOne = true)
+
+    private fun parse(
+        bytes: ByteArray,
+        off: Int,
+        len: Int,
+        out: (type: Long, value: ByteArray) -> Unit,
+        stopAfterOne: Boolean,
+    ): Int {
         var p = off
         val end = off + len
         while (p < end) {
@@ -82,7 +104,7 @@ internal class CapsuleParser(
                     filled = 0
                     maxBuffered = maxOf(maxBuffered, l.toInt())
                 }
-                if (remaining == 0L) finish(out)
+                if (remaining == 0L && finish(out) && stopAfterOne) return p - off
                 continue
             }
             val n = minOf((end - p).toLong(), remaining).toInt()
@@ -92,8 +114,9 @@ internal class CapsuleParser(
             }
             p += n
             remaining -= n
-            if (remaining == 0L) finish(out)
+            if (remaining == 0L && finish(out) && stopAfterOne) return p - off
         }
+        return p - off
     }
 
     /** The stream's FIN: throws H3_MESSAGE_ERROR when it cut a capsule (RFC 9297 section 3.3); a boundary is a clean end. */
@@ -101,12 +124,15 @@ internal class CapsuleParser(
         if (headerLen != 0 || type >= 0) throw H3ProtocolError(Http3ErrorCode.MESSAGE_ERROR, "truncated capsule")
     }
 
-    private fun finish(out: (Long, ByteArray) -> Unit) {
+    /** Ends the current capsule; true when it was delivered to [out]. */
+    private fun finish(out: (Long, ByteArray) -> Unit): Boolean {
         val t = type
         val b = payload
         type = -1
         payload = null
-        if (!skipping && b != null) out(t, b)
+        if (skipping || b == null) return false
+        out(t, b)
+        return true
     }
 
     companion object {

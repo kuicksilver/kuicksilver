@@ -97,7 +97,17 @@ private suspend fun H3Session.connectOnDispatcher(
             resp.pump.join()
             datagrams.unregister(resp.streamId)
         }
-        Http3StreamImpl(this@connectOnDispatcher, resp.stream, resp.body, writer, resp.datagramChannel!!, resp.headers) {
+        Http3StreamImpl(
+            this@connectOnDispatcher,
+            resp.stream,
+            resp.body,
+            writer,
+            resp.datagramChannel!!,
+            resp.headers,
+            status = resp.status,
+            localHeaders = r.headers,
+            isClient = true,
+        ) {
             scope.launch { datagrams.unregister(resp.streamId) }
         }.also(made)
     }

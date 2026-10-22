@@ -4,6 +4,7 @@ package io.kuicksilver.http3
 
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.ByteWriteChannel
+import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.quic.DatagramSendResult
 import io.kuicksilver.quic.StreamPriority
 import kotlinx.coroutines.flow.Flow
@@ -53,4 +54,23 @@ public interface Http3Stream {
 
     /** Asks the peer to stop sending with [code] (STOP_SENDING). */
     public fun stopSending(code: Long)
+
+    /**
+     * Speaks the Capsule Protocol (RFC 9297 section 3) on this stream from now on: [input], [output] and [datagrams] then
+     * belong to the returned [CapsuleStream] and must not be used directly. Call it at most once per stream, before
+     * reading [input] or writing [output].
+     *
+     * Checks RFC 9297 section 3.2 first. When the peer's message breaks it (a `content-length`, `content-type` or
+     * `transfer-encoding` field, or a 204, 205 or 206 response), the stream is reset and stopped with H3_MESSAGE_ERROR and
+     * [Http3Exception.MessageError] is thrown; when our own message does, IllegalStateException is thrown and the stream
+     * is left as it was.
+     *
+     * Implementations outside this library (test fakes) need not override it: the default throws
+     * UnsupportedOperationException.
+     *
+     * @throws IllegalStateException when called a second time, or when our own message breaks section 3.2.
+     */
+    @ExperimentalKuicksilverApi
+    public fun useCapsuleProtocol(config: CapsuleConfig = CapsuleConfig()): CapsuleStream =
+        throw UnsupportedOperationException("this Http3Stream does not implement the Capsule Protocol")
 }

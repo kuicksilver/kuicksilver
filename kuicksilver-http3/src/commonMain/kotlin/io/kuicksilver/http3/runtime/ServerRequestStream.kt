@@ -255,7 +255,17 @@ internal class ServerRequestImpl(
     override suspend fun acceptConnect(headers: Http3Headers): Http3Stream {
         check(method == "CONNECT") { "acceptConnect() needs a CONNECT request" }
         val writer = respond(200, headers)
-        return Http3StreamImpl(session, st, body, writer, datagramChannel!!, this.headers) { session.scope.launch { done() } }
+        return Http3StreamImpl(
+            session,
+            st,
+            body,
+            writer,
+            datagramChannel!!,
+            this.headers,
+            status = 200,
+            localHeaders = headers,
+            isClient = false,
+        ) { session.scope.launch { done() } }
     }
 
     /** A PRIORITY_UPDATE from the client; a priority the server chose in [respond] stays. */

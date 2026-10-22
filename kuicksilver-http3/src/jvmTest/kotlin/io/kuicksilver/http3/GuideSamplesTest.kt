@@ -1,15 +1,19 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
+@file:OptIn(ExperimentalKuicksilverApi::class)
+
 package io.kuicksilver.http3
 
 import io.ktor.network.sockets.InetSocketAddress
 import io.ktor.utils.io.copyTo
 import io.ktor.utils.io.writeStringUtf8
+import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.QuicEndpointConfig
 import io.kuicksilver.quic.QuicServerConfig
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -32,7 +36,16 @@ class GuideSamplesTest {
             generateSequence(File("").absoluteFile) {
                 it.parentFile
             }.map { File(it, "docs/guide/http3.md") }.first { it.exists() }.readText()
-        for (m in listOf("qpack", "endpoints", "client-request", "serve", "connect (server)", "connect (client)")) {
+        for (m in listOf(
+            "qpack",
+            "endpoints",
+            "client-request",
+            "serve",
+            "connect (server)",
+            "connect (client)",
+            "capsules (server)",
+            "capsules (client)",
+        )) {
             assertTrue("guide:http3:$m" in guide, "marker $m")
         }
     }
@@ -122,6 +135,36 @@ class GuideSamplesTest {
                 stream.output.flushAndClose()
                 serving.join() // the server's echo ends before the connections close under it
                 collector.cancel()
+                client.close()
+                serverConnection.close()
+                q.close()
+            }
+        }
+
+    @Test fun capsulesSample() =
+        runBlocking {
+            withTimeout(30.seconds) {
+                val q = QuicPair.open()
+                val (quicConnection, serverQuic) = q.connect()
+                val serverConnection = Http3Connection.server(serverQuic, http3Settings { enableConnectProtocol = true })
+                val client = Http3Connection.client(quicConnection)
+                val serving =
+                    launch {
+                        val request = serverConnection.acceptRequest()
+                        // guide:http3:capsules (server)
+                        val config = capsuleConfig { knownTypes = setOf(0x2843) } // the capsule types the protocol defines
+                        val tunnel = request.acceptConnect().useCapsuleProtocol(config)
+                        tunnel.capsules.collect { tunnel.send(it) } // echo each capsule until the client's FIN
+                        tunnel.close() // the queued capsules, then FIN
+                    }
+                // guide:http3:capsules (client)
+                val config = capsuleConfig { knownTypes = setOf(0x2843) }
+                val capsules = client.connect(http3Request("CONNECT", "example.com", "/chat"), protocol = "echo").useCapsuleProtocol(config)
+                capsules.send(Capsule(0x2843, "hello".encodeToByteArray()))
+                capsules.close()
+                val echoed = capsules.capsules.toList()
+                assertEquals(listOf("hello"), echoed.map { it.value.decodeToString() })
+                serving.join()
                 client.close()
                 serverConnection.close()
                 q.close()
