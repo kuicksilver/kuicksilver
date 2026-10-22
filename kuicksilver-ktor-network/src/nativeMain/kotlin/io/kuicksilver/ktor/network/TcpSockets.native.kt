@@ -35,6 +35,7 @@ import io.ktor.utils.io.reader
 import io.ktor.utils.io.writeFully
 import io.ktor.utils.io.writer
 import io.kuicksilver.annotations.InternalKuicksilverApi
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableJob
 import kotlinx.coroutines.CoroutineName
 import kotlinx.coroutines.CoroutineScope
@@ -181,6 +182,9 @@ internal class NativeTcpSocket(
 
     private val closeFlag = AtomicBoolean(false)
 
+    /** Set once the connection ends with a reset ([reset]): no shutdown may then send a FIN ahead of it. */
+    private val resetFlag = AtomicBoolean(false)
+
     /** Bytes the kernel has taken from the write loop ([bytesSent]): the progress of a drain. */
     val bytesWritten = AtomicLong(0L)
     private val actualCloseFlag = AtomicBoolean(false)
@@ -197,14 +201,21 @@ internal class NativeTcpSocket(
         }
     }
 
+    /** [abort]: the connection ends with a reset ([reset]), dropping what is unsent. */
+    fun abort() = reset(cancelWriteLoop = true)
+
     /**
-     * [abort]: closed, then both directions shut down under the loops, which then fail or see the end and finish. There
-     * is no `SO_LINGER` 0 here: the descriptor is released, but the kernel keeps what was unsent in the orphaned socket's
-     * buffer until TCP gives up on the peer.
+     * Ends the connection with a reset: `SO_LINGER` 0, then closed with the loops cancelled and no shutdown, so the
+     * descriptor's close sends a reset instead of a FIN and the kernel drops what was unsent. The peer sees an error, not
+     * the end of a stream that was cut. A failed write loop ends by itself with its failure ([cancelWriteLoop] false): a
+     * cancellation would hide that failure from the application's channel.
      */
-    fun abort() {
+    private fun reset(cancelWriteLoop: Boolean) {
+        if (!resetFlag.compareAndSet(expectedValue = false, newValue = true)) return
+        runCatching { tcpLingerZero(descriptor) }
         close()
-        tcpShutdown(descriptor, TCP_SHUT_RDWR)
+        if (cancelWriteLoop) readerJob.load()?.cancel()
+        writerJob.load()?.cancel()
     }
 
     override fun attachForReading(channel: ByteChannel): WriterJob = attachFor("reading", channel, writerJob) { readLoop(it) }
@@ -265,35 +276,43 @@ internal class NativeTcpSocket(
 
     private fun writeLoop(user: ByteChannel): ReaderJob =
         reader(Dispatchers.IO, user) {
-            val buffer = ByteArray(IO_BUFFER)
-            var socketClosed = false
-            while (!socketClosed) {
-                val n = channel.readAvailable(buffer, 0, buffer.size)
-                if (n < 0) break
-                var offset = 0
-                while (offset < n) {
-                    val sent = tcpSend(descriptor, buffer, offset, n - offset)
-                    if (sent < 0) {
-                        selector.select(this@NativeTcpSocket, SelectInterest.WRITE)
-                    } else if (sent == 0) {
-                        socketClosed = true
-                        break
-                    } else {
-                        offset += sent
-                        bytesWritten.addAndFetch(sent.toLong())
+            try {
+                val buffer = ByteArray(IO_BUFFER)
+                var socketClosed = false
+                while (!socketClosed) {
+                    val n = channel.readAvailable(buffer, 0, buffer.size)
+                    if (n < 0) break
+                    var offset = 0
+                    while (offset < n) {
+                        val sent = tcpSend(descriptor, buffer, offset, n - offset)
+                        if (sent < 0) {
+                            selector.select(this@NativeTcpSocket, SelectInterest.WRITE)
+                        } else if (sent == 0) {
+                            socketClosed = true
+                            break
+                        } else {
+                            offset += sent
+                            bytesWritten.addAndFetch(sent.toLong())
+                        }
                     }
                 }
+                if (!channel.isClosedForRead) {
+                    channel.cancel(IOException("Failed writing to closed socket. Some bytes remaining: ${channel.availableForRead}"))
+                } else {
+                    channel.closedCause?.let { throw it }
+                }
+            } catch (e: Throwable) {
+                // a send error, or the application's channel failed (a handler that threw mid-response): the stream is cut,
+                // and a FIN would end it as if complete (a peer reading a close-delimited body to the end would take the cut
+                // one for the whole), so the connection ends with a reset
+                if (e !is CancellationException) reset(cancelWriteLoop = false)
+                throw e
             }
-            if (!channel.isClosedForRead) {
-                channel.cancel(IOException("Failed writing to closed socket. Some bytes remaining: ${channel.availableForRead}"))
-            } else {
-                channel.closedCause?.let { throw it }
-            }
-        }.apply { invokeOnCompletion { tcpShutdown(descriptor, TCP_SHUT_WR) } }
+        }.apply { invokeOnCompletion { if (!resetFlag.load()) tcpShutdown(descriptor, TCP_SHUT_WR) } }
 
     private fun actualClose(): Throwable? =
         try {
-            tcpShutdown(descriptor, TCP_SHUT_RDWR)
+            if (!resetFlag.load()) tcpShutdown(descriptor, TCP_SHUT_RDWR)
             // the CLOSE select goes in before notifyClosed, which closes the descriptor; a closed selector closes it at once
             launch(start = CoroutineStart.UNDISPATCHED) {
                 try {

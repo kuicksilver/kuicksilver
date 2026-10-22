@@ -11,14 +11,17 @@ import kotlinx.cinterop.CPointerVar
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.IntVar
 import kotlinx.cinterop.UIntVar
+import kotlinx.cinterop.UShortVar
 import kotlinx.cinterop.addressOf
 import kotlinx.cinterop.alloc
+import kotlinx.cinterop.allocArray
 import kotlinx.cinterop.convert
 import kotlinx.cinterop.memScoped
 import kotlinx.cinterop.pointed
 import kotlinx.cinterop.ptr
 import kotlinx.cinterop.readBytes
 import kotlinx.cinterop.reinterpret
+import kotlinx.cinterop.set
 import kotlinx.cinterop.sizeOf
 import kotlinx.cinterop.toCPointer
 import kotlinx.cinterop.usePinned
@@ -34,6 +37,7 @@ import platform.posix.SOCK_STREAM
 import platform.posix.SOL_SOCKET
 import platform.posix.SO_ERROR
 import platform.posix.SO_EXCLUSIVEADDRUSE
+import platform.posix.SO_LINGER
 import platform.posix.WSADATA
 import platform.posix.WSAECONNRESET
 import platform.posix.WSAEINPROGRESS
@@ -267,6 +271,18 @@ internal actual fun tcpShutdown(
     how: Int,
 ) {
     shutdown(fd.convert(), how)
+}
+
+internal actual fun tcpLingerZero(fd: Int) {
+    memScoped {
+        // struct linger of Winsock: u_short l_onoff, u_short l_linger
+        val l = allocArray<UShortVar>(2)
+        l[0] = 1u
+        l[1] = 0u
+        if (setsockopt(fd.convert(), SOL_SOCKET, SO_LINGER, l.reinterpret(), 2 * sizeOf<UShortVar>().toInt()) != 0) {
+            throw PosixException.forErrno(WSAGetLastError(), "setsockopt(SO_LINGER)")
+        }
+    }
 }
 
 internal actual fun tcpClose(fd: Int) {

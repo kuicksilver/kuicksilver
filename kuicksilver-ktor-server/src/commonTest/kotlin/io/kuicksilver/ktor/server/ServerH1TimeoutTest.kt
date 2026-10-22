@@ -1,6 +1,6 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
-@file:OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+@file:OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class, io.kuicksilver.annotations.InternalKuicksilverApi::class)
 
 package io.kuicksilver.ktor.server
 
@@ -8,7 +8,6 @@ import io.ktor.http.HttpProtocolVersion
 import io.ktor.network.selector.SelectorManager
 import io.ktor.network.sockets.InetSocketAddress
 import io.ktor.network.sockets.Socket
-import io.ktor.network.sockets.aSocket
 import io.ktor.network.sockets.openReadChannel
 import io.ktor.network.sockets.openWriteChannel
 import io.ktor.server.application.Application
@@ -23,13 +22,14 @@ import io.ktor.server.routing.routing
 import io.ktor.utils.io.readAvailable
 import io.ktor.utils.io.writeFully
 import io.ktor.utils.io.writeStringUtf8
+import io.kuicksilver.ktor.network.connectTcp
 import io.kuicksilver.ktor.network.tls
 import io.kuicksilver.native.KslLoader
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.withTimeout
-import kotlinx.io.IOException
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -87,8 +87,9 @@ class ServerH1TimeoutTest {
     /**
      * A client that asks for a large response and never reads it (send-side slowloris) is disconnected about the idle
      * timeout after the socket stopped taking data, on a plain and on a TLS connector: the engine reports the connection
-     * closed, and the client, once it reads, reaches the end of the stream. Before, the response writer and the socket's
-     * close waited for the client for ever.
+     * closed, and the client, once it reads, finds the connection reset. Before, the response writer and the socket's
+     * close waited for the client for ever. The client is the engines' own socket ([connectTcp]), which turns a write to a
+     * reset connection into an error: ktor-network's Kotlin/Native socket lets it raise SIGPIPE, which ends the process.
      */
     @Test fun negative_clientThatNeverReadsIsDisconnected() =
         serverTest {
@@ -139,19 +140,21 @@ class ServerH1TimeoutTest {
                     }
                 val selector = SelectorManager(Dispatchers.Default)
                 try {
-                    val tcp = aSocket(selector).tcp().connect("127.0.0.1", port)
+                    val tcp = connectTcp(selector, InetSocketAddress("127.0.0.1", port))
                     val socket: Socket = if (tls) tcp.tls(ServerFixtures.clientTls()) else tcp
                     val w = socket.openWriteChannel(autoFlush = true)
                     val r = socket.openReadChannel()
                     w.writeStringUtf8("GET /large HTTP/1.1\r\nHost: s\r\n\r\n")
                     w.flush()
                     withTimeout(20.seconds) { closed.await() }
-                    // what the kernel had taken is still readable; then the stream ends (or is reset), it does not hang
+                    // what the kernel had taken may still be readable; then the connection is reset (or ends), it does not hang
                     withTimeout(20.seconds) {
                         val b = ByteArray(1 shl 16)
                         try {
                             while (r.readAvailable(b, 0, b.size) >= 0) Unit
-                        } catch (_: IOException) {
+                        } catch (e: Exception) {
+                            // the reset: an IOException on the JVM, a PosixException on Kotlin/Native
+                            if (e is CancellationException) throw e
                         }
                     }
                     socket.close()
@@ -192,7 +195,9 @@ class ServerH1TimeoutTest {
                 val sockets = ArrayList<Socket>()
                 try {
                     repeat(clients) {
-                        val tcp = aSocket(selector).tcp().connect("127.0.0.1", port)
+                        // the engines' own socket: the aborts reset these connections, and a write to one (the TLS
+                        // close_notify) must fail, not raise SIGPIPE as ktor-network's Kotlin/Native socket lets it
+                        val tcp = connectTcp(selector, InetSocketAddress("127.0.0.1", port))
                         val socket: Socket = if (tls) tcp.tls(ServerFixtures.clientTls()) else tcp
                         sockets += socket
                         val w = socket.openWriteChannel(autoFlush = true)
