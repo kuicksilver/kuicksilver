@@ -68,7 +68,8 @@ internal fun ConnectionCore.acceptPacketTooBig(
     val ours =
         if (first and 0x80 == 0) {
             val d = dcidFor(p) ?: return false
-            len >= 1 + d.length && d.contentEquals(quote, 1, d.length)
+            // at least one byte past the ID: with a zero-length peer ID the first byte alone would do, which any datagram matches
+            len >= 1 + d.length + 1 && d.contentEquals(quote, 1, d.length)
         } else {
             // version(4) | dcid len | dcid | scid len | scid: the source is our ID, the destination the peer's
             if (len < 6) return false
@@ -128,7 +129,7 @@ internal fun ConnectionCore.checkPmtuBlackHoles() {
         val p = paths.all[i]
         val m =
             p.pmtud ?: continue
-        if (m.takeBlackHole(now)) setMtu(p, 1200)
+        if (m.takeBlackHole(now)) setMtu(p, m.current) // 1200, or the size of a validated Packet Too Big under confirmation
     }
 }
 

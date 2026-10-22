@@ -78,11 +78,11 @@ GNUPGHOME="$tmp/gpg-other" git -C "$tmp/git" -c gpg.format=openpgp -c gpg.progra
 
 # the rebuilt libraries, and the published archives that carry the same bytes
 rb="$tmp/rebuilt"; mkdir -p "$rb/jni/osx-aarch_64" "$rb/android/arm64-v8a" "$rb/klib/macos_arm64"
-printf 'dylib for osx-aarch_64\n' > "$rb/jni/osx-aarch_64/libksl_6_osx_aarch_64.dylib"
+printf 'dylib for osx-aarch_64\n' > "$rb/jni/osx-aarch_64/libksl_7_osx_aarch_64.dylib"
 printf 'so for arm64-v8a\n' > "$rb/android/arm64-v8a/libksl.so"
 for a in libksl.a libssl.a libcrypto.a; do printf 'archive %s\n' "$a" > "$rb/klib/macos_arm64/$a"; done
 x="$tmp/x"; mkdir -p "$x/META-INF/native" "$x/jni/arm64-v8a" "$x/default/targets/macos_arm64/included"
-cp "$rb/jni/osx-aarch_64/libksl_6_osx_aarch_64.dylib" "$x/META-INF/native/"
+cp "$rb/jni/osx-aarch_64/libksl_7_osx_aarch_64.dylib" "$x/META-INF/native/"
 cp "$rb/android/arm64-v8a/libksl.so" "$x/jni/arm64-v8a/"
 cp "$rb/klib/macos_arm64"/*.a "$x/default/targets/macos_arm64/included/"
 printf '{"cyclonedx":"stand-in"}\n' > "$x/bom.cdx.json"
@@ -157,16 +157,16 @@ t "good release"                       0 ':' \
   '+^OK +signature +io/kuicksilver/kuicksilver-native-jvm/9.9.9/kuicksilver-native-jvm-9.9.9.jar' \
   '+^OK +signature +github/kuicksilver-9.9.9.intoto.json' '+^OK +provenance +io/kuicksilver/kuicksilver-native-android/9.9.9/' \
   '+^OK +provenance +source commit [0-9a-f]{12} +\(the commit of tag v9.9.9\)' \
-  '+^OK +rebuild +jni/osx-aarch_64/libksl_6_osx_aarch_64.dylib' '+^OK +rebuild +android/arm64-v8a/libksl.so' \
+  '+^OK +rebuild +jni/osx-aarch_64/libksl_7_osx_aarch_64.dylib' '+^OK +rebuild +android/arm64-v8a/libksl.so' \
   '+^OK +rebuild +klib/macos_arm64/libcrypto.a' '+^SKIPPED +rebuild +jni/linux-x86_64' \
   '-^(DIFF|FAIL)' '+0 DIFF, [0-9]+ SKIPPED, 0 FAIL$'
 t "tampered byte in the published jar" 1 "flip $jar" \
   '+^FAIL +signature +.*kuicksilver-native-jvm-9.9.9.jar +\(not a good signature' \
   '+^DIFF +provenance +.*kuicksilver-native-jvm-9.9.9.jar' '+^OK +rebuild +android/arm64-v8a'
 # a published library that is not what the sources build, in a jar signed with the right key (a stolen key, a dirty build)
-t "published library differs, signed"  1 "mkdir -p y/META-INF/native; printf 'other dylib\\\\n' > y/META-INF/native/libksl_6_osx_aarch_64.dylib
+t "published library differs, signed"  1 "mkdir -p y/META-INF/native; printf 'other dylib\\\\n' > y/META-INF/native/libksl_7_osx_aarch_64.dylib
     rm $jar; (cd y && zip -qr ../$jar META-INF); resign $jar" \
-  '+^OK +signature +.*kuicksilver-native-jvm-9.9.9.jar' '+^DIFF +rebuild +jni/osx-aarch_64/libksl_6_osx_aarch_64.dylib' \
+  '+^OK +signature +.*kuicksilver-native-jvm-9.9.9.jar' '+^DIFF +rebuild +jni/osx-aarch_64/libksl_7_osx_aarch_64.dylib' \
   '+^DIFF +provenance +.*kuicksilver-native-jvm-9.9.9.jar'
 t "rebuilt library differs by a byte"  1 'flip rebuilt/android/arm64-v8a/libksl.so' \
   '+^DIFF +rebuild +android/arm64-v8a/libksl.so +\(rebuilt [0-9a-f]{16}, published [0-9a-f]{16}' '+^OK +signature' '-^FAIL'

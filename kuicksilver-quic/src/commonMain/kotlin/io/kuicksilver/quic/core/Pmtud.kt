@@ -21,7 +21,8 @@ import kotlin.time.Duration.Companion.seconds
  * ICMP Packet Too Big and a local EMSGSIZE are hints, never facts (RFC 8899 section 4.6, RFC 9000 section 14.2.1; threat-model
  * 3.16): the caller validates the message first ([onPtb]). A size reported above [current] only ends the probes above it at once;
  * one below [current] starts a confirmation (probes of [current]): an acknowledged one forgets the hint, [maxProbes] lost ones lower
- * [current] to the reported size (never below the base, no pause). Nothing else of this class trusts ICMP.
+ * [current] to the reported size (never below the base, no pause), and a black hole detected meanwhile falls to that size instead of
+ * the base, also without the pause. Nothing else of this class trusts ICMP.
  */
 internal class Pmtud(
     private val base: Int = 1200,
@@ -80,6 +81,8 @@ internal class Pmtud(
         now: TimeMark,
     ) {
         if (payload < base) return
+        // payload == current: the size in use passes by the message's own account, so it only caps the search; a probe in flight that
+        // is not larger than payload is unaffected (the message concerned another, larger datagram)
         if (payload >= current) {
             if (payload < high) high = payload
             if (probeInFlight && !confirming && probeSize > payload) {
@@ -95,7 +98,9 @@ internal class Pmtud(
 
     /**
      * The kernel refused a datagram of [size] bytes as larger than the MTU it knows (EMSGSIZE): when it was the probe in flight, that
-     * size is settled at once, as if lost [maxProbes] times. Local, so not spoofable; still only about probes, never [current].
+     * size is settled at once, as if lost [maxProbes] times. Not proof: on Linux a forged Packet Too Big sets the socket error the next
+     * send meets, so ksl reports EMSGSIZE only when the retried send fails the same way, and a kernel may have cached a forged path
+     * MTU. Hence only about the probe in flight, never [current].
      */
     fun onEmsgsize(
         size: Int,
@@ -288,6 +293,33 @@ internal class Pmtud(
         now: TimeMark,
         disprovedAfterPn: Long,
     ) {
+        // a validated Packet Too Big under confirmation tells where the path stands: fall to its size, not the base, and without the
+        // pause; a black hole there too falls to the base next time (the hint is used once)
+        val hinted = if (confirmPtb >= base) base + (confirmPtb - base) / step * step else 0
+        if (hinted > base && hinted < current) {
+            if (undoCurrent == 0 || current > undoCurrent) {
+                undoCurrent = current
+                undoLow = low
+                undoHigh = high
+                undoSearchDone = searchDone
+                undoResearchAt = researchAt
+                undoAfterPn = disprovedAfterPn
+            }
+            bigLost = 0
+            firstBigLostPn = -1L
+            confirmPtb = 0
+            confirmLosses = 0
+            confirming = false
+            current = hinted
+            low = hinted
+            high = minOf(upperBound, maxOf(hinted, undoCurrent - 1))
+            searchDone = false
+            probeInFlight = false
+            probeLosses = 0
+            finalProbe = false
+            researchAt = TimeMark.NEVER
+            return
+        }
         if (current > base) {
             undoCurrent = current
             undoLow = low

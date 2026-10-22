@@ -28,6 +28,15 @@ step() { # name command...
   local log="build/ci/$n.log"; mkdir -p build/ci
   if "$@" > "$log" 2>&1; then echo "ok"; results="${results}step.$n=ok $name"$'\n'; else echo "FAIL (see $log)"; failed=$((failed+1)); results="${results}step.$n=FAIL $name"$'\n'; fi
 }
+docker_ctests() { # <platform> <image> <target>: the ksl C tests in a Linux container. Their ICMP error-queue tests (udp_recverr_*) need
+  # unshare(CLONE_NEWUSER | CLONE_NEWNET), which Docker's default seccomp profile refuses, so this container alone runs unconfined;
+  # a run that still skips them (no unprivileged user namespaces) leaves no marker, and the step after both fails when neither ran
+  local out rc
+  out=$(KSL_DOCKER_OPTS="--security-opt seccomp=unconfined" bash tools/ci/docker-run.sh "$1" "$2" "CC=/opt/rh/devtoolset-10/root/usr/bin/gcc SAN= bash tools/c-test.sh $3" 2>&1); rc=$?
+  printf '%s\n' "$out"
+  if grep -q 'udp_recverr_ptb_parsed: OK' <<< "$out"; then mkdir -p build/ci; touch "build/ci/recverr-ran-$3"; fi
+  return "$rc"
+}
 win_jvm() { # CI's windows-jvm on the Windows 11 VM; win-jvm-test's summary does not set its exit code, so it is read here
   local tool="${KSL_WIN_JVM_TEST:-$HOME/.kuicksilver-tools/win-jvm-test}" log rc summary
   [ -x "$tool" ] || { echo "no $tool (the Windows VM runner)"; return 2; }
@@ -102,8 +111,10 @@ step "native: glibc floors"                     bash -c 'bash tools/check/glibc-
 step "native: prefix whitelist (linux/mingw)"   bash -c 'for t in linux-x64-kn linux-arm64-kn mingw-x64; do bash tools/prefix/check-no-unprefixed.sh build/openssl-prefixed/$t/lib || exit 1; done'
 step "repro: double build (macos-arm64)"        bash tools/check/double-build.sh macos-arm64
 if [ "$skip_docker" = 0 ]; then
-step "docker: c-tests linux-x64"                bash tools/ci/docker-run.sh linux/amd64 kuicksilver-openssl-linux-x64 "CC=/opt/rh/devtoolset-10/root/usr/bin/gcc SAN= bash tools/c-test.sh linux-x64"
-step "docker: c-tests linux-arm64"              bash tools/ci/docker-run.sh linux/arm64 kuicksilver-openssl-linux-arm64 "CC=/opt/rh/devtoolset-10/root/usr/bin/gcc SAN= bash tools/c-test.sh linux-arm64"
+rm -f build/ci/recverr-ran-*
+step "docker: c-tests linux-x64"                docker_ctests linux/amd64 kuicksilver-openssl-linux-x64 linux-x64
+step "docker: c-tests linux-arm64"              docker_ctests linux/arm64 kuicksilver-openssl-linux-arm64 linux-arm64
+step "docker: Linux ICMP error-queue tests ran" bash -c 'ls build/ci/recverr-ran-* >/dev/null 2>&1 || { echo "udp_recverr_ptb_parsed skipped on every Linux runner"; exit 1; }' 
 step "docker: test.kexe linux-x64 (all modules)"  bash tools/ci/run-kexe.sh linux/amd64 kuicksilver-openssl-linux-x64 linuxX64 $KSL_LINK_MODULES
 step "docker: test.kexe linux-arm64 (all modules)" bash tools/ci/run-kexe.sh linux/arm64 "$KSL_UBUNTU_IMAGE" linuxArm64 $KSL_LINK_MODULES
 step "docker: jvm linux-x64 (.so + tests)"      bash tools/ci/docker-jvm.sh linux-x86_64

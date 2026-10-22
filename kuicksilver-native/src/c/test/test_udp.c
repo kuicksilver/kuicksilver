@@ -84,6 +84,22 @@ static int lo_set(int up, int mtu) {
     if (ok && mtu) { r.ifr_mtu = mtu; if (ioctl(s, SIOCSIFMTU, &r) != 0) ok = 0; }
     close(s); return ok ? 0 : -1;
 }
+/* Injects, through a raw socket, an ICMP "fragmentation needed" (next-hop MTU 1300) quoting the IP and UDP header of a datagram
+   [from] -> 127.0.0.1:4433 and 32 bytes of its payload (0x40..0x5f). 0 when sent */
+static int inject_ptb(const uint8_t from[KSL_UDP_ADDR_LEN]) {
+    int raw = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP); if (raw < 0) return -1;
+    uint8_t pkt[8 + 20 + 8 + 32]; memset(pkt, 0, sizeof pkt);
+    pkt[0] = 3; pkt[1] = 4; pkt[6] = 1300 >> 8; pkt[7] = 1300 & 0xff;
+    uint8_t *ip = pkt + 8; ip[0] = 0x45; uint16_t tot = 20 + 8 + 1400; ip[2] = (uint8_t)(tot >> 8); ip[3] = (uint8_t)tot;
+    ip[6] = 0x40; ip[8] = 64; ip[9] = IPPROTO_UDP; ip[12] = 127; ip[15] = 1; ip[16] = 127; ip[19] = 1;
+    uint16_t ic = csum16(ip, 20); ip[10] = (uint8_t)(ic >> 8); ip[11] = (uint8_t)ic;
+    uint8_t *uh = ip + 20; uh[0] = from[1]; uh[1] = from[2]; uh[2] = 4433 >> 8; uh[3] = 4433 & 0xff; uh[4] = (uint8_t)((8 + 1400) >> 8); uh[5] = (uint8_t)(8 + 1400);
+    for (int i = 0; i < 32; i++) uh[8 + i] = (uint8_t)(0x40 + i);
+    uint16_t c = csum16(pkt, sizeof pkt); pkt[2] = (uint8_t)(c >> 8); pkt[3] = (uint8_t)c;
+    struct sockaddr_in to; memset(&to, 0, sizeof to); to.sin_family = AF_INET; to.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    ssize_t w = sendto(raw, pkt, sizeof pkt, 0, (struct sockaddr *)&to, sizeof to); close(raw);
+    return w == (ssize_t)sizeof pkt ? 0 : -1;
+}
 /* In a child inside a fresh user and network namespace (no root needed where unprivileged user namespaces are allowed):
    (1) a datagram over the interface MTU with DF is a local EMSGSIZE: counted by ksl_udp_emsgsize, its SO_EE_ORIGIN_LOCAL entry drained
        and never a Packet Too Big; (2) an ICMP "fragmentation needed" (MTU 1300) quoting a datagram of our socket, injected through a raw
@@ -92,7 +108,8 @@ static int lo_set(int up, int mtu) {
 static int ptb_child(void) {
     if (unshare(CLONE_NEWUSER | CLONE_NEWNET) != 0) return 77;
     if (lo_set(1, 1280) != 0) return 77;
-    uint8_t la[KSL_UDP_ADDR_LEN], lb[KSL_UDP_ADDR_LEN]; ksl_udp *a = open_lo(KSL_UDP_DF, la), *b = open_lo(0, lb); if (!a || !b) return 2;
+    uint8_t la[KSL_UDP_ADDR_LEN], lb[KSL_UDP_ADDR_LEN]; ksl_udp *a = open_lo(KSL_UDP_DF | KSL_UDP_GSO, la), *b = open_lo(0, lb); if (!a || !b) return 2;
+    int gso = (caps_of(a, NULL) & KSL_UDP_GSO) != 0;
     if (!ksl_udp_recverr_for_test(a)) return 3;
     /* udp_recverr_local_emsgsize_queued */
     uint32_t last = 0; uint64_t e0 = ksl_udp_emsgsize(a, &last);
@@ -103,18 +120,19 @@ static int ptb_child(void) {
     if (ksl_udp_take_ptb(a, q, sizeof q, &ql, dst, &mtu) != 0) return 7;   /* only ICMP-origin entries are Packet Too Big */
     if (lo_set(0, 65536) != 0) return 8;
     /* udp_recverr_ptb_parsed: ICMP type 3 code 4, next-hop MTU 1300, quoting IP + UDP header of a datagram 127.0.0.1:port(a) -> 127.0.0.1:4433 */
-    int raw = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP); if (raw < 0) return 77;
-    uint8_t pkt[8 + 20 + 8 + 32]; memset(pkt, 0, sizeof pkt);
-    pkt[0] = 3; pkt[1] = 4; pkt[6] = 1300 >> 8; pkt[7] = 1300 & 0xff;
-    uint8_t *ip = pkt + 8; ip[0] = 0x45; ip[2] = 0; ip[3] = 20 + 8 + 1400 > 255 ? 0 : 0; uint16_t tot = 20 + 8 + 1400; ip[2] = (uint8_t)(tot >> 8); ip[3] = (uint8_t)tot;
-    ip[6] = 0x40; ip[8] = 64; ip[9] = IPPROTO_UDP; ip[12] = 127; ip[15] = 1; ip[16] = 127; ip[19] = 1;
-    uint16_t ic = csum16(ip, 20); ip[10] = (uint8_t)(ic >> 8); ip[11] = (uint8_t)ic;
-    uint8_t *uh = ip + 20; uh[0] = la[1]; uh[1] = la[2]; uh[2] = 4433 >> 8; uh[3] = 4433 & 0xff; uh[4] = (uint8_t)((8 + 1400) >> 8); uh[5] = (uint8_t)(8 + 1400);
-    for (int i = 0; i < 32; i++) uh[8 + i] = (uint8_t)(0x40 + i);
-    uint16_t c = csum16(pkt, sizeof pkt); pkt[2] = (uint8_t)(c >> 8); pkt[3] = (uint8_t)c;
-    struct sockaddr_in to; memset(&to, 0, sizeof to); to.sin_family = AF_INET; to.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-    if (sendto(raw, pkt, sizeof pkt, 0, (struct sockaddr *)&to, sizeof to) != (ssize_t)sizeof pkt) { close(raw); return 9; }
-    close(raw);
+    if (inject_ptb(la) != 0) return 9;
+    /* udp_recverr_forged_ptb_keeps_sending: the PTB set sk_err = EMSGSIZE, which the next send of any size meets once: the datagram is
+       sent on the retry, never counted as EMSGSIZE, and a GSO run that meets it keeps GSO */
+    uint64_t e1 = ksl_udp_emsgsize(a, &last);
+    if (send1(a, lb, 100) != 1 || recv1(b, 500) != 100) return 15;
+    if (ksl_udp_emsgsize(a, &last) != e1) return 16;
+    if (inject_ptb(la) != 0) return 9;
+    { uint8_t *bufs[2]; uint32_t lens[2] = { 100, 100 }; uint8_t addrs[2 * KSL_UDP_ADDR_LEN], ecn[2] = { 0, 0 }; uint8_t d[100]; memset(d, 0x42, sizeof d); bufs[0] = bufs[1] = d;
+      memcpy(addrs, lb, KSL_UDP_ADDR_LEN); memcpy(addrs + KSL_UDP_ADDR_LEN, lb, KSL_UDP_ADDR_LEN); uint32_t sent = 0;
+      if (ksl_udp_send(a, bufs, lens, addrs, ecn, 2, &sent) != KSL_OK || sent != 2) return 17;
+      if (recv1(b, 500) != 100 || recv1(b, 500) != 100) return 18;
+      if (gso && !(caps_of(a, NULL) & KSL_UDP_GSO)) return 19;
+      if (ksl_udp_emsgsize(a, &last) != e1) return 20; }
     int got = 0; for (int i = 0; i < 20 && !got; i++) { if (recv1(a, 50) < 0) return 10; got = ksl_udp_take_ptb(a, q, sizeof q, &ql, dst, &mtu); }
     if (!got) return 11;
     if (mtu != 1300 || ql != 32 || q[0] != 0x40 || q[31] != 0x40 + 31) return 12;
@@ -447,7 +465,7 @@ void run_udp(void) {
           ksl_udp_push_ptb_for_test(a, q, sizeof q, dst, 1300); CHECK(ksl_udp_take_ptb(a, out, 10, &ql, od, &mtu) == 1 && ql == 10, "the caller's capacity bounds the quote");
           CHECK(ksl_udp_take_ptb(a, out, sizeof out, &ql, od, &mtu) == 0, "empty again"); }
         /* udp_recverr_port_unreachable_keeps_socket: a datagram to a closed local port draws an ICMP port unreachable (Linux queues it
-           with IP_RECVERR and sets sk_err, which recvmsg used to report as a socket error); the receive answers a timeout, takes no
+           with IP_RECVERR and sets sk_err, which recvmsg reports once and the drain absorbs); the receive answers a timeout, takes no
            Packet Too Big, does not spin on POLLERR, and the next datagram is received. Apple delivers no ICMP to an unconnected socket */
         { uint8_t lc[KSL_UDP_ADDR_LEN], ld[KSL_UDP_ADDR_LEN], le[KSL_UDP_ADDR_LEN]; ksl_udp *c = open_lo(0, lc), *d = open_lo(KSL_UDP_DF, ld), *e = open_lo(0, le);
           CHECK(c && d && e, "sockets for the port-unreachable test");
@@ -478,8 +496,9 @@ void run_udp(void) {
         { pid_t pid = fork();
           if (pid == 0) _exit(ptb_child());
           int st = 0; waitpid(pid, &st, 0); int code = WIFEXITED(st) ? WEXITSTATUS(st) : 100;
+          /* the marker the gate looks for (tools/ci/local-matrix.sh): these tests must run on at least one Linux runner */
           if (code == 77) printf("udp_recverr_ptb_parsed: SKIP (no unprivileged user namespace)\n");
-          else CHECK(code == 0, "udp_recverr_local_emsgsize_queued + udp_recverr_ptb_parsed (child exit = failed step)");
+          else { CHECK(code == 0, "udp_recverr_local_emsgsize_queued + udp_recverr_ptb_parsed (child exit = failed step)"); if (code == 0) printf("udp_recverr_ptb_parsed: OK\n"); }
           if (code != 0 && code != 77) printf("    ptb child failed at step %d\n", code); }
 #endif
         ksl_udp_close(a); ksl_udp_close(b);

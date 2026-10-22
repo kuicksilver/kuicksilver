@@ -52,9 +52,9 @@ class KslDatagramIoTest {
 
     @Test fun negative_icmpPortUnreachableDoesNotKillTheSocket() =
         runBlocking {
-            // a datagram to a closed port draws an ICMP port unreachable; on Linux the error queue (IP_RECVERR with DF) sets sk_err,
-            // which recvmsg used to report as a socket error, ending the endpoint's receive loop. It is a timeout now, and the next
-            // datagram arrives. macOS and Windows deliver no such error to an unconnected socket: the test passes there trivially
+            // a datagram to a closed port draws an ICMP port unreachable; on Linux the error queue (IP_RECVERR with DF) sets sk_err, which
+            // recvmsg reports once: without the drain in ksl_udp_recv that would end the endpoint's receive loop. It is a timeout, and the
+            // next datagram arrives. macOS and Windows deliver no such error to an unconnected socket: the test passes there trivially
             assumeTrue(ready(), "needs the accelerated socket (Linux, macOS, Windows)")
             val closed = assertNotNull(KslDatagramIo.open(lo)).let { it.localAddress.also { _ -> it.close() } }
             val a = assertNotNull(KslDatagramIo.open(lo))

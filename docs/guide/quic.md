@@ -337,7 +337,8 @@ too large (EMSGSIZE). A Packet Too Big counts only when it quotes one of the con
 and leaves at least 1200 bytes of payload, and an endpoint looks at no more than 64 a second (`EndpointStats.ptbAccepted`,
 `ptbIgnored`). A reported size above the one in use ends the larger probes at once instead of after three lost tries; one
 below it never lowers the MTU by itself: the connection sends probes of its current size, keeps it when one is
-acknowledged, and moves down to the reported size (without the minute's pause) only when three are lost. EMSGSIZE on a
+acknowledged, and moves down to the reported size (without the minute's pause) only when three are lost, or when the
+black-hole detector fires meanwhile, which then falls to the reported size instead of 1200. EMSGSIZE on a
 probe settles that size at once. ICMP is easy to forge, so nothing else trusts it.
 
 | Platform | Hints |

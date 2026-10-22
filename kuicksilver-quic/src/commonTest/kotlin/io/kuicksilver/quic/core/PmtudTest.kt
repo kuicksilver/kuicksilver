@@ -714,6 +714,50 @@ class PmtudTest {
         }
     }
 
+    @Test fun negative_ptbWithEmptyQuoteIgnored() {
+        // a message that quotes nothing of ours cannot be checked: ignored
+        val (p, c) = pair()
+        try {
+            transfer(p, c)
+            assertTrue(p.runUntil(20.seconds) { c.stats.pathMtu == 1452 })
+            ptb(p, c, 1328, quote = ByteArray(0))
+            ptb(p, c, 1328, quote = byteArrayOf(0x43)) // the first byte alone
+            assertEquals(0L, p.client.stats.ptbAccepted)
+            assertEquals(2L, p.client.stats.ptbIgnored)
+            assertEquals(0, c.path.pmtud!!.confirmingForTest)
+        } finally {
+            p.close()
+        }
+    }
+
+    @Test fun blackHoleAfterValidatedPtbFallsToItsSize() {
+        // the link narrows under a bulk transfer and a PTB (payload 1300) arrives: the black-hole detector, which fires before the
+        // confirmation probes are settled, falls to the PTB size instead of the base and does not pause the search
+        val (p, c) = pair(clientQuic = noIdle, serverQuic = noIdle)
+        try {
+            transfer(p, c)
+            assertTrue(p.runUntil(20.seconds) { c.stats.pathMtu == 1452 })
+            assertTrue(p.runUntil(10.seconds) { !c.streams.hasStreamData() && c.stats.bytesInFlight == 0L }, "the transfer drained")
+            val before = p.events[c]!!.filterIsInstance<ConnectionEvent.MtuUpdated>().size
+            p.linkMtuToServer = 1320
+            p.linkMtuToClient = 1320
+            ptb(p, c, 1328)
+            transfer(p, c, 100_000)
+
+            fun changes() =
+                p.events[c]!!
+                    .filterIsInstance<ConnectionEvent.MtuUpdated>()
+                    .drop(before)
+                    .map { it.mtu }
+            assertEquals(1300, changes().firstOrNull(), "to the PTB size, not to 1200: ${changes()}")
+            assertTrue(1200 !in changes(), "never to the base: ${changes()}")
+            assertTrue(!c.path.pmtud!!.pausedForTest, "no pause")
+            assertEquals(null, p.closed(c))
+        } finally {
+            p.close()
+        }
+    }
+
     @Test fun negative_ptbFloodIsRateLimited() {
         // 10 000 valid-looking PTB messages in one second: at most 64 are looked at, the rest only counted
         val (p, c) = pair()

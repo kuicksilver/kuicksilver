@@ -34,8 +34,10 @@ static int dest_error(int e) { return e == EINVAL || e == EAFNOSUPPORT || e == E
 /* the kernel's queue is full (EAGAIN; ENOBUFS when Darwin's interface queue or Linux's qdisc is): stop, the caller sends the rest later */
 static int backpressure(int e) { return e == EAGAIN || e == EWOULDBLOCK || e == ENOBUFS; }
 /* this datagram is lost on the wire: the socket lives, loss detection repairs it */
-/* an ICMP error about an earlier datagram that the kernel reports on this send (sk_err with IP_RECVERR), not this datagram's fault */
-static int pending_icmp(int e) { return e == ECONNREFUSED || e == EHOSTUNREACH || e == ENETUNREACH || e == EHOSTDOWN; }
+/* an ICMP error about an earlier datagram that the kernel reports on this send (sk_err with IP_RECVERR), not this datagram's fault.
+   EMSGSIZE too: a Packet Too Big, real or forged, sets sk_err = EMSGSIZE, and the next send of any size answers it once; a send this
+   datagram really cannot make (larger than the MTU the kernel knows) answers EMSGSIZE again on the retry */
+static int pending_icmp(const ksl_udp *u, int e) { return u->recverr && (e == ECONNREFUSED || e == EHOSTUNREACH || e == ENETUNREACH || e == EHOSTDOWN || e == EMSGSIZE); }
 static void count_emsgsize(ksl_udp *u, uint32_t len) { __atomic_add_fetch(&u->emsgsize, 1, __ATOMIC_RELAXED); __atomic_store_n(&u->emsgsize_last, len, __ATOMIC_RELAXED); }
 static int slot_lost(int e) { return dest_error(e) || e == EMSGSIZE || e == EPERM || e == EACCES || e == ENETUNREACH || e == EHOSTUNREACH || e == ENETDOWN || e == EHOSTDOWN || e == ENOMEM || e == ECONNREFUSED; }
 
@@ -54,11 +56,11 @@ int ksl_udp_send(ksl_udp *u, uint8_t *const *bufs, const uint32_t *lens, const u
             if (run > 1 && send_one(u, joined, (uint32_t)total, addrs + i * KSL_UDP_ADDR_LEN, ecn[i], (uint16_t)lens[i], &e) == 0) { i += run; *sent += run; continue; }
             if (run > 1) {
                 if (backpressure(e)) return KSL_OK;
-                if ((e == EINVAL || e == EMSGSIZE) && lens[i] > 1200) { /* the segment size, not GSO itself, was refused (a narrow link): the run goes out one by one, GSO stays */ }
+                if (pending_icmp(u, e)) { /* sk_err of an ICMP message about another datagram (a forged PTB included): the run goes one by one, GSO stays */ }
+                else if ((e == EINVAL || e == EMSGSIZE) && lens[i] > 1200) { /* the segment size, not GSO itself, was refused (a narrow link): the run goes out one by one, GSO stays */ }
                 else if (e == EINVAL) gso_probe = 1;   /* GSO, the TOS cmsg or the destination: decided by the single send below */
                 else if (e == EIO || e == ENOTSUP || e == EOPNOTSUPP) gso_off(u);
                 else if (e == EPERM && !u->eperm_retried) { u->eperm_retried = 1; }
-                else if (u->recverr && pending_icmp(e)) { /* sk_err of an ICMP message about another datagram: the run goes one by one, GSO stays */ }
                 else { set_err(u, e, "sendmsg(gso)"); gso_off(u); }
             }
             /* fall through: the segments go one by one */
@@ -73,8 +75,10 @@ int ksl_udp_send(ksl_udp *u, uint8_t *const *bufs, const uint32_t *lens, const u
         gso_probe = 0;   /* the datagram failed alone too: GSO was not the cause */
         if (e == EPERM && !u->eperm_retried) { u->eperm_retried = 1; continue; }   /* a filter hiccup: one retry, then the datagram is given up like any other transient error */
         /* sk_err from an ICMP message about another datagram is reported (and cleared) by this send: the datagram goes once more */
-        if (u->recverr && pending_icmp(e) && !icmp_retried) { icmp_retried = 1; continue; }
-        if (e == EMSGSIZE) count_emsgsize(u, lens[i]);   /* larger than the path MTU the kernel knows: a DPLPMTUD hint (ksl_udp_emsgsize) */
+        if (pending_icmp(u, e) && !icmp_retried) { icmp_retried = 1; continue; }
+        /* larger than the path MTU the kernel knows: a DPLPMTUD hint (ksl_udp_emsgsize). With IP_RECVERR only once the retry failed
+           the same way, so a forged ICMP's sk_err never counts */
+        if (e == EMSGSIZE) count_emsgsize(u, lens[i]);
         if (slot_lost(e)) { i++; (*sent)++; icmp_retried = 0; continue; }
         set_err(u, e, "sendmsg"); return KSL_ERROR;
     }

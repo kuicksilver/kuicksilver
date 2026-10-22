@@ -979,7 +979,7 @@ public class ConnectionCore internal constructor(
                                 largePacketUnanswered(p)
                             ) {
                                 m.onBlackHole(now)
-                                setMtu(p, 1200)
+                                setMtu(p, m.current) // 1200, or the size of a validated Packet Too Big under confirmation
                             }
                         }
                     }

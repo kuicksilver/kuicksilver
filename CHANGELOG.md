@@ -19,7 +19,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   Packet Too Big must quote one of the connection's packets on its active path and leave at least 1200 bytes of payload,
   and at most 64 a second per endpoint are looked at (`EndpointStats.ptbAccepted`, `ptbIgnored`). It ends larger probes
   at once; one below the size in use only triggers confirmation probes, and the MTU drops to the reported size only when
-  three of them are lost. EMSGSIZE on a probe settles that size at once.
+  three of them are lost, or when the black-hole detector fires meanwhile, which then falls to the reported size instead
+  of 1200 and does not pause. EMSGSIZE on a probe settles that size at once.
 - Native (`ksl` ABI 7): on Linux and Android the accelerated UDP socket reads the ICMP error queue (`IP_RECVERR` /
   `IPV6_RECVERR`, set with DF) and keeps ICMP Packet Too Big messages, with the quoted start of the datagram and its
   destination, as hints for path MTU discovery (`ksl_udp_take_ptb`); every platform counts sends lost to `EMSGSIZE`
