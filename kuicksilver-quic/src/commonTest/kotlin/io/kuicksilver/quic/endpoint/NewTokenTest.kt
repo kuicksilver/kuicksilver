@@ -346,27 +346,39 @@ class NewTokenTest {
         return n
     }
 
-    @Test fun negative_nonceIsACounterSharedByBothTokenKindsUnderOneKey() {
+    @Test fun negative_eachTokenKindHasItsOwnKeyAndCounter() {
         // AES-GCM under one key must never see a nonce twice (a repeat gives away the GHASH key: forged tokens for any IP). A
-        // random 56-bit nonce passes NIST's 2^-32 collision bound at about 6000 tokens per key; a counter never repeats
+        // random 56-bit nonce passes NIST's 2^-32 collision bound at about 6000 tokens per key; a counter never repeats. Each kind
+        // counts on its own key, so two Retry tokens do not tell how many NEW_TOKEN tokens (handshakes) came in between
         val tokens = AddressTokens(KslQuicCrypto, Random(1))
         val client = InetSocketAddress("10.0.0.1", 40000)
         val t0 = TimeMark(1_000_000_000L)
         try {
-            val n = (1 shl 16) + 10
-            val nonces = LongArray(n)
+            val n = (1 shl 16) * 3 / 2 + 30 // over 2^16 of NEW_TOKEN, a third as many Retry
+            val retry = ArrayList<Long>()
+            val newToken = ArrayList<Long>()
             for (i in 0 until n) {
-                val t =
-                    if (i % 3 == 0) {
-                        tokens.mint(ConnectionId(ByteArray(8) { 1 }), ConnectionId(ByteArray(8) { 2 }), client, 1, t0)
-                    } else {
-                        assertNotNull(tokens.mintNewToken(client, t0))
-                    }
-                nonces[i] = nonceOf(assertNotNull(t))
+                if (i % 3 == 0) {
+                    retry +=
+                        nonceOf(
+                            assertNotNull(tokens.mint(ConnectionId(ByteArray(8) { 1 }), ConnectionId(ByteArray(8) { 2 }), client, 1, t0)),
+                        )
+                } else {
+                    newToken += nonceOf(assertNotNull(tokens.mintNewToken(client, t0)))
+                }
             }
-            for (i in 1 until n) assertEquals(nonces[i - 1] + 1, nonces[i], "one counter for Retry and NEW_TOKEN, +1 per token ($i)")
-            assertTrue(nonces.all { it ushr 56 == 0L }, "generation 0 in the top byte")
-            // the next generation: its own counter under its own key, named in the top byte
+            for (l in listOf(retry, newToken)) {
+                for (i in 1 until l.size) {
+                    assertEquals(
+                        l[i - 1] + 1,
+                        l[i],
+                        "+1 per token of the same kind, whatever the other kind minted ($i)",
+                    )
+                }
+                assertTrue(l.all { it ushr 56 == 0L }, "generation 0 in the top byte")
+            }
+            assertTrue(newToken.size > (1 shl 16), "over 2^16 NEW_TOKEN nonces, all distinct")
+            // the next generation: new keys and counters, named in the top byte
             val later = nonceOf(assertNotNull(tokens.mintNewToken(client, t0 + 1.hours + 1.seconds)))
             assertEquals(1L, later ushr 56)
         } finally {
@@ -381,11 +393,12 @@ class NewTokenTest {
         val t0 = TimeMark(1_000_000_000L)
         try {
             assertNotNull(tokens.mintNewToken(client, t0))
-            tokens.counterForTest = AddressTokens.COUNTER_LIMIT - 2
+            tokens.setCounterForTest(AddressTokens.NEW_TOKEN_KIND, AddressTokens.COUNTER_LIMIT - 1)
+            tokens.setCounterForTest(AddressTokens.RETRY_KIND, AddressTokens.COUNTER_LIMIT - 1)
             assertNotNull(tokens.mintNewToken(client, t0))
             assertNotNull(tokens.mint(ConnectionId(ByteArray(8) { 1 }), ConnectionId(ByteArray(8) { 2 }), client, 1, t0))
-            assertNull(tokens.mintNewToken(client, t0), "the counter is spent")
-            assertNull(tokens.mint(ConnectionId(ByteArray(8) { 1 }), ConnectionId(ByteArray(8) { 2 }), client, 1, t0))
+            assertNull(tokens.mintNewToken(client, t0), "the NEW_TOKEN counter is spent")
+            assertNull(tokens.mint(ConnectionId(ByteArray(8) { 1 }), ConnectionId(ByteArray(8) { 2 }), client, 1, t0), "and the Retry one")
             assertNotNull(tokens.mintNewToken(client, t0 + 1.hours + 1.seconds), "a new key, a new counter")
         } finally {
             tokens.close()

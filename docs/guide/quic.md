@@ -622,7 +622,7 @@ instance), bound to the client's IP address but not its port, valid for
 `QuicServerConfig.newTokenLifetime` (24 hours; null issues none) and accepted once: a register of the tokens it
 accepted, kept for at least the lifetime, treats a second use as no token.
 
-The register holds `newTokenReplayCapacity` tokens per lifetime (1,048,576 by default, 32 MiB allocated when the first
+The register holds at least `newTokenReplayCapacity` tokens per lifetime (1,048,576 by default, 32 MiB allocated when the first
 token is shown; about 32 bytes per token, rounded up to a power of two). It never forgets a token early: once it is full
 (first in parts, as its 64 stripes fill unevenly), a returning client's token is treated as absent, not accepted
 twice, so the client gets whatever the policy gives a client without a token (a Retry under `AlwaysRetry` or under

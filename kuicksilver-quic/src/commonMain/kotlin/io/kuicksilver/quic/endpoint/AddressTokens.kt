@@ -54,7 +54,7 @@ internal sealed interface TokenCheck {
 }
 
 /**
- * The server's address-validation tokens (RFC 9000 section 8.1), both kinds under one set of [TokenKey]s that live inside ksl:
+ * The server's address-validation tokens (RFC 9000 section 8.1), each kind under its own [TokenKey]s that live inside ksl:
  *
  * - Retry tokens (section 8.1.2): `0x01 | nonce(8) | AEAD(issuedAt(8) | odcidLen(1) | odcid | scidLen(1) | scid)` with the
  *   client's address, port and the QUIC version as associated data. The Retry SCID binds the token to the one Initial that may
@@ -63,16 +63,17 @@ internal sealed interface TokenCheck {
  * - NEW_TOKEN tokens (section 8.1.3): `0x02 | nonce(8) | AEAD(issuedAt(8))` with `0x02 | client IP` as associated data, as
  *   quic-go and ngtcp2 bind them: no port (a NAT picks a new one per flow) and no connection ID, so the token says nothing that
  *   links the connection it was issued on to the one that presents it. They live [newTokenLifetime] and pass the replay register
- *   once ([admitNewToken]; section 8.1.4), which holds about [replayCapacity] of them per lifetime.
+ *   once ([admitNewToken]; section 8.1.4), which holds at least [replayCapacity] of them per lifetime.
  *
- * The nonce of both kinds is `generation(8 bits) | counter(56 bits)`: the top byte names the key generation that sealed the token,
- * so a token costs one AEAD open, forged or not, and the counter is one per generation, shared by both kinds, starting at a
- * random point below 2^55 and never wrapping (at 2^56 nothing more is minted under that key). AES-GCM never sees a nonce twice
- * under one key, which a random nonce only makes likely (56 random bits pass NIST's 2^-32 collision bound at about 6000 tokens
- * per key, and a repeat gives away the GHASH key, that is forged tokens for any address). The counter in the clear tells a
- * client how many tokens the server minted between two of its own, and the generation byte roughly when a token was issued.
+ * The nonce is `generation(8 bits) | counter(56 bits)`: the top byte names the key generation that sealed the token, so a token
+ * costs one AEAD open, forged or not. Each kind has its own key per generation and its own counter under it, starting at a
+ * random point below 2^55 and never wrapping (at 2^56 nothing more of that kind is minted under that key): AES-GCM never sees a
+ * nonce twice under one key, which a random nonce only makes likely (56 random bits pass NIST's 2^-32 collision bound at about
+ * 6000 tokens per key, and a repeat gives away the GHASH key, that is forged tokens for any address). Two tokens of one kind tell
+ * a client how many of that kind the server minted in between (Retry: Retries sent; NEW_TOKEN: about the confirmed handshakes),
+ * never the other kind's volume; the generation byte tells roughly when a token was issued.
  *
- * Keys rotate every [rotateEvery]; the keys of the last `newTokenLifetime / rotateEvery + 1` generations are kept so a NEW_TOKEN
+ * Keys rotate every [rotateEvery] (both kinds at once); the keys of the last `newTokenLifetime / rotateEvery + 1` generations are kept so a NEW_TOKEN
  * token opens for its whole lifetime, while a Retry token only opens under the two newest. A token is checked by the process that
  * minted it (process time, keys only in memory).
  *
@@ -114,15 +115,16 @@ internal class AddressTokens(
         require(ring <= 256) { "newTokenLifetime / rotateEvery must stay below 256 key generations" }
     }
 
-    private val keys = arrayOfNulls<TokenKey>(ring)
+    /** Per kind ([RETRY_KIND], [NEW_TOKEN_KIND]) and generation slot; NEW_TOKEN keys only when this server issues them. */
+    private val keys = Array(2) { arrayOfNulls<TokenKey>(ring) }
     private val generations = LongArray(ring) { -1L }
     private var current = 0L
     private var epoch: TimeMark = TimeMark.NEVER
     private var closed = false
 
-    /** The next nonce counter of generation [counterGeneration] (-1: none minted yet in [current]). */
-    private var counter = 0L
-    private var counterGeneration = -1L
+    /** Per kind: the next nonce counter of generation [counterGeneration] (-1: none minted yet in [current]). */
+    private val counter = LongArray(2)
+    private val counterGeneration = LongArray(2) { -1L }
 
     /**
      * One fingerprint per accepted NEW_TOKEN nonce for as long as the token lives (entries last between one and two lifetimes); made
@@ -131,7 +133,8 @@ internal class AddressTokens(
     private val replay = AtomicReference(register)
 
     init {
-        keys[0] = crypto.newTokenKey()
+        keys[RETRY_KIND][0] = crypto.newTokenKey()
+        if (newTokenLifetime != null) keys[NEW_TOKEN_KIND][0] = crypto.newTokenKey()
         generations[0] = 0
     }
 
@@ -167,55 +170,62 @@ internal class AddressTokens(
     private fun rotate(now: TimeMark) {
         val g = locked { generationToMake(now) }
         if (g < 0) return
-        val made = crypto.newTokenKey()
-        val unused =
-            try {
-                locked {
-                    if (g <= current) {
-                        made // another loop moved there first
-                    } else {
-                        current = g
-                        val slot = (g % ring).toInt()
-                        val old = keys[slot]
-                        keys[slot] = made
-                        generations[slot] = g
-                        old // out of reach now: every use of a key happens under the lock
-                    }
-                }
-            } catch (e: Throwable) {
-                made.close() // closed meanwhile: the key never got in
-                throw e
-            }
-        unused?.close()
-    }
-
-    /** The next nonce of [current]'s key, or null when its counter is spent; under the lock. */
-    private fun nextNonce(): Long? {
-        if (counterGeneration != current) {
-            counterGeneration = current
-            counter = random.nextLong() ushr 9 // a random start below 2^55: the absolute count stays private
-        }
-        if (counter >= COUNTER_LIMIT) return null
-        return ((current and 0xff) shl 56) or counter++
-    }
-
-    /** Test hook: the next counter value of the current generation. */
-    internal var counterForTest: Long
-        get() = locked { counter }
-        set(v) {
+        val made = arrayOfNulls<TokenKey>(2)
+        val unused = arrayOfNulls<TokenKey>(2)
+        try {
+            made[RETRY_KIND] = crypto.newTokenKey()
+            if (newTokenLifetime != null) made[NEW_TOKEN_KIND] = crypto.newTokenKey()
             locked {
-                counterGeneration = current
-                counter = v
+                if (g <= current) {
+                    made.copyInto(unused) // another loop moved there first
+                } else {
+                    current = g
+                    val slot = (g % ring).toInt()
+                    for (kind in 0..1) {
+                        unused[kind] = keys[kind][slot] // out of reach now: every use of a key happens under the lock
+                        keys[kind][slot] = made[kind]
+                    }
+                    generations[slot] = g
+                }
             }
+        } catch (e: Throwable) {
+            for (k in made) k?.close() // closed meanwhile: the keys never got in
+            throw e
         }
+        for (k in unused) k?.close()
+    }
+
+    /** The next nonce of [kind]'s key in [current], or null when its counter is spent; under the lock. */
+    private fun nextNonce(kind: Int): Long? {
+        if (counterGeneration[kind] != current) {
+            counterGeneration[kind] = current
+            counter[kind] = random.nextLong() ushr 9 // a random start below 2^55: the absolute count stays private
+        }
+        if (counter[kind] >= COUNTER_LIMIT) return null
+        return ((current and 0xff) shl 56) or counter[kind]++
+    }
+
+    /** Test hook: sets the next counter value of [kind] in the current generation. */
+    internal fun setCounterForTest(
+        kind: Int,
+        v: Long,
+    ) {
+        locked {
+            counterGeneration[kind] = current
+            counter[kind] = v
+        }
+    }
 
     /** The generation a nonce's top byte names: the newest one with that low byte. */
     private fun generationOf(nonce: Long): Long = current - ((current - (nonce ushr 56)) and 0xff)
 
-    private fun key(generation: Long): TokenKey? {
+    private fun key(
+        kind: Int,
+        generation: Long,
+    ): TokenKey? {
         if (generation < 0 || generation > current || current - generation >= ring) return null
         val slot = (generation % ring).toInt()
-        return if (generations[slot] == generation) keys[slot] else null
+        return if (generations[slot] == generation) keys[kind][slot] else null
     }
 
     private fun retryAad(
@@ -270,14 +280,14 @@ internal class AddressTokens(
     ): ByteArray? {
         rotate(now)
         return locked {
-            val nonce = nextNonce() ?: return@locked null
+            val nonce = nextNonce(RETRY_KIND) ?: return@locked null
             val plain = ByteArray(8 + 1 + odcid.length + 1 + retryScid.length)
             issuedAt(now).copyInto(plain, 0)
             plain[8] = odcid.length.toByte()
             odcid.copyToArray(plain, 9)
             plain[9 + odcid.length] = retryScid.length.toByte()
             retryScid.copyToArray(plain, 10 + odcid.length)
-            token(RETRY, nonce, key(current)!!.seal(nonce, retryAad(client, version), plain))
+            token(RETRY, nonce, key(RETRY_KIND, current)!!.seal(nonce, retryAad(client, version), plain))
         }
     }
 
@@ -289,8 +299,8 @@ internal class AddressTokens(
         checkNotNull(newTokenLifetime) { "this server issues no NEW_TOKEN tokens" }
         rotate(now)
         return locked {
-            val nonce = nextNonce() ?: return@locked null
-            token(NEW_TOKEN, nonce, key(current)!!.seal(nonce, newTokenAad(client), issuedAt(now)))
+            val nonce = nextNonce(NEW_TOKEN_KIND) ?: return@locked null
+            token(NEW_TOKEN, nonce, key(NEW_TOKEN_KIND, current)!!.seal(nonce, newTokenAad(client), issuedAt(now)))
         }
     }
 
@@ -337,7 +347,7 @@ internal class AddressTokens(
             locked {
                 // only the two newest generations: a Retry token lives seconds
                 val generation = generationOf(nonce)
-                if (generation < current - 1) null else key(generation)?.open(nonce, a, sealed)
+                if (generation < current - 1) null else key(RETRY_KIND, generation)?.open(nonce, a, sealed)
             } ?: return TokenCheck.Invalid
         if (plain.size < 10) return TokenCheck.Invalid
         val issued = readLong(plain)
@@ -368,7 +378,7 @@ internal class AddressTokens(
         rotate(now)
         val plain =
             locked {
-                key(generationOf(nonce))?.open(nonce, newTokenAad(client), sealed)
+                key(NEW_TOKEN_KIND, generationOf(nonce))?.open(nonce, newTokenAad(client), sealed)
             } ?: return TokenCheck.NewTokenRejected
         if (plain.size != 8) return TokenCheck.NewTokenRejected
         val issued = readLong(plain)
@@ -425,15 +435,23 @@ internal class AddressTokens(
     override fun close() {
         if (owners.decrementAndFetch() != 0) return
         locked {
-            for (i in keys.indices) {
-                keys[i]?.close()
-                keys[i] = null
+            for (perKind in keys) {
+                for (i in perKind.indices) {
+                    perKind[i]?.close()
+                    perKind[i] = null
+                }
             }
             closed = true
         }
     }
 
     companion object {
+        /** Index of the Retry keys and counter. */
+        const val RETRY_KIND = 0
+
+        /** Index of the NEW_TOKEN keys and counter. */
+        const val NEW_TOKEN_KIND = 1
+
         private const val RETRY: Byte = 0x01
         private const val NEW_TOKEN: Byte = 0x02
 
