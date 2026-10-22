@@ -23,7 +23,7 @@ object Arbs {
     fun frame(): Arb<TestFrame> =
         arbitrary { rs ->
             val b = Arb.boolean()
-            when (Arb.int(0..21).bind()) {
+            when (Arb.int(0..22).bind()) {
                 0 -> {
                     TestFrame.Padding(Arb.int(1..300).bind())
                 }
@@ -132,6 +132,11 @@ object Arbs {
 
                 20 -> {
                     TestFrame.Datagram(bytes(200).bind())
+                }
+
+                22 -> {
+                    val finalSize = varint().bind()
+                    TestFrame.ResetStreamAt(small().bind(), varint().bind(), finalSize, Arb.long(0L..finalSize).bind())
                 }
 
                 else -> {

@@ -25,6 +25,20 @@ internal class RecvStream(
         private set
     var resetCode: Long = 0
         private set
+
+    /** A RESET_STREAM or RESET_STREAM_AT was received: [resetCode] is the peer's and must not change. */
+    private var resetSeen = false
+
+    /** draft-ietf-quic-reliable-stream-reset-11 section 5.2: a later reset with another application error code is an error. */
+    private fun checkCode(
+        code: Long,
+        frameType: Long,
+    ) {
+        if (resetSeen && code != resetCode) {
+            throw QuicWireException(TransportError.STREAM_STATE_ERROR, frameType, "stream $id: reset code changed from $resetCode to $code")
+        }
+    }
+
     var stopped: Boolean = false // we sent STOP_SENDING
 
     /** When the peer's last STREAM_DATA_BLOCKED for this stream arrived; one per RTT is answered (RFC 9000 section 4.1). */
@@ -103,6 +117,7 @@ internal class RecvStream(
         ) {
             throw QuicWireException(TransportError.FINAL_SIZE_ERROR, 0x04, "stream $id: reset final size conflicts with received data")
         }
+        checkCode(code, 0x04)
         if (state == RecvState.ResetRecvd || state == RecvState.ResetRead || state == RecvState.DataRead) return 0
         flow.onData(size) // a final size beyond the stream window is FLOW_CONTROL_ERROR (RFC 9000 sections 4.1, 4.5, 19.10)
         val advanced = size - highest
@@ -110,6 +125,7 @@ internal class RecvStream(
         finalSize = size
         highest = size
         resetCode = code
+        resetSeen = true
         state = RecvState.ResetRecvd
         reassembler.clear()
         return advanced
@@ -139,13 +155,15 @@ internal class RecvStream(
         ) {
             throw QuicWireException(TransportError.FINAL_SIZE_ERROR, 0x24, "stream $id: reset final size conflicts with received data")
         }
+        checkCode(code, 0x24)
         if (state == RecvState.ResetRecvd || state == RecvState.ResetRead || state == RecvState.DataRead) return 0
         flow.onData(size)
         val advanced = size - highest
         if (advanced > 0) conn.onData(connReceived + advanced)
         finalSize = size
         highest = size
-        if (reliableSize < 0) resetCode = code // a later frame may lower the reliable size, never change the code
+        resetCode = code
+        resetSeen = true
         if (reliableSize < 0 || reliable < reliableSize) reliableSize = reliable
         if (state == RecvState.Recv) state = RecvState.SizeKnown
         if (stopped || reassembler.readOffset >= reliableSize) reachResetAt()

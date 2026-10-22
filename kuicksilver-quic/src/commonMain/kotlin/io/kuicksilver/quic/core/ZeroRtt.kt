@@ -205,7 +205,9 @@ internal fun ConnectionCore.settleZeroRtt() {
                 tp.initialMaxStreamsBidi < old.initialMaxStreamsBidi ||
                 tp.initialMaxStreamsUni < old.initialMaxStreamsUni ||
                 // RFC 9221 section 3: the ticket stores max_datagram_frame_size, so a smaller one is a PROTOCOL_VIOLATION as well
-                tp.maxDatagramFrameSize < old.maxDatagramFrameSize
+                tp.maxDatagramFrameSize < old.maxDatagramFrameSize ||
+                // a remembered reset_stream_at the server dropped is a lower capability too (quic-go treats it so)
+                (old.resetStreamAt && !tp.resetStreamAt)
         if (lower) {
             fail(TransportError.PROTOCOL_VIOLATION, 0, "server accepted 0-RTT with transport parameters below the remembered ones", null)
             return

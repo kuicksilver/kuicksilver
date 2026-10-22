@@ -32,7 +32,12 @@ internal object TransportParametersCodec {
     private const val VERSION_INFORMATION = 0x11L
     private const val MAX_DATAGRAM_FRAME_SIZE = 0x20L
     private const val GREASE_QUIC_BIT = 0x2ab2L
-    private const val RESET_STREAM_AT = 0x17f7586d2cb571L
+
+    /** `reset_stream_at`: 0x1d (draft-ietf-quic-reliable-stream-reset-11 sections 3, 8.1). */
+    private const val RESET_STREAM_AT = 0x1dL
+
+    /** The pre-IANA codepoint of earlier drafts, which Chrome and quiche still use; sent and accepted next to [RESET_STREAM_AT]. */
+    private const val RESET_STREAM_AT_LEGACY = 0x17f7586d2cb571L
 
     private fun fail(msg: String): Nothing = throw QuicWireException(TRANSPORT_PARAMETER_ERROR, 0, msg)
 
@@ -101,7 +106,10 @@ internal object TransportParametersCodec {
             tp.initialSourceConnectionId?.let { bytes(INITIAL_SCID, it.toByteArray()) }
             if (tp.maxDatagramFrameSize != 0L) vi(MAX_DATAGRAM_FRAME_SIZE, tp.maxDatagramFrameSize)
             if (tp.greaseQuicBit) empty(GREASE_QUIC_BIT)
-            if (tp.resetStreamAt) empty(RESET_STREAM_AT)
+            if (tp.resetStreamAt) {
+                empty(RESET_STREAM_AT)
+                empty(RESET_STREAM_AT_LEGACY)
+            }
             tp.availableVersions?.let { av ->
                 w.varint(VERSION_INFORMATION)
                 w.varint((4 + 4 * av.size).toLong())
@@ -280,7 +288,7 @@ internal object TransportParametersCodec {
                         tp.greaseQuicBit = true
                     }
 
-                    RESET_STREAM_AT -> {
+                    RESET_STREAM_AT, RESET_STREAM_AT_LEGACY -> {
                         if (len != 0) fail("reset_stream_at carries a value")
                         tp.resetStreamAt = true
                     }

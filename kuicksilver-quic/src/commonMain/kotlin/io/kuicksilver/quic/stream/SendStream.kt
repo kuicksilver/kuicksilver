@@ -79,14 +79,33 @@ internal class SendStream(
 
     /** Offset of the next range [nextRange] would pick (for sizing the frame header). */
     val nextOffset: Long get() = if (lostCount > 0) lost[0] else sentEnd
-    private var releasedUpTo: Long = 0
+
+    /** The acknowledged prefix: bytes below it are released. */
+    var releasedUpTo: Long = 0
+        private set
 
     /** RESET_STREAM_AT: the bytes below this still go out and are retransmitted; -1 without one. */
     var reliableSize: Long = -1
         private set
 
-    /** The final size a RESET_STREAM_AT announced (the larger of what was sent and [reliableSize]); -1 without one. */
+    /** The final size a RESET_STREAM_AT announced; -1 before one was. */
     private var resetAtFinalSize: Long = -1
+
+    /** The application error code of the RESET_STREAM_AT, sent once [resetAtDue]. */
+    var resetAtCode: Long = 0
+        private set
+
+    /**
+     * RESET_STREAM_AT waits until every reliable byte was sent once (draft-ietf-quic-reliable-stream-reset-11 section 4: its
+     * final size must stay within the peer's flow-control limits, and the bytes up to [sentEnd] already are).
+     */
+    val resetAtDue: Boolean get() = state == SendState.ResetAt && resetAtFinalSize < 0 && sentEnd >= reliableSize
+
+    /** The RESET_STREAM_AT goes out now: its final size is what was sent. */
+    fun announceResetAt(): Long {
+        resetAtFinalSize = sentEnd
+        return sentEnd
+    }
 
     /** The final size of a reset (RFC 9000 section 4.5): what was sent, or what an earlier RESET_STREAM_AT announced. */
     val finalSizeForReset: Long get() = maxOf(sentEnd, resetAtFinalSize)
@@ -347,13 +366,15 @@ internal class SendStream(
         if (ackedCount > 0 && ackedRanges[0] <= releasedUpTo &&
             ackedRanges[1] > releasedUpTo
         ) {
-            released = ackedRanges[1] - releasedUpTo
+            // bytes past [written] are not in the buffer: RESET_STREAM_AT dropped them after they were sent
+            released = maxOf(0L, minOf(ackedRanges[1], written) - releasedUpTo)
             releasedUpTo = ackedRanges[1]
         }
         if (released > 0) head = ((head + released) % ring.size).toInt()
         buffered -= released
         if (finAcked && buffered == 0L && finQueued) state = SendState.DataRecvd
-        if (state == SendState.ResetAt && releasedUpTo >= reliableSize) state = SendState.ResetSent // the reliable part arrived
+        // the reliable part arrived and the frame went out
+        if (state == SendState.ResetAt && releasedUpTo >= reliableSize && resetAtFinalSize >= 0) state = SendState.ResetSent
         return released
     }
 
@@ -388,9 +409,12 @@ internal class SendStream(
      * being sent and retransmitted, everything after them is dropped, and no FIN goes out. Returns the buffered bytes
      * released. The stream is [SendState.ResetSent] at once when those bytes were all acknowledged already.
      */
-    fun resetAt(reliable: Long): Long {
+    fun resetAt(
+        reliable: Long,
+        code: Long,
+    ): Long {
         require(reliable in 0..written) { "reliable size $reliable outside 0..$written" }
-        resetAtFinalSize = maxOf(sentEnd, reliable)
+        resetAtCode = code
         reliableSize = reliable
         finQueued = false
         finSent = false
@@ -408,7 +432,7 @@ internal class SendStream(
             if (lost[2 * i + 1] > reliable) lost[2 * i + 1] = reliable
             i++
         }
-        state = if (releasedUpTo >= reliable) SendState.ResetSent else SendState.ResetAt
+        state = SendState.ResetAt // ResetSent once the reliable bytes are acknowledged ([onAcked]) and the frame went out
         return released
     }
 

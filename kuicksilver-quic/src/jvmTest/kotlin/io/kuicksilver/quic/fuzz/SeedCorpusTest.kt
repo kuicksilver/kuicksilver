@@ -307,6 +307,10 @@ class SeedCorpusTest {
         put("FrameDecodeFuzzTest", "frameDecode", "truncated-varint", cat(bytes(3), truncatedVarint()))
         put("FrameDecodeFuzzTest", "frameDecode", "retire-cid-x1000", cat(bytes(3), retireX1000()))
         put("FrameDecodeFuzzTest", "frameDecode", "empty-payload", bytes(3))
+        // RESET_STREAM_AT (draft-ietf-quic-reliable-stream-reset-11 section 4): a valid one, and one whose reliable size
+        // exceeds its final size
+        put("FrameDecodeFuzzTest", "frameDecode", "reset-stream-at", bytes(3, 0x24, 0x04, 0x07, 0x40, 0x64, 0x0a))
+        put("FrameDecodeFuzzTest", "frameDecode", "reset-stream-at-reliable-above-final", bytes(3, 0x24, 0x04, 0x07, 0x0a, 0x0b))
         put("FrameDecodeFuzzTest", "frameDecode", "crypto-max-offset", cat(bytes(0), cryptoMaxOffset()))
         put("FrameDecodeFuzzTest", "frameDecode", "stream-max-offset", cat(bytes(3, 0x0e, 0x00), varint8(maxOffset), bytes(0x01, 0x41)))
         put(

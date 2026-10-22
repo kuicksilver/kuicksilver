@@ -258,7 +258,10 @@ internal class StreamManager(
                 ) {
                     return "stream $id sent ${snd.sentEnd} beyond the peer's ${limit.maxLimit}"
                 }
-                if (snd.sentEnd > snd.written) return "stream $id sent ${snd.sentEnd} beyond what was written (${snd.written})"
+                // RESET_STREAM_AT drops what follows the reliable size, sent or not
+                if (snd.sentEnd > snd.written && snd.reliableSize < 0) {
+                    return "stream $id sent ${snd.sentEnd} beyond what was written (${snd.written})"
+                }
             }
         }
         for (bidi in booleanArrayOf(true, false)) {
@@ -268,6 +271,9 @@ internal class StreamManager(
         }
         return null
     }
+
+    /** Test hook: how far stream [id] has sent new data, -1 for no such sending half. */
+    internal fun sentEndForTest(id: Long): Long = streams[id]?.send?.sentEnd ?: -1
 
     /** Fuzzing probe: (streams, queued control frames, pending events) held by this manager. */
     internal fun sizesForTest(): IntArray = intArrayOf(streams.size, control.size, events.size, sendLimit.size, early.size)
@@ -723,11 +729,23 @@ internal class StreamManager(
         if (s.state == SendState.ResetSent || s.state == SendState.ResetAt || s.state == SendState.DataRecvd) return
         if (!peerResetStreamAt && !forceResetStreamAtForTest) return reset(id, code)
         val r = reliable.coerceIn(0, s.written)
-        sendBufferedBytes -= s.resetAt(r)
+        sendBufferedBytes -= s.resetAt(r, code)
         wakeRefusedWriters()
         if (s.hasPending) scheduler.add(s) else scheduler.remove(s)
-        queueControl(ControlKind.ResetStreamAt, id, code, s.finalSizeForReset, r)
-        maybeClose(id)
+        announceResetAtIfDue(s)
+    }
+
+    /**
+     * Queues the RESET_STREAM_AT of [s] once all its reliable bytes were sent: its final size is then within the credit
+     * the peer gave (draft-ietf-quic-reliable-stream-reset-11 section 4), so the frame never needs credit of its own.
+     */
+    private fun announceResetAtIfDue(s: SendStream) {
+        if (!s.resetAtDue) return
+        queueControl(ControlKind.ResetStreamAt, s.id, s.resetAtCode, s.announceResetAt(), s.reliableSize)
+        if (s.releasedUpTo >= s.reliableSize) {
+            s.onAcked(0, 0) // nothing more to acknowledge: the stream is ResetSent now
+            maybeClose(s.id)
+        }
     }
 
     fun stopSending(
@@ -807,6 +825,7 @@ internal class StreamManager(
             w.bytes(buf, 0, range.length)
             frames.addStream(s.id, range.offset, range.length, range.fin)
             s.markSent(range.offset, range.length, range.fin)
+            announceResetAtIfDue(s)
             if (!s.hasPending) {
                 scheduler.remove(s)
             } else if (s.priority.incremental) {

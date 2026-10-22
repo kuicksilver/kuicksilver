@@ -652,7 +652,11 @@ val config = quicEndpointConfig {
 advertised it too, `QuicStream.resetAt(code, reliableSize)` abandons a stream like `reset` but keeps delivering its first
 `reliableSize` bytes, retransmitting them as needed; the peer reads them and then fails with the reset. Only bytes
 already flushed to the stream count (a larger size is cut to them). Without the peer's parameter `resetAt` is a plain
-`reset`, and the prefix may be lost. A peer that sends RESET_STREAM_AT without our parameter, or with a reliable size
+`reset`, and the prefix may be lost. The frame waits until every reliable byte was sent once, so its final size stays
+within the peer's flow control (draft-11 section 4): with little credit the reset reaches the peer later, after the
+reliable bytes. Both codepoints of the parameter are sent and accepted, 0x1d and the pre-IANA one Chrome and quiche use.
+A server that accepts 0-RTT but drops a remembered `reset_stream_at` is treated like one that lowers a limit
+(PROTOCOL_VIOLATION). A later reset with another error code is STREAM_STATE_ERROR. A peer that sends RESET_STREAM_AT without our parameter, or with a reliable size
 above its final size, closes the connection with FRAME_ENCODING_ERROR. WebTransport uses it to keep a stream's header.
 
 ## Datagrams (RFC 9221)

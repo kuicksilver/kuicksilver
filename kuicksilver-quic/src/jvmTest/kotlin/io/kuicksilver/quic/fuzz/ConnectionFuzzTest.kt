@@ -432,6 +432,7 @@ internal class ConnectionFuzz(
         QuicConfig
             .Builder()
             .apply {
+                resetStreamAt = true // so the fuzzer reaches RESET_STREAM_AT handling too
                 if (small) {
                     maxBidiStreams = 4
                     maxUniStreams = 4

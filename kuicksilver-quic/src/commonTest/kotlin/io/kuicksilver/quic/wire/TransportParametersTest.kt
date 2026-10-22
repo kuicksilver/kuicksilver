@@ -100,6 +100,7 @@ class TransportParametersTest {
                     Arb.long(2L..100L).bind()
                 tp.maxDatagramFrameSize = Arbs.varint().bind()
                 tp.greaseQuicBit = Arb.boolean().bind()
+                tp.resetStreamAt = Arb.boolean().bind()
                 if (Arb.boolean().bind()) {
                     tp.chosenVersion = 1
                     tp.availableVersions = intArrayOf(1, 0x6b3343cf)
@@ -124,6 +125,7 @@ class TransportParametersTest {
                 assertEquals(tp.activeConnectionIdLimit, back.activeConnectionIdLimit)
                 assertEquals(tp.maxDatagramFrameSize, back.maxDatagramFrameSize)
                 assertEquals(tp.greaseQuicBit, back.greaseQuicBit)
+                assertEquals(tp.resetStreamAt, back.resetStreamAt)
                 assertEquals(tp.chosenVersion, back.chosenVersion)
                 assertEquals(tp.availableVersions?.toList(), back.availableVersions?.toList())
             }
@@ -169,6 +171,19 @@ class TransportParametersTest {
     @Test fun statelessResetTokenNot16BytesRejected() = expect(0x08, raw(0x02L to ByteArray(15)))
 
     @Test fun greaseQuicBitWithValueRejected() = expect(0x08, raw(0x2ab2L to byteArrayOf(1)))
+
+    /** draft-ietf-quic-reliable-stream-reset-11 section 3: 0x1d; the pre-IANA 0x17f7586d2cb571 (Chrome, quiche) is accepted too. */
+    @Test fun resetStreamAtBothCodepoints() {
+        for (id in listOf(0x1dL, 0x17f7586d2cb571L)) {
+            assertTrue(TransportParametersCodec.decode(raw(id to ByteArray(0)), TlsRole.Server).resetStreamAt, "0x${id.toString(16)}")
+            expect(0x08, raw(id to byteArrayOf(1)))
+        }
+        val tp = TransportParameters().also { it.resetStreamAt = true }
+        val sent = TransportParametersCodec.encode(tp, TlsRole.Client, 27)
+        // both go out: 0x1d for current peers (quic-go, neqo), the old one for Chrome and quiche
+        assertTrue(TransportParametersCodec.decode(sent, TlsRole.Client).resetStreamAt)
+        assertTrue(sent.toList().windowed(2).any { it == listOf(0x1d.toByte(), 0.toByte()) })
+    }
 
     @Test fun reservedParametersIgnored() {
         val tp = TransportParametersCodec.decode(raw(182L to byteArrayOf(1, 2, 3), 0x04L to vi(5)), TlsRole.Server)
