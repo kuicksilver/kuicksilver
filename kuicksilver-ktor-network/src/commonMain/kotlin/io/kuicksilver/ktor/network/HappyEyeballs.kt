@@ -161,13 +161,18 @@ private suspend fun sharedLookup(name: String): List<TcpAddress> {
 /** The lookups in flight (tests). */
 internal suspend fun lookupsInFlightForTest(): Int = lookupLock.withLock { lookupsInFlight.size }
 
-/** The four bytes of a dotted-decimal IPv4 literal (each octet 0..255, at most three digits), or null. */
+/**
+ * The four bytes of a dotted-decimal IPv4 literal (each octet 0..255, at most three digits, no leading zero), or null.
+ * An octet with a leading zero (`010`) is octal to `inet_aton`, `getaddrinfo`, curl and WHATWG URLs (8, not 10): such a
+ * string is left to the platform as before, so the address connected to is the one those parsers (and any allow or
+ * deny list built on them) see.
+ */
 internal fun parseIpv4Literal(name: String): ByteArray? {
     val parts = name.split('.')
     if (parts.size != 4) return null
     val out = ByteArray(4)
     for ((i, p) in parts.withIndex()) {
-        if (p.isEmpty() || p.length > 3 || !p.all { it in '0'..'9' }) return null
+        if (p.isEmpty() || p.length > 3 || !p.all { it in '0'..'9' } || (p.length > 1 && p[0] == '0')) return null
         val v = p.toInt()
         if (v > 255) return null
         out[i] = v.toByte()

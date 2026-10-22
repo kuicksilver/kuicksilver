@@ -32,6 +32,9 @@ class ResolveTcpTest {
         assertNull(parseIpv4Literal("1.2.3.4.5"))
         assertNull(parseIpv4Literal("1.2.3.0004"))
         assertNull(parseIpv4Literal("1.2.+3.4"))
+        assertNull(parseIpv4Literal("010.0.0.1")) // octal to inet_aton: left to the platform
+        assertNull(parseIpv4Literal("1.2.3.00"))
+        assertContentEquals(byteArrayOf(0, 0, 0, 0), parseIpv4Literal("0.0.0.0"))
     }
 
     /** An invalid IPv6 literal fails at once instead of being handed to the system resolver as a name. */

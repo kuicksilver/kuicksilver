@@ -94,7 +94,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   other. `connectionAttemptDelay = Duration.INFINITE` restores one address after another.
 - Ktor client: name lookups run at most 8 at a time on their own share of `Dispatchers.IO`, one per name however many
   requests wait for it; an IP address literal is never looked up, and a dotted-decimal string with an octet above 255
-  is a name, not an address.
+  is a name, not an address (one with a leading-zero octet, octal to `inet_aton`, goes to the platform as before).
 
 - HTTP/3 server: `QuicConfig.defaultStreamErrorCode` left at its default 0 (no HTTP/3 error code; a client reads it as
   H3_NO_ERROR, RFC 9114 section 9) becomes H3_REQUEST_REJECTED for `Http3Endpoint` and the Ktor engine's HTTP/3 side. It
