@@ -28,9 +28,11 @@ import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.nanoseconds
@@ -291,8 +293,8 @@ class NewTokenTest {
         val client = InetSocketAddress("10.0.0.1", 40000)
         val t0 = TimeMark(1_000_000_000L)
         try {
-            val retry = tokens.mint(ConnectionId(ByteArray(8) { 1 }), ConnectionId(ByteArray(8) { 2 }), client, 1, t0)
-            val newToken = tokens.mintNewToken(client, t0)
+            val retry = assertNotNull(tokens.mint(ConnectionId(ByteArray(8) { 1 }), ConnectionId(ByteArray(8) { 2 }), client, 1, t0))
+            val newToken = assertNotNull(tokens.mintNewToken(client, t0))
 
             fun check(t: ByteArray): TokenCheck {
                 val b = PacketBuffer.of(t)
@@ -322,7 +324,7 @@ class NewTokenTest {
         try {
             val admitted =
                 List(4) {
-                    val t = tokens.mintNewToken(client, t0)
+                    val t = assertNotNull(tokens.mintNewToken(client, t0))
                     val b = PacketBuffer.of(t)
                     val check =
                         try {
@@ -338,13 +340,99 @@ class NewTokenTest {
         }
     }
 
+    private fun nonceOf(t: ByteArray): Long {
+        var n = 0L
+        for (i in 0 until 8) n = (n shl 8) or (t[1 + i].toLong() and 0xff)
+        return n
+    }
+
+    @Test fun negative_nonceIsACounterSharedByBothTokenKindsUnderOneKey() {
+        // AES-GCM under one key must never see a nonce twice (a repeat gives away the GHASH key: forged tokens for any IP). A
+        // random 56-bit nonce passes NIST's 2^-32 collision bound at about 6000 tokens per key; a counter never repeats
+        val tokens = AddressTokens(KslQuicCrypto, Random(1))
+        val client = InetSocketAddress("10.0.0.1", 40000)
+        val t0 = TimeMark(1_000_000_000L)
+        try {
+            val n = (1 shl 16) + 10
+            val nonces = LongArray(n)
+            for (i in 0 until n) {
+                val t =
+                    if (i % 3 == 0) {
+                        tokens.mint(ConnectionId(ByteArray(8) { 1 }), ConnectionId(ByteArray(8) { 2 }), client, 1, t0)
+                    } else {
+                        assertNotNull(tokens.mintNewToken(client, t0))
+                    }
+                nonces[i] = nonceOf(assertNotNull(t))
+            }
+            for (i in 1 until n) assertEquals(nonces[i - 1] + 1, nonces[i], "one counter for Retry and NEW_TOKEN, +1 per token ($i)")
+            assertTrue(nonces.all { it ushr 56 == 0L }, "generation 0 in the top byte")
+            // the next generation: its own counter under its own key, named in the top byte
+            val later = nonceOf(assertNotNull(tokens.mintNewToken(client, t0 + 1.hours + 1.seconds)))
+            assertEquals(1L, later ushr 56)
+        } finally {
+            tokens.close()
+        }
+    }
+
+    @Test fun negative_counterNeverWraps() {
+        // a generation that would run out of nonces mints nothing more: no token rather than a repeated nonce
+        val tokens = AddressTokens(KslQuicCrypto, Random(1))
+        val client = InetSocketAddress("10.0.0.1", 40000)
+        val t0 = TimeMark(1_000_000_000L)
+        try {
+            assertNotNull(tokens.mintNewToken(client, t0))
+            tokens.counterForTest = AddressTokens.COUNTER_LIMIT - 2
+            assertNotNull(tokens.mintNewToken(client, t0))
+            assertNotNull(tokens.mint(ConnectionId(ByteArray(8) { 1 }), ConnectionId(ByteArray(8) { 2 }), client, 1, t0))
+            assertNull(tokens.mintNewToken(client, t0), "the counter is spent")
+            assertNull(tokens.mint(ConnectionId(ByteArray(8) { 1 }), ConnectionId(ByteArray(8) { 2 }), client, 1, t0))
+            assertNotNull(tokens.mintNewToken(client, t0 + 1.hours + 1.seconds), "a new key, a new counter")
+        } finally {
+            tokens.close()
+        }
+    }
+
+    @Test fun replayRegisterHoldsItsProductionCapacity() {
+        // the default capacity (QuicServerConfig.newTokenReplayCapacity): every one of that many distinct tokens is admitted
+        // within one lifetime, in the documented memory
+        val tokens = AddressTokens(KslQuicCrypto, Random(8))
+        val t0 = TimeMark(1_000_000_000L)
+        try {
+            val n = AddressTokens.DEFAULT_REPLAY_CAPACITY
+            assertEquals(1_048_576, n)
+            var admitted = 0
+            for (i in 0 until n) if (tokens.admitNewToken(i.toLong() * 0x9E3779B97F4A7C15uL.toLong(), t0)) admitted++
+            assertEquals(n, admitted, "every distinct token up to the capacity")
+            assertEquals(32L * 1024 * 1024, tokens.replayMemoryBytesForTest, "32 MiB")
+            assertFalse(tokens.admitNewToken(0, t0), "and still none twice")
+        } finally {
+            tokens.close()
+        }
+    }
+
+    @Test fun replayCapacitySizesTheRegister() {
+        assertEquals(64L * 4 * 16, AddressTokens.replayLayout(1).let { (stripes, slots) -> stripes.toLong() * slots * 16 })
+        val (stripes, slots) = AddressTokens.replayLayout(4_000_000)
+        assertTrue(stripes * (slots * 3 / 4) >= 4_000_000 * 11 / 10, "10 % headroom over an even spread: $stripes x $slots")
+        assertFailsWith<IllegalArgumentException> {
+            QuicServerConfig
+                .Builder(
+                    CoreFixtures.server(),
+                ).apply { newTokenReplayCapacity = 0 }
+                .build()
+        }
+        assertFailsWith<IllegalArgumentException> {
+            QuicServerConfig.Builder(CoreFixtures.server()).apply { newTokenReplayCapacity = (1 shl 24) + 1 }.build()
+        }
+    }
+
     @Test fun negative_newTokenNonceIsUniqueAndCarriesNoConnectionData() {
         // RFC 9000 section 8.1.3: a token MUST NOT carry anything that links it to the connection it was issued on; each one is unique
         val tokens = AddressTokens(KslQuicCrypto, Random(1))
         val client = InetSocketAddress("10.0.0.1", 40000)
         try {
             val seen = HashSet<String>()
-            repeat(200) { seen += tokens.mintNewToken(client, TimeMark(1_000_000_000L)).toHexForTest() }
+            repeat(200) { seen += assertNotNull(tokens.mintNewToken(client, TimeMark(1_000_000_000L))).toHexForTest() }
             assertEquals(200, seen.size)
         } finally {
             tokens.close()

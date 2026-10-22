@@ -1135,6 +1135,7 @@ public abstract interface class io/kuicksilver/quic/QuicPath {
 public final class io/kuicksilver/quic/QuicServerConfig {
 	public final fun getEarlyData ()Z
 	public final fun getNewTokenLifetime-FghU774 ()Lkotlin/time/Duration;
+	public final fun getNewTokenReplayCapacity ()I
 	public final fun getQuic ()Lio/kuicksilver/quic/QuicConfig;
 	public final fun getTls ()Lio/kuicksilver/tls/TlsConfig;
 }
@@ -1145,11 +1146,13 @@ public final class io/kuicksilver/quic/QuicServerConfig$Builder {
 	public final fun getEarlyData ()Z
 	public final fun getEarlyDataContext ()[B
 	public final fun getNewTokenLifetime-FghU774 ()Lkotlin/time/Duration;
+	public final fun getNewTokenReplayCapacity ()I
 	public final fun getQuic ()Lio/kuicksilver/quic/QuicConfig;
 	public final fun getTls ()Lio/kuicksilver/tls/TlsConfig;
 	public final fun setEarlyData (Z)V
 	public final fun setEarlyDataContext ([B)V
 	public final fun setNewTokenLifetime-BwNAW2A (Lkotlin/time/Duration;)V
+	public final fun setNewTokenReplayCapacity (I)V
 	public final fun setQuic (Lio/kuicksilver/quic/QuicConfig;)V
 }
 

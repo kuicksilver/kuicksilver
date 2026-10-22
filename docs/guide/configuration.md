@@ -73,6 +73,7 @@ Transport settings of a connection: `quicConfig { }` (`QuicConfig.Builder`), `Qu
 | server `earlyData` (*experimental*) | `Boolean` | `false` | not with client certificates | accept 0-RTT: fresh tickets only (±10 s ticket age), once per ticket, only for the configuration that issued it |
 | server `earlyDataContext` (*experimental*) | `ByteArray?` | `null` | at most 256 bytes | application settings bound into tickets (`Http3Endpoint` puts its SETTINGS here) |
 | client `tokenStore` (*experimental*) | `QuicTokenStore?` | `null` | | keep the servers' NEW_TOKEN tokens and present one on the next connection to the same server name and port: no Retry round trip; links those connections ([Address tokens](quic.md#address-tokens-new_token)) |
+| server `newTokenReplayCapacity` (*experimental*) | `Int` | `1_048_576` | 1..16,777,216 | NEW_TOKEN tokens the replay register holds per lifetime (32 bytes each, 32 MiB at the default, allocated on the first token shown); once full a returning client's token counts as absent |
 | server `newTokenLifetime` (*experimental*) | `Duration?` | 24 hours | positive, at most 7 days; `null` issues none | how long the NEW_TOKEN tokens this server issues validate a returning client's address ([Admission and endpoint limits](quic.md#admission-and-endpoint-limits)) |
 
 ## QuicEndpointConfig

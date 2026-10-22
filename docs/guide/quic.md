@@ -619,11 +619,23 @@ connection. A client that shows such a token on a later connection from the same
 is not held to three times what the client sent. The token is `0x02 | nonce | AEAD(issuedAt)` under keys that live only
 in this process (shared by every loop, rotated hourly; tokens do not survive a restart and do not work on another
 instance), bound to the client's IP address but not its port, valid for
-`QuicServerConfig.newTokenLifetime` (24 hours; null issues none) and accepted once: a register of the nonces it saw
-(1 MiB, entries kept for the whole lifetime) treats a second use as no token, and so does a full register. A token
-that does not validate (forged, expired, another IP, used before) is never refused with INVALID_TOKEN; the Initial is
-treated as one without a token, and `newTokensRejected` counts it. A policy may still answer a token holder with a
-Retry. Clients keep tokens only with a `tokenStore` ([Address tokens](#address-tokens-new_token)).
+`QuicServerConfig.newTokenLifetime` (24 hours; null issues none) and accepted once: a register of the tokens it
+accepted, kept for at least the lifetime, treats a second use as no token.
+
+The register holds `newTokenReplayCapacity` tokens per lifetime (1,048,576 by default, 32 MiB allocated when the first
+token is shown; about 32 bytes per token, rounded up to a power of two). It never forgets a token early: once it is full
+(first in parts, as its 64 stripes fill unevenly), a returning client's token is treated as absent, not accepted
+twice, so the client gets whatever the policy gives a client without a token (a Retry under `AlwaysRetry` or under
+load). Entries age out one to two lifetimes after they were added. A server that expects more returning clients per
+lifetime raises the capacity or shortens the lifetime (the register only has to cover one lifetime); a rising
+`newTokensRejected` with normal traffic says it is full. An attacker can fill it only with tokens it was issued: one
+completed handshake per token (four per connection at most, each for another IP it owns), each shown once from its
+IP, so filling the default takes over a million connections within a day, about 12 a second for 24 hours, and costs
+honest clients only the round trip their tokens would have saved.
+
+A token that does not validate (forged, expired, another IP, used before) is never refused with INVALID_TOKEN; the
+Initial is treated as one without a token, and `newTokensRejected` counts it. A policy may still answer a token holder
+with a Retry. Clients keep tokens only with a `tokenStore` ([Address tokens](#address-tokens-new_token)).
 
 ```kotlin
 // guide:quic:new-token

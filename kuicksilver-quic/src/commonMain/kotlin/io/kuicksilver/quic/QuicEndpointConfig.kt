@@ -96,6 +96,9 @@ public class QuicServerConfig private constructor(
     /** How long a NEW_TOKEN token this server issues stays valid, or null when it issues none; see [Builder.newTokenLifetime]. */
     @property:ExperimentalKuicksilverApi
     public val newTokenLifetime: Duration?,
+    /** NEW_TOKEN tokens the server's replay register holds per lifetime; see [Builder.newTokenReplayCapacity]. */
+    @property:ExperimentalKuicksilverApi
+    public val newTokenReplayCapacity: Int,
 ) {
     private val early = AtomicReference<ServerEarlyData?>(null)
 
@@ -159,6 +162,16 @@ public class QuicServerConfig private constructor(
         @ExperimentalKuicksilverApi
         public var newTokenLifetime: Duration? = 24.hours
 
+        /**
+         * Default 1,048,576 (1..16,777,216). A NEW_TOKEN token validates one connection: the server remembers each one it accepted
+         * for at least [newTokenLifetime] in a register sized for this many per lifetime, made when the first token is shown
+         * (32 MiB at the default; about 32 bytes per token, rounded up to a power of two per stripe). Past that, a returning
+         * client's token is treated as absent (it may get a Retry) until older entries age out: never a second use. All loops of
+         * the endpoint share it.
+         */
+        @ExperimentalKuicksilverApi
+        public var newTokenReplayCapacity: Int = 1 shl 20
+
         /** A [QuicServerConfig]; IllegalArgumentException for a client [tls], `TlsException.Config` for one QUIC cannot use. */
         public fun build(): QuicServerConfig {
             require(tls.role == TlsRole.Server) { "server config needs a server TlsConfig" }
@@ -170,7 +183,8 @@ public class QuicServerConfig private constructor(
                     it.isPositive() && it <= 7.days,
                 ) { "newTokenLifetime must be positive and at most 7 days, or null" }
             }
-            return QuicServerConfig(tls, quic, earlyData, earlyDataContext?.copyOf(), newTokenLifetime)
+            require(newTokenReplayCapacity in 1..(1 shl 24)) { "newTokenReplayCapacity must be 1..16777216" }
+            return QuicServerConfig(tls, quic, earlyData, earlyDataContext?.copyOf(), newTokenLifetime, newTokenReplayCapacity)
         }
     }
 }

@@ -83,7 +83,13 @@ public class EndpointCore internal constructor(
         if (config.server == null) {
             null
         } else {
-            sharedTokens ?: AddressTokens(config.crypto, random, newTokenLifetime = config.server.newTokenLifetime)
+            sharedTokens?.also { check(it.retain()) { "the group's address tokens are closed" } }
+                ?: AddressTokens(
+                    config.crypto,
+                    random,
+                    newTokenLifetime = config.server.newTokenLifetime,
+                    replayCapacity = config.server.newTokenReplayCapacity,
+                )
         }
     internal val queue: AdmissionQueue? = if (config.server != null) AdmissionQueue(config.initialQueueCap) else null
 

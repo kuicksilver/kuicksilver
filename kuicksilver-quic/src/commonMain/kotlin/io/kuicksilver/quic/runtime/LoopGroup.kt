@@ -194,21 +194,26 @@ internal class LoopGroup private constructor(
         ): LoopGroup {
             val g = LoopGroup(config)
             // one set of Retry and NEW_TOKEN keys for every loop: the kernel may hash a client's next connection onto another
-            // socket; each loop's endpoint core is an owner and the last one to close frees the keys
+            // socket. The group holds one reference while it builds the loops, each loop's endpoint core takes its own, and the
+            // last one to close frees the keys; a loop that fails to build leaves no reference behind
             val tokens =
                 io.kuicksilver.quic.endpoint.AddressTokens(
                     config.crypto,
                     KslRandom.newSource(),
                     newTokenLifetime = config.server!!.newTokenLifetime,
-                    owners = ios.size,
+                    replayCapacity = config.server.newTokenReplayCapacity,
                 )
-            val loops =
-                ios.mapIndexed {
-                    i,
-                    io,
-                    ->
-                    EndpointLoop.inGroup(config, io, i, g, g.acceptQueue, g.pendingAccept, g.sessions, tokens)
+            val loops = ArrayList<EndpointLoop>(ios.size)
+            try {
+                for ((i, io) in ios.withIndex()) {
+                    loops += EndpointLoop.inGroup(config, io, i, g, g.acceptQueue, g.pendingAccept, g.sessions, tokens)
                 }
+            } catch (e: Throwable) {
+                for (l in loops) l.core.close() // never started: their cores are all they hold of the group's keys
+                throw e
+            } finally {
+                tokens.close() // the group's own reference
+            }
             afterBuild()
             g.loops = loops
             for (l in loops) l.start()

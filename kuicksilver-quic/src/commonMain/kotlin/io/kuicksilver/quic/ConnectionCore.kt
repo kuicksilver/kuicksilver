@@ -138,7 +138,7 @@ public class ConnectionCore internal constructor(
     internal var initialToken: ByteArray? = null
 
     /** Server: mints a NEW_TOKEN token bound to an address (RFC 9000 section 8.1.3); null when the endpoint issues none. */
-    internal var newTokenMinter: ((InetSocketAddress) -> ByteArray)? = null
+    internal var newTokenMinter: ((InetSocketAddress) -> ByteArray?)? = null
 
     /** Server: the NEW_TOKEN token to send or resend, and its number ([SentFrames.ID_NEW_TOKEN]); null once acknowledged. */
     internal var newToken: ByteArray? = null

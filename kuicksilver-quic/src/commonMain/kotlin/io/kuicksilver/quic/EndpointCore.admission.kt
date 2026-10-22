@@ -159,7 +159,11 @@ private fun EndpointCore.admitValidated(
             val clientDcid = ConnectionId(ByteArray(hv.dcidLen).also { data.copyTo(it, hv.dcidOff, 0, hv.dcidLen) })
             val clientScid = ConnectionId(ByteArray(hv.scidLen).also { data.copyTo(it, hv.scidOff, 0, hv.scidLen) })
             val ourScid = ServerCidFormat.generate(loopIndex, server.quic.connectionIdLength, random)
-            val token = tokens.mint(clientDcid, ourScid, from, hv.version, now)
+            val token =
+                tokens.mint(clientDcid, ourScid, from, hv.version, now) ?: run {
+                    initialsDropped++ // this key's nonces are spent (2^55 tokens or more): no Retry rather than a repeated nonce
+                    return false
+                }
             val n = RetryPacket.write(vnBuffer, profile, clientScid, ourScid, token, clientDcid, config.crypto, random.nextInt(16))
             stateless +=
                 Stateless(ByteArray(n).also { vnBuffer.copyTo(it, 0, 0, n) }, from)

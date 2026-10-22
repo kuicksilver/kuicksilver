@@ -210,7 +210,7 @@ type is experimental, so are its members.
 | API | Feature |
 |---|---|
 | `QuicClientConfig.earlyData`, `QuicServerConfig.earlyData`, `earlyDataContext`, `QuicEndpoint.connectEarly`, `QuicConnection.awaitHandshake`, `earlyDataAccepted`, `isHandshakeComplete`, `QuicStream.receivedEarly`, `ConnectionEvent.EarlyDataAccepted` / `EarlyDataRejected` / `SessionTicket`, `ConnectionCore.earlyDataAccepted` / `streamReceivedEarly`, `QuicException.ConnectionLost.ZeroRttRejected`, `ZeroRttOutcome` | 0-RTT |
-| `QuicServerConfig.newTokenLifetime`, `QuicClientConfig.tokenStore`, `QuicTokenStore` (to implement), `MemoryTokenStore`, `EndpointStats.newTokensIssued` / `newTokensAccepted` / `newTokensRejected` | NEW_TOKEN address-validation tokens (RFC 9000 section 8.1.3) |
+| `QuicServerConfig.newTokenLifetime`, `newTokenReplayCapacity`, `QuicClientConfig.tokenStore`, `QuicTokenStore` (to implement), `MemoryTokenStore`, `EndpointStats.newTokensIssued` / `newTokensAccepted` / `newTokensRejected` | NEW_TOKEN address-validation tokens (RFC 9000 section 8.1.3) |
 | `CongestionController` (to implement), `Bbr` | pluggable congestion control and BBRv3 (`Cubic` and `NewReno` are stable) |
 | `ConnectionCore`, `EndpointCore`, `QuicConnection.core`, `QuicConfig.toBuilder()`, `QuicEndpointConfig.toBuilder()` | the sans-IO core used directly |
 | `NetworkMigrator`, `MigrationEvent`, `QuicConnection.rebind` | automatic migration (`QuicConnection.migrate`, `addPath`, `probe`, `switchTo` are stable) |

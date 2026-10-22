@@ -228,7 +228,7 @@ internal fun ConnectionCore.issueNewToken(client: io.ktor.network.sockets.InetSo
     val ip = AddressClass.ipBytes(client)
     if (newTokenIps.any { it.contentEquals(ip) }) return
     newTokenIps += ip
-    newToken = mint(client)
+    newToken = mint(client) ?: return // the key's nonces are spent: no token this time
     newTokenSeq++
     sendNewToken = true
 }

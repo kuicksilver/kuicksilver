@@ -19,8 +19,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   and one after the client is validated on a new IP address, at most four per connection; a client that presents one on a
   later connection from the same IP arrives validated (`ConnectionAttempt.addressValidated`): no Retry under
   `AlwaysRetry` and no anti-amplification limit. Tokens are bound to the IP (not the port), sealed under hourly keys shared
-  by the endpoint's loops and kept for the lifetime, and accepted once (a replay register); a token that does not
-  validate is treated as absent, never refused. New counters `EndpointStats.newTokensIssued`, `newTokensAccepted` and
+  by the endpoint's loops and kept for the lifetime, sealed with a counter nonce (never a repeat under one key), and
+  accepted once: a replay register sized by `QuicServerConfig.newTokenReplayCapacity` (1,048,576 tokens per lifetime in
+  32 MiB by default) that treats a token as absent once it is full; a token that does not validate is treated as absent,
+  never refused. New counters `EndpointStats.newTokensIssued`, `newTokensAccepted` and
   `newTokensRejected`.
 - QUIC: clients keep NEW_TOKEN tokens and present them on their next connection (experimental
   `QuicClientConfig.tokenStore`, off by default because a token links the connections that use it; `QuicTokenStore`,

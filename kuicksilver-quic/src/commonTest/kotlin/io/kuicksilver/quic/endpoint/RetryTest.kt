@@ -510,7 +510,7 @@ class RetryTest {
         val retryScid = ConnectionId(ByteArray(8) { 2 })
         try {
             val t0 = TimeMark(1_000_000_000L)
-            val tok = tokens.mint(odcid, retryScid, client, 1, t0)
+            val tok = assertNotNull(tokens.mint(odcid, retryScid, client, 1, t0))
 
             fun check(at: TimeMark): TokenCheck {
                 val b = PacketBuffer.of(tok)
@@ -603,7 +603,7 @@ class RetryTest {
         }
         try {
             val c = p.connect(quic = io.kuicksilver.quic.quicConfig { })
-            c.initialToken = ByteArray(50) { 0x02 } // type 0x02: not one of our Retry tokens
+            c.initialToken = ByteArray(50) { 0x03 } // type 0x03: neither a Retry nor a NEW_TOKEN token of ours
             assertTrue(p.confirmed(c), "${p.closed(c)}")
             val s = p.server.connections().single()
             assertTrue(s.addressValidatedByHandshakeForTest, "the address was validated by the Handshake packet, not by the token")

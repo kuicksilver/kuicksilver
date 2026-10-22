@@ -62,9 +62,15 @@ internal sealed interface TokenCheck {
  *   under the current or the previous key.
  * - NEW_TOKEN tokens (section 8.1.3): `0x02 | nonce(8) | AEAD(issuedAt(8))` with `0x02 | client IP` as associated data, as
  *   quic-go and ngtcp2 bind them: no port (a NAT picks a new one per flow) and no connection ID, so the token says nothing that
- *   links the connection it was issued on to the one that presents it. The random nonce makes every token unique. Its top byte
- *   names the key generation that sealed it, so a token costs one AEAD open, forged or not. They live [newTokenLifetime] and pass
- *   the replay register once ([admitNewToken]; section 8.1.4).
+ *   links the connection it was issued on to the one that presents it. They live [newTokenLifetime] and pass the replay register
+ *   once ([admitNewToken]; section 8.1.4), which holds about [replayCapacity] of them per lifetime.
+ *
+ * The nonce of both kinds is `generation(8 bits) | counter(56 bits)`: the top byte names the key generation that sealed the token,
+ * so a token costs one AEAD open, forged or not, and the counter is one per generation, shared by both kinds, starting at a
+ * random point below 2^55 and never wrapping (at 2^56 nothing more is minted under that key). AES-GCM never sees a nonce twice
+ * under one key, which a random nonce only makes likely (56 random bits pass NIST's 2^-32 collision bound at about 6000 tokens
+ * per key, and a repeat gives away the GHASH key, that is forged tokens for any address). The counter in the clear tells a
+ * client how many tokens the server minted between two of its own, and the generation byte roughly when a token was issued.
  *
  * Keys rotate every [rotateEvery]; the keys of the last `newTokenLifetime / rotateEvery + 1` generations are kept so a NEW_TOKEN
  * token opens for its whole lifetime, while a Retry token only opens under the two newest. A token is checked by the process that
@@ -83,11 +89,14 @@ internal class AddressTokens(
     val newTokenLifetime: Duration? = DEFAULT_NEW_TOKEN_LIFETIME,
     private val rotateEvery: Duration = 1.hours,
     owners: Int = 1,
+    /** NEW_TOKEN tokens the replay register holds per lifetime at least (`QuicServerConfig.newTokenReplayCapacity`); see [replayLayout]. */
+    private val replayCapacity: Int = DEFAULT_REPLAY_CAPACITY,
     /** The NEW_TOKEN replay register (keyed from [random]); tests shrink it. */
     register: ZeroRttReplayRegister? = null,
 ) : AutoCloseable {
     init {
         require(owners >= 1)
+        require(replayCapacity in 1..MAX_REPLAY_CAPACITY) { "replayCapacity must be 1..$MAX_REPLAY_CAPACITY" }
         require(rotateEvery.isPositive())
         newTokenLifetime?.let { require(it.isPositive() && it <= MAX_NEW_TOKEN_LIFETIME) { "newTokenLifetime must be in (0, 7 days]" } }
     }
@@ -111,6 +120,10 @@ internal class AddressTokens(
     private var epoch: TimeMark = TimeMark.NEVER
     private var closed = false
 
+    /** The next nonce counter of generation [counterGeneration] (-1: none minted yet in [current]). */
+    private var counter = 0L
+    private var counterGeneration = -1L
+
     /**
      * One fingerprint per accepted NEW_TOKEN nonce for as long as the token lives (entries last between one and two lifetimes); made
      * on the first token shown, outside the lock (1 MiB), so a server nobody returns to holds no memory for it.
@@ -123,7 +136,8 @@ internal class AddressTokens(
     }
 
     private inline fun <T> locked(block: () -> T): T {
-        // held for one AEAD seal or open (a microsecond) and a few array writes, never across a suspension or a key setup: a
+        // held for one AEAD seal or open (a microsecond) and a few array writes, never across a suspension or a key setup, and
+        // contended by at most `loops` threads (one per core or fewer, docs/guide/quic.md "Several loops on one port"): a
         // blocking lock would cost more than the wait
         while (!lock.compareAndSet(0, 1)) { /* spin */ }
         try {
@@ -155,20 +169,48 @@ internal class AddressTokens(
         if (g < 0) return
         val made = crypto.newTokenKey()
         val unused =
-            locked {
-                if (g <= current) {
-                    made // another loop moved there first
-                } else {
-                    current = g
-                    val slot = (g % ring).toInt()
-                    val old = keys[slot]
-                    keys[slot] = made
-                    generations[slot] = g
-                    old // out of reach now: every use of a key happens under the lock
+            try {
+                locked {
+                    if (g <= current) {
+                        made // another loop moved there first
+                    } else {
+                        current = g
+                        val slot = (g % ring).toInt()
+                        val old = keys[slot]
+                        keys[slot] = made
+                        generations[slot] = g
+                        old // out of reach now: every use of a key happens under the lock
+                    }
                 }
+            } catch (e: Throwable) {
+                made.close() // closed meanwhile: the key never got in
+                throw e
             }
         unused?.close()
     }
+
+    /** The next nonce of [current]'s key, or null when its counter is spent; under the lock. */
+    private fun nextNonce(): Long? {
+        if (counterGeneration != current) {
+            counterGeneration = current
+            counter = random.nextLong() ushr 9 // a random start below 2^55: the absolute count stays private
+        }
+        if (counter >= COUNTER_LIMIT) return null
+        return ((current and 0xff) shl 56) or counter++
+    }
+
+    /** Test hook: the next counter value of the current generation. */
+    internal var counterForTest: Long
+        get() = locked { counter }
+        set(v) {
+            locked {
+                counterGeneration = current
+                counter = v
+            }
+        }
+
+    /** The generation a nonce's top byte names: the newest one with that low byte. */
+    private fun generationOf(nonce: Long): Long = current - ((current - (nonce ushr 56)) and 0xff)
 
     private fun key(generation: Long): TokenKey? {
         if (generation < 0 || generation > current || current - generation >= ring) return null
@@ -218,17 +260,17 @@ internal class AddressTokens(
             }
         }
 
-    /** A Retry token for the Initial from [client] whose DCID was [odcid], answered by a Retry with SCID [retryScid]. */
+    /** A Retry token for the Initial from [client] whose DCID was [odcid], answered by a Retry with SCID [retryScid]; null when the key's nonces are spent. */
     fun mint(
         odcid: ConnectionId,
         retryScid: ConnectionId,
         client: InetSocketAddress,
         version: Int,
         now: TimeMark,
-    ): ByteArray {
+    ): ByteArray? {
         rotate(now)
         return locked {
-            val nonce = random.nextLong()
+            val nonce = nextNonce() ?: return@locked null
             val plain = ByteArray(8 + 1 + odcid.length + 1 + retryScid.length)
             issuedAt(now).copyInto(plain, 0)
             plain[8] = odcid.length.toByte()
@@ -239,15 +281,15 @@ internal class AddressTokens(
         }
     }
 
-    /** A NEW_TOKEN token for [client]'s IP (RFC 9000 section 19.7); only when [newTokenLifetime] is set. */
+    /** A NEW_TOKEN token for [client]'s IP (RFC 9000 section 19.7), or null when the key's nonces are spent; only when [newTokenLifetime] is set. */
     fun mintNewToken(
         client: InetSocketAddress,
         now: TimeMark,
-    ): ByteArray {
+    ): ByteArray? {
         checkNotNull(newTokenLifetime) { "this server issues no NEW_TOKEN tokens" }
         rotate(now)
         return locked {
-            val nonce = ((current and 0xff) shl 56) or (random.nextLong() ushr 8)
+            val nonce = nextNonce() ?: return@locked null
             token(NEW_TOKEN, nonce, key(current)!!.seal(nonce, newTokenAad(client), issuedAt(now)))
         }
     }
@@ -293,7 +335,9 @@ internal class AddressTokens(
         rotate(now)
         val plain =
             locked {
-                key(current)?.open(nonce, a, sealed) ?: key(current - 1)?.open(nonce, a, sealed)
+                // only the two newest generations: a Retry token lives seconds
+                val generation = generationOf(nonce)
+                if (generation < current - 1) null else key(generation)?.open(nonce, a, sealed)
             } ?: return TokenCheck.Invalid
         if (plain.size < 10) return TokenCheck.Invalid
         val issued = readLong(plain)
@@ -324,9 +368,7 @@ internal class AddressTokens(
         rotate(now)
         val plain =
             locked {
-                // the newest generation whose low byte the nonce names
-                val generation = current - ((current - (nonce ushr 56)) and 0xff)
-                key(generation)?.open(nonce, newTokenAad(client), sealed)
+                key(generationOf(nonce))?.open(nonce, newTokenAad(client), sealed)
             } ?: return TokenCheck.NewTokenRejected
         if (plain.size != 8) return TokenCheck.NewTokenRejected
         val issued = readLong(plain)
@@ -355,7 +397,8 @@ internal class AddressTokens(
             replay.load() ?: run {
                 val k0 = locked { random.nextLong() } // the SipHash keys: [random] is shared, the rest happens unlocked
                 val k1 = locked { random.nextLong() }
-                val made = ZeroRttReplayRegister(k0, k1, halfSpan = lifetime)
+                val (stripes, slots) = replayLayout(replayCapacity)
+                val made = ZeroRttReplayRegister(k0, k1, stripes, slots, halfSpan = lifetime)
                 if (replay.compareAndSet(null, made)) made else replay.load()!!
             }
         return r.admit(nonceBytes(nonce), now)
@@ -366,7 +409,19 @@ internal class AddressTokens(
         replay.load()?.release(nonceBytes(nonce))
     }
 
-    /** Called once by every owner (each loop's endpoint core); the last one frees the keys. */
+    /** Bytes of the replay register, 0 before the first token was shown; tests. */
+    internal val replayMemoryBytesForTest: Long get() = replay.load()?.memoryBytes ?: 0
+
+    /** One more owner (an endpoint core of the group); false once the keys are freed. */
+    fun retain(): Boolean {
+        while (true) {
+            val n = owners.load()
+            if (n == 0) return false
+            if (owners.compareAndSet(n, n + 1)) return true
+        }
+    }
+
+    /** Called once by every owner (each loop's endpoint core, and the group while it builds them); the last one frees the keys. */
     override fun close() {
         if (owners.decrementAndFetch() != 0) return
         locked {
@@ -389,6 +444,29 @@ internal class AddressTokens(
         private const val CLOCK_SLACK_NANOS = 1_000_000_000L
 
         val DEFAULT_NEW_TOKEN_LIFETIME: Duration = 24.hours
+
+        /** A generation's nonces end here (the counter part of the nonce is 56 bits). */
+        const val COUNTER_LIMIT: Long = 1L shl 56
+
+        /** Default NEW_TOKEN replay capacity: 1,048,576 tokens per lifetime in 32 MiB ([replayLayout]). */
+        const val DEFAULT_REPLAY_CAPACITY: Int = 1 shl 20
+        const val MAX_REPLAY_CAPACITY: Int = 1 shl 24
+
+        private const val REPLAY_STRIPES = 64
+
+        /**
+         * Stripes and slots per half of a replay register that holds [capacity] tokens per lifetime: each stripe takes 3/4 of its
+         * slots, sized for its even share plus 10 % (a stripe holds a random share; the SipHash key keeps an attacker from
+         * aiming at one), rounded up to a power of two. Memory: stripes x slots x 2 halves x 8 bytes.
+         */
+        fun replayLayout(capacity: Int): Pair<Int, Int> {
+            val perStripe = (capacity.toLong() * 11 / 10 + REPLAY_STRIPES - 1) / REPLAY_STRIPES
+            val need = (perStripe * 4 + 2) / 3
+            var slots = 4L
+            while (slots < need) slots = slots shl 1
+            return REPLAY_STRIPES to slots.toInt()
+        }
+
         val MAX_NEW_TOKEN_LIFETIME: Duration = 7.days
     }
 }
