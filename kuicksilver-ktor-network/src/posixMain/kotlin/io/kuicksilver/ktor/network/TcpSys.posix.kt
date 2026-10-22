@@ -41,6 +41,7 @@ import platform.posix.O_NONBLOCK
 import platform.posix.SOCK_STREAM
 import platform.posix.SOL_SOCKET
 import platform.posix.SO_ERROR
+import platform.posix.SO_LINGER
 import platform.posix.accept
 import platform.posix.addrinfo
 import platform.posix.bind
@@ -54,9 +55,11 @@ import platform.posix.getaddrinfo
 import platform.posix.getpeername
 import platform.posix.getsockname
 import platform.posix.getsockopt
+import platform.posix.linger
 import platform.posix.listen
 import platform.posix.recv
 import platform.posix.send
+import platform.posix.setsockopt
 import platform.posix.shutdown
 import platform.posix.socket
 import platform.posix.socklen_tVar
@@ -229,6 +232,17 @@ internal actual fun tcpShutdown(
     how: Int,
 ) {
     shutdown(fd, how)
+}
+
+internal actual fun tcpLingerZero(fd: Int) {
+    memScoped {
+        val l = alloc<linger>()
+        l.l_onoff = 1
+        l.l_linger = 0
+        if (setsockopt(fd, SOL_SOCKET, SO_LINGER, l.ptr, sizeOf<linger>().convert()) != 0) {
+            throw PosixException.forErrno(errno, "setsockopt(SO_LINGER)")
+        }
+    }
 }
 
 internal actual fun tcpClose(fd: Int) {

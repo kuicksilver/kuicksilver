@@ -114,6 +114,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- TCP sockets of the engines (JVM, Android, Kotlin/Native): when a write loop failed, from a send error or because the
+  application's stream failed mid-response (a handler that threw), the connection was closed with a FIN, so the peer
+  saw a clean end of a cut stream; for a response delimited by the connection's close, the cut body passed for the
+  whole one. Such a connection now ends with a reset (`SO_LINGER` 0), and the peer gets an error. On Kotlin/Native, a
+  connection the engine aborts (a client that stopped reading, a stop past its grace period) is now reset too, as on the
+  JVM and Android; it was shut down with a FIN, and the kernel kept the unsent bytes until TCP gave up on the peer.
 - Ktor server, HTTP/1.1 (slow POST, R.U.D.Y.): a request body had no deadline, so a client that announced a body and
   then sent it a byte at a time, or stopped, held its handler for ever. A body that sends no byte for
   `connectionIdleTimeoutSeconds` now fails the handler's read; when neither the application nor StatusPages answers the

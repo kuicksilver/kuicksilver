@@ -43,7 +43,8 @@ import kotlin.time.Duration.Companion.seconds
  * Closing: the write channel is flushed and closed, the writer drains it and shuts the output down (a FIN, as ktor's writer
  * does), and then the ktor socket is closed, which closes the descriptor once its reader has ended; when the writer had ended
  * already, at once. The drain is bounded by [closeTimeout] when one is set: past it the writer is cancelled. A writer that is cancelled (by that bound or
- * by the socket's job) or fails (a reset) closes the descriptor itself, so a socket never stays open behind a stalled write.
+ * by the socket's job) or fails (a reset, or a failed channel) closes the descriptor itself, so a socket never stays open
+ * behind a stalled write; a failed one with a reset, so the peer sees the stream cut, not ended.
  * Writing after [close] fails with an IOException, as with ktor's sockets.
  */
 internal class KslNioSocket(
@@ -113,9 +114,14 @@ internal class KslNioSocket(
                 }
             }
         } catch (e: Throwable) {
-            // a reset or another I/O error: `reader` closes the channel with it (the application's writes fail) and completes the
-            // job normally, so the descriptor is closed here
-            if (e !is CancellationException) runCatching { nio.close() }
+            // a reset, another I/O error, or the application's channel failed (a handler that threw mid-response): `reader`
+            // closes the channel with it (the application's writes fail) and completes the job normally, so the descriptor
+            // is closed here, with a reset (SO_LINGER 0) as abort() does: a FIN would end the stream as if complete, and a
+            // peer reading to the end of a close-delimited body would take the cut one for the whole
+            if (e !is CancellationException) {
+                runCatching { nio.setOption(StandardSocketOptions.SO_LINGER, 0) }
+                runCatching { nio.close() }
+            }
             throw e
         } finally {
             selectable.interestOp(SelectInterest.WRITE, false)

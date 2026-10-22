@@ -82,6 +82,9 @@ internal expect fun tcpShutdown(
     how: Int,
 )
 
+/** `SO_LINGER` on with a zero timeout: closing [fd] then sends a reset and drops what is unsent. */
+internal expect fun tcpLingerZero(fd: Int)
+
 /** Closes [fd] that never reached the selector (which otherwise closes it). */
 internal expect fun tcpClose(fd: Int)
 

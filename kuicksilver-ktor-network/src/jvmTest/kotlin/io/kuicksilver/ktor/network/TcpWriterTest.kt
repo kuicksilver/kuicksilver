@@ -10,6 +10,7 @@ import io.ktor.network.sockets.openReadChannel
 import io.ktor.network.sockets.openWriteChannel
 import io.ktor.utils.io.ByteChannel
 import io.ktor.utils.io.ByteWriteChannel
+import io.ktor.utils.io.close
 import io.ktor.utils.io.readAvailable
 import io.ktor.utils.io.writeFully
 import io.kuicksilver.native.KslLoader
@@ -33,6 +34,7 @@ import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
@@ -299,6 +301,53 @@ class TcpWriterTest {
                 release.complete(Unit)
                 scope.cancel()
                 peer.selector.close()
+            }
+        }
+
+    /**
+     * The application's stream fails mid-response (a handler that threw): the writer ends the connection with a reset, so a
+     * peer reading to the end gets an error. Before, the writer closed the descriptor with a FIN and the peer saw a clean end
+     * of a cut stream, which for a close-delimited body is indistinguishable from the whole one.
+     */
+    @Test fun negative_aFailedStreamResetsTheConnection(): Unit =
+        runBlocking {
+            val selector = SelectorManager(Dispatchers.Default)
+            try {
+                withTimeout(30.seconds) {
+                    val server = bindTcp(selector, "127.0.0.1", 0)
+                    val port = (server.localAddress as InetSocketAddress).port
+                    // the peer reads to the end; null when the connection was reset
+                    val peer =
+                        async(Dispatchers.IO) {
+                            java.net.Socket("127.0.0.1", port).use { s ->
+                                s.soTimeout = 20_000
+                                val buf = ByteArray(8192)
+                                var got = 0L
+                                try {
+                                    while (true) {
+                                        val n = s.getInputStream().read(buf)
+                                        if (n < 0) return@use "a clean end after $got bytes"
+                                        got += n
+                                    }
+                                    @Suppress("UNREACHABLE_CODE")
+                                    null
+                                } catch (_: java.net.SocketException) {
+                                    null
+                                }
+                            }
+                        }
+                    val sock = server.accept()
+                    val out = sock.openWriteChannel()
+                    out.writeFully(ByteArray(64 shl 10))
+                    out.flush()
+                    out.close(IOException("the handler failed"))
+                    val seen = peer.await()
+                    assertNull(seen, "the peer of a failed stream saw $seen, not a reset")
+                    sock.close()
+                    server.close()
+                }
+            } finally {
+                selector.close()
             }
         }
 }
