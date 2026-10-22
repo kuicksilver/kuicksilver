@@ -730,6 +730,9 @@ private suspend fun ByteReadChannel.copyToClient(
             withTimeoutOrNull(stall) { output.flush() } ?: throw ClientNotReading(stall)
             awaitContent()
         }
+        // a response whose handler failed is "closed for read" too, also before this copy reached it (it waited behind
+        // a pipelined one): it ends the connection with its failure, not with nothing sent for it
+        closedCause?.let { throw it }
     } catch (cause: Throwable) {
         cancel(cause)
         output.close(cause)
