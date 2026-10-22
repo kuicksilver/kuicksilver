@@ -309,6 +309,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   the writer drain for at most 3 s and then drops the rest; a server's accepted socket has no bound of its own, so a
   slow reader still gets the last response whole (whoever accepted it sets the bound, `setCloseTimeout`); a writer that is cancelled or
   fails (a reset) closes the descriptor ([threat model 3.21](docs/spec/threat-model.md)).
+- Kotlin/Native TCP sockets of the engines: a connection the peer reset, or whose wait for data failed, ended the read
+  channel cleanly. The read loop closed the channel before the failure could fail it, and a failed select even left the
+  loop as if at the end. A reader took the cut stream for a complete one, so over plain HTTP/1.1 a response delimited by
+  the connection's close passed cut for whole. The channel now fails with the reset or the select's error.
 - ktor-network: `TlsSocket.close()` could keep the raw socket, its coroutines and the native TLS session alive for as
   long as the peer kept the connection open without reading, since the flush, `close_notify` and the raw socket's last
   write all waited on it. A client's close (`Socket.tls`) is now bounded by 3 s in all; then what is queued is dropped

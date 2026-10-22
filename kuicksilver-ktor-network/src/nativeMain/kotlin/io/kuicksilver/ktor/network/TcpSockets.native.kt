@@ -271,13 +271,15 @@ internal class NativeTcpSocket(
                     } else if (n == 0) {
                         break
                     } else {
-                        try {
-                            selector.select(this@NativeTcpSocket, SelectInterest.READ)
-                        } catch (_: IOException) {
-                            break
-                        }
+                        selector.select(this@NativeTcpSocket, SelectInterest.READ)
                     }
                 }
+            } catch (e: Throwable) {
+                // a receive error (a reset) or a select that fails is not the peer's end: the channel fails with it. The
+                // close below ran first and closed it cleanly (a select failure even broke out of the loop as if at the
+                // end), so a reader took a cut stream for a complete one
+                if (e !is CancellationException) channel.cancel(e)
+                throw e
             } finally {
                 tcpShutdown(descriptor, TCP_SHUT_RD)
                 channel.flushAndClose()
