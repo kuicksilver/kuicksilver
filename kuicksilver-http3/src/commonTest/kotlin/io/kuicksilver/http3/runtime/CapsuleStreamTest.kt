@@ -24,7 +24,9 @@ import io.kuicksilver.quic.DatagramSendResult
 import io.kuicksilver.quic.DatagramUnsupportedReason
 import io.kuicksilver.quic.QuicException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.async
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.take
 import kotlinx.coroutines.flow.toList
@@ -40,7 +42,7 @@ import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
-import kotlin.time.Duration.Companion.milliseconds
+import kotlin.test.fail
 import kotlin.time.Duration.Companion.seconds
 
 private const val WT_TYPE = 0x2843L
@@ -426,25 +428,46 @@ class CapsuleStreamTest {
         }
 
     /**
-     * A peer that never reads holds close() (no deadline of its own); resetting the stream ends the writer, and close()
-     * then fails instead of waiting.
+     * What a peer that reads nothing lets `send` accept is bounded, and resetting the stream ends a writer it holds:
+     * the pending sends fail and close() fails instead of waiting.
+     *
+     * The bound is the sum of fixed limits: the capsule queue (32 x 60 KB), the HTTP/3 writer's channel (about 2 MiB of
+     * ktor buffering, plus one batch of the queue), `QuicConfig.maxSendBuffer` (4 MiB), and on the peer its stream
+     * window (512 KiB, at most `maxStreamWindow` = 6 MiB once tuned) plus its HTTP/3 layer's body channel (about 2 MiB):
+     * under 19 MB, measured 8.7 to 9.7 MB on the JVM and macOS, with and without CPU load. The sender offers 30 MB, so
+     * on a bounded build it cannot finish, whatever the timing. It starts UNDISPATCHED: a send queue that never
+     * suspends would let every send return before `launch` does, and the test fails then. The reset follows an event
+     * (the queue is full, which needs nothing from the peer), and the deadlines below only guard liveness.
      */
-    @Test fun resetEndsAWriterBlockedByThePeer() =
+    @Test fun negative_capsuleSendsBoundedWhenPeerReadsNothing() =
         h3Test {
             H3Pair.open(serverSettings = connectOn).useScoped { p ->
                 launch { p.server.acceptRequest().acceptConnect() } // never reads
                 val c = p.client.connect(connectReq(), "test-capsules").useCapsuleProtocol(known)
-                // 9.6 MB: more than the stream window, the send buffer and the capsule queue together
-                val sender = launch { runCatching { repeat(160) { c.send(Capsule(WT_TYPE, ByteArray(60_000))) } } }
-                assertEquals(
-                    null,
-                    withTimeoutOrNull(500.milliseconds) { sender.join() },
-                    "every send completed though the peer reads nothing",
-                )
-                assertEquals(null, withTimeoutOrNull(300.milliseconds) { c.close() }, "close() returned though the peer reads nothing")
+                val size = 60_000 + 4L // value plus the type and length varints
+                val offered = 500 * size // 30 MB
+                val bound = 20L shl 20 // 20 MiB, above the 19 MB sum of the limits
+                val accepted = MutableStateFlow(0L)
+                var outcome: Result<Unit>? = null
+                val sender =
+                    launch(start = CoroutineStart.UNDISPATCHED) {
+                        outcome =
+                            runCatching {
+                                repeat(500) {
+                                    c.send(Capsule(WT_TYPE, ByteArray(60_000)))
+                                    accepted.value += size
+                                }
+                            }
+                    }
+                assertTrue(sender.isActive, "all ${accepted.value} bytes were accepted without a single send suspending")
+                val queueFull = known.sendQueue * size
+                withTimeoutOrNull(10.seconds) { accepted.first { it >= queueFull } }
+                    ?: fail("the capsule queue never filled: ${accepted.value} bytes accepted")
                 c.stream.reset(Http3ErrorCode.REQUEST_CANCELLED)
-                assertFails { withTimeout(5.seconds) { c.close() } }
-                withTimeout(5.seconds) { sender.join() }
+                withTimeoutOrNull(10.seconds) { sender.join() } ?: fail("a send stayed suspended after the stream was reset")
+                assertTrue(outcome!!.isFailure, "the sender finished all $offered bytes though the peer read nothing")
+                assertTrue(accepted.value <= bound, "${accepted.value} bytes accepted, above the bound of $bound")
+                assertFails("close() succeeded after the reset") { withTimeout(10.seconds) { c.close() } }
             }
         }
 
