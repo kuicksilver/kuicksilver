@@ -22,6 +22,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   by the endpoint's loops and kept for the lifetime, and accepted once (a replay register); a token that does not
   validate is treated as absent, never refused. New counters `EndpointStats.newTokensIssued`, `newTokensAccepted` and
   `newTokensRejected`.
+- QUIC: clients keep NEW_TOKEN tokens and present them on their next connection (experimental
+  `QuicClientConfig.tokenStore`, off by default because a token links the connections that use it; `QuicTokenStore`,
+  `MemoryTokenStore`). Tokens are keyed by server name and port, used once, replaced by a Retry token when a Retry comes,
+  and bounded per connection (eight of at most 1024 bytes; more NEW_TOKEN frames spend glitch tokens).
 - Supply chain (`docs/release.md`, "Supply chain: SBOM and provenance"): a CycloneDX 1.6 SBOM of every publication
   (64 documents: each platform publication, each module, the BOM), with the statically linked OpenSSL (version, tarball
   SHA-256, CPE, configure flags) and the `ksl` shim as components, checked against the CycloneDX schema; and an in-toto

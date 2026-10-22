@@ -28,6 +28,7 @@ import io.kuicksilver.quic.core.failInternal
 import io.kuicksilver.quic.core.zeroRttWritable
 import io.kuicksilver.quic.emit
 import io.kuicksilver.quic.ipLiteral
+import io.kuicksilver.quic.tokenStoreKey
 import io.kuicksilver.quic.withLiteralHost
 import io.kuicksilver.tls.EarlyDataState
 import io.kuicksilver.tls.QuicSessionTicket
@@ -621,6 +622,41 @@ internal class EndpointLoop private constructor(
         scope.launch(start = kotlinx.coroutines.CoroutineStart.ATOMIC) { sessions.putQuic(tls, ticket) }
     }
 
+    /**
+     * A client connection received a NEW_TOKEN token: handed to the configured store (RFC 9000 section 8.1.3). The store runs
+     * in a coroutine of the loop's scope; what it throws is logged, never the connection's failure.
+     */
+    internal fun storeToken(
+        store: io.kuicksilver.quic.QuicTokenStore,
+        key: String,
+        token: ByteArray,
+    ) {
+        if (closing) return
+        // started even when the scope is cancelled meanwhile, like storeTicket: a token that arrived is still offered to the store
+        scope.launch(start = kotlinx.coroutines.CoroutineStart.ATOMIC) {
+            try {
+                store.put(key, token)
+            } catch (e: Throwable) {
+                // the loop's own cancellation goes on; anything else, a CancellationException of the store's included, is its failure
+                if (e is CancellationException) currentCoroutineContext().ensureActive()
+                observer.logger.emit(LogLevel.Warn, e) { "token store put failed for $key; the token is dropped" }
+            }
+        }
+    }
+
+    /** A token for the next connection to [key] from the configured store (in the caller's coroutine), or null; a failing store is logged and ignored. */
+    private suspend fun takeToken(
+        store: io.kuicksilver.quic.QuicTokenStore,
+        key: String,
+    ): ByteArray? =
+        try {
+            store.take(key)?.takeIf { it.isNotEmpty() && it.size <= ConnectionCore.MAX_KEPT_TOKEN }
+        } catch (e: Throwable) {
+            if (e is CancellationException) currentCoroutineContext().ensureActive() // the caller's cancellation goes on
+            observer.logger.emit(LogLevel.Warn, e) { "token store take failed for $key; connecting without a token" }
+            null
+        }
+
     internal fun onHandshakeCompleted(rt: ConnectionRuntime) {
         if (!rt.serverSide || rt.handedOff) return
         rt.handedOff = true
@@ -691,6 +727,9 @@ internal class EndpointLoop private constructor(
     ): QuicConnection {
         var adopted: ConnectionRuntime? = null // set on the loop; a cancellation at the withContext exit must not lose it
         try {
+            // an address-validation token from an earlier connection to this server (RFC 9000 section 8.1.3; single use)
+            val tokenKey = config.tokenStore?.let { tokenStoreKey(config.tls.serverName, remote) }
+            val token = config.tokenStore?.let { takeToken(it, tokenKey!!) }
             // a resumable ticket of this TLS configuration whose chain still passes the current trust (single use)
             val ticket = if (config.earlyData == EarlyDataState.Disabled) null else sessions.takeQuic(config.tls)
             if (early && ticket == null && config.earlyData == EarlyDataState.Required) {
@@ -710,7 +749,10 @@ internal class EndpointLoop private constructor(
                         }
                         checkPayloadSize(config.quic)
                         val c = core.connect(config, remote, now(), ticket)
+                        c.initialToken = token
                         val rt = adopt(c)
+                        rt.tokenStore = config.tokenStore
+                        rt.tokenKey = tokenKey
                         adopted = rt
                         flush()
                         zeroRtt = c.zeroRttWritable // the first poll drove TLS: the 0-RTT key exists when the ticket allowed it

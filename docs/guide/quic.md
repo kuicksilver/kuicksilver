@@ -186,6 +186,38 @@ after the first `connect` usually finds none and does a full handshake (`earlyDa
 - **Keys.** The client drops its 0-RTT key when the 1-RTT key arrives. The server drops its 0-RTT key 3 PTO after the
   first 1-RTT packet (RFC 9001 section 4.9.3).
 
+## Address tokens (NEW_TOKEN)
+
+A server sends each client an address-validation token once the handshake is confirmed (see
+[Admission and endpoint limits](#admission-and-endpoint-limits)). A client that keeps it and shows it on its next
+connection to that server skips the Retry round trip a busy or `AlwaysRetry` server asks unvalidated clients for, and
+the server's first flight is not held to three times what the client sent. Clients keep nothing by default: give the
+client configuration a `tokenStore` (experimental).
+
+```kotlin
+// guide:quic:token-store
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+val tokens = MemoryTokenStore(maxServers = 256, tokensPerServer = 4)   // share it between connections
+val config = quicClientConfig(tlsClientConfig) { tokenStore = tokens }
+val first = client.connect(addr, config)    // the server's NEW_TOKEN lands in `tokens` after the handshake
+val next = client.connect(addr, config)     // its Initials carry the token: no Retry
+```
+
+> **Privacy.** A token is an identifier the server gave this client: a connection that presents it tells the server it
+> comes from the same client as the earlier one, even from another network. Keep a store only where the server may link
+> the connections anyway, and drop it when the user or the network identity changes.
+
+- **Keys.** Tokens are kept under `"<server name>:<port>"` (the TLS server name), or the IP literal and port without
+  one, so a token never goes to another name on the same address (RFC 9000 section 8.1.3).
+- **Single use.** `take` removes the token; the server sends a fresh one on every connection. A Retry replaces the
+  token for the rest of that connection's Initials.
+- **Bounds.** A connection keeps at most eight NEW_TOKEN tokens of at most 1024 bytes each; every further NEW_TOKEN
+  frame spends a glitch token ([Glitch protection](#glitch-protection)). `MemoryTokenStore` keeps the newest
+  `tokensPerServer` per key and the `maxServers` keys used most recently (quic-go's LRU store).
+- **Your own store.** `take` runs in the coroutine that calls `connect` (which waits for it), `put` on the endpoint
+  loop; both should be quick. A store that throws is logged as a warning and the connection goes on without a token. A token presented to a server that no
+  longer accepts it (another process, an expired one) costs nothing: the server treats it as absent.
+
 ## Serving many connections
 
 `incomingConnections()` turns `accept()` into a `Flow` that completes when the endpoint closes, and
@@ -584,7 +616,7 @@ in this process (shared by every loop, rotated hourly), bound to the client's IP
 (1 MiB, entries kept for the whole lifetime) treats a second use as no token, and so does a full register. A token
 that does not validate (forged, expired, another IP, used before) is never refused with INVALID_TOKEN; the Initial is
 treated as one without a token, and `newTokensRejected` counts it. A policy may still answer a token holder with a
-Retry.
+Retry. Clients keep tokens only with a `tokenStore` ([Address tokens](#address-tokens-new_token)).
 
 ```kotlin
 // guide:quic:new-token

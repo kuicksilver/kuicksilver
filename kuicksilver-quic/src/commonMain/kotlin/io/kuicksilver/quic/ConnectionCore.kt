@@ -148,6 +148,12 @@ public class ConnectionCore internal constructor(
     /** Server: the IP addresses tokens were issued for on this connection, at most [MAX_NEW_TOKENS]. */
     internal val newTokenIps = ArrayList<ByteArray>(2)
 
+    /** Client: NEW_TOKEN frames received on this connection; past [NEW_TOKENS_KEPT] each one spends a glitch token. */
+    internal var newTokensReceived = 0
+
+    /** Client: tokens received and not yet handed to the endpoint's token store ([takeReceivedTokens]); at most [NEW_TOKENS_KEPT]. */
+    internal var receivedTokens: ArrayList<ByteArray>? = null
+
     /** Server: HANDSHAKE_DONE went out at least once (tests check that NEW_TOKEN never precedes it). */
     internal var handshakeDoneSent = false
     internal val newTokenSendsForTest = ArrayList<ByteArray>()
@@ -1204,6 +1210,12 @@ public class ConnectionCore internal constructor(
 
         /** NEW_TOKEN tokens a server issues per connection: one at confirmation, one per new client IP after that (as ngtcp2). */
         internal const val MAX_NEW_TOKENS = 4
+
+        /** NEW_TOKEN frames a client keeps per connection; each further one spends a glitch token (RFC 9000 section 21.9). */
+        internal const val NEW_TOKENS_KEPT = 8
+
+        /** The longest NEW_TOKEN token a client keeps: the bound it applies to Retry tokens (threat-model 3.3). */
+        internal const val MAX_KEPT_TOKEN = 1024
 
         /** A client connection to [remote]; the first [poll] produces the Initial datagrams. [random] supplies its connection IDs, PATH_CHALLENGE data and skipped packet numbers: a CSPRNG outside tests (predictable IDs would let an off-path attacker forge them). */
         public fun client(

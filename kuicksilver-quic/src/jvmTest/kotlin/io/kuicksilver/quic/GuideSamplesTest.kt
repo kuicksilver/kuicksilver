@@ -369,6 +369,45 @@ class GuideSamplesTest {
         assertEquals(4, withLoops.loops)
     }
 
+    @Test fun tokenStoreSample() =
+        runBlocking {
+            val server =
+                QuicEndpoint.bind(
+                    InetSocketAddress("127.0.0.1", 0),
+                    quicEndpointConfig {
+                        this.server = quicServerConfig(tlsServerConfig)
+                        admission = ConnectionAdmission.AlwaysRetry
+                    },
+                )
+            val client = QuicEndpoint.bind(InetSocketAddress("127.0.0.1", 0))
+            val addr = server.localAddress
+            try {
+                withTimeout(20.seconds) {
+                    launch { repeat(2) { server.accept() } }
+                    // guide:quic:token-store
+                    val tokens = MemoryTokenStore(maxServers = 256, tokensPerServer = 4) // share it between connections
+                    val config = quicClientConfig(tlsClientConfig) { tokenStore = tokens }
+                    val first = client.connect(addr, config) // the server's NEW_TOKEN lands in `tokens` after the handshake
+                    val key = "server.test:${addr.port}"
+                    while (true) { // until the token is in the store (put back after the look)
+                        val t = tokens.take(key)
+                        if (t != null) {
+                            tokens.put(key, t)
+                            break
+                        }
+                        kotlinx.coroutines.yield()
+                    }
+                    val next = client.connect(addr, config) // its Initials carry the token: no Retry
+                    assertEquals(1L, server.stats.newTokensAccepted, "${server.stats}")
+                    first.close()
+                    next.close()
+                }
+            } finally {
+                client.close()
+                server.close()
+            }
+        }
+
     @Test fun newTokenSample() {
         // guide:quic:new-token
         val config =

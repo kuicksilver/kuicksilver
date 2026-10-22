@@ -26,6 +26,7 @@ import io.kuicksilver.quic.SocketDefunctException
 import io.kuicksilver.quic.StreamPriority
 import io.kuicksilver.quic.core.failInternal
 import io.kuicksilver.quic.core.silentClose
+import io.kuicksilver.quic.core.takeReceivedTokens
 import io.kuicksilver.tls.Certificate
 import io.kuicksilver.tls.TlsRole
 import io.kuicksilver.tls.VerifyReason
@@ -501,7 +502,17 @@ internal class ConnectionRuntime(
                 is ConnectionEvent.MtuUpdated -> {} // maxDatagramSize follows through the check at the top of drainEvents
             }
         }
+        if (core.receivedTokens != null) {
+            val tokens = core.takeReceivedTokens()
+            val store = tokenStore
+            val key = tokenKey
+            if (store != null && key != null) for (t in tokens) loop.storeToken(store, key, t)
+        }
     }
+
+    /** Client: where NEW_TOKEN tokens of this connection go (`QuicClientConfig.tokenStore`) and under which key; null: dropped. */
+    internal var tokenStore: io.kuicksilver.quic.QuicTokenStore? = null
+    internal var tokenKey: String? = null
 
     /**
      * Runs the (possibly application-supplied) verifier off the loop. A verifier that throws rejects the peer; a result that

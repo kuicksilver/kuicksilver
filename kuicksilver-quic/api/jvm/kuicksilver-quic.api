@@ -558,6 +558,17 @@ public final class io/kuicksilver/quic/LogLevel : java/lang/Enum {
 	public static fun values ()[Lio/kuicksilver/quic/LogLevel;
 }
 
+public final class io/kuicksilver/quic/MemoryTokenStore : io/kuicksilver/quic/QuicTokenStore {
+	public fun <init> ()V
+	public fun <init> (II)V
+	public synthetic fun <init> (IIILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun getMaxServers ()I
+	public final fun getTokensPerServer ()I
+	public fun put (Ljava/lang/String;[BLkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public fun take (Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public fun toString ()Ljava/lang/String;
+}
+
 public abstract interface class io/kuicksilver/quic/MigrationEvent {
 }
 
@@ -721,6 +732,7 @@ public final class io/kuicksilver/quic/QuicClientConfig {
 	public final fun getEarlyData ()Lio/kuicksilver/tls/EarlyDataState;
 	public final fun getQuic ()Lio/kuicksilver/quic/QuicConfig;
 	public final fun getTls ()Lio/kuicksilver/tls/TlsConfig;
+	public final fun getTokenStore ()Lio/kuicksilver/quic/QuicTokenStore;
 }
 
 public final class io/kuicksilver/quic/QuicClientConfig$Builder {
@@ -729,8 +741,10 @@ public final class io/kuicksilver/quic/QuicClientConfig$Builder {
 	public final fun getEarlyData ()Lio/kuicksilver/tls/EarlyDataState;
 	public final fun getQuic ()Lio/kuicksilver/quic/QuicConfig;
 	public final fun getTls ()Lio/kuicksilver/tls/TlsConfig;
+	public final fun getTokenStore ()Lio/kuicksilver/quic/QuicTokenStore;
 	public final fun setEarlyData (Lio/kuicksilver/tls/EarlyDataState;)V
 	public final fun setQuic (Lio/kuicksilver/quic/QuicConfig;)V
+	public final fun setTokenStore (Lio/kuicksilver/quic/QuicTokenStore;)V
 }
 
 public final class io/kuicksilver/quic/QuicConfig {
@@ -1144,6 +1158,11 @@ public abstract interface class io/kuicksilver/quic/QuicStream {
 
 public final class io/kuicksilver/quic/QuicStream$DefaultImpls {
 	public static fun getReceivedEarly (Lio/kuicksilver/quic/QuicStream;)Z
+}
+
+public abstract interface class io/kuicksilver/quic/QuicTokenStore {
+	public abstract fun put (Ljava/lang/String;[BLkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public abstract fun take (Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 }
 
 public final class io/kuicksilver/quic/RebindKt {

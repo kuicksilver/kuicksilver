@@ -92,7 +92,8 @@ internal class FrameDispatcher(
         off: Int,
         len: Int,
     ) {
-        if (c.role == TlsRole.Server) violation("NEW_TOKEN from a client")
+        if (c.role == TlsRole.Server) violation("NEW_TOKEN from a client") // RFC 9000 section 19.7
+        c.onNewToken(token, off, len)
     }
 
     // ---- glitches: frames that cost work and change nothing spend a token (RFC 9000 section 21.9); duplicate STREAM/CRYPTO data does not: an honest sender

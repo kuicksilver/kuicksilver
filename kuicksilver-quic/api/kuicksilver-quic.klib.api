@@ -333,6 +333,11 @@ abstract interface io.kuicksilver.quic/QuicStream { // io.kuicksilver.quic/QuicS
     abstract fun stopSending(kotlin/Long) // io.kuicksilver.quic/QuicStream.stopSending|stopSending(kotlin.Long){}[0]
 }
 
+abstract interface io.kuicksilver.quic/QuicTokenStore { // io.kuicksilver.quic/QuicTokenStore|null[0]
+    abstract suspend fun put(kotlin/String, kotlin/ByteArray) // io.kuicksilver.quic/QuicTokenStore.put|put(kotlin.String;kotlin.ByteArray){}[0]
+    abstract suspend fun take(kotlin/String): kotlin/ByteArray? // io.kuicksilver.quic/QuicTokenStore.take|take(kotlin.String){}[0]
+}
+
 sealed interface <#A: out kotlin/Any?> io.kuicksilver.quic/MigrationEvent { // io.kuicksilver.quic/MigrationEvent|null[0]
     final class <#A1: out kotlin/Any?> Failed : io.kuicksilver.quic/MigrationEvent<#A1> { // io.kuicksilver.quic/MigrationEvent.Failed|null[0]
         final val cause // io.kuicksilver.quic/MigrationEvent.Failed.cause|{}cause[0]
@@ -952,6 +957,19 @@ final class io.kuicksilver.quic/IoCapabilities { // io.kuicksilver.quic/IoCapabi
     }
 }
 
+final class io.kuicksilver.quic/MemoryTokenStore : io.kuicksilver.quic/QuicTokenStore { // io.kuicksilver.quic/MemoryTokenStore|null[0]
+    constructor <init>(kotlin/Int = ..., kotlin/Int = ...) // io.kuicksilver.quic/MemoryTokenStore.<init>|<init>(kotlin.Int;kotlin.Int){}[0]
+
+    final val maxServers // io.kuicksilver.quic/MemoryTokenStore.maxServers|{}maxServers[0]
+        final fun <get-maxServers>(): kotlin/Int // io.kuicksilver.quic/MemoryTokenStore.maxServers.<get-maxServers>|<get-maxServers>(){}[0]
+    final val tokensPerServer // io.kuicksilver.quic/MemoryTokenStore.tokensPerServer|{}tokensPerServer[0]
+        final fun <get-tokensPerServer>(): kotlin/Int // io.kuicksilver.quic/MemoryTokenStore.tokensPerServer.<get-tokensPerServer>|<get-tokensPerServer>(){}[0]
+
+    final fun toString(): kotlin/String // io.kuicksilver.quic/MemoryTokenStore.toString|toString(){}[0]
+    final suspend fun put(kotlin/String, kotlin/ByteArray) // io.kuicksilver.quic/MemoryTokenStore.put|put(kotlin.String;kotlin.ByteArray){}[0]
+    final suspend fun take(kotlin/String): kotlin/ByteArray? // io.kuicksilver.quic/MemoryTokenStore.take|take(kotlin.String){}[0]
+}
+
 final class io.kuicksilver.quic/NewReno : io.kuicksilver.quic/CongestionController { // io.kuicksilver.quic/NewReno|null[0]
     constructor <init>(kotlin/Int = ...) // io.kuicksilver.quic/NewReno.<init>|<init>(kotlin.Int){}[0]
 
@@ -1013,6 +1031,8 @@ final class io.kuicksilver.quic/QuicClientConfig { // io.kuicksilver.quic/QuicCl
         final fun <get-quic>(): io.kuicksilver.quic/QuicConfig // io.kuicksilver.quic/QuicClientConfig.quic.<get-quic>|<get-quic>(){}[0]
     final val tls // io.kuicksilver.quic/QuicClientConfig.tls|{}tls[0]
         final fun <get-tls>(): io.kuicksilver.tls/TlsConfig // io.kuicksilver.quic/QuicClientConfig.tls.<get-tls>|<get-tls>(){}[0]
+    final val tokenStore // io.kuicksilver.quic/QuicClientConfig.tokenStore|{}tokenStore[0]
+        final fun <get-tokenStore>(): io.kuicksilver.quic/QuicTokenStore? // io.kuicksilver.quic/QuicClientConfig.tokenStore.<get-tokenStore>|<get-tokenStore>(){}[0]
 
     final class Builder { // io.kuicksilver.quic/QuicClientConfig.Builder|null[0]
         constructor <init>(io.kuicksilver.tls/TlsConfig) // io.kuicksilver.quic/QuicClientConfig.Builder.<init>|<init>(io.kuicksilver.tls.TlsConfig){}[0]
@@ -1026,6 +1046,9 @@ final class io.kuicksilver.quic/QuicClientConfig { // io.kuicksilver.quic/QuicCl
         final var quic // io.kuicksilver.quic/QuicClientConfig.Builder.quic|{}quic[0]
             final fun <get-quic>(): io.kuicksilver.quic/QuicConfig // io.kuicksilver.quic/QuicClientConfig.Builder.quic.<get-quic>|<get-quic>(){}[0]
             final fun <set-quic>(io.kuicksilver.quic/QuicConfig) // io.kuicksilver.quic/QuicClientConfig.Builder.quic.<set-quic>|<set-quic>(io.kuicksilver.quic.QuicConfig){}[0]
+        final var tokenStore // io.kuicksilver.quic/QuicClientConfig.Builder.tokenStore|{}tokenStore[0]
+            final fun <get-tokenStore>(): io.kuicksilver.quic/QuicTokenStore? // io.kuicksilver.quic/QuicClientConfig.Builder.tokenStore.<get-tokenStore>|<get-tokenStore>(){}[0]
+            final fun <set-tokenStore>(io.kuicksilver.quic/QuicTokenStore?) // io.kuicksilver.quic/QuicClientConfig.Builder.tokenStore.<set-tokenStore>|<set-tokenStore>(io.kuicksilver.quic.QuicTokenStore?){}[0]
 
         final fun build(): io.kuicksilver.quic/QuicClientConfig // io.kuicksilver.quic/QuicClientConfig.Builder.build|build(){}[0]
     }

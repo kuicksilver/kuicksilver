@@ -36,6 +36,9 @@ public class QuicClientConfig private constructor(
     /** Whether this client resumes and sends 0-RTT (ADR-0015); see [Builder.earlyData]. */
     @property:ExperimentalKuicksilverApi
     public val earlyData: EarlyDataState,
+    /** Where the endpoint keeps NEW_TOKEN tokens for this client's next connections, or null; see [Builder.tokenStore]. */
+    @property:ExperimentalKuicksilverApi
+    public val tokenStore: QuicTokenStore?,
 ) {
     /**
      * The mutable side of [QuicClientConfig].
@@ -57,11 +60,21 @@ public class QuicClientConfig private constructor(
         @ExperimentalKuicksilverApi
         public var earlyData: EarlyDataState = EarlyDataState.Disabled
 
+        /**
+         * Default null: no tokens are kept. Otherwise the endpoint stores the address-validation tokens the server sends in
+         * NEW_TOKEN frames (RFC 9000 section 8.1.3) under the server name and port, and takes one before each later connection
+         * to that server to send in its Initials: a server that asks unvalidated clients for a Retry then lets this one in
+         * without the extra round trip. Off by default because a token links the connections that present it to the one it
+         * came from, across networks (see [QuicTokenStore] on privacy). [MemoryTokenStore] keeps them in memory.
+         */
+        @ExperimentalKuicksilverApi
+        public var tokenStore: QuicTokenStore? = null
+
         /** A [QuicClientConfig]; IllegalArgumentException for a server [tls], `TlsException.Config` for one QUIC cannot use. */
         public fun build(): QuicClientConfig {
             require(tls.role == TlsRole.Client) { "client config needs a client TlsConfig" }
             tls.checkQuicCompatible()
-            return QuicClientConfig(tls, quic, earlyData)
+            return QuicClientConfig(tls, quic, earlyData, tokenStore)
         }
     }
 }

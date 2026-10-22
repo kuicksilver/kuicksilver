@@ -233,6 +233,32 @@ internal fun ConnectionCore.issueNewToken(client: io.ktor.network.sockets.InetSo
     sendNewToken = true
 }
 
+/**
+ * Client: a NEW_TOKEN frame (RFC 9000 section 19.7). The first [ConnectionCore.NEW_TOKENS_KEPT] of a connection are kept for the
+ * endpoint's token store when they are at most [ConnectionCore.MAX_KEPT_TOKEN] bytes; every further one changes nothing a
+ * server needs and spends a glitch token (section 21.9), so a flood ends the connection instead of growing the store.
+ */
+internal fun ConnectionCore.onNewToken(
+    token: io.kuicksilver.native.PacketBuffer,
+    off: Int,
+    len: Int,
+) {
+    if (++newTokensReceived > ConnectionCore.NEW_TOKENS_KEPT) {
+        glitch(0x07)
+        return
+    }
+    if (len > ConnectionCore.MAX_KEPT_TOKEN) return
+    val kept = receivedTokens ?: ArrayList<ByteArray>(1).also { receivedTokens = it }
+    kept += ByteArray(len).also { token.copyTo(it, off, 0, len) }
+}
+
+/** Client: the NEW_TOKEN tokens received since the last call, for the endpoint's token store. */
+internal fun ConnectionCore.takeReceivedTokens(): List<ByteArray> {
+    val kept = receivedTokens ?: return emptyList()
+    receivedTokens = null
+    return kept
+}
+
 /** Server side of a compatible upgrade (RFC 9368 section 2.3): send everything in [chosen] while still reading the client's Original Version Initials. */
 internal fun ConnectionCore.switchServerVersion(chosen: VersionProfile) {
     version = chosen
