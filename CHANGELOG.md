@@ -163,6 +163,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- HTTP/3: an application that cancels a request body (server) or a response body (client) now stops the stream at
+  once with STOP_SENDING (`H3_NO_ERROR` on the server, `H3_REQUEST_CANCELLED` on the client). Before, the stream was
+  stopped only when the peer sent its next DATA, so a peer that paused kept the stream and its flow-control credit.
 - TCP and TLS sockets of the engines (JVM, Android, Kotlin/Native): when the application's stream failed mid-response
   (a handler that threw) or a write loop failed, the connection ended as if the stream were complete: a FIN on a plain
   connection, `close_notify` and a FIN on a TLS one. The peer saw a clean end of a cut stream, and a response delimited
