@@ -29,7 +29,11 @@ internal class RecvStream(
     /** A RESET_STREAM or RESET_STREAM_AT was received: [resetCode] is the peer's and must not change. */
     private var resetSeen = false
 
-    /** draft-ietf-quic-reliable-stream-reset-11 section 5.2: a later reset with another application error code is an error. */
+    /**
+     * draft-ietf-quic-reliable-stream-reset-11 section 5.2: a later reset with another application error code is an error,
+     * once RESET_STREAM_AT is in play on the stream. RFC 9000 does not forbid a plain peer two RESET_STREAMs with different
+     * codes, so those stay ignored.
+     */
     private fun checkCode(
         code: Long,
         frameType: Long,
@@ -117,7 +121,7 @@ internal class RecvStream(
         ) {
             throw QuicWireException(TransportError.FINAL_SIZE_ERROR, 0x04, "stream $id: reset final size conflicts with received data")
         }
-        checkCode(code, 0x04)
+        if (reliableSize >= 0) checkCode(code, 0x04)
         if (state == RecvState.ResetRecvd || state == RecvState.ResetRead || state == RecvState.DataRead) return 0
         flow.onData(size) // a final size beyond the stream window is FLOW_CONTROL_ERROR (RFC 9000 sections 4.1, 4.5, 19.10)
         val advanced = size - highest

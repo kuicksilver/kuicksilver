@@ -126,6 +126,24 @@ class StreamStateTest {
         assertEquals(0x06L, code { recv(m, 0, 100, ByteArray(1)) })
     }
 
+    /** RFC 9000 does not forbid a second RESET_STREAM with another code: a plain peer's is ignored, not an error. */
+    @Test fun secondPlainResetWithAnotherCodeIsIgnored() {
+        val m = manager(TlsRole.Server)
+        m.onResetStream(0, 1, 10)
+        m.onResetStream(0, 2, 10)
+        assertNull(m.invariantViolationForTest())
+    }
+
+    /** draft-ietf-quic-reliable-stream-reset-11 section 5.2: once RESET_STREAM_AT is in play, a changed code is an error. */
+    @Test fun negative_changedCodeAfterResetStreamAtIsStreamStateError() {
+        val m = manager(TlsRole.Server)
+        m.onResetStreamAt(0, 1, 10, 5)
+        assertEquals(0x05L, code { m.onResetStream(0, 2, 10) })
+        val m2 = manager(TlsRole.Server)
+        m2.onResetStream(0, 1, 10)
+        assertEquals(0x05L, code { m2.onResetStreamAt(0, 2, 10, 5) })
+    }
+
     @Test fun resetFinalSizeBelowReceivedIsFinalSizeError() {
         val m = manager(TlsRole.Server)
         recv(m, 0, 0, ByteArray(100))

@@ -275,6 +275,9 @@ internal class StreamManager(
     /** Test hook: how far stream [id] has sent new data, -1 for no such sending half. */
     internal fun sentEndForTest(id: Long): Long = streams[id]?.send?.sentEnd ?: -1
 
+    /** Test hook: the acknowledged (released) prefix of stream [id], -1 for no such sending half. */
+    internal fun releasedForTest(id: Long): Long = streams[id]?.send?.releasedUpTo ?: -1
+
     /** Fuzzing probe: (streams, queued control frames, pending events) held by this manager. */
     internal fun sizesForTest(): IntArray = intArrayOf(streams.size, control.size, events.size, sendLimit.size, early.size)
 

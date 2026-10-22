@@ -54,7 +54,8 @@ public interface QuicStream {
      * Needs `QuicConfig.resetStreamAt` on both sides; otherwise it is [reset] (RESET_STREAM), and the prefix may be lost. Our
      * own setting is required too, not only the peer's: the frame then goes out only on connections where the application
      * opted in to the extension (the same switch makes us accept it), so RFC 9000 behaviour stays the default. The frame
-     * waits until every reliable byte was sent once, so its final size stays within the peer's flow control.
+     * waits until every reliable byte was sent once, so its final size stays within the peer's flow control: on a stream
+     * starved of credit the reset reaches the peer only once credit arrives, and a later [reset] cuts that short.
      * Implementations outside this library need not override it: the default is [reset].
      */
     @ExperimentalKuicksilverApi

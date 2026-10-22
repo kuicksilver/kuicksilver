@@ -174,19 +174,20 @@ class ResetStreamAtTest {
     }
 
     /**
-     * Bytes past the reliable size were sent, and are acknowledged after the reset (the first packet was lost, so nothing
-     * was released before): the send buffer accounting stays exact and the stream retires.
+     * Bytes past the reliable size were sent, and the ACK of the first flight arrives after the reset (nothing was released
+     * before it): the send buffer accounting stays exact and the stream retires.
      */
     @Test fun ackOfBytesPastTheReliableSizeKeepsTheBufferExact() {
         val p = CorePair(clientQuic = on, serverQuic = on)
         try {
             p.established()
             val id = p.client.openStream(bidi = false, StreamPriority.Default)
-            var dropNext = true
-            p.filterToServer = { _, bytes -> !(dropNext && bytes[0].toInt() and 0x80 == 0).also { if (it) dropNext = false } }
+            p.filterToClient = { _, _ -> false } // the server's ACKs are held back
             p.client.writeStream(id, ByteArray(200_000) { it.toByte() }, 0, 200_000, fin = false)
-            assertTrue(p.runUntil { p.client.streams.sentEndForTest(id) >= 50_000 })
+            assertTrue(p.runUntil { p.client.streams.sentEndForTest(id) >= 5_000 })
+            assertEquals(0L, p.client.streams.releasedForTest(id))
             p.client.resetStreamAt(id, 3, 10)
+            p.filterToClient = { _, _ -> true }
             var violation: String? = null
             assertTrue(
                 p.runUntil(limit = 30.seconds) {
