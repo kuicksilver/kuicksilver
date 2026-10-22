@@ -36,7 +36,8 @@ static int backpressure(int e) { return e == EAGAIN || e == EWOULDBLOCK || e == 
 /* this datagram is lost on the wire: the socket lives, loss detection repairs it */
 /* an ICMP error about an earlier datagram that the kernel reports on this send (sk_err with IP_RECVERR), not this datagram's fault.
    EMSGSIZE too: a Packet Too Big, real or forged, sets sk_err = EMSGSIZE, and the next send of any size answers it once; a send this
-   datagram really cannot make (larger than the MTU the kernel knows) answers EMSGSIZE again on the retry */
+   datagram really cannot make (larger than the MTU the kernel knows) answers EMSGSIZE again on the retry. That retry costs one more
+   system call per genuine local EMSGSIZE (rare: DPLPMTUD probes above the kernel's MTU), on purpose: it is what tells the two apart */
 static int pending_icmp(const ksl_udp *u, int e) { return u->recverr && (e == ECONNREFUSED || e == EHOSTUNREACH || e == ENETUNREACH || e == EHOSTDOWN || e == EMSGSIZE); }
 static void count_emsgsize(ksl_udp *u, uint32_t len) { __atomic_add_fetch(&u->emsgsize, 1, __ATOMIC_RELAXED); __atomic_store_n(&u->emsgsize_last, len, __ATOMIC_RELAXED); }
 static int slot_lost(int e) { return dest_error(e) || e == EMSGSIZE || e == EPERM || e == EACCES || e == ENETUNREACH || e == EHOSTUNREACH || e == ENETDOWN || e == EHOSTDOWN || e == ENOMEM || e == ECONNREFUSED; }

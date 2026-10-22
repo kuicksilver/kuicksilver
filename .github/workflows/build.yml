@@ -143,8 +143,18 @@ jobs:
         run: sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends llvm
       - name: 'docker: image ${{ matrix.target }}'
         run: bash tools/openssl/build-docker.sh --image ${{ matrix.target }}
+      # the ICMP error-queue tests (udp_recverr_*) run in a user and network namespace: Ubuntu 24.04 restricts unprivileged user
+      # namespaces through AppArmor and Docker's default seccomp profile refuses unshare(CLONE_NEWUSER), so both are lifted for this
+      # container, and the step fails when the tests still skipped (as tools/ci/local-matrix.sh's docker_ctests)
+      - name: 'host: allow unprivileged user namespaces'
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
       - name: 'docker: c-tests ${{ matrix.target }}'
-        run: bash tools/ci/docker-run.sh ${{ matrix.platform }} kuicksilver-openssl-${{ matrix.target }} "CC=/opt/rh/devtoolset-10/root/usr/bin/gcc SAN= bash tools/c-test.sh ${{ matrix.target }}"
+        env: { KSL_DOCKER_OPTS: '--security-opt seccomp=unconfined' }
+        run: |
+          rc=0; out=$(bash tools/ci/docker-run.sh ${{ matrix.platform }} kuicksilver-openssl-${{ matrix.target }} "CC=/opt/rh/devtoolset-10/root/usr/bin/gcc SAN= bash tools/c-test.sh ${{ matrix.target }}" 2>&1) || rc=$?   # the shell runs with -e
+          printf '%s\n' "$out"
+          [ "$rc" = 0 ] || exit "$rc"
+          grep -q 'udp_recverr_ptb_parsed: OK' <<< "$out" || { echo "udp_recverr_ptb_parsed did not run (SKIP)"; exit 1; }
       - name: 'docker: jvm ${{ matrix.target }} (.so + tests)'
         run: bash tools/ci/docker-jvm.sh ${{ matrix.classifier }}
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

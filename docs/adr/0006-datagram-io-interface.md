@@ -181,7 +181,8 @@ platform, so it covers:
   the queue with `MSG_ERRQUEUE` (16 messages per drain, counted toward its drop bound, so a flood of ICMP still ends the call
   at its deadline) and treats such an error as a dropped datagram, never as a broken socket; a send that meets a pending
   ICMP error goes once more — `EMSGSIZE` too, which a Packet Too Big (forged or not) leaves for the next send of any size: it
-  is counted (`ksl_udp_emsgsize`) only when the retry fails the same way, and a GSO run that meets it keeps GSO. Only ICMP-origin "fragmentation needed" (type 3 code 4) and ICMPv6 Packet Too Big (type 2) with
+  is counted (`ksl_udp_emsgsize`) only when the retry fails the same way, and a GSO run that meets it keeps GSO. The retry
+  costs one extra system call per genuine local `EMSGSIZE`, on purpose: it is what tells a forged error from a real one. Only ICMP-origin "fragmentation needed" (type 3 code 4) and ICMPv6 Packet Too Big (type 2) with
   an MTU of 68–65535 are kept: a ring of 16 in the socket (newer ones dropped when it is full) with the first 64 bytes of
   the quoted datagram and its destination, read with `ksl_udp_take_ptb`. They are hints for DPLPMTUD that the QUIC core
   validates (RFC 8899 §4.6, RFC 9000 §14.2.1); ksl never acts on them. Port unreachable, our own `SO_EE_ORIGIN_LOCAL`
