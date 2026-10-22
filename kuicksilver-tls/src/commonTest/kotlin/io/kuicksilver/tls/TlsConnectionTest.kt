@@ -30,6 +30,7 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.io.IOException
 import kotlin.coroutines.EmptyCoroutineContext
 import kotlin.test.BeforeTest
 import kotlin.test.Test
@@ -234,6 +235,50 @@ class TlsConnectionTest {
                 val tail = ByteArray(8)
                 assertEquals(-1, withTimeout(5.seconds) { s.input.readAvailable(tail, 0, 8) }, "clean EOF after close_notify")
                 assertNull(s.input.closedCause)
+            } finally {
+                c.close()
+                s.close()
+            }
+        }
+
+    /**
+     * An output the application failed (cancelled with a cause, a handler that threw mid-stream) is not an end: no
+     * close_notify, so the peer, reading to the end, gets an error when the transport ends, not a clean end of a cut
+     * stream. ktor's `readAvailable` answers -1 for a failed channel as for a closed one when the failure is there
+     * before the call; the writer pump, busy on a full transport when the failure came, took that -1 for the end and sent
+     * close_notify (a clean end after 8 KiB here before).
+     */
+    @Test fun negative_aFailedOutputSendsNoCloseNotify(): Unit =
+        runBlocking {
+            val pair = BoundedChannelPair()
+            val (c, s) = both(pair = pair)
+            try {
+                // more than the server takes while its application does not read (its plaintext buffer, about 1 MiB, and
+                // the few KiB of the transport): the writer pump is still on this data, not waiting for more, when the
+                // failure comes
+                c.output.writeFully(ByteArray(3 shl 19), 0, 3 shl 19)
+                c.output.flush()
+                c.output.cancel(IOException("the application's stream failed"))
+                // the client's session fails with it; then its transport ends, as a socket's close would end it
+                launch {
+                    runCatching { c.input.awaitContent() }
+                    pair.clientOut.flushAndClose()
+                }
+                val buf = ByteArray(8192)
+                val seen =
+                    runCatching {
+                        withTimeout(10.seconds) {
+                            var got = 0L
+                            while (true) {
+                                val n = s.input.readAvailable(buf, 0, buf.size)
+                                if (n < 0) break
+                                got += n
+                            }
+                            s.input.closedCause?.let { throw it }
+                            got
+                        }
+                    }
+                assertTrue(seen.isFailure, "the peer read a clean end after ${seen.getOrNull()} bytes of a failed stream")
             } finally {
                 c.close()
                 s.close()
