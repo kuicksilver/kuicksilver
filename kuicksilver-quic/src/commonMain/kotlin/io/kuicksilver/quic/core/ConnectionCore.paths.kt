@@ -10,6 +10,7 @@ import io.kuicksilver.native.PacketBuffer
 import io.kuicksilver.quic.ConnectionCore
 import io.kuicksilver.quic.ConnectionEvent
 import io.kuicksilver.quic.EcnState
+import io.kuicksilver.quic.PREFERRED_SOCKET
 import io.kuicksilver.quic.PathChangeReason
 import io.kuicksilver.quic.PathFailureReason
 import io.kuicksilver.quic.PathId
@@ -234,8 +235,9 @@ internal fun ConnectionCore.onPathPacket(
             abandonValidatingHeardBefore = if (migrating) TimeMark.NEVER else now - idle,
         ) ?: return
         p.amplification.onReceived(datagramBytes)
-        // NAT rebinding keeps the congestion state (same network); the old address probes on a controller of its own
-        if (sameIp(from, active.remote)) p.inheritFrom(active, config.congestionController())
+        // NAT rebinding keeps the congestion state (same network); the old address probes on a controller of its own. A move to our
+        // preferred address changes the server's end of the path: fresh congestion state and RTT (RFC 9000 section 9.4)
+        if (socket == active.socket && sameIp(from, active.remote)) p.inheritFrom(active, config.congestionController())
         initServerPath(p, active)
         startValidation(p)
     } else if (p.state == PathState.Unknown || (p.state == PathState.Failed && p.standbyUntil <= now)) {
@@ -248,7 +250,11 @@ internal fun ConnectionCore.onPathPacket(
     ) {
         largestNonProbingPn = pn
         // no ID to send there without linking the paths (RFC 9000 section 9.5): stay until the client gives us one
-        if (p.state != PathState.Failed &&
+        if (p.socket == PREFERRED_SOCKET && active.socket != PREFERRED_SOCKET) {
+            // RFC 9000 section 9.6.1: non-probing packets go out from the preferred address only once the client's address is validated
+            // there; until then they keep leaving the original socket
+            if (p.state == PathState.Validated) moveToPreferredSocket(p) else p.preferredMovePending = true
+        } else if (p.state != PathState.Failed &&
             dcidFor(p) != null
         ) {
             switchPath(
@@ -257,6 +263,24 @@ internal fun ConnectionCore.onPathPacket(
                 challengeOld = true,
             )
         }
+    }
+}
+
+/**
+ * Server: the client moved to our preferred address and [p], on the preferred socket, is validated (RFC 9000 section 9.6): the
+ * connection moves there and the original path closes, so nothing leaves the old socket any more.
+ */
+private fun ConnectionCore.moveToPreferredSocket(p: Path) {
+    if (dcidFor(p) == null) {
+        p.preferredMovePending = true // no spare ID of the client's yet: on the next non-probing packet
+        return
+    }
+    p.preferredMovePending = false
+    val old = paths.active
+    switchPath(p, PathChangeReason.PreferredAddress, challengeOld = false)
+    if (old !== paths.active && old.socket != PREFERRED_SOCKET) {
+        paths.remove(old)
+        releasePathCid(old)
     }
 }
 
@@ -468,8 +492,13 @@ internal fun ConnectionCore.onPathResponse(data: Long) {
             if (p === paths.active) handshakeFallback = null
             // a client gives back the ID of a path it only probed; a server keeps the one it answers a client's probe with, since the
             // client probes to migrate there next, and the switch must not need another spare ID (RFC 9000 section 9.5)
-            if (p !== paths.active && (role == TlsRole.Client || !p.peerProbed)) releasePathCid(p)
+            val preferredMove = role == TlsRole.Server && p.preferredMovePending && p !== paths.active
+            if (p !== paths.active && !preferredMove && (role == TlsRole.Client || !p.peerProbed)) releasePathCid(p)
             events += ConnectionEvent.PathValidated(p.id)
+            if (preferredMove) {
+                moveToPreferredSocket(p)
+                return
+            }
             // a client validated on a new IP gets a token for it (ngtcp2's NGTCP2_PATH_VALIDATION_FLAG_NEW_TOKEN)
             if (role == TlsRole.Server && p === paths.active) issueNewToken(p.remote)
             return

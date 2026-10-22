@@ -21,8 +21,12 @@ internal class TransportParameters {
     var maxAckDelayMs: Long = 25
     var disableActiveMigration: Boolean = false
 
-    /** The peer sent `preferred_address`; the addresses are not kept (the server never sends it; the client does not move to it). */
+    /** The peer sent `preferred_address` (RFC 9000 section 18.2), or we send it. */
     var preferredAddressPresent: Boolean = false
+
+    /** Its IPv4 and IPv6 address and port; null for a family the server does not offer (all zeros, an unspecified address or port 0). */
+    var preferredIpv4: io.ktor.network.sockets.InetSocketAddress? = null
+    var preferredIpv6: io.ktor.network.sockets.InetSocketAddress? = null
 
     /** The connection ID of `preferred_address`, the server's sequence 1 (RFC 9000 section 5.1.1), and its reset token. */
     var preferredAddressCid: ConnectionId? = null

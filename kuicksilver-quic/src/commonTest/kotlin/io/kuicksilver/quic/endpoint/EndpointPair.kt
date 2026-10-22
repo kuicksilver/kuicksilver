@@ -42,6 +42,8 @@ internal class EndpointPair(
     serverEarlyData: Boolean = false,
     newTokenLifetime: Duration? = 24.hours,
     sharedTokens: AddressTokens? = null,
+    /** The server's `preferred_address`: datagrams to it reach the server on [io.kuicksilver.quic.PREFERRED_SOCKET], its answers come from it. */
+    val serverPreferred: io.kuicksilver.quic.PreferredAddress? = null,
     configure: QuicEndpointConfig.Builder.() -> Unit = {},
 ) {
     val clientAddr: InetSocketAddress = InetSocketAddress("10.0.0.1", 40000)
@@ -59,6 +61,7 @@ internal class EndpointPair(
                                 quic = serverQuic
                                 earlyData = serverEarlyData
                                 this.newTokenLifetime = newTokenLifetime
+                                preferredAddress = serverPreferred
                             }.build()
                     ; this.crypto = crypto
                     configure()
@@ -116,6 +119,12 @@ internal class EndpointPair(
     /** Source address of the client's datagrams per socket (path id) other than the first; the server's answers to that address arrive on that socket. */
     val clientSocketSources: HashMap<PathId, InetSocketAddress> = HashMap()
     val sentElsewhere: MutableList<Pair<InetSocketAddress, ByteArray>> = ArrayList()
+
+    /** The socket each client datagram reached the server on, in order (the preferred one for its address). */
+    val toServerSockets: MutableList<PathId> = ArrayList()
+
+    /** The source of every server datagram, in the order of [serverSent]. */
+    val serverSentFrom: MutableList<InetSocketAddress> = ArrayList()
 
     /** Every server datagram with its destination, delivered or not. */
     val serverSent: MutableList<Pair<InetSocketAddress, ByteArray>> = ArrayList()
@@ -192,7 +201,13 @@ internal class EndpointPair(
             if (toServer) {
                 val sk = sockets[k]
                 if (sk != PathId.Initial) src = clientSocketSources[sk] ?: clientSource
+                if (dest == serverPreferred?.ipv4 || dest == serverPreferred?.ipv6) socket = io.kuicksilver.quic.PREFERRED_SOCKET
+                toServerSockets += socket
             } else {
+                if (sockets[k] == io.kuicksilver.quic.PREFERRED_SOCKET) {
+                    src = serverPreferred?.ipv4 ?: serverPreferred!!.ipv6!!
+                }
+                serverSentFrom += src
                 serverSent += dest to bytes
                 socket = clientSocketSources.entries.firstOrNull { it.value == dest }?.key ?: PathId.Initial
                 if (socket ==

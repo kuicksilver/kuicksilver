@@ -460,6 +460,11 @@ public class EndpointCore internal constructor(
             deliver(it, data, length, from, ecn, now, socket)
             return it
         }
+        // the preferred socket serves connections only: no new connection, no stateless answer (RFC 9000 section 9.6)
+        if (socket == PREFERRED_SOCKET) {
+            droppedStateless++
+            return null
+        }
         if (hv.isVersionNegotiation) {
             connections.firstOrNull { it.odcid.contentEquals(data, hv.scidOff, hv.scidLen) }?.let {
                 deliver(it, data, length, from, ecn, now)

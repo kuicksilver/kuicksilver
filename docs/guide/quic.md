@@ -400,6 +400,16 @@ connection IDs it sees. Datagrams that merely look like a reset are counted in `
 
 ## Migration and paths
 
+**Preferred address (server, experimental).** `quicServerConfig(tls) { preferredAddress = PreferredAddress(ipv4, ipv6) }`
+makes the endpoint also listen on those addresses and offer them to clients in `preferred_address` (RFC 9000 section
+9.6), for example a server behind an anycast or load-balanced address that wants clients on its own unicast address. A
+client that moves there validates the path first; the server switches its connection to the preferred socket only once it
+validated the client's address there too (until then everything non-probing leaves the original socket), reports
+`PathChangeReason.PreferredAddress` and closes the original path. Nothing else happens on a preferred socket: a new
+connection is never started there, and nothing is answered statelessly. With `allowMigration = false` a move to the
+preferred address is still taken, but only from the client's current address. With several loops every loop listens on
+the preferred addresses with `SO_REUSEPORT`, like on the main one.
+
 A server follows a client that changes address (RFC 9000 section 9). The first 1-RTT packet from a new address opens a
 path under validation: the server sends a `PATH_CHALLENGE` there (and to the previous address, against an off-path
 attacker replaying the client's packets), limits what it sends to the unvalidated address to three times what it

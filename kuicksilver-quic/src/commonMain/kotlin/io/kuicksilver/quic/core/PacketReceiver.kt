@@ -217,6 +217,8 @@ internal class PacketReceiver(
         if (!hv.fixedBitSet && !c.config.greaseQuicBit) return false
         // section 17.2.2: a server Initial carries no token
         if (type == PacketType.Initial && c.role == TlsRole.Client && hv.tokenLen != 0) return false
+        // the preferred socket carries 1-RTT packets of connections that moved there, nothing else (RFC 9000 section 9.6)
+        if (socket == io.kuicksilver.quic.PREFERRED_SOCKET && type != PacketType.OneRtt) return false
         // migration off, or to loopback/link-local (threat-model 3.14)
         if (type == PacketType.OneRtt && c.role == TlsRole.Server && !c.path.isRemote(from) && !c.migrationAllowedFrom(from)) return false
         // RFC 9369 section 4.1: a server takes 0-RTT only in the original version, whatever the negotiated one

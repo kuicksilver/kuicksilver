@@ -200,8 +200,8 @@ internal class ConnectionIdManager(
         if (largestPeerSeq < 1) largestPeerSeq = 1
     }
 
-    /** Test hook for a server that advertises `preferred_address`: its sequence-1 ID, issued and sent with the transport parameters. */
-    fun preferredAddressLocalForTest(): Local {
+    /** A server that advertises `preferred_address`: its sequence-1 ID (RFC 9000 section 5.1.1), issued and sent with the transport parameters. */
+    fun preferredAddressLocal(): Local {
         local.firstOrNull { it.seq == 1L }?.let { return it }
         check(nextLocalSeq == 1L) { "preferred_address needs sequence 1" }
         val cid = newLocalCid()

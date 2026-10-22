@@ -658,6 +658,7 @@ public final class io/kuicksilver/quic/PathChangeReason : java/lang/Enum {
 	public static final field ActiveMigration Lio/kuicksilver/quic/PathChangeReason;
 	public static final field NatRebinding Lio/kuicksilver/quic/PathChangeReason;
 	public static final field PeerMigration Lio/kuicksilver/quic/PathChangeReason;
+	public static final field PreferredAddress Lio/kuicksilver/quic/PathChangeReason;
 	public static final field ValidationFailed Lio/kuicksilver/quic/PathChangeReason;
 	public static fun getEntries ()Lkotlin/enums/EnumEntries;
 	public static fun valueOf (Ljava/lang/String;)Lio/kuicksilver/quic/PathChangeReason;
@@ -729,6 +730,13 @@ public final class io/kuicksilver/quic/PathState : java/lang/Enum {
 public final class io/kuicksilver/quic/PathValidationException : java/lang/IllegalStateException {
 	public fun <init> (Lio/kuicksilver/quic/PathFailureReason;)V
 	public final fun getReason ()Lio/kuicksilver/quic/PathFailureReason;
+}
+
+public final class io/kuicksilver/quic/PreferredAddress {
+	public fun <init> (Lio/ktor/network/sockets/InetSocketAddress;Lio/ktor/network/sockets/InetSocketAddress;)V
+	public final fun getIpv4 ()Lio/ktor/network/sockets/InetSocketAddress;
+	public final fun getIpv6 ()Lio/ktor/network/sockets/InetSocketAddress;
+	public fun toString ()Ljava/lang/String;
 }
 
 public abstract interface class io/kuicksilver/quic/QlogSink {
@@ -1145,6 +1153,7 @@ public final class io/kuicksilver/quic/QuicServerConfig {
 	public final fun getEarlyData ()Z
 	public final fun getNewTokenLifetime-FghU774 ()Lkotlin/time/Duration;
 	public final fun getNewTokenReplayCapacity ()I
+	public final fun getPreferredAddress ()Lio/kuicksilver/quic/PreferredAddress;
 	public final fun getQuic ()Lio/kuicksilver/quic/QuicConfig;
 	public final fun getTls ()Lio/kuicksilver/tls/TlsConfig;
 }
@@ -1156,12 +1165,14 @@ public final class io/kuicksilver/quic/QuicServerConfig$Builder {
 	public final fun getEarlyDataContext ()[B
 	public final fun getNewTokenLifetime-FghU774 ()Lkotlin/time/Duration;
 	public final fun getNewTokenReplayCapacity ()I
+	public final fun getPreferredAddress ()Lio/kuicksilver/quic/PreferredAddress;
 	public final fun getQuic ()Lio/kuicksilver/quic/QuicConfig;
 	public final fun getTls ()Lio/kuicksilver/tls/TlsConfig;
 	public final fun setEarlyData (Z)V
 	public final fun setEarlyDataContext ([B)V
 	public final fun setNewTokenLifetime-BwNAW2A (Lkotlin/time/Duration;)V
 	public final fun setNewTokenReplayCapacity (I)V
+	public final fun setPreferredAddress (Lio/kuicksilver/quic/PreferredAddress;)V
 	public final fun setQuic (Lio/kuicksilver/quic/QuicConfig;)V
 }
 

@@ -582,6 +582,9 @@ public class ConnectionCore internal constructor(
     /** (level, offset, length): inject one CRYPTO frame of zeros into the next packet of that level. */
     internal var testInjectCrypto: Triple<Int, Long, Int>? = null
     internal var testAdvertisePreferredAddress = false
+
+    /** Server: the endpoint's preferred address, advertised in the transport parameters (RFC 9000 section 9.6); null: none. */
+    internal var preferredAddress: PreferredAddress? = null
         set(v) {
             field = v
             refreshLocalTp()

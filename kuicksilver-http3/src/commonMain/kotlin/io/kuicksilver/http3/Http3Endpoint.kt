@@ -216,6 +216,7 @@ public class Http3Endpoint private constructor(
                                 this.quic = quic
                                 newTokenLifetime = s.newTokenLifetime
                                 newTokenReplayCapacity = s.newTokenReplayCapacity
+                                preferredAddress = s.preferredAddress
                                 if (s.earlyData) {
                                     earlyData = true
                                     earlyDataContext = settings.earlyDataContext()

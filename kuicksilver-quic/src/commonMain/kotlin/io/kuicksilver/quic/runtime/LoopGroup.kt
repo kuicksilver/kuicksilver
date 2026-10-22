@@ -106,11 +106,12 @@ internal class LoopGroup private constructor(
         from: InetSocketAddress,
         ecn: Ecn,
         asReceived: Boolean,
+        socket: io.kuicksilver.quic.PathId = io.kuicksilver.quic.PathId.Initial,
     ): Boolean {
         if (to >= loops.size || length > EndpointLoop.FORWARD_MAX) return true // not a queue drop: no loop takes it
         val bytes = ByteArray(length)
         buf.copyTo(bytes, 0, 0, length)
-        return loops[to].forwarded.trySend(EndpointLoop.Forwarded(bytes, from, ecn, asReceived)).isSuccess
+        return loops[to].forwarded.trySend(EndpointLoop.Forwarded(bytes, from, ecn, asReceived, socket)).isSuccess
     }
 
     internal fun loopForTest(i: Int): EndpointLoop = loops[i]
@@ -183,13 +184,38 @@ internal class LoopGroup private constructor(
                 for (io in ios) io.close()
                 throw e
             }
-            return create(config, ios)
+            // every loop listens on the preferred addresses too, sharing each port as it shares the main one (SO_REUSEPORT): the kernel
+            // hashes a moved client onto one of them, and a loop that does not own the connection copies the datagram to the one that does
+            val preferred = ArrayList<List<io.kuicksilver.quic.DatagramIo>>(config.loops)
+            try {
+                repeat(config.loops) {
+                    preferred +=
+                        EndpointLoop.openPreferred(config) { at ->
+                            val s =
+                                open(at)
+                                    ?: throw UnsupportedOperationException(
+                                        "accelerated transport unavailable for the preferred address $at",
+                                    )
+                            if (!s.reusePort) {
+                                s.io.close()
+                                throw UnsupportedOperationException(NO_REUSEPORT)
+                            }
+                            s.io
+                        }
+                }
+            } catch (e: Throwable) {
+                for (l in preferred) for (p in l) p.close()
+                for (io in ios) io.close()
+                throw e
+            }
+            return create(config, ios, preferred = preferred)
         }
 
         /** Builds every loop first, then starts them: a loop that receives before its peers exist would forward into nothing. [afterBuild] is a test hook. */
         internal suspend fun create(
             config: QuicEndpointConfig,
             ios: List<io.kuicksilver.quic.DatagramIo>,
+            preferred: List<List<io.kuicksilver.quic.DatagramIo>> = emptyList(),
             afterBuild: suspend () -> Unit = {},
         ): LoopGroup {
             val g = LoopGroup(config)
@@ -206,7 +232,18 @@ internal class LoopGroup private constructor(
             val loops = ArrayList<EndpointLoop>(ios.size)
             try {
                 for ((i, io) in ios.withIndex()) {
-                    loops += EndpointLoop.inGroup(config, io, i, g, g.acceptQueue, g.pendingAccept, g.sessions, tokens)
+                    loops +=
+                        EndpointLoop.inGroup(
+                            config,
+                            io,
+                            i,
+                            g,
+                            g.acceptQueue,
+                            g.pendingAccept,
+                            g.sessions,
+                            tokens,
+                            preferred.getOrElse(i) { emptyList() },
+                        )
                 }
             } catch (e: Throwable) {
                 for (l in loops) l.core.close() // never started: their cores are all they hold of the group's keys

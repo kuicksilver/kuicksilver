@@ -99,6 +99,9 @@ public class QuicServerConfig private constructor(
     /** NEW_TOKEN tokens the server's replay register holds per lifetime; see [Builder.newTokenReplayCapacity]. */
     @property:ExperimentalKuicksilverApi
     public val newTokenReplayCapacity: Int,
+    /** Where this server asks clients to move after the handshake, or null; see [Builder.preferredAddress]. */
+    @property:ExperimentalKuicksilverApi
+    public val preferredAddress: PreferredAddress?,
 ) {
     private val early = AtomicReference<ServerEarlyData?>(null)
 
@@ -172,6 +175,17 @@ public class QuicServerConfig private constructor(
         @ExperimentalKuicksilverApi
         public var newTokenReplayCapacity: Int = 1 shl 20
 
+        /**
+         * Default null. Otherwise the endpoint also listens on these addresses (a socket per family; every loop of a group shares the
+         * port, as for the main one) and advertises them in `preferred_address` with its sequence-1 connection ID (RFC 9000 sections 9.6
+         * and 18.2). A client that follows (`QuicConfig.followPreferredAddress`) validates the new path after the handshake and moves
+         * there; the server moves too once the client's address is validated on the preferred socket, and the original path closes.
+         * Only connections live there: a new Initial on a preferred socket is dropped. A move to it is taken even with
+         * `allowMigration = false`, from the client's current address only.
+         */
+        @ExperimentalKuicksilverApi
+        public var preferredAddress: PreferredAddress? = null
+
         /** A [QuicServerConfig]; IllegalArgumentException for a client [tls], `TlsException.Config` for one QUIC cannot use. */
         public fun build(): QuicServerConfig {
             require(tls.role == TlsRole.Server) { "server config needs a server TlsConfig" }
@@ -184,7 +198,15 @@ public class QuicServerConfig private constructor(
                 ) { "newTokenLifetime must be positive and at most 7 days, or null" }
             }
             require(newTokenReplayCapacity in 1..(1 shl 24)) { "newTokenReplayCapacity must be 1..16777216" }
-            return QuicServerConfig(tls, quic, earlyData, earlyDataContext?.copyOf(), newTokenLifetime, newTokenReplayCapacity)
+            return QuicServerConfig(
+                tls,
+                quic,
+                earlyData,
+                earlyDataContext?.copyOf(),
+                newTokenLifetime,
+                newTokenReplayCapacity,
+                preferredAddress,
+            )
         }
     }
 }

@@ -57,7 +57,16 @@ public enum class PathChangeReason {
 
     /** The active path failed validation and the connection fell back to the last validated path (section 9.3.2). */
     ValidationFailed,
+
+    /**
+     * The connection moved to the server's preferred address (RFC 9000 section 9.6): on a client after validating it, on a server once
+     * the client's packets arrived there and its address was validated on that socket. Added in 0.3.0.
+     */
+    PreferredAddress,
 }
+
+/** The socket a server listens on for its preferred address ([QuicServerConfig.Builder.preferredAddress]); a socket id, never a path id. */
+internal val PREFERRED_SOCKET: PathId = PathId(-1)
 
 /** Why a path failed validation ([ConnectionEvent.PathFailed], [PathEvent.Failed], [PathValidationException]). */
 @ExperimentalKuicksilverApi

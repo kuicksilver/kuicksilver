@@ -14,6 +14,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Added
 
+- QUIC: a server can advertise a preferred address (experimental `QuicServerConfig.preferredAddress`,
+  `PreferredAddress`; RFC 9000 section 9.6). The endpoint listens there too (every loop of a group), advertises it with its
+  sequence-1 connection ID, and moves a connection there once the client's address is validated on that socket,
+  reporting the new `PathChangeReason.PreferredAddress`; a new connection is never started on a preferred socket.
 - QUIC: ICMP Packet Too Big (Linux, Android) and EMSGSIZE (every accelerated socket) speed up path MTU discovery as
   hints (experimental `QuicConfig.pmtudIcmpHints`, on by default; RFC 8899 section 4.6, RFC 9000 section 14.2.1). A
   Packet Too Big must quote one of the connection's packets on its active path and leave at least 1200 bytes of payload,

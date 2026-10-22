@@ -213,6 +213,11 @@ private fun EndpointCore.admitValidated(
     }
     config.maxConnectionLifetime?.let { core.lifetimeDeadline = now + it }
     attach(core)
+    server.preferredAddress?.let {
+        // after attach: the sequence-1 ID it issues must route here (the registrar is set) before the first packet
+        core.preferredAddress = it
+        core.refreshLocalTp()
+    }
     if (retryScid == null) {
         registry.add(core.odcid, core)
     } else if (retryScid != cid) {

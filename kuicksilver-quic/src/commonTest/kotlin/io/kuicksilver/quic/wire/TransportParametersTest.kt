@@ -11,6 +11,7 @@ import io.kotest.property.arbitrary.long
 import io.kotest.property.checkAll
 import io.kuicksilver.native.PacketBuffer
 import io.kuicksilver.quic.Arbs
+import io.kuicksilver.quic.ipLiteral
 import io.kuicksilver.tls.TlsRole
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
@@ -214,4 +215,37 @@ class TransportParametersTest {
     /** Review finding 14, RFC 9000 section 18.2: "A server that chooses a zero-length connection ID MUST NOT provide a preferred address." */
     @Test fun negative_preferredAddressFromZeroLengthCidServer() =
         expect(0x08, raw(0x0fL to ByteArray(0), 0x0dL to ByteArray(4 + 2 + 16 + 2 + 1 + 8 + 16).also { it[24] = 8 }))
+
+    @Test fun preferredAddressRoundTrip() {
+        val tp = TransportParameters()
+        tp.preferredAddressPresent = true
+        tp.preferredIpv4 =
+            io.ktor.network.sockets
+                .InetSocketAddress("193.167.100.100", 4433)
+        tp.preferredIpv6 =
+            io.ktor.network.sockets
+                .InetSocketAddress("fd00:cafe:cafe:100::100", 4433)
+        tp.preferredAddressCid = ConnectionId(ByteArray(8) { (it + 1).toByte() })
+        tp.preferredAddressToken = ByteArray(16) { 0x5a }
+        val back = TransportParametersCodec.decode(TransportParametersCodec.encode(tp, TlsRole.Server, 27), TlsRole.Server)
+        assertTrue(back.preferredAddressPresent)
+        assertEquals("193.167.100.100", back.preferredIpv4!!.ipLiteral())
+        assertEquals(4433, back.preferredIpv4!!.port)
+        assertEquals("fd00:cafe:cafe:100::100", back.preferredIpv6!!.ipLiteral())
+        assertEquals(4433, back.preferredIpv6!!.port)
+        assertEquals(tp.preferredAddressCid, back.preferredAddressCid)
+        assertTrue(tp.preferredAddressToken!!.contentEquals(back.preferredAddressToken!!))
+    }
+
+    @Test fun zeroFamilyIsAbsent() {
+        // RFC 9000 section 18.2: a family the server does not offer is all zeros; zero address with a port, or a port 0, is no address either
+        val pa = ByteArray(4 + 2 + 16 + 2 + 1 + 8 + 16).also { it[24] = 8 }
+        pa[4] = 0x11
+        pa[5] = 0x51 // 0.0.0.0:4433
+        for (i in 6 until 22) pa[i] = 0x20 // an IPv6 address
+        val tp = TransportParametersCodec.decode(raw(0x0dL to pa), TlsRole.Server)
+        assertEquals(null, tp.preferredIpv4, "0.0.0.0 is no address")
+        assertEquals(null, tp.preferredIpv6, "port 0 is no address")
+        assertTrue(tp.preferredAddressPresent)
+    }
 }

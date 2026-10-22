@@ -82,9 +82,27 @@ internal object TransportParametersCodec {
                 }
                 tp.retrySourceConnectionId?.let { bytes(RETRY_SCID, it.toByteArray()) }
                 if (tp.preferredAddressPresent) {
-                    // zero addresses (tests only: the server never advertises one)
+                    // a family the server does not offer goes as zeros (RFC 9000 section 18.2)
                     val cid = tp.preferredAddressCid?.toByteArray() ?: ByteArray(8)
                     val v = ByteArray(4 + 2 + 16 + 2 + 1 + cid.size + 16)
+                    tp.preferredIpv4?.let { a ->
+                        val ip =
+                            io.kuicksilver.quic.core.AddressClass
+                                .ipBytes(a)
+                        require(ip.size == 4) { "preferredIpv4 is not IPv4" }
+                        ip.copyInto(v, 0)
+                        v[4] = (a.port ushr 8).toByte()
+                        v[5] = a.port.toByte()
+                    }
+                    tp.preferredIpv6?.let { a ->
+                        val ip =
+                            io.kuicksilver.quic.core.AddressClass
+                                .ipBytes(a)
+                        require(ip.size == 16) { "preferredIpv6 is not IPv6" }
+                        ip.copyInto(v, 6)
+                        v[22] = (a.port ushr 8).toByte()
+                        v[23] = a.port.toByte()
+                    }
                     v[24] = cid.size.toByte()
                     cid.copyInto(v, 25)
                     tp.preferredAddressToken?.copyInto(v, 25 + cid.size)
@@ -251,7 +269,26 @@ internal object TransportParametersCodec {
                         ) {
                             fail("preferred_address too short")
                         }
+                        val v4 = ByteArray(4).also { b.copyTo(it, r.pos, 0, 4) }
+                        val p4 = ((b[r.pos + 4].toInt() and 0xff) shl 8) or (b[r.pos + 5].toInt() and 0xff)
+                        val v6 = ByteArray(16).also { b.copyTo(it, r.pos + 6, 0, 16) }
+                        val p6 = ((b[r.pos + 22].toInt() and 0xff) shl 8) or (b[r.pos + 23].toInt() and 0xff)
                         r.skip(4 + 2 + 16 + 2)
+                        // a family the server does not offer: all zeros; an unspecified address or port 0 is no address either
+                        tp.preferredIpv4 =
+                            if (p4 == 0 || v4.all { it == 0.toByte() }) {
+                                null
+                            } else {
+                                io.kuicksilver.quic.core.AddressClass
+                                    .addressOf(v4, p4)
+                            }
+                        tp.preferredIpv6 =
+                            if (p6 == 0 || v6.all { it == 0.toByte() }) {
+                                null
+                            } else {
+                                io.kuicksilver.quic.core.AddressClass
+                                    .addressOf(v6, p6)
+                            }
                         val cidLen = r.u8()
                         if (cidLen == 0) fail("preferred_address with a zero-length connection ID")
                         if (cidLen > 20) fail("preferred_address connection ID longer than 20 bytes")

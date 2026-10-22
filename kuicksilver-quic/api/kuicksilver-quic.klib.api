@@ -99,6 +99,7 @@ final enum class io.kuicksilver.quic/PathChangeReason : kotlin/Enum<io.kuicksilv
     enum entry ActiveMigration // io.kuicksilver.quic/PathChangeReason.ActiveMigration|null[0]
     enum entry NatRebinding // io.kuicksilver.quic/PathChangeReason.NatRebinding|null[0]
     enum entry PeerMigration // io.kuicksilver.quic/PathChangeReason.PeerMigration|null[0]
+    enum entry PreferredAddress // io.kuicksilver.quic/PathChangeReason.PreferredAddress|null[0]
     enum entry ValidationFailed // io.kuicksilver.quic/PathChangeReason.ValidationFailed|null[0]
 
     final val entries // io.kuicksilver.quic/PathChangeReason.entries|#static{}entries[0]
@@ -1030,6 +1031,17 @@ final class io.kuicksilver.quic/PathValidationException : kotlin/IllegalStateExc
         final fun <get-reason>(): io.kuicksilver.quic/PathFailureReason // io.kuicksilver.quic/PathValidationException.reason.<get-reason>|<get-reason>(){}[0]
 }
 
+final class io.kuicksilver.quic/PreferredAddress { // io.kuicksilver.quic/PreferredAddress|null[0]
+    constructor <init>(io.ktor.network.sockets/InetSocketAddress?, io.ktor.network.sockets/InetSocketAddress?) // io.kuicksilver.quic/PreferredAddress.<init>|<init>(io.ktor.network.sockets.InetSocketAddress?;io.ktor.network.sockets.InetSocketAddress?){}[0]
+
+    final val ipv4 // io.kuicksilver.quic/PreferredAddress.ipv4|{}ipv4[0]
+        final fun <get-ipv4>(): io.ktor.network.sockets/InetSocketAddress? // io.kuicksilver.quic/PreferredAddress.ipv4.<get-ipv4>|<get-ipv4>(){}[0]
+    final val ipv6 // io.kuicksilver.quic/PreferredAddress.ipv6|{}ipv6[0]
+        final fun <get-ipv6>(): io.ktor.network.sockets/InetSocketAddress? // io.kuicksilver.quic/PreferredAddress.ipv6.<get-ipv6>|<get-ipv6>(){}[0]
+
+    final fun toString(): kotlin/String // io.kuicksilver.quic/PreferredAddress.toString|toString(){}[0]
+}
+
 final class io.kuicksilver.quic/QuicClientConfig { // io.kuicksilver.quic/QuicClientConfig|null[0]
     final val earlyData // io.kuicksilver.quic/QuicClientConfig.earlyData|{}earlyData[0]
         final fun <get-earlyData>(): io.kuicksilver.tls/EarlyDataState // io.kuicksilver.quic/QuicClientConfig.earlyData.<get-earlyData>|<get-earlyData>(){}[0]
@@ -1348,6 +1360,8 @@ final class io.kuicksilver.quic/QuicServerConfig { // io.kuicksilver.quic/QuicSe
         final fun <get-newTokenLifetime>(): kotlin.time/Duration? // io.kuicksilver.quic/QuicServerConfig.newTokenLifetime.<get-newTokenLifetime>|<get-newTokenLifetime>(){}[0]
     final val newTokenReplayCapacity // io.kuicksilver.quic/QuicServerConfig.newTokenReplayCapacity|{}newTokenReplayCapacity[0]
         final fun <get-newTokenReplayCapacity>(): kotlin/Int // io.kuicksilver.quic/QuicServerConfig.newTokenReplayCapacity.<get-newTokenReplayCapacity>|<get-newTokenReplayCapacity>(){}[0]
+    final val preferredAddress // io.kuicksilver.quic/QuicServerConfig.preferredAddress|{}preferredAddress[0]
+        final fun <get-preferredAddress>(): io.kuicksilver.quic/PreferredAddress? // io.kuicksilver.quic/QuicServerConfig.preferredAddress.<get-preferredAddress>|<get-preferredAddress>(){}[0]
     final val quic // io.kuicksilver.quic/QuicServerConfig.quic|{}quic[0]
         final fun <get-quic>(): io.kuicksilver.quic/QuicConfig // io.kuicksilver.quic/QuicServerConfig.quic.<get-quic>|<get-quic>(){}[0]
     final val tls // io.kuicksilver.quic/QuicServerConfig.tls|{}tls[0]
@@ -1371,6 +1385,9 @@ final class io.kuicksilver.quic/QuicServerConfig { // io.kuicksilver.quic/QuicSe
         final var newTokenReplayCapacity // io.kuicksilver.quic/QuicServerConfig.Builder.newTokenReplayCapacity|{}newTokenReplayCapacity[0]
             final fun <get-newTokenReplayCapacity>(): kotlin/Int // io.kuicksilver.quic/QuicServerConfig.Builder.newTokenReplayCapacity.<get-newTokenReplayCapacity>|<get-newTokenReplayCapacity>(){}[0]
             final fun <set-newTokenReplayCapacity>(kotlin/Int) // io.kuicksilver.quic/QuicServerConfig.Builder.newTokenReplayCapacity.<set-newTokenReplayCapacity>|<set-newTokenReplayCapacity>(kotlin.Int){}[0]
+        final var preferredAddress // io.kuicksilver.quic/QuicServerConfig.Builder.preferredAddress|{}preferredAddress[0]
+            final fun <get-preferredAddress>(): io.kuicksilver.quic/PreferredAddress? // io.kuicksilver.quic/QuicServerConfig.Builder.preferredAddress.<get-preferredAddress>|<get-preferredAddress>(){}[0]
+            final fun <set-preferredAddress>(io.kuicksilver.quic/PreferredAddress?) // io.kuicksilver.quic/QuicServerConfig.Builder.preferredAddress.<set-preferredAddress>|<set-preferredAddress>(io.kuicksilver.quic.PreferredAddress?){}[0]
         final var quic // io.kuicksilver.quic/QuicServerConfig.Builder.quic|{}quic[0]
             final fun <get-quic>(): io.kuicksilver.quic/QuicConfig // io.kuicksilver.quic/QuicServerConfig.Builder.quic.<get-quic>|<get-quic>(){}[0]
             final fun <set-quic>(io.kuicksilver.quic/QuicConfig) // io.kuicksilver.quic/QuicServerConfig.Builder.quic.<set-quic>|<set-quic>(io.kuicksilver.quic.QuicConfig){}[0]

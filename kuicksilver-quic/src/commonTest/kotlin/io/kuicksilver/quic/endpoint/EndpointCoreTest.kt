@@ -36,6 +36,7 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
 
 @OptIn(ExperimentalKuicksilverApi::class, DelicateKuicksilverApi::class)
 class EndpointCoreTest {
@@ -825,6 +826,166 @@ class EndpointCoreTest {
             val challenged = s.paths.all.filter { it.challenge != 0L }
             assertTrue(challenged.isNotEmpty(), "the migration started a validation")
             for (path in challenged) assertTrue(path.challenge in sr.longs, "PATH_CHALLENGE data of $path")
+        } finally {
+            p.close()
+        }
+    }
+
+    // ---- preferred_address, server side (RFC 9000 sections 9.6 and 18.2) ----
+
+    private val preferred = io.kuicksilver.quic.PreferredAddress(InetSocketAddress("10.0.0.3", 4433), null)
+
+    @Test fun serverAdvertisesPreferredAddressWithSequenceOneCid() {
+        val p = EndpointPair(crypto = io.kuicksilver.tls.KslQuicCrypto, serverPreferred = preferred)
+        try {
+            val c = p.connect()
+            assertTrue(p.confirmed(c), "${p.closed(c)}")
+            val s = p.server.connections().single()
+            val tp = assertNotNull(c.peerTp)
+            assertTrue(tp.preferredAddressPresent)
+            assertEquals("10.0.0.3", tp.preferredIpv4!!.hostname)
+            assertEquals(4433, tp.preferredIpv4!!.port)
+            assertNull(tp.preferredIpv6, "IPv6 not offered: zeros")
+            val seq1 = assertNotNull(s.cids.localForTest(1), "the server's sequence 1")
+            assertEquals(seq1.cid, tp.preferredAddressCid)
+            assertTrue(seq1.token.contentEquals(tp.preferredAddressToken!!), "its reset token")
+        } finally {
+            p.close()
+        }
+    }
+
+    /** The client probes the preferred address on its own socket and moves there once validated (what `followPreferredAddress` does by itself). */
+    private fun moveClientToPreferred(
+        p: EndpointPair,
+        c: ConnectionCore,
+    ) {
+        assertTrue(p.runUntil(5.seconds) { c.cids.hasSparePeerForTest }, "a spare peer ID")
+        val id = c.addPath(preferred.ipv4!!, p.now, io.kuicksilver.quic.PathId.Initial)
+        c.probePath(id, p.now)
+        assertTrue(
+            p.runUntil(5.seconds) {
+                c.pathState(id) == io.kuicksilver.quic.PathState.Validated
+            },
+            "the client validated the preferred address",
+        )
+        c.switchPath(id, p.now)
+        val sid = c.openStream(true)
+        c.writeStream(sid, ByteArray(100), 0, 100, true) // non-probing packets on the new path
+    }
+
+    @Test fun negative_initialOnPreferredSocketIsDropped() {
+        // a new connection never starts on the preferred socket, and nothing there answers statelessly (RFC 9000 section 9.6)
+        val p = EndpointPair(serverPreferred = preferred)
+        try {
+            val c = p.connect()
+            val b = PacketBatch(4)
+            try {
+                val n = c.poll(b, p.now)
+                assertTrue(n > 0)
+                for (i in 0 until n) {
+                    val bytes = b.buffer(i).toByteArray(b.length(i))
+                    val buf = PacketBuffer.of(bytes)
+                    try {
+                        p.server.handleDatagram(buf, bytes.size, p.clientAddr, Ecn.NotEct, p.now, io.kuicksilver.quic.PREFERRED_SOCKET)
+                    } finally {
+                        buf.close()
+                    }
+                }
+            } finally {
+                b.close()
+            }
+            p.server.processPending(p.now)
+            assertEquals(0L, p.server.stats.connectionsCreated)
+            assertEquals(0, p.stateless(p.server).size, "no stateless answer")
+        } finally {
+            p.close()
+        }
+    }
+
+    @Test fun negative_serverSendsNothingNonProbingFromPreferredBeforeValidation() {
+        // RFC 9000 section 9.6.1: the server sends non-probing packets from its preferred address only after it validated the
+        // client's address there; until then they keep leaving the original socket
+        val p = EndpointPair(crypto = io.kuicksilver.tls.KslQuicCrypto, serverPreferred = preferred)
+        try {
+            val c = p.connect()
+            assertTrue(p.confirmed(c), "${p.closed(c)}")
+            val s = p.server.connections().single()
+            moveClientToPreferred(p, c)
+            var violated = false
+            var reason: io.kuicksilver.quic.PathChangeReason? = null
+            assertTrue(
+                p.runUntil(10.seconds) {
+                    val a = s.path
+                    if (a.socket == io.kuicksilver.quic.PREFERRED_SOCKET &&
+                        a.state != io.kuicksilver.quic.PathState.Validated
+                    ) {
+                        violated = true
+                    }
+                    reason =
+                        p.events[s]!!
+                            .filterIsInstance<ConnectionEvent.PathChanged>()
+                            .lastOrNull()
+                            ?.reason
+                    reason != null
+                },
+                "the server never moved to its preferred socket",
+            )
+            assertTrue(!violated, "the active path moved to the preferred socket before its validation")
+            assertEquals(io.kuicksilver.quic.PathChangeReason.PreferredAddress, reason)
+            assertEquals(io.kuicksilver.quic.PREFERRED_SOCKET, s.path.socket)
+            assertEquals(1, s.pathCountForTest, "the original path is closed after the move")
+            // from here everything the server sends comes from the preferred address
+            val from = p.serverSentFrom.size
+            val id = c.openStream(true)
+            c.writeStream(id, ByteArray(5000), 0, 5000, true)
+            p.runUntil(2.seconds) { false }
+            assertTrue(p.serverSentFrom.drop(from).isNotEmpty() && p.serverSentFrom.drop(from).all { it == preferred.ipv4 })
+            assertNull(p.closed(c))
+        } finally {
+            p.close()
+        }
+    }
+
+    @Test fun preferredMoveAllowedWithAllowMigrationFalse() {
+        // the server disabled active migration, yet a move to its preferred address is the client's right (RFC 9000 section 18.2);
+        // on the preferred socket only the client's current address is taken, as ngtcp2 does
+        val noMigration = quicConfig { allowMigration = false }
+        val p = EndpointPair(crypto = io.kuicksilver.tls.KslQuicCrypto, serverPreferred = preferred, serverQuic = noMigration)
+        val captured = ArrayList<ByteArray>()
+        try {
+            val c = p.connect()
+            assertTrue(p.confirmed(c), "${p.closed(c)}")
+            val s = p.server.connections().single()
+            p.filterToServer = { _, b ->
+                // kept back from the server, so it sees each of them for the first time below (a repeat is a duplicate packet)
+                if (b[0].toInt() and 0x80 == 0 && captured.size < 4) {
+                    captured += b.copyOf()
+                    false
+                } else {
+                    true
+                }
+            }
+            val id = c.openStream(true)
+            c.writeStream(id, ByteArray(6000), 0, 6000, true)
+            assertTrue(p.runUntil(2.seconds) { captured.size >= 2 }, "1-RTT datagrams of the client: ${captured.size}")
+            p.filterToServer = { _, _ -> true }
+
+            fun feed(
+                bytes: ByteArray,
+                from: InetSocketAddress,
+            ) {
+                val b = PacketBuffer.of(bytes)
+                try {
+                    p.server.handleDatagram(b, bytes.size, from, Ecn.NotEct, p.now, io.kuicksilver.quic.PREFERRED_SOCKET)
+                } finally {
+                    b.close()
+                }
+            }
+            val paths = s.pathCountForTest
+            feed(captured[1], InetSocketAddress("10.0.0.9", 40000))
+            assertEquals(paths, s.pathCountForTest, "another IP on the preferred socket: dropped")
+            feed(captured[0], p.clientAddr)
+            assertEquals(paths + 1, s.pathCountForTest, "the client's own address on the preferred socket: a new path")
         } finally {
             p.close()
         }

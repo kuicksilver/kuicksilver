@@ -12,8 +12,10 @@ import io.kuicksilver.quic.DatagramIo
 import io.kuicksilver.quic.Ecn
 import io.kuicksilver.quic.EndpointCore
 import io.kuicksilver.quic.EndpointStats
+import io.kuicksilver.quic.IoPreference
 import io.kuicksilver.quic.KslDatagramIo
 import io.kuicksilver.quic.LogLevel
+import io.kuicksilver.quic.PREFERRED_SOCKET
 import io.kuicksilver.quic.PacketBatch
 import io.kuicksilver.quic.PathId
 import io.kuicksilver.quic.QuicClientConfig
@@ -24,12 +26,14 @@ import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.SocketDefunctException
 import io.kuicksilver.quic.TimeMark
 import io.kuicksilver.quic.TransportError
+import io.kuicksilver.quic.core.AddressClass
 import io.kuicksilver.quic.core.fail
 import io.kuicksilver.quic.core.failInternal
 import io.kuicksilver.quic.core.onEmsgsize
 import io.kuicksilver.quic.core.zeroRttWritable
 import io.kuicksilver.quic.emit
 import io.kuicksilver.quic.ipLiteral
+import io.kuicksilver.quic.openDatagramIo
 import io.kuicksilver.quic.tokenStoreKey
 import io.kuicksilver.quic.withLiteralHost
 import io.kuicksilver.tls.EarlyDataState
@@ -87,6 +91,8 @@ internal class EndpointLoop private constructor(
     internal val sessions: SessionCache = SessionCache(),
     /** A group's Retry and NEW_TOKEN keys, shared by its loops (RFC 9000 section 8.1); null: the endpoint core makes its own. */
     tokens: io.kuicksilver.quic.endpoint.AddressTokens? = null,
+    /** The sockets on the server's preferred addresses, one per family offered ([PREFERRED_SOCKET]). */
+    private val preferredIos: List<DatagramIo> = emptyList(),
 ) : QuicEndpoint {
     /** Last-resort failures of coroutines the loop launched (none is expected to throw): counted, never handed to the thread's uncaught handler, which on Android kills the process. */
     internal val uncaughtFailures = AtomicLong(0)
@@ -117,6 +123,8 @@ internal class EndpointLoop private constructor(
         val from: InetSocketAddress,
         val ecn: Ecn,
         val asReceived: Boolean,
+        /** The socket kind it arrived on: the main one, or a preferred-address socket ([PREFERRED_SOCKET]). */
+        val socket: PathId = PathId.Initial,
     )
 
     internal val forwarded = Channel<Forwarded>(FORWARD_QUEUE)
@@ -160,6 +168,10 @@ internal class EndpointLoop private constructor(
         receiveJob = scope.launch { receiveLoop() }
         scope.launch { timerLoop() }
         scope.launch { followCapabilities(io, PathId.Initial) }
+        for (p in preferredIos) {
+            scope.launch { receivePreferred(p) }
+            scope.launch { followCapabilities(p, PREFERRED_SOCKET) }
+        }
         if (group !=
             null
         ) {
@@ -256,18 +268,64 @@ internal class EndpointLoop private constructor(
         }
     }
 
-    /** The socket a slot of [out] goes out on: the endpoint's, or the one of the connection's path. */
+    /** The socket a slot of [out] goes out on: the endpoint's, the preferred one of [to]'s family, or the one of the connection's path. */
     private fun ioFor(
         rt: ConnectionRuntime,
         path: PathId,
+        to: InetSocketAddress? = null,
     ): DatagramIo =
         if (path ==
             PathId.Initial
         ) {
             io
+        } else if (path == PREFERRED_SOCKET) {
+            preferredIoFor(to) ?: io
         } else {
             (rt.paths.firstOrNull { it.id == path } as? PathRuntime)?.io ?: io
         }
+
+    /** The preferred-address socket of [to]'s family (a v4 and a v6 socket at most). */
+    private fun preferredIoFor(to: InetSocketAddress?): DatagramIo? {
+        if (preferredIos.size <= 1 || to == null) return preferredIos.firstOrNull()
+        val v4 = AddressClass.ipBytes(to).size == 4
+        return preferredIos.firstOrNull { (AddressClass.ipBytes(it.localAddress).size == 4) == v4 } ?: preferredIos[0]
+    }
+
+    /**
+     * Receives on a preferred-address socket: the datagrams of connections that moved there (RFC 9000 section 9.6), as
+     * [PREFERRED_SOCKET]; a new connection never starts there. In a group the kernel may hash a moved client onto
+     * another loop's preferred socket: copied to its owner like any other datagram.
+     */
+    private suspend fun receivePreferred(p: DatagramIo) {
+        val batch = PacketBatch(16, SLOT_SIZE)
+        val limiter = WorkLimiter()
+        val receiver = BatchReceiver(p, ::now, directWait)
+        try {
+            limiter.start(now())
+            while (true) {
+                batch.clear()
+                receiver.receive(batch, untilTimer)
+                observer.datagramsReceived += batch.count
+                val now = now()
+                for (i in 0 until batch.count) {
+                    onDatagram(batch.buffer(i), batch.length(i), batch.address(i)!!, batch.ecn(i), now, PREFERRED_SOCKET)
+                }
+                drainPacketTooBig(p, PREFERRED_SOCKET, now)
+                flush()
+                if (limiter.shouldYield(now)) {
+                    yield()
+                    limiter.start(now())
+                }
+            }
+        } catch (e: CancellationException) {
+            currentCoroutineContext().ensureActive()
+            if (!closing) fatal("preferred-address transport failed", e)
+        } catch (e: Throwable) {
+            if (!closing) fatal("preferred-address transport failed", e)
+        } finally {
+            batch.close()
+        }
+    }
 
     private val single = PacketBatch(1, SLOT_SIZE)
     private val copy = ByteArray(SLOT_SIZE)
@@ -291,7 +349,7 @@ internal class EndpointLoop private constructor(
             single.setLength(0, n)
             single.setAddress(0, out.address(i)!!)
             single.setEcn(0, out.ecn(i))
-            sendOrLose(ioFor(rt, out.path(i)), single, rt)
+            sendOrLose(ioFor(rt, out.path(i), out.address(i)), single, rt)
         }
     }
 
@@ -353,15 +411,16 @@ internal class EndpointLoop private constructor(
         from: InetSocketAddress,
         ecn: Ecn,
         now: TimeMark,
+        socket: PathId = PathId.Initial,
     ) {
         val misroute = testMisrouteTo
         if (misroute >= 0 && group != null) {
-            if (!group.forward(misroute, buf, length, from, ecn, asReceived = true)) core.droppedQueue++
+            if (!group.forward(misroute, buf, length, from, ecn, asReceived = true, socket)) core.droppedQueue++
             return
         }
-        if (core.handleDatagram(buf, length, from, ecn, now) != null || group == null) return
+        if (core.handleDatagram(buf, length, from, ecn, now, socket) != null || group == null) return
         val owner = core.ownerLoop(buf, length)
-        if (owner >= 0 && owner != index && !group.forward(owner, buf, length, from, ecn, asReceived = false)) core.droppedQueue++
+        if (owner >= 0 && owner != index && !group.forward(owner, buf, length, from, ecn, asReceived = false, socket)) core.droppedQueue++
     }
 
     /**
@@ -494,9 +553,10 @@ internal class EndpointLoop private constructor(
                         f.from,
                         f.ecn,
                         now,
+                        f.socket,
                     )
                 } else {
-                    core.handleDatagram(buf, f.bytes.size, f.from, f.ecn, now)
+                    core.handleDatagram(buf, f.bytes.size, f.from, f.ecn, now, f.socket)
                 }
                 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
                 val drained = forwarded.isEmpty
@@ -936,6 +996,7 @@ internal class EndpointLoop private constructor(
                     runtimes.clear()
                     // the socket first: it wakes a receiver blocked inside the socket call; its batch is freed only once that call returned (a native receive writes into the batch's memory)
                     io.close()
+                    for (p in preferredIos) p.close()
                     receiveJob?.cancel()
                     forwardJob?.cancel()
                     withContext(kotlinx.coroutines.NonCancellable) {
@@ -995,7 +1056,30 @@ internal class EndpointLoop private constructor(
                     "a QUIC server on Kotlin/Native needs the accelerated ksl socket (Linux, Apple, Windows), which is unavailable here",
                 )
             }
-            return EndpointLoop(config, io, config.dispatcher ?: ownDispatcher()).also { it.start() }
+            val preferred =
+                try {
+                    openPreferred(config) { at -> config.io?.invoke(at) ?: openDatagramIo(at, IoPreference.Accelerated, config.logger) }
+                } catch (e: Throwable) {
+                    io.close()
+                    throw e
+                }
+            return EndpointLoop(config, io, config.dispatcher ?: ownDispatcher(), preferredIos = preferred).also { it.start() }
+        }
+
+        /** The server's preferred-address sockets ([io.kuicksilver.quic.QuicServerConfig.preferredAddress]), opened with [open]; all or none. */
+        internal suspend fun openPreferred(
+            config: QuicEndpointConfig,
+            open: suspend (InetSocketAddress) -> DatagramIo,
+        ): List<DatagramIo> {
+            val pa = config.server?.preferredAddress ?: return emptyList()
+            val out = ArrayList<DatagramIo>(2)
+            try {
+                for (a in listOfNotNull(pa.ipv4, pa.ipv6)) out += open(a)
+            } catch (e: Throwable) {
+                for (p in out) p.close()
+                throw e
+            }
+            return out
         }
 
         /** One loop of a [LoopGroup]: its own dispatcher, the group's accept queue. */
@@ -1008,7 +1092,9 @@ internal class EndpointLoop private constructor(
             pendingAccept: AtomicInt,
             sessions: SessionCache,
             tokens: io.kuicksilver.quic.endpoint.AddressTokens,
-        ): EndpointLoop = EndpointLoop(config, io, ownDispatcher(), index, group, pendingAccept, acceptQueue, sessions, tokens)
+            preferredIos: List<DatagramIo> = emptyList(),
+        ): EndpointLoop =
+            EndpointLoop(config, io, ownDispatcher(), index, group, pendingAccept, acceptQueue, sessions, tokens, preferredIos)
 
         /**
          * The accept queue, whose slots [pending] counts. A connection the queue cannot deliver (an `accept()` cancelled

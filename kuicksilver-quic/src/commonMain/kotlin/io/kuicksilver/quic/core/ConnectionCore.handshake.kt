@@ -54,9 +54,13 @@ internal fun ConnectionCore.buildLocalTp(): TransportParameters {
     ) {
         tp.chosenVersion = tp.availableVersions!!.first { it != tp.chosenVersion }
     }
-    if (testAdvertisePreferredAddress) {
-        val l = cids.preferredAddressLocalForTest()
+    val preferred = preferredAddress
+    if (role == TlsRole.Server && (preferred != null || testAdvertisePreferredAddress)) {
+        // RFC 9000 section 18.2: the addresses (zeros for a family not offered: the test hook offers none), the sequence-1 ID and its token
+        val l = cids.preferredAddressLocal()
         tp.preferredAddressPresent = true
+        tp.preferredIpv4 = preferred?.ipv4
+        tp.preferredIpv6 = preferred?.ipv6
         tp.preferredAddressCid = l.cid
         tp.preferredAddressToken = l.token
     }
