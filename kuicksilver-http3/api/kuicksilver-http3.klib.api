@@ -254,6 +254,8 @@ final class io.kuicksilver.http3/Http3PeerSettings { // io.kuicksilver.http3/Htt
         final fun <get-qpackMaxTableCapacity>(): kotlin/Long // io.kuicksilver.http3/Http3PeerSettings.qpackMaxTableCapacity.<get-qpackMaxTableCapacity>|<get-qpackMaxTableCapacity>(){}[0]
     final val unknown // io.kuicksilver.http3/Http3PeerSettings.unknown|{}unknown[0]
         final fun <get-unknown>(): kotlin.collections/Map<kotlin/Long, kotlin/Long> // io.kuicksilver.http3/Http3PeerSettings.unknown.<get-unknown>|<get-unknown>(){}[0]
+    final val webTransport // io.kuicksilver.http3/Http3PeerSettings.webTransport|{}webTransport[0]
+        final fun <get-webTransport>(): kotlin/Boolean // io.kuicksilver.http3/Http3PeerSettings.webTransport.<get-webTransport>|<get-webTransport>(){}[0]
 
     final fun toString(): kotlin/String // io.kuicksilver.http3/Http3PeerSettings.toString|toString(){}[0]
 }
@@ -348,6 +350,8 @@ final class io.kuicksilver.http3/Http3Settings { // io.kuicksilver.http3/Http3Se
         final fun <get-qpackBlockedStreams>(): kotlin/Long // io.kuicksilver.http3/Http3Settings.qpackBlockedStreams.<get-qpackBlockedStreams>|<get-qpackBlockedStreams>(){}[0]
     final val qpackMaxTableCapacity // io.kuicksilver.http3/Http3Settings.qpackMaxTableCapacity|{}qpackMaxTableCapacity[0]
         final fun <get-qpackMaxTableCapacity>(): kotlin/Long // io.kuicksilver.http3/Http3Settings.qpackMaxTableCapacity.<get-qpackMaxTableCapacity>|<get-qpackMaxTableCapacity>(){}[0]
+    final val webTransport // io.kuicksilver.http3/Http3Settings.webTransport|{}webTransport[0]
+        final fun <get-webTransport>(): kotlin/Boolean // io.kuicksilver.http3/Http3Settings.webTransport.<get-webTransport>|<get-webTransport>(){}[0]
 
     final fun toBuilder(): io.kuicksilver.http3/Http3Settings.Builder // io.kuicksilver.http3/Http3Settings.toBuilder|toBuilder(){}[0]
 
@@ -387,6 +391,9 @@ final class io.kuicksilver.http3/Http3Settings { // io.kuicksilver.http3/Http3Se
         final var qpackMaxTableCapacity // io.kuicksilver.http3/Http3Settings.Builder.qpackMaxTableCapacity|{}qpackMaxTableCapacity[0]
             final fun <get-qpackMaxTableCapacity>(): kotlin/Long // io.kuicksilver.http3/Http3Settings.Builder.qpackMaxTableCapacity.<get-qpackMaxTableCapacity>|<get-qpackMaxTableCapacity>(){}[0]
             final fun <set-qpackMaxTableCapacity>(kotlin/Long) // io.kuicksilver.http3/Http3Settings.Builder.qpackMaxTableCapacity.<set-qpackMaxTableCapacity>|<set-qpackMaxTableCapacity>(kotlin.Long){}[0]
+        final var webTransport // io.kuicksilver.http3/Http3Settings.Builder.webTransport|{}webTransport[0]
+            final fun <get-webTransport>(): kotlin/Boolean // io.kuicksilver.http3/Http3Settings.Builder.webTransport.<get-webTransport>|<get-webTransport>(){}[0]
+            final fun <set-webTransport>(kotlin/Boolean) // io.kuicksilver.http3/Http3Settings.Builder.webTransport.<set-webTransport>|<set-webTransport>(kotlin.Boolean){}[0]
 
         final fun build(): io.kuicksilver.http3/Http3Settings // io.kuicksilver.http3/Http3Settings.Builder.build|build(){}[0]
         final fun enableQpackDynamicTable() // io.kuicksilver.http3/Http3Settings.Builder.enableQpackDynamicTable|enableQpackDynamicTable(){}[0]

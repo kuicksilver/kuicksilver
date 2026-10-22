@@ -23,6 +23,8 @@ import io.kuicksilver.http3.message.GlitchLimiter
 import io.kuicksilver.http3.message.PriorityField
 import io.kuicksilver.http3.qpack.QpackError
 import io.kuicksilver.http3.qpack.entrySize
+import io.kuicksilver.http3.webtransport.WtSettings
+import io.kuicksilver.http3.webtransport.WtVersion
 import io.kuicksilver.quic.Initiator
 import io.kuicksilver.quic.PathEvent
 import io.kuicksilver.quic.QuicConnection
@@ -276,6 +278,11 @@ internal class H3Session(
             closed.onAwait { throw it }
         }
 
+    /** The highest WebTransport draft the peer's SETTINGS announce; null before they arrived or when they announce none. */
+    fun peerWtVersion(): WtVersion? = peerWtVersion
+
+    private var peerWtVersion: WtVersion? = null
+
     private fun ourSettings(): List<Pair<Long, Long>> =
         buildList {
             if (settings.qpackMaxTableCapacity > 0) add(SettingsId.QPACK_MAX_TABLE_CAPACITY to settings.qpackMaxTableCapacity)
@@ -283,6 +290,7 @@ internal class H3Session(
             add(SettingsId.MAX_FIELD_SECTION_SIZE to settings.maxFieldSectionSize)
             if (settings.enableConnectProtocol) add(SettingsId.ENABLE_CONNECT_PROTOCOL to 1L)
             add(SettingsId.H3_DATAGRAM to if (settings.h3Datagram) 1L else 0L)
+            if (settings.webTransport) addAll(WtSettings.ours(isServer))
             if (settings.grease) add(FrameType.grease(Random.nextLong(0, 1000)) to Random.nextLong(0, 1L shl 30))
         }
 
@@ -477,7 +485,7 @@ internal class H3Session(
                 SettingsId.MAX_FIELD_SECTION_SIZE,
                 SettingsId.ENABLE_CONNECT_PROTOCOL,
                 SettingsId.H3_DATAGRAM,
-            )
+            ) + WtSettings.ALL
         val ps =
             Http3PeerSettings(
                 m[SettingsId.QPACK_MAX_TABLE_CAPACITY] ?: 0,
@@ -486,6 +494,7 @@ internal class H3Session(
                 m[SettingsId.ENABLE_CONNECT_PROTOCOL] == 1L,
                 m[SettingsId.H3_DATAGRAM] == 1L,
                 m.filterKeys { it !in known },
+                webTransport = WtVersion.of(m) != null,
             )
         // RFC 9297 section 2.1.1: H3_DATAGRAM=1 needs the transport's max_datagram_frame_size
         if (ps.h3Datagram &&
@@ -494,6 +503,7 @@ internal class H3Session(
             throw H3ProtocolError(Http3ErrorCode.SETTINGS_ERROR, "H3_DATAGRAM without QUIC datagram support")
         }
         qpack.onPeerSettings(ps.qpackMaxTableCapacity, ps.qpackBlockedStreams)
+        peerWtVersion = WtVersion.of(m)
         peerSettings.value = ps
         peerSettingsArrived.complete(ps)
     }

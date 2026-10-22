@@ -1,5 +1,7 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
+@file:OptIn(ExperimentalKuicksilverApi::class)
+
 package io.kuicksilver.http3
 
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
@@ -33,6 +35,12 @@ public class Http3Settings private constructor(
     /** Server: what happens to requests received in 0-RTT before the handshake completed (only with `QuicServerConfig.earlyData`). */
     @property:ExperimentalKuicksilverApi
     public val earlyData: Http3EarlyDataPolicy,
+    /**
+     * Speak WebTransport over HTTP/3 (draft-ietf-webtrans-http3-16): advertise its SETTINGS and route WebTransport streams to
+     * sessions. Needs [enableConnectProtocol] and [h3Datagram].
+     */
+    @property:ExperimentalKuicksilverApi
+    public val webTransport: Boolean,
 ) {
     /** Mutable form of [Http3Settings], used through [http3Settings] or [toBuilder]; ranges are checked by [build]. */
     @KuicksilverDsl
@@ -71,6 +79,16 @@ public class Http3Settings private constructor(
         @ExperimentalKuicksilverApi
         public var earlyData: Http3EarlyDataPolicy = Http3EarlyDataPolicy.WaitForHandshake()
 
+        /**
+         * WebTransport over HTTP/3 (draft-ietf-webtrans-http3-16); false by default. A server advertises
+         * `SETTINGS_WT_ENABLED`, `SETTINGS_WT_MAX_SESSIONS=1` (draft-14) and `SETTINGS_ENABLE_WEBTRANSPORT` (draft-02), so
+         * browsers that still speak the older drafts find theirs; a client advertises the first and the last. [build]
+         * refuses it without [enableConnectProtocol] and [h3Datagram]: sessions are Extended CONNECT requests and carry
+         * HTTP datagrams.
+         */
+        @ExperimentalKuicksilverApi
+        public var webTransport: Boolean = false
+
         /** Advertises a 4096-byte dynamic table and 16 blocked streams (the dynamic table is off by default). */
         public fun enableQpackDynamicTable() {
             qpackMaxTableCapacity = 4096
@@ -85,6 +103,9 @@ public class Http3Settings private constructor(
             require(maxFieldSectionSize in 1..(1L shl 30)) { "maxFieldSectionSize must be 1..2^30" }
             require(maxInformationalResponses >= 0) { "maxInformationalResponses must not be negative" }
             require(maxEarlyPriorityUpdates >= 0) { "maxEarlyPriorityUpdates must not be negative" }
+            require(!webTransport || (enableConnectProtocol && h3Datagram)) {
+                "webTransport needs enableConnectProtocol and h3Datagram"
+            }
             return Http3Settings(
                 qpackMaxTableCapacity,
                 qpackBlockedStreams,
@@ -97,6 +118,7 @@ public class Http3Settings private constructor(
                 maxEarlyPriorityUpdates,
                 glitchProtection,
                 earlyData,
+                webTransport,
             )
         }
     }
@@ -118,14 +140,20 @@ public class Http3Settings private constructor(
             it.glitchProtection =
                 glitchProtection
             it.earlyData = earlyData
+            it.webTransport = webTransport
         }
 
     /**
      * The settings a 0-RTT client relies on (RFC 9114 section 7.2.4.2), bound into the server's tickets: a ticket issued
-     * under other SETTINGS gets no early data.
+     * under other SETTINGS gets no early data. WebTransport is part of it (draft-ietf-webtrans-http3-16 section 3.2: its
+     * settings must not be reduced for 0-RTT); the suffix is only added when it is on, so tickets of servers without it
+     * stay valid across this release.
      */
     internal fun earlyDataContext(): ByteArray =
-        "h3|$qpackMaxTableCapacity|$qpackBlockedStreams|$maxFieldSectionSize|$enableConnectProtocol|$h3Datagram".encodeToByteArray()
+        (
+            "h3|$qpackMaxTableCapacity|$qpackBlockedStreams|$maxFieldSectionSize|$enableConnectProtocol|$h3Datagram" +
+                if (webTransport) "|wt" else ""
+        ).encodeToByteArray()
 
     /** Holds [Default]. */
     public companion object { /** The defaults listed on [Builder]'s properties. */
@@ -148,8 +176,14 @@ public class Http3PeerSettings internal constructor(
     public val enableConnectProtocol: Boolean,
     /** `SETTINGS_H3_DATAGRAM=1`: the peer accepts HTTP datagrams (RFC 9297 section 2.1.1). */
     public val h3Datagram: Boolean,
-    /** Settings this library does not interpret (GREASE included). */
+    /** Settings this library does not interpret (GREASE included); the WebTransport ones are interpreted, see [webTransport]. */
     public val unknown: Map<Long, Long>,
+    /**
+     * The peer speaks WebTransport over HTTP/3: it sent `SETTINGS_WT_ENABLED=1` (draft-15 and later), a non-zero
+     * `SETTINGS_WT_MAX_SESSIONS` (draft-13, -14) or `SETTINGS_ENABLE_WEBTRANSPORT` (draft-02).
+     */
+    @property:ExperimentalKuicksilverApi
+    public val webTransport: Boolean = false,
 ) {
     override fun toString(): String =
         "Http3PeerSettings(qpack=$qpackMaxTableCapacity/$qpackBlockedStreams, maxFieldSectionSize=$maxFieldSectionSize, connect=$enableConnectProtocol, datagram=$h3Datagram)"

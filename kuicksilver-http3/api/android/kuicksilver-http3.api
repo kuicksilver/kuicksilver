@@ -248,6 +248,7 @@ public final class io/kuicksilver/http3/Http3PeerSettings {
 	public final fun getQpackBlockedStreams ()J
 	public final fun getQpackMaxTableCapacity ()J
 	public final fun getUnknown ()Ljava/util/Map;
+	public final fun getWebTransport ()Z
 	public fun toString ()Ljava/lang/String;
 }
 
@@ -373,6 +374,7 @@ public final class io/kuicksilver/http3/Http3Settings {
 	public final fun getMaxInformationalResponses ()I
 	public final fun getQpackBlockedStreams ()J
 	public final fun getQpackMaxTableCapacity ()J
+	public final fun getWebTransport ()Z
 	public final fun toBuilder ()Lio/kuicksilver/http3/Http3Settings$Builder;
 }
 
@@ -391,6 +393,7 @@ public final class io/kuicksilver/http3/Http3Settings$Builder {
 	public final fun getMaxInformationalResponses ()I
 	public final fun getQpackBlockedStreams ()J
 	public final fun getQpackMaxTableCapacity ()J
+	public final fun getWebTransport ()Z
 	public final fun setEarlyData (Lio/kuicksilver/http3/Http3EarlyDataPolicy;)V
 	public final fun setEnableConnectProtocol (Z)V
 	public final fun setEncoderMaxTableCapacity (J)V
@@ -402,6 +405,7 @@ public final class io/kuicksilver/http3/Http3Settings$Builder {
 	public final fun setMaxInformationalResponses (I)V
 	public final fun setQpackBlockedStreams (J)V
 	public final fun setQpackMaxTableCapacity (J)V
+	public final fun setWebTransport (Z)V
 }
 
 public final class io/kuicksilver/http3/Http3Settings$Companion {

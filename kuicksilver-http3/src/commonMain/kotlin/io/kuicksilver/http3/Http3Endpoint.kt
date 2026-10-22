@@ -233,10 +233,13 @@ public class Http3Endpoint private constructor(
             }
         }
 
+        @OptIn(ExperimentalKuicksilverApi::class)
         private fun Http3Settings.withTransport(q: QuicConfig): Http3Settings =
             if (h3Datagram &&
                 q.maxDatagramFrameSize == 0L
             ) {
+                // WebTransport sessions carry HTTP datagrams: refused, never quietly turned off with them
+                require(!webTransport) { "Http3Settings.webTransport needs QUIC datagrams: QuicConfig.maxDatagramFrameSize is 0" }
                 toBuilder().apply { h3Datagram = false }.build()
             } else {
                 this
