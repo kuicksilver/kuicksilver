@@ -15,6 +15,7 @@ import io.ktor.utils.io.readAvailable
 import io.ktor.utils.io.writeByte
 import io.ktor.utils.io.writeFully
 import io.kuicksilver.native.KslLoader
+import io.kuicksilver.tls.TlsException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -78,6 +79,37 @@ class TlsFailedStreamTest {
                     sock.close()
                     server.close()
                     assertTrue(seen.isFailure, "a reset TLS session read as ${seen.getOrNull()}, not an error")
+                }
+            } finally {
+                selector.close()
+            }
+        }
+
+    /**
+     * The application's channel fails with the session's [TlsException] one cause down, as ktor's channels hand on any
+     * failure: `ClosedByteChannelException(TlsException)`. Before, the TLS socket's reader closed the channel with the
+     * already wrapped failure, and the TlsException sat two causes deep.
+     */
+    @Test fun aFailedSessionReachesTheReaderAsItsTlsException() =
+        runBlocking {
+            val selector = SelectorManager(Dispatchers.Default)
+            try {
+                withTimeout(30.seconds) {
+                    val server = bindTcp(selector, "127.0.0.1", 0)
+                    val port = (server.localAddress as InetSocketAddress).port
+                    val client = async { connectTcp(selector, InetSocketAddress("127.0.0.1", port)).tls(clientConfig()) }
+                    val accepted = server.accept().tlsServer(serverConfig())
+                    val sock = client.await()
+                    val input = sock.openReadChannel() // the reader waits in the copy when the session fails
+                    accepted.abort()
+                    while (withTimeoutOrNull(PROBE_AFTER) { input.awaitFailure() } == null) sock.tls.output.probe()
+                    val seen = runCatching { input.readOrFail(ByteArray(1)) }
+                    sock.close()
+                    server.close()
+                    assertTrue(seen.isFailure, "a failed session read as ${seen.getOrNull()}")
+                    // the channel's own cause, not a thrown copy (the JVM's stack-trace recovery adds copies to those)
+                    val cause = input.closedCause?.cause
+                    assertTrue(cause is TlsException, "the channel failed with ${input.closedCause}, caused by $cause")
                 }
             } finally {
                 selector.close()

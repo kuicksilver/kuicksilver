@@ -9,11 +9,11 @@ import io.ktor.network.sockets.SocketAddress
 import io.ktor.network.sockets.openReadChannel
 import io.ktor.network.sockets.openWriteChannel
 import io.ktor.utils.io.ByteChannel
+import io.ktor.utils.io.ClosedByteChannelException
 import io.ktor.utils.io.ByteWriteChannel
 import io.ktor.utils.io.InternalAPI
 import io.ktor.utils.io.ReaderJob
 import io.ktor.utils.io.WriterJob
-import io.ktor.utils.io.copyTo
 import io.ktor.utils.io.reader
 import io.ktor.utils.io.writer
 import io.kuicksilver.annotations.InternalKuicksilverApi
@@ -99,13 +99,32 @@ public class TlsSocket private constructor(
      * channel, not ends it: ktor's `copyTo` ends its loop on a source closed with a failure as on one closed cleanly and
      * returns normally, so a reset before the application opened its channel, or landing between two of its reads after
      * the last bytes, reached the application as a clean end, and a body delimited by the connection's close passed cut
-     * for whole.
+     * for whole. The channel fails with the session's [TlsException] itself: ktor's channels wrap a failure in
+     * `ClosedByteChannelException` where they hand it on, and a second wrapping (ktor's `copyTo` closed the channel with
+     * the wrapped failure it caught) hid the [TlsException] two causes deep.
      */
+    @OptIn(InternalAPI::class)
     override fun attachForReading(channel: ByteChannel): WriterJob =
         writer(coroutineContext, channel) {
-            tls.input.copyTo(channel)
-            tls.input.closedCause?.let { throw it }
+            val source = tls.input
+            try {
+                while (true) {
+                    if (source.readBuffer.exhausted() && !source.awaitContent()) break
+                    source.readBuffer.transferTo(channel.writeBuffer)
+                    channel.flush()
+                }
+                source.closedCause?.let { throw it }
+            } catch (e: ClosedByteChannelException) {
+                throw e.sessionFailure()
+            }
         }
+
+    /** The [TlsException] under ktor's wrappers (and, on the JVM in debug mode, their stack-trace-recovery copies), else this. */
+    private fun ClosedByteChannelException.sessionFailure(): Throwable {
+        var c: Throwable? = cause
+        while (c is ClosedByteChannelException) c = c.cause
+        return c as? TlsException ?: this
+    }
 
     /**
      * The application's plaintext goes through the TLS session to the raw socket. When the application's channel fails
