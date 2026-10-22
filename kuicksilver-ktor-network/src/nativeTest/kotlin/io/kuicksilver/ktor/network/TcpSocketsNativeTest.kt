@@ -2,12 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.kuicksilver.ktor.network
 
+import io.ktor.network.selector.SelectInterest
+import io.ktor.network.selector.Selectable
 import io.ktor.network.selector.SelectorManager
 import io.ktor.network.sockets.InetSocketAddress
 import io.ktor.network.sockets.Socket
 import io.ktor.network.sockets.openReadChannel
 import io.ktor.network.sockets.openWriteChannel
 import io.ktor.utils.io.close
+import io.ktor.utils.io.readAvailable
 import io.ktor.utils.io.errors.PosixException
 import io.ktor.utils.io.readRemaining
 import io.ktor.utils.io.writeFully
@@ -23,6 +26,7 @@ import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
@@ -107,6 +111,81 @@ class TcpSocketsNativeTest {
             sock.abort()
             assertNull((sock as NativeTcpSocket).resetFailure, "SO_LINGER 0 could not be set")
         }
+
+    /**
+     * A wait for data whose select fails (here a selector that throws, as one closed under its sockets does) fails the
+     * read channel with that failure. Before, the read loop broke out on it and closed the channel cleanly: the reader
+     * saw a clean end of a stream nobody had ended.
+     */
+    @Test fun negative_aFailedSelectFailsTheReadChannel() =
+        runBlocking {
+            val selector = SelectorManager(Dispatchers.Default)
+            val failing = FailingReadSelector(selector)
+            try {
+                withTimeout(30.seconds) {
+                    val server = bindTcp(selector, "127.0.0.1", 0)
+                    val port = (server.localAddress as InetSocketAddress).port
+                    val client = connectTcp(failing, InetSocketAddress("127.0.0.1", port))
+                    val accepted = server.accept() // sends nothing: the client's read loop waits in select
+                    val input = client.openReadChannel()
+                    val seen =
+                        runCatching {
+                            val n = input.readAvailable(ByteArray(1), 0, 1)
+                            if (n < 0) input.closedCause?.let { throw it }
+                            n
+                        }
+                    client.close()
+                    accepted.close()
+                    server.close()
+                    assertTrue(seen.isFailure, "a failed select read as ${seen.getOrNull()}, not an error")
+                }
+            } finally {
+                selector.close()
+            }
+        }
+
+    /**
+     * A connection the peer resets fails the read channel. Before, the read loop's close of the channel ran ahead of the
+     * failure, so the reader saw a clean end: a close-delimited body cut by a reset passed for the whole, over plain
+     * HTTP/1.1 on Kotlin/Native.
+     */
+    @Test fun negative_aResetFailsTheReadChannel() =
+        runBlocking {
+            val selector = SelectorManager(Dispatchers.Default)
+            try {
+                withTimeout(30.seconds) {
+                    val server = bindTcp(selector, "127.0.0.1", 0)
+                    val port = (server.localAddress as InetSocketAddress).port
+                    val client = connectTcp(selector, InetSocketAddress("127.0.0.1", port))
+                    val input = client.openReadChannel()
+                    server.accept().abort() // nothing sent: the reset carries the sequence number the client expects
+                    val seen =
+                        runCatching {
+                            val n = input.readAvailable(ByteArray(1), 0, 1)
+                            if (n < 0) input.closedCause?.let { throw it }
+                            n
+                        }
+                    client.close()
+                    server.close()
+                    assertTrue(seen.isFailure, "a reset connection read as ${seen.getOrNull()}, not an error")
+                }
+            } finally {
+                selector.close()
+            }
+        }
+
+    /** [delegate], whose waits for reading fail with an IOException. */
+    private class FailingReadSelector(
+        private val delegate: SelectorManager,
+    ) : SelectorManager by delegate {
+        override suspend fun select(
+            selectable: Selectable,
+            interest: SelectInterest,
+        ) {
+            if (interest == SelectInterest.READ) throw IOException("the selector failed")
+            delegate.select(selectable, interest)
+        }
+    }
 
     /**
      * Accepts one connection, runs [cut] on it and asserts that the peer, reading to the end with the raw system calls (the
