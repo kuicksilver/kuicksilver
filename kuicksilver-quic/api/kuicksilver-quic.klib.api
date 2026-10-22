@@ -331,6 +331,7 @@ abstract interface io.kuicksilver.quic/QuicStream { // io.kuicksilver.quic/QuicS
 
     abstract fun reset(kotlin/Long) // io.kuicksilver.quic/QuicStream.reset|reset(kotlin.Long){}[0]
     abstract fun stopSending(kotlin/Long) // io.kuicksilver.quic/QuicStream.stopSending|stopSending(kotlin.Long){}[0]
+    open fun resetAt(kotlin/Long, kotlin/Long) // io.kuicksilver.quic/QuicStream.resetAt|resetAt(kotlin.Long;kotlin.Long){}[0]
 }
 
 abstract interface io.kuicksilver.quic/QuicTokenStore { // io.kuicksilver.quic/QuicTokenStore|null[0]
@@ -701,6 +702,7 @@ final class io.kuicksilver.quic/ConnectionCore { // io.kuicksilver.quic/Connecti
     final fun readDatagram(kotlin/ByteArray, kotlin/Int): kotlin/Int // io.kuicksilver.quic/ConnectionCore.readDatagram|readDatagram(kotlin.ByteArray;kotlin.Int){}[0]
     final fun readStream(kotlin/Long, kotlin/ByteArray, kotlin/Int, kotlin/Int): kotlin/Int // io.kuicksilver.quic/ConnectionCore.readStream|readStream(kotlin.Long;kotlin.ByteArray;kotlin.Int;kotlin.Int){}[0]
     final fun resetStream(kotlin/Long, kotlin/Long) // io.kuicksilver.quic/ConnectionCore.resetStream|resetStream(kotlin.Long;kotlin.Long){}[0]
+    final fun resetStreamAt(kotlin/Long, kotlin/Long, kotlin/Long) // io.kuicksilver.quic/ConnectionCore.resetStreamAt|resetStreamAt(kotlin.Long;kotlin.Long;kotlin.Long){}[0]
     final fun resumeVerify(io.kuicksilver.tls/VerifyResult) // io.kuicksilver.quic/ConnectionCore.resumeVerify|resumeVerify(io.kuicksilver.tls.VerifyResult){}[0]
     final fun setPathCapabilities(io.kuicksilver.quic/PathId, io.kuicksilver.quic/IoCapabilities) // io.kuicksilver.quic/ConnectionCore.setPathCapabilities|setPathCapabilities(io.kuicksilver.quic.PathId;io.kuicksilver.quic.IoCapabilities){}[0]
     final fun setPriority(kotlin/Long, io.kuicksilver.quic/StreamPriority) // io.kuicksilver.quic/ConnectionCore.setPriority|setPriority(kotlin.Long;io.kuicksilver.quic.StreamPriority){}[0]
@@ -1115,6 +1117,8 @@ final class io.kuicksilver.quic/QuicConfig { // io.kuicksilver.quic/QuicConfig|n
         final fun <get-pmtud>(): kotlin/Boolean // io.kuicksilver.quic/QuicConfig.pmtud.<get-pmtud>|<get-pmtud>(){}[0]
     final val qlog // io.kuicksilver.quic/QuicConfig.qlog|{}qlog[0]
         final fun <get-qlog>(): io.kuicksilver.quic/QlogSink? // io.kuicksilver.quic/QuicConfig.qlog.<get-qlog>|<get-qlog>(){}[0]
+    final val resetStreamAt // io.kuicksilver.quic/QuicConfig.resetStreamAt|{}resetStreamAt[0]
+        final fun <get-resetStreamAt>(): kotlin/Boolean // io.kuicksilver.quic/QuicConfig.resetStreamAt.<get-resetStreamAt>|<get-resetStreamAt>(){}[0]
     final val versions // io.kuicksilver.quic/QuicConfig.versions|{}versions[0]
         final fun <get-versions>(): kotlin.collections/List<io.kuicksilver.quic/VersionProfile> // io.kuicksilver.quic/QuicConfig.versions.<get-versions>|<get-versions>(){}[0]
 
@@ -1210,6 +1214,9 @@ final class io.kuicksilver.quic/QuicConfig { // io.kuicksilver.quic/QuicConfig|n
         final var qlog // io.kuicksilver.quic/QuicConfig.Builder.qlog|{}qlog[0]
             final fun <get-qlog>(): io.kuicksilver.quic/QlogSink? // io.kuicksilver.quic/QuicConfig.Builder.qlog.<get-qlog>|<get-qlog>(){}[0]
             final fun <set-qlog>(io.kuicksilver.quic/QlogSink?) // io.kuicksilver.quic/QuicConfig.Builder.qlog.<set-qlog>|<set-qlog>(io.kuicksilver.quic.QlogSink?){}[0]
+        final var resetStreamAt // io.kuicksilver.quic/QuicConfig.Builder.resetStreamAt|{}resetStreamAt[0]
+            final fun <get-resetStreamAt>(): kotlin/Boolean // io.kuicksilver.quic/QuicConfig.Builder.resetStreamAt.<get-resetStreamAt>|<get-resetStreamAt>(){}[0]
+            final fun <set-resetStreamAt>(kotlin/Boolean) // io.kuicksilver.quic/QuicConfig.Builder.resetStreamAt.<set-resetStreamAt>|<set-resetStreamAt>(kotlin.Boolean){}[0]
         final var versions // io.kuicksilver.quic/QuicConfig.Builder.versions|{}versions[0]
             final fun <get-versions>(): kotlin.collections/List<io.kuicksilver.quic/VersionProfile> // io.kuicksilver.quic/QuicConfig.Builder.versions.<get-versions>|<get-versions>(){}[0]
             final fun <set-versions>(kotlin.collections/List<io.kuicksilver.quic/VersionProfile>) // io.kuicksilver.quic/QuicConfig.Builder.versions.<set-versions>|<set-versions>(kotlin.collections.List<io.kuicksilver.quic.VersionProfile>){}[0]

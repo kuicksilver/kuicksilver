@@ -326,7 +326,9 @@ with `WT_SESSION_GONE`, and frees the connection for a next session. `drain()` a
 for the peer's flow-control credit; opening a stream waits for the peer's stream credit without a deadline, so bound
 it with `withTimeout`. WebTransport's own flow control (`WT_MAX_DATA` and the like) is not implemented: those capsules
 are ignored, and the QUIC limits (`maxBidiStreams`, `maxUniStreams`, the stream and connection windows) bound a
-session. RESET_STREAM_AT (section 4.4) is not used yet: a reset WebTransport stream goes as a plain RESET_STREAM.
+session. With `QuicConfig.resetStreamAt` on both sides a stream we opened is reset with RESET_STREAM_AT, which keeps its header
+so the peer can still tell its session (section 4.4); without it the reset is a plain RESET_STREAM. The Ktor server turns
+it on with `webTransport`.
 
 ```kotlin
 // guide:http3:webtransport-echo (server)

@@ -482,6 +482,7 @@ internal class ConnectionHandshakeSink(
         core.loss.peerAckDelayExponent = tp.ackDelayExponent
         core.loss.peerMaxAckDelay = tp.maxAckDelayMs.milliseconds
         core.peerGreaseQuicBit = tp.greaseQuicBit
+        core.streams.peerResetStreamAt = tp.resetStreamAt && core.config.resetStreamAt
         core.peerIdleMs = tp.maxIdleTimeoutMs
         core.cids.setPeerLimit(tp.activeConnectionIdLimit)
         // RFC 9000 section 14.3: never probe above the peer's max_udp_payload_size

@@ -40,6 +40,8 @@ internal class WtStreamImpl(
     internal val st: QuicStream,
     private val readable: Boolean,
     private val writable: Boolean,
+    /** Bytes of the stream header we wrote (signal or type, Session ID); 0 for a stream the peer opened. */
+    private val headerLength: Int,
     private val onDone: (WtStreamImpl) -> Unit,
 ) : WebTransportBidiStream {
     override val streamId: Long get() = st.id
@@ -104,7 +106,7 @@ internal class WtStreamImpl(
             }
             if (outCh.closedCause != null) {
                 // the application cancelled its output: the stream is abandoned, not ended
-                runCatching { st.reset(WtErrorCodes.toHttp3(0)) }
+                abandon(WtErrorCodes.toHttp3(0))
             } else {
                 st.output.flushAndClose()
             }
@@ -114,7 +116,7 @@ internal class WtStreamImpl(
         } catch (e: Throwable) {
             if (H3Session.transportCause(e) == null) {
                 // the application cancelled its output while the pump waited on it: the stream is abandoned (code 0)
-                runCatching { st.reset(WtErrorCodes.toHttp3(0)) }
+                abandon(WtErrorCodes.toHttp3(0))
             }
             outCh.cancel(map(e))
         }
@@ -142,7 +144,7 @@ internal class WtStreamImpl(
     override fun reset(code: Long) {
         val h = WtErrorCodes.toHttp3(code)
         check(writable) { "stream $streamId is receive-only" }
-        runCatching { st.reset(h) }
+        abandon(h)
         outPump?.cancel()
         outCh.cancel(IOException("WebTransport stream $streamId reset locally with $code"))
     }
@@ -157,13 +159,23 @@ internal class WtStreamImpl(
 
     /** The session is over: both directions end with WT_SESSION_GONE (section 6). */
     fun gone() {
-        if (writable) runCatching { st.reset(Http3ErrorCode.WT_SESSION_GONE) }
+        if (writable) abandon(Http3ErrorCode.WT_SESSION_GONE)
         if (readable) runCatching { st.stopSending(Http3ErrorCode.WT_SESSION_GONE) }
         inPump?.cancel()
         outPump?.cancel()
         val e = WebTransportException.SessionClosed("the WebTransport session of stream $streamId is closed")
         inCh.cancel(e)
         outCh.cancel(e)
+    }
+
+    /**
+     * Resets our sending side with [code]. A stream we opened keeps its header (draft-16 section 4.4: RESET_STREAM_AT with
+     * the header as the reliable size), so the peer can still tell which session the reset belongs to; without
+     * `reset_stream_at` on both sides it is a plain RESET_STREAM.
+     */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    private fun abandon(code: Long) {
+        runCatching { if (headerLength > 0) st.resetAt(code, headerLength.toLong()) else st.reset(code) }
     }
 
     private companion object {

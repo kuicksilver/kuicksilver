@@ -51,6 +51,10 @@ class FrameCodecTest {
                 FrameEncoder.stopSending(w, f.id, f.code)
             }
 
+            is TestFrame.ResetStreamAt -> {
+                FrameEncoder.resetStreamAt(w, f.id, f.code, f.finalSize, f.reliableSize)
+            }
+
             is TestFrame.Crypto -> {
                 withBuf(f.data) { b -> FrameEncoder.crypto(w, f.offset, b, 0, f.data.size) }
             }
@@ -170,6 +174,21 @@ class FrameCodecTest {
         val e = assertFailsWith<QuicWireException> { decode(bytes, type) }
         assertEquals(code, e.code, "code")
         return e
+    }
+
+    /** draft-ietf-quic-reliable-stream-reset section 4: type 0x24, then Stream ID, Error Code, Final Size, Reliable Size. */
+    @Test fun resetStreamAtRoundTrips() {
+        val f = TestFrame.ResetStreamAt(4, 0x52e4a40fa8e2, 1000, 3)
+        val bytes = bytesOf(f)
+        assertEquals(0x24, bytes[0].toInt())
+        assertEquals(listOf<TestFrame>(f), decode(bytes).first)
+        assertEquals(listOf<TestFrame>(f), decode(bytes, PacketType.ZeroRtt).first)
+        expectCode(0x0a, bytes, PacketType.Handshake) // PROTOCOL_VIOLATION: not in Initial or Handshake packets
+    }
+
+    /** Section 4: a Reliable Size above the Final Size is FRAME_ENCODING_ERROR. */
+    @Test fun negative_resetStreamAtReliableSizeAboveFinalIsError() {
+        expectCode(0x07, bytesOf(TestFrame.ResetStreamAt(4, 1, 10, 11)))
     }
 
     @Test fun everyFrameTypeRoundTrips() =

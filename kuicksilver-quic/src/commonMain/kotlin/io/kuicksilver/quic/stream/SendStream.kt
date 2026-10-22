@@ -4,7 +4,11 @@ package io.kuicksilver.quic.stream
 
 import io.kuicksilver.quic.StreamPriority
 
-internal enum class SendState { Ready, Send, DataSent, ResetSent, DataRecvd, ResetRecvd }
+/**
+ * RFC 9000 section 3.1, plus [ResetAt]: RESET_STREAM_AT was sent (draft-ietf-quic-reliable-stream-reset section 3) and the
+ * bytes below the reliable size are still being delivered; once they are acknowledged the stream is [ResetSent].
+ */
+internal enum class SendState { Ready, Send, DataSent, ResetAt, ResetSent, DataRecvd, ResetRecvd }
 
 /**
  * The sending half of a stream (RFC 9000 section 3.1): bytes are kept in chunks until acknowledged; lost ranges are
@@ -76,6 +80,17 @@ internal class SendStream(
     /** Offset of the next range [nextRange] would pick (for sizing the frame header). */
     val nextOffset: Long get() = if (lostCount > 0) lost[0] else sentEnd
     private var releasedUpTo: Long = 0
+
+    /** RESET_STREAM_AT: the bytes below this still go out and are retransmitted; -1 without one. */
+    var reliableSize: Long = -1
+        private set
+
+    /** The final size a RESET_STREAM_AT announced (the larger of what was sent and [reliableSize]); -1 without one. */
+    private var resetAtFinalSize: Long = -1
+
+    /** The final size of a reset (RFC 9000 section 4.5): what was sent, or what an earlier RESET_STREAM_AT announced. */
+    val finalSizeForReset: Long get() = maxOf(sentEnd, resetAtFinalSize)
+
     val hasPending: Boolean get() {
         if (state == SendState.ResetSent ||
             state == SendState.ResetRecvd
@@ -245,7 +260,8 @@ internal class SendStream(
         if (state == SendState.ResetSent || state == SendState.ResetRecvd) return
         // queue only what is not acknowledged: the gaps between the acknowledged ranges inside [offset, offset + len)
         var start = maxOf(offset, releasedUpTo)
-        val end = offset + len
+        // after RESET_STREAM_AT only the bytes below the reliable size are delivered
+        val end = if (state == SendState.ResetAt) minOf(offset + len, reliableSize) else offset + len
         var a = firstEndingAbove(ackedRanges, ackedCount, start)
         while (start < end) {
             rangeStepsForTest++
@@ -258,7 +274,7 @@ internal class SendStream(
             addLost(start, gapEnd)
             start = gapEnd
         }
-        if (fin && !finAcked) {
+        if (fin && !finAcked && state != SendState.ResetAt) {
             finSent = false
             if (state == SendState.DataSent) state = SendState.Send
         }
@@ -337,6 +353,7 @@ internal class SendStream(
         if (released > 0) head = ((head + released) % ring.size).toInt()
         buffered -= released
         if (finAcked && buffered == 0L && finQueued) state = SendState.DataRecvd
+        if (state == SendState.ResetAt && releasedUpTo >= reliableSize) state = SendState.ResetSent // the reliable part arrived
         return released
     }
 
@@ -364,6 +381,35 @@ internal class SendStream(
         }
         ackedRanges[2 * i] = s
         ackedRanges[2 * i + 1] = e
+    }
+
+    /**
+     * RESET_STREAM_AT (draft-ietf-quic-reliable-stream-reset section 3): the bytes below [reliable] (at most [written]) keep
+     * being sent and retransmitted, everything after them is dropped, and no FIN goes out. Returns the buffered bytes
+     * released. The stream is [SendState.ResetSent] at once when those bytes were all acknowledged already.
+     */
+    fun resetAt(reliable: Long): Long {
+        require(reliable in 0..written) { "reliable size $reliable outside 0..$written" }
+        resetAtFinalSize = maxOf(sentEnd, reliable)
+        reliableSize = reliable
+        finQueued = false
+        finSent = false
+        val keep = maxOf(reliable, releasedUpTo)
+        val released = written - keep
+        written = keep
+        buffered -= released
+        // retransmissions only below the reliable size
+        var i = 0
+        while (i < lostCount) {
+            if (lost[2 * i] >= reliable) {
+                lostCount = i
+                break
+            }
+            if (lost[2 * i + 1] > reliable) lost[2 * i + 1] = reliable
+            i++
+        }
+        state = if (releasedUpTo >= reliable) SendState.ResetSent else SendState.ResetAt
+        return released
     }
 
     /** Abandons the stream (RESET_STREAM): pending data is dropped; returns the buffered bytes released. */

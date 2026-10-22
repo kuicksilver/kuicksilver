@@ -49,6 +49,19 @@ internal class FrameDispatcher(
         c.streams.onStopSending(id, code)
     }
 
+    override fun resetStreamAt(
+        id: Long,
+        code: Long,
+        finalSize: Long,
+        reliableSize: Long,
+    ) {
+        // known only to a peer we offered `reset_stream_at` (draft-ietf-quic-reliable-stream-reset section 3)
+        if (!c.config.resetStreamAt) {
+            throw QuicWireException(TransportError.FRAME_ENCODING_ERROR, r.reader.frameType, "unknown frame type 0x24")
+        }
+        c.streams.onResetStreamAt(id, code, finalSize, reliableSize)
+    }
+
     override fun crypto(
         offset: Long,
         data: PacketBuffer,

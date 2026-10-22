@@ -61,10 +61,15 @@ public sealed interface ConnectionEvent {
         public val id: Long,
     ) : ConnectionEvent
 
-    /** The peer abandoned stream [id] with RESET_STREAM and application error [code] (RFC 9000 section 19.4); its reads end with -1. */
+    /**
+     * The peer abandoned stream [id] with RESET_STREAM and application error [code] (RFC 9000 section 19.4); its reads end with
+     * -1. After RESET_STREAM_AT (draft-ietf-quic-reliable-stream-reset) it comes once the reliable bytes were read.
+     */
     public class StreamReset internal constructor(
         public val id: Long,
         public val code: Long,
+        /** RESET_STREAM_AT: the reliable bytes were read, and the reader may still hold some it has not handed over. */
+        internal val afterData: Boolean = false,
     ) : ConnectionEvent
 
     /**

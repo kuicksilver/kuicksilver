@@ -249,9 +249,10 @@ internal class WtSessionImpl(
         st: QuicStream,
         readable: Boolean,
         writable: Boolean,
+        headerLength: Int = 0,
     ): WtStreamImpl =
         withContext(NonCancellable + h3.dispatcher) {
-            val s = WtStreamImpl(h3.scope, st, readable, writable) { done -> h3.scope.launch { streams.remove(done) } }
+            val s = WtStreamImpl(h3.scope, st, readable, writable, headerLength) { done -> h3.scope.launch { streams.remove(done) } }
             if (closedInfo.isCompleted) {
                 s.gone()
                 throw sessionClosed()
@@ -291,14 +292,15 @@ internal class WtSessionImpl(
                     }
                 }
             }
+        val header = VarInt.encode(if (bidi) FrameType.WT_STREAM else StreamType.WT_UNI) + VarInt.encode(sessionId)
         try {
-            st.output.writeFully(VarInt.encode(if (bidi) FrameType.WT_STREAM else StreamType.WT_UNI) + VarInt.encode(sessionId))
+            st.output.writeFully(header)
             st.output.flush()
         } catch (e: Throwable) {
             runCatching { st.reset(Http3ErrorCode.WT_SESSION_GONE) }
             throw if (e is CancellationException) e else h3.map(e)
         }
-        return track(st, readable = bidi, writable = true)
+        return track(st, readable = bidi, writable = true, headerLength = header.size)
     }
 
     override suspend fun openBidi(): WebTransportBidiStream = open(bidi = true)

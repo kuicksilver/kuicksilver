@@ -22,6 +22,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.io.readByteArray
 import kotlin.concurrent.Volatile
 import kotlin.test.BeforeTest
 import kotlin.test.Test
@@ -213,6 +214,44 @@ class StreamBridgeTest {
                     assertEquals(3L, lost.code)
                     assertEquals(Initiator.Local, lost.initiator)
                     c.close()
+                }
+            }
+        }
+
+    /** RESET_STREAM_AT through the stream API: the reader gets exactly the reliable bytes, then the reset (never -1). */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    @Test
+    fun resetAtDeliversThePrefixThenTheReset() =
+        runBlocking {
+            val on = io.kuicksilver.quic.quicConfig { resetStreamAt = true }
+            ApiPair.open(serverQuic = on).use { p ->
+                withTimeout(20.seconds) {
+                    val (c, s) = p.connect(on)
+                    val st = c.openUni()
+                    val data = ByteArray(100_000) { it.toByte() }
+                    st.output.writeFully(data, 0, data.size)
+                    st.output.flush()
+                    st.resetAt(5, 70_000)
+                    val ss = s.acceptStream()
+                    // bytes read before the reset arrived may go past the reliable size; the reliable ones always arrive
+                    val got = kotlinx.io.Buffer()
+                    val buf = ByteArray(8192)
+                    val e =
+                        assertFailsWith<Throwable> {
+                            withTimeout(10.seconds) {
+                                while (true) {
+                                    val n = ss.input.readAvailable(buf, 0, buf.size)
+                                    if (n < 0) error("-1: a reset stream read as complete")
+                                    got.write(buf, 0, n)
+                                }
+                            }
+                        }
+                    assertTrue(causes<Throwable>(e).any { it is QuicException.StreamError.Reset && it.code == 5L }, "$e")
+                    val bytes = got.readByteArray()
+                    assertTrue(bytes.size >= 70_000, "${bytes.size} bytes")
+                    assertContentEquals(data.copyOf(bytes.size), bytes)
+                    c.close()
+                    s.close()
                 }
             }
         }

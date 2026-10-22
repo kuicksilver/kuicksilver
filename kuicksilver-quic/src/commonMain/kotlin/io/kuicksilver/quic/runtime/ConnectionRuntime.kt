@@ -468,7 +468,7 @@ internal class ConnectionRuntime(
 
                 is ConnectionEvent.StreamReset -> {
                     val s = streams[e.id]
-                    s?.peerReset(e.code)
+                    s?.peerReset(e.code, e.afterData)
                     if (s == null || !s.deferReset()) core.readStream(e.id, NO_BYTES, 0, 0)
                 }
 

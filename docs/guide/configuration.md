@@ -54,6 +54,7 @@ Transport settings of a connection: `quicConfig { }` (`QuicConfig.Builder`), `Qu
 | `allowMigrationToLoopback` | `Boolean` | `false` | | server: accept a move to a loopback or link-local address from a connection that did not start on one |
 | `pmtud` | `Boolean` | `true` | | DPLPMTUD (RFC 8899) on sockets that set DF; `false` keeps 1200 bytes |
 | `maxDatagramFrameSize` | `Long` | 65 535 | 0..65 535 | our `max_datagram_frame_size` (RFC 9221); 0 turns datagrams off |
+| `resetStreamAt` (*experimental*) | `Boolean` | `false` | | advertise `reset_stream_at`: `QuicStream.resetAt` keeps a stream's first bytes when the peer advertised it too ([quic.md](quic.md#reliable-stream-reset-experimental)) |
 | `datagramReceiveQueue` | `Int` | 128 | at least 1 | received datagrams held for the application; a full queue drops the oldest |
 | `datagramSendQueue` | `Int` | 32 | at least 1 | datagrams queued for sending ([Datagrams](quic.md#datagrams-rfc-9221)) |
 | `datagramSendQueueBytes` | `Long` | 1 048 576 (1 MiB) | at least 1 | byte ceiling of the same queue |

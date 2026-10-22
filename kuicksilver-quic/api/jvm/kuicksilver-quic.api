@@ -113,6 +113,7 @@ public final class io/kuicksilver/quic/ConnectionCore {
 	public final fun readDatagram ([BI)I
 	public final fun readStream (J[BII)I
 	public final fun resetStream (JJ)V
+	public final fun resetStreamAt (JJJ)V
 	public final fun resumeVerify (Lio/kuicksilver/tls/VerifyResult;)V
 	public final fun setDatagramSender (Lio/kuicksilver/quic/DatagramSender;)V
 	public final fun setPathCapabilities-pqKNJPU (ILio/kuicksilver/quic/IoCapabilities;)V
@@ -779,6 +780,7 @@ public final class io/kuicksilver/quic/QuicConfig {
 	public final fun getMaxUniStreams ()J
 	public final fun getPmtud ()Z
 	public final fun getQlog ()Lio/kuicksilver/quic/QlogSink;
+	public final fun getResetStreamAt ()Z
 	public final fun getVersions ()Ljava/util/List;
 	public final fun toBuilder ()Lio/kuicksilver/quic/QuicConfig$Builder;
 }
@@ -815,6 +817,7 @@ public final class io/kuicksilver/quic/QuicConfig$Builder {
 	public final fun getMaxUniStreams ()J
 	public final fun getPmtud ()Z
 	public final fun getQlog ()Lio/kuicksilver/quic/QlogSink;
+	public final fun getResetStreamAt ()Z
 	public final fun getVersions ()Ljava/util/List;
 	public final fun setAckDelayExponent (I)V
 	public final fun setActiveConnectionIdLimit (I)V
@@ -845,6 +848,7 @@ public final class io/kuicksilver/quic/QuicConfig$Builder {
 	public final fun setMaxUniStreams (J)V
 	public final fun setPmtud (Z)V
 	public final fun setQlog (Lio/kuicksilver/quic/QlogSink;)V
+	public final fun setResetStreamAt (Z)V
 	public final fun setVersions (Ljava/util/List;)V
 }
 
@@ -1155,12 +1159,14 @@ public abstract interface class io/kuicksilver/quic/QuicStream {
 	public abstract fun getPriority ()Lio/kuicksilver/quic/StreamPriority;
 	public fun getReceivedEarly ()Z
 	public abstract fun reset (J)V
+	public fun resetAt (JJ)V
 	public abstract fun setPriority (Lio/kuicksilver/quic/StreamPriority;)V
 	public abstract fun stopSending (J)V
 }
 
 public final class io/kuicksilver/quic/QuicStream$DefaultImpls {
 	public static fun getReceivedEarly (Lio/kuicksilver/quic/QuicStream;)Z
+	public static fun resetAt (Lio/kuicksilver/quic/QuicStream;JJ)V
 }
 
 public abstract interface class io/kuicksilver/quic/QuicTokenStore {

@@ -115,7 +115,60 @@ internal class RecvStream(
         return advanced
     }
 
-    val readable: Int get() = reassembler.readable
+    /** RESET_STREAM_AT: the bytes below this are delivered before the reset; -1 without one. */
+    var reliableSize: Long = -1
+        private set
+
+    /** Set when reading reached the reliable size and the stream turned [RecvState.ResetRecvd]; taken by [takeResetAtReached]. */
+    private var resetAtReached = false
+
+    /**
+     * RESET_STREAM_AT (draft-ietf-quic-reliable-stream-reset section 3): checked like RESET_STREAM, then the stream keeps
+     * delivering the bytes below [reliable] (the smallest reliable size received counts, section 3) and turns
+     * [RecvState.ResetRecvd] once they were read; when they already were, at once ([takeResetAtReached] tells).
+     */
+    fun onResetAt(
+        code: Long,
+        size: Long,
+        reliable: Long,
+        conn: RecvFlowController,
+        connReceived: Long,
+    ): Long {
+        if (size < highest ||
+            (finalSize >= 0 && size != finalSize)
+        ) {
+            throw QuicWireException(TransportError.FINAL_SIZE_ERROR, 0x24, "stream $id: reset final size conflicts with received data")
+        }
+        if (state == RecvState.ResetRecvd || state == RecvState.ResetRead || state == RecvState.DataRead) return 0
+        flow.onData(size)
+        val advanced = size - highest
+        if (advanced > 0) conn.onData(connReceived + advanced)
+        finalSize = size
+        highest = size
+        if (reliableSize < 0) resetCode = code // a later frame may lower the reliable size, never change the code
+        if (reliableSize < 0 || reliable < reliableSize) reliableSize = reliable
+        if (state == RecvState.Recv) state = RecvState.SizeKnown
+        if (stopped || reassembler.readOffset >= reliableSize) reachResetAt()
+        return advanced
+    }
+
+    private fun reachResetAt() {
+        state = RecvState.ResetRecvd
+        reassembler.clear()
+        resetAtReached = true
+    }
+
+    /** True once after the reliable bytes of a RESET_STREAM_AT were all read (or none were left to read). */
+    fun takeResetAtReached(): Boolean = resetAtReached.also { resetAtReached = false }
+
+    val readable: Int get() =
+        if (reliableSize <
+            0
+        ) {
+            reassembler.readable
+        } else {
+            maxOf(0L, minOf(reassembler.readable.toLong(), reliableSize - reassembler.readOffset)).toInt()
+        }
 
     /**
      * STOP_SENDING still has a purpose: no RESET_STREAM arrived ("any state where it has not received a RESET_STREAM frame",
@@ -134,7 +187,20 @@ internal class RecvStream(
             return -1
         }
         if (state == RecvState.ResetRead) return -1
-        val n = reassembler.read(into, off, len)
+        var max = len
+        if (reliableSize >= 0) {
+            val left = reliableSize - reassembler.readOffset
+            if (left <= 0) {
+                reachResetAt()
+                return 0
+            }
+            max = minOf(len.toLong(), left).toInt()
+        }
+        val n = reassembler.read(into, off, max)
+        if (reliableSize >= 0 && reassembler.readOffset >= reliableSize) {
+            reachResetAt()
+            return n
+        }
         if (n == 0 && finalSize >= 0 && reassembler.readOffset == finalSize) {
             state = RecvState.DataRead
             return -1

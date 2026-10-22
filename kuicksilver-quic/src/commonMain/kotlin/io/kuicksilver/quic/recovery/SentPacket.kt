@@ -27,6 +27,9 @@ internal class SentFrames {
     var idValue = LongArray(4)
     var idExtra = LongArray(4)
     var idExtra2 = LongArray(4)
+
+    /** The reliable size of a RESET_STREAM_AT ([ID_RESET_STREAM_AT]). */
+    var idExtra3 = LongArray(4)
     var pathChallenge: Long = 0
 
     /** Ids of DATAGRAM frames (RFC 9221) for the sender's acked/lost callbacks; never retransmitted. */
@@ -105,6 +108,7 @@ internal class SentFrames {
         value: Long,
         extra: Long = 0,
         extra2: Long = 0,
+        extra3: Long = 0,
     ) {
         if (idCount ==
             idKind.size
@@ -114,11 +118,13 @@ internal class SentFrames {
             idExtra = idExtra.copyOf(idCount * 2)
             idExtra2 =
                 idExtra2.copyOf(idCount * 2)
+            idExtra3 = idExtra3.copyOf(idCount * 2)
         }
         idKind[idCount] = kind
         idValue[idCount] = value
         idExtra[idCount] = extra
         idExtra2[idCount] = extra2
+        idExtra3[idCount] = extra3
         idCount++
     }
 
@@ -148,6 +154,7 @@ internal class SentFrames {
 
         /** A NEW_TOKEN frame; the value is the connection's token number (a newer token replaces an older one). */
         const val ID_NEW_TOKEN = 7
+        const val ID_RESET_STREAM_AT = 8
     }
 }
 

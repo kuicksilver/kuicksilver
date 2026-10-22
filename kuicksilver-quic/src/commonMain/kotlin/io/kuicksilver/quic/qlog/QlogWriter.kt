@@ -245,6 +245,7 @@ internal class QlogWriter(
                 when (f.idKind[i]) {
                     SentFrames.ID_MAX_STREAM_DATA -> "max_stream_data"
                     SentFrames.ID_RESET_STREAM -> "reset_stream"
+                    SentFrames.ID_RESET_STREAM_AT -> "reset_stream_at"
                     SentFrames.ID_STOP_SENDING -> "stop_sending"
                     SentFrames.ID_NEW_CONNECTION_ID -> "new_connection_id"
                     SentFrames.ID_RETIRE_CONNECTION_ID -> "retire_connection_id"

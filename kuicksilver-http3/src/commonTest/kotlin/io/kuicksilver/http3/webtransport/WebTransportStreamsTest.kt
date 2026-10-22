@@ -195,4 +195,27 @@ class WebTransportStreamsTest {
                 assertIs<WebTransportException.SessionClosed>(withTimeout(5.seconds) { opening.await() }.exceptionOrNull())
             }
         }
+
+    /**
+     * Section 4.4: with `reset_stream_at` on both sides a reset stream keeps its header (RESET_STREAM_AT with the header as
+     * the reliable size): a stream whose header was lost and then reset still reaches the peer's session, with the code.
+     */
+    @Test fun wtResetUsesResetStreamAtWhenNegotiated() =
+        h3Test {
+            val reliable = quicConfig { resetStreamAt = true }
+            H3Pair.open(clientSettings = wtOn, serverSettings = wtOn, serverQuic = reliable, clientQuic = reliable).useScoped { p ->
+                val (client, server) = sessions(p)
+                val clientAddr =
+                    p.client.quic.paths
+                        .first()
+                        .localAddress
+                p.quic.net.drop = { from, _, _ -> from == clientAddr } // the header is lost
+                val out = client.openUni()
+                out.reset(5)
+                p.quic.net.drop = null
+                val st = withTimeout(10.seconds) { server.acceptUni() }
+                assertEquals(out.streamId, st.streamId)
+                assertEquals(5L, causeOf<WebTransportException.StreamReset> { withTimeout(10.seconds) { st.input.readAllBytes() } }.code)
+            }
+        }
 }

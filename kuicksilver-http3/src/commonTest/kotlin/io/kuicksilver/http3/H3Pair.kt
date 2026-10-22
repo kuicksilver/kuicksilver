@@ -196,9 +196,10 @@ internal class H3Pair(
             clientSettings: Http3Settings = Http3Settings.Default,
             serverSettings: Http3Settings = Http3Settings.Default,
             serverQuic: QuicConfig = QuicConfig.Default,
+            clientQuic: QuicConfig = QuicConfig.Default,
         ): H3Pair {
             val q = QuicPair.open(serverQuic)
-            val (c, s) = q.connect()
+            val (c, s) = q.connect(clientQuic)
             return coroutineScope {
                 val server = async { Http3Connection.server(s, serverSettings) }
                 H3Pair(q, Http3Connection.client(c, clientSettings), server.await())

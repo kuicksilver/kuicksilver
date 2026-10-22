@@ -24,6 +24,13 @@ sealed class TestFrame {
         val ecn: List<Long>?,
     ) : TestFrame()
 
+    data class ResetStreamAt(
+        val id: Long,
+        val code: Long,
+        val finalSize: Long,
+        val reliableSize: Long,
+    ) : TestFrame()
+
     data class ResetStream(
         val id: Long,
         val code: Long,
@@ -181,6 +188,15 @@ internal class CollectingHandler : FrameHandler {
         code: Long,
     ) {
         frames += TestFrame.StopSending(id, code)
+    }
+
+    override fun resetStreamAt(
+        id: Long,
+        code: Long,
+        finalSize: Long,
+        reliableSize: Long,
+    ) {
+        frames += TestFrame.ResetStreamAt(id, code, finalSize, reliableSize)
     }
 
     override fun crypto(

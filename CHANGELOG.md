@@ -88,6 +88,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   serve WebTransport sessions over HTTP/3 (`docs/guide/ktor.md`, "WebTransport over HTTP/3"): the route matches only a
   WebTransport Extended CONNECT, refuses a foreign `origin` with 403 (`sameHostOrigin` by default), picks the
   protocol, and closes the session when the handler returns (code 0) or throws (`WEB_TRANSPORT_HANDLER_FAILED`).
+- QUIC (experimental): RESET_STREAM_AT (draft-ietf-quic-reliable-stream-reset). `QuicConfig.resetStreamAt` advertises
+  `reset_stream_at`; `QuicStream.resetAt(code, reliableSize)` and `ConnectionCore.resetStreamAt` reset a stream while
+  still delivering its first bytes when the peer advertised it too, and fall back to RESET_STREAM otherwise. WebTransport
+  resets the streams it opened this way, keeping their header (draft-ietf-webtrans-http3-16 section 4.4), and the Ktor
+  server advertises it with `webTransport`.
 - WebTransport interop with a real browser: `ChromeWebTransportTest` (opt-in, `-Pkuicksilver.browserTests=true`)
   drives an installed Chrome headless through streams, datagrams and both closes against the Ktor server; results and
   a manual check for Firefox and Safari in `docs/spec/rfc-compliance.md`, "Interop WebTransport".

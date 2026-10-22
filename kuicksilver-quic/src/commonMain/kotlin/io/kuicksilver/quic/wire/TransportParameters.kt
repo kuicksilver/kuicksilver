@@ -33,6 +33,9 @@ internal class TransportParameters {
     var maxDatagramFrameSize: Long = 0
     var greaseQuicBit: Boolean = false
 
+    /** `reset_stream_at` (draft-ietf-quic-reliable-stream-reset section 3): the sender takes RESET_STREAM_AT frames. */
+    var resetStreamAt: Boolean = false
+
     /** `version_information` (0x11): Chosen Version, or 0 when the parameter is absent. */
     var chosenVersion: Int = 0
 
@@ -65,6 +68,7 @@ internal fun QuicConfig.localTransportParameters(
         tp.activeConnectionIdLimit = activeConnectionIdLimit.toLong()
         tp.initialSourceConnectionId = scid
         tp.greaseQuicBit = greaseQuicBit
+        tp.resetStreamAt = resetStreamAt
         tp.maxDatagramFrameSize = maxDatagramFrameSize // RFC 9221 section 3; 0 = absent
         if (role == TlsRole.Server) {
             tp.originalDestinationConnectionId = odcid

@@ -42,20 +42,32 @@ internal class StreamInput(
 
     @Volatile override var closedCause: Throwable? = null
         private set
+
+    /** A reset after RESET_STREAM_AT: it fails the input once [buffer], the reliable bytes, is read. */
+    @Volatile private var pendingCause: Throwable? = null
+
     override val readBuffer: Source get() {
         closedCause?.let { throw it }
+        pendingCause?.let { if (buffer.exhausted()) throw failNow(it) }
         return buffer
     }
     override val isClosedForRead: Boolean get() = eof && buffer.exhausted()
+
+    private fun failNow(cause: Throwable): Throwable {
+        if (closedCause == null) closedCause = cause
+        return closedCause!!
+    }
 
     override suspend fun awaitContent(min: Int): Boolean {
         if (eof) return buffer.size >= min
         closedCause?.let { throw it }
         if (buffer.size >= min) return true
+        pendingCause?.let { throw failNow(it) }
         return withContext(stream.loop.dispatcher) {
             while (true) {
                 if (eof) return@withContext buffer.size >= min
                 closedCause?.let { throw it }
+                pendingCause?.let { if (buffer.size >= min) return@withContext true else throw failNow(it) }
                 var pulled = 0
                 var touched = false
                 while (buffer.size < maxOf(min.toLong(), PULL_TARGET) &&
@@ -72,8 +84,14 @@ internal class StreamInput(
                         if (n <
                             0
                         ) {
-                            touched = !eof
-                            eof = true
+                            // the end of a reset stream is no end of its data: what was read is delivered, then the reset
+                            val reset = stream.conn.core.streams.lastReadResetCode
+                            if (reset != null) {
+                                if (pendingCause == null) pendingCause = QuicException.StreamError.Reset(stream.id, reset, Initiator.Peer)
+                            } else {
+                                touched = !eof
+                                eof = true
+                            }
                         }
                         break
                     }
@@ -81,6 +99,7 @@ internal class StreamInput(
                 // credit (MAX_STREAM_DATA / MAX_DATA) and MAX_STREAMS (a consumed stream) leave as the application consumes
                 if (touched) stream.loop.flush(stream.conn.core)
                 if (buffer.size >= min) return@withContext true
+                pendingCause?.let { throw failNow(it) }
                 if (eof) return@withContext false
                 try {
                     stream.readable.receive()
@@ -109,6 +128,12 @@ internal class StreamInput(
             stream.conn.core.stopSending(stream.id, stream.conn.defaultCode())
             stream.loop.flush(stream.conn.core)
         }
+    }
+
+    /** Fails the input with [cause] once what it holds was read, unless the peer's FIN was already taken. */
+    fun closeAfterBuffered(cause: Throwable) {
+        if (pendingCause == null && !eof) pendingCause = cause
+        stream.readable.close()
     }
 
     /** Fails the input with [cause] unless the peer's FIN was already taken: a complete stream stays complete. */

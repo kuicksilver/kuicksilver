@@ -774,6 +774,12 @@ internal class PacketBuilder(
                     frames.addId(SentFrames.ID_RESET_STREAM, cf.id, cf.a, cf.b)
                 }
 
+                ControlKind.ResetStreamAt -> {
+                    c.streams.tamperResetStreamAtForTest?.invoke(cf)
+                    FrameEncoder.resetStreamAt(w, cf.id, cf.a, cf.b, cf.c)
+                    frames.addId(SentFrames.ID_RESET_STREAM_AT, cf.id, cf.a, cf.b, cf.c)
+                }
+
                 ControlKind.StopSending -> {
                     FrameEncoder.stopSending(w, cf.id, cf.a)
                     frames.addId(SentFrames.ID_STOP_SENDING, cf.id, cf.a)

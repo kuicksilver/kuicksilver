@@ -23,6 +23,14 @@ internal interface FrameHandler {
         code: Long,
     )
 
+    /** RESET_STREAM_AT; [reliableSize] is at most [finalSize] (the decoder checks it). */
+    fun resetStreamAt(
+        id: Long,
+        code: Long,
+        finalSize: Long,
+        reliableSize: Long,
+    )
+
     fun crypto(
         offset: Long,
         data: PacketBuffer,

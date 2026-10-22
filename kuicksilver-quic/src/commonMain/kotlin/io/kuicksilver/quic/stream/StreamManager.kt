@@ -21,6 +21,7 @@ import kotlin.time.Duration
 
 internal enum class ControlKind {
     ResetStream,
+    ResetStreamAt,
     StopSending,
     MaxStreamData,
     StreamDataBlocked,
@@ -32,12 +33,13 @@ internal enum class ControlKind {
     StreamsBlockedUni,
 }
 
-/** A pending control frame: [a]/[b] carry the code, limit or final size. */
+/** A pending control frame: [a]/[b] carry the code, limit or final size; [c] the reliable size of RESET_STREAM_AT. */
 internal class ControlFrame {
     var kind: ControlKind = ControlKind.MaxData
     var id: Long = 0
     var a: Long = 0
     var b: Long = 0
+    var c: Long = 0
 }
 
 /** Every stream of a connection, both directions, with the connection-level flow control and stream limits (RFC 9000 sections 2–4). */
@@ -71,6 +73,7 @@ internal class StreamManager(
         id: Long,
         a: Long,
         b: Long = 0,
+        reliable: Long = 0,
     ) {
         val c =
             controlPool.removeLastOrNull() ?: ControlFrame()
@@ -78,6 +81,7 @@ internal class StreamManager(
         c.id = id
         c.a = a
         c.b = b
+        c.c = reliable
         control += c
     }
 
@@ -87,6 +91,7 @@ internal class StreamManager(
         id: Long,
         a: Long,
         b: Long = 0,
+        reliable: Long = 0,
     ) {
         for (i in 0 until control.size) {
             val c = control[i]
@@ -95,8 +100,24 @@ internal class StreamManager(
                 return
             }
         }
-        queueControl(kind, id, a, b)
+        queueControl(kind, id, a, b, reliable)
     }
+
+    /** The peer sent `reset_stream_at`: [resetAt] may use RESET_STREAM_AT (draft-ietf-quic-reliable-stream-reset). */
+    var peerResetStreamAt = false
+
+    /** Test hook: send RESET_STREAM_AT although the peer did not offer it. */
+    internal var forceResetStreamAtForTest = false
+
+    /** Test hook: changes each RESET_STREAM_AT frame before it is written. */
+    internal var tamperResetStreamAtForTest: ((ControlFrame) -> Unit)? = null
+
+    /**
+     * The code of the RESET_STREAM (or RESET_STREAM_AT) that ended the last [read] answering -1, or null when that read
+     * found the peer's FIN: the end of a reset stream is no end of its data. Read right after [read], on the same thread.
+     */
+    var lastReadResetCode: Long? = null
+        private set
 
     val events: ArrayDeque<ConnectionEvent> = ArrayDeque()
     private val nextIndex = longArrayOf(0, 0) // [bidi, uni]
@@ -415,6 +436,34 @@ internal class StreamManager(
         if (r.stopped) maybeClose(id) // a stopped half has no reader to surface the reset to
     }
 
+    /** RESET_STREAM_AT (draft-ietf-quic-reliable-stream-reset section 4); the decoder checked reliable size <= final size. */
+    fun onResetStreamAt(
+        id: Long,
+        code: Long,
+        finalSize: Long,
+        reliableSize: Long,
+    ) {
+        val e = peerStream(id, 0x24, receiving = true) ?: return
+        val r =
+            e.recv ?: throw QuicWireException(TransportError.STREAM_STATE_ERROR, 0x24, "RESET_STREAM_AT on our send-only stream $id")
+        connReceived += r.onResetAt(code, finalSize, reliableSize, connFlow, connReceived)
+        if (r.takeResetAtReached()) {
+            resetAtSurfaced(e, r)
+        } else if (r.readable > 0) {
+            events += e.readable
+        }
+    }
+
+    /** The reliable bytes of a RESET_STREAM_AT were read (or none were left): the reset reaches the application now. */
+    private fun resetAtSurfaced(
+        e: Entry,
+        r: RecvStream,
+    ) {
+        creditConnection(r.abandon())
+        events += ConnectionEvent.StreamReset(e.id, r.resetCode, afterData = true)
+        if (r.stopped) maybeClose(e.id)
+    }
+
     fun onStopSending(
         id: Long,
         code: Long,
@@ -424,10 +473,11 @@ internal class StreamManager(
         val s =
             e.send ?: throw QuicWireException(TransportError.STREAM_STATE_ERROR, 0x05, "STOP_SENDING on our receive-only stream $id")
         if (s.state == SendState.ResetSent || s.state == SendState.DataRecvd) return
+        val finalSize = s.finalSizeForReset
         sendBufferedBytes -= s.reset()
         scheduler.remove(s)
         wakeRefusedWriters()
-        queueControl(ControlKind.ResetStream, id, code, s.sentEnd)
+        queueControl(ControlKind.ResetStream, id, code, finalSize)
         events += ConnectionEvent.StopSendingReceived(id, code)
         maybeClose(id)
     }
@@ -569,7 +619,7 @@ internal class StreamManager(
         fin: Boolean,
     ): Int {
         val s = streams[id]?.send ?: throw IllegalStateException("stream $id is not writable")
-        check(s.state != SendState.ResetSent) { "stream $id was reset" }
+        check(s.state != SendState.ResetSent && s.state != SendState.ResetAt) { "stream $id was reset" }
         val accepted = minOf(len.toLong(), config.maxSendBuffer - sendBufferedBytes).toInt()
         if (accepted <= 0 && !fin) return 0
         s.enqueue(data, off, accepted, fin && accepted == len)
@@ -590,7 +640,10 @@ internal class StreamManager(
     ): Int {
         val e = streams[id] ?: return 0 // not opened yet (peer-initiated) or already finished: nothing to read
         val r = e.recv ?: throw IllegalStateException("stream $id is not readable")
+        val wasReset = r.state == RecvState.ResetRecvd || r.state == RecvState.ResetRead
         val n = r.read(into, off, len)
+        lastReadResetCode = if (n < 0 && wasReset) r.resetCode else null
+        if (r.takeResetAtReached()) resetAtSurfaced(e, r)
         if (n > 0) {
             r.connCredited += n
             creditConnection(n.toLong())
@@ -648,10 +701,32 @@ internal class StreamManager(
         ) {
             return
         }
+        val finalSize = s.finalSizeForReset
         sendBufferedBytes -= s.reset()
         scheduler.remove(s)
         wakeRefusedWriters()
-        queueControl(ControlKind.ResetStream, id, code, s.sentEnd)
+        queueControl(ControlKind.ResetStream, id, code, finalSize)
+        maybeClose(id)
+    }
+
+    /**
+     * RESET_STREAM_AT (draft-ietf-quic-reliable-stream-reset section 3): the first [reliable] bytes (at most what was
+     * written) are still delivered, the rest is dropped. Without the peer's `reset_stream_at` it is a RESET_STREAM.
+     * Nothing happens for an unknown or reset stream; a stream already reset with RESET_STREAM_AT is not reset again with it.
+     */
+    fun resetAt(
+        id: Long,
+        code: Long,
+        reliable: Long,
+    ) {
+        val s = streams[id]?.send ?: return
+        if (s.state == SendState.ResetSent || s.state == SendState.ResetAt || s.state == SendState.DataRecvd) return
+        if (!peerResetStreamAt && !forceResetStreamAtForTest) return reset(id, code)
+        val r = reliable.coerceIn(0, s.written)
+        sendBufferedBytes -= s.resetAt(r)
+        wakeRefusedWriters()
+        if (s.hasPending) scheduler.add(s) else scheduler.remove(s)
+        queueControl(ControlKind.ResetStreamAt, id, code, s.finalSizeForReset, r)
         maybeClose(id)
     }
 
@@ -802,7 +877,7 @@ internal class StreamManager(
             }
             sendBufferedBytes -=
                 s.onAcked(f.streamOffset[i], f.streamLength[i], f.streamFin[i])
-            if (s.state == SendState.DataRecvd) maybeClose(s.id)
+            if (s.state == SendState.DataRecvd || s.state == SendState.ResetSent) maybeClose(s.id)
         }
         if (sendBufferedBytes < bufferedBefore) wakeRefusedWriters()
     }
@@ -842,6 +917,11 @@ internal class StreamManager(
                     queueOnce(ControlKind.ResetStream, f.idValue[i], f.idExtra[i], f.idExtra2[i])
                 }
 
+                // a lost RESET_STREAM_AT goes again with its reliable size (a RESET_STREAM sent since then wins at the peer)
+                SentFrames.ID_RESET_STREAM_AT -> {
+                    queueOnce(ControlKind.ResetStreamAt, f.idValue[i], f.idExtra[i], f.idExtra2[i], f.idExtra3[i])
+                }
+
                 // final size travels with the frame: the stream may be retired by now
                 SentFrames.ID_STOP_SENDING -> {
                     if (streams[f.idValue[i]]?.recv?.wantsStopSending == true) {
@@ -875,5 +955,7 @@ internal class StreamManager(
 
     /** Varint size helper for the packet builder. */
     fun controlOverhead(c: ControlFrame): Int =
-        1 + VarInt.size(c.id) + VarInt.size(c.a) + (if (c.kind == ControlKind.ResetStream) VarInt.size(c.b) else 0)
+        1 + VarInt.size(c.id) + VarInt.size(c.a) +
+            (if (c.kind == ControlKind.ResetStream || c.kind == ControlKind.ResetStreamAt) VarInt.size(c.b) else 0) +
+            (if (c.kind == ControlKind.ResetStreamAt) VarInt.size(c.c) else 0)
 }

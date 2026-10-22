@@ -138,6 +138,12 @@ public class QuicConfig private constructor(
     /** Byte ceiling of the same send queue; whichever of the two limits is reached first applies the [DatagramPolicy]. */
     public val datagramSendQueueBytes: Long,
     internal val limits: QuicLimits,
+    /**
+     * Advertise `reset_stream_at` (draft-ietf-quic-reliable-stream-reset): the peer may reset a stream with
+     * RESET_STREAM_AT, and [QuicStream.resetAt] uses the frame when the peer advertised it too. Off by default.
+     */
+    @property:ExperimentalKuicksilverApi
+    public val resetStreamAt: Boolean = false,
 ) {
     init {
         require(versions.isNotEmpty()) { "at least one QUIC version" }
@@ -208,6 +214,7 @@ public class QuicConfig private constructor(
             datagramSendQueue,
             datagramSendQueueBytes,
             limits,
+            resetStreamAt,
         ).also { it.newPathInitialRtt = newPathInitialRtt }
 
     /** The version a client starts with: [initialVersion] or the first of [versions]. */
@@ -317,6 +324,10 @@ public class QuicConfig private constructor(
         public var datagramSendQueueBytes: Long = 1_048_576
         internal var limits: QuicLimits = QuicLimits()
 
+        /** Default false; see [QuicConfig.resetStreamAt]. */
+        @ExperimentalKuicksilverApi
+        public var resetStreamAt: Boolean = false
+
         /** An immutable [QuicConfig] from the current values; IllegalArgumentException names the first value out of range. */
         public fun build(): QuicConfig =
             QuicConfig(
@@ -351,6 +362,7 @@ public class QuicConfig private constructor(
                 datagramSendQueue,
                 datagramSendQueueBytes,
                 limits,
+                resetStreamAt,
             )
     }
 
@@ -388,6 +400,7 @@ public class QuicConfig private constructor(
             it.datagramSendQueue = datagramSendQueue
             it.datagramSendQueueBytes = datagramSendQueueBytes
             it.limits = limits
+            it.resetStreamAt = resetStreamAt
             it.versions = versions.toList()
         }
 

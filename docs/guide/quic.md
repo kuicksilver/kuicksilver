@@ -646,6 +646,15 @@ val config = quicEndpointConfig {
 }
 ```
 
+## Reliable stream reset (experimental)
+
+`QuicConfig.resetStreamAt = true` advertises `reset_stream_at` (draft-ietf-quic-reliable-stream-reset). When the peer
+advertised it too, `QuicStream.resetAt(code, reliableSize)` abandons a stream like `reset` but keeps delivering its first
+`reliableSize` bytes, retransmitting them as needed; the peer reads them and then fails with the reset. Only bytes
+already flushed to the stream count (a larger size is cut to them). Without the peer's parameter `resetAt` is a plain
+`reset`, and the prefix may be lost. A peer that sends RESET_STREAM_AT without our parameter, or with a reliable size
+above its final size, closes the connection with FRAME_ENCODING_ERROR. WebTransport uses it to keep a stream's header.
+
 ## Datagrams (RFC 9221)
 
 Both sides advertise `max_datagram_frame_size` (65 535 by default; `maxDatagramFrameSize = 0` turns the extension off and

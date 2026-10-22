@@ -73,8 +73,13 @@ internal class StreamRuntime(
     @OptIn(ExperimentalAtomicApi::class)
     internal fun deferReset(): Boolean = handOut.compareAndSet(QUEUED, RESET_UNREAD)
 
-    internal fun peerReset(code: Long) {
-        inChannel?.closeWith(QuicException.StreamError.Reset(id, code, Initiator.Peer))
+    /** The peer's reset; after RESET_STREAM_AT ([afterData]) the bytes the input still holds are read first. */
+    internal fun peerReset(
+        code: Long,
+        afterData: Boolean = false,
+    ) {
+        val e = QuicException.StreamError.Reset(id, code, Initiator.Peer)
+        if (afterData) inChannel?.closeAfterBuffered(e) else inChannel?.closeWith(e)
     }
 
     internal fun peerStopped(code: Long) {
@@ -91,6 +96,17 @@ internal class StreamRuntime(
         outChannel?.closeWith(QuicException.StreamError.Reset(id, code, Initiator.Local))
         loop.scope.launch {
             conn.core.resetStream(id, code)
+            loop.flush(conn.core)
+        }
+    }
+
+    override fun resetAt(
+        code: Long,
+        reliableSize: Long,
+    ) {
+        outChannel?.closeWith(QuicException.StreamError.Reset(id, code, Initiator.Local))
+        loop.scope.launch {
+            conn.core.resetStreamAt(id, code, reliableSize)
             loop.flush(conn.core)
         }
     }

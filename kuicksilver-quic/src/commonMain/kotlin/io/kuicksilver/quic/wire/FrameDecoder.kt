@@ -32,6 +32,9 @@ internal object FrameType {
     const val HANDSHAKE_DONE = 0x1eL
     const val DATAGRAM = 0x30L
     const val DATAGRAM_LEN = 0x31L
+
+    /** RESET_STREAM_AT (draft-ietf-quic-reliable-stream-reset section 4); known only when we sent `reset_stream_at`. */
+    const val RESET_STREAM_AT = 0x24L
     const val MAX_STREAMS_LIMIT: Long = 1L shl 60
 }
 
@@ -52,6 +55,7 @@ internal object FrameDecoder {
 
             in FrameType.STREAM..0x0fL,
             FrameType.RESET_STREAM,
+            FrameType.RESET_STREAM_AT,
             FrameType.STOP_SENDING,
             FrameType.MAX_DATA,
             FrameType.MAX_STREAM_DATA,
@@ -174,6 +178,19 @@ internal object FrameDecoder {
                 FrameType.STOP_SENDING -> {
                     ackEliciting = true
                     h.stopSending(r.varint(), r.varint())
+                }
+
+                FrameType.RESET_STREAM_AT -> {
+                    ackEliciting = true
+                    val id = r.varint()
+                    val code = r.varint()
+                    val finalSize = r.varint()
+                    val reliableSize = r.varint()
+                    // section 4: "If the Reliable Size is larger than the Final Size, the receiver MUST close the connection"
+                    if (reliableSize > finalSize) {
+                        throw QuicWireException(TransportError.FRAME_ENCODING_ERROR, type, "RESET_STREAM_AT reliable size above final size")
+                    }
+                    h.resetStreamAt(id, code, finalSize, reliableSize)
                 }
 
                 FrameType.CRYPTO -> {

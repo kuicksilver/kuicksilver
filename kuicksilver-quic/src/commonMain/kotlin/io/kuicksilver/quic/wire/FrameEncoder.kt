@@ -73,6 +73,21 @@ internal object FrameEncoder {
         w.varint(finalSize)
     }
 
+    /** RESET_STREAM_AT (draft-ietf-quic-reliable-stream-reset section 4). */
+    fun resetStreamAt(
+        w: WireWriter,
+        id: Long,
+        code: Long,
+        finalSize: Long,
+        reliableSize: Long,
+    ) {
+        w.u8(FrameType.RESET_STREAM_AT.toInt())
+        w.varint(id)
+        w.varint(code)
+        w.varint(finalSize)
+        w.varint(reliableSize)
+    }
+
     fun stopSending(
         w: WireWriter,
         id: Long,
