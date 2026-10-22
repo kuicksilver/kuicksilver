@@ -75,6 +75,13 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   the request's connect timeout, and the JVM and Android no longer connect only to the first address of a name. The
   name is resolved once per request for both sides of the h3/h1 race (HTTP/3 takes the first address), off the
   caller's thread and within the connect timeout.
+- Ktor engines: WebSocket extension negotiation and frame checks (RFC 6455 sections 4.1, 5.2 and 9.1; RFC 7692
+  section 6.1; `docs/guide/ktor.md`, "Client"). The client engine declares `WebSocketExtensionsCapability`, so Ktor's
+  `WebSockets` plugin offers and negotiates the installed extensions over HTTP/1.1 and HTTP/3 (Ktor's JVM
+  `WebSocketDeflateExtension` included); an answer that accepts an extension the client did not offer fails the call
+  with `WebSocketException`. Both engines end a session whose peer sets an RSV bit no negotiated extension defines, or
+  uses a reserved opcode, or masks its frames in the wrong direction (RFC 6455 section 5.1), with a Close frame with code
+  1002 (threat model 3.20.1).
 
 ### Changed
 

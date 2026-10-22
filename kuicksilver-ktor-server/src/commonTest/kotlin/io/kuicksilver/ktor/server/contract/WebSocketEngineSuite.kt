@@ -1,7 +1,9 @@
 // Copyright 2014-2026 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
 // Modifications Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
-// Vendored from Ktor 3.6.0 ktor-server/ktor-server-test-suites/common/src/io/ktor/server/testing/suites/WebSocketEngineSuite.kt, adapted to the Kuicksilver engine.
+// Vendored from Ktor 3.6.0 ktor-server/ktor-server-test-suites/common/src/io/ktor/server/testing/suites/WebSocketEngineSuite.kt, adapted to the Kuicksilver engine:
+// the test client masks its frames, as RFC 6455 section 5.1 requires and the engine checks (raw hex frames with a zero
+// masking key, which leaves the payload as it is).
 package io.kuicksilver.ktor.server.contract
 
 import io.ktor.http.*
@@ -294,11 +296,11 @@ abstract class WebSocketEngineSuite<TEngine : ApplicationEngine, TConfiguration 
 
                 output.apply {
                     // text message with content "Hello"
-                    writeHex("0x81 0x05 0x48 0x65 0x6c 0x6c 0x6f")
+                    writeHex("0x81 0x85 0x00 0x00 0x00 0x00 0x48 0x65 0x6c 0x6c 0x6f") // masked with a zero key
                     flush()
 
                     // close frame with code 1000
-                    writeHex("0x88 0x02 0x03 0xe8")
+                    writeHex("0x88 0x82 0x00 0x00 0x00 0x00 0x03 0xe8") // masked with a zero key
                     flush()
                 }
 
@@ -336,13 +338,13 @@ abstract class WebSocketEngineSuite<TEngine : ApplicationEngine, TConfiguration 
                     assertEquals(true, frame.fin)
                     assertTrue(frame.data.isNotEmpty())
 
-                    output.writeFrame(Frame.Pong(frame.data), false)
+                    output.writeFrame(Frame.Pong(frame.data), true)
                     output.flush()
                 }
 
                 output.apply {
                     // close frame with code 1000
-                    writeHex("0x88 0x02 0x03 0xe8")
+                    writeHex("0x88 0x82 0x00 0x00 0x00 0x00 0x03 0xe8") // masked with a zero key
                     flush()
                 }
 
@@ -381,13 +383,14 @@ abstract class WebSocketEngineSuite<TEngine : ApplicationEngine, TConfiguration 
                 output.apply {
                     for (i in 1..count) {
                         writeHex("0x81")
-                        writeByte(i.toByte())
+                        writeByte((i or 0x80).toByte()) // masked with a zero key
+                        writeHex("0x00 0x00 0x00 0x00")
                         writeFully(bytes, 0, i)
                         flush()
                     }
 
                     // close frame with code 1000
-                    writeHex("0x88 0x02 0x03 0xe8")
+                    writeHex("0x88 0x82 0x00 0x00 0x00 0x00 0x03 0xe8") // masked with a zero key
                     flush()
                 }
 
@@ -433,13 +436,14 @@ abstract class WebSocketEngineSuite<TEngine : ApplicationEngine, TConfiguration 
                 output.apply {
                     for (i in 1..count) {
                         writeHex("0x81")
-                        writeByte(i.toByte())
+                        writeByte((i or 0x80).toByte()) // masked with a zero key
+                        writeHex("0x00 0x00 0x00 0x00")
                         writeFully(bytes, 0, i)
                         flush()
                     }
 
                     // close frame with code 1000
-                    writeHex("0x88 0x02 0x03 0xe8")
+                    writeHex("0x88 0x82 0x00 0x00 0x00 0x00 0x03 0xe8") // masked with a zero key
                     flush()
                 }
 
@@ -481,7 +485,7 @@ abstract class WebSocketEngineSuite<TEngine : ApplicationEngine, TConfiguration 
 
                 output.apply {
                     // close frame with code 1000
-                    writeHex("0x88 0x02 0x03 0xe8")
+                    writeHex("0x88 0x82 0x00 0x00 0x00 0x00 0x03 0xe8") // masked with a zero key
                     flush()
                 }
 
@@ -510,7 +514,7 @@ abstract class WebSocketEngineSuite<TEngine : ApplicationEngine, TConfiguration 
                 negotiateHttpWebSocket()
 
                 output.apply {
-                    writeFrame(Frame.Binary(true, content), false)
+                    writeFrame(Frame.Binary(true, content), true)
                     flush()
                 }
 
@@ -523,7 +527,7 @@ abstract class WebSocketEngineSuite<TEngine : ApplicationEngine, TConfiguration 
                 }
 
                 output.apply {
-                    writeFrame(Frame.Close(), false)
+                    writeFrame(Frame.Close(), true)
                     flush()
                 }
 
@@ -562,9 +566,9 @@ abstract class WebSocketEngineSuite<TEngine : ApplicationEngine, TConfiguration 
 
                 output.apply {
                     for (i in 1L..expectedCount) {
-                        writeFrame(Frame.Text(true, i.toString().toByteArray()), false)
+                        writeFrame(Frame.Text(true, i.toString().toByteArray()), true)
                     }
-                    writeFrame(Frame.Close(), false)
+                    writeFrame(Frame.Close(), true)
                     flush()
                 }
 
@@ -589,7 +593,7 @@ abstract class WebSocketEngineSuite<TEngine : ApplicationEngine, TConfiguration 
 
                 // we should be able to write close frame back
                 output.apply {
-                    writeFrame(Frame.Close(), false)
+                    writeFrame(Frame.Close(), true)
                     flush()
                 }
             }
@@ -623,7 +627,7 @@ abstract class WebSocketEngineSuite<TEngine : ApplicationEngine, TConfiguration 
                 negotiateHttpWebSocket()
 
                 output.apply {
-                    writeFrame(Frame.Close(CloseReason(CloseReason.Codes.GOING_AWAY, "Completed.")), false)
+                    writeFrame(Frame.Close(CloseReason(CloseReason.Codes.GOING_AWAY, "Completed.")), true)
                     flush()
                 }
 
@@ -660,7 +664,7 @@ abstract class WebSocketEngineSuite<TEngine : ApplicationEngine, TConfiguration 
                         writeFrameTest(Frame.Text(false, "Hello".toByteArray(), true, false, false), false)
                         writeFrameTest(Frame.Text(true, ", World".toByteArray(), false, false, false), false, opcode = 0)
                     }
-                    writeFrameTest(Frame.Close(), false)
+                    writeFrameTest(Frame.Close(), true)
                     flush()
                 }
             }
@@ -698,7 +702,7 @@ abstract class WebSocketEngineSuite<TEngine : ApplicationEngine, TConfiguration 
 
                 output.apply {
                     // close frame with code 1000
-                    writeHex("0x88 0x02 0x03 0xe8")
+                    writeHex("0x88 0x82 0x00 0x00 0x00 0x00 0x03 0xe8") // masked with a zero key
                     flush()
                 }
 

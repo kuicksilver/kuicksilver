@@ -9,6 +9,7 @@ import io.ktor.client.plugins.HttpTimeoutCapability
 import io.ktor.client.plugins.sse.SSECapability
 import io.ktor.client.plugins.websocket.WEBSOCKETS_KEY
 import io.ktor.client.plugins.websocket.WebSocketCapability
+import io.ktor.client.plugins.websocket.WebSocketExtensionsCapability
 import io.ktor.client.request.HttpRequestData
 import io.ktor.client.request.HttpResponseData
 import io.ktor.http.HttpHeaders
@@ -46,9 +47,10 @@ import kotlin.coroutines.CoroutineContext
 internal class KuicksilverEngine(
     override val config: KuicksilverEngineConfig,
 ) : HttpClientEngineBase("ktor-kuicksilver") {
-    // WebSocketExtensionsCapability is not declared in v1: no extension negotiation; no Unix sockets
+    // WebSocket extensions are negotiated by Ktor's plugin; the engine checks the answer against the offer and the frames'
+    // RSV bits against what was negotiated (RFC 6455 sections 4.1 and 5.2). No Unix sockets
     override val supportedCapabilities: Set<HttpClientEngineCapability<*>> =
-        setOf(HttpTimeoutCapability, WebSocketCapability, SSECapability)
+        setOf(HttpTimeoutCapability, WebSocketCapability, WebSocketExtensionsCapability, SSECapability)
 
     /**
      * The requests' job, a supervisor child of the base context (as in the CIO engine): `close()` completes it, and once its

@@ -1,7 +1,10 @@
 // Copyright 2014-2026 JetBrains s.r.o and contributors. Use of this source code is governed by the Apache 2.0 license.
 // Modifications Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
-// Vendored from Ktor 3.6.0 ktor-client-cio utils.kt (internal there), adapted: keep-alive release hook, no Unix sockets.
+// Vendored from Ktor 3.6.0 ktor-client-cio utils.kt (internal there), adapted: keep-alive release hook, no Unix sockets,
+// WebSocket extension and RSV checks.
+@file:OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+
 package io.kuicksilver.ktor.client.h1
 
 import io.ktor.client.call.UnsupportedContentTypeException
@@ -40,7 +43,9 @@ import io.ktor.utils.io.writeFully
 import io.ktor.utils.io.writePacket
 import io.ktor.utils.io.writer
 import io.ktor.websocket.RawWebSocket
+import io.kuicksilver.ktor.client.webSocketRsvAfterHandshake
 import io.kuicksilver.ktor.client.withSocketTimeout
+import io.kuicksilver.ktor.network.guardWebSocketInput
 import kotlinx.coroutines.CoroutineName
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.coroutineScope
@@ -255,11 +260,14 @@ internal suspend fun readResponse(
                     ConnectionOptions.parse(request.headers[HttpHeaders.Connection])?.close != true && !framing.lengthAndEncoding
 
             if (status == HttpStatusCode.SwitchingProtocols) {
+                // an extension the client did not offer fails the handshake before the connection is handed over
+                val extensions = headers.getAll(HttpHeaders.SecWebSocketExtensions).orEmpty()
+                val allowedRsv = webSocketRsvAfterHandshake(request, extensions)
                 onBodyDone(AfterResponse.HandOver)
                 val wsConfig = request.attributes[WEBSOCKETS_KEY]
                 val session =
                     RawWebSocket(
-                        input = input,
+                        input = guardWebSocketInput(input, allowedRsv, untilClose = false, peerMasks = false, context = callContext),
                         output = output,
                         masking = true,
                         coroutineContext = callContext,

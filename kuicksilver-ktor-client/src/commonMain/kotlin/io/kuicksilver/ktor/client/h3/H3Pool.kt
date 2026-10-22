@@ -42,8 +42,10 @@ import io.kuicksilver.ktor.client.h1.toMillisOrMax
 import io.kuicksilver.ktor.client.newRequestDns
 import io.kuicksilver.ktor.client.socketTimeoutMillis
 import io.kuicksilver.ktor.client.tlsConfigFor
+import io.kuicksilver.ktor.client.webSocketRsvAfterHandshake
 import io.kuicksilver.ktor.client.withSocketInactivityTimeout
 import io.kuicksilver.ktor.client.withSocketTimeout
+import io.kuicksilver.ktor.network.guardWebSocketInput
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineName
@@ -600,9 +602,16 @@ internal class H3Pool(
             if (!readToEnd) stream.stopSending(io.kuicksilver.http3.Http3ErrorCode.REQUEST_CANCELLED)
             events.emit("connectionReleased") { connectionReleased(data, HttpProtocolVersion.HTTP_3_0, kept = !conn.closed.isCompleted) }
         }
+        // an extension the client did not offer fails the handshake (RFC 6455 section 4.1, RFC 9220 section 3); the
+        // call's failure resets the stream (above)
+        val extensions =
+            stream.headers.fields
+                .filter { it.first == "sec-websocket-extensions" }
+                .map { it.second }
+        val allowedRsv = webSocketRsvAfterHandshake(data, extensions)
         val session =
             RawWebSocket(
-                webSocketInputUntilClose(stream.input, callContext),
+                guardWebSocketInput(stream.input, allowedRsv, untilClose = true, peerMasks = false, context = callContext),
                 stream.output,
                 masking = true,
                 coroutineContext = callContext,
@@ -666,7 +675,9 @@ internal class H3Pool(
             val out = ArrayList<Pair<String, String>>()
             mergeHeaders(data.headers, data.body) { k, v ->
                 val n = k.lowercase()
-                if (n !in HOP_BY_HOP) out += n to v
+                // Ktor allows OWS around a value (its WebSocket plugin writes `Sec-WebSocket-Extensions: x-test `); an
+                // HTTP/3 field value carries none (RFC 9110 section 5.5), as on the server side
+                if (n !in HOP_BY_HOP) out += n to v.trim { it == ' ' || it == '\t' }
             }
             if (out.none { it.first == "content-length" }) {
                 body.contentLength?.let {

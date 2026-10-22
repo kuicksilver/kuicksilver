@@ -1,5 +1,7 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
+@file:OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+
 package io.kuicksilver.ktor.server.h3
 
 import io.ktor.http.Headers
@@ -9,6 +11,9 @@ import io.ktor.server.application.PipelineCall
 import io.ktor.utils.io.cancel
 import io.kuicksilver.http3.Http3Headers
 import io.kuicksilver.http3.Http3ServerRequest
+import io.kuicksilver.ktor.network.guardWebSocketInput
+import io.kuicksilver.ktor.server.webSocketRsv
+import kotlinx.coroutines.Job
 import kotlin.coroutines.CoroutineContext
 import kotlin.io.encoding.Base64
 import kotlin.random.Random
@@ -48,9 +53,23 @@ internal class H3UpgradeResponse(
     override suspend fun respondUpgrade(upgrade: OutgoingContent.ProtocolUpgrade) {
         val headers = Http3Headers(h3Headers().fields.filter { it.first !in WebSocketOverH3.DROPPED })
         val stream = h3.acceptConnect(headers)
+        // the frames are checked against the extensions negotiated here (RFC 6455 section 5.2, RFC 9220 section 3); the
+        // check ends with the upgrade
+        val guard = Job()
         try {
-            upgrade.upgrade(stream.input, stream.output, engineDispatcher, userDispatcher).join()
+            val allowedRsv = webSocketRsv(call.request.headers, headersBuilder)
+            val input =
+                guardWebSocketInput(
+                    stream.input,
+                    allowedRsv,
+                    untilClose = false,
+                    peerMasks = true,
+                    context =
+                        engineDispatcher + guard,
+                )
+            upgrade.upgrade(input, stream.output, engineDispatcher, userDispatcher).join()
         } finally {
+            guard.cancel()
             stream.output.flushAndClose()
             stream.input.cancel()
         }

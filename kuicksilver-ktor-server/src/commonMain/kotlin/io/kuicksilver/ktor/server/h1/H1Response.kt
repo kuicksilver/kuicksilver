@@ -2,7 +2,9 @@
 // Modifications Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
 // Vendored from Ktor 3.6.0 ktor-server-cio CIOApplicationResponse.kt (internal there), adapted: Alt-Svc for HTTP/3 (RFC 7838),
-// `Connection: close` once the server is stopping.
+// `Connection: close` once the server is stopping, WebSocket frames checked against the negotiated extensions.
+@file:OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+
 package io.kuicksilver.ktor.server.h1
 
 import io.ktor.http.HeadersBuilder
@@ -18,6 +20,8 @@ import io.ktor.utils.io.ByteWriteChannel
 import io.ktor.utils.io.cancel
 import io.ktor.utils.io.writeFully
 import io.ktor.utils.io.writePacket
+import io.kuicksilver.ktor.network.guardWebSocketInput
+import io.kuicksilver.ktor.server.webSocketRsv
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -64,10 +68,21 @@ internal class H1Response(
     override suspend fun respondUpgrade(upgrade: OutgoingContent.ProtocolUpgrade) {
         sendResponseMessage(contentReady = false)
 
+        // a WebSocket's frames are checked against the extensions negotiated here (RFC 6455 section 5.2); the check
+        // ends with the upgrade
+        val guard = Job()
         try {
-            val upgradedJob = upgrade.upgrade(input, output, engineDispatcher, userDispatcher)
+            val upgradedInput =
+                if (call.request.headers[HttpHeaders.Upgrade]?.contains("websocket", ignoreCase = true) == true) {
+                    val allowedRsv = webSocketRsv(call.request.headers, headersBuilder)
+                    guardWebSocketInput(input, allowedRsv, untilClose = false, peerMasks = true, context = engineDispatcher + guard)
+                } else {
+                    input
+                }
+            val upgradedJob = upgrade.upgrade(upgradedInput, output, engineDispatcher, userDispatcher)
             upgradedJob.join()
         } finally {
+            guard.cancel()
             output.flushAndClose()
             input.cancel()
         }

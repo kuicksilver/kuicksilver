@@ -6,6 +6,8 @@ import io.kuicksilver.ktor.server.Kuicksilver
 import io.kuicksilver.ktor.server.KuicksilverApplicationEngine
 import io.kuicksilver.native.KslLoader
 import kotlin.test.BeforeTest
+import kotlin.test.Ignore
+import kotlin.test.Test
 
 // The vendored Ktor 3.6.0 server engine suites against embeddedServer(Kuicksilver), over HTTP/1.1 and over HTTP/3.
 
@@ -34,4 +36,13 @@ class KuicksilverH3PortableContentTest : PortableContentTestSuite<E, C>(Kuicksil
 
 class KuicksilverH1WebSocketTest : WebSocketEngineSuite<E, C>(Kuicksilver) {
     @BeforeTest fun load() = KslLoader.ensureLoaded()
+
+    /**
+     * Ktor's test sends RSV1 without negotiating an extension and expects the server to take it. The engine fails such a
+     * connection with 1002 (RFC 6455 section 5.2, threat model 3.20.1): `ServerWebSocketGuardTest` covers that, and
+     * the RSV1 of a negotiated extension reaching the session is covered by `ClientDeflateKtorTest` (both directions).
+     */
+    @Test
+    @Ignore
+    override fun testFragmentedFlagsFromTheFirstFrame() {}
 }

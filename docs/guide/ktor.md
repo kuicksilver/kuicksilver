@@ -157,8 +157,18 @@ val client = HttpClient(Kuicksilver) {
   takes and every byte of the response that arrives restarts it, so an upload that keeps moving never times out however
   long it takes, and one that stalls (the server stops reading, the application stops writing) fails that long after its
   last progress; every read of the response body then has it on its own. Without `HttpTimeout` the engine's `connectTimeout` (10 s) applies.
-- Capabilities: `HttpTimeoutCapability`, `WebSocketCapability`, `SSECapability`. `WebSocketExtensionsCapability` is not
-  declared (no extension negotiation; permessage-deflate is planned for 0.3.0), nor Unix sockets.
+- Capabilities: `HttpTimeoutCapability`, `WebSocketCapability`, `WebSocketExtensionsCapability`, `SSECapability`; no
+  Unix sockets. With `WebSocketExtensionsCapability` Ktor's `WebSockets` plugin offers the extensions installed with
+  `extensions { install(...) }` in `Sec-WebSocket-Extensions` and negotiates them, over HTTP/1.1 and HTTP/3 (RFC 9220).
+  Ktor's own permessage-deflate, `WebSocketDeflateExtension`, exists on the JVM and Android only. Both engines check the
+  handshake and the frames (RFC 6455 sections 4.1, 5.2 and 9.1): an answer that accepts an extension the client did not
+  offer fails the call with `WebSocketException` before a session opens, and a frame with an RSV bit that no negotiated
+  extension defines (RSV1 for permessage-deflate, on the first frame of a message only, RFC 7692 section 6.1), a
+  reserved opcode, or a mask bit in the wrong direction (RFC 6455 section 5.1: a server's frames are never masked, a
+  client's always are) fails the connection with code 1002: the engine hands the session a Close frame with 1002 in place
+  of the bad frame, Ktor's session answers it, so 1002 goes on the wire and is the session's `closeReason`, and
+  `incoming` ends without the bad frame (a raw `webSocketRaw` session sees the Close in `incoming` and answers it
+  itself). An extension the engine does not know (the application's own) may use every RSV bit.
 - `HttpClient()` without an engine finds Kuicksilver through `ServiceLoader` on the JVM with priority 0.5 (below OkHttp
   and the platform engines at 1.0, above CIO at 0.0) and through Ktor's engine list on Kotlin/Native.
 
