@@ -135,11 +135,15 @@ internal suspend fun writeBody(
     val encoder = encodeChunked(output, callContext)
     try {
         processOutgoingContent(body, encoder.channel)
-    } finally {
-        encoder.channel.flushAndClose()
-        encoder.job.join()
-        output.flush()
+    } catch (e: Throwable) {
+        // a body that failed is not complete: closing the encoder's channel would send the last chunk, and the server
+        // would take the cut body for the whole; failed, the encoder ends the connection's output with the failure instead
+        encoder.channel.cancel(e)
+        throw e
     }
+    encoder.channel.flushAndClose()
+    encoder.job.join()
+    output.flush()
 }
 
 private fun OutgoingContent.getUnwrapped(): OutgoingContent =
@@ -155,7 +159,10 @@ private suspend fun processOutgoingContent(
         }
 
         is OutgoingContent.ReadChannelContent -> {
-            body.readFrom().copyTo(channel)
+            // ktor's copyTo ends on a source that failed as on one that ended: only a clean end is the body's end
+            val source = body.readFrom()
+            source.copyTo(channel)
+            source.closedCause?.let { throw it }
         }
 
         // writeTo may close the channel it gets: give it its own, the connection's output stays open for keep-alive
@@ -444,8 +451,11 @@ internal class ResponseFraming private constructor(
                 }
             }
 
+            // ktor's copyTo ends on a connection that failed (a reset) as on one that closed: only the close ends this body,
+            // or a cut one would pass for the whole
             else -> {
                 input.copyTo(out, Long.MAX_VALUE)
+                input.closedCause?.let { throw it }
             }
         }
     }

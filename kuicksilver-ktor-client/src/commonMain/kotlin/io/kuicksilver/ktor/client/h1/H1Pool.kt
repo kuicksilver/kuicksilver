@@ -282,7 +282,11 @@ internal class H1Pool(
         }
     }
 
-    /** Writes the body in its own coroutine; a failure closes the connection (so the response read fails too) and is reported. */
+    /**
+     * Writes the body in its own coroutine; a failure closes the connection (so the response read fails too) and is
+     * reported through the call ([BodySender.failure]). It is not rethrown: this coroutine has no parent, so a failure
+     * thrown out of it went to the uncaught-exception handler as well (printed on the JVM, fatal to an Android app).
+     */
     @OptIn(DelicateCoroutinesApi::class)
     private fun sendBodyConcurrently(
         data: HttpRequestData,
@@ -295,11 +299,11 @@ internal class H1Pool(
             GlobalScope.launch(callContext.minusKey(Job) + CoroutineName("kuicksilver-h1-request-body")) {
                 try {
                     writeBody(data, output, callContext)
-                } catch (
-                    e: Throwable,
-                ) {
-                    if (e !is CancellationException) sender.failure = e
+                } catch (e: CancellationException) {
                     throw e
+                } catch (e: Throwable) {
+                    sender.failure = e
+                    conn.close()
                 }
             }
         sender.job.invokeOnCompletion { c -> if (c != null) conn.close() }
