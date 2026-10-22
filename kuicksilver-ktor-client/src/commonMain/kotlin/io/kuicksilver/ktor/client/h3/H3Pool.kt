@@ -169,6 +169,7 @@ internal class H3Pool(
         }
     }
 
+    @kotlin.concurrent.Volatile
     private var endpoint: Http3Endpoint? = null
     private val connections = HashMap<String, H3Entry>()
 
@@ -288,11 +289,13 @@ internal class H3Pool(
             }
         val d = e.deferred
         if (connect) {
+            // set inside the timeout: a handshake that completes as the timeout fires is closed, never orphaned
+            var made: Http3Connection? = null
             try {
                 beforeSetupForTest?.invoke()
-                val c =
-                    withTimeout(data.connectTimeoutMillis(config)) {
-                        @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+                withTimeout(data.connectTimeoutMillis(config)) {
+                    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+                    made =
                         if (config.http3.earlyData) {
                             // returns as soon as 0-RTT keys exist: the connect timeout still bounds the setup, through
                             // the handshake timer (a request sent early then fails, and falls back, at that time)
@@ -310,7 +313,8 @@ internal class H3Pool(
                                 config.http3.settings,
                             )
                         }
-                    }
+                }
+                val c = made!!
                 e.idleSince.store(clock())
                 if (events.enabled) {
                     lock.withLock {
@@ -322,16 +326,19 @@ internal class H3Pool(
             } catch (
                 x: TimeoutCancellationException,
             ) {
+                made?.close()
                 d.completeExceptionally(ConnectTimeoutException(data, x))
                 forget(t, e)
             } catch (
                 x: CancellationException,
             ) {
+                made?.close()
                 // only this caller is cancelled: the others waiting on d start a new setup (cancelling d would cancel them too)
                 d.completeExceptionally(SetupAbandoned(x))
                 withContext(NonCancellable) { forget(t, e) }
                 throw x
             } catch (x: Throwable) {
+                if (!d.isCompleted) made?.close()
                 d.completeExceptionally(x)
                 forget(t, e)
             }
