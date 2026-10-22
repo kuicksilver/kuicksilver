@@ -336,6 +336,7 @@ public abstract interface class io/kuicksilver/http3/Http3ServerRequest {
 	public abstract fun acceptConnect (Lio/kuicksilver/http3/Http3Headers;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public static synthetic fun acceptConnect$default (Lio/kuicksilver/http3/Http3ServerRequest;Lio/kuicksilver/http3/Http3Headers;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 	public abstract fun getAuthority ()Ljava/lang/String;
+	public fun getAvailableProtocols ()Ljava/util/List;
 	public abstract fun getBody ()Lio/ktor/utils/io/ByteReadChannel;
 	public abstract fun getHeaders ()Lio/kuicksilver/http3/Http3Headers;
 	public abstract fun getMethod ()Ljava/lang/String;
@@ -347,6 +348,7 @@ public abstract interface class io/kuicksilver/http3/Http3ServerRequest {
 	public abstract fun getScheme ()Ljava/lang/String;
 	public abstract fun getStreamId ()J
 	public abstract fun getTrailers ()Lkotlinx/coroutines/Deferred;
+	public fun isWebTransport ()Z
 	public abstract fun reset (J)V
 	public abstract fun respond (ILio/kuicksilver/http3/Http3Headers;Lio/kuicksilver/quic/StreamPriority;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public static synthetic fun respond$default (Lio/kuicksilver/http3/Http3ServerRequest;ILio/kuicksilver/http3/Http3Headers;Lio/kuicksilver/quic/StreamPriority;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
@@ -356,7 +358,9 @@ public abstract interface class io/kuicksilver/http3/Http3ServerRequest {
 
 public final class io/kuicksilver/http3/Http3ServerRequest$DefaultImpls {
 	public static synthetic fun acceptConnect$default (Lio/kuicksilver/http3/Http3ServerRequest;Lio/kuicksilver/http3/Http3Headers;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+	public static fun getAvailableProtocols (Lio/kuicksilver/http3/Http3ServerRequest;)Ljava/util/List;
 	public static fun getReceivedEarly (Lio/kuicksilver/http3/Http3ServerRequest;)Z
+	public static fun isWebTransport (Lio/kuicksilver/http3/Http3ServerRequest;)Z
 	public static synthetic fun respond$default (Lio/kuicksilver/http3/Http3ServerRequest;ILio/kuicksilver/http3/Http3Headers;Lio/kuicksilver/quic/StreamPriority;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 	public static synthetic fun sendInformational$default (Lio/kuicksilver/http3/Http3ServerRequest;ILio/kuicksilver/http3/Http3Headers;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 }
@@ -435,5 +439,28 @@ public abstract interface class io/kuicksilver/http3/Http3Stream {
 public final class io/kuicksilver/http3/Http3Stream$DefaultImpls {
 	public static fun useCapsuleProtocol (Lio/kuicksilver/http3/Http3Stream;Lio/kuicksilver/http3/CapsuleConfig;)Lio/kuicksilver/http3/CapsuleStream;
 	public static synthetic fun useCapsuleProtocol$default (Lio/kuicksilver/http3/Http3Stream;Lio/kuicksilver/http3/CapsuleConfig;ILjava/lang/Object;)Lio/kuicksilver/http3/CapsuleStream;
+}
+
+public abstract class io/kuicksilver/http3/WebTransportException : java/io/IOException {
+	public synthetic fun <init> (Ljava/lang/String;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+}
+
+public final class io/kuicksilver/http3/WebTransportException$Alpn : io/kuicksilver/http3/WebTransportException {
+	public fun <init> (Ljava/util/List;Ljava/lang/String;)V
+	public final fun getOffered ()Ljava/util/List;
+	public final fun getSelected ()Ljava/lang/String;
+}
+
+public final class io/kuicksilver/http3/WebTransportKt {
+	public static final fun acceptWebTransport (Lio/kuicksilver/http3/Http3ServerRequest;Lio/kuicksilver/http3/Http3Headers;Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static synthetic fun acceptWebTransport$default (Lio/kuicksilver/http3/Http3ServerRequest;Lio/kuicksilver/http3/Http3Headers;Ljava/lang/String;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+	public static final fun webTransport (Lio/kuicksilver/http3/Http3Connection;Lio/kuicksilver/http3/Http3Request;Ljava/util/List;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static synthetic fun webTransport$default (Lio/kuicksilver/http3/Http3Connection;Lio/kuicksilver/http3/Http3Request;Ljava/util/List;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+}
+
+public abstract interface class io/kuicksilver/http3/WebTransportSession {
+	public abstract fun getHeaders ()Lio/kuicksilver/http3/Http3Headers;
+	public abstract fun getProtocol ()Ljava/lang/String;
+	public abstract fun getSessionId ()J
 }
 

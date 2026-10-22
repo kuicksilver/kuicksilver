@@ -77,6 +77,10 @@ abstract interface io.kuicksilver.http3/Http3ServerRequest { // io.kuicksilver.h
         abstract fun <get-streamId>(): kotlin/Long // io.kuicksilver.http3/Http3ServerRequest.streamId.<get-streamId>|<get-streamId>(){}[0]
     abstract val trailers // io.kuicksilver.http3/Http3ServerRequest.trailers|{}trailers[0]
         abstract fun <get-trailers>(): kotlinx.coroutines/Deferred<io.kuicksilver.http3/Http3Headers?> // io.kuicksilver.http3/Http3ServerRequest.trailers.<get-trailers>|<get-trailers>(){}[0]
+    open val availableProtocols // io.kuicksilver.http3/Http3ServerRequest.availableProtocols|{}availableProtocols[0]
+        open fun <get-availableProtocols>(): kotlin.collections/List<kotlin/String> // io.kuicksilver.http3/Http3ServerRequest.availableProtocols.<get-availableProtocols>|<get-availableProtocols>(){}[0]
+    open val isWebTransport // io.kuicksilver.http3/Http3ServerRequest.isWebTransport|{}isWebTransport[0]
+        open fun <get-isWebTransport>(): kotlin/Boolean // io.kuicksilver.http3/Http3ServerRequest.isWebTransport.<get-isWebTransport>|<get-isWebTransport>(){}[0]
     open val receivedEarly // io.kuicksilver.http3/Http3ServerRequest.receivedEarly|{}receivedEarly[0]
         open fun <get-receivedEarly>(): kotlin/Boolean // io.kuicksilver.http3/Http3ServerRequest.receivedEarly.<get-receivedEarly>|<get-receivedEarly>(){}[0]
 
@@ -107,6 +111,15 @@ abstract interface io.kuicksilver.http3/Http3Stream { // io.kuicksilver.http3/Ht
     abstract fun trySendDatagram(kotlin/ByteArray): io.kuicksilver.quic/DatagramSendResult // io.kuicksilver.http3/Http3Stream.trySendDatagram|trySendDatagram(kotlin.ByteArray){}[0]
     abstract suspend fun sendDatagram(kotlin/ByteArray) // io.kuicksilver.http3/Http3Stream.sendDatagram|sendDatagram(kotlin.ByteArray){}[0]
     open fun useCapsuleProtocol(io.kuicksilver.http3/CapsuleConfig = ...): io.kuicksilver.http3/CapsuleStream // io.kuicksilver.http3/Http3Stream.useCapsuleProtocol|useCapsuleProtocol(io.kuicksilver.http3.CapsuleConfig){}[0]
+}
+
+abstract interface io.kuicksilver.http3/WebTransportSession { // io.kuicksilver.http3/WebTransportSession|null[0]
+    abstract val headers // io.kuicksilver.http3/WebTransportSession.headers|{}headers[0]
+        abstract fun <get-headers>(): io.kuicksilver.http3/Http3Headers // io.kuicksilver.http3/WebTransportSession.headers.<get-headers>|<get-headers>(){}[0]
+    abstract val protocol // io.kuicksilver.http3/WebTransportSession.protocol|{}protocol[0]
+        abstract fun <get-protocol>(): kotlin/String? // io.kuicksilver.http3/WebTransportSession.protocol.<get-protocol>|<get-protocol>(){}[0]
+    abstract val sessionId // io.kuicksilver.http3/WebTransportSession.sessionId|{}sessionId[0]
+        abstract fun <get-sessionId>(): kotlin/Long // io.kuicksilver.http3/WebTransportSession.sessionId.<get-sessionId>|<get-sessionId>(){}[0]
 }
 
 final class io.kuicksilver.http3/Capsule { // io.kuicksilver.http3/Capsule|null[0]
@@ -501,6 +514,17 @@ sealed class io.kuicksilver.http3/Http3Exception : kotlinx.coroutines/CopyableTh
     }
 }
 
+sealed class io.kuicksilver.http3/WebTransportException : kotlinx.io/IOException { // io.kuicksilver.http3/WebTransportException|null[0]
+    final class Alpn : io.kuicksilver.http3/WebTransportException { // io.kuicksilver.http3/WebTransportException.Alpn|null[0]
+        constructor <init>(kotlin.collections/List<kotlin/String>, kotlin/String) // io.kuicksilver.http3/WebTransportException.Alpn.<init>|<init>(kotlin.collections.List<kotlin.String>;kotlin.String){}[0]
+
+        final val offered // io.kuicksilver.http3/WebTransportException.Alpn.offered|{}offered[0]
+            final fun <get-offered>(): kotlin.collections/List<kotlin/String> // io.kuicksilver.http3/WebTransportException.Alpn.offered.<get-offered>|<get-offered>(){}[0]
+        final val selected // io.kuicksilver.http3/WebTransportException.Alpn.selected|{}selected[0]
+            final fun <get-selected>(): kotlin/String // io.kuicksilver.http3/WebTransportException.Alpn.selected.<get-selected>|<get-selected>(){}[0]
+    }
+}
+
 final object io.kuicksilver.http3/CapsuleProtocol { // io.kuicksilver.http3/CapsuleProtocol|null[0]
     final const val DATAGRAM // io.kuicksilver.http3/CapsuleProtocol.DATAGRAM|{}DATAGRAM[0]
         final fun <get-DATAGRAM>(): kotlin/Long // io.kuicksilver.http3/CapsuleProtocol.DATAGRAM.<get-DATAGRAM>|<get-DATAGRAM>(){}[0]
@@ -565,3 +589,5 @@ final object io.kuicksilver.http3/Http3ErrorCode { // io.kuicksilver.http3/Http3
 final inline fun io.kuicksilver.http3/capsuleConfig(kotlin/Function1<io.kuicksilver.http3/CapsuleConfig.Builder, kotlin/Unit>): io.kuicksilver.http3/CapsuleConfig // io.kuicksilver.http3/capsuleConfig|capsuleConfig(kotlin.Function1<io.kuicksilver.http3.CapsuleConfig.Builder,kotlin.Unit>){}[0]
 final inline fun io.kuicksilver.http3/http3Request(kotlin/String, kotlin/String?, kotlin/String?, kotlin/Function1<io.kuicksilver.http3/Http3Request.Builder, kotlin/Unit> = ...): io.kuicksilver.http3/Http3Request // io.kuicksilver.http3/http3Request|http3Request(kotlin.String;kotlin.String?;kotlin.String?;kotlin.Function1<io.kuicksilver.http3.Http3Request.Builder,kotlin.Unit>){}[0]
 final inline fun io.kuicksilver.http3/http3Settings(kotlin/Function1<io.kuicksilver.http3/Http3Settings.Builder, kotlin/Unit>): io.kuicksilver.http3/Http3Settings // io.kuicksilver.http3/http3Settings|http3Settings(kotlin.Function1<io.kuicksilver.http3.Http3Settings.Builder,kotlin.Unit>){}[0]
+final suspend fun (io.kuicksilver.http3/Http3Connection).io.kuicksilver.http3/webTransport(io.kuicksilver.http3/Http3Request, kotlin.collections/List<kotlin/String> = ...): io.kuicksilver.http3/WebTransportSession // io.kuicksilver.http3/webTransport|webTransport@io.kuicksilver.http3.Http3Connection(io.kuicksilver.http3.Http3Request;kotlin.collections.List<kotlin.String>){}[0]
+final suspend fun (io.kuicksilver.http3/Http3ServerRequest).io.kuicksilver.http3/acceptWebTransport(io.kuicksilver.http3/Http3Headers = ..., kotlin/String? = ...): io.kuicksilver.http3/WebTransportSession // io.kuicksilver.http3/acceptWebTransport|acceptWebTransport@io.kuicksilver.http3.Http3ServerRequest(io.kuicksilver.http3.Http3Headers;kotlin.String?){}[0]

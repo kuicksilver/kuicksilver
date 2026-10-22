@@ -79,6 +79,19 @@ internal class H3Session(
 
     /** WebTransport streams to their sessions (only used with [Http3Settings.webTransport]). */
     val wt = WtStreamRouter(this)
+
+    /**
+     * Server: the request stream of the WebTransport CONNECT handed to the application and not yet over; while it is set
+     * another one is refused with H3_REQUEST_REJECTED (one session per connection, draft-ietf-webtrans-http3-16 section
+     * 5.1). Session dispatcher only.
+     */
+    var wtSessionStream: Long? = null
+
+    /** Client: a WebTransport session is being opened or is open on this connection (one at a time). Dispatcher only. */
+    var wtClientBusy = false
+
+    /** How long opening or accepting a WebTransport session waits for the peer's SETTINGS; settable by tests. */
+    var wtSettingsDeadline: Duration = WT_SETTINGS_DEADLINE
     val goAwayReceived = MutableStateFlow<Long?>(null)
     val closed = CompletableDeferred<Throwable>()
     val requests = Channel<ServerRequestImpl>(Channel.UNLIMITED)
@@ -796,6 +809,9 @@ internal class H3Session(
          */
         val CRITICAL_STREAMS_DEADLINE: Duration = 3.seconds
         val CRITICAL = StreamPriority(0)
+
+        /** A peer that speaks HTTP/3 sends SETTINGS first thing (RFC 9114 section 6.2.1): ten seconds is plenty. */
+        val WT_SETTINGS_DEADLINE: Duration = 10.seconds
         const val MAX_PRIORITY_UPDATE = 256
 
         fun transportCause(e: Throwable): QuicException? =

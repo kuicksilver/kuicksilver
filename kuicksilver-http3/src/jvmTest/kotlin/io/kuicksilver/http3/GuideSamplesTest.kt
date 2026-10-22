@@ -45,6 +45,8 @@ class GuideSamplesTest {
             "connect (client)",
             "capsules (server)",
             "capsules (client)",
+            "webtransport (server)",
+            "webtransport (client)",
         )) {
             assertTrue("guide:http3:$m" in guide, "marker $m")
         }
@@ -164,6 +166,44 @@ class GuideSamplesTest {
                 capsules.close()
                 val echoed = capsules.capsules.toList()
                 assertEquals(listOf("hello"), echoed.map { it.value.decodeToString() })
+                serving.join()
+                client.close()
+                serverConnection.close()
+                q.close()
+            }
+        }
+
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    @Test
+    fun webTransportSamples() =
+        runBlocking {
+            withTimeout(30.seconds) {
+                val q = QuicPair.open()
+                val (quicConnection, serverQuic) = q.connect()
+                val wt =
+                    http3Settings {
+                        enableConnectProtocol = true
+                        webTransport = true
+                    }
+                val serverConnection = Http3Connection.server(serverQuic, wt)
+                val client = Http3Connection.client(quicConnection, wt)
+                val serving =
+                    launch {
+                        val connection = serverConnection
+                        // guide:http3:webtransport (server)
+                        val request = connection.acceptRequest()
+                        if (request.isWebTransport && request.headers["origin"] == "https://app.example") {
+                            val session = request.acceptWebTransport(protocol = request.availableProtocols.firstOrNull())
+                            assertEquals("chat-v1", session.protocol)
+                        } else {
+                            request.respond(403).finish()
+                        }
+                    }
+                // guide:http3:webtransport (client)
+                val request = http3Request("CONNECT", "example.com", "/wt") { headers = Http3Headers.of("origin" to "https://app.example") }
+                val session = client.webTransport(request, protocols = listOf("chat-v1"))
+                println(session.protocol)
+                assertEquals("chat-v1", session.protocol)
                 serving.join()
                 client.close()
                 serverConnection.close()

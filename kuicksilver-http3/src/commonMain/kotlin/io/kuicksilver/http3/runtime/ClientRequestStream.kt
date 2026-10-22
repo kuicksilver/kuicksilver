@@ -43,11 +43,12 @@ import kotlin.coroutines.ContinuationInterceptor
 internal suspend fun H3Session.connect(
     r: Http3Request,
     protocol: String,
+    ended: CompletableDeferred<Unit>? = null,
 ): Http3Stream {
     val caller = callerDispatcher()
     var made: Http3Stream? = null // as in requestOnce: a stream set up for a caller cancelled at the return is closed
     try {
-        return connectOnDispatcher(r, protocol, caller) { made = it }
+        return connectOnDispatcher(r, protocol, caller, ended) { made = it }
     } catch (e: CancellationException) {
         made?.let {
             it.reset(Http3ErrorCode.REQUEST_CANCELLED)
@@ -61,6 +62,7 @@ private suspend fun H3Session.connectOnDispatcher(
     r: Http3Request,
     protocol: String,
     caller: ContinuationInterceptor,
+    ended: CompletableDeferred<Unit>?,
     made: (Http3Stream) -> Unit,
 ): Http3Stream =
     withContext(dispatcher) {
@@ -90,6 +92,7 @@ private suspend fun H3Session.connectOnDispatcher(
                 writer.pump.join()
             } finally {
                 exchangeEnded()
+                ended?.complete(Unit) // both directions of the tunnel are over (a WebTransport session ends here)
             }
         }
         // the datagram registration goes when the receive side ended (later datagrams are dropped, RFC 9297 section 2.1), or at a reset

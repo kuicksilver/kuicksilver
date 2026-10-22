@@ -170,6 +170,21 @@ public interface Http3ServerRequest {
     /** `:protocol` of an Extended CONNECT (RFC 9220), else null. */
     public val protocol: String?
 
+    /**
+     * A WebTransport session request: an Extended CONNECT with `:protocol` `webtransport-h3` (draft-15 and later) or
+     * `webtransport` (older drafts, what browsers send), on a connection with `Http3Settings.webTransport`. Accept it with
+     * `acceptWebTransport`, or refuse it with [respond].
+     */
+    @ExperimentalKuicksilverApi
+    public val isWebTransport: Boolean get() = false
+
+    /**
+     * The application protocols a WebTransport client offers in `WT-Available-Protocols` (draft-ietf-webtrans-http3-16
+     * section 3.3), in its order of preference; empty when it offers none or the field is not a valid list of Strings.
+     */
+    @ExperimentalKuicksilverApi
+    public val availableProtocols: List<String> get() = emptyList()
+
     /** The validated request fields, pseudo-headers excluded (RFC 9114 section 4.2). */
     public val headers: Http3Headers
 

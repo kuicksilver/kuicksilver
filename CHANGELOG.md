@@ -59,6 +59,13 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   capsules are received together with QUIC datagrams, dropped unread above `maxDatagramLength`, and sent instead of QUIC
   datagrams when HTTP/3 datagrams are unsupported (`datagramFallback`). `CapsuleProtocol` reads and writes the
   `Capsule-Protocol` header field. See `docs/guide/http3.md`, "Capsules".
+- WebTransport over HTTP/3, first part (experimental, `docs/guide/http3.md`, "WebTransport"): `Http3Settings.webTransport`
+  advertises the SETTINGS of draft-ietf-webtrans-http3-16 and of the draft-02 and draft-14 codepoints browsers still
+  use; WebTransport streams (`0x54` uni, `0x41` bidi) are routed to their session, those that arrive before it wait in
+  a bounded buffer (16 per connection, 5 s each); `Http3Connection.webTransport` opens a session (the `:protocol`
+  token follows the server's draft, `WT-Available-Protocols`/`WT-Protocol` negotiation) and
+  `Http3ServerRequest.isWebTransport`, `availableProtocols` and `acceptWebTransport` accept one. One session per
+  connection, no WebTransport flow control. Streams and datagrams of a session, close and drain follow.
 
 ### Changed
 

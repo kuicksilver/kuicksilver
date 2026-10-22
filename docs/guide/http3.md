@@ -279,3 +279,34 @@ so collect `capsules` even when only datagrams matter, or list no `knownTypes`. 
 the writer running in the connection, so bound them with `withTimeout` and `reset` the stream when it expires. Options:
 [configuration reference](configuration.md#capsuleconfig-experimental). The Capsule Protocol is only available on HTTP/3;
 HTTP/1.1 and HTTP/2 upgrades are not supported.
+
+## WebTransport (experimental)
+
+WebTransport over HTTP/3 (draft-ietf-webtrans-http3-16) is in progress for 0.3.0; what exists today is session
+establishment, under `@ExperimentalKuicksilverApi`. Both sides set `webTransport = true` in `http3Settings` (it needs
+`enableConnectProtocol` and `h3Datagram`; `Http3Endpoint.bind` refuses it when QUIC datagrams are off). Browsers do not
+speak draft-16 yet, so a server announces the SETTINGS of draft-02 (Chrome, Firefox) and draft-14 (Safari) too and
+accepts both `:protocol` tokens, `webtransport-h3` and `webtransport`; a client picks the token from the server's
+SETTINGS. A request with either token is `isWebTransport`; `acceptWebTransport` answers 200 once the client's SETTINGS
+arrived (ten seconds at most, then the request is reset with `WT_REQUIREMENTS_NOT_MET`), and a 4xx from `respond`
+refuses the session. Check the `origin` field before accepting a browser's session. The client offers application
+protocols in `WT-Available-Protocols` and the server picks one of `availableProtocols`; a choice the client did not
+offer fails `webTransport` with `WebTransportException.Alpn`.
+
+There is no WebTransport flow control, so a connection carries one session: a client refuses a second one with
+`IllegalStateException`, a server resets a second CONNECT with `H3_REQUEST_REJECTED` before the application sees it.
+WebTransport streams that arrive before their session was accepted wait, 16 per connection for up to 5 s each; the
+others are rejected with `WT_BUFFERED_STREAM_REJECTED`.
+
+```kotlin
+// guide:http3:webtransport (server)
+val request = connection.acceptRequest()
+if (request.isWebTransport && request.headers["origin"] == "https://app.example") {
+    val session = request.acceptWebTransport(protocol = request.availableProtocols.firstOrNull())
+} else request.respond(403).finish()
+
+// guide:http3:webtransport (client)
+val request = http3Request("CONNECT", "example.com", "/wt") { headers = Http3Headers.of("origin" to "https://app.example") }
+val session = client.webTransport(request, protocols = listOf("chat-v1"))
+println(session.protocol)                          // "chat-v1" when the server chose it
+```

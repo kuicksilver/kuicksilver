@@ -16,12 +16,17 @@ import io.kuicksilver.http3.Http3Headers
 import io.kuicksilver.http3.Http3ResponseWriter
 import io.kuicksilver.http3.Http3ServerRequest
 import io.kuicksilver.http3.Http3Stream
+import io.kuicksilver.http3.WebTransportSession
 import io.kuicksilver.http3.frame.FrameType
 import io.kuicksilver.http3.frame.H3ProtocolError
 import io.kuicksilver.http3.message.FieldValidator
 import io.kuicksilver.http3.message.MalformedMessage
 import io.kuicksilver.http3.message.PriorityField
 import io.kuicksilver.http3.message.PseudoHeaders
+import io.kuicksilver.http3.webtransport.WtCodes
+import io.kuicksilver.http3.webtransport.WtProtocols
+import io.kuicksilver.http3.webtransport.WtSessionImpl
+import io.kuicksilver.http3.webtransport.WtTokens
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.QuicStream
 import io.kuicksilver.quic.StreamPriority
@@ -34,6 +39,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.concurrent.atomics.incrementAndFetch
 
 /** A request stream accepted by a server: HEADERS first, then the body pump (RFC 9114 section 4.1). */
@@ -141,6 +147,15 @@ internal suspend fun handleRequestStream(
                 return@with
             }
         pendingHeaders.remove(st.id)
+        if (settings.webTransport && parsed.method == "CONNECT" && WtTokens.isWebTransport(parsed.protocol)) {
+            // one session per connection without flow control: a second is refused before the application (section 5.1)
+            if (wtSessionStream != null) {
+                abort(st, Http3ErrorCode.REQUEST_REJECTED)
+                wt.unregister(st.id)
+                return@with
+            }
+            wtSessionStream = st.id
+        }
         val req = ServerRequestImpl(this, st, parsed)
         // RFC 8470: a request that came in 0-RTT and is not replayable runs only on a completed handshake (ADR-0015)
         if (st.receivedEarly && !quic.isHandshakeComplete) {
@@ -174,8 +189,20 @@ internal suspend fun handleRequestStream(
         req.receiveEnded()
     } finally {
         pendingHeaders.remove(st.id)
-        if (!handedOff) requestDone()
+        if (!handedOff) {
+            requestDone()
+            if (wtSessionStream == st.id) wtSessionEnded(st.id, null)
+        }
     }
+}
+
+/** A WebTransport CONNECT is over (refused, ended, or never handed over): the slot is free and its streams are rejected. */
+internal fun H3Session.wtSessionEnded(
+    streamId: Long,
+    session: WtSessionImpl?,
+) {
+    if (wtSessionStream == streamId) wtSessionStream = null
+    session?.ended() ?: wt.unregister(streamId)
 }
 
 /** 431 and STOP_SENDING H3_EXCESSIVE_LOAD (RFC 9114 section 4.2.2; quic-go CVE-2025-64702). */
@@ -210,6 +237,18 @@ internal class ServerRequestImpl(
     override val path: String? = parsed.path
     override val protocol: String? = parsed.protocol
     override val headers: Http3Headers = parsed.regular
+    override val isWebTransport: Boolean =
+        session.settings.webTransport && method == "CONNECT" && WtTokens.isWebTransport(protocol)
+    override val availableProtocols: List<String> =
+        if (isWebTransport) {
+            headers.getAll(WtProtocols.AVAILABLE_FIELD).takeIf { it.isNotEmpty() }?.let { WtProtocols.parseList(it.joinToString(", ")) }
+                ?: emptyList()
+        } else {
+            emptyList()
+        }
+
+    /** The session [acceptWebTransport] made; it ends with the exchange. */
+    private var wtSession: WtSessionImpl? = null
     val bodyChannel = ByteChannel()
     override val body: ByteReadChannel = BodyReadChannel(bodyChannel)
     val trailersDeferred = CompletableDeferred<Http3Headers?>()
@@ -231,6 +270,7 @@ internal class ServerRequestImpl(
             finished = true
             session.activeServerRequests.remove(st.id)
             session.datagrams.unregister(st.id)
+            if (isWebTransport) session.wtSessionEnded(st.id, wtSession)
             session.responseHandedOver(st)
             session.requestDone()
         }
@@ -289,6 +329,52 @@ internal class ServerRequestImpl(
             localHeaders = headers,
             isClient = false,
         ) { session.scope.launch { done() } }
+    }
+
+    /** `acceptWebTransport` (draft-ietf-webtrans-http3-16 sections 3.2, 3.3, 7.1). */
+    suspend fun acceptWebTransport(
+        headers: Http3Headers,
+        protocol: String?,
+    ): WebTransportSession {
+        check(!responseStarted) { "response already started" }
+        require(protocol == null || protocol in availableProtocols) {
+            "WebTransport protocol '$protocol' is not one the client offered: $availableProtocols"
+        }
+        val ps = withTimeoutOrNull(session.wtSettingsDeadline) { session.awaitPeerSettings() }
+        val missing =
+            when {
+                ps == null -> "no SETTINGS from the client within ${session.wtSettingsDeadline}"
+                !ps.h3Datagram -> "the client did not send SETTINGS_H3_DATAGRAM=1, which WebTransport needs"
+                else -> null
+            }
+        if (missing != null) {
+            withContext(session.dispatcher) {
+                runCatching { st.reset(WtCodes.REQUIREMENTS_NOT_MET) }
+                runCatching { st.stopSending(WtCodes.REQUIREMENTS_NOT_MET) }
+                done()
+            }
+            throw Http3Exception.Settings(missing)
+        }
+        val fields =
+            buildList {
+                addAll(headers.fields)
+                if (protocol != null) add(WtProtocols.SELECTED_FIELD to WtProtocols.quote(protocol))
+                // Chrome's draft-02 client refuses a 2xx without it
+                if (this@ServerRequestImpl.headers[WtTokens.DRAFT02_REQUEST_FIELD] != null) {
+                    add(WtTokens.DRAFT02_RESPONSE_FIELD to WtTokens.DRAFT02_RESPONSE_VALUE)
+                }
+            }
+        val stream = acceptConnect(Http3Headers(fields))
+        val s = WtSessionImpl(session, stream, this.headers, protocol)
+        withContext(session.dispatcher) {
+            if (finished) {
+                s.ended()
+            } else {
+                wtSession = s
+                session.wt.register(st.id, s)
+            }
+        }
+        return s
     }
 
     /** A PRIORITY_UPDATE from the client; a priority the server chose in [respond] stays. */
