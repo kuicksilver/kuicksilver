@@ -35,7 +35,6 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
-import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
 /**
@@ -249,10 +248,16 @@ class ServerH1TimeoutTest {
     }
 
     /**
-     * A slow client's last response is not cut by the close: with a 1 s idle timeout, a client reading about 64 KiB every
-     * 10 ms through a 64 KiB receive buffer gets the whole of a 4 MiB (plain) or 8 MiB (TLS) `Connection: close`
-     * response, which takes seconds to drain after the engine has handed it all to the socket. The close bound is the
-     * stall deadline on progress (3 s here), not a fixed time. Before, the close was aborted after the idle timeout.
+     * A slow client's last response is not cut by the close: with a 1 s idle timeout, a client reading 512 KiB/s (plain) or
+     * 1 MiB/s (TLS) through a 64 KiB receive buffer gets the whole of a 4 MiB (plain) or 8 MiB (TLS) `Connection: close`
+     * response, which takes seconds to drain after the engine has handed it all to the socket (sizes and rates that fail
+     * with a close bounded by the idle timeout). The close bound is the stall deadline on progress, not a fixed time. Before,
+     * the close was aborted after the idle timeout.
+     *
+     * The stall deadline (15 s here) has to outlast the client's own buffering: ktor's socket reader takes up to 1 MiB
+     * (and the TLS layer as much again) before the client reads it, and refills only once that is nearly drained, so the
+     * server's socket takes nothing for that buffer's worth of reading, about 2 s here. With 3 s, and a reader that a
+     * pause per read made four times slower on Windows, those gaps passed the deadline and the close was aborted.
      */
     @Test fun negative_slowReaderGetsTheWholeClosingResponse() =
         serverTest {
@@ -261,7 +266,7 @@ class ServerH1TimeoutTest {
                 val (server, port) =
                     largeResponseServer(tls) {
                         connectionIdleTimeoutSeconds = 1
-                        sendStallTimeoutForTest = 3.seconds
+                        sendStallTimeoutForTest = 15.seconds
                     }
                 try {
                     val text =
@@ -269,7 +274,7 @@ class ServerH1TimeoutTest {
                             port,
                             "GET /large?mib=$mib HTTP/1.1\r\nHost: s\r\nConnection: close\r\n\r\n",
                             tls = if (tls) ServerFixtures.clientTls() else null,
-                            pause = 10.milliseconds,
+                            bytesPerSecond = if (tls) 1024L * 1024 else 512L * 1024,
                         )
                     val body = text.substringAfter("\r\n\r\n").length
                     assertEquals(mib * 1024 * 1024, body, "tls=$tls: the closing response was cut at $body bytes")

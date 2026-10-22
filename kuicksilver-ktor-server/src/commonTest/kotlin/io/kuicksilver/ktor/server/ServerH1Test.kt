@@ -38,7 +38,6 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
-import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
 class ServerH1Test {
@@ -287,11 +286,13 @@ class ServerH1Test {
                                 port,
                                 "GET / HTTP/1.1\r\nHost: server.test\r\n\r\n",
                                 tls = if (tls) ServerFixtures.clientTls() else null,
-                                pause = 5.milliseconds, // still far slower than the server writes: the drain outlasts the stop
+                                // far slower than the server writes: the response is still draining when its handler returns
+                                bytesPerSecond = 1024L * 1024,
                             )
                         }
                     inHandler.await()
-                    withTimeout(20.seconds) { server.stopSuspend(8_000, 10_000) }
+                    // a grace period well past the 4 s drain: a stop that ran out of it would cut the response by design
+                    withTimeout(30.seconds) { server.stopSuspend(20_000, 25_000) }
                     val text = response.await()
                     val body = text.substringAfter("\r\n\r\n")
                     assertEquals(size, body.length, "tls=$tls: the response in flight was cut at ${body.length} bytes")
