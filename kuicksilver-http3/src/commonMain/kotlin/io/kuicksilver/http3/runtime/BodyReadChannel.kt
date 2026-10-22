@@ -13,10 +13,15 @@ import kotlinx.io.Source
  * cannot tell from a complete body (0.2.0 release gate: a truncated download passed as complete). Here a body with a cause
  * is not at its end: `readBuffer` throws it, as does `awaitContent`, so `readAvailable` and every other ktor-io read fails
  * with the cause, the way `QuicStream.input` does. [closedCause] still tells why.
+ *
+ * [onCancel] runs when the application cancels the body: the stream is stopped there and then. The pump only notices a
+ * cancelled channel at its next write, which a peer that pauses never brings, so the stream and its flow-control credit
+ * stayed held until the peer sent more.
  */
 @OptIn(InternalAPI::class)
 internal class BodyReadChannel(
     private val inner: ByteReadChannel,
+    private val onCancel: () -> Unit = {},
 ) : ByteReadChannel {
     override val closedCause: Throwable? get() = inner.closedCause
 
@@ -29,5 +34,8 @@ internal class BodyReadChannel(
 
     override suspend fun awaitContent(min: Int): Boolean = inner.awaitContent(min)
 
-    override fun cancel(cause: Throwable?) = inner.cancel(cause)
+    override fun cancel(cause: Throwable?) {
+        inner.cancel(cause)
+        onCancel()
+    }
 }

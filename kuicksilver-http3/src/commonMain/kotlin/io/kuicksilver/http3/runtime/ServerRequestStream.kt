@@ -188,7 +188,11 @@ internal class ServerRequestImpl(
     override val protocol: String? = parsed.protocol
     override val headers: Http3Headers = parsed.regular
     val bodyChannel = ByteChannel()
-    override val body: ByteReadChannel = BodyReadChannel(bodyChannel)
+    override val body: ByteReadChannel =
+        BodyReadChannel(bodyChannel) {
+            // the application wants no more of the request: stop the client now (RFC 9114 section 4.1), not at its next DATA
+            if (!receiveEnded) runCatching { st.stopSending(Http3ErrorCode.NO_ERROR) }
+        }
     val trailersDeferred = CompletableDeferred<Http3Headers?>()
     override val trailers: Deferred<Http3Headers?> get() = trailersDeferred
 

@@ -429,7 +429,11 @@ internal class ResponseImpl(
     override val streamId: Long get() = st.id
     internal var datagramChannel: kotlinx.coroutines.channels.Channel<ByteArray>? = null
     private val bodyChannel = ByteChannel()
-    override val body: ByteReadChannel = BodyReadChannel(bodyChannel)
+    override val body: ByteReadChannel =
+        BodyReadChannel(bodyChannel) {
+            // the application wants no more of the response: stop the server now, not at its next DATA
+            if (!pump.isCompleted) runCatching { st.stopSending(Http3ErrorCode.REQUEST_CANCELLED) }
+        }
     private val trailersDeferred = CompletableDeferred<Http3Headers?>()
     override val trailers: Deferred<Http3Headers?> get() = trailersDeferred
     internal val pump: Job =
