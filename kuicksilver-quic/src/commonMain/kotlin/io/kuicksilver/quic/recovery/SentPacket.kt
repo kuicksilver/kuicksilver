@@ -145,6 +145,9 @@ internal class SentFrames {
         const val ID_NEW_CONNECTION_ID = 4
         const val ID_RETIRE_CONNECTION_ID = 5
         const val ID_STREAM_DATA_BLOCKED = 6
+
+        /** A NEW_TOKEN frame; the value is the connection's token number (a newer token replaces an older one). */
+        const val ID_NEW_TOKEN = 7
     }
 }
 

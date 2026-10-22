@@ -82,6 +82,8 @@ internal class EndpointLoop private constructor(
     private val acceptQueue: Channel<QuicConnection> = acceptChannel(pendingAccept),
     /** The client's session tickets (per endpoint, single use; ADR-0015): a group's loops share one, `connect` picks any loop. */
     internal val sessions: SessionCache = SessionCache(),
+    /** A group's Retry and NEW_TOKEN keys, shared by its loops (RFC 9000 section 8.1); null: the endpoint core makes its own. */
+    tokens: io.kuicksilver.quic.endpoint.AddressTokens? = null,
 ) : QuicEndpoint {
     /** Last-resort failures of coroutines the loop launched (none is expected to throw): counted, never handed to the thread's uncaught handler, which on Android kills the process. */
     internal val uncaughtFailures = AtomicLong(0)
@@ -91,7 +93,7 @@ internal class EndpointLoop private constructor(
         )
 
     // one unsynchronised CSPRNG stream per loop: every call into the core stays on this loop's thread
-    internal val core = EndpointCore(config, KslRandom.newSource(), index)
+    internal val core = EndpointCore(config, KslRandom.newSource(), index, tokens)
 
     /** Lifecycle counters, the connection listener and the logger of this loop (docs/guide/quic.md, "Observability"). */
     internal val observer = LoopObserver(config.logger, config.listener)
@@ -910,7 +912,8 @@ internal class EndpointLoop private constructor(
             acceptQueue: Channel<QuicConnection>,
             pendingAccept: AtomicInt,
             sessions: SessionCache,
-        ): EndpointLoop = EndpointLoop(config, io, ownDispatcher(), index, group, pendingAccept, acceptQueue, sessions)
+            tokens: io.kuicksilver.quic.endpoint.AddressTokens,
+        ): EndpointLoop = EndpointLoop(config, io, ownDispatcher(), index, group, pendingAccept, acceptQueue, sessions, tokens)
 
         /**
          * The accept queue, whose slots [pending] counts. A connection the queue cannot deliver (an `accept()` cancelled

@@ -369,6 +369,16 @@ class GuideSamplesTest {
         assertEquals(4, withLoops.loops)
     }
 
+    @Test fun newTokenSample() {
+        // guide:quic:new-token
+        val config =
+            quicEndpointConfig {
+                server = quicServerConfig(tlsServerConfig) { newTokenLifetime = 6.hours } // null: issue none
+                admission = ConnectionAdmission.AlwaysRetry // returning clients with a token skip the Retry
+            }
+        assertEquals(6.hours, config.server!!.newTokenLifetime)
+    }
+
     @Test fun keyUpdateDatagramsAndMigrationSamples(): Unit =
         runBlocking {
             val server =

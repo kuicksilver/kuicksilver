@@ -213,7 +213,8 @@ internal class PacketBuilder(
         c.testInjectCrypto?.let { if (it.first == level) return true }
         if (c.testInjectFrames.firstOrNull()?.first == level) return true
         if (space != SpaceId.Application) return false
-        return c.sendHandshakeDone || c.path.challengePending || c.paths.hasResponseFor(c.path) || c.testInjectPathChallenges > 0 ||
+        return c.sendHandshakeDone || c.sendNewToken || c.path.challengePending || c.paths.hasResponseFor(c.path) ||
+            c.testInjectPathChallenges > 0 ||
             c.testInjectPathResponse != null ||
             c.streams.hasControlFrames() ||
             c.streams.hasStreamData() ||
@@ -325,7 +326,7 @@ internal class PacketBuilder(
                     if (type == PacketType.Initial &&
                         c.role == TlsRole.Client
                     ) {
-                        (c.retryToken ?: c.testInitialToken)
+                        (c.retryToken ?: c.initialToken)
                     } else {
                         null
                     },
@@ -538,6 +539,17 @@ internal class PacketBuilder(
                         frames.flags = frames.flags or SentFrames.HANDSHAKE_DONE
                         c.sendHandshakeDone =
                             false
+                        c.handshakeDoneSent = true
+                        ackEliciting = true
+                    }
+                    // RFC 9000 section 19.7: the token travels in a 1-RTT packet, here after HANDSHAKE_DONE (the client confirms first)
+                    val token = c.newToken
+                    if (c.sendNewToken && token != null && w.remaining >= 1 + 2 + token.size) {
+                        FrameEncoder.newToken(w, token)
+                        frames.addId(SentFrames.ID_NEW_TOKEN, c.newTokenSeq)
+                        c.sendNewToken = false
+                        if (!c.handshakeDoneSent) c.newTokenAfterHandshakeDoneForTest = false
+                        c.newTokenSendsForTest.recordForTest(token)
                         ackEliciting = true
                     }
                     if (c.testInjectHandshakeDone &&

@@ -256,7 +256,7 @@ class AdmissionTest {
         val p = EndpointPair { admission = rec }
         try {
             val c = p.connect()
-            c.testInitialToken = ByteArray(50) { 0x7f }
+            c.initialToken = ByteArray(50) { 0x7f }
             val b = PacketBatch(4)
             val initial =
                 try {

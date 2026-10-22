@@ -20,6 +20,8 @@ import kotlin.concurrent.atomics.AtomicReference
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.random.Random
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.days
+import kotlin.time.Duration.Companion.hours
 
 /**
  * Client side of a connection: TLS plus transport settings. [Builder.build] throws `TlsException.Config` for a TLS config QUIC cannot use
@@ -78,6 +80,9 @@ public class QuicServerConfig private constructor(
     @property:ExperimentalKuicksilverApi
     public val earlyData: Boolean,
     private val earlyDataContext: ByteArray?,
+    /** How long a NEW_TOKEN token this server issues stays valid, or null when it issues none; see [Builder.newTokenLifetime]. */
+    @property:ExperimentalKuicksilverApi
+    public val newTokenLifetime: Duration?,
 ) {
     private val early = AtomicReference<ServerEarlyData?>(null)
 
@@ -130,13 +135,29 @@ public class QuicServerConfig private constructor(
         @ExperimentalKuicksilverApi
         public var earlyDataContext: ByteArray? = null
 
+        /**
+         * Default 24 hours; null issues none. Once a connection's handshake is confirmed the server sends the client one NEW_TOKEN
+         * token (RFC 9000 section 8.1.3), and another after the client moved to a new IP address (at most four per connection). A
+         * client that presents one on its next connection from the same IP address, within this lifetime and for the first time,
+         * counts as validated ([ConnectionAttempt.addressValidated]): no Retry under [ConnectionAdmission.AlwaysRetry] and no
+         * anti-amplification limit on the first flight. A token that does not validate is treated as absent, never refused.
+         * Tokens are sealed with keys that live only in this process (rotated hourly); at most 7 days.
+         */
+        @ExperimentalKuicksilverApi
+        public var newTokenLifetime: Duration? = 24.hours
+
         /** A [QuicServerConfig]; IllegalArgumentException for a client [tls], `TlsException.Config` for one QUIC cannot use. */
         public fun build(): QuicServerConfig {
             require(tls.role == TlsRole.Server) { "server config needs a server TlsConfig" }
             tls.checkQuicCompatible()
             require(!earlyData || tls.clientAuth == ClientAuth.None) { "earlyData cannot be combined with client certificates" }
             require((earlyDataContext?.size ?: 0) <= 256) { "earlyDataContext is at most 256 bytes" }
-            return QuicServerConfig(tls, quic, earlyData, earlyDataContext?.copyOf())
+            newTokenLifetime?.let {
+                require(
+                    it.isPositive() && it <= 7.days,
+                ) { "newTokenLifetime must be positive and at most 7 days, or null" }
+            }
+            return QuicServerConfig(tls, quic, earlyData, earlyDataContext?.copyOf(), newTokenLifetime)
         }
     }
 }

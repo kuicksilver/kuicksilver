@@ -103,6 +103,15 @@ internal object FrameEncoder {
 
     fun newToken(
         w: WireWriter,
+        token: ByteArray,
+    ) {
+        w.u8(FrameType.NEW_TOKEN.toInt())
+        w.varint(token.size.toLong())
+        w.bytes(token)
+    }
+
+    fun newToken(
+        w: WireWriter,
         token: PacketBuffer,
         off: Int,
         len: Int,

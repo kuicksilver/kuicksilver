@@ -6,6 +6,7 @@ import io.kuicksilver.quic.TimeMark
 import kotlin.concurrent.atomics.AtomicInt
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.random.Random
+import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 
 /**
@@ -25,10 +26,16 @@ internal class ZeroRttReplayRegister(
     private val stripeCount: Int = STRIPES,
     /** Slots per half (a power of two). */
     private val slots: Int = SLOTS,
+    /**
+     * One half of the window: an entry is remembered between one and two of these. [HALF_SPAN] for 0-RTT tickets; the lifetime of a
+     * NEW_TOKEN token for [AddressTokens], so a token is never forgotten while it could still be shown.
+     */
+    private val halfSpan: Duration = HALF_SPAN,
 ) {
     init {
         require(stripeCount > 0 && stripeCount and (stripeCount - 1) == 0 && stripeCount <= 64) { "stripes: a power of two up to 64" }
         require(slots >= 4 && slots and (slots - 1) == 0) { "slots: a power of two of at least 4" }
+        require(halfSpan.isPositive()) { "halfSpan must be positive" }
     }
 
     /** Fingerprints (live plus tombstones) a half holds before it compacts or fails closed: 3/4 of [slots]. */
@@ -60,7 +67,7 @@ internal class ZeroRttReplayRegister(
      * rotates only on an admission, so a quiet stripe's count is stale once two halves passed: it counts as zero.
      */
     fun liveEntries(now: TimeMark): Int =
-        stripes.sumOf { s -> locked(s) { if (s.start == TimeMark.NEVER || now >= s.start + HALF_SPAN * 2) 0 else s.live } }
+        stripes.sumOf { s -> locked(s) { if (s.start == TimeMark.NEVER || now >= s.start + halfSpan * 2) 0 else s.live } }
 
     /** Bytes of fingerprint storage. */
     val memoryBytes: Long get() = stripeCount.toLong() * slots * 2 * 8
@@ -92,8 +99,8 @@ internal class ZeroRttReplayRegister(
             s.start = now
             return
         }
-        if (now < s.start + HALF_SPAN) return
-        if (now < s.start + HALF_SPAN * 2) {
+        if (now < s.start + halfSpan) return
+        if (now < s.start + halfSpan * 2) {
             // one half passed: the current half becomes the previous one, the oldest is reused for the new half
             val oldest = s.previous
             s.previous = s.current
@@ -126,9 +133,9 @@ internal class ZeroRttReplayRegister(
     /**
      * True while a backward wall-clock step could make a forgotten hello fresh again. OpenSSL judges a ticket's age by the
      * wall clock and accepts a hello within 10 s of the age it passed with the first time (age in [claimed - 1 s,
-     * claimed + 9 s]); the register forgets by the monotonic clock after at least [HALF_SPAN]. Without a step, a forgotten
+     * claimed + 9 s]); the register forgets by the monotonic clock after at least [halfSpan]. Without a step, a forgotten
      * hello is stale for good; after the wall clock fell back by more than [WALL_SLACK] against the monotonic one, every
-     * hello this stripe admitted could still be fresh until the wall clock passes the latest of them plus [HALF_SPAN], so
+     * hello this stripe admitted could still be fresh until the wall clock passes the latest of them plus [halfSpan], so
      * the stripe refuses early data until then and then takes the new offset as its baseline.
      */
     private fun wallClockStepped(
@@ -146,7 +153,7 @@ internal class ZeroRttReplayRegister(
             if (offset > s.offsetHigh) s.offsetHigh = offset
             return false
         }
-        if (wallMillis <= s.wallHigh + HALF_SPAN.inWholeMilliseconds) return true
+        if (wallMillis <= s.wallHigh + halfSpan.inWholeMilliseconds) return true
         s.offsetHigh = offset
         return false
     }

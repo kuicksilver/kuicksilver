@@ -214,6 +214,7 @@ public class Http3Endpoint private constructor(
                             .Builder(s.tls)
                             .apply {
                                 this.quic = quic
+                                newTokenLifetime = s.newTokenLifetime
                                 if (s.earlyData) {
                                     earlyData = true
                                     earlyDataContext = settings.earlyDataContext()

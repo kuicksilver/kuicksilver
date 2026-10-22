@@ -248,6 +248,7 @@ internal class QlogWriter(
                     SentFrames.ID_STOP_SENDING -> "stop_sending"
                     SentFrames.ID_NEW_CONNECTION_ID -> "new_connection_id"
                     SentFrames.ID_RETIRE_CONNECTION_ID -> "retire_connection_id"
+                    SentFrames.ID_NEW_TOKEN -> "new_token"
                     else -> "stream_data_blocked"
                 },
             )

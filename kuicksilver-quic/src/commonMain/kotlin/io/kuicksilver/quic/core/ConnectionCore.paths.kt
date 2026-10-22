@@ -426,6 +426,8 @@ internal fun ConnectionCore.onPathResponse(data: Long) {
             // client probes to migrate there next, and the switch must not need another spare ID (RFC 9000 section 9.5)
             if (p !== paths.active && (role == TlsRole.Client || !p.peerProbed)) releasePathCid(p)
             events += ConnectionEvent.PathValidated(p.id)
+            // a client validated on a new IP gets a token for it (ngtcp2's NGTCP2_PATH_VALIDATION_FLAG_NEW_TOKEN)
+            if (role == TlsRole.Server && p === paths.active) issueNewToken(p.remote)
             return
         }
     }

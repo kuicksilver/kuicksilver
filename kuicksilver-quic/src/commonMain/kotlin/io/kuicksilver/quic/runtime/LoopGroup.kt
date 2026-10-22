@@ -20,7 +20,7 @@ import kotlin.concurrent.atomics.incrementAndFetch
 
 /**
  * `QuicEndpointConfig.loops` endpoint loops on one port (docs/guide/quic.md, "Several loops on one port"): each has its own accelerated socket bound with
- * SO_REUSEPORT, its own dispatcher, [io.kuicksilver.quic.EndpointCore] (so its own Retry and reset keys) and the routing
+ * SO_REUSEPORT, its own dispatcher, [io.kuicksilver.quic.EndpointCore] (so its own reset key; the Retry and NEW_TOKEN keys are shared) and the routing
  * byte `index` in every connection ID it issues. The kernel hashes a client's flow onto one socket; a datagram that lands
  * elsewhere after a rebind is copied to its owner ([EndpointLoop.forwarded]), never answered by a stranger (threat-model
  * 3.4). Accepted connections of every loop reach one `accept()` queue; `connect` picks loops round-robin, and the client
@@ -193,7 +193,22 @@ internal class LoopGroup private constructor(
             afterBuild: suspend () -> Unit = {},
         ): LoopGroup {
             val g = LoopGroup(config)
-            val loops = ios.mapIndexed { i, io -> EndpointLoop.inGroup(config, io, i, g, g.acceptQueue, g.pendingAccept, g.sessions) }
+            // one set of Retry and NEW_TOKEN keys for every loop: the kernel may hash a client's next connection onto another
+            // socket; each loop's endpoint core is an owner and the last one to close frees the keys
+            val tokens =
+                io.kuicksilver.quic.endpoint.AddressTokens(
+                    config.crypto,
+                    KslRandom.newSource(),
+                    newTokenLifetime = config.server!!.newTokenLifetime,
+                    owners = ios.size,
+                )
+            val loops =
+                ios.mapIndexed {
+                    i,
+                    io,
+                    ->
+                    EndpointLoop.inGroup(config, io, i, g, g.acceptQueue, g.pendingAccept, g.sessions, tokens)
+                }
             afterBuild()
             g.loops = loops
             for (l in loops) l.start()

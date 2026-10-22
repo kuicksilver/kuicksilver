@@ -27,6 +27,7 @@ import io.kuicksilver.tls.QuicCrypto
 import kotlinx.coroutines.runBlocking
 import kotlin.random.Random
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.milliseconds
 
 /** Two endpoint cores joined in memory under virtual time (10 ms per step, one-step one-way delay); datagram hooks for tests. */
@@ -39,6 +40,8 @@ internal class EndpointPair(
     serverRandom: Random = Random(serverSeed),
     clientRandom: Random = Random(6),
     serverEarlyData: Boolean = false,
+    newTokenLifetime: Duration? = 24.hours,
+    sharedTokens: AddressTokens? = null,
     configure: QuicEndpointConfig.Builder.() -> Unit = {},
 ) {
     val clientAddr: InetSocketAddress = InetSocketAddress("10.0.0.1", 40000)
@@ -55,12 +58,14 @@ internal class EndpointPair(
                             .apply {
                                 quic = serverQuic
                                 earlyData = serverEarlyData
+                                this.newTokenLifetime = newTokenLifetime
                             }.build()
                     ; this.crypto = crypto
                     configure()
                 }.build(),
             serverRandom,
             loopIndex,
+            sharedTokens,
         )
     val client: EndpointCore = EndpointCore(QuicEndpointConfig.Builder().apply { this.crypto = crypto }.build(), clientRandom)
     val events: HashMap<ConnectionCore, MutableList<ConnectionEvent>> = HashMap()

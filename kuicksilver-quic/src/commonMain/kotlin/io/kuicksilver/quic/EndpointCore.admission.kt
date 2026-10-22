@@ -32,15 +32,20 @@ internal fun EndpointCore.admitOne(
     val data = e.buffer
     val length = e.length
     val from = e.from
-    val server = config.server!!
     if (!PacketHeaderCodec.parse(data, 0, length, cidLength, hv) || hv.type != PacketType.Initial) return false
     registry.lookup(data, hv.dcidOff, hv.dcidLen)?.let {
         deliver(it, data, length, from, e.ecn, now)
         return false
     } // the second datagram of a flight whose first one just became a connection
     val profile = VersionProfile.of(hv.version) ?: return false
-    val tokens = retryTokens!!
-    val check = if (hv.tokenLen == 0) TokenCheck.Absent else tokens.check(data, hv.tokenOff, hv.tokenLen, from, hv.version, now)
+    val tokens = addressTokens!!
+    var check = if (hv.tokenLen == 0) TokenCheck.Absent else tokens.check(data, hv.tokenOff, hv.tokenLen, from, hv.version, now)
+    if (check == TokenCheck.NewTokenRejected) {
+        // RFC 9000 section 8.1.3: a NEW_TOKEN token that does not validate is treated as no token, never refused (the client may
+        // hold a stale one, or one for another server behind the same name)
+        newTokensRejected++
+        check = TokenCheck.Absent
+    }
     if (check == TokenCheck.Invalid || check == TokenCheck.Expired) { // RFC 9000 section 8.1.3: refuse with INVALID_TOKEN, statelessly
         invalidTokens++
         statelessInitialClose(data, profile, from, TransportError.INVALID_TOKEN, now)
@@ -81,7 +86,38 @@ internal fun EndpointCore.admitOne(
             return false
         }
     }
-    val validated = check is TokenCheck.Valid
+    // the replay register last, after the hard limits: a token is spent only by an attempt the policy gets to see (RFC 9000 section 8.1.4)
+    val newTokenNonce = (check as? TokenCheck.NewTokenValid)?.nonce
+    if (newTokenNonce != null) {
+        if (tokens.admitNewToken(newTokenNonce, now)) {
+            newTokensAccepted++
+        } else {
+            newTokensRejected++ // a replay, or the register is full: fail closed, as a client without a token
+            check = TokenCheck.Absent
+        }
+    }
+    val created = admitValidated(e, data, length, from, now, inflight, handshakeBuffer, profile, check, fromIp, ipKey)
+    if (!created && check is TokenCheck.NewTokenValid) tokens.releaseNewToken(check.nonce) // the client may show it again
+    return created
+}
+
+/** The policy's decision and the connection for an attempt past the token check and the hard limits; true when a connection was created. */
+private fun EndpointCore.admitValidated(
+    e: AdmissionQueue.Entry,
+    data: io.kuicksilver.native.PacketBuffer,
+    length: Int,
+    from: InetSocketAddress,
+    now: TimeMark,
+    inflight: Int,
+    handshakeBuffer: Long,
+    profile: VersionProfile,
+    check: TokenCheck,
+    fromIp: Int,
+    ipKey: Any,
+): Boolean {
+    val server = config.server!!
+    val tokens = addressTokens!!
+    val validated = check is TokenCheck.Valid || check is TokenCheck.NewTokenValid
     val decision =
         try {
             config.admission.admit(ConnectionAttempt(from, inflight, connections.size, fromIp, handshakeBuffer, validated))
@@ -108,11 +144,13 @@ internal fun EndpointCore.admitOne(
         }
 
         AdmissionDecision.Retry -> {
-            if (validated) {
+            // RFC 9000 section 8.1.2: never a second Retry for a client that answered one (quinn CVE-2024-45311); a NEW_TOKEN
+            // holder may get one
+            if (check is TokenCheck.Valid) {
                 admissionContractViolations++
                 initialsDropped++
                 return false
-            } // RFC 9000 section 8.1.2: never a second Retry for a validated client (quinn CVE-2024-45311)
+            }
             if (!limiter.allow(from, now)) {
                 statelessRateLimited++
                 droppedStateless++
@@ -156,8 +194,15 @@ internal fun EndpointCore.admitOne(
             originalDcid,
             retryScid,
             serverEarly,
+            tokenValidated = check is TokenCheck.NewTokenValid,
         )
             ?: return false
+    if (tokens.newTokenLifetime != null) {
+        core.newTokenMinter = { client ->
+            newTokensIssued++
+            tokens.mintNewToken(client, core.now)
+        }
+    }
     if (testForgeRetryScidInTp && retryScid != null) {
         core.testForgeRetryScid = true
         core.refreshLocalTp()

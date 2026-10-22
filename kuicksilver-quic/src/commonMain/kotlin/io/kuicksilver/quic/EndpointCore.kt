@@ -14,9 +14,9 @@ import io.kuicksilver.quic.core.failInternal
 import io.kuicksilver.quic.core.refreshLocalTp
 import io.kuicksilver.quic.core.release
 import io.kuicksilver.quic.core.useTicket
+import io.kuicksilver.quic.endpoint.AddressTokens
 import io.kuicksilver.quic.endpoint.AdmissionQueue
 import io.kuicksilver.quic.endpoint.ConnectionIdRegistry
-import io.kuicksilver.quic.endpoint.RetryTokens
 import io.kuicksilver.quic.endpoint.ServerCidFormat
 import io.kuicksilver.quic.endpoint.StatelessClose
 import io.kuicksilver.quic.endpoint.StatelessRateLimiter
@@ -49,11 +49,16 @@ import kotlin.time.Duration.Companion.seconds
  * @property loopIndex This endpoint's loop in a group (0 for a single loop): the routing byte of every server connection ID it issues.
  */
 @ExperimentalKuicksilverApi
-public class EndpointCore(
+public class EndpointCore internal constructor(
     public val config: QuicEndpointConfig,
     internal val random: Random,
-    public val loopIndex: Int = 0,
+    public val loopIndex: Int,
+    /** The address tokens of a loop group, shared by its loops (this endpoint is one owner); null makes this endpoint's own. */
+    sharedTokens: AddressTokens?,
 ) {
+    /** An endpoint with its own Retry, NEW_TOKEN and reset keys; [loopIndex] is its routing byte in a group (0 alone). */
+    public constructor(config: QuicEndpointConfig, random: Random, loopIndex: Int = 0) : this(config, random, loopIndex, null)
+
     // [random] must be a CSPRNG in production (the runtime passes a per-loop `RAND_bytes` stream): every connection of this endpoint draws its
     // connection IDs, PATH_CHALLENGE data and skipped packet numbers from it directly; tests pass a seeded Random to stay deterministic
     internal val registry = ConnectionIdRegistry(random.nextLong(), random.nextLong())
@@ -72,7 +77,14 @@ public class EndpointCore(
     /** One reset key per endpoint (loop), random for the life of the process (RFC 9000 section 10.3; ADR-0003). */
     internal val resetKey: ResetKey = config.crypto.newResetKey()
     internal val limiter = StatelessRateLimiter(config.statelessPerAddressPerSecond, config.statelessTotalPerSecond)
-    internal val retryTokens: RetryTokens? = if (config.server != null) RetryTokens(config.crypto, random) else null
+
+    /** Retry and NEW_TOKEN tokens (RFC 9000 section 8.1): a group's, or this endpoint's own; null without a server. */
+    internal val addressTokens: AddressTokens? =
+        if (config.server == null) {
+            null
+        } else {
+            sharedTokens ?: AddressTokens(config.crypto, random, newTokenLifetime = config.server.newTokenLifetime)
+        }
     internal val queue: AdmissionQueue? = if (config.server != null) AdmissionQueue(config.initialQueueCap) else null
 
     /** The server's 0-RTT setup (configuration digest and the replay register shared by every loop), or null without 0-RTT. */
@@ -147,6 +159,9 @@ public class EndpointCore(
     internal var statelessRateLimited = 0L
     internal var retriesSent = 0L
     internal var invalidTokens = 0L
+    internal var newTokensIssued = 0L
+    internal var newTokensAccepted = 0L
+    internal var newTokensRejected = 0L
     internal var initialsDropped = 0L
 
     /** Client Initials answered with CONNECTION_REFUSED because the accept queue was full (RFC 9000 section 5.2.2). */
@@ -211,6 +226,9 @@ public class EndpointCore(
             datagramsDroppedQueue = droppedQueue,
             datagramsDroppedUndecryptable = droppedUndecryptable,
             datagramsDroppedStateless = droppedStateless,
+            newTokensIssued = newTokensIssued,
+            newTokensAccepted = newTokensAccepted,
+            newTokensRejected = newTokensRejected,
         )
 
     /** A new client connection to [remote]; its first [ConnectionCore.poll] produces the Initial datagrams. */
@@ -547,6 +565,8 @@ public class EndpointCore(
         const val RTT_MEMORY = 256
     }
 
+    private var tokensReleased = false
+
     /** Frees the queue, the stateless buffer and every connection's native resources. */
     public fun close() {
         for (c in connections) c.release()
@@ -556,7 +576,8 @@ public class EndpointCore(
         registry.clear()
         vnBuffer.close()
         resetKey.close()
-        retryTokens?.close()
+        if (!tokensReleased) addressTokens?.close() // one release per owner: a group's other loops may still use the keys
+        tokensReleased = true
         queue?.close()
     }
 

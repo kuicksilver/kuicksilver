@@ -14,6 +14,14 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Added
 
+- QUIC: the server issues NEW_TOKEN address-validation tokens (RFC 9000 section 8.1.3; experimental
+  `QuicServerConfig.newTokenLifetime`, 24 hours by default, null issues none). One token after the handshake is confirmed
+  and one after the client is validated on a new IP address, at most four per connection; a client that presents one on a
+  later connection from the same IP arrives validated (`ConnectionAttempt.addressValidated`): no Retry under
+  `AlwaysRetry` and no anti-amplification limit. Tokens are bound to the IP (not the port), sealed under hourly keys shared
+  by the endpoint's loops and kept for the lifetime, and accepted once (a replay register); a token that does not
+  validate is treated as absent, never refused. New counters `EndpointStats.newTokensIssued`, `newTokensAccepted` and
+  `newTokensRejected`.
 - Supply chain (`docs/release.md`, "Supply chain: SBOM and provenance"): a CycloneDX 1.6 SBOM of every publication
   (64 documents: each platform publication, each module, the BOM), with the statically linked OpenSSL (version, tarball
   SHA-256, CPE, configure flags) and the `ksl` shim as components, checked against the CycloneDX schema; and an in-toto

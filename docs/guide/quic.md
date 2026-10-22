@@ -567,12 +567,33 @@ val config = quicEndpointConfig {
 
 The default policy asks for a Retry when the attempt would be more than `maxInflightHandshakes` concurrent handshakes
 or the unfinished handshakes already hold more than `maxHandshakeBufferBytes`; `ConnectionAdmission.AlwaysRetry` makes
-every unvalidated client prove its address first. A `Retry` for an attempt whose token already validated the address is
-a contract violation: the endpoint drops the Initial and counts it in `EndpointStats.admissionContractViolations`
+every unvalidated client prove its address first. A `Retry` for an attempt whose Retry token already validated the
+address is a contract violation: the endpoint drops the Initial and counts it in `EndpointStats.admissionContractViolations`
 instead of sending a second Retry. An exception out of `admit` is treated as `Drop` and counted the same way. Stateless
 answers (Retry, Version Negotiation, Stateless Reset, INVALID_TOKEN close) are rate limited per address
 (`statelessPerAddressPerSecond`, 8) and in total (`statelessTotalPerSecond`, 1000). `QuicEndpoint.stats` exposes every
 counter, summed over the loops (see [Observability](#observability)).
+
+**NEW_TOKEN.** Once a connection's handshake is confirmed, the server sends the client one address-validation token
+(RFC 9000 section 8.1.3), and one more each time the client is validated on a new IP address, at most four per
+connection. A client that shows such a token on a later connection from the same IP address arrives as a validated
+`ConnectionAttempt` (`addressValidated = true`): `AlwaysRetry` lets it in without a Retry, and the server's first flight
+is not held to three times what the client sent. The token is `0x02 | nonce | AEAD(issuedAt)` under keys that live only
+in this process (shared by every loop, rotated hourly), bound to the client's IP address but not its port, valid for
+`QuicServerConfig.newTokenLifetime` (24 hours; null issues none) and accepted once: a register of the nonces it saw
+(1 MiB, entries kept for the whole lifetime) treats a second use as no token, and so does a full register. A token
+that does not validate (forged, expired, another IP, used before) is never refused with INVALID_TOKEN; the Initial is
+treated as one without a token, and `newTokensRejected` counts it. A policy may still answer a token holder with a
+Retry.
+
+```kotlin
+// guide:quic:new-token
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+val config = quicEndpointConfig {
+    server = quicServerConfig(tlsServerConfig) { newTokenLifetime = 6.hours }   // null: issue none
+    admission = ConnectionAdmission.AlwaysRetry   // returning clients with a token skip the Retry
+}
+```
 
 ## Datagrams (RFC 9221)
 
@@ -669,6 +690,7 @@ few seconds from any thread (fields are read without a lock and may lag the loop
 | 0-RTT | `zeroRttOffered`, `zeroRttAccepted`, `zeroRttRejected` |
 | Datagrams | `datagramsReceived`, `datagramsSent`, `datagramsDroppedSocket`, `datagramsDroppedQueue`, `datagramsDroppedUndecryptable`, `datagramsDroppedStateless` |
 | Stateless work | `initialsDropped` (new Initials discarded: a full Initial queue, `maxConnections`, `maxConnectionsPerIp`, reflective source ports, admission `Drop`), `retriesSent`, `invalidTokens`, `versionNegotiations`, `statelessResets`, `statelessRateLimited` |
+| Address tokens | `newTokensIssued`, `newTokensAccepted`, `newTokensRejected` (NEW_TOKEN; see [Admission and endpoint limits](#admission-and-endpoint-limits)) |
 | Paths | `pathValidations`, `pathValidationFailures` |
 | Internal failures | `uncaughtFailures`, `sendFailures`, `listenerFailures`, `admissionContractViolations` |
 

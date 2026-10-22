@@ -215,6 +215,22 @@ internal fun ConnectionCore.confirmHandshake() {
         // until answered or settled
     }
     discardHandshakeKeysAfterPacket = true
+    if (role == TlsRole.Server) issueNewToken(paths.active.remote)
+}
+
+/**
+ * Server: queues a NEW_TOKEN token for [client]'s IP (RFC 9000 sections 8.1.3 and 19.7) once the handshake is confirmed, unless one
+ * went to that IP already on this connection or [ConnectionCore.MAX_NEW_TOKENS] did; a newer token replaces an unacknowledged older one.
+ */
+internal fun ConnectionCore.issueNewToken(client: io.ktor.network.sockets.InetSocketAddress) {
+    val mint = newTokenMinter ?: return
+    if (handshakeConfirmedAt == null || newTokenIps.size >= ConnectionCore.MAX_NEW_TOKENS) return
+    val ip = AddressClass.ipBytes(client)
+    if (newTokenIps.any { it.contentEquals(ip) }) return
+    newTokenIps += ip
+    newToken = mint(client)
+    newTokenSeq++
+    sendNewToken = true
 }
 
 /** Server side of a compatible upgrade (RFC 9368 section 2.3): send everything in [chosen] while still reading the client's Original Version Initials. */

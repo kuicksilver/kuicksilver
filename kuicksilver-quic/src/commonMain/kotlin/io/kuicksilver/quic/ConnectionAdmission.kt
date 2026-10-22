@@ -22,7 +22,11 @@ public class ConnectionAttempt internal constructor(
     public val connectionsFromAddress: Int,
     /** Bytes buffered by the unfinished handshakes: undecryptable packets held for later keys and out-of-order CRYPTO data. */
     public val handshakeBufferBytes: Long,
-    /** True when the Initial carried a Retry token this endpoint minted for this address (RFC 9000 section 8.1.2); a [AdmissionDecision.Retry] for such an attempt is a contract violation and is dropped. */
+    /**
+     * True when the Initial carried a Retry token or a NEW_TOKEN token this endpoint minted for this address (RFC 9000 sections
+     * 8.1.2 and 8.1.3). A [AdmissionDecision.Retry] for an attempt that answered a Retry is a contract violation and is dropped;
+     * one for a NEW_TOKEN holder is sent (the client then shows the Retry token instead).
+     */
     public val addressValidated: Boolean,
 ) {
     override fun toString(): String =
@@ -36,7 +40,10 @@ public sealed interface AdmissionDecision {
         override fun toString(): String = "Allow"
     }
 
-    /** Answer with a Retry packet so the client proves its address first (RFC 9000 section 8.1.2); only for an attempt whose address is not validated yet. */
+    /**
+     * Answer with a Retry packet so the client proves its address first (RFC 9000 section 8.1.2); never for an attempt that
+     * already answered one (its Retry token validated the address).
+     */
     public object Retry : AdmissionDecision {
         override fun toString(): String = "Retry"
     }

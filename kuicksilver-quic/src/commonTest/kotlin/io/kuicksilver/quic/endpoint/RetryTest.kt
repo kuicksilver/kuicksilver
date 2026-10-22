@@ -492,7 +492,7 @@ class RetryTest {
             assertTrue(p.confirmed(c1), "${p.closed(c1)}")
             val stolen = assertNotNull(token)
             val c2 = p.connect()
-            c2.testInitialToken = stolen // a fresh connection: its DCID is not the Retry SCID the token was minted for
+            c2.initialToken = stolen // a fresh connection: its DCID is not the Retry SCID the token was minted for
             assertTrue(p.runUntil { p.closed(c2) != null }, "the second client is told")
             val r = p.closed(c2)
             assertIs<QuicException.ConnectionLost.TransportClosed>(r)
@@ -504,7 +504,7 @@ class RetryTest {
     }
 
     @Test fun tokenSurvivesOneRotationNotTwo() {
-        val tokens = RetryTokens(KslQuicCrypto, Random(1), lifetime = 10.hours, rotateEvery = 1.hours)
+        val tokens = AddressTokens(KslQuicCrypto, Random(1), retryLifetime = 10.hours, rotateEvery = 1.hours)
         val client = InetSocketAddress("10.0.0.1", 40000)
         val odcid = ConnectionId(ByteArray(8) { 1 })
         val retryScid = ConnectionId(ByteArray(8) { 2 })
@@ -603,7 +603,7 @@ class RetryTest {
         }
         try {
             val c = p.connect(quic = io.kuicksilver.quic.quicConfig { })
-            c.testInitialToken = ByteArray(50) { 0x02 } // type 0x02: not one of our Retry tokens
+            c.initialToken = ByteArray(50) { 0x02 } // type 0x02: not one of our Retry tokens
             assertTrue(p.confirmed(c), "${p.closed(c)}")
             val s = p.server.connections().single()
             assertTrue(s.addressValidatedByHandshakeForTest, "the address was validated by the Handshake packet, not by the token")

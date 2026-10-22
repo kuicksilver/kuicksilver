@@ -23,7 +23,7 @@ public class EndpointStats internal constructor(
     public val statelessResets: Long,
     /** Stateless answers (Retry, Version Negotiation, Stateless Reset, INVALID_TOKEN or CONNECTION_REFUSED close) withheld by the per-address or total rate limit. */
     public val statelessRateLimited: Long,
-    /** [AdmissionDecision.Retry] returned for an already validated address, or an exception out of [ConnectionAdmission.admit]; each one was dropped. */
+    /** [AdmissionDecision.Retry] returned for an attempt whose Retry token validated the address, or an exception out of [ConnectionAdmission.admit]; each one was dropped. */
     public val admissionContractViolations: Long,
     /**
      * Connections this endpoint created so far: client connections opened, plus server connections admitted whose first
@@ -106,6 +106,15 @@ public class EndpointStats internal constructor(
     /** Exceptions out of a [ConnectionListener] callback or a [KuicksilverLogger]. */
     @property:ExperimentalKuicksilverApi
     public val listenerFailures: Long = 0,
+    /** NEW_TOKEN tokens this server issued (RFC 9000 section 8.1.3; `QuicServerConfig.newTokenLifetime`). */
+    @property:ExperimentalKuicksilverApi
+    public val newTokensIssued: Long = 0,
+    /** Client Initials whose NEW_TOKEN token validated the client's address. */
+    @property:ExperimentalKuicksilverApi
+    public val newTokensAccepted: Long = 0,
+    /** Client Initials with a NEW_TOKEN-type token that did not validate (forged, expired, another IP, replayed): treated as no token. */
+    @property:ExperimentalKuicksilverApi
+    public val newTokensRejected: Long = 0,
 ) {
     /** Field by field sum: a loop group's endpoint statistics. */
     internal operator fun plus(o: EndpointStats): EndpointStats =
@@ -142,6 +151,9 @@ public class EndpointStats internal constructor(
             uncaughtFailures + o.uncaughtFailures,
             sendFailures + o.sendFailures,
             listenerFailures + o.listenerFailures,
+            newTokensIssued + o.newTokensIssued,
+            newTokensAccepted + o.newTokensAccepted,
+            newTokensRejected + o.newTokensRejected,
         )
 
     @OptIn(ExperimentalKuicksilverApi::class)
@@ -158,5 +170,6 @@ public class EndpointStats internal constructor(
             "datagramsSent=$datagramsSent, datagramsDroppedSocket=$datagramsDroppedSocket, datagramsDroppedQueue=$datagramsDroppedQueue, " +
             "datagramsDroppedUndecryptable=$datagramsDroppedUndecryptable, datagramsDroppedStateless=$datagramsDroppedStateless, " +
             "pathValidations=$pathValidations, pathValidationFailures=$pathValidationFailures, uncaughtFailures=$uncaughtFailures, " +
-            "sendFailures=$sendFailures, listenerFailures=$listenerFailures)"
+            "sendFailures=$sendFailures, listenerFailures=$listenerFailures, newTokensIssued=$newTokensIssued, " +
+            "newTokensAccepted=$newTokensAccepted, newTokensRejected=$newTokensRejected)"
 }

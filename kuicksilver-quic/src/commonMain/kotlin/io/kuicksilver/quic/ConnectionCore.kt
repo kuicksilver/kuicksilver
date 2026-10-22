@@ -131,9 +131,27 @@ public class ConnectionCore internal constructor(
     /** Client: the SCID of the Retry we accepted; server: our SCID in the Retry we sent. The transport parameters must agree (RFC 9000 section 7.3). */
     internal var retryScid: ConnectionId? = null
 
-    /** Client: the Retry token to put in every Initial. */
+    /** Client: the Retry token to put in every Initial; it replaces [initialToken] (RFC 9000 section 17.2.5.3). */
     internal var retryToken: ByteArray? = null
-    internal var testInitialToken: ByteArray? = null
+
+    /** Client: a NEW_TOKEN token from an earlier connection, sent in every Initial until a Retry brings another (RFC 9000 section 8.1.3). */
+    internal var initialToken: ByteArray? = null
+
+    /** Server: mints a NEW_TOKEN token bound to an address (RFC 9000 section 8.1.3); null when the endpoint issues none. */
+    internal var newTokenMinter: ((InetSocketAddress) -> ByteArray)? = null
+
+    /** Server: the NEW_TOKEN token to send or resend, and its number ([SentFrames.ID_NEW_TOKEN]); null once acknowledged. */
+    internal var newToken: ByteArray? = null
+    internal var newTokenSeq = 0L
+    internal var sendNewToken = false
+
+    /** Server: the IP addresses tokens were issued for on this connection, at most [MAX_NEW_TOKENS]. */
+    internal val newTokenIps = ArrayList<ByteArray>(2)
+
+    /** Server: HANDSHAKE_DONE went out at least once (tests check that NEW_TOKEN never precedes it). */
+    internal var handshakeDoneSent = false
+    internal val newTokenSendsForTest = ArrayList<ByteArray>()
+    internal var newTokenAfterHandshakeDoneForTest = true
     internal val retryReceivedForTest: Boolean get() = retryScid != null && role == TlsRole.Client
     internal var validatedByToken = false
     internal val addressValidatedByHandshakeForTest: Boolean get() = amplification.validated && !validatedByToken
@@ -1184,6 +1202,9 @@ public class ConnectionCore internal constructor(
         /** The most entries a test-only record of this connection keeps (the latest ones): a peer must not grow it. */
         internal const val TEST_RECORD_LIMIT = 64
 
+        /** NEW_TOKEN tokens a server issues per connection: one at confirmation, one per new client IP after that (as ngtcp2). */
+        internal const val MAX_NEW_TOKENS = 4
+
         /** A client connection to [remote]; the first [poll] produces the Initial datagrams. [random] supplies its connection IDs, PATH_CHALLENGE data and skipped packet numbers: a CSPRNG outside tests (predictable IDs would let an off-path attacker forge them). */
         public fun client(
             config: QuicConfig,
@@ -1262,6 +1283,7 @@ internal fun ConnectionCore.Companion.serverWithKeys(
     originalDcid: ConnectionId? = null,
     retryScid: ConnectionId? = null,
     early: io.kuicksilver.quic.core.ServerEarlyData? = null,
+    tokenValidated: Boolean = false,
 ): ConnectionCore? {
     require(tls.role == TlsRole.Server) { "a server connection needs a server TlsConfig" }
     val hv = PacketHeaderView()
@@ -1294,6 +1316,12 @@ internal fun ConnectionCore.Companion.serverWithKeys(
             earlyMode = io.kuicksilver.tls.EarlyDataState.Disabled,
             serverEarly = early,
         )
+    if (tokenValidated) {
+        // a NEW_TOKEN token validated the address (RFC 9000 section 8.1.3): no anti-amplification limit, no Retry state
+        core.validatedByToken = true
+        core.amplification.validated = true
+        core.loss.peerAddressValidated = true
+    }
     if (retryScid !=
         null
     ) {

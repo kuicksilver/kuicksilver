@@ -183,6 +183,14 @@ internal fun ConnectionCore.requeueForProbe(
         // bare PING, or a receiver whose window update was lost waits for a loss declaration that its own PTO backoff delays
         if (f.streamCount > 0 || f.idCount > 0 || f.flags and SentFrames.STREAM_CONTROL != 0) streams.onFramesLost(f)
         if (f.flags and SentFrames.HANDSHAKE_DONE != 0) sendHandshakeDone = true
+        requeueNewToken(f)
+    }
+}
+
+/** A lost (or probed) packet carried the NEW_TOKEN frame still unacknowledged: the same token goes again. */
+internal fun ConnectionCore.requeueNewToken(f: SentFrames) {
+    for (i in 0 until f.idCount) {
+        if (f.idKind[i] == SentFrames.ID_NEW_TOKEN && f.idValue[i] == newTokenSeq && newToken != null) sendNewToken = true
     }
 }
 
@@ -207,7 +215,13 @@ internal class ConnectionLossListener(
         if (space != SpaceId.Initial && core.role == io.kuicksilver.tls.TlsRole.Server) core.onHandshakePathAcked(p.pathId, p.addressEpoch)
         if (f.flags and SentFrames.HANDSHAKE_DONE != 0) core.sendHandshakeDone = false
         if (space == SpaceId.Application) core.keyPhase?.onPacketAcked(p.pn, core.now)
-        for (i in 0 until f.idCount) if (f.idKind[i] == SentFrames.ID_RETIRE_CONNECTION_ID) core.cids.onRetireAcked(f.idValue[i])
+        for (i in 0 until f.idCount) {
+            if (f.idKind[i] == SentFrames.ID_RETIRE_CONNECTION_ID) core.cids.onRetireAcked(f.idValue[i])
+            if (f.idKind[i] == SentFrames.ID_NEW_TOKEN && f.idValue[i] == core.newTokenSeq) {
+                core.newToken = null // delivered: nothing to repeat
+                core.sendNewToken = false
+            }
+        }
         core.paths.byId(PathId(p.pathId))?.let { path ->
             path.pmtud?.let { m ->
                 if (f.flags and SentFrames.PMTU_PROBE !=
@@ -277,6 +291,7 @@ internal class ConnectionLossListener(
         for (i in 0 until f.cryptoCount) core.cryptoStreams.send[f.cryptoLevel[i]].onLost(f.cryptoOffset[i], f.cryptoLength[i])
         if (f.streamCount > 0 || f.idCount > 0 || f.flags and SentFrames.STREAM_CONTROL != 0) core.streams.onFramesLost(f)
         if (f.flags and SentFrames.HANDSHAKE_DONE != 0) core.sendHandshakeDone = true
+        core.requeueNewToken(f)
         // a lost PATH_CHALLENGE is not resent here: the path's PTO-paced timer repeats it (RFC 9000 section 8.2.4), otherwise a dead path draws one 1200-byte probe per loss detection; PATH_RESPONSE is never retransmitted (section 13.3)
         for (i in 0 until f.idCount) {
             when (f.idKind[i]) {
