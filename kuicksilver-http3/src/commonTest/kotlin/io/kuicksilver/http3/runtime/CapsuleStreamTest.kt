@@ -256,13 +256,17 @@ class CapsuleStreamTest {
                         val s = p.server.acceptRequest().acceptConnect()
                         assertFailsWith<Http3Exception.MessageError> { s.useCapsuleProtocol() }
                     }
-                val c =
-                    p.client.connect(
-                        http3Request("CONNECT", "server.test", "/chat") { headers = Http3Headers.of("content-length" to "0") },
-                        "test-capsules",
-                    )
+                // the server's reset races the 2xx: connect() either fails with it or returns a stream that sees it
+                val connected =
+                    runCatching {
+                        p.client.connect(
+                            http3Request("CONNECT", "server.test", "/chat") { headers = Http3Headers.of("content-length" to "0") },
+                            "test-capsules",
+                        )
+                    }
                 withTimeout(5.seconds) { server.await() }
-                assertEquals(Http3ErrorCode.MESSAGE_ERROR, peerResetCode(c))
+                val code = connected.fold(onSuccess = { peerResetCode(it) }, onFailure = { h3Code(it) })
+                assertEquals(Http3ErrorCode.MESSAGE_ERROR, code, "client saw ${connected.exceptionOrNull() ?: "a stream"}")
             }
         }
 
