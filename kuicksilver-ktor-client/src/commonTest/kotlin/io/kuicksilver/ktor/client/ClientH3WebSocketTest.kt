@@ -5,8 +5,13 @@ package io.kuicksilver.ktor.client
 import io.ktor.client.plugins.websocket.WebSockets
 import io.ktor.client.plugins.websocket.webSocket
 import io.ktor.network.sockets.InetSocketAddress
+import io.ktor.utils.io.ByteReadChannel
+import io.ktor.utils.io.readByte
+import io.ktor.utils.io.readByteArray
 import io.ktor.utils.io.readRemaining
 import io.ktor.utils.io.writeFully
+import io.ktor.websocket.CloseReason
+import io.ktor.websocket.close
 import io.kuicksilver.http3.Http3Endpoint
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.QuicEndpointConfig
@@ -16,11 +21,14 @@ import io.kuicksilver.tls.TlsRole
 import io.kuicksilver.tls.tlsConfig
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
 import kotlinx.io.readByteArray
 import kotlin.test.BeforeTest
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 
@@ -87,4 +95,79 @@ class ClientH3WebSocketTest {
                 }
             }
         }
+
+    /**
+     * A call that ends with a cause after its session sent the Close frame and finished its send side (the caller is
+     * cancelled during the closing handshake) does not reset the HTTP/3 stream: the Close and the FIN still in flight
+     * reach the peer, not a reset. The relay holds the client's packets until the call has ended, so the Close is still
+     * unacknowledged when the call ends; before, the engine reset the send side then and the peer never got the Close.
+     */
+    @Test fun closeSentBeforeACancelledCallIsNotReset() =
+        h3Test {
+            val serverTls =
+                tlsConfig(TlsRole.Server) {
+                    alpn = listOf("h3")
+                    identity =
+                        TlsIdentity.fromDer(listOf(TestCerts.server), TestCerts.serverKey.copyOf())
+                }
+            val ep =
+                Http3Endpoint.bind(
+                    InetSocketAddress("127.0.0.1", 0),
+                    QuicEndpointConfig
+                        .Builder()
+                        .apply {
+                            this.server =
+                                QuicServerConfig.Builder(serverTls).build()
+                        }.build(),
+                    io.kuicksilver.http3.http3Settings { enableConnectProtocol = true },
+                )
+            coroutineScope {
+                // the close code of the client's first frame, or -2 when its send side then ends in a reset, not a FIN
+                val served =
+                    async {
+                        val conn = ep.accept()
+                        val s = conn.acceptRequest().acceptConnect()
+                        val code = closeCodeOfFirstFrame(s.input)
+                        if (runCatching { s.input.readRemaining() }.isFailure) -2 else code
+                    }
+                try {
+                    udpRelay(ep.localAddress.port) { relayPort, relay ->
+                        testClient(Http3DiscoveryMode.H3Only, block = { install(WebSockets) }).use { c ->
+                            val closeSent = CompletableDeferred<Unit>()
+                            coroutineScope {
+                                val call =
+                                    launch {
+                                        c.webSocket("wss://127.0.0.1:$relayPort/ws") {
+                                            relay.blocked = true
+                                            close(CloseReason(CloseReason.Codes.GOING_AWAY, "bye"))
+                                            flush() // returns once the writer wrote the Close and finished the send side
+                                            closeSent.complete(Unit)
+                                            awaitCancellation()
+                                        }
+                                    }
+                                withTimeout(10.seconds) { closeSent.await() }
+                                call.cancel()
+                                call.join()
+                            }
+                            relay.blocked = false
+                            assertEquals(1001, withTimeout(10.seconds) { served.await() })
+                        }
+                    }
+                } finally {
+                    served.cancel()
+                    ep.close()
+                }
+            }
+        }
+
+    /** The close code of the first frame on [input] (a Close frame, masked or not), or -1 for anything else. */
+    private suspend fun closeCodeOfFirstFrame(input: ByteReadChannel): Int =
+        runCatching {
+            val b0 = input.readByte().toInt() and 0xff
+            val b1 = input.readByte().toInt() and 0xff
+            val length = b1 and 0x7f // a Close frame's payload is at most 125 bytes
+            val mask = if (b1 and 0x80 != 0) input.readByteArray(4) else ByteArray(4)
+            val payload = input.readByteArray(length).mapIndexed { i, b -> (b.toInt() xor mask[i % 4].toInt()) and 0xff }
+            if (b0 and 0x0f != 0x8 || payload.size < 2) -1 else (payload[0] shl 8) or payload[1]
+        }.getOrDefault(-1)
 }

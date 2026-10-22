@@ -248,6 +248,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   with decimal parts is now classified as the address it names, on every platform; a numeric host with an octal or hex
   part (`0177.0.0.1`, `0x7f.1`: octal or hex to inet_aton, decimal or refused by the JVM) or that is no address
   (`256.1.1.1`, `4294967296`) is never a destination.
+- Ktor client, HTTP/3: a WebSocket call that ended with a cause (a caller cancelled during the closing handshake, an
+  application that threw once its Close was out) reset the stream's send side even when the session had already
+  queued its Close frame and FIN: the reset could overtake them, and the peer then saw a reset, not the Close. A send
+  side the session finished is now left to deliver its Close and FIN; an unfinished one is still reset.
 - Ktor server: a graceful `stop(gracePeriod, timeout)` took the whole grace period while any HTTP/1.1 keep-alive
   client was connected. The stop waits for every HTTP/1.1 connection, and an idle keep-alive connection sat in the
   request parser (until the idle timeout), so it was only cut at the grace deadline. Once accepting stops, an HTTP/1.1
