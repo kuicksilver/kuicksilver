@@ -129,6 +129,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   anyway. The body now goes out on a 100 Continue, or after 1 s without an answer (as Ktor's CIO engine and curl); a
   final response first is the answer, the body is never sent and that connection is not reused. A 417 is the exception:
   the request is repeated once without the expectation, as the RFC recommends and CIO does.
+- Ktor client: a request that completes just as its socket timeout expires keeps its response. The inactivity
+  watchdog could still act after the request had returned (a timer that already fired is not stopped by cancelling the
+  watchdog, nor is one firing on another thread), so the response was replaced by a `SocketTimeoutException` and, over
+  HTTP/1.1, the connection was closed under it. The request's end and the expiry now settle once: whichever comes
+  first wins.
 - HTTP/3: a body never waits forever when the connection ends under it. A response that arrived with the connection's
   close was returned with a body whose pump never ran (it was launched into the connection's already cancelled scope),
   so reading it hung; and when the connection ended while a response or a request body was being written, the
