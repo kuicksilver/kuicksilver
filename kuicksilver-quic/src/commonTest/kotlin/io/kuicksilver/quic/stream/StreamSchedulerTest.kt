@@ -14,8 +14,9 @@ class StreamSchedulerTest {
         urgency: Int = 3,
         incremental: Boolean = false,
         retransmit: Boolean = false,
+        critical: Boolean = false,
     ): SendStream =
-        SendStream(id, StreamPriority(urgency, incremental)).also {
+        SendStream(id, if (critical) StreamPriority.Critical else StreamPriority(urgency, incremental)).also {
             it.enqueue(ByteArray(100), 0, 100, false)
             if (retransmit) {
                 it.markSent(0, 100)
@@ -48,6 +49,23 @@ class StreamSchedulerTest {
 
     @Test fun retransmissionsBeforeNewDataOnSameLevel() =
         assertEquals(listOf(8L, 0L, 4L), order(stream(0), stream(4), stream(8, retransmit = true)))
+
+    /**
+     * Streams opened with [StreamPriority.Critical] (the HTTP/3 control and QPACK streams) go before every other stream, a
+     * peer's u=0 with a lower id included: a peer must not hold back our SETTINGS or QPACK instructions with its own signal.
+     */
+    @Test fun criticalStreamsBeforeEveryUrgency() =
+        assertEquals(
+            listOf(11L, 3L, 7L, 4L, 0L, 8L),
+            order(
+                stream(0, urgency = 0),
+                stream(4, urgency = 0, retransmit = true),
+                stream(8, urgency = 0, incremental = true),
+                stream(7, critical = true),
+                stream(3, critical = true),
+                stream(11, critical = true, retransmit = true),
+            ),
+        )
 
     @Test fun addIsLogarithmicAtTenThousandStreams() {
         // RFC 9000 section 21.6: the peer's stream limit sets how many streams can be live; scheduling one must not cost a pass over all of them

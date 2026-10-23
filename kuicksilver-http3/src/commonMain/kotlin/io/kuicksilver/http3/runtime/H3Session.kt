@@ -744,7 +744,10 @@ internal class H3Session(
          * allows them in its transport parameters, so they open at once; only a peer that does not is held up here.
          */
         val CRITICAL_STREAMS_DEADLINE: Duration = 3.seconds
-        val CRITICAL = StreamPriority(0)
+
+        /** Control and QPACK streams: sent before every request stream, whatever urgency a peer asks for. */
+        @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+        val CRITICAL = StreamPriority.Critical
         const val MAX_PRIORITY_UPDATE = 256
 
         fun transportCause(e: Throwable): QuicException? =

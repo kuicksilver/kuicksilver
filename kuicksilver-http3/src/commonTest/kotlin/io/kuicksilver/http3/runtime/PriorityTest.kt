@@ -2,25 +2,37 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.kuicksilver.http3.runtime
 
+import io.ktor.network.sockets.InetSocketAddress
+import io.ktor.utils.io.readAvailable
 import io.ktor.utils.io.writeFully
 import io.kuicksilver.http3.H3Pair
 import io.kuicksilver.http3.Http3Connection
 import io.kuicksilver.http3.Http3ErrorCode
+import io.kuicksilver.http3.Http3Headers
 import io.kuicksilver.http3.Http3ServerRequest
 import io.kuicksilver.http3.QuicPair
 import io.kuicksilver.http3.frame.ControlFrames
 import io.kuicksilver.http3.frame.FrameType
+import io.kuicksilver.http3.frame.SettingsId
+import io.kuicksilver.http3.frame.StreamType
 import io.kuicksilver.http3.http3Request
+import io.kuicksilver.http3.http3Settings
 import io.kuicksilver.http3.useScoped
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.StreamPriority
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
 class PriorityTest {
@@ -174,6 +186,59 @@ class PriorityTest {
                 resp.updatePriority(StreamPriority(2, true))
                 withTimeout(5.seconds) { while (served?.priority?.value != StreamPriority(2, true)) delay(10) }
                 resp.cancel()
+            }
+        }
+
+    /**
+     * Our control and QPACK streams go before every request stream whatever the peer's signal: a client that asks u=0
+     * (non-incremental, stream 0 has the lowest id) for a large response must not hold back the QPACK insert its trailers
+     * need behind the whole body. The server's packets are held while the body and then the trailers are queued, so what
+     * it sends first after that is the scheduler's choice alone.
+     */
+    @Test fun criticalStreamsGoBeforeAnUrgentResponse() =
+        h3Test {
+            QuicPair.open().use { q ->
+                val (c, s) = q.connect()
+                val server = Http3Connection.server(s, http3Settings { enableQpackDynamicTable() })
+                val raw = RawPeer(c)
+                raw.openControl(listOf(SettingsId.QPACK_MAX_TABLE_CAPACITY to 4096L, SettingsId.QPACK_BLOCKED_STREAMS to 16L))
+                // (encoder stream bytes so far, connection bytes received when they arrived)
+                val encoder = MutableStateFlow(0L to 0L)
+                launch {
+                    runCatching {
+                        while (true) {
+                            val st = c.acceptStream()
+                            if (st.readVarInt() != StreamType.QPACK_ENCODER) continue
+                            val b = ByteArray(256)
+                            while (true) {
+                                val n = st.input.readAvailable(b, 0, b.size)
+                                if (n < 0) break
+                                encoder.update { (total, _) -> total + n to c.stats.bytesReceived }
+                            }
+                        }
+                    }
+                }
+                raw.request(GET + ("priority" to "u=0"))
+                val r = server.acceptRequest()
+                withTimeout(5.seconds) { server.peerSettings.filterNotNull().first() }
+                // Set Dynamic Table Capacity follows the client's SETTINGS: in before the test begins
+                val capacitySent = withTimeout(5.seconds) { encoder.first { it.first > 0 } }.first
+                // a 40 ms round trip paces the flights, so the reader below sees the insert before the next flights land
+                q.net.delay = 20.milliseconds
+                val serverAddress = InetSocketAddress("10.0.0.2", 443)
+                val held = Channel<Pair<InetSocketAddress, ByteArray>>(Channel.UNLIMITED)
+                q.net.drop = { from, to, b -> from == serverAddress && held.trySend(to to b).isSuccess }
+                val body = 384 * 1024 // within the client's stream and connection windows: nothing but the scheduler stops it
+                val w = r.respond(200)
+                w.output.writeFully(ByteArray(body))
+                w.output.flush()
+                w.finish(Http3Headers.of("x-probe" to "trailer")) // a new field: the encoder stream gets an insert
+                q.net.drop = null
+                val base = c.stats.bytesReceived
+                held.close()
+                for ((to, b) in held) q.net.deliver(serverAddress, to, b)
+                val before = withTimeout(10.seconds) { encoder.first { it.first > capacitySent } }.second - base
+                assertTrue(before < body / 2, "$before bytes reached the client before the QPACK insert")
             }
         }
 }

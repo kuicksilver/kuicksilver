@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.kuicksilver.quic
 
+import io.kuicksilver.annotations.InternalKuicksilverApi
+
 /**
  * Send priority of a stream (RFC 9218 semantics at the transport): lower [urgency] first; [incremental] streams share their level
  * round-robin.
@@ -26,5 +28,12 @@ public class StreamPriority(
     /** Holds [Default]. */
     public companion object { /** Urgency 3, not incremental. */
         public val Default: StreamPriority = StreamPriority()
+
+        /**
+         * Reads as urgency 0, not incremental, but the transport sends a stream opened with this very instance before every
+         * other stream, whatever their urgency (the HTTP/3 control and QPACK streams: a peer's u=0 must not delay them).
+         */
+        @InternalKuicksilverApi
+        public val Critical: StreamPriority = StreamPriority(0)
     }
 }

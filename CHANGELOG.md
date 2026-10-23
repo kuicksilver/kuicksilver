@@ -121,6 +121,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   nonce twice under one key. Random nonces crossed NIST's 2^-32 collision bound after about 92,000 tokens per hourly
   key (93 s at the default stateless rate limit of 1000 per second); a repeat an attacker observed among its own tokens
   would give away the key's GHASH key and let it forge Retry tokens for other addresses while that key lives.
+- HTTP/3 scheduling: the control and QPACK streams are now sent before every request stream, whatever urgency the peer
+  asks for. Before, they were urgency 0 like any other stream, so a request at u=0 (non-incremental) with a stream id
+  below theirs had its whole response sent ahead of them: a QPACK insert that the response's own header or trailer
+  section needed, or a GOAWAY, waited behind the body (only on that client's own connection).
 - TCP and TLS sockets of the engines (JVM, Android, Kotlin/Native): when the application's stream failed mid-response
   (a handler that threw) or a write loop failed, the connection ended as if the stream were complete: a FIN on a plain
   connection, `close_notify` and a FIN on a TLS one. The peer saw a clean end of a cut stream, and a response delimited
