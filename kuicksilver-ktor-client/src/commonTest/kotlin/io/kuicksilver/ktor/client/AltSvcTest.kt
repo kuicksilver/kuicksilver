@@ -72,6 +72,16 @@ class AltSvcTest {
         assertEquals(443, cache.h3For(origin)?.port)
     }
 
+    /** RFC 7838 section 6: a 421 from an alternative removes that entry of the origin's cache, not the others. */
+    @Test fun removeAlternativeKeepsTheOthers() {
+        respond(200, "h3=\":443\", h3=\"alt.example.com:443\"")
+        cache.removeAlternative(origin, cache.h3For(origin)!!)
+        assertEquals("alt.example.com", cache.h3For(origin)?.host)
+        cache.removeAlternative(origin, cache.h3For(origin)!!)
+        assertNull(cache.h3For(origin))
+        assertTrue(store.get(cache.originOf(origin)).isEmpty())
+    }
+
     @Test fun lowPortOriginRejectsHighAltPort() {
         respond(200, "h3=\":8443\"")
         assertNull(cache.h3For(origin)) // origin 443 (privileged) -> alt 8443 refused

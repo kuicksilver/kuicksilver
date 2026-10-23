@@ -145,6 +145,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   from an alternative removes it (RFC 7838 section 6); before, a 421 received over HTTP/1.1 also dropped every
   alternative of the origin. A 421 is not authoritative for the origin (RFC 9110 section 15.5.20), so its `Alt-Svc` is
   not learned either.
+- Ktor client: a 421 from an alternative removes only that alternative from the origin's cache (RFC 7838 section 6);
+  the origin's other alternatives stay. Before, it removed all of them.
 - HTTP/3: a body never waits forever when the connection ends under it. A response that arrived with the connection's
   close was returned with a body whose pump never ran (it was launched into the connection's already cancelled scope),
   so reading it hung; and when the connection ended while a response or a request body was being written, the
