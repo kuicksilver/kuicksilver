@@ -210,6 +210,8 @@ void run_udp(void) {
           uint32_t rl[64]; uint32_t got = ping(a, b, lb, 60, 1092, 0, NULL, NULL, rl); CHECK(got == 60, "all sixty delivered");
           CHECK(ksl_udp_get(a, KSL_UDP_GET_STATS, st, 12, &sn) == KSL_OK, "stats after"); uint32_t fb1 = ((uint32_t)st[8] << 24) | ((uint32_t)st[9] << 16) | ((uint32_t)st[10] << 8) | st[11];
           CHECK(fb1 == fb0 && (caps_of(a, NULL) & KSL_UDP_GSO), "a run over 65507 bytes to an IPv4 peer keeps GSO on"); }
+        /* udp_gso_eintr_resends_the_run: an interrupted GSO sendmsg goes again as it was, GSO stays on */
+        if (caps & KSL_UDP_GSO) { ksl_udp_fail_next_gso_for_test(a, EINTR); uint32_t rl[64]; uint32_t got = ping(a, b, lb, 6, 1000, 0, NULL, NULL, rl); CHECK(got == 6, "all six delivered after EINTR"); CHECK(caps_of(a, NULL) & KSL_UDP_GSO, "GSO kept after EINTR"); }
         /* udp_gso_eio_falls_back_and_resends: the first GSO sendmsg fails with EIO → GSO off, every segment resent one by one, caps lose GSO */
         if (caps & KSL_UDP_GSO) { ksl_udp_fail_next_gso_for_test(a, EIO); uint32_t rl[64]; uint32_t got = ping(a, b, lb, 6, 1000, 0, NULL, NULL, rl); CHECK(got == 6, "all six delivered after the fallback"); CHECK(!(caps_of(a, NULL) & KSL_UDP_GSO), "GSO withdrawn from the caps"); }
         /* udp_concurrent_send_recv_same_socket: one thread sends GSO batches on b while another receives trains on b (the loop and the
@@ -245,10 +247,11 @@ void run_udp(void) {
         { uint8_t *bufs[2]; uint32_t lens[2] = { 100, 90 }; uint8_t addrs[2 * KSL_UDP_ADDR_LEN]; uint8_t ecns[2] = { 0, 0 }; for (int i = 0; i < 2; i++) { bufs[i] = malloc(100); memset(bufs[i], 0x60 + i, 100); memcpy(addrs + i * KSL_UDP_ADDR_LEN, lb, KSL_UDP_ADDR_LEN); }   /* unequal lengths: no GSO run, the hook fails plain sends */
             uint32_t sent = 0; ksl_udp_fail_next_send_for_test(a, EPERM); CHECK(ksl_udp_send(a, bufs, lens, addrs, ecns, 2, &sent) == KSL_OK && sent == 2, "EPERM: retried once, both sent");
             ksl_udp_fail_next_send_for_test(a, EPERM); CHECK(ksl_udp_send(a, bufs, lens, addrs, ecns, 2, &sent) == KSL_OK && sent == 2, "a later EPERM after successful sends: retried again (the retry budget renews on success), both sent");
+            ksl_udp_fail_next_send_for_test(a, EINTR); CHECK(ksl_udp_send(a, bufs, lens, addrs, ecns, 2, &sent) == KSL_OK && sent == 2, "EINTR: the interrupted send goes again, both sent");
             ksl_udp_fail_next_send_for_test(a, ENETUNREACH); CHECK(ksl_udp_send(a, bufs, lens, addrs, ecns, 2, &sent) == KSL_OK && sent == 2, "ENETUNREACH: the datagram is given up (counted as sent, lost on the wire), the socket lives");
             uint8_t *rb[8]; uint32_t rc[8], rl[8], got = 0, drained = 0; uint8_t ra[8 * KSL_UDP_ADDR_LEN], re[8]; for (int i = 0; i < 8; i++) { rb[i] = malloc(200); rc[i] = 200; }
             for (int tries = 0; tries < 20; tries++) { if (ksl_udp_recv(b, rb, rc, rl, ra, re, 8, &got, 100) == KSL_OK) drained += got; else break; }
-            CHECK(drained == 5, "five of the six reached the wire (the unreachable one was skipped)");
+            CHECK(drained == 7, "seven of the eight reached the wire (the unreachable one was skipped)");
             for (int i = 0; i < 2; i++) free(bufs[i]); for (int i = 0; i < 8; i++) free(rb[i]); }
         /* udp_host_or_net_down_is_slot_loss: EHOSTDOWN and ENETDOWN (a peer's link went away, Darwin reports both) lose that slot only;
            udp_enobufs_is_backpressure: a full interface queue answers KSL_OK with the datagrams sent so far, as EAGAIN, and nothing is lost */

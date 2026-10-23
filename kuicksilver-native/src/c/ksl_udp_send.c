@@ -33,6 +33,7 @@ static void gso_off(ksl_udp *u) { u->gso_on = 0; u->granted &= ~(uint32_t)KSL_UD
 static int dest_error(int e) { return e == EINVAL || e == EAFNOSUPPORT || e == EADDRNOTAVAIL || e == EDESTADDRREQ; }
 /* the kernel's queue is full (EAGAIN; ENOBUFS when Darwin's interface queue or Linux's qdisc is): stop, the caller sends the rest later */
 static int backpressure(int e) { return e == EAGAIN || e == EWOULDBLOCK || e == ENOBUFS; }
+/* a signal arrived before sendmsg sent anything (POSIX: EINTR only when no data was transmitted): the same send goes again */
 /* this datagram is lost on the wire: the socket lives, loss detection repairs it */
 /* an ICMP error about an earlier datagram that the kernel reports on this send (sk_err with IP_RECVERR), not this datagram's fault.
    EMSGSIZE too: a Packet Too Big, real or forged, sets sk_err = EMSGSIZE, and the next send of any size answers it once; a send this
@@ -57,6 +58,7 @@ int ksl_udp_send(ksl_udp *u, uint8_t *const *bufs, const uint32_t *lens, const u
             if (run > 1 && send_one(u, joined, (uint32_t)total, addrs + i * KSL_UDP_ADDR_LEN, ecn[i], (uint16_t)lens[i], &e) == 0) { i += run; *sent += run; continue; }
             if (run > 1) {
                 if (backpressure(e)) return KSL_OK;
+                if (e == EINTR) continue;   /* the run again, unchanged */
                 if (pending_icmp(u, e)) { /* sk_err of an ICMP message about another datagram (a forged PTB included): the run goes one by one, GSO stays */ }
                 else if ((e == EINVAL || e == EMSGSIZE) && lens[i] > 1200) { /* the segment size, not GSO itself, was refused (a narrow link): the run goes out one by one, GSO stays */ }
                 else if (e == EINVAL) gso_probe = 1;   /* GSO, the TOS cmsg or the destination: decided by the single send below */
@@ -69,9 +71,11 @@ int ksl_udp_send(ksl_udp *u, uint8_t *const *bufs, const uint32_t *lens, const u
         int e = 0;
         if (send_one(u, bufs[i], lens[i], addrs + i * KSL_UDP_ADDR_LEN, ecn[i], 0, &e) == 0) { if (gso_probe) gso_off(u); gso_probe = 0; i++; (*sent)++; u->eperm_retried = 0; icmp_retried = 0; continue; }
         if (backpressure(e)) return KSL_OK;
+        if (e == EINTR) continue;
         if (e == EINVAL && u->tos_cmsg_on && ecn[i]) {   /* the TOS cmsg or the destination: the same datagram without the mark decides */
             if (send_one(u, bufs[i], lens[i], addrs + i * KSL_UDP_ADDR_LEN, 0, 0, &e) == 0) { u->tos_cmsg_on = 0; u->granted &= ~(uint32_t)KSL_UDP_ECN; gso_probe = 0; i++; (*sent)++; u->eperm_retried = 0; icmp_retried = 0; continue; }   /* the kernel rejected the TOS cmsg: never send it again */
             if (backpressure(e)) return KSL_OK;
+            if (e == EINTR) continue;   /* undecided: the datagram goes again with its mark */
         }
         gso_probe = 0;   /* the datagram failed alone too: GSO was not the cause */
         if (e == EPERM && !u->eperm_retried) { u->eperm_retried = 1; continue; }   /* a filter hiccup: one retry, then the datagram is given up like any other transient error */
