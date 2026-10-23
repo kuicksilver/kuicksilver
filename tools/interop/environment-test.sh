@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
 # Copyright 2026 The Kuicksilver Authors
 # SPDX-License-Identifier: Apache-2.0
-# Cases for the ENVIRONMENT classification of run-local.sh (environment.sh, handshake-challenge.py, closing-rebind.py) on fixtures in testdata/,
+# Cases for the ENVIRONMENT classification of run-local.sh (environment.sh, handshake-challenge.py, closing-rebind.py, clienthello-lost.py) on fixtures in testdata/,
 # and for sim-entrypoint.sh's rebind start gate on stubs (no runner, no Docker, no tshark; needs python3 and jq).
 # KSL_INTEROP_CELL=<a result cell directory with its pcaps> also runs the classification on that real cell (needs tshark), e.g.
 # build/interop/20261016-045713/quiche-server/kuicksilver_quiche/rebind-addr from the 0.2.0 gate; KSL_INTEROP_CLOSE_CELL the same for
 # closing-rebind.py, e.g. build/interop/20261017-054938/msquic-client/msquic_kuicksilver-native/rebind-port (0.2.0 gate 6); KSL_INTEROP_TIMEOUT_CELL
 # a cell the runner timed out, which must not be listed, e.g. build/interop/20261017-175019/picoquic-server/kuicksilver_picoquic/v2 (0.2.0 gate);
 # KSL_INTEROP_STALE_CELL a cell that ran on the sim of a timed-out cell, e.g. build/interop/20261020-031632/picoquic-server/kuicksilver_picoquic/zerortt.
+# KSL_INTEROP_LOST_CELL a cell whose peer client's ClientHello never reached our server in full, e.g.
+# build/interop/20261023-114548/quiche-server/kuicksilver_quiche/handshakeloss (0.2.1 gate 2).
 # Usage: environment-test.sh
 set -uo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"; td="$here/testdata"; hc="$here/handshake-challenge.py"
@@ -77,6 +79,39 @@ check "close: the client closed with an error code"                1 "" -- pytho
 check "close: the client's close code is unknown"                  1 "" -- python3 "$cr" --decoded "$(cvar nocode "$cli.close_codes = []")"
 check "close: a malformed summary cannot be analysed"              2 "cannot analyse" -- python3 "$cr" --decoded "$(cvar broken 'del(.on_path)')"
 
+# clienthello-lost.py: the peer client's ClientHello never reached our server in full (0.2.1 gate 2, run 20261023-114548:
+# kuicksilver->quiche:handshakeloss, decoded with --dump; and a rerun of it whose connection was still open at teardown, empty qlog)
+cl="$here/clienthello-lost.py"; fl="$td/clienthello-lost-quiche-handshakeloss.json"; fo="$td/clienthello-lost-quiche-handshakeloss-open.json"
+lvar() { jq "$2" "$fl" > "$tmp/$1.json"; echo "$tmp/$1.json"; }
+ovar() { jq "$2" "$fo" > "$tmp/$1.json"; echo "$tmp/$1.json"; }
+conn='.connections[0]'; toserver="$conn.server_side[] | select(.from_server | not)"
+check "lost: gate cell, CRYPTO at offset 0 only, every ACK dropped"  0 "beyond CRYPTO offset 1133 never reached our server" -- python3 "$cl" --decoded "$fl"
+check "lost: open at teardown (empty qlog), from the capture"       0 "3 Initial packets received" -- python3 "$cl" --decoded "$fo"
+check "lost: transferloss counts too"                               0 "" -- python3 "$cl" --decoded "$(lvar tl '.case = "transferloss"')"
+check "lost: the server got the whole ClientHello"                  1 "" -- python3 "$cl" --decoded "$(lvar full "([$toserver][1]) as \$p | ($conn.server_side[] | select(. == \$p)).crypto += [[1133, 357]]")"
+check "lost:   (open at teardown)"                                  1 "" -- python3 "$cl" --decoded "$(ovar ofull "($conn.server_side[0]).crypto += [[1133, 357]]")"
+check "lost: one client packet was not ACKed"                       1 "" -- python3 "$cl" --decoded "$(lvar noack "$conn.packets |= del(.[-1])")"
+check "lost: an ACK went out 100 ms late"                           1 "" -- python3 "$cl" --decoded "$(lvar late "$conn.packets[1].t += 100")"
+check "lost:   (open at teardown, in the capture)"                  1 "" -- python3 "$cl" --decoded "$(ovar olate "$conn.server_side[1].t += 0.1")"
+check "lost: the server sent no ACK at all (open at teardown)"      1 "" -- python3 "$cl" --decoded "$(ovar osilent "$conn.server_side |= map(select(.from_server | not))")"
+check "lost: our client's cell (peer server)"                       1 "" -- python3 "$cl" --decoded "$(lvar client '.pair = "quiche_kuicksilver"')"
+check "lost: the native image's server counts"                      0 "" -- python3 "$cl" --decoded "$(lvar native '.pair = "kuicksilver-native_quiche"')"
+check "lost: not a loss test case"                                  1 "" -- python3 "$cl" --decoded "$(lvar transfer '.case = "transfer"')"
+check "lost: the runner timed the cell out"                         1 "" -- python3 "$cl" --decoded "$(lvar rto '.runner_timeout = true')"
+check "lost: the client exited with 0"                              1 "" -- python3 "$cl" --decoded "$(lvar ok '.exits.client = 0')"
+check "lost: the client logged no timeout"                          1 "" -- python3 "$cl" --decoded "$(lvar nto '.client_timeout = false')"
+check "lost: our server exited on its own"                          1 "" -- python3 "$cl" --decoded "$(lvar crash '.exits.server = 1')"
+check "lost: our server exited before the client"                   1 "" -- python3 "$cl" --decoded "$(lvar first '.exit_order = ["server", "client", "sim"]')"
+check "lost: the server sent a Handshake packet"                    1 "" -- python3 "$cl" --decoded "$(lvar hs "$conn.packets[1].type = \"handshake\"")"
+check "lost: the server sent CRYPTO to the client"                  1 "" -- python3 "$cl" --decoded "$(lvar crypto "($conn.server_side[] | select(.from_server)).frames += [6]")"
+check "lost: an ACK of ours reached the client"                     1 "" -- python3 "$cl" --decoded "$(lvar reached '.connections[0].client_side += [{"t": 0, "long": ["0"], "crypto": [], "frames": [2], "from_server": true}]')"
+check "lost: the client never sent the rest"                        1 "" -- python3 "$cl" --decoded "$(lvar norest "$conn.client_side |= map(.crypto |= map(select(.[0] == 0)))")"
+check "lost: qlog and capture disagree on what arrived"             1 "" -- python3 "$cl" --decoded "$(lvar count "$conn.server_side |= del(.[0])")"
+check "lost: the connection closed otherwise (idle_timeout)"        1 "" -- python3 "$cl" --decoded "$(lvar idle "$conn.closed = \"idle_timeout\"")"
+check "lost: no connection without a handshake"                     1 "" -- python3 "$cl" --decoded "$(lvar none '.connections = []')"
+check "lost: another such connection does not fit"                  1 "" -- python3 "$cl" --decoded "$(lvar two ".connections += [$conn | .closed = \"idle_timeout\"]")"
+check "lost: a malformed summary cannot be analysed"                2 "cannot analyse" -- python3 "$cl" --decoded "$(lvar broken "del($conn.packets)")"
+
 # cell mode: only our own server's cells, only with the runner's verdict, and never a guess without the captures
 mk() { mkdir -p "$tmp/res/$1/$2"; printf '%s\n' "${@:3}" > "$tmp/res/$1/$2/output.txt"; }
 mk quiche-server/kuicksilver_quiche rebind-addr "PATH_CHALLENGE without a PATH_RESPONSE: ['e1:5d:7d:5c:e5:c0:f7:57']"
@@ -87,6 +122,11 @@ check "our server's cell without captures cannot be analysed" 2 "cannot analyse"
 check "a peer server's cell is never excused"                  1 "" -- python3 "$hc" "$tmp/res/quiche-client/quiche_kuicksilver/rebind-addr"
 check "no rebind failure in the verdict"                       1 "" -- python3 "$hc" "$tmp/res/quiche-server/kuicksilver_quiche/rebind-port"
 check "a missing challenge without captures cannot be analysed" 2 "cannot analyse" -- python3 "$hc" "$tmp/res/quinn-server/kuicksilver_quinn/rebind-port"
+mk quiche-server/kuicksilver_quiche handshakeloss "client exited with code 255" "server exited with code 143"
+mk quiche-client/quiche_kuicksilver handshakeloss "client exited with code 1" "server exited with code 143"
+check "lost: our server's cell without captures cannot be analysed" 2 "cannot analyse" -- python3 "$cl" "$tmp/res/quiche-server/kuicksilver_quiche/handshakeloss"
+check "lost: our client's cell is never excused"                   1 "" -- python3 "$cl" "$tmp/res/quiche-client/quiche_kuicksilver/handshakeloss"
+check "lost: a client that exited with 0 is never analysed"        1 "" -- python3 "$cl" "$tmp/res/quiche-server/kuicksilver_quiche/rebind-port"
 mk msquic-client/msquic_kuicksilver-native rebind-port "Check of downloaded files succeeded." "First server packet on new path (('193.167.100.100', 443), ('193.167.0.100', 59022)) did not contain a PATH_CHALLENGE frame"
 check "close: a missing challenge without captures cannot be analysed" 2 "cannot analyse" -- python3 "$cr" "$tmp/res/msquic-client/msquic_kuicksilver-native/rebind-port"
 check "close: no missing challenge in the verdict"             1 "" -- python3 "$cr" "$tmp/res/quiche-client/quiche_kuicksilver/rebind-addr"
@@ -228,6 +268,11 @@ if [ -n "${KSL_INTEROP_CLOSE_CELL:-}" ]; then   # the real gate 6 cell: pcaps an
   cell=${KSL_INTEROP_CLOSE_CELL%/}; res=$(dirname "$(dirname "$cell")")
   check "real close cell: classified ENVIRONMENT" 0 "$(basename "$(dirname "$cell")") $(basename "$cell") the rebind landed just before the client's CONNECTION_CLOSE" -- environment_cells "$res"
   check "real close cell: the decoded summary matches its fixture" 0 "" -- bash -c "python3 '$cr' --dump '$cell' | jq -e --slurpfile f '$fc' '. == \$f[0]' > /dev/null"
+fi
+if [ -n "${KSL_INTEROP_LOST_CELL:-}" ]; then   # the real 0.2.1 gate 2 cell: qlogs and pcaps through tshark
+  cell=${KSL_INTEROP_LOST_CELL%/}; res=$(dirname "$(dirname "$cell")")
+  check "real lost cell: classified ENVIRONMENT" 0 "$(basename "$(dirname "$cell")") $(basename "$cell") the peer client's ClientHello never reached our server" -- environment_cells "$res"
+  check "real lost cell: the decoded summary matches its fixture" 0 "" -- bash -c "python3 '$cl' --dump '$cell' | jq -e --slurpfile f '$fl' '. == \$f[0]' > /dev/null"
 fi
 [ $fails -eq 0 ] && echo "all cases passed"
 [ $fails -eq 0 ]

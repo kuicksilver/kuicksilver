@@ -24,7 +24,9 @@
 # with its own close there instead of a PATH_CHALLENGE (tools/interop/closing-rebind.py; 0.2.0 gate 6,
 # msquic->kuicksilver-native:rebind-port), and a cell that ran on the sim the timed-out cell before it left running ("Container sim
 # Running": a stale ARP entry for the server; the override below has compose recreate the sim in every cell, this is the backstop),
-# and a cell whose server container started only after the sim had stopped waiting for it (no scenario ran, no packet was sent).
+# and a cell whose server container started only after the sim had stopped waiting for it (no scenario ran, no packet was sent),
+# and a loss cell of our server whose peer client idled out because the rest of its two-packet ClientHello never reached us while the
+# simulator dropped every ACK of ours (tools/interop/clienthello-lost.py; 0.2.1 gate 2, kuicksilver->quiche:handshakeloss, 1 of 10 reruns).
 # --check-required merges the reruns (a green rerun counts), --results reports such cells only.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/../.." && pwd)"; cd "$root"
