@@ -123,6 +123,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   so reading it hung; and when the connection ended while a response or a request body was being written, the
   application's writes hung once the channel's buffer was full. The body and trailers now fail with the connection's
   error, and so do those writes.
+- HTTP/3: a response or request body whose last bytes came with the peer's CONNECTION_CLOSE is read whole. When the
+  connection is lost, the readers of the peer's streams (message bodies, control and QPACK streams) now go on until
+  their input ends, at most one second, before the connection's coroutines are cancelled; before, they were cancelled at
+  once and the body failed with the connection's error. A reader the application does not keep up with is cut after
+  that second.
 - QUIC: data and FIN received just before a CONNECTION_CLOSE are delivered. A peer that sends its last bytes and closes
   at once (Firefox closes its WebTransport connection right after the session's WT_CLOSE_SESSION and FIN) lost them when
   the close was processed before the application read: the reads failed with the connection's end.
