@@ -125,6 +125,27 @@ check "  not the timed-out cell itself"                          1 "" -- grep -q
 check "  nor a reused sim after a cell that ended normally"      1 "" -- grep -q "kuicksilver_quinn retry" "$tmp/stale.txt"
 check "  and nothing else"                                       0 "" -- test "$(wc -l < "$tmp/stale.txt" | tr -d ' ')" = 1
 
+# a server container that started after the sim stopped waiting for it: no scenario, no capture, no packet (0.2.1 gate, run
+# 20261023-085151: picoquic->kuicksilver-native:transfer); once a capture started the scenario ran, and the verdict stands
+mk late-client/picoquic_kuicksilver-native transfer "sim  | waiting 10s for server:443" " Container client Started " "sim  | timeout occurred after waiting 10.004429212s for server:443" "sim exited with code 0" " Container server Started " "server  | Starting picoquic server for test: transfer"
+mk late-client/picoquic_kuicksilver-native handshake "sim  | waiting 10s for server:443" " Container server Started " "Capturing on 'eth0'" "Capturing on 'eth1'" "Packets received/dropped on interface 'eth0': 9/0" "Packets received/dropped on interface 'eth1': 9/0"
+mk late-client/picoquic_kuicksilver-native retry "sim  | waiting 10s for server:443" "sim  | timeout occurred after waiting 10.0s for server:443" "Capturing on 'eth0'" "Capturing on 'eth1'" "Packets received/dropped on interface 'eth0': 9/0" "Packets received/dropped on interface 'eth1': 9/0" "Test failed: took longer than 60s."
+# the server's own log does not matter when compose started it after the timeout; started before it, only an empty log excuses it
+mkdir -p "$tmp/res/late-client/picoquic_kuicksilver-native/transfer/server"; echo "Waiting for packets." > "$tmp/res/late-client/picoquic_kuicksilver-native/transfer/server/server_log.txt"
+# compose printed "Started" one line before the timeout and the server logged nothing (2026-10-14, kuicksilver->quic-go:retry)
+mk late-client/kuicksilver_quic-go retry "sim  | waiting 10s for server:443" " Container server Started " "sim  | timeout occurred after waiting 10.06376913s for server:443" "sim exited with code 1"
+mkdir -p "$tmp/res/late-client/kuicksilver_quic-go/retry/server/qlog"; : > "$tmp/res/late-client/kuicksilver_quic-go/retry/server/keys.log"
+# started before the timeout and logged: the server was up and did not answer the sim, its own verdict
+mk late-client/kuicksilver_quic-go transfer "sim  | waiting 10s for server:443" " Container server Started " "sim  | timeout occurred after waiting 10.0s for server:443" "sim exited with code 1"
+mkdir -p "$tmp/res/late-client/kuicksilver_quic-go/transfer/server"; echo "listening on 443" > "$tmp/res/late-client/kuicksilver_quic-go/transfer/server/log.txt"
+environment_cells "$tmp/res/late-client" > "$tmp/late.txt" 2>/dev/null
+check "a server that came up after the sim gave up is ENVIRONMENT" 0 "picoquic_kuicksilver-native transfer the server container started after the sim" -- cat "$tmp/late.txt"
+check "  as is one started just before it that logged nothing"  0 "kuicksilver_quic-go retry the server container started after the sim" -- cat "$tmp/late.txt"
+check "  not one started before it that logged"                  1 "" -- grep -q "kuicksilver_quic-go transfer" "$tmp/late.txt"
+check "  not a cell whose server answered the sim in time"       1 "" -- grep -q "picoquic_kuicksilver-native handshake" "$tmp/late.txt"
+check "  nor one whose scenario ran (a capture started)"         1 "" -- grep -q "picoquic_kuicksilver-native retry" "$tmp/late.txt"
+check "  and nothing else"                                       0 "" -- test "$(wc -l < "$tmp/late.txt" | tr -d ' ')" = 2
+
 # run-local.sh's compose override: the sim's KSL_INTEROP_SIM_CELL reaches compose unexpanded and compose's interpolation of it
 # differs in every cell (same test case and client, fresh log directories), so compose never reuses a running sim
 # shellcheck disable=SC2016   # the pattern matches the literal "$runner" of run-local.sh

@@ -75,11 +75,36 @@ stale_sim() {
   done < <(find "$1" -mindepth 3 -maxdepth 3 -name output.txt 2>/dev/null | sort)
 }
 
+# Cells whose server container came up only after the sim had stopped waiting for it ("timeout occurred after waiting 10.0s for
+# server:443" from the sim): the sim exits before its scenario and its dumpcaps start, compose stops the cell and the client
+# never gets past waiting for the sim, so no endpoint sent a packet and the verdict judges nothing (0.2.1 gate, run
+# 20261023-085151: picoquic->kuicksilver-native:transfer, the picoquic server "Started" after the sim gave up, its log and key
+# log empty; 2026-10-14, three kuicksilver->quic-go cells in one run). Only when the server's container started after the sim's
+# timeout line (its first "Container server Started" comes later in the output) or its log directory holds no non-empty file:
+# a server that was up in time and logged has to answer for the timeout (in two of the 2026-10-14 cells compose printed
+# "Started" one line before the timeout, with nothing logged). Not when a capture started: then the scenario ran and the
+# verdict is the endpoints'. Prints "<server>_<client> <case>" per cell.
+late_server() {
+  local o cell
+  while IFS= read -r o; do
+    grep -q "timeout occurred after waiting .* for server:443" "$o" || continue
+    grep -q "Capturing on" "$o" && continue
+    local timeout_at started_at
+    timeout_at=$(grep -n "timeout occurred after waiting .* for server:443" "$o" | head -1 | cut -d: -f1)
+    started_at=$(grep -n "Container server Started" "$o" | head -1 | cut -d: -f1)
+    if [ -z "$started_at" ] || [ "$started_at" -le "$timeout_at" ]; then   # not started after the timeout
+      [ -z "$(find "$(dirname "$o")/server" -type f -size +0 2>/dev/null | head -1)" ] || continue   # up in time, and it logged
+    fi
+    cell=${o#"$1"/}; cell=${cell%/output.txt}; echo "${cell%%/*} ${cell#*/}"
+  done < <(find "$1" -mindepth 3 -maxdepth 3 -name output.txt 2>/dev/null | sort)
+}
+
 # Cells of a result directory whose verdict rests on the environment: "<server>_<client> <case> <why>", one line per cell.
 environment_cells() {
   { truncated_captures "$1" | sed 's/$/ the sim'"'"'s capture was not flushed before teardown (dumpcap summary missing in output.txt), the pcap is incomplete/'
     handshake_rebind "$1" | sed 's/$/ the rebind landed inside the handshake: the PATH_CHALLENGE the runner checks went out before the client or the runner could decrypt it (handshake-challenge.py)/'
     stale_sim "$1" | sed 's/$/ the cell before it timed out and the runner could not stop its sim: compose reused it ("Container sim Running") with a stale ARP entry for the server/'
+    late_server "$1" | sed 's/$/ the server container started after the sim had stopped waiting for it: the scenario never ran, no packet was sent/'
     closing_rebind "$1" | sed 's/$/ the rebind landed just before the client'"'"'s CONNECTION_CLOSE: the server answered the close from the new path with its own close, no path left to validate (closing-rebind.py)/'
   } | sort -u -k1,2
 }

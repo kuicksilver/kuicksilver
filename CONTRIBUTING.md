@@ -127,7 +127,9 @@ its close), answered by the server with its own CONNECTION_CLOSE there as RFC 90
 PATH_CHALLENGE (`tools/interop/closing-rebind.py`; every earlier path must have passed the runner's check), and a cell
 that ran on the simulator the timed-out cell before it left running (`Container sim Running` in its output: the runner's
 `docker compose stop` after a timeout fails, and the reused simulator still sends to the previous server container's MAC;
-`run-local.sh` has compose recreate the simulator in every cell, this rule is the backstop).
+`run-local.sh` has compose recreate the simulator in every cell, this rule is the backstop), and a cell whose server
+container started only after the simulator had stopped waiting for it (`timeout occurred after waiting ... for
+server:443` and no capture started: the scenario never ran and no endpoint sent a packet).
 `bash tools/interop/environment-test.sh` runs those rules on `tools/interop/testdata`.
 
 The floors were measured on a local host, so the thresholds file says `"blocking": false`: a cell below its floor is a
