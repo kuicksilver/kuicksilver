@@ -43,6 +43,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.channels.ClosedSendChannelException
 import kotlinx.coroutines.channels.ReceiveChannel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
@@ -541,17 +542,32 @@ private fun closingResponsePacket(
 
 /**
  * Queues an empty [status] response that closes the connection behind the responses already queued and ends the
- * pipeline; nothing is sent when the queue is full (the connection closes all the same).
+ * pipeline.
  */
 private suspend fun respondStatus(
     actorChannel: Channel<ByteReadChannel>,
     status: Int,
     reason: String,
+) = respondClosing(actorChannel, closingResponsePacket(status, reason))
+
+/**
+ * Queues [packet], a complete response that closes the connection, behind the responses already queued, and ends the
+ * pipeline. It waits for room in the queue rather than dropping the response when the queue is full: the refusal is the
+ * answer the client MUST get (RFC 9112 sections 3.2 and 6.3 items 4 and 5: 400; RFC 6585 section 5: 431). A writer
+ * held up by a slow earlier response is bounded by the send-stall and idle deadlines. Nothing is sent only when the
+ * writer has already ended (the connection is gone).
+ */
+private suspend fun respondClosing(
+    actorChannel: Channel<ByteReadChannel>,
+    packet: Source,
 ) {
     val bc = ByteChannel()
-    if (actorChannel.trySend(bc).isSuccess) {
-        bc.writePacket(closingResponsePacket(status, reason))
-        bc.close()
+    bc.writePacket(packet)
+    bc.close()
+    try {
+        actorChannel.send(bc)
+    } catch (_: ClosedSendChannelException) {
+        bc.cancel(IOException("Response was not delivered"))
     }
     actorChannel.close()
 }
@@ -677,14 +693,7 @@ private suspend fun ByteReadChannel.skipEmptyLines(): Boolean {
 private const val CR: Byte = '\r'.code.toByte()
 private const val LF: Byte = '\n'.code.toByte()
 
-private suspend fun respondBadRequest(actorChannel: Channel<ByteReadChannel>) {
-    val bc = ByteChannel()
-    if (actorChannel.trySend(bc).isSuccess) {
-        bc.writePacket(badRequestPacket())
-        bc.close()
-    }
-    actorChannel.close()
-}
+private suspend fun respondBadRequest(actorChannel: Channel<ByteReadChannel>) = respondClosing(actorChannel, badRequestPacket())
 
 @OptIn(InternalAPI::class)
 private suspend fun pipelineWriterLoop(

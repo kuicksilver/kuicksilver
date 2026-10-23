@@ -267,6 +267,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- Ktor server, HTTP/1.1: a refused request (400 for a malformed head or framing, 431 for a head over the size limit)
+  behind pipelined requests whose responses filled the response queue got no answer: the refusal was dropped and the
+  connection closed after the earlier responses. It now waits its turn behind them
+  (RFC 9112 sections 3.2 and 6.3 require the 400; RFC 6585 section 5 the 431).
 - Ktor server, HTTP/1.1: the 400 for a malformed request said `HTTP/1.0`. It now says `HTTP/1.1`, the highest
   version the server conforms to, as every other response does (RFC 9110 section 6.2: a server SHOULD send it).
 - Ktor server, HTTP/1.0: a response of unknown length (a streamed body) to an HTTP/1.0 request no longer carries
