@@ -60,7 +60,8 @@ class ServerH1FramingTest {
                             tls = null,
                         )
                     }
-                assertTrue(resp.startsWith("HTTP/1.0 400") || resp.startsWith("HTTP/1.1 400"), resp)
+                // the server's highest conforming version, not HTTP/1.0 (RFC 9110 section 6.2)
+                assertTrue(resp.startsWith("HTTP/1.1 400 "), resp)
                 assertFalse(resp.contains("admin secret"), "the smuggled request was served: $resp")
             }
         }

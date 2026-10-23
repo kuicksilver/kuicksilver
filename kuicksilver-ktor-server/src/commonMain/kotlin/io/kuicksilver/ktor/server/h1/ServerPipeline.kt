@@ -510,12 +510,13 @@ private fun Channel<ByteReadChannel>.cancelPendingResponses(cause: Throwable?) {
 /**
  * `400 Bad Request` with `Connection: close` and a fixed text body. Ktor CIO sends the parser's message instead, and a
  * `ParserException` message embeds the header section read so far: cookies, credentials and the fields a front proxy
- * added would be echoed to the client (the class of Apache's CVE-2012-0053).
+ * added would be echoed to the client (the class of Apache's CVE-2012-0053). Its version is HTTP/1.1: a server SHOULD
+ * send the highest version it conforms to (RFC 9110 section 6.2), as it does for every other response.
  */
 private fun badRequestPacket(): Source =
     RequestResponseBuilder()
         .apply {
-            responseLine("HTTP/1.0", 400, "Bad Request")
+            responseLine("HTTP/1.1", 400, "Bad Request")
             headerLine("Connection", "close")
             headerLine("Content-Type", "text/plain; charset=utf-8")
             headerLine("Content-Length", BAD_REQUEST_BODY.size.toString())
