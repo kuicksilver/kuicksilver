@@ -124,6 +124,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   when the reset's event had not reached the stream yet (the loop's flush waiting in a blocking send), a read that
   pulled the core took the -1 for a clean end, `readAvailable` answered -1 and `closedCause` stayed null. The input now
   asks the core which it was and fails with the reset.
+- Ktor server, HTTP/1.1: a pipelined request with `Expect: 100-continue` behind a slow response no longer gets a 408
+  while its client correctly waits for the `100 Continue` (RFC 9110 section 10.1.1). The `100 Continue` waits behind
+  the earlier responses, but the body deadline started when it was queued; it now starts once those responses are
+  written.
 - Ktor server, HTTP/1.1: a refused request (400 for a malformed head or framing, 431 for a head over the size limit)
   behind pipelined requests whose responses filled the response queue got no answer: the refusal was dropped and the
   connection closed after the earlier responses. It now waits its turn behind them
