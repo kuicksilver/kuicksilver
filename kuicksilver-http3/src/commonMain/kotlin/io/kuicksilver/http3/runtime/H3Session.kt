@@ -836,6 +836,20 @@ internal class H3Session(
         job.cancel()
     }
 
+    /**
+     * Runs [cleanup] when [job] ends cancelled, with the connection's reason once it is gone. Unlike a catch or finally in
+     * the job's body this also runs for a job cancelled before it started: a launch into the scope of a connection that
+     * already ended runs none of its body, and a channel only it would have closed left its reader or writer waiting
+     * forever (a response body whose pump was launched just after the connection closed). [cleanup] runs on whatever
+     * thread cancels the job: it may only close channels and complete deferreds.
+     */
+    fun onCancelled(
+        job: Job,
+        cleanup: (Throwable) -> Unit,
+    ) {
+        job.invokeOnCompletion { e -> if (e != null) cleanup(if (closed.isCompleted) closed.getCompleted() else e) }
+    }
+
     /** What a stream operation throws once the connection is gone. */
     fun connectionError(): Throwable = if (closed.isCompleted) closed.getCompleted() else IllegalStateException("connection open")
 

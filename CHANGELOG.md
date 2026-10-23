@@ -267,6 +267,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- HTTP/3: a body never waits forever when the connection ends under it. A response that arrived with the connection's
+  close was returned with a body whose pump never ran (it was launched into the connection's already cancelled scope),
+  so reading it hung; and when the connection ended while a response or a request body was being written, the
+  application's writes hung once the channel's buffer was full. The body and trailers now fail with the connection's
+  error, and so do those writes.
 - QUIC: data and FIN received just before a CONNECTION_CLOSE are delivered. A peer that sends its last bytes and closes
   at once (Firefox closes its WebTransport connection right after the session's WT_CLOSE_SESSION and FIN) lost them when
   the close was processed before the application read: the reads failed with the connection's end.
