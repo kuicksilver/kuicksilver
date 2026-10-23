@@ -14,10 +14,13 @@ import io.kuicksilver.http3.http3Request
 import io.kuicksilver.http3.readAllBytes
 import io.kuicksilver.http3.useScoped
 import io.kuicksilver.native.KslLoader
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.job
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlin.test.BeforeTest
 import kotlin.test.Test
@@ -71,8 +74,8 @@ class ConnectionEndTest {
     }
 
     /**
-     * The response arrives with the close, so `request` returns after the connection's coroutines were cancelled: the body's
-     * pump, launched then, never ran. Its body still ends (whole or with the connection's error), it never waits forever.
+     * The response arrives with the close, so `request` may return after the connection's coroutines were cancelled. Its
+     * body still ends (whole or with the connection's error), it never waits forever.
      */
     @Test fun responseAfterTheConnectionEndedNeverHangs() =
         h3Test {
@@ -123,6 +126,29 @@ class ConnectionEndTest {
                     val body = runCatching { withTimeout(5.seconds) { r.getOrThrow().body.readAllBytes() } }
                     assertEquals("hello", body.getOrNull()?.decodeToString(), "request: $r, body read: $body")
                 }
+            }
+        }
+
+    /**
+     * A reader started after the connection ended still runs: a response whose headers were read after the session
+     * processed the close launched its body's pump into a cancelled scope, and the body ended with H3_NO_ERROR, unread.
+     */
+    @Test fun drainerLaunchedAfterTheEndRuns() =
+        h3Test {
+            QuicPair.open().useScoped { q ->
+                val (c, s) = q.connect()
+                val client = Http3Connection.client(c)
+                RawPeer(s).openControl()
+                client.peerSettings.filterNotNull().first()
+                s.close(Http3ErrorCode.NO_ERROR, "")
+                withTimeout(5.seconds) { client.closed.await() }
+                val session = client.session
+                val sessionJob = session.scope.coroutineContext.job
+                withTimeout(5.seconds) { sessionJob.join() } // the session's own coroutines are gone
+                val ran = CompletableDeferred<Unit>()
+                val job = withContext(session.dispatcher) { session.launchDrainer { ran.complete(Unit) } }
+                withTimeout(5.seconds) { job.join() }
+                assertTrue(ran.isCompleted, "the drainer ran: $job")
             }
         }
 

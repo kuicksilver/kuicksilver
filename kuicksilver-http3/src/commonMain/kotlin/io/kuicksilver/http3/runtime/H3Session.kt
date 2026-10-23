@@ -56,6 +56,7 @@ import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.random.Random
 import kotlin.time.Duration
@@ -78,6 +79,9 @@ internal class H3Session(
     val dispatcher = Dispatchers.Default.limitedParallelism(1)
     private val job = SupervisorJob()
     val scope = CoroutineScope(job + dispatcher + CoroutineName("http3"))
+
+    /** Where [launchDrainer] readers run: outside [scope], so one started after the connection ended still runs. */
+    private val afterEnd = CoroutineScope(SupervisorJob() + dispatcher + CoroutineName("http3-drain"))
 
     /** Coroutines reading what the peer sent, which may finish it when the connection is lost ([drains]). */
     private val drainers = kotlin.concurrent.atomics.AtomicReference<List<Job>>(emptyList())
@@ -867,6 +871,22 @@ internal class H3Session(
             job.cancel()
         }
     }
+
+    /**
+     * Launches a reader of a peer's stream that may finish it when the connection is lost, like a [drains] one, from any
+     * thread. It runs outside [scope]: a launch into the scope once the connection ended never runs, and a response whose
+     * headers were read after the session processed the peer's CONNECTION_CLOSE lost its body that way (seen on slow
+     * Windows and macOS runners). Once the session's coroutines are gone it gets at most [DRAIN_GRACE] more, then it is cut.
+     */
+    fun launchDrainer(block: suspend CoroutineScope.() -> Unit): Job =
+        afterEnd.launch {
+            val reader = launch(block = block)
+            select {
+                reader.onJoin {}
+                job.onJoin {}
+            }
+            withTimeout(DRAIN_GRACE) { reader.join() }
+        }
 
     /**
      * Runs [cleanup] when [job] ends cancelled, with the connection's reason once it is gone. Unlike a catch or finally in
