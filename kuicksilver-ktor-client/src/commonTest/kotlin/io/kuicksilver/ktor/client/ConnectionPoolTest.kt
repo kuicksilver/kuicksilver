@@ -4,6 +4,7 @@
 
 package io.kuicksilver.ktor.client
 
+import io.ktor.client.engine.ClientEngineClosedException
 import io.kuicksilver.ktor.client.h1.ConnectionPool
 import io.kuicksilver.ktor.client.h1.PoolLimits
 import io.kuicksilver.ktor.client.h1.PooledConnection
@@ -282,11 +283,11 @@ class ConnectionPoolTest {
             val waiter = async { runCatching { p.get("a") } }
             while (p.waiterCount < 1) yield()
             p.shutdown()
-            assertTrue(waiter.await().isFailure)
+            assertTrue(waiter.await().exceptionOrNull() is ClientEngineClosedException, "${waiter.await()}")
             assertTrue(b.closed)
             a.close()
             assertEquals(0, p.liveCount)
-            assertNotNull(runCatching { p.acquire("c") }.exceptionOrNull())
+            assertTrue(runCatching { p.acquire("c") }.exceptionOrNull() is ClientEngineClosedException)
         }
 
     @Test fun waitersOfManyRoutesAllComplete() =
@@ -307,19 +308,21 @@ class ConnectionPoolTest {
 
     /**
      * A waiter cancelled while [ConnectionPool.shutdown] fails the waiters (after it left the queue, before its own failure
-     * arrived) ends with a CancellationException like the others, not "This job has not completed yet".
+     * arrived) ends with its own CancellationException, not "This job has not completed yet"; the others get
+     * ClientEngineClosedException.
      */
     @Test fun waiterCancelledDuringShutdownGetsCancellation() =
         test {
             val p = pool(maxPerRoute = 1)
             val held = p.get("a")
+            var firstFailure: Throwable? = null
             var secondFailure: Throwable? = null
             lateinit var second: Job
             // Unconfined: the first waiter's failure runs inside shutdown() and cancels the second before shutdown reaches it
             val first =
                 launch(Dispatchers.Unconfined) {
                     try {
-                        p.get("a")
+                        firstFailure = runCatching { p.get("a") }.exceptionOrNull()
                     } finally {
                         second.cancel()
                     }
@@ -336,6 +339,7 @@ class ConnectionPoolTest {
             p.shutdown()
             first.join()
             second.join()
+            assertTrue(firstFailure is ClientEngineClosedException, "the first waiter failed with $firstFailure")
             assertTrue(secondFailure is CancellationException, "the second waiter failed with $secondFailure")
             held.close()
             assertEquals(0, p.liveCount)
