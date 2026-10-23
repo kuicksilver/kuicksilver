@@ -280,6 +280,39 @@ class MigrationApiTest {
             }
         }
 
+    @Test fun eachPathReportsItsOwnRemoteAddress() =
+        runBlocking {
+            ApiPair.open().use { p ->
+                withTimeout(30.seconds) {
+                    // the client moves to another socket: on the server the old path is the client's old address and the new one its
+                    // new address, in the path events and in QuicConnection.paths alike
+                    val (c, s) = p.connect()
+                    val clientOld = p.clientIo.localAddress
+                    val serverEvents = kotlinx.coroutines.channels.Channel<PathEvent>(kotlinx.coroutines.channels.Channel.UNLIMITED)
+                    val collector =
+                        launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) { s.pathEvents.collect { serverEvents.send(it) } }
+                    c.migrate(p.net.open(newAddr))
+                    assertTrue(echo(c, s, 4 shl 10))
+                    val changed =
+                        withTimeout(10.seconds) {
+                            var e: PathEvent
+                            do e = serverEvents.receive() while (e !is PathEvent.Changed)
+                            e
+                        }
+                    assertEquals(clientOld, changed.old.remoteAddress, "the path the client left")
+                    assertEquals(newAddr, changed.new.remoteAddress, "the path the client moved to")
+                    val remotes = s.paths.map { it.remoteAddress }
+                    assertTrue(newAddr in remotes, "$remotes")
+                    for (path in s.paths) {
+                        assertEquals(if (path.id == changed.old.id) clientOld else newAddr, path.remoteAddress, "$path")
+                    }
+                    collector.cancel()
+                    c.close()
+                    s.close()
+                }
+            }
+        }
+
     @Test fun pathEventsOrdered() =
         runBlocking {
             ApiPair.open().use { p ->

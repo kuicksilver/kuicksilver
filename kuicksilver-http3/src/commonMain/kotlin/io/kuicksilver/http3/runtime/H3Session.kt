@@ -202,7 +202,13 @@ internal class H3Session(
             onTransportClosed(e)
         }
         scope.launch { guarded { openCriticalStreams(criticalStreamsDeadline) } }
-        scope.launch { quic.pathEvents.collect { if (it is PathEvent.Changed) currentPath = it.new } }
+        scope.launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
+            quic.pathEvents.collect { if (it is PathEvent.Changed) currentPath = it.new }
+        }
+        // each path reports its own peer address: a change before the collector started (a NAT rebinding right after the handshake)
+        // must not leave the session on the path the peer left
+        val active = quic.stats.currentPath
+        quic.paths.firstOrNull { it.id == active }?.let { currentPath = it }
         scope.launch { acceptLoop() }
         datagrams.start()
         if (!isServer) awaitCriticalStreams()

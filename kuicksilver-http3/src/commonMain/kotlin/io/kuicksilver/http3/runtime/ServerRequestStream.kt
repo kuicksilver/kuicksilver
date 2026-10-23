@@ -201,7 +201,12 @@ internal class ServerRequestImpl(
     private var serverPriority: StreamPriority? = null
     internal val stream: QuicStream get() = st
     override val priority: StateFlow<StreamPriority> get() = priorityFlow
-    override val remoteAddress: InetSocketAddress get() = session.currentPath.remoteAddress
+
+    /** The client's address now: the live active path, read at request time; the session's last seen one only when none is left. */
+    override val remoteAddress: InetSocketAddress get() {
+        val active = session.quic.stats.currentPath
+        return (session.quic.paths.firstOrNull { it.id == active } ?: session.currentPath).remoteAddress
+    }
     var responseStarted: Boolean = false
         private set
     private var finished = false

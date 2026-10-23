@@ -125,6 +125,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   asks for. Before, they were urgency 0 like any other stream, so a request at u=0 (non-incremental) with a stream id
   below theirs had its whole response sent ahead of them: a QPACK insert that the response's own header or trailer
   section needed, or a GOAWAY, waited behind the body (only on that client's own connection).
+- QUIC: `QuicPath.remoteAddress` reports each path's own peer address. Before, every path reported the connection's
+  current one: on a server whose client migrated, the path the client left (in `PathEvent.Changed.old`,
+  `QuicConnection.paths` and the path-change log line) showed the client's new address.
 - TCP and TLS sockets of the engines (JVM, Android, Kotlin/Native): when the application's stream failed mid-response
   (a handler that threw) or a write loop failed, the connection ended as if the stream were complete: a FIN on a plain
   connection, `close_notify` and a FIN on a TLS one. The peer saw a clean end of a cut stream, and a response delimited

@@ -139,10 +139,9 @@ internal suspend fun KuicksilverApplicationEngine.startHttp3(
                     listener.add(conn)
                     // after add(): a stop that began meanwhile either saw this connection in live() or is seen here (RFC 9114 5.2)
                     if (listener.stopping) launch { runCatching { conn.goAway() } }
-                    val remote =
-                        conn.quic.paths
-                            .firstOrNull()
-                            ?.remoteAddress
+                    // the peer's address now (a NAT rebinding right after the handshake moves it to another path)
+                    val active = conn.quic.stats.currentPath
+                    val remote = (conn.quic.paths.firstOrNull { it.id == active } ?: conn.quic.paths.firstOrNull())?.remoteAddress
                     events.emit("connectionOpened") { connectionOpened(HttpProtocolVersion.HTTP_3_0, remote) }
                     // the last resort: a failure that still reaches this coroutine is logged, not left uncaught (Native aborts on those)
                     launch(

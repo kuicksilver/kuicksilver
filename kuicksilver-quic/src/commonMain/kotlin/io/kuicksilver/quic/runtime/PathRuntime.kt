@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlin.concurrent.Volatile
 
 /** A [QuicPath] of the coroutine runtime: a socket ([io], null for the endpoint's own) and the core path it feeds. */
 @OptIn(ExperimentalKuicksilverApi::class)
@@ -24,10 +25,14 @@ internal class PathRuntime(
     override val id: PathId,
     override val localAddress: InetSocketAddress,
     internal val io: DatagramIo?,
+    remote: InetSocketAddress,
 ) : QuicPath {
     internal val stateFlow = MutableStateFlow(conn.core.pathState(id))
     override val state: StateFlow<PathState> get() = stateFlow
-    override val remoteAddress: InetSocketAddress get() = conn.core.remoteAddress
+
+    /** This path's own peer address, as the loop last saw it (a handshake-time rebinding moves it); kept once the path is gone. */
+    @Volatile internal var remote: InetSocketAddress = remote
+    override val remoteAddress: InetSocketAddress get() = remote
 
     /** Completed by the next PathValidated / PathFailed event for this path. */
     internal var validation = CompletableDeferred<Boolean>()
