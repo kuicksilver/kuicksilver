@@ -14,6 +14,9 @@ import io.kuicksilver.quic.quicConfig
 import io.kuicksilver.tls.TlsRole
 import io.kuicksilver.tls.tlsConfig
 import io.ktor.network.sockets.InetSocketAddress
+import io.kuicksilver.quic.Initiator
+import io.kuicksilver.quic.QuicException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -72,6 +75,32 @@ class HqInteropTest {
             val code = Interop.run(mapOf("ROLE" to "client", "TESTCASE" to "transfer", "REQUESTS" to "https://127.0.0.1:${ep.localAddress.port}/f", "DOWNLOADS" to downloads.path))
             assertEquals(1, code); closer.join()
         } finally { ep.close() }
+    }
+    /**
+     * The close that lands between openBidi and the request's write: the stream's output reports it as a
+     * ClosedWriteChannelException whose cause is the ConnectionLost, and that is exit 1 too, not an uncaught exception
+     * (clientExits1WhenTheConnectionIsLost hit this order on the Linux arm64 Docker JVM, 2026-10-23, and 3 times in 1000 macOS runs under CPU load).
+     */
+    @Test @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    fun clientExits1WhenTheConnectionIsLostBeforeTheRequestIsWritten() = runBlocking {
+        val tls = tlsConfig(TlsRole.Server) { alpn = listOf("hq-interop"); this.identity = identity() }
+        val config = QuicEndpointConfig.Builder().apply { server = QuicServerConfig.Builder(tls).apply { quic = quicConfig { versions = Interop.v1 } }.build() }.build()
+        val ep = QuicEndpoint.bind(InetSocketAddress("127.0.0.1", 0), config)
+        val lostAt = CompletableDeferred<Unit>()
+        HqInteropClient.beforeRequest = { conn -> conn.closed.await(); lostAt.complete(Unit) }
+        try {
+            val closer = launch(Dispatchers.Default) { ep.accept().close(0x101, "go away") }
+            val downloads = Files.createTempDirectory("dl").toFile()
+            val code = Interop.run(mapOf("ROLE" to "client", "TESTCASE" to "transfer", "REQUESTS" to "https://127.0.0.1:${ep.localAddress.port}/f", "DOWNLOADS" to downloads.path))
+            assertEquals(1, code); closer.join()
+            assertTrue(lostAt.isCompleted, "the connection ended after openBidi, before the request was written")
+        } finally { HqInteropClient.beforeRequest = {}; ep.close() }
+    }
+    @Test fun lostConnectionIsFoundInTheCauseChain() {
+        val lost = QuicException.ConnectionLost.ApplicationClosed(0x101, "go away", Initiator.Peer)
+        assertSame(lost, Interop.connectionLost(io.ktor.utils.io.ClosedWriteChannelException(io.ktor.utils.io.ClosedWriteChannelException(lost))))
+        assertSame(lost, Interop.connectionLost(lost))
+        assertEquals(null, Interop.connectionLost(io.ktor.utils.io.ClosedWriteChannelException(QuicException.StreamError.Reset(0, 1, Initiator.Peer))))
     }
     @Test fun unknownTestcaseExits127() { assertEquals(127, Interop.run(mapOf("ROLE" to "client", "TESTCASE" to "connectionmigration", "REQUESTS" to ""))); assertEquals(127, Interop.run(mapOf("ROLE" to "server", "TESTCASE" to "foo"))) }
     @Test fun keylogWrittenWhenEnvSet() = runBlocking {
