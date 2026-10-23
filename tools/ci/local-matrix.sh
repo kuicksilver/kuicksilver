@@ -22,11 +22,41 @@ for a in "$@"; do case "$a" in --dry-run) dry=1 ;; --skip-android) skip_android=
 # (Kotlin 2.4.20's classpath-snapshot diff failed on stale state in a gate run, 2026-10-16).
 G="./gradlew --max-workers=${KSL_GATE_WORKERS:-2} -q -Pkotlin.incremental=false"; failed=0; n=0; results=""
 head0=$(git rev-parse HEAD 2>/dev/null || echo unknown); dirty0=$(git status --porcelain 2>/dev/null | head -5); started=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+# A failed step keeps its evidence: the test XML and HTML reports it wrote are copied to build/ci/<n>-reports before a later
+# step overwrites them, and the failing tests are listed in <n>.log and on the failure line. The third 0.2.1 gate lost the
+# name of a flaky test this way: step 13's log had only "297 tests completed, 1 failed" (2026-10-23).
+step_reports() { # <marker> <dest>: copies every test-results file and HTML test report newer than <marker> to <dest>, same relative paths
+  local marker="$1" dest="$2"
+  rm -rf "$dest"
+  find . \( -name .git -o -name .worktrees -o -name .gradle -o -name node_modules -o -path ./build/ci \) -prune -o -type f -newer "$marker" \
+    \( -path '*/build/test-results/*' -o -path '*/build/reports/tests/*' \) -print0 > "$marker.list" 2>/dev/null
+  [ -s "$marker.list" ] || { rm -f "$marker.list"; return 1; }
+  mkdir -p "$dest" && tar --null -T "$marker.list" -cf - 2>/dev/null | tar -C "$dest" -xf -
+  rm -f "$marker.list"
+}
+failed_tests() { # <dir>: one line per failed or errored JUnit test case in the XML under <dir>: class.name: first message line
+  # shellcheck disable=SC2016   # an awk program
+  find "$1" -path '*/test-results/*' -name '*.xml' -type f -print0 2>/dev/null | xargs -0 awk '
+    function attr(line, a,   m) { if (match(line, " " a "=\"[^\"]*\"")) { m = substr(line, RSTART + length(a) + 3, RLENGTH - length(a) - 4); return m } return "" }
+    /<testcase / { tc = attr($0, "classname") "." attr($0, "name") }
+    /<(failure|error)[ >]/ { msg = attr($0, "message"); gsub(/&#10;.*/, "", msg); gsub(/&quot;/, "\"", msg); gsub(/&lt;/, "<", msg); gsub(/&gt;/, ">", msg); gsub(/&amp;/, "\\&", msg)
+      print "  " tc ": " substr(msg, 1, 200) }' 2>/dev/null | sort -u
+}
 step() { # name command...
   local name="$1"; shift; n=$((n+1)); printf '[%2d] %-44s' "$n" "$name"
   if [ "$dry" = 1 ]; then echo "(dry run)"; return; fi
-  local log="build/ci/$n.log"; mkdir -p build/ci
-  if "$@" > "$log" 2>&1; then echo "ok"; results="${results}step.$n=ok $name"$'\n'; else echo "FAIL (see $log)"; failed=$((failed+1)); results="${results}step.$n=FAIL $name"$'\n'; fi
+  local log="build/ci/$n.log" marker="build/ci/.step-$n.start" reports="build/ci/$n-reports" tests; mkdir -p build/ci
+  rm -rf "$reports"; touch "$marker"
+  if "$@" > "$log" 2>&1; then echo "ok"; results="${results}step.$n=ok $name"$'\n'
+  else
+    failed=$((failed+1)); results="${results}step.$n=FAIL $name"$'\n'
+    if step_reports "$marker" "$reports"; then
+      tests=$(failed_tests "$reports")
+      { echo; echo "== local-matrix: test reports of this step copied to $reports"; echo "== failed tests:"; printf '%s\n' "${tests:-  (none in the XML)}"; } >> "$log"
+      echo "FAIL (see $log; reports $reports)"; [ -z "$tests" ] || printf '%s\n' "$tests" | head -10 | sed 's/^/     |/'
+    else echo "FAIL (see $log)"; fi
+  fi
+  rm -f "$marker"
 }
 docker_ctests() { # <platform> <image> <target>: the ksl C tests in a Linux container. Their ICMP error-queue tests (udp_recverr_*) need
   # unshare(CLONE_NEWUSER | CLONE_NEWNET), which Docker's default seccomp profile refuses, so this container alone runs unconfined;
