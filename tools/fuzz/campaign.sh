@@ -108,7 +108,9 @@ if ! mkdir "$lock" 2>/dev/null; then
   rm -rf "$lock"; mkdir "$lock"
 fi
 echo $$ > "$lock/pid"
-trap 'rm -rf "$lock"' EXIT INT TERM
+trap 'rm -rf "$lock"' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 quiet() { if command -v taskpolicy >/dev/null 2>&1; then taskpolicy -b nice -n "$niceness" "$@"; else nice -n "$niceness" "$@"; fi; }
 
@@ -265,7 +267,11 @@ kill_tree() { # [pid] and its descendants, by PID
   for c in $(ps -ax -o pid= -o ppid= | awk -v p="$1" '$2 == p { print $1 }'); do kill_tree "$c"; done
   kill "$1" 2>/dev/null || true
 }
-trap 'for p in ${run_pids[@]+"${run_pids[@]}"}; do kill_tree "$p"; done; rm -rf "$lock"' EXIT INT TERM
+# INT/TERM only exit (128+signal); the EXIT trap does the cleanup, exactly once
+cleanup() { for p in ${run_pids[@]+"${run_pids[@]}"}; do kill_tree "$p"; done; rm -rf "$lock"; }
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 first=1; stop=""
 while :; do
   reap
