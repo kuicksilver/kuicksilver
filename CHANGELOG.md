@@ -267,6 +267,13 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- TLS: a session ticket now resumes only under the server name it was issued for (RFC 6066 section 3: a server "MUST
+  NOT accept the request to resume the session if the server_name extension contains a different name"). Virtual hosts
+  of one server (an `sniSelector` returning overrides with the same trust, hence the same session context, and the
+  process-wide ticket keys) accepted each other's tickets: a client offering `a.test`'s ticket with the name `b.test`
+  resumed `a.test`'s session and never saw `b.test`'s certificate. Such a ticket, or one without a server name when
+  the connection has one (and the reverse), now runs a full handshake and gets a new ticket. Tickets issued before this
+  release are not resumed (one full handshake each).
 - Ktor server, HTTP/1.1: an upgrade request (WebSocket) whose handler failed before any response started, its error
   response failing too, no longer takes the connection's coroutine down with it. The failure was rethrown out of the
   connection's pipeline: the connection was reset, the responses pipelined before it were lost, and the exception

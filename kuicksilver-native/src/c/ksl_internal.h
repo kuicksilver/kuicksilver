@@ -48,6 +48,8 @@ struct ksl_ssl {
     STACK_OF(X509) *presented_chain, *validated_chain;
     /* 0-RTT (server): context stamped into tickets, the transport's verdict, whether the resumed ticket's context matched */
     uint8_t early_ctx[64]; size_t early_ctx_len; int early_allow, early_ctx_match;
+    /* server: digest of the ClientHello's host name, bound into every ticket (RFC 6066 section 3, ksl_client_hello_cb) */
+    uint8_t sni_tag[32];
     /* server SNI pause */
     int sni_pending, sni_decision_alert; ksl_ctx *sni_override;
     /* KSL_OPT_NUM_TICKETS 0: set by ksl_ssl_new_session_ticket, the only way such a session gets a ticket (after the pin verdict) */
@@ -85,6 +87,7 @@ size_t ksl_quic_pending(const ksl_ssl *s, int level);   /* CRYPTO bytes provided
 /* verification (ksl_verify.c) */
 int ksl_cert_verify_cb(X509_STORE_CTX *xctx, void *arg);
 int ksl_client_hello_cb(SSL *ssl, int *al, void *arg);
+int ksl_client_hello_sni(SSL *ssl, const unsigned char **name, size_t *len);   /* during the ClientHello: its host_name, if any */
 
 /* the system CA store (ksl_ctx.c, ksl_trust_cache.c) */
 void ksl_trust_paths(const char *const **files, const char *const **dirs);

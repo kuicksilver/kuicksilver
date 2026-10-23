@@ -218,4 +218,61 @@ static void test_session_context(void) {
     ksl_ssl_free(c); ksl_ssl_free(s); ksl_session_free(sess); ksl_ctx_free(cc); ksl_ctx_free(a); ksl_ctx_free(a2); ksl_ctx_free(b); END();
 }
 
-void run_tcp(void) { test_echo(); test_truncation(); test_tls12(); test_resumption(); test_sni_pause(); test_sni_override_alpn(); test_sni_override_settings_effective(); test_no_tls12_ticket_without_num_tickets(); test_session_context(); }
+/* Two virtual hosts behind one TCP server, as an SNI selector builds them: the same trust (so the same session context) and
+   the same ticket keys (the process-wide generated ones). RFC 6066 section 3: a server "MUST NOT accept the request to resume
+   the session if the server_name extension contains a different name. Instead, it proceeds with a full handshake to establish
+   a new session"; RFC 8446 sections 4.2.11 and 4.6.1 leave the ticket's binding to the server, which must ensure a compatible PSK. */
+typedef struct { ksl_ctx *a, *b; } vhosts;
+static int on_vhost(ksl_ssl *s, int rc, void *arg) {
+    vhosts *v = arg; if (rc != KSL_WANT_SNI) return 1; ksl_client_hello ch; ksl_ctx *pick = NULL;
+    if (ksl_ssl_client_hello(s, &ch) == KSL_OK && ch.sni) {
+        if (ch.sni_len == 6 && !memcmp(ch.sni, "a.test", 6)) pick = v->a;
+        else if (ch.sni_len == 6 && !memcmp(ch.sni, "B.TEST", 6)) pick = v->b;   /* host names compare case-insensitively */
+        else if (ch.sni_len == 6 && !memcmp(ch.sni, "b.test", 6)) pick = v->b;
+    }
+    return ksl_ssl_sni_resume(s, pick, pick ? 0 : 112) == KSL_OK;
+}
+static int leaf_is(ksl_ssl *c, const char *name) {
+    char path[256]; snprintf(path, sizeof path, TESTDATA "%s.der", name); size_t l; uint8_t *want = read_file(path, &l);
+    uint8_t got[4096]; size_t n = 0; int ok = ksl_ssl_get_peer_chain(c, KSL_CHAIN_PRESENTED, 0, got, sizeof got, &n) == KSL_OK && n == l && !memcmp(got, want, l);
+    free(want); return ok;
+}
+static void test_ticket_bound_to_server_name(void) {
+    SECTION("tcp_ticket_bound_to_server_name");
+    uint8_t keys[80]; for (int i = 0; i < 80; i++) keys[i] = (uint8_t)(i * 11 + 5);
+    ksl_ctx *cc = client_ctx("test-ca", KSL_VERIFY_OPENSSL), *base = server_ctx("server-other-ca");
+    ksl_ctx *a = server_ctx("server"), *b = server_ctx("server-other-key");   /* both valid for the client's reference name server.test */
+    ksl_ctx *srv[3] = { base, a, b };
+    for (int k = 0; k < 3; k++) { ksl_ctx_set_ticket_keys(srv[k], keys, 1); ksl_ctx_set_option(srv[k], KSL_OPT_NUM_TICKETS, 1); }
+    ksl_ctx_set_option(base, KSL_OPT_SNI_PAUSE, 1); for (int k = 0; k < 3; k++) ksl_ctx_freeze(srv[k]);
+    vhosts v = { a, b }; uint8_t reused = 9; size_t n;
+    ksl_ssl *c = tcp_client(cc, "a.test"), *s = ksl_ssl_new(base, KSL_MODE_TCP);
+    CHECK(tcp_pump(c, s, on_vhost, &v) == KSL_OK && leaf_is(c, "server"), "full handshake with a.test");
+    ksl_session *sess = client_session_after(c); CHECK(sess != NULL, "a.test issued a ticket"); ksl_ssl_free(c); ksl_ssl_free(s);
+    /* the ticket of a.test offered with the server name b.test */
+    c = tcp_client(cc, "b.test"); s = ksl_ssl_new(base, KSL_MODE_TCP); ksl_ssl_set_session(c, sess);
+    CHECK(tcp_pump(c, s, on_vhost, &v) == KSL_OK, "handshake with b.test");
+    CHECK(ksl_ssl_get(s, KSL_GET_SESSION_REUSED, &reused, 1, &n) == KSL_OK && reused == 0, "negative: a.test's ticket does not resume under b.test (RFC 6066 section 3)");
+    CHECK(ksl_ssl_get(c, KSL_GET_SESSION_REUSED, &reused, 1, &n) == KSL_OK && reused == 0, "negative: the client sees a full handshake");
+    CHECK(leaf_is(c, "server-other-key"), "b.test's certificate is presented");
+    ksl_session *sess_b = client_session_after(c); CHECK(sess_b != NULL, "the full handshake issued b.test its own ticket"); ksl_ssl_free(c); ksl_ssl_free(s);
+    /* controls: each ticket resumes under its own name (case-insensitively) */
+    c = tcp_client(cc, "a.test"); s = ksl_ssl_new(base, KSL_MODE_TCP); ksl_ssl_set_session(c, sess);
+    CHECK(tcp_pump(c, s, on_vhost, &v) == KSL_OK && ksl_ssl_get(s, KSL_GET_SESSION_REUSED, &reused, 1, &n) == KSL_OK && reused == 1, "control: a.test's ticket resumes under a.test");
+    ksl_session *renewed = client_session_after(c); CHECK(renewed != NULL, "the resumption renewed the ticket"); ksl_ssl_free(c); ksl_ssl_free(s);
+    c = tcp_client(cc, "a.test"); s = ksl_ssl_new(base, KSL_MODE_TCP); ksl_ssl_set_session(c, renewed);
+    CHECK(tcp_pump(c, s, on_vhost, &v) == KSL_OK && ksl_ssl_get(s, KSL_GET_SESSION_REUSED, &reused, 1, &n) == KSL_OK && reused == 1, "control: the renewed ticket keeps the name and resumes");
+    ksl_ssl_free(c); ksl_ssl_free(s);
+    c = tcp_client(cc, "B.TEST"); s = ksl_ssl_new(base, KSL_MODE_TCP); ksl_ssl_set_session(c, sess_b);
+    CHECK(tcp_pump(c, s, on_vhost, &v) == KSL_OK && ksl_ssl_get(s, KSL_GET_SESSION_REUSED, &reused, 1, &n) == KSL_OK && reused == 1, "control: b.test's ticket resumes under B.TEST");
+    ksl_ssl_free(c); ksl_ssl_free(s);
+    /* no server name at all is a different name too */
+    c = tcp_client(cc, NULL); s = ksl_ssl_new(a, KSL_MODE_TCP); ksl_ssl_set_session(c, sess);
+    CHECK(tcp_pump(c, s, NULL, NULL) == KSL_OK && ksl_ssl_get(s, KSL_GET_SESSION_REUSED, &reused, 1, &n) == KSL_OK && reused == 0, "negative: a.test's ticket does not resume without SNI");
+    ksl_ssl_free(c); ksl_ssl_free(s);
+    ksl_session_free(sess); ksl_session_free(sess_b); ksl_session_free(renewed);
+    for (int k = 0; k < 3; k++) ksl_ctx_free(srv[k]);
+    ksl_ctx_free(cc); END();
+}
+
+void run_tcp(void) { test_echo(); test_truncation(); test_tls12(); test_resumption(); test_sni_pause(); test_sni_override_alpn(); test_sni_override_settings_effective(); test_no_tls12_ticket_without_num_tickets(); test_session_context(); test_ticket_bound_to_server_name(); }
