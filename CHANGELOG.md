@@ -240,6 +240,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- QUIC: `QuicPath.remoteAddress` reports each path's own peer address. Before, every path reported the connection's
+  current one: on a server whose client migrated, the path the client left (in `PathEvent.Changed.old` and
+  `QuicConnection.paths`) showed the client's new address, and a client's probe toward a server's preferred address
+  showed the original one.
 - HTTP/3: an application that cancels a request body (server) or a response body (client) now stops the stream at
   once with STOP_SENDING (`H3_NO_ERROR` on the server, `H3_REQUEST_CANCELLED` on the client). Before, the stream was
   stopped only when the peer sent its next DATA, so a peer that paused kept the stream and its flow-control credit.

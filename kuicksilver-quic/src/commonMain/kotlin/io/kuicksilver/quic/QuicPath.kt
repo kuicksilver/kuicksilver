@@ -18,7 +18,7 @@ public interface QuicPath {
     /** The local address of the socket this path sends from. */
     public val localAddress: InetSocketAddress
 
-    /** The peer address this path sends to. */
+    /** The peer address this path sends to (its own: another path of the connection may send elsewhere). */
     public val remoteAddress: InetSocketAddress
 
     /** Unknown, Validating, Validated, Failed or Closed (RFC 9000 section 8.2). */

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.kuicksilver.quic.runtime
 
+import io.ktor.network.sockets.InetSocketAddress
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.quic.ConnectionCore
 import io.kuicksilver.quic.ConnectionEvent
@@ -127,7 +128,8 @@ internal class ConnectionRuntime(
         private set
 
     /** Copy-on-write: mutated on the loop, read from application threads through [paths]. */
-    @Volatile private var pathList: List<PathRuntime> = listOf(PathRuntime(this, loop, PathId.Initial, loop.localAddress, null))
+    @Volatile private var pathList: List<PathRuntime> =
+        listOf(PathRuntime(this, loop, PathId.Initial, loop.localAddress, null, core.remoteAddress))
     private val pathEventFlow = MutableSharedFlow<PathEvent>(extraBufferCapacity = 64)
     override val paths: List<QuicPath> get() = pathList.filter { it.stateFlow.value != PathState.Closed }
     override val pathEvents: Flow<PathEvent> get() = pathEventFlow
@@ -135,7 +137,7 @@ internal class ConnectionRuntime(
     private fun pathRuntime(id: PathId): PathRuntime =
         pathList.firstOrNull {
             it.id == id
-        } ?: PathRuntime(this, loop, id, loop.localAddress, null).also {
+        } ?: PathRuntime(this, loop, id, loop.localAddress, null, lastRemote(id)).also {
             pathList = pathList + it
         } // a path the peer moved to (server side) shares the endpoint's socket
 
@@ -162,7 +164,7 @@ internal class ConnectionRuntime(
                 }
                 val id = core.addPath(core.remoteAddress, loop.now())
                 core.setPathCapabilities(id, io.capabilities.value)
-                val rt = PathRuntime(this@ConnectionRuntime, loop, id, io.localAddress, io)
+                val rt = PathRuntime(this@ConnectionRuntime, loop, id, io.localAddress, io, core.remoteAddress)
                 pathList = pathList + rt
                 rt.receiver = loop.receiveOn(io, core, id)
                 adopted = true
@@ -293,6 +295,54 @@ internal class ConnectionRuntime(
      * neither active nor last validated nor under validation goes): without this a server whose peer keeps moving would
      * keep one runtime per address it ever saw. Loop dispatcher only.
      */
+
+    /**
+     * The peer address of every path the core had at the start of this drain or the last one (at most eight: four paths, and the ones
+     * dropped since): a path the core drops before its event is drained (a failed preferred-address probe) still reports its own
+     * address, not the connection's. Loop dispatcher only.
+     */
+    private val seenIds = IntArray(8)
+    private val seenRemotes = arrayOfNulls<InetSocketAddress>(8)
+    private var seen = 0
+
+    /** Each path reports its own peer address ([PathRuntime.remote]); a handshake-time rebinding moves it. Loop dispatcher only. */
+    private fun refreshPathRemotes() {
+        val all = core.paths.all
+        for (i in 0 until all.size) {
+            val p = all[i]
+            var j = 0
+            while (j < seen && seenIds[j] != p.id.value) j++
+            if (j == seen) {
+                if (seen == seenIds.size) continue // cannot happen: at most four paths, and four dropped since the last drain
+                seenIds[seen++] = p.id.value
+            }
+            seenRemotes[j] = p.remote
+        }
+        for (p in pathList) {
+            val r = core.paths.byId(p.id)?.remote ?: continue
+            if (r !== p.remote) p.remote = r
+        }
+    }
+
+    /** Drops the remembered addresses of paths the core no longer has, once their events were drained. */
+    private fun forgetDroppedRemotes() {
+        var k = 0
+        for (j in 0 until seen) {
+            if (core.paths.byId(PathId(seenIds[j])) == null) continue
+            seenIds[k] = seenIds[j]
+            seenRemotes[k++] = seenRemotes[j]
+        }
+        for (j in k until seen) seenRemotes[j] = null
+        seen = k
+    }
+
+    /** The peer address of path [id]: the core's, else the one last seen for it, else the connection's. */
+    private fun lastRemote(id: PathId): InetSocketAddress {
+        core.paths.byId(id)?.let { return it.remote }
+        for (j in 0 until seen) if (seenIds[j] == id.value) return seenRemotes[j]!!
+        return core.remoteAddress
+    }
+
     private fun prunePaths() {
         for (p in pathList) if (p.id != activePathId && core.paths.byId(p.id) == null) closePath(p)
     }
@@ -411,6 +461,7 @@ internal class ConnectionRuntime(
     private fun isLocal(id: Long) = (id and 1L == 0L) == (role == io.kuicksilver.tls.TlsRole.Client)
 
     internal fun drainEvents() {
+        refreshPathRemotes()
         val max = core.maxDatagramPayload
         if (max != maxDatagramSizeFlow.value) maxDatagramSizeFlow.value = max
         core.datagramsDroppedSend = sendQueue.dropped
@@ -508,6 +559,7 @@ internal class ConnectionRuntime(
             val key = tokenKey
             if (store != null && key != null) for (t in tokens) loop.storeToken(store, key, t)
         }
+        forgetDroppedRemotes()
     }
 
     /** Client: where NEW_TOKEN tokens of this connection go (`QuicClientConfig.tokenStore`) and under which key; null: dropped. */

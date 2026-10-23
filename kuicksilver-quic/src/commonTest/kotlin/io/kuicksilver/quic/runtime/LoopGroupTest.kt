@@ -215,8 +215,7 @@ class LoopGroupTest {
                             do e = events.receive() while (e !is io.kuicksilver.quic.PathEvent.Failed)
                             e
                         }
-                    // QuicPath.remoteAddress is the connection's current peer address for every path, so the probe shows by its ID
-                    assertTrue(failed.path.id != io.kuicksilver.quic.PathId.Initial, "the preferred probe failed, not the original path")
+                    assertEquals(pref, failed.path.remoteAddress, "the preferred probe failed, not the original path")
                     val st = c.openBidi()
                     st.output.writeFully(ByteArray(20_000) { 7 })
                     st.output.flushAndClose()
