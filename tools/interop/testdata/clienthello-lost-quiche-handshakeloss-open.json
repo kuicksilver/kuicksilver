@@ -1,0 +1,226 @@
+{
+  "pair": "kuicksilver_quiche",
+  "case": "handshakeloss",
+  "exits": {
+    "client": 255,
+    "server": 143,
+    "sim": 0
+  },
+  "exit_order": [
+    "client",
+    "server",
+    "sim"
+  ],
+  "runner_timeout": false,
+  "client_timeout": true,
+  "connections": [
+    {
+      "odcid": "46d26be4338278192446e156f8352189",
+      "packets": [],
+      "closed": null,
+      "qlog_empty": true,
+      "server_side": [
+        {
+          "t": 1792745240.7245722,
+          "long": [
+            "0"
+          ],
+          "crypto": [
+            [
+              0,
+              1133
+            ]
+          ],
+          "frames": [
+            6
+          ],
+          "from_server": false
+        },
+        {
+          "t": 1792745240.7291992,
+          "long": [
+            "0"
+          ],
+          "crypto": [],
+          "frames": [
+            2
+          ],
+          "from_server": true
+        },
+        {
+          "t": 1792745244.7342064,
+          "long": [
+            "0"
+          ],
+          "crypto": [
+            [
+              0,
+              1133
+            ]
+          ],
+          "frames": [
+            6
+          ],
+          "from_server": false
+        },
+        {
+          "t": 1792745244.7343042,
+          "long": [
+            "0"
+          ],
+          "crypto": [],
+          "frames": [
+            0,
+            1
+          ],
+          "from_server": false
+        },
+        {
+          "t": 1792745244.7350488,
+          "long": [
+            "0"
+          ],
+          "crypto": [],
+          "frames": [
+            2
+          ],
+          "from_server": true
+        }
+      ],
+      "client_side": [
+        {
+          "t": 1792745237.6911256,
+          "long": [
+            "0"
+          ],
+          "crypto": [
+            [
+              0,
+              1133
+            ]
+          ],
+          "frames": [
+            6
+          ],
+          "from_server": false
+        },
+        {
+          "t": 1792745238.6948106,
+          "long": [
+            "0"
+          ],
+          "crypto": [
+            [
+              0,
+              1133
+            ]
+          ],
+          "frames": [
+            6
+          ],
+          "from_server": false
+        },
+        {
+          "t": 1792745238.6951637,
+          "long": [
+            "0"
+          ],
+          "crypto": [
+            [
+              1133,
+              357
+            ]
+          ],
+          "frames": [
+            6
+          ],
+          "from_server": false
+        },
+        {
+          "t": 1792745240.7048006,
+          "long": [
+            "0"
+          ],
+          "crypto": [
+            [
+              0,
+              1133
+            ]
+          ],
+          "frames": [
+            6
+          ],
+          "from_server": false
+        },
+        {
+          "t": 1792745240.70673,
+          "long": [
+            "0"
+          ],
+          "crypto": [],
+          "frames": [
+            0,
+            1
+          ],
+          "from_server": false
+        },
+        {
+          "t": 1792745244.7149172,
+          "long": [
+            "0"
+          ],
+          "crypto": [
+            [
+              0,
+              1133
+            ]
+          ],
+          "frames": [
+            6
+          ],
+          "from_server": false
+        },
+        {
+          "t": 1792745244.7151616,
+          "long": [
+            "0"
+          ],
+          "crypto": [],
+          "frames": [
+            0,
+            1
+          ],
+          "from_server": false
+        },
+        {
+          "t": 1792745252.7144477,
+          "long": [
+            "0"
+          ],
+          "crypto": [
+            [
+              0,
+              1133
+            ]
+          ],
+          "frames": [
+            6
+          ],
+          "from_server": false
+        },
+        {
+          "t": 1792745252.714791,
+          "long": [
+            "0"
+          ],
+          "crypto": [],
+          "frames": [
+            0,
+            1
+          ],
+          "from_server": false
+        }
+      ]
+    }
+  ]
+}

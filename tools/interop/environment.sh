@@ -99,12 +99,30 @@ late_server() {
   done < <(find "$1" -mindepth 3 -maxdepth 3 -name output.txt 2>/dev/null | sort)
 }
 
+# Loss cells of our server failed only because the peer client's ClientHello never reached it in full: a post-quantum ClientHello
+# spans two Initial packets, quiche sends the second once and repeats only the first on PTO, and when the simulator drops that
+# packet and every ACK of ours the client idles out on a handshake no server could complete (0.2.1 gate 2, run 20261023-114548:
+# kuicksilver->quiche:handshakeloss; 1 of 10 reruns of the cell). tools/interop/clienthello-lost.py proves it from our server's
+# qlogs and both captures: our server received CRYPTO at offset 0 only, ACKed every packet within 25 ms, none of the ACKs reached
+# the client, and the client, which exited first on its own timeout, had sent the rest. Our server's cells of handshakeloss and
+# transferloss only. Prints "<server>_<client> <case>" per cell.
+clienthello_lost() {
+  local o cell
+  while IFS= read -r o; do
+    grep -qE "client exited with code [1-9]" "$o" || continue
+    cell=$(dirname "$o")
+    python3 "$interop_tools/clienthello-lost.py" "$cell" > /dev/null || continue
+    cell=${cell#"$1"/}; echo "${cell%%/*} ${cell#*/}"
+  done < <(find "$1" -mindepth 3 -maxdepth 3 -name output.txt \( -path '*/handshakeloss/*' -o -path '*/transferloss/*' \) 2>/dev/null | sort)
+}
+
 # Cells of a result directory whose verdict rests on the environment: "<server>_<client> <case> <why>", one line per cell.
 environment_cells() {
   { truncated_captures "$1" | sed 's/$/ the sim'"'"'s capture was not flushed before teardown (dumpcap summary missing in output.txt), the pcap is incomplete/'
     handshake_rebind "$1" | sed 's/$/ the rebind landed inside the handshake: the PATH_CHALLENGE the runner checks went out before the client or the runner could decrypt it (handshake-challenge.py)/'
     stale_sim "$1" | sed 's/$/ the cell before it timed out and the runner could not stop its sim: compose reused it ("Container sim Running") with a stale ARP entry for the server/'
     late_server "$1" | sed 's/$/ the server container started after the sim had stopped waiting for it: the scenario never ran, no packet was sent/'
+    clienthello_lost "$1" | sed 's/$/ the peer client'"'"'s ClientHello never reached our server in full: the simulator dropped its one copy of the rest and every ACK of ours, and the client repeats only the first part on PTO (clienthello-lost.py)/'
     closing_rebind "$1" | sed 's/$/ the rebind landed just before the client'"'"'s CONNECTION_CLOSE: the server answered the close from the new path with its own close, no path left to validate (closing-rebind.py)/'
   } | sort -u -k1,2
 }
