@@ -153,6 +153,11 @@ ksl_ctx *ksl_ctx_new(int role) {
     SSL_CTX_set_session_id_context(c->ctx, (const unsigned char *)"ksl", 3); memcpy(c->sid_ctx, "ksl", 3); c->sid_ctx_len = 3;
     /* every server stamps its tickets (the flag byte of ticket_gen_cb) and checks them on resumption */
     if (role == KSL_SERVER) SSL_CTX_set_session_ticket_cb(c->ctx, ticket_gen_cb, ticket_dec_cb, NULL);
+    /* the ticket key callback too, keys or not: without it OpenSSL would fall back to random keys of its own for this SSL_CTX, so a
+       context without keys would issue and accept tickets, and an SNI override's keys would be ignored under a keyless base context
+       (OpenSSL takes the callback from the session context). ticket_cb without keys issues no ticket, which RFC 8446 section 4.6.1
+       allows, and decrypts none: a full handshake. */
+    if (role == KSL_SERVER) SSL_CTX_set_tlsext_ticket_key_evp_cb(c->ctx, ticket_cb);
     if (role == KSL_SERVER) SSL_CTX_set_client_hello_cb(c->ctx, ksl_client_hello_cb, c);   /* QUIC ALPN check, SNI pause (KSL_OPT_SNI_PAUSE) */
     ksl_live_add(KSL_LIVE_CTX, 1);
     return c;
@@ -296,8 +301,7 @@ int ksl_ctx_set_ticket_keys(ksl_ctx *c, const uint8_t *keys, size_t n) {
     if (!keys || n == 0) { ksl_ctx_set_error(c, KSL_E_BAD_ARG, "ksl: no ticket keys"); return KSL_ERROR; }
     uint8_t *copy = malloc(n * 80); if (!copy) return KSL_ERROR; memcpy(copy, keys, n * 80);
     if (c->ticket_keys) { OPENSSL_cleanse(c->ticket_keys, c->ticket_key_count * 80); free(c->ticket_keys); }
-    c->ticket_keys = copy; c->ticket_key_count = n;
-    SSL_CTX_set_tlsext_ticket_key_evp_cb(c->ctx, ticket_cb); return KSL_OK;
+    c->ticket_keys = copy; c->ticket_key_count = n; return KSL_OK;   /* ticket_cb (installed by ksl_ctx_new) reads them */
 }
 /* Binds tickets to a server configuration: OpenSSL resumes a session only when its sid_ctx equals the SSL's, otherwise a full handshake
    runs. Kotlin derives it from the trust configuration, so a resumed session proves this configuration's verdict. */

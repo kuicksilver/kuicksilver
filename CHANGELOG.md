@@ -267,6 +267,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- TLS: a server context without session ticket keys (a QUIC server with tickets off, a keyless SNI override base) no
+  longer falls back to OpenSSL's own random ticket keys: it sends no ticket (RFC 8446 section 4.6.1 allows none) and
+  resumes none, also when a ticket is requested explicitly after the pin verdict. A keyed SNI override under a keyless
+  base context now seals its tickets with its own keys instead of the base context's random ones.
 - TLS: a session ticket now resumes only under the server name it was issued for (RFC 6066 section 3: a server "MUST
   NOT accept the request to resume the session if the server_name extension contains a different name"). Virtual hosts
   of one server (an `sniSelector` returning overrides with the same trust, hence the same session context, and the

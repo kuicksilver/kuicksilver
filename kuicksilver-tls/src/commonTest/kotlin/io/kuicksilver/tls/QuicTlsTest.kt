@@ -312,7 +312,13 @@ class QuicHandshakeTest {
     }
 
     @Test fun postHandshakeTicketDelivered() {
-        val p = pair()
+        // a server with ticket keys: one without keys sends no ticket at all (RFC 8446 section 4.6.1)
+        val keyed = KslQuicCrypto.newSessionForTest(Fixtures.server(), ticketsWithoutEarlyData = true)
+        val p =
+            Pump(KslQuicCrypto.newSession(Fixtures.client()), keyed).also {
+                it.c.setTransportParameters(Fixtures.tp)
+                it.s.setTransportParameters(Fixtures.tp)
+            }
         try {
             p.run()
             assertTrue(p.cs.done && p.ss.done)
