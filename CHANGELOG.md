@@ -131,7 +131,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   connection is lost, the readers of the peer's streams (message bodies, control and QPACK streams) now go on until
   their input ends, at most one second, before the connection's coroutines are cancelled; before, they were cancelled at
   once and the body failed with the connection's error. A reader the application does not keep up with is cut after
-  that second.
+  that second. This holds for a response whose headers came with the close too: its body's reader started
+  after the connection's coroutines were gone and never ran, and the body failed with H3_NO_ERROR, unread.
 - QUIC: data and FIN received just before a CONNECTION_CLOSE are delivered. A peer that sends its last bytes and closes
   at once (Firefox closes its WebTransport connection right after the session's WT_CLOSE_SESSION and FIN) lost them when
   the close was processed before the application read: the reads failed with the connection's end.
