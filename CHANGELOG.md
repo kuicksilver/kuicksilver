@@ -141,6 +141,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   watchdog, nor is one firing on another thread), so the response was replaced by a `SocketTimeoutException` and, over
   HTTP/1.1, the connection was closed under it. The request's end and the expiry now settle once: whichever comes
   first wins.
+- Ktor client: a 421 (Misdirected Request) from the origin itself leaves the origin's cached alternatives. Only a 421
+  from an alternative removes it (RFC 7838 section 6); before, a 421 received over HTTP/1.1 also dropped every
+  alternative of the origin. A 421 is not authoritative for the origin (RFC 9110 section 15.5.20), so its `Alt-Svc` is
+  not learned either.
 - HTTP/3: a body never waits forever when the connection ends under it. A response that arrived with the connection's
   close was returned with a body whose pump never ran (it was launched into the connection's already cancelled scope),
   so reading it hung; and when the connection ended while a response or a request body was being written, the

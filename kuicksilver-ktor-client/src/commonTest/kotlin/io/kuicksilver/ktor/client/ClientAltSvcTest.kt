@@ -5,6 +5,7 @@ package io.kuicksilver.ktor.client
 import io.ktor.client.request.get
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpProtocolVersion
+import io.ktor.http.HttpStatusCode
 import io.ktor.server.response.header
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
@@ -151,6 +152,49 @@ class ClientAltSvcTest {
                     // the UDP side answers nothing: HTTP/1.1 served it, and that response said `clear`
                     assertEquals(HttpProtocolVersion.HTTP_1_1, second.version)
                     assertTrue(store.get(origin).isEmpty(), "clear over HTTP/1.1 removed the alternative: ${store.get(origin)}")
+                }
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
+    /**
+     * RFC 7838 section 6 removes an alternative only for a 421 from that alternative: a 421 from the origin itself over
+     * HTTP/1.1 (RFC 9110 section 15.5.20, a response that is not authoritative for the origin) leaves the cache unchanged.
+     */
+    @Test fun misdirectedOverH1KeepsCachedAlternative() =
+        clientTest {
+            var calls = 0
+            val (server, port) =
+                testServer(configure = { http3 = false }) {
+                    routing {
+                        get("/") {
+                            calls++
+                            if (calls == 1) {
+                                call.response.header("Alt-Svc", "h3=\":${call.request.local.localPort}\"")
+                                call.respondText("h1")
+                            } else {
+                                call.response.header("Alt-Svc", "clear")
+                                call.respondText("elsewhere", status = HttpStatusCode.fromValue(421))
+                            }
+                        }
+                    }
+                }
+            try {
+                val store = InMemoryAltSvcStore()
+                val origin = "https://127.0.0.1:$port"
+                testClient(Http3DiscoveryMode.Auto, engine = {
+                    http3 { altSvcStore = store }
+                    quic =
+                        io.kuicksilver.quic.quicConfig { handshakeTimeout = kotlin.time.Duration.parse("500ms") }
+                }).use { c ->
+                    assertEquals("h1", c.get("$origin/").bodyAsText())
+                    val learned = store.get(origin)
+                    assertTrue(learned.isNotEmpty(), "the alternative was learned")
+                    val second = c.get("$origin/")
+                    assertEquals(HttpProtocolVersion.HTTP_1_1, second.version)
+                    assertEquals(421, second.status.value)
+                    assertEquals(learned, store.get(origin), "a 421 from the origin left the alternative cached")
                 }
             } finally {
                 server.stop(100, 500)
