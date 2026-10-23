@@ -267,9 +267,14 @@ class MigrationApiTest {
                     }
                     // the server moves its end once it validated the client there: only then is the connection on the preferred socket
                     while ((s as ConnectionRuntime).core.path.socket != io.kuicksilver.quic.PREFERRED_SOCKET) kotlinx.coroutines.yield()
+                    val mainSent = b.sent
                     assertNotNull(prefIo).failWith(SocketDefunctException("gone", 9))
                     withTimeout(10.seconds) { s.closed.await() }
                     assertEquals(1L, server.stats.preferredAddressFailures)
+                    delay(300)
+                    // its close has no socket left on the preferred address: lost, never sent from the main one, where the client would
+                    // see a stranger
+                    assertEquals(mainSent, b.sent, "nothing of the moved connection leaves the main socket")
                     val warned = generateSequence { warnings.tryReceive().getOrNull() }.toList()
                     assertTrue(warned.any { "preferred-address socket" in it }, "$warned")
                     // a new connection: no preferred address offered, it works on the main socket
