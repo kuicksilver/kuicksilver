@@ -33,6 +33,9 @@ internal enum class ControlKind {
     StreamsBlockedUni,
 }
 
+/** Control frames whose [ControlFrame.a] is an application error code, not a limit: a repeat never changes it. */
+private val CODE_KINDS = setOf(ControlKind.ResetStream, ControlKind.ResetStreamAt, ControlKind.StopSending)
+
 /** A pending control frame: [a]/[b] carry the code, limit or final size; [c] the reliable size of RESET_STREAM_AT. */
 internal class ControlFrame {
     var kind: ControlKind = ControlKind.MaxData
@@ -85,7 +88,7 @@ internal class StreamManager(
         control += c
     }
 
-    /** Queues [kind] for [id] unless one is already waiting, which then carries the larger value: one frame says the latest. */
+    /** Queues [kind] for [id] unless one is already waiting; a waiting limit then takes the larger value: one frame says the latest. */
     private fun queueOnce(
         kind: ControlKind,
         id: Long,
@@ -96,7 +99,8 @@ internal class StreamManager(
         for (i in 0 until control.size) {
             val c = control[i]
             if (c.kind == kind && c.id == id) {
-                if (a > c.a) c.a = a
+                // a limit carries the latest (largest) value; a reset's or stop's error code stays its first one
+                if (kind !in CODE_KINDS && a > c.a) c.a = a
                 return
             }
         }
