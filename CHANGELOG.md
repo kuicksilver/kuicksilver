@@ -124,6 +124,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   when the reset's event had not reached the stream yet (the loop's flush waiting in a blocking send), a read that
   pulled the core took the -1 for a clean end, `readAvailable` answered -1 and `closedCause` stayed null. The input now
   asks the core which it was and fails with the reset.
+- HTTP/3: a peer that resets a stream while its trailers wait for the QPACK encoder stream now fails the body with
+  the reset as an `Http3Exception`. Before, the reader got the runtime's internal "stream abandoned while blocked"
+  exception, and the stream's Stream Cancellation went out twice (RFC 9204 section 4.4.2).
 - HTTP/3 server: a CONNECT request (classic or Extended, WebTransport among them) carrying `content-length` no
   longer has its tunnel bytes checked against it. A CONNECT has no content and what follows its header section is the
   tunnel (RFC 9110 section 9.3.6, RFC 9114 section 4.1.2), so `content-length: 0` followed by tunnel DATA failed the

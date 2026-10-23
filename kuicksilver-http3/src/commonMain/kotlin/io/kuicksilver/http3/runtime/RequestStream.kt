@@ -185,6 +185,14 @@ internal suspend fun H3Session.pumpBody(
             e.code,
             e.message ?: "",
         )
+    } catch (
+        e: StreamAbandoned,
+    ) {
+        // the peer reset the stream while its trailers waited for the encoder stream: the body fails with that reset, and
+        // the Stream Cancellation was already sent (RFC 9204 section 4.4.2)
+        val mapped = map(st.input.closedCause ?: e)
+        out.cancel(mapped)
+        trailers.completeExceptionally(mapped)
     } catch (e: Throwable) {
         // the consumer cancelled the body (its own reason), or the transport failed (a reset, a lost connection)
         val mapped = map(e)

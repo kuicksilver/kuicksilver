@@ -8,6 +8,7 @@ import io.ktor.utils.io.writeFully
 import io.kuicksilver.http3.H3Pair
 import io.kuicksilver.http3.Http3Connection
 import io.kuicksilver.http3.Http3ErrorCode
+import io.kuicksilver.http3.Http3Exception
 import io.kuicksilver.http3.Http3Headers
 import io.kuicksilver.http3.QuicPair
 import io.kuicksilver.http3.frame.FrameHeaders
@@ -221,6 +222,38 @@ class QpackDynamicTest {
                 st.reset(Http3ErrorCode.REQUEST_CANCELLED)
                 // Stream Cancellation
                 withTimeout(5.seconds) { while (!decoderBytes.value.contains((0x40 or st.id.toInt()).toByte())) delay(20) }
+            }
+        }
+
+    /**
+     * Request trailers blocked on the dynamic table when the peer resets the stream (RFC 9204 section 2.1.2): the body
+     * fails with the reset as an [Http3Exception], not the runtime's internal abandonment signal, and the stream gets one
+     * Stream Cancellation (section 4.4.2), not two.
+     */
+    @Test fun resetWhileTrailersBlockedFailsBodyWithTheReset() =
+        h3Test {
+            QuicPair.open().use { q ->
+                val (c, s) = q.connect()
+                val server = Http3Connection.server(s, dyn)
+                val raw = RawPeer(c)
+                raw.openControl()
+                val decoderBytes = serverDecoderStream(c)
+                val post = listOf(":method" to "POST", ":scheme" to "https", ":authority" to "server.test", ":path" to "/")
+                val st = c.openBidi()
+                st.output.writeFully(raw.headers(st.id, post) + raw.data("x".encodeToByteArray()))
+                st.output.writeFully(FrameHeaders.frame(FrameType.HEADERS, blockedSection()))
+                st.output.flush()
+                val req = server.acceptRequest()
+                delay(150) // the trailers are blocked
+                st.reset(Http3ErrorCode.REQUEST_CANCELLED)
+                val failure = withTimeout(5.seconds) { runCatching { req.body.readAllBytes() }.exceptionOrNull() }
+                val chain = generateSequence(failure) { it.cause }.toList()
+                assertTrue(chain.none { it is StreamAbandoned }, "internal signal leaked: $chain")
+                assertTrue(chain.any { it is Http3Exception }, "no Http3Exception in $chain")
+                val cancellation = (0x40 or st.id.toInt()).toByte()
+                withTimeout(5.seconds) { while (!decoderBytes.value.contains(cancellation)) delay(20) }
+                delay(200)
+                assertEquals(1, decoderBytes.value.count { it == cancellation }, "Stream Cancellations: ${decoderBytes.value.toList()}")
             }
         }
 
