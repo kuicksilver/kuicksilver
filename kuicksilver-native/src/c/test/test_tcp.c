@@ -275,4 +275,33 @@ static void test_ticket_bound_to_server_name(void) {
     ksl_ctx_free(cc); END();
 }
 
-void run_tcp(void) { test_echo(); test_truncation(); test_tls12(); test_resumption(); test_sni_pause(); test_sni_override_alpn(); test_sni_override_settings_effective(); test_no_tls12_ticket_without_num_tickets(); test_session_context(); test_ticket_bound_to_server_name(); }
+static void test_keyless_server_no_tickets(void) {
+    SECTION("tcp_server_without_ticket_keys_issues_and_accepts_none");
+    /* RFC 8446 section 4.6.1: a server may send no ticket. A context without ticket keys must not fall back to OpenSSL's own random
+       keys for its SSL_CTX: it issues no ticket and resumes none */
+    uint8_t keys[80]; for (int i = 0; i < 80; i++) keys[i] = (uint8_t)(i * 17 + 2);
+    ksl_ctx *cc = client_ctx("test-ca", KSL_VERIFY_OPENSSL), *keyless = server_ctx("server"), *keyed = server_ctx("server");
+    ksl_ctx_set_option(keyless, KSL_OPT_NUM_TICKETS, 1); ksl_ctx_set_option(keyed, KSL_OPT_NUM_TICKETS, 1); ksl_ctx_set_ticket_keys(keyed, keys, 1);
+    ksl_ssl *c = tcp_client(cc, "server.test"), *s = ksl_ssl_new(keyless, KSL_MODE_TCP); CHECK(tcp_pump(c, s, NULL, NULL) == KSL_OK, "handshake with the keyless context");
+    ksl_session *sess = client_session_after(c); CHECK(sess == NULL, "negative: no ticket without ticket keys"); ksl_session_free(sess); ksl_ssl_free(c); ksl_ssl_free(s);
+    c = tcp_client(cc, "server.test"); s = ksl_ssl_new(keyless, KSL_MODE_TCP);
+    CHECK(tcp_pump(c, s, NULL, NULL) == KSL_OK && ksl_ssl_new_session_ticket(s) == KSL_OK, "an explicit ticket request without keys");
+    ksl_drive(s); shuttle(s, c); sess = client_session_after(c); CHECK(sess == NULL, "negative: still no ticket"); ksl_session_free(sess); ksl_ssl_free(c); ksl_ssl_free(s);
+    c = tcp_client(cc, "server.test"); s = ksl_ssl_new(keyed, KSL_MODE_TCP); CHECK(tcp_pump(c, s, NULL, NULL) == KSL_OK, "handshake with the keyed context");
+    sess = client_session_after(c); CHECK(sess != NULL, "control: the keyed context issues a ticket"); ksl_ssl_free(c); ksl_ssl_free(s);
+    uint8_t reused = 9; size_t n;
+    c = tcp_client(cc, "server.test"); s = ksl_ssl_new(keyless, KSL_MODE_TCP); ksl_ssl_set_session(c, sess);
+    CHECK(tcp_pump(c, s, NULL, NULL) == KSL_OK && ksl_ssl_get(s, KSL_GET_SESSION_REUSED, &reused, 1, &n) == KSL_OK && reused == 0, "negative: the keyless context resumes no ticket");
+    ksl_session *after = client_session_after(c); CHECK(after == NULL, "negative: nor renews it"); ksl_session_free(after); ksl_ssl_free(c); ksl_ssl_free(s); ksl_session_free(sess);
+    /* a keyed SNI override under a keyless base: its keys are the ones in use (OpenSSL takes the callback from the base context) */
+    ksl_ctx *base = server_ctx("server-other-ca"); ksl_ctx_set_option(base, KSL_OPT_SNI_PAUSE, 1); ksl_ctx_freeze(base); ksl_ctx_freeze(keyed);
+    c = tcp_client(cc, "server.test"); s = ksl_ssl_new(base, KSL_MODE_TCP); sni_arg a = {keyed, 0, 0, {0}};
+    CHECK(tcp_pump(c, s, on_sni, &a) == KSL_OK, "handshake under the keyed override");
+    sess = client_session_after(c); CHECK(sess != NULL, "the override issued a ticket"); ksl_ssl_free(c); ksl_ssl_free(s);
+    c = tcp_client(cc, "server.test"); s = ksl_ssl_new(keyed, KSL_MODE_TCP); ksl_ssl_set_session(c, sess);
+    CHECK(tcp_pump(c, s, NULL, NULL) == KSL_OK && ksl_ssl_get(s, KSL_GET_SESSION_REUSED, &reused, 1, &n) == KSL_OK && reused == 1, "the override's ticket is sealed with the override's keys");
+    ksl_ssl_free(c); ksl_ssl_free(s); ksl_session_free(sess);
+    ksl_ctx_free(cc); ksl_ctx_free(keyless); ksl_ctx_free(keyed); ksl_ctx_free(base); END();
+}
+
+void run_tcp(void) { test_echo(); test_truncation(); test_tls12(); test_resumption(); test_sni_pause(); test_sni_override_alpn(); test_sni_override_settings_effective(); test_no_tls12_ticket_without_num_tickets(); test_session_context(); test_ticket_bound_to_server_name(); test_keyless_server_no_tickets(); }

@@ -122,6 +122,7 @@ static void test_alpn_required(void) {
 static void test_post_handshake_ticket(void) {
     SECTION("quic_post_handshake_ticket_delivered");
     ksl_ctx *cc = client_ctx("test-ca", KSL_VERIFY_OPENSSL), *sc = server_ctx("server"); ksl_ctx_set_option(sc, KSL_OPT_NUM_TICKETS, 0);
+    uint8_t keys[80]; for (int i = 0; i < 80; i++) keys[i] = (uint8_t)(i * 19 + 4); ksl_ctx_set_ticket_keys(sc, keys, 1);   /* no keys, no ticket */
     ksl_ssl *c = client(cc, "server.test"), *s = server(sc); side cs = {0}, ss = {0}; pump(c, s, &cs, &ss, 40, NULL, NULL);
     CHECK(cs.done && ss.done, "handshake done");
     int before = ss.crypto_events; CHECK(ksl_ssl_new_session_ticket(s) == KSL_OK, "queue a ticket");

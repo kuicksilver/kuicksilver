@@ -21,6 +21,7 @@ static void test_handshake_objects_return(void) {
     int64_t ctx0 = live(KSL_LIVE_CTX), ssl0 = live(KSL_LIVE_SSL), key0 = live(KSL_LIVE_KEY), pkey0 = live(KSL_LIVE_PKEY), sess0 = live(KSL_LIVE_SESSION);
     ksl_ctx *cc = client_ctx("test-ca", KSL_VERIFY_OPENSSL), *sc = ksl_ctx_new(KSL_SERVER);
     ksl_ctx_set_alpn(sc, ALPN_H3, sizeof ALPN_H3);
+    uint8_t tk[80]; for (int i = 0; i < 80; i++) tk[i] = (uint8_t)(i * 23 + 6); ksl_ctx_set_ticket_keys(sc, tk, 1);   /* no keys, no ticket */
     blob ch = chain_of(1, "server"); size_t kl; uint8_t *kd = key_of("server", &kl);
     ksl_pkey *pk = ksl_pkey_new(kd, kl); free(kd);
     CHECK(live(KSL_LIVE_PKEY) == pkey0 + 1, "a parsed key is one live reference");
