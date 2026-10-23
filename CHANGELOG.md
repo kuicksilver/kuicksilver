@@ -267,6 +267,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- Ktor server, HTTP/1.1: a pipelined request with `Expect: 100-continue` behind a slow response no longer gets a 408
+  while its client correctly waits for the `100 Continue` (RFC 9110 section 10.1.1). The `100 Continue` waits behind
+  the earlier responses, but the body deadline started when it was queued; it now starts once those responses are
+  written.
 - Ktor server, HTTP/1.1: a refused request (400 for a malformed head or framing, 431 for a head over the size limit)
   behind pipelined requests whose responses filled the response queue got no answer: the refusal was dropped and the
   connection closed after the earlier responses. It now waits its turn behind them

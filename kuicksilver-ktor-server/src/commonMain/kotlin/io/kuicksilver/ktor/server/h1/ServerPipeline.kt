@@ -94,7 +94,8 @@ internal class H1RequestScope(
     val closing: () -> Boolean = { false },
     /**
      * For a request with `Expect: 100-continue`: complete it once `100 Continue` went out, which starts the deadline of the
-     * body (the client may hold the body back until then). Null for other requests.
+     * body (the client may hold the body back until then) as soon as the earlier pipelined responses are written. Null
+     * for other requests.
      */
     val continueSent: CompletableJob? = null,
     /**
@@ -396,11 +397,20 @@ internal fun CoroutineScope.startH1Pipeline(
                 }
 
                 if (body != null && requestBody is ByteChannel) {
-                    // the deadline of the body starts once `100 Continue` is written, or when the handler ends without it
+                    // the deadline of the body starts once `100 Continue` is on its way to the client, or when the handler
+                    // ends without it. The client may wait for it before sending the body (RFC 9110 section 10.1.1), and
+                    // it waits in this request's response behind the earlier ones: the deadline starts only once those
+                    // are written too (only this request's response unwritten, as for the head deadline)
                     val gate =
                         continueSent?.let { sent ->
                             Job().also { g ->
-                                sent.invokeOnCompletion { g.complete() }
+                                val opener =
+                                    launch(start = CoroutineStart.UNDISPATCHED) {
+                                        sent.join()
+                                        unwritten.first { it <= 1 }
+                                        g.complete()
+                                    }
+                                g.invokeOnCompletion { opener.cancel() }
                                 handlerJob.invokeOnCompletion { g.complete() }
                             }
                         }
