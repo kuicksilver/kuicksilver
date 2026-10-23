@@ -46,6 +46,13 @@ Done for the project in October 2026, kept here so it can be repeated for a new 
    not in the repository: it runs the JVM suites of the given tree (`-w <root>`) in the VM against the mingw-w64 dll and
    ends its output with a `== summary` block of tests, failures and errors per module, which
    `tools/ci/local-matrix.sh --with-windows` reads (no tests run, or any failure, fails the step).
+6. **Network and Gradle cache for the Docker JVM steps**: `tools/ci/docker-jvm.sh` runs Gradle offline in a container
+   that sees only the host's `~/.gradle/caches/modules-2` (read-only, as `GRADLE_RO_DEP_CACHE`) and the unpacked
+   wrapper distribution, never the rest of `~/.gradle` (`gradle.properties` with the credentials above stays on the
+   host); its own Gradle home is private to the container, with cache cleanup off. The gate's preflight resolves every
+   configuration on the host, online, first, so the host must reach the repositories when the gate starts; if it
+   refuses with "the Docker JVM steps would not resolve offline", run the command it prints and see
+   `build/ci/preflight-deps.log`.
 
 ## Every release
 
