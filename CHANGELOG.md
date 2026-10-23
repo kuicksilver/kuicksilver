@@ -118,6 +118,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- QUIC, Linux and Apple platforms: a UDP send interrupted by a signal (`EINTR`) is retried instead of failing the
+  socket; on Linux an interrupted GSO send no longer withdraws GSO.
 - TLS: a server context without session ticket keys (a QUIC server with tickets off, a keyless SNI override base) no
   longer falls back to OpenSSL's own random ticket keys: it sends no ticket (RFC 8446 section 4.6.1 allows none) and
   resumes none, also when a ticket is requested explicitly after the pin verdict. A keyed SNI override under a keyless
