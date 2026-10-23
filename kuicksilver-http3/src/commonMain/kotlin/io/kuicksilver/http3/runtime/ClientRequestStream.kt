@@ -216,7 +216,11 @@ private suspend fun H3Session.exchange(
                 st.output.flushAndClose()
             } else {
                 st.output.flush()
-                sender = scope.launch { sendBody(st, r, callbacks, sendFailure) }
+                sender =
+                    scope.launch { sendBody(st, r, callbacks, sendFailure) }.also { j ->
+                        // the application writing the request body is released, whether the sender started or not
+                        onCancelled(j) { e -> r.body?.cancel(e) }
+                    }
             }
         } catch (e: Throwable) {
             // a server that answered without the rest of the request may stop it with H3_NO_ERROR before our FIN left: the response still counts (RFC 9114 section 4.1)
@@ -461,6 +465,11 @@ internal class ResponseImpl(
     }
 
     init {
+        // a pump cancelled before it ran (launched after the connection ended) still ends the body: its reader never hangs
+        session.onCancelled(pump) { e ->
+            bodyChannel.cancel(e)
+            trailersDeferred.completeExceptionally(e)
+        }
         // the request was abandoned after the response began: the body and trailers end with the sender's failure
         sendFailure?.invokeOnCompletion { cause ->
             if (cause != null) {

@@ -405,6 +405,11 @@ internal class ResponseWriterImpl(
             }
         }
 
+    init {
+        // cancelled with the connection, before it ran or while it waited: the application's writes fail, never hang
+        session.onCancelled(pump) { e -> channel.cancel(e) }
+    }
+
     override suspend fun finish(trailers: Http3Headers?) {
         finishing = true
         channel.flushAndClose()
