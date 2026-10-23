@@ -90,10 +90,12 @@ internal object HqInteropClient {
      * server has answered its ClientHello, the order that sends the requests in 1-RTT unless the answer is held back).
      */
     @kotlin.concurrent.Volatile var beforeZeroRttRequests: suspend (QuicConnection) -> Unit = {}
+    /** Runs between `openBidi` and the request's write (tests: let the connection end there, a close the write path reports). */
+    @kotlin.concurrent.Volatile var beforeRequest: suspend (QuicConnection) -> Unit = {}
     /** The `keyupdate` case: one key update once this many response bytes arrived (the runner wants it within the first MB). */
     private class KeyUpdateOnce(val after: Long) { var received = 0L; var done = false }
     private suspend fun fetch(conn: QuicConnection, url: String, downloads: String, progress: KeyUpdateOnce?): Boolean {
-        val st = conn.openBidi(); request(st, url); st.output.flushAndClose()
+        val st = conn.openBidi(); beforeRequest(conn); request(st, url); st.output.flushAndClose()
         return receive(conn, st, url, downloads, progress)
     }
     /**

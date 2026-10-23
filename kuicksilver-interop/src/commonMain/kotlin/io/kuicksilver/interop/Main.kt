@@ -38,16 +38,25 @@ internal object Interop {
                 val plan = Testcases.client(testcase, cc)!!
                 val requests = (env["REQUESTS"] ?: "").split(Regex("\\s+")).filter { it.isNotBlank() }
                 // a lost connection (idle timeout, the peer's close, a stateless reset) is a failed cell, exit 1: uncaught it ended the
-                // JVM with 1 but Kotlin/Native with 133 (ngtcp2->kuicksilver-native:rebind-addr, 2026-10-20)
+                // JVM with 1 but Kotlin/Native with 133 (ngtcp2->kuicksilver-native:rebind-addr, 2026-10-20). A stream's output reports
+                // it as a ClosedWriteChannelException with the ConnectionLost as its cause (a close that lands between openBidi and the
+                // request's write: Linux arm64 Docker JVM 2026-10-23, 3 in 1000 loaded macOS runs), so the cause chain is searched for it
                 try {
                     val ok = if (plan.http3) H3InteropClient.download(requests, env["DOWNLOADS"] ?: "/downloads", plan, InteropTrust.config(env), env["SSLKEYLOGFILE"], env["QLOGDIR"]?.let { DirectoryQlogSink(it) })
                         else HqInteropClient.download(requests, env["DOWNLOADS"] ?: "/downloads", plan, InteropTrust.config(env), env["SSLKEYLOGFILE"], env["QLOGDIR"]?.let { DirectoryQlogSink(it) })
                     if (ok) 0 else 1
-                } catch (e: QuicException.ConnectionLost) { Files.log("connection lost: $e"); 1 }
+                } catch (e: Exception) {
+                    val lost = connectionLost(e) ?: throw e
+                    Files.log("connection lost: $lost"); 1
+                }
             }
             else -> 127
         }
     }
+
+    /** [e] or the first of its causes that is a lost connection (ktor-io's channels wrap it), else null. */
+    internal fun connectionLost(e: Throwable): QuicException.ConnectionLost? =
+        generateSequence(e) { it.cause.takeUnless { c -> c === it } }.take(16).filterIsInstance<QuicException.ConnectionLost>().firstOrNull()
 }
 
 fun main() { exitWith(Interop.run(Interop.environment())) }
