@@ -145,14 +145,28 @@ and only with an installed Chrome or Chromium:
 ```
 
 It starts Chrome headless with a throw-away profile, QUIC forced for the test origin and the test certificate admitted
-by its SPKI hash, and the page `wt/index.html` from the test resources posts its results back. To check Firefox or
-Safari by hand, serve that page and the test's two routes (`/wt/echo`, `/wt/server-close`) from a server whose
-certificate is valid for at most 14 days and not RSA (browsers pin such a certificate by hash), for example
-`openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -days 13 -nodes -subj /CN=localhost -addext
-subjectAltName=DNS:localhost -keyout wt.key -out wt.pem`, and open `https://localhost:<port>/wt/index.html?hash=<b64>`
-with `<b64>` from `openssl x509 -in wt.pem -outform der | openssl dgst -sha256 -binary | base64`, accepting the
-browser's certificate warning for the page itself (`serverCertificateHashes` only covers the WebTransport session); each step prints
-`ok` on the page. Record the result in `docs/spec/rfc-compliance.md`, "Interop WebTransport".
+by its SPKI hash, and the page `wt/index.html` from the test resources posts its results back. Firefox is checked by
+hand with one command:
+
+```sh
+tools/interop/wt-firefox-manual.sh
+```
+
+It makes a P-256 certificate valid for 13 days (browsers pin only a certificate valid for at most 14 days and not RSA
+by hash) and its SHA-256 hash, starts `ManualWebTransportServer` (`kuicksilver-ktor-server` jvmTest, opt-in with
+`-Pkuicksilver.manualWebTransport=true`) with that page and the test's two routes on `127.0.0.1`, and opens
+`https://localhost:<port>/wt/index.html?hash=<b64>` in Firefox with a throw-away profile. Accept Firefox's certificate
+warning for the page once (`serverCertificateHashes` only covers the WebTransport sessions); the script then prints
+PASS or FAIL with the page's JSON and stops Firefox and the server (variables in the script's header). To check Safari
+by hand, start the same server with a certificate such as `openssl req -x509 -newkey ec -pkeyopt
+ec_paramgen_curve:P-256 -days 13 -nodes -subj /CN=localhost -addext subjectAltName=DNS:localhost -keyout wt.key -out
+wt.pem` (OpenSSL 3, which writes the PKCS#8 key the server reads): `./gradlew :kuicksilver-ktor-server:jvmTest --tests
+'*ManualWebTransportServer*' -Pkuicksilver.manualWebTransport=true -Pkuicksilver.manualWebTransport.cert=$PWD/wt.pem
+-Pkuicksilver.manualWebTransport.key=$PWD/wt.key -Pkuicksilver.manualWebTransport.port=<port>`, open
+`https://localhost:<port>/wt/index.html?hash=<b64>` with `<b64>` from `openssl x509 -in wt.pem -outform der | openssl
+dgst -sha256 -binary | base64` (percent-encoded in the URL) and accept the certificate warning for the page; each step
+prints `ok` on the page and the Gradle run passes once the page has posted its result. Record the result in
+`docs/spec/rfc-compliance.md`, "Interop WebTransport".
 
 ### EngineMain and configuration keys
 
