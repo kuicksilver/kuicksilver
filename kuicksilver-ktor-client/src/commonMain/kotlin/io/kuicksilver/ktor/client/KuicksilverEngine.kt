@@ -375,7 +375,8 @@ internal class KuicksilverEngine(
     /**
      * `Auto` (RFC 7838): HTTP/3 to a live alternative the origin announced, with `Alt-Used`; otherwise HTTP/1.1,
      * learning `Alt-Svc` from its responses (always over verified TLS here: the engine's TLS rejects what the trust
-     * configuration rejects). A 421 from the alternative drops it and the request goes to the origin over HTTP/1.1.
+     * configuration rejects). A 421 from the alternative drops that alternative, the origin's others stay (RFC 7838
+     * section 6), and the request goes to the origin over HTTP/1.1.
      */
     private suspend fun auto(
         data: HttpRequestData,
@@ -404,7 +405,7 @@ internal class KuicksilverEngine(
                     )
                 }
                 if (r.statusCode.value != 421 || r.version != HttpProtocolVersion.HTTP_3_0) return r
-                altSvcUpdate { altSvc.remove(url) }
+                altSvcUpdate { altSvc.removeAlternative(url, alt) }
                 if (!data.body.isReplayable()) {
                     throw H3BodyConsumed(
                         "421 Misdirected Request from the alternative, and the request body was already consumed",

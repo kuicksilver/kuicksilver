@@ -253,8 +253,14 @@ internal class AltSvcCache(
         }
     }
 
-    fun remove(url: Url) {
-        store.remove(originOf(url))
+    /** Forgets [entry] of the origin of [url] and keeps its other alternatives: a 421 from [entry] (RFC 7838 section 6). */
+    fun removeAlternative(
+        url: Url,
+        entry: AltSvcEntry,
+    ) {
+        val origin = originOf(url)
+        val entries = store.get(origin)
+        if (entry in entries) store.put(origin, entries - entry)
     }
 
     fun onNetworkChanged(clearNonPersistent: Boolean) {
