@@ -14,9 +14,15 @@ import io.ktor.server.routing.routing
 import io.ktor.utils.io.copyTo
 import io.ktor.utils.io.writeFully
 import io.kuicksilver.http3.WebTransportCloseInfo
+import io.kuicksilver.http3.WebTransportSession
 import io.kuicksilver.ktor.server.Kuicksilver
 import io.kuicksilver.ktor.server.webTransport
 import io.kuicksilver.native.KslLoader
+import io.kuicksilver.quic.ConnectionInfo
+import io.kuicksilver.quic.ConnectionListener
+import io.kuicksilver.quic.QuicException
+import io.kuicksilver.quic.qlog.AsyncQlogSink
+import io.kuicksilver.quic.qlog.DirectoryQlogSink
 import io.kuicksilver.tls.TlsIdentity
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.cancelChildren
@@ -33,6 +39,7 @@ import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
 import java.security.cert.CertificateFactory
 import java.util.Base64
+import java.util.concurrent.ConcurrentLinkedQueue
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -52,6 +59,13 @@ import kotlin.time.Duration.Companion.seconds
  * free one), `.dir` (where `ready` is written with the port once the server listens, and `result.json` and `server.txt`
  * once the page has posted), `.timeoutSeconds` (how long to wait for the page, 600 by default). It prints the URL, waits
  * for the page's POST, prints the JSON, checks every step and stops.
+ *
+ * Diagnostics, with `.dir` only: a qlog trace per QUIC connection in `<dir>/qlog`, and `<dir>/server-events.txt`, a
+ * timeline (wall clock in microseconds, comparable with Firefox's qlog) of each connection's open, handshake and close
+ * (who closed, the code, its stats), each session's request headers and the client's SETTINGS as the connection saw them,
+ * and how each session ended: its code, reason and cause chain. The cause tells the end apart: none with code 0 is the
+ * client's FIN without a WT_CLOSE_SESSION, a stream error is a RESET_STREAM (or our STOP_SENDING), a lost connection is a
+ * CONNECTION_CLOSE (or a timeout) before any capsule was read.
  */
 class ManualWebTransportServer {
     @BeforeTest fun load() = KslLoader.ensureLoaded()
@@ -73,6 +87,26 @@ class ManualWebTransportServer {
         val result = CompletableDeferred<String>()
         val clientClose = CompletableDeferred<WebTransportCloseInfo>()
         val connect = CompletableDeferred<String>()
+        val events = Timeline()
+        val qlogSink = dir?.let { AsyncQlogSink(DirectoryQlogSink(File(it, "qlog").path)) }
+        lateinit var peerSettings: suspend () -> String
+
+        /** The session's headers and the client's SETTINGS on arrival, and its end once it ends, in [events]. */
+        @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+        suspend fun observe(
+            route: String,
+            session: WebTransportSession,
+        ) {
+            events.add("$route: session ${session.sessionId} accepted, protocol=${session.protocol}")
+            for ((name, value) in session.headers.fields) events.add("$route:   request header $name: $value")
+            events.add("$route:   ${peerSettings()}")
+            session.closed.invokeOnCompletion {
+                val info = session.closed.getCompleted()
+                events.add(
+                    "$route: session ${session.sessionId} ended: code=${info.code} reason=\"${info.reason}\" cause=${chain(info.cause)}",
+                )
+            }
+        }
         val server =
             embeddedServer(Kuicksilver, configure = {
                 tlsConnector(identity) {
@@ -80,6 +114,8 @@ class ManualWebTransportServer {
                     this.port = port
                 }
                 webTransport = true
+                qlog = qlogSink
+                connectionListener = events
             }) {
                 routing {
                     get("/wt/index.html") { call.respondText(page, ContentType.Text.Html) }
@@ -88,6 +124,7 @@ class ManualWebTransportServer {
                         call.respondText("ok")
                     }
                     webTransport("/wt/echo") { session ->
+                        observe("/wt/echo", session)
                         connect.complete(
                             "sec-webtransport-http3-draft02=${session.headers["sec-webtransport-http3-draft02"]} " +
                                 "user-agent=${session.headers["user-agent"]}",
@@ -114,9 +151,20 @@ class ManualWebTransportServer {
                             coroutineContext.cancelChildren()
                         }
                     }
-                    webTransport("/wt/server-close") { session -> session.close(9, "server-bye") }
+                    webTransport("/wt/server-close") { session ->
+                        observe("/wt/server-close", session)
+                        session.close(9, "server-bye")
+                    }
                 }
             }
+        peerSettings = {
+            server.engine.h3ListenersForProbe
+                .flatMap { it.live() }
+                .joinToString("; ", prefix = "client SETTINGS per live connection: ") { c ->
+                    val ps = c.peerSettings.value
+                    if (ps == null) "none yet" else "$ps unknown=${ps.unknown.entries.joinToString { (k, v) -> "0x${k.toString(16)}=$v" }}"
+                }
+        }
         runBlocking {
             server.startSuspend(wait = false)
             try {
@@ -131,7 +179,7 @@ class ManualWebTransportServer {
                 val json = withTimeout(wait) { result.await() }
                 val seenClose = withTimeoutOrNull(10.seconds) { clientClose.await() }
                 val seenConnect = withTimeoutOrNull(1.seconds) { connect.await() }
-                val closeText = seenClose?.let { "${it.code} \"${it.reason}\"" }
+                val closeText = seenClose?.let { "${it.code} \"${it.reason}\" (cause ${chain(it.cause)})" }
                 val serverSide = "connect: $seenConnect\nclientClose seen by the server: $closeText\n"
                 println("Browser WebTransport result: $json")
                 print(serverSide)
@@ -145,7 +193,40 @@ class ManualWebTransportServer {
                 assertEquals(7L to "bye", closed.code to closed.reason)
             } finally {
                 server.stopSuspend(100, 1000)
+                qlogSink?.close()
+                val timeline = events.text()
+                print("Server events:\n$timeline")
+                dir?.let { writeAtomically(File(it, "server-events.txt"), timeline) }
             }
+        }
+    }
+
+    /** The QUIC connections' lifecycle and the sessions' events, stamped with the wall clock in microseconds. */
+    private class Timeline : ConnectionListener {
+        private val lines = ConcurrentLinkedQueue<String>()
+        private val epochMicros = System.currentTimeMillis() * 1000
+        private val startNanos = System.nanoTime()
+
+        fun add(event: String) {
+            val us = epochMicros + (System.nanoTime() - startNanos) / 1000
+            lines += "${us / 1_000_000}.${(us % 1_000_000).toString().padStart(6, '0')} $event"
+        }
+
+        fun text(): String = lines.joinToString("") { it + "\n" }
+
+        override fun onOpened(connection: ConnectionInfo) = add("quic ${connection.id}: opened from ${connection.remoteAddress}")
+
+        override fun onHandshakeCompleted(connection: ConnectionInfo) = add("quic ${connection.id}: handshake completed")
+
+        override fun onClosed(
+            connection: ConnectionInfo,
+            reason: QuicException.ConnectionLost,
+        ) {
+            val s = connection.connection.stats
+            add(
+                "quic ${connection.id}: closed: ${chain(reason)}; packets received ${s.packetsReceived}, sent ${s.packetsSent}, " +
+                    "lost ${s.lostPackets}",
+            )
         }
     }
 
@@ -168,6 +249,10 @@ class ManualWebTransportServer {
     }
 
     private companion object {
+        /** [e] and its causes, each as its class and message. */
+        fun chain(e: Throwable?): String =
+            generateSequence(e) { it.cause }.take(6).joinToString(" <- ") { "${it::class.simpleName}(${it.message})" }.ifEmpty { "none" }
+
         const val PREFIX = "kuicksilver.manualWebTransport"
         val STEPS = listOf("connect", "bidiEcho1MB", "uniFromServer", "datagrams", "clientClose", "serverClose")
     }

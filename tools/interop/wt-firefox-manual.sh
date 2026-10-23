@@ -9,11 +9,17 @@
 # once it listens opens https://localhost:<port>/wt/index.html?hash=<hash> in Firefox with a throw-away profile. Accept
 # Firefox's certificate warning for the page once ("Advanced", "Accept the Risk and Continue"): the hash covers only the
 # WebTransport sessions, not the page. The page runs its steps and posts the result; the script prints PASS or FAIL with
-# the page's JSON, stops Firefox and the Gradle run it started (only those, by process group) and removes the directory.
+# the page's JSON, stops Firefox and the Gradle run it started (only those, by process group) and removes the directory
+# on PASS; on FAIL it keeps it and lists what to look at. Diagnostics in that directory: server-events.txt (the server's
+# timeline: connections, request headers, the client's SETTINGS, how each session ended and why), qlog/ (the server's
+# qlog), firefox-qlog/ (Firefox's own qlog, network.http.http3.enable_qlog, with the frames it sent and received),
+# firefox-moz.log* (MOZ_LOG), gradle.log, result.json and server.txt.
 # Env: FIREFOX (the firefox executable; default: Firefox.app in /Applications or ~/Applications), WT_PORT (default 0: the
 # server picks a free port), WT_HOST (the host in the URL, default localhost; 127.0.0.1 also matches the certificate),
 # WT_TIMEOUT (seconds to wait for the page's result, default 600), OPENSSL (default: openssl on PATH; LibreSSL works too),
-# KSL_GRADLE (default ~/.kuicksilver-tools/quiet-gradle, ./gradlew where that is missing), WT_KEEP=1 keeps the directory.
+# KSL_GRADLE (default ~/.kuicksilver-tools/quiet-gradle, ./gradlew where that is missing), WT_KEEP=1 keeps the directory
+# on PASS too and WT_KEEP=0 removes it on FAIL too, WT_MOZ_LOG (Firefox's MOZ_LOG modules, default
+# timestamp,sync,nsHttp:4,neqo_http3:5,neqo_transport:3; empty turns MOZ_LOG off).
 # Exit 0 on PASS, 1 on FAIL, 2 when something needed is missing.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -60,13 +66,35 @@ stop_group() {
   done
   kill -KILL -- "-$pid" 2>/dev/null || kill -KILL "$pid" 2>/dev/null || true
 }
+# Firefox writes its qlog to qlog_<pid> in its temporary directory: the TMPDIR it was started with, or on macOS the
+# per-user one if it does not honour TMPDIR; the directories made during this run are copied next to the rest.
+# shellcheck disable=SC2329   # called from cleanup, the EXIT trap
+collect_firefox_qlog() {
+  [ -f "$tmp/started" ] || return 0
+  local base d
+  for base in "$tmp/firefox-tmp" "$(getconf DARWIN_USER_TEMP_DIR 2>/dev/null || true)" "${TMPDIR:-/tmp}"; do
+    [ -n "$base" ] && [ -d "$base" ] || continue
+    while IFS= read -r d; do
+      mkdir -p "$tmp/firefox-qlog"
+      cp -R "$d" "$tmp/firefox-qlog/" 2>/dev/null || true
+    done < <(find "$base" -maxdepth 1 -type d -name 'qlog_*' -newer "$tmp/started" 2>/dev/null)
+  done
+}
 # shellcheck disable=SC2329   # the EXIT trap
 cleanup() {
   local rc=$?
   trap - EXIT INT TERM
   stop_group "$firefox_pid"
   stop_group "$gradle_pid"
-  if [ "${WT_KEEP:-}" = 1 ]; then echo "wt-firefox-manual: kept $tmp"; else rm -rf "$tmp"; fi
+  collect_firefox_qlog
+  if [ "${WT_KEEP:-}" = 1 ] || { [ "$rc" -ne 0 ] && [ "${WT_KEEP:-}" != 0 ]; }; then
+    echo "wt-firefox-manual: kept $tmp"
+    for f in server-events.txt server.txt result.json qlog firefox-qlog firefox-moz.log gradle.log; do
+      if compgen -G "$tmp/$f*" >/dev/null; then echo "  $tmp/$f"; fi
+    done
+  else
+    rm -rf "$tmp"
+  fi
   exit "$rc"
 }
 trap cleanup EXIT
@@ -149,14 +177,23 @@ user_pref("startup.homepage_welcome_url.additional", "");
 user_pref("datareporting.policy.dataSubmissionEnabled", false);
 user_pref("toolkit.telemetry.reportingpolicy.firstRun", false);
 user_pref("app.update.disabledForTesting", true);
+user_pref("network.http.http3.enable_qlog", true);
 EOF
 
 echo "wt-firefox-manual: server on 127.0.0.1:$bound; opening Firefox at"
 echo "  $url"
 echo "wt-firefox-manual: accept Firefox's certificate warning once (Advanced, Accept the Risk and Continue);"
 echo "  the page then runs its steps by itself. Waiting up to $timeout s for its result (Ctrl-C stops everything)."
+mkdir -p "$tmp/firefox-tmp"
+touch "$tmp/started"
+moz_log="${WT_MOZ_LOG-timestamp,sync,nsHttp:4,neqo_http3:5,neqo_transport:3}"
 set -m
-"$firefox" -no-remote -profile "$profile" "$url" >"$tmp/firefox.log" 2>&1 &
+if [ -n "$moz_log" ]; then
+  TMPDIR="$tmp/firefox-tmp/" MOZ_LOG="$moz_log" MOZ_LOG_FILE="$tmp/firefox-moz.log" \
+    "$firefox" -no-remote -profile "$profile" "$url" >"$tmp/firefox.log" 2>&1 &
+else
+  TMPDIR="$tmp/firefox-tmp/" "$firefox" -no-remote -profile "$profile" "$url" >"$tmp/firefox.log" 2>&1 &
+fi
 firefox_pid=$!
 set +m
 
@@ -168,6 +205,10 @@ echo
 if [ -f "$tmp/result.json" ]; then
   echo "Page result: $(cat "$tmp/result.json")"
   cat "$tmp/server.txt" 2>/dev/null || true
+  if [ -f "$tmp/server-events.txt" ]; then
+    echo "Server events (how each session and connection ended):"
+    grep -E 'ended:|closed:' "$tmp/server-events.txt" || true
+  fi
 fi
 if [ "$gradle_rc" -eq 0 ] && [ -f "$tmp/result.json" ]; then
   echo "wt-firefox-manual: PASS: every step ok in $version"

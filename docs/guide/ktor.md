@@ -157,7 +157,9 @@ by hash) and its SHA-256 hash, starts `ManualWebTransportServer` (`kuicksilver-k
 `-Pkuicksilver.manualWebTransport=true`) with that page and the test's two routes on `127.0.0.1`, and opens
 `https://localhost:<port>/wt/index.html?hash=<b64>` in Firefox with a throw-away profile. Accept Firefox's certificate
 warning for the page once (`serverCertificateHashes` only covers the WebTransport sessions); the script then prints
-PASS or FAIL with the page's JSON and stops Firefox and the server (variables in the script's header). To check Safari
+PASS or FAIL with the page's JSON and stops Firefox and the server (variables in the script's header). On FAIL it keeps
+its temporary directory and lists it: `server-events.txt` (how each session and connection ended, with the cause),
+the server's qlog, Firefox's own qlog and MOZ_LOG. To check Safari
 by hand, start the same server with a certificate such as `openssl req -x509 -newkey ec -pkeyopt
 ec_paramgen_curve:P-256 -days 13 -nodes -subj /CN=localhost -addext subjectAltName=DNS:localhost -keyout wt.key -out
 wt.pem` (OpenSSL 3, which writes the PKCS#8 key the server reads): `./gradlew :kuicksilver-ktor-server:jvmTest --tests
