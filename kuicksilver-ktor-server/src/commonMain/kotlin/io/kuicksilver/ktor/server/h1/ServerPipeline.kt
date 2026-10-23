@@ -96,6 +96,11 @@ internal class H1RequestScope(
      * body (the client may hold the body back until then). Null for other requests.
      */
     val continueSent: CompletableJob? = null,
+    /**
+     * For an HTTP/1.0 request: completed as the response head goes out, true when the response has no known length and
+     * the close of the connection delimits its body (see [H1Response]), false otherwise. Null for other requests.
+     */
+    val closeDelimited: CompletableDeferred<Boolean>? = null,
 ) : CoroutineScope
 
 /**
@@ -349,6 +354,7 @@ internal fun CoroutineScope.startH1Pipeline(
                 val continueSent =
                     if (expectedHttpBody && expectsContinue(request, version)) Job() else null
                 val body = if (expectedHttpBody) RequestBody(framing, input, continueSent) else null
+                val closeDelimited = if (version == HttpProtocolVersion.HTTP_1_0) CompletableDeferred<Boolean>() else null
 
                 val handlerJob =
                     launch(requestContext, start = CoroutineStart.UNDISPATCHED) {
@@ -364,6 +370,7 @@ internal fun CoroutineScope.startH1Pipeline(
                                     draining?.isCompleted == true || bodyTimedOut.isCompleted || body?.endsConnectionAtResponse() == true
                                 },
                                 continueSent = continueSent,
+                                closeDelimited = closeDelimited,
                             )
                         try {
                             handler(handlerScope, request)
@@ -373,6 +380,7 @@ internal fun CoroutineScope.startH1Pipeline(
                         } finally {
                             response.close()
                             upgraded?.complete(false)
+                            closeDelimited?.complete(false)
                         }
                     }
 
@@ -434,6 +442,9 @@ internal fun CoroutineScope.startH1Pipeline(
                 }
 
                 if (isLastHttpRequest(version, connectionOptions)) break
+                // an HTTP/1.0 keep-alive response of unknown length ends at the close (RFC 9112 section 6.3 item 8): no
+                // further request is read on this connection
+                if (closeDelimited?.await() == true) break
             }
         } catch (_: IOException) {
             // the client went away

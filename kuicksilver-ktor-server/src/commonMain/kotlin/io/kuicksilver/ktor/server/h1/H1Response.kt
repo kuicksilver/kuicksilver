@@ -38,6 +38,8 @@ internal class H1Response(
     private val altSvc: String?,
     /** True once the connection ends after this response (the server is stopping): it then says `Connection: close`. */
     private val closing: () -> Boolean = { false },
+    /** For an HTTP/1.0 request: completed with whether the close of the connection delimits this response's body. */
+    private val closeDelimited: CompletableDeferred<Boolean>? = null,
 ) : BaseApplicationResponse(call) {
     private var statusCode: HttpStatusCode = HttpStatusCode.OK
     private val headersBuilder = HeadersBuilder()
@@ -126,6 +128,17 @@ internal class H1Response(
         if (altSvc != null && headersBuilder["Alt-Svc"] == null && statusCode.value != 421) headersBuilder.append("Alt-Svc", altSvc)
         // the server is stopping and reads no further request here: say so (RFC 9112 section 9.6), as Go's Shutdown does
         if (closing() && statusCode != HttpStatusCode.SwitchingProtocols) headersBuilder[HttpHeaders.Connection] = "close"
+        if (closeDelimited != null) {
+            // HTTP/1.0 request: a server MUST NOT send Transfer-Encoding (RFC 9112 section 6.1). A body of unknown length
+            // (Ktor asked for chunked) goes out raw and the close delimits it (section 6.3 item 8), which `Connection:
+            // close` announces (section 9.6), whatever the request's keep-alive
+            val unknownLength = headersBuilder.contains(HttpHeaders.TransferEncoding)
+            if (unknownLength) {
+                headersBuilder.remove(HttpHeaders.TransferEncoding)
+                headersBuilder[HttpHeaders.Connection] = "close"
+            }
+            closeDelimited.complete(unknownLength)
+        }
         val builder = RequestResponseBuilder()
         try {
             builder.responseLine("HTTP/1.1", statusCode.value, statusCode.description)
