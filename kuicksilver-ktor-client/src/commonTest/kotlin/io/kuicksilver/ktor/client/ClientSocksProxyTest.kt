@@ -190,6 +190,79 @@ class ClientSocksProxyTest {
             }
         }
 
+    /**
+     * Through `socks5://` (names resolved by the client) a "host unreachable" for the first address of the origin moves
+     * on to the next one, on a new connection to the proxy.
+     */
+    @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+    @Test
+    fun socks5LocalDnsTriesNextAddressOnUnreachable() =
+        clientTest {
+            val (server, port) = testServer { routing { get("/") { call.respondText("second address") } } }
+            val selector = SelectorManager(Dispatchers.Default)
+            val listener = aSocket(selector).tcp().bind("127.0.0.1", 0)
+            val destinations = ArrayList<List<Byte>>()
+            try {
+                coroutineScope {
+                    val proxy =
+                        launch {
+                            for (attempt in 0..1) {
+                                listener.accept().use { s ->
+                                    val input = s.openReadChannel()
+                                    val output = s.openWriteChannel(autoFlush = true)
+                                    input.readFully(ByteArray(3)) // 05 01 00: no authentication only
+                                    output.writeFully(byteArrayOf(5, 0))
+                                    val head = ByteArray(4).also { input.readFully(it) }
+                                    check(head[3] == 1.toByte()) { "an address was expected, not ATYP ${head[3]}" }
+                                    destinations += ByteArray(4).also { input.readFully(it) }.toList()
+                                    input.readFully(ByteArray(2))
+                                    if (attempt == 0) {
+                                        output.writeFully(byteArrayOf(5, 4, 0, 1, 0, 0, 0, 0, 0, 0)) // host unreachable
+                                    } else {
+                                        aSocket(selector).tcp().connect("127.0.0.1", port).use { o ->
+                                            output.writeFully(byteArrayOf(5, 0, 0, 1, 127, 0, 0, 1, 0, 0))
+                                            val oIn = o.openReadChannel()
+                                            val oOut = o.openWriteChannel(autoFlush = true)
+                                            coroutineScope {
+                                                launch { pump(input, oOut) }
+                                                pump(oIn, output)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    val proxyPort = (listener.localAddress as InetSocketAddress).port
+                    testClient(engine = {
+                        proxyResolver = environmentResolver(mapOf("all_proxy" to "socks5://127.0.0.1:$proxyPort"))
+                        resolverForTest = { host, p ->
+                            if (host == "server.test") {
+                                listOf(
+                                    io.kuicksilver.ktor.network
+                                        .TcpAddress(byteArrayOf(10, -1, -1, 1), p),
+                                    io.kuicksilver.ktor.network
+                                        .TcpAddress(byteArrayOf(127, 0, 0, 1), p),
+                                )
+                            } else {
+                                listOf(
+                                    io.kuicksilver.ktor.network
+                                        .TcpAddress(byteArrayOf(127, 0, 0, 1), p),
+                                )
+                            }
+                        }
+                    }).use { c ->
+                        assertEquals("second address", c.get("https://server.test:$port/").bodyAsText())
+                    }
+                    assertEquals(listOf(listOf<Byte>(10, -1, -1, 1), listOf<Byte>(127, 0, 0, 1)), destinations)
+                    proxy.cancel()
+                }
+            } finally {
+                listener.close()
+                selector.close()
+                server.stop(100, 500)
+            }
+        }
+
     @Test fun negative_socksReplyFailsTheRequest() =
         clientTest {
             socksProxy(1, reply = 5) { proxyPort, _ ->

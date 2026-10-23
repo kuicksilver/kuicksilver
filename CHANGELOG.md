@@ -36,10 +36,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   resolver sends through a proxy.
 - Ktor client: SOCKS5 proxies (RFC 1928, CONNECT only) with username/password authentication (RFC 1929): a
   `ProxyBuilder.socks(host, port)` proxy now tunnels every request instead of being refused, the proxy resolving the
-  origin's name. New experimental `proxyCredentials` (SOCKS5 username/password, sent only when the proxy picks that
-  method; `Proxy-Authorization: Basic` with the first CONNECT or absolute-form request to an HTTP proxy) and
-  `ProxyException` (a SOCKS5 reply or CONNECT status other than success, as `replyCode`). Off the JVM a proxy URL's
-  user info is used as its credentials, and an `https://` proxy URL is refused instead of being spoken to in clear.
+  origin's name. New experimental `proxyCredentials` for the explicit `proxy` (SOCKS5 username/password, sent only
+  when the proxy picks that method; `Proxy-Authorization: Basic` with the first CONNECT or absolute-form request to an
+  HTTP proxy) and `ProxyException` (a SOCKS5 reply or CONNECT status other than success, as `replyCode`). Off the JVM
+  a proxy URL's user info is used as its credentials, and an `https://` proxy URL is refused instead of being spoken
+  to in clear.
 - QUIC: ICMP Packet Too Big (Linux, Android) and EMSGSIZE (every accelerated socket) speed up path MTU discovery as
   hints (experimental `QuicConfig.pmtudIcmpHints`, on by default; RFC 8899 section 4.6, RFC 9000 section 14.2.1). A
   Packet Too Big must quote one of the connection's packets on its active path and leave at least 1200 bytes of payload,

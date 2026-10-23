@@ -90,6 +90,12 @@ class Socks5Test {
         assertTrue(handshake(bytes(4, 0) + ok).second is ProxyException, "a reply that is not SOCKS5")
     }
 
+    /** RFC 1929 says the reply's VER is 1; a proxy that answers 5 (the SOCKS version) is tolerated, as curl does. */
+    @Test fun authReplyVersion5Tolerated() {
+        assertNull(handshake(bytes(5, 2, 5, 0) + ok, credentials = ProxyCredentials("u", "p")).second)
+        assertTrue(handshake(bytes(5, 2, 4, 0) + ok, credentials = ProxyCredentials("u", "p")).second is ProxyException)
+    }
+
     @Test fun negative_socksAuthRejected() {
         val e = handshake(bytes(5, 2, 1, 1), credentials = ProxyCredentials("u", "p")).second
         assertTrue(e is ProxyException && e.replyCode == null && "rejected" in e.message!!, "$e")

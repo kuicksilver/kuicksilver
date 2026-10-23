@@ -60,4 +60,34 @@ class SystemProxyJvmTest {
                 server.stop(100, 500)
             }
         }
+
+    /** A `ProxySelector` that blocks (waiting on the network) fails the request at the connect timeout. */
+    @Test fun negative_blockingSelectorFailsAtConnectTimeout() =
+        clientTest {
+            val previous = ProxySelector.getDefault()
+            val release = java.util.concurrent.CountDownLatch(1)
+            try {
+                ProxySelector.setDefault(
+                    object : ProxySelector() {
+                        override fun select(uri: URI): List<Proxy> {
+                            release.await()
+                            return listOf(Proxy.NO_PROXY)
+                        }
+
+                        override fun connectFailed(
+                            uri: URI?,
+                            sa: SocketAddress?,
+                            ioe: IOException?,
+                        ) {}
+                    },
+                )
+                testClient(engine = { connectTimeout = kotlin.time.Duration.parse("300ms") }).use { c ->
+                    val e = kotlin.test.assertFailsWith<ProxyException> { c.get("https://blocked.test/") }
+                    kotlin.test.assertTrue("connect timeout" in e.message!!, e.message)
+                }
+            } finally {
+                release.countDown()
+                ProxySelector.setDefault(previous)
+            }
+        }
 }

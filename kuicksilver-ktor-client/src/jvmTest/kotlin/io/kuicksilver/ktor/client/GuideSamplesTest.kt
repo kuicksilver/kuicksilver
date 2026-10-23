@@ -5,6 +5,8 @@
 package io.kuicksilver.ktor.client
 
 import io.ktor.client.HttpClient
+import io.ktor.client.engine.ProxyBuilder
+import io.ktor.client.engine.http
 import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.request.HttpRequestData
 import io.ktor.client.request.get
@@ -129,17 +131,39 @@ class GuideSamplesTest {
             }
         }
 
-    @Test fun proxySample() {
-        // guide:ktor:proxy
-        val client =
-            HttpClient(Kuicksilver) {
-                engine {
-                    proxyResolver = ProxyResolvers.Environment // or System (the default), None, or your own
-                    proxyCredentials = ProxyCredentials("user", System.getenv("PROXY_PASSWORD") ?: "")
+    @Test fun proxySample() =
+        clientTest {
+            // guide:ktor:proxy
+            val password = System.getenv("PROXY_PASSWORD") ?: ""
+            // one proxy for everything, with credentials for it
+            val viaProxy =
+                HttpClient(Kuicksilver) {
+                    engine {
+                        proxy = ProxyBuilder.http("http://proxy.corp.test:3128")
+                        proxyCredentials = ProxyCredentials("user", password) // for `proxy` only
+                    }
                 }
+            // a resolver of your own: its proxy carries its own credentials (ProxyResolvers.Environment takes them from https_proxy)
+            val perHost =
+                HttpClient(Kuicksilver) {
+                    engine {
+                        proxyResolver =
+                            ProxyResolver { url ->
+                                if (url.host.endsWith(".internal.test")) {
+                                    null // direct
+                                } else {
+                                    ResolvedProxy.http("proxy.corp.test", 3128, ProxyCredentials("user", password))
+                                }
+                            }
+                    }
+                }
+            viaProxy.close()
+            perHost.use {
+                val resolver = (it.engine as KuicksilverEngine).config.proxyResolver
+                assertEquals(null, resolver.proxyFor(io.ktor.http.Url("https://a.internal.test/")))
+                assertEquals("user", resolver.proxyFor(io.ktor.http.Url("https://example.test/"))?.credentials?.user)
             }
-        client.use { assertEquals(ProxyResolvers.Environment, (it.engine as KuicksilverEngine).config.proxyResolver) }
-    }
+        }
 
     @Test
     fun poolSample() {

@@ -75,7 +75,8 @@ internal suspend fun socks5Connect(
             output.flush()
             val v = input.readByte()
             val status = input.readByte()
-            if (v != AUTH_VERSION) throw ProxyException("$proxy answered the authentication with version $v", null)
+            // RFC 1929 says version 1; some proxies answer with the SOCKS version 5, which curl tolerates too
+            if (v != AUTH_VERSION && v != VERSION) throw ProxyException("$proxy answered the authentication with version $v", null)
             if (status != 0.toByte()) throw ProxyException("$proxy rejected the credentials", null)
         }
 

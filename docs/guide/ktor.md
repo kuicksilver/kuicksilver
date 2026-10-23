@@ -335,8 +335,8 @@ network. Broken alternatives are skipped (straight to HTTP/1.1).
 
 Where a request's proxy comes from:
 
-1. `engine { proxy = ... }` (Ktor's `ProxyConfig`) when set: it applies to every request (`java.net.Proxy.NO_PROXY`
-   means none).
+1. `engine { proxy = ... }` (Ktor's `ProxyConfig`) when set: it applies to every request, `localhost` and loopback
+   addresses included (as `curl -x` does; `java.net.Proxy.NO_PROXY` means none).
 2. Otherwise `engine { proxyResolver = ... }` (*experimental*), asked per request and remembered for 30 seconds per
    scheme, host and port. The default is **`ProxyResolvers.System`**, the platform's settings:
 
@@ -350,7 +350,10 @@ Where a request's proxy comes from:
 
 `ProxyResolvers.Environment` reads the variables as curl does: `https_proxy`/`HTTPS_PROXY` for `https` and `wss`,
 `http_proxy` (lower case only) for `http` and `ws`, then `all_proxy`/`ALL_PROXY`; `no_proxy`/`NO_PROXY` exempts `*`,
-names with their subdomains (`example.com` covers `a.example.com`, not `badexample.com`), IP addresses and CIDR ranges.
+names with their subdomains (`example.com` covers `a.example.com`, not `badexample.com`), IP addresses and CIDR ranges;
+an entry with a port (`example.com:8080`, `[2001:db8::1]:443`) exempts that port only, as Go does. On Windows
+environment names are case-insensitive, so there an `HTTP_PROXY` variable is read as `http_proxy` (curl has the same
+caveat).
 A value is `http://host:port`, `socks5://` (names resolved by the client), `socks5h://` (by the proxy) or a bare
 `host:port`; user info in it becomes the credentials. `ProxyResolvers.None` connects directly, as 0.2 did without
 `proxy`; any `ProxyResolver { url -> ... }` of your own works too. Both built-in resolvers send `localhost`,
@@ -362,10 +365,14 @@ A proxy the engine cannot use (`socks4://`, an `https://` proxy, an unknown type
 How a proxy is used. An HTTP proxy gets `CONNECT` tunnels for `https` and for WebSockets, `ws://` included (RFC 6455
 section 4.1, as browsers), and absolute-form requests for plain `http`; a SOCKS proxy is SOCKS5 (RFC 1928, CONNECT only;
 no SOCKS4), every request tunneled, the proxy resolving the origin's name unless `socks5://` asked otherwise.
-`proxyCredentials` (*experimental*) authenticate to either: SOCKS5 username/password (RFC 1929), offered and sent only
-when the proxy picks that method, or `Proxy-Authorization: Basic` with the first CONNECT or absolute-form request
-unless the request sets its own; off the JVM a proxy URL's user info (`http://user:password@proxy:3128`) wins. Both go in
-clear to the proxy, never to the origin. A proxy that refuses fails the request with `ProxyException` (*experimental*):
+Credentials authenticate to either: SOCKS5 username/password (RFC 1929), offered and sent only when the proxy picks
+that method, or `Proxy-Authorization: Basic` with the first CONNECT or absolute-form request unless the request sets
+its own. `proxyCredentials` (*experimental*) are for the explicit `proxy` only (off the JVM a proxy URL's user info,
+`http://user:password@proxy:3128`, wins); a resolver's proxy carries its own: the user info of `https_proxy` and the
+like with `ProxyResolvers.Environment`, or the `credentials` of the `ResolvedProxy` your resolver returns. Both go in
+clear to the proxy, never to the origin. Through `socks5://` (names resolved here) the engine tries the origin's
+addresses in turn while the proxy answers "network unreachable" or "host unreachable", within the connect timeout. A
+resolver that does not answer within the connect timeout fails the request with `ProxyException`. A proxy that refuses fails the request with `ProxyException` (*experimental*):
 `replyCode` is the SOCKS5 reply or the CONNECT status (407: credentials wanted; not retried).
 
 **Through a proxy there is no HTTP/3.** QUIC is UDP, which neither CONNECT nor SOCKS5 CONNECT carries (no CONNECT-UDP,
@@ -378,10 +385,21 @@ HTTP/3 to a host, exempt it from the proxy (`no_proxy`, the OS bypass list), or 
 ```kotlin
 // guide:ktor:proxy
 @file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
-val client = HttpClient(Kuicksilver) {
+val password = System.getenv("PROXY_PASSWORD") ?: ""
+// one proxy for everything, with credentials for it
+val viaProxy = HttpClient(Kuicksilver) {
     engine {
-        proxyResolver = ProxyResolvers.Environment // or System (the default), None, or your own
-        proxyCredentials = ProxyCredentials("user", System.getenv("PROXY_PASSWORD") ?: "")
+        proxy = ProxyBuilder.http("http://proxy.corp.test:3128")
+        proxyCredentials = ProxyCredentials("user", password) // for `proxy` only
+    }
+}
+// a resolver of your own: its proxy carries its own credentials (ProxyResolvers.Environment takes them from https_proxy)
+val perHost = HttpClient(Kuicksilver) {
+    engine {
+        proxyResolver = ProxyResolver { url ->
+            if (url.host.endsWith(".internal.test")) null // direct
+            else ResolvedProxy.http("proxy.corp.test", 3128, ProxyCredentials("user", password))
+        }
     }
 }
 ```

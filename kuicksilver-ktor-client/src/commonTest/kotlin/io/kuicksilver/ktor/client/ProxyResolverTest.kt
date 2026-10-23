@@ -38,27 +38,43 @@ class ProxyResolverTest {
 
     @Test fun noProxyMatchesOnDomainBoundary() {
         val no = NoProxy.parse("example.com, .other.test")
-        assertTrue(no.matches("example.com"))
-        assertTrue(no.matches("a.example.com"))
-        assertFalse(no.matches("badexample.com"))
-        assertTrue(no.matches("x.other.test"))
-        assertTrue(no.matches("other.test"))
-        assertTrue(no.matches("A.EXAMPLE.COM."), "case and a trailing dot")
+        assertTrue(no.matches("example.com", 443))
+        assertTrue(no.matches("a.example.com", 443))
+        assertFalse(no.matches("badexample.com", 443))
+        assertTrue(no.matches("x.other.test", 443))
+        assertTrue(no.matches("other.test", 443))
+        assertTrue(no.matches("A.EXAMPLE.COM.", 443), "case and a trailing dot")
         val r = env("https_proxy" to "http://p.test:3128", "no_proxy" to "example.com")
         assertNull(r.at("https://a.example.com/"))
         assertEquals(ResolvedProxy.http("p.test", 3128), r.at("https://badexample.com/"))
     }
 
     @Test fun noProxyStarAndCidr() {
-        assertTrue(NoProxy.parse("*").matches("anything.test"))
+        assertTrue(NoProxy.parse("*").matches("anything.test", 443))
         val no = NoProxy.parse("10.0.0.0/8 192.168.1.7 [2001:db8::]/32")
-        assertTrue(no.matches("10.1.2.3"))
-        assertFalse(no.matches("11.1.2.3"))
-        assertTrue(no.matches("192.168.1.7"))
-        assertFalse(no.matches("192.168.1.8"))
-        assertTrue(no.matches("[2001:db8::5]"))
-        assertFalse(no.matches("2001:db9::5"))
+        assertTrue(no.matches("10.1.2.3", 443))
+        assertFalse(no.matches("11.1.2.3", 443))
+        assertTrue(no.matches("192.168.1.7", 443))
+        assertFalse(no.matches("192.168.1.8", 443))
+        assertTrue(no.matches("[2001:db8::5]", 443))
+        assertFalse(no.matches("2001:db9::5", 443))
         assertNull(env("http_proxy" to "p.test:1", "NO_PROXY" to "*").at("http://x.test/"))
+    }
+
+    /** An entry with a port exempts that port only (as Go); `[v6]:port` keeps the address whole. */
+    @Test fun noProxyPortRestricted() {
+        val no = NoProxy.parse("example.com:8080, 10.0.0.1:443, [2001:db8::1]:443, [2001:db8::2], 2001:db8::3")
+        assertTrue(no.matches("a.example.com", 8080))
+        assertFalse(no.matches("a.example.com", 443))
+        assertTrue(no.matches("10.0.0.1", 443))
+        assertFalse(no.matches("10.0.0.1", 80))
+        assertTrue(no.matches("[2001:db8::1]", 443))
+        assertFalse(no.matches("[2001:db8::1]", 80))
+        assertTrue(no.matches("2001:db8::2", 80), "brackets without a port: every port")
+        assertTrue(no.matches("2001:db8::3", 80), "a bare IPv6 address has no port")
+        val r = env("https_proxy" to "http://p.test:1", "no_proxy" to "example.com:8443")
+        assertNull(r.at("https://example.com:8443/"))
+        assertEquals(ResolvedProxy.http("p.test", 1), r.at("https://example.com/"))
     }
 
     /** `HTTP_PROXY` can come from a request's `Proxy:` header in CGI ("httpoxy"): only the lower-case name counts. */
@@ -136,6 +152,51 @@ class ProxyResolverTest {
         assertNull(parseWinInetProxy("p:8080", "*.corp.test;10.*", Url("https://10.1.2.3/")))
         assertNull(parseWinInetProxy(null, null, Url("https://x.test/")))
     }
+
+    @Test fun negative_wininetHttpsProxyRefused() {
+        val e = assertFailsWith<UnsupportedOperationException> { parseWinInetProxy("https=https://p:443", null, Url("https://x.test/")) }
+        assertTrue("TLS to the proxy" in e.message!!, e.message)
+        assertFailsWith<UnsupportedOperationException> { env("https_proxy" to "https://p.test:443").at("https://x.test/") }
+    }
+
+    /** The pool key carries an opaque id per credentials instance, nothing derived from the password. */
+    @Test fun routeKeyHoldsNoPasswordHash() {
+        val a = ResolvedProxy.http("p.test", 1, ProxyCredentials("u", "secret-1"))
+        val b = ResolvedProxy.http("p.test", 1, ProxyCredentials("u", "secret-2"))
+        assertEquals(a.hashCode(), b.hashCode(), "the hash does not depend on the password")
+        assertTrue(a != b)
+        assertFalse("secret".hashCode().toString() in a.routeKey || "secret-1".hashCode().toString() in a.routeKey)
+        val same = ProxyCredentials("u", "secret-1")
+        assertEquals(ResolvedProxy.http("p.test", 1, same).routeKey, ResolvedProxy.http("p.test", 1, same).routeKey)
+        assertTrue(
+            a.routeKey != ResolvedProxy.http("p.test", 1, ProxyCredentials("u", "secret-1")).routeKey,
+            "another instance, another route",
+        )
+        val r = env("https_proxy" to "http://u:pw@p.test:3128")
+        assertEquals(r.at("https://x.test/")!!.routeKey, r.at("https://y.test/")!!.routeKey, "the same variable, the same route")
+    }
+
+    /** A resolver that does not answer fails the request at the connect timeout instead of holding it. */
+    @Test fun negative_hungResolverFailsAtConnectTimeout() =
+        clientTest {
+            val release = kotlinx.coroutines.CompletableDeferred<Unit>()
+            try {
+                testClient(engine = {
+                    connectTimeout = kotlin.time.Duration.parse("300ms")
+                    proxyResolver =
+                        ProxyResolver {
+                            kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) { release.await() }
+                            null
+                        }
+                }).use { c ->
+                    val e = assertFailsWith<ProxyException> { c.get("https://hung.test/") }
+                    assertTrue("connect timeout" in e.message!!, e.message)
+                    assertFailsWith<ProxyException> { c.get("https://hung.test/") } // joins the same lookup, fails again
+                }
+            } finally {
+                release.complete(Unit)
+            }
+        }
 
     @Test fun cfAnswerPicked() {
         var warnings = 0

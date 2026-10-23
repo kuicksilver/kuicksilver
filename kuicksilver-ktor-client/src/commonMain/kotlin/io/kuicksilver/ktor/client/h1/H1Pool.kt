@@ -356,64 +356,82 @@ internal class H1Pool(
         dns: RequestDns,
     ): H1Connection {
         val (host, port) = if (proxy != null) proxy.host to proxy.port else url.host to url.port
-        // every address of the host, IPv6 and IPv4 alternating (RFC 8305); this module's connects on Kotlin/Native, not
-        // ktor-network's (Ktor issue KTOR-10017, security, under coordinated disclosure)
-        @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-        val tcp = connectTcpRacing(selector, host, port, config.connectionAttemptDelay, dns::lookup)
-        try {
-            val rawIn = tcp.openReadChannel()
-            val rawOut = tcp.openWriteChannel(autoFlush = true)
-            when {
-                proxy == null -> {}
+        // through socks5:// (names resolved here) each address of the origin in turn while the proxy answers "network
+        // unreachable" or "host unreachable" (RFC 1928 section 6, REP 3 and 4), each on a new connection to the proxy
+        val socksTargets =
+            if (proxy?.kind == ResolvedProxy.Kind.Socks5) socks5Targets(url.host, proxy.remoteDns, dns) else listOf(null)
+        for ((attempt, socksTarget) in socksTargets.withIndex()) {
+            // every address of the host, IPv6 and IPv4 alternating (RFC 8305); this module's connects on Kotlin/Native, not
+            // ktor-network's (Ktor issue KTOR-10017, security, under coordinated disclosure)
+            @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+            val tcp = connectTcpRacing(selector, host, port, config.connectionAttemptDelay, dns::lookup)
+            try {
+                val rawIn = tcp.openReadChannel()
+                val rawOut = tcp.openWriteChannel(autoFlush = true)
+                when {
+                    proxy == null -> {}
 
-                proxy.kind == ResolvedProxy.Kind.Socks5 -> {
-                    socks5Connect(rawIn, rawOut, socks5Target(url.host, proxy.remoteDns, dns), url.port, proxy.credentials, "$proxy")
-                }
+                    socksTarget != null -> {
+                        try {
+                            socks5Connect(rawIn, rawOut, socksTarget, url.port, proxy.credentials, "$proxy")
+                        } catch (e: io.kuicksilver.ktor.client.ProxyException) {
+                            if ((e.replyCode != 3 && e.replyCode != 4) || attempt == socksTargets.lastIndex) throw e
+                            tcp.close()
+                            continue
+                        }
+                    }
 
-                proxy.tunnels(data) -> {
-                    startTunnel(
-                        url,
-                        data.headers[HttpHeaders.UserAgent],
-                        // the request's own field wins; else the configured credentials, sent at once (no 407 round trip)
-                        data.headers[HttpHeaders.ProxyAuthorization] ?: proxy.basicAuthorization,
-                        rawOut,
-                        rawIn,
-                    )
+                    proxy.tunnels(data) -> {
+                        startTunnel(
+                            url,
+                            data.headers[HttpHeaders.UserAgent],
+                            // the request's own field wins; else the configured credentials, sent at once (no 407 round trip)
+                            data.headers[HttpHeaders.ProxyAuthorization] ?: proxy.basicAuthorization,
+                            rawOut,
+                            rawIn,
+                        )
+                    }
                 }
+                return if (secure) {
+                    val tls =
+                        TlsConnection.client(
+                            rawIn,
+                            rawOut,
+                            config.tlsConfigFor(url.host, listOf("http/1.1")),
+                            callContextOrEmpty(),
+                            sessions,
+                        )
+                    H1Connection(tcp, tls, tls.input, tls.output, key, clock())
+                } else {
+                    H1Connection(tcp, null, rawIn, rawOut, key, clock())
+                }
+            } catch (e: Throwable) {
+                tcp.close()
+                throw e
             }
-            return if (secure) {
-                val tls =
-                    TlsConnection.client(
-                        rawIn,
-                        rawOut,
-                        config.tlsConfigFor(url.host, listOf("http/1.1")),
-                        callContextOrEmpty(),
-                        sessions,
-                    )
-                H1Connection(tcp, tls, tls.input, tls.output, key, clock())
-            } else {
-                H1Connection(tcp, null, rawIn, rawOut, key, clock())
-            }
-        } catch (e: Throwable) {
-            tcp.close()
-            throw e
         }
+        error("no SOCKS5 destination") // socks5Targets is never empty
     }
 
     private fun callContextOrEmpty(): CoroutineContext = selector.coroutineContext
 
     /**
-     * The SOCKS5 destination for [host]: an address literal as ATYP 1 or 4; a name as itself for the proxy to resolve
-     * ([remoteDns], `socks5h`), else the first address the request's resolution gives (`socks5`).
+     * The SOCKS5 destinations for [host], in order: an address literal as ATYP 1 or 4; a name as itself for the proxy to
+     * resolve ([remoteDns], `socks5h`), else every address the request's resolution gives (`socks5`).
      */
-    private suspend fun socks5Target(
+    private suspend fun socks5Targets(
         host: String,
         remoteDns: Boolean,
         dns: RequestDns,
-    ): Socks5Target {
+    ): List<Socks5Target> {
         val name = socketHost(host)
         val literal = ':' in name || parseIpv4(name) != null
-        return if (literal || !remoteDns) Socks5Target.Address(dns.lookup(name, 0).first().bytes) else Socks5Target.Domain(name)
+        if (!literal && remoteDns) return listOf(Socks5Target.Domain(name))
+        return dns
+            .lookup(name, 0)
+            .map { it.bytes }
+            .distinctBy { it.toList() }
+            .map { Socks5Target.Address(it) }
     }
 }
 

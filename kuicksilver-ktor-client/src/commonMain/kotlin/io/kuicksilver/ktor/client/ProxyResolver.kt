@@ -11,6 +11,8 @@ import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.ktor.client.h1.monotonicMillis
 import io.kuicksilver.quic.KuicksilverLogger
 import io.kuicksilver.quic.LogLevel
+import kotlinx.coroutines.async
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlin.concurrent.atomics.AtomicInt
@@ -81,6 +83,10 @@ internal class EnvironmentProxyResolver(
 ) : ProxyResolver {
     private fun env(name: String): String? = getenv(name)?.trim()?.takeIf { it.isNotEmpty() }
 
+    /** The last value parsed and its proxy: the same variable gives the same credentials instance, so the same route. */
+    @kotlin.concurrent.Volatile
+    private var last: Pair<String, ResolvedProxy>? = null
+
     override suspend fun proxyFor(url: Url): ResolvedProxy? {
         val host = socketHost(url.host)
         if (isLoopback(host)) return null
@@ -88,8 +94,9 @@ internal class EnvironmentProxyResolver(
             (if (url.protocol.isSecure()) env("https_proxy") ?: env("HTTPS_PROXY") else env("http_proxy"))
                 ?: env("all_proxy") ?: env("ALL_PROXY") ?: return null
         val noProxy = env("no_proxy") ?: env("NO_PROXY")
-        if (noProxy != null && NoProxy.parse(noProxy).matches(host)) return null
-        return parseProxyUrl(value)
+        if (noProxy != null && NoProxy.parse(noProxy).matches(host, url.port)) return null
+        last?.let { (v, p) -> if (v == value) return p }
+        return parseProxyUrl(value).also { last = value to it }
     }
 }
 
@@ -118,6 +125,8 @@ internal fun parseProxyUrl(value: String): ResolvedProxy {
         "socks5" -> ResolvedProxy.socks5(host, port, credentials, remoteDns = false)
 
         "socks5h" -> ResolvedProxy.socks5(host, port, credentials, remoteDns = true)
+
+        "https" -> throw UnsupportedOperationException(TLS_PROXY_UNSUPPORTED)
 
         else -> throw UnsupportedOperationException(
             "proxy scheme $scheme:// is not supported (http://, socks5:// and socks5h:// are); refusing to connect around it",
@@ -163,51 +172,79 @@ internal fun isLoopback(host: String): Boolean {
  * `no_proxy` / `NO_PROXY` as curl reads it: entries separated by commas or whitespace; `*` alone matches every host; a
  * name matches itself and its subdomains on a label boundary (`example.com` and `.example.com` both cover
  * `a.example.com` and `example.com`, not `badexample.com`); an IP address matches itself and `addr/bits` a CIDR range.
- * A `:port` on a name is ignored (the entry covers every port).
+ * An entry with a port (`example.com:8080`, `10.0.0.1:443`, `[2001:db8::1]:443`) covers that port only, as Go's
+ * `NO_PROXY` does; without one it covers every port.
  */
 internal class NoProxy private constructor(
     private val all: Boolean,
-    private val names: List<String>,
-    private val nets: List<Pair<ByteArray, Int>>,
+    private val names: List<Pair<String, Int?>>,
+    private val nets: List<Triple<ByteArray, Int, Int?>>,
 ) {
-    fun matches(host: String): Boolean {
+    fun matches(
+        host: String,
+        port: Int,
+    ): Boolean {
         if (all) return true
         val h = socketHost(host).lowercase().removeSuffix(".")
+
+        fun portOk(p: Int?) = p == null || p == port
         val ip = parseIpLiteral(h)
-        if (ip != null) return nets.any { (net, bits) -> net.size == ip.size && prefixMatches(net, ip, bits) } || h in names
-        return names.any { h == it || h.endsWith(".$it") }
+        if (ip != null) {
+            return nets.any { (net, bits, p) -> portOk(p) && net.size == ip.size && prefixMatches(net, ip, bits) } ||
+                names.any { (n, p) -> portOk(p) && n == h }
+        }
+        return names.any { (n, p) -> portOk(p) && (h == n || h.endsWith(".$n")) }
     }
 
     companion object {
         fun parse(list: String): NoProxy {
             var all = false
-            val names = ArrayList<String>()
-            val nets = ArrayList<Pair<ByteArray, Int>>()
+            val names = ArrayList<Pair<String, Int?>>()
+            val nets = ArrayList<Triple<ByteArray, Int, Int?>>()
             for (raw in list.split(',', ' ', '\t', '\n').map { it.trim() }.filter { it.isNotEmpty() }) {
                 if (raw == "*") {
                     all = true
                     continue
                 }
-                val slash = raw.indexOf('/')
+                // the entry's address part and its port, if any: `[v6]:port`, `[v6]`, `v4:port`, `name:port`; a bare
+                // IPv6 address (more than one colon) has no port
+                val (body, port) =
+                    when {
+                        raw.startsWith('[') -> {
+                            val end = raw.indexOf(']')
+                            if (end < 0) continue
+                            val after = raw.substring(end + 1)
+                            val p = if (after.startsWith(':')) after.substring(1).toIntOrNull() ?: continue else null
+                            (raw.substring(1, end) + after.substringAfter('/', "").let { if (it.isEmpty()) "" else "/$it" }) to p
+                        }
+
+                        raw.count { it == ':' } == 1 -> {
+                            raw.substringBefore(':') to (raw.substringAfter(':').toIntOrNull() ?: continue)
+                        }
+
+                        else -> {
+                            raw to null
+                        }
+                    }
+                val slash = body.indexOf('/')
                 if (slash > 0) {
-                    val net = parseIpLiteral(raw.substring(0, slash)) ?: continue
-                    val bits = raw.substring(slash + 1).toIntOrNull()?.takeIf { it in 0..net.size * 8 } ?: continue
-                    nets += net to bits
+                    val net = parseIpLiteral(body.substring(0, slash)) ?: continue
+                    val bits = body.substring(slash + 1).toIntOrNull()?.takeIf { it in 0..net.size * 8 } ?: continue
+                    nets += Triple(net, bits, port)
                     continue
                 }
-                val ip = parseIpLiteral(socketHost(raw))
+                val ip = parseIpLiteral(body)
                 if (ip != null) {
-                    nets += ip to ip.size * 8
+                    nets += Triple(ip, ip.size * 8, port)
                     continue
                 }
                 val name =
-                    raw
+                    body
                         .removePrefix("*")
                         .removePrefix(".")
-                        .substringBefore(':')
                         .lowercase()
                         .removeSuffix(".")
-                if (name.isNotEmpty()) names += name
+                if (name.isNotEmpty()) names += name to port
             }
             return NoProxy(all, names, nets)
         }
@@ -298,7 +335,8 @@ internal fun parseWinInetProxy(
     }
 
     fun http(v: String): ResolvedProxy {
-        val (h, p) = splitHostPort(v.removePrefix("http://").substringBefore('/'), defaultPort = 80)
+        if (v.startsWith("https://", ignoreCase = true)) throw UnsupportedOperationException(TLS_PROXY_UNSUPPORTED)
+        val (h, p) = splitHostPort(v.removePrefix("http://").removePrefix("HTTP://").substringBefore('/'), defaultPort = 80)
         return ResolvedProxy.http(h, p)
     }
     val own = if (url.protocol.isSecure()) byScheme["https"] else byScheme["http"]
@@ -403,6 +441,9 @@ internal fun pickCfProxy(
     return null
 }
 
+internal const val TLS_PROXY_UNSUPPORTED: String =
+    "an https:// proxy (TLS to the proxy) is not supported; use an http:// proxy, whose CONNECT tunnels still carry TLS"
+
 internal const val PAC_WARNING: String =
     "the system proxy settings use a proxy auto-configuration (PAC or WPAD) script, which the Kuicksilver engine does not " +
         "run: requests it does not cover with a fixed proxy connect directly; set engine { proxy = ... } or " +
@@ -416,7 +457,16 @@ internal class ProxyRouting(
 ) {
     private val lock = Mutex()
     private val cache = LinkedHashMap<String, Pair<ResolvedProxy?, Long>>()
+    private val inFlight = HashMap<String, kotlinx.coroutines.Deferred<ResolvedProxy?>>()
     private val warned = AtomicInt(0)
+
+    /** The engine's `proxy` with `proxyCredentials`, converted once (one credentials instance, so one pool route). */
+    private val explicitProxy: Result<ResolvedProxy?> by lazy {
+        runCatching { config.proxy?.toResolvedProxy(config.proxyCredentials) }
+    }
+
+    /** See [explicitProxy]; a proxy the engine cannot use fails every request with the same exception. */
+    fun explicit(): ResolvedProxy? = explicitProxy.getOrThrow()
 
     suspend fun lookup(url: Url): ResolvedProxy? {
         val resolver = config.proxyResolver
@@ -424,13 +474,56 @@ internal class ProxyRouting(
         val key = "${url.protocol.name}://${url.host}:${url.port}"
         val now = clock()
         lock.withLock { cache[key]?.takeIf { now - it.second < TTL_MILLIS }?.let { return it.first } }
-        val proxy = if (resolver is WarningProxyResolver) resolver.proxyFor(url, ::warnOnce) else resolver.proxyFor(url)
+        val proxy = resolve(resolver, key, url)
         lock.withLock {
             cache.remove(key)
             if (cache.size >= MAX_ROUTES) cache.remove(cache.keys.first()) // the oldest answer goes
             cache[key] = proxy to now
         }
         return proxy
+    }
+
+    /**
+     * [resolver]'s answer for [url], bounded by the connect timeout: a platform call that hangs (a `ProxySelector` or a
+     * system API waiting on the network) fails the request with [ProxyException] instead of holding it. The call runs
+     * outside the request, shared by every request to the same route while it is in flight, so a hung one holds one
+     * thread per route, and at most [MAX_ROUTES] are in flight.
+     */
+    @OptIn(kotlinx.coroutines.DelicateCoroutinesApi::class)
+    private suspend fun resolve(
+        resolver: ProxyResolver,
+        key: String,
+        url: Url,
+    ): ResolvedProxy? {
+        val call =
+            lock.withLock {
+                inFlight[key] ?: run {
+                    if (inFlight.size >= MAX_ROUTES) throw ProxyException("too many proxy lookups in flight", null)
+                    kotlinx.coroutines.GlobalScope
+                        .async(kotlinx.coroutines.Dispatchers.Default) {
+                            if (resolver is WarningProxyResolver) resolver.proxyFor(url, ::warnOnce) else resolver.proxyFor(url)
+                        }.also { d ->
+                            inFlight[key] = d
+                            d.invokeOnCompletion {
+                                kotlinx.coroutines.GlobalScope.launch {
+                                    lock.withLock {
+                                        if (inFlight[key] ===
+                                            d
+                                        ) {
+                                            inFlight.remove(key)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                }
+            }
+        val timeout = config.connectTimeout
+        // boxed: null is an answer (direct), a missing box the timeout
+        val answer =
+            kotlinx.coroutines.withTimeoutOrNull(timeout) { listOf(call.await()) }
+                ?: throw ProxyException("the proxy lookup for ${url.host} took longer than the connect timeout ($timeout)", null)
+        return answer.single()
     }
 
     private fun warnOnce(message: String) {

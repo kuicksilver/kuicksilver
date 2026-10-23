@@ -14,7 +14,8 @@ import kotlin.io.encoding.Base64
 
 /**
  * A user name and password for a proxy: SOCKS5 username/password authentication (RFC 1929) or HTTP `Basic`
- * (`Proxy-Authorization`, RFC 9110 section 11.7.2, RFC 7617). [toString] leaves the password out.
+ * (`Proxy-Authorization`, RFC 9110 section 11.7.2, RFC 7617). [toString] leaves the password out, and [hashCode]
+ * depends on the user name only.
  */
 @ExperimentalKuicksilverApi
 public class ProxyCredentials(
@@ -23,12 +24,19 @@ public class ProxyCredentials(
     /** The password. */
     public val password: String,
 ) {
+    /** An opaque number of this instance, for the connection pool's key: nothing derived from the password goes there. */
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    internal val id: Long = nextCredentialsId.addAndFetch(1L)
+
     override fun equals(other: Any?): Boolean = other is ProxyCredentials && other.user == user && other.password == password
 
-    override fun hashCode(): Int = user.hashCode() * 31 + password.hashCode()
+    override fun hashCode(): Int = user.hashCode()
 
     override fun toString(): String = "ProxyCredentials(user=$user, password=***)"
 }
+
+@OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+private val nextCredentialsId = kotlin.concurrent.atomics.AtomicLong(0)
 
 /**
  * A proxy refused or failed the request's connection: a SOCKS5 reply other than "succeeded" ([replyCode] is its REP
@@ -71,8 +79,11 @@ public class ResolvedProxy private constructor(
     /** [ProxyType.HTTP] or [ProxyType.SOCKS] (SOCKS5). */
     public val type: ProxyType get() = if (kind == Kind.Http) ProxyType.HTTP else ProxyType.SOCKS
 
-    /** Part of the connection pool's key: another proxy, or other credentials, is another route. */
-    internal val routeKey: String get() = "$kind://${uriHost(host)}:$port#${credentials?.hashCode() ?: 0}/$remoteDns"
+    /**
+     * Part of the connection pool's key: another proxy, or another [ProxyCredentials] instance, is another route. The
+     * instance's opaque id stands for the credentials, so nothing derived from the password is kept or compared there.
+     */
+    internal val routeKey: String get() = "$kind://${uriHost(host)}:$port#${credentials?.id ?: 0}/$remoteDns"
 
     /** `Basic` credentials for `Proxy-Authorization`, when there are credentials. */
     internal val basicAuthorization: String?
@@ -82,7 +93,7 @@ public class ResolvedProxy private constructor(
         other is ResolvedProxy && other.kind == kind && other.host == host && other.port == port &&
             other.credentials == credentials && other.remoteDns == remoteDns
 
-    override fun hashCode(): Int = routeKey.hashCode()
+    override fun hashCode(): Int = ((kind.hashCode() * 31 + host.hashCode()) * 31 + port) * 31 + (credentials?.hashCode() ?: 0)
 
     override fun toString(): String =
         "${if (kind == Kind.Http) {
@@ -128,9 +139,7 @@ internal fun ProxyConfig.toResolvedProxy(fallback: ProxyCredentials?): ResolvedP
             ProxyType.UNKNOWN -> throw UnsupportedOperationException("the Kuicksilver engine supports HTTP and SOCKS5 proxies only")
         }
     if (kind == ResolvedProxy.Kind.Http && platformProxyUsesTls()) {
-        throw UnsupportedOperationException(
-            "an https:// proxy (TLS to the proxy) is not supported; use an http:// proxy, whose CONNECT tunnels still carry TLS",
-        )
+        throw UnsupportedOperationException(TLS_PROXY_UNSUPPORTED)
     }
     // a NetworkAddress (java.net's on the JVM, ktor-utils' on Native): its address, not a reverse lookup of it
     val address = resolveAddress()
@@ -158,7 +167,5 @@ internal expect fun ProxyConfig.platformProxyUsesTls(): Boolean
  * proxy the engine cannot use, so a request never bypasses it.
  */
 @OptIn(ExperimentalKuicksilverApi::class)
-internal suspend fun KuicksilverEngine.proxyFor(url: io.ktor.http.Url): ResolvedProxy? {
-    val explicit = config.proxy ?: return proxies.lookup(url)
-    return explicit.toResolvedProxy(config.proxyCredentials)
-}
+internal suspend fun KuicksilverEngine.proxyFor(url: io.ktor.http.Url): ResolvedProxy? =
+    if (config.proxy == null) proxies.lookup(url) else proxies.explicit()

@@ -196,7 +196,9 @@ public class KuicksilverEngineConfig : HttpClientEngineConfig() {
     public var connectionAttemptDelay: Duration = 250.milliseconds
 
     /**
-     * Credentials for the proxy (`proxy`): SOCKS5 username/password (RFC 1929), offered to a SOCKS5 proxy and sent only
+     * Credentials for the explicit `proxy` only: a proxy a [proxyResolver] returns carries its own
+     * ([ResolvedProxy.credentials]: the user info of `https_proxy` and the like, or what your resolver gives
+     * `ResolvedProxy.http(host, port, credentials)`), and these are never sent to it. SOCKS5 username/password (RFC 1929), offered to a SOCKS5 proxy and sent only
      * when it picks that method, or `Proxy-Authorization: Basic` on an HTTP proxy's CONNECT and absolute-form requests,
      * sent with the first request (no 407 round trip) unless the request sets its own `Proxy-Authorization`. Off the JVM
      * the proxy URL's user info (`http://user:password@proxy:3128`) wins over these. Null (the default) for none. Both go
