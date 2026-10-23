@@ -73,6 +73,7 @@ internal class StreamInput(
                 closedCause?.let { throw it }
                 var pulled = 0
                 var touched = false
+                var resetSeen: Throwable? = null
                 while (buffer.size < maxOf(min.toLong(), PULL_TARGET) &&
                     pulled < PULL_TARGET
                 ) {
@@ -87,8 +88,15 @@ internal class StreamInput(
                         if (n <
                             0
                         ) {
-                            touched = !eof
-                            eof = true
+                            // -1 is also the end of a reset stream, whose event the loop may not have handed over yet (its
+                            // flush waits in a send): that is no end of the stream, it fails like the reset
+                            val reset = stream.conn.core.streams.lastReadResetCode
+                            if (reset != null) {
+                                resetSeen = QuicException.StreamError.Reset(stream.id, reset, Initiator.Peer)
+                            } else {
+                                touched = !eof
+                                eof = true
+                            }
                         }
                         break
                     }
@@ -97,6 +105,7 @@ internal class StreamInput(
                 // a connection that is gone sends nothing more
                 if (touched && lostCause == null) stream.loop.flush(stream.conn.core)
                 if (buffer.size >= min) return@withContext true
+                resetSeen?.let { throw failNow(it) }
                 if (eof) return@withContext false
                 // the core held nothing more of a stream whose connection is gone: it is cut short there
                 lostCause?.let { throw failNow(it) }

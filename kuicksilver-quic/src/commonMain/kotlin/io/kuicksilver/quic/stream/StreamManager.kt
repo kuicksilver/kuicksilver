@@ -32,6 +32,9 @@ internal enum class ControlKind {
     StreamsBlockedUni,
 }
 
+/** Control frames whose [ControlFrame.a] is an application error code, not a limit: a repeat never changes it. */
+private val CODE_KINDS = setOf(ControlKind.ResetStream, ControlKind.StopSending)
+
 /** A pending control frame: [a]/[b] carry the code, limit or final size. */
 internal class ControlFrame {
     var kind: ControlKind = ControlKind.MaxData
@@ -91,7 +94,8 @@ internal class StreamManager(
         for (i in 0 until control.size) {
             val c = control[i]
             if (c.kind == kind && c.id == id) {
-                if (a > c.a) c.a = a
+                // a limit carries the latest (largest) value; a reset's or stop's error code stays its first one
+                if (kind !in CODE_KINDS && a > c.a) c.a = a
                 return
             }
         }
@@ -111,6 +115,12 @@ internal class StreamManager(
     val reassemblyRanges: Int get() = budget.used
     var now: TimeMark = TimeMark(0)
     var smoothedRtt: Duration = config.initialRtt
+
+    /**
+     * The code of the RESET_STREAM that ended the last [read] answering -1, or null when that read found the peer's FIN:
+     * the core answers -1 for both. Read right after [read], on the same thread.
+     */
+    var lastReadResetCode: Long? = null
 
     fun applyPeerParameters(
         initialMaxStreamDataBidiLocal: Long,
@@ -590,7 +600,9 @@ internal class StreamManager(
     ): Int {
         val e = streams[id] ?: return 0 // not opened yet (peer-initiated) or already finished: nothing to read
         val r = e.recv ?: throw IllegalStateException("stream $id is not readable")
+        val wasReset = r.state == RecvState.ResetRecvd || r.state == RecvState.ResetRead
         val n = r.read(into, off, len)
+        lastReadResetCode = if (n < 0 && wasReset) r.resetCode else null
         if (n > 0) {
             r.connCredited += n
             creditConnection(n.toLong())

@@ -118,6 +118,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- QUIC: a peer's RESET_STREAM never reads as the end of the stream. The core answers -1 both at a FIN and at a reset;
+  when the reset's event had not reached the stream yet (the loop's flush waiting in a blocking send), a read that
+  pulled the core took the -1 for a clean end, `readAvailable` answered -1 and `closedCause` stayed null. The input now
+  asks the core which it was and fails with the reset.
 - HTTP/3: a body never waits forever when the connection ends under it. A response that arrived with the connection's
   close was returned with a body whose pump never ran (it was launched into the connection's already cancelled scope),
   so reading it hung; and when the connection ended while a response or a request body was being written, the

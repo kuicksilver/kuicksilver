@@ -259,6 +259,20 @@ class StreamStateTest {
         assertEquals(-1, m.read(0, buf, 0, 10))
     }
 
+    /** The core answers -1 at a FIN and at a reset alike: [StreamManager.lastReadResetCode] tells the reset apart. */
+    @Test fun minusOneAfterAResetReportsItsCode() {
+        val m = manager(TlsRole.Server)
+        recv(m, 0, 0, byteArrayOf(1, 2, 3))
+        m.onResetStream(0, 7, 3)
+        val buf = ByteArray(10)
+        assertEquals(-1, m.read(0, buf, 0, 10))
+        assertEquals(7L, m.lastReadResetCode)
+        recv(m, 4, 0, byteArrayOf(1), fin = true)
+        assertEquals(1, m.read(4, buf, 0, 10))
+        assertEquals(-1, m.read(4, buf, 0, 10))
+        assertEquals(null, m.lastReadResetCode, "a FIN is no reset")
+    }
+
     @Test fun writeBlockedByPeerFlowControlReportsBlocked() {
         val m = manager(peerMaxData = 500)
         val id = m.open(bidi = true, StreamPriority.Default)
