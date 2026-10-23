@@ -302,6 +302,38 @@ class ExtendedConnectTest {
                 assertEquals(501, assertFailsWith<Http3Exception.ConnectRejected> { p.client.connect(connectReq(), "unknown") }.status)
             }
         }
+
+    /**
+     * RFC 9110 section 9.3.6: a CONNECT request has no content, and what follows its header section is the tunnel; per
+     * RFC 9114 section 4.1.2 its `content-length` then does not describe the DATA frames. A CONNECT (classic and
+     * Extended) declaring `content-length: 0` delivers its tunnel bytes instead of failing with H3_MESSAGE_ERROR.
+     */
+    @Test fun connectContentLengthDoesNotLimitTheTunnel() =
+        h3Test {
+            QuicPair.open().useScoped { q ->
+                val (c, s) = q.connect()
+                val server = Http3Connection.server(s, connectOn)
+                val raw = RawPeer(c)
+                raw.openControl()
+                val classic = listOf(":method" to "CONNECT", ":authority" to "server.test:443", "content-length" to "0")
+                val extended =
+                    listOf(
+                        ":method" to "CONNECT",
+                        ":protocol" to "websocket",
+                        ":scheme" to "https",
+                        ":authority" to "a",
+                        ":path" to "/ws",
+                        "content-length" to "0",
+                    )
+                for (req in listOf(classic, extended)) {
+                    val st = c.openBidi()
+                    st.output.writeFully(raw.headers(st.id, req) + raw.data("hello".encodeToByteArray()))
+                    st.output.flushAndClose()
+                    val tunnel = server.acceptRequest().acceptConnect()
+                    assertContentEquals("hello".encodeToByteArray(), withTimeout(5.seconds) { tunnel.input.readAllBytes() })
+                }
+            }
+        }
 }
 
 class H3DatagramTest {

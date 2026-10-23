@@ -124,6 +124,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   when the reset's event had not reached the stream yet (the loop's flush waiting in a blocking send), a read that
   pulled the core took the -1 for a clean end, `readAvailable` answered -1 and `closedCause` stayed null. The input now
   asks the core which it was and fails with the reset.
+- HTTP/3 server: a CONNECT request (classic or Extended, WebTransport among them) carrying `content-length` no
+  longer has its tunnel bytes checked against it. A CONNECT has no content and what follows its header section is the
+  tunnel (RFC 9110 section 9.3.6, RFC 9114 section 4.1.2), so `content-length: 0` followed by tunnel DATA failed the
+  stream with H3_MESSAGE_ERROR.
 - Ktor client, HTTP/1.1: a request with `Expect: 100-continue` now waits for the server before sending its body (RFC
   9110 section 10.1.1). Before, the body followed the head at once, so a server that refuses it (417, 401) received it
   anyway. The body now goes out on a 100 Continue, or after 1 s without an answer (as Ktor's CIO engine and curl); a

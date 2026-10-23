@@ -144,7 +144,10 @@ internal suspend fun handleRequestStream(
             req.done()
             return@with
         }
-        pumpBody(st, frames, req.bodyChannel, req.trailersDeferred, contentLength(parsed.regular), tunnel = { req.tunnel }) { f ->
+        // a CONNECT has no content: what follows its header section is the tunnel, which its content-length does not
+        // describe (RFC 9110 section 9.3.6, RFC 9114 section 4.1.2)
+        val bodyLimit = if (parsed.method == "CONNECT") null else contentLength(parsed.regular)
+        pumpBody(st, frames, req.bodyChannel, req.trailersDeferred, bodyLimit, tunnel = { req.tunnel }) { f ->
             if (f.code == Http3ErrorCode.EXCESSIVE_LOAD && !req.responseStarted) reject431(st) else abort(st, f.code)
             req.done()
         }
