@@ -15,6 +15,7 @@ import io.kuicksilver.ktor.server.h3.WebSocketOverH3
 import io.kuicksilver.quic.QuicConfig
 import io.kuicksilver.quic.QuicEndpointConfig
 import io.kuicksilver.quic.QuicServerConfig
+import io.kuicksilver.quic.activePath
 import io.kuicksilver.quic.quicConfig
 import io.kuicksilver.tls.Certificate
 import kotlinx.coroutines.CancellationException
@@ -142,10 +143,8 @@ internal suspend fun KuicksilverApplicationEngine.startHttp3(
                     listener.add(conn)
                     // after add(): a stop that began meanwhile either saw this connection in live() or is seen here (RFC 9114 5.2)
                     if (listener.stopping) launch { runCatching { conn.goAway() } }
-                    val remote =
-                        conn.quic.paths
-                            .firstOrNull()
-                            ?.remoteAddress
+                    // the peer's address now (a NAT rebinding right after the handshake moves it to another path)
+                    val remote = (conn.quic.activePath ?: conn.quic.paths.firstOrNull())?.remoteAddress
                     events.emit("connectionOpened") { connectionOpened(HttpProtocolVersion.HTTP_3_0, remote) }
                     // the last resort: a failure that still reaches this coroutine is logged, not left uncaught (Native aborts on those)
                     launch(
