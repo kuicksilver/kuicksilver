@@ -267,6 +267,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- Ktor server, HTTP/1.1: an upgrade request (WebSocket) whose handler failed before any response started, its error
+  response failing too, no longer takes the connection's coroutine down with it. The failure was rethrown out of the
+  connection's pipeline: the connection was reset, the responses pipelined before it were lost, and the exception
+  reached the thread's uncaught exception handler (a crash on Android). The connection now ends with a close after
+  those responses, and any failure that still reaches an HTTP/1.1 connection's coroutine is logged, as for HTTP/3.
 - Ktor server, HTTP/1.1: a pipelined request with `Expect: 100-continue` behind a slow response no longer gets a 408
   while its client correctly waits for the `100 Continue` (RFC 9110 section 10.1.1). The `100 Continue` waits behind
   the earlier responses, but the body deadline started when it was queued; it now starts once those responses are
