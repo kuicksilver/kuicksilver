@@ -4,9 +4,6 @@
 
 package io.kuicksilver.ktor.client.h1
 
-import io.ktor.client.engine.ProxyType
-import io.ktor.client.engine.resolveAddress
-import io.ktor.client.engine.type
 import io.ktor.client.network.sockets.SocketTimeoutException
 import io.ktor.client.plugins.ConnectTimeoutException
 import io.ktor.client.request.HttpRequestData
@@ -21,8 +18,6 @@ import io.ktor.network.sockets.Socket
 import io.ktor.network.sockets.openReadChannel
 import io.ktor.network.sockets.openWriteChannel
 import io.ktor.util.date.GMTDate
-import io.ktor.util.network.address
-import io.ktor.util.network.port
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.ByteWriteChannel
 import io.ktor.utils.io.ClosedReadChannelException
@@ -33,6 +28,7 @@ import io.kuicksilver.ktor.client.EngineEvents
 import io.kuicksilver.ktor.client.H3ExchangeKey
 import io.kuicksilver.ktor.client.KuicksilverEngineConfig
 import io.kuicksilver.ktor.client.RequestDns
+import io.kuicksilver.ktor.client.ResolvedProxy
 import io.kuicksilver.ktor.client.connectTimeoutMillis
 import io.kuicksilver.ktor.client.isIdempotent
 import io.kuicksilver.ktor.client.newRequestDns
@@ -120,9 +116,12 @@ internal class H1Pool(
         sessions.close() // a connection still finishing stores its ticket into a closed cache, which releases it
     }
 
-    private fun keyOf(data: HttpRequestData): String =
+    private fun keyOf(
+        data: HttpRequestData,
+        proxy: ResolvedProxy?,
+    ): String =
         data.url.let {
-            "${it.protocol.name}://${it.host}:${it.port}|${config.proxy?.resolveAddress()}"
+            "${it.protocol.name}://${it.host}:${it.port}|${proxy?.routeKey}"
         }
 
     /**
@@ -132,7 +131,7 @@ internal class H1Pool(
     suspend fun open(
         data: HttpRequestData,
         dns: RequestDns = config.newRequestDns(),
-    ): Opened = obtain(data, keyOf(data), dns).let { Opened(it.first, it.second) }
+    ): Opened = obtain(data, keyOf(data, null), dns, null).let { Opened(it.first, it.second) }
 
     /** A connection [open] handed out and whether it came from the idle pool. */
     class Opened(
@@ -148,6 +147,7 @@ internal class H1Pool(
         data: HttpRequestData,
         key: String,
         dns: RequestDns,
+        proxy: ResolvedProxy?,
     ): Pair<H1Connection, Boolean> {
         var conn: H1Connection? = null
         var reused = false
@@ -160,7 +160,7 @@ internal class H1Pool(
                 } else {
                     try {
                         conn =
-                            connect(data, data.url, data.url.protocol.isSecure(), config.proxy != null, key, dns)
+                            connect(data, data.url, data.url.protocol.isSecure(), proxy, key, dns)
                                 .also { pool.adopt(it) }
                     } catch (e: Throwable) {
                         pool.releasePermit(key)
@@ -177,12 +177,16 @@ internal class H1Pool(
         return conn!! to reused
     }
 
-    /** One exchange; [preopened] is a connection the race already obtained ([open]), [dns] the request's name resolution. */
+    /**
+     * One exchange; [preopened] is a connection the race already obtained ([open]), [dns] the request's name resolution,
+     * [proxy] the proxy that applies to the request (the engine resolved it), null for a direct connection.
+     */
     suspend fun execute(
         data: HttpRequestData,
         callContext: CoroutineContext,
         preopened: Opened? = null,
         dns: RequestDns = config.newRequestDns(),
+        proxy: ResolvedProxy? = null,
     ): HttpResponseData {
         // a request sent again over HTTP/1.1 (after a 421 or a failure over HTTP/3) leaves its HTTP/3 exchange behind:
         // HttpResponse.updatePriority must not reach that stream
@@ -196,20 +200,15 @@ internal class H1Pool(
                     .cleartextNotPermitted(host)
             }
         }
-        val proxy =
-            config.proxy?.also {
-                if (it.type !=
-                    ProxyType.HTTP
-                ) {
-                    throw UnsupportedOperationException("the Kuicksilver engine supports HTTP proxies only, not ${it.type}")
-                }
-            }
-        val key = keyOf(data)
+        // through an HTTP proxy, plain http goes in the absolute form (RFC 9112 section 3.2.2); TLS and WebSockets, ws://
+        // included (RFC 6455 section 4.1, as browsers), through a CONNECT tunnel; through SOCKS5 everything is tunneled
+        val tunneled = proxy != null && proxy.tunnels(data)
+        val key = keyOf(data, proxy)
         var first = true
         var given = preopened
         while (true) {
             // a connection the race just opened is fresh and never earns the stale retry; an idle one it took from the pool does
-            val (conn, reused) = given?.let { it.connection to it.reused } ?: obtain(data, key, dns)
+            val (conn, reused) = given?.let { it.connection to it.reused } ?: obtain(data, key, dns, proxy)
             given = null
             events.emit("connectionAcquired") { connectionAcquired(data, HttpProtocolVersion.HTTP_1_1, reused) }
             var bodyJob: BodySender? = null
@@ -222,7 +221,13 @@ internal class H1Pool(
                 val output = activity?.let { ActivityOutput(conn.output, it) } ?: conn.output
                 val input = activity?.let { ActivityInput(conn.input, it) } ?: conn.input
                 return withSocketInactivityTimeout(data, activity, onExpiry = { conn.close() }) {
-                    writeHeaders(data, output, overProxy = proxy != null && !secure, tunneled = proxy != null && secure)
+                    writeHeaders(
+                        data,
+                        output,
+                        overProxy = proxy != null && !tunneled,
+                        tunneled = tunneled,
+                        proxyAuthorization = proxy?.takeIf { !tunneled }?.basicAuthorization,
+                    )
                     // a streamed body is sent while the response is read (as the CIO engine): the server may answer first
                     if (data.body.isStreamed()) {
                         bodyJob = sendBodyConcurrently(data, conn, output, callContext)
@@ -338,22 +343,19 @@ internal class H1Pool(
         @kotlin.concurrent.Volatile var failure: Throwable? = null
     }
 
-    /** TCP, the proxy tunnel and TLS; runs under [obtain]'s connect timeout. */
+    /**
+     * TCP, the proxy's tunnel (HTTP CONNECT or SOCKS5) and TLS; runs under [obtain]'s connect timeout, which bounds every
+     * step of a proxy's handshake too.
+     */
     private suspend fun connect(
         data: HttpRequestData,
         url: Url,
         secure: Boolean,
-        viaProxy: Boolean,
+        proxy: ResolvedProxy?,
         key: String,
         dns: RequestDns,
     ): H1Connection {
-        val (host, port) =
-            if (viaProxy) {
-                // a NetworkAddress (java.net's on the JVM, ktor-utils' on Native): its address, not a reverse lookup of it
-                config.proxy!!.resolveAddress().let { socketHost(it.address) to it.port }
-            } else {
-                url.host to url.port
-            }
+        val (host, port) = if (proxy != null) proxy.host to proxy.port else url.host to url.port
         // every address of the host, IPv6 and IPv4 alternating (RFC 8305); this module's connects on Kotlin/Native, not
         // ktor-network's (Ktor issue KTOR-10017, security, under coordinated disclosure)
         @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
@@ -361,16 +363,23 @@ internal class H1Pool(
         try {
             val rawIn = tcp.openReadChannel()
             val rawOut = tcp.openWriteChannel(autoFlush = true)
-            if (viaProxy &&
-                secure
-            ) {
-                startTunnel(
-                    url,
-                    data.headers[HttpHeaders.UserAgent],
-                    data.headers[HttpHeaders.ProxyAuthorization],
-                    rawOut,
-                    rawIn,
-                )
+            when {
+                proxy == null -> {}
+
+                proxy.kind == ResolvedProxy.Kind.Socks5 -> {
+                    socks5Connect(rawIn, rawOut, socks5Target(url.host, proxy.remoteDns, dns), url.port, proxy.credentials, "$proxy")
+                }
+
+                proxy.tunnels(data) -> {
+                    startTunnel(
+                        url,
+                        data.headers[HttpHeaders.UserAgent],
+                        // the request's own field wins; else the configured credentials, sent at once (no 407 round trip)
+                        data.headers[HttpHeaders.ProxyAuthorization] ?: proxy.basicAuthorization,
+                        rawOut,
+                        rawIn,
+                    )
+                }
             }
             return if (secure) {
                 val tls =
@@ -392,7 +401,34 @@ internal class H1Pool(
     }
 
     private fun callContextOrEmpty(): CoroutineContext = selector.coroutineContext
+
+    /**
+     * The SOCKS5 destination for [host]: an address literal as ATYP 1 or 4; a name as itself for the proxy to resolve
+     * ([remoteDns], `socks5h`), else the first address the request's resolution gives (`socks5`).
+     */
+    private suspend fun socks5Target(
+        host: String,
+        remoteDns: Boolean,
+        dns: RequestDns,
+    ): Socks5Target {
+        val name = socketHost(host)
+        val literal = ':' in name || parseIpv4(name) != null
+        return if (literal || !remoteDns) Socks5Target.Address(dns.lookup(name, 0).first().bytes) else Socks5Target.Domain(name)
+    }
 }
+
+/** Whether a request through this proxy goes in a tunnel: always through SOCKS5; through HTTP for TLS and WebSockets. */
+@OptIn(io.ktor.utils.io.InternalAPI::class)
+internal fun ResolvedProxy.tunnels(data: HttpRequestData): Boolean =
+    kind == ResolvedProxy.Kind.Socks5 || data.url.protocol.isSecure() ||
+        data.attributes.contains(io.ktor.client.plugins.websocket.WEBSOCKETS_KEY)
+
+/** Four dotted-decimal octets 0..255, or null. */
+private fun parseIpv4(s: String): List<Int>? =
+    s.split('.').takeIf { it.size == 4 }?.map { p ->
+        p.toIntOrNull()?.takeIf { it in 0..255 && p.isNotEmpty() && p.length <= 3 }
+            ?: return null
+    }
 
 /** Milliseconds on a monotonic clock, for idle and lifetime expiry. */
 internal fun monotonicMillis(): () -> Long {

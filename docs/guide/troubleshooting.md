@@ -351,7 +351,9 @@ Check `KuicksilverEventListener.protocolSelected`'s `ProtocolReason`:
 
 | Reason | Meaning and fix |
 |---|---|
-| `Configuration` | `discovery` is `H1Only`, a proxy is configured (HTTP/3 never goes through one), or the URL is not `https` |
+| `Configuration` | `discovery` is `H1Only` |
+| `NotSecure` | the URL is not `https` (or `wss`): HTTP/3 needs TLS |
+| `Proxy` | a proxy applies to the URL: HTTP/3 never goes through one (QUIC is UDP); exempt the host from the proxy for HTTP/3 |
 | `NoAlternative` | `Auto` mode and the origin has not announced `h3` in `Alt-Svc` yet, or the entry expired; the first request always goes over HTTP/1.1. Use `quicHints` or `Preferred` for origins you know speak HTTP/3, and `FileAltSvcStore` to keep alternatives across restarts |
 | `BrokenAlternative` | HTTP/3 to this origin failed while HTTP/1.1 worked (UDP blocked, a QUIC error), so the alternative is skipped for 5 minutes, doubling per repeat up to 2 days; `altSvcMarkedBroken` reported it. Set `networkId` so a network change forgets the marks |
 | `Race` | the race went to HTTP/1.1: QUIC did not finish within its head start (1.5 x the origin's smoothed RTT, 250 ms without history, 100 ms..2 s; `hardDelay` overrides it), and on a network where QUIC was never seen working HTTP/1.1 starts at once. The QUIC setup goes on and serves the next requests |

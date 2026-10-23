@@ -195,6 +195,17 @@ public class KuicksilverEngineConfig : HttpClientEngineConfig() {
     @ExperimentalKuicksilverApi
     public var connectionAttemptDelay: Duration = 250.milliseconds
 
+    /**
+     * Credentials for the proxy (`proxy`): SOCKS5 username/password (RFC 1929), offered to a SOCKS5 proxy and sent only
+     * when it picks that method, or `Proxy-Authorization: Basic` on an HTTP proxy's CONNECT and absolute-form requests,
+     * sent with the first request (no 407 round trip) unless the request sets its own `Proxy-Authorization`. Off the JVM
+     * the proxy URL's user info (`http://user:password@proxy:3128`) wins over these. Null (the default) for none. Both go
+     * in clear to the proxy (RFC 1929 section 5, RFC 7617 section 4), never to the origin, and never into the engine's
+     * logs or events.
+     */
+    @ExperimentalKuicksilverApi
+    public var proxyCredentials: ProxyCredentials? = null
+
     /** Replaces the system resolver for both pools (tests: names and addresses the test owns). */
     @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
     internal var resolverForTest: (suspend (String, Int) -> List<io.kuicksilver.ktor.network.TcpAddress>)? = null

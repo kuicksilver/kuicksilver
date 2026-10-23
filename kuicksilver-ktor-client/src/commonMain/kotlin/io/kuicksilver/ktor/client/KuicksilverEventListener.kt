@@ -105,7 +105,7 @@ public enum class ProtocolReason {
     /** `Http3DiscoveryMode.H1Only` or `H3Only`. */
     Configuration,
 
-    /** `http://`, or a proxy: HTTP/3 needs TLS and no proxy. */
+    /** `http://` (or `ws://`): HTTP/3 needs TLS. */
     NotSecure,
 
     /** An HTTP/3 connection to the origin was already open. */
@@ -125,6 +125,9 @@ public enum class ProtocolReason {
 
     /** HTTP/3 failed for this request; it is repeated on HTTP/1.1. */
     Fallback,
+
+    /** A proxy applies to the request: HTTP/1.1 through it (QUIC's UDP does not go through HTTP CONNECT or SOCKS5 CONNECT). */
+    Proxy,
 }
 
 /** The engine's [KuicksilverEventListener], never failing the call (an exception is logged); a no-op without one. */

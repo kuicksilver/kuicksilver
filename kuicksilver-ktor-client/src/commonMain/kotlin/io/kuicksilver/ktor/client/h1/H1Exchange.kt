@@ -54,13 +54,13 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.io.EOFException
-import kotlinx.io.IOException
 import kotlin.coroutines.CoroutineContext
 
 /**
- * Request line and headers (absolute-form through an HTTP proxy, RFC 9112 section 3.2.2). Inside a CONNECT [tunneled]
- * connection the proxy's fields stay out: Proxy-Authorization applies only to the proxy that asked for it (RFC 9110
- * section 11.7.2) and went on the CONNECT ([startTunnel]); the origin must not receive the proxy's credentials.
+ * Request line and headers (absolute-form through an HTTP proxy, RFC 9112 section 3.2.2). Inside a [tunneled] connection
+ * (HTTP CONNECT or SOCKS5) the proxy's fields stay out: Proxy-Authorization applies only to the proxy that asked for it
+ * (RFC 9110 section 11.7.2) and went on the CONNECT ([startTunnel]); the origin must not receive the proxy's credentials.
+ * In the absolute form [proxyAuthorization] (the configured credentials) is sent unless the request has its own.
  */
 @OptIn(InternalAPI::class)
 internal suspend fun writeHeaders(
@@ -68,6 +68,7 @@ internal suspend fun writeHeaders(
     output: ByteWriteChannel,
     overProxy: Boolean,
     tunneled: Boolean = false,
+    proxyAuthorization: String? = null,
 ) {
     val builder = RequestResponseBuilder()
     val method = request.method
@@ -97,6 +98,9 @@ internal suspend fun writeHeaders(
         }
 
         val ownPriority = request.priority // HttpRequestBuilder.priority replaces a raw field: one signal
+        if (overProxy && proxyAuthorization != null && headers[HttpHeaders.ProxyAuthorization] == null) {
+            builder.headerLine(HttpHeaders.ProxyAuthorization, proxyAuthorization)
+        }
         mergeHeaders(headers, body) { key, value ->
             if (key == HttpHeaders.ContentLength || key == HttpHeaders.Expect) return@mergeHeaders
             if (ownPriority != null && key.equals("Priority", true)) return@mergeHeaders
@@ -363,8 +367,9 @@ private suspend fun readResponseHead(
 private fun responseHeadTooLarge() = ParserException("The response head is larger than $MAX_RESPONSE_HEAD_BYTES bytes")
 
 /**
- * HTTP CONNECT through a proxy (RFC 9110 section 9.3.6), before TLS to the origin. The proxy's response head is limited
- * to [MAX_RESPONSE_HEAD_BYTES] ([ParserException] beyond); any status but 2xx, a 1xx included, fails the tunnel.
+ * HTTP CONNECT through a proxy (RFC 9110 section 9.3.6), before TLS to the origin or a WebSocket. The proxy's response
+ * head is limited to [MAX_RESPONSE_HEAD_BYTES] ([ParserException] beyond); any status but 2xx, a 1xx included, fails the
+ * tunnel with a ProxyException carrying it (407: the proxy wants credentials; not retried).
  */
 internal suspend fun startTunnel(
     url: Url,
@@ -407,7 +412,14 @@ internal suspend fun startTunnel(
         rawResponse.use {
             // a 2xx makes the connection a tunnel at the end of the head: Content-Length and Transfer-Encoding are ignored
             // (RFC 9110 section 9.3.6), the bytes that follow are the origin's
-            if (rawResponse.status / 100 != 2) throw IOException("Can not establish tunnel connection: ${rawResponse.status}")
+            if (rawResponse.status / 100 != 2) {
+                @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+                throw io.kuicksilver.ktor.client.ProxyException(
+                    "the proxy refused the CONNECT to $hostWithPort: ${rawResponse.status}" +
+                        if (rawResponse.status == 407) " (it wants credentials: proxyCredentials or a Proxy-Authorization header)" else "",
+                    rawResponse.status,
+                )
+            }
         }
     } finally {
         builder.release()

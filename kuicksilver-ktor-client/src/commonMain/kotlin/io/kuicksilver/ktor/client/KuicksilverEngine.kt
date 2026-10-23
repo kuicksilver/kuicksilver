@@ -146,26 +146,27 @@ internal class KuicksilverEngine(
                     "use https or another discovery mode",
             )
         }
-        if (config.proxy != null && url.protocol.isSecure() && config.http3.discovery == Http3DiscoveryMode.H3Only) {
+        val proxy = proxyFor(url) // explicit, else the resolver's: a proxy the engine cannot use fails here, never bypassed
+        if (proxy != null && url.protocol.isSecure() && config.http3.discovery == Http3DiscoveryMode.H3Only) {
             throw UnsupportedOperationException(
-                "Http3DiscoveryMode.H3Only: HTTP/3 cannot go through the configured proxy (UDP through an HTTP CONNECT or " +
+                "Http3DiscoveryMode.H3Only: HTTP/3 cannot go through the proxy for ${url.host} (UDP through an HTTP CONNECT or " +
                     "SOCKS5 proxy is not supported); remove the proxy or use another discovery mode",
             )
         }
         // HTTP/3 needs TLS and no proxy (through a proxy only HTTP/1.1)
-        if (!url.protocol.isSecure() || config.proxy != null ||
+        if (!url.protocol.isSecure() || proxy != null ||
             config.http3.discovery == Http3DiscoveryMode.H1Only
         ) {
             selected(
                 data,
                 HttpProtocolVersion.HTTP_1_1,
-                if (config.http3.discovery == Http3DiscoveryMode.H1Only && url.protocol.isSecure() && config.proxy == null) {
-                    ProtocolReason.Configuration
-                } else {
-                    ProtocolReason.NotSecure
+                when {
+                    proxy != null -> ProtocolReason.Proxy
+                    config.http3.discovery == Http3DiscoveryMode.H1Only && url.protocol.isSecure() -> ProtocolReason.Configuration
+                    else -> ProtocolReason.NotSecure
                 },
             )
-            return h1.execute(data, callContext)
+            return h1.execute(data, callContext, proxy = proxy) // no Alt-Svc is used or learned through a proxy
         }
         val target = H3Target(url.host, url.host, url.port)
         val webSocket = data.attributes.contains(WEBSOCKETS_KEY)

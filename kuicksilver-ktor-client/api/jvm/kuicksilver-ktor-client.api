@@ -109,6 +109,7 @@ public final class io/kuicksilver/ktor/client/KuicksilverEngineConfig : io/ktor/
 	public final fun getMaxConnectionsCount ()I
 	public final fun getMaxConnectionsPerRoute ()I
 	public final fun getMaxIdleConnectionsPerRoute ()I
+	public final fun getProxyCredentials ()Lio/kuicksilver/ktor/client/ProxyCredentials;
 	public final fun getQuic ()Lio/kuicksilver/quic/QuicConfig;
 	public final fun getTls ()Lkotlin/jvm/functions/Function1;
 	public final fun getTrust ()Lio/kuicksilver/tls/TrustConfig;
@@ -123,6 +124,7 @@ public final class io/kuicksilver/ktor/client/KuicksilverEngineConfig : io/ktor/
 	public final fun setMaxConnectionsCount (I)V
 	public final fun setMaxConnectionsPerRoute (I)V
 	public final fun setMaxIdleConnectionsPerRoute (I)V
+	public final fun setProxyCredentials (Lio/kuicksilver/ktor/client/ProxyCredentials;)V
 	public final fun setQuic (Lio/kuicksilver/quic/QuicConfig;)V
 	public final fun setTls (Lkotlin/jvm/functions/Function1;)V
 	public final fun setTrust (Lio/kuicksilver/tls/TrustConfig;)V
@@ -164,11 +166,26 @@ public final class io/kuicksilver/ktor/client/ProtocolReason : java/lang/Enum {
 	public static final field Fallback Lio/kuicksilver/ktor/client/ProtocolReason;
 	public static final field NoAlternative Lio/kuicksilver/ktor/client/ProtocolReason;
 	public static final field NotSecure Lio/kuicksilver/ktor/client/ProtocolReason;
+	public static final field Proxy Lio/kuicksilver/ktor/client/ProtocolReason;
 	public static final field Race Lio/kuicksilver/ktor/client/ProtocolReason;
 	public static final field WebSocket Lio/kuicksilver/ktor/client/ProtocolReason;
 	public static fun getEntries ()Lkotlin/enums/EnumEntries;
 	public static fun valueOf (Ljava/lang/String;)Lio/kuicksilver/ktor/client/ProtocolReason;
 	public static fun values ()[Lio/kuicksilver/ktor/client/ProtocolReason;
+}
+
+public final class io/kuicksilver/ktor/client/ProxyCredentials {
+	public fun <init> (Ljava/lang/String;Ljava/lang/String;)V
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getPassword ()Ljava/lang/String;
+	public final fun getUser ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/kuicksilver/ktor/client/ProxyException : java/io/IOException {
+	public fun <init> (Ljava/lang/String;Ljava/lang/Integer;)V
+	public final fun getReplyCode ()Ljava/lang/Integer;
 }
 
 public final class io/kuicksilver/ktor/client/WebTransportClientKt {

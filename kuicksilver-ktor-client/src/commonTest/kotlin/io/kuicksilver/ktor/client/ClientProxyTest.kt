@@ -177,7 +177,7 @@ class ClientProxyTest {
      * A one-connection CONNECT proxy to 127.0.0.1:[originPort]: answers the CONNECT with [connectResponse], then copies bytes
      * both ways. [block] gets its port and the CONNECT head's lines (once the CONNECT was read).
      */
-    private suspend fun tunnelProxy(
+    internal suspend fun tunnelProxy(
         originPort: Int,
         connectResponse: String = "HTTP/1.1 200 Connection established\r\n\r\n",
         block: suspend (Int, () -> List<String>) -> Unit,

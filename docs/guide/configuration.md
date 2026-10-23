@@ -245,7 +245,8 @@ Guide: [Ktor: Client](ktor.md#client).
 | `connectionAttemptDelay` (*experimental*) | `Duration` | 250 ms | 10 ms..2 s, or `Duration.INFINITE`; anything else fails the engine's creation | Happy Eyeballs (RFC 8305) for HTTP/1.1's TCP connects: the delay before the next address is tried while earlier attempts are still pending; `INFINITE` tries one address after another ([Ktor: IPv6 over TCP](ktor.md#ipv6-over-tcp-on-kotlinnative)) |
 | `logger` (*experimental*) | `KuicksilverLogger?` | `null` (keeps `http3.endpoint.logger`) | | the engine's and its QUIC endpoint's diagnostics |
 | `eventListener` (*experimental*) | `KuicksilverEventListener?` | `null` | | call, protocol, race, Alt-Svc and pool events ([Ktor: Observability](ktor.md#observability-experimental)) |
-| `proxy` (Ktor) | `ProxyConfig?` | `null` | HTTP proxies only | HTTP/1.1 through the proxy; HTTP/3 is never proxied |
+| `proxy` (Ktor) | `ProxyConfig?` | `null` | HTTP (`http://` only) and SOCKS5 proxies; others, an `https://` proxy URL included, fail each request with `UnsupportedOperationException` | HTTP/1.1 through the proxy (CONNECT for `https` and WebSockets, absolute form for `http`; SOCKS5 CONNECT with the proxy resolving names); HTTP/3 is never proxied |
+| `proxyCredentials` (*experimental*) | `ProxyCredentials?` | `null` | SOCKS5: user 1–255 bytes, password up to 255 (RFC 1929) | SOCKS5 username/password when the proxy picks it; `Proxy-Authorization: Basic` on an HTTP proxy's CONNECT and absolute-form requests unless the request has its own; off the JVM the proxy URL's user info wins |
 
 `pipelining` (from Ktor's `HttpClientEngineConfig`) is not used.
 

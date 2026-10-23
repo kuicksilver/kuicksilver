@@ -55,7 +55,7 @@ public suspend fun HttpClient.webTransport(
     if (engine.config.http3.discovery == Http3DiscoveryMode.H1Only) {
         throw UnsupportedOperationException("WebTransport needs HTTP/3, which http3 { discovery = H1Only } turns off")
     }
-    if (engine.effectiveProxyFor(url) != null && !engine.config.http3.webTransportIgnoresProxy) {
+    if (!engine.config.http3.webTransportIgnoresProxy && engine.effectiveProxyFor(url) != null) {
         throw UnsupportedOperationException(
             "WebTransport runs over UDP and cannot go through the proxy that applies to ${url.host}: exempt the host from the " +
                 "proxy (the proxy's bypass list), configure no proxy for it, or set http3 { webTransportIgnoresProxy = true } " +
@@ -76,10 +76,7 @@ public suspend fun HttpClient.webTransport(
 }
 
 /**
- * The proxy that applies to [url], or null for a direct connection. Today only the engine's explicit `proxy`.
- * TODO(C.2/C.3): extend with the environment and system proxy resolvers and their bypass lists (NO_PROXY, localhost),
- * so WebTransport refuses exactly the URLs a request would send through a proxy.
+ * The proxy that applies to [url], or null for a direct connection: the one a request to [url] would go through, so
+ * WebTransport refuses exactly the URLs a request sends through a proxy.
  */
-internal fun KuicksilverEngine.effectiveProxyFor(
-    @Suppress("UNUSED_PARAMETER") url: Url,
-): io.ktor.client.engine.ProxyConfig? = config.proxy
+internal suspend fun KuicksilverEngine.effectiveProxyFor(url: Url): ResolvedProxy? = proxyFor(url)

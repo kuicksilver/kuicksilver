@@ -194,10 +194,20 @@ val client = HttpClient(Kuicksilver) {
   line and header fields) is limited to 64 KiB, the same as the HTTP/3 field section, and at most 5 interim (1xx)
   responses are skipped before the final one (as Go's `net/http`); beyond either the request fails with Ktor's
   `ParserException` and the connection is closed. A proxy's response to `CONNECT` has the same 64 KiB limit.
-- A proxy (`proxy = ProxyBuilder.http(...)`) is used for HTTP/1.1 only: `CONNECT` tunnels for `https`, absolute-form
-  requests for `http`; SOCKS proxies are refused with `UnsupportedOperationException`. HTTP/3 never goes through a proxy:
-  with a proxy, `Auto` and `Preferred` use HTTP/1.1 through it (no Alt-Svc), and `H3Only` fails every request with
-  `UnsupportedOperationException` instead of falling back to TCP.
+- A proxy is used for HTTP/1.1 only. An HTTP proxy (`proxy = ProxyBuilder.http(...)`) gets `CONNECT` tunnels for
+  `https` and for WebSockets, `ws://` included (RFC 6455 section 4.1, as browsers), and absolute-form requests for plain
+  `http`; a SOCKS proxy (`ProxyBuilder.socks(host, port)`) is SOCKS5 (RFC 1928, CONNECT only; no SOCKS4) with the
+  origin's name resolved by the proxy, every request tunneled. `proxyCredentials` (*experimental*) authenticate to
+  either: SOCKS5 username/password (RFC 1929), offered and sent only when the proxy picks that method, or
+  `Proxy-Authorization: Basic` with the first CONNECT or absolute-form request unless the request sets its own; off the
+  JVM a proxy URL's user info (`http://user:password@proxy:3128`) wins. Both go in clear to the proxy, never to the origin.
+  A proxy that refuses fails the request with `ProxyException` (*experimental*): `replyCode` is the SOCKS5 reply or the
+  CONNECT status (407: credentials wanted; not retried). An `https://` proxy URL (TLS to the proxy) is refused with
+  `UnsupportedOperationException`, never used in clear. HTTP/3 never goes through a proxy: QUIC is UDP, which neither
+  CONNECT nor SOCKS5 CONNECT carries (no CONNECT-UDP, RFC 9298, or SOCKS5 UDP ASSOCIATE). With a proxy, `Auto` and
+  `Preferred` use HTTP/1.1 through it (Alt-Svc is neither used nor learned, `quicHints` are ignored; the event reason
+  is `ProtocolReason.Proxy`), and `H3Only` fails every request with `UnsupportedOperationException` without contacting
+  the proxy.
 - Timeouts come from `HttpTimeout`: the connect timeout (TCP + TLS, or the QUIC handshake) fails with Ktor's
   `ConnectTimeoutException`, the socket timeout with `SocketTimeoutException`; the request timeout is the plugin's own.
   The socket timeout is an inactivity timeout, as Ktor defines it ("maximum time of inactivity between two data
@@ -438,7 +448,7 @@ embeddedServer(Kuicksilver, configure = {
 **Client.** `engine { eventListener = ... }` takes a `KuicksilverEventListener`, an abstract class with an empty method
 per event in the manner of OkHttp's `EventListener`: `callStart`, `callEnd` (protocol and status) or `callFailed`;
 `protocolSelected` with a `ProtocolReason` (`Configuration`, `NotSecure`, `ExistingConnection`, `Race`, `NoAlternative`,
-`BrokenAlternative`, `WebSocket`, `Fallback`); `raceEnded` (winner, head start, why HTTP/3 lost); `altSvcUsed` and
+`BrokenAlternative`, `WebSocket`, `Fallback`, `Proxy`); `raceEnded` (winner, head start, why HTTP/3 lost); `altSvcUsed` and
 `altSvcMarkedBroken`; `fallback` from HTTP/3 to HTTP/1.1; `retry` (a request the server did not process after GOAWAY, a
 stale pooled HTTP/1.1 connection); `connectionAcquired` (reused or new) and `connectionReleased` (kept for the next request
 or closed). `logger` (null keeps `http3.endpoint.logger`) also receives the listener's own failures, and
