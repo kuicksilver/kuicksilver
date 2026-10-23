@@ -11,6 +11,8 @@ import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.ktor.client.h1.monotonicMillis
 import io.kuicksilver.quic.KuicksilverLogger
 import io.kuicksilver.quic.LogLevel
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
 import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -83,9 +85,12 @@ internal class EnvironmentProxyResolver(
 ) : ProxyResolver {
     private fun env(name: String): String? = getenv(name)?.trim()?.takeIf { it.isNotEmpty() }
 
-    /** The last value parsed and its proxy: the same variable gives the same credentials instance, so the same route. */
-    @kotlin.concurrent.Volatile
-    private var last: Pair<String, ResolvedProxy>? = null
+    /**
+     * The values parsed lately and their proxies (at most [PARSED_VALUES]): the same value, whichever variable holds it,
+     * gives the same credentials instance, so the same pool route.
+     */
+    private val parsedLock = Mutex()
+    private val parsed = LinkedHashMap<String, ResolvedProxy>()
 
     override suspend fun proxyFor(url: Url): ResolvedProxy? {
         val host = socketHost(url.host)
@@ -95,8 +100,16 @@ internal class EnvironmentProxyResolver(
                 ?: env("all_proxy") ?: env("ALL_PROXY") ?: return null
         val noProxy = env("no_proxy") ?: env("NO_PROXY")
         if (noProxy != null && NoProxy.parse(noProxy).matches(host, url.port)) return null
-        last?.let { (v, p) -> if (v == value) return p }
-        return parseProxyUrl(value).also { last = value to it }
+        return parsedLock.withLock {
+            parsed[value] ?: parseProxyUrl(value).also {
+                if (parsed.size >= PARSED_VALUES) parsed.remove(parsed.keys.first())
+                parsed[value] = it
+            }
+        }
+    }
+
+    private companion object {
+        const val PARSED_VALUES = 8
     }
 }
 
@@ -441,6 +454,13 @@ internal fun pickCfProxy(
     return null
 }
 
+/**
+ * Where the engines' resolver calls run: [ProxyResolver]s may block (a `ProxySelector`, a system API, a user's own),
+ * so they get threads of `Dispatchers.IO` of their own, never `Dispatchers.Default`'s.
+ */
+@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+private val resolverDispatcher = Dispatchers.IO.limitedParallelism(ProxyRouting.MAX_ROUTES)
+
 internal const val TLS_PROXY_UNSUPPORTED: String =
     "an https:// proxy (TLS to the proxy) is not supported; use an http:// proxy, whose CONNECT tunnels still carry TLS"
 
@@ -458,6 +478,7 @@ internal class ProxyRouting(
     private val lock = Mutex()
     private val cache = LinkedHashMap<String, Pair<ResolvedProxy?, Long>>()
     private val inFlight = HashMap<String, kotlinx.coroutines.Deferred<ResolvedProxy?>>()
+    private val slots = kotlinx.coroutines.sync.Semaphore(MAX_ROUTES)
     private val warned = AtomicInt(0)
 
     /** The engine's `proxy` with `proxyCredentials`, converted once (one credentials instance, so one pool route). */
@@ -487,7 +508,7 @@ internal class ProxyRouting(
      * [resolver]'s answer for [url], bounded by the connect timeout: a platform call that hangs (a `ProxySelector` or a
      * system API waiting on the network) fails the request with [ProxyException] instead of holding it. The call runs
      * outside the request, shared by every request to the same route while it is in flight, so a hung one holds one
-     * thread per route, and at most [MAX_ROUTES] are in flight.
+     * thread per route; at most [MAX_ROUTES] run at once and further routes queue for a slot within the same timeout.
      */
     @OptIn(kotlinx.coroutines.DelicateCoroutinesApi::class)
     private suspend fun resolve(
@@ -495,35 +516,44 @@ internal class ProxyRouting(
         key: String,
         url: Url,
     ): ResolvedProxy? {
-        val call =
-            lock.withLock {
-                inFlight[key] ?: run {
-                    if (inFlight.size >= MAX_ROUTES) throw ProxyException("too many proxy lookups in flight", null)
-                    kotlinx.coroutines.GlobalScope
-                        .async(kotlinx.coroutines.Dispatchers.Default) {
-                            if (resolver is WarningProxyResolver) resolver.proxyFor(url, ::warnOnce) else resolver.proxyFor(url)
-                        }.also { d ->
-                            inFlight[key] = d
-                            d.invokeOnCompletion {
-                                kotlinx.coroutines.GlobalScope.launch {
-                                    lock.withLock {
-                                        if (inFlight[key] ===
-                                            d
-                                        ) {
-                                            inFlight.remove(key)
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                }
-            }
         val timeout = config.connectTimeout
-        // boxed: null is an answer (direct), a missing box the timeout
+        // boxed: null is an answer (direct), a missing box the timeout; waiting for a free slot counts against it too
         val answer =
-            kotlinx.coroutines.withTimeoutOrNull(timeout) { listOf(call.await()) }
+            kotlinx.coroutines.withTimeoutOrNull(timeout) { listOf(callFor(resolver, key, url).await()) }
                 ?: throw ProxyException("the proxy lookup for ${url.host} took longer than the connect timeout ($timeout)", null)
         return answer.single()
+    }
+
+    /**
+     * The call in flight for [key], or a new one once one of the [MAX_ROUTES] slots is free (a caller queues for it). It
+     * runs detached on [resolverDispatcher] and frees its slot when it completes, however long that takes.
+     */
+    @OptIn(kotlinx.coroutines.DelicateCoroutinesApi::class)
+    private suspend fun callFor(
+        resolver: ProxyResolver,
+        key: String,
+        url: Url,
+    ): kotlinx.coroutines.Deferred<ResolvedProxy?> {
+        lock.withLock { inFlight[key] }?.let { return it }
+        slots.acquire()
+        var started = false
+        try {
+            return lock.withLock {
+                inFlight[key] ?: kotlinx.coroutines.GlobalScope
+                    .async(resolverDispatcher) {
+                        if (resolver is WarningProxyResolver) resolver.proxyFor(url, ::warnOnce) else resolver.proxyFor(url)
+                    }.also { d ->
+                        started = true
+                        inFlight[key] = d
+                        d.invokeOnCompletion {
+                            slots.release()
+                            kotlinx.coroutines.GlobalScope.launch { lock.withLock { if (inFlight[key] === d) inFlight.remove(key) } }
+                        }
+                    }
+            }
+        } finally {
+            if (!started) slots.release() // another caller started it meanwhile, or this one was cancelled first
+        }
     }
 
     private fun warnOnce(message: String) {

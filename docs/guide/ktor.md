@@ -372,7 +372,8 @@ its own. `proxyCredentials` (*experimental*) are for the explicit `proxy` only (
 like with `ProxyResolvers.Environment`, or the `credentials` of the `ResolvedProxy` your resolver returns. Both go in
 clear to the proxy, never to the origin. Through `socks5://` (names resolved here) the engine tries the origin's
 addresses in turn while the proxy answers "network unreachable" or "host unreachable", within the connect timeout. A
-resolver that does not answer within the connect timeout fails the request with `ProxyException`. A proxy that refuses fails the request with `ProxyException` (*experimental*):
+resolver that does not answer within the engine's `connectTimeout` (not a per-request `HttpTimeout`) fails the request with
+`ProxyException`. A proxy that refuses fails the request with `ProxyException` (*experimental*):
 `replyCode` is the SOCKS5 reply or the CONNECT status (407: credentials wanted; not retried).
 
 **Through a proxy there is no HTTP/3.** QUIC is UDP, which neither CONNECT nor SOCKS5 CONNECT carries (no CONNECT-UDP,

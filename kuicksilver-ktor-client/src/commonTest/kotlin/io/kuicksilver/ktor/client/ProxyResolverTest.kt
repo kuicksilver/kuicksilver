@@ -174,6 +174,11 @@ class ProxyResolverTest {
         )
         val r = env("https_proxy" to "http://u:pw@p.test:3128")
         assertEquals(r.at("https://x.test/")!!.routeKey, r.at("https://y.test/")!!.routeKey, "the same variable, the same route")
+        val two = env("https_proxy" to "http://u:a@s.test:1", "http_proxy" to "http://u:b@h.test:2")
+        val secure = two.at("https://x.test/")!!.routeKey
+        val plain = two.at("http://x.test/")!!.routeKey
+        assertEquals(secure, two.at("https://y.test/")!!.routeKey, "alternating variables keep their routes")
+        assertEquals(plain, two.at("http://y.test/")!!.routeKey)
     }
 
     /** A resolver that does not answer fails the request at the connect timeout instead of holding it. */

@@ -410,7 +410,7 @@ internal class H1Pool(
                 throw e
             }
         }
-        error("no SOCKS5 destination") // socks5Targets is never empty
+        throw kotlinx.io.IOException("no SOCKS5 destination for ${url.host}") // socks5Targets never returns an empty list
     }
 
     private fun callContextOrEmpty(): CoroutineContext = selector.coroutineContext
