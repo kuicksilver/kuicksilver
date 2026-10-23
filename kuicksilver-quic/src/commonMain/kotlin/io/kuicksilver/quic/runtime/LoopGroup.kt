@@ -14,6 +14,7 @@ import io.kuicksilver.quic.QuicConnection
 import io.kuicksilver.quic.QuicEndpoint
 import io.kuicksilver.quic.QuicEndpointConfig
 import io.kuicksilver.quic.withLiteralHost
+import kotlinx.coroutines.launch
 import kotlin.concurrent.atomics.AtomicInt
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.concurrent.atomics.incrementAndFetch
@@ -112,6 +113,16 @@ internal class LoopGroup private constructor(
         val bytes = ByteArray(length)
         buf.copyTo(bytes, 0, 0, length)
         return loops[to].forwarded.trySend(EndpointLoop.Forwarded(bytes, from, ecn, asReceived, socket)).isSuccess
+    }
+
+    private val preferredFailed = AtomicInt(0)
+
+    /** True for the first loop whose preferred-address socket fails: it alone counts and logs the failure. */
+    internal fun claimPreferredFailure(): Boolean = preferredFailed.compareAndSet(0, 1)
+
+    /** The preferred address is served by every loop or by none: each loop takes its part down on its own dispatcher. */
+    internal fun dropPreferred() {
+        for (l in loops) l.scope.launch { l.dropPreferred() }
     }
 
     internal fun loopForTest(i: Int): EndpointLoop = loops[i]

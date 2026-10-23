@@ -88,7 +88,10 @@ public class EndpointStats internal constructor(
     /** Datagrams that did not parse as QUIC, and client Initials whose protection did not verify (no state is kept for them). */
     @property:ExperimentalKuicksilverApi
     public val datagramsDroppedUndecryptable: Long = 0,
-    /** Datagrams no connection took that got no answer: unknown connection IDs without a Stateless Reset, packets the cheap Initial checks discard, answers withheld by the rate limit. */
+    /**
+     * Datagrams no connection took that got no answer: unknown connection IDs without a Stateless Reset, packets the cheap Initial checks
+     * discard, answers withheld by the rate limit, and datagrams for a preferred address that went down ([preferredAddressFailures]).
+     */
     @property:ExperimentalKuicksilverApi
     public val datagramsDroppedStateless: Long = 0,
     /** Paths that passed validation (RFC 9000 section 8.2): migrations, NAT rebindings and probes. */
@@ -122,8 +125,8 @@ public class EndpointStats internal constructor(
     @property:ExperimentalKuicksilverApi
     public val ptbIgnored: Long = 0,
     /**
-     * Times a loop's preferred-address sockets failed (`QuicServerConfig.preferredAddress`): that loop then stops offering the address
-     * and closes the connections that had moved there; the endpoint goes on.
+     * Times the preferred-address sockets failed (`QuicServerConfig.preferredAddress`; at most once per endpoint): every loop then stops
+     * offering the address and closes the connections that had moved there; the endpoint goes on.
      */
     @property:ExperimentalKuicksilverApi
     public val preferredAddressFailures: Long = 0,

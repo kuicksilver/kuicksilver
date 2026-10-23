@@ -232,7 +232,7 @@ public class EndpointCore internal constructor(
             connectionsRefusedShutdown = refusedShutdown,
             datagramsDroppedQueue = droppedQueue,
             datagramsDroppedUndecryptable = droppedUndecryptable,
-            datagramsDroppedStateless = droppedStateless,
+            datagramsDroppedStateless = droppedStateless + droppedPreferredDown,
             newTokensIssued = newTokensIssued,
             newTokensAccepted = newTokensAccepted,
             newTokensRejected = newTokensRejected,
@@ -329,6 +329,9 @@ public class EndpointCore internal constructor(
     /** The preferred-address sockets failed ([io.kuicksilver.quic.runtime.EndpointLoop]): new connections no longer get the offer. */
     internal var preferredDown = false
     internal var preferredAddressFailures = 0L
+
+    /** Datagrams that arrived for the preferred address after it went down (forwarded by another loop before it knew): dropped. */
+    internal var droppedPreferredDown = 0L
 
     internal var ptbAccepted = 0L
     internal var ptbIgnored = 0L

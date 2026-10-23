@@ -30,6 +30,7 @@ import io.kuicksilver.quic.core.AddressClass
 import io.kuicksilver.quic.core.fail
 import io.kuicksilver.quic.core.failInternal
 import io.kuicksilver.quic.core.onEmsgsize
+import io.kuicksilver.quic.core.preferredSocketDown
 import io.kuicksilver.quic.core.zeroRttWritable
 import io.kuicksilver.quic.emit
 import io.kuicksilver.quic.ipLiteral
@@ -101,7 +102,7 @@ internal class EndpointLoop private constructor(
             SupervisorJob() + dispatcher + kotlinx.coroutines.CoroutineExceptionHandler { _, _ -> uncaughtFailures.incrementAndFetch() },
         )
 
-    /** The preferred-address sockets; emptied when one fails ([preferredFailed]). Loop dispatcher only. */
+    /** The preferred-address sockets; emptied when the preferred address goes down ([dropPreferred]). Loop dispatcher only. */
     private var preferredIos: List<DatagramIo> = preferredIos
 
     // one unsynchronised CSPRNG stream per loop: every call into the core stays on this loop's thread
@@ -276,13 +277,13 @@ internal class EndpointLoop private constructor(
         rt: ConnectionRuntime,
         path: PathId,
         to: InetSocketAddress? = null,
-    ): DatagramIo =
+    ): DatagramIo? =
         if (path ==
             PathId.Initial
         ) {
             io
         } else if (path == PREFERRED_SOCKET) {
-            preferredIoFor(to) ?: io
+            preferredIoFor(to) // none once the preferred address is down: never the main socket, the client would see a stranger
         } else {
             (rt.paths.firstOrNull { it.id == path } as? PathRuntime)?.io ?: io
         }
@@ -331,30 +332,40 @@ internal class EndpointLoop private constructor(
     }
 
     /**
-     * A preferred-address socket failed: the endpoint degrades instead of failing (owner decision). Every preferred socket of this
-     * loop closes, new connections no longer get the offer, and the connections whose active path is on a preferred socket are closed
-     * at once (an INTERNAL_ERROR close is attempted; their packets have no socket left), counted in
-     * `EndpointStats.preferredAddressFailures`. Connections on the main socket go on. Loop dispatcher only.
+     * A preferred-address socket failed: the endpoint degrades instead of failing (owner decision). The preferred address is served
+     * by every loop of a group or by none, so the whole group takes it down ([dropPreferred]); counted once in
+     * `EndpointStats.preferredAddressFailures`. Loop dispatcher only.
      */
-    private suspend fun preferredFailed(
+    private fun preferredFailed(
         failed: DatagramIo,
         e: Throwable,
     ) {
-        if (preferredIos.isEmpty()) return // the other family's socket already took the preferred address down
+        if (core.preferredDown) return // already going down: this loop's other socket, or the group's degrade closing it
+        if (group != null && !group.claimPreferredFailure()) return // another loop's socket failed first
         observer.logger.emit(LogLevel.Warn, e) {
             "endpoint ${io.localAddress} loop $index: the preferred-address socket ${failed.localAddress} failed; no longer offering " +
                 "the preferred address, closing the connections that moved there"
         }
+        core.preferredAddressFailures++
+        core.preferredDown = true
+        if (group != null) group.dropPreferred() else scope.launch { dropPreferred() }
+    }
+
+    /**
+     * Takes this loop's part of the preferred address down: its preferred sockets close, new connections no longer get the offer,
+     * connections whose active path is on a preferred socket are closed at once (an INTERNAL_ERROR close is attempted, but with no
+     * socket left on that address it may never reach the client, which then times out), and a preferred path still under validation
+     * fails, its connection staying where it was (RFC 9000 section 9.6.1). Datagrams that still arrive for the preferred socket (forwarded
+     * by another loop before it went down) are dropped. Loop dispatcher only.
+     */
+    internal suspend fun dropPreferred() {
+        core.preferredDown = true
+        if (preferredIos.isEmpty()) return
         val down = preferredIos
         preferredIos = emptyList()
-        core.preferredDown = true
-        core.preferredAddressFailures++
         for (p in down) p.close()
         for (rt in runtimes.values.toList()) {
-            if (rt.core.path.socket == PREFERRED_SOCKET) {
-                rt.core.fail(TransportError.INTERNAL_ERROR, 0, "the server's preferred-address socket failed", null)
-                core.markDirty(rt.core)
-            }
+            if (rt.core.preferredSocketDown()) core.markDirty(rt.core)
         }
         flush()
     }
@@ -381,7 +392,12 @@ internal class EndpointLoop private constructor(
             single.setLength(0, n)
             single.setAddress(0, out.address(i)!!)
             single.setEcn(0, out.ecn(i))
-            sendOrLose(ioFor(rt, out.path(i), out.address(i)), single, rt)
+            val target = ioFor(rt, out.path(i), out.address(i))
+            if (target == null) {
+                lose(1, rt) // its socket is gone (the preferred address went down): loss recovery or the close deals with it
+                continue
+            }
+            sendOrLose(target, single, rt)
         }
     }
 
@@ -430,10 +446,15 @@ internal class EndpointLoop private constructor(
                     batch.count
                 }
             }
-        if (lost > 0) {
-            socketDrops += lost
-            if (rt != null) rt.core.datagramsDroppedSocket += lost
-        }
+        if (lost > 0) lose(lost, rt)
+    }
+
+    private fun lose(
+        n: Int,
+        rt: ConnectionRuntime?,
+    ) {
+        socketDrops += n
+        if (rt != null) rt.core.datagramsDroppedSocket += n
     }
 
     /** One datagram off this loop's socket: routed by the core, or, in a group, copied to the loop its connection ID names. */
@@ -445,6 +466,10 @@ internal class EndpointLoop private constructor(
         now: TimeMark,
         socket: PathId = PathId.Initial,
     ) {
+        if (socket == PREFERRED_SOCKET && preferredIos.isEmpty()) {
+            core.droppedPreferredDown++ // the preferred address went down; another loop forwarded this before it knew
+            return
+        }
         val misroute = testMisrouteTo
         if (misroute >= 0 && group != null) {
             if (!group.forward(misroute, buf, length, from, ecn, asReceived = true, socket)) core.droppedQueue++
@@ -587,6 +612,8 @@ internal class EndpointLoop private constructor(
                         now,
                         f.socket,
                     )
+                } else if (f.socket == PREFERRED_SOCKET && preferredIos.isEmpty()) {
+                    core.droppedPreferredDown++
                 } else {
                     core.handleDatagram(buf, f.bytes.size, f.from, f.ecn, now, f.socket)
                 }
@@ -716,7 +743,7 @@ internal class EndpointLoop private constructor(
         c.setPathCapabilities(PathId.Initial, io.capabilities.value)
         c.onEcnFailed =
             { path ->
-                ioFor(rt, path).disableEcnMarking()
+                ioFor(rt, path)?.disableEcnMarking()
             }
         // the failed path's own socket; a per-datagram io ignores it
         core.markDirty(c)
@@ -1066,9 +1093,10 @@ internal class EndpointLoop private constructor(
         const val FLUSH_ROUNDS: Int = 4
 
         /**
-         * A preferred address must not be the endpoint's own: the same port on the same IP, or on any IP of a socket bound to an
-         * unspecified address (which also takes the other family on a dual-stack socket). With SO_REUSEPORT the kernel would hash part
-         * of the new clients' Initials onto the preferred sockets, where a connection never starts.
+         * A preferred address must not be the endpoint's own: the same port on the same IP, or on any IP of its family when the socket
+         * is bound to the unspecified address (an IPv6 one, `::`, also takes IPv4 on a dual-stack socket; `0.0.0.0` takes no IPv6
+         * address). With SO_REUSEPORT the kernel would hash part of the new clients' Initials onto the preferred sockets, where a
+         * connection never starts.
          */
         internal fun checkNotOwnAddress(
             pa: io.kuicksilver.quic.PreferredAddress,
@@ -1078,7 +1106,8 @@ internal class EndpointLoop private constructor(
             val unspecified = m.all { it == 0.toByte() }
             for (a in listOfNotNull(pa.ipv4, pa.ipv6)) {
                 if (a.port != main.port) continue
-                if (unspecified || m.contentEquals(AddressClass.ipBytes(a))) {
+                val ip = AddressClass.ipBytes(a)
+                if ((unspecified && (m.size == 16 || ip.size == 4)) || m.contentEquals(ip)) {
                     throw IllegalArgumentException("preferred address $a is the endpoint's own address ($main)")
                 }
             }

@@ -203,6 +203,11 @@ class MigrationApiTest {
                 PreferredAddress(InetSocketAddress("10.0.0.2", 2223), null),
                 InetSocketAddress("10.0.0.2", 2222),
             )
+            // and so is an IPv6 address on the port of a socket bound to 0.0.0.0, which takes no IPv6
+            io.kuicksilver.quic.runtime.EndpointLoop.checkNotOwnAddress(
+                PreferredAddress(null, InetSocketAddress("2001:db8::1", 2222)),
+                InetSocketAddress("0.0.0.0", 2222),
+            )
         }
 
     @Test fun preferredSocketFailureDegradesTheEndpoint() =

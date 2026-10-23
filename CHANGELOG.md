@@ -18,8 +18,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   `PreferredAddress`; RFC 9000 section 9.6). The endpoint listens there too (every loop of a group), advertises it with its
   sequence-1 connection ID, and moves a connection there once the client's address is validated on that socket,
   reporting the new `PathChangeReason.PreferredAddress`; a new connection is never started on a preferred socket.
-  `bind` refuses a preferred address that is the endpoint's own, and a failed preferred socket degrades the loop (no more
-  offers, its moved connections closed, `EndpointStats.preferredAddressFailures`) instead of ending the endpoint.
+  `bind` refuses a preferred address that is the endpoint's own, and a failed preferred socket takes the preferred address
+  down on every loop (no more offers, moved connections closed, validations under way failed,
+  `EndpointStats.preferredAddressFailures`) instead of ending the endpoint.
 - QUIC: clients follow a server's preferred address (experimental `QuicConfig.followPreferredAddress`, on by default; RFC
   9000 section 9.6): after the handshake is confirmed they validate the path to the address of their family and move
   there, closing the original path; a failed validation keeps the connection where it was, and a public server cannot

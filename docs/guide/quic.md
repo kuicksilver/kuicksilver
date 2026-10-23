@@ -410,10 +410,16 @@ connection is never started there, and nothing is answered statelessly. With `al
 preferred address is still taken, but only from the client's current address. With several loops every loop listens on
 the preferred addresses with `SO_REUSEPORT`, like on the main one. Each preferred socket binds the literal address it
 advertises (there is no NAT indirection: behind a NAT, advertise an address the server owns), which must not be the
-endpoint's own (`bind` refuses the same IP and port, or the port of a socket bound to `0.0.0.0` or `::`) nor use a
-reflection port (53, 123, 1900, 5353, 11211). If a preferred socket fails later, the endpoint degrades rather than
-failing: that loop stops offering the address to new connections, closes the connections that had moved there, logs a
-warning and counts it in `EndpointStats.preferredAddressFailures`; everything on the main socket goes on.
+endpoint's own (`bind` refuses the same IP and port, the port of a socket bound to `0.0.0.0` for an IPv4 address, or
+the port of one bound to `::` for either family) nor use a reflection port (53, 123, 1900, 5353, 11211). If a preferred
+socket fails later, the endpoint degrades rather than failing. The preferred address is served by every loop or by none,
+so with several loops the whole group takes it down: every loop closes its preferred sockets and stops offering the
+address to new connections; connections that had moved there are closed with INTERNAL_ERROR, and a validation of the
+preferred address still under way fails, leaving its connection on the original address (RFC 9000 section 9.6.1).
+The close is attempted, but no socket is left on the preferred address to send it from, so a client that had moved
+there may not receive it and ends at its idle timeout instead. Datagrams still arriving for the preferred address are
+dropped (`datagramsDroppedStateless`), never answered from the main socket. The failure is logged as a warning and
+counted once in `EndpointStats.preferredAddressFailures`; everything on the main socket goes on.
 
 A client follows a server's preferred address by default (`followPreferredAddress`, experimental; RFC 9000 section 9.6):
 once the handshake is confirmed it validates a path to the address of the family it uses, with the server's

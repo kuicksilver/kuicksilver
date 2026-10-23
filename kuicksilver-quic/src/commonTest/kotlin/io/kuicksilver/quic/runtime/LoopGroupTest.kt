@@ -25,6 +25,7 @@ import io.kuicksilver.tls.KslQuicCrypto
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
@@ -136,10 +137,139 @@ class LoopGroupTest {
     private class SharedPortTwin(
         val real: MemoryDatagramIo,
     ) : DatagramIo by real {
-        override suspend fun receive(into: PacketBatch): Int = kotlinx.coroutines.awaitCancellation()
+        private val failure = kotlinx.coroutines.CompletableDeferred<Throwable>()
+
+        override suspend fun receive(into: PacketBatch): Int = throw failure.await()
+
+        /** The twin's receive fails with [e], as a socket error would. */
+        fun failWith(e: Throwable) {
+            failure.complete(e)
+        }
 
         override fun close() {}
     }
+
+    /** A loops=2 group of [net] whose preferred address [pref] is [real] on loop [owner] and a [SharedPortTwin] of it on the other loop. */
+    private suspend fun groupWithPreferred(
+        net: MemoryNetwork,
+        pref: InetSocketAddress,
+        real: MemoryDatagramIo,
+        twin: SharedPortTwin,
+        owner: Int,
+    ): LoopGroup {
+        val withPreferred =
+            QuicEndpointConfig
+                .Builder()
+                .apply {
+                    server =
+                        QuicServerConfig
+                            .Builder(CoreFixtures.server())
+                            .apply { preferredAddress = io.kuicksilver.quic.PreferredAddress(pref, null) }
+                            .build()
+                    crypto = NullCryptoProvider
+                    loops = 2
+                }.build()
+        val preferred = if (owner == 0) listOf(listOf<DatagramIo>(real), listOf(twin)) else listOf(listOf(twin), listOf(real))
+        return LoopGroup.create(withPreferred, listOf(net.open(serverAddr), net.open(otherAddr)), preferred = preferred)
+    }
+
+    @Test fun preferredFailureOnOneLoopTakesThePreferredAddressDownGroupWide() =
+        runBlocking {
+            withTimeout(30.seconds) {
+                // the connection is loop 0's; its client's probe toward the preferred address is held back. Loop 0's preferred socket fails:
+                // the whole group stops serving the address, so loop 1's preferred socket (where the kernel hashes the probes) no longer
+                // forwards them for loop 0 to answer from its main socket (a validation the client could never use, RFC 9000 section 9.6.1).
+                // The probe fails and the connection stays on the original address
+                val net = MemoryNetwork()
+                val pref = InetSocketAddress("10.0.0.4", 4433)
+                val real = net.open(pref)
+                val twin = SharedPortTwin(real)
+                val group = groupWithPreferred(net, pref, real, twin, owner = 1)
+
+                val released = kotlinx.coroutines.CompletableDeferred<Unit>()
+                val probed = kotlinx.coroutines.CompletableDeferred<Unit>()
+                net.lose = { _, to, _ ->
+                    val held = !released.isCompleted && to == pref
+                    if (held) probed.complete(Unit)
+                    held
+                }
+                val client = QuicEndpoint.bind(clientAddr, client(net.open(clientAddr)))
+                try {
+                    val accepted = async { group.accept() }
+                    val c = client.connect(serverAddr, clientConfig) // loop 0's socket: the connection is loop 0's
+                    val events =
+                        kotlinx.coroutines.channels.Channel<io.kuicksilver.quic.PathEvent>(
+                            kotlinx.coroutines.channels.Channel.UNLIMITED,
+                        )
+                    val collector =
+                        launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) { c.pathEvents.collect { events.send(it) } }
+                    val s = accepted.await()
+                    probed.await() // the client probes the preferred address; held back
+                    twin.failWith(io.kuicksilver.quic.SocketDefunctException("gone", 9))
+                    while (group.stats.preferredAddressFailures < 1 || !real.closed) delay(5)
+                    assertEquals(1L, group.stats.preferredAddressFailures, "one failure for the group")
+                    released.complete(Unit)
+                    val failed =
+                        withTimeout(20.seconds) {
+                            var e: io.kuicksilver.quic.PathEvent
+                            do e = events.receive() while (e !is io.kuicksilver.quic.PathEvent.Failed)
+                            e
+                        }
+                    // QuicPath.remoteAddress is the connection's current peer address for every path, so the probe shows by its ID
+                    assertTrue(failed.path.id != io.kuicksilver.quic.PathId.Initial, "the preferred probe failed, not the original path")
+                    val st = c.openBidi()
+                    st.output.writeFully(ByteArray(20_000) { 7 })
+                    st.output.flushAndClose()
+                    val got =
+                        s
+                            .acceptStream()
+                            .input
+                            .readRemaining()
+                            .readByteArray()
+                    assertEquals(20_000, got.size, "data over the original path")
+                    assertEquals(serverAddr, (c as ConnectionRuntime).core.path.remote, "still on the original address")
+                    collector.cancel()
+                    c.close()
+                } finally {
+                    client.close()
+                    group.close()
+                }
+            }
+        }
+
+    @Test fun preferredFailureOnOneLoopClosesConnectionsMovedThereOnTheOtherLoop() =
+        runBlocking {
+            withTimeout(30.seconds) {
+                // the connection is loop 1's and moved to the preferred address, which the kernel hashes onto loop 0's socket; that
+                // socket fails: the group-wide degrade closes the moved connection on the healthy loop 1 as well
+                val net = MemoryNetwork()
+                val pref = InetSocketAddress("10.0.0.4", 4433)
+                val real = net.open(pref)
+                val twin = SharedPortTwin(real)
+                val group = groupWithPreferred(net, pref, real, twin, owner = 0)
+                val client = QuicEndpoint.bind(clientAddr, client(net.open(clientAddr)))
+                try {
+                    val accepted = async { group.accept() }
+                    val c = client.connect(otherAddr, clientConfig) // loop 1's socket: the connection is loop 1's
+                    val s = accepted.await()
+                    val loop1 = group.loopForTest(1).core
+                    while (loop1
+                            .connections()
+                            .single()
+                            .path.socket != io.kuicksilver.quic.PREFERRED_SOCKET
+                    ) {
+                        delay(5)
+                    }
+                    real.failWith(io.kuicksilver.quic.SocketDefunctException("gone", 9))
+                    withTimeout(10.seconds) { s.closed.await() }
+                    assertEquals(1L, group.stats.preferredAddressFailures)
+                    c.close()
+                } finally {
+                    client.close()
+                    group.close()
+                }
+            }
+        }
 
     @Test fun movedConnectionOnAnotherLoopsPreferredSocketIsForwardedAsPreferred() =
         runBlocking {
@@ -205,6 +335,33 @@ class LoopGroupTest {
                     c.close()
                 } finally {
                     client.close()
+                    group.close()
+                }
+            }
+        }
+
+    @Test fun forwardedPreferredDatagramIsDroppedOnceThePreferredAddressIsDown() =
+        runBlocking {
+            withTimeout(30.seconds) {
+                // a datagram another loop forwarded from its preferred socket before the address went down: no preferred socket is left
+                // to answer from, and the main one must not (the client would validate a path it can never use); dropped and counted
+                val net = MemoryNetwork()
+                val group = LoopGroup.create(config, listOf(net.open(serverAddr), net.open(otherAddr)))
+                try {
+                    val loop = group.loopForTest(0)
+                    loop.forwarded.trySend(
+                        EndpointLoop.Forwarded(
+                            ByteArray(30) { 0x40 },
+                            clientAddr,
+                            io.kuicksilver.quic.Ecn.NotEct,
+                            asReceived = false,
+                            socket = io.kuicksilver.quic.PREFERRED_SOCKET,
+                        ),
+                    )
+                    withTimeout(10.seconds) { while (loop.forwardedCount.load() < 1) delay(10) }
+                    val dropped = kotlinx.coroutines.withContext(loop.dispatcher) { loop.core.droppedPreferredDown }
+                    assertEquals(1L, dropped)
+                } finally {
                     group.close()
                 }
             }

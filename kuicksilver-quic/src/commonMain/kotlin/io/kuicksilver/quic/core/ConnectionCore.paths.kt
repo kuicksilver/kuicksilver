@@ -17,6 +17,7 @@ import io.kuicksilver.quic.PathId
 import io.kuicksilver.quic.PathState
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.TimeMark
+import io.kuicksilver.quic.TransportError
 import io.kuicksilver.quic.recordForTest
 import io.kuicksilver.quic.recovery.SentFrames
 import io.kuicksilver.quic.recovery.SpaceId
@@ -282,6 +283,26 @@ private fun ConnectionCore.moveToPreferredSocket(p: Path) {
         paths.remove(old)
         releasePathCid(old)
     }
+}
+
+/**
+ * Server: the preferred-address sockets went down (the endpoint degrades, docs/guide/quic.md). A connection whose active path is there
+ * is closed with INTERNAL_ERROR (the close may not reach the client: no socket is left on that address); a path there still under
+ * validation or waiting for the move is given up and the connection stays on its original path (RFC 9000 section 9.6.1). True when
+ * something changed.
+ */
+internal fun ConnectionCore.preferredSocketDown(): Boolean {
+    if (paths.active.socket == PREFERRED_SOCKET) {
+        fail(TransportError.INTERNAL_ERROR, 0, "the server's preferred-address socket failed", null)
+        return true
+    }
+    val gone = paths.all.filter { it.socket == PREFERRED_SOCKET }
+    for (p in gone) {
+        if (p.state != PathState.Failed) onPathFailed(p)
+        paths.remove(p)
+        releasePathCid(p)
+    }
+    return gone.isNotEmpty()
 }
 
 /**
