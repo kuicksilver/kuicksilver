@@ -52,6 +52,29 @@ else
     echo "local matrix: refused before step 1; fix and run: ./gradlew --max-workers=2 ${preflight[*]}" >&2; exit 1
   fi
 fi
+# Preflight for the Docker JVM steps: their Gradle runs offline against the host's dependency cache, mounted read-only
+# (tools/ci/docker-jvm.sh), so every artifact and every POM/.module it needs must be in that cache before it starts. The
+# host's own cache cleanup deletes metadata files it does not see used (the descriptor cache answers instead), and an offline
+# build with dependency verification then refuses the module: "No cached version of ... available for offline mode" for
+# error_prone_annotations, an hour into the gate (2026-10-23). Resolving every configuration here, online and on the host
+# (the init script of the "dependency verification" step, lenient), fetches whatever is missing; a failure of the build,
+# or of a configuration the JVM suites run with, refuses the gate before anything ran.
+if [ "$skip_docker" = 0 ]; then
+  deps=(./gradlew "--max-workers=${KSL_GATE_WORKERS:-2}" -Pkotlin.incremental=false -I tools/check/resolve-all.init.gradle.kts --continue :build-logic:ksResolveAll ksResolveAll)
+  if [ "$dry" = 1 ]; then
+    echo "preflight: ${deps[*]} (dry run)"
+  else
+    printf 'preflight: dependencies of the offline Docker builds (host, online) ... '
+    if "${deps[@]}" > build/ci/preflight-deps.log 2>&1 \
+      && ! grep -Eq '^ksResolveAll [^ ]*:(jvm(Test)?(Compile|Runtime)Classpath|(compile|runtime)Classpath|kotlinCompiler(Plugin)?Classpath) (unresolved|failed)' build/ci/preflight-deps.log; then
+      echo ok
+    else
+      echo "FAIL (see build/ci/preflight-deps.log)"
+      grep -E '^ksResolveAll .*(unresolved|failed)|^> |FAILURE' build/ci/preflight-deps.log | head -15 | sed 's/^/     | /'
+      echo "local matrix: refused before step 1: the Docker JVM steps would not resolve offline; fix and run: ${deps[*]}" >&2; exit 1
+    fi
+  fi
+fi
 export SIZE_LIMIT="${SIZE_LIMIT:-3000000}"
 aar=kuicksilver-native/build/outputs/aar/kuicksilver-native.aar
 step "lint: action/image pins"                 bash tools/check/pins.sh .

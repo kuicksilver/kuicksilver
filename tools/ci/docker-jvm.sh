@@ -4,7 +4,7 @@
 # Linux JVM path end to end: libksl.so built in manylinux2014 (glibc 2.17 floor), then the JVM test suites of every
 # module (tools/ci/matrix.sh KSL_JVM_TESTS) run against that library, never a host-gcc one (review I8). On a Linux host of
 # the same architecture (the GitHub runners) the suites run on the host JVM; elsewhere (the owner's macOS host) in a
-# Temurin 21 container, Gradle offline against the host's cache. Usage: docker-jvm.sh <linux-x86_64|linux-aarch_64>
+# Temurin 21 container, Gradle offline against the host's dependency cache, read-only. Usage: docker-jvm.sh <linux-x86_64|linux-aarch_64>
 # Env: KSL_GRADLE_ARGS extra Gradle arguments for the host run; KSL_JVM_IN_CONTAINER=1 forces the container on Linux.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/../.." && pwd)"; cls="${1:-linux-x86_64}"
@@ -24,10 +24,25 @@ if [ "$(uname -s)" = Linux ] && [ "$(uname -m)" = "$march" ] && [ "${KSL_JVM_IN_
   # shellcheck disable=SC2086
   (cd "$root" && ./gradlew ${KSL_GRADLE_ARGS:-} --continue -x :kuicksilver-native:buildJniHost $KSL_JVM_TESTS)
 else
-  # --no-daemon: the build releases its locks in the shared ~/.gradle before the container exits (a daemon killed with the container left
-  # the journal and build-cache locks to time out the next host build); --no-watch-fs: a container build never runs twice, and inotify
-  # on the bind mount ended in "Couldn't poll for events, error = 4" (EINTR) noise
-  docker run --rm --platform "$plat" -v "$root:/w" -v "$HOME/.gradle:/root/.gradle" -w /w -e GRADLE_OPTS="-Dorg.gradle.workers.max=2" \
+  # The container never sees ~/.gradle. It read and wrote the whole of it before (2026-10-23): its Gradle ran the user-home cache
+  # cleanup, whose access journal is keyed by absolute path, so every file the host had used (recorded under its home directory) looked
+  # unused under /root/... and was deleted, POMs first (Gradle does not mark them used when its descriptor cache answers);
+  # the next offline build then failed on a deleted POM. And the third-party image could read ~/.gradle/gradle.properties
+  # (the Central and signing credentials). Now: the host's dependency cache read-only as GRADLE_RO_DEP_CACHE (Gradle never
+  # writes or cleans one), a Gradle user home private to the container in /tmp/gh with cache cleanup disabled anyway
+  # (tools/ci/gradle-init.d), and the host's unpacked wrapper distribution read-only, run directly: the wrapper itself would
+  # take a lock file in the distribution directory, which a read-only mount refuses. The host must have resolved everything
+  # online first (tools/ci/local-matrix.sh does, before the Docker steps).
+  # --no-daemon: one build per container, nothing left running when it exits; --no-watch-fs: a container build never runs
+  # twice, and inotify on the bind mount ended in "Couldn't poll for events, error = 4" (EINTR) noise
+  gv=$(sed -n 's#^distributionUrl=.*/gradle-\([0-9.]*\)-bin\.zip$#\1#p' "$root/gradle/wrapper/gradle-wrapper.properties")
+  dist=""; for d in "$HOME/.gradle/wrapper/dists/gradle-$gv-bin/"*/"gradle-$gv"; do [ -x "$d/bin/gradle" ] && { dist="$d"; break; }; done
+  [ -n "$gv" ] && [ -x "$dist/bin/gradle" ] || { echo "no unpacked Gradle $gv under ~/.gradle/wrapper/dists: run ./gradlew --version on the host first" >&2; exit 2; }
+  [ -d "$HOME/.gradle/caches/modules-2" ] || { echo "no ~/.gradle/caches/modules-2 to mount as the read-only dependency cache" >&2; exit 2; }
+  docker run --rm --platform "$plat" -v "$root:/w" -w /w \
+    -v "$HOME/.gradle/caches/modules-2:/ro-dep-cache/modules-2:ro" -e GRADLE_RO_DEP_CACHE=/ro-dep-cache \
+    -e GRADLE_USER_HOME=/tmp/gh -v "$root/tools/ci/gradle-init.d:/tmp/gh/init.d:ro" -v "$dist:/opt/gradle:ro" \
+    -e GRADLE_OPTS="-Dorg.gradle.workers.max=2" \
     eclipse-temurin:21@sha256:3e3c176ffed168beb42c607be9bc1639b466cf00261a0fb04425562c9d0c5c2b bash -c \
-    "./gradlew --offline --no-daemon --no-watch-fs -q --continue -x :kuicksilver-native:buildJniHost $KSL_JVM_TESTS"
+    "/opt/gradle/bin/gradle --offline --no-daemon --no-watch-fs -q --continue -x :kuicksilver-native:buildJniHost $KSL_JVM_TESTS"
 fi
