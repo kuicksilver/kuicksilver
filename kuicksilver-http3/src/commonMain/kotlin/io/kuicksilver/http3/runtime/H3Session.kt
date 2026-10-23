@@ -1,6 +1,6 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
-@file:OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+@file:OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class, kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
 
 package io.kuicksilver.http3.runtime
 
@@ -79,9 +79,8 @@ internal class H3Session(
     private val job = SupervisorJob()
     val scope = CoroutineScope(job + dispatcher + CoroutineName("http3"))
 
-    /** Coroutines reading what the peer sent, which may finish it when the connection is lost ([drains]); dispatcher only. */
-    private val drainers = ArrayList<Job>()
-    private var drainersPruneAt = DRAINERS_PRUNE_MIN
+    /** Coroutines reading what the peer sent, which may finish it when the connection is lost ([drains]). */
+    private val drainers = kotlin.concurrent.atomics.AtomicReference<List<Job>>(emptyList())
     val peerSettings = MutableStateFlow<Http3PeerSettings?>(null)
     private val peerSettingsArrived = CompletableDeferred<Http3PeerSettings>()
     val datagrams = DatagramDemux(this)
@@ -839,15 +838,15 @@ internal class H3Session(
     /**
      * [job] reads a peer's stream (a message body, a unidirectional stream): when the connection is lost it goes on until
      * its input ends, which it does once it has read what the peer sent before the loss (`QuicStream.input`), so a
-     * response whose last bytes came with the peer's CONNECTION_CLOSE is still read whole. Session dispatcher only.
+     * response whose last bytes came with the peer's CONNECTION_CLOSE is still read whole. Any thread (a capsule reader
+     * starts on the application's).
      */
     fun drains(job: Job): Job {
-        if (drainers.size >= drainersPruneAt) {
-            drainers.removeAll { it.isCompleted }
-            drainersPruneAt = maxOf(DRAINERS_PRUNE_MIN, drainers.size * 2)
+        while (true) {
+            val now = drainers.load()
+            val kept = if (now.size >= DRAINERS_PRUNE_MIN) now.filter { !it.isCompleted } else now
+            if (drainers.compareAndSet(now, kept + job)) return job
         }
-        drainers += job
-        return job
     }
 
     /**
@@ -857,8 +856,7 @@ internal class H3Session(
      */
     private fun onTransportClosed(e: QuicException.ConnectionLost) {
         if (closed.complete(Http3Exception.fromQuic(e))) requests.close(closed.getCompleted())
-        val draining = drainers.filter { it.isActive }
-        drainers.clear()
+        val draining = drainers.exchange(emptyList()).filter { it.isActive }
         if (draining.isEmpty()) {
             job.cancel()
             return

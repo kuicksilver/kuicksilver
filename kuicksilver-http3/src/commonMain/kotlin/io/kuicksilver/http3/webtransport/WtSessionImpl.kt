@@ -86,7 +86,9 @@ internal class WtSessionImpl(
 
     /** Starts reading capsules and datagrams; session dispatcher only, right after the router registration. */
     fun start() {
-        watchers += h3.scope.launch { readCapsules() }
+        // the capsule reader finishes what the peer sent when the connection is lost: a WT_CLOSE_SESSION right before the peer's
+        // CONNECTION_CLOSE (Firefox) still ends the session with its code
+        watchers += h3.drains(h3.scope.launch { readCapsules() })
         watchers +=
             h3.scope.launch {
                 try {
@@ -95,13 +97,17 @@ internal class WtSessionImpl(
                     datagramsIn.close()
                 }
             }
-        // the connection's end cancels the session's coroutines with it: the session is over with the connection's reason
+        // the connection's end: the session is over with the connection's reason, unless the capsule reader, which reads on to
+        // what the peer sent before (H3Session.drains), ends it with a WT_CLOSE_SESSION first
+        val reader = watchers.first()
         h3.closed.invokeOnCompletion {
             val cause = if (h3.closed.isCompleted && !h3.closed.isCancelled) h3.closed.getCompleted() else it
-            if (closedInfo.complete(WebTransportCloseInfo(0, "", cause ?: sessionClosed()))) {
-                bidiIn.close()
-                uniIn.close()
-                datagramsIn.close()
+            reader.invokeOnCompletion {
+                if (closedInfo.complete(WebTransportCloseInfo(0, "", cause ?: sessionClosed()))) {
+                    bidiIn.close()
+                    uniIn.close()
+                    datagramsIn.close()
+                }
             }
         }
         // an HTTP/3 GOAWAY asks every session to wind down (section 4.7)
@@ -136,7 +142,9 @@ internal class WtSessionImpl(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Throwable) {
-            terminate(WebTransportCloseInfo(0, "", e), End.Failed)
+            // the input ended with the lost connection (after the capsules it held): the session ends with the connection's reason
+            val cause = if (e !is Http3Exception.MessageError && h3.closed.isCompleted) h3.closed.getCompleted() else e
+            terminate(WebTransportCloseInfo(0, "", cause), End.Failed)
         }
     }
 

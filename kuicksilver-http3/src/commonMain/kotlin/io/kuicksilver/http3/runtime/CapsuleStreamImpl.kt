@@ -73,7 +73,8 @@ internal class CapsuleStreamImpl(
     fun start() {
         writer = stream.scope.launch { writeLoop() }
         writer.invokeOnCompletion { fail(it?.let { e -> connectionClosed(e) } ?: return@invokeOnCompletion) }
-        reader = stream.scope.launch { readLoop() }
+        // read to the end of what the peer sent even when the connection is lost: its last capsule may come with its close
+        reader = stream.drains(stream.scope.launch { readLoop() })
         reader.invokeOnCompletion {
             incoming.close(IOException("the stream's input was stopped or the connection closed", it))
             datagramSourceEnded()

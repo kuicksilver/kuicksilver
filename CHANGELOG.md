@@ -272,6 +272,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   so reading it hung; and when the connection ended while a response or a request body was being written, the
   application's writes hung once the channel's buffer was full. The body and trailers now fail with the connection's
   error, and so do those writes.
+- WebTransport: a session the peer closes with WT_CLOSE_SESSION and then, at once, its connection (Firefox does both
+  in back-to-back packets) ends with the capsule's code and reason. Before, the server saw code 0 and an empty reason:
+  the connection's end completed the session before its capsule reader had read the capsule. The capsule reader now
+  reads on to what the peer sent, and the connection's reason is the session's only when no capsule came. A
+  WebTransport stream whose pump the lost connection cancelled before it ran now ends instead of leaving the
+  application waiting.
 - HTTP/3: a response or request body whose last bytes came with the peer's CONNECTION_CLOSE is read whole. When the
   connection is lost, the readers of the peer's streams (message bodies, control and QPACK streams) now go on until
   their input ends, at most one second, before the connection's coroutines are cancelled; before, they were cancelled at

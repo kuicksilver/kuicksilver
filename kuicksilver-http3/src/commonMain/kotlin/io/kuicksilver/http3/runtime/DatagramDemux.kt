@@ -23,6 +23,7 @@ import io.kuicksilver.quic.QuicStream
 import io.kuicksilver.quic.StreamPriority
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
@@ -154,6 +155,9 @@ internal class Http3StreamImpl(
 ) : Http3Stream {
     /** The connection's scope, on its dispatcher: the capsule reader and writer run there. */
     internal val scope: CoroutineScope get() = session.scope
+
+    /** [job] reads this stream: it may finish what the peer sent when the connection is lost (`H3Session.drains`). */
+    internal fun drains(job: Job): Job = session.drains(job)
 
     private val capsulesInUse = AtomicBoolean(false)
 

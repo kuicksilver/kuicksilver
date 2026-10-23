@@ -4,6 +4,7 @@
 
 package io.kuicksilver.http3.webtransport
 
+import io.ktor.network.sockets.InetSocketAddress
 import io.ktor.utils.io.writeFully
 import io.kuicksilver.http3.H3Pair
 import io.kuicksilver.http3.Http3Connection
@@ -205,6 +206,31 @@ class WebTransportCloseTest {
                 r.send(capsule(0x2843, closeValue(5, "x".encodeToByteArray())))
                 val seen = withTimeout(5.seconds) { r.server.closed.await() }
                 assertEquals(5L to "x", seen.code to seen.reason)
+            }
+        }
+
+    /**
+     * Firefox (neqo) closes a WebTransport session with WT_CLOSE_SESSION and FIN in one packet and, its dedicated
+     * connection then being idle, CONNECTION_CLOSE(H3_NO_ERROR) in the next. Both arrive before the server reads the
+     * stream: the session still ends with the capsule's code and reason, not as a lost connection.
+     */
+    @Test fun closeCapsuleRightBeforeConnectionCloseKeepsItsCode() =
+        h3Test {
+            QuicPair.open().useScoped { q ->
+                val r = rawSession(q)
+                val held = ArrayList<Triple<InetSocketAddress, InetSocketAddress, ByteArray>>()
+                q.net.drop = { from, to, bytes -> to == q.server.localAddress && held.add(Triple(from, to, bytes)) }
+                r.connect.output.writeFully(r.raw.data(capsule(0x2843, closeValue(7, "bye".encodeToByteArray()))))
+                r.connect.output.flushAndClose()
+                r.raw.quic.close(Http3ErrorCode.NO_ERROR, "")
+                q.net.drop = null
+                // with null crypto the payload is plain: the capsule's STREAM frame was sent, before the close
+                val capsuleBytes = capsule(0x2843, closeValue(7, "bye".encodeToByteArray()))
+                val carrying = held.indexOfFirst { (_, _, d) -> d.asList().windowed(capsuleBytes.size).any { it == capsuleBytes.asList() } }
+                assertTrue(carrying in 0 until held.size - 1, "the capsule in datagram $carrying of ${held.size}")
+                for ((from, to, bytes) in held) q.net.deliver(from, to, bytes) // back to back, in the order sent
+                val seen = withTimeout(5.seconds) { r.server.closed.await() }
+                assertEquals(7L to "bye", seen.code to seen.reason, "closed with $seen")
             }
         }
 

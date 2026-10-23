@@ -63,6 +63,15 @@ internal class WtStreamImpl(
     init {
         inPump = if (readable) scope.launch { pumpIn() } else null.also { inCh.close() }
         outPump = if (writable) scope.launch { pumpOut() } else null.also { outCh.close() }
+        // a pump cancelled before it ran (the connection ended first) still ends its channel: the application never hangs on it
+        inPump?.invokeOnCompletion { e -> if (e != null) inCh.cancel(IOException("the WebTransport stream $streamId stopped reading", e)) }
+        outPump?.invokeOnCompletion { e ->
+            if (e !=
+                null
+            ) {
+                outCh.cancel(IOException("the WebTransport stream $streamId stopped writing", e))
+            }
+        }
         val pumps = listOfNotNull(inPump, outPump)
         val left = AtomicInt(pumps.size)
         for (p in pumps) {
