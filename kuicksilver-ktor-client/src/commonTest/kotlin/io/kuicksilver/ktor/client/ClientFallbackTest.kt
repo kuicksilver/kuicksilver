@@ -2,10 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.kuicksilver.ktor.client
 
+import io.ktor.client.request.HttpRequestBuilder
 import io.ktor.client.request.get
 import io.ktor.client.request.post
 import io.ktor.client.request.put
 import io.ktor.client.request.setBody
+import io.ktor.client.request.url
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpProtocolVersion
 import io.ktor.network.sockets.InetSocketAddress
@@ -30,6 +32,7 @@ import io.kuicksilver.tls.TlsIdentity
 import io.kuicksilver.tls.TlsRole
 import io.kuicksilver.tls.TrustConfig
 import io.kuicksilver.tls.tlsConfig
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -46,8 +49,20 @@ class ClientFallbackTest {
     @BeforeTest fun load() = KslLoader.ensureLoaded()
 
     /** Feature focus 4: Alt-Svc points at a UDP port where nobody answers. */
-    @Test fun blockedUdpFallsBackAfterHardDelayAndMarksBroken() =
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    @Test
+    fun blockedUdpFallsBackAfterHardDelayAndMarksBroken() =
         clientTest {
+            val markedBroken = CompletableDeferred<Pair<String, String>>()
+            val listener =
+                object : KuicksilverEventListener() {
+                    override fun altSvcMarkedBroken(
+                        origin: String,
+                        alternative: String,
+                    ) {
+                        markedBroken.complete(origin to alternative)
+                    }
+                }
             val (server, port) =
                 testServer(configure = { http3 = false }) {
                     routing {
@@ -58,7 +73,10 @@ class ClientFallbackTest {
                     }
                 }
             try {
-                testClient(Http3DiscoveryMode.Auto, engine = { quic = quicConfig { handshakeTimeout = 500.milliseconds } }).use { c ->
+                testClient(Http3DiscoveryMode.Auto, engine = {
+                    quic = quicConfig { handshakeTimeout = 500.milliseconds }
+                    eventListener = listener
+                }).use { c ->
                     assertEquals("h1", c.get("https://127.0.0.1:$port/").bodyAsText()) // learns the alternative
                     val t0 = TimeSource.Monotonic.markNow()
                     val r = c.get("https://127.0.0.1:$port/")
@@ -67,8 +85,12 @@ class ClientFallbackTest {
                     val engine = c.engine as KuicksilverEngine
                     val origin = "https://127.0.0.1:$port"
                     val alt = "127.0.0.1:$port"
-                    // h3 failed and h1 worked
-                    kotlinx.coroutines.withTimeout(5.seconds) { while (!engine.brokenAltSvc.isBroken(origin, alt)) delay(50) }
+                    // h3 failed and h1 worked: the HTTP/3 attempt that lost the race marks the alternative once it fails
+                    val marked =
+                        kotlinx.coroutines.withTimeoutOrNull(30.seconds) { markedBroken.await() }
+                            ?: kotlin.test.fail("$alt of $origin was not marked broken within 30 s")
+                    assertEquals(origin to alt, marked)
+                    assertTrue(engine.brokenAltSvc.isBroken(origin, alt))
                     assertEquals(HttpProtocolVersion.HTTP_1_1, c.get("https://127.0.0.1:$port/").version)
                 }
             } finally {
@@ -167,6 +189,23 @@ class ClientFallbackTest {
         return ep
     }
 
+    /**
+     * The HTTP/3 connection to 127.0.0.1:[port], once there is one: joins the setup a lost race left running (or returns
+     * the open connection) instead of polling the pool. The budget leaves room for a loaded host.
+     */
+    private suspend fun KuicksilverEngine.awaitH3Connection(port: Int) {
+        val target = io.ktor.http.Url("https://127.0.0.1:$port/")
+        val request = HttpRequestBuilder().apply { url(target) }.build()
+        kotlinx.coroutines.withTimeoutOrNull(30.seconds) {
+            h3.connection(
+                io.kuicksilver.ktor.client.h3
+                    .H3Target(target.host, target.host, target.port),
+                request,
+            )
+        } ?: kotlin.test.fail("no HTTP/3 connection to $target within 30 s")
+        assertTrue(hasH3Connection(target), "the HTTP/3 connection to $target closed before the next request")
+    }
+
     /** Both setups fail: the h1 failure of the race is the result; the engine does not open a second TCP connection. */
     @Test fun raceFailureMakesOneH1Attempt() =
         clientTest {
@@ -206,21 +245,51 @@ class ClientFallbackTest {
             }
         }
 
-    /** HTTP/3 failed at connection level while HTTP/1.1 served the request: the alternative is marked broken (RFC 7838 section 2.4). */
-    @Test fun h3FailureWithH1SuccessMarksBroken() =
+    /**
+     * HTTP/3 failed at connection level while HTTP/1.1 served the request: the alternative is marked broken (RFC 7838 section 2.4).
+     * Which setup wins the first race is up to the host: when HTTP/3 wins, that first request fails on it and HTTP/1.1
+     * serves it, so the alternative is broken and no HTTP/3 connection is left to wait for (1 of 40 runs on the Windows VM).
+     */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class, kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    @Test
+    fun h3FailureWithH1SuccessMarksBroken() =
         h3Test {
             kotlinx.coroutines.coroutineScope {
                 val (server, ep, port) =
                     h1AndH3({ routing { get("/") { call.respondText("h1") } } }) { failingH3(closeConnection = true) }
+                val winners = mutableListOf<HttpProtocolVersion>()
+                val fallbacks = mutableListOf<Throwable>()
+                val listener =
+                    object : KuicksilverEventListener() {
+                        override fun raceEnded(
+                            request: io.ktor.client.request.HttpRequestData,
+                            winner: HttpProtocolVersion,
+                            headStart: kotlin.time.Duration,
+                            h3Failure: Throwable?,
+                        ) {
+                            winners += winner
+                        }
+
+                        override fun fallback(
+                            request: io.ktor.client.request.HttpRequestData,
+                            cause: Throwable,
+                        ) {
+                            fallbacks += cause
+                        }
+                    }
                 try {
-                    testClient(Http3DiscoveryMode.Preferred).use { c ->
-                        // the first request may be won by HTTP/1.1 outright; the HTTP/3 setup outlives the race and serves the next one
+                    testClient(Http3DiscoveryMode.Preferred, engine = { eventListener = listener }).use { c ->
                         assertEquals(HttpProtocolVersion.HTTP_1_1, c.get("https://127.0.0.1:$port/").version)
                         val engine = c.engine as KuicksilverEngine
-                        kotlinx.coroutines.withTimeout(
-                            5.seconds,
-                        ) { while (!engine.hasH3Connection(io.ktor.http.Url("https://127.0.0.1:$port/"))) delay(20) }
-                        assertEquals(HttpProtocolVersion.HTTP_1_1, c.get("https://127.0.0.1:$port/").version)
+                        if (winners.single() == HttpProtocolVersion.HTTP_1_1) {
+                            // HTTP/1.1 won the race; the HTTP/3 setup outlives it and serves the next request, which fails on it
+                            engine.awaitH3Connection(port)
+                            // the wait joined (or found) the race's own setup; a loser cancelled with the race would have
+                            // left the wait to start a setup of its own, which counts no waiter
+                            assertEquals(1, engine.h3.setupWaitersForTest.load(), "the HTTP/3 setup that lost the race was not kept")
+                            assertEquals(HttpProtocolVersion.HTTP_1_1, c.get("https://127.0.0.1:$port/").version)
+                        }
+                        assertEquals(1, fallbacks.size, "one request failed over HTTP/3 and went to HTTP/1.1: $fallbacks")
                         assertTrue(engine.brokenAltSvc.isBroken("https://127.0.0.1:$port", "127.0.0.1:$port"))
                     }
                 } finally {
@@ -242,9 +311,7 @@ class ClientFallbackTest {
                         val engine = c.engine as KuicksilverEngine
                         // the first request may be won by HTTP/1.1 outright; wait for the HTTP/3 connection the race left behind
                         c.get("https://127.0.0.1:$port/warmup")
-                        kotlinx.coroutines.withTimeout(
-                            5.seconds,
-                        ) { while (!engine.hasH3Connection(io.ktor.http.Url("https://127.0.0.1:$port/"))) delay(20) }
+                        engine.awaitH3Connection(port)
                         assertEquals(HttpProtocolVersion.HTTP_1_1, c.get("https://127.0.0.1:$port/").version)
                         assertTrue(
                             !engine.brokenAltSvc.isBroken("https://127.0.0.1:$port", "127.0.0.1:$port"),
@@ -305,9 +372,7 @@ class ClientFallbackTest {
                         // the warm-up must succeed over HTTP/3: a fallback would mark the alternative broken and route the POST to HTTP/1.1
                         runCatching { c.get("https://127.0.0.1:$port/warmup") }
                         val engine = c.engine as KuicksilverEngine
-                        kotlinx.coroutines.withTimeout(
-                            5.seconds,
-                        ) { while (!engine.hasH3Connection(io.ktor.http.Url("https://127.0.0.1:$port/"))) delay(20) }
+                        engine.awaitH3Connection(port)
                         val e = assertFailsWith<Throwable> { c.post("https://127.0.0.1:$port/") { setBody("payment") } }
                         assertTrue(generateSequence(e) { it.cause }.any { it is Http3Exception.Protocol }, "$e")
                         assertEquals(0, h1Calls)
@@ -372,9 +437,7 @@ class ClientFallbackTest {
                     testClient(Http3DiscoveryMode.Preferred).use { c ->
                         runCatching { c.get("https://127.0.0.1:$port/warmup") }
                         val engine = c.engine as KuicksilverEngine
-                        kotlinx.coroutines.withTimeout(
-                            5.seconds,
-                        ) { while (!engine.hasH3Connection(io.ktor.http.Url("https://127.0.0.1:$port/"))) delay(20) }
+                        engine.awaitH3Connection(port)
                         val streamed =
                             object : io.ktor.http.content.OutgoingContent.ReadChannelContent() {
                                 override fun readFrom() =
