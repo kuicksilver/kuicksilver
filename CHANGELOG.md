@@ -124,6 +124,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   when the reset's event had not reached the stream yet (the loop's flush waiting in a blocking send), a read that
   pulled the core took the -1 for a clean end, `readAvailable` answered -1 and `closedCause` stayed null. The input now
   asks the core which it was and fails with the reset.
+- Ktor server, HTTP/1.1: an upgrade request (WebSocket) whose handler failed before any response started, its error
+  response failing too, no longer takes the connection's coroutine down with it. The failure was rethrown out of the
+  connection's pipeline: the connection was reset, the responses pipelined before it were lost, and the exception
+  reached the thread's uncaught exception handler (a crash on Android). The connection now ends with a close after
+  those responses, and any failure that still reaches an HTTP/1.1 connection's coroutine is logged, as for HTTP/3.
 - Ktor server, HTTP/1.1: a pipelined request with `Expect: 100-continue` behind a slow response no longer gets a 408
   while its client correctly waits for the `100 Continue` (RFC 9110 section 10.1.1). The `100 Continue` waits behind
   the earlier responses, but the body deadline started when it was queued; it now starts once those responses are

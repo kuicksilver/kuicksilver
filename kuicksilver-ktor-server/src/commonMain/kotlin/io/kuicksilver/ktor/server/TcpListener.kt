@@ -41,6 +41,7 @@ import io.kuicksilver.tls.Certificate
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CompletableJob
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineName
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
@@ -154,8 +155,14 @@ internal fun KuicksilverApplicationEngine.startTcp(
                 server.use {
                     socket.complete(server)
                     h3Ready.join()
-                    val connectionScope = CoroutineScope(coroutineContext + connections + CoroutineName("connection"))
                     val port = (server.localAddress as? InetSocketAddress)?.port ?: l.config.port
+                    // the last resort, as for HTTP/3 connections: a failure that still reaches a connection's coroutine
+                    // is logged, not left to the thread's uncaught exception handler (a crash on Android, an abort on Native)
+                    val connectionScope =
+                        CoroutineScope(
+                            coroutineContext + connections + CoroutineName("connection") +
+                                CoroutineExceptionHandler { _, e -> environment.log.debug("HTTP/1.1 connection on port $port failed: $e") },
+                        )
                     val acceptFailures = AcceptFailureReporter(ACCEPT_FAILURE_LOG_INTERVAL) { environment.log.warn("${l.config}: $it") }
                     try {
                         acceptLoop(

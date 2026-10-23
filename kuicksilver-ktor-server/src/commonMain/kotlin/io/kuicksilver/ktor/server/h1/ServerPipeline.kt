@@ -377,8 +377,14 @@ internal fun CoroutineScope.startH1Pipeline(
                         try {
                             handler(handlerScope, request)
                         } catch (cause: Throwable) {
-                            response.close(cause)
-                            upgraded?.completeExceptionally(cause)
+                            if (upgraded?.completeExceptionally(cause) == true) {
+                                // the outcome of the upgrade was still open, so no response started (the response
+                                // settles it first): nothing to cut short, the connection then ends with a close, not a
+                                // reset that could destroy the responses before this one
+                                response.close()
+                            } else {
+                                response.close(cause)
+                            }
                         } finally {
                             response.close()
                             upgraded?.complete(false)
@@ -387,13 +393,25 @@ internal fun CoroutineScope.startH1Pipeline(
                     }
 
                 if (upgraded != null) {
-                    if (upgraded.await()) { // suspend a pipeline until we know if the upgrade performed?
+                    // a handler that failed before any response started (its error response failed too) completes it
+                    // exceptionally: no upgrade, and no answer to this request, so the connection ends after the
+                    // responses before it. Rethrown, the failure reset the connection and lost them
+                    val up =
+                        try {
+                            upgraded.await() // suspend a pipeline until we know if the upgrade performed?
+                        } catch (c: CancellationException) {
+                            throw c
+                        } catch (_: Throwable) {
+                            null
+                        }
+                    if (up == true) {
                         actorChannel.close()
                         input.copyAndClose(requestBody as ByteChannel)
                         break
                     } else if (requestBody is ByteChannel) { // not upgraded, for example, 404
                         requestBody.close()
                     }
+                    if (up == null) break
                 }
 
                 if (body != null && requestBody is ByteChannel) {
