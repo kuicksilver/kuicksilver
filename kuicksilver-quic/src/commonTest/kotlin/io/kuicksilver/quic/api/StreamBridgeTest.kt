@@ -30,6 +30,7 @@ import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
@@ -298,6 +299,134 @@ class StreamBridgeTest {
                     assertTrue(ss.input.readAvailable(ByteArray(4), 0, 4) < 0, "still EOF after the connection ended")
                     assertEquals(null, ss.input.closedCause)
                     s.close()
+                }
+            }
+        }
+
+    /**
+     * Data and FIN, then CONNECTION_CLOSE right behind them (Firefox closing a WebTransport session), all received before
+     * the application reads: the connection's end takes none of it, the stream reads whole and ends cleanly.
+     */
+    @Test fun dataAndFinThenConnectionCloseReadWholeThenEof() =
+        runBlocking {
+            ApiPair.open().use { p ->
+                withTimeout(20.seconds) {
+                    val (c, s) = p.connect()
+                    val st = c.openBidi()
+                    st.output.writeFully(byteArrayOf(1), 0, 1)
+                    st.output.flush()
+                    val ss = s.acceptStream()
+                    ss.input.readExactly(1)
+                    val data = ByteArray(1000) { (it * 3).toByte() } // one packet: all of it leaves before the close
+                    st.output.writeFully(data, 0, data.size)
+                    st.output.flushAndClose()
+                    c.close(7, "bye")
+                    s.closed.await() // the close was processed before any read below
+                    assertContentEquals(data, ss.input.readExactly(data.size))
+                    assertTrue(ss.input.readAvailable(ByteArray(4), 0, 4) < 0, "EOF: the FIN came before the close")
+                    assertTrue(ss.input.isClosedForRead)
+                    assertEquals(null, ss.input.closedCause)
+                }
+            }
+        }
+
+    /** Data without a FIN, then CONNECTION_CLOSE: the bytes received are read, then reads fail with the connection's end. */
+    @Test fun dataWithoutFinThenConnectionCloseReadsTheBytesThenFails() =
+        runBlocking {
+            ApiPair.open().use { p ->
+                withTimeout(20.seconds) {
+                    val (c, s) = p.connect()
+                    val st = c.openBidi()
+                    st.output.writeFully(byteArrayOf(1), 0, 1)
+                    st.output.flush()
+                    val ss = s.acceptStream()
+                    ss.input.readExactly(1)
+                    st.output.writeFully(byteArrayOf(2, 3, 4), 0, 3)
+                    st.output.flush()
+                    c.close(7, "bye")
+                    s.closed.await()
+                    assertContentEquals(byteArrayOf(2, 3, 4), ss.input.readExactly(3))
+                    val e = assertFailsWith<Throwable> { ss.input.readAvailable(ByteArray(4), 0, 4) }
+                    val lost = causes<Throwable>(e).filterIsInstance<QuicException.ConnectionLost.ApplicationClosed>().first()
+                    assertEquals(7L, lost.code)
+                    assertFalse(ss.input.isClosedForRead, "a stream cut short is not at its end")
+                    assertIs<QuicException.ConnectionLost>(ss.input.closedCause)
+                    assertFailsWith<Throwable> { ss.input.readByte() }
+                    s.close()
+                }
+            }
+        }
+
+    /**
+     * A reader already waiting when the connection goes, with nothing more held: its read fails with the connection's end,
+     * never answers as if the stream had ended (readAvailable 0 or -1 made an HTTP/3 body look complete).
+     */
+    @Test fun waitingReaderFailsWhenTheConnectionGoes() =
+        runBlocking {
+            ApiPair.open().use { p ->
+                withTimeout(20.seconds) {
+                    val (c, s) = p.connect()
+                    val st = c.openBidi()
+                    st.output.writeFully(byteArrayOf(1), 0, 1)
+                    st.output.flush()
+                    val ss = s.acceptStream()
+                    ss.input.readExactly(1)
+                    val read = async { runCatching { ss.input.readAvailable(ByteArray(4), 0, 4) } }
+                    assertFailsWith<TimeoutCancellationException> { withTimeout(100.milliseconds) { read.await() } } // it waits
+                    c.close(7, "bye")
+                    val r = read.await()
+                    val e = assertNotNull(r.exceptionOrNull(), "the waiting read answered ${r.getOrNull()}")
+                    assertTrue(causes<Throwable>(e).any { it is QuicException.ConnectionLost.ApplicationClosed }, "$e")
+                    s.close()
+                }
+            }
+        }
+
+    /**
+     * A reader waiting when RESET_STREAM_AT arrives with everything up to its reliable size already read: the read fails with
+     * the reset, never answers as if the stream had ended.
+     */
+    @Test fun waitingReaderFailsOnResetAtOfWhatItRead() =
+        runBlocking {
+            val on = io.kuicksilver.quic.quicConfig { resetStreamAt = true }
+            ApiPair.open(serverQuic = on).use { p ->
+                withTimeout(20.seconds) {
+                    val (c, s) = p.connect(on)
+                    val st = c.openUni()
+                    st.output.writeFully(ByteArray(10) { it.toByte() }, 0, 10)
+                    st.output.flush()
+                    val ss = s.acceptStream()
+                    ss.input.readExactly(10)
+                    val read = async { runCatching { ss.input.readAvailable(ByteArray(4), 0, 4) } }
+                    assertFailsWith<TimeoutCancellationException> { withTimeout(100.milliseconds) { read.await() } }
+                    st.resetAt(5, 10)
+                    val r = read.await()
+                    val e = assertNotNull(r.exceptionOrNull(), "the waiting read answered ${r.getOrNull()}")
+                    assertTrue(causes<Throwable>(e).any { it is QuicException.StreamError.Reset && it.code == 5L }, "$e")
+                    c.close()
+                    s.close()
+                }
+            }
+        }
+
+    /** A reset before the close still fails the reads at once: the data it abandons is not delivered (RFC 9000 section 3.2). */
+    @Test fun resetThenConnectionCloseFailsAtOnce() =
+        runBlocking {
+            ApiPair.open().use { p ->
+                withTimeout(20.seconds) {
+                    val (c, s) = p.connect()
+                    val st = c.openBidi()
+                    st.output.writeFully(byteArrayOf(1), 0, 1)
+                    st.output.flush()
+                    val ss = s.acceptStream()
+                    ss.input.readExactly(1)
+                    st.output.writeFully(byteArrayOf(2, 3, 4), 0, 3)
+                    st.output.flush()
+                    st.reset(5)
+                    c.close(7, "bye")
+                    s.closed.await()
+                    val e = assertFailsWith<Throwable> { ss.input.readAvailable(ByteArray(4), 0, 4) }
+                    assertTrue(causes<Throwable>(e).any { it is QuicException.StreamError.Reset && it.code == 5L }, "$e")
                 }
             }
         }

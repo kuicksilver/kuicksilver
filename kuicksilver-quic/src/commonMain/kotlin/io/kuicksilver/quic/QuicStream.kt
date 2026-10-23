@@ -24,7 +24,10 @@ public interface QuicStream {
      * -1 from `readAvailable`, `closedCause` null). Any other end fails every read with its cause instead of reporting an end,
      * and leaves the channel not `isClosedForRead`: [QuicException.StreamError.Reset] when the peer resets the stream,
      * [QuicException.StreamError.Stopped] after our [stopSending], [QuicException.ConnectionLost] once the connection is gone
-     * (a close by either side, an idle timeout, a stateless reset). IllegalStateException on our own unidirectional stream.
+     * (a close by either side, an idle timeout, a stateless reset). A lost connection takes nothing the peer sent before it:
+     * the bytes already received are still read, up to the FIN when it came too (then the stream ends cleanly, as above),
+     * and only then do reads fail with the [QuicException.ConnectionLost]. A reset still fails the reads at once (RFC 9000
+     * section 3.2: the data it abandons may be discarded). IllegalStateException on our own unidirectional stream.
      */
     public val input: ByteReadChannel
 

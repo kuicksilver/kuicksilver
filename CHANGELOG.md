@@ -167,6 +167,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Changed
 
+- QUIC: a lost connection no longer takes the bytes a peer sent before it (`QuicStream.input`): what was received is
+  still read, up to the FIN when it came too (then the stream ends cleanly), and only then do reads fail with the
+  `QuicException.ConnectionLost`. Before, every read failed at once, even with the whole stream received. A reset still
+  fails the reads at once.
 - Ktor client: requests now follow the platform's proxy settings by default (`proxyResolver = ProxyResolvers.System`):
   where the system, the JVM's properties or (on Linux) the environment name a proxy, requests go through it over
   HTTP/1.1, without HTTP/3 or Alt-Svc. Before, only an explicit `proxy` was used. `proxyResolver = ProxyResolvers.None`
@@ -263,6 +267,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- QUIC: data and FIN received just before a CONNECTION_CLOSE are delivered. A peer that sends its last bytes and closes
+  at once (Firefox closes its WebTransport connection right after the session's WT_CLOSE_SESSION and FIN) lost them when
+  the close was processed before the application read: the reads failed with the connection's end.
 - QUIC: `QuicPath.remoteAddress` reports each path's own peer address. Before, every path reported the connection's
   current one: on a server whose client migrated, the path the client left (in `PathEvent.Changed.old` and
   `QuicConnection.paths`) showed the client's new address, and a client's probe toward a server's preferred address
