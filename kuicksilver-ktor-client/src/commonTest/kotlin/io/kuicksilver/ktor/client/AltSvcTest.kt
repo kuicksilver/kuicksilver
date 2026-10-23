@@ -63,10 +63,13 @@ class AltSvcTest {
         assertNull(cache.h3For(origin))
     }
 
-    @Test fun status421RemovesEntry() {
+    /** A 421 is not authoritative for the origin (RFC 9110 section 15.5.20): neither its `Alt-Svc` nor its status changes the cache. */
+    @Test fun status421LeavesEntries() {
         respond(200, "h3=\":443\"")
         respond(421, "h3=\":9443\"")
-        assertNull(cache.h3For(origin))
+        assertEquals(443, cache.h3For(origin)?.port)
+        respond(421, "clear")
+        assertEquals(443, cache.h3For(origin)?.port)
     }
 
     @Test fun lowPortOriginRejectsHighAltPort() {

@@ -45,7 +45,7 @@ public interface AltSvcStore {
         entries: List<AltSvcEntry>,
     )
 
-    /** Forgets [origin]'s entries: after `Alt-Svc: clear` or a 421 response (RFC 7838 sections 3, 6). */
+    /** Forgets [origin]'s entries: after `Alt-Svc: clear` (RFC 7838 section 3). */
     public fun remove(origin: String)
 
     /** Drops every entry without `persist=1` (a network change, RFC 7838 section 2.2). */
@@ -206,8 +206,10 @@ internal object AltSvcParser {
 
 /**
  * The client's Alt-Svc knowledge by origin (RFC 7838): only from responses over verified TLS, a new header
- * replaces all entries of the origin, `clear` and 421 remove them, an unprivileged alternative port is refused for a
- * privileged origin port (as Chromium does), and expired entries are ignored.
+ * replaces all entries of the origin and `clear` removes them, an unprivileged alternative port is refused for a
+ * privileged origin port (as Chromium does), and expired entries are ignored. A 421 changes nothing here: it is not
+ * authoritative for the origin (RFC 9110 section 15.5.20), so its `Alt-Svc` is not learned, and only a 421 from an
+ * alternative removes that alternative (RFC 7838 section 6), which the engine does as it knows where the 421 came from.
  */
 internal class AltSvcCache(
     private val store: AltSvcStore,
@@ -223,11 +225,7 @@ internal class AltSvcCache(
     ) {
         if (!verifiedTls) return // threat-model 3.18: never learn an alternative from an unauthenticated response
         val origin = originOf(url)
-        if (status == 421) {
-            store.remove(origin)
-            return
-        } // RFC 7838 section 6: the alternative misdirected us
-        if (values.isEmpty()) return
+        if (status == 421 || values.isEmpty()) return
         val now = clock()
         val entries = ArrayList<AltSvcEntry>()
         for (v in values) {

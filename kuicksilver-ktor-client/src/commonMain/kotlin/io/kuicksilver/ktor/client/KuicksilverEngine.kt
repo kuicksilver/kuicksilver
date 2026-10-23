@@ -393,7 +393,8 @@ internal class KuicksilverEngine(
                 events.emit("altSvcUsed") { altSvcUsed(data, "${uriHost(altHost)}:${alt.port}") }
                 val r = raced(t, data, callContext, network, listOf("alt-used" to "${uriHost(altHost)}:${alt.port}"))
                 // the origin's Alt-Svc on any answer, over HTTP/3 as over HTTP/1.1 (broken alternative, lost race, fallback): a
-                // new list or `clear` replaces the cached one (RFC 7838 section 3); a 421 removes it
+                // new list or `clear` replaces the cached one (RFC 7838 section 3); a 421 is not authoritative and changes
+                // nothing (RFC 9110 section 15.5.20), except that one from the alternative removes it (below, RFC 7838 section 6)
                 altSvcUpdate {
                     altSvc.onResponse(
                         url,
