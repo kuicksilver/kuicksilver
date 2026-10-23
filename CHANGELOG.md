@@ -54,6 +54,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Changed
 
+- QUIC: a lost connection no longer takes the bytes a peer sent before it (`QuicStream.input`): what was received is
+  still read, up to the FIN when it came too (then the stream ends cleanly), and only then do reads fail with the
+  `QuicException.ConnectionLost`. Before, every read failed at once, even with the whole stream received. A reset still
+  fails the reads at once.
 - HTTP/3 server: `QuicConfig.defaultStreamErrorCode` left at its default 0 (no HTTP/3 error code; a client reads it as
   H3_NO_ERROR, RFC 9114 section 9) becomes H3_REQUEST_REJECTED for `Http3Endpoint` and the Ktor engine's HTTP/3 side. It
   is the code of a request stream the QUIC layer gives up before the server saw it, which a client may then retry
@@ -114,6 +118,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- QUIC: data and FIN received just before a CONNECTION_CLOSE are delivered. A peer that sends its last bytes and closes
+  at once (Firefox closes its WebTransport connection right after the session's WT_CLOSE_SESSION and FIN) lost them when
+  the close was processed before the application read: the reads failed with the connection's end.
 - HTTP/3: an application that cancels a request body (server) or a response body (client) now stops the stream at
   once with STOP_SENDING (`H3_NO_ERROR` on the server, `H3_REQUEST_CANCELLED` on the client). Before, the stream was
   stopped only when the peer sent its next DATA, so a peer that paused kept the stream and its flow-control credit.

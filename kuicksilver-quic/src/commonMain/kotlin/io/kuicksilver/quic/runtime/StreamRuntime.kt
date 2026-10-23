@@ -82,7 +82,7 @@ internal class StreamRuntime(
     }
 
     internal fun connectionLost(reason: QuicException.ConnectionLost) {
-        inChannel?.closeWith(reason)
+        inChannel?.connectionLost(reason) // what the peer sent before is still read
         outChannel?.closeWith(reason)
         done.complete(Unit)
     }
