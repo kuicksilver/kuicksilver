@@ -267,6 +267,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- Ktor server, HTTP/1.1: the 400 for a malformed request said `HTTP/1.0`. It now says `HTTP/1.1`, the highest
+  version the server conforms to, as every other response does (RFC 9110 section 6.2: a server SHOULD send it).
 - Ktor server, HTTP/1.0: a response of unknown length (a streamed body) to an HTTP/1.0 request no longer carries
   `Transfer-Encoding: chunked`, which a server MUST NOT send unless the request indicates HTTP/1.1 (RFC 9112 section
   6.1). Its body now goes out as is, delimited by the close of the connection (section 6.3 item 8), and the response
