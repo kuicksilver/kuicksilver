@@ -10,8 +10,8 @@ import io.ktor.network.sockets.Socket
 import io.ktor.network.sockets.openReadChannel
 import io.ktor.network.sockets.openWriteChannel
 import io.ktor.utils.io.close
-import io.ktor.utils.io.readAvailable
 import io.ktor.utils.io.errors.PosixException
+import io.ktor.utils.io.readAvailable
 import io.ktor.utils.io.readRemaining
 import io.ktor.utils.io.writeFully
 import kotlinx.coroutines.CompletableDeferred

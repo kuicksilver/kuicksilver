@@ -176,7 +176,8 @@ class H1FailedBodyTest {
      * nothing reported it.
      */
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-    @Test fun aBodyThatFailsAfterACompleteResponseIsLogged() =
+    @Test
+    fun aBodyThatFailsAfterACompleteResponseIsLogged() =
         runTest {
             val bodyMayFail = Job()
             val body =
@@ -219,13 +220,19 @@ class H1FailedBodyTest {
                 wire.fromServer.flush()
                 runCatching { while (wire.toServer.readLineStrict() != null) continue }
             }
-            val status = exchange(wire, post(body), events = EngineEvents(listener, logger)) { r ->
-                bodyMayFail.complete()
-                advanceUntilIdle()
-                r.statusCode.value
-            }
+            val status =
+                exchange(wire, post(body), events = EngineEvents(listener, logger)) { r ->
+                    bodyMayFail.complete()
+                    advanceUntilIdle()
+                    r.statusCode.value
+                }
             assertEquals(204, status)
-            assertTrue(logged.any { it.startsWith("Debug") && it.contains("request body") && it.contains("the application's body failed") }, "logged: $logged")
+            assertTrue(
+                logged.any {
+                    it.startsWith("Debug") && it.contains("request body") && it.contains("the application's body failed")
+                },
+                "logged: $logged",
+            )
             assertEquals(listOf(false), releases, "the connection of a failed body was kept")
         }
 

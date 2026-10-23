@@ -9,8 +9,8 @@ import io.ktor.network.sockets.SocketAddress
 import io.ktor.network.sockets.openReadChannel
 import io.ktor.network.sockets.openWriteChannel
 import io.ktor.utils.io.ByteChannel
-import io.ktor.utils.io.ClosedByteChannelException
 import io.ktor.utils.io.ByteWriteChannel
+import io.ktor.utils.io.ClosedByteChannelException
 import io.ktor.utils.io.InternalAPI
 import io.ktor.utils.io.ReaderJob
 import io.ktor.utils.io.WriterJob
