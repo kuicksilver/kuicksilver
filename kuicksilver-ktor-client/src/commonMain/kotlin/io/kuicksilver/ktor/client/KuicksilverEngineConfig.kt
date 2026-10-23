@@ -206,6 +206,16 @@ public class KuicksilverEngineConfig : HttpClientEngineConfig() {
     @ExperimentalKuicksilverApi
     public var proxyCredentials: ProxyCredentials? = null
 
+    /**
+     * Where the proxy for a request comes from when `proxy` is not set (an explicit `proxy` always wins):
+     * [ProxyResolvers.System] (the default: the platform's proxy settings), [ProxyResolvers.Environment]
+     * (`https_proxy`, `no_proxy`...), [ProxyResolvers.None] for direct connections, or your own [ProxyResolver]. A
+     * request through a proxy uses HTTP/1.1 only and neither uses nor learns `Alt-Svc`; `localhost` and loopback
+     * addresses always connect directly with the built-in resolvers. docs/guide/ktor.md, "Proxies".
+     */
+    @ExperimentalKuicksilverApi
+    public var proxyResolver: ProxyResolver = ProxyResolvers.System
+
     /** Replaces the system resolver for both pools (tests: names and addresses the test owns). */
     @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
     internal var resolverForTest: (suspend (String, Int) -> List<io.kuicksilver.ktor.network.TcpAddress>)? = null

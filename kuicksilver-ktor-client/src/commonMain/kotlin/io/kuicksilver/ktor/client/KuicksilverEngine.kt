@@ -69,6 +69,9 @@ internal class KuicksilverEngine(
     /** The [KuicksilverEventListener] of the configuration, behind a guard that never fails a call. */
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
     private val events = EngineEvents(config.eventListener, config.logger ?: config.http3.endpoint.logger)
+
+    /** `proxyResolver`'s answers per route ([proxyFor]). */
+    internal val proxies = ProxyRouting(config, events.logger)
     internal val h1 = H1Pool(config, selector, events) // internal for tests (the engine's session cache)
     internal val h3 = H3Pool(config, events) // internal for tests (0-RTT reconnects)
     private val altSvc = AltSvcCache(config.http3.altSvcStore) { getTimeMillis() }

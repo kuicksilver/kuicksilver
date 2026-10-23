@@ -361,6 +361,17 @@ Check `KuicksilverEventListener.protocolSelected`'s `ProtocolReason`:
 An alternative on an unprivileged port (1024 and up) is ignored for an origin on a privileged port, and only `h3`
 alternatives over verified TLS count ([Ktor: Discovery and Alt-Svc](ktor.md#discovery-and-alt-svc)).
 
+### Requests go through a proxy, or not, unexpectedly
+
+The Ktor client follows the platform's proxy settings by default (`proxyResolver = ProxyResolvers.System`), so a
+request may go through a proxy you did not configure in code, over HTTP/1.1 (`protocolSelected` reports
+`ProtocolReason.Proxy`). Set `proxyResolver = ProxyResolvers.None` to connect directly, exempt the host in the
+settings (`no_proxy`, the OS bypass list), or set `proxy` explicitly. On macOS, iOS and Windows a proxy
+auto-configuration (PAC script or WPAD) is not run: the engine logs one warning ("proxy auto-configuration ... does not
+run") and those requests connect directly; set `proxy` or a `proxyResolver` of your own where a PAC decides the route.
+A request that fails with `UnsupportedOperationException` naming a proxy scheme (`socks4://`, `https://`) has a proxy
+setting the engine cannot use; it is never bypassed.
+
 ### `H3Only` requests time out
 
 With `Http3DiscoveryMode.H3Only` there is no fallback: when UDP is blocked the call fails with Ktor's

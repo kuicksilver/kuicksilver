@@ -44,6 +44,7 @@ class GuideSamplesTest {
         assertTrue("guide:ktor:pool" in guide, "marker pool")
         assertTrue("guide:ktor:webtransport-client" in guide, "marker webtransport-client")
         assertTrue("guide:ktor:priority-client" in guide, "marker priority-client")
+        assertTrue("guide:ktor:proxy" in guide, "marker proxy")
     }
 
     @Test fun observabilityAndZeroRttSamples() {
@@ -127,6 +128,18 @@ class GuideSamplesTest {
                 server.stopSuspend(100, 1000)
             }
         }
+
+    @Test fun proxySample() {
+        // guide:ktor:proxy
+        val client =
+            HttpClient(Kuicksilver) {
+                engine {
+                    proxyResolver = ProxyResolvers.Environment // or System (the default), None, or your own
+                    proxyCredentials = ProxyCredentials("user", System.getenv("PROXY_PASSWORD") ?: "")
+                }
+            }
+        client.use { assertEquals(ProxyResolvers.Environment, (it.engine as KuicksilverEngine).config.proxyResolver) }
+    }
 
     @Test
     fun poolSample() {

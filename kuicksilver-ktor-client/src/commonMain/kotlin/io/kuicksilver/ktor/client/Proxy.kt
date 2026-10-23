@@ -44,28 +44,72 @@ public class ProxyException(
 ) : IOException(message)
 
 /**
- * A proxy as the engine uses it: HTTP (CONNECT tunnels for TLS and WebSockets, the absolute form for plain http) or
- * SOCKS5 (CONNECT only, RFC 1928), with the credentials to present and, for SOCKS5, whether the proxy resolves the
- * origin's name ([remoteDns], `socks5h`) or the engine sends it an address it resolved itself (`socks5`).
+ * A proxy as the engine uses it, what a [ProxyResolver] answers: HTTP ([http]: CONNECT tunnels for TLS and WebSockets,
+ * the absolute form for plain http) or SOCKS5 ([socks5]: CONNECT only, RFC 1928), with the credentials to present and,
+ * for SOCKS5, whether the proxy resolves the origin's name ([remoteDns], `socks5h`) or the engine sends it an address it
+ * resolved itself (`socks5`). [toString] leaves the credentials out.
  */
-@OptIn(ExperimentalKuicksilverApi::class)
-internal class ResolvedProxy(
-    val kind: Kind,
-    val host: String,
-    val port: Int,
-    val credentials: ProxyCredentials?,
-    val remoteDns: Boolean = true,
+@ExperimentalKuicksilverApi
+public class ResolvedProxy private constructor(
+    internal val kind: Kind,
+    /** The proxy's host: a name or an IP literal (without brackets). */
+    public val host: String,
+    /** The proxy's port, 1..65535. */
+    public val port: Int,
+    /** What to authenticate with, or null. */
+    public val credentials: ProxyCredentials?,
+    /** SOCKS5 only: true sends the origin's name for the proxy to resolve, false an address the engine resolved. */
+    public val remoteDns: Boolean,
 ) {
-    enum class Kind { Http, Socks5 }
+    internal enum class Kind { Http, Socks5 }
+
+    init {
+        require(host.isNotEmpty()) { "a proxy needs a host" }
+        require(port in 1..0xffff) { "proxy port out of range: $port" }
+    }
+
+    /** [ProxyType.HTTP] or [ProxyType.SOCKS] (SOCKS5). */
+    public val type: ProxyType get() = if (kind == Kind.Http) ProxyType.HTTP else ProxyType.SOCKS
 
     /** Part of the connection pool's key: another proxy, or other credentials, is another route. */
-    val routeKey: String get() = "$kind://${uriHost(host)}:$port#${credentials?.hashCode() ?: 0}/$remoteDns"
+    internal val routeKey: String get() = "$kind://${uriHost(host)}:$port#${credentials?.hashCode() ?: 0}/$remoteDns"
 
     /** `Basic` credentials for `Proxy-Authorization`, when there are credentials. */
-    val basicAuthorization: String?
+    internal val basicAuthorization: String?
         get() = credentials?.let { "Basic " + Base64.encode("${it.user}:${it.password}".encodeToByteArray()) }
 
-    override fun toString(): String = "${if (kind == Kind.Http) "http" else "socks5"}://${uriHost(host)}:$port"
+    override fun equals(other: Any?): Boolean =
+        other is ResolvedProxy && other.kind == kind && other.host == host && other.port == port &&
+            other.credentials == credentials && other.remoteDns == remoteDns
+
+    override fun hashCode(): Int = routeKey.hashCode()
+
+    override fun toString(): String =
+        "${if (kind == Kind.Http) {
+            "http"
+        } else if (remoteDns) {
+            "socks5h"
+        } else {
+            "socks5"
+        }}://${uriHost(host)}:$port"
+
+    /** Builds them. */
+    public companion object {
+        /** An HTTP proxy at [host]:[port] (spoken to in plain TCP; TLS to the proxy itself is not supported). */
+        public fun http(
+            host: String,
+            port: Int,
+            credentials: ProxyCredentials? = null,
+        ): ResolvedProxy = ResolvedProxy(Kind.Http, socketHost(host), port, credentials, remoteDns = true)
+
+        /** A SOCKS5 proxy at [host]:[port]; [remoteDns] true (`socks5h`) lets it resolve the origin's name. */
+        public fun socks5(
+            host: String,
+            port: Int,
+            credentials: ProxyCredentials? = null,
+            remoteDns: Boolean = true,
+        ): ResolvedProxy = ResolvedProxy(Kind.Socks5, socketHost(host), port, credentials, remoteDns)
+    }
 }
 
 /**
@@ -90,7 +134,12 @@ internal fun ProxyConfig.toResolvedProxy(fallback: ProxyCredentials?): ResolvedP
     }
     // a NetworkAddress (java.net's on the JVM, ktor-utils' on Native): its address, not a reverse lookup of it
     val address = resolveAddress()
-    return ResolvedProxy(kind, socketHost(address.address), address.port, platformProxyCredentials() ?: fallback)
+    val credentials = platformProxyCredentials() ?: fallback
+    return if (kind == ResolvedProxy.Kind.Http) {
+        ResolvedProxy.http(address.address, address.port, credentials)
+    } else {
+        ResolvedProxy.socks5(address.address, address.port, credentials)
+    }
 }
 
 /** The credentials in the proxy URL's user info, percent-decoded; null on the JVM and without user info. */
@@ -104,10 +153,12 @@ internal expect fun ProxyConfig.platformProxyIsDirect(): Boolean
 internal expect fun ProxyConfig.platformProxyUsesTls(): Boolean
 
 /**
- * The proxy for a request to [url]: the engine's explicit `proxy` (with `proxyCredentials`), null for a direct
- * connection. Fails with UnsupportedOperationException for a proxy the engine cannot use, so a request never bypasses it.
+ * The proxy for a request to [url]: the engine's explicit `proxy` (with `proxyCredentials`), else what its
+ * `proxyResolver` says (cached per route), null for a direct connection. Fails with UnsupportedOperationException for a
+ * proxy the engine cannot use, so a request never bypasses it.
  */
 @OptIn(ExperimentalKuicksilverApi::class)
-internal suspend fun KuicksilverEngine.proxyFor(
-    @Suppress("UNUSED_PARAMETER") url: io.ktor.http.Url,
-): ResolvedProxy? = config.proxy?.toResolvedProxy(config.proxyCredentials)
+internal suspend fun KuicksilverEngine.proxyFor(url: io.ktor.http.Url): ResolvedProxy? {
+    val explicit = config.proxy ?: return proxies.lookup(url)
+    return explicit.toResolvedProxy(config.proxyCredentials)
+}

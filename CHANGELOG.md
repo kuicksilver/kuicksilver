@@ -26,6 +26,14 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   there, closing the original path; a failed validation keeps the connection where it was, and a public server cannot
   send the client to a local, unspecified, multicast or broadcast address. `disable_active_migration` does not stop the
   move, and after it the client may migrate.
+- Ktor client: proxy resolution (experimental `proxyResolver`, `docs/guide/ktor.md`, "Proxies"):
+  `ProxyResolvers.System` (the platform's settings: `ProxySelector` on the JVM and Android, CFNetwork on Apple
+  platforms, WinHTTP's Internet settings on Windows, the environment on Linux), `ProxyResolvers.Environment` (curl's
+  `https_proxy`, `http_proxy`, `all_proxy` and `no_proxy`, with `socks5://` and `socks5h://`), `ProxyResolvers.None`,
+  or any `ProxyResolver` returning a `ResolvedProxy`. Answers are kept 30 seconds per route; `localhost` and loopback
+  addresses always connect directly; a PAC or WPAD configuration on Apple platforms and Windows is not run (direct,
+  one warning); a proxy the engine cannot use fails the request. `HttpClient.webTransport` refuses exactly the URLs a
+  resolver sends through a proxy.
 - Ktor client: SOCKS5 proxies (RFC 1928, CONNECT only) with username/password authentication (RFC 1929): a
   `ProxyBuilder.socks(host, port)` proxy now tunnels every request instead of being refused, the proxy resolving the
   origin's name. New experimental `proxyCredentials` (SOCKS5 username/password, sent only when the proxy picks that
@@ -158,6 +166,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Changed
 
+- Ktor client: requests now follow the platform's proxy settings by default (`proxyResolver = ProxyResolvers.System`):
+  where the system, the JVM's properties or (on Linux) the environment name a proxy, requests go through it over
+  HTTP/1.1, without HTTP/3 or Alt-Svc. Before, only an explicit `proxy` was used. `proxyResolver = ProxyResolvers.None`
+  restores direct connections.
 - Ktor client: a `ws://` WebSocket through an HTTP proxy now goes in a CONNECT tunnel (RFC 6455 section 4.1), as
   browsers do, instead of an absolute-form Upgrade the proxy may not forward. A CONNECT the proxy refuses fails with
   `ProxyException` (`replyCode` 407 when it wants credentials) instead of a plain `IOException`. The

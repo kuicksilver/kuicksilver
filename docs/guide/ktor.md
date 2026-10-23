@@ -194,20 +194,8 @@ val client = HttpClient(Kuicksilver) {
   line and header fields) is limited to 64 KiB, the same as the HTTP/3 field section, and at most 5 interim (1xx)
   responses are skipped before the final one (as Go's `net/http`); beyond either the request fails with Ktor's
   `ParserException` and the connection is closed. A proxy's response to `CONNECT` has the same 64 KiB limit.
-- A proxy is used for HTTP/1.1 only. An HTTP proxy (`proxy = ProxyBuilder.http(...)`) gets `CONNECT` tunnels for
-  `https` and for WebSockets, `ws://` included (RFC 6455 section 4.1, as browsers), and absolute-form requests for plain
-  `http`; a SOCKS proxy (`ProxyBuilder.socks(host, port)`) is SOCKS5 (RFC 1928, CONNECT only; no SOCKS4) with the
-  origin's name resolved by the proxy, every request tunneled. `proxyCredentials` (*experimental*) authenticate to
-  either: SOCKS5 username/password (RFC 1929), offered and sent only when the proxy picks that method, or
-  `Proxy-Authorization: Basic` with the first CONNECT or absolute-form request unless the request sets its own; off the
-  JVM a proxy URL's user info (`http://user:password@proxy:3128`) wins. Both go in clear to the proxy, never to the origin.
-  A proxy that refuses fails the request with `ProxyException` (*experimental*): `replyCode` is the SOCKS5 reply or the
-  CONNECT status (407: credentials wanted; not retried). An `https://` proxy URL (TLS to the proxy) is refused with
-  `UnsupportedOperationException`, never used in clear. HTTP/3 never goes through a proxy: QUIC is UDP, which neither
-  CONNECT nor SOCKS5 CONNECT carries (no CONNECT-UDP, RFC 9298, or SOCKS5 UDP ASSOCIATE). With a proxy, `Auto` and
-  `Preferred` use HTTP/1.1 through it (Alt-Svc is neither used nor learned, `quicHints` are ignored; the event reason
-  is `ProtocolReason.Proxy`), and `H3Only` fails every request with `UnsupportedOperationException` without contacting
-  the proxy.
+- Requests go through a proxy when one applies (by default the platform's proxy settings): HTTP/1.1 only, see
+  [Proxies](#proxies).
 - Timeouts come from `HttpTimeout`: the connect timeout (TCP + TLS, or the QUIC handshake) fails with Ktor's
   `ConnectTimeoutException`, the socket timeout with `SocketTimeoutException`; the request timeout is the plugin's own.
   The socket timeout is an inactivity timeout, as Ktor defines it ("maximum time of inactivity between two data
@@ -342,6 +330,61 @@ An alternative is marked broken only when HTTP/3 failed while HTTP/1.1 worked (a
 back to HTTP/1.1 after the HTTP/3 connection failed as a whole: setup, QUIC transport, an HTTP/3 connection error; a
 single stream reset or a malformed response falls back for that request only) — per origin and alternative, never "UDP is blocked" for everything: 5 minutes, doubling up to 2 days, and forgotten when `networkId()` reports a new
 network. Broken alternatives are skipped (straight to HTTP/1.1).
+
+### Proxies
+
+Where a request's proxy comes from:
+
+1. `engine { proxy = ... }` (Ktor's `ProxyConfig`) when set: it applies to every request (`java.net.Proxy.NO_PROXY`
+   means none).
+2. Otherwise `engine { proxyResolver = ... }` (*experimental*), asked per request and remembered for 30 seconds per
+   scheme, host and port. The default is **`ProxyResolvers.System`**, the platform's settings:
+
+| Target | `ProxyResolvers.System` | PAC / WPAD |
+|---|---|---|
+| JVM | `java.net.ProxySelector.getDefault()`: `https.proxyHost`/`http.proxyHost`, `socksProxyHost`, `http.nonProxyHosts`, and with `-Djava.net.useSystemProxies=true` the OS settings | as the JDK does |
+| Android | the same: the active network's proxy, PAC through the system | yes (by the system) |
+| macOS, iOS | the system proxy settings via `CFNetworkCopyProxiesForURL` (HTTP, HTTPS, SOCKS; the exceptions list) | not run: direct and one warning |
+| Windows | the user's Internet settings via `WinHttpGetIEProxyConfigForCurrentUser` (`host:port` or `http=…;https=…;socks=…`, the bypass list with `<local>`) | not run: a fixed proxy next to it is used, else direct; one warning |
+| Linux | `ProxyResolvers.Environment` (there is no system API; desktop settings are not read) | — |
+
+`ProxyResolvers.Environment` reads the variables as curl does: `https_proxy`/`HTTPS_PROXY` for `https` and `wss`,
+`http_proxy` (lower case only) for `http` and `ws`, then `all_proxy`/`ALL_PROXY`; `no_proxy`/`NO_PROXY` exempts `*`,
+names with their subdomains (`example.com` covers `a.example.com`, not `badexample.com`), IP addresses and CIDR ranges.
+A value is `http://host:port`, `socks5://` (names resolved by the client), `socks5h://` (by the proxy) or a bare
+`host:port`; user info in it becomes the credentials. `ProxyResolvers.None` connects directly, as 0.2 did without
+`proxy`; any `ProxyResolver { url -> ... }` of your own works too. Both built-in resolvers send `localhost`,
+`*.localhost` and loopback addresses directly whatever the settings say.
+
+A proxy the engine cannot use (`socks4://`, an `https://` proxy, an unknown type) fails the request with
+`UnsupportedOperationException`: it is never bypassed.
+
+How a proxy is used. An HTTP proxy gets `CONNECT` tunnels for `https` and for WebSockets, `ws://` included (RFC 6455
+section 4.1, as browsers), and absolute-form requests for plain `http`; a SOCKS proxy is SOCKS5 (RFC 1928, CONNECT only;
+no SOCKS4), every request tunneled, the proxy resolving the origin's name unless `socks5://` asked otherwise.
+`proxyCredentials` (*experimental*) authenticate to either: SOCKS5 username/password (RFC 1929), offered and sent only
+when the proxy picks that method, or `Proxy-Authorization: Basic` with the first CONNECT or absolute-form request
+unless the request sets its own; off the JVM a proxy URL's user info (`http://user:password@proxy:3128`) wins. Both go in
+clear to the proxy, never to the origin. A proxy that refuses fails the request with `ProxyException` (*experimental*):
+`replyCode` is the SOCKS5 reply or the CONNECT status (407: credentials wanted; not retried).
+
+**Through a proxy there is no HTTP/3.** QUIC is UDP, which neither CONNECT nor SOCKS5 CONNECT carries (no CONNECT-UDP,
+RFC 9298, or SOCKS5 UDP ASSOCIATE), as with Chrome and curl. A proxied request uses HTTP/1.1 (`ProtocolReason.Proxy`),
+`Alt-Svc` is neither used nor learned and `quicHints` are ignored; `H3Only` fails it with `UnsupportedOperationException`
+without contacting the proxy, and `HttpClient.webTransport` refuses the URL unless `webTransportIgnoresProxy`. To use
+HTTP/3 to a host, exempt it from the proxy (`no_proxy`, the OS bypass list), or connect directly everywhere with
+`proxyResolver = ProxyResolvers.None`.
+
+```kotlin
+// guide:ktor:proxy
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+val client = HttpClient(Kuicksilver) {
+    engine {
+        proxyResolver = ProxyResolvers.Environment // or System (the default), None, or your own
+        proxyCredentials = ProxyCredentials("user", System.getenv("PROXY_PASSWORD") ?: "")
+    }
+}
+```
 
 ### WebTransport on the client (experimental)
 

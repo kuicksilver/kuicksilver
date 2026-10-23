@@ -110,6 +110,7 @@ public final class io/kuicksilver/ktor/client/KuicksilverEngineConfig : io/ktor/
 	public final fun getMaxConnectionsPerRoute ()I
 	public final fun getMaxIdleConnectionsPerRoute ()I
 	public final fun getProxyCredentials ()Lio/kuicksilver/ktor/client/ProxyCredentials;
+	public final fun getProxyResolver ()Lio/kuicksilver/ktor/client/ProxyResolver;
 	public final fun getQuic ()Lio/kuicksilver/quic/QuicConfig;
 	public final fun getTls ()Lkotlin/jvm/functions/Function1;
 	public final fun getTrust ()Lio/kuicksilver/tls/TrustConfig;
@@ -125,6 +126,7 @@ public final class io/kuicksilver/ktor/client/KuicksilverEngineConfig : io/ktor/
 	public final fun setMaxConnectionsPerRoute (I)V
 	public final fun setMaxIdleConnectionsPerRoute (I)V
 	public final fun setProxyCredentials (Lio/kuicksilver/ktor/client/ProxyCredentials;)V
+	public final fun setProxyResolver (Lio/kuicksilver/ktor/client/ProxyResolver;)V
 	public final fun setQuic (Lio/kuicksilver/quic/QuicConfig;)V
 	public final fun setTls (Lkotlin/jvm/functions/Function1;)V
 	public final fun setTrust (Lio/kuicksilver/tls/TrustConfig;)V
@@ -186,6 +188,36 @@ public final class io/kuicksilver/ktor/client/ProxyCredentials {
 public final class io/kuicksilver/ktor/client/ProxyException : java/io/IOException {
 	public fun <init> (Ljava/lang/String;Ljava/lang/Integer;)V
 	public final fun getReplyCode ()Ljava/lang/Integer;
+}
+
+public abstract interface class io/kuicksilver/ktor/client/ProxyResolver {
+	public abstract fun proxyFor (Lio/ktor/http/Url;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+}
+
+public final class io/kuicksilver/ktor/client/ProxyResolvers {
+	public static final field INSTANCE Lio/kuicksilver/ktor/client/ProxyResolvers;
+	public final fun getEnvironment ()Lio/kuicksilver/ktor/client/ProxyResolver;
+	public final fun getNone ()Lio/kuicksilver/ktor/client/ProxyResolver;
+	public final fun getSystem ()Lio/kuicksilver/ktor/client/ProxyResolver;
+}
+
+public final class io/kuicksilver/ktor/client/ResolvedProxy {
+	public static final field Companion Lio/kuicksilver/ktor/client/ResolvedProxy$Companion;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getCredentials ()Lio/kuicksilver/ktor/client/ProxyCredentials;
+	public final fun getHost ()Ljava/lang/String;
+	public final fun getPort ()I
+	public final fun getRemoteDns ()Z
+	public final fun getType ()Lio/ktor/client/engine/ProxyType;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/kuicksilver/ktor/client/ResolvedProxy$Companion {
+	public final fun http (Ljava/lang/String;ILio/kuicksilver/ktor/client/ProxyCredentials;)Lio/kuicksilver/ktor/client/ResolvedProxy;
+	public static synthetic fun http$default (Lio/kuicksilver/ktor/client/ResolvedProxy$Companion;Ljava/lang/String;ILio/kuicksilver/ktor/client/ProxyCredentials;ILjava/lang/Object;)Lio/kuicksilver/ktor/client/ResolvedProxy;
+	public final fun socks5 (Ljava/lang/String;ILio/kuicksilver/ktor/client/ProxyCredentials;Z)Lio/kuicksilver/ktor/client/ResolvedProxy;
+	public static synthetic fun socks5$default (Lio/kuicksilver/ktor/client/ResolvedProxy$Companion;Ljava/lang/String;ILio/kuicksilver/ktor/client/ProxyCredentials;ZILjava/lang/Object;)Lio/kuicksilver/ktor/client/ResolvedProxy;
 }
 
 public final class io/kuicksilver/ktor/client/WebTransportClientKt {

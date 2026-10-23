@@ -37,6 +37,10 @@ final enum class io.kuicksilver.ktor.client/ProtocolReason : kotlin/Enum<io.kuic
     final fun values(): kotlin/Array<io.kuicksilver.ktor.client/ProtocolReason> // io.kuicksilver.ktor.client/ProtocolReason.values|values#static(){}[0]
 }
 
+abstract fun interface io.kuicksilver.ktor.client/ProxyResolver { // io.kuicksilver.ktor.client/ProxyResolver|null[0]
+    abstract suspend fun proxyFor(io.ktor.http/Url): io.kuicksilver.ktor.client/ResolvedProxy? // io.kuicksilver.ktor.client/ProxyResolver.proxyFor|proxyFor(io.ktor.http.Url){}[0]
+}
+
 abstract interface io.kuicksilver.ktor.client/AltSvcStore { // io.kuicksilver.ktor.client/AltSvcStore|null[0]
     abstract fun clearNonPersistent() // io.kuicksilver.ktor.client/AltSvcStore.clearNonPersistent|clearNonPersistent(){}[0]
     abstract fun get(kotlin/String): kotlin.collections/List<io.kuicksilver.ktor.client/AltSvcEntry> // io.kuicksilver.ktor.client/AltSvcStore.get|get(kotlin.String){}[0]
@@ -197,6 +201,9 @@ final class io.kuicksilver.ktor.client/KuicksilverEngineConfig : io.ktor.client.
     final var proxyCredentials // io.kuicksilver.ktor.client/KuicksilverEngineConfig.proxyCredentials|{}proxyCredentials[0]
         final fun <get-proxyCredentials>(): io.kuicksilver.ktor.client/ProxyCredentials? // io.kuicksilver.ktor.client/KuicksilverEngineConfig.proxyCredentials.<get-proxyCredentials>|<get-proxyCredentials>(){}[0]
         final fun <set-proxyCredentials>(io.kuicksilver.ktor.client/ProxyCredentials?) // io.kuicksilver.ktor.client/KuicksilverEngineConfig.proxyCredentials.<set-proxyCredentials>|<set-proxyCredentials>(io.kuicksilver.ktor.client.ProxyCredentials?){}[0]
+    final var proxyResolver // io.kuicksilver.ktor.client/KuicksilverEngineConfig.proxyResolver|{}proxyResolver[0]
+        final fun <get-proxyResolver>(): io.kuicksilver.ktor.client/ProxyResolver // io.kuicksilver.ktor.client/KuicksilverEngineConfig.proxyResolver.<get-proxyResolver>|<get-proxyResolver>(){}[0]
+        final fun <set-proxyResolver>(io.kuicksilver.ktor.client/ProxyResolver) // io.kuicksilver.ktor.client/KuicksilverEngineConfig.proxyResolver.<set-proxyResolver>|<set-proxyResolver>(io.kuicksilver.ktor.client.ProxyResolver){}[0]
     final var quic // io.kuicksilver.ktor.client/KuicksilverEngineConfig.quic|{}quic[0]
         final fun <get-quic>(): io.kuicksilver.quic/QuicConfig // io.kuicksilver.ktor.client/KuicksilverEngineConfig.quic.<get-quic>|<get-quic>(){}[0]
         final fun <set-quic>(io.kuicksilver.quic/QuicConfig) // io.kuicksilver.ktor.client/KuicksilverEngineConfig.quic.<set-quic>|<set-quic>(io.kuicksilver.quic.QuicConfig){}[0]
@@ -230,11 +237,42 @@ final class io.kuicksilver.ktor.client/ProxyException : kotlinx.io/IOException {
         final fun <get-replyCode>(): kotlin/Int? // io.kuicksilver.ktor.client/ProxyException.replyCode.<get-replyCode>|<get-replyCode>(){}[0]
 }
 
+final class io.kuicksilver.ktor.client/ResolvedProxy { // io.kuicksilver.ktor.client/ResolvedProxy|null[0]
+    final val credentials // io.kuicksilver.ktor.client/ResolvedProxy.credentials|{}credentials[0]
+        final fun <get-credentials>(): io.kuicksilver.ktor.client/ProxyCredentials? // io.kuicksilver.ktor.client/ResolvedProxy.credentials.<get-credentials>|<get-credentials>(){}[0]
+    final val host // io.kuicksilver.ktor.client/ResolvedProxy.host|{}host[0]
+        final fun <get-host>(): kotlin/String // io.kuicksilver.ktor.client/ResolvedProxy.host.<get-host>|<get-host>(){}[0]
+    final val port // io.kuicksilver.ktor.client/ResolvedProxy.port|{}port[0]
+        final fun <get-port>(): kotlin/Int // io.kuicksilver.ktor.client/ResolvedProxy.port.<get-port>|<get-port>(){}[0]
+    final val remoteDns // io.kuicksilver.ktor.client/ResolvedProxy.remoteDns|{}remoteDns[0]
+        final fun <get-remoteDns>(): kotlin/Boolean // io.kuicksilver.ktor.client/ResolvedProxy.remoteDns.<get-remoteDns>|<get-remoteDns>(){}[0]
+    final val type // io.kuicksilver.ktor.client/ResolvedProxy.type|{}type[0]
+        final fun <get-type>(): io.ktor.client.engine/ProxyType // io.kuicksilver.ktor.client/ResolvedProxy.type.<get-type>|<get-type>(){}[0]
+
+    final fun equals(kotlin/Any?): kotlin/Boolean // io.kuicksilver.ktor.client/ResolvedProxy.equals|equals(kotlin.Any?){}[0]
+    final fun hashCode(): kotlin/Int // io.kuicksilver.ktor.client/ResolvedProxy.hashCode|hashCode(){}[0]
+    final fun toString(): kotlin/String // io.kuicksilver.ktor.client/ResolvedProxy.toString|toString(){}[0]
+
+    final object Companion { // io.kuicksilver.ktor.client/ResolvedProxy.Companion|null[0]
+        final fun http(kotlin/String, kotlin/Int, io.kuicksilver.ktor.client/ProxyCredentials? = ...): io.kuicksilver.ktor.client/ResolvedProxy // io.kuicksilver.ktor.client/ResolvedProxy.Companion.http|http(kotlin.String;kotlin.Int;io.kuicksilver.ktor.client.ProxyCredentials?){}[0]
+        final fun socks5(kotlin/String, kotlin/Int, io.kuicksilver.ktor.client/ProxyCredentials? = ..., kotlin/Boolean = ...): io.kuicksilver.ktor.client/ResolvedProxy // io.kuicksilver.ktor.client/ResolvedProxy.Companion.socks5|socks5(kotlin.String;kotlin.Int;io.kuicksilver.ktor.client.ProxyCredentials?;kotlin.Boolean){}[0]
+    }
+}
+
 final object io.kuicksilver.ktor.client/Kuicksilver : io.ktor.client.engine/HttpClientEngineFactory<io.kuicksilver.ktor.client/KuicksilverEngineConfig> { // io.kuicksilver.ktor.client/Kuicksilver|null[0]
     final fun create(kotlin/Function1<io.kuicksilver.ktor.client/KuicksilverEngineConfig, kotlin/Unit>): io.ktor.client.engine/HttpClientEngine // io.kuicksilver.ktor.client/Kuicksilver.create|create(kotlin.Function1<io.kuicksilver.ktor.client.KuicksilverEngineConfig,kotlin.Unit>){}[0]
     final fun equals(kotlin/Any?): kotlin/Boolean // io.kuicksilver.ktor.client/Kuicksilver.equals|equals(kotlin.Any?){}[0]
     final fun hashCode(): kotlin/Int // io.kuicksilver.ktor.client/Kuicksilver.hashCode|hashCode(){}[0]
     final fun toString(): kotlin/String // io.kuicksilver.ktor.client/Kuicksilver.toString|toString(){}[0]
+}
+
+final object io.kuicksilver.ktor.client/ProxyResolvers { // io.kuicksilver.ktor.client/ProxyResolvers|null[0]
+    final val Environment // io.kuicksilver.ktor.client/ProxyResolvers.Environment|{}Environment[0]
+        final fun <get-Environment>(): io.kuicksilver.ktor.client/ProxyResolver // io.kuicksilver.ktor.client/ProxyResolvers.Environment.<get-Environment>|<get-Environment>(){}[0]
+    final val None // io.kuicksilver.ktor.client/ProxyResolvers.None|{}None[0]
+        final fun <get-None>(): io.kuicksilver.ktor.client/ProxyResolver // io.kuicksilver.ktor.client/ProxyResolvers.None.<get-None>|<get-None>(){}[0]
+    final val System // io.kuicksilver.ktor.client/ProxyResolvers.System|{}System[0]
+        final fun <get-System>(): io.kuicksilver.ktor.client/ProxyResolver // io.kuicksilver.ktor.client/ProxyResolvers.System.<get-System>|<get-System>(){}[0]
 }
 
 final val io.kuicksilver.ktor.client/priority // io.kuicksilver.ktor.client/priority|@io.ktor.client.request.HttpRequestBuilder{}priority[0]
