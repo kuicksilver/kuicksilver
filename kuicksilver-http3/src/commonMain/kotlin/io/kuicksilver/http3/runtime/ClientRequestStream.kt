@@ -466,6 +466,8 @@ internal class ResponseImpl(
         }
     private val trailersDeferred = CompletableDeferred<Http3Headers?>()
     override val trailers: Deferred<Http3Headers?> get() = trailersDeferred
+
+    // read to its end even when the connection is lost: the body's last bytes may come with the peer's close (drains)
     internal val pump: Job =
         session.scope.launch {
             session.pumpBody(
@@ -491,6 +493,7 @@ internal class ResponseImpl(
     }
 
     init {
+        session.drains(pump)
         // a pump cancelled before it ran (launched after the connection ended) still ends the body: its reader never hangs
         session.onCancelled(pump) { e ->
             bodyChannel.cancel(e)

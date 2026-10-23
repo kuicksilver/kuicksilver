@@ -78,6 +78,10 @@ internal class H3Session(
     val dispatcher = Dispatchers.Default.limitedParallelism(1)
     private val job = SupervisorJob()
     val scope = CoroutineScope(job + dispatcher + CoroutineName("http3"))
+
+    /** Coroutines reading what the peer sent, which may finish it when the connection is lost ([drains]); dispatcher only. */
+    private val drainers = ArrayList<Job>()
+    private var drainersPruneAt = DRAINERS_PRUNE_MIN
     val peerSettings = MutableStateFlow<Http3PeerSettings?>(null)
     private val peerSettingsArrived = CompletableDeferred<Http3PeerSettings>()
     val datagrams = DatagramDemux(this)
@@ -396,10 +400,11 @@ internal class H3Session(
                 } catch (_: Throwable) {
                     return
                 }
+            // the peer's streams are read to their end even when the connection is lost (drains)
             if (st.id and 2L != 0L) {
-                scope.launch { guarded { readUni(st) } }
+                drains(scope.launch { guarded { readUni(st) } })
             } else if (isServer) {
-                scope.launch { guarded { handleRequestStream(this@H3Session, st) } }
+                drains(scope.launch { guarded { handleRequestStream(this@H3Session, st) } })
             } else if (settings.webTransport) {
                 scope.launch { guarded { serverBidi(st) } }
             } else {
@@ -831,9 +836,38 @@ internal class H3Session(
         }
     }
 
+    /**
+     * [job] reads a peer's stream (a message body, a unidirectional stream): when the connection is lost it goes on until
+     * its input ends, which it does once it has read what the peer sent before the loss (`QuicStream.input`), so a
+     * response whose last bytes came with the peer's CONNECTION_CLOSE is still read whole. Session dispatcher only.
+     */
+    fun drains(job: Job): Job {
+        if (drainers.size >= drainersPruneAt) {
+            drainers.removeAll { it.isCompleted }
+            drainersPruneAt = maxOf(DRAINERS_PRUNE_MIN, drainers.size * 2)
+        }
+        drainers += job
+        return job
+    }
+
+    /**
+     * The connection is gone: every coroutine of the session ends, but the [drains] readers only once their inputs ended,
+     * for at most [DRAIN_GRACE] (a reader the application does not keep up with is cut there: it never holds the
+     * session). Cancelling them at once lost what the peer sent last, Firefox's WT_CLOSE_SESSION right before its close.
+     */
     private fun onTransportClosed(e: QuicException.ConnectionLost) {
         if (closed.complete(Http3Exception.fromQuic(e))) requests.close(closed.getCompleted())
-        job.cancel()
+        val draining = drainers.filter { it.isActive }
+        drainers.clear()
+        if (draining.isEmpty()) {
+            job.cancel()
+            return
+        }
+        for (c in job.children.toList()) if (c !in draining) c.cancel()
+        scope.launch {
+            withTimeoutOrNull(DRAIN_GRACE) { draining.forEach { it.join() } }
+            job.cancel()
+        }
     }
 
     /**
@@ -870,6 +904,11 @@ internal class H3Session(
          * allows them in its transport parameters, so they open at once; only a peer that does not is held up here.
          */
         val CRITICAL_STREAMS_DEADLINE: Duration = 3.seconds
+
+        /** How long readers may go on finishing what a peer sent once its connection is lost ([drains]). */
+        val DRAIN_GRACE: Duration = 1.seconds
+
+        private const val DRAINERS_PRUNE_MIN = 64
 
         /** Control and QPACK streams: sent before every request stream, whatever urgency a peer asks for. */
         val CRITICAL = StreamPriority.Critical
