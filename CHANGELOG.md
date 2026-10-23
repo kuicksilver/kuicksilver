@@ -277,7 +277,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - Ktor client, HTTP/1.1: a request with `Expect: 100-continue` now waits for the server before sending its body (RFC
   9110 section 10.1.1). Before, the body followed the head at once, so a server that refuses it (417, 401) received it
   anyway. The body now goes out on a 100 Continue, or after 1 s without an answer (as Ktor's CIO engine and curl); a
-  final response first is the answer, the body is never sent and that connection is not reused.
+  final response first is the answer, the body is never sent and that connection is not reused. A 417 is the exception:
+  the request is repeated once without the expectation, as the RFC recommends and CIO does.
 - Ktor client: a request that completes just as its socket timeout expires keeps its response. The inactivity
   watchdog could still act after the request had returned (a timer that already fired is not stopped by cancelling the
   watchdog, nor is one firing on another thread), so the response was replaced by a `SocketTimeoutException` and, over

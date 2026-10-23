@@ -128,7 +128,11 @@ internal suspend fun writeHeaders(
 
 /** Whether the request goes out with its Expect field: only with a body, which then waits for the server's answer. */
 internal fun expectsContinue(request: HttpRequestData): Boolean =
-    request.headers[HttpHeaders.Expect] != null && request.body !is OutgoingContent.NoContent
+    request.headers[HttpHeaders.Expect] != null && request.body !is OutgoingContent.NoContent &&
+        !request.attributes.contains(ExpectationFailedKey)
+
+/** Set on a request answered with 417 to its `Expect: 100-continue`: it is sent again without the field. */
+internal val ExpectationFailedKey = io.ktor.util.AttributeKey<Unit>("kuicksilver.ExpectationFailed")
 
 /**
  * How long a request with `Expect: 100-continue` waits for the server to answer before it sends its body anyway (RFC 9110

@@ -74,7 +74,10 @@ public abstract class KuicksilverEventListener {
         cause: Throwable,
     ) {}
 
-    /** [request] is sent again, attempt number [attempt] (2 and up), because of [cause]: a GOAWAY or a stale pooled connection. */
+    /**
+     * [request] is sent again, attempt number [attempt] (2 and up), because of [cause]: a GOAWAY, a stale pooled
+     * connection, or a 417 to its `Expect: 100-continue` (sent again without it).
+     */
     public open fun retry(
         request: HttpRequestData,
         attempt: Int,
