@@ -430,9 +430,10 @@ internal class ServerRequestImpl(
         responseStarted = true
         tunnel = method == "CONNECT" && status in 200..299
         return withContext(session.dispatcher) {
-            // an explicit priority wins; else the response's own `priority` field merged into the client's signal (RFC 9218
-            // section 8: a parameter it leaves out keeps the client's value), as h2o does
-            (priority ?: headers["priority"]?.let { PriorityField.merge(priorityFlow.value, it) })?.let {
+            // an explicit priority wins; else the response's own `priority` field merged into the stream's current schedule
+            // (RFC 9218 section 8: a parameter it leaves out keeps that value), as h2o does: the client's signal, or for an
+            // unsignalled tunnel its incremental default (sections 10.1, 11), which a field like `u=1` then keeps
+            (priority ?: headers["priority"]?.let { PriorityField.merge(st.priority, it) })?.let {
                 serverPriority = it
                 st.priority = it
             }

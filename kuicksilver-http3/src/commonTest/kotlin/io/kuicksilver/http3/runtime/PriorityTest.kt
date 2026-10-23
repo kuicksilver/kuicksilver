@@ -328,4 +328,23 @@ class PriorityTest {
                 assertEquals(StreamPriority(2, false), (withTimeout(5.seconds) { explicit.await() } as ServerRequestImpl).stream.priority)
             }
         }
+
+    /** A response field on an unsignalled tunnel merges into its local schedule: `u=1` keeps the incremental default. */
+    @Test fun responseFieldKeepsTunnelIncremental() =
+        h3Test {
+            H3Pair.open(serverSettings = io.kuicksilver.http3.http3Settings { enableConnectProtocol = true }).useScoped { p ->
+                val accepted = kotlinx.coroutines.CompletableDeferred<Http3ServerRequest>()
+                launch {
+                    val r = p.server.acceptRequest()
+                    r.acceptConnect(
+                        io.kuicksilver.http3.Http3Headers
+                            .of("priority" to "u=1"),
+                    )
+                    accepted.complete(r)
+                }
+                p.client.connect(connectReq(), "echo")
+                val r = withTimeout(5.seconds) { accepted.await() }
+                assertEquals(StreamPriority(1, true), (r as ServerRequestImpl).stream.priority)
+            }
+        }
 }

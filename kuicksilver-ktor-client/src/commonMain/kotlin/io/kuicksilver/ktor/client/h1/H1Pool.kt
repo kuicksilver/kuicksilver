@@ -30,6 +30,7 @@ import io.kuicksilver.ktor.client.Activity
 import io.kuicksilver.ktor.client.ActivityInput
 import io.kuicksilver.ktor.client.ActivityOutput
 import io.kuicksilver.ktor.client.EngineEvents
+import io.kuicksilver.ktor.client.H3ExchangeKey
 import io.kuicksilver.ktor.client.KuicksilverEngineConfig
 import io.kuicksilver.ktor.client.RequestDns
 import io.kuicksilver.ktor.client.connectTimeoutMillis
@@ -183,6 +184,9 @@ internal class H1Pool(
         preopened: Opened? = null,
         dns: RequestDns = config.newRequestDns(),
     ): HttpResponseData {
+        // a request sent again over HTTP/1.1 (after a 421 or a failure over HTTP/3) leaves its HTTP/3 exchange behind:
+        // HttpResponse.updatePriority must not reach that stream
+        data.attributes.remove(H3ExchangeKey)
         val url = data.url
         val secure = url.protocol.isSecure()
         if (!secure) {

@@ -198,8 +198,9 @@ default (`u=3`, not incremental), and `Http3Response.updatePriority(...)` sends 
 schedules its own request stream with the same signal, whether it came as `Http3Request.priority` or as a `priority`
 header. The server acts on the client's signal: `Http3ServerRequest.priority` follows the field and later updates, and
 the response stream is scheduled with it unless the server picks its own, with `respond(status, headers, priority)` or
-with a `priority` field in the response headers, which is merged into the client's signal (a parameter it leaves out
-keeps the client's value, RFC 9218 section 8, as h2o does); the server's choice then stays. A CONNECT tunnel without a
+with a `priority` field in the response headers, which is merged into the stream's current priority (a parameter it
+leaves out keeps that value: the client's, or an unsignalled tunnel's incremental default; RFC 9218 section 8, as h2o
+does); the server's choice then stays. A CONNECT tunnel without a
 signal is scheduled incremental on both sides (sections 10.1, 11), so a long-lived WebSocket shares bandwidth with the
 responses next to it instead of holding them back; its client's signal itself still reads as the default. The
 transport scheduler serves eight urgency levels in order and shares a level round-robin between incremental streams;

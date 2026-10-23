@@ -372,6 +372,11 @@ internal object PseudoHeaders {
  * The `Priority` field (RFC 9218 section 4): a Structured Fields dictionary with `u` (urgency, 0..7) and `i`
  * (incremental). Unknown keys, out-of-range values and malformed members are ignored, so a garbled field reads as the
  * defaults. Shared with the Ktor engines, hence public under [InternalKuicksilverApi].
+ *
+ * The parse is lenient and member by member, not RFC 8941's whole-field one: a strict parser fails the whole dictionary
+ * on one syntax error (section 4.2), which RFC 9218 section 4 then reads as all defaults, while here the valid members
+ * of `u=1, i=7, ;;` still count (`u=1`). Members are split at commas and parameters after `;` are dropped, so a comma
+ * inside a String or Inner List value would split it; neither is a valid `u` or `i`, so only unknown keys are affected.
  */
 @InternalKuicksilverApi
 public object PriorityField {

@@ -9,6 +9,7 @@ import io.ktor.util.AttributeKey
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.http3.Http3Response
 import io.kuicksilver.quic.StreamPriority
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.isActive
 
 /** The priority a request was given with [priority]. */
@@ -45,7 +46,8 @@ public val HttpRequestBuilder.priority: StreamPriority? get() = attributes.getOr
 /**
  * Sends a new priority for this response (a PRIORITY_UPDATE frame, RFC 9218 section 7) and applies it to the request's
  * own stream; the server reschedules the rest of the response unless it set a priority of its own. True when the frame
- * was sent; false over HTTP/1.1, which has no such signal, and once the call is over or its body was read to the end.
+ * was sent; false over HTTP/1.1, which has no such signal, once the call is over or its body was read to the end, and when
+ * the connection is gone.
  *
  * @throws IllegalArgumentException when [urgency] is outside 0..7.
  */
@@ -57,6 +59,12 @@ public suspend fun HttpResponse.updatePriority(
     require(urgency in 0..7) { "urgency must be 0..7, was $urgency" }
     val exchange = call.attributes.getOrNull(H3ExchangeKey) ?: return false
     if (!this.coroutineContext.isActive || exchange.trailers.isCompleted) return false
-    exchange.updatePriority(StreamPriority(urgency, incremental))
-    return true
+    return try {
+        exchange.updatePriority(StreamPriority(urgency, incremental))
+        true
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        false // the connection is gone (its control stream with it): nothing to update
+    }
 }

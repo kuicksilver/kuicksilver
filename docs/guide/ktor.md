@@ -393,7 +393,8 @@ sent as the `priority` field (no field for the default, u=3 non-incremental) and
 with it, a WebSocket over HTTP/3 included; over HTTP/1.1 only the `Priority` field is sent. It replaces a `Priority`
 header set on the same request, so the server sees one signal. `response.updatePriority(urgency, incremental)` sends a
 PRIORITY_UPDATE while the response is still coming (RFC 9218 section 7) and returns true; it returns false over
-HTTP/1.1, which has no such signal, and once the call is over or the body was read to the end. The server reschedules
+HTTP/1.1, which has no such signal (also when a 421 or a failure sent the request again over HTTP/1.1), once the call
+is over or the body was read to the end, and when the connection is gone. The server reschedules
 the rest of the response unless it set a priority of its own.
 
 ```kotlin

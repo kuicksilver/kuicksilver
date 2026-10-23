@@ -12,7 +12,9 @@ import io.ktor.client.request.header
 import io.ktor.client.request.prepareGet
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpProtocolVersion
+import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.install
+import io.ktor.server.request.httpVersion
 import io.ktor.server.response.respondBytesWriter
 import io.ktor.server.response.respondRedirect
 import io.ktor.server.response.respondText
@@ -174,6 +176,44 @@ class ClientPriorityTest {
             } finally {
                 server.stop(100, 500)
                 plain.stop(100, 500)
+            }
+        }
+
+    /** A 421 over HTTP/3 sends the request again over HTTP/1.1: its response must not update the abandoned HTTP/3 stream. */
+    @Test fun updatePriorityAfter421FallbackIsFalse() =
+        h3Test {
+            val misdirected = kotlinx.coroutines.flow.MutableStateFlow(0) // written by the server, read by the test
+            val (server, port) =
+                testServer {
+                    routing {
+                        get("/m") {
+                            if (call.request.httpVersion == "HTTP/3") {
+                                misdirected.value++
+                                call.respondText("elsewhere", status = HttpStatusCode.fromValue(421))
+                            } else {
+                                call.respondText("ok")
+                            }
+                        }
+                    }
+                }
+            try {
+                testClient(Http3DiscoveryMode.Auto).use { c ->
+                    // the first request learns Alt-Svc over HTTP/1.1, the next race HTTP/3 against the pooled HTTP/1.1
+                    // connection, which wins on loopback while QUIC comes up (as ClientAltSvcTest.autoUpgradesToH3AfterAltSvc):
+                    // requests go on until one reaches the alternative and is sent again over HTTP/1.1 after its 421
+                    withTimeout(10.seconds) {
+                        while (misdirected.value == 0) {
+                            c.prepareGet("https://127.0.0.1:$port/m") { priority(1) }.execute { r ->
+                                assertEquals(HttpProtocolVersion.HTTP_1_1, r.version)
+                                assertFalse(r.updatePriority(6, incremental = false), "no PRIORITY_UPDATE on the 421's HTTP/3 stream")
+                                assertEquals("ok", r.bodyAsText())
+                            }
+                        }
+                    }
+                }
+                assertEquals(1, misdirected.value, "the request went to the alternative first")
+            } finally {
+                server.stop(100, 500)
             }
         }
 
