@@ -13,6 +13,7 @@ import io.ktor.client.request.HttpRequestData
 import io.ktor.client.request.HttpResponseData
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpProtocolVersion
+import io.ktor.http.HttpStatusCode
 import io.ktor.http.Url
 import io.ktor.http.content.OutgoingContent
 import io.ktor.http.isSecure
@@ -199,58 +200,70 @@ internal class H1Pool(
                 val activity = data.socketTimeoutMillis()?.let { Activity() }
                 val output = activity?.let { ActivityOutput(conn.output, it) } ?: conn.output
                 val input = activity?.let { ActivityInput(conn.input, it) } ?: conn.input
-                return withSocketInactivityTimeout(data, activity, onExpiry = { conn.close() }) {
-                    writeHeaders(data, output, overProxy = proxy != null && !secure, tunneled = proxy != null && secure)
+                var bodySent = false
+                val response =
+                    withSocketInactivityTimeout(data, activity, onExpiry = { conn.close() }) {
+                        writeHeaders(data, output, overProxy = proxy != null && !secure, tunneled = proxy != null && secure)
 
-                    suspend fun sendBody() {
-                        // a streamed body is sent while the response is read (as the CIO engine): the server may answer first
-                        if (data.body.isStreamed()) {
-                            bodyJob = sendBodyConcurrently(data, conn, output, callContext)
-                        } else {
-                            writeBody(data, output, callContext)
+                        suspend fun sendBody() {
+                            bodySent = true
+                            // a streamed body is sent while the response is read (as the CIO engine): the server may answer first
+                            if (data.body.isStreamed()) {
+                                bodyJob = sendBodyConcurrently(data, conn, output, callContext)
+                            } else {
+                                writeBody(data, output, callContext)
+                            }
                         }
-                    }
-                    // `Expect: 100-continue` (RFC 9110 section 10.1.1): the body waits for the server's 100 Continue, or a
-                    // final response that refuses it (417, 401), up to CONTINUE_TIMEOUT; a server that says nothing in that
-                    // time gets the body anyway
-                    val answered = expectsContinue(data) && withTimeoutOrNull(CONTINUE_TIMEOUT) { input.awaitContent() } != null
-                    if (!answered) sendBody()
-                    val continueBody: (suspend () -> Unit)? = if (answered) ({ sendBody() }) else null
-                    readResponse(requestTime, data, input, conn.output, callContext, conn.input, continueBody) { after ->
-                        val job = bodyJob
+                        // `Expect: 100-continue` (RFC 9110 section 10.1.1): the body waits for the server's 100 Continue, or a
+                        // final response that refuses it (417, 401), up to CONTINUE_TIMEOUT; a server that says nothing in that
+                        // time gets the body anyway
+                        val answered = expectsContinue(data) && withTimeoutOrNull(CONTINUE_TIMEOUT) { input.awaitContent() } != null
+                        if (!answered) sendBody()
+                        val continueBody: (suspend () -> Unit)? = if (answered) ({ sendBody() }) else null
+                        readResponse(requestTime, data, input, conn.output, callContext, conn.input, continueBody) { after ->
+                            val job = bodyJob
 
-                        fun released(kept: Boolean) =
-                            events.emit("connectionReleased") { connectionReleased(data, HttpProtocolVersion.HTTP_1_1, kept) }
+                            fun released(kept: Boolean) =
+                                events.emit("connectionReleased") { connectionReleased(data, HttpProtocolVersion.HTTP_1_1, kept) }
 
-                        fun settle(a: AfterResponse) {
-                            when (a) {
-                                AfterResponse.Reuse -> {
-                                    released(pool.release(conn))
-                                }
+                            fun settle(a: AfterResponse) {
+                                when (a) {
+                                    AfterResponse.Reuse -> {
+                                        released(pool.release(conn))
+                                    }
 
-                                AfterResponse.Close -> {
-                                    conn.close()
-                                    released(false)
-                                }
-
-                                AfterResponse.HandOver -> {
-                                    callContext[Job]?.invokeOnCompletion {
+                                    AfterResponse.Close -> {
                                         conn.close()
                                         released(false)
                                     }
+
+                                    AfterResponse.HandOver -> {
+                                        callContext[Job]?.invokeOnCompletion {
+                                            conn.close()
+                                            released(false)
+                                        }
+                                    }
+                                }
+                            }
+                            if (job == null || after != AfterResponse.Reuse) {
+                                settle(after)
+                            } else {
+                                // reusable once the body is out
+                                job.job.invokeOnCompletion { c ->
+                                    settle(if (c == null && job.failure == null) AfterResponse.Reuse else AfterResponse.Close)
                                 }
                             }
                         }
-                        if (job == null || after != AfterResponse.Reuse) {
-                            settle(after)
-                        } else {
-                            // reusable once the body is out
-                            job.job.invokeOnCompletion { c ->
-                                settle(if (c == null && job.failure == null) AfterResponse.Reuse else AfterResponse.Close)
-                            }
-                        }
                     }
+                // a 417 to a request that waited for 100 Continue only says that something on the way does not support
+                // expectations: the request is repeated once without one (RFC 9110 section 10.1.1, as CIO); its body was
+                // never sent, so it can be. The 417's connection was closed: it promised a body it never got
+                if (response.statusCode == HttpStatusCode.ExpectationFailed && !bodySent && expectsContinue(data)) {
+                    data.attributes.put(ExpectationFailedKey, Unit)
+                    events.emit("retry") { retry(data, 2, IllegalStateException("417 Expectation Failed to Expect: 100-continue")) }
+                    continue
                 }
+                return response
             } catch (e: CancellationException) {
                 conn.close()
                 events.emit("connectionReleased") { connectionReleased(data, HttpProtocolVersion.HTTP_1_1, kept = false) }

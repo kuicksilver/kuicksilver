@@ -420,20 +420,30 @@ class ClientH1Test {
     ): Boolean = withTimeoutOrNull(millis) { input.awaitContent() } == true
 
     /**
-     * RFC 9110 section 10.1.1: with `Expect: 100-continue` the body waits for the server; a final status first (417 here)
-     * is the response and the body is never sent, the connection (which promised a body) is not reused.
+     * RFC 9110 section 10.1.1: with `Expect: 100-continue` the body waits for the server; a 417 first sends no body and
+     * closes that connection, and the request is repeated once without the expectation, its body then sent at once.
      */
     @Test fun expectContinueFinalStatusFirstSendsNoBody() =
         clientTest {
             var earlyBody: Boolean? = null
+            var retryHeaders: List<String>? = null
+            var retryBody: String? = null
             var connections = 0
             rawServerPerConnection({ index, input, output ->
                 connections++
-                readHead(input)
                 if (index == 0) {
+                    readHead(input)
                     earlyBody = bytesArriveWithin(input, 300)
                     output.writeStringUtf8("HTTP/1.1 417 Expectation Failed\r\nContent-Length: 0\r\n\r\n")
                 } else {
+                    val lines = mutableListOf<String>()
+                    while (true) {
+                        val l = input.readUTF8Line() ?: break
+                        if (l.isEmpty()) break
+                        lines += l
+                    }
+                    retryHeaders = lines
+                    retryBody = input.readByteArray(3).decodeToString()
                     output.writeStringUtf8("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok")
                 }
                 input.readUTF8Line() // until the client closes
@@ -444,9 +454,11 @@ class ClientH1Test {
                             header(HttpHeaders.Expect, "100-continue")
                             setBody("abc")
                         }
-                    assertEquals(417, r.status.value)
+                    assertEquals(200, r.status.value, "the request repeated without the expectation is answered")
+                    assertEquals("ok", r.bodyAsText())
                     assertEquals(false, earlyBody, "the body went out before the server answered")
-                    assertEquals("ok", c.get("http://127.0.0.1:$port/next").bodyAsText())
+                    assertEquals(false, retryHeaders!!.any { it.startsWith("Expect:", ignoreCase = true) }, "$retryHeaders")
+                    assertEquals("abc", retryBody)
                     assertEquals(2, connections, "the connection that promised a body is not reused")
                 }
             }
