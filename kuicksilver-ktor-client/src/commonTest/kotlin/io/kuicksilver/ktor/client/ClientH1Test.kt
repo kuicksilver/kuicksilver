@@ -49,10 +49,13 @@ import io.kuicksilver.native.KslLoader
 import io.kuicksilver.tls.SpkiSha256
 import io.kuicksilver.tls.TlsException
 import io.kuicksilver.tls.TrustConfig
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.test.BeforeTest
 import kotlin.test.Test
@@ -681,4 +684,49 @@ class ClientH1Test {
             assertTrue(c.engine.toString().contains("Kuicksilver") || c.engine::class.simpleName == "KuicksilverEngine")
         }
     }
+
+    /**
+     * close() lets the calls already made finish, as CIO does: the one in flight and one still queued for the connection
+     * limit get their responses, and the pool, sockets and selector close only after them. A request made after the
+     * engine's own close() fails with Ktor's ClientEngineClosedException (after HttpClient.close() Ktor's request
+     * lifecycle cancels it before any engine runs, the same for every engine).
+     */
+    @Test fun closeLetsCallsInFlightFinish() =
+        clientTest {
+            val release = CompletableDeferred<Unit>()
+            val (server, port) =
+                testServer(plain = true) {
+                    routing {
+                        get("/slow") {
+                            release.await()
+                            call.respondText("slow")
+                        }
+                        get("/") { call.respondText("ok") }
+                    }
+                }
+            try {
+                val client = testClient(engine = { maxConnectionsPerRoute = 1 })
+                val engine = client.engine as KuicksilverEngine
+                coroutineScope {
+                    val slow = async { client.get("http://127.0.0.1:$port/slow").bodyAsText() }
+                    withTimeout(5.seconds) { while (engine.h1.pool.liveCount < 1) delay(10) }
+                    val queued = async { runCatching { client.get("http://127.0.0.1:$port/").bodyAsText() } }
+                    withTimeout(5.seconds) { while (engine.h1.pool.waiterCount < 1) delay(10) }
+                    client.close()
+                    delay(200) // the cleanup would have run by now
+                    assertTrue(engine.cleanup.isActive, "the cleanup waits for the calls")
+                    release.complete(Unit)
+                    assertEquals("slow", slow.await())
+                    assertEquals("ok", queued.await().getOrThrow(), "a request queued before close() is served")
+                    withTimeout(5.seconds) { engine.cleanup.join() }
+                }
+                val shared = Kuicksilver.create { trust = ClientFixtures.trust }
+                val other = io.ktor.client.HttpClient(shared)
+                shared.close()
+                assertFailsWith<io.ktor.client.engine.ClientEngineClosedException> { other.get("http://127.0.0.1:$port/") }
+                other.close()
+            } finally {
+                server.stop(100, 500)
+            }
+        }
 }

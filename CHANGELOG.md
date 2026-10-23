@@ -289,6 +289,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   not learned either.
 - Ktor client: a 421 from an alternative removes only that alternative from the origin's cache (RFC 7838 section 6);
   the origin's other alternatives stay. Before, it removed all of them.
+- Ktor client: `close()` lets the calls already made finish, as Ktor's CIO engine does: a request in flight or still
+  queued for the connection limit gets its response, and the pools, sockets and selector close after the last call
+  ends. Before, the cleanup ran at once and closed them under those calls, which failed with a bare
+  `CancellationException` (one a caller could take for its own cancellation). A call made after `close()` fails with
+  Ktor's `ClientEngineClosedException`, as does one the HTTP/1.1 pool turns away once shut down.
 - HTTP/3: a body never waits forever when the connection ends under it. A response that arrived with the connection's
   close was returned with a body whose pump never ran (it was launched into the connection's already cancelled scope),
   so reading it hung; and when the connection ended while a response or a request body was being written, the

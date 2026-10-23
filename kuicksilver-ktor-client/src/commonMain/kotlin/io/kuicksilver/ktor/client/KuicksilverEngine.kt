@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.kuicksilver.ktor.client
 
+import io.ktor.client.engine.ClientEngineClosedException
 import io.ktor.client.engine.HttpClientEngineBase
 import io.ktor.client.engine.HttpClientEngineCapability
 import io.ktor.client.engine.callContext
@@ -108,7 +109,12 @@ internal class KuicksilverEngine(
             }
     }
 
+    /** Set by [close]: new calls fail at once, the ones already made finish before the cleanup runs. */
+    @kotlin.concurrent.Volatile
+    private var closed = false
+
     override fun close() {
+        closed = true
         h3.refuseDedicated() // at once, so a WebTransport call after close() fails instead of binding an endpoint
         reaper.cancel()
         engineJob.complete()
@@ -116,8 +122,14 @@ internal class KuicksilverEngine(
     }
 
     override suspend fun execute(data: HttpRequestData): HttpResponseData {
+        // the requests' job stays active while calls finish after close(), so Ktor's own closed check lets new calls in
+        if (closed) throw ClientEngineClosedException()
         events.emit("callStart") { callStart(data) }
         val callContext = callContext()
+        // Ktor's call job is not a child of the requests' job: a child of that job lives as long as the call (its response
+        // body included), so the cleanup after close() waits for the call (as CIO's) instead of closing its socket under it
+        val inFlight = Job(this.coroutineContext[Job])
+        callContext[Job]!!.invokeOnCompletion { inFlight.complete() }
         val r =
             try {
                 AbandonableBody.guard(route(data, callContext), callContext)

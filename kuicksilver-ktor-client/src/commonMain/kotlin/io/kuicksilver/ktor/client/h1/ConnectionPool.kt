@@ -4,6 +4,7 @@
 
 package io.kuicksilver.ktor.client.h1
 
+import io.ktor.client.engine.ClientEngineClosedException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlin.concurrent.atomics.AtomicInt
@@ -152,7 +153,7 @@ internal class ConnectionPool<C : PooledConnection>(
         try {
             waiter =
                 lock.withLock {
-                    if (shutDown) throw CancellationException("the connection pool is closed")
+                    if (shutDown) throw ClientEngineClosedException()
                     val r = routes.getOrPut(route) { Route(route) }
                     takeIdle(r, toClose)?.let { return it }
                     if (grantPermit(r, toClose)) return null
@@ -295,7 +296,10 @@ internal class ConnectionPool<C : PooledConnection>(
         return next
     }
 
-    /** Closes the idle connections and fails the waiters; later [acquire] calls fail. */
+    /**
+     * Closes the idle connections and fails the waiters; later [acquire] calls fail. Both fail with Ktor's
+     * [ClientEngineClosedException] (as the CIO engine), never a bare CancellationException a caller takes for its own.
+     */
     fun shutdown() {
         val toClose = ArrayList<C>()
         val failed =
@@ -312,7 +316,7 @@ internal class ConnectionPool<C : PooledConnection>(
                 routes.values.removeAll { it.live == 0 }
                 w
             }
-        failed.forEach { it.result.completeExceptionally(CancellationException("the connection pool is closed")) }
+        failed.forEach { it.result.completeExceptionally(ClientEngineClosedException()) }
         closeAll(toClose)
     }
 
