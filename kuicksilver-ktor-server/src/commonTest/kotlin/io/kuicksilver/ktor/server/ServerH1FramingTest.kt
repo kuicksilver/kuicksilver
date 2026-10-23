@@ -6,10 +6,12 @@ import io.ktor.server.application.Application
 import io.ktor.server.engine.connector
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.request.receiveText
+import io.ktor.server.response.respondBytesWriter
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
 import io.ktor.server.routing.post
 import io.ktor.server.routing.routing
+import io.ktor.utils.io.writeStringUtf8
 import io.kuicksilver.native.KslLoader
 import kotlinx.coroutines.withTimeout
 import kotlin.test.BeforeTest
@@ -31,6 +33,13 @@ class ServerH1FramingTest {
             post("/echo") { call.respondText("body=" + call.receiveText()) }
             get("/admin") { call.respondText("admin secret") }
             get("/") { call.respondText("root") }
+            get("/stream") {
+                call.respondBytesWriter {
+                    writeStringUtf8("hello ")
+                    flush()
+                    writeStringUtf8("world")
+                }
+            }
         }
     }
 
@@ -146,6 +155,42 @@ class ServerH1FramingTest {
                     assertTrue(resp.contains(" 400 "), "[$head]: $resp")
                     assertFalse(resp.contains("root"), "[$head]: $resp")
                 }
+            }
+        }
+
+    /**
+     * A response of unknown length to an HTTP/1.0 request: a server MUST NOT send Transfer-Encoding unless the request
+     * indicates HTTP/1.1 or later (RFC 9112 section 6.1), so the body is delimited by the close of the connection
+     * (section 6.3 item 8), which the response announces with `Connection: close` (section 9.6), also when the client
+     * asked for keep-alive. Before, Ktor's `Transfer-Encoding: chunked` went out and the body was chunk-encoded, which
+     * an HTTP/1.0 client reads as part of the body; with keep-alive the connection then stayed open.
+     */
+    @Test fun negative_http10StreamingResponseIsCloseDelimitedWithoutTransferEncoding() =
+        serverTest {
+            plainServer { port ->
+                for (connection in listOf("", "Connection: keep-alive\r\n")) {
+                    val resp = withTimeout(10.seconds) { rawHttp(port, "GET /stream HTTP/1.0\r\n$connection\r\n", tls = null) }
+                    val head = resp.substringBefore("\r\n\r\n")
+                    assertTrue(head.startsWith("HTTP/1.1 200 "), "[$connection]: $resp")
+                    assertFalse(head.contains("Transfer-Encoding", ignoreCase = true), "[$connection]: $resp")
+                    assertTrue(head.contains("\r\nConnection: close", ignoreCase = true), "[$connection]: $resp")
+                    assertEquals("hello world", resp.substringAfter("\r\n\r\n"), "[$connection]: $resp")
+                }
+            }
+        }
+
+    /** A response of known length to an HTTP/1.0 keep-alive request keeps its Content-Length and the connection. */
+    @Test fun http10KeepAliveResponseOfKnownLengthKeepsTheConnection() =
+        serverTest {
+            plainServer { port ->
+                val resp =
+                    withTimeout(10.seconds) {
+                        rawHttp(port, "GET / HTTP/1.0\r\nConnection: keep-alive\r\n\r\nGET / HTTP/1.0\r\n\r\n", tls = null)
+                    }
+                assertEquals(2, Regex("HTTP/1.1 200 ").findAll(resp).count(), resp)
+                assertTrue(resp.contains("\r\nContent-Length: 4\r\n"), resp)
+                assertFalse(resp.contains("Transfer-Encoding", ignoreCase = true), resp)
+                assertTrue(resp.endsWith("root"), resp)
             }
         }
 
