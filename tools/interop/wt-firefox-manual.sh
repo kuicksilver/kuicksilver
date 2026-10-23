@@ -50,6 +50,7 @@ version="$("$firefox" --version 2>/dev/null || echo "$firefox")"   # prints the 
 tmp="$(mktemp -d "${TMPDIR:-/tmp}/kuicksilver-wt-firefox.XXXXXX")"
 gradle_pid=""
 firefox_pid=""
+profile=""
 
 # Each background job below runs in its own process group (set -m), so a stop reaches the job's children too (gradlew's
 # JVM under quiet-gradle, Firefox's helpers) and nothing else; Ctrl-C at the terminal reaches only this script's group,
@@ -80,11 +81,32 @@ collect_firefox_qlog() {
     done < <(find "$base" -maxdepth 1 -type d -name 'qlog_*' -newer "$tmp/started" 2>/dev/null)
   done
 }
+# Firefox can leave its process group (on macOS it may restart itself, and its helpers outlive the main process): every
+# process whose command line names this run's throw-away profile is stopped too, and nothing else.
+# shellcheck disable=SC2329   # called from cleanup, the EXIT trap
+stop_profile_users() {
+  [ -n "${profile:-}" ] || return 0
+  local pids=() pid cmd
+  while read -r pid cmd; do
+    [ "$pid" = "$$" ] || [ "$pid" = "$PPID" ] && continue
+    case "$cmd" in *"$profile"*) pids+=("$pid") ;; esac
+  done < <(ps -axo pid=,command=)
+  [ "${#pids[@]}" -gt 0 ] || return 0
+  kill -TERM "${pids[@]}" 2>/dev/null || true
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    local alive=0
+    for pid in "${pids[@]}"; do kill -0 "$pid" 2>/dev/null && alive=1; done
+    [ "$alive" = 1 ] || return 0
+    sleep 1
+  done
+  kill -KILL "${pids[@]}" 2>/dev/null || true
+}
 # shellcheck disable=SC2329   # the EXIT trap
 cleanup() {
   local rc=$?
   trap - EXIT INT TERM
   stop_group "$firefox_pid"
+  stop_profile_users
   stop_group "$gradle_pid"
   collect_firefox_qlog
   if [ "${WT_KEEP:-}" = 1 ] || { [ "$rc" -ne 0 ] && [ "${WT_KEEP:-}" != 0 ]; }; then
