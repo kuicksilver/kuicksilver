@@ -53,6 +53,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -414,6 +415,104 @@ class ClientH1Test {
                 }
             }
         }
+
+    /** Whether request bytes arrive on [input] within [millis] (the client sent the body without waiting). */
+    private suspend fun bytesArriveWithin(
+        input: ByteReadChannel,
+        millis: Long,
+    ): Boolean = withTimeoutOrNull(millis) { input.awaitContent() } == true
+
+    /**
+     * RFC 9110 section 10.1.1: with `Expect: 100-continue` the body waits for the server; a final status first (417 here)
+     * is the response and the body is never sent, the connection (which promised a body) is not reused.
+     */
+    @Test fun expectContinueFinalStatusFirstSendsNoBody() =
+        clientTest {
+            var earlyBody: Boolean? = null
+            var connections = 0
+            rawServerPerConnection({ index, input, output ->
+                connections++
+                readHead(input)
+                if (index == 0) {
+                    earlyBody = bytesArriveWithin(input, 300)
+                    output.writeStringUtf8("HTTP/1.1 417 Expectation Failed\r\nContent-Length: 0\r\n\r\n")
+                } else {
+                    output.writeStringUtf8("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok")
+                }
+                input.readUTF8Line() // until the client closes
+            }) { port ->
+                testClient().use { c ->
+                    val r =
+                        c.post("http://127.0.0.1:$port/") {
+                            header(HttpHeaders.Expect, "100-continue")
+                            setBody("abc")
+                        }
+                    assertEquals(417, r.status.value)
+                    assertEquals(false, earlyBody, "the body went out before the server answered")
+                    assertEquals("ok", c.get("http://127.0.0.1:$port/next").bodyAsText())
+                    assertEquals(2, connections, "the connection that promised a body is not reused")
+                }
+            }
+        }
+
+    /** With `Expect: 100-continue` the body goes out after the server's 100 Continue, not before. */
+    @Test fun expectContinueBodyWaitsForContinue() =
+        clientTest {
+            for (streamed in listOf(false, true)) {
+                var earlyBody: Boolean? = null
+                var received: String? = null
+                rawServer({ input, output ->
+                    readHead(input)
+                    earlyBody = bytesArriveWithin(input, 300)
+                    output.writeStringUtf8("HTTP/1.1 100 Continue\r\n\r\n")
+                    received = input.readByteArray(3).decodeToString()
+                    output.writeStringUtf8("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok")
+                }) { port ->
+                    testClient().use { c ->
+                        val r =
+                            c.post("http://127.0.0.1:$port/") {
+                                header(HttpHeaders.Expect, "100-continue")
+                                header(HttpHeaders.ContentLength, "3")
+                                if (streamed) setBody(ByteReadChannel("abc")) else setBody("abc")
+                            }
+                        assertEquals(200, r.status.value)
+                        assertEquals("ok", r.bodyAsText())
+                        assertEquals(false, earlyBody, "streamed=$streamed: the body went out before 100 Continue")
+                        assertEquals("abc", received)
+                    }
+                }
+            }
+        }
+
+    /** A server that ignores `Expect: 100-continue` gets the body after a bounded wait (RFC 9110 section 10.1.1). */
+    @Test fun expectContinueBodySentAfterTimeoutWithoutAnswer() =
+        clientTest {
+            var received: String? = null
+            rawServer({ input, output ->
+                readHead(input)
+                received = input.readByteArray(3).decodeToString()
+                output.writeStringUtf8("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok")
+            }) { port ->
+                testClient().use { c ->
+                    val r =
+                        c.post("http://127.0.0.1:$port/") {
+                            header(HttpHeaders.Expect, "100-continue")
+                            setBody("abc")
+                        }
+                    assertEquals("ok", r.bodyAsText())
+                    assertEquals("abc", received)
+                }
+            }
+        }
+
+    /** One plain TCP connection driven by [handler]; [block] gets the port. */
+    private suspend fun rawServer(
+        handler: suspend (input: ByteReadChannel, output: ByteWriteChannel) -> Unit,
+        block: suspend (Int) -> Unit,
+    ) = rawServerPerConnection({ _, input, output ->
+        handler(input, output)
+        input.readUTF8Line() // until the client closes
+    }, block)
 
     /** A pooled connection the server closed is replaced once for an idempotent request (RFC 9110 section 9.2.2). */
     @Test fun staleConnectionRetriedOnceForGet() =

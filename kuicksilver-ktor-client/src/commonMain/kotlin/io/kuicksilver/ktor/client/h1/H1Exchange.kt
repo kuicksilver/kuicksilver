@@ -55,6 +55,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.io.EOFException
 import kotlin.coroutines.CoroutineContext
+import kotlin.time.Duration.Companion.seconds
 
 /**
  * Request line and headers (absolute-form through an HTTP proxy, RFC 9112 section 3.2.2). Inside a [tunneled] connection
@@ -115,7 +116,7 @@ internal suspend fun writeHeaders(
         ) {
             builder.headerLine(HttpHeaders.TransferEncoding, "chunked")
         }
-        if (expected != null && body !is OutgoingContent.NoContent) builder.headerLine(HttpHeaders.Expect, expected)
+        if (expected != null && expectsContinue(request)) builder.headerLine(HttpHeaders.Expect, expected)
 
         builder.emptyLine()
         output.writePacket(builder.build())
@@ -124,6 +125,16 @@ internal suspend fun writeHeaders(
         builder.release()
     }
 }
+
+/** Whether the request goes out with its Expect field: only with a body, which then waits for the server's answer. */
+internal fun expectsContinue(request: HttpRequestData): Boolean =
+    request.headers[HttpHeaders.Expect] != null && request.body !is OutgoingContent.NoContent
+
+/**
+ * How long a request with `Expect: 100-continue` waits for the server to answer before it sends its body anyway (RFC 9110
+ * section 10.1.1): 1 s, as Ktor's CIO engine and curl.
+ */
+internal val CONTINUE_TIMEOUT = 1.seconds
 
 /** The request body; the connection's output stays open for the next request (keep-alive). */
 internal suspend fun writeBody(
@@ -231,7 +242,9 @@ internal const val MAX_INTERIM_RESPONSES: Int = 5
  * body reader. [onBodyDone] runs when the body was read to its end (reuse allowed) or failed; WebSocket upgrades hand
  * the connection to the session (never reused). With [head], the connection's input under [input], every head is limited
  * to its size limit ([MAX_RESPONSE_HEAD_BYTES] for a pooled connection): a larger one fails with [ParserException],
- * which is not an IOException, so a pooled connection is not retried.
+ * which is not an IOException, so a pooled connection is not retried. With [continueBody] (a request with
+ * `Expect: 100-continue` whose body waits) a 100 Continue sends the body; a final response before it is the answer, the
+ * body is never sent and the connection, which promised one, is closed after the response.
  */
 @OptIn(InternalAPI::class)
 internal suspend fun readResponse(
@@ -241,11 +254,13 @@ internal suspend fun readResponse(
     output: ByteWriteChannel,
     callContext: CoroutineContext,
     head: HeadLimitedInput? = null,
+    continueBody: (suspend () -> Unit)? = null,
     onBodyDone: (AfterResponse) -> Unit,
 ): HttpResponseData =
     withContext(callContext) {
         var rawResponse: io.ktor.http.cio.Response
         var interim = 0
+        var unsentBody = continueBody
         while (true) {
             rawResponse = readResponseHead(input, head)
                 ?: throw ClosedReadChannelException(
@@ -253,9 +268,15 @@ internal suspend fun readResponse(
                 )
             // an interim 1xx (100 Continue, 103 Early Hints) is not the response: drop it and read the next head (RFC 9110 section 15.2)
             if (rawResponse.status / 100 != 1 || rawResponse.status == HttpStatusCode.SwitchingProtocols.value) break
+            val continued = rawResponse.status == HttpStatusCode.Continue.value
             rawResponse.release()
             if (++interim > MAX_INTERIM_RESPONSES) {
                 throw ParserException("More than $MAX_INTERIM_RESPONSES interim (1xx) responses before the final response")
+            }
+            val send = unsentBody
+            if (continued && send != null) {
+                unsentBody = null
+                send()
             }
         }
 
@@ -274,7 +295,8 @@ internal suspend fun readResponse(
             // with both Content-Length and Transfer-Encoding may be a smuggling or splitting attempt (section 6.3 item 3)
             val keepAlive =
                 version == HttpProtocolVersion.HTTP_1_1 && connectionType?.close != true &&
-                    ConnectionOptions.parse(request.headers[HttpHeaders.Connection])?.close != true && !framing.lengthAndEncoding
+                    ConnectionOptions.parse(request.headers[HttpHeaders.Connection])?.close != true && !framing.lengthAndEncoding &&
+                    unsentBody == null
 
             if (status == HttpStatusCode.SwitchingProtocols) {
                 // an extension the client did not offer fails the handshake before the connection is handed over
