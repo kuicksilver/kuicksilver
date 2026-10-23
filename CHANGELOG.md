@@ -118,6 +118,13 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- TLS: a session ticket now resumes only under the server name it was issued for (RFC 6066 section 3: a server "MUST
+  NOT accept the request to resume the session if the server_name extension contains a different name"). Virtual hosts
+  of one server (an `sniSelector` returning overrides with the same trust, hence the same session context, and the
+  process-wide ticket keys) accepted each other's tickets: a client offering `a.test`'s ticket with the name `b.test`
+  resumed `a.test`'s session and never saw `b.test`'s certificate. Such a ticket, or one without a server name when
+  the connection has one (and the reverse), now runs a full handshake and gets a new ticket. Tickets issued before this
+  release are not resumed (one full handshake each).
 - Ktor client: an HTTP/3 connection whose handshake completed just as the connect timeout fired is closed. It was
   dropped by the timeout and stayed open with nobody holding it until its idle timeout.
 - QUIC: a peer's RESET_STREAM never reads as the end of the stream. The core answers -1 both at a FIN and at a reset;

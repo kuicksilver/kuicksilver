@@ -158,9 +158,7 @@ int ksl_ssl_key_update(ksl_ssl *s, int request_peer) {
 int ksl_ssl_client_hello(ksl_ssl *s, ksl_client_hello *out) {
     if (!s->sni_pending) { ksl_ssl_set_error(s, KSL_E_NOT_PAUSED, "ksl: not paused at ClientHello"); return KSL_ERROR; }
     memset(out, 0, sizeof *out); const unsigned char *p; size_t l;
-    if (SSL_client_hello_get0_ext(s->ssl, TLSEXT_TYPE_server_name, &p, &l) == 1 && l >= 5 && p[2] == 0) {   /* list len(2) type(1) name len(2) name */
-        size_t nl = ((size_t)p[3] << 8) | p[4]; if (5 + nl <= l) { out->sni = p + 5; out->sni_len = nl; }
-    }
+    ksl_client_hello_sni(s->ssl, &out->sni, &out->sni_len);
     if (SSL_client_hello_get0_ext(s->ssl, TLSEXT_TYPE_application_layer_protocol_negotiation, &p, &l) == 1 && l >= 2) { out->alpn = p + 2; out->alpn_len = l - 2; }
     if (SSL_client_hello_get0_ext(s->ssl, TLSEXT_TYPE_signature_algorithms, &p, &l) == 1 && l >= 2) { out->sig_algs = p + 2; out->sig_algs_len = l - 2; }
     return KSL_OK;

@@ -76,11 +76,36 @@ int ksl_cert_verify_cb(X509_STORE_CTX *xctx, void *arg) {
    present, so a ClientHello without it is refused here, as OpenSSL's own QUIC stack and BoringSSL do. Then the pause for SNI selection
    (KSL_OPT_SNI_PAUSE): Kotlin reads ksl_ssl_client_hello and answers with ksl_ssl_sni_resume; the override is applied once (a second
    ClientHello after HelloRetryRequest keeps it). */
+int ksl_client_hello_sni(SSL *ssl, const unsigned char **name, size_t *len) {
+    const unsigned char *p; size_t l; *name = NULL; *len = 0;
+    if (SSL_client_hello_get0_ext(ssl, TLSEXT_TYPE_server_name, &p, &l) == 1 && l >= 5 && p[2] == 0) {   /* list len(2) type(1) name len(2) name */
+        size_t nl = ((size_t)p[3] << 8) | p[4]; if (5 + nl <= l) { *name = p + 5; *len = nl; return 1; }
+    }
+    return 0;   /* none; OpenSSL refuses a malformed extension itself (decode_error) */
+}
+/* The tag a ticket carries for its server name: SHA-256 of a presence byte and the host name in ASCII lower case (DNS names
+   compare case-insensitively, RFC 4343 section 3), so that no name and every distinct name have distinct tags. */
+static int sni_tag(SSL *ssl, uint8_t out[32]) {
+    const unsigned char *name; size_t len; uint8_t has = (uint8_t)ksl_client_hello_sni(ssl, &name, &len); unsigned int ol = 0;
+    EVP_MD_CTX *m = EVP_MD_CTX_new(); int ok = m && EVP_DigestInit_ex(m, EVP_sha256(), NULL) == 1 && EVP_DigestUpdate(m, &has, 1) == 1;
+    for (size_t i = 0; ok && i < len; i += 64) {
+        uint8_t low[64]; size_t k = len - i < sizeof low ? len - i : sizeof low;
+        for (size_t j = 0; j < k; j++) { uint8_t ch = name[i + j]; low[j] = ch >= 'A' && ch <= 'Z' ? (uint8_t)(ch + 32) : ch; }
+        ok = EVP_DigestUpdate(m, low, k) == 1;
+    }
+    ok = ok && EVP_DigestFinal_ex(m, out, &ol) == 1 && ol == 32; EVP_MD_CTX_free(m); return ok;
+}
 int ksl_client_hello_cb(SSL *ssl, int *al, void *arg) {
     (void)arg; ksl_ssl *s = SSL_get_ex_data(ssl, 1); const unsigned char *ext; size_t ext_len;
     if (s->mode == KSL_MODE_QUIC && SSL_client_hello_get0_ext(ssl, TLSEXT_TYPE_application_layer_protocol_negotiation, &ext, &ext_len) != 1) {
         *al = SSL_AD_NO_APPLICATION_PROTOCOL; return SSL_CLIENT_HELLO_ERROR;
     }
+    /* RFC 6066 section 3: a server "MUST NOT accept the request to resume the session if the server_name extension contains a
+       different name". OpenSSL compares no name on a TLS 1.3 resumption, and virtual hosts of one server (SNI overrides with the
+       same trust, hence the same session context, and the process-wide ticket keys) would accept each other's tickets: every
+       ticket carries this tag (ticket_gen_cb), and a ticket of another name runs a full handshake (ticket_dec_cb). Taken from the
+       ClientHello itself: OpenSSL decrypts the ticket before it parses server_name, so SSL_get_servername is not yet set then. */
+    if (!sni_tag(ssl, s->sni_tag)) { *al = SSL_AD_INTERNAL_ERROR; return SSL_CLIENT_HELLO_ERROR; }
     if (!s->owner->sni_pause || s->sni_pending == 3) return SSL_CLIENT_HELLO_SUCCESS;
     if (s->sni_pending == 0) { s->sni_pending = 1; return SSL_CLIENT_HELLO_RETRY; }
     if (s->sni_pending == 1) return SSL_CLIENT_HELLO_RETRY;

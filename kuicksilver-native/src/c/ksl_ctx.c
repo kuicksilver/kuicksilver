@@ -57,13 +57,18 @@ static int ticket_cb(SSL *ssl, unsigned char key_name[16], unsigned char iv[EVP_
     return enc ? 1 : (k == c->ticket_keys ? 1 : 2);   /* 2 = decrypted with a previous key: renew the ticket */
 }
 
-/* Ticket app data: one flag byte (KSL_TICKET_AFTER_VERDICT: issued by ksl_ssl_new_session_ticket, after the pin verdict), the QUIC
-   version of the issuing connection (4 bytes big-endian, the negotiated one; 0 for TLS over TCP), then the server's early context (0-RTT,
-   ADR-0015). A ticket of another version than the one the client started this connection with is not resumed (RFC 9369 section 5: a
-   full handshake, without 0-RTT); a resumed ticket whose early context differs keeps the resumption but gets no early data. The final
+/* Ticket app data: one flag byte (KSL_TICKET_AFTER_VERDICT: issued by ksl_ssl_new_session_ticket, after the pin verdict;
+   KSL_TICKET_NAME_BOUND: the name tag follows), the QUIC version of the issuing connection (4 bytes big-endian, the negotiated one; 0 for
+   TLS over TCP), the server name tag (32 bytes, ksl_client_hello_cb), then the server's early context (0-RTT, ADR-0015). A ticket of
+   another version than the one the client started this connection with is not resumed (RFC 9369 section 5: a full handshake, without
+   0-RTT), nor is a ticket of another server name or without a name tag (RFC 6066 section 3: "MUST NOT accept the request to resume the
+   session if the server_name extension contains a different name. Instead, it proceeds with a full handshake"); a resumed ticket whose
+   early context differs keeps the resumption but gets no early data. The final
    early-data decision also needs the transport's verdict for this hello (its replay register). Both callbacks are the base (session)
    context's: OpenSSL keeps them across an SNI override, and they read the settings of the session's current owner. */
 #define KSL_TICKET_AFTER_VERDICT 1
+#define KSL_TICKET_NAME_BOUND 2
+#define KSL_TICKET_HEAD (5 + sizeof ((ksl_ssl *)0)->sni_tag)   /* flags, version, name tag */
 static uint32_t ticket_version(const ksl_ssl *s, int issuing) {
     if (s->mode != KSL_MODE_QUIC) return 0;
     return issuing || !s->orig_version ? s->quic_version : s->orig_version;   /* issued: the negotiated version; resumed: the original one */
@@ -71,17 +76,18 @@ static uint32_t ticket_version(const ksl_ssl *s, int issuing) {
 static int ticket_gen_cb(SSL *ssl, void *arg) {
     (void)arg; ksl_ssl *s = SSL_get_ex_data(ssl, 1); SSL_SESSION *sess = SSL_get0_session(ssl);
     if (!s || !sess) return 0;
-    uint8_t data[5 + sizeof s->early_ctx]; uint32_t v = ticket_version(s, 1); data[0] = s->ticket_authorized ? KSL_TICKET_AFTER_VERDICT : 0;
+    uint8_t data[KSL_TICKET_HEAD + sizeof s->early_ctx]; uint32_t v = ticket_version(s, 1);
+    data[0] = KSL_TICKET_NAME_BOUND | (s->ticket_authorized ? KSL_TICKET_AFTER_VERDICT : 0);
     data[1] = (uint8_t)(v >> 24); data[2] = (uint8_t)(v >> 16); data[3] = (uint8_t)(v >> 8); data[4] = (uint8_t)v;
-    memcpy(data + 5, s->early_ctx, s->early_ctx_len);
-    return SSL_SESSION_set1_ticket_appdata(sess, data, 5 + s->early_ctx_len);
+    memcpy(data + 5, s->sni_tag, sizeof s->sni_tag); memcpy(data + KSL_TICKET_HEAD, s->early_ctx, s->early_ctx_len);
+    return SSL_SESSION_set1_ticket_appdata(sess, data, KSL_TICKET_HEAD + s->early_ctx_len);
 }
 static SSL_TICKET_RETURN ticket_dec_cb(SSL *ssl, SSL_SESSION *sess, const unsigned char *keyname, size_t keyname_len, SSL_TICKET_STATUS status, void *arg) {
     (void)keyname; (void)keyname_len; (void)arg; ksl_ssl *s = SSL_get_ex_data(ssl, 1);
     switch (status) {
     case SSL_TICKET_SUCCESS: case SSL_TICKET_SUCCESS_RENEW: {
         void *d = NULL; size_t l = 0; const uint8_t *p;
-        if (SSL_SESSION_get0_ticket_appdata(sess, &d, &l) != 1 || l < 5) { d = NULL; l = 0; }
+        if (SSL_SESSION_get0_ticket_appdata(sess, &d, &l) != 1 || l < KSL_TICKET_HEAD) { d = NULL; l = 0; }
         p = d;
         /* a context that issues tickets only after the pin verdict (NUM_TICKETS 0) resumes only such tickets: a ticket from anywhere else
            (another configuration sharing keys and session context, an in-handshake ticket) proves no verdict, so a full handshake runs */
@@ -89,7 +95,9 @@ static SSL_TICKET_RETURN ticket_dec_cb(SSL *ssl, SSL_SESSION *sess, const unsign
         if (!s || !p) return SSL_TICKET_RETURN_IGNORE_RENEW;
         uint32_t v = ((uint32_t)p[1] << 24) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 8) | p[4];
         if (v != ticket_version(s, 0)) { s->early_ctx_match = 0; return SSL_TICKET_RETURN_IGNORE_RENEW; }
-        s->early_ctx_match = l > 5 && l - 5 == s->early_ctx_len && !memcmp(p + 5, s->early_ctx, l - 5);
+        /* RFC 6066 section 3: another server name (or a ticket from before names were bound) gets a full handshake and a new ticket */
+        if (!(p[0] & KSL_TICKET_NAME_BOUND) || CRYPTO_memcmp(p + 5, s->sni_tag, sizeof s->sni_tag) != 0) { s->early_ctx_match = 0; return SSL_TICKET_RETURN_IGNORE_RENEW; }
+        s->early_ctx_match = l > KSL_TICKET_HEAD && l - KSL_TICKET_HEAD == s->early_ctx_len && !memcmp(p + KSL_TICKET_HEAD, s->early_ctx, l - KSL_TICKET_HEAD);
         return SSL_TICKET_RETURN_USE_RENEW;   /* client tickets are single-use: every resumption gets a fresh one */
     }
     case SSL_TICKET_EMPTY: case SSL_TICKET_NO_DECRYPT: return SSL_TICKET_RETURN_IGNORE_RENEW;
