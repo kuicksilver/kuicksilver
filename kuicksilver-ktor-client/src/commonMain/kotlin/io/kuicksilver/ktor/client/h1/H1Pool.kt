@@ -51,6 +51,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.coroutines.CoroutineContext
 
 /** One HTTP/1.1 connection: TCP, optionally a CONNECT tunnel, optionally TLS; its pool slot comes back when it closes. */
@@ -200,14 +201,24 @@ internal class H1Pool(
                 val input = activity?.let { ActivityInput(conn.input, it) } ?: conn.input
                 return withSocketInactivityTimeout(data, activity, onExpiry = { conn.close() }) {
                     writeHeaders(data, output, overProxy = proxy != null && !secure, tunneled = proxy != null && secure)
-                    // a streamed body is sent while the response is read (as the CIO engine): the server may answer first
-                    if (data.body.isStreamed()) {
-                        bodyJob = sendBodyConcurrently(data, conn, output, callContext)
-                    } else {
-                        writeBody(data, output, callContext)
+
+                    suspend fun sendBody() {
+                        // a streamed body is sent while the response is read (as the CIO engine): the server may answer first
+                        if (data.body.isStreamed()) {
+                            bodyJob = sendBodyConcurrently(data, conn, output, callContext)
+                        } else {
+                            writeBody(data, output, callContext)
+                        }
                     }
-                    val job = bodyJob
-                    readResponse(requestTime, data, input, conn.output, callContext, conn.input) { after ->
+                    // `Expect: 100-continue` (RFC 9110 section 10.1.1): the body waits for the server's 100 Continue, or a
+                    // final response that refuses it (417, 401), up to CONTINUE_TIMEOUT; a server that says nothing in that
+                    // time gets the body anyway
+                    val answered = expectsContinue(data) && withTimeoutOrNull(CONTINUE_TIMEOUT) { input.awaitContent() } != null
+                    if (!answered) sendBody()
+                    val continueBody: (suspend () -> Unit)? = if (answered) ({ sendBody() }) else null
+                    readResponse(requestTime, data, input, conn.output, callContext, conn.input, continueBody) { after ->
+                        val job = bodyJob
+
                         fun released(kept: Boolean) =
                             events.emit("connectionReleased") { connectionReleased(data, HttpProtocolVersion.HTTP_1_1, kept) }
 
