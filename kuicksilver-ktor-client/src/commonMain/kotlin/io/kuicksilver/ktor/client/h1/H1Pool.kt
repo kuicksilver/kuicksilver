@@ -294,7 +294,12 @@ internal class H1Pool(
                     val logger = events.logger
                     runCatching {
                         if (logger.isEnabled(io.kuicksilver.quic.LogLevel.Debug)) {
-                            logger.log(io.kuicksilver.quic.LogLevel.Debug, "HTTP/1.1 request body of ${data.method.value} ${data.url.protocol.name}://${data.url.host}:${data.url.port} failed; its connection is closed", e)
+                            logger.log(
+                                io.kuicksilver.quic.LogLevel.Debug,
+                                "HTTP/1.1 request body of ${data.method.value} " +
+                                    "${data.url.protocol.name}://${data.url.host}:${data.url.port} failed; its connection is closed",
+                                e,
+                            )
                         }
                     }
                 }
