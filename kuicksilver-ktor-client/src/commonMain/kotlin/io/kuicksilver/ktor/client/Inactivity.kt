@@ -20,6 +20,8 @@ import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.io.Buffer
 import kotlinx.io.Sink
 import kotlinx.io.Source
+import kotlin.concurrent.atomics.AtomicBoolean
+import kotlin.concurrent.atomics.ExperimentalAtomicApi
 
 /**
  * Progress of one exchange, in either direction, for the socket timeout. Ktor defines `socketTimeoutMillis` as the
@@ -40,8 +42,11 @@ internal class Activity {
     /**
      * Runs [block]; when [millis] pass without a [tick], [onExpiry] runs, [block] is cancelled and [timeout] is thrown
      * instead. [onExpiry] is for a [block] that cancellation does not reach (one that switches to another `Job`, as the
-     * vendored response reader does with the call's context): closing its connection ends its wait.
+     * vendored response reader does with the call's context): closing its connection ends its wait. Whichever ends
+     * first wins: once [block] has returned or thrown, an expiry that fired at the same moment is dropped (the watchdog
+     * can still run after its cancellation, which does not stop a timer that already fired, or on another thread).
      */
+    @OptIn(ExperimentalAtomicApi::class)
     suspend fun <T> within(
         millis: Long,
         timeout: (CancellationException) -> Throwable,
@@ -49,6 +54,7 @@ internal class Activity {
         block: suspend () -> T,
     ): T {
         var expired: Inactive? = null
+        val settled = AtomicBoolean(false) // claimed by the first of the block's end and the expiry
         try {
             return coroutineScope {
                 val scope = this
@@ -56,6 +62,7 @@ internal class Activity {
                     launch {
                         var seen = ticks.value
                         while (true) seen = withTimeoutOrNull(millis) { ticks.first { it != seen } } ?: break
+                        if (!settled.compareAndSet(false, true)) return@launch // the block ended first
                         val inactive = Inactive(millis)
                         expired = inactive
                         onExpiry()
@@ -64,6 +71,7 @@ internal class Activity {
                 try {
                     block()
                 } finally {
+                    settled.compareAndSet(false, true)
                     watchdog.cancel()
                 }
             }

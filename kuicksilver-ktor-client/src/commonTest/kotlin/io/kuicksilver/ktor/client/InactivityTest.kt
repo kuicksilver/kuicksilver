@@ -11,6 +11,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.currentTime
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.yield
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -106,5 +107,24 @@ class InactivityTest {
             job.join()
             assertEquals(true, job.isCancelled)
             assertEquals(500L, currentTime)
+        }
+
+    /**
+     * A block that returns at the deadline, after the timer fired but before the watchdog ran, keeps its result: the
+     * expiry is not reported, and [Activity.within]'s `onExpiry` (which closes the connection) does not run.
+     */
+    @Test fun blockReturningAsTheTimerFiresKeepsItsResult() =
+        runTest(timeout = 20.seconds) {
+            val activity = Activity()
+            var expiries = 0
+            val result =
+                activity.within(1_000, { Timeout() }, onExpiry = { expiries++ }) {
+                    yield() // the watchdog arms its timer first, so it fires first at 1 s
+                    delay(1_000)
+                    "done"
+                }
+            assertEquals("done", result)
+            assertEquals(0, expiries)
+            assertEquals(1_000L, currentTime)
         }
 }
