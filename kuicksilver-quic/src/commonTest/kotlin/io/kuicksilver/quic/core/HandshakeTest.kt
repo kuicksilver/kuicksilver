@@ -14,6 +14,7 @@ import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.StreamPriority
 import io.kuicksilver.quic.TestCerts
 import io.kuicksilver.quic.ksl
+import io.kuicksilver.quic.nullDatagramHasAckElicitingInitial
 import io.kuicksilver.tls.Certificate
 import io.kuicksilver.tls.EncryptionLevel
 import io.kuicksilver.tls.QuicCrypto
@@ -111,6 +112,58 @@ class HandshakeTest {
         } finally {
             p.close()
         }
+    }
+
+    /**
+     * RFC 9000 section 14.1: a server MUST expand every datagram carrying an ack-eliciting Initial to 1200 bytes. The first flight
+     * is Initial + Handshake with a 1-RTT frame queued behind them; the Handshake flight is swept so it ends at every offset before
+     * 1200, including the last 64 bytes, where the 1-RTT packet no longer fits and could not pad the datagram.
+     */
+    @Test fun negative_serverInitialDatagramPaddedWhenTheNextPacketDoesNotFit() {
+        val short = ArrayList<String>()
+        for (len in 1..1150) {
+            val p = CorePair()
+            p.onServerCreated = { s ->
+                s.testInjectCrypto = Triple(2, 10_000L, len)
+                s.testInjectFrames += 3 to byteArrayOf(0x01) // PING
+            }
+            p.filterToClient = { _, b ->
+                if (b.size < 1200 && nullDatagramHasAckElicitingInitial(b)) short += "Handshake CRYPTO $len: ${b.size} bytes"
+                true
+            }
+            try {
+                p.step() // the ClientHello makes the server
+                p.step() // the server answers it
+            } finally {
+                p.close()
+            }
+        }
+        assertTrue(short.isEmpty(), short.joinToString())
+    }
+
+    /**
+     * RFC 9000 section 14.1: a client MUST expand every datagram carrying Initial packets to 1200 bytes. Its second flight is
+     * Initial + Handshake (Finished) + 1-RTT; the Initial is swept so it ends at every offset before 1200, including the last
+     * 64 bytes, where the Handshake packet no longer fits behind it.
+     */
+    @Test fun negative_clientInitialDatagramPaddedWhenTheNextPacketDoesNotFit() {
+        val short = ArrayList<String>()
+        for (len in 1..1150) {
+            val p = CorePair()
+            try {
+                p.step() // the ClientHello makes the server
+                p.step() // the server's first flight is queued for the client
+                p.client.testInjectCrypto = Triple(0, 10_000L, len)
+                p.filterToServer = { _, b ->
+                    if (b[0].toInt() and 0xf0 == 0xc0 && b.size < 1200) short += "Initial CRYPTO $len: ${b.size} bytes"
+                    true
+                }
+                p.step()
+            } finally {
+                p.close()
+            }
+        }
+        assertTrue(short.isEmpty(), short.joinToString())
     }
 
     @Test fun largeClientHelloSpansMultipleInitials() {
