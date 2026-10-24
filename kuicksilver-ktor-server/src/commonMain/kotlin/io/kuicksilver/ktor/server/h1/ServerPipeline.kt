@@ -99,10 +99,10 @@ internal class H1RequestScope(
      */
     val continueSent: CompletableJob? = null,
     /**
-     * For an HTTP/1.0 request: completed as the response head goes out, true when the response has no known length and
-     * the close of the connection delimits its body (see [H1Response]), false otherwise. Null for other requests.
+     * Completed as the response head goes out, true when the response says `Connection: close` (see [H1Response]): the
+     * connection ends after it (RFC 9112 section 9.6). False when the handler ends without a response head.
      */
-    val closeDelimited: CompletableDeferred<Boolean>? = null,
+    val endsConnection: CompletableDeferred<Boolean>? = null,
 ) : CoroutineScope
 
 /**
@@ -358,7 +358,7 @@ internal fun CoroutineScope.startH1Pipeline(
                 val continueSent =
                     if (expectedHttpBody && expectsContinue(request, version)) Job() else null
                 val body = if (expectedHttpBody) RequestBody(framing, input, continueSent) else null
-                val closeDelimited = if (version == HttpProtocolVersion.HTTP_1_0) CompletableDeferred<Boolean>() else null
+                val endsConnection = CompletableDeferred<Boolean>()
 
                 val handlerJob =
                     launch(requestContext, start = CoroutineStart.UNDISPATCHED) {
@@ -374,7 +374,7 @@ internal fun CoroutineScope.startH1Pipeline(
                                     draining?.isCompleted == true || bodyTimedOut.isCompleted || body?.endsConnectionAtResponse() == true
                                 },
                                 continueSent = continueSent,
-                                closeDelimited = closeDelimited,
+                                endsConnection = endsConnection,
                             )
                         try {
                             handler(handlerScope, request)
@@ -390,7 +390,7 @@ internal fun CoroutineScope.startH1Pipeline(
                         } finally {
                             response.close()
                             upgraded?.complete(false)
-                            closeDelimited?.complete(false)
+                            endsConnection.complete(false)
                         }
                     }
 
@@ -473,9 +473,11 @@ internal fun CoroutineScope.startH1Pipeline(
                 }
 
                 if (isLastHttpRequest(version, connectionOptions)) break
-                // an HTTP/1.0 keep-alive response of unknown length ends at the close (RFC 9112 section 6.3 item 8): no
-                // further request is read on this connection
-                if (closeDelimited?.await() == true) break
+                // a response that says `Connection: close` (the application's, a stopping server's, or an HTTP/1.0
+                // response of unknown length that the close delimits, section 6.3 item 8) ends the connection: the server
+                // MUST NOT process any further request received on it (RFC 9112 section 9.6), so the next one is read
+                // only once this response's head shows it may be
+                if (endsConnection.await()) break
             }
         } catch (_: IOException) {
             // the client went away

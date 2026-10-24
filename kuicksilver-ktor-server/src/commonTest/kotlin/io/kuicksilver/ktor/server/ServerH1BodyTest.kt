@@ -118,25 +118,17 @@ class ServerH1BodyTest {
         }
 
     /**
-     * Per request: a pipelined earlier request's own 500, answered after the later request's body timed out, stays a
-     * 500. Before, a flag of the connection relabelled every 500 after a body timeout as 408.
+     * Per request: a pipelined earlier request's own 500 stays a 500 and the later request whose body timed out gets its
+     * 408. Before, a flag of the connection relabelled every 500 after a body timeout as 408. The later request is now
+     * read only once the earlier response's head is out (it may say `Connection: close`, RFC 9112 section 9.6), so the
+     * earlier handler can no longer wait for the later one's timeout: it fails right away.
      */
     @Test fun negative_earlierPipelinedRequestsOwn500IsNotRelabelled() =
         serverTest {
-            val timedOut = CompletableDeferred<Unit>()
             plainServer(module = {
                 routing {
-                    get("/first") {
-                        timedOut.await()
-                        error("the first request fails on its own")
-                    }
-                    post("/body") {
-                        try {
-                            call.receiveText()
-                        } finally {
-                            timedOut.complete(Unit)
-                        }
-                    }
+                    get("/first") { error("the first request fails on its own") }
+                    post("/body") { call.receiveText() }
                 }
             }) { port ->
                 val r = withTimeout(10.seconds) { rawHttp(port, "GET /first HTTP/1.1\r\nHost: s\r\n\r\n" + stalledPost, tls = null) }

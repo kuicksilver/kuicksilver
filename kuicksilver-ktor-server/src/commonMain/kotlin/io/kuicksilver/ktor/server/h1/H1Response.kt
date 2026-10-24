@@ -9,6 +9,7 @@ package io.kuicksilver.ktor.server.h1
 
 import io.ktor.http.HeadersBuilder
 import io.ktor.http.HttpHeaders
+import io.ktor.http.HttpProtocolVersion
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.cio.RequestResponseBuilder
 import io.ktor.http.cio.encodeChunked
@@ -38,8 +39,12 @@ internal class H1Response(
     private val altSvc: String?,
     /** True once the connection ends after this response (the server is stopping): it then says `Connection: close`. */
     private val closing: () -> Boolean = { false },
-    /** For an HTTP/1.0 request: completed with whether the close of the connection delimits this response's body. */
-    private val closeDelimited: CompletableDeferred<Boolean>? = null,
+    /**
+     * Completed as the response head goes out with whether the connection ends after this response: the head says
+     * `Connection: close` (RFC 9112 section 9.6), set by the application, by [closing], or because the close delimits
+     * the body of a response of unknown length to an HTTP/1.0 request.
+     */
+    private val endsConnection: CompletableDeferred<Boolean>? = null,
 ) : BaseApplicationResponse(call) {
     private var statusCode: HttpStatusCode = HttpStatusCode.OK
     private val headersBuilder = HeadersBuilder()
@@ -128,17 +133,18 @@ internal class H1Response(
         if (altSvc != null && headersBuilder["Alt-Svc"] == null && statusCode.value != 421) headersBuilder.append("Alt-Svc", altSvc)
         // the server is stopping and reads no further request here: say so (RFC 9112 section 9.6), as Go's Shutdown does
         if (closing() && statusCode != HttpStatusCode.SwitchingProtocols) headersBuilder[HttpHeaders.Connection] = "close"
-        if (closeDelimited != null) {
+        if (HttpProtocolVersion.parse(call.request.local.version) == HttpProtocolVersion.HTTP_1_0 &&
+            headersBuilder.contains(HttpHeaders.TransferEncoding)
+        ) {
             // HTTP/1.0 request: a server MUST NOT send Transfer-Encoding (RFC 9112 section 6.1). A body of unknown length
             // (Ktor asked for chunked) goes out raw and the close delimits it (section 6.3 item 8), which `Connection:
             // close` announces (section 9.6), whatever the request's keep-alive
-            val unknownLength = headersBuilder.contains(HttpHeaders.TransferEncoding)
-            if (unknownLength) {
-                headersBuilder.remove(HttpHeaders.TransferEncoding)
-                headersBuilder[HttpHeaders.Connection] = "close"
-            }
-            closeDelimited.complete(unknownLength)
+            headersBuilder.remove(HttpHeaders.TransferEncoding)
+            headersBuilder[HttpHeaders.Connection] = "close"
         }
+        // a server that sends the "close" option MUST initiate the close after this response and MUST NOT process any
+        // further request on the connection (RFC 9112 section 9.6); a 101 hands the connection to the new protocol
+        endsConnection?.complete(statusCode != HttpStatusCode.SwitchingProtocols && saysClose())
         val builder = RequestResponseBuilder()
         try {
             builder.responseLine("HTTP/1.1", statusCode.value, statusCode.description)
@@ -157,6 +163,12 @@ internal class H1Response(
             builder.release()
         }
     }
+
+    /** Whether a Connection field line of the response carries the `close` option (RFC 9110 section 7.6.1, any case). */
+    private fun saysClose(): Boolean =
+        headersBuilder.getAll(HttpHeaders.Connection).orEmpty().any { line ->
+            line.split(',').any { it.trim().equals("close", ignoreCase = true) }
+        }
 
     private fun preparedBodyChannel(): ByteWriteChannel {
         val chunked = headers[HttpHeaders.TransferEncoding] == "chunked"
