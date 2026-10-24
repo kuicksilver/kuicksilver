@@ -6,6 +6,7 @@ import io.ktor.server.application.Application
 import io.ktor.server.engine.connector
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.request.receiveText
+import io.ktor.server.request.uri
 import io.ktor.server.response.respondBytesWriter
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
@@ -33,6 +34,10 @@ class ServerH1FramingTest {
             post("/echo") { call.respondText("body=" + call.receiveText()) }
             get("/admin") { call.respondText("admin secret") }
             get("/") { call.respondText("root") }
+            get("/echo-host") {
+                val local = call.request.local
+                call.respondText("${local.serverHost}|${local.serverPort}|${call.request.uri}|${call.request.queryParameters["q"]}")
+            }
             get("/stream") {
                 call.respondBytesWriter {
                     writeStringUtf8("hello ")
@@ -219,6 +224,49 @@ class ServerH1FramingTest {
                 assertTrue(resp.contains(" 400 "), resp)
                 assertFalse(resp.contains("SECRET"), resp)
                 assertFalse(resp.contains("Cookie"), resp)
+            }
+        }
+
+    /**
+     * RFC 9112 section 3.2.2: a server MUST accept the absolute-form, and when the target is in absolute-form it MUST
+     * ignore the received Host field and use the host of the request-target (also section 3.3: the target URI is the
+     * request-target). Before, the raw target went to routing (404) and the host came from Host.
+     */
+    @Test fun absoluteFormIsRoutedByItsPathAndAuthority() =
+        serverTest {
+            plainServer { port ->
+                for ((target, expected) in listOf(
+                    "http://a.example/echo-host?q=1" to "a.example|80|/echo-host?q=1|1",
+                    "HTTP://A.example:8080/echo-host" to "A.example|8080|/echo-host|null",
+                    "http://a.example?q=2" to null, // empty path: "/" (RFC 9110 section 4.2.3)
+                )) {
+                    val resp =
+                        withTimeout(10.seconds) {
+                            rawHttp(port, "GET $target HTTP/1.1\r\nHost: b.example\r\nConnection: close\r\n\r\n", tls = null)
+                        }
+                    assertTrue(resp.startsWith("HTTP/1.1 200 "), "[$target]: $resp")
+                    assertTrue(resp.endsWith(expected ?: "root"), "[$target]: $resp")
+                }
+            }
+        }
+
+    /**
+     * An "http" URI with an empty host: a recipient MUST reject it as invalid (RFC 9110 section 4.2.1). Userinfo in an
+     * absolute-form target: a recipient SHOULD treat it as an error, it is likely used to obscure the authority (section
+     * 4.2.4). Both 400; a Host field is still required (RFC 9112 section 3.2).
+     */
+    @Test fun negative_absoluteFormWithEmptyHostOrUserinfoIsRejected() =
+        serverTest {
+            plainServer { port ->
+                for (head in listOf(
+                    "GET http:///echo-host HTTP/1.1\r\nHost: b.example\r\n",
+                    "GET http://u:p@a.example/echo-host HTTP/1.1\r\nHost: b.example\r\n",
+                    "GET http://a.example/echo-host HTTP/1.1\r\n",
+                )) {
+                    val resp = withTimeout(10.seconds) { rawHttp(port, "${head}Connection: close\r\n\r\n", tls = null) }
+                    assertTrue(resp.startsWith("HTTP/1.1 400 "), "[$head]: $resp")
+                    assertFalse(resp.contains("example|"), "[$head]: $resp")
+                }
             }
         }
 
