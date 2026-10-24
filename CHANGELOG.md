@@ -267,6 +267,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- Ktor client, HTTP/1.1: a response whose `Content-Length` or `Transfer-Encoding` has whitespace other than SP and
+  HTAB around a value (VT, FF, U+00A0) fails, and its connection is closed instead of reused (RFC 9110 sections 5.6.3
+  and 8.6, RFC 9112 section 6.3 item 5). `Content-Length: 5<VT>` framed a 5-byte body and `Transfer-Encoding:
+  chunked<U+00A0>` a chunked one, so with a proxy in front that framed the response otherwise the bytes behind it
+  became the response to the next request (response splitting). A `Transfer-Encoding` that is not a list of transfer
+  codings or that applies `chunked` twice (RFC 9112 section 6.1) fails the same way.
 - Ktor server, HTTP/1.1: `Content-Length` and `Transfer-Encoding` values with whitespace other than SP and HTAB
   around them (VT, FF, U+00A0) are refused with 400 and the connection closed (RFC 9110 sections 5.6.3 and 8.6, RFC
   9112 section 6.3 items 4 and 5). They were trimmed as Unicode whitespace, so `Content-Length: 5<VT>` framed a 5-byte
