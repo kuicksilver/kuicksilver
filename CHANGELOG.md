@@ -140,6 +140,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   path and query, with the target's authority as the host and the Host field ignored (RFC 9112 section 3.2.2, two
   MUSTs); before, routing saw the whole URI (404) and the host came from Host. An "http" or "https" target with an empty
   host (RFC 9110 section 4.2.1) or with userinfo (section 4.2.4) gets 400.
+- Ktor server, HTTP/1.1: a response the application marks `Connection: close` now ends the connection after it, and
+  no further pipelined request is processed (RFC 9112 section 9.6); before, the next request ran and was answered and
+  the connection stayed open. The next pipelined request is now read once the previous response's head is out.
 - QUIC, Linux and Apple platforms: a UDP send interrupted by a signal (`EINTR`) is retried instead of failing the
   socket; on Linux an interrupted GSO send no longer withdraws GSO.
 - TLS: a server context without session ticket keys (a QUIC server with tickets off, a keyless SNI override base) no

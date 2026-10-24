@@ -32,12 +32,12 @@ internal class H1Call(
     peerCertificates: List<Certificate>,
     altSvc: String?,
     closing: () -> Boolean = { false },
-    closeDelimited: CompletableDeferred<Boolean>? = null,
+    endsConnection: CompletableDeferred<Boolean>? = null,
 ) : BaseApplicationCall(application),
     CoroutineScope {
     override val request = H1Request(this, remoteAddress, localAddress, input, _request, scheme)
 
-    override val response = H1Response(this, output, input, engineDispatcher, appDispatcher, upgraded, altSvc, closing, closeDelimited)
+    override val response = H1Response(this, output, input, engineDispatcher, appDispatcher, upgraded, altSvc, closing, endsConnection)
 
     internal fun release() {
         request.release()

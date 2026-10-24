@@ -2,11 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.kuicksilver.ktor.server
 
+import io.ktor.http.HttpHeaders
 import io.ktor.server.application.Application
 import io.ktor.server.engine.connector
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.request.receiveText
 import io.ktor.server.request.uri
+import io.ktor.server.response.header
 import io.ktor.server.response.respondBytesWriter
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
@@ -15,6 +17,9 @@ import io.ktor.server.routing.routing
 import io.ktor.utils.io.writeStringUtf8
 import io.kuicksilver.native.KslLoader
 import kotlinx.coroutines.withTimeout
+import kotlin.concurrent.atomics.AtomicInt
+import kotlin.concurrent.atomics.ExperimentalAtomicApi
+import kotlin.concurrent.atomics.incrementAndFetch
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -26,8 +31,12 @@ import kotlin.time.Duration.Companion.seconds
  * How the server checks an HTTP/1.1 request (RFC 9112 section 3.2), finds its end and whether the connection carries another
  * (sections 6, 7).
  */
+@OptIn(ExperimentalAtomicApi::class)
 class ServerH1FramingTest {
     @BeforeTest fun load() = KslLoader.ensureLoaded()
+
+    /** How often the handler of `/after-close` ran. */
+    private val afterClose = AtomicInt(0)
 
     private val routes: Application.() -> Unit = {
         routing {
@@ -37,6 +46,14 @@ class ServerH1FramingTest {
             get("/echo-host") {
                 val local = call.request.local
                 call.respondText("${local.serverHost}|${local.serverPort}|${call.request.uri}|${call.request.queryParameters["q"]}")
+            }
+            get("/close") {
+                call.response.header(HttpHeaders.Connection, "close")
+                call.respondText("bye")
+            }
+            get("/after-close") {
+                afterClose.incrementAndFetch()
+                call.respondText("after")
             }
             get("/stream") {
                 call.respondBytesWriter {
@@ -267,6 +284,29 @@ class ServerH1FramingTest {
                     assertTrue(resp.startsWith("HTTP/1.1 400 "), "[$head]: $resp")
                     assertFalse(resp.contains("example|"), "[$head]: $resp")
                 }
+            }
+        }
+
+    /**
+     * RFC 9112 section 9.6: a server that sends a "close" connection option MUST initiate closure of the connection after
+     * that response and MUST NOT process any further requests received on it. Before, a handler's `Connection: close`
+     * was written, and the pipelined `/after-close` was still executed and answered on the same connection.
+     */
+    @Test fun negative_responseConnectionCloseEndsThePipeline() =
+        serverTest {
+            plainServer { port ->
+                val resp =
+                    withTimeout(10.seconds) {
+                        rawHttp(
+                            port,
+                            "GET /close HTTP/1.1\r\nHost: s\r\n\r\nGET /after-close HTTP/1.1\r\nHost: s\r\n\r\n",
+                            tls = null,
+                        )
+                    }
+                assertTrue(resp.startsWith("HTTP/1.1 200 "), resp)
+                assertTrue(resp.endsWith("bye"), resp)
+                assertEquals(1, Regex("HTTP/1.1 ").findAll(resp).count(), resp)
+                assertEquals(0, afterClose.load(), resp)
             }
         }
 
