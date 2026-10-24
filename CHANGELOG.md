@@ -118,6 +118,14 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- Ktor server, HTTP/1.1: `Content-Length` and `Transfer-Encoding` values with whitespace other than SP and HTAB
+  around them (VT, FF, U+00A0) are refused with 400 and the connection closed (RFC 9110 sections 5.6.3 and 8.6, RFC
+  9112 section 6.3 items 4 and 5). They were trimmed as Unicode whitespace, so `Content-Length: 5<VT>` framed a 5-byte
+  body and `Transfer-Encoding: chunked<U+00A0>` a chunked one, while a front proxy that ignores the invalid field
+  forwards those bytes as the next request (request smuggling). `Transfer-Encoding` is now parsed as a list of transfer
+  codings (RFC 9112 section 6.1): a value that is not one, or that applies `chunked` twice, gets 400, and a coding the
+  server does not implement before the final `chunked` (`gzip, chunked`, also `identity, chunked`) gets 501 instead of
+  400 (section 6.1); `identity` is no longer ignored, as it is no transfer coding since RFC 7230.
 - QUIC, Linux and Apple platforms: a UDP send interrupted by a signal (`EINTR`) is retried instead of failing the
   socket; on Linux an interrupted GSO send no longer withdraws GSO.
 - TLS: a server context without session ticket keys (a QUIC server with tickets off, a keyless SNI override base) no
