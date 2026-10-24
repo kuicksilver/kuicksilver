@@ -148,6 +148,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   fit behind the Initial or Handshake packet (a ClientHello ending in the last 64 bytes before 1200 with 0-RTT data
   queued, or a server flight ending there with 1-RTT frames queued), the datagram left short, the peer dropped it, and
   every retransmission repeated the same layout. The packet with no room behind it now carries the PADDING frames.
+- QUIC: a server whose anti-amplification budget is below 1200 bytes no longer sends an ack-eliciting Initial packet (a
+  PTO probe or CRYPTO data) in a datagram of the budget's size, which RFC 9000 section 14.1 forbids and the client drops.
+  The Initial data waits until the client's next datagram raises the budget (section 8.1); an Initial ACK and Handshake
+  data still go out within the budget, and no PTO is armed while no probe can be sent (RFC 9002 section 6.2.2.1).
 - QUIC, Linux and Apple platforms: a UDP send interrupted by a signal (`EINTR`) is retried instead of failing the
   socket; on Linux an interrupted GSO send no longer withdraws GSO.
 - TLS: a server context without session ticket keys (a QUIC server with tickets off, a keyless SNI override base) no

@@ -610,12 +610,24 @@ public class ConnectionCore internal constructor(
         val reason: ByteArray,
     )
 
+    /**
+     * Server: the anti-amplification limit leaves no PTO probe to send, so no PTO is armed (RFC 9002 section 6.2.2.1). Below 64
+     * bytes PacketBuilder builds no datagram; below 1200 an ack-eliciting Initial may not go out (RFC 9000 section 14.1), so a
+     * probe needs Handshake data in flight to resend.
+     */
+    private fun amplificationLeavesNoProbe(): Boolean {
+        if (amplification.validated) return false
+        val budget = amplification.budget()
+        if (budget < 64) return true
+        if (budget >= 1200) return false
+        val handshake = SpaceId.Handshake
+        return writeKeys[2] == null || spaceDiscarded[handshake.ordinal] || loss.space(handshake).ackElicitingInFlight <= 0
+    }
+
     init {
         paths.onEvicted = { releasePathCid(it) }
         if (role == TlsRole.Server) {
-            loss.amplificationBlocked = {
-                !amplification.validated && amplification.budget() < 64
-            } // what PacketBuilder needs for a datagram
+            loss.amplificationBlocked = { amplificationLeavesNoProbe() }
         }
         cids.core = this
         cids.adoptInitialLocalCid(localCid)

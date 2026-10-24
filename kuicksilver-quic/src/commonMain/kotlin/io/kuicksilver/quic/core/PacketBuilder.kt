@@ -42,6 +42,13 @@ internal class PacketBuilder(
     /** The ECN codepoint of the datagram being built (per path validation state). */
     private var currentMark: io.kuicksilver.quic.Ecn = io.kuicksilver.quic.Ecn.NotEct
 
+    /**
+     * Set while a datagram below 1200 bytes is built (a server's anti-amplification budget): its Initial packet may carry an ACK
+     * but nothing ack-eliciting, since a datagram with an ack-eliciting Initial must reach 1200 bytes (RFC 9000 section 14.1) and
+     * the server must not send more than the budget (section 8.1). CRYPTO and PTO probes of the Initial space wait for budget.
+     */
+    private var initialAckOnly = false
+
     /** Set while a DPLPMTUD probe is built: a 1-RTT packet of PING and padding, outside congestion control (RFC 9000 section 14.4). */
     private var pmtuProbe = false
 
@@ -235,6 +242,7 @@ internal class PacketBuilder(
     ): Boolean {
         if (c.spaceDiscarded[space.ordinal] || c.writeKeys[spaceLevel(space)] == null) return false
         if (c.closeFrame != null) return spaceLevel(space) != 1 && !c.closeSentIn[space.ordinal] // no CONNECTION_CLOSE (0x1c) in 0-RTT
+        if (space == SpaceId.Initial && initialAckOnly) return hasAckToSend(space, now)
         if (spaceLevel(space) == 1) {
             return !congested && (c.streams.hasControlFrames() || c.streams.hasStreamData() || c.testInjectFrames.firstOrNull()?.first == 1)
         }
@@ -250,6 +258,7 @@ internal class PacketBuilder(
         now: TimeMark,
     ): Int {
         congested = c.cc.bytesInFlight >= c.cc.cwnd && c.probePending.all { it == 0 }
+        initialAckOnly = c.role == TlsRole.Server && maxLen < 1200
         if (!congested) pacer(now)
         var pos = 0
         var needPad = false
@@ -268,7 +277,7 @@ internal class PacketBuilder(
             // RFC 9000 section 14.1: a client expands every datagram carrying an Initial packet to 1200 bytes, a server every one
             // carrying an ack-eliciting Initial packet, with PADDING frames or by coalescing (section 12.2). The last packet pads
             // the datagram; an earlier one pads itself when a following packet could no longer fit behind it
-            val initialNeedsPad = space == SpaceId.Initial && (c.role == TlsRole.Client || hasData(SpaceId.Initial))
+            val initialNeedsPad = space == SpaceId.Initial && !initialAckOnly && (c.role == TlsRole.Client || hasData(SpaceId.Initial))
             val pad = needPad || initialNeedsPad
             val n = buildPacket(buf, pos, maxLen, space, now, padToEnd = last && pad, padIfNoRoomAfter = !last && pad)
             if (n == 0) continue
@@ -476,7 +485,7 @@ internal class PacketBuilder(
                     c.pathResponsesSentForTest++
                 } // section 8.2.2
             }
-            if (!congested) {
+            if (!congested && !(space == SpaceId.Initial && initialAckOnly)) {
                 val cs = c.cryptoStreams.send[level]
                 while (cs.hasPending) {
                     val overhead = FrameEncoder.cryptoOverhead(cs.nextOffset, w.remaining)

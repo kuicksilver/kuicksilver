@@ -8,6 +8,7 @@ import io.kuicksilver.native.KslLoader
 import io.kuicksilver.native.PacketBuffer
 import io.kuicksilver.native.of
 import io.kuicksilver.quic.ConnectionEvent
+import io.kuicksilver.quic.ConnectionState
 import io.kuicksilver.quic.CoreFixtures
 import io.kuicksilver.quic.CorePair
 import io.kuicksilver.quic.Ecn
@@ -16,6 +17,7 @@ import io.kuicksilver.quic.TestCerts
 import io.kuicksilver.quic.TimeMark
 import io.kuicksilver.quic.TransportError
 import io.kuicksilver.quic.ksl
+import io.kuicksilver.quic.nullDatagramHasAckElicitingInitial
 import io.kuicksilver.quic.wire.QuicWireException
 import io.kuicksilver.tls.TrustConfig
 import io.kuicksilver.tls.VerifyResult
@@ -299,6 +301,7 @@ class HandshakeLimitsTest {
      * RFC 9000 section 8.1 with budget left after the first flight (the default chain): the server's PTO probes, which resend
      * CRYPTO since probes cycle through outstanding data, spend the rest of the 3x budget and then stop; no datagram ever crosses
      * the limit (the interop runner's amplificationlimit check counts every server datagram against 3x the client's Initials).
+     * Less than 1200 bytes of budget can carry no Initial probe (section 14.1), so up to 1199 bytes may stay unspent.
      */
     @Test fun ptoProbesStayWithinAmplificationBudget() {
         var received = 0L
@@ -321,10 +324,79 @@ class HandshakeLimitsTest {
             assertTrue(!s.addressValidated, "the address stays unvalidated")
             assertTrue(s.stats.ptoCount > 0, "the server probed: ptoCount ${s.stats.ptoCount}, sent $sent of ${3 * received}")
             assertTrue(!violated, "server sent $sent after receiving $received before validation")
-            assertTrue(s.amplification.budget() < 64, "the probes spent the budget: ${s.amplification.budget()} left of ${3 * received}")
-            assertEquals(TimeMark.NEVER, s.loss.timeout(), "no PTO armed once the budget is spent")
+            // an Initial probe needs a 1200-byte datagram (RFC 9000 section 14.1): what is left below that is never sent as one
+            assertTrue(s.amplification.budget() < 1200, "the probes spent the budget: ${s.amplification.budget()} left of ${3 * received}")
+            assertEquals(TimeMark.NEVER, s.loss.timeout(), "no PTO armed once the budget cannot carry a probe (RFC 9002 section 6.2.2.1)")
         } finally {
             p.close()
+        }
+    }
+
+    /**
+     * RFC 9000 sections 8.1 and 14.1: a server MUST expand every datagram carrying an ack-eliciting Initial to 1200 bytes and
+     * MUST NOT send more than 3x the bytes received, so with a budget below 1200 it sends no Initial probe at all. Only the
+     * client's first Initial (plus [extra] undecodable bytes, which count toward the budget) reaches the server; its PTO probes
+     * spend the budget in 1200-byte datagrams, the rest goes at most to Handshake probes, and the Initial probe waits. More bytes
+     * from the client let it go out, padded.
+     */
+    @Test fun negative_noUndersizedAckElicitingServerInitial() {
+        for (extra in listOf(100, 500, 1000)) {
+            var received = 0L
+            var sent = 0L
+            val undersized = ArrayList<Int>()
+            var fullInitials = 0
+            val p = CorePair()
+            p.filterToServer = { i, b ->
+                if (i == 0) received += b.size
+                i == 0
+            }
+            p.filterToClient = { _, b ->
+                sent += b.size
+                if (nullDatagramHasAckElicitingInitial(b)) {
+                    if (b.size < 1200) undersized += b.size else fullInitials++
+                }
+                true
+            }
+            try {
+                p.step() // the ClientHello makes the server
+                p.step() // the server answers it
+                val s = p.server!!
+                feedJunk(p, s, extra)
+                received += extra
+                val waited = p.runUntil(8.seconds) { s.amplification.budget() < 1200 && s.probePending[0] > 0 }
+                p.runUntil(1.seconds) { false }
+                assertEquals(emptyList(), undersized, "extra $extra: ack-eliciting Initial datagrams below 1200 bytes")
+                assertTrue(sent <= 3 * received, "extra $extra: server sent $sent after receiving $received")
+                assertTrue(
+                    waited && s.probePending[0] > 0,
+                    "extra $extra: an Initial probe waits for budget (${s.amplification.budget()} left)",
+                )
+                assertTrue(!s.addressValidated && s.state == ConnectionState.Handshaking, "extra $extra: ${s.state}, unvalidated")
+                val before = fullInitials
+                feedJunk(p, s, 400) // 1200 more bytes of budget
+                assertTrue(
+                    p.runUntil(1.seconds) { fullInitials > before },
+                    "extra $extra: the Initial probe goes out once 1200 bytes may be sent",
+                )
+                assertTrue(sent <= 3 * (received + 400), "extra $extra: server sent $sent after receiving ${received + 400}")
+                assertEquals(emptyList(), undersized, "extra $extra: ack-eliciting Initial datagrams below 1200 bytes")
+            } finally {
+                p.close()
+            }
+        }
+    }
+
+    private fun feedJunk(
+        p: CorePair,
+        s: io.kuicksilver.quic.ConnectionCore,
+        size: Int,
+    ) {
+        val junk = ByteArray(size) { 0x7f }
+        val b = PacketBuffer.of(junk)
+        try {
+            s.handleDatagram(b, junk.size, CoreFixtures.clientAddr, Ecn.NotEct, p.now)
+        } finally {
+            b.close()
         }
     }
 }
