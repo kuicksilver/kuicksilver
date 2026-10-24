@@ -45,8 +45,11 @@ internal class H1Request(
         encodeParameters(rawQueryParameters).withEmptyStringForValuelessKeys()
     }
 
+    /** The absolute-form's authority and origin-form, or null for another form of the request-target. */
+    private val absoluteForm: Pair<String, String>? = splitAbsoluteForm(request.uri.toString())
+
     override val rawQueryParameters: Parameters by lazy {
-        val uri = request.uri.toString()
+        val uri = local.uri
         val queryStartIndex = uri.indexOf('?').takeIf { it != -1 } ?: return@lazy Parameters.Empty
         parseQueryString(uri, startIndex = queryStartIndex + 1, decode = false)
     }
@@ -56,8 +59,10 @@ internal class H1Request(
             remoteAddress,
             localAddress,
             request.version.toString(),
-            request.uri.toString(),
-            request.headers[HttpHeaders.Host]?.toString(),
+            // absolute-form: routing sees its path and query, and the authority replaces Host, which the server MUST
+            // ignore (RFC 9112 section 3.2.2)
+            absoluteForm?.second ?: request.uri.toString(),
+            absoluteForm?.first ?: request.headers[HttpHeaders.Host]?.toString(),
             HttpMethod.parse(request.method.value),
             scheme,
         )
@@ -141,4 +146,23 @@ internal fun splitHostField(value: String): Pair<String, String?> {
     }
     val colon = value.lastIndexOf(':')
     return if (colon < 0) value to null else value.substring(0, colon) to value.substring(colon + 1)
+}
+
+/**
+ * Splits an "http" or "https" request-target in absolute-form (RFC 9112 section 3.2.2; the scheme is case-insensitive,
+ * RFC 3986 section 3.1) into its authority, as is (it may be empty or carry userinfo: [RequestFraming] refuses both), and
+ * its origin-form `absolute-path [ "?" query ]`, an empty path as "/" (RFC 9110 section 4.2.3). Null for an origin-form,
+ * authority-form or asterisk-form target and for other schemes.
+ */
+internal fun splitAbsoluteForm(target: String): Pair<String, String>? {
+    val start =
+        when {
+            target.startsWith("http://", ignoreCase = true) -> 7
+            target.startsWith("https://", ignoreCase = true) -> 8
+            else -> return null
+        }
+    val end = target.indexOfAny(charArrayOf('/', '?', '#'), start).let { if (it < 0) target.length else it }
+    val rest = target.substring(end)
+    val originForm = if (rest.startsWith("/")) rest else "/$rest"
+    return target.substring(start, end) to originForm
 }

@@ -285,6 +285,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   request line (RFC 9110 section 4.2.4: a sender MUST NOT generate userinfo in a target URI; section 7.1, RFC 9112
   section 3.2.2): `http://user:pass@host/p?q#frag` went out as `GET http://user:pass@host/p?q#frag`, the origin's
   credentials in clear text to the proxy and its logs; it is now `GET http://host/p?q`.
+- Ktor server, HTTP/1.1: a request in absolute-form (`GET http://a.example/x HTTP/1.1`) is accepted and routed by its
+  path and query, with the target's authority as the host and the Host field ignored (RFC 9112 section 3.2.2, two
+  MUSTs); before, routing saw the whole URI (404) and the host came from Host. An "http" or "https" target with an empty
+  host (RFC 9110 section 4.2.1) or with userinfo (section 4.2.4) gets 400.
 - QUIC, Linux and Apple platforms: a UDP send interrupted by a signal (`EINTR`) is retried instead of failing the
   socket; on Linux an interrupted GSO send no longer withdraws GSO.
 - TLS: a server context without session ticket keys (a QUIC server with tickets off, a keyless SNI override base) no

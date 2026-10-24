@@ -145,7 +145,7 @@ private val RequestHandlerName = CoroutineName("kuicksilver-h1-request")
  * the message otherwise (CL.0 or TE obfuscation smuggling).
  * It is also set for a request whose Host is missing (HTTP/1.1) or repeated (section 3.2: the server MUST respond with
  * 400; Ktor's parser checks only the syntax of a Host value): a front proxy that keys on another Host line than ours
- * routes and caches by another host.
+ * routes and caches by another host; and for an absolute-form target with an empty host or with userinfo.
  */
 internal class RequestFraming private constructor(
     val chunked: Boolean,
@@ -182,6 +182,12 @@ internal class RequestFraming private constructor(
             if (hosts > 1) return faulty("More than one Host field")
             if (hosts == 0 && HttpProtocolVersion.parse(request.version) == HttpProtocolVersion.HTTP_1_1) {
                 return faulty("No Host field in an HTTP/1.1 request")
+            }
+            splitAbsoluteForm(request.uri.toString())?.let { (authority, _) ->
+                // RFC 9110 section 4.2.1: an "http" URI with an empty host MUST be rejected as invalid; section 4.2.4:
+                // userinfo SHOULD be treated as an error (it is likely used to obscure the authority)
+                if (splitHostField(authority).first.isEmpty()) return faulty("Empty host in an absolute-form target")
+                if ('@' in authority) return faulty("Userinfo in an absolute-form target")
             }
             val te = request.headers.getAll("Transfer-Encoding").toList()
             val cl = request.headers.getAll("Content-Length").toList()
