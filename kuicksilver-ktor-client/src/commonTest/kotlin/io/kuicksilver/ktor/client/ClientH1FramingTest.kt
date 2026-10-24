@@ -217,6 +217,84 @@ class ClientH1FramingTest {
             assertEquals(listOf(0, 1), served, "a request went out on a connection after one that said Connection: close")
         }
 
+    /**
+     * Whitespace other than SP and HTAB around a framing field value (VT, FF, U+00A0 sent as `C2 A0`) makes it invalid:
+     * OWS is `*( SP / HTAB )` (RFC 9110 section 5.6.3), Content-Length is `1*DIGIT` (RFC 9110 section 8.6), a transfer
+     * coding is a token (RFC 9112 section 6.1). The response fails and its connection is not reused (RFC 9112 section 6.3
+     * item 5; an invalid Transfer-Encoding leaves the framing as unknown). Before, Kotlin's `trim()` stripped them, so the
+     * client framed the body by a value that a proxy in front of it may have ignored, and the bytes behind became the
+     * response to the next request (response splitting).
+     */
+    @Test fun negative_nonOwsWhitespaceInFramingFieldsFails() =
+        clientTest {
+            val cases =
+                listOf(
+                    "Content-Length: 5\u000b\r\n\r\nhello",
+                    "Content-Length: 5\u000c\r\n\r\nhello",
+                    "Content-Length: 5 \r\n\r\nhello",
+                    "Transfer-Encoding: chunked \r\n\r\n5\r\nhello\r\n0\r\n\r\n",
+                    "Transfer-Encoding: chunked\u000b\r\n\r\n5\r\nhello\r\n0\r\n\r\n",
+                    "Transfer-Encoding: chunked\u000c\r\n\r\n5\r\nhello\r\n0\r\n\r\n",
+                    "Transfer-Encoding: chun ked\r\n\r\n5\r\nhello\r\n0\r\n\r\n",
+                    "Transfer-Encoding: chunked, chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n",
+                )
+            for (case in cases) {
+                val shown =
+                    case
+                        .substringBefore("\r\n\r\n")
+                        .map {
+                            if (it.code < 0x20 ||
+                                it.code > 0x7e
+                            ) {
+                                "\\u" + it.code.toString(16).padStart(4, '0')
+                            } else {
+                                "$it"
+                            }
+                        }.joinToString("")
+                val served = ArrayList<Int>()
+                rawServerPerConnection({ index, input, output ->
+                    while (true) {
+                        if (readHead(input).isEmpty()) break
+                        served += index
+                        output.writeStringUtf8(
+                            if (index == 0) "HTTP/1.1 200 OK\r\n$case" else "HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\ngood",
+                        )
+                    }
+                }) { port ->
+                    testClient().use { c ->
+                        val first = runCatching { c.get("http://127.0.0.1:$port/1").bodyAsText() }
+                        assertTrue(first.isFailure, "$shown was accepted: ${first.getOrNull()}")
+                        assertEquals("good", c.get("http://127.0.0.1:$port/2").bodyAsText(), shown)
+                    }
+                }
+                assertEquals(listOf(0, 1), served, "$shown: the second request went out on the first connection")
+            }
+        }
+
+    /** SP and HTAB are OWS (RFC 9110 section 5.6.3) and coding names are case-insensitive (RFC 9112 section 7). */
+    @Test fun owsAndCaseInFramingFieldsAreAccepted() =
+        clientTest {
+            for (case in listOf(
+                "Content-Length: \t5 \t\r\n\r\nhello",
+                "Transfer-Encoding: \t, ChUnKeD \t\r\n\r\n5\r\nhello\r\n0\r\n\r\n",
+            )) {
+                val served = ArrayList<Int>()
+                rawServerPerConnection({ index, input, output ->
+                    while (true) {
+                        if (readHead(input).isEmpty()) break
+                        served += index
+                        output.writeStringUtf8("HTTP/1.1 200 OK\r\n$case")
+                    }
+                }) { port ->
+                    testClient().use { c ->
+                        assertEquals("hello", c.get("http://127.0.0.1:$port/1").bodyAsText(), case)
+                        assertEquals("hello", c.get("http://127.0.0.1:$port/2").bodyAsText(), case)
+                    }
+                }
+                assertEquals(listOf(0, 0), served, "$case: the connection was not reused")
+            }
+        }
+
     /** Reads a request head; returns its request line ("" at end of stream). */
     private suspend fun readHead(input: ByteReadChannel): String {
         val line = input.readUTF8Line() ?: return ""

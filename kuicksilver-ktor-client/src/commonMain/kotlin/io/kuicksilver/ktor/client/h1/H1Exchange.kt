@@ -304,7 +304,15 @@ internal suspend fun readResponse(
             val body =
                 when {
                     request.method == HttpMethod.Head || status == HttpStatusCode.NotModified || status == HttpStatusCode.NoContent -> {
-                        onBodyDone(if (keepAlive && !framing.invalidLength) AfterResponse.Reuse else AfterResponse.Close)
+                        onBodyDone(
+                            if (keepAlive && !framing.invalidLength &&
+                                !framing.invalidEncoding
+                            ) {
+                                AfterResponse.Reuse
+                            } else {
+                                AfterResponse.Close
+                            },
+                        )
                         ByteReadChannel.Empty
                     }
 
@@ -314,6 +322,15 @@ internal suspend fun readResponse(
                         throw ParserException(
                             "Invalid or conflicting Content-Length in the response: " +
                                 rawResponse.headers.getAll(HttpHeaders.ContentLength).joinToString(),
+                        )
+                    }
+
+                    // an invalid Transfer-Encoding: the framing is unknown, handled as an invalid Content-Length (RFC 9112
+                    // sections 6.1 and 6.3 items 4 and 5)
+                    framing.invalidEncoding -> {
+                        throw ParserException(
+                            "Invalid Transfer-Encoding in the response: " +
+                                rawResponse.headers.getAll(HttpHeaders.TransferEncoding).joinToString(),
                         )
                     }
 
@@ -433,22 +450,20 @@ private fun HttpHeadersMap.joined(name: String): String? = getAll(name).toList()
  * How a response body ends (RFC 9112 section 6.3), for a response that has one: by the chunked coding when it is the final
  * transfer coding (item 4), by the connection's close for another transfer coding (item 4) or without any framing (item 8),
  * else by Content-Length (item 6). Content-Length is 1*DIGIT, and several values (repeated fields or a list) must be
- * identical (RFC 9110 section 8.6); anything else is [invalidLength] (item 5).
+ * identical (RFC 9110 section 8.6); anything else is [invalidLength] (item 5). A Transfer-Encoding that is not a list of
+ * transfer codings, that applies `chunked` twice (RFC 9112 section 6.1) or gives the final `chunked` parameters is
+ * [invalidEncoding]: the framing is unknown, as with an invalid length. OWS is only SP and HTAB (RFC 9110 section
+ * 5.6.3): `Content-Length: 5<VT>` or `Transfer-Encoding: chunked<U+00A0>` is invalid, not 5 or `chunked`.
  */
 internal class ResponseFraming private constructor(
     val transferEncoding: String?,
     val contentLength: Long,
     val invalidLength: Boolean,
+    val invalidEncoding: Boolean,
     /** Content-Length and Transfer-Encoding together: framed by the coding, the connection is not reused (item 3). */
     val lengthAndEncoding: Boolean,
+    private val chunked: Boolean,
 ) {
-    private val chunked: Boolean =
-        transferEncoding
-            ?.split(',')
-            ?.lastOrNull { it.isNotBlank() }
-            ?.trim()
-            .equals("chunked", ignoreCase = true)
-
     /** Whether the body ends by its own framing, so the connection can carry the next response. */
     val delimited: Boolean get() = chunked || (transferEncoding == null && contentLength >= 0)
 
@@ -480,30 +495,23 @@ internal class ResponseFraming private constructor(
 
     companion object {
         fun of(headers: HttpHeadersMap): ResponseFraming {
-            val te = headers.joined(HttpHeaders.TransferEncoding)
+            val teValues = headers.getAll(HttpHeaders.TransferEncoding).toList()
+            val te = teValues.takeIf { it.isNotEmpty() }?.joinToString(",")
+            val codings = if (te == null) emptyList() else transferCodingsOf(teValues)
+            val last = codings?.lastOrNull()
+            val invalidEncoding =
+                te != null &&
+                    (codings == null || codings.count { it.name == "chunked" } > 1 || (last?.name == "chunked" && last.hasParameters))
             val values = headers.getAll(HttpHeaders.ContentLength).toList()
             val length = if (values.isEmpty()) -1L else contentLengthOf(values)
             return ResponseFraming(
                 transferEncoding = te,
                 contentLength = length ?: -1L,
                 invalidLength = te == null && length == null,
+                invalidEncoding = invalidEncoding,
                 lengthAndEncoding = te != null && values.isNotEmpty(),
+                chunked = !invalidEncoding && last?.name == "chunked",
             )
-        }
-
-        /** The one length that every value states, or null when one is not 1*DIGIT or they differ. */
-        fun contentLengthOf(values: List<CharSequence>): Long? {
-            var result: Long? = null
-            for (v in values) {
-                for (part in v.split(',')) {
-                    val t = part.trim()
-                    if (t.isEmpty() || t.length > 18 || t.any { it !in '0'..'9' }) return null
-                    val n = t.toLong()
-                    if (result != null && result != n) return null
-                    result = n
-                }
-            }
-            return result
         }
     }
 }
