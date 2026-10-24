@@ -86,12 +86,15 @@ internal suspend fun writeHeaders(
 
     try {
         val normalizedUrl = if (url.rawSegments.isEmpty()) URLBuilder(url).apply { encodedPath = "/" }.build() else url
-        val urlString = if (overProxy) normalizedUrl.toString() else normalizedUrl.fullPath
+        // The authority without userinfo (RFC 9110 section 4.2.4: a sender MUST NOT generate it in a target URI), the
+        // port only when not the scheme's default (RFC 9112 section 3.2); the same value for Host and the absolute-form.
+        val authority = if (url.protocol.defaultPort == url.port) url.host else url.hostWithPort
+        // Absolute-form (RFC 9112 section 3.2.2) is scheme "://" authority path-abempty ["?" query], never Url.toString(),
+        // which carries the userinfo and the fragment (no fragment in a request-target, RFC 9110 section 7.1).
+        val urlString = if (overProxy) "${url.protocol.name}://$authority${normalizedUrl.fullPath}" else normalizedUrl.fullPath
 
         builder.requestLine(method, urlString, HttpProtocolVersion.HTTP_1_1.toString())
-        if (!headers.contains(HttpHeaders.Host)) {
-            builder.headerLine(HttpHeaders.Host, if (url.protocol.defaultPort == url.port) url.host else url.hostWithPort)
-        }
+        if (!headers.contains(HttpHeaders.Host)) builder.headerLine(HttpHeaders.Host, authority)
 
         val hasContent = contentBody !is OutgoingContent.NoContent
         if (contentLength != null) {

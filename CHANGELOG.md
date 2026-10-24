@@ -281,6 +281,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   codings (RFC 9112 section 6.1): a value that is not one, or that applies `chunked` twice, gets 400, and a coding the
   server does not implement before the final `chunked` (`gzip, chunked`, also `identity, chunked`) gets 501 instead of
   400 (section 6.1); `identity` is no longer ignored, as it is no transfer coding since RFC 7230.
+- Ktor client: a request through an HTTP proxy no longer sends the URL's userinfo and fragment in its absolute-form
+  request line (RFC 9110 section 4.2.4: a sender MUST NOT generate userinfo in a target URI; section 7.1, RFC 9112
+  section 3.2.2): `http://user:pass@host/p?q#frag` went out as `GET http://user:pass@host/p?q#frag`, the origin's
+  credentials in clear text to the proxy and its logs; it is now `GET http://host/p?q`.
 - QUIC, Linux and Apple platforms: a UDP send interrupted by a signal (`EINTR`) is retried instead of failing the
   socket; on Linux an interrupted GSO send no longer withdraws GSO.
 - TLS: a server context without session ticket keys (a QUIC server with tickets off, a keyless SNI override base) no
