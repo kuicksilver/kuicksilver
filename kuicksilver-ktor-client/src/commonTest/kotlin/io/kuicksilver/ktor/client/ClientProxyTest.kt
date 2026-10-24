@@ -174,6 +174,59 @@ class ClientProxyTest {
         }
 
     /**
+     * RFC 9110 section 4.2.4: the origin's userinfo (and its "@") must never be generated in a target URI; RFC 9110
+     * section 7.1 / RFC 9112 section 3.2.2: the fragment is not part of the absolute-form, nor of the Host field.
+     */
+    @Test fun negative_absoluteFormHasNoUserinfoOrFragment() =
+        clientTest {
+            val lines = proxiedHead("http://alice:s3cret@origin.test:8080/x?q=1#top")
+            assertEquals("GET http://origin.test:8080/x?q=1 HTTP/1.1", lines.first())
+            assertTrue("Host: origin.test:8080" in lines, "$lines")
+            assertTrue(lines.none { "s3cret" in it || "alice" in it || "#top" in it }, "$lines")
+        }
+
+    @Test fun negative_absoluteFormWithDefaultPortAndEmptyPathHasNoUserinfo() =
+        clientTest {
+            val lines = proxiedHead("http://alice:s3cret@origin.test#top")
+            assertEquals("GET http://origin.test/ HTTP/1.1", lines.first())
+            assertTrue("Host: origin.test" in lines, "$lines")
+            assertTrue(lines.none { "s3cret" in it || "alice" in it || "#top" in it }, "$lines")
+        }
+
+    /** The request head a plain HTTP proxy receives for a GET of [url]; the proxy answers 200 "ok". */
+    private suspend fun proxiedHead(url: String): List<String> {
+        val selector = SelectorManager(Dispatchers.Default)
+        val listener = aSocket(selector).tcp().bind("127.0.0.1", 0)
+        try {
+            return coroutineScope {
+                val head =
+                    async {
+                        listener.accept().use { s ->
+                            val input = s.openReadChannel()
+                            val output = s.openWriteChannel(autoFlush = true)
+                            val lines = ArrayList<String>()
+                            while (true) {
+                                val line = input.readUTF8Line() ?: break
+                                if (line.isEmpty()) break
+                                lines += line
+                            }
+                            output.writeStringUtf8("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok")
+                            lines
+                        }
+                    }
+                val proxyPort = (listener.localAddress as InetSocketAddress).port
+                testClient(engine = { proxy = ProxyBuilder.http(Url("http://127.0.0.1:$proxyPort")) }).use { c ->
+                    assertEquals("ok", c.get(url).bodyAsText())
+                }
+                head.await()
+            }
+        } finally {
+            listener.close()
+            selector.close()
+        }
+    }
+
+    /**
      * A one-connection CONNECT proxy to 127.0.0.1:[originPort]: answers the CONNECT with [connectResponse], then copies bytes
      * both ways. [block] gets its port and the CONNECT head's lines (once the CONNECT was read).
      */
