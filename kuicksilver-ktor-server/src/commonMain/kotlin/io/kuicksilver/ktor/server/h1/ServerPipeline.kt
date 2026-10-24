@@ -137,8 +137,12 @@ private val RequestHandlerName = CoroutineName("kuicksilver-h1-request")
  * all — no Content-Length and no Transfer-Encoding is a request without a body (item 7), whatever its method or
  * `Connection` header. [fault] is set for a request whose framing is faulty: Content-Length together with
  * Transfer-Encoding (section 6.1: the server MUST close the connection after responding; it is refused here), a
- * transfer coding other than a final `chunked` (item 4), Transfer-Encoding in an HTTP/1.0 request (section 6.1), or
- * Content-Length values that are not `1*DIGIT` or differ (item 5; identical repeats are one length, RFC 9110 section 8.6).
+ * Transfer-Encoding that is not a list of transfer codings or whose final coding is not `chunked` (item 4) or that applies
+ * `chunked` twice (section 6.1), a coding the server does not implement before the final `chunked` (section 6.1: 501),
+ * Transfer-Encoding in an HTTP/1.0 request (section 6.1), or Content-Length values that are not `1*DIGIT` or differ
+ * (item 5; identical repeats are one length, RFC 9110 section 8.6). OWS is only SP and HTAB (RFC 9110 section 5.6.3):
+ * `Content-Length: 5<VT>` or `Transfer-Encoding: chunked<U+00A0>` is invalid, as a front proxy that ignores it frames
+ * the message otherwise (CL.0 or TE obfuscation smuggling).
  * It is also set for a request whose Host is missing (HTTP/1.1) or repeated (section 3.2: the server MUST respond with
  * 400; Ktor's parser checks only the syntax of a Host value): a front proxy that keys on another Host line than ours
  * routes and caches by another host.
@@ -147,6 +151,8 @@ internal class RequestFraming private constructor(
     val chunked: Boolean,
     val contentLength: Long,
     val fault: String?,
+    /** The status that refuses a request with a [fault]: 400, or 501 for a transfer coding the server does not implement. */
+    val faultStatus: Int = 400,
 ) {
     /** Whether the request has body bytes to read. */
     val hasBody: Boolean get() = fault == null && (chunked || contentLength > 0)
@@ -184,12 +190,14 @@ internal class RequestFraming private constructor(
                 if (HttpProtocolVersion.parse(request.version) == HttpProtocolVersion.HTTP_1_0) {
                     return faulty("Transfer-Encoding in an HTTP/1.0 request")
                 }
-                val codings =
-                    te
-                        .flatMap { it.split(',') }
-                        .map { it.trim().lowercase() }
-                        .filter { it.isNotEmpty() && it != "identity" }
-                if (codings != listOf("chunked")) return faulty("Unsupported transfer coding: ${te.joinToString()}")
+                val codings = transferCodingsOf(te) ?: return faulty("Invalid Transfer-Encoding")
+                val last = codings.lastOrNull()
+                val finalChunked = last != null && last.name == "chunked" && !last.hasParameters
+                if (!finalChunked) return faulty("Transfer coding other than a final chunked")
+                if (codings.size > 1) {
+                    if (codings.any { it.name == "chunked" && it !== last }) return faulty("chunked applied more than once")
+                    return faulty("Unsupported transfer coding", status = 501)
+                }
                 return RequestFraming(chunked = true, contentLength = -1, fault = null)
             }
             if (cl.isEmpty()) return RequestFraming(chunked = false, contentLength = 0, fault = null)
@@ -197,22 +205,10 @@ internal class RequestFraming private constructor(
             return RequestFraming(chunked = false, contentLength = length, fault = null)
         }
 
-        private fun faulty(message: String) = RequestFraming(chunked = false, contentLength = 0, fault = message)
-
-        /** The one length that every value states, or null when one is not 1*DIGIT or they differ. */
-        private fun contentLengthOf(values: List<CharSequence>): Long? {
-            var result: Long? = null
-            for (v in values) {
-                for (part in v.split(',')) {
-                    val t = part.trim()
-                    if (t.isEmpty() || t.length > 18 || t.any { it !in '0'..'9' }) return null
-                    val n = t.toLong()
-                    if (result != null && result != n) return null
-                    result = n
-                }
-            }
-            return result
-        }
+        private fun faulty(
+            message: String,
+            status: Int = 400,
+        ) = RequestFraming(chunked = false, contentLength = 0, fault = message, faultStatus = status)
     }
 }
 
@@ -314,7 +310,7 @@ internal fun CoroutineScope.startH1Pipeline(
                 val framing = RequestFraming.of(request)
                 if (framing.fault != null) {
                     request.release()
-                    respondBadRequest(actorChannel)
+                    if (framing.faultStatus == 501) respondStatus(actorChannel, 501, "Not Implemented") else respondBadRequest(actorChannel)
                     break
                 }
 

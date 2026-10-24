@@ -234,6 +234,107 @@ class ServerH1FramingTest {
             }
         }
 
+    /**
+     * Whitespace other than SP and HTAB around a framing field value (VT, FF, U+00A0 sent as `C2 A0`) makes the value
+     * invalid: OWS is `*( SP / HTAB )` (RFC 9110 section 5.6.3), Content-Length is `1*DIGIT` (RFC 9110 section 8.6) and a
+     * transfer coding is a token (RFC 9112 section 6.1). 400 and close (RFC 9112 section 6.3 items 4 and 5), and the
+     * pipelined request behind it is not served. Before, Kotlin's `trim()` stripped them and the body was framed by
+     * the value, while a front proxy that ignores the invalid field (length 0) forwards the body as the next request
+     * (CL.0 / TE obfuscation smuggling).
+     */
+    @Test fun negative_nonOwsWhitespaceInFramingFieldsIsRejected() =
+        serverTest {
+            plainServer { port ->
+                val smuggled = "GET /admin HTTP/1.1\r\nHost: s\r\nConnection: close\r\n\r\n"
+                val cases =
+                    listOf(
+                        "Content-Length: 5\u000b\r\n\r\nhello",
+                        "Content-Length: 5\u000c\r\n\r\nhello",
+                        "Content-Length: 5 \r\n\r\nhello",
+                        "Content-Length: 5, 5\u000b\r\n\r\nhello",
+                        "Transfer-Encoding: chunked \r\n\r\n0\r\n\r\n",
+                        "Transfer-Encoding: chunked\u000b\r\n\r\n0\r\n\r\n",
+                        "Transfer-Encoding: chunked\u000c\r\n\r\n0\r\n\r\n",
+                        "Transfer-Encoding: chun ked\r\n\r\n0\r\n\r\n",
+                        "Transfer-Encoding: \"chunked\"\r\n\r\n0\r\n\r\n",
+                        "Transfer-Encoding: chunked;\r\n\r\n0\r\n\r\n",
+                    )
+                for (case in cases) {
+                    val resp =
+                        withTimeout(10.seconds) {
+                            rawHttp(port, "POST /echo HTTP/1.1\r\nHost: s\r\n$case$smuggled", tls = null)
+                        }
+                    val shown =
+                        case.substringBefore("\r\n\r\n").map {
+                            if (it.code < 0x20 ||
+                                it.code > 0x7e
+                            ) {
+                                "\\u" + it.code.toString(16).padStart(4, '0')
+                            } else {
+                                "$it"
+                            }
+                        }
+                    assertTrue(resp.startsWith("HTTP/1.1 400 "), "${shown.joinToString("")}: $resp")
+                    assertFalse(resp.contains("admin secret"), "${shown.joinToString("")}: the pipelined request was served: $resp")
+                }
+            }
+        }
+
+    /** SP and HTAB are OWS (RFC 9110 section 5.6.3) and coding names are case-insensitive (RFC 9112 section 7). */
+    @Test fun owsAndCaseInFramingFieldsAreAccepted() =
+        serverTest {
+            plainServer { port ->
+                for (case in listOf(
+                    "Content-Length: \t5 \t\r\n\r\nhello",
+                    "Transfer-Encoding: \t, ChUnKeD \t\r\n\r\n5\r\nhello\r\n0\r\n\r\n",
+                )) {
+                    val resp =
+                        withTimeout(10.seconds) {
+                            rawHttp(port, "POST /echo HTTP/1.1\r\nHost: s\r\nConnection: close\r\n$case", tls = null)
+                        }
+                    assertTrue(resp.startsWith("HTTP/1.1 200 "), "$case: $resp")
+                    assertTrue(resp.endsWith("body=hello"), "$case: $resp")
+                }
+            }
+        }
+
+    /**
+     * A transfer coding the server does not implement before a final `chunked` (`identity` is no transfer coding since
+     * RFC 7230): 501 (RFC 9112 section 6.1), and the connection closes, as the body is not read.
+     */
+    @Test fun negative_unimplementedTransferCodingGets501() =
+        serverTest {
+            plainServer { port ->
+                for (te in listOf("gzip, chunked", "gzip;level=\"1,2\" , chunked", "identity, chunked")) {
+                    val resp =
+                        withTimeout(10.seconds) {
+                            rawHttp(
+                                port,
+                                "POST /echo HTTP/1.1\r\nHost: s\r\nTransfer-Encoding: $te\r\n\r\n0\r\n\r\n" +
+                                    "GET /admin HTTP/1.1\r\nHost: s\r\nConnection: close\r\n\r\n",
+                                tls = null,
+                            )
+                        }
+                    assertTrue(resp.startsWith("HTTP/1.1 501 "), "$te: $resp")
+                    assertFalse(resp.contains("admin secret"), "$te: $resp")
+                }
+            }
+        }
+
+    /** `chunked` applied twice (RFC 9112 section 6.1: a sender MUST NOT) or not final (section 6.3 item 4): 400. */
+    @Test fun negative_chunkedTwiceOrNotFinalIsRejected() =
+        serverTest {
+            plainServer { port ->
+                for (te in listOf("chunked, chunked", "chunked\r\nTransfer-Encoding: chunked", "chunked, gzip", "chunked;x=1")) {
+                    val resp =
+                        withTimeout(10.seconds) {
+                            rawHttp(port, "POST /echo HTTP/1.1\r\nHost: s\r\nTransfer-Encoding: $te\r\n\r\n0\r\n\r\n", tls = null)
+                        }
+                    assertTrue(resp.startsWith("HTTP/1.1 400 "), "$te: $resp")
+                }
+            }
+        }
+
     private suspend fun plainServer(block: suspend (Int) -> Unit) {
         val server =
             embeddedServer(Kuicksilver, configure = {
