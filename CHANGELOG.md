@@ -143,6 +143,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - Ktor server, HTTP/1.1: a response the application marks `Connection: close` now ends the connection after it, and
   no further pipelined request is processed (RFC 9112 section 9.6); before, the next request ran and was answered and
   the connection stayed open. The next pipelined request is now read once the previous response's head is out.
+- QUIC: a datagram carrying an Initial packet now always reaches 1200 bytes (RFC 9000 section 14.1: a client pads every
+  such datagram, a server every one with an ack-eliciting Initial). When the packet expected to pad the datagram did not
+  fit behind the Initial or Handshake packet (a ClientHello ending in the last 64 bytes before 1200 with 0-RTT data
+  queued, or a server flight ending there with 1-RTT frames queued), the datagram left short, the peer dropped it, and
+  every retransmission repeated the same layout. The packet with no room behind it now carries the PADDING frames.
 - QUIC, Linux and Apple platforms: a UDP send interrupted by a signal (`EINTR`) is retried instead of failing the
   socket; on Linux an interrupted GSO send no longer withdraws GSO.
 - TLS: a server context without session ticket keys (a QUIC server with tickets off, a keyless SNI override base) no

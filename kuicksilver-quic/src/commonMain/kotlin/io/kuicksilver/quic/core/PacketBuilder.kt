@@ -253,6 +253,7 @@ internal class PacketBuilder(
         if (!congested) pacer(now)
         var pos = 0
         var needPad = false
+        var lastBuilt: SpaceId? = null
         val spaces = SpaceId.entries
         for (i in spaces.indices) {
             val space = spaces[i]
@@ -264,14 +265,22 @@ internal class PacketBuilder(
                     break
                 }
             }
-            // RFC 9000 section 14.1
+            // RFC 9000 section 14.1: a client expands every datagram carrying an Initial packet to 1200 bytes, a server every one
+            // carrying an ack-eliciting Initial packet, with PADDING frames or by coalescing (section 12.2). The last packet pads
+            // the datagram; an earlier one pads itself when a following packet could no longer fit behind it
             val initialNeedsPad = space == SpaceId.Initial && (c.role == TlsRole.Client || hasData(SpaceId.Initial))
-            val n = buildPacket(buf, pos, maxLen, space, now, padToEnd = last && (needPad || initialNeedsPad))
+            val pad = needPad || initialNeedsPad
+            val n = buildPacket(buf, pos, maxLen, space, now, padToEnd = last && pad, padIfNoRoomAfter = !last && pad)
             if (n == 0) continue
             if (space == SpaceId.Initial && (c.role == TlsRole.Client || lastWasAckEliciting)) needPad = true
             pos += n
+            lastBuilt = space
         }
-        if (needPad && pos < 1200 && pos > 0 && maxLen >= 1200) { /* padding was requested from the last packet; nothing more to do */ }
+        // the space expected to close the datagram sent nothing after all: one more packet of the last long-header space, padded
+        // to the end; the packet before it left room for it ([MIN_COALESCED_PACKET]). A 1-RTT packet is always the last one
+        if (needPad && pos in 1 until 1200 && maxLen >= 1200 && lastBuilt != null && lastBuilt != SpaceId.Application) {
+            pos += buildPacket(buf, pos, maxLen, lastBuilt, now, padToEnd = true)
+        }
         return pos
     }
 
@@ -294,6 +303,7 @@ internal class PacketBuilder(
         padToEnd: Boolean,
         target: Path = c.path,
         dcid: io.kuicksilver.quic.wire.ConnectionId = c.remoteCid,
+        padIfNoRoomAfter: Boolean = false,
     ): Int {
         var padToEnd = padToEnd
         val level = spaceLevel(space)
@@ -684,6 +694,8 @@ internal class PacketBuilder(
             return 0
         }
         var padded = false
+        // RFC 9000 section 14.1: this packet must reach 1200 bytes with PADDING frames when no further packet fits behind it
+        if (padIfNoRoomAfter && maxLen >= 1200 && maxLen - (w.pos + 16) < MIN_COALESCED_PACKET) padToEnd = true
         if (padToEnd && maxLen >= 1200) {
             w.zero(w.remaining)
             padded = true
@@ -818,3 +830,10 @@ internal class PacketBuilder(
         return ackEliciting
     }
 }
+
+/**
+ * The room a packet coalesced behind another one may need (RFC 9000 section 12.2): a long header with two 20-byte connection
+ * IDs, a 2-byte Length and a 4-byte packet number (53 bytes), the 4 bytes that keep the header protection sample inside the
+ * packet (RFC 9001 section 5.4.2) and the 16-byte AEAD tag.
+ */
+private const val MIN_COALESCED_PACKET = 73

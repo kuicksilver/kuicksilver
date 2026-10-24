@@ -5,7 +5,12 @@ package io.kuicksilver.quic
 import io.kuicksilver.native.PacketBuffer
 import io.kuicksilver.native.of
 import io.kuicksilver.quic.wire.AckFrameView
+import io.kuicksilver.quic.wire.FrameDecoder
 import io.kuicksilver.quic.wire.FrameHandler
+import io.kuicksilver.quic.wire.PacketHeaderCodec
+import io.kuicksilver.quic.wire.PacketHeaderView
+import io.kuicksilver.quic.wire.PacketType
+import io.kuicksilver.quic.wire.WireReader
 
 /** A frame as a plain value, for round-trip tests. */
 sealed class TestFrame {
@@ -136,6 +141,29 @@ internal fun nullOneRttFrames(
             h,
         )
         return h.frames
+    } finally {
+        b.close()
+    }
+}
+
+/**
+ * Whether a [NullCryptoProvider] datagram carries an ack-eliciting Initial packet (identity header protection, zero tag): walks
+ * the coalesced long-header packets and decodes the Initial's frames. False when it holds no Initial or only ACK/PADDING.
+ */
+internal fun nullDatagramHasAckElicitingInitial(bytes: ByteArray): Boolean {
+    val b = PacketBuffer.of(bytes)
+    try {
+        val view = PacketHeaderView()
+        var off = 0
+        while (off < bytes.size && bytes[off].toInt() and 0x80 != 0) {
+            if (!PacketHeaderCodec.parse(b, off, bytes.size, 8, view)) break
+            if (view.type == PacketType.Initial) {
+                val payload = view.pnOffset + (bytes[off].toInt() and 0x03) + 1
+                if (FrameDecoder.decode(WireReader(b, payload, view.packetEnd - 16), PacketType.Initial, CollectingHandler())) return true
+            }
+            off = view.packetEnd
+        }
+        return false
     } finally {
         b.close()
     }

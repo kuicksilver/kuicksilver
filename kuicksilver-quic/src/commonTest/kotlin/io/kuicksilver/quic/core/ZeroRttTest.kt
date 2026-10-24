@@ -22,6 +22,9 @@ import io.kuicksilver.quic.endpoint.ZeroRttReplayRegister
 import io.kuicksilver.quic.ksl
 import io.kuicksilver.quic.quicConfig
 import io.kuicksilver.quic.serverWithKeys
+import io.kuicksilver.quic.wire.PacketHeaderCodec
+import io.kuicksilver.quic.wire.PacketHeaderView
+import io.kuicksilver.quic.wire.PacketType
 import io.kuicksilver.quic.wire.TransportParametersCodec
 import io.kuicksilver.tls.EarlyDataState
 import io.kuicksilver.tls.EncryptionLevel
@@ -132,6 +135,54 @@ class ZeroRttTest {
         assertNull(rememberedParameters(byteArrayOf(0xff.toByte())))
         assertNull(rememberedParameters(byteArrayOf(0, 0, 0, 1, 5, 'h'.code.toByte(), '3'.code.toByte())))
         assertNotNull(rememberedParameters(rememberedBlob(1, "h3", ByteArray(0))))
+    }
+
+    /**
+     * RFC 9000 section 14.1: a client MUST expand every datagram carrying Initial packets to 1200 bytes. With 0-RTT stream data
+     * queued, the ClientHello is grown (as a long ALPN or SNI list would) so its last Initial ends at offsets throughout the last
+     * 64 bytes before 1200, where the 0-RTT packet no longer fits behind it: the datagram must still reach 1200 bytes.
+     */
+    @Test fun negative_initialFollowedByZeroRttThatDoesNotFitIsPadded() {
+        // the client's first flight with [extra] CRYPTO bytes added to the ClientHello: the long-header packets of each datagram
+        fun firstFlight(extra: Int): List<Pair<Int, List<Pair<PacketType?, Int>>>> {
+            val (p, _) = resumed(ticket())
+            try {
+                p.client.testInjectCrypto = Triple(0, 20_000L, extra)
+                p.poll(p.client, p.toServer, CoreFixtures.clientAddr, toServer = true)
+                return p.toServer.map { d -> d.bytes.size to longHeaderPackets(d.bytes) }
+            } finally {
+                p.close()
+            }
+        }
+        // where the last Initial ends when it has room for the 0-RTT packet behind it (the Length field is not protected)
+        val base = firstFlight(100).last().second
+        assertEquals(PacketType.ZeroRtt, base.last().first, "0-RTT data rides with the Initial: $base")
+        val initialEnd = base.last { it.first == PacketType.Initial }.second
+        for (end in listOf(1137, 1170, 1199)) {
+            val flight = firstFlight(100 + end - initialEnd)
+            for ((size, packets) in flight) {
+                if (packets.any { it.first == PacketType.Initial }) {
+                    assertTrue(size >= 1200, "Initial meant to end at $end: datagram of $size bytes, $packets")
+                }
+            }
+        }
+    }
+
+    /** The type and end offset of each coalesced long-header packet in [bytes]. */
+    private fun longHeaderPackets(bytes: ByteArray): List<Pair<PacketType?, Int>> {
+        val b = PacketBuffer.of(bytes)
+        try {
+            val v = PacketHeaderView()
+            val out = ArrayList<Pair<PacketType?, Int>>()
+            var off = 0
+            while (off < bytes.size && bytes[off].toInt() and 0x80 != 0 && PacketHeaderCodec.parse(b, off, bytes.size, 8, v)) {
+                out += v.type to v.packetEnd
+                off = v.packetEnd
+            }
+            return out
+        } finally {
+            b.close()
+        }
     }
 
     @Test fun zeroRttDataAnsweredBeforeHandshakeCompletes() {
