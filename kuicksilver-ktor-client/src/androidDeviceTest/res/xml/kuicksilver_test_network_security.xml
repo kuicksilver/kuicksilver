@@ -9,5 +9,7 @@ SPDX-License-Identifier: Apache-2.0
         <domain includeSubdomains="false">127.0.0.1</domain>
         <domain includeSubdomains="false">localhost</domain>
         <domain includeSubdomains="false">::1</domain>
+        <!-- the shared tests' hosts behind a proxy (origin.test, p.test, ...): .test never resolves publicly (RFC 6761 section 6.2) -->
+        <domain includeSubdomains="true">test</domain>
     </domain-config>
 </network-security-config>

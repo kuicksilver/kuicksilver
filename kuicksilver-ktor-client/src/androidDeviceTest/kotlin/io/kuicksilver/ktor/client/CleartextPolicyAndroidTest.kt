@@ -16,7 +16,7 @@ import kotlin.test.assertTrue
 class CleartextPolicyAndroidTest {
     @Test fun cleartextRefusedByTheNetworkSecurityConfigurationNeverConnects(): Unit =
         runBlocking {
-            // the test APK's network security config allows cleartext to the loopback only (androidDeviceTest/res/xml)
+            // the test APK's network security config allows cleartext to the loopback and .test names only (androidDeviceTest/res/xml)
             val policy = NetworkSecurityPolicy.getInstance()
             assertTrue(policy.isCleartextTrafficPermitted("127.0.0.1"))
             assertFalse(policy.isCleartextTrafficPermitted("192.0.2.1"))
