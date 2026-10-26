@@ -14,9 +14,9 @@ import io.ktor.server.application.install
 import io.ktor.server.routing.routing
 import io.ktor.util.AttributeKey
 import io.ktor.utils.io.ByteReadChannel
+import io.ktor.utils.io.readBuffer
 import io.ktor.utils.io.readByte
 import io.ktor.utils.io.readByteArray
-import io.ktor.utils.io.readRemaining
 import io.ktor.utils.io.readUTF8Line
 import io.ktor.utils.io.writeFully
 import io.ktor.utils.io.writeStringUtf8
@@ -318,7 +318,7 @@ class ClientWebSocketExtensionsTest {
                         s.output.flush()
                         val code = closeCodeOfFirstFrame(s.input)
                         // with endsWithFin, the client's send side must end with its FIN after the Close, not a reset
-                        if (endsWithFin && runCatching { s.input.readRemaining() }.isFailure) -2 else code
+                        if (endsWithFin && runCatching { s.input.readBuffer() }.isFailure) -2 else code
                     }
                 try {
                     withTimeout(20.seconds) { block(ep.localAddress.port, served) }

@@ -5,7 +5,7 @@ package io.kuicksilver.ktor.client
 import io.ktor.client.plugins.websocket.WebSockets
 import io.ktor.client.plugins.websocket.webSocket
 import io.ktor.network.sockets.InetSocketAddress
-import io.ktor.utils.io.readRemaining
+import io.ktor.utils.io.readBuffer
 import io.ktor.utils.io.writeFully
 import io.kuicksilver.http3.Http3Endpoint
 import io.kuicksilver.native.KslLoader
@@ -66,7 +66,7 @@ class ClientH3WebSocketTest {
                         val read =
                             runCatching {
                                 s.input
-                                    .readRemaining()
+                                    .readBuffer()
                                     .readByteArray()
                                     .size
                             }

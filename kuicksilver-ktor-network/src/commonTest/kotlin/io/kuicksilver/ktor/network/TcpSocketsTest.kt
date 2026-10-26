@@ -8,7 +8,7 @@ import io.ktor.network.sockets.ServerSocket
 import io.ktor.network.sockets.Socket
 import io.ktor.network.sockets.openReadChannel
 import io.ktor.network.sockets.openWriteChannel
-import io.ktor.utils.io.readRemaining
+import io.ktor.utils.io.readBuffer
 import io.ktor.utils.io.writeFully
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -62,7 +62,7 @@ class TcpSocketsTest {
             out.writeFully(payload)
             out.flushAndClose()
             val peer = accepted.await()
-            peer to peer.openReadChannel().readRemaining().readByteArray()
+            peer to peer.openReadChannel().readBuffer().readByteArray()
         }
 
     @Test fun connectReachesTheIpv6Listener() =

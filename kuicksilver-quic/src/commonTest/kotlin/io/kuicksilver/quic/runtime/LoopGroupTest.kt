@@ -3,7 +3,7 @@
 package io.kuicksilver.quic.runtime
 
 import io.ktor.network.sockets.InetSocketAddress
-import io.ktor.utils.io.readRemaining
+import io.ktor.utils.io.readBuffer
 import io.ktor.utils.io.writeFully
 import io.kuicksilver.annotations.DelicateKuicksilverApi
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
@@ -223,7 +223,7 @@ class LoopGroupTest {
                         s
                             .acceptStream()
                             .input
-                            .readRemaining()
+                            .readBuffer()
                             .readByteArray()
                     assertEquals(20_000, got.size, "data over the original path")
                     assertEquals(serverAddr, (c as ConnectionRuntime).core.path.remote, "still on the original address")
@@ -316,7 +316,7 @@ class LoopGroupTest {
                         s
                             .acceptStream()
                             .input
-                            .readRemaining()
+                            .readBuffer()
                             .readByteArray()
                     assertEquals(20_000, got.size, "data over the forwarded preferred path")
                     assertTrue(group.forwardedForTest(1) > 0, "loop 0 forwarded the preferred-socket datagrams to loop 1")

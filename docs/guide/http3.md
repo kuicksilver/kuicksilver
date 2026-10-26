@@ -348,7 +348,7 @@ println(session.closed.await().reason)            // "done" once the client clos
 val stream = session.openBidi()
 stream.output.writeFully("ping".encodeToByteArray())
 stream.output.flushAndClose()
-println(stream.input.readRemaining().readString())  // "ping"
+println(stream.input.readBuffer().readString())  // "ping"
 session.trySendDatagram(byteArrayOf(1, 2, 3))
 println(session.receiveDatagram().size)
 session.close(0, "done")

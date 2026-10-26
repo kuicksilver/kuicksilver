@@ -19,7 +19,7 @@ import io.ktor.server.routing.get
 import io.ktor.server.routing.routing
 import io.ktor.utils.io.copyTo
 import io.ktor.utils.io.discard
-import io.ktor.utils.io.readRemaining
+import io.ktor.utils.io.readBuffer
 import io.ktor.utils.io.writeFully
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.quic.qlog.AsyncQlogSink
@@ -97,7 +97,7 @@ class GuideSamplesTest {
                     val stream = session.openBidi()
                     stream.output.writeFully("ping".encodeToByteArray())
                     stream.output.flushAndClose()
-                    println(stream.input.readRemaining().readString())
+                    println(stream.input.readBuffer().readString())
                     session.close(0, "done")
                     assertEquals("echo-v1", session.protocol)
                 }

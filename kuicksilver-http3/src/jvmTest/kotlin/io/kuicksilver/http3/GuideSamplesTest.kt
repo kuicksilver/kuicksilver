@@ -6,7 +6,7 @@ package io.kuicksilver.http3
 
 import io.ktor.network.sockets.InetSocketAddress
 import io.ktor.utils.io.copyTo
-import io.ktor.utils.io.readRemaining
+import io.ktor.utils.io.readBuffer
 import io.ktor.utils.io.writeFully
 import io.ktor.utils.io.writeStringUtf8
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
@@ -247,7 +247,7 @@ class GuideSamplesTest {
                 val stream = session.openBidi()
                 stream.output.writeFully("ping".encodeToByteArray())
                 stream.output.flushAndClose()
-                println(stream.input.readRemaining().readString())
+                println(stream.input.readBuffer().readString())
                 session.trySendDatagram(byteArrayOf(1, 2, 3))
                 println(session.receiveDatagram().size)
                 session.close(0, "done")

@@ -449,7 +449,7 @@ val session = client.webTransport(url, protocols = listOf("echo-v1"))
 val stream = session.openBidi()
 stream.output.writeFully("ping".encodeToByteArray())
 stream.output.flushAndClose()
-println(stream.input.readRemaining().readString())
+println(stream.input.readBuffer().readString())
 session.close(0, "done")                           // the session's own connection closes with it
 ```
 

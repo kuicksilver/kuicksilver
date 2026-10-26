@@ -5,7 +5,7 @@ package io.kuicksilver.ktor.server.h1
 import io.ktor.http.cio.Request
 import io.ktor.utils.io.ByteChannel
 import io.ktor.utils.io.readAvailable
-import io.ktor.utils.io.readRemaining
+import io.ktor.utils.io.readBuffer
 import io.ktor.utils.io.writeStringUtf8
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -47,7 +47,7 @@ class H1PipelineContinueTest {
                     continueSent?.complete()
                     val answer =
                         try {
-                            "HTTP/1.1 200 OK\r\nContent-Length: 11\r\n\r\nposted=" + input.readRemaining().readString()
+                            "HTTP/1.1 200 OK\r\nContent-Length: 11\r\n\r\nposted=" + input.readBuffer().readString()
                         } catch (_: Exception) {
                             "HTTP/1.1 408 Request Timeout\r\nContent-Length: 0\r\n\r\n"
                         }

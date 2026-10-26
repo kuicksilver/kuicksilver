@@ -6,7 +6,7 @@ import io.ktor.http.cio.Request
 import io.ktor.utils.io.ByteChannel
 import io.ktor.utils.io.InternalAPI
 import io.ktor.utils.io.discard
-import io.ktor.utils.io.readRemaining
+import io.ktor.utils.io.readBuffer
 import io.ktor.utils.io.writeStringUtf8
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
@@ -48,7 +48,7 @@ class H1PipelineHeadLimitTest {
         }
         advanceTimeBy(1.seconds) // well inside the 30 s header deadline; backgroundScope work does not count for advanceUntilIdle
         assertTrue(c.job.isCompleted, "the connection is still open")
-        return c.fromServer.readRemaining().readString()
+        return c.fromServer.readBuffer().readString()
     }
 
     /** A head one byte over the limit gets 431 and the connection closes (RFC 6585 section 5). */

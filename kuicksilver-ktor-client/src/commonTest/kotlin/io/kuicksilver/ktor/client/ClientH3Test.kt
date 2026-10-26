@@ -28,8 +28,8 @@ import io.ktor.server.routing.routing
 import io.ktor.utils.io.ByteWriteChannel
 import io.ktor.utils.io.discard
 import io.ktor.utils.io.readAvailable
+import io.ktor.utils.io.readBuffer
 import io.ktor.utils.io.readByteArray
-import io.ktor.utils.io.readRemaining
 import io.ktor.utils.io.writeFully
 import io.ktor.websocket.Frame
 import io.ktor.websocket.readText
@@ -489,7 +489,7 @@ class ClientH3Test {
                         delay(300) // read only after the client's call is over: a reset by then would have discarded its Close
                         runCatching {
                             s.input
-                                .readRemaining()
+                                .readBuffer()
                                 .readByteArray()
                                 .size
                         }
@@ -544,7 +544,7 @@ class ClientH3Test {
                             c
                                 .prepareGet(
                                     "https://127.0.0.1:$port/slow",
-                                ).execute { it.bodyAsChannel().readRemaining() }
+                                ).execute { it.bodyAsChannel().readBuffer() }
                         }
                     assertTrue(
                         e is io.ktor.client.plugins.HttpRequestTimeoutException ||
@@ -631,7 +631,7 @@ class ClientH3Test {
                             val ch = r.bodyAsChannel()
                             assertEquals(1000, ch.readByteArray(1000).size)
                             gate1.complete(Unit)
-                            assertFailsWith<Throwable> { withTimeout(10.seconds) { ch.readRemaining() } }
+                            assertFailsWith<Throwable> { withTimeout(10.seconds) { ch.readBuffer() } }
                             readFailed = true
                         }
                         assertTrue(readFailed, "the streamed body failed after its first 1000 bytes")

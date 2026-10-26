@@ -5,7 +5,7 @@ package io.kuicksilver.ktor.server.h1
 import io.ktor.http.cio.Request
 import io.ktor.utils.io.ByteChannel
 import io.ktor.utils.io.InternalAPI
-import io.ktor.utils.io.readRemaining
+import io.ktor.utils.io.readBuffer
 import io.ktor.utils.io.writeStringUtf8
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -40,7 +40,7 @@ class H1PipelineTimeoutTest {
         val job: Job,
     ) {
         /** What the server sent; call once the pipeline has ended (the writer closes [fromServer]). */
-        suspend fun received(): String = fromServer.readRemaining().readString()
+        suspend fun received(): String = fromServer.readBuffer().readString()
     }
 
     private fun TestScope.pipeline(

@@ -12,7 +12,7 @@ import io.ktor.network.sockets.openWriteChannel
 import io.ktor.utils.io.close
 import io.ktor.utils.io.errors.PosixException
 import io.ktor.utils.io.readAvailable
-import io.ktor.utils.io.readRemaining
+import io.ktor.utils.io.readBuffer
 import io.ktor.utils.io.writeFully
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
@@ -55,7 +55,7 @@ class TcpSocketsNativeTest {
                                 val out = client.openWriteChannel()
                                 out.writeFully(byteArrayOf(7, 8, 9))
                                 out.flushAndClose()
-                                assertContentEquals(byteArrayOf(7, 8, 9), peer.openReadChannel().readRemaining().readByteArray())
+                                assertContentEquals(byteArrayOf(7, 8, 9), peer.openReadChannel().readBuffer().readByteArray())
                             }
                         }
                     }

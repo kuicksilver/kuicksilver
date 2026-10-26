@@ -9,7 +9,7 @@ import io.ktor.server.response.respondBytesWriter
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
 import io.ktor.server.routing.routing
-import io.ktor.utils.io.readRemaining
+import io.ktor.utils.io.readBuffer
 import io.ktor.utils.io.writeStringUtf8
 import io.kuicksilver.http3.Http3Connection
 import io.kuicksilver.http3.Http3Endpoint
@@ -56,7 +56,7 @@ class ServerPriorityTest {
     private suspend fun Http3Connection.text(
         path: String,
         vararg fields: Pair<String, String>,
-    ): String = withTimeout(5.seconds) { request(get(path, *fields)).body.readRemaining().readString() }
+    ): String = withTimeout(5.seconds) { request(get(path, *fields)).body.readBuffer().readString() }
 
     @Test fun requestPriorityFromField() =
         h3ServerTest {
@@ -87,7 +87,7 @@ class ServerPriorityTest {
                 h3(port) { c ->
                     val resp = withTimeout(5.seconds) { c.request(get("/u")) }
                     resp.updatePriority(StreamPriority(6))
-                    assertEquals("6", withTimeout(5.seconds) { resp.body.readRemaining().readString() })
+                    assertEquals("6", withTimeout(5.seconds) { resp.body.readBuffer().readString() })
                 }
             } finally {
                 server.stopSuspend(100, 1000)
@@ -118,7 +118,7 @@ class ServerPriorityTest {
                 h3(port) { c ->
                     val resp = withTimeout(5.seconds) { c.request(get("/r", "priority" to "u=5, i")) }
                     assertEquals(listOf("u=0"), resp.headers.getAll("priority"))
-                    assertEquals("${StreamPriority(5, true)}", withTimeout(5.seconds) { resp.body.readRemaining().readString() })
+                    assertEquals("${StreamPriority(5, true)}", withTimeout(5.seconds) { resp.body.readBuffer().readString() })
                     val inc = withTimeout(5.seconds) { c.request(get("/i")) }
                     assertEquals(listOf("i=?0"), inc.headers.getAll("priority"))
                 }

@@ -3,7 +3,7 @@
 package io.kuicksilver.ktor.client
 
 import io.ktor.network.sockets.InetSocketAddress
-import io.ktor.utils.io.readRemaining
+import io.ktor.utils.io.readBuffer
 import io.ktor.utils.io.writeFully
 import io.kuicksilver.quic.QuicClientConfig
 import io.kuicksilver.quic.QuicEndpoint
@@ -54,7 +54,7 @@ internal object HostInterop {
                 launch {
                     c.incomingStreams().collect { st ->
                         launch {
-                            val bytes = st.input.readRemaining().readByteArray()
+                            val bytes = st.input.readBuffer().readByteArray()
                             st.output.writeFully(bytes, 0, bytes.size)
                             st.output.flushAndClose()
                         }
@@ -89,7 +89,7 @@ internal object HostInterop {
                 val st = c.openBidi()
                 st.output.writeFully(payload, 0, payload.size)
                 st.output.flushAndClose()
-                return st.input.readRemaining().readByteArray()
+                return st.input.readBuffer().readByteArray()
             } finally {
                 c.close()
             }

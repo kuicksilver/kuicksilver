@@ -5,7 +5,7 @@
 package io.kuicksilver.ktor.client.h1
 
 import io.ktor.utils.io.ByteChannel
-import io.ktor.utils.io.readRemaining
+import io.ktor.utils.io.readBuffer
 import io.ktor.utils.io.writeFully
 import io.kuicksilver.ktor.client.ProxyCredentials
 import io.kuicksilver.ktor.client.ProxyException
@@ -39,7 +39,7 @@ class Socks5Test {
             val output = ByteChannel()
             val failure = runCatching { socks5Connect(input, output, target, port, credentials, "proxy.test:1080") }.exceptionOrNull()
             output.flushAndClose()
-            output.readRemaining().readByteArray() to failure
+            output.readBuffer().readByteArray() to failure
         }
 
     @Test fun greetingOffersUserPassOnlyWithCredentials() {

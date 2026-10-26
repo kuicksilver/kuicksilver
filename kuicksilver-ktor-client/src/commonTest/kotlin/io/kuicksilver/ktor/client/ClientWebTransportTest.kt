@@ -14,7 +14,7 @@ import io.ktor.client.request.HttpResponseData
 import io.ktor.network.sockets.InetSocketAddress
 import io.ktor.server.routing.routing
 import io.ktor.utils.io.copyTo
-import io.ktor.utils.io.readRemaining
+import io.ktor.utils.io.readBuffer
 import io.ktor.utils.io.writeFully
 import io.kuicksilver.http3.Http3Endpoint
 import io.kuicksilver.http3.Http3Exception
@@ -77,7 +77,7 @@ class ClientWebTransportTest {
                     val st = session.openBidi()
                     st.output.writeFully("ping".encodeToByteArray())
                     st.output.flushAndClose()
-                    assertEquals("ping", withTimeout(10.seconds) { st.input.readRemaining().readString() })
+                    assertEquals("ping", withTimeout(10.seconds) { st.input.readBuffer().readString() })
                     session.trySendDatagram(byteArrayOf(4, 2))
                     assertContentEquals(byteArrayOf(4, 2), withTimeout(10.seconds) { session.receiveDatagram() })
                     session.close(0, "done")

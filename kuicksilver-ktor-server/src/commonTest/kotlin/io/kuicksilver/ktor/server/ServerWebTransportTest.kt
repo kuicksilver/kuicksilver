@@ -9,7 +9,7 @@ import io.ktor.server.response.respondText
 import io.ktor.server.routing.route
 import io.ktor.server.routing.routing
 import io.ktor.utils.io.copyTo
-import io.ktor.utils.io.readRemaining
+import io.ktor.utils.io.readBuffer
 import io.ktor.utils.io.writeFully
 import io.kuicksilver.http3.Http3Connection
 import io.kuicksilver.http3.Http3Endpoint
@@ -87,7 +87,7 @@ class ServerWebTransportTest {
                     val st = session.openBidi()
                     st.output.writeFully("ping".encodeToByteArray())
                     st.output.flushAndClose()
-                    assertEquals("ping", withTimeout(5.seconds) { st.input.readRemaining().readString() })
+                    assertEquals("ping", withTimeout(5.seconds) { st.input.readBuffer().readString() })
                     session.trySendDatagram(byteArrayOf(1, 2, 3))
                     assertContentEquals(byteArrayOf(1, 2, 3), withTimeout(5.seconds) { session.receiveDatagram() })
                     session.close(0, "done")

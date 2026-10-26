@@ -5,7 +5,7 @@ package io.kuicksilver.ktor.server.h1
 import io.ktor.http.cio.Request
 import io.ktor.utils.io.ByteChannel
 import io.ktor.utils.io.InternalAPI
-import io.ktor.utils.io.readRemaining
+import io.ktor.utils.io.readBuffer
 import io.ktor.utils.io.writeStringUtf8
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -52,7 +52,7 @@ class H1PipelineBodyTimeoutTest {
         val toServer = ByteChannel()
         val fromServer = ByteChannel()
         val job = backgroundScope.startH1Pipeline(H1Connection(toServer, fromServer, null, null), idle, 30.seconds, handler = handler)
-        backgroundScope.launch { runCatching { fromServer.readRemaining() } } // a client that reads its responses
+        backgroundScope.launch { runCatching { fromServer.readBuffer() } } // a client that reads its responses
         runCurrent()
         return Conn(toServer, job)
     }
@@ -61,7 +61,7 @@ class H1PipelineBodyTimeoutTest {
         { request ->
             request.release()
             try {
-                seen.body = input.readRemaining().readString()
+                seen.body = input.readBuffer().readString()
             } catch (e: Throwable) {
                 seen.failure = e
             }
@@ -163,7 +163,7 @@ class H1PipelineBodyTimeoutTest {
             val c =
                 pipeline { request ->
                     request.release()
-                    input.readRemaining()
+                    input.readBuffer()
                     closingAtResponse = closing()
                     respondOk()
                 }
@@ -181,7 +181,7 @@ class H1PipelineBodyTimeoutTest {
                     output.writeStringUtf8("HTTP/1.1 101 Switching Protocols\r\nUpgrade: test\r\nConnection: Upgrade\r\n\r\n")
                     output.flush()
                     upgraded!!.complete(true)
-                    input.readRemaining() // until the client closes
+                    input.readBuffer() // until the client closes
                 }
             c.send("GET /ws HTTP/1.1\r\nHost: s\r\nUpgrade: test\r\nConnection: Upgrade\r\n\r\nhi")
             advanceTimeBy(10.minutes)

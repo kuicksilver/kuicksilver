@@ -6,7 +6,7 @@ import io.ktor.network.sockets.InetSocketAddress
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
 import io.ktor.server.routing.routing
-import io.ktor.utils.io.readRemaining
+import io.ktor.utils.io.readBuffer
 import io.kuicksilver.http3.Http3Endpoint
 import io.kuicksilver.http3.http3Request
 import io.kuicksilver.native.KslLoader
@@ -35,7 +35,7 @@ class NativeServerH3Test {
                         assertEquals(
                             "native h3",
                             r.body
-                                .readRemaining()
+                                .readBuffer()
                                 .readByteArray()
                                 .decodeToString(),
                         )
