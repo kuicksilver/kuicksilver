@@ -87,9 +87,11 @@ class HqInteropTest {
         val config = QuicEndpointConfig.Builder().apply { server = QuicServerConfig.Builder(tls).apply { quic = quicConfig { versions = Interop.v1 } }.build() }.build()
         val ep = QuicEndpoint.bind(InetSocketAddress("127.0.0.1", 0), config)
         val lostAt = CompletableDeferred<Unit>()
-        HqInteropClient.beforeRequest = { conn -> conn.closed.await(); lostAt.complete(Unit) }
+        val afterOpenBidi = CompletableDeferred<Unit>()
+        HqInteropClient.beforeRequest = { conn -> afterOpenBidi.complete(Unit); conn.closed.await(); lostAt.complete(Unit) }
         try {
-            val closer = launch(Dispatchers.Default) { ep.accept().close(0x101, "go away") }
+            // the close waits for the client to be past openBidi: closing at accept could land before it (exit 1 too, but not the order under test)
+            val closer = launch(Dispatchers.Default) { val c = ep.accept(); afterOpenBidi.await(); c.close(0x101, "go away") }
             val downloads = Files.createTempDirectory("dl").toFile()
             val code = Interop.run(mapOf("ROLE" to "client", "TESTCASE" to "transfer", "REQUESTS" to "https://127.0.0.1:${ep.localAddress.port}/f", "DOWNLOADS" to downloads.path))
             assertEquals(1, code); closer.join()
