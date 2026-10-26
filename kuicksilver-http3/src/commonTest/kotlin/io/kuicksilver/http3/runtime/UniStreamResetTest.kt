@@ -79,10 +79,13 @@ class UniStreamResetTest {
         h3Test {
             withServer { c, server ->
                 val u = c.openUni()
-                u.output.writeFully(VarInt.encode(0x21L + 0x1fL * 7))
-                u.output.flush()
+                // the server stops the stream once it has read the type (section 6.2.3): that may land before our flush returns
+                peerMayHaveClosed {
+                    u.output.writeFully(VarInt.encode(0x21L + 0x1fL * 7))
+                    u.output.flush()
+                }
                 server.awaitDiscarded(1)
-                u.reset(Http3ErrorCode.REQUEST_CANCELLED)
+                peerMayHaveClosed { u.reset(Http3ErrorCode.REQUEST_CANCELLED) }
                 // a later stream is still read: the connection is alive and processing
                 c.openUni().reset(Http3ErrorCode.REQUEST_CANCELLED)
                 server.awaitDiscarded(2)
