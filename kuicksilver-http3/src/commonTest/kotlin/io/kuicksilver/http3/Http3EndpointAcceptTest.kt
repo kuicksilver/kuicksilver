@@ -82,8 +82,10 @@ class Http3EndpointAcceptTest {
                         val accepted = async { server.accept() }
                         val client = good.connect(server.localAddress, H3Fixtures.client())
                         val conn = withTimeout(10.seconds) { accepted.await() }
-                        launch { conn.acceptRequest().respond(204).finish() }
+                        val served = launch { conn.acceptRequest().respond(204).finish() }
                         assertEquals(204, client.request(http3Request("GET", "server.test", "/")).status)
+                        // the client has the 204 before the server's last flush returns: closing first failed that flush
+                        served.join()
                         client.close()
                     }
                 } finally {
