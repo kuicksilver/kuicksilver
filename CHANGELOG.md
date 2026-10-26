@@ -118,6 +118,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- HTTP/3 server: a client's PRIORITY_UPDATE now reaches the stream's scheduling before `ServerRequest.priority` shows it,
+  so code that reacts to the new value finds the stream already scheduled by it (RFC 9218 section 7).
 - HTTP/3 server: `goAway()` no longer throws when the client answers the GOAWAY by closing the connection at once (RFC 9114
   section 5.2). The transport's loss could reach the GOAWAY write before the session saw the close.
 - Ktor client, HTTP/1.1: a response whose `Content-Length` or `Transfer-Encoding` has whitespace other than SP and
