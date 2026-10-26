@@ -267,6 +267,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- HTTP/3 server: `goAway()` no longer throws when the client answers the GOAWAY by closing the connection at once (RFC 9114
+  section 5.2). The transport's loss could reach the GOAWAY write before the session saw the close.
 - Ktor client, HTTP/1.1: a response whose `Content-Length` or `Transfer-Encoding` has whitespace other than SP and
   HTAB around a value (VT, FF, U+00A0) fails, and its connection is closed instead of reused (RFC 9110 sections 5.6.3
   and 8.6, RFC 9112 section 6.3 item 5). `Content-Length: 5<VT>` framed a 5-byte body and `Transfer-Encoding:
