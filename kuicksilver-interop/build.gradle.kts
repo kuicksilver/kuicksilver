@@ -14,6 +14,7 @@ kotlin {
     // not in an image: a local server or client on a Mac, for profiling with `sample` or Instruments (docs/benchmarks.md, "Profiling")
     macosArm64 { binaries.executable { entryPoint = "io.kuicksilver.interop.main"; baseName = "kuicksilver-interop" } }
     sourceSets {
+        all { languageSettings.optIn("io.kuicksilver.annotations.ExperimentalKuicksilverApi") }   // internal tooling: uses the library's experimental API directly
         commonMain.dependencies { implementation(project(":kuicksilver-quic")); implementation(project(":kuicksilver-http3")) }
         commonTest.dependencies { implementation(kotlin("test")) }
     }

@@ -14,6 +14,7 @@ kotlin {
     linuxX64()
     macosArm64()
     sourceSets {
+        all { languageSettings.optIn("io.kuicksilver.annotations.ExperimentalKuicksilverApi") }   // internal tooling: uses the library's experimental API directly
         commonMain.dependencies {
             implementation(project(":kuicksilver-quic"))
             implementation(libs.kotlinx.benchmark.runtime)

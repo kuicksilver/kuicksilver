@@ -60,6 +60,10 @@ kotlin {
 
     // test source sets may use the internal API (NullCryptoProvider, address literals) and exercise the experimental one;
     // production code opts in per use site
+    // the library may use its own experimental API (consumers still get the opt-in warning)
+    sourceSets.matching { !it.name.endsWith("Test") }.configureEach {
+        languageSettings.optIn("io.kuicksilver.annotations.ExperimentalKuicksilverApi")
+    }
     sourceSets.matching { it.name.endsWith("Test") }.configureEach {
         languageSettings.optIn("io.kuicksilver.annotations.InternalKuicksilverApi")
         languageSettings.optIn("io.kuicksilver.annotations.ExperimentalKuicksilverApi")
