@@ -628,7 +628,9 @@ internal class H3Session(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Throwable) {
-            if (closed.isCompleted) false else throw e
+            // the connection ended under the write (an idle client closes as soon as GOAWAY arrives): the transport's loss can
+            // reach this write before the session's own close has run, so it counts as closed too
+            if (closed.isCompleted || transportCause(e) is QuicException.ConnectionLost) false else throw e
         }
 
     fun requestStarted() {
