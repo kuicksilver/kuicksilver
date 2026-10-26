@@ -21,7 +21,7 @@ work="$root/build/check/service-keep-rules/$$"; rm -rf "$work"; mkdir -p "$work"
 rc=0
 trap 'if [ "$rc" = 0 ]; then rm -rf "$work"; else echo "kept for diagnosis: $work"; fi' EXIT
 trap 'rc=130; exit 130' INT TERM HUP
-r8="${KSL_R8_JAR:-$( (ls "$HOME"/.gradle/caches/modules-2/files-2.1/com.android.tools/r8/*/*/r8-*.jar 2>/dev/null || true) | grep -v sources | sort -V | tail -1)}"
+r8="${KSL_R8_JAR:-$( (cd "$root" && ./gradlew -q ksR8Jar 2>/dev/null) | tail -1)}"   # the R8 pinned in gradle/libs.versions.toml
 jdk="${JAVA_HOME:-$(/usr/libexec/java_home 2>/dev/null || dirname "$(dirname "$(readlink -f "$(command -v java)")")")}"
 sha() { sha256sum "$1" 2>/dev/null || shasum -a 256 "$1"; }
 # lists <file>: the entry names of a zip, one per line (read whole, so no pipe ends early)
