@@ -82,9 +82,10 @@ class NioDatagramIoTest {
             val (a, _) = pair()
             try {
                 val c = a.capabilities.value
-                // ECT(0) through IP_TOS where the JDK can set it; Windows refuses IP_TOS on a DatagramChannel (SocketException), so
-                // there the socket reports no ECN rather than claiming marks it cannot send
-                assertEquals(!onWindows, c.ecnSend, "ecnSend on ${System.getProperty("os.name")}")
+                // ECT(0) through IP_TOS where the JDK can set it. Windows 11 refuses IP_TOS on a DatagramChannel (SocketException) and
+                // the socket then reports no ECN; Windows Server 2025 (the GitHub runner) accepts it. Either way ecnSend matches what
+                // IP_TOS holds (nioSetsIpTosEct0); elsewhere it is always on
+                if (!onWindows) assertTrue(c.ecnSend, "ecnSend on ${System.getProperty("os.name")}")
                 assertFalse(c.ecnReceive)
                 assertEquals(1, c.gsoMaxSegments)
                 assertFalse(c.gro)
@@ -106,7 +107,7 @@ class NioDatagramIoTest {
                 if (c.ecnSend) {
                     assertEquals(2, (a as io.kuicksilver.quic.NioDatagramIo).ipTosForTest())
                 } else {
-                    assertTrue(onWindows, "only Windows refuses IP_TOS on a DatagramChannel")
+                    assertTrue(onWindows, "only Windows (11, not Server 2025) refuses IP_TOS on a DatagramChannel")
                     val tos = runCatching { (a as io.kuicksilver.quic.NioDatagramIo).ipTosForTest() }.getOrDefault(0)
                     assertEquals(0, tos and 3, "no ECN codepoint when ecnSend is off")
                 }
