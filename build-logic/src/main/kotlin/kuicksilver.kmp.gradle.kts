@@ -56,8 +56,12 @@ kotlin {
         }
     }
 
-    // test source sets may use the internal API (NullCryptoProvider, address literals); production code opts in per use site
-    sourceSets.matching { it.name.endsWith("Test") }.configureEach { languageSettings.optIn("io.kuicksilver.annotations.InternalKuicksilverApi") }
+    // test source sets may use the internal API (NullCryptoProvider, address literals) and exercise the experimental one;
+    // production code opts in per use site
+    sourceSets.matching { it.name.endsWith("Test") }.configureEach {
+        languageSettings.optIn("io.kuicksilver.annotations.InternalKuicksilverApi")
+        languageSettings.optIn("io.kuicksilver.annotations.ExperimentalKuicksilverApi")
+    }
     sourceSets {
         commonTest.dependencies {
             implementation(kotlin("test"))
