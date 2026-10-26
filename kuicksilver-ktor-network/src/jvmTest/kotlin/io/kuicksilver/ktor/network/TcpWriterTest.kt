@@ -51,7 +51,15 @@ class TcpWriterTest {
         runBlocking { SessionCache.Default.clear() }
     }
 
+    /**
+     * Samples of 500 a stalled writer may be caught in SocketChannel.write. The spin this pins (Ktor's CIOWriter on a full send
+     * buffer) is caught in nearly all 500; a writer that waits for OP_WRITE is caught only when Linux grows a stalled
+     * connection's send buffer and reports it writable again (8 and 13 of 500 under TLS on the GitHub runners, 2026-10-26).
+     */
+    private val spinSamplesAllowed = 50
+
     /** Threads running inside a JDK socket write right now (the spinning writer is always there; a suspended one never). */
+
     private fun threadsInSocketWrite(): Int =
         Thread.getAllStackTraces().count { (t, st) ->
             t.state == Thread.State.RUNNABLE &&
@@ -122,7 +130,10 @@ class TcpWriterTest {
                 awaitStall(written)
                 var hits = 0
                 repeat(500) { if (threadsInSocketWrite() > 0) hits++ }
-                assertTrue(hits <= 5, "a writer kept running in SocketChannel.write in $hits of 500 samples after ${written.get()} bytes")
+                assertTrue(
+                    hits <= spinSamplesAllowed,
+                    "a writer kept running in SocketChannel.write in $hits of 500 samples after ${written.get()} bytes",
+                )
                 val waits = (c as KslNioSocket).writeWaits.get()
                 assertTrue(
                     waits in 1..5,
@@ -291,7 +302,10 @@ class TcpWriterTest {
                 awaitStall(written)
                 var hits = 0
                 repeat(500) { if (threadsInSocketWrite() > 0) hits++ }
-                assertTrue(hits <= 5, "under TLS too, a writer kept running in SocketChannel.write in $hits of 500 samples")
+                assertTrue(
+                    hits <= spinSamplesAllowed,
+                    "under TLS too, a writer kept running in SocketChannel.write in $hits of 500 samples",
+                )
                 c.close()
                 val released = withTimeoutOrNull(20.seconds) { raw.socketContext.join() }
                 assertTrue(released != null, "the TCP socket is released within the close bound although the peer never reads")
