@@ -53,7 +53,7 @@ internal class WtStreamImpl(
         BodyReadChannel(inCh) {
             if (readable && inPump?.isCompleted == false) {
                 runCatching { st.stopSending(WtErrorCodes.toHttp3(0)) }
-                inPump?.cancel()
+                inPump.cancel()
             }
         }
     override val output: ByteWriteChannel get() = outCh

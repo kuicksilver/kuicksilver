@@ -233,7 +233,7 @@ class AckTrackerTest {
                 }
             }
             assertTrue(acks in 500..500 + skips, "offset $offset: $acks ACKs for 1000 packets with $skips skipped numbers")
-            assertEquals(skips + 1, last!!.ranges.size, "offset $offset: every skipped number is a gap: ${last!!.ranges}")
+            assertEquals(skips + 1, last!!.ranges.size, "offset $offset: every skipped number is a gap: ${last.ranges}")
         }
     }
 

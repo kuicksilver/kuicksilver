@@ -266,7 +266,7 @@ class ClientWebSocketExtensionsTest {
                         listener.accept().use { s ->
                             val input = s.openReadChannel()
                             val output = s.openWriteChannel(autoFlush = true)
-                            while (input.readLine(LineEnding.Lenient)?.isNotEmpty() == true) Unit
+                            while (input.readLine(LineEnding.Lenient)?.isNotEmpty() == true) continue
                             output.writeStringUtf8(
                                 "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n" +
                                     "Sec-WebSocket-Accept: unchecked\r\n" +

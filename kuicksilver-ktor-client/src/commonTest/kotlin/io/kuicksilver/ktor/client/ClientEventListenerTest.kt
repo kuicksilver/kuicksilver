@@ -261,7 +261,7 @@ class ClientEventListenerTest {
                         launch {
                             listener.accept().use { s ->
                                 val input = s.openReadChannel()
-                                while ((input.readLine(LineEnding.Lenient) ?: "").isNotEmpty()) Unit
+                                while ((input.readLine(LineEnding.Lenient) ?: "").isNotEmpty()) continue
                             }
                         }
                     testClient(engine = { eventListener = events }).use { c ->

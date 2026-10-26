@@ -76,7 +76,9 @@ class ClientH3WebSocketTest {
                 try {
                     testClient(Http3DiscoveryMode.H3Only, block = { install(WebSockets) }).use { c ->
                         // the session ends on the Close exchange, not on the FIN
-                        withTimeout(10.seconds) { c.webSocket("wss://127.0.0.1:${ep.localAddress.port}/ws") { for (f in incoming) Unit } }
+                        withTimeout(
+                            10.seconds,
+                        ) { c.webSocket("wss://127.0.0.1:${ep.localAddress.port}/ws") { for (f in incoming) continue } }
                         clientDone.complete(Unit)
                         val got = withTimeout(5.seconds) { served.await() }
                         assertTrue(got.isSuccess && got.getOrThrow() >= 6, "the server reads the client's Close reply and FIN, got $got")

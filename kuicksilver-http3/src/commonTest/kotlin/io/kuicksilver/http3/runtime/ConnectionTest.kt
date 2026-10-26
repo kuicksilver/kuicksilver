@@ -125,7 +125,7 @@ class ConnectionTest {
                 }
             assertEquals(Http3ErrorCode.MISSING_SETTINGS, code)
             assertEquals(Http3ErrorCode.MISSING_SETTINGS, assertIs<Http3Exception.Protocol>(local).h3Code)
-            assertEquals(Initiator.Local, (local as Http3Exception.Protocol).initiator)
+            assertEquals(Initiator.Local, local.initiator)
         }
 
     @Test fun secondControlStreamIsCreationError() =

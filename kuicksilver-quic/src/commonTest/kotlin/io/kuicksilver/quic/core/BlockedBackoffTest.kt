@@ -76,7 +76,7 @@ class BlockedBackoffTest {
         }
 
         fun write() {
-            while (p.client.writeStream(id, data, 0, data.size, false) > 0) Unit
+            while (p.client.writeStream(id, data, 0, data.size, false) > 0) continue
         }
 
         fun run(limit: Duration) {
@@ -129,7 +129,7 @@ class BlockedBackoffTest {
             // the server reads a window's worth: MAX_STREAM_DATA lets the client send, and it blocks at the new limit
             val buf = ByteArray(65536)
             val s = p.server!!
-            while (s.readStream(b.id, buf, 0, buf.size) > 0) Unit
+            while (s.readStream(b.id, buf, 0, buf.size) > 0) continue
             val before = b.reports.size
             b.run(2.seconds)
             val fresh = b.reports.subList(before, b.reports.size)

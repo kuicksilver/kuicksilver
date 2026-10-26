@@ -496,7 +496,7 @@ class ClientH3Test {
                     }
                 try {
                     testClient(Http3DiscoveryMode.H3Only, block = { install(WebSockets) }).use { c ->
-                        c.webSocket("wss://127.0.0.1:${ep.localAddress.port}/ws") { for (f in incoming) Unit }
+                        c.webSocket("wss://127.0.0.1:${ep.localAddress.port}/ws") { for (f in incoming) continue }
                         clientDone.complete(Unit)
                         val got = withTimeout(5.seconds) { served.await() }
                         assertTrue(got.isSuccess && got.getOrThrow() >= 6, "the server reads the client's Close reply and FIN, got $got")
@@ -651,7 +651,7 @@ class ClientH3Test {
                             gate2.complete(Unit)
                             // the end is known before the application reads on: a read that was not waiting must fail too, not see -1
                             withTimeout(10.seconds) { while (raw.closedCause == null) yield() }
-                            assertFailsWith<Throwable> { while (raw.readAvailable(buf, 0, buf.size) >= 0) Unit }
+                            assertFailsWith<Throwable> { while (raw.readAvailable(buf, 0, buf.size) >= 0) continue }
                             readFailed = true
                         }
                         assertTrue(readFailed, "the engine's channel failed after its first 1000 bytes")

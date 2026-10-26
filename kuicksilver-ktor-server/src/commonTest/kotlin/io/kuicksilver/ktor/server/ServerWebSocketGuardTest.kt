@@ -70,7 +70,7 @@ class ServerWebSocketGuardTest {
                     )
                     val status = r.readLine(LineEnding.Lenient)
                     assertEquals("HTTP/1.1 101 Switching Protocols", status)
-                    while (r.readLine(LineEnding.Lenient)?.isNotEmpty() == true) Unit
+                    while (r.readLine(LineEnding.Lenient)?.isNotEmpty() == true) continue
                     w.writeFully(frame)
                     assertEquals(1002, withTimeout(10.seconds) { closeCode(r) })
                 } finally {

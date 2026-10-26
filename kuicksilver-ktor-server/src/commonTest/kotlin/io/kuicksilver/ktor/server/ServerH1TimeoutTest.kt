@@ -151,7 +151,7 @@ class ServerH1TimeoutTest {
                     withTimeout(20.seconds) {
                         val b = ByteArray(1 shl 16)
                         try {
-                            while (r.readAvailable(b, 0, b.size) >= 0) Unit
+                            while (r.readAvailable(b, 0, b.size) >= 0) continue
                         } catch (e: Exception) {
                             // the reset: an IOException on the JVM, a PosixException on Kotlin/Native
                             if (e is CancellationException) throw e

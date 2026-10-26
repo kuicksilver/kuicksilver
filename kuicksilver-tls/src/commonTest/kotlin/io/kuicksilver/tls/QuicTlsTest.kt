@@ -611,7 +611,7 @@ class QuicVersionTest {
                             if (me === s && ev.level == EncryptionLevel.Initial &&
                                 switch != null
                             ) {
-                                c.setQuicVersion(switch!!)
+                                c.setQuicVersion(switch)
                                 switch = null
                             }
                             peer.provide(ev.level, ev.data)

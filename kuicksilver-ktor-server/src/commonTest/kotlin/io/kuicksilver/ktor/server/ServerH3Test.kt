@@ -246,7 +246,7 @@ class ServerH3Test {
         } catch (e: Throwable) {
             var c: Throwable? = e
             while (c != null && c !is io.kuicksilver.quic.QuicException.StreamError.Stopped) c = c.cause
-            if ((c as? io.kuicksilver.quic.QuicException.StreamError.Stopped)?.code != 0x100L) throw e
+            if (c?.code != 0x100L) throw e
         }
         val resp = st.input.readFullBody()
         val types = ArrayList<Long>()

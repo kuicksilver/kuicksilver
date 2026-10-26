@@ -151,7 +151,7 @@ class TcpWriterTest {
         neverReadingPeer(scope) { s ->
             val input = s.openReadChannel()
             val buf = ByteArray(64 shl 10)
-            while (input.readAvailable(buf, 0, buf.size) >= 0) Unit
+            while (input.readAvailable(buf, 0, buf.size) >= 0) continue
         }
 
     /** The application ends its writes and waits for the writer before it closes: close() must still close the socket. */

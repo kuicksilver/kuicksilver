@@ -620,7 +620,7 @@ class ReceivePathTest {
                     }
                 }
             while (tampered == null) p.step()
-            feed(p.client, tampered!!, CoreFixtures.serverAddr, p.now)
+            feed(p.client, tampered, CoreFixtures.serverAddr, p.now)
             assertFalse(p.client.anyPeerPacket, "the Initial with a token was discarded")
             assertTrue(p.handshake(), "the server's retransmission completes the handshake")
         } finally {
@@ -643,7 +643,7 @@ class ReceivePathTest {
                     }
                 }
             while (tampered == null) p.step()
-            feed(p.client, tampered!!, CoreFixtures.serverAddr, p.now)
+            feed(p.client, tampered, CoreFixtures.serverAddr, p.now)
             assertFalse(p.client.anyPeerPacket, "discarded")
             assertTrue(p.handshake())
         } finally {

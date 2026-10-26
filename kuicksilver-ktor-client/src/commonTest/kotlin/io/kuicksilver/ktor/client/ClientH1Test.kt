@@ -579,7 +579,7 @@ class ClientH1Test {
     /** Reads a request head; returns its request line ("" at end of stream). */
     private suspend fun readHead(input: ByteReadChannel): String {
         val line = input.readLine(LineEnding.Lenient) ?: return ""
-        while (input.readLine(LineEnding.Lenient)?.isNotEmpty() == true) Unit
+        while (input.readLine(LineEnding.Lenient)?.isNotEmpty() == true) continue
         return line
     }
 
@@ -626,7 +626,7 @@ class ClientH1Test {
                             val input = s.openReadChannel()
                             val output = s.openWriteChannel(autoFlush = true)
                             responses.forEachIndexed { i, r ->
-                                while (input.readLine(LineEnding.Lenient)?.isNotEmpty() == true) Unit
+                                while (input.readLine(LineEnding.Lenient)?.isNotEmpty() == true) continue
                                 if (bodyBytes[i] > 0) input.readByteArray(bodyBytes[i])
                                 output.writeStringUtf8(r)
                             }

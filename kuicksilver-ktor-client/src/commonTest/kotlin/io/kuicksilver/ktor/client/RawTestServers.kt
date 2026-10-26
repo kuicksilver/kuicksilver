@@ -173,7 +173,7 @@ internal suspend fun CoroutineScope.h3Origin(
 
 private suspend fun ByteReadChannel.discardAll() {
     val b = ByteArray(4096)
-    while (readAvailable(b, 0, b.size) >= 0) Unit
+    while (readAvailable(b, 0, b.size) >= 0) continue
 }
 
 /** Control of a [udpRelay]. */

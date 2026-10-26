@@ -165,7 +165,7 @@ class MigrationApiTest {
                     }
                     val before = assertNotNull(prefIo).received
                     assertTrue(echo(c, s, 1 shl 20), "1 MiB echoed after the move")
-                    assertTrue(prefIo!!.received - before > 500, "through the preferred socket: ${prefIo!!.received - before} datagrams")
+                    assertTrue(prefIo.received - before > 500, "through the preferred socket: ${prefIo.received - before} datagrams")
                     c.close()
                     s.close()
                 }

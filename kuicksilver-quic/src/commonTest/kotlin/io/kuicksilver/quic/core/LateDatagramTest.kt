@@ -77,12 +77,12 @@ class LateDatagramTest {
                         if (n <= 0) break
                         p.server!!.writeStream(id, buf, 0, n, false)
                     }
-                    while (p.client.readStream(id, buf, 0, buf.size) > 0) Unit
+                    while (p.client.readStream(id, buf, 0, buf.size) > 0) continue
                     // 130 packet numbers later the held one decodes 256 too high (it was sent with a one-byte packet number)
                     if (!delivered && held != null && clientSpace.ack.largestReceived >= heldPn + 130) {
                         delivered = true
                         // the Null protection leaves the header readable: the packet number took one byte
-                        if (crypto === NullCryptoProvider) assertEquals(0, held!![0].toInt() and 0x03, "one-byte packet number")
+                        if (crypto === NullCryptoProvider) assertEquals(0, held[0].toInt() and 0x03, "one-byte packet number")
                         assertTrue(
                             p.server!!
                                 .loss
@@ -90,9 +90,9 @@ class LateDatagramTest {
                                 .largestSent < heldPn + 256,
                             "$crypto: the misread number was never sent",
                         )
-                        val b = PacketBuffer.of(held!!)
+                        val b = PacketBuffer.of(held)
                         try {
-                            p.client.handleDatagram(b, held!!.size, CoreFixtures.serverAddr, Ecn.NotEct, p.now)
+                            p.client.handleDatagram(b, held.size, CoreFixtures.serverAddr, Ecn.NotEct, p.now)
                         } finally {
                             b.close()
                         }

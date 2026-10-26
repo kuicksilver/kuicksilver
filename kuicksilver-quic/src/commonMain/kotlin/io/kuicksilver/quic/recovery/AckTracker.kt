@@ -78,8 +78,6 @@ internal class AckTracker(
             io.kuicksilver.quic.Ecn.Ce -> {
                 c[2]++
             }
-
-            else -> {}
         }
     }
 

@@ -216,7 +216,7 @@ class GoAwayTest {
                 p.server.goAway()
                 val e = withTimeout(5.seconds) { p.client.closed.await() }
                 assertEquals(Http3ErrorCode.NO_ERROR, assertIs<Http3Exception.Protocol>(e).h3Code)
-                assertEquals(Initiator.Local, (e as Http3Exception.Protocol).initiator)
+                assertEquals(Initiator.Local, e.initiator)
                 val s = withTimeout(5.seconds) { p.server.closed.await() } as Http3Exception.Protocol
                 assertEquals(Http3ErrorCode.NO_ERROR, s.h3Code)
                 assertEquals(Initiator.Peer, s.initiator)

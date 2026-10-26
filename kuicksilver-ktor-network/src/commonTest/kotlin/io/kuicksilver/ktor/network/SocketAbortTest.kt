@@ -65,7 +65,7 @@ class SocketAbortTest {
                             }
                         }
                         // until the writer is stuck (no chunk for 300 ms): the peer's buffers are full
-                        while (withTimeoutOrNull(300.milliseconds) { progress.receive() } != null) Unit
+                        while (withTimeoutOrNull(300.milliseconds) { progress.receive() } != null) continue
                         sock.close()
                         // a bounded look, not a wait for something to happen: a graceful close cannot finish here
                         assertNull(withTimeoutOrNull(500.milliseconds) { raw.socketContext.join() }, "the close finished")

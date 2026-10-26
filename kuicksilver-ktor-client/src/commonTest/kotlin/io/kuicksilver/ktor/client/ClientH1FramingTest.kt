@@ -299,7 +299,7 @@ class ClientH1FramingTest {
     /** Reads a request head; returns its request line ("" at end of stream). */
     private suspend fun readHead(input: ByteReadChannel): String {
         val line = input.readLine(LineEnding.Lenient) ?: return ""
-        while (input.readLine(LineEnding.Lenient)?.isNotEmpty() == true) Unit
+        while (input.readLine(LineEnding.Lenient)?.isNotEmpty() == true) continue
         return line
     }
 

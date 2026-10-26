@@ -1983,7 +1983,7 @@ class PathTest {
         val evicted = probed.single { it.state == PathState.Closed }
         assertFalse(paths.hasResponseFor(evicted), "no response is left for the evicted path")
         assertEquals(2, paths.responses)
-        assertTrue(paths.queueResponse(9, fifth!!), "its slot is free again")
+        assertTrue(paths.queueResponse(9, fifth), "its slot is free again")
     }
 
     /** A probe that was sent on a path closed since then and is declared lost must not reach the active path's congestion controller (RFC 9000 section 9.4). */
