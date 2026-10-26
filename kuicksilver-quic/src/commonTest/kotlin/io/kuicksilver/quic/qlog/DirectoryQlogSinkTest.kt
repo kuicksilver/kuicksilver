@@ -35,8 +35,19 @@ class DirectoryQlogSinkTest {
 
     private fun read(name: String) = SystemFileSystem.source(Path(dir, name)).buffered().use { it.readString() }
 
+    /**
+     * The sink, or null on Android API 24-25: without java.nio.file it cannot check the directory's permissions and refuses
+     * to write diagnostics there (PrivateFiles.jvm.kt), which is the behaviour these tests cannot exercise.
+     */
+    private fun sinkOrNull(make: () -> DirectoryQlogSink): DirectoryQlogSink? =
+        try {
+            make()
+        } catch (e: IllegalArgumentException) {
+            if (e.message?.contains("java.nio.file is unavailable") == true) null else throw e
+        }
+
     @Test fun negative_reusedOdcidDoesNotTruncateAnotherTrace() {
-        val sink = DirectoryQlogSink(dir.toString())
+        val sink = sinkOrNull { DirectoryQlogSink(dir.toString()) } ?: return
         val first = assertNotNull(sink.open("0011223344556677", TlsRole.Server))
         first.write("first\n")
         first.close()
@@ -50,7 +61,7 @@ class DirectoryQlogSinkTest {
     }
 
     @Test fun negative_openTracesAreBoundedPerSink() {
-        val sink = DirectoryQlogSink(dir.toString(), maxOpenTraces = 2, maxTotalBytes = 1L shl 20)
+        val sink = sinkOrNull { DirectoryQlogSink(dir.toString(), maxOpenTraces = 2, maxTotalBytes = 1L shl 20) } ?: return
         val a = assertNotNull(sink.open("aa00000000000000", TlsRole.Server))
         val b = assertNotNull(sink.open("bb00000000000000", TlsRole.Server))
         assertNull(sink.open("cc00000000000000", TlsRole.Server), "a third connection is not traced while two traces are open")
@@ -62,7 +73,7 @@ class DirectoryQlogSinkTest {
     }
 
     @Test fun negative_totalBytesAreBoundedPerSink() {
-        val sink = DirectoryQlogSink(dir.toString(), maxOpenTraces = 8, maxTotalBytes = 100)
+        val sink = sinkOrNull { DirectoryQlogSink(dir.toString(), maxOpenTraces = 8, maxTotalBytes = 100) } ?: return
         val a = assertNotNull(sink.open("aa00000000000000", TlsRole.Server))
         repeat(20) { a.write("0123456789") } // 200 bytes offered
         a.close()
