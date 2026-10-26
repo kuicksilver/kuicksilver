@@ -27,6 +27,7 @@ import io.kuicksilver.quic.SocketDefunctException
 import io.kuicksilver.quic.quicConfig
 import io.kuicksilver.quic.runtime.ConnectionRuntime
 import io.kuicksilver.tls.KslQuicCrypto
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
@@ -433,7 +434,8 @@ class MigrationApiTest {
             ApiPair.open().use { p ->
                 withTimeout(30.seconds) {
                     val (c, s) = p.connect()
-                    val events = async { c.pathEvents.first() }
+                    // subscribed before the probe: pathEvents is a hot flow without replay
+                    val events = async(start = CoroutineStart.UNDISPATCHED) { c.pathEvents.first() }
                     val dead = p.net.open(newAddr, deaf = true)
                     val path = c.addPath(dead)
                     assertFalse(path.probe(), "a socket whose datagrams vanish never validates")
@@ -512,7 +514,7 @@ class MigrationApiTest {
             ApiPair.open().use { p ->
                 withTimeout(20.seconds) {
                     val (c, s) = p.connect()
-                    val events = async { c.pathEvents.take(2).toList() }
+                    val events = async(start = CoroutineStart.UNDISPATCHED) { c.pathEvents.take(2).toList() } // subscribed before migrate
                     c.migrate(p.net.open(newAddr))
                     val l = events.await()
                     assertIs<PathEvent.Validated>(l[0])
