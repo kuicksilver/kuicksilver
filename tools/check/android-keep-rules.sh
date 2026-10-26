@@ -37,7 +37,7 @@ if grep -A2 -E '^-keep[a-z,]*includedescriptorclasses class io\.kuicksilver\.nat
 else echo "FAIL: proguard.txt does not keep KslNative's native methods (RegisterNatives) with includedescriptorclasses"; rc=1; fi
 
 # 2. R8 over the AAR's classes, as an app's release build runs it
-r8="${KSL_R8_JAR:-$( (ls "$HOME"/.gradle/caches/modules-2/files-2.1/com.android.tools/r8/*/*/r8-*.jar 2>/dev/null || true) | grep -v sources | sort -V | tail -1)}"
+r8="${KSL_R8_JAR:-$( (cd "$root" && ./gradlew -q ksR8Jar 2>/dev/null) | tail -1)}"   # the R8 pinned in gradle/libs.versions.toml
 sdk="${ANDROID_HOME:-$(sed -n 's/^sdk\.dir=//p' "$root/local.properties" 2>/dev/null)}"; sdk="${sdk:-$HOME/Library/Android/sdk}"
 android_jar=$( (ls "$sdk"/platforms/android-*/android.jar 2>/dev/null || true) | sort -V | tail -1)
 stdlib=$( (ls "$HOME"/.gradle/caches/modules-2/files-2.1/org.jetbrains.kotlin/kotlin-stdlib/*/*/kotlin-stdlib-[0-9]*.jar 2>/dev/null || true) | grep -v sources | sort -V | tail -1)
