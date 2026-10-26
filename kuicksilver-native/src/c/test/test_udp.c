@@ -248,10 +248,11 @@ void run_udp(void) {
             uint32_t sent = 0; ksl_udp_fail_next_send_for_test(a, EPERM); CHECK(ksl_udp_send(a, bufs, lens, addrs, ecns, 2, &sent) == KSL_OK && sent == 2, "EPERM: retried once, both sent");
             ksl_udp_fail_next_send_for_test(a, EPERM); CHECK(ksl_udp_send(a, bufs, lens, addrs, ecns, 2, &sent) == KSL_OK && sent == 2, "a later EPERM after successful sends: retried again (the retry budget renews on success), both sent");
             ksl_udp_fail_next_send_for_test(a, EINTR); CHECK(ksl_udp_send(a, bufs, lens, addrs, ecns, 2, &sent) == KSL_OK && sent == 2, "EINTR: the interrupted send goes again, both sent");
-            ksl_udp_fail_next_send_for_test(a, ENETUNREACH); CHECK(ksl_udp_send(a, bufs, lens, addrs, ecns, 2, &sent) == KSL_OK && sent == 2, "ENETUNREACH: the datagram is given up (counted as sent, lost on the wire), the socket lives");
+            ksl_udp_fail_next_send_for_test(a, ENETUNREACH); CHECK(ksl_udp_send(a, bufs, lens, addrs, ecns, 2, &sent) == KSL_OK && sent == 2, "ENETUNREACH: the datagram is given up (counted as sent, lost on the wire), the socket lives; with IP_RECVERR it is first taken for an earlier datagram's ICMP error and sent once more");
             uint8_t *rb[8]; uint32_t rc[8], rl[8], got = 0, drained = 0; uint8_t ra[8 * KSL_UDP_ADDR_LEN], re[8]; for (int i = 0; i < 8; i++) { rb[i] = malloc(200); rc[i] = 200; }
             for (int tries = 0; tries < 20; tries++) { if (ksl_udp_recv(b, rb, rc, rl, ra, re, 8, &got, 100) == KSL_OK) drained += got; else break; }
-            CHECK(drained == 7, "seven of the eight reached the wire (the unreachable one was skipped)");
+            /* with IP_RECVERR (Linux) the one ENETUNREACH is a pending ICMP error of another datagram: its retry reaches the wire */
+            CHECK(drained == 7u + (uint32_t)(ksl_udp_recverr_for_test(a) != 0), "seven of the eight reached the wire (the unreachable one was skipped; all eight with IP_RECVERR)");
             for (int i = 0; i < 2; i++) free(bufs[i]); for (int i = 0; i < 8; i++) free(rb[i]); }
         /* udp_host_or_net_down_is_slot_loss: EHOSTDOWN and ENETDOWN (a peer's link went away, Darwin reports both) lose that slot only;
            udp_enobufs_is_backpressure: a full interface queue answers KSL_OK with the datagrams sent so far, as EAGAIN, and nothing is lost */
@@ -263,7 +264,8 @@ void run_udp(void) {
             CHECK(ksl_udp_send(a, bufs, lens, addrs, ecns, 2, &sent) == KSL_OK && sent == 2, "the retry sends both");
             uint8_t *rb[8]; uint32_t rc[8], rl[8], got = 0, drained = 0; uint8_t ra[8 * KSL_UDP_ADDR_LEN], re[8]; for (int i = 0; i < 8; i++) { rb[i] = malloc(200); rc[i] = 200; }
             for (int tries = 0; tries < 20; tries++) { if (ksl_udp_recv(b, rb, rc, rl, ra, re, 8, &got, 100) == KSL_OK) drained += got; else break; }
-            CHECK(drained == 4, "four reached the wire: one of each down batch, both of the retry");
+            /* with IP_RECVERR (Linux) EHOSTDOWN, unlike ENETDOWN, is a pending ICMP error of another datagram: its retry reaches the wire */
+            CHECK(drained == 4u + (uint32_t)(ksl_udp_recverr_for_test(a) != 0), "four reached the wire: one of each down batch, both of the retry (five with IP_RECVERR: the EHOSTDOWN slot's retry)");
             for (int i = 0; i < 2; i++) free(bufs[i]); for (int i = 0; i < 8; i++) free(rb[i]); }
         /* udp_bad_destination_keeps_ecn_and_gso: the kernel answers EINVAL for port 0 (a spoofed Initial's source); that is the
            destination's fault — the slot is lost like any datagram on the wire, the batch goes on, and neither the ECN cmsg nor GSO is withdrawn */
