@@ -25,9 +25,9 @@ class DatagramApiAllocationTest {
                     val data = ByteArray(100)
                     val mx = ManagementFactory.getThreadMXBean() as com.sun.management.ThreadMXBean
                     repeat(1000) { c.trySendDatagram(data) } // warm up
-                    val before = mx.getThreadAllocatedBytes(Thread.currentThread().threadId())
+                    val before = mx.currentThreadAllocatedBytes
                     repeat(10_000) { assertEquals(DatagramSendResult.Sent, c.trySendDatagram(data)) }
-                    val perCall = (mx.getThreadAllocatedBytes(Thread.currentThread().threadId()) - before) / 10_000.0
+                    val perCall = (mx.currentThreadAllocatedBytes - before) / 10_000.0
                     assertTrue(
                         perCall <= data.size + 256,
                         "allocated $perCall bytes per call: the payload copy plus a bounded wrapper (command object and channel slot)",

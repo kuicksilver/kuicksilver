@@ -12,7 +12,7 @@ import kotlin.test.assertTrue
  */
 class CoreAllocationTest {
     private val mx = ManagementFactory.getThreadMXBean() as com.sun.management.ThreadMXBean
-    private fun allocated(): Long = mx.getThreadAllocatedBytes(Thread.currentThread().threadId())
+    private fun allocated(): Long = mx.currentThreadAllocatedBytes
 
     private fun measure(reverse: Boolean, datagrams: Boolean = false, quic: io.kuicksilver.quic.QuicConfig = io.kuicksilver.quic.QuicConfig.Default, midway: (CoreLoopback) -> Unit = {}) {
         CoreLoopback(streams = 1, payload = 1200, reverse = reverse, useDatagrams = datagrams, quic = quic).use { loop ->
