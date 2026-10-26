@@ -130,7 +130,22 @@ internal suspend fun slowHttp(
 ): String {
     val selector = SelectorManager(Dispatchers.Default)
     try {
-        val tcp = aSocket(selector).tcp().connect("127.0.0.1", port) { receiveBufferSize = 64 * 1024 }
+        // ktor-network's mingwX64 connect sometimes fails at once with "POSIX error 0: No error" against a listening server
+        // (the GitHub Windows runner, 2026-10-26): a client-side glitch, so the connect is retried a few times
+        var attempt = 0
+        val tcp =
+            run {
+                while (true) {
+                    try {
+                        return@run aSocket(selector).tcp().connect("127.0.0.1", port) { receiveBufferSize = 64 * 1024 }
+                    } catch (e: kotlinx.io.IOException) {
+                        if (++attempt >= 3) throw e
+                        kotlinx.coroutines.delay(50)
+                    }
+                }
+                @Suppress("UNREACHABLE_CODE")
+                error("unreachable")
+            }
         val socket: Socket = if (tls != null) tcp.tls(tls) else tcp
         try {
             val w = socket.openWriteChannel(autoFlush = true)
