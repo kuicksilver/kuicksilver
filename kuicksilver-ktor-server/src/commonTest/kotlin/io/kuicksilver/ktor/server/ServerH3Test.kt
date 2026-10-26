@@ -239,8 +239,15 @@ class ServerH3Test {
         val st = quic.openBidi()
         check(block.size < 16384)
         // HEADERS with a two-byte varint length
-        st.output.writeFully(byteArrayOf(0x01, (0x40 or (block.size shr 8)).toByte(), block.size.toByte()) + block)
-        st.output.flushAndClose()
+        // the server may answer and stop reading (STOP_SENDING with H3_NO_ERROR, RFC 9114 section 4.1) before our FIN leaves
+        try {
+            st.output.writeFully(byteArrayOf(0x01, (0x40 or (block.size shr 8)).toByte(), block.size.toByte()) + block)
+            st.output.flushAndClose()
+        } catch (e: Throwable) {
+            var c: Throwable? = e
+            while (c != null && c !is io.kuicksilver.quic.QuicException.StreamError.Stopped) c = c.cause
+            if ((c as? io.kuicksilver.quic.QuicException.StreamError.Stopped)?.code != 0x100L) throw e
+        }
         val resp = st.input.readFullBody()
         val types = ArrayList<Long>()
         var i = 0
