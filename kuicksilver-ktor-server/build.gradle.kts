@@ -9,7 +9,7 @@ plugins {
 kotlin {
     // the device tests' network security config (src/androidDeviceTest/res/xml): the Kuicksilver client they use refuses
     // cleartext the app does not allow; the library has no Android resources of its own
-    androidLibrary { androidResources { enable = true } }
+    android { androidResources { enable = true } }
     sourceSets {
         commonMain.dependencies {
             api(project(":kuicksilver-http3"))

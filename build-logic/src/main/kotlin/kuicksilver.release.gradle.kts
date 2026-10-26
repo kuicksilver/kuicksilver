@@ -12,7 +12,7 @@ plugins { signing }
 private val publishedModules = listOf("native", "tls", "ktor-network", "quic", "http3", "ktor-client", "ktor-server", "bom").map { "kuicksilver-$it" }
 private val releaseVersion = providers.gradleProperty("kuicksilver.version").getOrElse("0.3.0-SNAPSHOT")
 
-val cyclonedxValidator: Configuration by configurations.creating {
+val cyclonedxValidator: Configuration = configurations.create("cyclonedxValidator") {
     isCanBeConsumed = false
     description = "cyclonedx-core-java for validateSbom (an isolated class loader, not the build-logic class path)"
 }

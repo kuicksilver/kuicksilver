@@ -21,7 +21,7 @@ kotlin {
 tasks.named<Test>("jvmTest") { useJUnitPlatform(); maxHeapSize = "1g" }
 
 // Architecture checks (ADR-0004 sans-IO rule; only `PacketBuffer` and annotations may be imported from kuicksilver-native); see tools/check.
-val checkQuicArchitecture by tasks.registering {
+val checkQuicArchitecture = tasks.register("checkQuicArchitecture") {
     group = "verification"; description = "Runs the sans-IO and import rules for the QUIC core"
     val scripts = listOf(rootProject.file("tools/check/sans-io.sh"), rootProject.file("tools/check/quic-imports.sh")).map { it.path }
     val module = project.name; val workDir = rootProject.projectDir

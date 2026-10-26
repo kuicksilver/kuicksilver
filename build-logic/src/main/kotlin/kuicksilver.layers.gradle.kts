@@ -15,7 +15,7 @@ val allowed = mapOf(
     "kuicksilver-ktor-client" to setOf("kuicksilver-http3", "kuicksilver-ktor-network"),
     "kuicksilver-soak" to setOf("kuicksilver-ktor-client", "kuicksilver-ktor-server"),   // the soak harness drives the whole stack (not published)
 )
-val checkLayerDependencies by tasks.registering {
+val checkLayerDependencies = tasks.register("checkLayerDependencies") {
     group = "verification"
     description = "Fails when a module depends on a project outside its allowed neighbour"
     val violations = subprojects.flatMap { p ->

@@ -11,7 +11,7 @@ val hostClassifier = run {
     "$o-$a"
 }
 val jniOut = layout.buildDirectory.dir("jni")
-val buildJniHost by tasks.registering(Exec::class) {
+val buildJniHost = tasks.register<Exec>("buildJniHost") {
     group = "native"; description = "Builds libksl for the host JVM classifier ($hostClassifier)"
     dependsOn("opensslBuild" + (if (hostClassifier == "osx-aarch_64") "MacosArm64" else if (hostClassifier == "osx-x86_64") "MacosX64" else if (hostClassifier == "linux-aarch_64") "LinuxArm64" else if (hostClassifier == "linux-x86_64") "LinuxX64" else "MingwX64"))
     inputs.files(fileTree("src/c"), fileTree("src/jni"), root.resolve("tools/build-jni.sh"))
@@ -35,7 +35,7 @@ abstract class AndroidJniTask : DefaultTask() {
         abis.get().forEach { abi -> execOps.exec { commandLine("bash", script.get().asFile.path, abi, outDir.get().asFile.path) } }
     }
 }
-val buildAndroidJni by tasks.registering(AndroidJniTask::class) {
+val buildAndroidJni = tasks.register<AndroidJniTask>("buildAndroidJni") {
     group = "native"; description = "Builds libksl.so for ${androidAbis.joinToString()}"
     dependsOn(listOf("opensslBuildAndroidArm64", "opensslBuildAndroidX86_64") + (if (androidArmv7) listOf("opensslBuildAndroidArm") else emptyList()))
     script.set(root.resolve("tools/build-android-so.sh")); sources.from(fileTree("src/c"), fileTree("src/jni")); abis.set(androidAbis); outDir.set(file("src/androidMain/jniLibs"))

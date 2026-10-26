@@ -10,7 +10,7 @@ plugins {
 }
 kotlin {
     // the device tests' network security config (src/androidDeviceTest/res/xml) needs Android resources; the library has none
-    androidLibrary {
+    android {
         androidResources { enable = true }
         // ServiceLoader instantiates KuicksilverEngineContainer by name: an app shrinking with R8 must keep it (proguard.txt in the AAR)
         optimization { consumerKeepRules.publish = true; consumerKeepRules.file("consumer-rules.pro") }

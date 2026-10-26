@@ -44,7 +44,7 @@ fun prebuiltState(t: String): String? { // null when current, else why not ("mis
     return null
 }
 
-val opensslFetch by tasks.registering(Exec::class) {
+val opensslFetch = tasks.register<Exec>("opensslFetch") {
     group = "openssl"; description = "Downloads and verifies the pinned OpenSSL tarball"
     inputs.file(root.resolve("gradle/openssl.toml")); outputs.dir(root.resolve("build/openssl-work/src"))
     commandLine("bash", root.resolve("tools/openssl/fetch.sh").path)

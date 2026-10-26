@@ -31,7 +31,7 @@ kotlin {
         // the published JVM artifacts link against the JDK 17 API only, whatever toolchain builds them; tests may use the toolchain's JDK
         compilations.getByName("main").compileTaskProvider.configure { compilerOptions.freeCompilerArgs.add("-Xjdk-release=17") }
     }
-    androidLibrary {
+    android {
         // "native" is a Java keyword: R classes need a valid Java package, so that module uses io.kuicksilver.nativelib
         namespace = "io.kuicksilver." + project.name.removePrefix("kuicksilver-").replace('-', '.').replace("native", "nativelib")
         compileSdk = 35

@@ -20,7 +20,7 @@ kotlin {
 tasks.named<Test>("jvmTest") { useJUnitPlatform() }
 
 // Sans-IO rule (ADR-0004) for the HTTP/3 and QPACK codecs; see tools/check/sans-io.sh.
-val checkHttp3Architecture by tasks.registering {
+val checkHttp3Architecture = tasks.register("checkHttp3Architecture") {
     group = "verification"; description = "Runs the sans-IO rule for the HTTP/3 frame, QPACK and message codecs"
     val script = rootProject.file("tools/check/sans-io.sh").path
     val module = project.name; val workDir = rootProject.projectDir
