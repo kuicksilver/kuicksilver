@@ -17,13 +17,13 @@
 #   linux ── jdk-compat (JDK 17 API, tests on 17 / 25)
 name: build
 on:
-  push:
-    branches: [main]
-  pull_request:
-  schedule:
-    - cron: '17 3 * * 1'   # weekly: the whole matrix plus the QUIC Interop Runner
+  # push, pull_request and the weekly schedule come back once the matrix is green on the public runners again (2026-10-26)
   workflow_dispatch:
     inputs:
+      only:
+        description: comma-separated jobs to run (e.g. lint,apple); empty runs all; openssl-docker always runs
+        type: string
+        default: ''
       interop:
         description: also run the QUIC Interop Runner matrix (hours)
         type: boolean
@@ -40,6 +40,7 @@ env:
 
 jobs:
   lint:
+    if: ${{ (inputs.only == '' || contains(format(',{0},', inputs.only), ',lint,')) }}
     runs-on: ubuntu-24.04
     permissions: { contents: read }
     timeout-minutes: 45
@@ -118,6 +119,7 @@ jobs:
           retention-days: 7
 
   linux:
+    if: ${{ (inputs.only == '' || contains(format(',{0},', inputs.only), ',linux,')) }}
     # Linux JVM path end to end in the manylinux2014 images (glibc 2.17 floor): C tests, libksl.so, its exports and glibc floor,
     # then every module's JVM suite on the host JVM against that .so (tools/ci/docker-jvm.sh). arm64 runs on an arm64 runner
     # (native first, qemu-user only as a fallback — it lacks io_uring and parts of the UDP socket options).
@@ -164,6 +166,7 @@ jobs:
           retention-days: 7
 
   linux-native:
+    if: ${{ (inputs.only == '' || contains(format(',{0},', inputs.only), ',linux-native,')) }}
     # Kotlin/Native for Linux and Windows: the -kn OpenSSL builds with the konan clang and sysroots, the prefixed archives, the
     # test executables; test.kexe x64 runs in the manylinux image, the arm64 ones go to linux-native-arm64 (a native arm64
     # runner: under QEMU the real-time suites ran 10-50x slower and timed out, run 38287900994), the mingw test.exe to windows.
@@ -218,6 +221,7 @@ jobs:
           retention-days: 7
 
   linux-native-arm64:
+    if: ${{ (inputs.only == '' || contains(format(',{0},', inputs.only), ',linux-native-arm64,')) }}
     # The arm64 Kotlin/Native test executables linked by linux-native, run on a native arm64 runner in Ubuntu 24.04 (the K/N
     # arm64 sysroot needs glibc 2.25 > manylinux2014).
     needs: linux-native
@@ -236,6 +240,7 @@ jobs:
           bash tools/ci/run-kexe.sh linux/arm64 "$KSL_UBUNTU_IMAGE" linuxArm64 $KSL_LINK_MODULES
 
   windows:
+    if: ${{ (inputs.only == '' || contains(format(',{0},', inputs.only), ',windows,')) }}
     # Only runs the executables cross-built by linux-native (mingwX64 is Tier 3, built off Windows): the ksl C tests
     # (ksl_test.exe, ksl_udp_win.c among them) and every module's mingwX64 test.exe.
     needs: linux-native
@@ -264,6 +269,7 @@ jobs:
           if ($failed.Count -gt 0) { Write-Host "::error::test.exe failed: $($failed -join ', ')"; exit 1 }
 
   windows-jvm:
+    if: ${{ (inputs.only == '' || contains(format(',{0},', inputs.only), ',windows-jvm,')) }}
     # The JVM suites on a Windows host against the mingw-w64 JNI dll that openssl-docker built (the dll the jar ships). Nothing
     # native is built here: kuicksilver.openssl.prebuilt=true (also written by the setup action) keeps every opensslBuild* task
     # from running, and -x buildJniHost drops the only task that would shell out to tools/build-jni.sh (bash + a C toolchain +
@@ -294,11 +300,12 @@ jobs:
           retention-days: 7
 
   apple:
+    if: ${{ (inputs.only == '' || contains(format(',{0},', inputs.only), ',apple,')) }}
     # macOS arm64: everything that needs Xcode or the host JVM on a Mac, in the order of tools/ci/local-matrix.sh. checkKotlinAbi
     # runs here because the klib dumps of every target need the Apple, Android (NDK) and Kotlin/Native toolchains together;
     # the only Docker-built input, mingw-x64 OpenSSL, comes from openssl-docker.
     needs: openssl-docker
-    runs-on: macos-26
+    runs-on: xcode-27   # Xcode 27.0 (27A266a, gradle/toolchains.toml) is only on this preview image; macos-26 has 26.x
     permissions: { contents: read }
     timeout-minutes: 240
     steps:
@@ -384,6 +391,7 @@ jobs:
         with: { name: reports-apple, path: '**/build/reports/', retention-days: 7 }
 
   android:
+    if: ${{ (inputs.only == '' || contains(format(',{0},', inputs.only), ',android,')) }}
     # AAR with libksl.so for arm64-v8a, x86_64 and armeabi-v7a (pinned NDK), the size, 16 KiB page and consumer keep rule gates, then the device tests on the
     # x86_64 emulator at minSdk 24 and at compileSdk 35 (KVM on the Linux runner; Apple-silicon runners cannot nest it).
     strategy:
@@ -445,6 +453,7 @@ jobs:
           retention-days: 7
 
   jdk-compat:
+    if: ${{ (inputs.only == '' || contains(format(',{0},', inputs.only), ',jdk-compat,')) }}
     # Review I7: the libraries promise JVM 17. Compiled against the JDK 17 API (-Xjdk-release=17, always on in kuicksilver.kmp),
     # every JVM suite runs on Temurin 17; on JDK 25 the same suites run with restricted native access denied unless the
     # application enables it (JEP 472) — the library must never need more than --enable-native-access.
@@ -486,7 +495,7 @@ jobs:
   interop-images:
     # Both interop endpoint images: JVM (kuicksilver-interop:local, with the manylinux libksl.so from the linux job)
     # and Kotlin/Native (kuicksilver-interop-native:local), built once and handed to the per-peer jobs.
-    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.interop)
+    if: (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.interop)) && (inputs.only == '' || contains(format(',{0},', inputs.only), ',interop-images,'))
     needs: [openssl-docker, linux]
     runs-on: ubuntu-24.04
     permissions: { contents: read }
@@ -512,6 +521,7 @@ jobs:
         with: { name: interop-images, path: interop-images.tar.gz, if-no-files-found: error, retention-days: 3, compression-level: 0 }
 
   interop:
+    if: ${{ (inputs.only == '' || contains(format(',{0},', inputs.only), ',interop,')) }}
     # The QUIC Interop Runner (pinned in tools/interop/runner.lock) with kuicksilver as server and as client against each peer;
     # --check-required fails on any cell of tools/interop/required.json in this run's scope (its image, peer and cases).
     needs: interop-images
@@ -576,6 +586,7 @@ jobs:
           retention-days: 14
 
   jvm-jar:
+    if: ${{ (inputs.only == '' || contains(format(',{0},', inputs.only), ',jvm-jar,')) }}
     # The kuicksilver-native JVM jar as it is published: libksl for every JVM platform, each library built (and, except the
     # Windows dll and the Intel-Mac dylib, tested) by its own job and checked against that job's manifest.sha256.
     # buildJniHost is excluded: on this runner it would replace the manylinux .so with a host-gcc build.
@@ -599,10 +610,11 @@ jobs:
           bash tools/ci/collect-jni.sh --check-jar "$1"
 
   consumer-smoke:
+    if: ${{ (inputs.only == '' || contains(format(',{0},', inputs.only), ',consumer-smoke,')) }}
     # The published artifacts consumed the way a user does: publishToMavenLocal (unsigned, the jar with all five JNI
     # libraries), then samples/realtime-telemetry built from mavenLocal() without includeBuild (tools/check/consumer-smoke.sh).
     needs: [openssl-docker, jvm-jar]
-    runs-on: macos-26
+    runs-on: xcode-27   # Xcode 27.0 (27A266a, gradle/toolchains.toml) is only on this preview image; macos-26 has 26.x
     permissions: { contents: read }
     timeout-minutes: 180
     steps:

@@ -1,0 +1,4 @@
+# Runner labels actionlint does not know yet: the Xcode 27 preview image (actions/runner-images#14404).
+self-hosted-runner:
+  labels:
+    - xcode-27
