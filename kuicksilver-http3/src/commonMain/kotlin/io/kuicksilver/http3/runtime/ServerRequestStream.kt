@@ -402,8 +402,9 @@ internal class ServerRequestImpl(
 
     /** A PRIORITY_UPDATE from the client; a priority the server chose in [respond] stays. */
     fun onPriorityUpdate(p: StreamPriority) {
-        priorityFlow.value = p
+        // the stream first, then the flow: an application that sees the new value finds the stream already scheduled by it
         if (serverPriority == null) st.priority = p
+        priorityFlow.value = p
     }
 
     override suspend fun sendInformational(
