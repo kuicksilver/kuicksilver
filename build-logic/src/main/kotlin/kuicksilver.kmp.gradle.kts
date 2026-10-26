@@ -24,6 +24,8 @@ kotlin {
         common { group("jvmCommon") { withJvm(); withCompilations { it.platformType == org.jetbrains.kotlin.gradle.plugin.KotlinPlatformType.androidJvm } } }
     }
     jvmToolchain(21)
+    // the expect/actual classes are Beta (KT-61573): this is Kotlin's documented acknowledgement, not a behaviour change
+    compilerOptions { freeCompilerArgs.add("-Xexpect-actual-classes") }
     jvm {
         compilerOptions { jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17) }
         // the published JVM artifacts link against the JDK 17 API only, whatever toolchain builds them; tests may use the toolchain's JDK
