@@ -24,7 +24,7 @@ import kotlin.time.Duration.Companion.nanoseconds
  * value, only legal state transitions); and a clean bottleneck anywhere from 10 to 100 Gbit/s and 100 us to 2 s of RTT is
  * measured without overflow.
  */
-@OptIn(ExperimentalKuicksilverApi::class)
+@OptIn(ExperimentalKuicksilverApi::class, io.kotest.common.ExperimentalKotest::class)
 class BbrPropertyTest {
     @Test fun arbitraryEventStreamsKeepTheInvariants() =
         runTest {

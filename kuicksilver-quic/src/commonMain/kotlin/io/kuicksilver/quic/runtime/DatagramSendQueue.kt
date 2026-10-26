@@ -24,7 +24,7 @@ import kotlin.concurrent.atomics.incrementAndFetch
  * [DatagramPolicy.Reject] callers checked [hasRoom] (fewer than [maxCount] buffered in all), so they alone never overflow
  * the channel; only a concurrent DropOldest / LatestWins flood can push a datagram out, as the policy says.
  */
-@OptIn(ExperimentalKuicksilverApi::class, ExperimentalAtomicApi::class)
+@OptIn(ExperimentalKuicksilverApi::class, ExperimentalAtomicApi::class, kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 internal class DatagramSendQueue(
     private val maxCount: Int,
     private val maxBytes: Long,
