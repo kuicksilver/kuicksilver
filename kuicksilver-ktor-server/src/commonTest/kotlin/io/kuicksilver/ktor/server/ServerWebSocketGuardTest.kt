@@ -13,9 +13,10 @@ import io.ktor.server.routing.routing
 import io.ktor.server.websocket.WebSockets
 import io.ktor.server.websocket.webSocket
 import io.ktor.utils.io.ByteReadChannel
+import io.ktor.utils.io.LineEnding
 import io.ktor.utils.io.readByte
 import io.ktor.utils.io.readByteArray
-import io.ktor.utils.io.readUTF8Line
+import io.ktor.utils.io.readLine
 import io.ktor.utils.io.writeFully
 import io.ktor.utils.io.writeStringUtf8
 import io.ktor.websocket.Frame
@@ -67,9 +68,9 @@ class ServerWebSocketGuardTest {
                         "GET /ws HTTP/1.1\r\nHost: server.test\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n" +
                             "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n",
                     )
-                    val status = r.readUTF8Line()
+                    val status = r.readLine(LineEnding.Lenient)
                     assertEquals("HTTP/1.1 101 Switching Protocols", status)
-                    while (r.readUTF8Line()?.isNotEmpty() == true) Unit
+                    while (r.readLine(LineEnding.Lenient)?.isNotEmpty() == true) Unit
                     w.writeFully(frame)
                     assertEquals(1002, withTimeout(10.seconds) { closeCode(r) })
                 } finally {

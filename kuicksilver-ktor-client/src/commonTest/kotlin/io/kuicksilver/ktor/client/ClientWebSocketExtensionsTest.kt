@@ -14,10 +14,11 @@ import io.ktor.server.application.install
 import io.ktor.server.routing.routing
 import io.ktor.util.AttributeKey
 import io.ktor.utils.io.ByteReadChannel
+import io.ktor.utils.io.LineEnding
 import io.ktor.utils.io.readBuffer
 import io.ktor.utils.io.readByte
 import io.ktor.utils.io.readByteArray
-import io.ktor.utils.io.readUTF8Line
+import io.ktor.utils.io.readLine
 import io.ktor.utils.io.writeFully
 import io.ktor.utils.io.writeStringUtf8
 import io.ktor.websocket.CloseReason
@@ -265,7 +266,7 @@ class ClientWebSocketExtensionsTest {
                         listener.accept().use { s ->
                             val input = s.openReadChannel()
                             val output = s.openWriteChannel(autoFlush = true)
-                            while (input.readUTF8Line()?.isNotEmpty() == true) Unit
+                            while (input.readLine(LineEnding.Lenient)?.isNotEmpty() == true) Unit
                             output.writeStringUtf8(
                                 "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n" +
                                     "Sec-WebSocket-Accept: unchecked\r\n" +

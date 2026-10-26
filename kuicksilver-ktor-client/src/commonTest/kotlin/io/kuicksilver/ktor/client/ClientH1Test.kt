@@ -39,8 +39,9 @@ import io.ktor.server.routing.routing
 import io.ktor.sse.ServerSentEvent
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.ByteWriteChannel
+import io.ktor.utils.io.LineEnding
 import io.ktor.utils.io.readByteArray
-import io.ktor.utils.io.readUTF8Line
+import io.ktor.utils.io.readLine
 import io.ktor.utils.io.writeStringUtf8
 import io.ktor.websocket.Frame
 import io.ktor.websocket.readText
@@ -444,7 +445,7 @@ class ClientH1Test {
                 } else {
                     val lines = mutableListOf<String>()
                     while (true) {
-                        val l = input.readUTF8Line() ?: break
+                        val l = input.readLine(LineEnding.Lenient) ?: break
                         if (l.isEmpty()) break
                         lines += l
                     }
@@ -452,7 +453,7 @@ class ClientH1Test {
                     retryBody = input.readByteArray(3).decodeToString()
                     output.writeStringUtf8("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok")
                 }
-                input.readUTF8Line() // until the client closes
+                input.readLine(LineEnding.Lenient) // until the client closes
             }) { port ->
                 testClient().use { c ->
                     val r =
@@ -526,7 +527,7 @@ class ClientH1Test {
         block: suspend (Int) -> Unit,
     ) = rawServerPerConnection({ _, input, output ->
         handler(input, output)
-        input.readUTF8Line() // until the client closes
+        input.readLine(LineEnding.Lenient) // until the client closes
     }, block)
 
     /** A pooled connection the server closed is replaced once for an idempotent request (RFC 9110 section 9.2.2). */
@@ -577,8 +578,8 @@ class ClientH1Test {
 
     /** Reads a request head; returns its request line ("" at end of stream). */
     private suspend fun readHead(input: ByteReadChannel): String {
-        val line = input.readUTF8Line() ?: return ""
-        while (input.readUTF8Line()?.isNotEmpty() == true) Unit
+        val line = input.readLine(LineEnding.Lenient) ?: return ""
+        while (input.readLine(LineEnding.Lenient)?.isNotEmpty() == true) Unit
         return line
     }
 
@@ -625,11 +626,11 @@ class ClientH1Test {
                             val input = s.openReadChannel()
                             val output = s.openWriteChannel(autoFlush = true)
                             responses.forEachIndexed { i, r ->
-                                while (input.readUTF8Line()?.isNotEmpty() == true) Unit
+                                while (input.readLine(LineEnding.Lenient)?.isNotEmpty() == true) Unit
                                 if (bodyBytes[i] > 0) input.readByteArray(bodyBytes[i])
                                 output.writeStringUtf8(r)
                             }
-                            input.readUTF8Line() // until the client closes
+                            input.readLine(LineEnding.Lenient) // until the client closes
                         }
                     }
                 block((listener.localAddress as InetSocketAddress).port)

@@ -13,7 +13,6 @@ import io.ktor.network.sockets.InetSocketAddress
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.discard
 import io.ktor.utils.io.readAvailable
-import io.ktor.utils.io.readUTF8Line
 import io.ktor.utils.io.writeFully
 import io.ktor.utils.io.writeStringUtf8
 import io.kuicksilver.ktor.client.Http3DiscoveryMode
@@ -185,7 +184,7 @@ internal class Workload(
             left -= k
         }
         st.output.flushAndClose()
-        val line = st.input.readUTF8Line(64)
+        val line = st.input.readLineLenient(64)
         check(line == "ok $n") { "PUT $n answered $line" }
     }
 

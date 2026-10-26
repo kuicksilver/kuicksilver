@@ -24,10 +24,11 @@ import io.ktor.server.routing.get
 import io.ktor.server.routing.routing
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.ByteWriteChannel
+import io.ktor.utils.io.LineEnding
 import io.ktor.utils.io.copyAndClose
 import io.ktor.utils.io.readByte
 import io.ktor.utils.io.readFully
-import io.ktor.utils.io.readUTF8Line
+import io.ktor.utils.io.readLine
 import io.ktor.utils.io.writeFully
 import io.ktor.utils.io.writeStringUtf8
 import io.ktor.websocket.Frame
@@ -375,7 +376,7 @@ class ClientSocksProxyTest {
                             val output = s.openWriteChannel(autoFlush = true)
                             val lines = ArrayList<String>()
                             while (true) {
-                                val line = input.readUTF8Line() ?: break
+                                val line = input.readLine(LineEnding.Lenient) ?: break
                                 if (line.isEmpty()) break
                                 lines += line
                             }
@@ -409,7 +410,7 @@ class ClientSocksProxyTest {
                                 val output = s.openWriteChannel(autoFlush = true)
                                 val lines = ArrayList<String>()
                                 while (true) {
-                                    val line = input.readUTF8Line() ?: break
+                                    val line = input.readLine(LineEnding.Lenient) ?: break
                                     if (line.isEmpty()) break
                                     lines += line
                                 }

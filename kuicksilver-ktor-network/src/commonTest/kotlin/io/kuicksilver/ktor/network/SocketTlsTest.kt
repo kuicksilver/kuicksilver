@@ -15,11 +15,12 @@ import io.ktor.network.sockets.openWriteChannel
 import io.ktor.utils.io.ByteChannel
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.ByteWriteChannel
+import io.ktor.utils.io.LineEnding
 import io.ktor.utils.io.ReaderJob
 import io.ktor.utils.io.WriterJob
 import io.ktor.utils.io.copyTo
 import io.ktor.utils.io.readAvailable
-import io.ktor.utils.io.readUTF8Line
+import io.ktor.utils.io.readLine
 import io.ktor.utils.io.reader
 import io.ktor.utils.io.writeFully
 import io.ktor.utils.io.writeStringUtf8
@@ -301,9 +302,9 @@ class HttpsGetTest {
                 LoopbackServer.start { s ->
                     val r = s.openReadChannel()
                     val w = s.openWriteChannel(autoFlush = true)
-                    val requestLine = r.readUTF8Line()
+                    val requestLine = r.readLine(LineEnding.Lenient)
                     while (true) {
-                        val l = r.readUTF8Line() ?: break
+                        val l = r.readLine(LineEnding.Lenient) ?: break
                         if (l.isEmpty()) break
                     }
                     assertEquals("GET /health HTTP/1.1", requestLine)
@@ -327,12 +328,12 @@ class HttpsGetTest {
                     val r = c.openReadChannel()
                     w.writeStringUtf8("GET /health HTTP/1.1\r\nHost: server.test\r\n\r\n")
                     w.flush()
-                    val status = withTimeout(10.seconds) { r.readUTF8Line() }
+                    val status = withTimeout(10.seconds) { r.readLine(LineEnding.Lenient) }
                     assertEquals("HTTP/1.1 200 OK", status)
                     var contentLength = 0
                     while (true) {
                         val l =
-                            r.readUTF8Line() ?: break
+                            r.readLine(LineEnding.Lenient) ?: break
                         if (l.isEmpty()) break
                         if (l.startsWith("Content-Length:")) {
                             contentLength =
@@ -361,10 +362,10 @@ class WssTest {
                     val r = s.openReadChannel()
                     val w = s.openWriteChannel(autoFlush = true)
                     var key = ""
-                    r.readUTF8Line()
+                    r.readLine(LineEnding.Lenient)
                     while (true) {
                         val l =
-                            r.readUTF8Line() ?: break
+                            r.readLine(LineEnding.Lenient) ?: break
                         if (l.isEmpty()) break
                         if (l.startsWith("Sec-WebSocket-Key:", ignoreCase = true)) {
                             key =
@@ -403,11 +404,11 @@ class WssTest {
                         "GET /ws HTTP/1.1\r\nHost: server.test\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: $key\r\nSec-WebSocket-Version: 13\r\n\r\n",
                     )
                     w.flush()
-                    assertEquals("HTTP/1.1 101 Switching Protocols", withTimeout(10.seconds) { r.readUTF8Line() })
+                    assertEquals("HTTP/1.1 101 Switching Protocols", withTimeout(10.seconds) { r.readLine(LineEnding.Lenient) })
                     var acceptHeader = ""
                     while (true) {
                         val l =
-                            r.readUTF8Line() ?: break
+                            r.readLine(LineEnding.Lenient) ?: break
                         if (l.isEmpty()) break
                         if (l.startsWith("Sec-WebSocket-Accept:")) {
                             acceptHeader =

@@ -3,7 +3,8 @@
 package io.kuicksilver.quic.api
 
 import io.ktor.network.sockets.InetSocketAddress
-import io.ktor.utils.io.readUTF8Line
+import io.ktor.utils.io.LineEnding
+import io.ktor.utils.io.readLine
 import io.ktor.utils.io.writeStringUtf8
 import io.kuicksilver.annotations.DelicateKuicksilverApi
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
@@ -155,13 +156,13 @@ class ConveniencesTest {
                     val echo =
                         launch {
                             val st = s.acceptStream()
-                            st.output.writeStringUtf8((st.input.readUTF8Line() ?: "") + "\n")
+                            st.output.writeStringUtf8((st.input.readLine(LineEnding.Lenient) ?: "") + "\n")
                             st.output.flushAndClose()
                         }
                     val st = c.openBidi()
                     st.output.writeStringUtf8("hi\n")
                     st.output.flushAndClose()
-                    assertEquals("hi", st.input.readUTF8Line())
+                    assertEquals("hi", st.input.readLine(LineEnding.Lenient))
                     echo.join()
                     assertEquals(p.clientIo.localAddress, assertNotNull(c.activePath).localAddress)
                     val newAddr = InetSocketAddress("10.0.0.3", 3333)

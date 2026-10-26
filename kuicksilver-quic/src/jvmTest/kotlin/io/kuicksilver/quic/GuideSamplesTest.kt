@@ -5,8 +5,9 @@
 package io.kuicksilver.quic
 
 import io.ktor.network.sockets.InetSocketAddress
+import io.ktor.utils.io.LineEnding
 import io.ktor.utils.io.discard
-import io.ktor.utils.io.readUTF8Line
+import io.ktor.utils.io.readLine
 import io.ktor.utils.io.writeFully
 import io.ktor.utils.io.writeStringUtf8
 import io.kuicksilver.annotations.DelicateKuicksilverApi
@@ -130,7 +131,7 @@ class GuideSamplesTest {
                             // guide:quic:server-accept (the loop body)
                             val incoming = server.accept()
                             val echoed = incoming.acceptStream()
-                            echoed.output.writeStringUtf8(echoed.input.readUTF8Line() ?: "")
+                            echoed.output.writeStringUtf8(echoed.input.readLine(LineEnding.Lenient) ?: "")
                             echoed.output.flushAndClose()
                         }
                     // guide:quic:client-connect
@@ -145,7 +146,7 @@ class GuideSamplesTest {
                         val stream = connection.openBidi()
                         stream.output.writeStringUtf8("ping\n")
                         stream.output.flushAndClose()
-                        val reply = stream.input.readUTF8Line()
+                        val reply = stream.input.readLine(LineEnding.Lenient)
                         connection.close(code = 0, reason = "done")
                         assertEquals("ping", reply)
                         serverSide.await()
@@ -185,7 +186,7 @@ class GuideSamplesTest {
                                                         stream.input.discard()
                                                         return@launch
                                                     } // a peer's uni stream: input only
-                                                    val line = stream.input.readUTF8Line() ?: return@launch
+                                                    val line = stream.input.readLine(LineEnding.Lenient) ?: return@launch
                                                     stream.output.writeStringUtf8(line + "\n")
                                                     stream.output.flushAndClose()
                                                 } catch (e: IOException) {
@@ -204,7 +205,7 @@ class GuideSamplesTest {
                     val stream = connection.openBidi()
                     stream.output.writeStringUtf8("ping\n")
                     stream.output.flushAndClose()
-                    assertEquals("ping", stream.input.readUTF8Line())
+                    assertEquals("ping", stream.input.readLine(LineEnding.Lenient))
                     connection.close()
                     server.close()
                     serving.join() // the flows complete once the endpoint closes

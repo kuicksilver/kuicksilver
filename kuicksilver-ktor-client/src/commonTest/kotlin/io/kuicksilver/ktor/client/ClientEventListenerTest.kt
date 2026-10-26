@@ -13,7 +13,8 @@ import io.ktor.server.response.header
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
 import io.ktor.server.routing.routing
-import io.ktor.utils.io.readUTF8Line
+import io.ktor.utils.io.LineEnding
+import io.ktor.utils.io.readLine
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.ConnectionInfo
@@ -260,7 +261,7 @@ class ClientEventListenerTest {
                         launch {
                             listener.accept().use { s ->
                                 val input = s.openReadChannel()
-                                while ((input.readUTF8Line() ?: "").isNotEmpty()) Unit
+                                while ((input.readLine(LineEnding.Lenient) ?: "").isNotEmpty()) Unit
                             }
                         }
                     testClient(engine = { eventListener = events }).use { c ->

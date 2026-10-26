@@ -13,7 +13,8 @@ import io.ktor.network.sockets.openReadChannel
 import io.ktor.network.sockets.openWriteChannel
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.ByteWriteChannel
-import io.ktor.utils.io.readUTF8Line
+import io.ktor.utils.io.LineEnding
+import io.ktor.utils.io.readLine
 import io.ktor.utils.io.writeStringUtf8
 import io.kuicksilver.native.KslLoader
 import kotlinx.coroutines.Dispatchers
@@ -297,8 +298,8 @@ class ClientH1FramingTest {
 
     /** Reads a request head; returns its request line ("" at end of stream). */
     private suspend fun readHead(input: ByteReadChannel): String {
-        val line = input.readUTF8Line() ?: return ""
-        while (input.readUTF8Line()?.isNotEmpty() == true) Unit
+        val line = input.readLine(LineEnding.Lenient) ?: return ""
+        while (input.readLine(LineEnding.Lenient)?.isNotEmpty() == true) Unit
         return line
     }
 

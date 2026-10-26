@@ -11,9 +11,10 @@ import io.ktor.network.sockets.openReadChannel
 import io.ktor.network.sockets.openWriteChannel
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.ByteWriteChannel
+import io.ktor.utils.io.LineEnding
 import io.ktor.utils.io.readAvailable
 import io.ktor.utils.io.readByteArray
-import io.ktor.utils.io.readUTF8Line
+import io.ktor.utils.io.readLine
 import io.ktor.utils.io.writeStringUtf8
 import io.kuicksilver.http3.Http3Endpoint
 import io.kuicksilver.http3.Http3Headers
@@ -29,10 +30,10 @@ import kotlinx.coroutines.launch
 
 /** Reads a request head and its Content-Length body; returns the request line ("" at end of stream). */
 internal suspend fun readRequest(input: ByteReadChannel): String {
-    val line = input.readUTF8Line() ?: return ""
+    val line = input.readLine(LineEnding.Lenient) ?: return ""
     var length = 0
     while (true) {
-        val h = input.readUTF8Line() ?: break
+        val h = input.readLine(LineEnding.Lenient) ?: break
         if (h.isEmpty()) break
         if (h.startsWith("Content-Length:", ignoreCase = true)) length = h.substringAfter(':').trim().toInt()
     }

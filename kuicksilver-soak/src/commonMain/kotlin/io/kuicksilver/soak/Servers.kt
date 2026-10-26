@@ -14,8 +14,9 @@ import io.ktor.server.routing.get
 import io.ktor.server.routing.post
 import io.ktor.server.routing.routing
 import io.ktor.utils.io.ByteReadChannel
+import io.ktor.utils.io.LineEnding
 import io.ktor.utils.io.discard
-import io.ktor.utils.io.readUTF8Line
+import io.ktor.utils.io.readLineStrictTo
 import io.ktor.utils.io.writeFully
 import io.ktor.utils.io.writeStringUtf8
 import io.kuicksilver.ktor.server.Kuicksilver
@@ -38,6 +39,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.io.EOFException
 
 /** The test PKI: one server identity (SANs server.test and 127.0.0.1) and the CA that clients trust. */
 internal object SoakPki {
@@ -59,6 +61,22 @@ internal object SoakPki {
         }
 }
 
+/**
+ * The line `readUTF8Line(max)` returned, without the deprecated function (Ktor's documented equivalent): CR, LF and CRLF end a
+ * line, a last line without a delimiter still counts, null when the channel is exhausted before a line, and more than [max] bytes throw.
+ */
+internal suspend fun ByteReadChannel.readLineLenient(max: Int): String? {
+    val line = StringBuilder()
+    val read =
+        try {
+            readLineStrictTo(line, limit = max.toLong(), lineEnding = LineEnding.Lenient) >= 0
+        } catch (e: EOFException) {
+            if (e.message?.startsWith("Unexpected end of stream after reading") != true) throw e
+            true
+        }
+    return if (read) line.toString() else null
+}
+
 /** Raw QUIC application protocol of the soak: one command line per bidirectional stream. */
 internal object RawProtocol {
     const val ALPN: String = "kuicksilver-soak"
@@ -71,7 +89,7 @@ internal object RawProtocol {
         s: QuicStream,
     ) {
         try {
-            val line = s.input.readUTF8Line(64) ?: return
+            val line = s.input.readLineLenient(64) ?: return
             val parts = line.split(' ')
             when (parts[0]) {
                 "GET" -> {

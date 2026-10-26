@@ -19,8 +19,9 @@ import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
 import io.ktor.server.routing.routing
 import io.ktor.utils.io.ByteReadChannel
+import io.ktor.utils.io.LineEnding
 import io.ktor.utils.io.copyAndClose
-import io.ktor.utils.io.readUTF8Line
+import io.ktor.utils.io.readLine
 import io.ktor.utils.io.writeStringUtf8
 import io.kuicksilver.native.KslLoader
 import kotlinx.coroutines.Dispatchers
@@ -131,7 +132,7 @@ class ClientProxyTest {
                             listener.accept().use { s ->
                                 val input = s.openReadChannel()
                                 val output = s.openWriteChannel(autoFlush = false)
-                                while (input.readUTF8Line()?.isNotEmpty() == true) continue
+                                while (input.readLine(LineEnding.Lenient)?.isNotEmpty() == true) continue
                                 runCatching {
                                     output.writeStringUtf8("HTTP/1.1 200 Connection established\r\n")
                                     repeat(1024) { output.writeStringUtf8("X-Pad: " + "p".repeat(4000) + "\r\n") }
@@ -193,7 +194,7 @@ class ClientProxyTest {
                             val input = s.openReadChannel()
                             val output = s.openWriteChannel(autoFlush = true)
                             while (true) {
-                                val line = input.readUTF8Line() ?: return@launch
+                                val line = input.readLine(LineEnding.Lenient) ?: return@launch
                                 if (line.isEmpty()) break
                                 head += line
                             }

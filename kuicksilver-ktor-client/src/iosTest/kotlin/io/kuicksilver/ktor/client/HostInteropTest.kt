@@ -12,7 +12,8 @@ import io.ktor.network.sockets.InetSocketAddress
 import io.ktor.network.sockets.aSocket
 import io.ktor.network.sockets.openReadChannel
 import io.ktor.network.sockets.openWriteChannel
-import io.ktor.utils.io.readUTF8Line
+import io.ktor.utils.io.LineEnding
+import io.ktor.utils.io.readLine
 import io.ktor.utils.io.writeStringUtf8
 import io.kuicksilver.native.KslLoader
 import kotlinx.cinterop.ExperimentalForeignApi
@@ -70,7 +71,7 @@ class HostInteropTest {
                 val write = s.openWriteChannel(autoFlush = true)
                 val read = s.openReadChannel()
                 write.writeStringUtf8(request + "\n")
-                return read.readUTF8Line() ?: error("the host peer closed the control connection")
+                return read.readLine(LineEnding.Lenient) ?: error("the host peer closed the control connection")
             }
         } finally {
             selector.close()

@@ -8,7 +8,8 @@ import io.ktor.network.selector.SelectorManager
 import io.ktor.network.sockets.aSocket
 import io.ktor.network.sockets.openReadChannel
 import io.ktor.network.sockets.openWriteChannel
-import io.ktor.utils.io.readUTF8Line
+import io.ktor.utils.io.LineEnding
+import io.ktor.utils.io.readLine
 import io.ktor.utils.io.writeStringUtf8
 import io.kuicksilver.annotations.DelicateKuicksilverApi
 import io.kuicksilver.native.KslLoader
@@ -98,7 +99,7 @@ class GuideSamplesTest {
                 LoopbackServer.start { s ->
                     val r = s.openReadChannel()
                     val w = s.openWriteChannel(autoFlush = true)
-                    r.readUTF8Line()
+                    r.readLine(LineEnding.Lenient)
                     w.writeStringUtf8("HTTP/1.1 204 No Content\r\n\r\n")
                     w.flush()
                 }
@@ -110,7 +111,7 @@ class GuideSamplesTest {
                 val write = socket.openWriteChannel(autoFlush = true)
                 val read = socket.openReadChannel()
                 write.writeStringUtf8("GET / HTTP/1.1\r\nHost: server.test\r\n\r\n")
-                val status = withTimeout(10.seconds) { read.readUTF8Line() }
+                val status = withTimeout(10.seconds) { read.readLine(LineEnding.Lenient) }
                 socket.close() // sends close_notify, then closes the TCP socket
                 assertEquals("HTTP/1.1 204 No Content", status)
                 selector.close()
