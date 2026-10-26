@@ -333,21 +333,26 @@ class TcpWriterTest {
                     // the peer reads to the end; null when the connection was reset
                     val peer =
                         async(Dispatchers.IO) {
-                            java.net.Socket("127.0.0.1", port).use { s ->
-                                s.soTimeout = 20_000
-                                val buf = ByteArray(8192)
-                                var got = 0L
-                                try {
-                                    while (true) {
-                                        val n = s.getInputStream().read(buf)
-                                        if (n < 0) return@use "a clean end after $got bytes"
-                                        got += n
+                            // a reset may surface in the read or in the socket's close (JDK 25 reports it there): either is the reset
+                            try {
+                                java.net.Socket("127.0.0.1", port).use { s ->
+                                    s.soTimeout = 20_000
+                                    val buf = ByteArray(8192)
+                                    var got = 0L
+                                    try {
+                                        while (true) {
+                                            val n = s.getInputStream().read(buf)
+                                            if (n < 0) return@use "a clean end after $got bytes"
+                                            got += n
+                                        }
+                                        @Suppress("UNREACHABLE_CODE")
+                                        null
+                                    } catch (_: java.net.SocketException) {
+                                        null
                                     }
-                                    @Suppress("UNREACHABLE_CODE")
-                                    null
-                                } catch (_: java.net.SocketException) {
-                                    null
                                 }
+                            } catch (_: java.net.SocketException) {
+                                null
                             }
                         }
                     val sock = server.accept()
