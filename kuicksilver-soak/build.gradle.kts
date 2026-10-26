@@ -14,6 +14,8 @@ plugins {
 }
 kotlin {
     jvmToolchain(21)
+    // the expect/actual classes are Beta (KT-61573): Kotlin's documented acknowledgement, as in the kmp convention plugin
+    compilerOptions { freeCompilerArgs.add("-Xexpect-actual-classes") }
     jvm()
     linuxX64(); linuxArm64(); macosArm64()
     applyDefaultHierarchyTemplate()

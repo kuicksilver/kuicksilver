@@ -3,6 +3,7 @@
 
 import com.vanniktech.maven.publish.JavadocJar
 import com.vanniktech.maven.publish.KotlinMultiplatform
+import com.vanniktech.maven.publish.SourcesJar
 
 // Publication to Maven Central through the Central Portal (docs/release.md). Credentials and the signing key come from
 // Gradle properties only (~/.gradle/gradle.properties or ORG_GRADLE_PROJECT_* in CI), never from the repository:
@@ -27,7 +28,7 @@ mavenPublishing {
     val signed = providers.gradleProperty("kuicksilver.sign").orNull != "false" && (providers.gradleProperty("signingInMemoryKey").isPresent || providers.gradleProperty("signing.keyId").isPresent)
     if (signed) signAllPublications()
     // one empty javadoc jar per publication: Central requires the file, and a Dokka site per platform publication would multiply the upload (publishing limits)
-    configure(KotlinMultiplatform(javadocJar = JavadocJar.Empty(), sourcesJar = true))
+    configure(KotlinMultiplatform(javadocJar = JavadocJar.Empty(), sourcesJar = SourcesJar.Sources()))
     coordinates("io.kuicksilver", project.name, project.version.toString())
     pom {
         name.set(project.name)
