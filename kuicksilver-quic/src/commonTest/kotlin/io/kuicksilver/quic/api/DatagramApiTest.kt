@@ -128,10 +128,14 @@ class DatagramApiTest {
                             "slot ${it + 1} of 32",
                         )
                     }
+                    val before = c.stats
+                    val thirtyThird = c.trySendDatagram(payload(99, 1000), DatagramPolicy.Reject)
+                    // a slot that drained shows here: a PTO probe (ptoCount), a packet declared lost (lostPackets), or cwnd room
                     assertEquals(
                         DatagramSendResult.QueueFull,
-                        c.trySendDatagram(payload(99, 1000), DatagramPolicy.Reject),
-                        "the 33rd under Reject",
+                        thirtyThird,
+                        "the 33rd under Reject (before it: ptoCount=${before.ptoCount} lost=${before.lostPackets} " +
+                            "inFlight=${before.bytesInFlight} cwnd=${before.cwnd} sent=${before.packetsSent}; now ${c.stats.packetsSent} sent)",
                     )
                     repeat(1000) {
                         assertEquals(DatagramSendResult.Sent, c.trySendDatagram(payload(it, 1000), DatagramPolicy.DropOldest))
