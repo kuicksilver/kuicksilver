@@ -84,7 +84,15 @@ internal suspend fun rawHttp(
 ): String {
     val selector = SelectorManager(Dispatchers.Default)
     try {
-        val tcp = aSocket(selector).tcp().connect("127.0.0.1", port)
+        // Kuicksilver's own connect, not ktor-network's: on mingwX64 ktor-network's connect and write lose socket errors
+        // (POSIX error 0), so a server refusing a request could look like a hang; this way the test exercises our sockets only
+        val tcp =
+            io.kuicksilver.ktor.network
+                .connectTcp(
+                    selector,
+                    io.ktor.network.sockets
+                        .InetSocketAddress("127.0.0.1", port),
+                )
         val socket: Socket = if (tls != null) tcp.tls(tls) else tcp
         try {
             val w = socket.openWriteChannel(autoFlush = true)
