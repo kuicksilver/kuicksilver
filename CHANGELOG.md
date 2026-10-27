@@ -165,6 +165,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   chunked<U+00A0>` a chunked one, so with a proxy in front that framed the response otherwise the bytes behind it
   became the response to the next request (response splitting). A `Transfer-Encoding` that is not a list of transfer
   codings or that applies `chunked` twice (RFC 9112 section 6.1) fails the same way.
+- Ktor server, HTTP/1.1: an application's status description with a character a reason phrase cannot hold (CR, LF,
+  NUL; RFC 9112 section 4) is replaced by the registered reason of the code, or none. Before, it was written as it
+  was: `HttpStatusCode(200, "OK\r\nX-Injected: 1")` split the response and added a field of its own.
 - Ktor server, HTTP/1.1: a pipelined request with an unsafe method (POST, PUT, DELETE, ...) now runs alone: its
   handler starts after the handlers of the requests before it have ended, and the next request is read only after it
   has ended (RFC 9112 section 9.3.2: pipelined requests may be processed in parallel only if they all have safe

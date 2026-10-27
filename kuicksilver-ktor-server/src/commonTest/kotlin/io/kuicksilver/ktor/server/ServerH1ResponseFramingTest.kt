@@ -46,6 +46,9 @@ class ServerH1ResponseFramingTest {
                 call.response.header(HttpHeaders.Date, "Sun, 06 Nov 1994 08:49:37 GMT")
                 call.respondText("dated")
             }
+            get("/reason-crlf") { call.respond(HttpStatusCode(200, "OK\r\nX-Injected: 1")) }
+            get("/reason-nul") { call.respond(HttpStatusCode(299, "a\u0000b")) }
+            get("/reason-ok") { call.respond(HttpStatusCode(299, "Tr\u00e8s\tbien !")) }
             get("/304-stream-text") { call.respondBytesWriter(status = HttpStatusCode.NotModified) { writeStringUtf8("abc") } }
         }
     }
@@ -146,6 +149,27 @@ class ServerH1ResponseFramingTest {
                     withTimeout(10.seconds) { rawHttp(port, "GET /own-date HTTP/1.1\r\nHost: s\r\nConnection: close\r\n\r\n", tls = null) }
                 assertEquals(1, Regex("\r\nDate: ").findAll(own).count(), own)
                 assertTrue(own.contains("\r\nDate: Sun, 06 Nov 1994 08:49:37 GMT\r\n"), own)
+            }
+        }
+
+    /**
+     * reason-phrase = *( HTAB / SP / VCHAR / obs-text ) (RFC 9112 section 4). An application's status description with
+     * another character (CR, LF, NUL) is replaced by the registered reason of its code, or none: a CR LF there split the
+     * response (`X-Injected` became a field). A valid one, obs-text included (UTF-8), goes out as it is.
+     */
+    @Test fun negative_invalidReasonPhraseIsReplaced() =
+        serverTest {
+            plainServer { port ->
+                for ((path, line) in listOf(
+                    "/reason-crlf" to "HTTP/1.1 200 OK",
+                    "/reason-nul" to "HTTP/1.1 299 ",
+                    "/reason-ok" to "HTTP/1.1 299 Tr\u00e8s\tbien !",
+                )) {
+                    val resp =
+                        withTimeout(10.seconds) { rawHttp(port, "GET $path HTTP/1.1\r\nHost: s\r\nConnection: close\r\n\r\n", tls = null) }
+                    assertEquals(line, resp.substringBefore("\r\n"), "$path: $resp")
+                    assertFalse(resp.contains("X-Injected"), "$path: $resp")
+                }
             }
         }
 
