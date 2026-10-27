@@ -18,8 +18,8 @@ ksl_ssl *ksl_ssl_new(ksl_ctx *c, int mode) {
     } else {
         BIO *internal = NULL; if (!BIO_new_bio_pair(&internal, 0, &s->net, 0)) { SSL_free(s->ssl); free(s); return NULL; }
         SSL_set_bio(s->ssl, internal, internal);
-        if (c->role == KSL_CLIENT) { SSL_set_msg_callback(s->ssl, ksl_msg_cb); SSL_set_msg_callback_arg(s->ssl, s); }   /* until the handshake ends */
     }
+    if (c->role == KSL_CLIENT) { SSL_set_msg_callback(s->ssl, ksl_msg_cb); SSL_set_msg_callback_arg(s->ssl, s); }   /* until the handshake ends */
     ksl_live_add(KSL_LIVE_SSL, 1);
     return s;
 }
@@ -182,7 +182,7 @@ int ksl_drive(ksl_ssl *s) {
         if (r == 1 && s->owner->role == KSL_SERVER && SSL_get_state(s->ssl) == TLS_ST_EARLY_DATA) r = SSL_do_handshake(s->ssl);
         if (r == 1) {
             s->done = 1;
-            int ours = s->mode == KSL_MODE_TCP && s->owner->role == KSL_CLIENT;
+            int ours = s->owner->role == KSL_CLIENT;
 #ifdef KSL_TEST
             ours = ours && !s->msg_observer;
 #endif
@@ -228,11 +228,19 @@ static int server_hello_has_ems(const uint8_t *m, size_t len) {
     }
     return 0;
 }
-/* A TCP client's message callback during the handshake: notes whether the ServerHello carried extended_master_secret, which
-   ksl_cert_verify_cb needs before Finished (SSL_get_extms_support answers only after the handshake). */
+/* A client's message callback during the handshake, called with each message before OpenSSL processes it. ServerHello:
+   - notes whether it carried extended_master_secret, which ksl_cert_verify_cb needs before Finished (SSL_get_extms_support answers
+     only after the handshake);
+   - RFC 9846 section 4.2.3: "A client which receives a TLS 1.3 Server Hello with a legacy_version value not equal to 0x0303 MUST
+     abort the handshake with a protocol_version alert". OpenSSL takes the version from supported_versions and ignores the field;
+     ksl disables every version on the session here, so that OpenSSL's own version check, which runs next, aborts with
+     protocol_version (a TLS 1.2 ServerHello's legacy_version is its version, which OpenSSL checks itself). */
 void ksl_msg_cb(int write_p, int version, int content_type, const void *buf, size_t len, SSL *ssl, void *arg) {
     ksl_ssl *s = arg; const uint8_t *m = buf;
-    if (!write_p && content_type == SSL3_RT_HANDSHAKE && len >= 4 && m[0] == SSL3_MT_SERVER_HELLO) s->server_hello_ems = server_hello_has_ems(m, len);
+    if (!write_p && content_type == SSL3_RT_HANDSHAKE && len >= 6 && m[0] == SSL3_MT_SERVER_HELLO) {
+        s->server_hello_ems = server_hello_has_ems(m, len);
+        if (((m[4] << 8) | m[5]) != TLS1_2_VERSION) SSL_set_options(ssl, SSL_OP_NO_TLSv1_2 | SSL_OP_NO_TLSv1_3);
+    }
 #ifdef KSL_TEST
     if (s->msg_observer) s->msg_observer(write_p, version, content_type, buf, len, ssl, s->msg_observer_arg);
 #else

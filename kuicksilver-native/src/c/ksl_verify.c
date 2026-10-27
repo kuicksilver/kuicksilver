@@ -103,6 +103,10 @@ static int sni_tag(SSL *ssl, uint8_t out[32]) {
 }
 int ksl_client_hello_cb(SSL *ssl, int *al, void *arg) {
     (void)arg; ksl_ssl *s = SSL_get_ex_data(ssl, 1); const unsigned char *ext; size_t ext_len;
+    /* RFC 9846 section 4.2.2: "A server which receives a legacy_version value not equal to 0x0303 MUST abort the handshake with a
+       protocol_version alert" (OpenSSL tolerates 0x0301 and 0x0302 next to supported_versions); a TLS 1.2 ClientHello carries
+       0x0303 too (section 4.3.1, App. E.5) */
+    if (SSL_client_hello_get0_legacy_version(ssl) != TLS1_2_VERSION) { *al = SSL_AD_PROTOCOL_VERSION; return SSL_CLIENT_HELLO_ERROR; }
     if (s->mode == KSL_MODE_QUIC && SSL_client_hello_get0_ext(ssl, TLSEXT_TYPE_application_layer_protocol_negotiation, &ext, &ext_len) != 1) {
         *al = SSL_AD_NO_APPLICATION_PROTOCOL; return SSL_CLIENT_HELLO_ERROR;
     }

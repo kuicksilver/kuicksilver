@@ -299,6 +299,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   a stream error `H3_MESSAGE_ERROR`, and our own requests, responses and trailers with one fail locally with
   `IllegalArgumentException`. Only NUL, CR and LF were refused, so a value such as `a<ESC>b` reached the application
   and the Ktor engines.
+- TLS: a ClientHello, or a TLS 1.3 ServerHello, whose `legacy_version` is not 0x0303 is refused with `protocol_version`
+  (RFC 9846 sections 4.2.2 and 4.2.3, MUST); OpenSSL 3.5 accepted 0x0301 and 0x0302 next to `supported_versions`.
 - TLS over TCP: a connection whose application stream failed (a handler that threw mid-response) now ends with the fatal
   alert internal_error after what was sent, then a FIN, where OpenSSL can send one: a TLS 1.3 server and a TLS 1.2 client
   (RFC 8446 section 6.1). Before, it ended with a reset and no alert; it still never ends with `close_notify`, so a peer
