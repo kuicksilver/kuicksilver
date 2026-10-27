@@ -3,6 +3,8 @@
 package io.kuicksilver.ktor.client
 
 import io.ktor.client.engine.ProxyBuilder
+import io.ktor.client.plugins.websocket.WebSockets
+import io.ktor.client.plugins.websocket.webSocket
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.statement.bodyAsText
@@ -22,6 +24,7 @@ import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.LineEnding
 import io.ktor.utils.io.copyAndClose
 import io.ktor.utils.io.readLine
+import io.ktor.utils.io.readRemaining
 import io.ktor.utils.io.writeStringUtf8
 import io.kuicksilver.native.KslLoader
 import kotlinx.coroutines.Dispatchers
@@ -29,6 +32,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
+import kotlinx.io.readByteArray
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -115,6 +119,53 @@ class ClientProxyTest {
                 }
             } finally {
                 server.stop(100, 500)
+            }
+        }
+
+    /**
+     * A client MUST wait for a 2xx to its CONNECT before it sends tunnel data, or say `Connection: close` (RFC 9931 section
+     * 8); this one waits. A proxy that refuses the CONNECT with 407 receives nothing after the CONNECT head, neither a TLS
+     * ClientHello (https) nor a WebSocket handshake (ws://), up to the client's close: early bytes would land before it
+     * whenever they were sent, so no time window is needed.
+     */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    @Test
+    fun negative_noTunnelByteBeforeTheConnectAnswer() =
+        clientTest {
+            val selector = SelectorManager(Dispatchers.Default)
+            val listener = aSocket(selector).tcp().bind("127.0.0.1", 0)
+            try {
+                coroutineScope {
+                    // per connection: the CONNECT line and the bytes that followed its head until the client closed
+                    val seen =
+                        async {
+                            List(2) {
+                                listener.accept().use { s ->
+                                    val input = s.openReadChannel()
+                                    val output = s.openWriteChannel(autoFlush = true)
+                                    val line = input.readLine(LineEnding.Lenient).orEmpty()
+                                    while (input.readLine(LineEnding.Lenient)?.isNotEmpty() == true) continue
+                                    output.writeStringUtf8("HTTP/1.1 407 Proxy Authentication Required\r\nContent-Length: 0\r\n\r\n")
+                                    val after = withTimeout(10.seconds) { runCatching { input.readRemaining().readByteArray() } }
+                                    line to after.getOrElse { ByteArray(0) }.size
+                                }
+                            }
+                        }
+                    val proxyPort = (listener.localAddress as InetSocketAddress).port
+                    testClient(engine = { proxy = ProxyBuilder.http(Url("http://127.0.0.1:$proxyPort")) }, block = { install(WebSockets) })
+                        .use { c ->
+                            assertEquals(407, assertFailsWith<ProxyException> { c.get("https://127.0.0.1:1/").bodyAsText() }.replyCode)
+                            assertEquals(407, assertFailsWith<ProxyException> { c.webSocket("ws://127.0.0.1:2/ws") {} }.replyCode)
+                        }
+                    assertEquals(
+                        listOf("CONNECT 127.0.0.1:1 HTTP/1.1" to 0, "CONNECT 127.0.0.1:2 HTTP/1.1" to 0),
+                        seen.await(),
+                        "bytes after the CONNECT head before its answer",
+                    )
+                }
+            } finally {
+                listener.close()
+                selector.close()
             }
         }
 
