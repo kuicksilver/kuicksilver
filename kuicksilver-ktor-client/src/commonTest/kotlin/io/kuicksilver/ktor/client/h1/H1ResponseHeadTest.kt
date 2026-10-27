@@ -146,4 +146,31 @@ class H1ResponseHeadTest {
             val value = exchange(wire, get).headers["X-A"]
             assertEquals("a\tb", value?.substring(0, 3))
         }
+
+    /**
+     * A user agent MUST replace each obs-fold in a response with SP (RFC 9112 section 5.2): a field line that starts with
+     * SP or HTAB continues the previous one. Before, Ktor's parser failed the response.
+     */
+    @Test fun obsFoldInResponseIsUnfolded() =
+        runTest(timeout = 20.seconds) {
+            val wire = Wire()
+            server(wire) { send ->
+                send("HTTP/1.1 200 OK\r\nX-A: a\r\n b\r\nX-B: one  \r\n\t two\r\n   three\r\n")
+                send("Content-Length: 0\r\nConnection: close\r\n\r\n")
+            }
+            val headers = exchange(wire, get).headers
+            assertEquals("a b", headers["X-A"])
+            assertEquals("one two three", headers["X-B"])
+        }
+
+    /**
+     * A line that starts with whitespace right after the status line continues no field: the response is rejected (RFC
+     * 9112 section 2.2: reject it, or consume such lines without processing them).
+     */
+    @Test fun negative_foldRightAfterTheStatusLineFails() =
+        runTest(timeout = 20.seconds) {
+            val wire = Wire()
+            server(wire) { send -> send("HTTP/1.1 200 OK\r\n X-A: a\r\nContent-Length: 0\r\n\r\n") }
+            assertFailsWith<ParserException> { exchange(wire, get) }
+        }
 }

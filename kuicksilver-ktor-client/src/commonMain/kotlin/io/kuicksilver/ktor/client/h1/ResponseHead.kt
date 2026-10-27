@@ -23,6 +23,10 @@ import kotlinx.io.readByteArray
  * CR and LF in a field value are invalid and dangerous and MUST be rejected or replaced, the other CTLs are invalid too
  * (RFC 9110 section 5.5; a bare CR, RFC 9112 section 2.2). The reason phrase allows the same characters as a field value
  * (RFC 9112 section 4).
+ *
+ * An obs-fold (a field line that starts with SP or HTAB continues the one before) is replaced with one SP, as a user
+ * agent MUST (RFC 9112 section 5.2); such a line right after the status line continues no field and fails with
+ * [ParserException] (section 2.2 allows rejecting it).
  */
 @OptIn(InternalAPI::class)
 internal suspend fun readResponseHeadBytes(
@@ -33,6 +37,8 @@ internal suspend fun readResponseHeadBytes(
     val line = Buffer()
     var taken = 0
     var statusLine = true
+    // the field line read last, held back while the next line may continue it (obs-fold)
+    var field: ByteArray? = null
     while (true) {
         if (input.readBuffer.exhausted() && !input.awaitContent()) {
             if (taken == 0) return null
@@ -52,15 +58,51 @@ internal suspend fun readResponseHeadBytes(
             content.firstOrNull { isForbiddenControl(it) }?.let {
                 throw ParserException("Control character 0x${(it.toInt() and 0xff).toString(16).padStart(2, '0')} in the response head")
             }
-            if (!statusLine && content.isEmpty()) {
-                head.write(CRLF)
-                return head.readByteArray()
+            when {
+                statusLine -> {
+                    statusLine = false
+                    head.write(content)
+                    head.write(CRLF)
+                }
+
+                content.isEmpty() -> {
+                    field?.let {
+                        head.write(it)
+                        head.write(CRLF)
+                    }
+                    head.write(CRLF)
+                    return head.readByteArray()
+                }
+
+                isOws(content[0]) -> {
+                    val previous = field ?: throw ParserException("A line that starts with whitespace right after the status line")
+                    field = previous.trimOwsEnd() + SP + content.trimOwsStart()
+                }
+
+                else -> {
+                    field?.let {
+                        head.write(it)
+                        head.write(CRLF)
+                    }
+                    field = content
+                }
             }
-            statusLine = false
-            head.write(content)
-            head.write(CRLF)
         }
     }
+}
+
+private fun isOws(b: Byte) = b == SP || b == HTAB
+
+private fun ByteArray.trimOwsEnd(): ByteArray {
+    var end = size
+    while (end > 0 && isOws(this[end - 1])) end--
+    return copyOf(end)
+}
+
+private fun ByteArray.trimOwsStart(): ByteArray {
+    var start = 0
+    while (start < size && isOws(this[start])) start++
+    return copyOfRange(start, size)
 }
 
 /** A CTL other than HTAB (RFC 5234 appendix B.1): 0x00-0x08, 0x0A-0x1F, 0x7F. */
@@ -71,6 +113,7 @@ internal fun responseHeadTooLarge(maxBytes: Int = MAX_RESPONSE_HEAD_BYTES) =
     ParserException("The response head is larger than $maxBytes bytes")
 
 private const val HTAB: Byte = 0x09
+private const val SP: Byte = 0x20
 private const val CR: Byte = 0x0D
 private const val DEL: Byte = 0x7F
 private const val LF: Byte = 0x0A
