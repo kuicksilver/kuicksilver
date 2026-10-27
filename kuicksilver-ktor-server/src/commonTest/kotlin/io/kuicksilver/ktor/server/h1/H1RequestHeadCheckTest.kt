@@ -23,7 +23,7 @@ import kotlin.time.Duration.Companion.seconds
 
 /**
  * The checks of a request head the server makes before Ktor's parser reads it (`checkRequestHead`): the request line
- * (RFC 9112 section 3, RFC 9110 sections 6.2 and 15.6.6).
+ * (RFC 9112 section 3, RFC 9110 sections 6.2 and 15.6.6) and the field lines (RFC 9110 section 5).
  */
 class H1RequestHeadCheckTest {
     private class Conn(
@@ -39,7 +39,7 @@ class H1RequestHeadCheckTest {
         val fromServer = ByteChannel()
         val job =
             backgroundScope.startH1Pipeline(H1Connection(toServer, fromServer, null, null), 45.seconds, 30.seconds) { request ->
-                val body = "${request.method.value} ${request.uri} ${request.version}"
+                val body = "${request.method.value} ${request.uri} ${request.version}" + (request.headers["X-A"]?.let { " [$it]" } ?: "")
                 request.release()
                 output.writeStringUtf8("HTTP/1.1 200 OK\r\nContent-Length: ${body.length}\r\n\r\n$body")
                 output.flush()
@@ -141,6 +141,28 @@ class H1RequestHeadCheckTest {
                 val response = exchange("$line\r\nHost: s\r\nConnection: close\r\n\r\n")
                 assertTrue(response.endsWith("GET / HTTP/1.1"), "${show(line)}: $response")
             }
+        }
+
+    /**
+     * RFC 9110 section 5.5: a recipient of CR, LF or NUL within a field value MUST either reject the message or replace
+     * each of them with SP; field-content is VCHAR, obs-text, SP and HTAB, so the other control characters (DEL among
+     * them) are invalid too. 400 and close, the pipelined request behind is not served. Before, a NUL or a VT reached the
+     * application.
+     */
+    @Test fun negative_controlCharactersInAFieldValueAreRejected() =
+        runTest {
+            for (value in listOf("a\u0000b", "a\u0001b", "\u007f", "a\u001fb", "a\u000bb", "a\u000cb", "a\rb")) {
+                val response = exchange("GET / HTTP/1.1\r\nHost: s\r\nX-A: $value\r\n\r\nGET /next HTTP/1.1\r\nHost: s\r\n\r\n")
+                assertTrue(response.startsWith("HTTP/1.1 400 "), "${show(value)}: $response")
+                assertEquals(1, Regex("HTTP/1.1 ").findAll(response).count(), "${show(value)}: $response")
+            }
+        }
+
+    /** HTAB, SP and obs-text (bytes above 0x7F) are field content (RFC 9110 section 5.5) and reach the application. */
+    @Test fun tabsSpacesAndObsTextInAFieldValueAreAccepted() =
+        runTest {
+            val response = exchange("GET / HTTP/1.1\r\nHost: s\r\nX-A: \ta\tb c\u00e9 \r\nConnection: close\r\n\r\n")
+            assertTrue(response.endsWith("GET / HTTP/1.1 [a\tb c\u00e9]"), response)
         }
 
     private fun show(s: String) =

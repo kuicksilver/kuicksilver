@@ -165,6 +165,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   chunked<U+00A0>` a chunked one, so with a proxy in front that framed the response otherwise the bytes behind it
   became the response to the next request (response splitting). A `Transfer-Encoding` that is not a list of transfer
   codings or that applies `chunked` twice (RFC 9112 section 6.1) fails the same way.
+- Ktor server, HTTP/1.1: a request field value with a control character other than HTAB (NUL, VT, FF, DEL) gets 400
+  and the connection closes (RFC 9110 section 5.5: a recipient of NUL in a field value MUST reject the message or
+  replace it). Before, Ktor's parser refused only CR and LF, and a NUL reached the application.
 - Ktor server, HTTP/1.1: the request line is checked before Ktor's parser reads it. A method that is not a token
   (`G"ET`, RFC 9112 section 3.1), a control character other than the whitespace section 3 allows as a separator, or a
   Unicode space (U+00A0), which Ktor's parser took as a separator, gets 400. A request in a higher minor version
