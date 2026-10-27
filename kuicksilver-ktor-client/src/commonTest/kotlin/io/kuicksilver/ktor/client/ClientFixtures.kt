@@ -6,7 +6,9 @@ import io.ktor.client.HttpClient
 import io.ktor.client.HttpClientConfig
 import io.ktor.network.sockets.InetSocketAddress
 import io.ktor.server.application.Application
+import io.ktor.server.application.serverConfig
 import io.ktor.server.engine.EmbeddedServer
+import io.ktor.server.engine.applicationEnvironment
 import io.ktor.server.engine.connector
 import io.ktor.server.engine.embeddedServer
 import io.kuicksilver.http3.Http3Endpoint
@@ -42,23 +44,30 @@ internal suspend fun testServer(
     host: String = "127.0.0.1",
     port: Int = 0,
     configure: KuicksilverApplicationEngine.Configuration.() -> Unit = {},
+    log: CapturedLog? = null,
     module: Application.() -> Unit,
 ): Pair<TestServer, Int> {
-    val server =
-        embeddedServer(KuicksilverServer, configure = {
-            if (plain) {
-                connector {
-                    this.host = host
-                    this.port = port
-                }
-            } else {
-                tlsConnector(ClientFixtures.identity()) {
-                    this.host = host
-                    this.port = port
-                }
+    val configuration: KuicksilverApplicationEngine.Configuration.() -> Unit = {
+        if (plain) {
+            connector {
+                this.host = host
+                this.port = port
             }
-            configure()
-        }, module = module)
+        } else {
+            tlsConnector(ClientFixtures.identity()) {
+                this.host = host
+                this.port = port
+            }
+        }
+        configure()
+    }
+    val server =
+        if (log == null) {
+            embeddedServer(KuicksilverServer, configure = configuration, module = module)
+        } else {
+            // a test that provokes server-side errors on purpose takes them in [log] instead of printing them
+            embeddedServer(KuicksilverServer, serverConfig(applicationEnvironment { this.log = log }) { module(module) }, configuration)
+        }
     try {
         server.startSuspend(false)
     } catch (e: Throwable) {

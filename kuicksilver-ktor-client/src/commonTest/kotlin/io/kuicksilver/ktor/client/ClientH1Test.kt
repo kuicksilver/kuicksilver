@@ -232,8 +232,9 @@ class ClientH1Test {
 
     @Test fun socketTimeoutMapsToKtor() =
         clientTest {
+            val log = CapturedLog()
             val (server, port) =
-                testServer {
+                testServer(log = log) {
                     routing {
                         get("/") {
                             delay(3_000)
@@ -248,6 +249,8 @@ class ClientH1Test {
             } finally {
                 server.stop(100, 500)
             }
+            // the abandoned handler is cancelled and the server logs it as an error: asserted, not printed
+            log.assertLogged("ERROR", "Unhandled server error", "was cancelled")
         }
 
     /** Found by the vendored contract (HttpTimeoutTest.testSocketTimeoutRead): the socket timeout covers body reads too. */

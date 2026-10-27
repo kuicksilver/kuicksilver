@@ -14,6 +14,8 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.Application
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.application.install
+import io.ktor.server.application.serverConfig
+import io.ktor.server.engine.applicationEnvironment
 import io.ktor.server.engine.connector
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.request.header
@@ -26,6 +28,7 @@ import io.ktor.server.routing.get
 import io.ktor.server.routing.post
 import io.ktor.server.routing.routing
 import io.ktor.server.websocket.WebSockets
+import io.kuicksilver.ktor.client.CapturedLog
 import io.kuicksilver.ktor.client.Http3DiscoveryMode
 import io.kuicksilver.ktor.client.Kuicksilver
 import io.kuicksilver.ktor.client.KuicksilverEngineConfig
@@ -62,9 +65,21 @@ internal enum class ContractMode(
 
 /** The shared test server: the vendored routes of ktor-test-server on the Kuicksilver server engine, cleartext and TLS (+ HTTP/3). */
 internal object ContractServer {
+    /**
+     * The server's log. A client that ends an HTTP/3 WebSocket session resets its CONNECT stream (RFC 9114 section 4.1.1), which
+     * Ktor logs as an error of the session's handler; these peer resets are taken here, every other line prints.
+     */
+    val log =
+        CapturedLog(captures = { message, cause ->
+            message.startsWith("Websocket handler failed") && cause.toString().contains("Http3Exception")
+        })
+
     val ports: Pair<Int, Int> by lazy {
         val server =
-            embeddedServer(KuicksilverServer, configure = {
+            embeddedServer(
+                KuicksilverServer,
+                serverConfig(applicationEnvironment { log = ContractServer.log }) { module(Application::contractTests) },
+            ) {
                 connector {
                     host = "127.0.0.1"
                     port = 0
@@ -73,7 +88,7 @@ internal object ContractServer {
                     host = "127.0.0.1"
                     port = 0
                 }
-            }, module = Application::contractTests)
+            }
         runBlocking {
             server.startSuspend(false)
             val c = server.engine.resolvedConnectors()
