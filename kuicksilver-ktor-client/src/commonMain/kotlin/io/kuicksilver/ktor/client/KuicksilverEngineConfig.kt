@@ -63,8 +63,11 @@ public class Http3ClientConfig {
     /** Where Alt-Svc records live; in memory by default. */
     public var altSvcStore: AltSvcStore = InMemoryAltSvcStore()
 
-    /** Forget alternatives without `persist=1` when the network changes (RFC 7838 section 2.2; off like browsers). */
-    public var clearOnNetworkChange: Boolean = false
+    /**
+     * Forget alternatives without `persist=1` when [networkId] reports a new network, as RFC 7838 section 2.2 says a client
+     * SHOULD; true by default (before 0.2.1, false). False keeps them across networks.
+     */
+    public var clearOnNetworkChange: Boolean = true
 
     /** Head start of HTTP/3 over HTTP/1.1; null: 1.5 x the host's smoothed RTT, or 250 ms without history, clamped to 100 ms..2 s. */
     public var hardDelay: Duration? = null

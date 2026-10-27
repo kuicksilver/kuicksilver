@@ -83,6 +83,55 @@ class ClientAltSvcTest {
             }
         }
 
+    /**
+     * On a network change the engine forgets the alternatives without `persist=1` by default (RFC 7838 section 2.2:
+     * "clients SHOULD remove from cache all alternative services that lack the persist flag"); before, it did so only
+     * with `clearOnNetworkChange = true`. A persistent one stays, and `clearOnNetworkChange = false` still keeps both.
+     */
+    @Test fun networkChangeForgetsNonPersistentAlternativesByDefault() =
+        clientTest {
+            var served = 0
+            val (server, port) =
+                testServer(configure = { http3 = false }) {
+                    routing {
+                        get("/") {
+                            // only the first response of each client advertises alternatives
+                            if (served++ % 2 == 0) {
+                                val p = call.request.local.localPort
+                                call.response.header("Alt-Svc", "h3=\":$p\", h3=\":${p + 1}\"; persist=1")
+                            }
+                            call.respondText("h1")
+                        }
+                    }
+                }
+            try {
+                val origin = io.ktor.http.Url("https://127.0.0.1:$port/")
+                for (clear in listOf(null, false)) {
+                    var network = "a"
+                    // Auto: the client records Alt-Svc (nothing listens for QUIC there, so requests fall back to HTTP/1.1)
+                    testClient(
+                        Http3DiscoveryMode.Auto,
+                        engine = {
+                            http3 {
+                                networkId = { network }
+                                if (clear != null) clearOnNetworkChange = clear
+                            }
+                        },
+                    ).use { c ->
+                        val engine = c.engine as KuicksilverEngine
+                        c.get(origin).bodyAsText()
+                        assertEquals(2, engine.altSvcSnapshot(origin).size)
+                        network = "b"
+                        c.get(origin).bodyAsText()
+                        val left = engine.altSvcSnapshot(origin)
+                        if (clear == null) assertEquals(listOf(port + 1), left.map { it.port }) else assertEquals(2, left.size)
+                    }
+                }
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
     /** The per-origin RTT memory is bounded like the Alt-Svc cache (threat-model 3.18). */
     @Test fun srttMapBounded() =
         clientTest {

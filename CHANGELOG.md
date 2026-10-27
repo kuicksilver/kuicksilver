@@ -167,6 +167,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Changed
 
+- Ktor client: `http3 { clearOnNetworkChange }` is now true by default: when `networkId` reports a new network, the
+  engine forgets the Alt-Svc alternatives without `persist=1`, as RFC 7838 section 2.2 says a client SHOULD. Before, it
+  kept them unless asked. `clearOnNetworkChange = false` restores the old behaviour.
 - QUIC: a lost connection no longer takes the bytes a peer sent before it (`QuicStream.input`): what was received is
   still read, up to the FIN when it came too (then the stream ends cleanly), and only then do reads fail with the
   `QuicException.ConnectionLost`. Before, every read failed at once, even with the whole stream received. A reset still
