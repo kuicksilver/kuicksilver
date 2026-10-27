@@ -216,7 +216,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   (`HTTP/2.0`, `HTTP/0.9`) gets `505 HTTP Version Not Supported` instead of 400 (section 15.6.6).
 - Ktor server, HTTP/1.1: a request line longer than 8 KiB (a request-target longer than the server parses) gets
   `414 URI Too Long` instead of 400 (RFC 9112 section 3: the server MUST respond with 414), and what follows is read and
-  dropped for a while before the close, as after a 431. A field line over 8 KiB still gets 400.
+  dropped for a while before the close, as after a 431. A field line over 8 KiB still gets 400, and a method longer
+  than the line limit gets `501 Not Implemented` (section 3: a server SHOULD answer a method longer than any it
+  implements with 501).
 - Ktor server, HTTP/1.1: `Content-Length` and `Transfer-Encoding` values with whitespace other than SP and HTAB
   around them (VT, FF, U+00A0) are refused with 400 and the connection closed (RFC 9110 sections 5.6.3 and 8.6, RFC
   9112 section 6.3 items 4 and 5). They were trimmed as Unicode whitespace, so `Content-Length: 5<VT>` framed a 5-byte

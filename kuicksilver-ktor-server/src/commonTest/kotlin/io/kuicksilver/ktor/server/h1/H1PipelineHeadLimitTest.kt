@@ -92,6 +92,18 @@ class H1PipelineHeadLimitTest {
             assertTrue(response.startsWith("HTTP/1.1 414 "), response.take(200))
         }
 
+    /**
+     * A method longer than any the server implements (a token over the whole 8 KiB line limit): 501 (RFC 9112 section 3:
+     * the server SHOULD respond with 501). A line over the limit that starts with no token at all stays 400.
+     */
+    @Test fun negative_longMethodGets501() =
+        runTest {
+            val response = exchange(pipeline(), "G".repeat(9_000) + " / HTTP/1.1\r\nHost: s\r\n\r\n")
+            assertTrue(response.startsWith("HTTP/1.1 501 Not Implemented\r\n"), response.take(200))
+            val garbage = exchange(pipeline(), "\"" + "G".repeat(9_000) + " / HTTP/1.1\r\nHost: s\r\n\r\n")
+            assertTrue(garbage.startsWith("HTTP/1.1 400 "), garbage.take(200))
+        }
+
     /** A field line over the 8 KiB line limit is no request-target: it stays 400. */
     @Test fun negative_longFieldLineGets400() =
         runTest {
