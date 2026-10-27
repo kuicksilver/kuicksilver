@@ -258,6 +258,9 @@ internal class StreamManager(
         return null
     }
 
+    /** The number of [bidi] or unidirectional streams the peer may open, as our last MAX_STREAMS (or transport parameter) said. */
+    internal fun peerMaxStreamsGranted(bidi: Boolean): Long = limits.peerMaxStreamsGranted(bidi)
+
     /** Fuzzing probe: (streams, queued control frames, pending events) held by this manager. */
     internal fun sizesForTest(): IntArray = intArrayOf(streams.size, control.size, events.size, sendLimit.size, early.size)
 
