@@ -14,6 +14,7 @@ SPDX-License-Identifier: Apache-2.0
 </p>
 
 <p align="center">
+  <a href="https://github.com/kuicksilver/kuicksilver/actions/workflows/build.yml?query=branch%3Amain"><img alt="Build" src="https://github.com/kuicksilver/kuicksilver/actions/workflows/build.yml/badge.svg?branch=main"></a>
   <a href="https://central.sonatype.com/namespace/io.kuicksilver"><img alt="Maven Central" src="https://img.shields.io/maven-central/v/io.kuicksilver/kuicksilver-quic?label=Maven%20Central"></a>
   <a href="LICENSE"><img alt="License: Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-blue"></a>
   <a href="gradle/libs.versions.toml"><img alt="Kotlin 2.4" src="https://img.shields.io/badge/Kotlin-2.4-7F52FF?logo=kotlin&logoColor=white"></a>
