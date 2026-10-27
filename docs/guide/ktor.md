@@ -71,7 +71,7 @@ server.start(wait = true)
   0; `stop(grace, timeout)` stops accepting, sends GOAWAY to every HTTP/3 connection at once, raises `ApplicationStopPreparing`
   and waits for running calls (HTTP/1.1 and HTTP/3) until the grace period, then cuts what is left at the timeout.
 - Optional whitespace around a response header value is trimmed before the value goes out over HTTP/3 (field values
-  carry none); a value HTTP/3 cannot carry (a character above U+00FF, CR, LF) fails the call and resets its stream.
+  carry none); a value HTTP/3 cannot carry (a character above U+00FF, or a control character other than tab) fails the call and resets its stream.
 
 ### HTTP/3 on the server
 

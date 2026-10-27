@@ -31,6 +31,32 @@ class FieldValidatorTest {
         assertNull(FieldValidator.checkValue("fine value\twith tab"))
     }
 
+    /**
+     * RFC 9114 section 10.3: a field value with a character not permitted by RFC 9110 section 5.5 is malformed. HTAB is
+     * the only control character field-content allows; SP and obs-text (0x80-0xFF) stay valid.
+     */
+    @Test fun negative_h3FieldControlChars() {
+        for (c in listOf(0x01, 0x08, 0x0b, 0x0c, 0x0e, 0x1b, 0x1f, 0x7f)) {
+            assertNotNull(FieldValidator.checkValue("a${c.toChar()}b"), "0x${c.toString(16)}")
+        }
+        assertNull(FieldValidator.checkValue("a\tb"))
+        assertNull(FieldValidator.checkValue("a b"))
+        assertNull(FieldValidator.checkValue("\u00FF\u0080"))
+        assertFailsWith<MalformedMessage> {
+            PseudoHeaders.parseRequest(
+                listOf(
+                    ":method" to "GET",
+                    ":scheme" to "https",
+                    ":authority" to "example.com",
+                    ":path" to "/a\u007f",
+                ),
+                false,
+            )
+        }
+        assertFailsWith<MalformedMessage> { PseudoHeaders.parseResponse(listOf(":status" to "200", "x-a" to "a\u0001b")) }
+        assertFailsWith<MalformedMessage> { PseudoHeaders.parseTrailers(listOf("x-a" to "a\u001bb")) }
+    }
+
     /** Field names and values are octets: a char above U+00FF would be truncated by the Latin-1 encoder, and U+010A truncates to a raw LF. */
     @Test fun negative_h3FieldNonLatin1() {
         assertNotNull(FieldValidator.checkValue("a\u010Ab"))
