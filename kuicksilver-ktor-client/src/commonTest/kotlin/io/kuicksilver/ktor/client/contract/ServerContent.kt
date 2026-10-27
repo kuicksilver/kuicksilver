@@ -90,7 +90,7 @@ internal fun Application.contentTestServer() {
                 call.receiveMultipart().forEachPart { part ->
                     check(part.contentDisposition?.disposition == "form-data")
                     response.append(part.makeString())
-                    part.dispose()
+                    part.release()
                 }
 
                 call.respondText(response.toString())
