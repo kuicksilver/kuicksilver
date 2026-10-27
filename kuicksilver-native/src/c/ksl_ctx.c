@@ -18,10 +18,13 @@ static int alpn_select_cb(SSL *ssl, const unsigned char **out, unsigned char *ou
     if (SSL_select_next_proto((unsigned char **)out, outlen, c->alpn, (unsigned)c->alpn_len, in, inlen) == OPENSSL_NPN_NEGOTIATED) return SSL_TLSEXT_ERR_OK;
     return SSL_TLSEXT_ERR_ALERT_FATAL;   /* no_application_protocol (120) */
 }
-/* Records alerts for both modes: sent -> code, received -> code | 0x100 (ksl_ssl_last_error). */
+/* Records alerts for both modes: sent -> code, received -> code | 0x100 (ksl_ssl_last_error). Fatal ones and close_notify; in TLS
+   1.3 also an error alert at level warning, since RFC 9846 section 6: error alerts "MUST be treated as error alerts when received
+   regardless of the AlertLevel" (OpenSSL ends the connection on them; only user_canceled is not one). */
 static void info_cb(const SSL *ssl, int where, int ret) {
     if (!(where & SSL_CB_ALERT)) return; ksl_ssl *s = SSL_get_ex_data(ssl, 1); if (!s) return;
-    int code = ret & 0xff; if ((ret >> 8) != SSL3_AL_FATAL && code != SSL_AD_CLOSE_NOTIFY) return;
+    int code = ret & 0xff;
+    if ((ret >> 8) != SSL3_AL_FATAL && code != SSL_AD_CLOSE_NOTIFY && (SSL_version(ssl) < TLS1_3_VERSION || code == SSL_AD_USER_CANCELLED)) return;
     s->last_alert = (where & SSL_CB_READ) ? (code | 0x100) : code;
 }
 /* Moves a buffer of secrets into a larger one and zeroes the whole old block before the caller frees it: realloc would free
