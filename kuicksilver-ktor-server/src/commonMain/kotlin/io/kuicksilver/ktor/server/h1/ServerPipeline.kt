@@ -238,8 +238,10 @@ internal class MalformedRequestBody(
 }
 
 /**
- * Starts the HTTP/1.1 pipeline of [connection], invoking [handler] for every request (concurrently with reading the next
- * one, as HTTP/1.1 pipelining allows); responses are written in request order.
+ * Starts the HTTP/1.1 pipeline of [connection], invoking [handler] for every request; responses are written in request
+ * order. The next request is read once the response head of the one before it is out; the handlers of pipelined
+ * requests with safe methods may then run in parallel, a request with an unsafe method runs alone, after the handlers
+ * before it and before those after it (RFC 9112 section 9.3.2).
  *
  * [timeout] closes an idle connection, both directions: no response handed to the writer for that long ends the
  * pipeline. [sendTimeout] (the longer of [timeout] and [MIN_SEND_STALL_TIMEOUT] by default) ends it when the client's
@@ -288,6 +290,9 @@ internal fun CoroutineScope.startH1Pipeline(
         }
 
         val requestContext = RequestHandlerName + Dispatchers.Unconfined
+        // handlers of earlier requests that may still run: only requests with safe methods run in parallel (RFC 9112
+        // section 9.3.2), so these are all safe ones
+        val running = ArrayList<Job>()
 
         try {
             var headBudget = firstHeadTimeout
@@ -346,6 +351,7 @@ internal fun CoroutineScope.startH1Pipeline(
                             .map { it.toString() }
                             .toList(),
                     )
+                val safe = request.method.value in SAFE_METHODS
                 val connectionOptions: ConnectionOptions?
 
                 unwritten.update { it + 1 }
@@ -383,6 +389,11 @@ internal fun CoroutineScope.startH1Pipeline(
                 val body = if (expectedHttpBody) RequestBody(framing, input, continueSent) else null
                 val endsConnection = CompletableDeferred<Boolean>()
 
+                if (!safe) {
+                    // an unsafe request runs alone: after the handlers before it (its response waits for theirs anyway)
+                    for (earlier in running) earlier.join()
+                    running.clear()
+                }
                 val handlerJob =
                     launch(requestContext, start = CoroutineStart.UNDISPATCHED) {
                         val handlerScope =
@@ -498,6 +509,13 @@ internal fun CoroutineScope.startH1Pipeline(
                 // MUST NOT process any further request received on it (RFC 9112 section 9.6), so the next one is read
                 // only once this response's head shows it may be
                 if (endsConnection.await()) break
+                if (safe) {
+                    running.removeAll { it.isCompleted }
+                    running += handlerJob
+                } else {
+                    // and before the handlers after it: the next request is read once this one's handler has ended
+                    handlerJob.join()
+                }
             }
         } catch (_: IOException) {
             // the client went away
@@ -505,6 +523,12 @@ internal fun CoroutineScope.startH1Pipeline(
             actorChannel.close()
         }
     }
+
+/**
+ * The safe methods (RFC 9110 section 9.2.1): pipelined requests with only these may be processed in parallel (RFC 9112
+ * section 9.3.2); a request with any other method runs alone.
+ */
+private val SAFE_METHODS = setOf("GET", "HEAD", "OPTIONS", "TRACE")
 
 /**
  * Waits for the first byte of the next request head: true once it is there (or the input ended, which the parser

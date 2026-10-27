@@ -317,6 +317,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   chunked<U+00A0>` a chunked one, so with a proxy in front that framed the response otherwise the bytes behind it
   became the response to the next request (response splitting). A `Transfer-Encoding` that is not a list of transfer
   codings or that applies `chunked` twice (RFC 9112 section 6.1) fails the same way.
+- Ktor server, HTTP/1.1: a pipelined request with an unsafe method (POST, PUT, DELETE, ...) now runs alone: its
+  handler starts after the handlers of the requests before it have ended, and the next request is read only after it
+  has ended (RFC 9112 section 9.3.2: pipelined requests may be processed in parallel only if they all have safe
+  methods). Before, a pipelined DELETE could run while the PUT before it was still streaming its response. Pipelined
+  GET, HEAD, OPTIONS and TRACE requests still overlap.
 - Ktor server, HTTP/1.1: a request whose `Connection` field lists `close` (`close, TE`, `keep-alive, close`, or on a
   second `Connection` line) ends the connection after its response, which now says `Connection: close` (RFC 9112
   section 9.6); so does an HTTP/1.0 request without `keep-alive`. Before, only a field of exactly `close` was
