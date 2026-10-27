@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Copyright 2026 The Kuicksilver Authors
 # SPDX-License-Identifier: Apache-2.0
-# Cases for the ENVIRONMENT classification of run-local.sh (environment.sh, handshake-challenge.py, closing-rebind.py, clienthello-lost.py) on fixtures in testdata/,
+# Cases for the ENVIRONMENT classification of run-local.sh (environment.sh, handshake-challenge.py, closing-rebind.py, clienthello-lost.py,
+# prohibited-port-rebind.py) on fixtures in testdata/,
 # and for sim-entrypoint.sh's rebind start gate on stubs (no runner, no Docker, no tshark; needs python3 and jq).
 # KSL_INTEROP_CELL=<a result cell directory with its pcaps> also runs the classification on that real cell (needs tshark), e.g.
 # build/interop/20261016-045713/quiche-server/kuicksilver_quiche/rebind-addr from the 0.2.0 gate; KSL_INTEROP_CLOSE_CELL the same for
@@ -10,6 +11,8 @@
 # KSL_INTEROP_STALE_CELL a cell that ran on the sim of a timed-out cell, e.g. build/interop/20261020-031632/picoquic-server/kuicksilver_picoquic/zerortt.
 # KSL_INTEROP_LOST_CELL a cell whose peer client's ClientHello never reached our server in full, e.g.
 # build/interop/20261023-114548/quiche-server/kuicksilver_quiche/handshakeloss (0.2.1 gate 2).
+# KSL_INTEROP_PORT_CELL a cell of the ngtcp2 server whose client the sim rebound to a port that server drops, e.g. the release/0.2.x
+# run 40563746089 artifact interop-jvm-ngtcp2/20261027-192322/ngtcp2-client/ngtcp2_kuicksilver/rebind-addr.
 # Usage: environment-test.sh
 set -uo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"; td="$here/testdata"; hc="$here/handshake-challenge.py"
@@ -112,6 +115,35 @@ check "lost: no connection without a handshake"                     1 "" -- pyth
 check "lost: another such connection does not fit"                  1 "" -- python3 "$cl" --decoded "$(lvar two ".connections += [$conn | .closed = \"idle_timeout\"]")"
 check "lost: a malformed summary cannot be analysed"                2 "cannot analyse" -- python3 "$cl" --decoded "$(lvar broken "del($conn.packets)")"
 
+# prohibited-port-rebind.py: the sim rebound the client to a source port the ngtcp2 server drops (release/0.2.x run 40563746089:
+# ngtcp2->kuicksilver:rebind-addr, 193.167.0.229:18108 -> 193.167.0.155:745 at 11 s, decoded with --dump)
+pp="$here/prohibited-port-rebind.py"; fp="$td/prohibited-port-rebind-ngtcp2-rebind-addr.json"
+pvar() { jq "$2" "$fp" > "$tmp/$1.json"; echo "$tmp/$1.json"; }
+B='"193.167.0.155:745"'; A='"193.167.0.229:18108"'; blocked='.rebinds[1]'
+pkt() {   # server|client "ip:port" (a JSON string): a packet of the server to it, or of the client from it
+  if [ "$1" = server ]; then printf '{"n": 99999, "src": "193.167.100.100:443", "dst": %s, "from_server": true}' "$2"
+  else printf '{"n": 99999, "src": %s, "dst": "193.167.100.100:443", "from_server": false}' "$2"; fi
+}
+check "port: CI cell, rebound to :745, the server kept the old binding" 0 "rebound the client 193.167.0.229:18108 -> 193.167.0.155:745" -- python3 "$pp" --decoded "$fp"
+check "port: rebind-port counts too"                              0 "" -- python3 "$pp" --decoded "$(pvar rp '.case = "rebind-port"')"
+check "port: the server left no log (capture alone)"              0 "" -- python3 "$pp" --decoded "$(pvar nolog '.server_log = false')"
+check "port: a reflection port above 1024 (5353)"                 0 "" -- python3 "$pp" --decoded "$(pvar mdns "walk(if . == $B then \"193.167.0.155:5353\" else . end)")"
+check "port: the rebind landed on a normal port"                  1 "" -- python3 "$pp" --decoded "$(pvar normal "walk(if . == $B then \"193.167.0.155:7450\" else . end)")"
+check "port:   (1024, the first allowed port)"                    1 "" -- python3 "$pp" --decoded "$(pvar p1024 "walk(if . == $B then \"193.167.0.155:1024\" else . end)")"
+check "port: the server's log names the new binding"              1 "" -- python3 "$pp" --decoded "$(pvar logged ".server_log_names = [$B]")"
+check "port: the server sent to the new binding"          1 "" -- python3 "$pp" --decoded "$(pvar answered "$blocked.after += [$(pkt server "$B")]")"
+check "port: the server moved to another binding later"   1 "" -- python3 "$pp" --decoded "$(pvar moved "$blocked.after += [$(pkt server '"193.167.0.151:64331"')]")"
+check "port: the client sent from a later binding"        1 "" -- python3 "$pp" --decoded "$(pvar later "$blocked.after += [$(pkt client '"193.167.0.151:64331"')]")"
+check "port: the server spoke first on the new binding"   1 "" -- python3 "$pp" --decoded "$(pvar srvfirst "$blocked.after = [$(pkt server "$A")] + $blocked.after")"
+check "port: the server sent nothing after the rebind"            1 "" -- python3 "$pp" --decoded "$(pvar silent "$blocked.after |= map(select(.from_server | not))")"
+check "port: no packet from the new binding reached the server"   1 "" -- python3 "$pp" --decoded "$(pvar unseen "$blocked.after = []")"
+check "port: the client exited with 0"                            1 "" -- python3 "$pp" --decoded "$(pvar ok '.client_exit = 0')"
+check "port: the client's exit is unknown"                        1 "" -- python3 "$pp" --decoded "$(pvar noexit '.client_exit = null')"
+check "port: another server (msquic: only packets of no connection)" 1 "" -- python3 "$pp" --decoded "$(pvar msquic '.pair = "msquic_kuicksilver"')"
+check "port: our own server's cell"                               1 "" -- python3 "$pp" --decoded "$(pvar ours '.pair = "kuicksilver_ngtcp2"')"
+check "port: not a rebind test case"                              1 "" -- python3 "$pp" --decoded "$(pvar transfer '.case = "transfer"')"
+check "port: a malformed summary cannot be analysed"              2 "cannot analyse" -- python3 "$pp" --decoded "$(pvar broken "del($blocked.after[0].src)")"
+
 # cell mode: only our own server's cells, only with the runner's verdict, and never a guess without the captures
 mk() { mkdir -p "$tmp/res/$1/$2"; printf '%s\n' "${@:3}" > "$tmp/res/$1/$2/output.txt"; }
 mk quiche-server/kuicksilver_quiche rebind-addr "PATH_CHALLENGE without a PATH_RESPONSE: ['e1:5d:7d:5c:e5:c0:f7:57']"
@@ -134,6 +166,12 @@ check "close: no missing challenge in the verdict"             1 "" -- python3 "
 mk msquic-server/kuicksilver-native_msquic rebind-port "Check of downloaded files succeeded." "First server packet on new path (('193.167.100.100', 443), ('193.167.0.100', 59022)) did not contain a PATH_CHALLENGE frame"
 check "close: our server's cell is analysed as well"           2 "cannot analyse" -- python3 "$cr" "$tmp/res/msquic-server/kuicksilver-native_msquic/rebind-port"
 
+# prohibited-port-rebind.py on cells: no prohibited port in the sim's rebinds is no verdict, one without the capture cannot be analysed
+mk ngtcp2-client/ngtcp2_kuicksilver rebind-addr "sim     | 11s:  rebinding: 193.167.0.229:18108 -> 193.167.0.155:745" "client exited with code 1"
+mk ngtcp2-client/ngtcp2_kuicksilver rebind-port "sim     | 11s:  rebinding: 193.167.0.100:57607 -> 193.167.0.100:59022" "client exited with code 1"
+check "port: a prohibited port without the capture cannot be analysed" 2 "cannot analyse" -- python3 "$pp" "$tmp/res/ngtcp2-client/ngtcp2_kuicksilver/rebind-addr"
+check "port: no prohibited port in the rebinds"                    1 "" -- python3 "$pp" "$tmp/res/ngtcp2-client/ngtcp2_kuicksilver/rebind-port"
+
 # environment_cells: an unflushed capture (the earlier rule) is listed with its reason, a flushed one and the cells above are not
 mk ngtcp2-server/kuicksilver_ngtcp2 amplificationlimit "Capturing on 'eth0'" "Capturing on 'eth1'" "Packets received/dropped on interface 'eth0': 71/0"
 mk ngtcp2-server/kuicksilver_ngtcp2 handshake "Capturing on 'eth0'" "Capturing on 'eth1'" "Packets received/dropped on interface 'eth0': 9/0" "Packets received/dropped on interface 'eth1': 9/0"
@@ -143,7 +181,7 @@ mk picoquic-server/kuicksilver_picoquic v2 "Capturing on 'eth1'" "Capturing on '
 mk picoquic-server/kuicksilver_picoquic amplificationlimit "Capturing on 'eth1'" "Capturing on 'eth0'" "Packets received/dropped on interface 'eth0': 40/0" "Test failed: took longer than 60s."
 # a check that did run on a capture whose summary is missing stays ENVIRONMENT, whatever the verdict says about time
 mk quic-go-server/kuicksilver_quic-go transfer "Capturing on 'eth0'" "Capturing on 'eth1'" "Packets received/dropped on interface 'eth1': 30/0" "Missing files: took longer than expected"
-for role in quiche-server quiche-client quinn-server ngtcp2-server msquic-client msquic-server picoquic-server quic-go-server; do environment_cells "$tmp/res/$role"; done > "$tmp/cells.txt" 2>/dev/null
+for role in quiche-server quiche-client quinn-server ngtcp2-server ngtcp2-client msquic-client msquic-server picoquic-server quic-go-server; do environment_cells "$tmp/res/$role"; done > "$tmp/cells.txt" 2>/dev/null
 check "environment_cells lists the unflushed capture" 0 "kuicksilver_ngtcp2 amplificationlimit the sim's capture was not flushed" -- cat "$tmp/cells.txt"
 check "environment_cells lists a missing summary without a timeout" 0 "kuicksilver_quic-go transfer the sim's capture was not flushed" -- cat "$tmp/cells.txt"
 check "a runner timeout is no unflushed capture"     1 "" -- grep -q "kuicksilver_picoquic v2" "$tmp/cells.txt"
@@ -273,6 +311,11 @@ if [ -n "${KSL_INTEROP_LOST_CELL:-}" ]; then   # the real 0.2.1 gate 2 cell: qlo
   cell=${KSL_INTEROP_LOST_CELL%/}; res=$(dirname "$(dirname "$cell")")
   check "real lost cell: classified ENVIRONMENT" 0 "$(basename "$(dirname "$cell")") $(basename "$cell") the peer client's ClientHello never reached our server" -- environment_cells "$res"
   check "real lost cell: the decoded summary matches its fixture" 0 "" -- bash -c "python3 '$cl' --dump '$cell' | jq -e --slurpfile f '$fl' '. == \$f[0]' > /dev/null"
+fi
+if [ -n "${KSL_INTEROP_PORT_CELL:-}" ]; then   # the real release/0.2.x cell: pcap through tshark, the ngtcp2 server's log
+  cell=${KSL_INTEROP_PORT_CELL%/}; res=$(dirname "$(dirname "$cell")")
+  check "real port cell: classified ENVIRONMENT" 0 "$(basename "$(dirname "$cell")") $(basename "$cell") the sim rebound the client to a source port the ngtcp2 server drops" -- environment_cells "$res"
+  check "real port cell: the decoded summary matches its fixture" 0 "" -- bash -c "python3 '$pp' --dump '$cell' | jq -e --slurpfile f '$fp' '. == \$f[0]' > /dev/null"
 fi
 [ $fails -eq 0 ] && echo "all cases passed"
 [ $fails -eq 0 ]

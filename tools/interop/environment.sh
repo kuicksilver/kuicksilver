@@ -116,6 +116,24 @@ clienthello_lost() {
   done < <(find "$1" -mindepth 3 -maxdepth 3 -name output.txt \( -path '*/handshakeloss/*' -o -path '*/transferloss/*' \) 2>/dev/null | sort)
 }
 
+# Rebind cells of the ngtcp2 server failed only because the simulator rebound the client to a source port that server drops: below
+# 1024 or 1900, 5353, 11211, 20800, 27015 (ngtcp2 examples/util.cc:360-371, prohibited_port; examples/server.cc:1680-1684 drops
+# such a datagram before it logs or reads it). The server keeps sending to the old binding, which the sim has forgotten, and a
+# client that only downloads has nothing to send until its idle timeout (release/0.2.x run 40563746089: ngtcp2->kuicksilver:rebind-addr,
+# rebound to 193.167.0.155:745 at 11 s, the fixed-seed binding there, see sim-entrypoint.sh). tools/interop/prohibited-port-rebind.py proves it from the server-side capture and log:
+# the client's packets from the new binding reached the server's link, the server never answered there, kept to the old one, and
+# the client sent from no later binding. msquic's similar list applies only to packets of no connection (binding.c:1523), not here.
+# Prints "<server>_<client> <case>" per cell.
+prohibited_port_rebind() {
+  local o cell
+  while IFS= read -r o; do
+    grep -qE "client exited with code [1-9]" "$o" || continue
+    cell=$(dirname "$o")
+    python3 "$interop_tools/prohibited-port-rebind.py" "$cell" > /dev/null || continue
+    cell=${cell#"$1"/}; echo "${cell%%/*} ${cell#*/}"
+  done < <(find "$1" -mindepth 3 -maxdepth 3 -name output.txt \( -path '*/ngtcp2_*/rebind-addr/*' -o -path '*/ngtcp2_*/rebind-port/*' \) 2>/dev/null | sort)
+}
+
 # Cells of a result directory whose verdict rests on the environment: "<server>_<client> <case> <why>", one line per cell.
 environment_cells() {
   { truncated_captures "$1" | sed 's/$/ the sim'"'"'s capture was not flushed before teardown (dumpcap summary missing in output.txt), the pcap is incomplete/'
@@ -124,5 +142,6 @@ environment_cells() {
     late_server "$1" | sed 's/$/ the server container started after the sim had stopped waiting for it: the scenario never ran, no packet was sent/'
     clienthello_lost "$1" | sed 's/$/ the peer client'"'"'s ClientHello never reached our server in full: the simulator dropped its one copy of the rest and every ACK of ours, and the client repeats only the first part on PTO (clienthello-lost.py)/'
     closing_rebind "$1" | sed 's/$/ the rebind landed just before the client'"'"'s CONNECTION_CLOSE: the server answered the close from the new path with its own close, no path left to validate (closing-rebind.py)/'
+    prohibited_port_rebind "$1" | sed 's/$/ the sim rebound the client to a source port the ngtcp2 server drops (below 1024 or a reflection port): the server kept sending to the old binding and the downloading client had nothing to send (prohibited-port-rebind.py)/'
   } | sort -u -k1,2
 }

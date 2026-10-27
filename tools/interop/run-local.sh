@@ -26,7 +26,10 @@
 # Running": a stale ARP entry for the server; the override below has compose recreate the sim in every cell, this is the backstop),
 # and a cell whose server container started only after the sim had stopped waiting for it (no scenario ran, no packet was sent),
 # and a loss cell of our server whose peer client idled out because the rest of its two-packet ClientHello never reached us while the
-# simulator dropped every ACK of ours (tools/interop/clienthello-lost.py; 0.2.1 gate 2, kuicksilver->quiche:handshakeloss, 1 of 10 reruns).
+# simulator dropped every ACK of ours (tools/interop/clienthello-lost.py; 0.2.1 gate 2, kuicksilver->quiche:handshakeloss, 1 of 10 reruns),
+# and a rebind cell of the ngtcp2 server whose downloading client the sim rebound to a source port that server drops (below 1024:
+# the fixed-seed 193.167.0.155:745 at 11 s in rebind-addr), so the server kept sending to the old binding until the client idled
+# out (tools/interop/prohibited-port-rebind.py; release/0.2.x run 40563746089, ngtcp2->kuicksilver:rebind-addr).
 # --check-required merges the reruns (a green rerun counts), --results reports such cells only.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/../.." && pwd)"; cd "$root"
