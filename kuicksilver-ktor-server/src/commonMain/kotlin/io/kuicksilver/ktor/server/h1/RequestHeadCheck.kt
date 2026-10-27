@@ -54,7 +54,9 @@ internal suspend fun HeadLimitedInput.checkRequestHead() {
         } else if (end == lineStart) {
             val fields = buffer.peek()
             fields.skip(fieldsStart)
-            checkFieldSection(fields.readByteArray((lineStart - fieldsStart).toInt()))
+            for (colon in checkFieldSection(fields.readByteArray((lineStart - fieldsStart).toInt()))) {
+                replaceBufferedByte(fieldsStart + colon, SP_BYTE)
+            }
             return
         }
         lineStart = lf + 1
@@ -75,8 +77,13 @@ internal suspend fun HeadLimitedInput.checkRequestHead() {
  *   but Ktor's parser skips any Unicode whitespace there, so the application (and the framing of the body, for
  *   `Content-Length: <U+00A0>5`) would see another value than a recipient that holds to the grammar. Inside or at the
  *   end of a value such bytes are obs-text, passed on.
+ *
+ * Returns the offsets of the colons that end a Host value (`Host: a.example:`): `port = *DIGIT` (RFC 3986 section 3.2.3)
+ * makes the empty port valid (the default port), but Ktor's parser refuses it, so the caller turns that colon into SP,
+ * trailing OWS the parser drops: the same authority.
  */
-internal fun checkFieldSection(fields: ByteArray) {
+internal fun checkFieldSection(fields: ByteArray): List<Int> {
+    val emptyPortColons = ArrayList<Int>(0)
     var start = 0
     while (start < fields.size) {
         var lf = start
@@ -92,8 +99,14 @@ internal fun checkFieldSection(fields: ByteArray) {
             val c = fields[i].toInt() and 0xFF
             if ((c < 0x20 && c != 0x09) || c == 0x7F) refuse("A control character in a field value")
         }
+        if (colon - start == 4 && fields.decodeToString(start, colon).equals("host", ignoreCase = true)) {
+            var last = end - 1
+            while (last >= value && (fields[last] == SP_BYTE || fields[last] == HTAB_BYTE)) last--
+            if (last >= value && fields[last] == ':'.code.toByte()) emptyPortColons += last
+        }
         start = lf + 1
     }
+    return emptyPortColons
 }
 
 /**

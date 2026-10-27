@@ -350,10 +350,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   drops what the client is still sending for up to 2 s before it closes, as it did after a 431 (RFC 9112 section
   9.6: close in stages). Before, it closed over the unread rest of the request, the kernel answered with a reset, and
   the client could lose the 400.
-- Ktor server, HTTP/1.1: a Host field that is not `uri-host [":" port]` (`Host: a b`, `[::1`, `h:x`, `a%zz`, a port
-  above 65535) gets 400 and the connection closes (RFC 9112 section 3.2: a server MUST respond with 400 to a Host
-  with an invalid value); so does an absolute-form target with such an authority. Before, only `/?#@` and a trailing
-  colon were refused, and the rest reached `serverHost` and `serverPort`.
+- Ktor server, HTTP/1.1: a Host field that is not `uri-host [":" port]` (`Host: a b`, `[::1`, `h:x`, `a%zz`) gets 400
+  and the connection closes (RFC 9112 section 3.2: a server MUST respond with 400 to a Host with an invalid value); so
+  does an absolute-form target with such an authority. Before, only `/?#@` and a trailing colon were refused, and the
+  rest reached `serverHost` and `serverPort`. A trailing colon (`Host: a.example:`, an empty port, valid by RFC 3986's
+  `port = *DIGIT`) is now accepted as the default port instead of refused.
 - Ktor server, HTTP/1.1: a request field name that is not a token (with DEL or a byte above 0x7F, RFC 9110 section
   5.1) gets 400, and so does a Unicode space (U+00A0, U+2000, ...) right before a field value: OWS is only SP and HTAB
   (section 5.6.3), but Ktor's parser skipped it, so `Content-Length: <U+00A0>5` framed a 5-byte body while a front
