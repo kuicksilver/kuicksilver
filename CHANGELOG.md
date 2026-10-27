@@ -267,6 +267,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- HTTP/3 server with WebTransport: a WebTransport stream naming a Session ID beyond the bidirectional stream limit the
+  server granted closes the connection with `H3_ID_ERROR` at once; the client could never open that session. Such a
+  stream held one of the 16 buffer slots for 5 s before.
 - HTTP/3 server with WebTransport: datagrams that arrive before their session's CONNECT HEADERS (reordering, or a
   client that sends right after its CONNECT) are kept and delivered once the session is accepted, at most 16 per
   connection for 5 s, as early WebTransport streams already were (draft-ietf-webtrans-http3 section 4.6). They were

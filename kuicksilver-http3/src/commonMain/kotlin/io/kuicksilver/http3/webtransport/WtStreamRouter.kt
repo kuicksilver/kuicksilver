@@ -1,5 +1,7 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
+@file:OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+
 package io.kuicksilver.http3.webtransport
 
 import io.kuicksilver.http3.Http3ErrorCode
@@ -9,6 +11,7 @@ import io.kuicksilver.http3.runtime.IncompleteFrame
 import io.kuicksilver.http3.runtime.readVarIntOrNull
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.QuicStream
+import io.kuicksilver.quic.runtime.QuicStreamLimits
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -92,6 +95,14 @@ internal class WtStreamRouter(
                 Http3ErrorCode.ID_ERROR,
                 "WebTransport stream ${st.id} names session $sessionId, not a client-initiated bidirectional stream",
             )
+        }
+        // server: a stream the client could never open under the limit we granted (RFC 9218 section 7.2 does the same)
+        if (session.isServer) {
+            QuicStreamLimits.peerBidiStreamsGranted(session.quic)?.let {
+                if (sessionId / 4 >= it) {
+                    throw H3ProtocolError(Http3ErrorCode.ID_ERROR, "WebTransport session $sessionId beyond the limit of $it streams")
+                }
+            }
         }
         sinks[sessionId]?.let {
             it.onStream(st, bidi)

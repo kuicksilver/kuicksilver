@@ -22,6 +22,7 @@ import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.QuicConnection
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.QuicStream
+import io.kuicksilver.quic.quicConfig
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
@@ -218,6 +219,24 @@ class WtStreamRoutingTest {
     @Test fun negative_pendingDatagramsBounded() =
         h3Test {
             assertEquals((0 until 16).map { "d$it" }, datagramsBeforeConnect(17)) // the 17th is dropped at the cap
+        }
+
+    /**
+     * A Session ID naming a stream the client could never open under the bidirectional limit we granted is H3_ID_ERROR at
+     * once (as RFC 9218 section 7.2 has it for PRIORITY_UPDATE), not a stream buffered for 5 s; one within it is buffered.
+     */
+    @Test fun sessionIdBeyondStreamLimitIsIdError() =
+        h3Test {
+            QuicPair.open(serverQuic = quicConfig { maxBidiStreams = 10 }).useScoped { q ->
+                val (c, s) = q.connect()
+                val server = Http3Connection.server(s, wtOn)
+                val raw = RawPeer(c)
+                raw.openControl(wtClientSettings)
+                raw.uni(StreamType.WT_UNI, VarInt.encode(36)) // the tenth stream: within the limit, waits
+                server.awaitBuffered(1)
+                peerMayHaveClosed { raw.uni(StreamType.WT_UNI, VarInt.encode(40)) } // the eleventh
+                assertEquals(Http3ErrorCode.ID_ERROR, withTimeout(3.seconds) { peerSawClose(c) })
+            }
         }
 
     /** Without WebTransport a `0x54` stream is an unknown type, stopped as before (RFC 9114 section 6.2). */
