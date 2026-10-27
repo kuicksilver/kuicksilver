@@ -233,6 +233,13 @@ public expect object Ksl {
 
     public fun tcpShutdown(ssl: Long): Int
 
+    /**
+     * `ksl_tcp_abort`: fails the session with a fatal internal_error alert instead of close_notify. True when the alert is
+     * queued (drain it with [tcpDrain]); false when OpenSSL can send none for this role and version (a TLS 1.3 client, a TLS
+     * 1.2 server) or the session is not established. The session takes no more data either way.
+     */
+    public fun tcpAbort(ssl: Long): Boolean
+
     // keys
     public fun keyInitial(
         dcid: ByteArray,

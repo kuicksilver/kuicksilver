@@ -438,6 +438,8 @@ public actual object Ksl {
 
     public actual fun tcpShutdown(ssl: Long): Int = sslCheck(ssl, ksl_tcp_shutdown(ssl(ssl)))
 
+    public actual fun tcpAbort(ssl: Long): Boolean = ksl_tcp_abort(ssl(ssl)) == KSL_OK
+
     public actual fun keyInitial(
         dcid: ByteArray,
         isServer: Boolean,

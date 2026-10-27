@@ -299,6 +299,14 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   a stream error `H3_MESSAGE_ERROR`, and our own requests, responses and trailers with one fail locally with
   `IllegalArgumentException`. Only NUL, CR and LF were refused, so a value such as `a<ESC>b` reached the application
   and the Ktor engines.
+- TLS over TCP: a connection whose application stream failed (a handler that threw mid-response) now ends with the fatal
+  alert internal_error after what was sent, then a FIN, where OpenSSL can send one: a TLS 1.3 server and a TLS 1.2 client
+  (RFC 8446 section 6.1). Before, it ended with a reset and no alert; it still never ends with `close_notify`, so a peer
+  never takes the cut stream for a whole one. A TLS 1.3 client and a TLS 1.2 server still reset the connection: OpenSSL
+  3.5 offers no way to send an alert there. New internal `TlsConnection.abortOutput` and `ksl_tcp_abort` (additive, ABI 7).
+- TLS 1.2: a peer without Extended Master Secret is now refused during the handshake with a `handshake_failure` alert (the
+  server on the ClientHello, the client on the ServerHello), instead of being dropped without an alert after both
+  Finished messages (RFC 7627, RFC 9325 section 3.6).
 - TLS over TCP: a connection updates its sending key (TLS 1.3 KeyUpdate) every 2^23 records it wrote, before the AES-GCM
   record limit of RFC 8446 section 5.5 (2^24.5 records, about 384 GiB at full size). OpenSSL never does so by itself, so a
   very long-lived bulk connection kept one key for good.

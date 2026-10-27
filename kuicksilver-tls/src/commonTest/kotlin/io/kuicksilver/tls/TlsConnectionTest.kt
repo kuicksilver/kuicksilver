@@ -290,6 +290,48 @@ class TlsConnectionTest {
         }
 
     /**
+     * RFC 8446 section 6.1: "Each party MUST send a 'close_notify' alert before closing its write side of the connection,
+     * unless it has already sent some error alert". A TLS 1.3 server whose application's stream failed ends with
+     * internal_error (80) after what it had sent: the client reads that, then fails with the alert, never a clean end.
+     */
+    @Test fun negative_aFailedServerOutputSendsInternalError(): Unit =
+        runBlocking {
+            val (c, s) = both()
+            try {
+                s.output.writeFully(byteArrayOf(1, 2, 3), 0, 3)
+                s.output.flush()
+                assertContentEquals(byteArrayOf(1, 2, 3), withTimeout(10.seconds) { c.input.readExactly(3) })
+                assertTrue(s.abortOutput(IOException("the application's stream failed")), "the server sent no alert")
+                val seen =
+                    runCatching {
+                        withTimeout(10.seconds) {
+                            val buf = ByteArray(64)
+                            while (c.input.readAvailable(buf, 0, buf.size) >= 0) continue
+                            c.input.closedCause?.let { throw it }
+                        }
+                    }
+                var cause = seen.exceptionOrNull()
+                while (cause != null && cause !is TlsException.AlertReceived) cause = cause.cause
+                assertEquals(80, cause?.code, "the client saw $seen, not internal_error")
+            } finally {
+                c.close()
+                s.close()
+            }
+        }
+
+    /** A TLS 1.3 client has no way to send an alert through OpenSSL 3.5: [TlsConnection.abortOutput] says so at once. */
+    @Test fun aFailedClientOutputCannotSendAnAlert(): Unit =
+        runBlocking {
+            val (c, s) = both()
+            try {
+                assertEquals(false, c.abortOutput(IOException("the application's stream failed")))
+            } finally {
+                c.close()
+                s.close()
+            }
+        }
+
+    /**
      * The peer stops reading: once its transport and its plaintext buffer are full the writer pump waits on the transport for
      * good, and shutdown() must still return at its bound (the KDoc says bounded) instead of waiting for the writer forever.
      */

@@ -309,6 +309,8 @@ public actual object Ksl {
 
     public actual fun tcpShutdown(ssl: Long): Int = sslCheck(ssl, KslNative.tcpShutdown(ssl))
 
+    public actual fun tcpAbort(ssl: Long): Boolean = KslNative.tcpAbort(ssl) == KslConst.OK
+
     /** write/read: bytes >= 0, or the negated KslConst code (-WANT_READ, -EOF) for the caller to act on. */
     private fun tcpCode(
         ssl: Long,

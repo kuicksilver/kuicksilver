@@ -216,6 +216,8 @@ internal object KslNative {
 
     @JvmStatic external fun tcpShutdown(ssl: Long): Int
 
+    @JvmStatic external fun tcpAbort(ssl: Long): Int
+
     @JvmStatic external fun keyInitial(
         dcid: ByteArray,
         isServer: Int,

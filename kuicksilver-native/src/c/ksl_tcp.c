@@ -51,6 +51,30 @@ int ksl_tcp_read(ksl_ssl *s, uint8_t *out, size_t cap, size_t *read) {
     if (r == 1) { *read = n; return KSL_OK; }
     return map_error(s, r);
 }
+/* RFC 8446 section 6.1: "Each party MUST send a 'close_notify' alert before closing its write side of the connection, unless it has
+   already sent some error alert". A session whose application failed must not end with close_notify: the peer would take the cut
+   stream for a whole one. OpenSSL 3.5 has no call that sends an alert on an established connection, but it sends one whenever
+   building a handshake message fails, and two of those messages run a ksl callback first: a TLS 1.3 server's NewSessionTicket
+   (ksl_ctx.c ticket_gen_cb) and a TLS 1.2 client's renegotiation ClientHello (ksl_ctx.c abort_ext_add_cb, before any byte of it is
+   written). With abort_alert set both fail with internal_error (80), and OpenSSL writes the alert under the current keys, after
+   everything it wrote before. A TLS 1.3 client (it can only start a KeyUpdate, which runs no callback) and a TLS 1.2 server (its
+   HelloRequest runs none either) have no such message: they send nothing, and the caller resets the transport. */
+int ksl_tcp_abort(ksl_ssl *s) {
+    if (!tcp_only(s)) return KSL_ERROR;
+    if (s->fatal || !s->done) { ksl_ssl_set_error(s, KSL_E_NOT_SUPPORTED, "ksl: no alert: the session is not established"); s->fatal = 1; return KSL_ERROR; }
+    ERR_clear_error(); int started = 0, client = s->owner->role == KSL_CLIENT;
+    s->abort_alert = 1; s->last_alert = 0;
+    if (SSL_version(s->ssl) >= TLS1_3_VERSION) started = !client && SSL_new_session_ticket(s->ssl) == 1;
+    else if (client) {
+        SSL_clear_options(s->ssl, SSL_OP_NO_RENEGOTIATION);   /* SSL_renegotiate refuses otherwise; the ClientHello is never sent */
+        started = SSL_renegotiate(s->ssl) == 1;
+        SSL_set_options(s->ssl, SSL_OP_NO_RENEGOTIATION);
+    }
+    if (started) (void)SSL_do_handshake(s->ssl);
+    int sent = s->last_alert == SSL_AD_INTERNAL_ERROR;   /* info_cb: a fatal alert we sent */
+    ksl_ssl_fail(s, KSL_E_NOT_SUPPORTED, sent ? "ksl: session aborted with internal_error" : "ksl: session aborted; OpenSSL can send no alert for this role and version");
+    return sent ? KSL_OK : KSL_ERROR;
+}
 int ksl_tcp_shutdown(ksl_ssl *s) {
     if (!tcp_only(s)) return KSL_ERROR; if (s->fatal) return KSL_ERROR; ERR_clear_error();
     int r = SSL_shutdown(s->ssl);

@@ -128,10 +128,11 @@ public class TlsSocket private constructor(
 
     /**
      * The application's plaintext goes through the TLS session to the raw socket. When the application's channel fails
-     * (a handler that threw mid-response), or the pump does, the connection is aborted ([abortTls]: no `close_notify`,
-     * the raw socket reset): a `close_notify` and a FIN would end the stream as if complete, and a peer reading a body
-     * delimited by the connection's close would take the cut one for the whole. A channel closed normally ends with
-     * `close_notify` on [close].
+     * (a handler that threw mid-response), or the pump does, the connection never ends with `close_notify`: a
+     * `close_notify` and a FIN would end the stream as if complete, and a peer reading a body delimited by the
+     * connection's close would take the cut one for the whole. It ends with the fatal alert internal_error after what was
+     * sent, then a FIN, where OpenSSL can send one (RFC 8446 section 6.1; [failTls]), else with a reset ([abortTls]). A
+     * channel closed normally ends with `close_notify` on [close].
      */
     @OptIn(InternalAPI::class)
     override fun attachForWriting(channel: ByteChannel): ReaderJob =
@@ -146,7 +147,7 @@ public class TlsSocket private constructor(
                 }
                 channel.closedCause?.let { throw it }
             } catch (e: Throwable) {
-                if (e !is CancellationException) abortTls()
+                if (e !is CancellationException) failTls(e)
                 throw e
             }
             tls.output.flushAndClose()
@@ -208,10 +209,41 @@ public class TlsSocket private constructor(
         tls.close()
     }
 
+    /**
+     * Ends the connection after the application's stream failed with [cause]: the session sends internal_error after
+     * everything sent before ([TlsConnection.abortOutput]; a TLS 1.3 server, a TLS 1.2 client), the raw socket then
+     * closes with a FIN (the peer fails on the alert, so a FIN cannot pass for a clean end), and is reset when it has not
+     * closed after [ALERT_CLOSE_TIMEOUT] (a peer that stopped reading). Where no alert can be sent, or the transport did
+     * not take it, the connection is reset at once ([abortTls]).
+     */
+    private suspend fun failTls(cause: Throwable) {
+        val alerted = runCatching { tls.abortOutput(cause, ALERT_CLOSE_TIMEOUT) }.getOrDefault(false)
+        if (!alerted) {
+            abortTls()
+            return
+        }
+        closing = true
+        tls.close()
+        @OptIn(DelicateCoroutinesApi::class)
+        GlobalScope.launch(Dispatchers.Default) {
+            // outside the socket's scope, whose job ends only after this pump: the alert and a FIN, bounded
+            val closed =
+                withTimeoutOrNull(ALERT_CLOSE_TIMEOUT) {
+                    runCatching { rawOut.flushAndClose() }
+                    raw.close()
+                    raw.socketContext.join()
+                }
+            if (closed == null) abortTls()
+        }
+    }
+
     /** The factory behind [Socket.tls] and [Socket.tlsServer]; internal, so no empty companion is part of the public ABI. */
     internal companion object {
         /** How long a client's [close] may take in all before it stops waiting for the peer. */
         internal val CLOSE_TIMEOUT: Duration = 3.seconds
+
+        /** How long a failed stream's internal_error alert and FIN may take to leave before the connection is reset instead. */
+        internal val ALERT_CLOSE_TIMEOUT: Duration = 3.seconds
 
         internal suspend fun start(
             raw: Socket,

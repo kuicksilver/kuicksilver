@@ -124,6 +124,7 @@ static jint j_tcp_read(JNIEnv *e, jclass c, jlong h, jbyteArray a, jint off, jin
     uint8_t *b = malloc(cap ? (size_t)cap : 1); if (!b) return -1; size_t n = 0; int r = ksl_tcp_read(SSLP(h), b, (size_t)cap, &n); if (r == KSL_OK && n) (*e)->SetByteArrayRegion(e, a, off, (jsize)n, (const jbyte *)b); wipe(b, (size_t)cap); free(b); return map_rw(r, n);
 }
 static jint j_tcp_shutdown(JNIEnv *e, jclass c, jlong h) { (void)e; (void)c; return ksl_tcp_shutdown(SSLP(h)); }
+static jint j_tcp_abort(JNIEnv *e, jclass c, jlong h) { (void)e; (void)c; return ksl_tcp_abort(SSLP(h)); }
 
 static jlong j_key_initial(JNIEnv *e, jclass c, jbyteArray dcid, jint is_server, jint dir, jint version) { (void)c; bytes b = get_bytes(e, dcid); ksl_key *k = ksl_key_initial(b.p, b.n, is_server, dir, (uint32_t)version); drop(&b); return H(k); }
 static jlong j_key_next(JNIEnv *e, jclass c, jlong k) { (void)e; (void)c; return H(ksl_key_next(P(ksl_key, k))); }
@@ -222,7 +223,7 @@ static const JNINativeMethod methods[] = {
     {"sslExportKeyingMaterial", "(J" S_STR "[BI)[B", (void *)j_ssl_export}, {"sslGet1Session", "(J)J", (void *)j_ssl_get1_session}, {"sslSetSession", "(JJ)I", (void *)j_ssl_set_session}, {"sessionFree", "(J)V", (void *)j_session_free}, {"sslNewSessionTicket", "(J)I", (void *)j_ssl_new_ticket},
     {"sslKeyUpdate", "(JI)I", (void *)j_ssl_key_update}, {"sslLastError", "(J[I)" S_STR, (void *)j_ssl_last_error}, {"drive", "(J)I", (void *)j_drive},
     {"quicSetTransportParams", "(J[B)I", (void *)j_quic_set_tp}, {"quicProvide", "(JI[BII)I", (void *)j_quic_provide}, {"quicNextEvent", "(J" S_BB "I)I", (void *)j_quic_next_event},
-    {"tcpFeed", "(J[BII)I", (void *)j_tcp_feed}, {"tcpDrain", "(J[BII)I", (void *)j_tcp_drain}, {"tcpWrite", "(J[BII)I", (void *)j_tcp_write}, {"tcpRead", "(J[BII)I", (void *)j_tcp_read}, {"tcpShutdown", "(J)I", (void *)j_tcp_shutdown},
+    {"tcpFeed", "(J[BII)I", (void *)j_tcp_feed}, {"tcpDrain", "(J[BII)I", (void *)j_tcp_drain}, {"tcpWrite", "(J[BII)I", (void *)j_tcp_write}, {"tcpRead", "(J[BII)I", (void *)j_tcp_read}, {"tcpShutdown", "(J)I", (void *)j_tcp_shutdown}, {"tcpAbort", "(J)I", (void *)j_tcp_abort},
     {"keyInitial", "([BIII)J", (void *)j_key_initial}, {"keyNext", "(J)J", (void *)j_key_next}, {"keyFree", "(J)V", (void *)j_key_free}, {"keyRandom", "(I)J", (void *)j_key_random}, {"keyMac16", "(J" S_BB "II[BI)I", (void *)j_key_mac16},
     {"seal", "(JJ" S_BB "II" S_BB "III)I", (void *)j_seal}, {"open", "(JJ" S_BB "II" S_BB "II)I", (void *)j_open}, {"headerMask", "(J" S_BB "I[B)I", (void *)j_header_mask}, {"retryTag", "(I[B[B)[B", (void *)j_retry_tag},
     {"rand", "(I)[B", (void *)j_rand}, {"sha2", "(I[B)[B", (void *)j_sha2}, {"hkdfExpandLabel", "(I[B" S_STR "[BI)[B", (void *)j_hkdf}, {"sign", "(I[B[B)[B", (void *)j_sign}, {"verify", "(I[B[B[B)I", (void *)j_verify}, {"spkiSha256", "([B)[B", (void *)j_spki},

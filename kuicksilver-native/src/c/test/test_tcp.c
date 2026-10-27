@@ -67,12 +67,23 @@ static void test_tls12(void) {
     CHECK((SSL_CTX_get_options(cc->ctx) & SSL_OP_NO_RENEGOTIATION) && (SSL_CTX_get_options(cc->ctx) & SSL_OP_NO_COMPRESSION), "renegotiation and compression disabled");
     CHECK(echo_bytes(c, s, 5000), "data over TLS 1.2 ECDHE+AEAD");
     ksl_ssl_free(c); ksl_ssl_free(s);
-    /* negative: a peer without EMS */
+    /* negative: a client without EMS. The server refuses it before Finished, so that OpenSSL sends handshake_failure (RFC 8446
+       section 6.1 / RFC 5246 section 7.2: an error alert, not a bare transport end; RFC 7627 section 5.2, RFC 9325 section 3.6) */
     SSL_CTX_set_options(cc->ctx, SSL_OP_NO_EXTENDED_MASTER_SECRET);
-    c = tcp_client(cc, "server.test"); s = ksl_ssl_new(sc, KSL_MODE_TCP); int r = tcp_pump(c, s, NULL, NULL);
-    CHECK(r == KSL_ERROR && (last_code(c, NULL) == KSL_E_EMS_REQUIRED || last_code(s, NULL) == KSL_E_EMS_REQUIRED), "negative: TLS 1.2 without EMS rejected (KSL_E_EMS_REQUIRED)");
+    c = tcp_client(cc, "server.test"); s = ksl_ssl_new(sc, KSL_MODE_TCP); int r = tcp_pump(c, s, NULL, NULL), alert = 0;
+    CHECK(r == KSL_ERROR && last_code(s, &alert) == KSL_E_EMS_REQUIRED, "negative: the server refuses a TLS 1.2 client without EMS (KSL_E_EMS_REQUIRED)");
+    CHECK(alert == SSL_AD_HANDSHAKE_FAILURE, "the server sent handshake_failure");
+    last_code(c, &alert); CHECK(alert == (SSL_AD_HANDSHAKE_FAILURE | 0x100) && !c->done, "the client received handshake_failure before the handshake completed");
     uint8_t cb[32]; CHECK(ksl_ssl_get(c, KSL_GET_CHANNEL_BINDING, cb, 32, &n) == KSL_ERROR, "negative: channel binding unavailable without EMS");
-    ksl_ssl_free(c); ksl_ssl_free(s); ksl_ctx_free(cc); ksl_ctx_free(sc); END();
+    ksl_ssl_free(c); ksl_ssl_free(s);
+    /* negative: a server without EMS (one that does not refuse a client without it: ksl's check removed) */
+    SSL_CTX_clear_options(cc->ctx, SSL_OP_NO_EXTENDED_MASTER_SECRET); ksl_ctx *legacy = server_ctx("server"); ksl_ctx_set_option(legacy, KSL_OPT_MIN_VERSION, KSL_TLS1_2);
+    SSL_CTX_set_options(legacy->ctx, SSL_OP_NO_EXTENDED_MASTER_SECRET); SSL_CTX_set_tlsext_servername_callback(legacy->ctx, NULL);
+    c = tcp_client(cc, "server.test"); s = ksl_ssl_new(legacy, KSL_MODE_TCP); r = tcp_pump(c, s, NULL, NULL);
+    CHECK(r == KSL_ERROR && last_code(c, &alert) == KSL_E_EMS_REQUIRED, "negative: the client refuses a TLS 1.2 server without EMS (KSL_E_EMS_REQUIRED)");
+    CHECK(alert == SSL_AD_HANDSHAKE_FAILURE && !c->done, "the client sent handshake_failure before its Finished");
+    last_code(s, &alert); CHECK(alert == (SSL_AD_HANDSHAKE_FAILURE | 0x100) && !s->done, "the server received handshake_failure");
+    ksl_ssl_free(c); ksl_ssl_free(s); ksl_ctx_free(legacy); ksl_ctx_free(cc); ksl_ctx_free(sc); END();
 }
 
 static void test_resumption(void) {
@@ -325,7 +336,7 @@ static void server_ext_cb(int write_p, int version, int content_type, const void
 }
 static void watch_server_ext(ksl_ssl *c, ext_seen *e, unsigned type) {
     e->type = type; e->in_server_hello = e->in_encrypted_extensions = -1;
-    SSL *raw = ksl_ssl_raw_for_test(c); SSL_set_msg_callback(raw, server_ext_cb); SSL_set_msg_callback_arg(raw, e);
+    ksl_ssl_msg_observer_for_test(c, server_ext_cb, e);   /* next to ksl's own message callback (a client's ServerHello check) */
 }
 
 static void test_server_acknowledges_server_name(void) {
@@ -405,4 +416,51 @@ static void test_key_update_before_record_limit(void) {
     ksl_ssl_free(c); ksl_ssl_free(s); ksl_ctx_free(cc); ksl_ctx_free(sc); END();
 }
 
-void run_tcp(void) { test_echo(); test_truncation(); test_tls12(); test_resumption(); test_sni_pause(); test_sni_override_alpn(); test_sni_override_settings_effective(); test_no_tls12_ticket_without_num_tickets(); test_session_context(); test_ticket_bound_to_server_name(); test_keyless_server_no_tickets(); test_server_acknowledges_server_name(); test_key_update_before_record_limit(); }
+/* Counts the ClientHellos a server received (message callback) */
+static void client_hello_count_cb(int write_p, int version, int content_type, const void *buf, size_t len, SSL *ssl, void *arg) {
+    (void)version; (void)ssl; const uint8_t *m = buf;
+    if (!write_p && content_type == SSL3_RT_HANDSHAKE && len >= 4 && m[0] == SSL3_MT_CLIENT_HELLO) { int *n = arg; (*n)++; }
+}
+/* After one side aborted: what the other side reads, and the alert it got */
+static int read_after_abort(ksl_ssl *peer, int *alert) {
+    uint8_t buf[256]; size_t n; int r = KSL_OK;
+    for (int i = 0; i < 10 && r == KSL_OK; i++) r = ksl_tcp_read(peer, buf, sizeof buf, &n);
+    last_code(peer, alert); return r;
+}
+static void test_abort_sends_an_alert(void) {
+    SECTION("tcp_abort_sends_internal_error");
+    /* RFC 8446 section 6.1: "Each party MUST send a 'close_notify' alert before closing its write side of the connection, unless it
+       has already sent some error alert"; a session whose application failed must not end with close_notify (the peer would take a
+       cut stream for a whole one), so ksl_tcp_abort sends internal_error (80) where OpenSSL 3.5 can: a TLS 1.3 server (a
+       NewSessionTicket whose construction ksl fails) and a TLS 1.2 client (a renegotiation ClientHello whose construction ksl
+       fails, so none is sent). */
+    ksl_ctx *cc = client_ctx("test-ca", KSL_VERIFY_OPENSSL), *sc = server_ctx("server"); int alert = 0, hellos = 0; uint8_t out[512]; size_t n;
+    ksl_ssl *c = tcp_client(cc, "server.test"), *s = ksl_ssl_new(sc, KSL_MODE_TCP);
+    CHECK(ksl_tcp_abort(s) == KSL_ERROR, "negative: no abort before the handshake completed");
+    ksl_ssl_free(s); s = ksl_ssl_new(sc, KSL_MODE_TCP);
+    CHECK(tcp_pump(c, s, NULL, NULL) == KSL_OK && echo_bytes(c, s, 1000), "TLS 1.3 handshake and data");
+    CHECK(ksl_tcp_abort(s) == KSL_OK, "a TLS 1.3 server aborts with an alert");
+    CHECK(shuttle(s, c) > 0 && read_after_abort(c, &alert) == KSL_ERROR && alert == (SSL_AD_INTERNAL_ERROR | 0x100), "the client receives internal_error, not a clean end");
+    CHECK(ksl_tcp_write(s, out, 1, &n) == KSL_ERROR && ksl_tcp_shutdown(s) == KSL_ERROR, "the aborted session takes no more data and sends no close_notify");
+    ksl_ssl_free(c); ksl_ssl_free(s);
+    /* TLS 1.3 client: OpenSSL has no way to send an alert there; nothing is sent, close_notify least of all */
+    c = tcp_client(cc, "server.test"); s = ksl_ssl_new(sc, KSL_MODE_TCP); CHECK(tcp_pump(c, s, NULL, NULL) == KSL_OK, "TLS 1.3 handshake");
+    uint32_t code; CHECK(ksl_tcp_abort(c) == KSL_ERROR && (code = last_code(c, NULL)) == KSL_E_NOT_SUPPORTED, "a TLS 1.3 client: no alert (KSL_E_NOT_SUPPORTED)");
+    CHECK(ksl_tcp_drain(c, out, sizeof out, &n) == KSL_OK && n == 0 && ksl_tcp_shutdown(c) == KSL_ERROR, "negative: nothing leaves the client, no close_notify");
+    ksl_ssl_free(c); ksl_ssl_free(s);
+    /* TLS 1.2 */
+    ksl_ctx *cc12 = client_ctx("test-ca", KSL_VERIFY_OPENSSL); ksl_ctx_set_option(cc12, KSL_OPT_MIN_VERSION, KSL_TLS1_2); ksl_ctx_set_option(cc12, KSL_OPT_MAX_VERSION, KSL_TLS1_2); ksl_ctx_set_option(sc, KSL_OPT_MIN_VERSION, KSL_TLS1_2);
+    c = tcp_client(cc12, "server.test"); s = ksl_ssl_new(sc, KSL_MODE_TCP); ksl_ssl_msg_observer_for_test(s, client_hello_count_cb, &hellos);
+    CHECK(tcp_pump(c, s, NULL, NULL) == KSL_OK && echo_bytes(c, s, 1000) && hellos == 1, "TLS 1.2 handshake and data");
+    CHECK(ksl_tcp_abort(c) == KSL_OK, "a TLS 1.2 client aborts with an alert");
+    CHECK(shuttle(c, s) > 0 && read_after_abort(s, &alert) == KSL_ERROR && alert == (SSL_AD_INTERNAL_ERROR | 0x100), "the server receives internal_error");
+    CHECK(hellos == 1, "negative: no renegotiation ClientHello left the client");
+    CHECK((SSL_get_options(ksl_ssl_raw_for_test(c)) & SSL_OP_NO_RENEGOTIATION) != 0, "renegotiation is refused again on the aborted session");
+    ksl_ssl_free(c); ksl_ssl_free(s);
+    c = tcp_client(cc12, "server.test"); s = ksl_ssl_new(sc, KSL_MODE_TCP); CHECK(tcp_pump(c, s, NULL, NULL) == KSL_OK, "TLS 1.2 handshake");
+    CHECK(ksl_tcp_abort(s) == KSL_ERROR && last_code(s, NULL) == KSL_E_NOT_SUPPORTED, "a TLS 1.2 server: no alert (KSL_E_NOT_SUPPORTED)");
+    CHECK(ksl_tcp_drain(s, out, sizeof out, &n) == KSL_OK && n == 0, "negative: nothing leaves the server");
+    ksl_ssl_free(c); ksl_ssl_free(s); ksl_ctx_free(cc); ksl_ctx_free(cc12); ksl_ctx_free(sc); END();
+}
+
+void run_tcp(void) { test_echo(); test_truncation(); test_tls12(); test_resumption(); test_sni_pause(); test_sni_override_alpn(); test_sni_override_settings_effective(); test_no_tls12_ticket_without_num_tickets(); test_session_context(); test_ticket_bound_to_server_name(); test_keyless_server_no_tickets(); test_server_acknowledges_server_name(); test_key_update_before_record_limit(); test_abort_sends_an_alert(); }

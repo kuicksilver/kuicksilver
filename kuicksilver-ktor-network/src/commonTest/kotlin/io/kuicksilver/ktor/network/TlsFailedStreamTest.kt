@@ -31,9 +31,10 @@ import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 
 /**
- * A TLS server socket whose application stream fails mid-response (a handler that threw) ends the connection with a
- * reset and no `close_notify`, so a client reading to the end gets an error. Before, the TLS socket's close sent
- * `close_notify` and a FIN, and the client saw a clean end of a cut stream: for a body delimited by the connection's
+ * A TLS server socket whose application stream fails mid-response (a handler that threw) never ends the connection with
+ * `close_notify`, so a client reading to the end gets an error: a TLS 1.3 server sends the fatal alert internal_error
+ * (RFC 8446 section 6.1) and a FIN; where no alert can be sent the connection is reset. Before 0.2.0 the TLS socket's close
+ * sent `close_notify` and a FIN, and the client saw a clean end of a cut stream: for a body delimited by the connection's
  * close, the cut one passed for the whole. A stream that ends normally still closes with `close_notify` and a FIN.
  *
  * How the client reads: ktor's `readAvailable` answers -1 for a channel that failed as for one that ended, when the
@@ -47,10 +48,16 @@ import kotlin.time.Duration.Companion.seconds
 class TlsFailedStreamTest {
     @BeforeTest fun load() = KslLoader.ensureLoaded()
 
-    @Test fun negative_aFailedTlsStreamResetsTheConnection() {
+    @Test fun negative_aFailedTlsStreamEndsWithInternalError() {
         val seen = exchange(fail = true)
         assertNull(seen, "the client of a failed TLS stream saw $seen, not an error")
+        var cause = failure
+        while (cause != null && cause !is TlsException.AlertReceived) cause = cause.cause
+        assertEquals(80, cause?.code, "the client failed with $failure, not internal_error")
     }
+
+    /** The client's failure in the last [exchange] that failed. */
+    private var failure: Throwable? = null
 
     @Test fun aCompleteTlsStreamEndsCleanly() {
         assertEquals("a clean end after ${64 shl 10} bytes", exchange(fail = false))
@@ -148,6 +155,7 @@ class TlsFailedStreamTest {
                                 "a clean end after $got bytes"
                             } catch (e: Exception) {
                                 if (e is CancellationException) throw e
+                                failure = e
                                 null
                             } finally {
                                 sock.close()

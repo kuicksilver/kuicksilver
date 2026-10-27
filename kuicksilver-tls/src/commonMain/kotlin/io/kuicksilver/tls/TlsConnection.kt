@@ -26,6 +26,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.concurrent.Volatile
 import kotlin.coroutines.CoroutineContext
 import kotlin.coroutines.EmptyCoroutineContext
 import kotlin.time.Duration
@@ -409,11 +410,22 @@ public class TlsConnection private constructor(
         val buf = ByteArray(16 * 1024)
         try {
             while (true) {
-                val n = outputChannel.readAvailable(buf, 0, buf.size)
+                val n =
+                    try {
+                        outputChannel.readAvailable(buf, 0, buf.size)
+                    } catch (e: Throwable) {
+                        // a reader suspended when the output fails gets the cause thrown, one that comes later gets -1
+                        if (outputChannel.closedCause == null) throw e
+                        -1
+                    }
                 if (n < 0) {
                     // ktor answers -1 for an output failed with a cause as for one closed: a failed one (the application's
-                    // stream failed) gets no close_notify, which would end the stream for the peer as if complete
-                    outputChannel.closedCause?.let { throw it }
+                    // stream failed) gets no close_notify, which would end the stream for the peer as if complete, but an
+                    // error alert where OpenSSL can send one (RFC 8446 section 6.1)
+                    outputChannel.closedCause?.let {
+                        sendFailureAlert()
+                        throw it
+                    }
                     shutdownSend()
                     return
                 }
@@ -444,6 +456,46 @@ public class TlsConnection private constructor(
             // wait on a full buffer forever, holding its connection (a peer gone mid-response; found by the soak)
             outputChannel.cancel(failure)
         }
+    }
+
+    /**
+     * RFC 8446 section 6.1: "Each party MUST send a 'close_notify' alert before closing its write side of the connection,
+     * unless it has already sent some error alert". The application's stream failed: internal_error (80) follows what was
+     * already sent, where OpenSSL can send one ([canSendFailureAlert]); never close_notify. The session takes no more data.
+     */
+    private suspend fun sendFailureAlert() {
+        val sent = lock.withLock { ssl != 0L && !closed && canSendFailureAlert() && Ksl.tcpAbort(ssl) }
+        if (sent) {
+            drainToTransport()
+            failureAlertSent = true
+        }
+    }
+
+    /**
+     * Whether OpenSSL 3.5 can send an alert on this established connection: it sends one only when building a handshake
+     * message fails, and only two of those run a callback of ksl first (`ksl_tcp_abort`): a TLS 1.3 server's
+     * NewSessionTicket and a TLS 1.2 client's renegotiation ClientHello. A TLS 1.3 client and a TLS 1.2 server have none.
+     */
+    private fun canSendFailureAlert(): Boolean = (protocolVersion == TlsVersion.Tls13) == (config.role == TlsRole.Server)
+
+    @Volatile private var failureAlertSent = false
+
+    /**
+     * Fails [output] with [cause] (the application's stream failed) and waits, at most [timeout], until the internal_error
+     * alert that ends the connection is written and flushed to the transport after everything sent before it. True when it
+     * was: the caller may end the transport gracefully, the peer fails on the alert. False when no alert can be sent (a TLS
+     * 1.3 client, a TLS 1.2 server: OpenSSL offers no way, see [canSendFailureAlert]), when the transport did not take it in
+     * time, or when the connection had ended already: the caller resets the transport, so that the peer never sees a clean end.
+     */
+    @InternalKuicksilverApi
+    public suspend fun abortOutput(
+        cause: Throwable,
+        timeout: Duration = SHUTDOWN_TIMEOUT,
+    ): Boolean {
+        outputChannel.cancel(cause)
+        if (closed || !canSendFailureAlert()) return false
+        withTimeoutOrNull(timeout) { writerJob?.join() }
+        return failureAlertSent
     }
 
     private var ticketStored = false

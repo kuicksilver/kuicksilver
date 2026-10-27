@@ -75,7 +75,7 @@ static uint32_t ticket_version(const ksl_ssl *s, int issuing) {
 }
 static int ticket_gen_cb(SSL *ssl, void *arg) {
     (void)arg; ksl_ssl *s = SSL_get_ex_data(ssl, 1); SSL_SESSION *sess = SSL_get0_session(ssl);
-    if (!s || !sess) return 0;
+    if (!s || !sess || s->abort_alert) return 0;   /* 0: OpenSSL fails the NewSessionTicket with internal_error (ksl_tcp_abort) */
     uint8_t data[KSL_TICKET_HEAD + sizeof s->early_ctx]; uint32_t v = ticket_version(s, 1);
     data[0] = KSL_TICKET_NAME_BOUND | (s->ticket_authorized ? KSL_TICKET_AFTER_VERDICT : 0);
     data[1] = (uint8_t)(v >> 24); data[2] = (uint8_t)(v >> 16); data[3] = (uint8_t)(v >> 8); data[4] = (uint8_t)v;
@@ -104,14 +104,32 @@ static SSL_TICKET_RETURN ticket_dec_cb(SSL *ssl, SSL_SESSION *sess, const unsign
     default: return SSL_TICKET_RETURN_IGNORE;
     }
 }
-/* RFC 6066 section 3: a server that used server_name "SHALL include an extension of type 'server_name' in the (extended) server
-   hello" with empty data (TLS 1.3: in EncryptedExtensions). OpenSSL sends it only when a servername callback answers
-   SSL_TLSEXT_ERR_OK, and itself leaves it out of a resumed TLS 1.2 ServerHello, as the RFC requires. The name is already chosen by
-   then (ksl_client_hello_cb); OpenSSL reads this callback from the session's current context, so every server context carries it,
-   an SNI override too. */
-static int servername_ack_cb(SSL *ssl, int *al, void *arg) {
-    (void)al; (void)arg;
+/* Runs once the ClientHello's extensions are parsed and the version is chosen, before the server's first flight is built.
+   TLS 1.2 without extended master secret is refused here (RFC 7627, RFC 9325 section 3.6; the exporter and tls-exporter need it):
+   failing now makes OpenSSL send handshake_failure, where the check after Finished (ksl_drive) could only drop the connection
+   without an alert (RFC 8446 section 6.1, RFC 5246 section 7.2.2). OpenSSL ignores the client's extension under
+   SSL_OP_NO_EXTENDED_MASTER_SECRET, so that option counts as its absence.
+   RFC 6066 section 3: a server that used server_name "SHALL include an extension of type 'server_name' in the (extended) server
+   hello" with empty data (TLS 1.3: in EncryptedExtensions). OpenSSL sends it only when this callback answers SSL_TLSEXT_ERR_OK, and
+   itself leaves it out of a resumed TLS 1.2 ServerHello, as the RFC requires. The name is already chosen by then
+   (ksl_client_hello_cb); OpenSSL reads this callback from the session's current context, so every server context carries it, an
+   SNI override too. */
+static int server_name_cb(SSL *ssl, int *al, void *arg) {
+    (void)arg; ksl_ssl *s = SSL_get_ex_data(ssl, 1);
+    if (s && s->mode == KSL_MODE_TCP && SSL_version(ssl) < TLS1_3_VERSION
+        && (SSL_client_hello_get0_ext(ssl, TLSEXT_TYPE_extended_master_secret, NULL, NULL) != 1 || (SSL_get_options(ssl) & SSL_OP_NO_EXTENDED_MASTER_SECRET))) {
+        s->ems_refused = 1; *al = SSL_AD_HANDSHAKE_FAILURE; return SSL_TLSEXT_ERR_ALERT_FATAL;
+    }
     return SSL_get_servername(ssl, TLSEXT_NAMETYPE_host_name) ? SSL_TLSEXT_ERR_OK : SSL_TLSEXT_ERR_NOACK;
+}
+/* A client extension that is never sent: its callback runs while OpenSSL builds a TLS 1.2 ClientHello, before any of it is written,
+   and fails it with internal_error once ksl_tcp_abort asked for that (a renegotiation ClientHello). The type is from the private use
+   range (RFC 8446 section 4.2); OpenSSL refuses a server's answer to an extension the client did not send. */
+#define KSL_ABORT_EXT_TYPE 0xfe5a
+static int abort_ext_add_cb(SSL *ssl, unsigned int type, const unsigned char **out, size_t *outlen, int *al, void *arg) {
+    (void)type; (void)out; (void)outlen; (void)arg; ksl_ssl *s = SSL_get_ex_data(ssl, 1);
+    if (s && s->abort_alert) { *al = SSL_AD_INTERNAL_ERROR; return -1; }
+    return 0;
 }
 static int allow_early_data_cb(SSL *ssl, void *arg) { (void)arg; ksl_ssl *s = SSL_get_ex_data(ssl, 1); return s && s->early_allow && s->early_ctx_match; }
 void ksl_ctx_enable_early_data(SSL_CTX *ctx) {
@@ -168,7 +186,8 @@ ksl_ctx *ksl_ctx_new(int role) {
        allows, and decrypts none: a full handshake. */
     if (role == KSL_SERVER) SSL_CTX_set_tlsext_ticket_key_evp_cb(c->ctx, ticket_cb);
     if (role == KSL_SERVER) SSL_CTX_set_client_hello_cb(c->ctx, ksl_client_hello_cb, c);   /* QUIC ALPN check, SNI pause (KSL_OPT_SNI_PAUSE) */
-    if (role == KSL_SERVER) SSL_CTX_set_tlsext_servername_callback(c->ctx, servername_ack_cb);
+    if (role == KSL_SERVER) SSL_CTX_set_tlsext_servername_callback(c->ctx, server_name_cb);
+    if (role == KSL_CLIENT && SSL_CTX_add_client_custom_ext(c->ctx, KSL_ABORT_EXT_TYPE, abort_ext_add_cb, NULL, NULL, NULL, NULL) != 1) { SSL_CTX_free(c->ctx); free(c); return NULL; }
     ksl_live_add(KSL_LIVE_CTX, 1);
     return c;
 }
