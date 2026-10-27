@@ -2,14 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.kuicksilver.http3.qpack
 
-import io.kotest.property.Arb
-import io.kotest.property.RandomSource
-import io.kotest.property.arbitrary.element
-import io.kotest.property.arbitrary.list
-import io.kotest.property.arbitrary.next
-import io.kotest.property.arbitrary.pair
-import io.kotest.property.arbitrary.string
 import io.kuicksilver.http3.Http3ErrorCode
+import io.kuicksilver.http3.int
+import kotlin.random.Random
+import kotlin.random.nextInt
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
@@ -148,10 +144,15 @@ class QpackRoundTripTest {
             "x-custom-${'a'}",
             "cache-control",
         )
-    private val gen = Arb.list(Arb.pair(Arb.element(names), Arb.string(0..40)), 1..12)
+
+    /** 1 to 12 fields of a name from [names] and up to 40 printable ASCII characters (Kotest's default string alphabet). */
+    private fun fields(rnd: Random): List<Pair<String, String>> =
+        List(rnd.int(1..12)) {
+            names.random(rnd) to CharArray(rnd.int(0..40)) { rnd.nextInt(0x20..0x7e).toChar() }.concatToString()
+        }
 
     @Test fun gridRoundTrip() {
-        val rs = RandomSource.seeded(42)
+        val rs = Random(42)
         for (cap in listOf(0L, 256L, 4096L)) {
             for (blocked in listOf(0, 1, 16)) {
                 for (ack in Ack.values()) {
@@ -165,7 +166,7 @@ class QpackRoundTripTest {
                         val sections =
                             (0 until 5).map {
                                 val f =
-                                    gen.next(rs).map { (n, v) ->
+                                    fields(rs).map { (n, v) ->
                                         n to v.filter { c -> c.code in 0x21..0x7e }
                                     }
                                 val id = stream

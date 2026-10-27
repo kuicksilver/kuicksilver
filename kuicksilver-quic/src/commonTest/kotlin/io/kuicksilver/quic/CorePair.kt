@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.kuicksilver.quic
 
-import io.kotest.property.Arb
 import io.ktor.network.sockets.InetSocketAddress
 import io.kuicksilver.annotations.DelicateKuicksilverApi
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi

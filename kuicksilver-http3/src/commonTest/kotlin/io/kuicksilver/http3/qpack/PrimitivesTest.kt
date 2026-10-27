@@ -2,13 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.kuicksilver.http3.qpack
 
-import io.kotest.property.Arb
-import io.kotest.property.arbitrary.byte
-import io.kotest.property.arbitrary.byteArray
-import io.kotest.property.arbitrary.int
-import io.kotest.property.checkAll
 import io.kuicksilver.http3.Http3ErrorCode
-import kotlinx.coroutines.test.runTest
+import io.kuicksilver.http3.byte
+import io.kuicksilver.http3.forAllSeeded
+import io.kuicksilver.http3.int
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
@@ -39,15 +36,15 @@ class PrimitivesTest {
     }
 
     @Test fun integerRoundTrip() =
-        runTest {
-            checkAll(500, Arb.int(1..8), Arb.int(0..Int.MAX_VALUE)) { prefix, v ->
-                val w = QpackWriter()
-                w.writeInt(0, prefix, v.toLong())
-                val b = w.toByteArray()
-                val r = QpackReader(b, 0, b.size)
-                assertEquals(v.toLong(), r.readInt(prefix, limits))
-                assertEquals(b.size, r.pos)
-            }
+        forAllSeeded(500, seed = 0x7541L) { rnd, _ ->
+            val prefix = rnd.int(1..8)
+            val v = rnd.int(0..Int.MAX_VALUE)
+            val w = QpackWriter()
+            w.writeInt(0, prefix, v.toLong())
+            val b = w.toByteArray()
+            val r = QpackReader(b, 0, b.size)
+            assertEquals(v.toLong(), r.readInt(prefix, limits))
+            assertEquals(b.size, r.pos)
         }
 
     @Test fun truncatedIntegerFails() {
@@ -123,13 +120,12 @@ class HuffmanTest {
     }
 
     @Test fun roundTripAllBytes() =
-        runTest {
-            checkAll(1000, Arb.byteArray(Arb.int(0..200), Arb.byte())) { s ->
-                val w = QpackWriter()
-                Huffman.encode(s, w)
-                val b = w.toByteArray()
-                assertContentEquals(s, Huffman.decode(b, 0, b.size, 10_000))
-            }
+        forAllSeeded(1000, seed = 0x4FFL) { rnd, _ ->
+            val s = ByteArray(rnd.int(0..200)) { rnd.byte() }
+            val w = QpackWriter()
+            Huffman.encode(s, w)
+            val b = w.toByteArray()
+            assertContentEquals(s, Huffman.decode(b, 0, b.size, 10_000))
         }
 
     @Test fun eosInStringRejected() {

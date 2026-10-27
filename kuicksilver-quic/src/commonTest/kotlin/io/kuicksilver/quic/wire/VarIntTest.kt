@@ -2,11 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.kuicksilver.quic.wire
 
-import io.kotest.property.checkAll
 import io.kuicksilver.native.PacketBuffer
 import io.kuicksilver.native.of
 import io.kuicksilver.quic.Arbs
-import kotlinx.coroutines.test.runTest
+import io.kuicksilver.quic.forAllSeeded
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -56,19 +55,21 @@ class VarIntTest {
         assertEquals(0x07L, e.code)
     }
 
-    @Test fun roundTrip() =
-        runTest {
-            val b = PacketBuffer.allocate(8)
-            try {
-                checkAll(10_000, Arbs.varint()) { v ->
-                    val end = VarInt.write(b, 0, v)
-                    assertEquals(VarInt.size(v), end)
-                    val r = WireReader(b, 0, end)
-                    assertEquals(v, r.varint())
-                    assertEquals(0, r.remaining)
-                }
-            } finally {
-                b.close()
+    /** Every boundary of the four length classes, then 10 000 random values. */
+    @Test fun roundTrip() {
+        val b = PacketBuffer.allocate(8)
+        try {
+            fun check(v: Long) {
+                val end = VarInt.write(b, 0, v)
+                assertEquals(VarInt.size(v), end, "v=$v")
+                val r = WireReader(b, 0, end)
+                assertEquals(v, r.varint())
+                assertEquals(0, r.remaining)
             }
+            for (v in listOf(0L, 1L, 63L, 64L, 16383L, 16384L, (1L shl 30) - 1, 1L shl 30, VarInt.MAX - 1, VarInt.MAX)) check(v)
+            forAllSeeded(10_000, seed = 0x7A121L) { rnd, _ -> check(Arbs.varint(rnd)) }
+        } finally {
+            b.close()
         }
+    }
 }
