@@ -16,8 +16,10 @@ import io.ktor.http.cio.Request
 import io.ktor.http.cio.RequestResponseBuilder
 import io.ktor.http.cio.expectHttpUpgrade
 import io.ktor.http.cio.parseRequest
+import io.ktor.http.toHttpDate
 import io.ktor.server.plugins.BadRequestException
 import io.ktor.util.cio.ChannelReadException
+import io.ktor.util.date.GMTDate
 import io.ktor.util.network.NetworkAddress
 import io.ktor.utils.io.ByteChannel
 import io.ktor.utils.io.ByteReadChannel
@@ -559,6 +561,7 @@ private fun badRequestPacket(): Source =
     RequestResponseBuilder()
         .apply {
             responseLine("HTTP/1.1", 400, "Bad Request")
+            headerLine("Date", httpDateNow())
             headerLine("Connection", "close")
             headerLine("Content-Type", "text/plain; charset=utf-8")
             headerLine("Content-Length", BAD_REQUEST_BODY.size.toString())
@@ -568,6 +571,13 @@ private fun badRequestPacket(): Source =
 
 private val BAD_REQUEST_BODY = "Bad Request".encodeToByteArray()
 
+/**
+ * The current time as a Date field value (IMF-fixdate). RFC 9110 section 6.6.1: an origin server with a clock MUST
+ * generate a Date field in its 2xx, 3xx and 4xx responses and MAY in its 1xx and 5xx ones; the engine sends one on every
+ * final response it writes or frames, unless the application set its own (as Ktor's DefaultHeaders plugin does).
+ */
+internal fun httpDateNow(): String = GMTDate().toHttpDate()
+
 /** An empty [status] response with `Connection: close`. */
 private fun closingResponsePacket(
     status: Int,
@@ -576,6 +586,7 @@ private fun closingResponsePacket(
     RequestResponseBuilder()
         .apply {
             responseLine("HTTP/1.1", status, reason)
+            headerLine("Date", httpDateNow())
             headerLine("Connection", "close")
             headerLine("Content-Length", "0")
             emptyLine()

@@ -165,6 +165,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   chunked<U+00A0>` a chunked one, so with a proxy in front that framed the response otherwise the bytes behind it
   became the response to the next request (response splitting). A `Transfer-Encoding` that is not a list of transfer
   codings or that applies `chunked` twice (RFC 9112 section 6.1) fails the same way.
+- Ktor server, HTTP/1.1: every final response carries a `Date` field unless the application set one (RFC 9110
+  section 6.6.1: an origin server with a clock MUST send it), the engine's own 400, 408, 414, 431, 501 and 505
+  included. Before, only the DefaultHeaders plugin added it.
 - Ktor server, HTTP/1.1: what the application writes for a response to HEAD, or for a 1xx, 204 or 304 response, is
   dropped; the fields stay (RFC 9110 section 9.3.2: the server MUST NOT send content in the response to HEAD). Before,
   `head("/") { call.respondText("x") }` without the AutoHeadResponse plugin sent `x`, which a keep-alive client read
