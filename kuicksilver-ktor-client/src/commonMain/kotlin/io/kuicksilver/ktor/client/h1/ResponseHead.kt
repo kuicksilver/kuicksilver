@@ -26,7 +26,7 @@ import kotlinx.io.readByteArray
  *
  * An obs-fold (a field line that starts with SP or HTAB continues the one before) is replaced with one SP, as a user
  * agent MUST (RFC 9112 section 5.2); such a line right after the status line continues no field and fails with
- * [ParserException] (section 2.2 allows rejecting it).
+ * [ParserException] (section 2.2 allows rejecting it). The status line is checked and normalized by [statusLineOf].
  */
 @OptIn(InternalAPI::class)
 internal suspend fun readResponseHeadBytes(
@@ -61,7 +61,7 @@ internal suspend fun readResponseHeadBytes(
             when {
                 statusLine -> {
                     statusLine = false
-                    head.write(content)
+                    head.write(statusLineOf(content))
                     head.write(CRLF)
                 }
 
@@ -90,6 +90,28 @@ internal suspend fun readResponseHeadBytes(
         }
     }
 }
+
+/**
+ * [line] as a status line `HTTP-version SP 3DIGIT [SP reason-phrase]` (RFC 9112 section 4) with a status in 100..599
+ * (RFC 9110 section 15), else [ParserException]; Ktor's parser took `HTTP/1.1 20` for status 20. The SP before an absent
+ * reason phrase may be missing, as Go and OkHttp accept. `HTTP/1.x` with x above 1 is returned as `HTTP/1.1`, the highest
+ * minor version this client conforms to (RFC 9110 section 6.2 SHOULD); another major version fails.
+ */
+private fun statusLineOf(line: ByteArray): ByteArray {
+    fun invalid(): Nothing = throw ParserException("Invalid status line: ${line.decodeToString().take(64)}")
+
+    fun digit(i: Int) = line[i] in '0'.code.toByte()..'9'.code.toByte()
+
+    if (line.size < 12 || !HTTP_SLASH.indices.all { line[it] == HTTP_SLASH[it] }) invalid()
+    if (!digit(5) || line[6] != '.'.code.toByte() || !digit(7) || line[8] != SP) invalid()
+    if (!digit(9) || !digit(10) || !digit(11) || (line.size > 12 && line[12] != SP)) invalid()
+    if ((line[9] - '0'.code.toByte()) * 100 + (line[10] - '0'.code.toByte()) * 10 + (line[11] - '0'.code.toByte()) !in 100..599) invalid()
+    if (line[5] != '1'.code.toByte()) throw ParserException("Unsupported HTTP version: ${line.decodeToString(0, 8)}")
+    if (line[7] <= '1'.code.toByte()) return line
+    return line.copyOf().also { it[7] = '1'.code.toByte() }
+}
+
+private val HTTP_SLASH = "HTTP/".encodeToByteArray()
 
 private fun isOws(b: Byte) = b == SP || b == HTAB
 

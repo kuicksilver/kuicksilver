@@ -4,6 +4,7 @@ package io.kuicksilver.ktor.client.h1
 
 import io.ktor.client.request.HttpRequestBuilder
 import io.ktor.client.request.url
+import io.ktor.http.HttpProtocolVersion
 import io.ktor.http.Url
 import io.ktor.http.cio.ParserException
 import io.ktor.utils.io.ByteChannel
@@ -172,5 +173,47 @@ class H1ResponseHeadTest {
             val wire = Wire()
             server(wire) { send -> send("HTTP/1.1 200 OK\r\n X-A: a\r\nContent-Length: 0\r\n\r\n") }
             assertFailsWith<ParserException> { exchange(wire, get) }
+        }
+
+    /**
+     * The status code is exactly three digits (RFC 9112 section 4) in 100..599 (RFC 9110 section 15): a shorter or longer
+     * code, or one outside the range, fails the response. Before, `HTTP/1.1 20` or `HTTP/1.1 2000` without a reason
+     * phrase and `HTTP/1.1 600 X` were taken as statuses 20, 2000 and 600.
+     */
+    @Test fun negative_statusCodeNotThreeDigitsFails() =
+        runTest(timeout = 20.seconds) {
+            for (line in listOf("HTTP/1.1 20", "HTTP/1.1 2000", "HTTP/1.1 20 OK", "HTTP/1.1 600 Six", "HTTP/1.1 099 X", "HTTP/1.1 2x0 X")) {
+                val wire = Wire()
+                server(wire) { send -> send("$line\r\nContent-Length: 0\r\n\r\n") }
+                assertFailsWith<ParserException>(line) { exchange(wire, get) }
+            }
+        }
+
+    /** A status line without a reason phrase is accepted, with or without the SP before it (as Go and OkHttp). */
+    @Test fun statusLineWithoutReasonPhraseIsAccepted() =
+        runTest(timeout = 20.seconds) {
+            for (line in listOf("HTTP/1.1 204", "HTTP/1.1 204 ")) {
+                val wire = Wire()
+                server(wire) { send -> send("$line\r\nConnection: close\r\n\r\n") }
+                assertEquals(204, exchange(wire, get).statusCode.value, line)
+            }
+        }
+
+    /**
+     * A higher minor version is processed as HTTP/1.1, the highest this client conforms to (RFC 9110 section 6.2 SHOULD);
+     * before, `HTTP/1.2` failed the response. Another major version fails it.
+     */
+    @Test fun higherMinorVersionIsProcessedAsHttp11() =
+        runTest(timeout = 20.seconds) {
+            val wire = Wire()
+            server(wire) { send -> send("HTTP/1.2 200 OK\r\nContent-Length: 0\r\n\r\n") }
+            val response = exchange(wire, get)
+            assertEquals(200, response.statusCode.value)
+            assertEquals(HttpProtocolVersion.HTTP_1_1, response.version)
+            for (line in listOf("HTTP/2.0 200 OK", "HTTP/0.9 200 OK", "http/1.1 200 OK")) {
+                val other = Wire()
+                server(other) { send -> send("$line\r\nContent-Length: 0\r\n\r\n") }
+                assertFailsWith<ParserException>(line) { exchange(other, get) }
+            }
         }
 }
