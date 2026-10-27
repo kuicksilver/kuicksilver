@@ -237,16 +237,9 @@ private suspend fun H3Session.exchange(
         var interim = 0
         while (true) {
             when (val f = frames.next()) {
+                // no :status: a malformed response (RFC 9114 section 4.1.2); H3_REQUEST_INCOMPLETE names an incomplete request
                 RequestFrame.End -> {
-                    throw StreamFailure(
-                        Http3ErrorCode.REQUEST_INCOMPLETE,
-                        Http3Exception.Protocol(
-                            Http3ErrorCode.REQUEST_INCOMPLETE,
-                            Initiator.Peer,
-                            st.id,
-                            "stream ${st.id} ended without a response",
-                        ),
-                    )
+                    throw malformed(st.id, MalformedMessage("stream ended without a response"))
                 }
 
                 is RequestFrame.Data -> {
