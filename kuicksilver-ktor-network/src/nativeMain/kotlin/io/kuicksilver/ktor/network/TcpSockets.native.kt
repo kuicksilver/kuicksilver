@@ -283,6 +283,7 @@ internal class NativeTcpSocket(
     private fun readLoop(user: ByteChannel): WriterJob =
         writer(Dispatchers.IO, user) {
             val buffer = ByteArray(IO_BUFFER)
+            var atEnd = false
             try {
                 while (!channel.isClosedForWrite) {
                     val n =
@@ -296,6 +297,7 @@ internal class NativeTcpSocket(
                         channel.writeFully(buffer, 0, n)
                         channel.flush()
                     } else if (n == 0) {
+                        atEnd = true
                         break
                     } else {
                         selector.select(this@NativeTcpSocket, SelectInterest.READ)
@@ -308,7 +310,9 @@ internal class NativeTcpSocket(
                 if (e !is CancellationException) channel.cancel(e)
                 throw e
             } finally {
-                tcpShutdown(descriptor, TCP_SHUT_RD)
+                // not on Windows before the end of the stream: input arriving after SD_RECEIVE resets the connection there,
+                // so a server that stopped reading a request could lose the response it is about to write
+                if (atEnd || tcpShutdownReadBeforeEnd) tcpShutdown(descriptor, TCP_SHUT_RD)
                 channel.flushAndClose()
             }
         }

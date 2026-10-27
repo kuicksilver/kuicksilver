@@ -66,6 +66,9 @@ internal actual val afInet: Int = AF_INET
 internal actual val afInet6: Int = AF_INET6
 internal actual val bsdSockaddr: Boolean = false
 
+// unread input stays buffered until the close, as on Linux: after SD_RECEIVE, Winsock resets the connection on more data
+internal actual val tcpShutdownReadBeforeEnd: Boolean = false
+
 private val winsock: Int by lazy {
     memScoped {
         val data = alloc<WSADATA>()

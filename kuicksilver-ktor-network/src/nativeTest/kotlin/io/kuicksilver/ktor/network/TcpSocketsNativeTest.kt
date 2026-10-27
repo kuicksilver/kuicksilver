@@ -18,6 +18,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
@@ -198,6 +199,62 @@ class TcpSocketsNativeTest {
     /** The same with the platform's own selector (on Windows, the case the bounded wait is for). */
     @Test fun negative_aResetAfterThePeersEndFailsAWriterWithThePlatformSelector() =
         writerResetTest(SelectorKind.Platform, recheck = null, finFirst = true)
+
+    /**
+     * A server closes the connection gracefully while its response is still being sent and the client is still sending:
+     * the read loop ends at the close, before the end of the client's stream, and the client's next bytes stay unread.
+     * The client still reads the response. Before, on Windows, the read loop's `shutdown(SD_RECEIVE)` made Winsock reset
+     * the connection when those bytes arrived, destroying the response (only Windows CI runs that path; POSIX shuts the
+     * receiving direction down quietly). Unread input still resets the connection at the descriptor's final close, so the
+     * client reads only a prefix while the server is still sending.
+     */
+    @Test fun aClientSendingAfterTheServersCloseStillReadsTheResponse() =
+        runBlocking {
+            val selector = SelectorManager(Dispatchers.Default)
+            try {
+                withTimeout(30.seconds) {
+                    val server = bindTcp(selector, "127.0.0.1", 0)
+                    val port = (server.localAddress as InetSocketAddress).port
+                    val client = connectTcp(selector, InetSocketAddress("127.0.0.1", port))
+                    val accepted = server.accept()
+                    val clientIn = client.openReadChannel()
+                    val clientOut = client.openWriteChannel()
+                    val serverOut = accepted.openWriteChannel()
+                    accepted.openReadChannel()
+                    val progress = Channel<Unit>(Channel.CONFLATED)
+                    val response =
+                        async {
+                            val chunk = ByteArray(64 shl 10) { 7 }
+                            while (true) {
+                                serverOut.writeFully(chunk)
+                                serverOut.flush()
+                                progress.trySend(Unit)
+                            }
+                        }
+                    // until the response is stuck (no chunk for 300 ms): every buffer on the way is full
+                    while (withTimeoutOrNull(300.milliseconds) { progress.receive() } != null) continue
+                    response.cancelAndJoin()
+                    accepted.close() // ends the read loop; the write loop still sends what the channel holds
+                    delay(300.milliseconds)
+                    clientOut.writeFully(ByteArray(1024))
+                    clientOut.flush()
+                    delay(300.milliseconds)
+                    val got = ByteArray(64 shl 10)
+                    var at = 0
+                    while (at < got.size) {
+                        val n = clientIn.readAvailable(got, at, got.size - at)
+                        assertTrue(n > 0, "the response ended after $at bytes")
+                        at += n
+                    }
+                    assertTrue(got.all { it == 7.toByte() }, "the response arrived intact")
+                    client.abort()
+                    accepted.abort()
+                    server.close()
+                }
+            } finally {
+                selector.close()
+            }
+        }
 
     private enum class SelectorKind { Platform, NoWriteWakeUp }
 
