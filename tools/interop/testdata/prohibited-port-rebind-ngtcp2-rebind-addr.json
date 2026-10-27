@@ -197,5 +197,15 @@
   }
  ],
  "server_log": true,
- "server_log_names": []
+ "server_log_names": [],
+ "client_idle_timeout": 30.0,
+ "client_crash_lines": [],
+ "client_qlogs": [
+  {
+   "trigger": "idle_timeout",
+   "closed": 39.812,
+   "last_sent": 9.83,
+   "last_received": 9.812
+  }
+ ]
 }
