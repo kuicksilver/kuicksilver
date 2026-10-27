@@ -21,3 +21,10 @@ kotlin.sourceSets {
     getByName("appleMain").dependsOn(posixMain)
     getByName("linuxMain").dependsOn(posixMain)
 }
+
+// Windows: the Winsock calls with WSAGetLastError() read in the same C function (kslwsa.def; the reason is there)
+kotlin.mingwX64 {
+    compilations.getByName("main").cinterops.create("kslwsa") {
+        definitionFile.set(file("src/nativeInterop/cinterop/kslwsa.def"))
+    }
+}

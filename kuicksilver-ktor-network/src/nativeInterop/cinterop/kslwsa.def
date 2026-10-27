@@ -1,0 +1,93 @@
+# Copyright 2026 The Kuicksilver Authors
+# SPDX-License-Identifier: Apache-2.0
+# mingwX64 only: the Winsock calls of the native TCP sockets (TcpSys.mingw.kt), each with WSAGetLastError() read in the same
+# C function. Read from Kotlin, the last error is already gone: the return from a C call switches the thread back to the
+# Kotlin/Native runtime (thread state, safepoint, GC suspension; the mingw runtime's thread-locals are emulated), which can
+# make Win32 calls that reset it, and a pending connect then read as error 0 ("connect failed, POSIX error 0").
+# Every function is static: nothing global is added to an executable or klib (the ksl_ prefix is kept all the same).
+package = io.kuicksilver.ktor.network.wsa
+linkerOpts.mingw_x64 = -lws2_32
+---
+#include <winsock2.h>
+#include <ws2tcpip.h>
+
+/* WSASocketW flag (winsock2.h of newer SDKs): the handle is not inherited by child processes */
+#ifndef WSA_FLAG_NO_HANDLE_INHERIT
+#define WSA_FLAG_NO_HANDLE_INHERIT 0x80
+#endif
+
+/* each function returns what the Winsock call returned and stores in *err the WSAGetLastError() of a failure, 0 otherwise */
+
+/* a TCP socket of family, not inherited by child processes; ~0 (INVALID_SOCKET) on failure */
+static inline unsigned long long ksl_wsa_socket(int family, int *err) {
+    SOCKET s = WSASocketW(family, SOCK_STREAM, IPPROTO_TCP, NULL, 0, WSA_FLAG_NO_HANDLE_INHERIT);
+    *err = s == INVALID_SOCKET ? WSAGetLastError() : 0;
+    return (unsigned long long) s;
+}
+
+/* ioctlsocket(FIONBIO, 1) */
+static inline int ksl_wsa_nonblocking(unsigned long long s, int *err) {
+    u_long on = 1;
+    int r = ioctlsocket((SOCKET) s, FIONBIO, &on);
+    *err = r != 0 ? WSAGetLastError() : 0;
+    return r;
+}
+
+static inline int ksl_wsa_connect(unsigned long long s, const void *addr, int len, int *err) {
+    int r = connect((SOCKET) s, (const struct sockaddr *) addr, len);
+    *err = r != 0 ? WSAGetLastError() : 0;
+    return r;
+}
+
+static inline int ksl_wsa_bind(unsigned long long s, const void *addr, int len, int *err) {
+    int r = bind((SOCKET) s, (const struct sockaddr *) addr, len);
+    *err = r != 0 ? WSAGetLastError() : 0;
+    return r;
+}
+
+static inline int ksl_wsa_listen(unsigned long long s, int backlog, int *err) {
+    int r = listen((SOCKET) s, backlog);
+    *err = r != 0 ? WSAGetLastError() : 0;
+    return r;
+}
+
+/* ~0 (INVALID_SOCKET) on failure */
+static inline unsigned long long ksl_wsa_accept(unsigned long long s, void *addr, int *len, int *err) {
+    SOCKET c = accept((SOCKET) s, (struct sockaddr *) addr, len);
+    *err = c == INVALID_SOCKET ? WSAGetLastError() : 0;
+    return (unsigned long long) c;
+}
+
+static inline int ksl_wsa_recv(unsigned long long s, void *buf, int len, int *err) {
+    int r = recv((SOCKET) s, (char *) buf, len, 0);
+    *err = r < 0 ? WSAGetLastError() : 0;
+    return r;
+}
+
+static inline int ksl_wsa_send(unsigned long long s, const void *buf, int len, int *err) {
+    int r = send((SOCKET) s, (const char *) buf, len, 0);
+    *err = r < 0 ? WSAGetLastError() : 0;
+    return r;
+}
+
+/* getpeername when peer, getsockname otherwise */
+static inline int ksl_wsa_address(unsigned long long s, int peer, void *addr, int *len, int *err) {
+    int r = peer ? getpeername((SOCKET) s, (struct sockaddr *) addr, len) : getsockname((SOCKET) s, (struct sockaddr *) addr, len);
+    *err = r != 0 ? WSAGetLastError() : 0;
+    return r;
+}
+
+static inline int ksl_wsa_setsockopt(unsigned long long s, int level, int name, const void *value, int len, int *err) {
+    int r = setsockopt((SOCKET) s, level, name, (const char *) value, len);
+    *err = r != 0 ? WSAGetLastError() : 0;
+    return r;
+}
+
+/* getsockopt(SOL_SOCKET, SO_ERROR) into *value */
+static inline int ksl_wsa_so_error(unsigned long long s, int *value, int *err) {
+    int size = (int) sizeof *value;
+    *value = 0;
+    int r = getsockopt((SOCKET) s, SOL_SOCKET, SO_ERROR, (char *) value, &size);
+    *err = r != 0 ? WSAGetLastError() : 0;
+    return r;
+}
