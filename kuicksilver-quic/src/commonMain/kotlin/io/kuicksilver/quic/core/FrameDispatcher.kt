@@ -68,7 +68,6 @@ internal class FrameDispatcher(
         off: Int,
         len: Int,
     ) {
-        if (r.level == 0) r.initialCryptoSeen = true
         c.cryptoStreams.onData(r.level, offset, data, off, len, c.handshake.done)
         c.cryptoStreams.deliver(r.level) { bytes, n ->
             if (r.level == 0 && c.role == TlsRole.Server) checkClientHello(bytes, n)

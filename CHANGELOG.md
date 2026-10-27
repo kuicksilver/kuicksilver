@@ -287,6 +287,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   step 2, MUST): a WebSocket over HTTP/1.1 to an address and port another one is still connecting to waits until that
   handshake is answered or failed, also when it uses another name for the address; through a proxy that resolves names
   the name counts as the host. Before, any number connected at once.
+- QUIC client: an Initial with nothing but ACK, PING and PADDING that arrives before the server's Source Connection ID is
+  fixed (msquic acknowledges half a ClientHello from a provisional instance) is dropped unprocessed. It used to be
+  processed and then replaced by the ServerHello's SCID, against RFC 9000 section 7.2 ("MUST discard any subsequent
+  packet ... with a different Source Connection ID").
 - QUIC server with 0-RTT: `QuicConfig.resetStreamAt` is part of the tickets' early-data context, so a server that turned
   it off no longer accepts the 0-RTT of tickets issued with it on (draft-ietf-quic-reliable-stream-reset section 3: the
   server "MUST NOT disable this extension" when it accepts 0-RTT; the client then closed with PROTOCOL_VIOLATION).

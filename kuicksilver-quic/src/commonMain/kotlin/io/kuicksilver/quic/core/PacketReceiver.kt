@@ -188,21 +188,14 @@ internal class PacketReceiver(
             return false
         }
         if (!matchesLocalCid(data)) return false
-        // RFC 9000 section 7.2: after the server's first Initial its Source Connection ID is fixed; a long-header packet with another one belongs to a stranger
+        // RFC 9000 section 7.2: "Once a client has received a valid Initial packet from the server, it MUST discard any subsequent packet it
+        // receives on that connection with a different Source Connection ID": a long-header packet with another one belongs to a stranger
         // (msquic answers a retransmitted Initial from a second connection instance) and is discarded before any key is tried
         if (c.role == TlsRole.Client && type != PacketType.OneRtt && remoteCidSet &&
             peerScid?.contentEquals(data, hv.scidOff, hv.scidLen) == false
         ) {
-            // msquic acknowledges the ClientHello from an Initial whose SCID is still the client's DCID and chooses its own only with the ServerHello: until Initial CRYPTO arrived, a new SCID is adopted, not discarded
-            if (initialCryptoSeen) {
-                c.datagramsDropped++
-                return false
-            }
-            remoteCidSet = false
-            c.loss
-                .space(SpaceId.Initial)
-                .ack
-                .forgetAll() // what the provisional instance sent is not ours to acknowledge
+            c.datagramsDropped++
+            return false
         }
         space =
             when (type) {
@@ -328,6 +321,14 @@ internal class PacketReceiver(
         if (c.role == TlsRole.Client && type == PacketType.Initial &&
             !remoteCidSet
         ) {
+            // msquic acknowledges the first half of a ClientHello from a provisional instance whose SCID is the client's DCID and
+            // answers with its own SCID only with the ServerHello: an Initial that carries nothing but ACK, PING and PADDING is not
+            // taken before the SCID is fixed (dropped unprocessed, as if lost), so the first Initial taken, which fixes the SCID
+            // (section 7.2), is one with CRYPTO or CONNECTION_CLOSE
+            if (onlyAcks()) {
+                c.datagramsDropped++
+                return false
+            }
             val scid =
                 io.kuicksilver.quic.wire
                     .ConnectionId(ByteArray(hv.scidLen).also { data.copyTo(it, hv.scidOff, 0, hv.scidLen) })
@@ -417,13 +418,49 @@ internal class PacketReceiver(
         return true
     }
 
+    /**
+     * Whether the decrypted payload at [reader] holds only PADDING, PING and ACK frames; a malformed one counts as more, so the frame
+     * decoder reports it. The reader's position is kept.
+     */
+    private fun onlyAcks(): Boolean {
+        val start = reader.pos
+        try {
+            while (reader.pos < reader.limit) {
+                when (val t = reader.varint()) {
+                    0L, 1L -> {}
+
+                    2L, 3L -> {
+                        reader.varint() // largest acknowledged
+                        reader.varint() // ACK delay
+                        val ranges = reader.varint()
+                        reader.varint() // first range
+                        var i = 0L
+                        while (i < ranges) {
+                            reader.varint()
+                            reader.varint()
+                            i++
+                        }
+                        if (t == 3L) repeat(3) { reader.varint() }
+                    }
+
+                    else -> {
+                        return false
+                    }
+                }
+            }
+            return true
+        } catch (_: QuicWireException) {
+            return false
+        } finally {
+            reader.pos = start
+        }
+    }
+
     private var remoteCidSet = c.role == TlsRole.Server
 
     /** The server's Source Connection ID taken from its first Initial (client only); later long-header packets must carry it. */
     private var peerScid: io.kuicksilver.quic.wire.ConnectionId? = null
 
-    /** True once an Initial packet with CRYPTO data was processed: from then on the peer's SCID is final (RFC 9000 section 7.2). */
-    internal var initialCryptoSeen = false
     private var lastPingOnly: TimeMark = TimeMark.NEVER
     private var pingOnlyInRtt = 0
 
@@ -503,7 +540,6 @@ internal class PacketReceiver(
         buffered.clear()
         remoteCidSet = c.role == TlsRole.Server
         peerScid = null
-        initialCryptoSeen = false
     }
 
     /** Whether the packet being decoded is a 0-RTT one (its STREAM frames mark their streams as received early). */

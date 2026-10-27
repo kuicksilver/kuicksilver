@@ -641,6 +641,58 @@ class ReceivePathTest {
         }
     }
 
+    /**
+     * RFC 9000 section 7.2: "Once a client has received a valid Initial packet from the server, it MUST discard any subsequent
+     * packet it receives on that connection with a different Source Connection ID." msquic acknowledges the first half of a
+     * two-datagram ClientHello from a provisional instance whose SCID is the client's DCID, then answers with the ServerHello
+     * from another SCID. The client does not take an Initial with nothing but ACK, PING and PADDING before the server's SCID
+     * is fixed: it is dropped unprocessed (as if lost), so the Initial it takes first, the ServerHello's, fixes the SCID.
+     */
+    @Test fun negative_ackOnlyInitialBeforeTheServerHelloIsNotTaken() {
+        val p = CorePair(crypto = ksl)
+        try {
+            p.filterToClient = { _, _ -> false } // nothing of the real server yet
+            p.step()
+            val init = p.lastClientInitial!!
+            val dcidBefore = p.client.remoteCid
+            val b = PacketBuffer.of(init)
+            val other =
+                try {
+                    ConnectionCore.server(
+                        QuicConfig.Default,
+                        CoreFixtures.server(),
+                        ksl,
+                        CoreFixtures.clientAddr,
+                        kotlin.random.Random(79),
+                        p.now,
+                        b,
+                        init.size,
+                    )!!
+                } finally {
+                    b.close()
+                }
+            val bb = PacketBuffer.of(init)
+            try {
+                other.handleDatagram(bb, init.size, CoreFixtures.clientAddr, Ecn.NotEct, p.now)
+            } finally {
+                bb.close()
+            }
+            val batch = PacketBatch(8)
+            assertTrue(other.poll(batch, p.now) > 0, "the stranger acknowledges the half ClientHello")
+            val ackOnly = batch.buffer(0).toByteArray(batch.length(0))
+            batch.close()
+            other.release()
+            val dropped = p.client.datagramsDropped
+            feed(p.client, ackOnly, CoreFixtures.serverAddr, p.now)
+            assertEquals(dropped + 1, p.client.datagramsDropped, "the ACK-only Initial is not taken")
+            assertEquals(dcidBefore, p.client.remoteCid, "its SCID is not adopted")
+            p.filterToClient = { _, _ -> true }
+            assertTrue(p.handshake(), "the real server's Initial fixes the SCID")
+        } finally {
+            p.close()
+        }
+    }
+
     private fun feed(
         core: ConnectionCore,
         d: ByteArray,

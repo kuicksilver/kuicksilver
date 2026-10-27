@@ -41,19 +41,6 @@ internal class AckTracker(
     /** Highest refused packet number dropped from [refused] for lack of room: anything at or below it is treated as seen. */
     private var refusedBelow = -1L
 
-    /** Forgets every packet seen so far: the Initial packets of a provisional server instance (an SCID the client moved away from) are not part of this connection and must not be acknowledged. */
-    fun forgetAll() {
-        count = 0
-        largest = -1L
-        pending = 0
-        required = false
-        floor = -1L
-        evictedBelow = -1L
-        refusedCount = 0
-        refusedBelow = -1L
-        ecnCounts = null
-    }
-
     /** ECT(0), ECT(1), CE counts of processed packets (RFC 9000 section 13.4.1); null until a mark was seen, then ACK frames become ACK_ECN. */
     var ecnCounts: LongArray? = null
         private set
