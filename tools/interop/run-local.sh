@@ -48,6 +48,13 @@ fi
 [ -n "$tests" ] || tests="handshake,transfer"
 [ ${#peers[@]} -gt 0 ] || peers=(quic-go ngtcp2 quiche picoquic quinn msquic)
 runner=build/interop/runner; lock=$(cat tools/interop/runner.lock)
+# the runner needs tshark 4.5 or later: 4.2 cannot follow a connection whose peer switched to a new connection ID (keyupdate:
+# "Failed to read key phase bits"; rebind-*: "Unknown QUIC connection") and crashed in amplificationlimit (CI run 40515478566)
+tv=$(tshark --version 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+if [ -z "$tv" ] || [ "$(printf '%s\n4.5.0\n' "$tv" | sort -V | head -1)" != 4.5.0 ]; then
+  if [ -n "${CI:-}" ]; then echo "tshark ${tv:-missing} is older than 4.5.0, which the interop runner needs" >&2; exit 2; fi
+  echo "WARNING: tshark ${tv:-missing} is older than 4.5.0, which the interop runner needs; red keyupdate/rebind cells may be the capture's" >&2
+fi
 [ -d "$runner" ] || git clone -q https://github.com/quic-interop/quic-interop-runner "$runner"
 git -C "$runner" fetch -q origin "$lock" 2>/dev/null || true; git -C "$runner" checkout -q "$lock"
 venv=build/interop/venv; [ -x "$venv/bin/python" ] || { python3 -m venv "$venv"; "$venv/bin/pip" -q install -r "$runner/requirements.txt"; }
@@ -87,7 +94,13 @@ for peer in "${peers[@]}"; do
     if [ "$role" = server ]; then s=$me; c=$peer; else s=$peer; c=$me; fi
     dir="$out/$peer-$role"   # the runner creates it and refuses an existing one
     echo "== $me as $role vs $peer: $tests"
-    ( cd "$runner" && ../venv/bin/python run.py ${dbg[@]+"${dbg[@]}"} -s "$s" -c "$c" -t "$tests" -l "../../../$dir" -j "../../../$dir.json" ) || fail=1
+    ( cd "$runner" && ../venv/bin/python run.py ${dbg[@]+"${dbg[@]}"} -s "$s" -c "$c" -t "$tests" -l "../../../$dir" -j "../../../$dir.json" ) 2> >(tee "$dir.runner.log" >&2) || fail=1
+    if [ ! -f "$dir.json" ]; then   # the runner died (its traceback is in $dir.runner.log): no verdict for any cell of this role
+      echo "RUNNER CRASH: $dir left no result file; rerunning the role once" >&2
+      rm -rf "$dir"
+      ( cd "$runner" && ../venv/bin/python run.py ${dbg[@]+"${dbg[@]}"} -s "$s" -c "$c" -t "$tests" -l "../../../$dir" -j "../../../$dir.json" ) 2> >(tee -a "$dir.runner.log" >&2) || fail=1
+      [ -f "$dir.json" ] || { echo "RUNNER CRASH: $dir again left no result file" >&2; fail=1; }
+    fi
     [ $perf -eq 1 ] && continue
     while read -r pair case why; do
       [ -n "$pair" ] || continue
