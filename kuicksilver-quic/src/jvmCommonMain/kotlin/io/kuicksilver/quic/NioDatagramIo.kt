@@ -56,6 +56,13 @@ internal class NioDatagramIo private constructor(
 
     internal fun ipTosForTest(): Int = channel.getOption(StandardSocketOptions.IP_TOS)
 
+    /** The socket's IP_DONTFRAGMENT, or null where the JDK has no such option (test hook). */
+    internal fun dontFragmentForTest(): Boolean? =
+        dontFragmentOption()
+            ?.takeIf {
+                it in channel.supportedOptions()
+            }?.let { channel.getOption(it) }
+
     private var lastJava: java.net.InetSocketAddress? = null
     private var lastKtor: InetSocketAddress? = null
     private var sendJava: java.net.InetSocketAddress? = null
@@ -158,6 +165,39 @@ internal class NioDatagramIo private constructor(
     }
 
     companion object {
+        /**
+         * `jdk.net.ExtendedSocketOptions.IP_DONTFRAGMENT` (JDK 19 and later; looked up by reflection, since the build targets
+         * Java 17 and Android has none), or null where the runtime lacks it.
+         */
+        private val dontFragment: java.net.SocketOption<Boolean>? by lazy {
+            try {
+                @Suppress("UNCHECKED_CAST")
+                Class.forName("jdk.net.ExtendedSocketOptions").getField("IP_DONTFRAGMENT").get(null) as java.net.SocketOption<Boolean>
+            } catch (_: ReflectiveOperationException) {
+                null
+            } catch (_: ClassCastException) {
+                null
+            } catch (_: LinkageError) {
+                null
+            }
+        }
+
+        private fun dontFragmentOption(): java.net.SocketOption<Boolean>? = dontFragment
+
+        /**
+         * RFC 9000 section 14: "In IPv4, the Don't Fragment (DF) bit MUST be set if possible". Where the runtime has the option
+         * it is set (both families); this socket's datagrams stay within 1200 bytes, so PMTUD stays off (`df` capability
+         * false). A platform that refuses it keeps the socket as it was.
+         */
+        private fun setDontFragment(ch: DatagramChannel) {
+            val opt = dontFragmentOption() ?: return
+            try {
+                if (opt in ch.supportedOptions()) ch.setOption(opt, true)
+            } catch (_: java.io.IOException) {
+            } catch (_: UnsupportedOperationException) {
+            }
+        }
+
         /** How long a send waits for room in a full socket buffer before the rest of its batch is lost. */
         private const val WRITE_WAIT_MS = 5L
 
@@ -171,6 +211,7 @@ internal class NioDatagramIo private constructor(
             try {
                 ch.setOption(StandardSocketOptions.SO_RCVBUF, 8 shl 20)
                 ch.setOption(StandardSocketOptions.SO_SNDBUF, 8 shl 20)
+                setDontFragment(ch)
                 configure(ch)
                 ch.bind(local.toJavaAddress())
                 ch.configureBlocking(false)

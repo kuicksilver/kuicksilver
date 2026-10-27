@@ -116,6 +116,23 @@ class NioDatagramIoTest {
             }
         }
 
+    /**
+     * RFC 9000 section 14: "In IPv4, the Don't Fragment (DF) bit MUST be set if possible". The portable socket sets it where the
+     * JDK can (`jdk.net.ExtendedSocketOptions.IP_DONTFRAGMENT`, JDK 19 and later); its datagrams stay within 1200 bytes, so
+     * PMTUD stays off (`df` capability false).
+     */
+    @Test fun nioSetsDontFragmentWherePossible() =
+        runBlocking {
+            val (a, _) = pair()
+            try {
+                val df = (a as io.kuicksilver.quic.NioDatagramIo).dontFragmentForTest()
+                if (Runtime.version().feature() >= 19) assertEquals(true, df) else assertEquals(null, df)
+                assertFalse(a.capabilities.value.df)
+            } finally {
+                a.close()
+            }
+        }
+
     @Test fun nioClearsTosAfterValidationFailure() =
         runBlocking {
             val (a, _) = pair()
