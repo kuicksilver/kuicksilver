@@ -2,13 +2,15 @@
 // Modifications Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
 // Vendored from Ktor 3.6.0 ktor-server-cio CIOApplicationResponse.kt (internal there), adapted: Alt-Svc for HTTP/3 (RFC 7838),
-// `Connection: close` once the server is stopping, WebSocket frames checked against the negotiated extensions.
+// `Connection: close` once the server is stopping, WebSocket frames checked against the negotiated extensions, no
+// framing fields and no content where a response has none (RFC 9110 sections 8.6 and 9.3.2).
 @file:OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
 
 package io.kuicksilver.ktor.server.h1
 
 import io.ktor.http.HeadersBuilder
 import io.ktor.http.HttpHeaders
+import io.ktor.http.HttpMethod
 import io.ktor.http.HttpProtocolVersion
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.cio.RequestResponseBuilder
@@ -18,6 +20,7 @@ import io.ktor.server.engine.BaseApplicationResponse
 import io.ktor.server.response.ResponseHeaders
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.ByteWriteChannel
+import io.ktor.utils.io.asByteWriteChannel
 import io.ktor.utils.io.cancel
 import io.ktor.utils.io.writeFully
 import io.ktor.utils.io.writePacket
@@ -27,6 +30,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.withContext
+import kotlinx.io.discardingSink
 import kotlin.coroutines.CoroutineContext
 
 internal class H1Response(
@@ -97,6 +101,7 @@ internal class H1Response(
 
     override suspend fun respondFromBytes(bytes: ByteArray) {
         sendResponseMessage(contentReady = true)
+        if (hasNoContent()) return output.flushAndClose()
         val channel = preparedBodyChannel()
         return withContext(Dispatchers.Unconfined) {
             channel.writeFully(bytes)
@@ -122,6 +127,7 @@ internal class H1Response(
         super.respondOutgoingContent(content)
         chunkedChannel?.flushAndClose()
         chunkedJob?.join()
+        if (bodyDiscarded) output.flushAndClose()
     }
 
     override fun setStatus(statusCode: HttpStatusCode) {
@@ -139,9 +145,9 @@ internal class H1Response(
         ) {
             // HTTP/1.0 request: a server MUST NOT send Transfer-Encoding (RFC 9112 section 6.1). A body of unknown length
             // (Ktor asked for chunked) goes out raw and the close delimits it (section 6.3 item 8), which `Connection:
-            // close` announces (section 9.6), whatever the request's keep-alive
+            // close` announces (section 9.6), whatever the request's keep-alive; a response without content needs no close
             headersBuilder.remove(HttpHeaders.TransferEncoding)
-            headersBuilder[HttpHeaders.Connection] = "close"
+            if (!hasNoContent()) headersBuilder[HttpHeaders.Connection] = "close"
         }
         // a server that sends the "close" option MUST initiate the close after this response and MUST NOT process any
         // further request on the connection (RFC 9112 section 9.6); a 101 hands the connection to the new protocol
@@ -189,7 +195,26 @@ internal class H1Response(
             line.split(',').any { it.trim().equals("close", ignoreCase = true) }
         }
 
+    /**
+     * Whether this response has no content, whatever the application writes: the response to HEAD (RFC 9110 section
+     * 9.3.2: the server MUST NOT send content), a 1xx, a 204 or a 304 (sections 15.2, 15.3.5, 15.4.5; RFC 9112 section
+     * 6.3 item 1: such a response ends with its header section). Its fields stay as they are: a HEAD response keeps the
+     * Content-Length or Transfer-Encoding a GET would have had (RFC 9110 sections 8.6 and 9.3.2).
+     */
+    private fun hasNoContent(): Boolean {
+        val status = statusCode.value
+        return call.request.local.method == HttpMethod.Head || status in 100..199 || status == 204 || status == 304
+    }
+
+    /** The body channel of a response without content was handed out: its writes are dropped, [output] closed at the end. */
+    private var bodyDiscarded = false
+
     private fun preparedBodyChannel(): ByteWriteChannel {
+        if (hasNoContent()) {
+            // a keep-alive client would read what the application writes as the start of the next response
+            bodyDiscarded = true
+            return discardingSink().asByteWriteChannel()
+        }
         val chunked = headers[HttpHeaders.TransferEncoding] == "chunked"
         if (!chunked) return output
 

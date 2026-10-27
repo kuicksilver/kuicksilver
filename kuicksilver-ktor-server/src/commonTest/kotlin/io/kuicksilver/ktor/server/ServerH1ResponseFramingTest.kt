@@ -12,7 +12,9 @@ import io.ktor.server.response.respond
 import io.ktor.server.response.respondBytesWriter
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
+import io.ktor.server.routing.head
 import io.ktor.server.routing.routing
+import io.ktor.utils.io.writeStringUtf8
 import io.kuicksilver.native.KslLoader
 import kotlinx.coroutines.withTimeout
 import kotlin.test.BeforeTest
@@ -36,6 +38,11 @@ class ServerH1ResponseFramingTest {
                 call.respond(HttpStatusCode.NotModified)
             }
             get("/304-stream") { call.respondBytesWriter(status = HttpStatusCode.NotModified) {} }
+            head("/head-text") { call.respondText("x") }
+            head("/head-stream") { call.respondBytesWriter { writeStringUtf8("abc") } }
+            get("/204-text") { call.respondText("x", status = HttpStatusCode.NoContent) }
+            get("/304-text") { call.respondText("xy", status = HttpStatusCode.NotModified) }
+            get("/304-stream-text") { call.respondBytesWriter(status = HttpStatusCode.NotModified) { writeStringUtf8("abc") } }
         }
     }
 
@@ -65,6 +72,40 @@ class ServerH1ResponseFramingTest {
                     assertTrue(resp.substringAfter("\r\n\r\n").startsWith("HTTP/1.1 200 "), "$path: $resp")
                     assertTrue(resp.endsWith("root"), "$path: $resp")
                     if (path == "/304") assertTrue(head.contains("\r\nETag: \"v1\""), resp)
+                }
+            }
+        }
+
+    /**
+     * RFC 9110 section 9.3.2: the server MUST NOT send content in the response to HEAD; a 1xx, 204 or 304 response has
+     * none either (sections 15.2, 15.3.5, 15.4.5; RFC 9112 section 6.3 item 1). What the application writes for one is
+     * dropped, the fields stay (a HEAD response keeps the Content-Length or Transfer-Encoding a GET would have). Before,
+     * `head("/") { call.respondText("x") }` without AutoHeadResponse sent `x`, which a keep-alive client reads as the
+     * start of the next response.
+     */
+    @Test fun negative_noContentForHeadAnd204And304() =
+        serverTest {
+            plainServer { port ->
+                for ((request, field) in listOf(
+                    "HEAD /head-text" to "Content-Length: 1",
+                    "HEAD /head-stream" to "Transfer-Encoding: chunked",
+                    "GET /204-text" to null,
+                    "GET /304-text" to "Content-Length: 2",
+                    "GET /304-stream-text" to null,
+                )) {
+                    val resp =
+                        withTimeout(10.seconds) {
+                            rawHttp(
+                                port,
+                                "$request HTTP/1.1\r\nHost: s\r\n\r\nGET / HTTP/1.1\r\nHost: s\r\nConnection: close\r\n\r\n",
+                                tls = null,
+                            )
+                        }
+                    val head = resp.substringBefore("\r\n\r\n")
+                    if (field != null) assertTrue(head.contains("\r\n$field\r\n"), "$request: $resp")
+                    assertTrue(resp.substringAfter("\r\n\r\n").startsWith("HTTP/1.1 200 "), "$request: $resp")
+                    assertEquals(2, Regex("HTTP/1.1 ").findAll(resp).count(), "$request: $resp")
+                    assertTrue(resp.endsWith("root"), "$request: $resp")
                 }
             }
         }
