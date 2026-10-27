@@ -165,6 +165,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   chunked<U+00A0>` a chunked one, so with a proxy in front that framed the response otherwise the bytes behind it
   became the response to the next request (response splitting). A `Transfer-Encoding` that is not a list of transfer
   codings or that applies `chunked` twice (RFC 9112 section 6.1) fails the same way.
+- Ktor server, HTTP/1.1: the request line is checked before Ktor's parser reads it. A method that is not a token
+  (`G"ET`, RFC 9112 section 3.1), a control character other than the whitespace section 3 allows as a separator, or a
+  Unicode space (U+00A0), which Ktor's parser took as a separator, gets 400. A request in a higher minor version
+  (`HTTP/1.2`) is processed as HTTP/1.1 instead of refused (RFC 9110 section 6.2), and one in another major version
+  (`HTTP/2.0`, `HTTP/0.9`) gets `505 HTTP Version Not Supported` instead of 400 (section 15.6.6).
 - Ktor server, HTTP/1.1: a request line longer than 8 KiB (a request-target longer than the server parses) gets
   `414 URI Too Long` instead of 400 (RFC 9112 section 3: the server MUST respond with 414), and what follows is read and
   dropped for a while before the close, as after a 431. A field line over 8 KiB still gets 400.
