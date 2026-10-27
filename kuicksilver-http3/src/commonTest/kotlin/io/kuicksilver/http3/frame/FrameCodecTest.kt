@@ -171,6 +171,18 @@ class FrameRulesTest {
         )
     }
 
+    /**
+     * RFC 9114 sections 7.2.7 and 7.1: a server reads MAX_PUSH_ID (to catch a decreasing value), and a payload that is not
+     * exactly one variable-length integer is H3_FRAME_ERROR.
+     */
+    @Test fun maxPushIdProcessedOnServer() {
+        assertEquals(FrameAction.Process, FrameRules.checkControl(FrameType.MAX_PUSH_ID, first = false, isServer = true))
+        assertEquals(1L shl 40, ControlFrames.parseMaxPushId(ControlFrames.maxPushIdPayload(1L shl 40)))
+        assertEquals(Http3ErrorCode.FRAME_ERROR, err { ControlFrames.parseMaxPushId(ByteArray(0)) })
+        assertEquals(Http3ErrorCode.FRAME_ERROR, err { ControlFrames.parseMaxPushId(byteArrayOf(5, 0)) })
+        assertEquals(Http3ErrorCode.FRAME_ERROR, err { ControlFrames.parseMaxPushId(byteArrayOf(0x40)) })
+    }
+
     @Test fun settingsOnRequestUnexpected() {
         for (t in listOf(
             FrameType.SETTINGS,

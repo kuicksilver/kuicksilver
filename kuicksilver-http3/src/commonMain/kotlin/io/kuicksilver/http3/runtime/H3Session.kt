@@ -247,6 +247,7 @@ internal class H3Session(
     // RFC 9218 (server)
     val activeServerRequests = HashMap<Long, ServerRequestImpl>()
     private val earlyPriority = LinkedHashMap<Long, StreamPriority>() // PRIORITY_UPDATE for streams not open yet
+    private var peerMaxPushId = -1L // server: the client's last MAX_PUSH_ID (we never push; kept to catch a decrease)
 
     /** HEADERS frames above this are refused unread; QPACK output is never much larger than the decoded section it carries. */
     val maxHeadersFrame: Long get() = 2 * settings.maxFieldSectionSize
@@ -560,6 +561,13 @@ internal class H3Session(
 
             FrameType.PRIORITY_UPDATE_REQUEST -> {
                 onPriorityUpdate(payload)
+            }
+
+            // server only (a client gets H3_FRAME_UNEXPECTED from FrameRules); RFC 9114 section 7.2.7
+            FrameType.MAX_PUSH_ID -> {
+                val id = ControlFrames.parseMaxPushId(payload)
+                if (id < peerMaxPushId) throw H3ProtocolError(Http3ErrorCode.ID_ERROR, "MAX_PUSH_ID fell from $peerMaxPushId to $id")
+                peerMaxPushId = id
             }
 
             FrameType.PRIORITY_UPDATE_PUSH -> {

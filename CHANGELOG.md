@@ -267,6 +267,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- HTTP/3 server: a client's MAX_PUSH_ID is now read instead of skipped. A value smaller than the previous one closes the
+  connection with `H3_ID_ERROR` (RFC 9114 section 7.2.7), a payload that is not exactly one push ID with
+  `H3_FRAME_ERROR` (section 7.1), and a valid one no longer spends a glitch token as an unknown frame did.
 - HTTP/3: a field value with a control character other than HTAB (0x01–0x08, 0x0B, 0x0C, 0x0E–0x1F, 0x7F), in a
   regular field or a pseudo-header, makes the request or response malformed (RFC 9114 section 10.3): a received one is
   a stream error `H3_MESSAGE_ERROR`, and our own requests, responses and trailers with one fail locally with

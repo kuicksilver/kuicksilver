@@ -11,7 +11,9 @@ import io.kuicksilver.http3.QuicPair
 import io.kuicksilver.http3.frame.FrameHeaders
 import io.kuicksilver.http3.frame.FrameType
 import io.kuicksilver.http3.frame.StreamType
+import io.kuicksilver.http3.frame.VarInt
 import io.kuicksilver.http3.http3Settings
+import io.kuicksilver.http3.readAllBytes
 import io.kuicksilver.http3.useScoped
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.Initiator
@@ -213,6 +215,61 @@ class ConnectionTest {
                 raw.uni(StreamType.PUSH, byteArrayOf(0))
                 assertEquals(Http3ErrorCode.ID_ERROR, peerSawClose(s))
                 assertIs<Http3Exception.Protocol>(client.closed.await())
+            }
+        }
+
+    /** RFC 9114 section 7.2.7: a MAX_PUSH_ID smaller than the previous one is a connection error H3_ID_ERROR. */
+    @Test fun decreasingMaxPushIdIsIdError() =
+        h3Test {
+            assertEquals(
+                Http3ErrorCode.ID_ERROR,
+                violation {
+                    it.openControl()
+                    it.control.output.writeFully(
+                        it.frame(FrameType.MAX_PUSH_ID, VarInt.encode(10)) + it.frame(FrameType.MAX_PUSH_ID, VarInt.encode(5)),
+                    )
+                    it.control.output.flush()
+                }.first,
+            )
+        }
+
+    /** RFC 9114 section 7.1: a MAX_PUSH_ID payload with bytes after its push ID, or ending inside it, is H3_FRAME_ERROR. */
+    @Test fun malformedMaxPushIdIsFrameError() =
+        h3Test {
+            for (payload in listOf(byteArrayOf(5, 0), byteArrayOf(0x40), ByteArray(0))) {
+                assertEquals(
+                    Http3ErrorCode.FRAME_ERROR,
+                    violation {
+                        it.openControl()
+                        it.control.output.writeFully(it.frame(FrameType.MAX_PUSH_ID, payload))
+                        it.control.output.flush()
+                    }.first,
+                    payload.contentToString(),
+                )
+            }
+        }
+
+    /**
+     * A valid MAX_PUSH_ID (the same or a larger value) is a frame the client may send: unlike an unknown frame it spends
+     * no glitch token, so more of them than the bucket holds (1000) leave the connection open.
+     */
+    @Test fun validMaxPushIdsCostNoGlitchToken() =
+        h3Test {
+            QuicPair.open().use { q ->
+                val (c, s) = q.connect()
+                val server = Http3Connection.server(s)
+                val raw = RawPeer(c)
+                raw.openControl()
+                val frames = (0 until 2002).map { raw.frame(FrameType.MAX_PUSH_ID, VarInt.encode(it / 2L)) }.reduce { a, b -> a + b }
+                raw.control.output.writeFully(frames)
+                raw.control.output.flush()
+                val st = c.openBidi()
+                st.output.writeFully(raw.headers(st.id, GET))
+                st.output.flushAndClose()
+                val r = withTimeout(5.seconds) { server.acceptRequest() }
+                r.respond(204).finish()
+                assertTrue(st.input.readAllBytes().isNotEmpty())
+                assertTrue(!server.closed.isCompleted, "MAX_PUSH_ID frames closed the connection")
             }
         }
 
