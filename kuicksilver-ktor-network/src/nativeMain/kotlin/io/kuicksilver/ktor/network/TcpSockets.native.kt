@@ -40,11 +40,16 @@ import kotlinx.coroutines.CompletableJob
 import kotlinx.coroutines.CoroutineName
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.io.IOException
 import kotlin.concurrent.Volatile
 import kotlin.concurrent.atomics.AtomicBoolean
@@ -53,12 +58,19 @@ import kotlin.concurrent.atomics.AtomicReference
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.coroutines.CoroutineContext
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.seconds
 
 /** The listen backlog of ktor-network's native TCP server socket. */
 private const val BACKLOG = 50
 
 /** Bytes per `recv`/`send` call. */
 private const val IO_BUFFER = 8192
+
+/**
+ * How long the write loop waits for room before it tries the send again ([NativeTcpSocket.RoomWait]): the bound on how
+ * long a reset the selector does not report keeps a writer waiting (Windows reports it as `FD_CLOSE`, not `FD_WRITE`).
+ */
+private val ROOM_RECHECK = 1.seconds
 
 /** "[::1]" -> "::1": `getaddrinfo` takes no brackets. */
 private fun String.unbracketed(): String = if (length >= 2 && first() == '[' && last() == ']') substring(1, length - 1) else this
@@ -212,6 +224,15 @@ internal class NativeTcpSocket(
     private val readerJob = AtomicReference<ReaderJob?>(null)
     private val writerJob = AtomicReference<WriterJob?>(null)
 
+    /** Why the connection is gone, as the read loop's receive failed ([connectionLost]): a wait for room fails with it. */
+    private val lost = AtomicReference<Throwable?>(null)
+
+    /** The waits for room of the write loop ([RoomWait]), cancelled when the connection is [lost]. */
+    private val roomWaits = AtomicReference<Job?>(null)
+
+    /** How long a wait for room lasts before the send is tried again ([ROOM_RECHECK]; tests shorten or lengthen it). */
+    @Volatile internal var roomRecheck: Duration = ROOM_RECHECK
+
     override fun close() {
         if (!closeFlag.compareAndSet(expectedValue = false, newValue = true)) return
         launch(CoroutineName("socket-close")) {
@@ -284,7 +305,13 @@ internal class NativeTcpSocket(
             val buffer = ByteArray(IO_BUFFER)
             try {
                 while (!channel.isClosedForWrite) {
-                    val n = tcpRecv(descriptor, buffer)
+                    val n =
+                        try {
+                            tcpRecv(descriptor, buffer)
+                        } catch (e: PosixException) {
+                            connectionLost(e)
+                            throw e
+                        }
                     if (n > 0) {
                         channel.writeFully(buffer, 0, n)
                         channel.flush()
@@ -308,6 +335,7 @@ internal class NativeTcpSocket(
 
     private fun writeLoop(user: ByteChannel): ReaderJob =
         reader(Dispatchers.IO, user) {
+            val room = RoomWait(this)
             try {
                 val buffer = ByteArray(IO_BUFFER)
                 while (true) {
@@ -317,7 +345,7 @@ internal class NativeTcpSocket(
                     while (offset < n) {
                         val sent = tcpSend(descriptor, buffer, offset, n - offset)
                         if (sent < 0) {
-                            selector.select(this@NativeTcpSocket, SelectInterest.WRITE)
+                            room.await()
                         } else if (sent == 0) {
                             // nothing taken of a non-empty send: the stream is cut like after a send error
                             throw IOException(
@@ -333,11 +361,65 @@ internal class NativeTcpSocket(
             } catch (e: Throwable) {
                 // a send error, or the application's channel failed (a handler that threw mid-response): the stream is cut,
                 // and a FIN would end it as if complete (a peer reading a close-delimited body to the end would take the cut
-                // one for the whole), so the connection ends with a reset
-                if (e !is CancellationException) reset(cancelWriteLoop = false)?.let { e.addSuppressed(it) }
+                // one for the whole), so the connection ends with a reset. The application's channel fails first: the
+                // reset's close flushes it, and that flush would take the place of an application's write waiting for
+                // room, which then failed with ktor's ConcurrentIOException instead of this failure
+                if (e !is CancellationException) {
+                    channel.cancel(e)
+                    reset(cancelWriteLoop = false)?.let { e.addSuppressed(it) }
+                }
                 throw e
+            } finally {
+                room.cancel()
             }
         }.apply { invokeOnCompletion { if (!resetFlag.load()) tcpShutdown(descriptor, TCP_SHUT_WR) } }
+
+    /**
+     * The read loop's receive failed (a reset): the connection is gone in both directions, so a write loop waiting for room
+     * fails now. On Windows nothing else would wake it: ktor-network's selector waits for `FD_WRITE` there, and a reset
+     * is reported as `FD_CLOSE` alone.
+     */
+    private fun connectionLost(cause: Throwable) {
+        if (lost.compareAndSet(null, cause)) roomWaits.load()?.cancel()
+    }
+
+    /**
+     * The write loop's wait for room in the send buffer: a WRITE select, given up after [roomRecheck] so the loop tries the
+     * send again, which fails on a connection the peer has reset; and failed at once when the read loop finds the
+     * connection [lost]. Without the bound, a writer on Windows waited for ever on a reset connection: ktor-network's
+     * selector there (`WSAEventSelect`) waits for `FD_WRITE`, which a reset never brings (it is reported as `FD_CLOSE`,
+     * once), where `poll`/`select` on POSIX report a reset socket as writable. The select outlives a wait that gave up and
+     * serves the next one, so a peer that reads nothing for long leaves one select behind, not one per recheck.
+     */
+    private inner class RoomWait(
+        private val scope: CoroutineScope,
+    ) {
+        private val waits = SupervisorJob(scope.coroutineContext.job)
+        private var select: Deferred<Unit>? = null
+
+        init {
+            roomWaits.store(waits)
+            if (lost.load() != null) waits.cancel()
+        }
+
+        /** Returns when the send may be tried again: the socket is writable, or [roomRecheck] has passed. */
+        suspend fun await() {
+            val pending =
+                select ?: scope
+                    .async(waits, start = CoroutineStart.UNDISPATCHED) { selector.select(this@NativeTcpSocket, SelectInterest.WRITE) }
+                    .also { select = it }
+            try {
+                if (withTimeoutOrNull(roomRecheck) { pending.await() } != null) select = null
+            } catch (e: CancellationException) {
+                val cause = lost.load()
+                if (cause != null && scope.isActive) throw IOException("Connection reset by peer", cause)
+                throw e
+            }
+        }
+
+        /** Cancels the select in flight: the write loop has ended. */
+        fun cancel() = waits.cancel()
+    }
 
     private fun actualClose(): Throwable? =
         try {

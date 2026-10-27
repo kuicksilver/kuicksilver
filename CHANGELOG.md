@@ -396,6 +396,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   Kotlin/Native's return from a C call can itself reset the Winsock last error, so the error is now captured in C, in
   the same function as the Winsock call (a small cinterop shim); a failed connect without an error is taken as pending
   only when the socket's `SO_ERROR` shows none.
+- Windows (mingwX64) TCP: a write waiting for room on a connection the peer reset could wait for ever. ktor-network's
+  selector there wakes such a wait on `FD_WRITE`, and Winsock reports a reset as `FD_CLOSE` instead (POSIX `poll`
+  reports the socket writable, so the send fails). The wait now ends when the read side sees the reset, and otherwise
+  tries the send again every second, which fails on a reset connection; so the write fails with an IOException. On every
+  Kotlin/Native platform, such a write also failed now and then with ktor's `ConcurrentIOException` instead of the
+  connection's error.
 - HTTP/3 server: a client's PRIORITY_UPDATE now reaches the stream's scheduling before `ServerRequest.priority` shows it,
   so code that reacts to the new value finds the stream already scheduled by it (RFC 9218 section 7).
 - HTTP/3 server: `goAway()` no longer throws when the client answers the GOAWAY by closing the connection at once (RFC 9114
