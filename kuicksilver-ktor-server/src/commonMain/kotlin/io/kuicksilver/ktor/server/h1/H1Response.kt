@@ -118,6 +118,7 @@ internal class H1Response(
         if (altSvc != null && headersBuilder["Alt-Svc"] == null && statusCode.value != 421) headersBuilder.append("Alt-Svc", altSvc)
         // the server is stopping and reads no further request here: say so (RFC 9112 section 9.6), as Go's Shutdown does
         if (closing() && statusCode != HttpStatusCode.SwitchingProtocols) headersBuilder[HttpHeaders.Connection] = "close"
+        dropFramingFieldsOfAResponseWithoutContent()
         if (HttpProtocolVersion.parse(call.request.local.version) == HttpProtocolVersion.HTTP_1_0 &&
             headersBuilder.contains(HttpHeaders.TransferEncoding)
         ) {
@@ -146,6 +147,24 @@ internal class H1Response(
             }
         } finally {
             builder.release()
+        }
+    }
+
+    /**
+     * A 1xx or 204 response has no content: a server MUST NOT send Content-Length in it (RFC 9110 section 8.6) nor
+     * Transfer-Encoding (RFC 9112 section 6.1). A 304 has none either: no Transfer-Encoding, and Content-Length only
+     * when it equals the length a 200 would have had (RFC 9110 section 8.6), which `Content-Length: 0` does not say for a
+     * non-empty resource: Ktor adds it for every empty content (`respond(HttpStatusCode.NotModified)`), so it is dropped
+     * (a 304 MAY omit it); another value is the application's and stays.
+     */
+    private fun dropFramingFieldsOfAResponseWithoutContent() {
+        val status = statusCode.value
+        if (status in 100..199 || status == 204) {
+            headersBuilder.remove(HttpHeaders.ContentLength)
+            headersBuilder.remove(HttpHeaders.TransferEncoding)
+        } else if (status == 304) {
+            headersBuilder.remove(HttpHeaders.TransferEncoding)
+            if (headersBuilder.getAll(HttpHeaders.ContentLength) == listOf("0")) headersBuilder.remove(HttpHeaders.ContentLength)
         }
     }
 

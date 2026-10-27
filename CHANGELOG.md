@@ -165,6 +165,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   chunked<U+00A0>` a chunked one, so with a proxy in front that framed the response otherwise the bytes behind it
   became the response to the next request (response splitting). A `Transfer-Encoding` that is not a list of transfer
   codings or that applies `chunked` twice (RFC 9112 section 6.1) fails the same way.
+- Ktor server, HTTP/1.1: a 1xx or 204 response no longer carries `Content-Length` or `Transfer-Encoding`, and a 304
+  no longer `Transfer-Encoding` or the `Content-Length: 0` Ktor adds for empty content (RFC 9110 section 8.6: a server
+  MUST NOT send Content-Length in a 1xx or 204 response, nor in a 304 one other than the 200's length). Before,
+  `call.respond(HttpStatusCode.NoContent)` said `Content-Length: 0`, and a streamed 204 or 304 said
+  `Transfer-Encoding: chunked`.
 - Ktor server, HTTP/1.1: after a 400, 501 or 505 refusal (and a 400 for a malformed chunked body) the server reads and
   drops what the client is still sending for up to 2 s before it closes, as it did after a 431 (RFC 9112 section
   9.6: close in stages). Before, it closed over the unread rest of the request, the kernel answered with a reset, and
