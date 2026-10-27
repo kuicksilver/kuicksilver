@@ -30,6 +30,8 @@ import kotlinx.coroutines.withTimeout
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 
 /**
@@ -52,6 +54,31 @@ class ServerWebSocketGuardTest {
     }
 
     @Test fun negative_rsv1WithoutNegotiationClosesWith1002() = serverTest { h1Violation(rsv1Frame) }
+
+    /**
+     * RFC 9110 section 7.8: a server MUST ignore an Upgrade header field that is received in an HTTP/1.0 request (and
+     * MUST NOT send a 1xx response to an HTTP/1.0 client, section 15.2). The request reaches the application without
+     * it, so the WebSocket route does not take it. Before, Ktor's upgrade check did not look at the version and the
+     * HTTP/1.0 client got `101 Switching Protocols`.
+     */
+    @Test fun negative_http10UpgradeIsIgnored() =
+        serverTest {
+            val (server, port) = tlsServer { webSocketEcho() }
+            try {
+                val resp =
+                    withTimeout(10.seconds) {
+                        rawHttp(
+                            port,
+                            "GET /ws HTTP/1.0\r\nHost: server.test\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n" +
+                                "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n",
+                        )
+                    }
+                assertFalse(resp.contains(" 101 "), resp)
+                assertTrue(resp.startsWith("HTTP/1.1 4"), resp)
+            } finally {
+                server.stop(100, 500)
+            }
+        }
 
     @Test fun negative_unmaskedFrameFromClientClosesWith1002() = serverTest { h1Violation(unmaskedFrame) }
 
