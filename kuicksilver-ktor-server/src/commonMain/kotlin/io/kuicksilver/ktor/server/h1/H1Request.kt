@@ -106,7 +106,7 @@ internal class H1ConnectionPoint(
     override val serverPort: Int
         get() =
             hostAndPort
-                ?.let { (_, port) -> if (port == null) defaultPort else port.toIntOrNull() }
+                ?.let { (_, port) -> if (port.isNullOrEmpty()) defaultPort else port.toIntOrNull() }
                 ?: localPort
 
     override val localHost: String

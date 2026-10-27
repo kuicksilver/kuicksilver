@@ -98,8 +98,8 @@ internal fun contentLengthOf(values: List<CharSequence>): Long? {
  * Whether [value] is a valid Host field value, `uri-host [ ":" port ]` (RFC 9110 section 7.2), with `uri-host` the `host`
  * of RFC 3986 section 3.2.2: an IP-literal (`[` IPv6address or IPvFuture `]`), or a reg-name (unreserved, pct-encoded
  * and sub-delims characters, which covers IPv4 addresses), possibly empty (RFC 9112 section 3.2: an empty Host for a
- * target without an authority). The port is digits, at most 65535: the URI's port is a TCP port (RFC 9110 section
- * 4.2.1), as the HTTP/3 server checks `:authority`. A colon with no port after it is refused, as Ktor's parser did.
+ * target without an authority), and `port = *DIGIT` (section 3.2.3): any digits, or none after the colon (the default
+ * port).
  */
 internal fun isValidHostField(value: String): Boolean {
     val hostEnd: Int
@@ -113,8 +113,7 @@ internal fun isValidHostField(value: String): Boolean {
     }
     if (hostEnd == value.length) return true
     if (value[hostEnd] != ':') return false
-    val port = value.substring(hostEnd + 1)
-    return port.isNotEmpty() && port.length <= 5 && port.all { it in '0'..'9' } && port.toInt() <= 65_535
+    return value.substring(hostEnd + 1).all { it in '0'..'9' }
 }
 
 /** reg-name = *( unreserved / pct-encoded / sub-delims ) (RFC 3986 section 3.2.2). */

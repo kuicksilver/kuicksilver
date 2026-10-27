@@ -198,7 +198,6 @@ class ServerH1FramingTest {
                     "[::1]x",
                     "[zz]",
                     "[::1::2]",
-                    "h:99999",
                     "a\"b",
                     "a<b",
                     "[v1]",
@@ -212,7 +211,10 @@ class ServerH1FramingTest {
             }
         }
 
-    /** Valid Host values: a reg-name (with pct-encoded and sub-delims), IPv4, an IP-literal, a port, an empty value. */
+    /**
+     * Valid Host values: a reg-name (with pct-encoded and sub-delims), IPv4, an IP-literal, a port of any digits or none
+     * after the colon (RFC 3986 section 3.2.3: port = *DIGIT). Before, Ktor's parser refused `a.example:` with 400.
+     */
     @Test fun validHostsAreServed() =
         serverTest {
             plainServer { port ->
@@ -224,6 +226,11 @@ class ServerH1FramingTest {
                     "[::ffff:192.0.2.1]" to "[::ffff:192.0.2.1]|80|",
                     "[v7.a:b]" to "[v7.a:b]|80|",
                     "xn--d1a~_!\$&'()*+,;=%41" to "xn--d1a~_!\$&'()*+,;=%41|80|",
+                    // port = *DIGIT (RFC 3986 section 3.2.3): an empty port is the default one, any digits are a port
+                    "a.example:" to "a.example|80|",
+                    "[::1]:" to "[::1]|80|",
+                    "h:99999" to "h|99999|",
+                    "h:0080" to "h|80|",
                 )) {
                     val resp =
                         withTimeout(
@@ -310,6 +317,7 @@ class ServerH1FramingTest {
                     "http://a.example/echo-host?q=1" to "a.example|80|/echo-host?q=1|1",
                     "HTTP://A.example:8080/echo-host" to "A.example|8080|/echo-host|null",
                     "http://a.example?q=2" to null, // empty path: "/" (RFC 9110 section 4.2.3)
+                    "http://a.example:/echo-host" to "a.example|80|/echo-host|null", // empty port: the default one
                 )) {
                     val resp =
                         withTimeout(10.seconds) {
@@ -334,7 +342,6 @@ class ServerH1FramingTest {
                     "GET http://u:p@a.example/echo-host HTTP/1.1\r\nHost: b.example\r\n",
                     "GET http://a.example/echo-host HTTP/1.1\r\n",
                     "GET http://a%zz/echo-host HTTP/1.1\r\nHost: b.example\r\n",
-                    "GET http://a.example:99999/echo-host HTTP/1.1\r\nHost: b.example\r\n",
                 )) {
                     val resp = withTimeout(10.seconds) { rawHttp(port, "${head}Connection: close\r\n\r\n", tls = null) }
                     assertTrue(resp.startsWith("HTTP/1.1 400 "), "[$head]: $resp")
