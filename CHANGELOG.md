@@ -122,6 +122,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   socket code read the Winsock error after Kotlin/Native had unpinned the buffer, which can reset it, so a pending
   connect or a would-block send/receive was taken for a failure. The error is now read right after each call (the POSIX
   code reads errno the same way).
+- Windows (mingwX64) TCP: a connect to a listening local port could still fail with "POSIX error 0: No error" now and then.
+  Kotlin/Native's return from a C call can itself reset the Winsock last error, so the error is now captured in C, in
+  the same function as the Winsock call (a small cinterop shim); a failed connect without an error is taken as pending
+  only when the socket's `SO_ERROR` shows none.
 - HTTP/3 server: a client's PRIORITY_UPDATE now reaches the stream's scheduling before `ServerRequest.priority` shows it,
   so code that reacts to the new value finds the stream already scheduled by it (RFC 9218 section 7).
 - HTTP/3 server: `goAway()` no longer throws when the client answers the GOAWAY by closing the connection at once (RFC 9114

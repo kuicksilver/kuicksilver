@@ -5,6 +5,17 @@
 package io.kuicksilver.ktor.network
 
 import io.ktor.utils.io.errors.PosixException
+import io.kuicksilver.ktor.network.wsa.ksl_wsa_accept
+import io.kuicksilver.ktor.network.wsa.ksl_wsa_address
+import io.kuicksilver.ktor.network.wsa.ksl_wsa_bind
+import io.kuicksilver.ktor.network.wsa.ksl_wsa_connect
+import io.kuicksilver.ktor.network.wsa.ksl_wsa_listen
+import io.kuicksilver.ktor.network.wsa.ksl_wsa_nonblocking
+import io.kuicksilver.ktor.network.wsa.ksl_wsa_recv
+import io.kuicksilver.ktor.network.wsa.ksl_wsa_send
+import io.kuicksilver.ktor.network.wsa.ksl_wsa_setsockopt
+import io.kuicksilver.ktor.network.wsa.ksl_wsa_so_error
+import io.kuicksilver.ktor.network.wsa.ksl_wsa_socket
 import kotlinx.cinterop.ByteVar
 import kotlinx.cinterop.CPointed
 import kotlinx.cinterop.CPointerVar
@@ -30,12 +41,9 @@ import kotlinx.io.IOException
 import platform.posix.AF_INET
 import platform.posix.AF_INET6
 import platform.posix.AF_UNSPEC
-import platform.posix.FIONBIO
 import platform.posix.INVALID_SOCKET
-import platform.posix.IPPROTO_TCP
 import platform.posix.SOCK_STREAM
 import platform.posix.SOL_SOCKET
-import platform.posix.SO_ERROR
 import platform.posix.SO_EXCLUSIVEADDRUSE
 import platform.posix.SO_LINGER
 import platform.posix.WSADATA
@@ -43,21 +51,8 @@ import platform.posix.WSAECONNRESET
 import platform.posix.WSAEINPROGRESS
 import platform.posix.WSAEINTR
 import platform.posix.WSAEWOULDBLOCK
-import platform.posix.WSAGetLastError
-import platform.posix.WSASocketW
 import platform.posix.WSAStartup
-import platform.posix.accept
-import platform.posix.bind
 import platform.posix.closesocket
-import platform.posix.connect
-import platform.posix.getpeername
-import platform.posix.getsockname
-import platform.posix.getsockopt
-import platform.posix.ioctlsocket
-import platform.posix.listen
-import platform.posix.recv
-import platform.posix.send
-import platform.posix.setsockopt
 import platform.posix.shutdown
 import platform.windows.AI_NUMERICSERV
 import platform.windows.GetHandleInformation
@@ -112,21 +107,18 @@ internal actual fun tcpResolve(
         }
     }
 
-/** Makes [fd] non-blocking; 0, or the Winsock error read right after the call (see [lastErrorIf]). */
+/** Makes [fd] non-blocking: 0, or the Winsock error (captured in C, see kslwsa.def). */
 private fun nonBlocking(fd: Int): Int =
     memScoped {
-        val on = alloc<UIntVar>()
-        on.value = 1u
-        lastErrorIf(ioctlsocket(fd.convert(), FIONBIO.convert(), on.ptr) != 0)
+        val err = alloc<IntVar>()
+        ksl_wsa_nonblocking(fd.convert(), err.ptr)
+        err.value
     }
-
-/** WSASocketW flag (winsock2.h; not in the platform klib): the handle is not inherited by child processes. */
-private const val WSA_FLAG_NO_HANDLE_INHERIT: UInt = 0x80u
 
 /**
  * Children started with handle inheritance (CreateProcess with bInheritHandles) must not get our sockets: an inherited
  * listener keeps the port bound after we close it, an inherited connection keeps the peer's connection open (Go and msquic
- * create every socket with WSA_FLAG_NO_HANDLE_INHERIT). Accepted sockets are cleared explicitly as well.
+ * create every socket with WSA_FLAG_NO_HANDLE_INHERIT, as ksl_wsa_socket does). Accepted sockets are cleared explicitly.
  */
 private fun noInherit(s: ULong) {
     SetHandleInformation(s.toLong().toCPointer<CPointed>(), HANDLE_FLAG_INHERIT.convert(), 0u)
@@ -140,48 +132,61 @@ internal fun tcpInheritableForTest(fd: Int): Boolean =
         flags.value and HANDLE_FLAG_INHERIT.convert<UInt>() != 0u
     }
 
+/*
+ * Every Winsock call whose failure is told by the last error goes through the C shim of kslwsa.def, which reads
+ * WSAGetLastError() in the same C function. Read from Kotlin, even at once inside the pinned block, it was already reset:
+ * the return from a C call passes through the Kotlin/Native runtime (thread state switch, safepoint, a wait for the GC;
+ * thread-locals are emulated on mingw), which can make Win32 calls of its own, so a pending connect read as error 0.
+ */
+
 internal actual fun tcpOpen(family: Int): Int {
-    val s = WSASocketW(family, SOCK_STREAM, IPPROTO_TCP.convert(), null, 0u, WSA_FLAG_NO_HANDLE_INHERIT)
-    if (s == INVALID_SOCKET) throw PosixException.forErrno(WSAGetLastError(), "socket")
+    val (s, e) =
+        memScoped {
+            val err = alloc<IntVar>()
+            ksl_wsa_socket(family, err.ptr) to err.value
+        }
+    if (s == INVALID_SOCKET) throw PosixException.forErrno(e, "socket")
     val fd = s.toInt()
     val nbError = nonBlocking(fd)
     if (nbError != 0) {
-        val e = nbError
         closesocket(s)
-        throw PosixException.forErrno(e, "ioctlsocket")
+        throw PosixException.forErrno(nbError, "ioctlsocket")
     }
     return fd
 }
-
-/** The calling thread's last Winsock error when [failed], read at once (any later Win32 call may reset it); 0 otherwise. */
-private fun lastErrorIf(failed: Boolean): Int = if (failed) WSAGetLastError() else 0
 
 internal actual fun tcpConnect(
     fd: Int,
     to: TcpAddress,
 ): Boolean {
-    // the last error is read inside the pinned block, right after the call: unpinning (a GC safepoint) may make Win32 calls
-    // of its own that reset it, and a lost WSAEWOULDBLOCK read as error 0 failed connects that were only pending
     val (rc, e) =
-        to.bytes.usePinned {
-            val r = connect(fd.convert(), it.addressOf(0).reinterpret(), to.bytes.size)
-            r to lastErrorIf(r != 0)
+        memScoped {
+            val err = alloc<IntVar>()
+            to.bytes.usePinned { ksl_wsa_connect(fd.convert(), it.addressOf(0), to.bytes.size, err.ptr) } to err.value
         }
     if (rc == 0) return true
     if (tcpWouldBlock(e)) return false
+    if (e == 0) {
+        // Not expected since the error is captured in C, but a failed connect without an error must not fail a connect
+        // that is only pending (the original symptom): it is taken as pending when the socket has no error of its own;
+        // the selector then waits for it to become writable and reads SO_ERROR again. A real error fails it at once.
+        val pending = tcpPendingError(fd)
+        if (pending == 0) return false
+        throw PosixException.forErrno(pending, "connect")
+    }
     throw PosixException.forErrno(e, "connect")
 }
 
-internal actual fun tcpPendingError(fd: Int): Int =
-    memScoped {
-        val value = alloc<IntVar>()
-        val size = alloc<IntVar>()
-        size.value = sizeOf<IntVar>().toInt()
-        if (getsockopt(fd.convert(), SOL_SOCKET, SO_ERROR, value.ptr.reinterpret(), size.ptr) != 0) {
-            throw PosixException.forErrno(WSAGetLastError(), "getsockopt")
+internal actual fun tcpPendingError(fd: Int): Int {
+    val (rc, value, e) =
+        memScoped {
+            val value = alloc<IntVar>()
+            val err = alloc<IntVar>()
+            Triple(ksl_wsa_so_error(fd.convert(), value.ptr, err.ptr), value.value, err.value)
         }
-        value.value
-    }
+    if (rc != 0) throw PosixException.forErrno(e, "getsockopt")
+    return value
+}
 
 internal actual fun tcpWouldBlock(error: Int): Boolean = error == WSAEWOULDBLOCK || error == WSAEINPROGRESS
 
@@ -190,23 +195,19 @@ internal actual fun tcpBindListen(
     to: TcpAddress,
     backlog: Int,
 ) {
-    // nobody else binds this port while we listen, SO_REUSEADDR or not: without it another process could take over the
-    // connections to it (Windows lets a SO_REUSEADDR socket bind a port in use; msquic and the UDP sockets here do the same)
-    val exclusive =
-        memScoped {
-            val one = alloc<IntVar>()
-            one.value = 1
-            lastErrorIf(setsockopt(fd.convert(), SOL_SOCKET, SO_EXCLUSIVEADDRUSE, one.ptr.reinterpret(), sizeOf<IntVar>().toInt()) != 0)
+    memScoped {
+        val err = alloc<IntVar>()
+        // nobody else binds this port while we listen, SO_REUSEADDR or not: without it another process could take over the
+        // connections to it (Windows lets a SO_REUSEADDR socket bind a port in use; msquic and the UDP sockets here do the same)
+        val one = alloc<IntVar>()
+        one.value = 1
+        if (ksl_wsa_setsockopt(fd.convert(), SOL_SOCKET, SO_EXCLUSIVEADDRUSE, one.ptr, sizeOf<IntVar>().toInt(), err.ptr) != 0) {
+            throw PosixException.forErrno(err.value, "setsockopt(SO_EXCLUSIVEADDRUSE)")
         }
-    if (exclusive != 0) throw PosixException.forErrno(exclusive, "setsockopt(SO_EXCLUSIVEADDRUSE)")
-    val (bound, bindError) =
-        to.bytes.usePinned {
-            val r = bind(fd.convert(), it.addressOf(0).reinterpret(), to.bytes.size)
-            r to
-                lastErrorIf(r != 0)
-        }
-    if (bound != 0) throw PosixException.forErrno(bindError, "bind")
-    if (listen(fd.convert(), backlog) != 0) throw PosixException.forErrno(WSAGetLastError(), "listen")
+        val bound = to.bytes.usePinned { ksl_wsa_bind(fd.convert(), it.addressOf(0), to.bytes.size, err.ptr) }
+        if (bound != 0) throw PosixException.forErrno(err.value, "bind")
+        if (ksl_wsa_listen(fd.convert(), backlog, err.ptr) != 0) throw PosixException.forErrno(err.value, "listen")
+    }
 }
 
 internal actual fun tcpAccept(
@@ -217,23 +218,20 @@ internal actual fun tcpAccept(
         memScoped {
             val size = alloc<IntVar>()
             size.value = peer.size
-            peer.usePinned {
-                val c = accept(fd.convert(), it.addressOf(0).reinterpret(), size.ptr)
-                c to lastErrorIf(c == INVALID_SOCKET)
-            }
+            val err = alloc<IntVar>()
+            peer.usePinned { ksl_wsa_accept(fd.convert(), it.addressOf(0), size.ptr, err.ptr) } to err.value
         }
     if (client == INVALID_SOCKET) {
         // a connection reset before it was accepted is not the listener's failure
         if (tcpWouldBlock(e) || e == WSAEINTR || e == WSAECONNRESET) return null
         throw PosixException.forErrno(e, "accept")
     }
-    noInherit(client.convert())
+    noInherit(client)
     val c = client.toInt()
     val nbError = nonBlocking(c)
     if (nbError != 0) {
-        val e = nbError
         closesocket(client)
-        throw PosixException.forErrno(e, "ioctlsocket")
+        throw PosixException.forErrno(nbError, "ioctlsocket")
     }
     return c
 }
@@ -243,9 +241,9 @@ internal actual fun tcpRecv(
     buffer: ByteArray,
 ): Int {
     val (n, e) =
-        buffer.usePinned {
-            val r = recv(fd.convert(), it.addressOf(0), buffer.size, 0)
-            r to lastErrorIf(r < 0)
+        memScoped {
+            val err = alloc<IntVar>()
+            buffer.usePinned { ksl_wsa_recv(fd.convert(), it.addressOf(0), buffer.size, err.ptr) } to err.value
         }
     if (n >= 0) return n
     if (tcpWouldBlock(e) || e == WSAEINTR) return -1
@@ -259,9 +257,9 @@ internal actual fun tcpSend(
     length: Int,
 ): Int {
     val (n, e) =
-        buffer.usePinned {
-            val r = send(fd.convert(), it.addressOf(offset), length, 0)
-            r to lastErrorIf(r < 0)
+        memScoped {
+            val err = alloc<IntVar>()
+            buffer.usePinned { ksl_wsa_send(fd.convert(), it.addressOf(offset), length, err.ptr) } to err.value
         }
     if (n >= 0) return n
     if (tcpWouldBlock(e) || e == WSAEINTR) return -1
@@ -277,15 +275,8 @@ internal actual fun tcpAddressOf(
         memScoped {
             val size = alloc<IntVar>()
             size.value = storage.size
-            storage.usePinned {
-                val r =
-                    if (peer) {
-                        getpeername(fd.convert(), it.addressOf(0).reinterpret(), size.ptr)
-                    } else {
-                        getsockname(fd.convert(), it.addressOf(0).reinterpret(), size.ptr)
-                    }
-                r to lastErrorIf(r != 0)
-            }
+            val err = alloc<IntVar>()
+            storage.usePinned { ksl_wsa_address(fd.convert(), if (peer) 1 else 0, it.addressOf(0), size.ptr, err.ptr) } to err.value
         }
     if (rc != 0) throw PosixException.forErrno(e, if (peer) "getpeername" else "getsockname")
     return TcpAddress(storage)
@@ -304,8 +295,9 @@ internal actual fun tcpLingerZero(fd: Int) {
         val l = allocArray<UShortVar>(2)
         l[0] = 1u
         l[1] = 0u
-        if (setsockopt(fd.convert(), SOL_SOCKET, SO_LINGER, l.reinterpret(), 2 * sizeOf<UShortVar>().toInt()) != 0) {
-            throw PosixException.forErrno(WSAGetLastError(), "setsockopt(SO_LINGER)")
+        val err = alloc<IntVar>()
+        if (ksl_wsa_setsockopt(fd.convert(), SOL_SOCKET, SO_LINGER, l, 2 * sizeOf<UShortVar>().toInt(), err.ptr) != 0) {
+            throw PosixException.forErrno(err.value, "setsockopt(SO_LINGER)")
         }
     }
 }
