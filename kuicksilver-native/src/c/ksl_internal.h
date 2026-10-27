@@ -56,7 +56,9 @@ struct ksl_ssl {
     int ticket_authorized;
     /* TCP mode */
     BIO *net;                                        /* our end of the bio pair */
-    int abort_alert;                                 /* ksl_tcp_abort: the next ticket (server) or ClientHello (client) fails with internal_error */
+    int abort_alert;
+    uint64_t key_updates_sent, key_update_limit;     /* KeyUpdates written; the bound (RFC 9846 4.7.3), 0 = KSL_MAX_KEY_UPDATES */
+    int key_updates_exhausted;                       /* the bound was reached: the session ends */                                 /* ksl_tcp_abort: the next ticket (server) or ClientHello (client) fails with internal_error */
     int server_hello_ems, ems_refused;               /* client: the ServerHello carried extended_master_secret; the handshake was refused for its lack (RFC 7627) */
     uint64_t records_sent, key_update_records;       /* records written under the current key; the bound for a KeyUpdate (ksl_tcp_write) */
     /* keylog lines */
@@ -94,6 +96,9 @@ size_t ksl_quic_pending(const ksl_ssl *s, int level);   /* CRYPTO bytes provided
 int ksl_cert_verify_cb(X509_STORE_CTX *xctx, void *arg);
 int ksl_client_hello_cb(SSL *ssl, int *al, void *arg);
 int ksl_client_hello_sni(SSL *ssl, const unsigned char **name, size_t *len);   /* during the ClientHello: its host_name, if any */
+/* RFC 9846 section 4.7.3: the epoch of the application traffic keys starts at 3 and "MUST NOT ... exceed 2^48-1" */
+#define KSL_MAX_KEY_UPDATES ((UINT64_C(1) << 48) - 1 - 3)
+int ksl_key_update_limit_check(ksl_ssl *s);   /* KSL_ERROR (session failed) once the KeyUpdate bound was reached */
 void ksl_msg_cb(int write_p, int version, int content_type, const void *buf, size_t len, SSL *ssl, void *arg);   /* a TCP client's handshake messages (ksl_ssl.c) */
 
 /* the system CA store (ksl_ctx.c, ksl_trust_cache.c) */
