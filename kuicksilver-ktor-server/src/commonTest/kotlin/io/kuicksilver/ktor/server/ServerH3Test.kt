@@ -288,8 +288,10 @@ class ServerH3Test {
             val taken = ArrayList<DatagramIo>()
             val takenPorts = HashSet<Int>()
             val tried = ArrayList<Int>()
+            val log = CapturedLog()
             val (server, port) =
                 tlsServer(configure = {
+                    logger = log.quic
                     http3Bind = { a, c, s ->
                         tried += a.port
                         if (takenPorts.size < occupied && a.port !in takenPorts) {
@@ -300,7 +302,7 @@ class ServerH3Test {
                         }
                         Http3Endpoint.bind(a, c, s)
                     }
-                }) { routing { get("/") { call.respondText("ok") } } }
+                }, log = log) { routing { get("/") { call.respondText("ok") } } }
             try {
                 val why = "taken $takenPorts, tried $tried, serving $port"
                 assertEquals(occupied, takenPorts.size, why)
@@ -320,15 +322,17 @@ class ServerH3Test {
     @Test fun ephemeralPortGivesUpHttp3AfterTheBudget() =
         h3ServerTest {
             val tried = ArrayList<Int>()
+            val log = CapturedLog()
             val (server, port) =
                 tlsServer(configure = {
                     http3Bind = { a, _, _ ->
                         tried += a.port
                         throw kotlinx.io.IOException("UDP ${a.port}: Address already in use")
                     }
-                }) { routing { get("/") { call.respondText("ok") } } }
+                }, log = log) { routing { get("/") { call.respondText("ok") } } }
             try {
                 assertEquals(EPHEMERAL_PAIR_ATTEMPTS, tried.size, "tried $tried")
+                log.assertLogged("WARN", "HTTP/3 is not served: no free UDP port next to an ephemeral TCP one")
                 val resp = rawHttp(port, "GET / HTTP/1.1\r\nHost: server.test\r\nConnection: close\r\n\r\n")
                 assertTrue(resp.endsWith("ok") && !resp.contains("Alt-Svc"), resp)
             } finally {

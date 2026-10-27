@@ -10,7 +10,6 @@ import io.ktor.network.sockets.openWriteChannel
 import io.ktor.server.application.Application
 import io.ktor.server.application.install
 import io.ktor.server.engine.connector
-import io.ktor.server.engine.embeddedServer
 import io.ktor.server.plugins.statuspages.StatusPages
 import io.ktor.server.request.receiveText
 import io.ktor.server.response.respondText
@@ -43,11 +42,12 @@ class ServerH1BodyTest {
     private suspend fun plainServer(
         idleSeconds: Int = 1,
         configure: KuicksilverApplicationEngine.Configuration.() -> Unit = {},
+        log: CapturedLog? = null,
         module: Application.() -> Unit,
         block: suspend (Int) -> Unit,
     ) {
         val server =
-            embeddedServer(Kuicksilver, configure = {
+            kuicksilverServer(log, configure = {
                 configure()
                 connectionIdleTimeoutSeconds = idleSeconds
                 connector {
@@ -125,7 +125,8 @@ class ServerH1BodyTest {
      */
     @Test fun negative_earlierPipelinedRequestsOwn500IsNotRelabelled() =
         serverTest {
-            plainServer(module = {
+            val log = CapturedLog()
+            plainServer(log = log, module = {
                 routing {
                     get("/first") { error("the first request fails on its own") }
                     post("/body") { call.receiveText() }
@@ -134,6 +135,7 @@ class ServerH1BodyTest {
                 val r = withTimeout(10.seconds) { rawHttp(port, "GET /first HTTP/1.1\r\nHost: s\r\n\r\n" + stalledPost, tls = null) }
                 assertTrue(r.startsWith("HTTP/1.1 500 "), r)
                 assertTrue(r.contains("HTTP/1.1 408 "), r)
+                log.assertLogged("ERROR", "Unhandled: GET - /first", "the first request fails on its own")
             }
         }
 

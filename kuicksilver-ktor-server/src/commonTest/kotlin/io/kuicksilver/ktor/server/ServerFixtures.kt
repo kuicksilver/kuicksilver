@@ -9,7 +9,9 @@ import io.ktor.network.sockets.aSocket
 import io.ktor.network.sockets.openReadChannel
 import io.ktor.network.sockets.openWriteChannel
 import io.ktor.server.application.Application
+import io.ktor.server.application.serverConfig
 import io.ktor.server.engine.EmbeddedServer
+import io.ktor.server.engine.applicationEnvironment
 import io.ktor.server.engine.embeddedServer
 import io.ktor.utils.io.readAvailable
 import io.ktor.utils.io.writeStringUtf8
@@ -53,14 +55,30 @@ internal object ServerFixtures {
 
 internal typealias Server = EmbeddedServer<KuicksilverApplicationEngine, KuicksilverApplicationEngine.Configuration>
 
+/**
+ * A server (not started) whose application log is [log] when one is given: a test that provokes warnings or errors on purpose
+ * takes them there and asserts them, instead of printing them. Without it the engine's own log prints, as before.
+ */
+internal fun kuicksilverServer(
+    log: CapturedLog?,
+    configure: KuicksilverApplicationEngine.Configuration.() -> Unit,
+    module: Application.() -> Unit,
+): Server =
+    if (log == null) {
+        embeddedServer(Kuicksilver, configure = configure, module = module)
+    } else {
+        embeddedServer(Kuicksilver, serverConfig(applicationEnvironment { this.log = log }) { module(module) }, configure)
+    }
+
 /** Starts a server with one TLS connector on a free loopback port; returns it and the port. */
 internal suspend fun tlsServer(
     configure: KuicksilverApplicationEngine.Configuration.() -> Unit = {},
     connector: KuicksilverTlsConnector.Builder.() -> Unit = {},
+    log: CapturedLog? = null,
     module: Application.() -> Unit,
 ): Pair<Server, Int> {
     val server =
-        embeddedServer(Kuicksilver, configure = {
+        kuicksilverServer(log, configure = {
             tlsConnector(ServerFixtures.identity()) {
                 host = "127.0.0.1"
                 port = 0

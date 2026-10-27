@@ -269,7 +269,8 @@ class ServerObservabilityTest {
                         cause: Throwable?,
                     ): Unit = bug()
                 }
-            val (server, port) = tlsServer({ eventListener = throwing }) { routing { get("/") { call.respondText("ok") } } }
+            val log = CapturedLog()
+            val (server, port) = tlsServer({ eventListener = throwing }, log = log) { routing { get("/") { call.respondText("ok") } } }
             try {
                 repeat(2) {
                     val raw = rawHttp(port, "GET / HTTP/1.1\r\nHost: server.test\r\nConnection: close\r\n\r\n")
@@ -296,6 +297,10 @@ class ServerObservabilityTest {
                 }
             } finally {
                 server.stop(100, 500)
+            }
+            // each failure is logged as a warning with the listener's exception, not printed
+            for (what in listOf("connectionOpened", "connectionClosed", "requestStarted", "requestEnded")) {
+                log.assertLogged("WARN", "Kuicksilver server event listener failed in $what", "listener bug")
             }
         }
 

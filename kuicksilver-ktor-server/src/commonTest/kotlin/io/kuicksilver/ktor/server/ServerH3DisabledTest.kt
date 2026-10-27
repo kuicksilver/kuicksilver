@@ -17,14 +17,16 @@ class ServerH3DisabledTest {
     /** Where a QUIC server cannot run (no accelerated socket on Native, ADR-0006) HTTP/1.1 keeps working and no Alt-Svc is sent. */
     @Test fun h3DisabledWhenQuicServerUnsupported() =
         serverTest {
+            val log = CapturedLog()
             val (server, port) =
                 tlsServer(configure = {
                     http3Bind =
                         { _, _, _ -> throw UnsupportedOperationException("no QUIC server on this platform") }
-                }) { routing { get("/") { call.respondText("ok") } } }
+                }, log = log) { routing { get("/") { call.respondText("ok") } } }
             try {
                 val resp = rawHttp(port, "GET / HTTP/1.1\r\nHost: server.test\r\nConnection: close\r\n\r\n")
                 assertTrue(resp.endsWith("ok") && !resp.contains("Alt-Svc"), resp)
+                log.assertLogged("WARN", "HTTP/3 is not served on port", "no QUIC server on this platform")
             } finally {
                 server.stop(100, 500)
             }
@@ -33,13 +35,15 @@ class ServerH3DisabledTest {
     /** QUIC cannot use a per-SNI identity: a connector with `sniSelector` serves HTTP/1.1, skips HTTP/3 and sends no Alt-Svc. */
     @Test fun h3SkippedForSniSelectorConnector() =
         serverTest {
+            val log = CapturedLog()
             val (server, port) =
                 tlsServer(connector = {
                     sniSelector = { ServerTlsOverride(ServerFixtures.identity()) }
-                }) { routing { get("/") { call.respondText("ok") } } }
+                }, log = log) { routing { get("/") { call.respondText("ok") } } }
             try {
                 val resp = rawHttp(port, "GET / HTTP/1.1\r\nHost: server.test\r\nConnection: close\r\n\r\n")
                 assertTrue(resp.endsWith("ok") && !resp.contains("Alt-Svc"), resp)
+                log.assertLogged("WARN", "HTTP/3 is not served on", "sniSelector is not supported by QUIC")
             } finally {
                 server.stop(100, 500)
             }

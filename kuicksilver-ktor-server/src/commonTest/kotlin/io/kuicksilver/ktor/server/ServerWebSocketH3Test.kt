@@ -30,6 +30,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
+import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 
 /** WebSockets over HTTP/3 (RFC 9220) through Ktor's own `webSocket {}` route. */
@@ -93,8 +94,9 @@ class ServerWebSocketH3Test {
      */
     @Test fun peerResetOfAWebSocketStreamStaysInsideTheServer() =
         h3ServerTest {
+            val log = CapturedLog()
             val (server, port) =
-                tlsServer {
+                tlsServer(log = log) {
                     install(WebSockets)
                     routing {
                         webSocket(
@@ -113,6 +115,9 @@ class ServerWebSocketH3Test {
                         ws.cancel()
                     }
                 }
+                // Kotlin/Native logs the reset as the handler's failure (the JVM does not, and the timing is the peer's): whatever
+                // was logged is only that, never anything else
+                assertTrue(log.lines.all { it.level == "ERROR" && "Websocket handler failed" in it.message }, "${log.lines}")
             } finally {
                 server.stop(100, 500)
             }

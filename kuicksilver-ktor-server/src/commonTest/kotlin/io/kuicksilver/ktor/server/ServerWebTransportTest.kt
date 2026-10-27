@@ -152,8 +152,9 @@ class ServerWebTransportTest {
     @Test fun handlerExceptionClosesWithError() =
         h3ServerTest {
             var calls = 0
+            val log = CapturedLog()
             val (server, port) =
-                tlsServer({ webTransport = true }) {
+                tlsServer({ webTransport = true }, log = log) {
                     routing { webTransport("/wt") { if (calls++ == 0) throw IllegalStateException("boom") } }
                 }
             try {
@@ -164,6 +165,8 @@ class ServerWebTransportTest {
                 }
                 // the server lives on and serves the next session
                 h3(port) { c -> assertEquals(0L, withTimeout(5.seconds) { c.webTransport(wtReq()).closed.await() }.code) }
+                // the failure reaches the application log (an error with the handler's exception), not the test output
+                log.assertLogged("ERROR", "CONNECT - /wt", "boom")
             } finally {
                 server.stopSuspend(100, 1000)
             }
