@@ -78,6 +78,7 @@ d["kuicksilver"] = {"image": f"kuicksilver-interop:{tag}", "url": "https://githu
 d["kuicksilver-native"] = {"image": f"kuicksilver-interop-native:{tag}", "url": "https://github.com/kuicksilver/kuicksilver", "role": "both"}
 json.dump(d, open(p, "w"), indent=2)
 PY
+dbg=(); [ -z "${KSL_INTEROP_DEBUG:-}" ] || dbg=(-d)   # the runner's debug log, docker compose output included (CI prints it for a failed job)
 fail=0
 if [ -n "$results" ]; then out="$results"; else
 out="build/interop/$(date +%Y%m%d-%H%M%S)"; mkdir -p "$out"
@@ -86,14 +87,14 @@ for peer in "${peers[@]}"; do
     if [ "$role" = server ]; then s=$me; c=$peer; else s=$peer; c=$me; fi
     dir="$out/$peer-$role"   # the runner creates it and refuses an existing one
     echo "== $me as $role vs $peer: $tests"
-    ( cd "$runner" && ../venv/bin/python run.py -s "$s" -c "$c" -t "$tests" -l "../../../$dir" -j "../../../$dir.json" ) || fail=1
+    ( cd "$runner" && ../venv/bin/python run.py ${dbg[@]+"${dbg[@]}"} -s "$s" -c "$c" -t "$tests" -l "../../../$dir" -j "../../../$dir.json" ) || fail=1
     [ $perf -eq 1 ] && continue
     while read -r pair case why; do
       [ -n "$pair" ] || continue
       echo "ENVIRONMENT: $dir/$pair/$case: $why; rerunning the cell"
       for attempt in $(seq 1 "$env_reruns"); do
         rerun="$dir-rerun-$case"; [ "$attempt" -gt 1 ] && rerun="$dir-rerun$attempt-$case"
-        ( cd "$runner" && ../venv/bin/python run.py -s "$s" -c "$c" -t "$case" -l "../../../$rerun" -j "../../../$rerun.json" ) || true   # --check-required merges all runs; the plain exit code keeps the first run's verdict
+        ( cd "$runner" && ../venv/bin/python run.py ${dbg[@]+"${dbg[@]}"} -s "$s" -c "$c" -t "$case" -l "../../../$rerun" -j "../../../$rerun.json" ) || true   # --check-required merges all runs; the plain exit code keeps the first run's verdict
         again=$(environment_cells "$rerun")
         [ -n "$again" ] || break   # a verdict of the endpoints, green or red, stands
         echo "ENVIRONMENT: rerun $attempt of $env_reruns hit the environment again: $rerun/$pair/$case: ${again#* * }" >&2
