@@ -68,6 +68,8 @@ import platform.posix.socklen_tVar
 internal actual val afInet: Int = AF_INET
 internal actual val afInet6: Int = AF_INET6
 
+internal actual val tcpShutdownReadBeforeEnd: Boolean = true
+
 internal actual fun tcpStartup() {}
 
 internal actual fun tcpResolve(

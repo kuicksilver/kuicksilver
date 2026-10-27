@@ -402,6 +402,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   tries the send again every second, which fails on a reset connection; so the write fails with an IOException. On every
   Kotlin/Native platform, such a write also failed now and then with ktor's `ConcurrentIOException` instead of the
   connection's error.
+- Windows (mingwX64) TCP: a connection closed while the peer was still sending could lose the response still being
+  sent. The read loop's end (a graceful close, a stopped reader) shut the receiving direction down, and Winsock resets
+  the connection when data arrives after `SD_RECEIVE`. On Windows the read loop now does so only at the end of the
+  peer's stream; unread input stays buffered until the close, as on Linux.
 - HTTP/3 server: a client's PRIORITY_UPDATE now reaches the stream's scheduling before `ServerRequest.priority` shows it,
   so code that reacts to the new value finds the stream already scheduled by it (RFC 9218 section 7).
 - HTTP/3 server: `goAway()` no longer throws when the client answers the GOAWAY by closing the connection at once (RFC 9114

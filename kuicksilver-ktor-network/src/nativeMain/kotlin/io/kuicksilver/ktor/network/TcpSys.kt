@@ -21,6 +21,13 @@ internal expect val afInet6: Int
 /** Whether a `sockaddr` starts with a length byte and a one-byte family (BSD, Apple), not a two-byte family (Linux, Windows). */
 internal expect val bsdSockaddr: Boolean
 
+/**
+ * Whether the read loop shuts the receiving direction down when it ends before the end of the stream (the application
+ * stopped reading, a failure): POSIX keeps or drops later input quietly, but Winsock resets the connection when data
+ * arrives after `SD_RECEIVE`, which can destroy a response still to be written. At the end of the stream it always does.
+ */
+internal expect val tcpShutdownReadBeforeEnd: Boolean
+
 /** Starts the socket library once (Winsock); nothing elsewhere. */
 internal expect fun tcpStartup()
 
