@@ -285,7 +285,12 @@ class BbrTest {
         assertTrue(b.seen(Bbr.State.Drain))
     }
 
-    @Test fun persistentCongestionCollapsesTheWindowToWhatIsInFlight() {
+    /**
+     * RFC 9002 section 7.6.2: "When persistent congestion is declared, the sender's congestion window MUST be reduced to the
+     * minimum congestion window (kMinimumWindow)", whose RECOMMENDED value is 2 * max_datagram_size (section 7.2), whatever
+     * is still in flight; BBR's own 4-datagram floor applies again as its model sets the window on the next ACK.
+     */
+    @Test fun persistentCongestionReducesTheWindowToTheMinimum() {
         val cc = bbr()
         val t = TimeMark(1_000_000_000L)
         repeat(10) {
@@ -296,8 +301,8 @@ class BbrTest {
             cc.onPacketSent(t, 1200)
             cc.onPacketStamped(p, t)
         }
-        cc.onLoss(t + 1.seconds, 9 * 1200, t, persistentCongestion = true)
-        assertEquals(4L * 1200, cc.cwnd) // max(inflight + 1 datagram, the 4-datagram pipelining minimum)
+        cc.onLoss(t + 1.seconds, 5 * 1200, t, persistentCongestion = true) // five datagrams still in flight
+        assertEquals(2L * 1200, cc.cwnd)
     }
 
     @Test fun pacesTheInitialWindowAtTheStartupGainBeforeTheFirstAck() {
@@ -470,9 +475,9 @@ class BbrTest {
         val t = TimeMark(1_000_000_000L)
         repeat(10) { cc.onPacketSent(t, 1200) }
         cc.onLoss(t + 1.seconds, 9 * 1200, t, persistentCongestion = true)
-        assertEquals(4800L, cc.cwnd)
+        assertEquals(2400L, cc.cwnd)
         cc.onMtuUpdate(1452)
-        assertEquals(4800L, cc.cwnd, "the 4-datagram floor in the new size is not a reason to grow")
+        assertEquals(2400L, cc.cwnd, "the minimum window in the new size is not a reason to grow")
         val fresh = bbr()
         fresh.onMtuUpdate(1452)
         assertEquals(12_000L, fresh.cwnd, "before the first ACK either: the initial window stays in bytes")

@@ -165,6 +165,9 @@ public class Bbr(
 
     /** BBR.MinPipeCwnd: 4 datagrams (section 5.6.4.3). */
     internal val minPipeCwnd: Long get() = 4L * mss
+
+    /** kMinimumWindow (RFC 9002 section 7.2: "The RECOMMENDED value is 2 * max_datagram_size"), the window after persistent congestion. */
+    private val minimumWindow: Long get() = 2L * mss
     internal val isCwndLimited: Boolean get() = cwndLimitedThisRound || cwndLimitedLastRound
 
     /** The current pacing rate in bytes per second (0 before the first ACK) and BBR.MaxPipeCwnd-style limits, for the tests. */
@@ -280,7 +283,9 @@ public class Bbr(
         bytesInFlight -= lostBytes
         if (persistentCongestion) {
             saveCwnd()
-            cwnd = maxOf(sat(bytesInFlight, mss.toLong()), minPipeCwnd)
+            // RFC 9002 section 7.6.2: "the sender's congestion window MUST be reduced to the minimum congestion window", 2 datagrams
+            // (section 7.2); BBR's 4-datagram pipelining floor ([minPipeCwnd]) applies again when its model next sets the window
+            cwnd = minimumWindow
             inRecovery = false
             recoveryStart = TimeMark.NEVER
             return
