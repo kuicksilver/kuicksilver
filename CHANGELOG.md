@@ -118,6 +118,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- HTTP/3: a field value with a control character other than HTAB (0x01–0x08, 0x0B, 0x0C, 0x0E–0x1F, 0x7F), in a
+  regular field or a pseudo-header, makes the request or response malformed (RFC 9114 section 10.3): a received one is
+  a stream error `H3_MESSAGE_ERROR`, and our own requests, responses and trailers with one fail locally with
+  `IllegalArgumentException`. Only NUL, CR and LF were refused, so a value such as `a<ESC>b` reached the application
+  and the Ktor engines.
 - Windows (mingwX64) TCP: a connect, send or receive no longer fails at random with "POSIX error 0: No error". The
   socket code read the Winsock error after Kotlin/Native had unpinned the buffer, which can reset it, so a pending
   connect or a would-block send/receive was taken for a failure. The error is now read right after each call (the POSIX

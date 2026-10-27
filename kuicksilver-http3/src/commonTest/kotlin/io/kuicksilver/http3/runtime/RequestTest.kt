@@ -318,6 +318,33 @@ class RequestTest {
             }
         }
 
+    /**
+     * RFC 9114 section 10.3: a control character other than HTAB in a field value (here 0x01 in a regular field and
+     * 0x7F in :path) makes the request malformed: a stream error H3_MESSAGE_ERROR, the connection stays up.
+     */
+    @Test fun controlCharInRequestFieldIsMessageError() =
+        h3Test {
+            QuicPair.open().use { q ->
+                val (c, s) = q.connect()
+                val server = Http3Connection.server(s)
+                val raw = RawPeer(c)
+                raw.openControl()
+                for (fields in listOf(GET + ("x-a" to "a\u0001b"), GET.dropLast(1) + (":path" to "/a\u007f"))) {
+                    val bad = c.openBidi()
+                    bad.output.writeFully(raw.headers(bad.id, fields))
+                    peerMayHaveClosed { bad.output.flushAndClose() }
+                    val e = assertFailsWith<QuicException.StreamError.Reset> { bad.input.readAllBytes() }
+                    assertEquals(Http3ErrorCode.MESSAGE_ERROR, e.code, "$fields")
+                }
+                val good = c.openBidi()
+                good.output.writeFully(raw.headers(good.id, GET))
+                good.output.flushAndClose()
+                val r = server.acceptRequest()
+                assertEquals(good.id, r.streamId)
+                r.respond(200).finish()
+            }
+        }
+
     @Test fun unknownFramesSkippedOnRequestStream() =
         h3Test {
             QuicPair.open().use { q ->
@@ -574,30 +601,35 @@ class RequestTest {
             }
         }
 
-    /** A response field the validator rejects must not leave the stream half-open: the stream is reset and the client sees an error. */
+    /**
+     * A response field the validator rejects must not leave the stream half-open: the stream is reset and the client sees
+     * an error. Trailing whitespace, and (RFC 9114 section 10.3) a control character other than HTAB.
+     */
     @Test fun invalidResponseFieldResetsStream() =
         h3Test {
-            H3Pair.open().useScoped { p ->
-                launch {
-                    val r = p.server.acceptRequest()
-                    assertFailsWith<IllegalArgumentException> {
-                        r.respond(
-                            200,
-                            Http3Headers.of("x-a" to "v "),
-                        )
-                    }
-                    assertFailsWith<IllegalStateException> { r.respond(200) }
-                } // the stream was reset: the request is over
-                val e =
-                    withTimeoutOrNull(3.seconds) {
-                        runCatching {
-                            p.client
-                                .request(get("/"))
-                                .body
-                                .readAllBytes()
-                        }.exceptionOrNull()
-                    }
-                assertIs<Http3Exception>(e, "the client sees the reset instead of hanging: $e")
+            for (value in listOf("v ", "a\u001bb")) {
+                H3Pair.open().useScoped { p ->
+                    launch {
+                        val r = p.server.acceptRequest()
+                        assertFailsWith<IllegalArgumentException> {
+                            r.respond(
+                                200,
+                                Http3Headers.of("x-a" to value),
+                            )
+                        }
+                        assertFailsWith<IllegalStateException> { r.respond(200) }
+                    } // the stream was reset: the request is over
+                    val e =
+                        withTimeoutOrNull(3.seconds) {
+                            runCatching {
+                                p.client
+                                    .request(get("/"))
+                                    .body
+                                    .readAllBytes()
+                            }.exceptionOrNull()
+                        }
+                    assertIs<Http3Exception>(e, "the client sees the reset instead of hanging: $e")
+                }
             }
         }
 
@@ -618,6 +650,8 @@ class RequestTest {
                         http3Request("GET", "server.test", "a b"),
                         http3Request("GET", "server.test", "http://evil/x"),
                         http3Request("GET", "user@server.test", "/"),
+                        get(headers = Http3Headers.of("x-a" to "a\u0001b")),
+                        get("/a\u007f"),
                     )
                 for (r in bad) {
                     val e = withTimeout(5.seconds) { runCatching { p.client.request(r) }.exceptionOrNull() }

@@ -32,16 +32,15 @@ internal object FieldValidator {
     }
 
     /**
-     * null when [v] has no NUL, CR or LF, no leading or trailing whitespace and no character above U+00FF, else the reason.
-     * Field values are octets (ISO-8859-1 on the wire): a wider char would be truncated to its low byte, and U+010A would
-     * become a raw LF.
+     * null when [v] has no control character other than HTAB (NUL, CR, LF, 0x01-0x1F, 0x7F), no leading or trailing
+     * whitespace and no character above U+00FF, else the reason: RFC 9114 section 10.3 makes a character outside the RFC
+     * 9110 section 5.5 field-value grammar malformed. Field values are octets (ISO-8859-1 on the wire): a wider char would
+     * be truncated to its low byte, and U+010A would become a raw LF.
      */
     fun checkValue(v: String): String? {
         for (c in v) {
-            if (c == '\u0000' || c == '\r' ||
-                c == '\n'
-            ) {
-                return "NUL, CR or LF in field value"
+            if ((c < ' ' && c != '\t') || c == '\u007F') {
+                return "control character 0x${c.code.toString(16).padStart(2, '0')} in field value"
             }
             if (c.code >
                 0xFF
