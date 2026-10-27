@@ -20,6 +20,24 @@ import io.kuicksilver.tls.TlsException
 // How a [ConnectionCore] ends: CONNECTION_CLOSE, draining, silent close, stateless reset, release of native resources and the glitch
 // budget (RFC 9000 sections 10 and 21.9).
 
+/** The longest reason phrase we send, in bytes. */
+internal const val MAX_REASON_BYTES = 1024
+
+/**
+ * The length of the longest prefix of the UTF-8 bytes [b] of at most [max] bytes that ends on a code point boundary (RFC 9000
+ * section 19.19: the Reason Phrase "SHOULD be a UTF-8 encoded string"). Bytes that are not UTF-8 are cut at [max].
+ */
+internal fun utf8Prefix(
+    b: ByteArray,
+    max: Int,
+): Int {
+    if (b.size <= max) return b.size
+    var n = max
+    // step back over at most three continuation bytes (10xxxxxx) to the lead byte of the character [max] splits
+    while (n > 0 && max - n < 3 && b[n].toInt() and 0xc0 == 0x80) n--
+    return if (b[n].toInt() and 0xc0 == 0x80) max else n
+}
+
 internal fun ConnectionCore.enterClosing(reason: QuicException.ConnectionLost) {
     state = ConnectionState.Closing
     closedReason = reason
@@ -78,7 +96,7 @@ internal fun ConnectionCore.fail(
     cause: Throwable?,
 ) {
     if (state == ConnectionState.Closing || state == ConnectionState.Draining || state == ConnectionState.Closed) return
-    val bytes = reason.encodeToByteArray().let { if (it.size > 1024) it.copyOf(1024) else it }
+    val bytes = reason.encodeToByteArray().let { it.copyOf(utf8Prefix(it, MAX_REASON_BYTES)) }
     closeFrame = CloseFrame(false, code, frameType, bytes)
     enterClosing(QuicException.ConnectionLost.TransportClosed(code, frameType, reason, bytes, Initiator.Local, cause))
 }

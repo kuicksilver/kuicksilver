@@ -319,6 +319,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - QUIC: a CONNECTION_CLOSE that does not fit the room left in its packet (a server closing below its anti-amplification
   budget with a long reason) now goes out with its reason cut to fit (RFC 9000 sections 10.2.1 and 10.2.3). The frame
   was skipped, and the packet, holding only padding, still counted as the close, so the peer never learned of it.
+- QUIC: the reason phrase of a CONNECTION_CLOSE that is cut (to 1024 bytes, or to fit its packet) ends on a whole
+  character, so the peer receives valid UTF-8 (RFC 9000 section 19.19). The encoded bytes were cut anywhere, which could
+  leave half of a multi-byte character at the end.
 - QUIC, Linux and Apple platforms: a UDP send interrupted by a signal (`EINTR`) is retried instead of failing the
   socket; on Linux an interrupted GSO send no longer withdraws GSO.
 - TLS: a server context without session ticket keys (a QUIC server with tickets off, a keyless SNI override base) no
