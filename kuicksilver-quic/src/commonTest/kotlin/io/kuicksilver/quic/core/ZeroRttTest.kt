@@ -227,6 +227,60 @@ class ZeroRttTest {
         p.close()
     }
 
+    /**
+     * RFC 9846 section 5.5: "it is not possible to perform a KeyUpdate for early data; therefore, implementations MUST NOT exceed
+     * the limits when sending early data"; for QUIC the limit is RFC 9001 section 6.6's per key. With the 0-RTT key's limit
+     * lowered to 4 packets, a 20 000-byte request sends at most 4 0-RTT packets, and the rest arrives in 1-RTT.
+     */
+    @Test fun negative_zeroRttStopsAtTheAeadLimit() {
+        val t = ticket()
+        val request = "x".repeat(20_000)
+        var zeroRttPackets = 0
+        var id = -1L
+        val p =
+            CorePair(
+                crypto = ksl,
+                clientEarly = EarlyDataState.Allowed,
+                serverEarly = early(),
+                clientSetup = { c ->
+                    c.testZeroRttConfidentialityLimit = 4
+                    assertTrue(c.useTicket(t))
+                    id = c.openStream(bidi = true)
+                    assertEquals(request.length, c.writeStream(id, request.encodeToByteArray(), 0, request.length, fin = true))
+                },
+            )
+        val hv = PacketHeaderView()
+        p.filterToServer = { _, b ->
+            val buf = PacketBuffer.of(b)
+            try {
+                var off = 0
+                while (off < b.size && PacketHeaderCodec.parse(buf, off, b.size, 8, hv)) {
+                    if (hv.type == PacketType.ZeroRtt) zeroRttPackets++
+                    if (hv.packetEnd <= off) break
+                    off = hv.packetEnd
+                }
+            } finally {
+                buf.close()
+            }
+            true
+        }
+        try {
+            var got = ""
+            assertTrue(
+                p.runUntil(limit = 5.seconds) {
+                    p.server?.let { got += streamText(it, id) }
+                    got.length == request.length
+                },
+                "the whole request arrives: ${got.length} bytes",
+            )
+            assertTrue(zeroRttPackets in 1..4, "0-RTT packets sent: $zeroRttPackets")
+            assertEquals(zeroRttPackets.toLong(), p.client.zeroRttPacketsSealed)
+            assertNull(p.closedReason(p.clientEvents))
+        } finally {
+            p.close()
+        }
+    }
+
     @Test fun zeroRttRejectedRetransmitsIn1Rtt() {
         // the server's application context changed: TLS refuses the early data (RFC 9001 section 4.6.3), the stream goes again in 1-RTT
         val (p, id) = resumed(ticket(), serverEarly = early(app = byteArrayOf(9)))

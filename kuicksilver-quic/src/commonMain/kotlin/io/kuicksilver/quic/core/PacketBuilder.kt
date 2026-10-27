@@ -755,6 +755,7 @@ internal class PacketBuilder(
         // RFC 9000 section 8.2.1: a challenge the amplification limit kept below 1200 bytes does not validate the path MTU
         if (frames.flags and SentFrames.PATH_CHALLENGE != 0 && end < 1200) target.markLastChallengeUndersized()
         if (type == PacketType.OneRtt) c.onOneRttPacketSealed(pn)
+        if (type == PacketType.ZeroRtt) c.zeroRttPacketsSealed++ // its confidentiality limit (zeroRttWritable)
         p.zeroRtt = type == PacketType.ZeroRtt
         p.pn = pn
         p.timeSent = now

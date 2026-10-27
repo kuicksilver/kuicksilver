@@ -17,6 +17,7 @@ import io.kuicksilver.quic.wire.QuicWireException
 import io.kuicksilver.quic.wire.TransportParameters
 import io.kuicksilver.quic.wire.TransportParametersCodec
 import io.kuicksilver.quic.wire.WireWriter
+import io.kuicksilver.tls.Aead
 import io.kuicksilver.tls.EarlyDataAdmission
 import io.kuicksilver.tls.EarlyDataState
 import io.kuicksilver.tls.QuicSessionTicket
@@ -178,8 +179,19 @@ internal fun ConnectionCore.useTicket(ticket: QuicSessionTicket): Boolean {
     return true
 }
 
-/** The connection may still send 0-RTT packets: a 0-RTT write key and no 1-RTT one yet. */
-internal val ConnectionCore.zeroRttWritable: Boolean get() = writeKeys[1] != null && writeKeys[3] == null
+/**
+ * The connection may still send 0-RTT packets: a 0-RTT write key, no 1-RTT one yet, and the key below its AEAD confidentiality
+ * limit. RFC 9846 section 5.5: "it is not possible to perform a KeyUpdate for early data; therefore, implementations MUST NOT
+ * exceed the limits when sending early data" (RFC 9001 section 6.6 for QUIC); what is left waits for 1-RTT.
+ */
+internal val ConnectionCore.zeroRttWritable: Boolean get() = writeKeys[1] != null && writeKeys[3] == null && !zeroRttLimitReached
+
+/** The 0-RTT key sealed as many packets as its AEAD allows (AES-GCM 2^23; ChaCha20's 2^62 is out of reach). */
+private val ConnectionCore.zeroRttLimitReached: Boolean get() {
+    val key = writeKeys[1] ?: return false
+    if (key.aead == Aead.CHACHA20_POLY1305) return false
+    return zeroRttPacketsSealed >= (testZeroRttConfidentialityLimit ?: config.limits.confidentialityLimitAesGcm)
+}
 
 /**
  * Client, at handshake completion: the server's answer to our 0-RTT (RFC 9001 section 4.6.2). Accepted: the new limits
