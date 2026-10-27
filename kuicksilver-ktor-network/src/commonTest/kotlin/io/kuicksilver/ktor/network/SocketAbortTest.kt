@@ -11,6 +11,7 @@ import io.ktor.network.sockets.openWriteChannel
 import io.ktor.utils.io.writeFully
 import io.kuicksilver.native.KslLoader
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelChildren
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
@@ -18,8 +19,10 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.io.IOException
 import kotlin.test.BeforeTest
 import kotlin.test.Test
+import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.time.Duration.Companion.milliseconds
@@ -35,6 +38,49 @@ class SocketAbortTest {
     @Test fun negative_abortReleasesAPlainSocketWhosePeerDoesNotRead() = abortTest(tls = false)
 
     @Test fun negative_abortReleasesATlsSocketWhosePeerDoesNotRead() = abortTest(tls = true)
+
+    /**
+     * The other side: a writer waiting for room on a connection its peer resets (the peer's [abort]) fails with an
+     * IOException, promptly. Before, on Windows, it waited for ever: ktor-network's selector there waits for `FD_WRITE`,
+     * and a reset comes as `FD_CLOSE`.
+     */
+    @Test fun negative_aWriterWaitingForRoomFailsWhenThePeerResets() =
+        runBlocking {
+            val selector = SelectorManager(Dispatchers.Default)
+            try {
+                withTimeout(30.seconds) {
+                    val server = bindTcp(selector, "127.0.0.1", 0)
+                    val port = (server.localAddress as InetSocketAddress).port
+                    val client = connectTcp(selector, InetSocketAddress("127.0.0.1", port))
+                    val peer = server.accept() // reads nothing
+                    val out = client.openWriteChannel()
+                    val progress = Channel<Unit>(Channel.CONFLATED)
+                    val writer =
+                        async {
+                            runCatching {
+                                val chunk = ByteArray(64 * 1024)
+                                while (true) {
+                                    out.writeFully(chunk)
+                                    out.flush()
+                                    progress.trySend(Unit)
+                                }
+                            }.exceptionOrNull()
+                        }
+                    // until the writer is stuck (no chunk for 300 ms): the peer's buffers are full
+                    while (withTimeoutOrNull(300.milliseconds) { progress.receive() } != null) continue
+                    peer.abort()
+                    val failure = withTimeoutOrNull(5.seconds) { writer.await() }
+                    assertIs<IOException>(
+                        failure,
+                        "the writer on a reset connection still waits after 5 s, or did not fail with an IOException",
+                    )
+                    client.abort()
+                    server.close()
+                }
+            } finally {
+                selector.close()
+            }
+        }
 
     private fun abortTest(tls: Boolean) =
         runBlocking {

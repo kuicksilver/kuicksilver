@@ -17,16 +17,21 @@ import io.ktor.utils.io.writeFully
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.io.IOException
 import kotlinx.io.readByteArray
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
+import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
@@ -173,6 +178,95 @@ class TcpSocketsNativeTest {
                 selector.close()
             }
         }
+
+    /**
+     * A writer waiting for room on a connection the peer resets fails once the read loop sees the reset, even when the
+     * selector never reports the socket writable: so ktor-network's selector on Windows, which waits for `FD_WRITE` while
+     * a reset comes as `FD_CLOSE`. Before, the writer waited for ever (an HTTP/1.1 server test timed out on Windows).
+     */
+    @Test fun negative_aResetTheReadLoopSeesFailsAWriterWaitingForRoom() =
+        writerResetTest(SelectorKind.NoWriteWakeUp, recheck = Duration.INFINITE, finFirst = false)
+
+    /**
+     * The peer ends its stream, then resets the connection (its close over unread data): the read loop has already ended
+     * at the end of the stream, and on Windows no wake-up comes for the writer; it tries the send again after its bounded
+     * wait and fails then. Before, it waited for ever.
+     */
+    @Test fun negative_aResetAfterThePeersEndFailsAWriterWaitingForRoom() =
+        writerResetTest(SelectorKind.NoWriteWakeUp, recheck = 200.milliseconds, finFirst = true)
+
+    /** The same with the platform's own selector (on Windows, the case the bounded wait is for). */
+    @Test fun negative_aResetAfterThePeersEndFailsAWriterWithThePlatformSelector() =
+        writerResetTest(SelectorKind.Platform, recheck = null, finFirst = true)
+
+    private enum class SelectorKind { Platform, NoWriteWakeUp }
+
+    /**
+     * The client writes to an accepted peer that reads nothing until its writer waits for room; the peer then (after
+     * ending its own stream, with [finFirst]) resets the connection. The client's write must fail with an IOException
+     * within 5 s. [recheck] overrides the client's bound on a wait for room.
+     */
+    private fun writerResetTest(
+        kind: SelectorKind,
+        recheck: Duration?,
+        finFirst: Boolean,
+    ) = runBlocking {
+        val selector = SelectorManager(Dispatchers.Default)
+        val clientSelector = if (kind == SelectorKind.NoWriteWakeUp) NoWriteWakeUpSelector(selector) else selector
+        try {
+            withTimeout(30.seconds) {
+                val server = bindTcp(selector, "127.0.0.1", 0)
+                val port = (server.localAddress as InetSocketAddress).port
+                val client = connectTcp(clientSelector, InetSocketAddress("127.0.0.1", port)) as NativeTcpSocket
+                if (recheck != null) client.roomRecheck = recheck
+                val accepted = server.accept() as NativeTcpSocket // reads nothing
+                val input = client.openReadChannel()
+                val out = client.openWriteChannel()
+                val progress = Channel<Unit>(Channel.CONFLATED)
+                val writer =
+                    async {
+                        runCatching {
+                            val chunk = ByteArray(64 shl 10)
+                            while (true) {
+                                out.writeFully(chunk)
+                                out.flush()
+                                progress.trySend(Unit)
+                            }
+                        }.exceptionOrNull()
+                    }
+                // until the writer is stuck (no chunk for 300 ms): the peer's buffers are full
+                while (withTimeoutOrNull(300.milliseconds) { progress.receive() } != null) continue
+                if (finFirst) {
+                    tcpShutdown(accepted.descriptor, TCP_SHUT_WR)
+                    assertEquals(-1, input.readAvailable(ByteArray(1), 0, 1), "the client's read loop saw the peer's end")
+                }
+                accepted.abort()
+                assertNull(accepted.resetFailure, "SO_LINGER 0 could not be set")
+                val failure = withTimeoutOrNull(5.seconds) { writer.await() }
+                assertIs<IOException>(
+                    failure,
+                    "a writer on a reset connection still waits after 5 s, or did not fail with an IOException",
+                )
+                client.abort()
+                server.close()
+            }
+        } finally {
+            selector.close()
+        }
+    }
+
+    /** [delegate], whose waits for room never end (as on Windows for a reset connection); the job's cancellation ends them. */
+    private class NoWriteWakeUpSelector(
+        private val delegate: SelectorManager,
+    ) : SelectorManager by delegate {
+        override suspend fun select(
+            selectable: Selectable,
+            interest: SelectInterest,
+        ) {
+            if (interest == SelectInterest.WRITE) awaitCancellation()
+            delegate.select(selectable, interest)
+        }
+    }
 
     /** [delegate], whose waits for reading fail with an IOException. */
     private class FailingReadSelector(
