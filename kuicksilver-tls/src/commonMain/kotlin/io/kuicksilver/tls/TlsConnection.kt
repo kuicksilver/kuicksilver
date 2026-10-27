@@ -282,9 +282,10 @@ public class TlsConnection private constructor(
                 val r = Verification(effective).pinCheck(validated())
                 if (r is VerifyResult.Rejected) abort(TlsException.Verify(r.reason, presented))
             }
-            // explicit ticket: after the pin verdict (never before), and after a resumption (OpenSSL issues none by itself; client tickets are single-use)
+            // explicit tickets: after the pin verdict (never before), two after a full handshake as KslContext's count for the other
+            // servers (RFC 9846 appendix C.4), and one after a resumption (client tickets are single-use)
             if (pinnedClients || reused) {
-                lock.withLock { Ksl.sslNewSessionTicket(s()) }
+                lock.withLock { repeat(if (reused) 1 else TCP_TICKETS) { Ksl.sslNewSessionTicket(s()) } }
                 drainToTransport()
             }
         }
@@ -498,22 +499,35 @@ public class TlsConnection private constructor(
         return failureAlertSent
     }
 
-    private var ticketStored = false
+    /**
+     * The handle of the newest session stored, compared only: once ksl has handed out every new ticket it returns the session's
+     * current one, which is that one (the session holds it, so the address is not reused while they compare equal).
+     */
+    private var lastStored = 0L
 
-    /** After a NewSessionTicket the serialized session changes; store it once per connection (single-use on the client). */
+    /**
+     * After a NewSessionTicket the session changes; every new one is stored (a server sends several, RFC 9846 appendix C.4, so
+     * that parallel connections each resume; each ticket is used once). ksl hands out the tickets in the order they came, then
+     * the current session, which is the last one stored.
+     */
     private suspend fun rememberSession() {
-        val key = cacheKey ?: return
-        if (ticketStored) return
+        while (rememberOneSession()) continue
+    }
+
+    /** Stores the next ticket ksl hands out; false when there is none. */
+    private suspend fun rememberOneSession(): Boolean {
+        val key = cacheKey ?: return false
         val entry =
             try {
                 lock.withLock {
-                    if (ssl == 0L) return
+                    if (ssl == 0L) return false
                     val session = Ksl.sslGet1Session(ssl) // a native handle: the ticket and its secret never reach the heap
-                    if (session == 0L) return
-                    if (session == cached?.session) {
+                    if (session == 0L) return false
+                    if (session == cached?.session || session == lastStored) {
                         Ksl.sessionFree(session)
-                        return
-                    } // the consumed ticket itself: single-use
+                        return false
+                    } // the consumed ticket itself (single-use), or one stored already
+                    lastStored = session
                     try {
                         val validated =
                             if (ctx.verifyMode == KslConst.VERIFY_OPENSSL &&
@@ -530,10 +544,10 @@ public class TlsConnection private constructor(
                     }
                 }
             } catch (_: KslException.Internal) {
-                return
+                return false
             }
         sessionCache.put(key, entry)
-        ticketStored = true
+        return true
     }
 
     private suspend fun shutdownSend() {
@@ -642,6 +656,12 @@ public class TlsConnection private constructor(
     public companion object {
         /** How long [shutdown] waits for the pumps in all: the writer's last ciphertext and close_notify, then the peer's close_notify. */
         internal val SHUTDOWN_TIMEOUT: Duration = 3.seconds
+
+        /**
+         * Tickets a TCP server issues after a full handshake: RFC 9846 appendix C.4, "Servers that issue tickets SHOULD offer at least
+         * as many tickets as the number of connections that a client might use"; every resumption then brings one more.
+         */
+        internal const val TCP_TICKETS: Int = 2
 
         /**
          * Runs a client handshake over [transportIn]/[transportOut] and returns once it completed and the server passed
@@ -789,14 +809,19 @@ public class SessionCache(
         }
     }
 
-    private val entries = LinkedHashMap<String, Entry>() // insertion order: the head is the least recently stored entry
+    // per origin the tickets oldest first; insertion order of the origins: the head is the least recently stored one
+    private val entries = LinkedHashMap<String, ArrayDeque<Entry>>()
+    private var count = 0
     internal val mutex = Mutex() // internal for the tests
 
     /** The process-wide cache, key derivation and the default bound. */
     @InternalKuicksilverApi
     public companion object {
-        /** Sessions a cache keeps before the oldest is evicted; one origin per entry, so this is also the number of resumable origins. */
+        /** Sessions a cache keeps before the oldest is evicted. */
         public const val DEFAULT_MAX_ENTRIES: Int = 256
+
+        /** Tickets kept per TCP origin (RFC 9846 appendix C.4: one for each of the client's parallel connections); a QUIC origin keeps one. */
+        internal const val TICKETS_PER_ORIGIN: Int = 4
         private const val TTL_SECONDS = 7L * 24 * 3600
 
         /** The cache of connections opened without an engine (`TlsConnection.client`, `Socket.tls`). */
@@ -810,17 +835,18 @@ public class SessionCache(
         ): String = "$sni|$reference|${trust.cacheKey()}|id:${identity?.chain?.firstOrNull()?.spkiSha256 ?: "none"}"
     }
 
-    /** Removes and returns the entry: a ticket is used at most once (RFC 8446 appendix C.4). */
+    /** Removes and returns the newest live ticket of [key]: a ticket is used at most once (RFC 9846 appendix C.4). */
     internal suspend fun take(key: String): Entry? =
         mutex.withLock {
-            val e =
-                entries.remove(key) ?: return null
-            if (nowSeconds() - e.created > TTL_SECONDS) {
-                e.close()
-                null
-            } else {
-                e
+            val list = entries[key] ?: return null
+            var found: Entry? = null
+            while (found == null && list.isNotEmpty()) {
+                val e = list.removeLast()
+                count--
+                if (nowSeconds() - e.created > TTL_SECONDS) e.close() else found = e
             }
+            if (list.isEmpty()) entries.remove(key)
+            found
         }
 
     private var closed = false
@@ -833,6 +859,7 @@ public class SessionCache(
     internal suspend fun put(
         key: String,
         entry: Entry,
+        keep: Int = TICKETS_PER_ORIGIN,
     ) {
         var taken = false
         try {
@@ -842,7 +869,7 @@ public class SessionCache(
                     entry.close()
                     return
                 }
-                store(key, entry)
+                store(key, entry, keep)
             }
         } finally {
             if (!taken) entry.close()
@@ -852,23 +879,31 @@ public class SessionCache(
     private fun store(
         key: String,
         entry: Entry,
+        keep: Int,
     ) {
-        entries.remove(key)?.close() // re-inserted at the tail: a fresh ticket for an origin is the most recent entry
-        entries.put(key, entry)
-        val now = nowSeconds()
-        val it = entries.values.iterator()
-        while (it.hasNext()) {
-            val e = it.next()
-            if (now - e.created > TTL_SECONDS) {
-                e.close()
-                it.remove()
-            }
+        val list = entries.remove(key) ?: ArrayDeque() // re-inserted at the tail: a fresh ticket makes its origin the most recent
+        entries[key] = list
+        list.addLast(entry)
+        count++
+        while (list.size > keep) {
+            list.removeFirst().close()
+            count--
         }
-        while (entries.size > maxEntries) {
-            val oldest = entries.entries.iterator()
-            val e = oldest.next()
-            e.value.close()
-            oldest.remove()
+        val now = nowSeconds()
+        val lists = entries.values.iterator()
+        while (lists.hasNext()) {
+            val l = lists.next()
+            val expired = l.filter { e -> now - e.created > TTL_SECONDS }
+            expired.forEach { e -> e.close() }
+            l.removeAll(expired)
+            count -= expired.size
+            if (l.isEmpty()) lists.remove()
+        }
+        while (count > maxEntries) {
+            val oldest = entries.entries.iterator().next()
+            oldest.value.removeFirst().close()
+            count--
+            if (oldest.value.isEmpty()) entries.remove(oldest.key)
         }
     }
 
@@ -876,23 +911,25 @@ public class SessionCache(
     public suspend fun close() {
         mutex.withLock {
             closed = true
-            entries.values.forEach { it.close() }
+            entries.values.forEach { l -> l.forEach { it.close() } }
             entries.clear()
+            count = 0
         }
     }
 
     /** Drops every cached session (tests, credential rotation). */
     public suspend fun clear() {
         mutex.withLock {
-            entries.values.forEach { it.close() }
+            entries.values.forEach { l -> l.forEach { it.close() } }
             entries.clear()
+            count = 0
         }
     }
 
     /** Number of cached sessions. */
-    public suspend fun size(): Int = mutex.withLock { entries.size }
+    public suspend fun size(): Int = mutex.withLock { count }
 
-    internal suspend fun peek(key: String): Boolean = mutex.withLock { entries.containsKey(key) }
+    internal suspend fun peek(key: String): Boolean = mutex.withLock { entries[key]?.isNotEmpty() == true }
 
     /**
      * QUIC (ADR-0015): takes the ticket stored for [config] (single use) and checks its cached chain again against the
@@ -928,7 +965,7 @@ public class SessionCache(
         ticket: QuicSessionTicket,
     ) {
         if (ticket.closed) return
-        put(quicKey(config), ticket.entry)
+        put(quicKey(config), ticket.entry, keep = 1)
     }
 
     private fun quicKey(config: TlsConfig): String =

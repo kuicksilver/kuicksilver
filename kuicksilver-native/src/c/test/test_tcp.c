@@ -548,4 +548,27 @@ static void test_key_update_epoch_is_bounded(void) {
     ksl_ssl_free(c); ksl_ssl_free(s); ksl_ctx_free(cc); ksl_ctx_free(sc); END();
 }
 
-void run_tcp(void) { test_echo(); test_truncation(); test_tls12(); test_resumption(); test_sni_pause(); test_sni_override_alpn(); test_sni_override_settings_effective(); test_no_tls12_ticket_without_num_tickets(); test_session_context(); test_ticket_bound_to_server_name(); test_keyless_server_no_tickets(); test_server_acknowledges_server_name(); test_key_update_before_record_limit(); test_abort_sends_an_alert(); test_legacy_version_must_be_0303(); test_key_update_request_waits_for_the_peer(); test_key_update_epoch_is_bounded(); }
+static void test_client_keeps_every_ticket(void) {
+    SECTION("tcp_client_keeps_every_ticket");
+    /* RFC 9846 appendix C.4: "Servers that issue tickets SHOULD offer at least as many tickets as the number of connections that a
+       client might use". Two tickets that arrive in one read are both handed out by ksl_ssl_get1_session, oldest first, and each
+       resumes a connection of its own. */
+    uint8_t keys[80]; for (int i = 0; i < 80; i++) keys[i] = (uint8_t)(i * 5 + 9);
+    ksl_ctx *cc = client_ctx("test-ca", KSL_VERIFY_OPENSSL), *sc = server_ctx("server"); ksl_ctx_set_option(sc, KSL_OPT_NUM_TICKETS, 2); ksl_ctx_set_ticket_keys(sc, keys, 1);
+    ksl_ssl *c = tcp_client(cc, "server.test"), *s = ksl_ssl_new(sc, KSL_MODE_TCP);
+    CHECK(tcp_pump(c, s, NULL, NULL) == KSL_OK, "full handshake");
+    uint8_t buf[16]; size_t n; ksl_tcp_read(c, buf, sizeof buf, &n);   /* both NewSessionTickets in one read */
+    ksl_session *t1 = ksl_ssl_get1_session(c), *t2 = ksl_ssl_get1_session(c), *t3 = ksl_ssl_get1_session(c);
+    CHECK(t1 && t2 && t1 != t2, "two tickets, one after the other");
+    CHECK(t3 == t2, "then the current session again");
+    ksl_ssl_free(c); ksl_ssl_free(s);
+    ksl_session *ts[2] = {t1, t2}; uint8_t reused;
+    for (int i = 0; i < 2; i++) {
+        c = tcp_client(cc, "server.test"); s = ksl_ssl_new(sc, KSL_MODE_TCP); ksl_ssl_set_session(c, ts[i]);
+        CHECK(tcp_pump(c, s, NULL, NULL) == KSL_OK && ksl_ssl_get(s, KSL_GET_SESSION_REUSED, &reused, 1, &n) == KSL_OK && reused == 1, "each ticket resumes");
+        ksl_ssl_free(c); ksl_ssl_free(s);
+    }
+    ksl_session_free(t1); ksl_session_free(t2); ksl_session_free(t3); ksl_ctx_free(cc); ksl_ctx_free(sc); END();
+}
+
+void run_tcp(void) { test_echo(); test_truncation(); test_tls12(); test_resumption(); test_sni_pause(); test_sni_override_alpn(); test_sni_override_settings_effective(); test_no_tls12_ticket_without_num_tickets(); test_session_context(); test_ticket_bound_to_server_name(); test_keyless_server_no_tickets(); test_server_acknowledges_server_name(); test_key_update_before_record_limit(); test_abort_sends_an_alert(); test_legacy_version_must_be_0303(); test_key_update_request_waits_for_the_peer(); test_key_update_epoch_is_bounded(); test_client_keeps_every_ticket(); }

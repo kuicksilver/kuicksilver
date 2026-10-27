@@ -14,6 +14,7 @@ import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.yield
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 
 /** Each engine owns its TLS session cache: tickets never land in the process-wide cache, and closing the engine frees them. */
@@ -27,7 +28,7 @@ class EngineSessionCacheTest {
                 val engine = client.engine as KuicksilverEngine
                 assertEquals("ok", client.get("https://127.0.0.1:$port/").bodyAsText())
                 withTimeout(10.seconds) { while (engine.h1.sessions.size() == 0) yield() } // the ticket lands from the reader pump
-                assertEquals(1, engine.h1.sessions.size(), "the ticket is in the engine's cache")
+                assertTrue(engine.h1.sessions.size() in 1..2, "the tickets are in the engine's cache (two per full handshake)")
                 assertEquals(0, SessionCache.Default.size(), "and not in the process-wide one")
                 client.close()
                 engine.cleanup.join()

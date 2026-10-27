@@ -131,6 +131,16 @@ static int abort_ext_add_cb(SSL *ssl, unsigned int type, const unsigned char **o
     if (s && s->abort_alert) { *al = SSL_AD_INTERNAL_ERROR; return -1; }
     return 0;
 }
+/* A TCP client keeps every NewSessionTicket until ksl_ssl_get1_session hands it out: a server sends several (RFC 9846 appendix C.4:
+   "at least as many tickets as the number of connections that a client might use"), and two that arrive in one read would leave
+   only the last one as the session's current one. At most four are kept (the oldest goes first). */
+static int new_session_cb(SSL *ssl, SSL_SESSION *sess) {
+    ksl_ssl *s = SSL_get_ex_data(ssl, 1);
+    if (!s || s->mode != KSL_MODE_TCP || !SSL_SESSION_is_resumable(sess)) return 0;
+    if (s->new_sessions_n == 4) { SSL_SESSION_free(s->new_sessions[0]); memmove(s->new_sessions, s->new_sessions + 1, 3 * sizeof *s->new_sessions); s->new_sessions_n--; }
+    s->new_sessions[s->new_sessions_n++] = sess;
+    return 1;   /* the reference is ours */
+}
 static int allow_early_data_cb(SSL *ssl, void *arg) { (void)arg; ksl_ssl *s = SSL_get_ex_data(ssl, 1); return s && s->early_allow && s->early_ctx_match; }
 void ksl_ctx_enable_early_data(SSL_CTX *ctx) {
     /* OpenSSL's own anti-replay makes tickets stateful in the server cache ksl keeps off: with it every early data would be refused */
@@ -176,6 +186,8 @@ ksl_ctx *ksl_ctx_new(int role) {
     SSL_CTX_set_verify(c->ctx, role == KSL_CLIENT ? SSL_VERIFY_PEER : SSL_VERIFY_NONE, NULL);
     SSL_CTX_set_num_tickets(c->ctx, 0); SSL_CTX_set_keylog_callback(c->ctx, keylog_cb); SSL_CTX_set_info_callback(c->ctx, info_cb);
     SSL_CTX_set_session_cache_mode(c->ctx, SSL_SESS_CACHE_OFF);
+    /* a client is told of every ticket (new_session_cb) and stores none inside OpenSSL */
+    if (role == KSL_CLIENT) { SSL_CTX_set_session_cache_mode(c->ctx, SSL_SESS_CACHE_CLIENT | SSL_SESS_CACHE_NO_INTERNAL_STORE); SSL_CTX_sess_set_new_cb(c->ctx, new_session_cb); }
     /* required by OpenSSL to resume a session whose handshake verified a client certificate */
     SSL_CTX_set_session_id_context(c->ctx, (const unsigned char *)"ksl", 3); memcpy(c->sid_ctx, "ksl", 3); c->sid_ctx_len = 3;
     /* every server stamps its tickets (the flag byte of ticket_gen_cb) and checks them on resumption */

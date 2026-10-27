@@ -154,7 +154,7 @@ internal class KslContext private constructor(
                         ) {
                             0
                         } else {
-                            1
+                            TlsConnection.TCP_TICKETS
                         },
                     )
                 }

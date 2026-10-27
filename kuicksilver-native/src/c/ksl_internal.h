@@ -57,6 +57,7 @@ struct ksl_ssl {
     /* TCP mode */
     BIO *net;                                        /* our end of the bio pair */
     int abort_alert;
+    SSL_SESSION *new_sessions[4]; int new_sessions_n;   /* client: tickets not yet handed out by ksl_ssl_get1_session, oldest first */
     uint64_t key_updates_sent, key_update_limit;     /* KeyUpdates written; the bound (RFC 9846 4.7.3), 0 = KSL_MAX_KEY_UPDATES */
     int key_updates_exhausted, update_requested_pending;   /* the bound was reached: the session ends; our update_requested awaits the peer's KeyUpdate */                                 /* ksl_tcp_abort: the next ticket (server) or ClientHello (client) fails with internal_error */
     int server_hello_ems, ems_refused;               /* client: the ServerHello carried extended_master_secret; the handshake was refused for its lack (RFC 7627) */

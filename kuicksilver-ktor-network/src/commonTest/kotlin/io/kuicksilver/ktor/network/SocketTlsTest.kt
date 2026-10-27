@@ -176,8 +176,9 @@ class SocketTlsTest {
                     srv.close()
                 }
             }
-            // the ticket preceded the echo, so it is cached by the time the echo was read
-            assertEquals(1, SessionCache.Default.size())
+            // the tickets preceded the echo, so they are cached by the time the echo was read (several per origin, RFC 9846 appendix C.4)
+            val cached = SessionCache.Default.size()
+            assertTrue(cached in 1..4, "$cached tickets cached")
         }
 
     @Test fun clientServerEchoOverRealSockets(): Unit =

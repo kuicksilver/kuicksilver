@@ -29,6 +29,7 @@ void ksl_ssl_free(ksl_ssl *s) {
     ksl_live_add(KSL_LIVE_SSL, -1);
     SSL_set_shutdown(s->ssl, SSL_SENT_SHUTDOWN | SSL_RECEIVED_SHUTDOWN);   /* keeps the session resumable */
     SSL_free(s->ssl); BIO_free(s->net);
+    for (int i = 0; i < s->new_sessions_n; i++) SSL_SESSION_free(s->new_sessions[i]);
     for (int i = 0; i < KSL_NLEVELS; i++) { free(s->in[i].buf); free(s->stash[i].buf); }
     while (s->qh != s->qt) { if (s->q[s->qh].type == KSL_EV_KEY) ksl_key_free(s->q[s->qh].key); free(s->qbuf[s->qh]); s->qh = (s->qh + 1) % KSL_EVQ; }
     free(s->last_popped); free(s->tp); free(s->verify_host); free(s->verify_ip);
@@ -140,7 +141,12 @@ int ksl_ssl_export_keying_material(ksl_ssl *s, uint8_t *out, size_t out_len, con
 }
 /* ksl_session is an SSL_SESSION: reference-counted, its master key cleansed by OpenSSL on the last free (never serialized to Kotlin, so the secret stays in native memory) */
 ksl_session *ksl_ssl_get1_session(ksl_ssl *s) {
-    ERR_clear_error(); SSL_SESSION *sess = SSL_get1_session(s->ssl);
+    ERR_clear_error();
+    if (s->new_sessions_n) {   /* TCP client: the tickets in the order they came (ksl_ctx.c new_session_cb), then the current session */
+        SSL_SESSION *t = s->new_sessions[0]; memmove(s->new_sessions, s->new_sessions + 1, (size_t)--s->new_sessions_n * sizeof *s->new_sessions);
+        ksl_live_add(KSL_LIVE_SESSION, 1); return (ksl_session *)t;
+    }
+    SSL_SESSION *sess = SSL_get1_session(s->ssl);
     if (sess && !SSL_SESSION_is_resumable(sess)) { SSL_SESSION_free(sess); sess = NULL; }
     if (sess) ksl_live_add(KSL_LIVE_SESSION, 1);
     return (ksl_session *)sess;
