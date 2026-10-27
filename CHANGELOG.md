@@ -287,6 +287,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   step 2, MUST): a WebSocket over HTTP/1.1 to an address and port another one is still connecting to waits until that
   handshake is answered or failed, also when it uses another name for the address; through a proxy that resolves names
   the name counts as the host. Before, any number connected at once.
+- QUIC with `resetStreamAt`: a RESET_STREAM sent after our RESET_STREAM_AT (our own `reset`, or the answer to the
+  peer's STOP_SENDING) carries the RESET_STREAM_AT's error code, not the new one; draft-ietf-quic-reliable-stream-reset
+  section 5.2 says the initiator "MUST NOT change the Application Error Code", and a peer closed the connection with
+  STREAM_STATE_ERROR.
 - HTTP/3: a `priority` field or PRIORITY_UPDATE Priority Field Value that is not a valid Structured Fields
   dictionary is ignored as a whole, so the defaults (u=3, i=?0) apply, or the current values when a response's field
   is merged (RFC 8941 section 4.2, RFC 9218 section 4). The parser read it member by member before and kept the valid

@@ -521,10 +521,11 @@ internal class StreamManager(
             e.send ?: throw QuicWireException(TransportError.STREAM_STATE_ERROR, 0x05, "STOP_SENDING on our receive-only stream $id")
         if (s.state == SendState.ResetSent || s.state == SendState.DataRecvd) return
         val finalSize = s.finalSizeForReset
+        val resetCode = codeAfterResetAt(s, code)
         sendBufferedBytes -= s.reset()
         scheduler.remove(s)
         wakeRefusedWriters()
-        queueControl(ControlKind.ResetStream, id, code, finalSize)
+        queueControl(ControlKind.ResetStream, id, resetCode, finalSize)
         events += ConnectionEvent.StopSendingReceived(id, code)
         maybeClose(id)
     }
@@ -749,12 +750,23 @@ internal class StreamManager(
             return
         }
         val finalSize = s.finalSizeForReset
+        val resetCode = codeAfterResetAt(s, code)
         sendBufferedBytes -= s.reset()
         scheduler.remove(s)
         wakeRefusedWriters()
-        queueControl(ControlKind.ResetStream, id, code, finalSize)
+        queueControl(ControlKind.ResetStream, id, resetCode, finalSize)
         maybeClose(id)
     }
+
+    /**
+     * The code of a RESET_STREAM for [s]: after our RESET_STREAM_AT the one it carried, since "the initiator MUST NOT change
+     * the Application Error Code in subsequent RESET_STREAM_AT or RESET_STREAM frames" (draft-ietf-quic-reliable-stream-reset
+     * section 5.2); otherwise [code].
+     */
+    private fun codeAfterResetAt(
+        s: SendStream,
+        code: Long,
+    ): Long = if (s.state == SendState.ResetAt) s.resetAtCode else code
 
     /**
      * RESET_STREAM_AT (draft-ietf-quic-reliable-stream-reset section 3): the first [reliable] bytes (at most what was

@@ -174,6 +174,37 @@ class ResetStreamAtTest {
     }
 
     /**
+     * Section 5.2: "the initiator MUST NOT change the Application Error Code in subsequent RESET_STREAM_AT or RESET_STREAM
+     * frames". Our RESET_STREAM_AT with code 4 went out and is not acknowledged yet (the peer's ACKs are held back); a later
+     * STOP_SENDING (code 6) or our own reset (code 9) is answered with RESET_STREAM carrying code 4, so the peer sees no
+     * STREAM_STATE_ERROR.
+     */
+    @Test fun laterResetKeepsTheResetStreamAtCode() {
+        for (viaStopSending in listOf(true, false)) {
+            val p = CorePair(clientQuic = on, serverQuic = on)
+            try {
+                p.established()
+                val id = p.client.openStream(bidi = false, StreamPriority.Default)
+                p.filterToClient = { _, _ -> false }
+                p.client.writeStream(id, ByteArray(200_000), 0, 200_000, fin = false)
+                assertTrue(p.runUntil { p.client.streams.sentEndForTest(id) >= 5_000 })
+                p.client.resetStreamAt(id, 4, 3_000)
+                p.step() // the RESET_STREAM_AT leaves; nothing of it is acknowledged
+                if (viaStopSending) p.client.streams.onStopSending(id, 6) else p.client.resetStream(id, 9)
+                val codes = mutableListOf<Long>()
+                while (true) {
+                    val c = p.client.streams.takeControlFrame() ?: break
+                    if (c.id == id && c.kind == io.kuicksilver.quic.stream.ControlKind.ResetStream) codes += c.a
+                    p.client.streams.releaseControlFrame(c)
+                }
+                assertEquals(listOf(4L), codes, "via STOP_SENDING: $viaStopSending")
+            } finally {
+                p.close()
+            }
+        }
+    }
+
+    /**
      * Bytes past the reliable size were sent, and the ACK of the first flight arrives after the reset (nothing was released
      * before it): the send buffer accounting stays exact and the stream retires.
      */

@@ -74,7 +74,7 @@ public sealed interface ConnectionEvent {
 
     /**
      * The peer sent STOP_SENDING with [code] for stream [id] (RFC 9000 section 19.5); the core already answered with RESET_STREAM carrying
-     * the same code.
+     * the same code, or the code of our RESET_STREAM_AT when one went first (draft-ietf-quic-reliable-stream-reset section 5.2).
      */
     public class StopSendingReceived internal constructor(
         public val id: Long,
