@@ -5,6 +5,9 @@ package io.kuicksilver.quic.core
 import io.kuicksilver.annotations.DelicateKuicksilverApi
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.native.KslLoader
+import io.kuicksilver.native.PacketBuffer
+import io.kuicksilver.native.of
+import io.kuicksilver.native.toByteArray
 import io.kuicksilver.quic.ConnectionState
 import io.kuicksilver.quic.CorePair
 import io.kuicksilver.quic.Initiator
@@ -13,6 +16,8 @@ import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.TimeoutKind
 import io.kuicksilver.quic.ksl
 import io.kuicksilver.quic.quicConfig
+import io.kuicksilver.quic.wire.PacketHeaderCodec
+import io.kuicksilver.quic.wire.PacketHeaderView
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -321,6 +326,77 @@ class LifecycleTest {
             )
         } finally {
             q.close()
+        }
+    }
+
+    /** The frames of the 1-RTT packet in a Null-protected datagram (short header behind any long ones), or null without one. */
+    private fun nullOneRttPayload(
+        d: ByteArray,
+        dcidLen: Int,
+    ): ByteArray? {
+        val hv = PacketHeaderView()
+        val b = PacketBuffer.of(d)
+        try {
+            var off = 0
+            while (off < d.size && PacketHeaderCodec.parse(b, off, d.size, dcidLen, hv)) {
+                if (d[off].toInt() and 0x80 == 0) {
+                    val pnLen = (d[off].toInt() and 0x03) + 1
+                    return d.copyOfRange(hv.pnOffset + pnLen, hv.packetEnd - 16)
+                }
+                if (hv.packetEnd <= off) break
+                off = hv.packetEnd
+            }
+            return null
+        } finally {
+            b.close()
+        }
+    }
+
+    /** A QUIC variable-length integer at [off]: its value and its size. */
+    private fun varint(
+        b: ByteArray,
+        off: Int,
+    ): Pair<Long, Int> {
+        val len = 1 shl ((b[off].toInt() and 0xc0) ushr 6)
+        var v = (b[off].toLong() and 0x3f)
+        for (i in 1 until len) v = (v shl 8) or (b[off + i].toLong() and 0xff)
+        return v to len
+    }
+
+    /**
+     * RFC 9000 section 10.2.3 / 10.2.1: the CONNECTION_CLOSE is what a closing endpoint sends. A server below its
+     * anti-amplification budget with 1-RTT keys closed with a 1024-byte reason: the 0x1d frame did not fit the 1-RTT packet and
+     * was skipped, while the packet (padding only) still counted as the close. The reason is now cut to fit.
+     */
+    @Test fun closeReasonIsTruncatedToFitTheBudget() {
+        val p = CorePair()
+        p.filterToServer = { i, _ -> i == 0 } // only the ClientHello: the client's address stays unvalidated
+        try {
+            p.step()
+            p.step()
+            val s = p.server!!
+            assertTrue(s.writeKeys[3] != null && !s.addressValidated, "the server holds 1-RTT keys, unvalidated")
+            // as if probes had spent all but 300 bytes of the 3x budget (RFC 9000 section 8.1)
+            val a = s.amplification
+            a.restore(a.received, 3 * a.received - 300, validated = false)
+            s.close(7, "x".repeat(1024), p.now)
+            p.batch.clear()
+            val n = s.poll(p.batch, p.now)
+            assertEquals(1, n, "one datagram within the budget")
+            val d = p.batch.buffer(0).toByteArray(p.batch.length(0))
+            assertTrue(d.size <= 300, "${d.size} bytes")
+            val f = nullOneRttPayload(d, p.client.localCid.length)
+            assertTrue(f != null, "a 1-RTT packet in the ${d.size}-byte datagram")
+            assertEquals(0x1d, f[0].toInt(), "the 1-RTT packet carries CONNECTION_CLOSE (application)")
+            val (code, cl) = varint(f, 1)
+            assertEquals(7L, code)
+            val (len, ll) = varint(f, 1 + cl)
+            assertTrue(len in 1..1023, "reason cut to $len bytes")
+            val reason = f.copyOfRange(1 + cl + ll, 1 + cl + ll + len.toInt())
+            assertTrue(reason.all { it == 'x'.code.toByte() })
+            assertTrue(s.closeSent, "the close counts as sent")
+        } finally {
+            p.close()
         }
     }
 

@@ -375,36 +375,31 @@ internal class PacketBuilder(
         if (close != null) {
             // Initial/Handshake copies omit the reason (RFC 9000 section 10.2.3)
             val reason = if (type == PacketType.OneRtt) close.reason else ByteArray(0)
-            c.closeSentIn[space.ordinal] = true
             val app = close.application && type == PacketType.OneRtt
-            if (w.remaining >=
-                FrameEncoder.connectionCloseOverhead(
-                    app,
-                    if (app) {
-                        close.code
-                    } else if (close.application) {
-                        0x0c
-                    } else {
-                        close.code
-                    },
-                    close.frameType,
-                    reason.size,
-                )
-            ) {
-                FrameEncoder.connectionClose(
-                    w,
-                    app,
-                    if (app) {
-                        close.code
-                    } else if (close.application) {
-                        0x0c
-                    } else {
-                        close.code
-                    },
-                    close.frameType,
-                    reason,
-                )
+            val code =
+                if (app) {
+                    close.code
+                } else if (close.application) {
+                    0x0c
+                } else {
+                    close.code
+                }
+            // the frame is what the closing state exists to deliver (RFC 9000 section 10.2.1): a reason that does not fit the room
+            // left (an anti-amplification budget, section 8.1) is cut, never the frame; a packet without room even for a bare frame
+            // is not built, and the space still owes its copy
+            val bare = FrameEncoder.connectionCloseOverhead(app, code, close.frameType, 0)
+            if (w.remaining < bare) {
+                sp.release(p)
+                return 0
             }
+            var reasonLength = reason.size
+            if (FrameEncoder.connectionCloseOverhead(app, code, close.frameType, reasonLength) > w.remaining) {
+                val room = w.remaining - bare // bare counts a 1-byte reason length; up to 63 bytes keep it
+                reasonLength = if (room <= 63) room else room - 1
+            }
+            val sentReason = if (reasonLength == reason.size) reason else reason.copyOf(reasonLength)
+            FrameEncoder.connectionClose(w, app, code, close.frameType, sentReason)
+            c.closeSentIn[space.ordinal] = true
         } else if (pmtuProbe) {
             FrameEncoder.ping(w)
             frames.flags = frames.flags or SentFrames.PING or SentFrames.PMTU_PROBE
