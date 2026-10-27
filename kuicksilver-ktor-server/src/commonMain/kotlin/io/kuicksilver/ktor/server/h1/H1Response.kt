@@ -140,6 +140,8 @@ internal class H1Response(
         // the server is stopping and reads no further request here: say so (RFC 9112 section 9.6), as Go's Shutdown does
         if (closing() && statusCode != HttpStatusCode.SwitchingProtocols) headersBuilder[HttpHeaders.Connection] = "close"
         dropFramingFieldsOfAResponseWithoutContent()
+        // RFC 9110 section 6.6.1: an origin server with a clock MUST send Date (2xx to 4xx; MAY in 5xx)
+        if (statusCode.value >= 200 && !headersBuilder.contains(HttpHeaders.Date)) headersBuilder.append(HttpHeaders.Date, httpDateNow())
         if (HttpProtocolVersion.parse(call.request.local.version) == HttpProtocolVersion.HTTP_1_0 &&
             headersBuilder.contains(HttpHeaders.TransferEncoding)
         ) {

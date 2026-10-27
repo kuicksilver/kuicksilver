@@ -42,6 +42,10 @@ class ServerH1ResponseFramingTest {
             head("/head-stream") { call.respondBytesWriter { writeStringUtf8("abc") } }
             get("/204-text") { call.respondText("x", status = HttpStatusCode.NoContent) }
             get("/304-text") { call.respondText("xy", status = HttpStatusCode.NotModified) }
+            get("/own-date") {
+                call.response.header(HttpHeaders.Date, "Sun, 06 Nov 1994 08:49:37 GMT")
+                call.respondText("dated")
+            }
             get("/304-stream-text") { call.respondBytesWriter(status = HttpStatusCode.NotModified) { writeStringUtf8("abc") } }
         }
     }
@@ -107,6 +111,41 @@ class ServerH1ResponseFramingTest {
                     assertEquals(2, Regex("HTTP/1.1 ").findAll(resp).count(), "$request: $resp")
                     assertTrue(resp.endsWith("root"), "$request: $resp")
                 }
+            }
+        }
+
+    /**
+     * RFC 9110 section 6.6.1: an origin server with a clock MUST generate a Date field in its 2xx, 3xx and 4xx responses
+     * (and MAY in 5xx), in IMF-fixdate. Before, only the DefaultHeaders plugin added it, and the engine's own refusals
+     * (400, 414, 431, 501, 505) had none. A Date the application set is kept, not doubled.
+     */
+    @Test fun responsesCarryDate() =
+        serverTest {
+            plainServer { port ->
+                val imfFixdate =
+                    Regex(
+                        "\r\nDate: (Mon|Tue|Wed|Thu|Fri|Sat|Sun), \\d{2} (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) \\d{4} \\d{2}:\\d{2}:\\d{2} GMT\r\n",
+                    )
+                for ((request, status) in listOf(
+                    "GET / HTTP/1.1\r\nHost: s\r\n" to "200",
+                    "GET /missing HTTP/1.1\r\nHost: s\r\n" to "404",
+                    "GET /204 HTTP/1.1\r\nHost: s\r\n" to "204",
+                    "GET / HTTP/1.1\r\nHost: s\r\nbad line\r\n" to "400",
+                    "GET / HTTP/1.1\r\n" to "400",
+                    "GET / HTTP/2.0\r\nHost: s\r\n" to "505",
+                    "GET /${"a".repeat(9_000)} HTTP/1.1\r\nHost: s\r\n" to "414",
+                    "POST / HTTP/1.1\r\nHost: s\r\nTransfer-Encoding: gzip, chunked\r\n" to "501",
+                    "GET / HTTP/1.1\r\nHost: s\r\n" + "X-P: ${"p".repeat(8_000)}\r\n".repeat(9) to "431",
+                )) {
+                    val resp = withTimeout(10.seconds) { rawHttp(port, "${request}Connection: close\r\n\r\n", tls = null) }
+                    val head = resp.substringBefore("\r\n\r\n") + "\r\n"
+                    assertTrue(head.startsWith("HTTP/1.1 $status "), "${request.take(40)}: $resp")
+                    assertEquals(1, imfFixdate.findAll(head).count(), "${request.take(40)}: $resp")
+                }
+                val own =
+                    withTimeout(10.seconds) { rawHttp(port, "GET /own-date HTTP/1.1\r\nHost: s\r\nConnection: close\r\n\r\n", tls = null) }
+                assertEquals(1, Regex("\r\nDate: ").findAll(own).count(), own)
+                assertTrue(own.contains("\r\nDate: Sun, 06 Nov 1994 08:49:37 GMT\r\n"), own)
             }
         }
 
