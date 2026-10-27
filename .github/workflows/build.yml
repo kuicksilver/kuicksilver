@@ -445,7 +445,7 @@ jobs:
         run: bash tools/check/page-align.sh "$AAR"
       - name: 'android: consumer keep rules (R8)'
         run: bash tools/check/android-keep-rules.sh "$AAR"
-        env: { KSL_R8_REQUIRED: '1' }   # R8 comes with AGP into the Gradle cache, android.jar with the SDK: the run and its negative control may not be skipped
+        env: { KSL_R8_REQUIRED: '1' }   # R8 pinned in gradle/libs.versions.toml (ksR8Jar), android.jar with the SDK: the run and its negative control may not be skipped
       - name: 'jvm/android: service keep rules (R8)'
         run: |
           $G :kuicksilver-ktor-client:jvmJar :kuicksilver-ktor-client:bundleAndroidMainAar
