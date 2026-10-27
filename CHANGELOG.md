@@ -140,6 +140,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   a stream error `H3_MESSAGE_ERROR`, and our own requests, responses and trailers with one fail locally with
   `IllegalArgumentException`. Only NUL, CR and LF were refused, so a value such as `a<ESC>b` reached the application
   and the Ktor engines.
+- TLS over TCP: `TlsConnection.keyUpdate(requestPeer = true)` called again before the peer answered the previous request
+  now updates only our key (`update_not_requested`) instead of asking the peer again (RFC 9846 section 4.7.3, MUST).
 - TLS over TCP: a connection never lets its key update epoch pass 2^48-1 (RFC 9846 section 4.7.3, MUST); the session
   that sent its last allowed KeyUpdate ends instead of sending another, also in answer to the peer. OpenSSL counts none.
 - TLS: a ClientHello, or a TLS 1.3 ServerHello, whose `legacy_version` is not 0x0303 is refused with `protocol_version`
