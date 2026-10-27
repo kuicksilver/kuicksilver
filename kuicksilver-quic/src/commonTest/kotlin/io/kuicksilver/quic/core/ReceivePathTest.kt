@@ -405,6 +405,41 @@ class ReceivePathTest {
         }
     }
 
+    /**
+     * RFC 9000 section 17.4: with the spin bit disabled (we never spin), "It is RECOMMENDED that endpoints set the spin bit to a
+     * random value either chosen independently for each packet or chosen independently for each connection ID." It was always 0.
+     * Both directions, from the short headers (Null protection leaves the first byte as sent).
+     */
+    @Test fun spinBitIsRandomWhileDisabled() {
+        val toServer = ArrayList<Boolean>()
+        val toClient = ArrayList<Boolean>()
+        val p = CorePair()
+        p.filterToServer = { _, b ->
+            if (!isLong(b)) toServer += b[0].toInt() and 0x20 != 0
+            true
+        }
+        p.filterToClient = { _, b ->
+            if (!isLong(b)) toClient += b[0].toInt() and 0x20 != 0
+            true
+        }
+        try {
+            assertTrue(p.handshake())
+            val id = p.client.openStream(true)
+            var sent = 0
+            p.runUntil(limit = 2000.milliseconds) {
+                if (sent < 40) {
+                    p.client.writeStream(id, ByteArray(100), 0, 100, false)
+                    sent++
+                }
+                toServer.size > 40 && toClient.size > 20
+            }
+            assertTrue(toServer.size > 20 && toServer.any { it } && toServer.any { !it }, "client: $toServer")
+            assertTrue(toClient.size > 10 && toClient.any { it } && toClient.any { !it }, "server: $toClient")
+        } finally {
+            p.close()
+        }
+    }
+
     @Test fun clientIgnoresPreferredAddress() {
         val p = CorePair(serverTls = CoreFixtures.server(), crypto = ksl)
         p.onServerCreated = { it.testAdvertisePreferredAddress = true }

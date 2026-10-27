@@ -180,6 +180,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - QUIC: the reason phrase of a CONNECTION_CLOSE that is cut (to 1024 bytes, or to fit its packet) ends on a whole
   character, so the peer receives valid UTF-8 (RFC 9000 section 19.19). The encoded bytes were cut anywhere, which could
   leave half of a multi-byte character at the end.
+- QUIC: the spin bit of every 1-RTT packet is now a random value instead of always 0 (RFC 9000 section 17.4 recommends
+  this for an endpoint that does not spin, as kuicksilver never does), so the bit tells an on-path observer nothing.
 - QUIC, Linux and Apple platforms: a UDP send interrupted by a signal (`EINTR`) is retried instead of failing the
   socket; on Linux an interrupted GSO send no longer withdraws GSO.
 - TLS: a server context without session ticket keys (a QUIC server with tickets off, a keyless SNI override base) no

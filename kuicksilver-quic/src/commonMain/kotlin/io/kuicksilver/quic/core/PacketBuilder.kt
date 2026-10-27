@@ -303,6 +303,26 @@ internal class PacketBuilder(
 
     private var lastWasAckEliciting = false
 
+    /** Random bits for the spin bit, drawn 64 at a time; [spinBitsLeft] of them are unused. */
+    private var spinBits = 0L
+    private var spinBitsLeft = 0
+
+    /**
+     * The spin bit of the next short header. We never spin (latency spin is disabled), so RFC 9000 section 17.4 applies: "It is
+     * RECOMMENDED that endpoints set the spin bit to a random value either chosen independently for each packet or chosen
+     * independently for each connection ID": a fresh random bit per packet.
+     */
+    private fun nextSpinBit(): Boolean {
+        if (spinBitsLeft == 0) {
+            spinBits = c.random.nextLong()
+            spinBitsLeft = 64
+        }
+        spinBitsLeft--
+        val bit = spinBits and 1L != 0L
+        spinBits = spinBits ushr 1
+        return bit
+    }
+
     private fun buildPacket(
         buf: PacketBuffer,
         start: Int,
@@ -356,7 +376,7 @@ internal class PacketBuilder(
                 w,
                 dcid,
                 pnLen,
-                spin = false,
+                spin = nextSpinBit(),
                 keyPhase = c.keyPhase?.phase ?: false,
                 greaseFixedBit =
                     c.peerGreaseQuicBit && c.config.greaseQuicBit && c.random.nextBoolean(),
