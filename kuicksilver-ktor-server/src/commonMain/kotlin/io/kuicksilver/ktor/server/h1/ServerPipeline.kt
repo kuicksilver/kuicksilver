@@ -10,7 +10,10 @@
 // make no progress.
 package io.kuicksilver.ktor.server.h1
 
+import io.ktor.http.Headers
+import io.ktor.http.HeadersBuilder
 import io.ktor.http.HttpProtocolVersion
+import io.ktor.http.cio.CIOHeaders
 import io.ktor.http.cio.ConnectionOptions
 import io.ktor.http.cio.Request
 import io.ktor.http.cio.RequestResponseBuilder
@@ -105,6 +108,8 @@ internal class H1RequestScope(
      * connection ends after it (RFC 9112 section 9.6). False when the handler ends without a response head.
      */
     val endsConnection: CompletableDeferred<Boolean>? = null,
+    /** The request's header fields as the client sent them (see [requestFields]); Ktor's parsed map may differ. */
+    val fields: Headers = Headers.Empty,
 ) : CoroutineScope
 
 /**
@@ -180,13 +185,16 @@ internal class RequestFraming private constructor(
     }
 
     companion object {
-        fun of(request: Request): RequestFraming {
-            val hosts = request.headers.getAll("Host").count()
+        fun of(
+            request: Request,
+            fields: Headers = CIOHeaders(request.headers),
+        ): RequestFraming {
+            val hosts = fields.getAll("Host").orEmpty().size
             if (hosts > 1) return faulty("More than one Host field")
             if (hosts == 0 && HttpProtocolVersion.parse(request.version) == HttpProtocolVersion.HTTP_1_1) {
                 return faulty("No Host field in an HTTP/1.1 request")
             }
-            request.headers["Host"]?.let { if (!isValidHostField(it.toString())) return faulty("Invalid Host field") }
+            fields["Host"]?.let { if (!isValidHostField(it)) return faulty("Invalid Host field") }
             splitAbsoluteForm(request.uri.toString())?.let { (authority, _) ->
                 // RFC 9110 section 4.2.1: an "http" URI with an empty host MUST be rejected as invalid; section 4.2.4:
                 // userinfo SHOULD be treated as an error (it is likely used to obscure the authority)
@@ -194,8 +202,8 @@ internal class RequestFraming private constructor(
                 if ('@' in authority) return faulty("Userinfo in an absolute-form target")
                 if (!isValidHostField(authority)) return faulty("Invalid authority in an absolute-form target")
             }
-            val te = request.headers.getAll("Transfer-Encoding").toList()
-            val cl = request.headers.getAll("Content-Length").toList()
+            val te = fields.getAll("Transfer-Encoding").orEmpty()
+            val cl = fields.getAll("Content-Length").orEmpty()
             if (te.isNotEmpty()) {
                 if (cl.isNotEmpty()) return faulty("Content-Length and Transfer-Encoding in one request")
                 if (HttpProtocolVersion.parse(request.version) == HttpProtocolVersion.HTTP_1_0) {
@@ -221,6 +229,31 @@ internal class RequestFraming private constructor(
             status: Int = 400,
         ) = RequestFraming(chunked = false, contentLength = 0, fault = message, faultStatus = status)
     }
+}
+
+/**
+ * The header fields of [request] as the client sent them: Ktor's parsed map, except for the values in [kept] (from
+ * [checkRequestHead]: values that start with obs-text Ktor's parser takes for whitespace and strips). Every reader of a
+ * request field in the engine and the application reads this.
+ */
+internal fun requestFields(
+    request: Request,
+    kept: List<KeptFieldValue>,
+): Headers {
+    val parsed = CIOHeaders(request.headers)
+    if (kept.isEmpty()) return parsed
+    // names() lists each spelling of a name (`X-A`, `x-a`), getAll() ignores case: one pass per name
+    val seen = HashSet<String>()
+    return HeadersBuilder()
+        .apply {
+            for (name in parsed.names()) {
+                if (!seen.add(name.lowercase())) continue
+                val values = parsed.getAll(name).orEmpty()
+                for ((index, value) in values.withIndex()) {
+                    append(name, kept.firstOrNull { it.name.equals(name, ignoreCase = true) && it.occurrence == index }?.value ?: value)
+                }
+            }
+        }.build()
 }
 
 /**
@@ -330,8 +363,9 @@ internal fun CoroutineScope.startH1Pipeline(
                     } ?: break
                 headBudget = headerTimeout
 
+                val fields = requestFields(request, input.keptFieldValues)
                 // faulty framing: 400 and close before anything of the request is handed on (RFC 9112 sections 6.1, 6.3)
-                val framing = RequestFraming.of(request)
+                val framing = RequestFraming.of(request, fields)
                 if (framing.fault != null) {
                     request.release()
                     if (framing.faultStatus == 501) respondStatus(actorChannel, 501, "Not Implemented") else respondBadRequest(actorChannel)
@@ -340,17 +374,11 @@ internal fun CoroutineScope.startH1Pipeline(
                 }
 
                 val response = ByteChannel()
-                val upgrade = request.headers["Upgrade"]
+                val upgrade = fields["Upgrade"]
                 val version = HttpProtocolVersion.parse(request.version)
                 // read before the handler runs: it may release the request's fields
                 val lastRequest =
-                    requestEndsConnection(
-                        version,
-                        request.headers
-                            .getAll("Connection")
-                            .map { it.toString() }
-                            .toList(),
-                    )
+                    requestEndsConnection(version, fields.getAll("Connection").orEmpty())
                 val safe = request.method.value in SAFE_METHODS
                 val connectionOptions: ConnectionOptions?
 
@@ -366,7 +394,7 @@ internal fun CoroutineScope.startH1Pipeline(
                 val expectedHttpBody = framing.hasBody
                 val expectedHttpUpgrade: Boolean
                 try {
-                    connectionOptions = ConnectionOptions.parse(request.headers["Connection"])
+                    connectionOptions = ConnectionOptions.parse(fields["Connection"])
                     expectedHttpUpgrade = !expectedHttpBody && expectHttpUpgrade(request.method, upgrade, connectionOptions)
                 } catch (_: Throwable) {
                     request.release()
@@ -385,7 +413,7 @@ internal fun CoroutineScope.startH1Pipeline(
                 val upgraded = if (expectedHttpUpgrade) CompletableDeferred<Boolean>() else null
                 // completed when `100 Continue` has been written (the engine's `addHandlerForExpectedHeader`)
                 val continueSent =
-                    if (expectedHttpBody && expectsContinue(request, version)) Job() else null
+                    if (expectedHttpBody && expectsContinue(fields, version)) Job() else null
                 val body = if (expectedHttpBody) RequestBody(framing, input, continueSent) else null
                 val endsConnection = CompletableDeferred<Boolean>()
 
@@ -409,6 +437,7 @@ internal fun CoroutineScope.startH1Pipeline(
                                 },
                                 continueSent = continueSent,
                                 endsConnection = endsConnection,
+                                fields = fields,
                             )
                         try {
                             handler(handlerScope, request)
@@ -868,9 +897,9 @@ private suspend fun ByteReadChannel.copyToClient(
 
 /** `Expect: 100-continue` on an HTTP/1.1 request, the case `addHandlerForExpectedHeader` answers with `100 Continue`. */
 private fun expectsContinue(
-    request: Request,
+    fields: Headers,
     version: HttpProtocolVersion,
-): Boolean = version != HttpProtocolVersion.HTTP_1_0 && request.headers["Expect"]?.toString()?.lowercase() == "100-continue"
+): Boolean = version != HttpProtocolVersion.HTTP_1_0 && fields["Expect"]?.lowercase() == "100-continue"
 
 /** How the read of a request body ended. */
 private sealed interface BodyOutcome {

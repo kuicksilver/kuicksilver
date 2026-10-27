@@ -4,6 +4,8 @@
 // Vendored from Ktor 3.6.0 ktor-server-cio CIOApplicationCall.kt (internal there), adapted: TLS scheme, peer certificates, the priority signal.
 package io.kuicksilver.ktor.server.h1
 
+import io.ktor.http.Headers
+import io.ktor.http.cio.CIOHeaders
 import io.ktor.http.cio.Request
 import io.ktor.server.application.Application
 import io.ktor.server.engine.BaseApplicationCall
@@ -35,9 +37,10 @@ internal class H1Call(
     altSvc: String?,
     closing: () -> Boolean = { false },
     endsConnection: CompletableDeferred<Boolean>? = null,
+    fields: Headers = CIOHeaders(_request.headers),
 ) : BaseApplicationCall(application),
     CoroutineScope {
-    override val request = H1Request(this, remoteAddress, localAddress, input, _request, scheme)
+    override val request = H1Request(this, remoteAddress, localAddress, input, _request, scheme, fields)
 
     override val response = H1Response(this, output, input, engineDispatcher, appDispatcher, upgraded, altSvc, closing, endsConnection)
 
