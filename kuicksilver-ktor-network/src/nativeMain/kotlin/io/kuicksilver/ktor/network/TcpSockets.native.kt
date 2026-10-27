@@ -379,6 +379,7 @@ internal class NativeTcpSocket(
         private val scope: CoroutineScope,
     ) {
         private val waits = SupervisorJob(scope.coroutineContext.job)
+        private val waitScope = CoroutineScope(scope.coroutineContext + waits)
         private var select: Deferred<Unit>? = null
 
         init {
@@ -389,8 +390,8 @@ internal class NativeTcpSocket(
         /** Returns when the send may be tried again: the socket is writable, or [roomRecheck] has passed. */
         suspend fun await() {
             val pending =
-                select ?: scope
-                    .async(waits, start = CoroutineStart.UNDISPATCHED) { selector.select(this@NativeTcpSocket, SelectInterest.WRITE) }
+                select ?: waitScope
+                    .async(start = CoroutineStart.UNDISPATCHED) { selector.select(this@NativeTcpSocket, SelectInterest.WRITE) }
                     .also { select = it }
             try {
                 if (withTimeoutOrNull(roomRecheck) { pending.await() } != null) select = null
