@@ -33,6 +33,6 @@ KSL_SIM_ARGS=(:kuicksilver-testing:jvmTest -Pkuicksilver.sim.runs=200 --tests "i
 KSL_UBUNTU_IMAGE="ubuntu:24.04@sha256:534baea6a22c03a63003dbc8dbe78fe34bc0d7e595d9a9dc9834884ff530eb55"
 
 # QUIC Interop Runner: the full case list for the JVM image, the subset for the Kotlin/Native image, the peers.
-KSL_INTEROP_CASES="handshake,transfer,longrtt,chacha20,multiplexing,retry,keyupdate,blackhole,ecn,amplificationlimit,handshakeloss,transferloss,handshakecorruption,transfercorruption,ipv6,v2,rebind-port,rebind-addr,http3"
-KSL_INTEROP_NATIVE_CASES="handshake,transfer,retry,keyupdate,ecn,rebind-port,http3"
+KSL_INTEROP_CASES="handshake,transfer,resumption,zerortt,longrtt,chacha20,multiplexing,retry,keyupdate,blackhole,ecn,amplificationlimit,handshakeloss,transferloss,handshakecorruption,transfercorruption,ipv6,v2,rebind-port,rebind-addr,http3"
+KSL_INTEROP_NATIVE_CASES="handshake,transfer,resumption,zerortt,retry,keyupdate,ecn,rebind-port,http3"
 KSL_INTEROP_PEERS="quic-go ngtcp2 quiche picoquic quinn msquic"
