@@ -315,8 +315,11 @@ class ClientWebSocketExtensionsTest {
                             conn.acceptRequest().acceptConnect(
                                 Http3Headers(listOfNotNull(extensions?.let { "sec-websocket-extensions" to it })),
                             )
-                        s.output.writeFully(frames)
-                        s.output.flush()
+                        // a client that refuses the answer (an unoffered extension) may stop this stream before the frames go out
+                        runCatching {
+                            s.output.writeFully(frames)
+                            s.output.flush()
+                        }
                         val code = closeCodeOfFirstFrame(s.input)
                         // with endsWithFin, the client's send side must end with its FIN after the Close, not a reset
                         if (endsWithFin && runCatching { s.input.readBuffer() }.isFailure) -2 else code
