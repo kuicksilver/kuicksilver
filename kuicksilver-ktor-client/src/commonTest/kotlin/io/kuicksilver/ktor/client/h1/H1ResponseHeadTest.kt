@@ -72,27 +72,31 @@ class H1ResponseHeadTest {
         }
 
     /**
-     * A server that streams interim 103 heads holds the request only for a few of them: after 5 (Go's net/http stops at
-     * the same count) the request fails. Before, they were skipped without end, bounded only by a request timeout.
+     * A server that streams interim 103 heads without end fails the request once they add up to more than
+     * [MAX_INTERIM_HEAD_BYTES]: a bound by bytes, not by count, so any number of 1xx heads that a final response follows
+     * is parsed (RFC 9110 section 15.2 MUST). Before, they were skipped without end, and then a sixth one failed.
      */
     @Test fun negative_endlessInterimResponsesFail() =
         runTest(timeout = 20.seconds) {
             val wire = Wire()
             server(wire) { send ->
-                repeat(50) { send("HTTP/1.1 103 Early Hints\r\nLink: </a.css>; rel=preload\r\n\r\n") }
-                send("HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n")
+                while (true) send("HTTP/1.1 103 Early Hints\r\nLink: </a.css>; rel=preload\r\n\r\n")
             }
             val e = assertFailsWith<ParserException> { exchange(wire, get) }
-            assertTrue(e.message!!.contains("interim"), e.message)
+            assertTrue(e.message!!.contains("interim") && e.message!!.contains("$MAX_INTERIM_HEAD_BYTES"), e.message)
+            assertTrue(wire.toServer.isClosedForWrite, "the connection was not closed")
         }
 
-    /** A 100 Continue and a few 103 Early Hints before the final response are skipped (RFC 9110 section 15.2). */
-    @Test fun fewInterimResponsesAreSkipped() =
+    /**
+     * A 100 Continue and many 103 Early Hints before the final response are skipped, however many there are (RFC 9110
+     * section 15.2: a client MUST be able to parse one or more 1xx responses); before, a sixth one failed the request.
+     */
+    @Test fun manyInterimResponsesAreSkipped() =
         runTest(timeout = 20.seconds) {
             val wire = Wire()
             server(wire) { send ->
                 send("HTTP/1.1 100 Continue\r\n\r\n")
-                repeat(4) { send("HTTP/1.1 103 Early Hints\r\nLink: </a.css>; rel=preload\r\n\r\n") }
+                repeat(200) { send("HTTP/1.1 103 Early Hints\r\nLink: </a.css>; rel=preload\r\n\r\n") }
                 send("HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n")
             }
             assertEquals(204, exchange(wire, get).statusCode.value)
@@ -218,19 +222,31 @@ class H1ResponseHeadTest {
         }
 
     /**
-     * Interim responses to the CONNECT are bounded as those to a request ([MAX_INTERIM_RESPONSES], as Go): a proxy that
-     * streams them fails the tunnel; a 101 is no answer to a CONNECT and fails it as a refusal.
+     * Interim responses to the CONNECT are bounded as those to a request ([MAX_INTERIM_HEAD_BYTES] in all): many of them
+     * are skipped, a proxy that streams them without end fails the tunnel; a 101 is no answer to a CONNECT and fails it
+     * as a refusal.
      */
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
     @Test
     fun negative_endlessInterimResponsesToTheConnectFail() =
         runTest(timeout = 20.seconds) {
+            val many = ByteChannel()
+            repeat(200) { many.writeStringUtf8("HTTP/1.1 103 Early Hints\r\n\r\n") }
+            many.writeStringUtf8("HTTP/1.1 200 Connection established\r\n\r\n")
+            many.flush()
+            startTunnel(Url("https://origin.test/"), null, null, ByteChannel(), many)
             val input = ByteChannel()
-            repeat(50) { input.writeStringUtf8("HTTP/1.1 103 Early Hints\r\n\r\n") }
-            input.writeStringUtf8("HTTP/1.1 200 Connection established\r\n\r\n")
-            input.flush()
+            backgroundScope.launch {
+                runCatching {
+                    while (true) {
+                        input.writeStringUtf8("HTTP/1.1 103 Early Hints\r\n\r\n")
+                        input.flush()
+                    }
+                }
+            }
             val e = assertFailsWith<ParserException> { startTunnel(Url("https://origin.test/"), null, null, ByteChannel(), input) }
-            assertTrue(e.message!!.contains("interim"), e.message)
+            assertTrue(e.message!!.contains("interim") && e.message!!.contains("$MAX_INTERIM_HEAD_BYTES"), e.message)
+            input.cancel(null)
             val upgrade = ByteChannel()
             upgrade.writeStringUtf8("HTTP/1.1 101 Switching Protocols\r\n\r\n")
             upgrade.flush()

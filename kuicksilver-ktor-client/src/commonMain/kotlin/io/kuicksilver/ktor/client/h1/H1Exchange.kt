@@ -233,14 +233,35 @@ internal enum class AfterResponse {
 internal const val MAX_RESPONSE_HEAD_BYTES: Int = 65_536
 
 /**
- * Interim (1xx) responses skipped before the final one; one more fails the request. Go's net/http stops at the same
- * count (`max1xxResponses = 5`); without a bound a server streaming 103 Early Hints holds the request until a timeout.
+ * The interim (1xx) heads skipped before one final response may add up to this many bytes; beyond it the request fails
+ * with a [ParserException] and the connection is closed. A client MUST be able to parse any number of 1xx responses
+ * (RFC 9110 section 15.2), so the bound is on bytes, not on their count; without one a server streaming 103 Early Hints
+ * holds the request (and the socket timeout, which measures inactivity, never fires). Each head keeps its own
+ * [MAX_RESPONSE_HEAD_BYTES] limit, the final one included.
  */
-internal const val MAX_INTERIM_RESPONSES: Int = 5
+internal const val MAX_INTERIM_HEAD_BYTES: Int = 65_536
 
 /**
- * Parses the response head (interim 1xx heads other than 101 are skipped, at most [MAX_INTERIM_RESPONSES]) and starts the
- * body reader. [onBodyDone] runs when the body was read to its end (reuse allowed) or failed; WebSocket upgrades hand
+ * Counts the bytes of the interim heads before one final response against [MAX_INTERIM_HEAD_BYTES]; [what] names the
+ * final response in the failure.
+ */
+internal class InterimHeads(
+    private val what: String,
+) {
+    private var bytes = 0L
+
+    /** One more interim head of [size] bytes was skipped; [ParserException] once they are more than the bound. */
+    fun skipped(size: Int) {
+        bytes += size
+        if (bytes > MAX_INTERIM_HEAD_BYTES) {
+            throw ParserException("More than $MAX_INTERIM_HEAD_BYTES bytes of interim (1xx) responses before $what")
+        }
+    }
+}
+
+/**
+ * Parses the response head (interim 1xx heads other than 101 are skipped, any number of them up to
+ * [MAX_INTERIM_HEAD_BYTES] in all) and starts the body reader. [onBodyDone] runs when the body was read to its end (reuse allowed) or failed; WebSocket upgrades hand
  * the connection to the session (never reused). With [head], the connection's input under [input], every head is limited
  * to its size limit ([MAX_RESPONSE_HEAD_BYTES] for a pooled connection): a larger one fails with [ParserException],
  * which is not an IOException, so a pooled connection is not retried. With [continueBody] (a request with
@@ -260,20 +281,21 @@ internal suspend fun readResponse(
 ): HttpResponseData =
     withContext(callContext) {
         var rawResponse: io.ktor.http.cio.Response
-        var interim = 0
+        val interim = InterimHeads("the final response")
         var unsentBody = continueBody
         while (true) {
-            rawResponse = readResponseHead(input, head)
-                ?: throw ClosedReadChannelException(
-                    EOFException("Failed to parse HTTP response: the server prematurely closed the connection"),
-                )
+            val bytes =
+                readResponseHead(input, head)
+                    ?: throw ClosedReadChannelException(
+                        EOFException("Failed to parse HTTP response: the server prematurely closed the connection"),
+                    )
+            rawResponse = parseResponse(ByteReadChannel(bytes))
+                ?: throw ParserException("Failed to parse HTTP response")
             // an interim 1xx (100 Continue, 103 Early Hints) is not the response: drop it and read the next head (RFC 9110 section 15.2)
             if (rawResponse.status / 100 != 1 || rawResponse.status == HttpStatusCode.SwitchingProtocols.value) break
             val continued = rawResponse.status == HttpStatusCode.Continue.value
             rawResponse.release()
-            if (++interim > MAX_INTERIM_RESPONSES) {
-                throw ParserException("More than $MAX_INTERIM_RESPONSES interim (1xx) responses before the final response")
-            }
+            interim.skipped(bytes.size)
             val send = unsentBody
             if (continued && send != null) {
                 unsentBody = null
@@ -381,14 +403,13 @@ internal suspend fun readResponse(
     }
 
 /**
- * One response head from [input] ([readResponseHeadBytes]), within [head]'s size limit when there is one; null when the
- * connection ended before it.
+ * The bytes of one response head from [input] ([readResponseHeadBytes]), within [head]'s size limit when there is one;
+ * null when the connection ended before it.
  */
-@OptIn(InternalAPI::class)
 private suspend fun readResponseHead(
     input: ByteReadChannel,
     head: HeadLimitedInput?,
-): io.ktor.http.cio.Response? {
+): ByteArray? {
     head?.startHead()
     val bytes =
         try {
@@ -400,14 +421,14 @@ private suspend fun readResponseHead(
         }
     if (head?.exceeded == true) throw responseHeadTooLarge()
     head?.endHead()
-    return bytes?.let { parseResponse(ByteReadChannel(it)) }
+    return bytes
 }
 
 /**
  * HTTP CONNECT through a proxy (RFC 9110 section 9.3.6), before TLS to the origin or a WebSocket. The proxy's response
  * head is limited to [MAX_RESPONSE_HEAD_BYTES] ([ParserException] beyond); interim 1xx heads before it are skipped, at
- * most [MAX_INTERIM_RESPONSES]; any final status but 2xx, 101 included, fails the tunnel with a ProxyException carrying
- * it (407: the proxy wants credentials; not retried).
+ * most [MAX_INTERIM_HEAD_BYTES] in all; any final status but 2xx, 101 included, fails the tunnel with a ProxyException
+ * carrying it (407: the proxy wants credentials; not retried).
  */
 internal suspend fun startTunnel(
     url: Url,
@@ -430,16 +451,17 @@ internal suspend fun startTunnel(
 
         // the proxy's heads within the response-head limit, each read up to its end: the bytes after the final one are
         // the tunnel's; interim 1xx heads before it are skipped as for a request (RFC 9110 section 15.2), 101 is final
-        var interim = 0
+        val interim = InterimHeads("the CONNECT response")
         var rawResponse: io.ktor.http.cio.Response
         while (true) {
-            rawResponse = readResponseHeadBytes(input, MAX_RESPONSE_HEAD_BYTES)?.let { parseResponse(ByteReadChannel(it)) }
-                ?: throw ClosedReadChannelException(EOFException("Failed to parse CONNECT response: unexpected EOF"))
+            val bytes =
+                readResponseHeadBytes(input, MAX_RESPONSE_HEAD_BYTES)
+                    ?: throw ClosedReadChannelException(EOFException("Failed to parse CONNECT response: unexpected EOF"))
+            rawResponse = parseResponse(ByteReadChannel(bytes))
+                ?: throw ParserException("Failed to parse CONNECT response")
             if (rawResponse.status / 100 != 1 || rawResponse.status == HttpStatusCode.SwitchingProtocols.value) break
             rawResponse.release()
-            if (++interim > MAX_INTERIM_RESPONSES) {
-                throw ParserException("More than $MAX_INTERIM_RESPONSES interim (1xx) responses before the CONNECT response")
-            }
+            interim.skipped(bytes.size)
         }
         rawResponse.use {
             // a 2xx makes the connection a tunnel at the end of the head: Content-Length and Transfer-Encoding are ignored

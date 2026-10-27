@@ -453,7 +453,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   and 600, and now fail with `ParserException`. A response in `HTTP/1.2` or a later minor version is processed as
   HTTP/1.1 (RFC 9110 section 6.2) instead of failing.
 - Ktor client: an HTTP proxy's interim 1xx responses (100 Continue, 103 Early Hints) before its answer to `CONNECT` are
-  skipped, at most 5 as for a request, instead of failing the tunnel with a `ProxyException` (RFC 9110 section 15.2: a
+  skipped, bounded by bytes as for a request, instead of failing the tunnel with a `ProxyException` (RFC 9110 section 15.2: a
   client MUST be able to parse 1xx responses it did not expect).
 - Ktor client, HTTP/1.1: a request body with a transfer coding of its own (`Transfer-Encoding: gzip` in the request's or
   the content's headers) now goes out with `chunked` added as the final coding and without `Content-Length` (RFC 9112
@@ -713,9 +713,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   endless interim responses. Ktor's `parseResponse` bounds each line at 8 KiB but not their number, and the whole header
   section is buffered (2 bytes per character) before the call sees it; interim 1xx heads were skipped without a bound,
   so a server streaming 103 Early Hints held the request until a timeout, if any. A response head is now limited to
-  64 KiB (the field section size our HTTP/3 client advertises, and the server's limit for request heads) and at most 5
-  interim responses are skipped (Go's `net/http` stops at the same count); beyond either the request fails with Ktor's
-  `ParserException` and the connection is closed.
+  64 KiB (the field section size our HTTP/3 client advertises, and the server's limit for request heads), and the
+  interim heads before one final response to 64 KiB in all; beyond either the request fails with Ktor's
+  `ParserException` and the connection is closed. Interim responses are bounded by bytes, not by count: a client MUST
+  parse any number of them (RFC 9110 section 15.2).
 - Ktor client: the proxy's response to `CONNECT` had no size limit either (the same Ktor parser). It is read with the
   same 64 KiB limit, one byte at a time so that no byte of the tunnel after the head is consumed; a larger head fails
   the request with `ParserException` and the connection to the proxy is closed.

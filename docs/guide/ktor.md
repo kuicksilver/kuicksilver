@@ -207,9 +207,10 @@ val client = HttpClient(Kuicksilver) {
   (a pooled connection the server already closed is replaced once, transparently, for idempotent requests; a POST
   that failed on one is reported, never sent again). Requests on one connection are
   sequential; `pipelining` is not used. Limits and idle cleanup: see "Connection pool" below. A response head (status
-  line and header fields) is limited to 64 KiB, the same as the HTTP/3 field section, and at most 5 interim (1xx)
-  responses are skipped before the final one (as Go's `net/http`); beyond either the request fails with Ktor's
-  `ParserException` and the connection is closed. A proxy's response to `CONNECT` has the same 64 KiB limit.
+  line and header fields) is limited to 64 KiB, the same as the HTTP/3 field section, and the interim (1xx) responses
+  skipped before the final one to 64 KiB in all, however many they are (RFC 9110 section 15.2); beyond either the
+  request fails with Ktor's `ParserException` and the connection is closed. A proxy's response to `CONNECT` has the same
+  limits.
 - Requests go through a proxy when one applies (by default the platform's proxy settings): HTTP/1.1 only, see
   [Proxies](#proxies).
 - Timeouts come from `HttpTimeout`: the connect timeout (TCP + TLS, or the QUIC handshake) fails with Ktor's
