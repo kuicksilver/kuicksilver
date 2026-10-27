@@ -18,6 +18,7 @@ import io.kuicksilver.quic.receivedAll
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
@@ -199,6 +200,73 @@ class ConnectionEndTest {
                 repeat(2) { withContext(session.dispatcher) {} }
                 val body = runCatching { withTimeout(5.seconds) { req.body.readAllBytes() } }
                 assertEquals(chunks * chunk.size, body.getOrNull()?.size, "body read: $body")
+            }
+        }
+
+    /**
+     * A whole request body larger than its channel holds, which the handler never reads, does not keep the server's session
+     * once the connection is gone: its reader hands the rest over without waiting for the handler and ends, so the session
+     * ends too (no grace involved: it never runs out here). The bytes then live only in the body the handler holds.
+     */
+    @Test fun unreadWholeRequestBodyLetsTheSessionEnd() =
+        h3Test {
+            QuicPair.open().useScoped { q ->
+                val (c, s) = q.connect()
+                val server = Http3Connection.server(s)
+                val session = server.session
+                session.drainTimer = { awaitCancellation() } // the grace never runs out: only the reader's own end counts
+                val raw = RawPeer(c)
+                raw.openControl()
+                val st = c.openBidi()
+                st.output.writeFully(raw.headers(st.id, POST))
+                st.output.flush()
+                val req = withTimeout(5.seconds) { server.acceptRequest() } as ServerRequestImpl
+                val chunk = ByteArray(16 * 1024) { (it * 7).toByte() }
+                val chunks = 80 // more than the body channel takes before its writer waits for the handler
+                repeat(chunks) { st.output.writeFully(raw.data(chunk)) }
+                st.output.flushAndClose()
+                withTimeout(5.seconds) { while (!req.stream.receivedAll) delay(5) }
+                c.close(Http3ErrorCode.NO_ERROR, "")
+                withTimeout(5.seconds) { server.closed.await() }
+                withTimeout(5.seconds) {
+                    session.scope.coroutineContext.job
+                        .join()
+                }
+                val body = withTimeout(5.seconds) { req.body.readAllBytes() }
+                assertEquals(chunks * chunk.size, body.size)
+            }
+        }
+
+    /** The client's mirror: a whole response body nobody reads lets its reader end once the connection is gone. */
+    @Test fun unreadWholeResponseBodyLetsItsReaderEnd() =
+        h3Test {
+            QuicPair.open().useScoped { q ->
+                val (c, s) = q.connect()
+                val client = Http3Connection.client(c)
+                client.session.drainTimer = { awaitCancellation() }
+                val raw = RawPeer(s)
+                raw.openControl()
+                client.peerSettings.filterNotNull().first()
+                val response = async { client.request(get()) }
+                val st = s.acceptBidi()
+                st.input.readAllBytes()
+                st.output.writeFully(raw.headers(st.id, listOf(":status" to "200")))
+                st.output.flush()
+                val r = withTimeout(5.seconds) { response.await() } as ResponseImpl
+                val chunk = ByteArray(16 * 1024) { (it * 7).toByte() }
+                val chunks = 80
+                repeat(chunks) { st.output.writeFully(raw.data(chunk)) }
+                st.output.flushAndClose()
+                withTimeout(5.seconds) { while (!r.stream.receivedAll) delay(5) }
+                s.close(Http3ErrorCode.NO_ERROR, "")
+                withTimeout(5.seconds) { client.closed.await() }
+                withTimeout(5.seconds) { r.pump.join() }
+                withTimeout(5.seconds) {
+                    client.session.scope.coroutineContext.job
+                        .join()
+                }
+                val body = withTimeout(5.seconds) { r.body.readAllBytes() }
+                assertEquals(chunks * chunk.size, body.size)
             }
         }
 
