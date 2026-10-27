@@ -36,50 +36,55 @@ class DirectoryQlogSinkTest {
     private fun read(name: String) = SystemFileSystem.source(Path(dir, name)).buffered().use { it.readString() }
 
     /**
-     * The sink, or null on Android API 24-25: without java.nio.file it cannot check the directory's permissions and refuses
-     * to write diagnostics there (PrivateFiles.jvm.kt), which is the behaviour these tests cannot exercise.
+     * Runs [block] unless the sink refuses for want of java.nio.file: on Android API 24-25 it cannot check the directory's
+     * permissions and refuses to write diagnostics there (PrivateFiles.jvm.kt), the behaviour these tests cannot exercise.
+     * Any other failure still fails the test.
      */
-    private fun sinkOrNull(make: () -> DirectoryQlogSink): DirectoryQlogSink? =
+    private inline fun unlessNioFilesMissing(block: () -> Unit) {
         try {
-            make()
+            block()
         } catch (e: IllegalArgumentException) {
-            if (e.message?.contains("java.nio.file is unavailable") == true) null else throw e
+            if (e.message?.contains("java.nio.file is unavailable") != true) throw e
+        }
+    }
+
+    @Test fun negative_reusedOdcidDoesNotTruncateAnotherTrace() =
+        unlessNioFilesMissing {
+            val sink = DirectoryQlogSink(dir.toString())
+            val first = assertNotNull(sink.open("0011223344556677", TlsRole.Server))
+            first.write("first\n")
+            first.close()
+            val second = assertNotNull(sink.open("0011223344556677", TlsRole.Server))
+            second.write("second\n")
+            second.close()
+            val names = files()
+            assertEquals(2, names.size, "a reused connection ID gets a file of its own: $names")
+            assertTrue(names.all { it.startsWith("0011223344556677_server_") && it.endsWith(".sqlog") }, "$names")
+            assertEquals(setOf("first\n", "second\n"), names.map { read(it) }.toSet(), "the first trace is intact")
         }
 
-    @Test fun negative_reusedOdcidDoesNotTruncateAnotherTrace() {
-        val sink = sinkOrNull { DirectoryQlogSink(dir.toString()) } ?: return
-        val first = assertNotNull(sink.open("0011223344556677", TlsRole.Server))
-        first.write("first\n")
-        first.close()
-        val second = assertNotNull(sink.open("0011223344556677", TlsRole.Server))
-        second.write("second\n")
-        second.close()
-        val names = files()
-        assertEquals(2, names.size, "a reused connection ID gets a file of its own: $names")
-        assertTrue(names.all { it.startsWith("0011223344556677_server_") && it.endsWith(".sqlog") }, "$names")
-        assertEquals(setOf("first\n", "second\n"), names.map { read(it) }.toSet(), "the first trace is intact")
-    }
+    @Test fun negative_openTracesAreBoundedPerSink() =
+        unlessNioFilesMissing {
+            val sink = DirectoryQlogSink(dir.toString(), maxOpenTraces = 2, maxTotalBytes = 1L shl 20)
+            val a = assertNotNull(sink.open("aa00000000000000", TlsRole.Server))
+            val b = assertNotNull(sink.open("bb00000000000000", TlsRole.Server))
+            assertNull(sink.open("cc00000000000000", TlsRole.Server), "a third connection is not traced while two traces are open")
+            a.close()
+            val c = assertNotNull(sink.open("cc00000000000000", TlsRole.Server), "a closed trace frees its slot")
+            b.close()
+            c.close()
+            assertEquals(3, files().size)
+        }
 
-    @Test fun negative_openTracesAreBoundedPerSink() {
-        val sink = sinkOrNull { DirectoryQlogSink(dir.toString(), maxOpenTraces = 2, maxTotalBytes = 1L shl 20) } ?: return
-        val a = assertNotNull(sink.open("aa00000000000000", TlsRole.Server))
-        val b = assertNotNull(sink.open("bb00000000000000", TlsRole.Server))
-        assertNull(sink.open("cc00000000000000", TlsRole.Server), "a third connection is not traced while two traces are open")
-        a.close()
-        val c = assertNotNull(sink.open("cc00000000000000", TlsRole.Server), "a closed trace frees its slot")
-        b.close()
-        c.close()
-        assertEquals(3, files().size)
-    }
-
-    @Test fun negative_totalBytesAreBoundedPerSink() {
-        val sink = sinkOrNull { DirectoryQlogSink(dir.toString(), maxOpenTraces = 8, maxTotalBytes = 100) } ?: return
-        val a = assertNotNull(sink.open("aa00000000000000", TlsRole.Server))
-        repeat(20) { a.write("0123456789") } // 200 bytes offered
-        a.close()
-        assertTrue(read(files().single()).length <= 100, "the trace stops at the sink's lifetime budget")
-        assertNull(sink.open("bb00000000000000", TlsRole.Server), "no trace opens once the budget is spent")
-    }
+    @Test fun negative_totalBytesAreBoundedPerSink() =
+        unlessNioFilesMissing {
+            val sink = DirectoryQlogSink(dir.toString(), maxOpenTraces = 8, maxTotalBytes = 100)
+            val a = assertNotNull(sink.open("aa00000000000000", TlsRole.Server))
+            repeat(20) { a.write("0123456789") } // 200 bytes offered
+            a.close()
+            assertTrue(read(files().single()).length <= 100, "the trace stops at the sink's lifetime budget")
+            assertNull(sink.open("bb00000000000000", TlsRole.Server), "no trace opens once the budget is spent")
+        }
 
     @Test fun negative_nameThatIsNotHexIsRefused() {
         val sink = DirectoryQlogSink(dir.toString())
