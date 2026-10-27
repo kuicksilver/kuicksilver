@@ -36,7 +36,12 @@ public class Http3Endpoint private constructor(
     /** The bound UDP address, with the real port when [bind] was given port 0. */
     public val localAddress: InetSocketAddress get() = endpoint.localAddress
 
-    /** Opens a client connection to [remote]; the handshake and our SETTINGS are done when this returns. */
+    /**
+     * Opens a client connection to [remote]; the handshake and our SETTINGS are done when this returns, unless the server
+     * sent GOAWAY first (it is stopping): the connection is then returned with [Http3Connection.goAwayReceived] set and
+     * already closing, and a request on it fails with [Http3Exception.RequestNotProcessed] (retry-safe, RFC 9114 section
+     * 5.2).
+     */
     public suspend fun connect(
         remote: InetSocketAddress,
         tls: TlsConfig,

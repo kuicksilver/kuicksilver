@@ -238,7 +238,10 @@ internal class H3Session(
      * unidirectional streams HTTP/3 needs (RFC 9114 section 6.2: they "MUST allow the peer to create at least three") would
      * hold the caller forever. Without them after [criticalStreamsDeadline] the connection closes with
      * H3_GENERAL_PROTOCOL_ERROR. A server returns at once, so an accept loop never waits on one peer; a client returns once
-     * its SETTINGS went out and throws the connection's error when the streams could not be opened.
+     * its SETTINGS went out and throws the connection's error when the streams could not be opened. A client that received
+     * GOAWAY first (a server stopping right after the handshake) returns too: it closed itself, idle, as RFC 9114 section 5.2
+     * lets it, and a request then fails with the retry-safe [Http3Exception.RequestNotProcessed]; its own H3_NO_ERROR close
+     * is no failure of the connection to report.
      */
     suspend fun start(criticalStreamsDeadline: Duration = CRITICAL_STREAMS_DEADLINE) {
         scope.launch {
@@ -255,7 +258,12 @@ internal class H3Session(
         quic.paths.firstOrNull { it.id == active }?.let { currentPath = it }
         scope.launch { acceptLoop() }
         datagrams.start()
-        if (!isServer) awaitCriticalStreams()
+        if (isServer) return
+        try {
+            awaitCriticalStreams()
+        } catch (e: Http3Exception) {
+            if (goAwayReceived.value == null) throw e
+        }
     }
 
     private suspend fun openCriticalStreams(deadline: Duration) {

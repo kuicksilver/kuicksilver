@@ -112,7 +112,9 @@ public class Http3Connection private constructor(
         /**
          * Starts the client side on an established QUIC connection; returns once our SETTINGS went out. Throws
          * [Http3Exception.Protocol] (H3_GENERAL_PROTOCOL_ERROR) when the server's transport parameters do not let us open
-         * the control and QPACK streams (RFC 9114 section 6.2).
+         * the control and QPACK streams (RFC 9114 section 6.2). A server that sent GOAWAY before that (it is stopping) does
+         * not make this throw: the connection is returned with [goAwayReceived] set and already closing, and a request on it
+         * fails with [Http3Exception.RequestNotProcessed] (retry-safe, RFC 9114 section 5.2).
          */
         public suspend fun client(
             quic: QuicConnection,

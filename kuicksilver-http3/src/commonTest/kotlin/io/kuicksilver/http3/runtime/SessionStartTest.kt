@@ -2,12 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.kuicksilver.http3.runtime
 
+import io.ktor.utils.io.writeFully
 import io.kuicksilver.http3.Http3Connection
 import io.kuicksilver.http3.Http3ErrorCode
 import io.kuicksilver.http3.Http3Exception
 import io.kuicksilver.http3.Http3Role
 import io.kuicksilver.http3.Http3Settings
 import io.kuicksilver.http3.QuicPair
+import io.kuicksilver.http3.frame.ControlFrames
+import io.kuicksilver.http3.frame.FrameType
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.quicConfig
 import kotlinx.coroutines.withTimeout
@@ -58,6 +61,26 @@ class SessionStartTest {
                     }
                 assertEquals(Http3ErrorCode.GENERAL_PROTOCOL_ERROR, e.h3Code)
                 assertEquals(Http3ErrorCode.GENERAL_PROTOCOL_ERROR, peerSawClose(s))
+            }
+        }
+
+    /**
+     * A server that is stopping sends GOAWAY before the client's own SETTINGS went out (here held back by the server's
+     * stream credit), and the idle client closes at once (RFC 9114 section 5.2). Starting the client is not a failure of
+     * the handshake or the protocol: the connection is returned with the GOAWAY, and a request on it fails with the
+     * retry-safe [Http3Exception.RequestNotProcessed], never with the client's own H3_NO_ERROR close.
+     */
+    @Test fun goAwayBeforeTheClientSettingsLeaveRefusesRequestsAsNotProcessed() =
+        h3Test {
+            QuicPair.open(serverQuic = quicConfig { maxUniStreams = 2 }).use { q ->
+                val (c, s) = q.connect()
+                val raw = RawPeer(s)
+                raw.openControl()
+                raw.control.output.writeFully(raw.frame(FrameType.GOAWAY, ControlFrames.goAwayPayload(0)))
+                raw.control.output.flush()
+                val client = withTimeout(10.seconds) { Http3Connection.client(c) }
+                assertEquals(0L, client.goAwayReceived.value)
+                assertFailsWith<Http3Exception.RequestNotProcessed> { withTimeout(10.seconds) { client.request(get()) } }
             }
         }
 
