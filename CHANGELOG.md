@@ -122,6 +122,13 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   so code that reacts to the new value finds the stream already scheduled by it (RFC 9218 section 7).
 - HTTP/3 server: `goAway()` no longer throws when the client answers the GOAWAY by closing the connection at once (RFC 9114
   section 5.2). The transport's loss could reach the GOAWAY write before the session saw the close.
+- Building from source on a clean machine (a fresh `GRADLE_USER_HOME`, as `docs/verifying.md` and a CI runner start):
+  Gradle dependency verification failed, because an empty cache resolves other variants than a warm one (junit-bom
+  `.module` files the Plugin Portal serves without a usable signature, JUnit, OpenTelemetry, protobuf and poko artifacts
+  no trusted key covered). `gradle/verification-metadata.xml` now covers them (signature trust where the key verifies,
+  a sha256 checked against Maven Central's `.sha1` and the Plugin Portal otherwise; the new keys are in the keyring).
+  The keep-rule checks (`tools/check/android-keep-rules.sh`, `service-keep-rules.sh`) run the R8 pinned in
+  `gradle/libs.versions.toml` (`./gradlew -q ksR8Jar`) instead of whichever one another build left in the cache.
 - Ktor client, HTTP/1.1: a response whose `Content-Length` or `Transfer-Encoding` has whitespace other than SP and
   HTAB around a value (VT, FF, U+00A0) fails, and its connection is closed instead of reused (RFC 9110 sections 5.6.3
   and 8.6, RFC 9112 section 6.3 item 5). `Content-Length: 5<VT>` framed a 5-byte body and `Transfer-Encoding:
