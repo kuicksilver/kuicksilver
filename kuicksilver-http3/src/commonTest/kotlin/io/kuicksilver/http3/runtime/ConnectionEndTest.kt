@@ -14,9 +14,11 @@ import io.kuicksilver.http3.http3Request
 import io.kuicksilver.http3.readAllBytes
 import io.kuicksilver.http3.useScoped
 import io.kuicksilver.native.KslLoader
+import io.kuicksilver.quic.receivedAll
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.job
@@ -126,6 +128,77 @@ class ConnectionEndTest {
                     val body = runCatching { withTimeout(5.seconds) { r.getOrThrow().body.readAllBytes() } }
                     assertEquals("hello", body.getOrNull()?.decodeToString(), "request: $r, body read: $body")
                 }
+            }
+        }
+
+    /**
+     * The whole response (HEADERS, DATA, FIN) arrived before the server's CONNECTION_CLOSE, but the body's reader runs only
+     * after the drain grace measured from the connection's end has passed: the scheduler paused it (a loaded Android 7
+     * emulator, a slow Windows VM, macOS under memory pressure). The stream had every byte (RFC 9000 section 3.2, "Data
+     * Recvd"), so the body is read whole; the grace cut it with H3_NO_ERROR from the peer.
+     */
+    @Test fun wholeResponseReaderRunLateReadsWhole() =
+        h3Test {
+            QuicPair.open().useScoped { q ->
+                val (c, s) = q.connect()
+                val client = Http3Connection.client(c)
+                val session = client.session
+                val reader = CompletableDeferred<Unit>()
+                session.beforeDrainerForTest = { reader.await() } // the scheduler pauses the body's reader
+                session.drainTimer = {} // and the grace is over as soon as it starts
+                val raw = RawPeer(s)
+                raw.openControl()
+                client.peerSettings.filterNotNull().first()
+                val response = async { client.request(get()) }
+                val st = s.acceptBidi()
+                st.input.readAllBytes()
+                st.output.writeFully(raw.headers(st.id, listOf(":status" to "200")) + raw.data("hello".encodeToByteArray()))
+                st.output.flushAndClose() // one STREAM frame: the client has the FIN once it has the headers
+                val r = withTimeout(5.seconds) { response.await() }
+                s.close(Http3ErrorCode.NO_ERROR, "")
+                withTimeout(5.seconds) { client.closed.await() }
+                withTimeout(5.seconds) {
+                    session.scope.coroutineContext.job
+                        .join()
+                }
+                // the reader's drainer saw the end first (notified before this coroutine), so its grace has run out here
+                withContext(session.dispatcher) {}
+                reader.complete(Unit)
+                val body = runCatching { withTimeout(5.seconds) { r.body.readAllBytes() } }
+                assertEquals("hello", body.getOrNull()?.decodeToString(), "body read: $body")
+            }
+        }
+
+    /**
+     * The server's mirror: a request body larger than its channel holds came whole (FIN included) before the client's
+     * close, and the handler reads it only after the drain grace. The body pump waits for the handler, not for the network,
+     * and the body is read whole.
+     */
+    @Test fun wholeRequestBodyReadAfterTheGraceReadsWhole() =
+        h3Test {
+            QuicPair.open().useScoped { q ->
+                val (c, s) = q.connect()
+                val server = Http3Connection.server(s)
+                val session = server.session
+                session.drainTimer = {} // the grace is over as soon as it starts
+                val raw = RawPeer(c)
+                raw.openControl()
+                val st = c.openBidi()
+                st.output.writeFully(raw.headers(st.id, POST))
+                st.output.flush()
+                val req = withTimeout(5.seconds) { server.acceptRequest() } as ServerRequestImpl
+                // more than the body channel takes before its writer waits: the pump waits for the handler to read
+                val chunk = ByteArray(16 * 1024) { (it * 7).toByte() }
+                val chunks = 80
+                repeat(chunks) { st.output.writeFully(raw.data(chunk)) }
+                st.output.flushAndClose()
+                withTimeout(5.seconds) { while (!req.stream.receivedAll) delay(5) } // the FIN is in
+                c.close(Http3ErrorCode.NO_ERROR, "")
+                withTimeout(5.seconds) { server.closed.await() }
+                // the session's end and its (zero) grace ran before these
+                repeat(2) { withContext(session.dispatcher) {} }
+                val body = runCatching { withTimeout(5.seconds) { req.body.readAllBytes() } }
+                assertEquals(chunks * chunk.size, body.getOrNull()?.size, "body read: $body")
             }
         }
 

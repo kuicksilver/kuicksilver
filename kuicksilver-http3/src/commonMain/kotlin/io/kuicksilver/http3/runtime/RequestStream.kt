@@ -33,10 +33,8 @@ internal suspend fun H3Session.decodeSection(
 ): List<Pair<String, String>> =
     when (
         val r =
-            qpack.decode(st.id, block) {
-                st.input.closedCause !=
-                    null
-            }
+            // the peer reset the stream, or the connection is gone with the inserts the section waits for
+            qpack.decode(st.id, block) { st.input.closedCause != null || noMoreInserts() }
     ) {
         is DecodeResult.Decoded -> r.fields
 
@@ -192,7 +190,7 @@ internal suspend fun H3Session.pumpBody(
     ) {
         // the peer reset the stream while its trailers waited for the encoder stream: the body fails with that reset, and
         // the Stream Cancellation was already sent (RFC 9204 section 4.4.2)
-        val mapped = map(st.input.closedCause ?: e)
+        val mapped = map(st.input.closedCause ?: if (noMoreInserts()) connectionError() else e)
         out.cancel(mapped)
         trailers.completeExceptionally(mapped)
     } catch (e: Throwable) {

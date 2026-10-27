@@ -359,7 +359,7 @@ private suspend fun H3Session.exchange(
         throw connectionError()
     } catch (e: StreamAbandoned) {
         sender?.cancel()
-        throw sendFailure.failureOr(map(st.input.closedCause ?: e))
+        throw sendFailure.failureOr(map(st.input.closedCause ?: if (noMoreInserts()) connectionError() else e))
     } catch (e: Throwable) {
         sender?.cancel()
         // the stream was reset, or we stopped it (refused trailers), before the response HEADERS were read: a section the
@@ -479,7 +479,7 @@ internal class ResponseImpl(
 
     // read to its end even when the connection is lost: the body's last bytes may come with the peer's close (drains)
     internal val pump: Job =
-        session.launchDrainer {
+        session.launchDrainer(st) {
             session.pumpBody(
                 st,
                 frames,

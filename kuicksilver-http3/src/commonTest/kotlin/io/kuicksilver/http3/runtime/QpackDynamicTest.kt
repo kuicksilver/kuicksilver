@@ -22,8 +22,10 @@ import io.kuicksilver.http3.useScoped
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.QuicConnection
 import io.kuicksilver.quic.QuicStream
+import io.kuicksilver.quic.receivedAll
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -254,6 +256,33 @@ class QpackDynamicTest {
                 withTimeout(5.seconds) { while (!decoderBytes.value.contains(cancellation)) delay(20) }
                 delay(200)
                 assertEquals(1, decoderBytes.value.count { it == cancellation }, "Stream Cancellations: ${decoderBytes.value.toList()}")
+            }
+        }
+
+    /**
+     * Request trailers blocked on a dynamic-table entry, then the FIN and the client's CONNECTION_CLOSE: the request stream
+     * came whole, so the drain grace does not cut its reader, but no insert can arrive any more (the peer's encoder stream
+     * is gone with the connection): the body fails with the connection's end instead of waiting forever.
+     */
+    @Test fun trailersBlockedWhenTheConnectionEndsFailTheBody() =
+        h3Test {
+            QuicPair.open().use { q ->
+                val (c, s) = q.connect()
+                val server = Http3Connection.server(s, dyn)
+                server.session.drainTimer = { awaitCancellation() } // no grace cut: the wait has to end by itself
+                val raw = RawPeer(c)
+                raw.openControl()
+                val st = c.openBidi()
+                st.output.writeFully(raw.headers(st.id, POST) + raw.data("x".encodeToByteArray()))
+                st.output.writeFully(FrameHeaders.frame(FrameType.HEADERS, blockedSection()))
+                st.output.flushAndClose()
+                val req = withTimeout(5.seconds) { server.acceptRequest() } as ServerRequestImpl
+                withTimeout(5.seconds) { while (!req.stream.receivedAll) delay(5) }
+                c.close(Http3ErrorCode.NO_ERROR, "")
+                val failure = withTimeout(5.seconds) { runCatching { req.body.readAllBytes() }.exceptionOrNull() }
+                val chain = generateSequence(failure) { it.cause }.toList()
+                assertTrue(chain.none { it is StreamAbandoned }, "internal signal leaked: $chain")
+                assertTrue(chain.any { it is Http3Exception }, "no Http3Exception in $chain")
             }
         }
 
