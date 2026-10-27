@@ -339,8 +339,8 @@ false` keeps them.
 When HTTP/3 is an option (`Preferred`, a QUIC hint, or a live Alt-Svc alternative) and no HTTP/3 connection to it is
 open yet, the engine races connection setups (RFC 8305 section 5, after Chromium and curl): QUIC starts at once and
 TCP + TLS starts when QUIC fails, or after a head start of 1.5 x the host's smoothed RTT (250 ms without history,
-clamped to 100 ms..2 s; `hardDelay` overrides it) — and with no head start at all on a network where QUIC was never
-seen working. The request runs once, on the winner. A QUIC setup that loses the race keeps going in the background and
+clamped to 100 ms..2 s; `hardDelay` overrides it) — and after 10 ms, the least RFC 8305 section 5 allows between two
+attempts, on a network where QUIC was never seen working. The request runs once, on the winner. A QUIC setup that loses the race keeps going in the background and
 serves the next requests once it is up; a TCP connection that loses is closed. When both setups fail, the HTTP/1.1
 failure is reported — the race was the one HTTP/1.1 attempt, there is no second one.
 

@@ -69,7 +69,12 @@ public class Http3ClientConfig {
      */
     public var clearOnNetworkChange: Boolean = true
 
-    /** Head start of HTTP/3 over HTTP/1.1; null: 1.5 x the host's smoothed RTT, or 250 ms without history, clamped to 100 ms..2 s. */
+    /**
+     * Head start of HTTP/3 over HTTP/1.1 on a network where QUIC was confirmed; null: 1.5 x the host's smoothed RTT, or
+     * 250 ms without history, clamped to 100 ms..2 s. An explicit value must be 10 ms..2 s (RFC 8305 section 5), or
+     * [Duration.INFINITE] for HTTP/1.1 only after HTTP/3 failed; another one fails the engine's creation with
+     * [IllegalArgumentException]. On a network where QUIC was never confirmed the head start is 10 ms.
+     */
     public var hardDelay: Duration? = null
 
     /** Identifies the current network; a change resets "broken" marks and QUIC confirmation. null: one network. */

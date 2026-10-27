@@ -167,6 +167,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Changed
 
+- Ktor client: the h3/h1 race starts HTTP/1.1 10 ms after HTTP/3 on a network where QUIC was never confirmed, instead
+  of at the same time, and an explicit `http3 { hardDelay }` must be 10 ms..2 s or `Duration.INFINITE` (else the
+  engine's creation fails with `IllegalArgumentException`; before, any value was used as is). RFC 8305 section 5: a
+  subsequent connection attempt MUST NOT start within 10 ms of the previous one, and attempts SHOULD NOT be
+  simultaneous.
 - Ktor client: `http3 { clearOnNetworkChange }` is now true by default: when `networkId` reports a new network, the
   engine forgets the Alt-Svc alternatives without `persist=1`, as RFC 7838 section 2.2 says a client SHOULD. Before, it
   kept them unless asked. `clearOnNetworkChange = false` restores the old behaviour.

@@ -259,7 +259,7 @@ Guide: [Ktor: Client](ktor.md#client).
 | `quicHints` | `Set<HostPort>` | empty | origins treated as `Preferred` in `Auto` mode; `HostPort(host, port)` compares the host exactly as in URLs |
 | `altSvcStore` | `AltSvcStore` | `InMemoryAltSvcStore()` | where alternatives live; `FileAltSvcStore(path)` keeps them across restarts |
 | `clearOnNetworkChange` | `Boolean` | `true` | drop alternatives without `persist=1` when `networkId` changes (RFC 7838 section 2.2); `false` keeps them |
-| `hardDelay` | `Duration?` | `null` (1.5 x the origin's smoothed RTT, 250 ms without history, clamped to 100 ms..2 s) | head start of HTTP/3 over HTTP/1.1 in a race; an explicit value is used as is |
+| `hardDelay` | `Duration?` | `null` (1.5 x the origin's smoothed RTT, 250 ms without history, clamped to 100 ms..2 s) | head start of HTTP/3 over HTTP/1.1 in a race on a network where QUIC was confirmed (10 ms elsewhere); an explicit value must be 10 ms..2 s or `Duration.INFINITE` (RFC 8305 section 5), else the engine's creation fails with `IllegalArgumentException` |
 | `networkId` | `() -> String?` | `{ null }` (one network) | identifies the current network; a change forgets broken marks and QUIC confirmation |
 | `settings` | `Http3Settings` | `Http3Settings.Default` | HTTP/3 settings of the engine's connections |
 | `endpoint` | `QuicEndpointConfig` | `QuicEndpointConfig.Default` | the client QUIC endpoint (bound to `0.0.0.0:0`, a dual-stack socket on the accelerated transport) |

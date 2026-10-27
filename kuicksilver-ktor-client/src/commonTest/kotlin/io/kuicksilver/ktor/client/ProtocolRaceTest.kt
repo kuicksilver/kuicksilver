@@ -20,6 +20,7 @@ import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
@@ -80,7 +81,12 @@ class ProtocolRaceTest {
             assertNotNull(r.h3Failure)
         }
 
-    @Test fun noHeadStartOnUnconfirmedNetwork() =
+    /**
+     * On a network where QUIC was never confirmed HTTP/1.1 starts after the minimum delay of RFC 8305 section 5, not
+     * together with HTTP/3: "a subsequent connection MUST NOT be started within 10 milliseconds of the previous attempt".
+     * Before, both started at once.
+     */
+    @Test fun minimumHeadStartOnUnconfirmedNetwork() =
         runTest {
             var startedAt = -1L
             race.race({
@@ -91,14 +97,35 @@ class ProtocolRaceTest {
                 delay(10)
                 "h1"
             }, srtt = null, quicConfirmed = false)
-            assertEquals(0L, startedAt)
+            assertEquals(10L, startedAt)
+            assertEquals(10.milliseconds, race.headStart(null, false))
+            assertEquals(10.milliseconds, ProtocolRace(700.milliseconds).headStart(null, false))
         }
+
+    /**
+     * An explicit `hardDelay` keeps the bounds of RFC 8305 section 5 (at least 10 ms, MUST; at most 2 s, SHOULD), as
+     * `connectionAttemptDelay` does; `Duration.INFINITE` (HTTP/1.1 only after HTTP/3 failed) stays allowed. Before, any
+     * value was used as is, zero included.
+     */
+    @Test fun negative_hardDelayOutsideRfc8305BoundsIsRefused() {
+        for (d in listOf(Duration.ZERO, 9.milliseconds, 2001.milliseconds)) {
+            assertFailsWith<IllegalArgumentException>("$d") { ProtocolRace(d) }
+        }
+        for (d in listOf(10.milliseconds, 2.seconds, Duration.INFINITE)) ProtocolRace(d)
+    }
 
     /** An h1 setup that completed just as h3 won is handed to [onLoser] (the engine closes it) instead of being leaked. */
     @Test fun losingH1ResultIsHandedToOnLoser() =
         runTest {
             val lost = ArrayList<String>()
-            val r = race.race({ "h3" }, { "h1" }, null, quicConfirmed = false, onLoser = { lost += it })
+            val r =
+                race.race({
+                    delay(30)
+                    "h3"
+                }, {
+                    withContext(NonCancellable) { delay(30) }
+                    "h1"
+                }, null, quicConfirmed = false, onLoser = { lost += it })
             assertEquals(Protocol.H3, r.winner)
             assertEquals(listOf("h1"), lost)
         }
