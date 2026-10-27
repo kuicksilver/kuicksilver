@@ -21,30 +21,67 @@ internal class RequestHeadRefused(
 ) : Exception(message)
 
 /**
- * Checks the request line at the start of [this] input (empty lines before it already skipped) before Ktor's parser reads
+ * Checks the request head at the start of [this] input (empty lines before it already skipped) before Ktor's parser reads
  * it, and throws [RequestHeadRefused] for one the server refuses. A request line longer than [MAX_REQUEST_LINE_BYTES]
  * is a request-target longer than the server parses: 414 (RFC 9112 section 3: the server MUST respond with 414), unless
- * no method and separator start it (400, as before). The line itself is checked by [checkRequestLine]. Returns without
- * a verdict when the input ends or the head limit is reached before the line end: the parser then reports that as it
- * did.
+ * no method and separator start it (400, as before). The request line itself is checked by [checkRequestLine] as soon
+ * as it is there, the field lines by [checkFieldSection] once the whole head is. Returns without a verdict when the
+ * input ends or the head limit is reached before the head's end: the parser then reports that as it did.
  */
 @OptIn(InternalAPI::class, InternalIoApi::class)
 internal suspend fun HeadLimitedInput.checkRequestHead() {
     val buffer = readBuffer.buffer
     var scanned = 0L
+    var lineStart = 0L
+    var fieldsStart = -1L
     while (true) {
-        val lf = buffer.indexOf(LF_BYTE, scanned, minOf(buffer.size, MAX_REQUEST_LINE_BYTES + 2L))
-        if (lf >= 0) {
-            val end = if (lf > 0 && buffer[lf - 1] == CR_BYTE) lf - 1 else lf
+        val limit = if (fieldsStart < 0) minOf(buffer.size, MAX_REQUEST_LINE_BYTES + 2L) else buffer.size
+        val lf = if (scanned < limit) buffer.indexOf(LF_BYTE, scanned, limit) else -1L
+        if (lf < 0) {
+            if (fieldsStart < 0 && buffer.size >= MAX_REQUEST_LINE_BYTES + 2L) refuseLongLine(buffer)
+            scanned = limit
+            if (!awaitContent((buffer.size + 1).toInt())) return
+            continue
+        }
+        val end = if (lf > lineStart && buffer[lf - 1] == CR_BYTE) lf - 1 else lf
+        if (fieldsStart < 0) {
             if (end > MAX_REQUEST_LINE_BYTES) refuseLongLine(buffer)
             val line = buffer.peek().readByteArray(end.toInt())
             val minor = checkRequestLine(line)
             if (line[minor] > '1'.code.toByte()) replaceBufferedByte(minor.toLong(), '1'.code.toByte())
+            fieldsStart = lf + 1
+        } else if (end == lineStart) {
+            val fields = buffer.peek()
+            fields.skip(fieldsStart)
+            checkFieldSection(fields.readByteArray((lineStart - fieldsStart).toInt()))
             return
         }
-        if (buffer.size >= MAX_REQUEST_LINE_BYTES + 2L) refuseLongLine(buffer)
-        scanned = buffer.size
-        if (!awaitContent((buffer.size + 1).toInt())) return
+        lineStart = lf + 1
+        scanned = lf + 1
+    }
+}
+
+/**
+ * Checks the field lines of a request head ([fields]: each line with its line end, without the empty line that ends the
+ * section). RFC 9110 section 5.5: a recipient of CR, LF or NUL within a field value MUST either reject the message or
+ * replace each of them with SP; field-content is VCHAR, obs-text, SP and HTAB, so the other control characters (DEL
+ * among them) are invalid too: 400, as Go's net/http does. Ktor's parser refuses only CR and LF in a value. A line
+ * without a colon is left to the parser, which refuses it.
+ */
+internal fun checkFieldSection(fields: ByteArray) {
+    var start = 0
+    while (start < fields.size) {
+        var lf = start
+        while (lf < fields.size && fields[lf] != LF_BYTE) lf++
+        val end = if (lf > start && fields[lf - 1] == CR_BYTE) lf - 1 else lf
+        val colon = (start until end).firstOrNull { fields[it] == ':'.code.toByte() }
+        if (colon != null) {
+            for (i in colon + 1 until end) {
+                val c = fields[i].toInt() and 0xFF
+                if ((c < 0x20 && c != 0x09) || c == 0x7F) refuse("A control character in a field value")
+            }
+        }
+        start = lf + 1
     }
 }
 
