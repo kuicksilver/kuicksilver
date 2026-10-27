@@ -489,6 +489,75 @@ class LifecycleTest {
         }
     }
 
+    /**
+     * RFC 9000 section 10.2.1: "An endpoint in the closing state sends a packet containing a CONNECTION_CLOSE frame in response to
+     * any incoming packet that it attributes to the connection" and "SHOULD limit the rate at which it generates packets in the
+     * closing state"; "An endpoint MUST NOT send further packets" other than that. Ours answer at most once per PTO, and carry
+     * the CONNECTION_CLOSE and padding only.
+     */
+    @Test fun closingStateSendsOnlyRateLimitedConnectionClose() {
+        val p = CorePair()
+        try {
+            assertTrue(p.handshake())
+            p.runUntil { p.client.state == ConnectionState.Confirmed && p.server?.state == ConnectionState.Confirmed }
+            val s = p.server!!
+            val c = p.client
+            val sid = s.openStream(false)
+            c.close(5, "bye", p.now)
+            val sent = ArrayList<ByteArray>()
+
+            fun pollClient() {
+                p.batch.clear()
+                val n = c.poll(p.batch, p.now)
+                for (i in 0 until n) sent += p.batch.buffer(i).toByteArray(p.batch.length(i))
+            }
+
+            fun serverSends() {
+                s.writeStream(sid, ByteArray(200), 0, 200, false)
+                p.batch.clear()
+                val n = s.poll(p.batch, p.now)
+                val ds = (0 until n).map { p.batch.buffer(it).toByteArray(p.batch.length(it)) }
+                for (d in ds) {
+                    val b = PacketBuffer.of(d)
+                    try {
+                        c.handleDatagram(b, d.size, io.kuicksilver.quic.CoreFixtures.serverAddr, io.kuicksilver.quic.Ecn.NotEct, p.now)
+                    } finally {
+                        b.close()
+                    }
+                }
+            }
+            pollClient()
+            assertEquals(1, sent.size, "the close goes out once")
+            val pto = c.pto()
+            // the server keeps sending within one PTO: no answer
+            repeat(5) {
+                p.advance(pto / 10)
+                serverSends()
+                pollClient()
+            }
+            assertEquals(1, sent.size, "no second close within a PTO")
+            // a PTO later, one more answer for the next incoming packet
+            p.advance(pto)
+            serverSends()
+            pollClient()
+            serverSends()
+            pollClient()
+            assertEquals(2, sent.size, "one answer per PTO")
+            for (d in sent) {
+                val f = nullOneRttPayload(d, s.localCid.length)
+                assertTrue(f != null && f[0].toInt() == 0x1d, "a 1-RTT CONNECTION_CLOSE")
+                val (code, cl) = varint(f, 1)
+                assertEquals(5L, code)
+                val (len, ll) = varint(f, 1 + cl)
+                val rest = f.copyOfRange(1 + cl + ll + len.toInt(), f.size)
+                assertTrue(rest.all { it == 0.toByte() }, "nothing but PADDING after the CONNECTION_CLOSE")
+            }
+            assertEquals(ConnectionState.Closing, c.state)
+        } finally {
+            p.close()
+        }
+    }
+
     @Test fun errorCodeAbove2Pow62Rejected() {
         val p = CorePair()
         try {
