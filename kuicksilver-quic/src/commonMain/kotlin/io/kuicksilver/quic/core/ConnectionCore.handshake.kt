@@ -528,6 +528,8 @@ internal class ConnectionHandshakeSink(
         if (core.role == TlsRole.Server) {
             core.sendHandshakeDone = true
             core.confirmHandshake()
+            // the client's 1-RTT packets held until its Finished was verified (RFC 9001 section 5.7)
+            core.receiver.replayBuffered(3)
         }
     }
 

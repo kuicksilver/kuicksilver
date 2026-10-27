@@ -245,7 +245,12 @@ internal class PacketReceiver(
             } else {
                 c.readKeys[level]
             }
-        if (key == null) {
+        // RFC 9001 section 5.7: "a server MUST NOT process incoming 1-RTT protected packets before the TLS handshake is complete";
+        // a TLS stack may hand it the 1-RTT read key before the client's Finished is verified (BoringSSL's QUIC API and
+        // NullTlsSession do). Such packets "MAY be stored and later decrypted": they wait with those held for keys, until
+        // onHandshakeDone replays them
+        val beforeFinished = type == PacketType.OneRtt && c.role == TlsRole.Server && c.state == ConnectionState.Handshaking
+        if (key == null || beforeFinished) {
             // 0-RTT waits for its key only on a server that accepts it, and only until the handshake shows whether it was accepted
             if (type == PacketType.ZeroRtt &&
                 (c.role != TlsRole.Server || c.serverEarly == null || c.state != ConnectionState.Handshaking)

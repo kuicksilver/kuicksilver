@@ -5,6 +5,9 @@ package io.kuicksilver.quic.core
 import io.kuicksilver.annotations.DelicateKuicksilverApi
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.native.KslLoader
+import io.kuicksilver.native.PacketBuffer
+import io.kuicksilver.native.of
+import io.kuicksilver.native.toByteArray
 import io.kuicksilver.quic.ConnectionEvent
 import io.kuicksilver.quic.ConnectionState
 import io.kuicksilver.quic.CoreFixtures
@@ -15,6 +18,8 @@ import io.kuicksilver.quic.StreamPriority
 import io.kuicksilver.quic.TestCerts
 import io.kuicksilver.quic.ksl
 import io.kuicksilver.quic.nullDatagramHasAckElicitingInitial
+import io.kuicksilver.quic.wire.PacketHeaderCodec
+import io.kuicksilver.quic.wire.PacketHeaderView
 import io.kuicksilver.tls.Certificate
 import io.kuicksilver.tls.EncryptionLevel
 import io.kuicksilver.tls.QuicCrypto
@@ -38,6 +43,116 @@ import kotlin.time.Duration.Companion.seconds
 @OptIn(ExperimentalKuicksilverApi::class, DelicateKuicksilverApi::class)
 class HandshakeTest {
     @BeforeTest fun load() = KslLoader.ensureLoaded()
+
+    /**
+     * A Null-crypto pair whose client completed its handshake while every client datagram after the ClientHello was held back:
+     * [held] carries the client's Finished; [oneRtt] are 1-RTT packets (cut out of their datagrams) with a STREAM frame
+     * opening client stream 0 with "hello". The server holds 1-RTT read keys from the ClientHello on (as BoringSSL's QUIC API).
+     */
+    private class HeldFinished(
+        val p: CorePair,
+        val held: List<ByteArray>,
+        val oneRtt: List<ByteArray>,
+    )
+
+    private fun heldFinished(): HeldFinished {
+        val p = CorePair()
+        val held = ArrayList<ByteArray>()
+        p.filterToServer = { i, b ->
+            if (i > 0) held += b
+            i == 0
+        }
+        assertTrue(p.runUntil { p.clientEvents.any { it is ConnectionEvent.HandshakeCompleted } })
+        val s = p.server!!
+        assertTrue(s.readKeys[3] != null && s.state == ConnectionState.Handshaking, "the server reads 1-RTT before the Finished")
+        val id = p.client.openStream(true)
+        val hello = "hello".encodeToByteArray()
+        p.client.writeStream(id, hello, 0, hello.size, true)
+        p.batch.clear()
+        val n = p.client.poll(p.batch, p.now)
+        val oneRtt = ArrayList<ByteArray>()
+        val hv = PacketHeaderView()
+        for (i in 0 until n) {
+            val d = p.batch.buffer(i).toByteArray(p.batch.length(i))
+            val b = PacketBuffer.of(d)
+            try {
+                var off = 0
+                while (off < d.size && PacketHeaderCodec.parse(b, off, d.size, s.localCid.length, hv)) {
+                    if (d[off].toInt() and 0x80 == 0) {
+                        oneRtt += d.copyOfRange(off, d.size)
+                        break
+                    }
+                    off = hv.packetEnd
+                }
+            } finally {
+                b.close()
+            }
+        }
+        assertTrue(oneRtt.isNotEmpty(), "the client sent 1-RTT packets")
+        return HeldFinished(p, held, oneRtt)
+    }
+
+    private fun feed(
+        p: CorePair,
+        d: ByteArray,
+    ) {
+        val b = PacketBuffer.of(d)
+        try {
+            p.server!!.handleDatagram(b, d.size, CoreFixtures.clientAddr, io.kuicksilver.quic.Ecn.NotEct, p.now)
+        } finally {
+            b.close()
+        }
+        p.drainEvents(p.server!!, p.serverEvents)
+    }
+
+    private fun streamEvents(events: List<ConnectionEvent>) =
+        events.filter { it is ConnectionEvent.StreamOpened || it is ConnectionEvent.StreamReadable }
+
+    /**
+     * RFC 9001 section 5.7: "a server MUST NOT process incoming 1-RTT protected packets before the TLS handshake is complete";
+     * they "MAY be stored and later decrypted and used once the handshake is complete." A client's STREAM in 1-RTT, alone or
+     * coalesced behind a Finished that fails, must not reach the application; after a valid Finished it does.
+     */
+    @Test fun negative_serverDefersOneRttUntilFinished() {
+        // 1. the 1-RTT packets arrive before the Finished: held; the Finished then completes the handshake and releases them
+        val a = heldFinished()
+        try {
+            val s = a.p.server!!
+            for (d in a.oneRtt) feed(a.p, d)
+            assertEquals(emptyList(), streamEvents(a.p.serverEvents), "no stream before the Finished")
+            assertEquals(ConnectionState.Handshaking, s.state)
+            for (d in a.held) feed(a.p, d)
+            val done = a.p.serverEvents.indexOfFirst { it is ConnectionEvent.HandshakeCompleted }
+            assertTrue(done >= 0, "the Finished completes the handshake: ${a.p.serverEvents}")
+            val opened = a.p.serverEvents.indexOfFirst { it is ConnectionEvent.StreamOpened }
+            assertTrue(opened > done, "the stored 1-RTT packet is used once the handshake completed: ${a.p.serverEvents}")
+            val buf = ByteArray(16)
+            assertEquals("hello", buf.decodeToString(0, s.readStream(0, buf, 0, buf.size)))
+        } finally {
+            a.p.close()
+        }
+        // 2. one datagram, [Initial][Handshake(Finished, corrupted)][1-RTT(STREAM)]: the Finished fails, the STREAM is never used
+        val b = heldFinished()
+        try {
+            val withFinished = b.held.first { d -> finishedAt(d) >= 0 }.copyOf()
+            withFinished[finishedAt(withFinished)] = 21 // a TLS message other than Finished (type 20): NullTlsSession fails
+            feed(b.p, withFinished + b.oneRtt.first())
+            b.p.runUntil(limit = 1.seconds) { b.p.closedReason(b.p.serverEvents) != null }
+            assertTrue(b.p.closedReason(b.p.serverEvents) != null, "the bad Finished fails the handshake")
+            assertEquals(emptyList(), streamEvents(b.p.serverEvents), "the STREAM behind the bad Finished was not processed")
+        } finally {
+            b.p.close()
+        }
+    }
+
+    /** The offset of the Finished message type in a Null-crypto datagram: CRYPTO at offset 0, length 4, then 0x14 and a zero length. */
+    private fun finishedAt(d: ByteArray): Int {
+        val pattern = byteArrayOf(0x06, 0x00, 0x04, 0x14, 0x00, 0x00, 0x00)
+        for (i in 0..d.size - pattern.size) {
+            if ((pattern.indices).all { d[i + it] == pattern[it] }) return i + 3
+        }
+        return -1
+    }
 
     /** RFC 9001 section 8.4: a server treats a ClientHello with a non-empty legacy_session_id as a PROTOCOL_VIOLATION. */
     @Test fun negative_clientHelloWithLegacySessionIdIsProtocolViolation() {
