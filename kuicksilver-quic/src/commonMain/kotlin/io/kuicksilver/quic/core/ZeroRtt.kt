@@ -28,7 +28,7 @@ import io.kuicksilver.tls.TlsRole
 
 /**
  * A server's 0-RTT setup: [context] binds tickets to this configuration (RFC 9001 section 4.6.3), [register] is the
- * replay register (RFC 8446 section 8.2; the process's one in production) and [clock] the time it is kept in (the
+ * replay register (RFC 9846 section 8.2; the process's one in production) and [clock] the time it is kept in (the
  * process's monotonic clock in production; null: the connection's clock, for tests in virtual time) and [wallClock] the
  * wall clock in milliseconds OpenSSL judges ticket ages by (null: [clock]'s, no steps).
  */

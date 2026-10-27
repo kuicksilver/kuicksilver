@@ -62,7 +62,7 @@ public class Http3Request private constructor(
     /**
      * Send in 0-RTT on a connection from `Http3Endpoint.connectEarly` whose handshake is not complete yet; honoured only for a
      * safe method (GET, HEAD, OPTIONS) without a body, every other request waits for the handshake. The request may be
-     * replayed by an attacker (RFC 8446 section 8); a `425 Too Early` answer is repeated once after the handshake (RFC 8470).
+     * replayed by an attacker (RFC 9846 section 8); a `425 Too Early` answer is repeated once after the handshake (RFC 8470).
      */
     @property:ExperimentalKuicksilverApi
     public val allowEarlyData: Boolean

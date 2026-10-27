@@ -422,7 +422,7 @@ public class TlsConnection private constructor(
                 if (n < 0) {
                     // ktor answers -1 for an output failed with a cause as for one closed: a failed one (the application's
                     // stream failed) gets no close_notify, which would end the stream for the peer as if complete, but an
-                    // error alert where OpenSSL can send one (RFC 8446 section 6.1)
+                    // error alert where OpenSSL can send one (RFC 9846 section 6.1)
                     outputChannel.closedCause?.let {
                         sendFailureAlert()
                         throw it
@@ -460,7 +460,7 @@ public class TlsConnection private constructor(
     }
 
     /**
-     * RFC 8446 section 6.1: "Each party MUST send a 'close_notify' alert before closing its write side of the connection,
+     * RFC 9846 section 6.1: "Each party MUST send a 'close_notify' alert before closing its write side of the connection,
      * unless it has already sent some error alert". The application's stream failed: internal_error (80) follows what was
      * already sent, where OpenSSL can send one ([canSendFailureAlert]); never close_notify. The session takes no more data.
      */
@@ -557,7 +557,7 @@ public class TlsConnection private constructor(
 
     // ---- public operations ----
 
-    /** RFC 5705 / RFC 8446 section 7.5 exporter; only after the handshake. Throws [IllegalStateException] when the exporter is unavailable, [TlsException.Protocol] for other TLS errors. */
+    /** RFC 5705 / RFC 9846 section 7.5 exporter; only after the handshake. Throws [IllegalStateException] when the exporter is unavailable, [TlsException.Protocol] for other TLS errors. */
     public suspend fun exportKeyingMaterial(
         label: String,
         context: ByteArray?,
@@ -578,7 +578,7 @@ public class TlsConnection private constructor(
             }
         }
 
-    /** RFC 8446 section 4.6.3 key update; takes effect with the next write. */
+    /** RFC 9846 section 4.7.3 key update; takes effect with the next write. */
     public suspend fun keyUpdate(requestPeer: Boolean = false) {
         lock.withLock { Ksl.sslKeyUpdate(s(), requestPeer) }
     }
@@ -763,7 +763,7 @@ public enum class TlsVersion {
     /** TLS 1.2 (RFC 5246) under the RFC 9325 profile, with Extended Master Secret; only with [TlsVersions.Tls12And13]. */
     Tls12,
 
-    /** TLS 1.3 (RFC 8446). */
+    /** TLS 1.3 (RFC 9846). */
     Tls13,
 }
 

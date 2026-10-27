@@ -606,7 +606,7 @@ val client = HttpClient(Kuicksilver) {
 }
 ```
 
-> **Replay warning.** An attacker can replay a 0-RTT request (RFC 8446 section 8). Turn this on only when the handlers
+> **Replay warning.** An attacker can replay a 0-RTT request (RFC 9846 section 8). Turn this on only when the handlers
 > of GET, HEAD and OPTIONS have no side effects.
 
 ## Supported Ktor versions

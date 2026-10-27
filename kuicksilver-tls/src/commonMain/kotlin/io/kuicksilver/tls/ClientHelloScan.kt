@@ -5,7 +5,7 @@ package io.kuicksilver.tls
 /**
  * Reads a server's first ClientHello from the Initial CRYPTO stream before `ksl` processes it (ADR-0015): whether it
  * offers early data, and the identity of the ticket it resumes, so the replay register decides before OpenSSL does
- * (RFC 8446 sections 4.1.2, 4.2.10, 4.2.11). Bounded: a hello beyond [max] bytes or a malformed one is decided as "no
+ * (RFC 9846 sections 4.2.2, 4.3.10, 4.3.11). Bounded: a hello beyond [max] bytes or a malformed one is decided as "no
  * early data"; OpenSSL still parses (and rejects) it on its own.
  */
 internal class ClientHelloScan(

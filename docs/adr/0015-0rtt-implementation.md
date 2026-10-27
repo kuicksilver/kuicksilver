@@ -21,7 +21,7 @@ Facts of the pinned OpenSSL 3.5.9 that fix the design:
   every early data. ksl therefore sets `SSL_OP_NO_ANTI_REPLAY`, as the ngtcp2 examples do.
 - With stateless tickets, OpenSSL accepts early data only for the first PSK identity, only when the ticket has not
   expired, and only when the client's `obfuscated_ticket_age` lies within `TICKET_AGE_ALLOWANCE` (10 s) of the
-  server's age. This is RFC 8446 §8.3 freshness.
+  server's age. This is RFC 9846 §8.3 freshness.
 - `SSL_CTX_set_allow_early_data_cb` makes the final decision, and `SSL_CTX_set_session_ticket_cb` can store app data
   in a ticket and read it back when the ticket is decrypted. Neither callback may call back into Kotlin (ksl contract:
   no upcalls). Any per-connection verdict must therefore be stored in the `ksl_ssl` before the ClientHello is

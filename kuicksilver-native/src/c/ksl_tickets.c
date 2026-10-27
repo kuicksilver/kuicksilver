@@ -1,6 +1,6 @@
 /* Copyright 2026 The Kuicksilver Authors
  * SPDX-License-Identifier: Apache-2.0 */
-/* Session ticket keys (RFC 8446 section 4.6.1) that never leave native memory (threat model 1, 3.7):
+/* Session ticket keys (RFC 9846 section 4.7.1) that never leave native memory (threat model 1, 3.7):
  *  - the process-wide generated keys: a current key that encrypts and the previous one that still decrypts, rotated here;
  *  - explicit keys a deployment shares between processes: copied in once, registered under an id, never handed back.
  * A context takes a copy of the keys it needs (ksl_ctx_set_ticket_keys), which ksl_ctx_free cleanses. Every temporary is

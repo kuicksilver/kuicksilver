@@ -6,7 +6,7 @@ import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 
 /**
  * What an HTTP/3 server does with a request that arrived in 0-RTT before the handshake completed (RFC 8470, ADR-0015).
- * Early data can be replayed by an attacker (RFC 8446 section 8): only requests [replayable] says are safe to execute
+ * Early data can be replayed by an attacker (RFC 9846 section 8): only requests [replayable] says are safe to execute
  * twice run at once. Every other one waits for the handshake ([WaitForHandshake], the default; a replayed connection
  * never completes it, so the request never runs) or is answered with `425 Too Early` ([Reject425]), which a client
  * repeats after its handshake (RFC 8470 section 5.2).

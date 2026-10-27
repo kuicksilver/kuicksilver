@@ -24,17 +24,17 @@ public enum class TlsRole {
 
 /** Versions offered: QUIC is always TLS 1.3; TCP defaults to 1.3 and accepts 1.2 only when asked (RFC 9325 profile). */
 public enum class TlsVersions {
-    /** TLS 1.3 only (RFC 8446): the default, and the only value QUIC accepts (RFC 9001 section 4.2). */
+    /** TLS 1.3 only (RFC 9846): the default, and the only value QUIC accepts (RFC 9001 section 4.2). */
     Tls13,
 
     /**
-     * TLS 1.3, or TLS 1.2 (RFC 5246) with a peer that lacks 1.3, under the RFC 9325 profile: ECDHE with AEAD suites only and
-     * Extended Master Secret required. TCP only; it lets any peer without 1.3 downgrade the connection to 1.2.
+     * TLS 1.3, or TLS 1.2 (RFC 5246, obsoleted by RFC 9846) with a peer that lacks 1.3, under the RFC 9325 profile as narrowed
+     * by RFC 10015: ECDHE with AEAD suites only and Extended Master Secret (RFC 9846 appendix D) required. TCP only; it lets any peer without 1.3 downgrade the connection to 1.2.
      */
     Tls12And13,
 }
 
-/** Whether a server asks for a client certificate (RFC 8446 section 4.3.2); a client configuration refuses anything but [None]. */
+/** Whether a server asks for a client certificate (RFC 9846 section 4.4.2); a client configuration refuses anything but [None]. */
 public enum class ClientAuth {
     /** No CertificateRequest is sent and clients stay anonymous at the TLS level: the default. */
     None,
@@ -51,7 +51,7 @@ public class CipherSuites(
     suites: List<String>,
 ) {
     /**
-     * The IANA suite names (RFC 8446 appendix B.4), most preferred first; never empty. They configure TLS 1.3 only: with
+     * The IANA suite names (RFC 9846 appendix B.4), most preferred first; never empty. They configure TLS 1.3 only: with
      * [TlsVersions.Tls12And13] the TLS 1.2 suites are the fixed ECDHE + AEAD list of the RFC 9325 profile.
      */
     public val suites: List<String> = suites.toList()
@@ -64,7 +64,7 @@ public class CipherSuites(
 
     /** The suite names this stack supports and the default order. */
     public companion object {
-        /** `TLS_AES_128_GCM_SHA256`, mandatory to implement in TLS 1.3 (RFC 8446 section 9.1). */
+        /** `TLS_AES_128_GCM_SHA256`, mandatory to implement in TLS 1.3 (RFC 9846 section 9.1). */
         public const val AES_128_GCM: String = "TLS_AES_128_GCM_SHA256"
 
         /** `TLS_AES_256_GCM_SHA384`. */
@@ -94,7 +94,7 @@ public class CipherSuites(
  *   Each distinct set stays in native memory for the life of the process (at most 1024 distinct sets).
  * @property rotateEvery how often the process-wide generated keys rotate (default 1 day, positive, at most 7 days); the previous key
  *   still decrypts until the next rotation. Explicit [keys] are not rotated by the library. A longer period lets one stolen
- *   ticket key decrypt more resumed sessions (RFC 8446 section 4.6.1).
+ *   ticket key decrypt more resumed sessions (RFC 9846 section 4.7.1).
  * @property ticketLifetime how long an issued ticket resumes (default 12 hours, at least 1 second, at most [rotateEvery] / 2,
  *   whole seconds);
  *   a longer lifetime widens the window in which resumptions can be linked to one client.
@@ -372,7 +372,7 @@ public inline fun tlsConfig(
  *
  * @property serverName the host name from the client's SNI extension (RFC 6066), or null when it sent none; unverified input.
  * @property alpn the protocols the client offers (RFC 7301), in its preference order; empty without ALPN.
- * @property signatureSchemes the TLS SignatureScheme code points of `signature_algorithms` (RFC 8446 section 4.2.3), e.g.
+ * @property signatureSchemes the TLS SignatureScheme code points of `signature_algorithms` (RFC 9846 section 4.3.3), e.g.
  *   `0x0403` for ecdsa_secp256r1_sha256, so the selector can pick an identity whose key the client can verify.
  */
 public class ClientHelloInfo internal constructor(

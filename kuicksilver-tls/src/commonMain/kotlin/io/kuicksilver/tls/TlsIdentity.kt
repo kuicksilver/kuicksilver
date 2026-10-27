@@ -14,7 +14,7 @@ import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.io.encoding.Base64
 
 /**
- * A certificate chain (leaf first, RFC 8446 section 4.4.2) and the matching private key. Sealed: the one kind in 0.2.0 is
+ * A certificate chain (leaf first, RFC 9846 section 4.5.1) and the matching private key. Sealed: the one kind in 0.2.0 is
  * [InMemory]; identities whose key stays in a keystore or HSM may be added later, so do not match on it exhaustively.
  */
 public sealed interface TlsIdentity {

@@ -233,7 +233,7 @@ int ksl_drive(ksl_ssl *s) {
     }
 }
 
-/* Whether a ServerHello (handshake header included) carries extended_master_secret (RFC 7627). */
+/* Whether a ServerHello (handshake header included) carries extended_master_secret (RFC 9846 appendix D). */
 static int server_hello_has_ems(const uint8_t *m, size_t len) {
     size_t off = 4 + 2 + 32; if (len < off + 1) return 0;   /* header, legacy_version, random */
     off += 1 + m[off] + 2 + 1;   /* session id, cipher suite, compression method */

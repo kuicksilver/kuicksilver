@@ -33,7 +33,7 @@ import kotlin.time.Duration.Companion.seconds
 /**
  * A TLS server socket whose application stream fails mid-response (a handler that threw) never ends the connection with
  * `close_notify`, so a client reading to the end gets an error: a TLS 1.3 server sends the fatal alert internal_error
- * (RFC 8446 section 6.1) and a FIN; where no alert can be sent the connection is reset. Before 0.2.0 the TLS socket's close
+ * (RFC 9846 section 6.1) and a FIN; where no alert can be sent the connection is reset. Before 0.2.0 the TLS socket's close
  * sent `close_notify` and a FIN, and the client saw a clean end of a cut stream: for a body delimited by the connection's
  * close, the cut one passed for the whole. A stream that ends normally still closes with `close_notify` and a FIN.
  *

@@ -312,7 +312,7 @@ class QuicHandshakeTest {
     }
 
     @Test fun postHandshakeTicketDelivered() {
-        // a server with ticket keys: one without keys sends no ticket at all (RFC 8446 section 4.6.1)
+        // a server with ticket keys: one without keys sends no ticket at all (RFC 9846 section 4.7.1)
         val keyed = KslQuicCrypto.newSessionForTest(Fixtures.server(), ticketsWithoutEarlyData = true)
         val p =
             Pump(KslQuicCrypto.newSession(Fixtures.client()), keyed).also {

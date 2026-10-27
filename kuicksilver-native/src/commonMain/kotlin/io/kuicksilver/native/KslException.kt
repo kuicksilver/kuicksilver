@@ -73,7 +73,7 @@ public sealed class KslException(
      * An error reported by ksl or OpenSSL: [packed] is `(lib shl 16) or reason`, [alert] is the TLS alert (`or 0x100` when received).
      *
      * @property packed the error code `(lib shl 16) or reason`; split it with [lib] and [reason].
-     * @property alert the TLS alert involved (RFC 8446 section 6.2) in bits 0-7, bit 8 (`0x100`) set when the peer sent it, and
+     * @property alert the TLS alert involved (RFC 9846 section 6.2) in bits 0-7, bit 8 (`0x100`) set when the peer sent it, and
      *   bits 16-31 the OpenSSL `X509_V_ERR_*` code of a local certificate verification failure; 0 when none applies.
      */
     public class Internal(

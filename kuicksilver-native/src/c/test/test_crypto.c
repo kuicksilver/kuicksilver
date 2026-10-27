@@ -1,6 +1,6 @@
 /* Copyright 2026 The Kuicksilver Authors
  * SPDX-License-Identifier: Apache-2.0 */
-/* KslCrypto helpers: rand, SHA-2, HKDF-Expand-Label (RFC 8446), ECDSA P-256, Ed25519, SPKI SHA-256. */
+/* KslCrypto helpers: rand, SHA-2, HKDF-Expand-Label (RFC 9846), ECDSA P-256, Ed25519, SPKI SHA-256. */
 #include "test_common.h"
 size_t ksl_spki_der_for_test(const uint8_t *cert_der, size_t len, uint8_t *out, size_t cap);
 int ksl_base64_equals_for_test(const uint8_t *bytes, size_t n, const char *b64, size_t b64len);

@@ -10,7 +10,7 @@ import io.kuicksilver.native.KslConst
 import io.kuicksilver.native.KslLoader
 
 /**
- * The hash of a TLS 1.3 key schedule, chosen by the cipher suite (RFC 8446 section 7.1); used by [KslCrypto.hkdfExpandLabel].
+ * The hash of a TLS 1.3 key schedule, chosen by the cipher suite (RFC 9846 section 7.1); used by [KslCrypto.hkdfExpandLabel].
  *
  * @property size the output length in bytes.
  */
@@ -29,7 +29,7 @@ public enum class Hash(
 public enum class SignatureAlgorithm(
     internal val ksl: Int,
 ) {
-    /** ECDSA over P-256 with SHA-256 and DER-encoded signatures (`ecdsa_secp256r1_sha256`, RFC 8446 section 4.2.3). */
+    /** ECDSA over P-256 with SHA-256 and DER-encoded signatures (`ecdsa_secp256r1_sha256`, RFC 9846 section 4.3.3). */
     EcdsaP256(1),
 
     /** Ed25519 (RFC 8032), signing the message itself. */
@@ -59,7 +59,7 @@ public object KslCrypto {
         return Ksl.sha2(384, data)
     }
 
-    /** RFC 8446 section 7.1 `HKDF-Expand-Label(secret, label, context, length)`; the "tls13 " prefix is added here. */
+    /** RFC 9846 section 7.1 `HKDF-Expand-Label(secret, label, context, length)`; the "tls13 " prefix is added here. */
     public fun hkdfExpandLabel(
         hash: Hash,
         secret: ByteArray,

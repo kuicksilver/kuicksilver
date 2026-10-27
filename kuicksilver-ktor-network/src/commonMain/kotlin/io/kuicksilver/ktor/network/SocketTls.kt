@@ -65,7 +65,7 @@ public suspend fun Socket.tlsServer(
  * A [Socket] over a [TlsConnection]; closing it sends `close_notify` and closes the underlying socket.
  *
  * @property tls the TLS session underneath, for what [Socket] cannot express: the protocol version, the exporter
- *   (RFC 8446 section 7.5), the `tls-exporter` channel binding (RFC 9266) and key updates. Read and write through the
+ *   (RFC 9846 section 7.5), the `tls-exporter` channel binding (RFC 9266) and key updates. Read and write through the
  *   socket's channels, not through `tls.input`/`tls.output` as well.
  */
 public class TlsSocket private constructor(
@@ -131,7 +131,7 @@ public class TlsSocket private constructor(
      * (a handler that threw mid-response), or the pump does, the connection never ends with `close_notify`: a
      * `close_notify` and a FIN would end the stream as if complete, and a peer reading a body delimited by the
      * connection's close would take the cut one for the whole. It ends with the fatal alert internal_error after what was
-     * sent, then a FIN, where OpenSSL can send one (RFC 8446 section 6.1; [failTls]), else with a reset ([abortTls]). A
+     * sent, then a FIN, where OpenSSL can send one (RFC 9846 section 6.1; [failTls]), else with a reset ([abortTls]). A
      * channel closed normally ends with `close_notify` on [close].
      */
     @OptIn(InternalAPI::class)

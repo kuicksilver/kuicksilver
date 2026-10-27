@@ -290,7 +290,7 @@ class TlsConnectionTest {
         }
 
     /**
-     * RFC 8446 section 6.1: "Each party MUST send a 'close_notify' alert before closing its write side of the connection,
+     * RFC 9846 section 6.1: "Each party MUST send a 'close_notify' alert before closing its write side of the connection,
      * unless it has already sent some error alert". A TLS 1.3 server whose application's stream failed ends with
      * internal_error (80) after what it had sent: the client reads that, then fails with the alert, never a clean end.
      */

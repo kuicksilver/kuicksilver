@@ -55,7 +55,7 @@ public class QuicClientConfig private constructor(
         /**
          * Default [EarlyDataState.Disabled]. Otherwise the endpoint keeps the server's session tickets (per endpoint, single
          * use) and `QuicEndpoint.connectEarly` sends what the application writes before the handshake completes in 0-RTT.
-         * 0-RTT data can be replayed by an attacker (RFC 8446 section 8): send early only what is safe to execute twice.
+         * 0-RTT data can be replayed by an attacker (RFC 9846 section 8): send early only what is safe to execute twice.
          */
         @ExperimentalKuicksilverApi
         public var earlyData: EarlyDataState = EarlyDataState.Disabled

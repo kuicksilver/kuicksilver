@@ -24,8 +24,8 @@ static int map_error(ksl_ssl *s, int r) {
     default: s->fatal = 1; ksl_ssl_set_error(s, KSL_E_NOT_SUPPORTED, "ksl: TLS error"); return KSL_ERROR;
     }
 }
-/* RFC 8446 section 5.5: for AES-GCM "up to 2^24.5 full-size records (about 24 million) may be encrypted on a given connection while
-   keeping a safety margin of approximately 2^-57 ... Implementations SHOULD do a key update before reaching this limit". OpenSSL
+/* RFC 9846 section 5.5: for AES-GCM up to 2^24.5 full-size records may be encrypted under a given set of keys, and
+   "Implementations MUST either close the connection or do a key update ... prior to reaching these limits". OpenSSL
    sends a KeyUpdate only on SSL_key_update, so ksl requests one every 2^23 records it wrote under one key (a third of the limit;
    one bound for every suite: ChaCha20-Poly1305's limit is far higher). Records are counted as full ones of the negotiated size
    (16 KiB, or the max_fragment_length), at least one per write: never fewer than were sent. The KeyUpdate goes out ahead of the
@@ -52,7 +52,7 @@ int ksl_tcp_read(ksl_ssl *s, uint8_t *out, size_t cap, size_t *read) {
     if (r == 1) { *read = n; return KSL_OK; }
     return map_error(s, r);
 }
-/* RFC 8446 section 6.1: "Each party MUST send a 'close_notify' alert before closing its write side of the connection, unless it has
+/* RFC 9846 section 6.1: "Each party MUST send a 'close_notify' alert before closing its write side of the connection, unless it has
    already sent some error alert". A session whose application failed must not end with close_notify: the peer would take the cut
    stream for a whole one. OpenSSL 3.5 has no call that sends an alert on an established connection, but it sends one whenever
    building a handshake message fails, and two of those messages run a ksl callback first: a TLS 1.3 server's NewSessionTicket

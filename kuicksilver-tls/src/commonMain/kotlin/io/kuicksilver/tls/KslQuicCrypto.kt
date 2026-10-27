@@ -29,7 +29,7 @@ public object KslQuicCrypto : QuicCrypto {
             earlyDataSession = earlyData,
         )
 
-    /** Test hook: a server whose tickets do not allow early data (RFC 8446 section 4.2.10), to prove a client then sends no 0-RTT. */
+    /** Test hook: a server whose tickets do not allow early data (RFC 9846 section 4.3.10), to prove a client then sends no 0-RTT. */
     internal fun newSessionForTest(
         config: TlsConfig,
         ticketsWithoutEarlyData: Boolean,

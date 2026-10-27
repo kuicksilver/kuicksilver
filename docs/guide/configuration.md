@@ -130,7 +130,7 @@ client-only endpoint), `toBuilder()` (*experimental*). Guide: [Admission and end
 |---|---|---|---|---|
 | `alpn` | `List<String>` | empty | each name 1..255 UTF-8 bytes, the list at most 255 bytes on the wire; QUIC needs at least one | ALPN protocol IDs in preference order |
 | `serverName` | `String?` | `null` | a client needs it (or `TrustConfig.ExpectedName`) | SNI and the name the certificate must match; an IP literal is verified but never sent as SNI. Servers ignore it |
-| `versions` | `TlsVersions` | `Tls13` | QUIC: `Tls13` only | `Tls12And13` allows the RFC 9325 profile of TLS 1.2 over TCP |
+| `versions` | `TlsVersions` | `Tls13` | QUIC: `Tls13` only | TLS 1.3 is the default (RFC 9852); `Tls12And13` allows TLS 1.2 over TCP under the RFC 9325 profile as narrowed by RFC 10015 (ECDHE and AEAD only) |
 | `cipherSuites` | `CipherSuites` | `CipherSuites.Default` (AES-128-GCM, AES-256-GCM, ChaCha20-Poly1305) | at least one; QUIC refuses `TLS_AES_128_CCM_8_SHA256` | TLS 1.3 suites in preference order |
 | `identity` | `TlsIdentity?` | `null` | a server needs an identity or an `sniSelector` | certificate chain and key |
 | `trust` | `TrustConfig` | `TrustConfig.Platform` | with `clientAuth` other than `None`: `AnchoredCa`, optionally under `Pinned` | how the peer is verified ([below](#trustconfig)) |

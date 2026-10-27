@@ -42,7 +42,7 @@ static void keylog_cb(const SSL *ssl, const char *line) {
     }
     memcpy(s->keylog + s->keylog_len, line, l); s->keylog_len += l; s->keylog[s->keylog_len++] = '\n'; s->keylog[s->keylog_len] = 0;
 }
-/* RFC 8446 section 4.6.1 tickets: name16 | aes-256 key 32 | hmac-sha256 key 32; current key encrypts, all keys decrypt. */
+/* RFC 9846 section 4.7.1 tickets: name16 | aes-256 key 32 | hmac-sha256 key 32; current key encrypts, all keys decrypt. */
 static int ticket_cb(SSL *ssl, unsigned char key_name[16], unsigned char iv[EVP_MAX_IV_LENGTH], EVP_CIPHER_CTX *ectx, EVP_MAC_CTX *hctx, int enc) {
     ksl_ssl *s = SSL_get_ex_data(ssl, 1); ksl_ctx *c = s->owner;
     const uint8_t *k = NULL; if (!c->ticket_keys) return 0;   /* an override context without keys: no ticket (TLS 1.3 sends none), none decrypts */
@@ -108,9 +108,9 @@ static SSL_TICKET_RETURN ticket_dec_cb(SSL *ssl, SSL_SESSION *sess, const unsign
     }
 }
 /* Runs once the ClientHello's extensions are parsed and the version is chosen, before the server's first flight is built.
-   TLS 1.2 without extended master secret is refused here (RFC 7627, RFC 9325 section 3.6; the exporter and tls-exporter need it):
+   TLS 1.2 without extended master secret is refused here (RFC 9846 appendix D, RFC 9325 section 3.6; the exporter and tls-exporter need it):
    failing now makes OpenSSL send handshake_failure, where the check after Finished (ksl_drive) could only drop the connection
-   without an alert (RFC 8446 section 6.1, RFC 5246 section 7.2.2). OpenSSL ignores the client's extension under
+   without an alert (RFC 9846 section 6.1, RFC 5246 section 7.2.2). OpenSSL ignores the client's extension under
    SSL_OP_NO_EXTENDED_MASTER_SECRET, so that option counts as its absence.
    RFC 6066 section 3: a server that used server_name "SHALL include an extension of type 'server_name' in the (extended) server
    hello" with empty data (TLS 1.3: in EncryptedExtensions). OpenSSL sends it only when this callback answers SSL_TLSEXT_ERR_OK, and
@@ -127,7 +127,7 @@ static int server_name_cb(SSL *ssl, int *al, void *arg) {
 }
 /* A client extension that is never sent: its callback runs while OpenSSL builds a TLS 1.2 ClientHello, before any of it is written,
    and fails it with internal_error once ksl_tcp_abort asked for that (a renegotiation ClientHello). The type is from the private use
-   range (RFC 8446 section 4.2); OpenSSL refuses a server's answer to an extension the client did not send. */
+   range (RFC 9846 section 4.3); OpenSSL refuses a server's answer to an extension the client did not send. */
 #define KSL_ABORT_EXT_TYPE 0xfe5a
 static int abort_ext_add_cb(SSL *ssl, unsigned int type, const unsigned char **out, size_t *outlen, int *al, void *arg) {
     (void)type; (void)out; (void)outlen; (void)arg; ksl_ssl *s = SSL_get_ex_data(ssl, 1);
@@ -197,7 +197,7 @@ ksl_ctx *ksl_ctx_new(int role) {
     if (role == KSL_SERVER) SSL_CTX_set_session_ticket_cb(c->ctx, ticket_gen_cb, ticket_dec_cb, NULL);
     /* the ticket key callback too, keys or not: without it OpenSSL would fall back to random keys of its own for this SSL_CTX, so a
        context without keys would issue and accept tickets, and an SNI override's keys would be ignored under a keyless base context
-       (OpenSSL takes the callback from the session context). ticket_cb without keys issues no ticket, which RFC 8446 section 4.6.1
+       (OpenSSL takes the callback from the session context). ticket_cb without keys issues no ticket, which RFC 9846 section 4.7.1
        allows, and decrypts none: a full handshake. */
     if (role == KSL_SERVER) SSL_CTX_set_tlsext_ticket_key_evp_cb(c->ctx, ticket_cb);
     if (role == KSL_SERVER) SSL_CTX_set_client_hello_cb(c->ctx, ksl_client_hello_cb, c);   /* QUIC ALPN check, SNI pause (KSL_OPT_SNI_PAUSE) */

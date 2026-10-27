@@ -42,7 +42,7 @@ class TlsSeedCorpusTest {
         body: ByteArray,
     ) = cat(u16(type), u16(body.size), body)
 
-    /** A TLS 1.3 ClientHello with [extensions] (RFC 8446 section 4.1.2). */
+    /** A TLS 1.3 ClientHello with [extensions] (RFC 9846 section 4.2.2). */
     private fun hello(vararg extensions: ByteArray): ByteArray {
         val exts = cat(*extensions)
         val body =

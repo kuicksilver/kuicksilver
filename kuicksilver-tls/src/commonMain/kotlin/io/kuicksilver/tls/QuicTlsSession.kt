@@ -88,7 +88,7 @@ public sealed interface DriveResult {
      * Every later [QuicTlsSession.drive] returns the same result.
      *
      * @property exception what failed, for the application.
-     * @property alert the TLS alert code (RFC 8446 section 6), already `handshake_failure` with [TlsConfig.genericAlerts].
+     * @property alert the TLS alert code (RFC 9846 section 6), already `handshake_failure` with [TlsConfig.genericAlerts].
      */
     public class Failed
         @ExperimentalKuicksilverApi
@@ -149,7 +149,7 @@ public sealed interface TlsEvent {
     public object HandshakeDone : TlsEvent
 
     /**
-     * Client: the server sent a NewSessionTicket (RFC 8446 section 4.6.1); only for sessions created with early data
+     * Client: the server sent a NewSessionTicket (RFC 9846 section 4.7.1); only for sessions created with early data
      * (`QuicCrypto.newSession(config, earlyData = true)`). The receiver owns [ticket] and closes it or stores it.
      *
      * @property ticket the resumable session.
@@ -163,7 +163,7 @@ public sealed interface TlsEvent {
 }
 
 /**
- * Whether a client uses 0-RTT (RFC 9001 section 4.6, ADR-0015). 0-RTT data can be replayed by an attacker (RFC 8446
+ * Whether a client uses 0-RTT (RFC 9001 section 4.6, ADR-0015). 0-RTT data can be replayed by an attacker (RFC 9846
  * section 8): send early only what is safe to execute twice. Entries may be added; keep an `else` branch in `when`.
  * Experimental, as the rest of the 0-RTT API.
  */
@@ -180,7 +180,7 @@ public enum class EarlyDataState {
 }
 
 /**
- * The server's replay register for 0-RTT (RFC 8446 section 8, ADR-0015): consulted once per ClientHello that offers
+ * The server's replay register for 0-RTT (RFC 9846 section 8, ADR-0015): consulted once per ClientHello that offers
  * early data, keyed by the identity of the ticket it resumes (`key_name ‖ iv`, 32 bytes). Implementations are called on
  * connection loops and must be thread-safe when several loops share one.
  */
@@ -194,8 +194,8 @@ public interface EarlyDataAdmission {
 }
 
 /**
- * A client's resumable QUIC session (RFC 8446 section 4.6.1): the ticket and its resumption secret stay in native memory.
- * Single use (RFC 8446 appendix C.4): [QuicTlsSession.resume] consumes it. [remembered] holds what the transport stores
+ * A client's resumable QUIC session (RFC 9846 section 4.7.1): the ticket and its resumption secret stay in native memory.
+ * Single use (RFC 9846 appendix C.4): [QuicTlsSession.resume] consumes it. [remembered] holds what the transport stores
  * with it (the server's transport parameters, RFC 9000 section 7.4.1).
  */
 @ExperimentalKuicksilverApi
@@ -323,7 +323,7 @@ public interface QuicTlsSession : AutoCloseable {
     ): Boolean = false
 
     /**
-     * The RFC 8446 section 7.5 exporter: [length] bytes for [label] and [context] (null for none); only after the handshake,
+     * The RFC 9846 section 7.5 exporter: [length] bytes for [label] and [context] (null for none); only after the handshake,
      * before it [IllegalStateException].
      * The result is secret material on the heap by design (threat model 3.7); wipe it after use.
      */

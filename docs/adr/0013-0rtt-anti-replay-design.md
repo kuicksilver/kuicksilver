@@ -4,14 +4,14 @@ Date: 2026-10-08, reviewed 2026-10. Status: **accepted as revised** by the secti
 
 ## Context
 
-ADR-0008: 0-RTT is disabled in v1 — `early_data` is not enabled, incoming 0-RTT packets are dropped, `EarlyDataState.Disabled`. The design requires that a later version can enable 0-RTT without breaking the API, and that the application itself decides which requests may be replayed. Replay is the only property of 0-RTT that the transport cannot hide from the application: an on-path attacker replays the client's first flight, and the server executes the early data twice (RFC 8446 §8, RFC 9001 §9.2). References: quic-go and quinn accept 0-RTT by default and leave protection to the application; rustls and Go limit tickets by their lifetime; OpenSSL 3.5 offers `SSL_set_quic_tls_early_data_enabled` and, in the TLS layer, the RFC 8446 §8.3 freshness check (the client-reported ticket age against the age the server computes, within a 10 s allowance), but keeps no state across processes.
+ADR-0008: 0-RTT is disabled in v1 — `early_data` is not enabled, incoming 0-RTT packets are dropped, `EarlyDataState.Disabled`. The design requires that a later version can enable 0-RTT without breaking the API, and that the application itself decides which requests may be replayed. Replay is the only property of 0-RTT that the transport cannot hide from the application: an on-path attacker replays the client's first flight, and the server executes the early data twice (RFC 9846 §8, RFC 9001 §9.2). References: quic-go and quinn accept 0-RTT by default and leave protection to the application; rustls and Go limit tickets by their lifetime; OpenSSL 3.5 offers `SSL_set_quic_tls_early_data_enabled` and, in the TLS layer, the RFC 9846 §8.3 freshness check (the client-reported ticket age against the age the server computes, within a 10 s allowance), but keeps no state across processes.
 
 ## Decision
 
 Protection in three layers, all on the server; the client only marks what may be replayed.
 
-1. **Ticket freshness** (RFC 8446 §8.3) is checked when a ClientHello with `early_data` arrives: the ticket must be within its lifetime, and the ticket age the client reports (`obfuscated_ticket_age − ticket_age_add`) must match the age the server computes from the issue time within a small allowance. The ticket age itself may run up to the ticket lifetime; the allowance only bounds the gap between the reported and the computed age, and because a replayed ClientHello carries a fixed reported age, that allowance is the replay window which sizes the register of item 2. (The 2026-10-08 text compared the ticket age with a 10 s `maxEarlyDataAge`, which mixed the two up; see the review.) A failed check rejects the early data but continues the handshake (`early_data` is not sent in EncryptedExtensions). Not a single new function in `ksl.h` for this step: the flag goes into `ksl_ctx_set_option` (`KSL_OPT_EARLY_DATA_MAX_AGE`), the early secret into the existing `KSL_EV_KEY` events with a new level `KSL_LEVEL_EARLY` (levels are 0–3 today; level 1 — 0-RTT — is already reserved in `ksl_quic_provide`/`KslEvent`).
-2. **Single use within the window** (RFC 8446 §8.2 "single-use tickets" in a soft form): `EndpointCore` keeps a window of accepted ClientHellos keyed by `(hash(ticket nonce), time)` — a ring sized `replay window (the allowance) × expected rate`, by default 65 536 entries in a Bloom filter with two rotating halves (as in RFC 8446 §8.2 and Go `crypto/tls`): a repeated ClientHello with the same ticket inside the window → the early data is rejected. The filter is per endpoint loop (like the Retry and reset keys, ADR-0003); with `loops > 1` a client replayed into another loop passes only the freshness check — an accepted residue that the application closes with idempotency (item 3). Memory, within the per-connection resource ceilings (threat-model 3.2): ≤ 1 MiB per loop.
+1. **Ticket freshness** (RFC 9846 §8.3) is checked when a ClientHello with `early_data` arrives: the ticket must be within its lifetime, and the ticket age the client reports (`obfuscated_ticket_age − ticket_age_add`) must match the age the server computes from the issue time within a small allowance. The ticket age itself may run up to the ticket lifetime; the allowance only bounds the gap between the reported and the computed age, and because a replayed ClientHello carries a fixed reported age, that allowance is the replay window which sizes the register of item 2. (The 2026-10-08 text compared the ticket age with a 10 s `maxEarlyDataAge`, which mixed the two up; see the review.) A failed check rejects the early data but continues the handshake (`early_data` is not sent in EncryptedExtensions). Not a single new function in `ksl.h` for this step: the flag goes into `ksl_ctx_set_option` (`KSL_OPT_EARLY_DATA_MAX_AGE`), the early secret into the existing `KSL_EV_KEY` events with a new level `KSL_LEVEL_EARLY` (levels are 0–3 today; level 1 — 0-RTT — is already reserved in `ksl_quic_provide`/`KslEvent`).
+2. **Single use within the window** (RFC 9846 §8.2 "single-use tickets" in a soft form): `EndpointCore` keeps a window of accepted ClientHellos keyed by `(hash(ticket nonce), time)` — a ring sized `replay window (the allowance) × expected rate`, by default 65 536 entries in a Bloom filter with two rotating halves (as in RFC 9846 §8.2 and Go `crypto/tls`): a repeated ClientHello with the same ticket inside the window → the early data is rejected. The filter is per endpoint loop (like the Retry and reset keys, ADR-0003); with `loops > 1` a client replayed into another loop passes only the freshness check — an accepted residue that the application closes with idempotency (item 3). Memory, within the per-connection resource ceilings (threat-model 3.2): ≤ 1 MiB per loop.
 3. **Idempotency decided by the application**: the client marks requests `EarlyDataState.Allowed` only for what is safe to replay; a `QuicStream`/HTTP/3 request gets a `sentEarly` flag; the server exposes `receivedEarly` on the stream to the application, and the HTTP/3 layer answers `425 Too Early` to everything the application has not declared idempotent (RFC 8470), as quic-go/nghttp3 do.
 
 What is rejected and how: early data rejected by the server is retransmitted by the client itself in 1-RTT (RFC 9001 §4.6.2); the application sees `QuicException.ZeroRttRejected` only if it asked for `EarlyDataState.Required`; a rejected 0-RTT packet is silently dropped by the server (as in v1), 0-RTT keys are not installed.
@@ -33,7 +33,7 @@ Whether a filter shared between loops is needed (threading model, docs/architect
 
 ## Review 2026-10, implemented in 0.2.0
 
-Reviewed against RFC 9001 §4.6 and §9.2, RFC 8446 §8, RFC 8470, RFC 9000 §7.4.1, RFC 9114 §7.2.4.2 and §10.9, the
+Reviewed against RFC 9001 §4.6 and §9.2, RFC 9846 §8, RFC 8470, RFC 9000 §7.4.1, RFC 9114 §7.2.4.2 and §10.9, the
 OpenSSL 3.5 sources we pin (`ssl/statem/extensions_srvr.c`, `SSL_read_early_data(3)`), and the current quic-go, quiche
 and ngtcp2 trees. Verdict: the three-layer shape stands, and 0-RTT is implemented in 0.2.0 (owner decision); layers 1 and
 2 move, and the API sketch below replaces the "already declared or reserved" claim, which was not true: only
@@ -59,7 +59,7 @@ and ngtcp2 trees. Verdict: the three-layer shape stands, and 0-RTT is implemente
   the ticket is within its lifetime (the session timeout: 2 h by default, `KSL_OPT_TICKET_LIFETIME` in ksl) and the
   client-reported age is not above the server-computed age (plus 1 s for rounding) and not more than
   `TICKET_AGE_ALLOWANCE` (10 s, a compile-time constant) below it. The ticket age may thus be anything up to the
-  lifetime. The allowance bounds the difference between the reported and the computed age (RFC 8446 §8.3), so a
+  lifetime. The allowance bounds the difference between the reported and the computed age (RFC 9846 §8.3), so a
   captured ClientHello, whose reported age is fixed, passes for at most 10 s after it was first sent (less the 1 s
   rounding margin): that is the replay window the register must cover. (b) When `max_early_data > 0`, which `SSL_set_quic_tls_early_data_enabled`
   implies, and `SSL_OP_NO_ANTI_REPLAY` is not set, its built-in anti-replay makes tickets stateful: a ticket carries
@@ -96,7 +96,7 @@ and ngtcp2 trees. Verdict: the three-layer shape stands, and 0-RTT is implemente
 2. **The replay register is per server, not per loop, and is keyed by the ticket's identity.** Our tickets are stateless
    and each carries a fresh random IV (`ticket_cb`). The pair `(key_name, iv)` therefore identifies one issued ticket
    exactly and is available in the decrypt path. That is better than "hash(ticket nonce)", which the server cannot see
-   before decryption. Store `SipHash(key_name‖iv)` in two rotating halves of a time-bucketed set (RFC 8446 §8.2), where
+   before decryption. Store `SipHash(key_name‖iv)` in two rotating halves of a time-bucketed set (RFC 9846 §8.2), where
    one half spans the replay window, OpenSSL's 10 s allowance, independent of the ticket lifetime. A Bloom false positive only costs one round trip, because it
    only downgrades to 1-RTT. The register belongs to the `QuicServer` and is shared by all `LoopGroup` loops through a
    striped lock (one CAS per 0-RTT ClientHello). This closes the cross-loop residue of the original item 2 and replaces
@@ -106,7 +106,7 @@ and ngtcp2 trees. Verdict: the three-layer shape stands, and 0-RTT is implemente
    *Amended by ADR-0015:* there is no `QuicServer` class; the register is one per process (`ProcessReplayRegister`),
    shared by every server endpoint, after the security review found a replay into a second listener of the same process.
 3. **Client tickets are single-use.** The per-engine `SessionCache` (LRU, 256) takes a ticket out when it is
-   used for 0-RTT (RFC 8446 §C.4) instead of reading it. The server issues two tickets per handshake
+   used for 0-RTT (RFC 9846 §C.4) instead of reading it. The server issues two tickets per handshake
    (`ksl_ssl_new_session_ticket` ×2 after the pin verdict, OpenSSL's own default count) so the next connection still
    has one. The cache entry gains
    the remembered transport parameters and the opaque application blob (HTTP/3 SETTINGS), and it is keyed by

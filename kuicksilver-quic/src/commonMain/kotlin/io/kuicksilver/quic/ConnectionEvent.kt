@@ -137,7 +137,7 @@ public sealed interface ConnectionEvent {
 
     /**
      * Server: 0-RTT of this connection was accepted and its packets are read from now on, before the handshake completes;
-     * client: the server accepted our 0-RTT (RFC 9001 section 4.6.2). Early data can be a replay (RFC 8446 section 8).
+     * client: the server accepted our 0-RTT (RFC 9001 section 4.6.2). Early data can be a replay (RFC 9846 section 8).
      */
     @ExperimentalKuicksilverApi
     public object EarlyDataAccepted : ConnectionEvent
