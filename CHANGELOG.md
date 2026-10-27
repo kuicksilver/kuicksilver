@@ -327,6 +327,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - QUIC server: a client's 1-RTT packets that arrive before its TLS Finished is verified are held and processed only
   once the handshake completes (RFC 9001 section 5.7). Their frames, stream data included, were applied at once, even
   when they came in the same datagram as a Finished (or client certificate) that then failed verification.
+- QUIC: a peer's first key update no longer closes the connection with KEY_UPDATE_ERROR when it arrives before any
+  1-RTT packet of the first key phase was processed (RFC 9001 section 6.2), for instance when the peer updates right
+  after the handshake and its earlier 1-RTT packets were lost. The packet is now taken as the update.
 - QUIC, Linux and Apple platforms: a UDP send interrupted by a signal (`EINTR`) is retried instead of failing the
   socket; on Linux an interrupted GSO send no longer withdraws GSO.
 - TLS: a server context without session ticket keys (a QUIC server with tickets off, a keyless SNI override base) no

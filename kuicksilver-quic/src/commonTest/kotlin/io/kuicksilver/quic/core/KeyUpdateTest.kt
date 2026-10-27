@@ -10,6 +10,7 @@ import io.kuicksilver.native.of
 import io.kuicksilver.quic.ConnectionState
 import io.kuicksilver.quic.CoreFixtures
 import io.kuicksilver.quic.CorePair
+import io.kuicksilver.quic.Dgram
 import io.kuicksilver.quic.Ecn
 import io.kuicksilver.quic.NullCryptoProvider
 import io.kuicksilver.quic.QuicException
@@ -17,6 +18,8 @@ import io.kuicksilver.quic.StreamPriority
 import io.kuicksilver.quic.TimeMark
 import io.kuicksilver.quic.crypto.NullPacketProtector
 import io.kuicksilver.quic.ksl
+import io.kuicksilver.quic.wire.PacketHeaderCodec
+import io.kuicksilver.quic.wire.PacketHeaderView
 import io.kuicksilver.tls.CipherSuites
 import io.kuicksilver.tls.PacketProtector
 import io.kuicksilver.tls.QuicCrypto
@@ -343,6 +346,59 @@ class KeyUpdateTest {
             val r = p.closedReason(p.serverEvents)
             assertIs<QuicException.ConnectionLost.TransportClosed>(r)
             assertEquals(0x0eL, r.code)
+        } finally {
+            p.close()
+        }
+    }
+
+    /**
+     * RFC 9001 section 6.2: a packet "with a key phase that differs from the current key phase" is processed with the next keys,
+     * also when no packet of the current phase was processed yet. Every server 1-RTT packet of phase 0 is kept from the client
+     * (cut out of its datagram); the server updates its keys as soon as it is confirmed, so the client's first 1-RTT packet is
+     * already in phase 1. It was a KEY_UPDATE_ERROR ("below the current phase") since the lowest packet number of phase 0 was
+     * still unset. Null protection leaves the Key Phase bit (0x04) readable.
+     */
+    @Test fun firstPeerPacketMayAlreadyBeInTheNextPhase() {
+        val p = CorePair()
+        val hv = PacketHeaderView()
+        var phase0Dropped = 0
+        p.filterToClient = { _, b ->
+            val buf = PacketBuffer.of(b)
+            try {
+                var off = 0
+                var shortAt = -1
+                while (off < b.size && PacketHeaderCodec.parse(buf, off, b.size, 8, hv)) {
+                    if (isShort(b.copyOfRange(off, off + 1))) {
+                        shortAt = off
+                        break
+                    }
+                    off = hv.packetEnd
+                }
+                if (shortAt < 0 || b[shortAt].toInt() and 0x04 != 0) {
+                    true
+                } else {
+                    phase0Dropped++
+                    if (shortAt > 0) p.toClient.addLast(Dgram(b.copyOfRange(0, shortAt), CoreFixtures.serverAddr))
+                    false
+                }
+            } finally {
+                buf.close()
+            }
+        }
+        try {
+            var updated = false
+            assertTrue(
+                p.runUntil(limit = 5.seconds) {
+                    val s = p.server
+                    if (!updated && s != null && s.state == ConnectionState.Confirmed) updated = s.initiateKeyUpdate(p.now)
+                    p.client.keyPhaseForTest?.generation == 1L && p.client.state == ConnectionState.Confirmed
+                },
+                "client: ${p.closedReason(p.clientEvents)}, generation ${p.client.keyPhaseForTest?.generation}",
+            )
+            assertTrue(updated && phase0Dropped > 0, "the server updated ($updated) and phase-0 packets were kept away ($phase0Dropped)")
+            assertNull(p.closedReason(p.clientEvents))
+            assertNull(p.closedReason(p.serverEvents))
+            assertTrue(echo(p, 4096), "the connection carries data in phase 1")
         } finally {
             p.close()
         }
