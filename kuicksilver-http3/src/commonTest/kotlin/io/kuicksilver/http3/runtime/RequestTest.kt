@@ -412,7 +412,8 @@ class RequestTest {
         h3Test {
             QuicPair.open().use { q ->
                 val (c, s) = q.connect()
-                Http3Connection.server(s)
+                // the bucket's clock stands still: one frame beyond its 1000 tokens empties it, however slowly they are read
+                Http3Connection.server(s).session.glitchClock = { 0L }
                 val raw = RawPeer(c)
                 raw.openControl()
                 val st = c.openBidi()
