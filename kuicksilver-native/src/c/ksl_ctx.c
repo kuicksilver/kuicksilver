@@ -370,8 +370,10 @@ int ksl_ctx_set_option(ksl_ctx *c, int option, int value) {
         c->client_cert_mode = value;
         SSL_CTX_set_verify(c->ctx, value == KSL_CLIENT_CERT_NONE ? SSL_VERIFY_NONE : value == KSL_CLIENT_CERT_OPTIONAL ? SSL_VERIFY_PEER : SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT, NULL);
         return KSL_OK;
-    case KSL_OPT_MIN_VERSION: return SSL_CTX_set_min_proto_version(c->ctx, value) == 1 ? KSL_OK : KSL_ERROR;
-    case KSL_OPT_MAX_VERSION: return SSL_CTX_set_max_proto_version(c->ctx, value) == 1 ? KSL_OK : KSL_ERROR;
+    /* RFC 9846 section 4.2.3, App. E.5: TLS 1.0 and 1.1 "MUST NOT be negotiated for any reason"; 0 (OpenSSL: no bound) would allow them */
+    case KSL_OPT_MIN_VERSION: case KSL_OPT_MAX_VERSION:
+        if (value != KSL_TLS1_2 && value != KSL_TLS1_3) { ksl_ctx_set_error(c, KSL_E_BAD_ARG, "ksl: versions are KSL_TLS1_2 or KSL_TLS1_3"); return KSL_ERROR; }
+        return (option == KSL_OPT_MIN_VERSION ? SSL_CTX_set_min_proto_version(c->ctx, value) : SSL_CTX_set_max_proto_version(c->ctx, value)) == 1 ? KSL_OK : KSL_ERROR;
     case KSL_OPT_NUM_TICKETS: c->num_tickets = (size_t)value; return SSL_CTX_set_num_tickets(c->ctx, (size_t)value) == 1 ? KSL_OK : KSL_ERROR;
     case KSL_OPT_KEYLOG: c->keylog = value != 0; return KSL_OK;
     case KSL_OPT_GENERIC_ALERTS: c->generic_alerts = value != 0; return KSL_OK;

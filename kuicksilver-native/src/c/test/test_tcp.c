@@ -571,4 +571,28 @@ static void test_client_keeps_every_ticket(void) {
     ksl_session_free(t1); ksl_session_free(t2); ksl_session_free(t3); ksl_ctx_free(cc); ksl_ctx_free(sc); END();
 }
 
-void run_tcp(void) { test_echo(); test_truncation(); test_tls12(); test_resumption(); test_sni_pause(); test_sni_override_alpn(); test_sni_override_settings_effective(); test_no_tls12_ticket_without_num_tickets(); test_session_context(); test_ticket_bound_to_server_name(); test_keyless_server_no_tickets(); test_server_acknowledges_server_name(); test_key_update_before_record_limit(); test_abort_sends_an_alert(); test_legacy_version_must_be_0303(); test_key_update_request_waits_for_the_peer(); test_key_update_epoch_is_bounded(); test_client_keeps_every_ticket(); }
+static void test_default_versions_and_tls12_profile(void) {
+    SECTION("tcp_default_versions_and_tls12_profile");
+    /* RFC 9852 section 4 (TLS 1.3 by default), RFC 9846 section 4.2.3 and App. E.5 (TLS 1.0 and 1.1 "MUST NOT be negotiated for any
+       reason"), RFC 10015 sections 2-4 (no static RSA, no FFDH or FFDHE in TLS 1.2) */
+    int roles[2] = {KSL_CLIENT, KSL_SERVER};
+    for (int i = 0; i < 2; i++) {
+        ksl_ctx *c = ksl_ctx_new(roles[i]);
+        CHECK(SSL_CTX_get_min_proto_version(c->ctx) == TLS1_3_VERSION && SSL_CTX_get_max_proto_version(c->ctx) == TLS1_3_VERSION, "a new context speaks TLS 1.3 only");
+        CHECK(ksl_ctx_set_option(c, KSL_OPT_MIN_VERSION, TLS1_1_VERSION) == KSL_ERROR && ksl_ctx_set_option(c, KSL_OPT_MIN_VERSION, TLS1_VERSION) == KSL_ERROR, "negative: TLS 1.0 and 1.1 refused as minimum");
+        CHECK(ksl_ctx_set_option(c, KSL_OPT_MAX_VERSION, TLS1_1_VERSION) == KSL_ERROR && ksl_ctx_set_option(c, KSL_OPT_MIN_VERSION, 0) == KSL_ERROR, "negative: TLS 1.1 as maximum, or no bound at all, refused");
+        CHECK(SSL_CTX_get_min_proto_version(c->ctx) == TLS1_3_VERSION, "the refused values changed nothing");
+        CHECK(ksl_ctx_set_option(c, KSL_OPT_MIN_VERSION, KSL_TLS1_2) == KSL_OK && SSL_CTX_get_min_proto_version(c->ctx) == TLS1_2_VERSION && SSL_CTX_get_max_proto_version(c->ctx) == TLS1_3_VERSION, "TLS 1.2 as the floor, 1.3 still the top");
+        STACK_OF(SSL_CIPHER) *sk = SSL_CTX_get_ciphers(c->ctx); int tls12 = 0, ok = 1;
+        for (int k = 0; k < sk_SSL_CIPHER_num(sk); k++) {
+            const SSL_CIPHER *ci = sk_SSL_CIPHER_value(sk, k); if (SSL_CIPHER_get_kx_nid(ci) == NID_kx_any) continue;   /* a TLS 1.3 suite */
+            tls12++; int auth = SSL_CIPHER_get_auth_nid(ci);
+            ok = ok && SSL_CIPHER_get_kx_nid(ci) == NID_kx_ecdhe && (auth == NID_auth_rsa || auth == NID_auth_ecdsa) && SSL_CIPHER_is_aead(ci);
+        }
+        CHECK(tls12 == 6 && ok, "the TLS 1.2 suites: six, all ECDHE with RSA or ECDSA and AEAD (no static RSA, no FFDHE, no static (EC)DH)");
+        ksl_ctx_free(c);
+    }
+    END();
+}
+
+void run_tcp(void) { test_echo(); test_truncation(); test_tls12(); test_resumption(); test_sni_pause(); test_sni_override_alpn(); test_sni_override_settings_effective(); test_no_tls12_ticket_without_num_tickets(); test_session_context(); test_ticket_bound_to_server_name(); test_keyless_server_no_tickets(); test_server_acknowledges_server_name(); test_key_update_before_record_limit(); test_abort_sends_an_alert(); test_legacy_version_must_be_0303(); test_key_update_request_waits_for_the_peer(); test_key_update_epoch_is_bounded(); test_client_keeps_every_ticket(); test_default_versions_and_tls12_profile(); }
