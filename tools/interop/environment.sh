@@ -134,14 +134,55 @@ prohibited_port_rebind() {
   done < <(find "$1" -mindepth 3 -maxdepth 3 -name output.txt \( -path '*/ngtcp2_*/rebind-addr/*' -o -path '*/ngtcp2_*/rebind-port/*' \) 2>/dev/null | sort)
 }
 
-# Cells of a result directory whose verdict rests on the environment: "<server>_<client> <case> <why>", one line per cell.
-environment_cells() {
-  { truncated_captures "$1" | sed 's/$/ the sim'"'"'s capture was not flushed before teardown (dumpcap summary missing in output.txt), the pcap is incomplete/'
+# The reason environment_cells gives for a prohibited_port_rebind cell.
+prohibited_port_why='the sim rebound the client to a source port the ngtcp2 server drops (below 1024 or a reflection port): the server kept sending to the old binding and the downloading client had nothing to send (prohibited-port-rebind.py)'
+
+# Cells of a result directory whose verdict rests on the environment, but for prohibited_port_rebind: "<server>_<client> <case> <why>".
+# run-local.sh reruns these, and one that stays red after its reruns fails the run.
+environment_rerun_cells() {
+  {
+    truncated_captures "$1" | sed 's/$/ the sim'"'"'s capture was not flushed before teardown (dumpcap summary missing in output.txt), the pcap is incomplete/'
     handshake_rebind "$1" | sed 's/$/ the rebind landed inside the handshake: the PATH_CHALLENGE the runner checks went out before the client or the runner could decrypt it (handshake-challenge.py)/'
     stale_sim "$1" | sed 's/$/ the cell before it timed out and the runner could not stop its sim: compose reused it ("Container sim Running") with a stale ARP entry for the server/'
     late_server "$1" | sed 's/$/ the server container started after the sim had stopped waiting for it: the scenario never ran, no packet was sent/'
     clienthello_lost "$1" | sed 's/$/ the peer client'"'"'s ClientHello never reached our server in full: the simulator dropped its one copy of the rest and every ACK of ours, and the client repeats only the first part on PTO (clienthello-lost.py)/'
     closing_rebind "$1" | sed 's/$/ the rebind landed just before the client'"'"'s CONNECTION_CLOSE: the server answered the close from the new path with its own close, no path left to validate (closing-rebind.py)/'
-    prohibited_port_rebind "$1" | sed 's/$/ the sim rebound the client to a source port the ngtcp2 server drops (below 1024 or a reflection port): the server kept sending to the old binding and the downloading client had nothing to send (prohibited-port-rebind.py)/'
+  } | sort -u -k1,2
+}
+
+# Environment-yellow cells (owner's decision 2026-10-28): prohibited_port_rebind cells that no other rule lists, "<server>_<client> <case>".
+# The ngtcp2 server drops the simulator's fixed-seed binding at 11 s in rebind-addr, so on a host where the transfer still runs then
+# every rerun fails the same way: run-local.sh does not rerun such a cell, warns, and check-required.py does not count it red.
+environment_yellow_cells() {
+  local others pair case
+  others=$(environment_rerun_cells "$1" | cut -d' ' -f1,2)
+  prohibited_port_rebind "$1" | while read -r pair case; do
+    grep -qxF "$pair $case" <<< "$others" || echo "$pair $case"
+  done
+}
+
+# The environment-yellow cells of result directories (comma-separated, as run-local.sh --results takes them) for check-required.py:
+# "<server>-><client>:<case><TAB><why>" per cell, from the role directories (<peer>-server, <peer>-client), not the reruns (a cell
+# first classified otherwise, whose rerun then hit this signature, stays red).
+environment_yellow_keys() {
+  local d r pair case
+  for d in ${1//,/ }; do for r in "$d"/*-server "$d"/*-client; do [ -d "$r" ] || continue
+    while read -r pair case; do
+      [ -n "$pair" ] && printf '%s->%s:%s\t%s\n' "${pair%%_*}" "${pair#*_}" "$case" "$prohibited_port_why"
+    done < <(environment_yellow_cells "$r")
+  done; done
+}
+
+# A warning for an environment-yellow cell: a GitHub Actions annotation in CI, a plain line elsewhere. Args: cell path, why.
+environment_warn() {
+  if [ -n "${GITHUB_ACTIONS:-}" ]; then echo "::warning title=interop environment-yellow::$1: prohibited_port_rebind: $2"
+  else echo "WARNING: environment-yellow: $1: prohibited_port_rebind: $2"; fi
+}
+
+# Cells of a result directory whose verdict rests on the environment: "<server>_<client> <case> <why>", one line per cell.
+environment_cells() {
+  local pair case
+  { environment_rerun_cells "$1"
+    prohibited_port_rebind "$1" | while read -r pair case; do echo "$pair $case $prohibited_port_why"; done
   } | sort -u -k1,2
 }

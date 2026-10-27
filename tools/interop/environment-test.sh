@@ -2,7 +2,7 @@
 # Copyright 2026 The Kuicksilver Authors
 # SPDX-License-Identifier: Apache-2.0
 # Cases for the ENVIRONMENT classification of run-local.sh (environment.sh, handshake-challenge.py, closing-rebind.py, clienthello-lost.py,
-# prohibited-port-rebind.py) on fixtures in testdata/,
+# prohibited-port-rebind.py) and for check-required.py's environment-yellow cells on fixtures in testdata/,
 # and for sim-entrypoint.sh's rebind start gate on stubs (no runner, no Docker, no tshark; needs python3 and jq).
 # KSL_INTEROP_CELL=<a result cell directory with its pcaps> also runs the classification on that real cell (needs tshark), e.g.
 # build/interop/20261016-045713/quiche-server/kuicksilver_quiche/rebind-addr from the 0.2.0 gate; KSL_INTEROP_CLOSE_CELL the same for
@@ -224,6 +224,46 @@ check "  not a cell whose server answered the sim in time"       1 "" -- grep -q
 check "  nor one whose scenario ran (a capture started)"         1 "" -- grep -q "picoquic_kuicksilver-native retry" "$tmp/late.txt"
 check "  and nothing else"                                       0 "" -- test "$(wc -l < "$tmp/late.txt" | tr -d ' ')" = 2
 
+# environment-yellow (owner's decision 2026-10-28): a cell only prohibited_port_rebind lists is not rerun, gets a warning and is not
+# counted red by check-required.py; a cell another rule lists (alone or as well) stays red when its reruns stay red. The rules are
+# stubbed here (a subshell): prohibited_port_rebind lists the ngtcp2 client cells, closing_rebind the ngtcp2 server cells.
+yd="$tmp/yellow"
+runjson() {   # file server client case result
+  printf '{"servers": ["%s"], "clients": ["%s"], "results": [[{"name": "%s", "result": "%s"}]]}\n' "$2" "$3" "$4" "$5" > "$1"
+}
+mkdir -p "$yd/run/ngtcp2-client/ngtcp2_kuicksilver/rebind-addr" "$yd/run/ngtcp2-server/kuicksilver_ngtcp2/rebind-port" "$yd/both/ngtcp2-client/ngtcp2_kuicksilver/rebind-addr"
+runjson "$yd/run/ngtcp2-client.json" ngtcp2 kuicksilver rebind-addr failed
+runjson "$yd/run/ngtcp2-server.json" kuicksilver ngtcp2 rebind-port failed
+runjson "$yd/run/ngtcp2-server-rerun-rebind-port.json" kuicksilver ngtcp2 rebind-port failed   # every rerun hit the environment again
+runjson "$yd/run/ngtcp2-server-rerun5-rebind-port.json" kuicksilver ngtcp2 rebind-port failed
+runjson "$yd/both/ngtcp2-client.json" ngtcp2 kuicksilver rebind-addr failed
+echo '{"required": ["ngtcp2->kuicksilver:rebind-addr"]}' > "$yd/req-yellow.json"
+echo '{"required": ["ngtcp2->kuicksilver:rebind-addr", "kuicksilver->ngtcp2:rebind-port"]}' > "$yd/req-both.json"
+(
+  prohibited_port_rebind() { case "${1##*/}" in ngtcp2-client) echo "ngtcp2_kuicksilver rebind-addr" ;; esac; }
+  closing_rebind() { case "$1" in */run/ngtcp2-server|*/both/ngtcp2-client) echo "${1##*/}" | sed 's/ngtcp2-server/kuicksilver_ngtcp2 rebind-port/; s/ngtcp2-client/ngtcp2_kuicksilver rebind-addr/' ;; esac; }
+  environment_yellow_keys "$yd/run" > "$yd/keys-run.txt"
+  environment_yellow_keys "$yd/both" > "$yd/keys-both.txt"
+  environment_cells "$yd/run/ngtcp2-client" > "$yd/cells-client.txt"
+  environment_warn "r/ngtcp2-client/ngtcp2_kuicksilver/rebind-addr" "why" > "$yd/warn-local.txt"
+  GITHUB_ACTIONS=true environment_warn "r/ngtcp2-client/ngtcp2_kuicksilver/rebind-addr" "why" > "$yd/warn-ci.txt"
+) 2>/dev/null
+ck="$here/check-required.py"
+check "yellow: the prohibited-port cell is environment-yellow"   0 "^ngtcp2->kuicksilver:rebind-addr	the sim rebound the client" -- cat "$yd/keys-run.txt"
+check "yellow:   and only that cell"                             0 "" -- test "$(wc -l < "$yd/keys-run.txt" | tr -d ' ')" = 1
+check "yellow:   environment_cells still lists it with its reason" 0 "ngtcp2_kuicksilver rebind-addr the sim rebound the client" -- cat "$yd/cells-client.txt"
+check "yellow: a warning outside CI"                             0 "^WARNING: environment-yellow: r/ngtcp2-client/ngtcp2_kuicksilver/rebind-addr: prohibited_port_rebind" -- cat "$yd/warn-local.txt"
+check "yellow: a ::warning:: annotation in CI"                   0 "^::warning title=interop environment-yellow::r/ngtcp2-client/ngtcp2_kuicksilver/rebind-addr: prohibited_port_rebind" -- cat "$yd/warn-ci.txt"
+check "yellow: a persistent prohibited-port cell passes the job" 0 "environment-yellow (prohibited_port_rebind, not counted red): \['ngtcp2->kuicksilver:rebind-addr'\]" -- env -u GITHUB_STEP_SUMMARY python3 "$ck" "$yd/run" "$yd/req-yellow.json" "$yd/keys-run.txt"
+check "yellow:   and is not counted red"                         0 "red: \[\]" -- env -u GITHUB_STEP_SUMMARY python3 "$ck" "$yd/run" "$yd/req-yellow.json" "$yd/keys-run.txt"
+check "yellow:   without the yellow list it is red"              1 "" -- python3 "$ck" "$yd/run" "$yd/req-yellow.json"
+check "yellow: a persistent other-environment cell still fails"  1 "red: \['kuicksilver->ngtcp2:rebind-port'\]" -- env -u GITHUB_STEP_SUMMARY python3 "$ck" "$yd/run" "$yd/req-both.json" "$yd/keys-run.txt"
+check "yellow: a cell another rule lists as well is not yellow"  0 "" -- test ! -s "$yd/keys-both.txt"
+check "yellow:   so it stays red"                                1 "red: \['ngtcp2->kuicksilver:rebind-addr'\]" -- python3 "$ck" "$yd/both" "$yd/req-yellow.json" "$yd/keys-both.txt"
+check "yellow: the step summary names the yellow cell"           0 "ngtcp2->kuicksilver:rebind-addr" -- bash -c "GITHUB_STEP_SUMMARY='$yd/summary.md' python3 '$ck' '$yd/run' '$yd/req-yellow.json' '$yd/keys-run.txt' > /dev/null && cat '$yd/summary.md'"
+runjson "$yd/run/ngtcp2-client-rerun-rebind-addr.json" ngtcp2 kuicksilver rebind-addr succeeded
+check "yellow: a green run of the cell needs no excuse"          0 "red: \[\]" -- python3 "$ck" "$yd/run" "$yd/req-yellow.json"
+
 # run-local.sh's compose override: the sim's KSL_INTEROP_SIM_CELL reaches compose unexpanded and compose's interpolation of it
 # differs in every cell (same test case and client, fresh log directories), so compose never reuses a running sim
 # shellcheck disable=SC2016   # the pattern matches the literal "$runner" of run-local.sh
@@ -315,6 +355,7 @@ fi
 if [ -n "${KSL_INTEROP_PORT_CELL:-}" ]; then   # the real release/0.2.x cell: pcap through tshark, the ngtcp2 server's log
   cell=${KSL_INTEROP_PORT_CELL%/}; res=$(dirname "$(dirname "$cell")")
   check "real port cell: classified ENVIRONMENT" 0 "$(basename "$(dirname "$cell")") $(basename "$cell") the sim rebound the client to a source port the ngtcp2 server drops" -- environment_cells "$res"
+  check "real port cell: environment-yellow" 0 "ngtcp2->kuicksilver:rebind-addr	" -- environment_yellow_keys "$(dirname "$res")"
   check "real port cell: the decoded summary matches its fixture" 0 "" -- bash -c "python3 '$pp' --dump '$cell' | jq -e --slurpfile f '$fp' '. == \$f[0]' > /dev/null"
 fi
 [ $fails -eq 0 ] && echo "all cases passed"

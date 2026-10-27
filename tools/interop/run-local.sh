@@ -30,6 +30,9 @@
 # and a rebind cell of the ngtcp2 server whose downloading client the sim rebound to a source port that server drops (below 1024:
 # the fixed-seed 193.167.0.155:745 at 11 s in rebind-addr), so the server kept sending to the old binding until the client idled
 # out (tools/interop/prohibited-port-rebind.py; release/0.2.x run 40563746089, ngtcp2->kuicksilver:rebind-addr).
+# The prohibited_port_rebind cell is the exception (environment-yellow, owner's decision 2026-10-28): the binding at 11 s is fixed, so
+# on a host where the transfer still runs then every rerun fails alike; it is not rerun, it gets a warning (::warning:: in CI) and
+# --check-required (check-required.py) reports it apart and does not count it red. Every other ENVIRONMENT cell that stays red fails.
 # --check-required merges the reruns (a green rerun counts), --results reports such cells only.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/../.." && pwd)"; cd "$root"
@@ -105,8 +108,12 @@ for peer in "${peers[@]}"; do
       [ -f "$dir.json" ] || { echo "RUNNER CRASH: $dir again left no result file" >&2; fail=1; }
     fi
     [ $perf -eq 1 ] && continue
+    yellow=$(environment_yellow_cells "$dir")
     while read -r pair case why; do
       [ -n "$pair" ] || continue
+      if grep -qxF "$pair $case" <<< "$yellow"; then   # deterministic on a slow host: a rerun fails the same way, --check-required excuses it
+        environment_warn "$dir/$pair/$case" "$why; not rerun, environment-yellow"; continue
+      fi
       echo "ENVIRONMENT: $dir/$pair/$case: $why; rerunning the cell"
       for attempt in $(seq 1 "$env_reruns"); do
         rerun="$dir-rerun-$case"; [ "$attempt" -gt 1 ] && rerun="$dir-rerun$attempt-$case"
@@ -123,7 +130,12 @@ fi
 echo "results in $out"
 if [ -n "$results" ] && [ $perf -eq 0 ]; then   # --results: report cells whose verdict rests on the environment (no rerun here)
   for d in ${out//,/ }; do for r in "$d"/*-server "$d"/*-client; do [ -d "$r" ] || continue
-    while read -r pair case why; do [ -n "$pair" ] && echo "ENVIRONMENT: $r/$pair/$case: $why"; done < <(environment_cells "$r")
+    yellow=$(environment_yellow_cells "$r")
+    while read -r pair case why; do
+      [ -n "$pair" ] || continue
+      if grep -qxF "$pair $case" <<< "$yellow"; then environment_warn "$r/$pair/$case" "$why; environment-yellow"
+      else echo "ENVIRONMENT: $r/$pair/$case: $why"; fi
+    done < <(environment_cells "$r")
   done; done
 fi
 if [ $perf -eq 1 ]; then
@@ -131,27 +143,9 @@ if [ $perf -eq 1 ]; then
   exit $fail   # a runner crash that left no result file for a role also fails the run
 fi
 if [ $check -eq 1 ]; then
-  python3 - "$out" tools/interop/required.json <<'PY'
-import json, sys, glob, os
-out, req = sys.argv[1], json.load(open(sys.argv[2]))["required"]
-results = {}
-for f in [f for d in out.split(",") for f in glob.glob(os.path.join(d, "*.json"))]:
-    r = json.load(open(f))
-    for i, s in enumerate(r.get("servers", [])):
-        for j, c in enumerate(r.get("clients", [])):
-            for cell in r["results"][i * len(r["clients"]) + j]:
-                k = f"{s}->{c}:{cell['name']}"
-                if cell["result"] == "succeeded" or k not in results: results[k] = cell["result"]   # a later green rerun of a cell counts
-# only the cells this run could have produced count: its implementations (both roles) and its test cases (a JVM-image run must not fail on native-image cells)
-impls, cases = set(), set()
-for k in results: ep, case = k.rsplit(":", 1); srv, cli = ep.split("->"); impls.update((srv, cli)); cases.add(case)
-def in_scope(k):
-    ep, case = k.rsplit(":", 1); srv, cli = ep.split("->"); return srv in impls and cli in impls and case in cases
-scoped = [k for k in req if in_scope(k)]
-missing = [k for k in scoped if results.get(k) != "succeeded"]
-print("required cells in this run's scope:", len(scoped), "of", len(req), "red:", missing)
-sys.exit(1 if missing else 0)
-PY
+  yellow_keys=$(mktemp); trap 'rm -f "$yellow_keys"' EXIT
+  environment_yellow_keys "$out" > "$yellow_keys"
+  python3 tools/interop/check-required.py "$out" tools/interop/required.json "$yellow_keys"
 exit $?   # with --check-required only the required cells decide; a red optional cell is reported, not fatal
 fi
 exit $fail
