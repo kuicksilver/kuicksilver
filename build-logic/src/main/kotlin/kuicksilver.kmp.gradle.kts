@@ -69,6 +69,7 @@ kotlin {
     sourceSets.matching { it.name.endsWith("Test") }.configureEach {
         languageSettings.optIn("io.kuicksilver.annotations.InternalKuicksilverApi")
         languageSettings.optIn("io.kuicksilver.annotations.ExperimentalKuicksilverApi")
+        languageSettings.optIn("io.kuicksilver.annotations.DelicateKuicksilverApi") // tests drive the delicate knobs on purpose
     }
     sourceSets {
         commonTest.dependencies {
