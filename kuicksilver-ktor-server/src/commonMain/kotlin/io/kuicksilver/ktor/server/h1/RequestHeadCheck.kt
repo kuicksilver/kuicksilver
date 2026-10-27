@@ -8,6 +8,16 @@ import kotlinx.io.indexOf
 import kotlinx.io.readByteArray
 
 /**
+ * A field value as the client sent it, for the [occurrence]-th field line (from 0) named [name] (lower case): one that
+ * Ktor's parser would hand on changed.
+ */
+internal class KeptFieldValue(
+    val name: String,
+    val occurrence: Int,
+    val value: String,
+)
+
+/**
  * The longest request line (without its line end) the server parses: Ktor's `parseRequest` limit for one line
  * (`HTTP_LINE_LIMIT`, 8 KiB).
  */
@@ -54,15 +64,23 @@ internal suspend fun HeadLimitedInput.checkRequestHead() {
         } else if (end == lineStart) {
             val fields = buffer.peek()
             fields.skip(fieldsStart)
-            for (colon in checkFieldSection(fields.readByteArray((lineStart - fieldsStart).toInt()))) {
-                replaceBufferedByte(fieldsStart + colon, SP_BYTE)
-            }
+            val checked = checkFieldSection(fields.readByteArray((lineStart - fieldsStart).toInt()))
+            for (colon in checked.emptyPortColons) replaceBufferedByte(fieldsStart + colon, SP_BYTE)
+            keptFieldValues = checked.keptValues
             return
         }
         lineStart = lf + 1
         scanned = lf + 1
     }
 }
+
+/** What [checkFieldSection] found besides refusals. */
+internal class FieldSectionCheck(
+    /** Offsets of the colons that end a Host value (an empty port), which the caller turns into SP. */
+    val emptyPortColons: List<Int>,
+    /** Values that start with obs-text Ktor's parser takes for whitespace, as sent. */
+    val keptValues: List<KeptFieldValue>,
+)
 
 /**
  * Checks the field lines of a request head ([fields]: each line with its line end, without the empty line that ends the
@@ -72,18 +90,21 @@ internal suspend fun HeadLimitedInput.checkRequestHead() {
  *   (section 5.2), which the parser refuses too;
  * - a control character other than HTAB in a value. RFC 9110 section 5.5: a recipient of CR, LF or NUL within a field
  *   value MUST either reject the message or replace each of them with SP; field-content is VCHAR, obs-text, SP and
- *   HTAB, so the others (DEL among them) are invalid too, as Go's net/http holds. Ktor's parser refuses only CR and LF;
- * - a Unicode space (U+00A0, ...) right after the OWS before a value: OWS is only SP and HTAB (RFC 9110 section 5.6.3),
- *   but Ktor's parser skips any Unicode whitespace there, so the application (and the framing of the body, for
- *   `Content-Length: <U+00A0>5`) would see another value than a recipient that holds to the grammar. Inside or at the
- *   end of a value such bytes are obs-text, passed on.
+ *   HTAB, so the others (DEL among them) are invalid too, as Go's net/http holds. Ktor's parser refuses only CR and LF.
  *
- * Returns the offsets of the colons that end a Host value (`Host: a.example:`): `port = *DIGIT` (RFC 3986 section 3.2.3)
- * makes the empty port valid (the default port), but Ktor's parser refuses it, so the caller turns that colon into SP,
- * trailing OWS the parser drops: the same authority.
+ * And it finds what Ktor's parser would get wrong in a valid head:
+ * - a value that starts with obs-text decoding to a Unicode space (U+00A0, ...): OWS is only SP and HTAB (RFC 9110
+ *   section 5.6.3), obs-text is field content a recipient SHOULD treat as opaque data (section 5.5), but the parser
+ *   skips any Unicode whitespace before a value. Such values are returned as sent, for [requestFields]; a framing field
+ *   with one is then invalid, as it is;
+ * - a Host value that ends with a colon: `port = *DIGIT` (RFC 3986 section 3.2.3) makes the empty port valid (the
+ *   default port), but the parser refuses it, so the caller turns that colon into SP, trailing OWS the parser drops: the
+ *   same authority.
  */
-internal fun checkFieldSection(fields: ByteArray): List<Int> {
+internal fun checkFieldSection(fields: ByteArray): FieldSectionCheck {
     val emptyPortColons = ArrayList<Int>(0)
+    val kept = ArrayList<KeptFieldValue>(0)
+    val occurrences = HashMap<String, Int>()
     var start = 0
     while (start < fields.size) {
         var lf = start
@@ -92,21 +113,24 @@ internal fun checkFieldSection(fields: ByteArray): List<Int> {
         var colon = start
         while (colon < end && isTcharByte(fields[colon])) colon++
         if (colon == start || colon == end || fields[colon] != ':'.code.toByte()) refuse("The field name is not a token")
+        val name = fields.decodeToString(start, colon).lowercase()
+        val occurrence = occurrences[name] ?: 0
+        occurrences[name] = occurrence + 1
         var value = colon + 1
         while (value < end && (fields[value] == SP_BYTE || fields[value] == HTAB_BYTE)) value++
-        if (value < end && unicodeSpaceLength(fields, value) > 0) refuse("A Unicode space before a field value")
         for (i in value until end) {
             val c = fields[i].toInt() and 0xFF
             if ((c < 0x20 && c != 0x09) || c == 0x7F) refuse("A control character in a field value")
         }
-        if (colon - start == 4 && fields.decodeToString(start, colon).equals("host", ignoreCase = true)) {
-            var last = end - 1
-            while (last >= value && (fields[last] == SP_BYTE || fields[last] == HTAB_BYTE)) last--
-            if (last >= value && fields[last] == ':'.code.toByte()) emptyPortColons += last
+        var last = end - 1
+        while (last >= value && (fields[last] == SP_BYTE || fields[last] == HTAB_BYTE)) last--
+        if (value < end && unicodeSpaceLength(fields, value) > 0) {
+            kept += KeptFieldValue(name, occurrence, fields.decodeToString(value, last + 1))
         }
+        if (name == "host" && last >= value && fields[last] == ':'.code.toByte()) emptyPortColons += last
         start = lf + 1
     }
-    return emptyPortColons
+    return FieldSectionCheck(emptyPortColons, kept)
 }
 
 /**

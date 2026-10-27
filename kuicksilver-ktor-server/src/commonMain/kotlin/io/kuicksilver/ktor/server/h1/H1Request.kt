@@ -33,12 +33,14 @@ internal class H1Request(
     private val input: ByteReadChannel,
     private val request: Request,
     scheme: String,
+    /** The request's fields as the client sent them ([requestFields]). */
+    fields: Headers = CIOHeaders(request.headers),
 ) : BaseApplicationRequest(call) {
     override val cookies: RequestCookies by lazy { RequestCookies(this) }
 
     override val engineReceiveChannel: ByteReadChannel = input
 
-    override var engineHeaders: Headers = CIOHeaders(request.headers)
+    override var engineHeaders: Headers = fields
 
     @OptIn(InternalAPI::class)
     override val queryParameters: Parameters by lazy {
@@ -62,7 +64,7 @@ internal class H1Request(
             // absolute-form: routing sees its path and query, and the authority replaces Host, which the server MUST
             // ignore (RFC 9112 section 3.2.2)
             absoluteForm?.second ?: request.uri.toString(),
-            absoluteForm?.first ?: request.headers[HttpHeaders.Host]?.toString(),
+            absoluteForm?.first ?: fields[HttpHeaders.Host],
             HttpMethod.parse(request.method.value),
             scheme,
         )

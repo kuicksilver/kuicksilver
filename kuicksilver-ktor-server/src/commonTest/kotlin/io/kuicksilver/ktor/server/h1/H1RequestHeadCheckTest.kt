@@ -39,7 +39,8 @@ class H1RequestHeadCheckTest {
         val fromServer = ByteChannel()
         val job =
             backgroundScope.startH1Pipeline(H1Connection(toServer, fromServer, null, null), 45.seconds, 30.seconds) { request ->
-                val body = "${request.method.value} ${request.uri} ${request.version}" + (request.headers["X-A"]?.let { " [$it]" } ?: "")
+                val body =
+                    "${request.method.value} ${request.uri} ${request.version}" + (fields.getAll("X-A")?.joinToString("|", " [", "]") ?: "")
                 request.release()
                 output.writeStringUtf8("HTTP/1.1 200 OK\r\nContent-Length: ${body.length}\r\n\r\n$body")
                 output.flush()
@@ -179,24 +180,42 @@ class H1RequestHeadCheckTest {
         }
 
     /**
-     * OWS is `*( SP / HTAB )` (RFC 9110 section 5.6.3). Ktor's parser skips any Unicode whitespace before a value, so
-     * `X-A: <U+00A0>a` reached the application as `a`, and `Content-Length: <U+00A0>5` framed a 5-byte body while a front
-     * proxy that finds the value invalid frames none (CL.0 smuggling). 400 and close (RFC 9112 section 6.3 item 5 for
-     * Content-Length).
+     * A field value may start with obs-text (RFC 9110 section 5.5: field-content), which a recipient SHOULD treat as
+     * opaque data. Ktor's parser skips any Unicode whitespace before a value, so `X-A: <U+00A0>a` reached the
+     * application as `a`; the server now hands on the value as sent (only SP and HTAB are OWS, section 5.6.3), the second
+     * of two lines too. Before the fix that preceded this, a 400; before that, the stripped value.
      */
-    @Test fun negative_unicodeSpaceBeforeAFieldValueIsRejected() =
+    @Test fun unicodeSpaceBeforeAFieldValueIsKept() =
+        runTest {
+            for ((field, value) in listOf(
+                "X-A: \u00a0a" to "\u00a0a",
+                "X-A:\u2000a" to "\u2000a",
+                "X-A: \t\u3000a \t" to "\u3000a",
+                "X-A: \u00a0" to "\u00a0",
+                "X-A: one\r\nx-a: \u00a0two" to "one|\u00a0two",
+            )) {
+                val response = exchange("GET / HTTP/1.1\r\nHost: s\r\n$field\r\nConnection: close\r\n\r\n")
+                assertTrue(response.endsWith("GET / HTTP/1.1 [$value]"), "${show(field)}: $response")
+            }
+        }
+
+    /**
+     * The same values in a field the server reads itself are invalid there: `Content-Length: <U+00A0>5` is not `1*DIGIT`
+     * and `Transfer-Encoding: <U+2009>chunked` no transfer coding (RFC 9112 section 6.3 items 4 and 5: 400 and close),
+     * `Host: <U+00A0>a` no `uri-host` (section 3.2). Ktor's parser stripped the space, so the first framed a 5-byte body
+     * while a front proxy that finds the value invalid frames none (CL.0 smuggling).
+     */
+    @Test fun negative_unicodeSpaceBeforeAFramingValueIsRejected() =
         runTest {
             val next = "GET /next HTTP/1.1\r\nHost: s\r\n\r\n"
-            for (field in listOf(
-                "X-A: \u00a0a\r\n\r\n",
-                "X-A:\u2000a\r\n\r\n",
-                "X-A: \t\u3000a\r\n\r\n",
-                "Content-Length: \u00a05\r\n\r\nhello",
-                "Transfer-Encoding: \u2009chunked\r\n\r\n0\r\n\r\n",
+            for (head in listOf(
+                "POST / HTTP/1.1\r\nHost: s\r\nContent-Length: \u00a05\r\n\r\nhello",
+                "POST / HTTP/1.1\r\nHost: s\r\nTransfer-Encoding: \u2009chunked\r\n\r\n0\r\n\r\n",
+                "GET / HTTP/1.1\r\nHost: \u00a0a\r\n\r\n",
             )) {
-                val response = exchange("POST / HTTP/1.1\r\nHost: s\r\n$field$next")
-                assertTrue(response.startsWith("HTTP/1.1 400 "), "${show(field)}: $response")
-                assertEquals(1, Regex("HTTP/1.1 ").findAll(response).count(), "${show(field)}: $response")
+                val response = exchange("$head$next")
+                assertTrue(response.startsWith("HTTP/1.1 400 "), "${show(head)}: $response")
+                assertEquals(1, Regex("HTTP/1.1 ").findAll(response).count(), "${show(head)}: $response")
             }
         }
 

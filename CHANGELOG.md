@@ -204,9 +204,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   rest reached `serverHost` and `serverPort`. A trailing colon (`Host: a.example:`, an empty port, valid by RFC 3986's
   `port = *DIGIT`) is now accepted as the default port instead of refused.
 - Ktor server, HTTP/1.1: a request field name that is not a token (with DEL or a byte above 0x7F, RFC 9110 section
-  5.1) gets 400, and so does a Unicode space (U+00A0, U+2000, ...) right before a field value: OWS is only SP and HTAB
-  (section 5.6.3), but Ktor's parser skipped it, so `Content-Length: <U+00A0>5` framed a 5-byte body while a front
-  proxy that finds the value invalid frames none (request smuggling).
+  5.1) gets 400. A field value that starts with a Unicode space (U+00A0, U+2000, ... sent as obs-text) now reaches
+  the application as sent: OWS is only SP and HTAB (section 5.6.3) and obs-text is opaque field content (section
+  5.5), but Ktor's parser skipped it, so `X-A: <U+00A0>a` arrived as `a`, and `Content-Length: <U+00A0>5` framed a
+  5-byte body while a front proxy that finds the value invalid frames none (request smuggling); such a
+  `Content-Length`, `Transfer-Encoding` or `Host` is now invalid and gets 400.
 - Ktor server, HTTP/1.1: a request field value with a control character other than HTAB (NUL, VT, FF, DEL) gets 400
   and the connection closes (RFC 9110 section 5.5: a recipient of NUL in a field value MUST reject the message or
   replace it). Before, Ktor's parser refused only CR and LF, and a NUL reached the application.

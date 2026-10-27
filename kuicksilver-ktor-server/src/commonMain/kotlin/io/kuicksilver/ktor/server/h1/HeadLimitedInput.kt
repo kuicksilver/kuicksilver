@@ -42,10 +42,17 @@ internal class HeadLimitedInput(
     var exceeded: Boolean = false
         private set
 
+    /**
+     * The field values of the current head that Ktor's parser would change ([checkRequestHead] sets them; see
+     * [requestFields]).
+     */
+    var keptFieldValues: List<KeptFieldValue> = emptyList()
+
     /** A request head starts at the next unread byte. */
     fun startHead() {
         headBudget = (maxHeadBytes - buffer.size).coerceAtLeast(0)
         exceeded = false
+        keptFieldValues = emptyList()
     }
 
     /** The head was read: what follows (a body) is not limited. */

@@ -273,6 +273,7 @@ private suspend fun KuicksilverApplicationEngine.handleRequest(
                     altSvc,
                     closing,
                     endsConnection,
+                    fields,
                 )
             events.emit("requestStarted") { requestStarted(HttpProtocolVersion.HTTP_1_1, call) }
             var failure: Throwable? = null
