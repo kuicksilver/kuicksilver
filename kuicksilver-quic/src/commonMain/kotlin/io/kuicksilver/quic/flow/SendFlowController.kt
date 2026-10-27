@@ -29,11 +29,13 @@ internal class SendFlowController(
     }
 
     /**
-     * Sets the limit even when lower: only after a rejected 0-RTT, when the server's new transport parameters replace the
-     * remembered ones (RFC 9000 section 7.4.1); the caller has checked that [used] fits.
+     * Starts again with nothing sent and [limit], even when lower: only for the connection after a rejected 0-RTT, whose
+     * streams were reset (RFC 9001 section 4.6.2) and whose new transport parameters replace the remembered ones (RFC 9000
+     * section 7.4.1).
      */
-    fun resetLimit(limit: Long) {
+    fun restart(limit: Long) {
         this.limit = limit
+        sent = 0
         blockedReportedAt = -1
     }
 

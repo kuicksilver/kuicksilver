@@ -12,6 +12,7 @@ import io.kuicksilver.quic.CoreFixtures
 import io.kuicksilver.quic.QuicClientConfig
 import io.kuicksilver.quic.QuicConnection
 import io.kuicksilver.quic.QuicException
+import io.kuicksilver.quic.quicConfig
 import io.kuicksilver.quic.runtime.EndpointLoop
 import io.kuicksilver.tls.EarlyDataState
 import io.kuicksilver.tls.KslQuicCrypto
@@ -170,6 +171,63 @@ class ZeroRttApiTest {
                     assertEquals("after!", second.echo("after"), "a stream opened after the handshake on a 0-RTT connection")
                     u.output.flushAndClose()
                     server.await()
+                }
+            }
+        }
+
+    /**
+     * RFC 9001 section 4.6.2: the server restarted with another configuration and rejects the ticket's 0-RTT; the stream
+     * opened early fails with [QuicException.StreamError.EarlyDataRejected] (the client "MUST reset the state of all
+     * streams"), nothing of it reaches the server, and the connection serves a new stream.
+     */
+    @Test fun rejectedZeroRttFailsEarlyStreamsAndTheConnectionGoesOn(): Unit =
+        runBlocking {
+            ApiPair.open(crypto = KslQuicCrypto, serverEarlyData = true).use { p ->
+                withTimeout(20.seconds) {
+                    val firstServer =
+                        async {
+                            val c = p.server.accept()
+                            val s = c.acceptStream()
+                            s.output.writeFully(s.input.readAll().encodeToByteArray())
+                            s.output.flushAndClose()
+                        }
+                    val first = p.client.connect(p.server.localAddress, clientConfig())
+                    assertEquals("one", first.echo("one"))
+                    val sessions = (p.client as EndpointLoop).sessions
+                    while (sessions.size() == 0) yield()
+                    first.close()
+                    firstServer.await()
+                    val server = p.restartServer(quicConfig { initialConnectionWindow = 700_000 }, KslQuicCrypto)
+                    try {
+                        val seen = mutableListOf<String>()
+                        val serving =
+                            async {
+                                val c = server.accept()
+                                val s = c.acceptStream()
+                                val got = s.input.readAll()
+                                seen += got
+                                s.output.writeFully("$got!".encodeToByteArray())
+                                s.output.flushAndClose()
+                            }
+                        // the server's answers wait until the early stream is written: it must leave in 0-RTT
+                        p.net.hold(p.clientIo.localAddress)
+                        val second = p.client.connectEarly(server.localAddress, clientConfig())
+                        val early = second.openBidi()
+                        early.output.writeFully("two".encodeToByteArray())
+                        early.output.flushAndClose()
+                        assertEquals(false, second.isHandshakeComplete)
+                        p.net.release(p.clientIo.localAddress)
+                        val e = assertFailsWith<QuicException.StreamError.EarlyDataRejected> { early.input.readAll() }
+                        assertEquals(early.id, e.streamId)
+                        second.awaitHandshake()
+                        assertEquals(false, second.earlyDataAccepted)
+                        assertEquals("three!", second.echo("three"), "a new stream after the rejection")
+                        serving.await()
+                        assertEquals(listOf("three"), seen, "nothing of the rejected stream reached the server")
+                        second.close()
+                    } finally {
+                        server.close()
+                    }
                 }
             }
         }

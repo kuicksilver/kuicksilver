@@ -497,6 +497,9 @@ internal class ConnectionRuntime(
 
                 ConnectionEvent.EarlyDataRejected -> {
                     earlyAccepted = false
+                    // the core dropped every stream we opened (RFC 9001 section 4.6.2) and reuses their IDs: their wrappers fail and go
+                    val gone = streams.keys.filter { isLocal(it) }
+                    for (id in gone) streams.remove(id)?.earlyDataRejected()
                     loop.observer.zeroRtt(this, io.kuicksilver.quic.ZeroRttOutcome.Rejected)
                 }
 

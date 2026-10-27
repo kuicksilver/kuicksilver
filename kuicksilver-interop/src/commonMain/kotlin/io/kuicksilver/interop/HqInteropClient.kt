@@ -10,6 +10,7 @@ import io.kuicksilver.tls.EarlyDataState
 import io.kuicksilver.quic.QlogSink
 import io.kuicksilver.quic.QuicClientConfig
 import io.kuicksilver.quic.QuicConnection
+import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.QuicEndpoint
 import io.kuicksilver.quic.QuicEndpointConfig
 import io.kuicksilver.quic.QuicStream
@@ -94,9 +95,16 @@ internal object HqInteropClient {
     @kotlin.concurrent.Volatile var beforeRequest: suspend (QuicConnection) -> Unit = {}
     /** The `keyupdate` case: one key update once this many response bytes arrived (the runner wants it within the first MB). */
     private class KeyUpdateOnce(val after: Long) { var received = 0L; var done = false }
+    /**
+     * One request on a new stream. A stream opened before the handshake completed that the server's rejection of 0-RTT reset
+     * (RFC 9001 section 4.6.2) is sent again on a new stream once the handshake completed.
+     */
     private suspend fun fetch(conn: QuicConnection, url: String, downloads: String, progress: KeyUpdateOnce?): Boolean {
-        val st = conn.openBidi(); beforeRequest(conn); request(st, url); st.output.flushAndClose()
-        return receive(conn, st, url, downloads, progress)
+        val early = !conn.isHandshakeComplete
+        val st = conn.openBidi(); beforeRequest(conn); request(st, url)
+        val ok = try { st.output.flushAndClose(); receive(conn, st, url, downloads, progress) } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException || st.input.closedCause !is QuicException.StreamError.EarlyDataRejected) throw e; false }
+        if (ok || !early || st.input.closedCause !is QuicException.StreamError.EarlyDataRejected) return ok
+        conn.awaitHandshake(); return fetch(conn, url, downloads, progress)
     }
     /**
      * Writes the request into the channel's buffer, not through the auto-flushing writeFully, so flushAndClose sends it and

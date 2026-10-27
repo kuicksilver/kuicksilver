@@ -145,9 +145,9 @@ public sealed class QuicException(
         }
 
         /**
-         * The server rejected 0-RTT and its answer leaves no safe way to resend it in 1-RTT (another ALPN, or lower limits
-         * than the 0-RTT data already used), or `EarlyDataState.Required` was asked for and 0-RTT was refused or unavailable.
-         * The connection closed with NO_ERROR; retry on a new connection.
+         * The server rejected 0-RTT and chose another ALPN than the ticket's, or `EarlyDataState.Required` was asked for and
+         * 0-RTT was refused or unavailable. The connection closed with NO_ERROR; retry on a new connection. (Any other
+         * rejection keeps the connection and fails the streams opened early with [StreamError.EarlyDataRejected].)
          */
         @ExperimentalKuicksilverApi
         public class ZeroRttRejected : ConnectionLost("0-RTT rejected") {
@@ -205,6 +205,20 @@ public sealed class QuicException(
             }
 
             override fun createCopy(): Stopped = Stopped(streamId, code, initiator)
+        }
+
+        /**
+         * Client: the server rejected 0-RTT, and this stream, opened before the handshake completed, was reset with all the
+         * others (RFC 9001 section 4.6.2: the client "MUST reset the state of all streams"). Nothing of it reached the
+         * server; the connection lives on, and what is still wanted goes on a new stream.
+         *
+         * @property streamId The stream that was reset.
+         */
+        @ExperimentalKuicksilverApi
+        public class EarlyDataRejected(
+            public val streamId: Long,
+        ) : StreamError("stream $streamId reset: the server rejected 0-RTT") {
+            override fun createCopy(): EarlyDataRejected = EarlyDataRejected(streamId)
         }
     }
 

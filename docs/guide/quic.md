@@ -175,10 +175,12 @@ after the first `connect` usually finds none and does a full handshake (`earlyDa
 
 - **Tickets** are kept per client endpoint, used once, and checked against the current trust again before use. The
   remembered transport parameters (RFC 9000 section 7.4.1) set the limits of 0-RTT. Closing the endpoint drops them.
-- **Rejection.** When the server refuses 0-RTT (a changed configuration, a stale or replayed ticket), the transport
-  sends the same stream data again in 1-RTT, and `earlyDataAccepted` is false. If the new limits cannot hold what was
-  already sent, or `EarlyDataState.Required` was asked for, the connection closes with
-  `QuicException.ConnectionLost.ZeroRttRejected`.
+- **Rejection.** When the server refuses 0-RTT (a changed configuration, a stale or replayed ticket), the client resets
+  every stream it opened before the handshake completed (RFC 9001 section 4.6.2: it "MUST reset the state of all
+  streams"): they fail with `QuicException.StreamError.EarlyDataRejected`, nothing of them reached the server, and
+  `earlyDataAccepted` is false. The connection goes on with the server's new limits; send again on new streams what you
+  still want. `Http3Connection.request` does that itself for its early requests. If the server chose another ALPN, or
+  `EarlyDataState.Required` was asked for, the connection closes with `QuicException.ConnectionLost.ZeroRttRejected`.
 - **Server side.** With `earlyData = true`, `accept()` returns a connection as soon as its 0-RTT is accepted, so the
   application can answer in 0.5-RTT. `QuicStream.receivedEarly` marks streams whose data came in 0-RTT.
   `earlyDataContext` binds application settings into tickets, and `Http3Endpoint` puts its SETTINGS there. 0-RTT

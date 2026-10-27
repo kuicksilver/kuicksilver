@@ -298,7 +298,15 @@ internal class Workload(
     private suspend fun zeroRtt(r: Random): Outcome {
         val c = zeroRtt.connectEarly(rawAddr, early)
         try {
-            c.get(size(r, 64 shl 10))
+            val n = size(r, 64 shl 10)
+            try {
+                c.get(n)
+            } catch (e: Exception) {
+                // the rejection reset the early stream (RFC 9001 section 4.6.2): the request goes again after the handshake
+                if (generateSequence<Throwable>(e) { it.cause }.none { it is QuicException.StreamError.EarlyDataRejected }) throw e
+                c.awaitHandshake()
+                c.get(n)
+            }
             c.awaitHandshake()
         } finally {
             c.close(0, "0rtt")

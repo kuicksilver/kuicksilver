@@ -55,6 +55,12 @@ internal class StreamLimits(
         ourOpened[idx(bidi)]++
     }
 
+    /** After a rejected 0-RTT: the streams we opened were reset (RFC 9001 section 4.6.2) and their IDs are free again. */
+    fun resetLocalOpened() {
+        ourOpened[0] = 0
+        ourOpened[1] = 0
+    }
+
     /** True when the limit grew. */
     fun onPeerMaxStreams(
         bidi: Boolean,

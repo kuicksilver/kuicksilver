@@ -115,11 +115,14 @@ a connection whose handshake does not complete. A replayer cannot complete the h
   write key is discarded when the 1-RTT write key is installed (RFC 9001 §4.9.3).
 - Acceptance (`EncryptedExtensions` with `early_data`): new server values below the remembered ones close the
   connection with PROTOCOL_VIOLATION, as quic-go's client does.
-- Rejection: 0-RTT packets leave the bytes in flight without a congestion signal. If the ALPN did not change and the
-  new limits cover what was already sent, their stream frames are queued again and travel in 1-RTT, and the server's
-  new limits (connection and per-stream credit, stream counts) replace the remembered ones even where they are lower
-  (RFC 9000 section 7.4.1); this is the one place a send limit may shrink. The stream state
-  stays because the server never saw those streams (RFC 9001 §4.6.2 retransmission, as msquic does). Otherwise the
+- Rejection: 0-RTT packets leave the bytes in flight without a congestion signal. *Amended 2026-10-28 (0.2.1):* until
+  then their stream frames were queued again for 1-RTT and the streams stayed, as msquic does; that missed RFC 9001
+  §4.6.2 ("The client therefore MUST reset the state of all streams, including application state bound to those
+  streams"). Now, if the ALPN did not change, every stream the client opened is dropped without a frame (its ID, its
+  credit and the stream counts start over from the server's new transport parameters, RFC 9000 section 7.4.1, as
+  ngtcp2's `conn_discard_early_data_state` and quic-go's `streamsMap.ResetFor0RTT`), and the runtime fails its
+  `QuicStream` with `StreamError.EarlyDataRejected`. The application sends again what it still wants; the HTTP/3 client
+  opens its control and QPACK streams only after the handshake and repeats its early requests once. Otherwise the
   connection closes with `ZeroRttRejected`. `EarlyDataState.Required` also turns a rejection into `ZeroRttRejected`.
 - Server: 0-RTT packets that arrive before their keys are buffered with the other undecryptable packets. They are
   dropped when the handshake shows that 0-RTT was rejected. 0-RTT packets for a connection that does not exist yet
@@ -156,7 +159,7 @@ engines are opt-in: client `earlyData`, server `quicEarlyData`. 0-RTT is never o
 
 - Resumption and 0-RTT are one opt-in. With every option at its default, nothing changes on the wire.
 - ADR-0013's planned tests become `negative_0rttReplayRejected`, `negative_0rttTransportParamsReduced`,
-  `zeroRttRejectedRetransmitsIn1Rtt`, `clientTicketIsSingleUse` and the HTTP/3 cases
+  `zeroRttRejectedResetsStreams` (until 0.2.1 `zeroRttRejectedRetransmitsIn1Rtt`), `clientTicketIsSingleUse` and the HTTP/3 cases
   (`negative_unsafeMethodNotProcessedInEarlyData`, `reject425PolicyAndOneRetry`).
 - The interop `zerortt` and `resumption` cases are required and green against all six peers in both roles (0.2.0),
   except quinn's client against our server in `zerortt` (`tools/interop/required.json`).

@@ -28,7 +28,10 @@ public interface QuicEndpoint : AutoCloseable {
      * writes before the handshake completes travels in 0-RTT (RFC 9001 section 4.6). Without a usable ticket it returns at
      * handshake completion, and under `EarlyDataState.Required` it then throws [QuicException.ConnectionLost.ZeroRttRejected].
      * Early data can be replayed by an attacker: write early only what is safe to execute twice, and use
-     * [QuicConnection.awaitHandshake] before the rest. A rejection is repaired by the transport (sent again in 1-RTT).
+     * [QuicConnection.awaitHandshake] before the rest. When the server rejects 0-RTT, every stream opened before the handshake
+     * completed is reset (RFC 9001 section 4.6.2: the client "MUST reset the state of all streams") and fails with
+     * [QuicException.StreamError.EarlyDataRejected]; nothing of it reached the server, and the application sends again on
+     * new streams what it still wants.
      */
     @ExperimentalKuicksilverApi
     public suspend fun connectEarly(

@@ -179,36 +179,67 @@ internal class StreamManager(
     }
 
     /**
-     * After a rejected 0-RTT whose data fits ([localSendFits]): the server's new limits replace the remembered ones on every
-     * stream we opened and for the stream counts, also where they are lower (RFC 9000 section 7.4.1).
+     * Client, after a rejected 0-RTT (RFC 9001 section 4.6.2: the client "MUST reset the state of all streams"): every stream we
+     * opened is dropped without a frame (the server never saw it), with its buffered data, its pending control frames and
+     * events; stream IDs start again at 0, the stream counts and the connection's send credit start again from the server's
+     * new transport parameters (RFC 9000 section 7.4.1), as ngtcp2's `conn_discard_early_data_state`. Returns how many
+     * streams were dropped.
      */
-    fun adoptLocalSendLimits(
-        bidiRemote: Long,
-        uni: Long,
+    fun resetForRejectedZeroRtt(
+        maxData: Long,
         maxStreamsBidi: Long,
         maxStreamsUni: Long,
-    ) {
+    ): Int {
+        var dropped = 0
+        val it = streams.values.iterator()
+        while (it.hasNext()) {
+            val e = it.next()
+            if (!StreamIds.isLocal(e.id, role)) continue
+            e.send?.let { s ->
+                sendBufferedBytes -= s.reset()
+                scheduler.remove(s)
+                s.connBlocked = false
+            }
+            e.recv?.discardBuffered()
+            sendLimit.remove(e.id)
+            early -= e.id
+            it.remove()
+            dropped++
+        }
+        connBlocked.clear()
+        writeRefused.removeAll { !streams.containsKey(it.id) }
+        for (i in control.indices.reversed()) {
+            val c = control[i]
+            // stream frames of the dropped streams, and blocked reports whose limits no longer hold
+            val stale =
+                when (c.kind) {
+                    ControlKind.DataBlocked, ControlKind.StreamsBlockedBidi, ControlKind.StreamsBlockedUni -> true
+                    ControlKind.MaxData, ControlKind.MaxStreamsBidi, ControlKind.MaxStreamsUni -> false
+                    else -> StreamIds.isLocal(c.id, role)
+                }
+            if (stale) releaseControlFrame(control.removeAt(i))
+        }
+        events.removeAll { ev ->
+            val id =
+                when (ev) {
+                    is ConnectionEvent.StreamReadable -> ev.id
+                    is ConnectionEvent.StreamWritable -> ev.id
+                    is ConnectionEvent.StreamReset -> ev.id
+                    is ConnectionEvent.StopSendingReceived -> ev.id
+                    is ConnectionEvent.StreamFinished -> ev.id
+                    else -> return@removeAll false
+                }
+            StreamIds.isLocal(id, role)
+        }
+        nextIndex[0] = 0
+        nextIndex[1] = 0
+        openBlocked[0] = false
+        openBlocked[1] = false
+        limits.resetLocalOpened()
         limits.resetPeerMaxStreams(true, maxStreamsBidi)
         limits.resetPeerMaxStreams(false, maxStreamsUni)
-        for ((id, limit) in sendLimit) {
-            if (!StreamIds.isLocal(id, role)) continue
-            limit.resetLimit(if (StreamIds.isBidi(id)) bidiRemote else uni)
-        }
-    }
-
-    /** After a rejected 0-RTT: whether what our streams already used fits the server's new limits, so resending it is allowed. */
-    fun localSendFits(
-        bidiRemote: Long,
-        uni: Long,
-        maxStreamsBidi: Long,
-        maxStreamsUni: Long,
-    ): Boolean {
-        if (limits.localOpened(true) > maxStreamsBidi || limits.localOpened(false) > maxStreamsUni) return false
-        for ((id, limit) in sendLimit) {
-            if (!StreamIds.isLocal(id, role)) continue
-            if (limit.used > if (StreamIds.isBidi(id)) bidiRemote else uni) return false
-        }
-        return true
+        connSend.restart(maxData)
+        return dropped
     }
 
     /** Receive window of stream [id] and of the connection (test hooks: auto-tuning). */
@@ -968,6 +999,14 @@ internal class StreamManager(
                 }
             }
         }
+        onConnectionFramesLost(f)
+    }
+
+    /**
+     * The connection-level part of [onFramesLost]: DATA_BLOCKED, STREAMS_BLOCKED, MAX_DATA and MAX_STREAMS go again with
+     * their current values. Alone for the 0-RTT packets of a rejected 0-RTT, whose streams are reset, not resent.
+     */
+    fun onConnectionFramesLost(f: SentFrames) {
         if (f.flags and SentFrames.DATA_BLOCKED != 0 && connBlocked.isNotEmpty() && connSend.stillBlockedAt(connSend.maxLimit)) {
             queueOnce(ControlKind.DataBlocked, 0, connSend.maxLimit)
         }

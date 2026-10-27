@@ -81,6 +81,34 @@ internal class ApiPair private constructor(
         }
     }
 
+    /**
+     * Closes [server] and binds a new server endpoint (its own ticket keys and early-data context, from [serverQuic]) at the
+     * same address: a server restarted with another configuration, which refuses earlier tickets' 0-RTT. The caller closes it.
+     */
+    suspend fun restartServer(
+        serverQuic: QuicConfig,
+        crypto: QuicCrypto,
+    ): QuicEndpoint {
+        server.closeAndJoin()
+        val io = net.open(serverIo.localAddress)
+        return QuicEndpoint.bind(
+            io.localAddress,
+            QuicEndpointConfig
+                .Builder()
+                .apply {
+                    this.server =
+                        QuicServerConfig
+                            .Builder(CoreFixtures.server())
+                            .apply {
+                                quic = serverQuic
+                                earlyData = true
+                            }.build()
+                    this.crypto = crypto
+                    this.io = { io }
+                }.build(),
+        )
+    }
+
     suspend fun connect(quic: QuicConfig = QuicConfig.Default): Pair<QuicConnection, QuicConnection> =
         coroutineScope {
             val accepted = async { server.accept() }

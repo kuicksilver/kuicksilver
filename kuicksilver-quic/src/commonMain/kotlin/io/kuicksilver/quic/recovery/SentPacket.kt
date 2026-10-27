@@ -178,7 +178,10 @@ internal class SentPacket {
     /** Sent with ECT(0) (RFC 9000 section 13.4.2). */
     var ecnMarked: Boolean = false
 
-    /** Sent with 0-RTT keys (client): a rejection takes it out of flight and its frames go again in 1-RTT. */
+    /**
+     * Sent with 0-RTT keys (client): a rejection takes it out of flight, its stream frames are dropped with their reset
+     * streams (RFC 9001 section 4.6.2) and its connection-level ones go again in 1-RTT.
+     */
     var zeroRtt: Boolean = false
 
     /** Its frames already went out again in a PTO probe: the next probe takes newer packets (RFC 9002 section 6.2.4). */

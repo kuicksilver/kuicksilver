@@ -152,9 +152,12 @@ it with the stack trace of its `cause`.
 
 ### 0-RTT is rejected
 
-- `ConnectionLost.ZeroRttRejected` ("0-RTT rejected"): the server rejected 0-RTT and what was sent early cannot be
-  resent safely (another ALPN, lower limits), or the client asked for `EarlyDataState.Required` and got no 0-RTT. Retry
-  on a new connection with `connectEarly` off or `Allowed`.
+- `StreamError.EarlyDataRejected` on a stream opened before the handshake completed: the server rejected 0-RTT, and the
+  client reset every such stream (RFC 9001 section 4.6.2); nothing of it reached the server. Send it again on a new
+  stream after `awaitHandshake()` (the HTTP/3 client does this itself for its early requests).
+- `ConnectionLost.ZeroRttRejected` ("0-RTT rejected"): the server rejected 0-RTT and chose another ALPN than the ticket's,
+  or the client asked for `EarlyDataState.Required` and got no 0-RTT. Retry on a new connection with `connectEarly` off
+  or `Allowed`.
 - 0-RTT never happens: the server needs `QuicServerConfig.earlyData = true` (Ktor server `quicEarlyData`), it is
   refused with client certificates, a ticket is single-use and lives in the endpoint (or Ktor engine) that received
   it, and a server whose configuration changed (ALPN, transport limits, HTTP/3 SETTINGS) refuses old tickets. The

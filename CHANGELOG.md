@@ -175,6 +175,14 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - Ktor client: `http3 { clearOnNetworkChange }` is now true by default: when `networkId` reports a new network, the
   engine forgets the Alt-Svc alternatives without `persist=1`, as RFC 7838 section 2.2 says a client SHOULD. Before, it
   kept them unless asked. `clearOnNetworkChange = false` restores the old behaviour.
+- QUIC: when the server rejects 0-RTT, the client resets every stream it opened before the handshake completed, as
+  RFC 9001 section 4.6.2 requires ("MUST reset the state of all streams"); before, it sent their data again in 1-RTT. The
+  streams fail with the new `QuicException.StreamError.EarlyDataRejected` (experimental), nothing of them reached the
+  server, their IDs and the connection's credit start over from the server's new transport parameters, and the
+  connection goes on; send again on new streams what is still wanted. A rejection closes the connection with
+  `ZeroRttRejected` only for another ALPN or under `EarlyDataState.Required` (no longer for lower limits). The HTTP/3
+  client opens its control and QPACK streams once the handshake completed and repeats each early request once after a
+  rejection.
 - QUIC: a lost connection no longer takes the bytes a peer sent before it (`QuicStream.input`): what was received is
   still read, up to the FIN when it came too (then the stream ends cleanly), and only then do reads fail with the
   `QuicException.ConnectionLost`. Before, every read failed at once, even with the whole stream received. A reset still

@@ -14,7 +14,7 @@ Protection in three layers, all on the server; the client only marks what may be
 2. **Single use within the window** (RFC 9846 §8.2 "single-use tickets" in a soft form): `EndpointCore` keeps a window of accepted ClientHellos keyed by `(hash(ticket nonce), time)` — a ring sized `replay window (the allowance) × expected rate`, by default 65 536 entries in a Bloom filter with two rotating halves (as in RFC 9846 §8.2 and Go `crypto/tls`): a repeated ClientHello with the same ticket inside the window → the early data is rejected. The filter is per endpoint loop (like the Retry and reset keys, ADR-0003); with `loops > 1` a client replayed into another loop passes only the freshness check — an accepted residue that the application closes with idempotency (item 3). Memory, within the per-connection resource ceilings (threat-model 3.2): ≤ 1 MiB per loop.
 3. **Idempotency decided by the application**: the client marks requests `EarlyDataState.Allowed` only for what is safe to replay; a `QuicStream`/HTTP/3 request gets a `sentEarly` flag; the server exposes `receivedEarly` on the stream to the application, and the HTTP/3 layer answers `425 Too Early` to everything the application has not declared idempotent (RFC 8470), as quic-go/nghttp3 do.
 
-What is rejected and how: early data rejected by the server is retransmitted by the client itself in 1-RTT (RFC 9001 §4.6.2); the application sees `QuicException.ZeroRttRejected` only if it asked for `EarlyDataState.Required`; a rejected 0-RTT packet is silently dropped by the server (as in v1), 0-RTT keys are not installed.
+What is rejected and how: early data rejected by the server is retransmitted by the client itself in 1-RTT (RFC 9001 §4.6.2; *amended by ADR-0015, 2026-10-28:* the client resets its streams instead, as §4.6.2 requires, and the application or the HTTP/3 client sends again); the application sees `QuicException.ZeroRttRejected` only if it asked for `EarlyDataState.Required`; a rejected 0-RTT packet is silently dropped by the server (as in v1), 0-RTT keys are not installed.
 
 ## API consequences that must not be broken later
 
@@ -80,7 +80,9 @@ and ngtcp2 trees. Verdict: the three-layer shape stands, and 0-RTT is implemente
 - The closed set `Disabled | Allowed | Required`, `receivedEarly` as a stream flag rather than a new event, and
   `HandshakeCompleted` still meaning "1-RTT keys".
 - Rejected early data is retransmitted by our transport in 1-RTT (RFC 9001 §4.6.2), and `ZeroRttRejected` is raised
-  only for `Required`.
+  only for `Required`. *Amended by ADR-0015 (2026-10-28):* the transport resets the streams instead (RFC 9001 §4.6.2
+  "MUST reset the state of all streams") and fails them with `StreamError.EarlyDataRejected`; the HTTP/3 client repeats
+  its early requests.
 - The transport-parameter codec does not change. The early-data key arrives as a `KSL_EV_KEY` at the reserved level 1.
 - All the tests listed above. Add `negative_zeroRttTransportParamsShrunk` and `negative_zeroRttH3SettingsChanged`.
 

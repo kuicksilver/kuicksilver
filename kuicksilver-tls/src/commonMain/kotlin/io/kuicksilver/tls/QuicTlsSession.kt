@@ -172,7 +172,7 @@ public enum class EarlyDataState {
     /** No resumption and no 0-RTT (the default). */
     Disabled,
 
-    /** Resume with a stored ticket and send 0-RTT when the ticket allows it; a rejection is repaired by sending again in 1-RTT. */
+    /** Resume with a stored ticket and send 0-RTT when the ticket allows it; [earlyDataAccepted] tells the server's answer. */
     Allowed,
 
     /** As [Allowed], but a missing ticket or a rejection fails the connection instead of falling back to 1-RTT. */

@@ -159,6 +159,9 @@ internal class H3Session(
     /** Requests repeated after a 425 Too Early (RFC 8470 section 5.2). */
     internal var early425Retries = 0
 
+    /** Early requests sent again after the server rejected 0-RTT (RFC 9001 section 4.6.2). */
+    internal var earlyRejectedRetries = 0
+
     /** Test hook: requests that came in 0-RTT and waited for the handshake (RFC 8470 gate). */
     @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
     internal val earlyHeldForHandshake = kotlin.concurrent.atomics.AtomicInt(0)
@@ -271,7 +274,9 @@ internal class H3Session(
      * unidirectional streams HTTP/3 needs (RFC 9114 section 6.2: they "MUST allow the peer to create at least three") would
      * hold the caller forever. Without them after [criticalStreamsDeadline] the connection closes with
      * H3_GENERAL_PROTOCOL_ERROR. A server returns at once, so an accept loop never waits on one peer; a client returns once
-     * its SETTINGS went out and throws the connection's error when the streams could not be opened.
+     * its SETTINGS went out and throws the connection's error when the streams could not be opened. A client whose QUIC
+     * handshake is still running (0-RTT) opens them once it completed and returns at once: a rejected 0-RTT resets every
+     * stream the client opened (RFC 9001 section 4.6.2), so only the early requests, which are sent again, ride 0-RTT.
      */
     suspend fun start(criticalStreamsDeadline: Duration = CRITICAL_STREAMS_DEADLINE) {
         scope.launch {
@@ -287,10 +292,11 @@ internal class H3Session(
         quic.activePath?.let { currentPath = it }
         scope.launch { acceptLoop() }
         datagrams.start()
-        if (!isServer) awaitCriticalStreams()
+        if (!isServer && quic.isHandshakeComplete) awaitCriticalStreams()
     }
 
     private suspend fun openCriticalStreams(deadline: Duration) {
+        if (!isServer) quic.awaitHandshake()
         // RFC 9114 section 6.2: the critical streams first, then others (GREASE) as the peer allows
         val opened =
             withTimeoutOrNull(deadline) {

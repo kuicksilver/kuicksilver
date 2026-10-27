@@ -171,6 +171,8 @@ class EarlyDataTest {
     private suspend fun earlyAcceptedAfterResuming(
         issuer: Http3Settings,
         resumer: Http3Settings,
+        earlyRequest: Boolean = false,
+        resumerRequests: AtomicInt = AtomicInt(0),
     ): Boolean? {
         val net = MemoryNet()
         val a = net.open(InetSocketAddress("10.0.0.1", 1111))
@@ -219,6 +221,7 @@ class EarlyDataTest {
                         scope.launch {
                             while (true) {
                                 val r = c.acceptRequest()
+                                if (srv === second) resumerRequests.incrementAndFetch()
                                 scope.launch { r.respond(204, Http3Headers.Empty).finish() }
                             }
                         }
@@ -229,7 +232,12 @@ class EarlyDataTest {
             repeat(2) { assertEquals(204, warm.request(http3Request("GET", "server.test", "/")).status) } // the ticket arrives
             warm.close()
             val c = client.connectEarly(second.localAddress, H3Fixtures.client())
-            assertEquals(204, c.request(http3Request("GET", "server.test", "/")).status)
+            val request =
+                http3Request("GET", "server.test", "/") {
+                    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+                    allowEarlyData = earlyRequest
+                }
+            assertEquals(204, c.request(request).status)
             c.quic.awaitHandshake()
             return c.quic.earlyDataAccepted
         } finally {
@@ -239,6 +247,27 @@ class EarlyDataTest {
             second.close()
         }
     }
+
+    /**
+     * RFC 9001 section 4.6.2: a rejected 0-RTT resets every stream the client opened, so an early request is lost with it;
+     * the client sends it again on a new stream after the handshake (a safe method, so repeating it is allowed: RFC 9110
+     * section 9.2.2), once, and the caller gets the answer. The server sees the request exactly once.
+     */
+    @Test fun earlyRequestIsSentAgainAfterRejection(): Unit =
+        runBlocking {
+            withTimeout(30.seconds) {
+                val seen = AtomicInt(0)
+                val accepted =
+                    earlyAcceptedAfterResuming(
+                        issuer = http3Settings {},
+                        resumer = http3Settings { h3Datagram = false },
+                        earlyRequest = true,
+                        resumerRequests = seen,
+                    )
+                assertEquals(false, accepted)
+                assertEquals(1, seen.load())
+            }
+        }
 
     @Test fun earlyGetIsAnsweredIn0Rtt(): Unit =
         runBlocking {

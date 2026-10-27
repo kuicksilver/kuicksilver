@@ -142,7 +142,11 @@ public sealed interface ConnectionEvent {
     @ExperimentalKuicksilverApi
     public object EarlyDataAccepted : ConnectionEvent
 
-    /** Client: the server rejected our 0-RTT; what it carried is being sent again in 1-RTT (RFC 9001 section 4.6.2). */
+    /**
+     * Client: the server rejected our 0-RTT. Every stream we opened was reset (RFC 9001 section 4.6.2): nothing of them is
+     * sent again, their IDs and the connection's credit start over from the server's new transport parameters, and the
+     * application opens new streams for what it still wants to send.
+     */
     @ExperimentalKuicksilverApi
     public object EarlyDataRejected : ConnectionEvent
 

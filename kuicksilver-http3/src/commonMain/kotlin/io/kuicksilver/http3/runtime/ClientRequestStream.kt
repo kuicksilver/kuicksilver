@@ -123,7 +123,9 @@ private suspend fun callerDispatcher(): ContinuationInterceptor = currentCorouti
 
 /**
  * RFC 8470 and ADR-0015: before the handshake completed only a request that opted in, with a safe method and no body,
- * goes out (in 0-RTT); every other one waits. A 425 to a request that went early is repeated once after the handshake.
+ * goes out (in 0-RTT); every other one waits. A 425 to a request that went early is repeated once after the handshake. So
+ * is one whose stream the server's rejection of 0-RTT reset (RFC 9001 section 4.6.2: nothing of it reached the server, and
+ * a safe method may be repeated, RFC 9110 section 9.2.2).
  */
 internal suspend fun H3Session.request(
     r: Http3Request,
@@ -134,7 +136,17 @@ internal suspend fun H3Session.request(
         testSendUnsafeEarly || (r.allowEarlyData && !keepOpen && r.body == null && r.method in Http3EarlyDataPolicy.SAFE_METHODS)
     if (!mayGoEarly) quic.awaitHandshake()
     val early = !quic.isHandshakeComplete
-    val first = requestOnce(r, keepOpen, caller)
+    val first =
+        try {
+            requestOnce(r, keepOpen, caller)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            if (!early || H3Session.transportCause(e) !is QuicException.StreamError.EarlyDataRejected) throw e
+            quic.awaitHandshake()
+            earlyRejectedRetries++
+            return requestOnce(r, keepOpen, caller)
+        }
     if (!early || first.status != 425) return first
     runCatching { first.body.cancel() }
     quic.awaitHandshake()

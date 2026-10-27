@@ -43,7 +43,7 @@ internal class StreamRuntime(
     override var priority: StreamPriority = initialPriority
         set(v) {
             field = v
-            loop.scope.launch { conn.core.setPriority(id, v) }
+            loop.scope.launch { if (!dropped) conn.core.setPriority(id, v) }
         }
 
     internal fun signalReadable() {
@@ -86,6 +86,22 @@ internal class StreamRuntime(
         outChannel?.closeWith(QuicException.StreamError.Stopped(id, code, Initiator.Peer))
     }
 
+    /**
+     * The server rejected 0-RTT and the core dropped this stream (RFC 9001 section 4.6.2); its ID may already name a new
+     * stream, so nothing here touches the core again.
+     */
+    @Volatile
+    internal var dropped = false
+        private set
+
+    internal fun earlyDataRejected() {
+        dropped = true
+        val e = QuicException.StreamError.EarlyDataRejected(id)
+        inChannel?.closeWith(e)
+        outChannel?.closeWith(e)
+        finished()
+    }
+
     internal fun connectionLost(reason: QuicException.ConnectionLost) {
         inChannel?.connectionLost(reason) // what the peer sent before is still read
         outChannel?.closeWith(reason)
@@ -95,6 +111,7 @@ internal class StreamRuntime(
     override fun reset(code: Long) {
         outChannel?.closeWith(QuicException.StreamError.Reset(id, code, Initiator.Local))
         loop.scope.launch {
+            if (dropped) return@launch
             conn.core.resetStream(id, code)
             loop.flush(conn.core)
         }
@@ -106,6 +123,7 @@ internal class StreamRuntime(
     ) {
         outChannel?.closeWith(QuicException.StreamError.Reset(id, code, Initiator.Local))
         loop.scope.launch {
+            if (dropped) return@launch
             conn.core.resetStreamAt(id, code, reliableSize)
             loop.flush(conn.core)
         }
@@ -114,6 +132,7 @@ internal class StreamRuntime(
     override fun stopSending(code: Long) {
         inChannel?.closeWith(QuicException.StreamError.Stopped(id, code, Initiator.Local))
         loop.scope.launch {
+            if (dropped) return@launch
             conn.core.stopSending(id, code)
             loop.flush(conn.core)
         }

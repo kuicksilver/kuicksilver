@@ -1588,6 +1588,15 @@ sealed class io.kuicksilver.quic/QuicException : kotlinx.coroutines/CopyableThro
     }
 
     sealed class StreamError : io.kuicksilver.quic/QuicException { // io.kuicksilver.quic/QuicException.StreamError|null[0]
+        final class EarlyDataRejected : io.kuicksilver.quic/QuicException.StreamError { // io.kuicksilver.quic/QuicException.StreamError.EarlyDataRejected|null[0]
+            constructor <init>(kotlin/Long) // io.kuicksilver.quic/QuicException.StreamError.EarlyDataRejected.<init>|<init>(kotlin.Long){}[0]
+
+            final val streamId // io.kuicksilver.quic/QuicException.StreamError.EarlyDataRejected.streamId|{}streamId[0]
+                final fun <get-streamId>(): kotlin/Long // io.kuicksilver.quic/QuicException.StreamError.EarlyDataRejected.streamId.<get-streamId>|<get-streamId>(){}[0]
+
+            final fun createCopy(): io.kuicksilver.quic/QuicException.StreamError.EarlyDataRejected // io.kuicksilver.quic/QuicException.StreamError.EarlyDataRejected.createCopy|createCopy(){}[0]
+        }
+
         final class Reset : io.kuicksilver.quic/QuicException.StreamError { // io.kuicksilver.quic/QuicException.StreamError.Reset|null[0]
             constructor <init>(kotlin/Long, kotlin/Long, io.kuicksilver.quic/Initiator) // io.kuicksilver.quic/QuicException.StreamError.Reset.<init>|<init>(kotlin.Long;kotlin.Long;io.kuicksilver.quic.Initiator){}[0]
 

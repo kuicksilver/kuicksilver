@@ -281,27 +281,46 @@ class ZeroRttTest {
         }
     }
 
-    @Test fun zeroRttRejectedRetransmitsIn1Rtt() {
-        // the server's application context changed: TLS refuses the early data (RFC 9001 section 4.6.3), the stream goes again in 1-RTT
+    /**
+     * RFC 9001 section 4.6.2: "When 0-RTT is rejected, all connection characteristics that the client assumed might be
+     * incorrect ... The client therefore MUST reset the state of all streams". The stream opened in 0-RTT is gone (nothing
+     * of it is sent again), its ID and its flow-control credit are free again (as ngtcp2's `conn_discard_early_data_state`
+     * and quic-go's `streamsMap.ResetFor0RTT`), and the application sends what it still wants on a new stream.
+     */
+    @Test fun zeroRttRejectedResetsStreams() {
+        // the server's application context changed: TLS refuses the early data (RFC 9001 section 4.6.3)
         val (p, id) = resumed(ticket(), serverEarly = early(app = byteArrayOf(9)))
+        assertTrue(p.handshake())
+        assertEquals(false, p.client.earlyDataAccepted)
+        assertEquals(false, p.server!!.earlyDataAccepted)
+        assertTrue(p.clientEvents.any { it === ConnectionEvent.EarlyDataRejected })
+        assertTrue(!p.client.isStreamOpenForTest(id), "the stream opened in 0-RTT is reset with the rejection")
+        assertEquals(0L, p.client.connSend.used, "no connection credit stays used by the rejected 0-RTT data")
+        p.runUntil(limit = 1.seconds) { false }
+        assertTrue(
+            p.serverEvents.none { it is ConnectionEvent.StreamReadable || it is ConnectionEvent.StreamOpened },
+            "nothing of the rejected stream is sent again",
+        )
+        // the application opens its stream again: the same ID, since the server never saw the first one
+        val again = p.client.openStream(bidi = true)
+        assertEquals(id, again)
+        p.client.writeStream(again, "GET /index.html".encodeToByteArray(), 0, 15, fin = true)
         var got = ""
-        var readWhile: ConnectionState? = null
         assertTrue(
             p.runUntil(limit = 3.seconds) {
-                val s = p.server
-                if (s != null && readWhile == null && p.serverEvents.any { it is ConnectionEvent.StreamReadable && it.id == id }) {
-                    assertEquals("GET /index.html", streamText(s, id))
-                    readWhile = s.state
-                    s.writeStream(id, "200 OK".encodeToByteArray(), 0, 6, fin = true)
+                val s = p.server!!
+                if (p.serverEvents.any { it is ConnectionEvent.StreamReadable && it.id == again }) {
+                    val req = streamText(s, again)
+                    if (req.isNotEmpty()) {
+                        assertEquals("GET /index.html", req)
+                        s.writeStream(again, "200 OK".encodeToByteArray(), 0, 6, fin = true)
+                    }
                 }
-                got += streamText(p.client, id)
+                got += streamText(p.client, again)
                 got == "200 OK"
             },
         )
-        assertTrue(readWhile != ConnectionState.Handshaking, "a rejected 0-RTT packet is never processed: the data arrived in 1-RTT")
-        assertEquals(false, p.client.earlyDataAccepted)
-        assertEquals(false, p.server!!.earlyDataAccepted)
-        assertTrue(!p.server!!.streamReceivedEarly(id))
+        assertTrue(!p.server!!.streamReceivedEarly(again))
         assertNull(p.closedReason(p.clientEvents))
         p.close()
     }
@@ -485,23 +504,17 @@ class ZeroRttTest {
         }
     }
 
-    @Test fun rejectedWithSmallerLimitsFailsZeroRttRejected() {
+    /** Rejected with lower limits than the 0-RTT data used: nothing is resent, so the connection goes on with the reset streams. */
+    @Test fun rejectedWithSmallerLimitsResetsStreamsAndContinues() {
         val big = "x".repeat(4000)
-        val (p, _) =
-            resumed(
-                ticket(),
-                request = big,
-                serverQuic = quicConfig { initialConnectionWindow = 1000 },
-                serverEarly =
-                    early(
-                        quicConfig {
-                            initialConnectionWindow =
-                                1000
-                        },
-                    ),
-            )
-        assertTrue(p.runUntil(limit = 3.seconds) { p.closedReason(p.clientEvents) != null })
-        assertIs<QuicException.ConnectionLost.ZeroRttRejected>(p.closedReason(p.clientEvents))
+        val small = quicConfig { initialConnectionWindow = 1000 }
+        val (p, id) = resumed(ticket(), request = big, serverQuic = small, serverEarly = early(small))
+        assertTrue(p.handshake())
+        assertTrue(p.clientEvents.any { it === ConnectionEvent.EarlyDataRejected })
+        assertTrue(!p.client.isStreamOpenForTest(id))
+        p.runUntil(limit = 1.seconds) { false }
+        assertNull(p.closedReason(p.clientEvents))
+        assertNull(p.closedReason(p.serverEvents), "the server saw no flow-control violation")
         p.close()
     }
 
@@ -517,7 +530,10 @@ class ZeroRttTest {
         val (p, id) = resumed(t, serverEarly = null)
         assertTrue(p.handshake())
         assertEquals(false, p.client.earlyDataAccepted, "a server without 0-RTT refuses (and cannot resume: it has no ticket keys)")
-        assertTrue(p.runUntil(limit = 2.seconds) { p.serverEvents.any { it is ConnectionEvent.StreamReadable && it.id == id } })
+        assertTrue(!p.client.isStreamOpenForTest(id), "the early stream was reset with the rejection (RFC 9001 section 4.6.2)")
+        val again = p.client.openStream(bidi = true)
+        p.client.writeStream(again, "GET /".encodeToByteArray(), 0, 5, fin = true)
+        assertTrue(p.runUntil(limit = 2.seconds) { p.serverEvents.any { it is ConnectionEvent.StreamReadable && it.id == again } })
         p.close()
     }
 
@@ -612,7 +628,8 @@ class ZeroRttTest {
         // the application never reads: only the transport's limits hold the client back
         val big = ByteArray(3000) { 'y'.code.toByte() }
         val more = List(3) { p.client.openStream(bidi = true) }
-        assertEquals(listOf(true, false, false), more.map { it >= 0 }, "one more stream than the early one: the new limit is 2")
+        assertEquals(listOf(true, true, false), more.map { it >= 0 }, "the early stream was reset: two streams within the new limit of 2")
+        assertEquals(id, more[0], "stream IDs start again after the reset")
         p.client.writeStream(more[0], big, 0, big.size, fin = false) // more than the new 1500-byte stream window
         p.runUntil(limit = 2.seconds) { p.closedReason(p.serverEvents) != null || p.closedReason(p.clientEvents) != null }
         assertNull(p.closedReason(p.serverEvents), "the server saw no limit violation")

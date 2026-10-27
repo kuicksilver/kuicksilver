@@ -1117,6 +1117,13 @@ public abstract class io/kuicksilver/quic/QuicException$StreamError : io/kuicksi
 	public synthetic fun <init> (Ljava/lang/String;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
 }
 
+public final class io/kuicksilver/quic/QuicException$StreamError$EarlyDataRejected : io/kuicksilver/quic/QuicException$StreamError {
+	public fun <init> (J)V
+	public fun createCopy ()Lio/kuicksilver/quic/QuicException$StreamError$EarlyDataRejected;
+	public synthetic fun createCopy ()Ljava/lang/Throwable;
+	public final fun getStreamId ()J
+}
+
 public final class io/kuicksilver/quic/QuicException$StreamError$Reset : io/kuicksilver/quic/QuicException$StreamError {
 	public fun <init> (JJLio/kuicksilver/quic/Initiator;)V
 	public fun createCopy ()Lio/kuicksilver/quic/QuicException$StreamError$Reset;
