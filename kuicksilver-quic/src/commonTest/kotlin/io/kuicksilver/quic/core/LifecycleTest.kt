@@ -453,6 +453,42 @@ class LifecycleTest {
         }
     }
 
+    /**
+     * RFC 9000 section 12.3: "If the packet number for sending reaches 2^62-1, the sender MUST close the connection without
+     * sending a CONNECTION_CLOSE frame or any further packets." Unreachable in practice (146 000 years at 1 Mpps), so the
+     * test starts the client's 1-RTT space just below the limit. Null protection: a packet's last 8 bytes are its number.
+     */
+    @Test fun packetNumberExhaustionClosesSilently() {
+        val limit = (1L shl 62) - 1
+        val p = CorePair()
+        try {
+            assertTrue(p.handshake())
+            p.runUntil { p.client.state == ConnectionState.Confirmed }
+            p.client.loss
+                .space(io.kuicksilver.quic.recovery.SpaceId.Application)
+                .nextPn = limit - 4
+            val id = p.client.openStream(true)
+            val numbers = ArrayList<Long>()
+            for (round in 0 until 8) {
+                if (p.client.state != ConnectionState.Closed) p.client.writeStream(id, ByteArray(100), 0, 100, false)
+                p.batch.clear()
+                val n = p.client.poll(p.batch, p.now)
+                for (i in 0 until n) {
+                    val d = p.batch.buffer(i).toByteArray(p.batch.length(i))
+                    var pn = 0L
+                    for (k in d.size - 8 until d.size) pn = (pn shl 8) or (d[k].toLong() and 0xff)
+                    numbers += pn
+                }
+            }
+            assertTrue(numbers.isNotEmpty() && numbers.all { it < limit }, "packet numbers sent: $numbers")
+            assertEquals(ConnectionState.Closed, p.client.state, "closed at the limit")
+            val r = p.closedReason(generateSequence { p.client.nextEvent() }.toList())
+            assertIs<QuicException.ConnectionLost.Internal>(r, "closed silently: $r")
+        } finally {
+            p.close()
+        }
+    }
+
     @Test fun errorCodeAbove2Pow62Rejected() {
         val p = CorePair()
         try {

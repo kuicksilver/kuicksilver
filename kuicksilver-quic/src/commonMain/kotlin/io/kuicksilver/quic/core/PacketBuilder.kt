@@ -8,6 +8,7 @@ import io.kuicksilver.quic.ConnectionCore
 import io.kuicksilver.quic.ConnectionState
 import io.kuicksilver.quic.PacketBatch
 import io.kuicksilver.quic.PathState
+import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.TimeMark
 import io.kuicksilver.quic.crypto.PacketProtection
 import io.kuicksilver.quic.recordForTest
@@ -95,6 +96,7 @@ internal class PacketBuilder(
                         probeTarget =
                             null
                     }
+                if (pnExhausted) return exhausted(count)
                 if (n == 0) {
                     target.challengePending = false
                     continue
@@ -129,6 +131,7 @@ internal class PacketBuilder(
                             pmtuProbe =
                                 false
                         }
+                    if (pnExhausted) return exhausted(count)
                     if (n >
                         0
                     ) {
@@ -158,6 +161,7 @@ internal class PacketBuilder(
             }
             currentMark = c.path.ecn.markFor()
             val n = buildDatagram(buf, limit, now)
+            if (pnExhausted) return exhausted(count)
             if (n == 0) break
             out.setLength(count, n)
             out.setAddress(count, c.path.remote)
@@ -182,6 +186,18 @@ internal class PacketBuilder(
         if (!congested && count < out.capacity && bytes < c.cc.sendQuantum && c.closeFrame == null && !hasData(SpaceId.Application)) {
             (c.cc as? io.kuicksilver.quic.Bbr)?.onAppLimited()
         }
+        return count
+    }
+
+    /** Set when a packet number space has no number left to send (RFC 9000 section 12.3). */
+    private var pnExhausted = false
+
+    /**
+     * A space ran out of packet numbers while a datagram was built: that datagram is dropped unsent and the connection closes
+     * silently (RFC 9000 section 12.3); the [count] datagrams completed before stay in the batch.
+     */
+    private fun exhausted(count: Int): Int {
+        c.silentClose(QuicException.ConnectionLost.Internal("packet numbers exhausted (RFC 9000 section 12.3)"))
         return count
     }
 
@@ -340,6 +356,12 @@ internal class PacketBuilder(
         val key = c.writeKeys[level] ?: return 0
         val sp = c.loss.space(space)
         if (maxLen - 16 - start < 48) return 0 // no room for a header, the sample and a frame
+        // RFC 9000 section 12.3: at packet number 2^62-1 the connection closes without a CONNECTION_CLOSE or any further packet.
+        // takePn may skip one number, so the space is spent once the next would be 2^62-2
+        if (sp.nextPn >= MAX_PACKET_NUMBER - 1) {
+            pnExhausted = true
+            return 0
+        }
         val pn = sp.takePn(c.random)
         val pnLen = PacketNumbers.encodedLength(pn, sp.largestAcked)
         val w =
@@ -880,3 +902,6 @@ internal class PacketBuilder(
  * packet (RFC 9001 section 5.4.2) and the 16-byte AEAD tag.
  */
 private const val MIN_COALESCED_PACKET = 73
+
+/** The packet number at which a sender must stop (RFC 9000 section 12.3: 2^62-1). */
+private const val MAX_PACKET_NUMBER = (1L shl 62) - 1
