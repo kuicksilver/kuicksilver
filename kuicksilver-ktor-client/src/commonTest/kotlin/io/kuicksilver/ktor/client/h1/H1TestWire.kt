@@ -26,7 +26,7 @@ internal class Wire(
 )
 
 /** The socket under a connection whose channels the test drives; closing it ends them, as a real socket's close does. */
-private class NoSocket(
+internal class NoSocket(
     private val wire: Wire,
 ) : Socket {
     override val socketContext: Job = Job()

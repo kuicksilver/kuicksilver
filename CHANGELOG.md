@@ -359,6 +359,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   the content's headers) now goes out with `chunked` added as the final coding and without `Content-Length` (RFC 9112
   sections 6.1 and 6.2). The head said `Transfer-Encoding: gzip` over a chunk-encoded body, which a server reads until
   the connection closes, and a body with a length sent both fields.
+- Ktor client, HTTP/1.1: an idle pooled connection on which the server sent something no request asked for (typically
+  `408 Request Timeout` before closing it) is no longer reused; the next request goes on a fresh connection. Before,
+  that 408 was returned as the answer to the next request.
 - QUIC: a datagram carrying an Initial packet now always reaches 1200 bytes (RFC 9000 section 14.1: a client pads every
   such datagram, a server every one with an ack-eliciting Initial). When the packet expected to pad the datagram did not
   fit behind the Initial or Handshake packet (a ClientHello ending in the last 64 bytes before 1200 with 0-RTT data

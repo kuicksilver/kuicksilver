@@ -67,7 +67,12 @@ internal class H1Connection(
     /** What the server sends, with the size limit on each response head ([MAX_RESPONSE_HEAD_BYTES]). */
     val input: HeadLimitedInput = HeadLimitedInput(rawInput, MAX_RESPONSE_HEAD_BYTES)
 
-    override val isOpen: Boolean get() = !closed && !input.isClosedForRead
+    /**
+     * Not closed, not closed by the server, and nothing unread: bytes on a connection between exchanges answer no request
+     * (an unsolicited `408 Request Timeout` before the server closes, RFC 9110 section 15.5.9) and would be read as the next
+     * response, so such a connection is not reused (as Go's net/http).
+     */
+    override val isOpen: Boolean get() = !closed && !input.isClosedForRead && !input.hasUnread
 
     override fun closeTransport() {
         tls?.close()
