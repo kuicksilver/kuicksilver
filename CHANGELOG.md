@@ -118,6 +118,13 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- HTTP/3: a response or request body whose stream came whole (its FIN and every byte before it) before the peer's
+  CONNECTION_CLOSE is read whole however late its reader runs or the application reads it (RFC 9000 section 3.2, "Data
+  Recvd"). The one-second drain grace after a lost connection cut such a reader too, and a response body reader started
+  between the session's end and the cancellation of its scope was cancelled with it: the body ended with `H3_NO_ERROR`
+  from the peer instead of the bytes (`ConnectionEndTest` on Linux, Windows, a loaded Android 7 emulator, macOS under
+  memory pressure). The grace now applies only to readers of streams cut short, and a field section waiting for a
+  dynamic-table insert fails once no insert can arrive any more instead of waiting.
 - HTTP/3 client: a response stream that ends without HEADERS fails the request with `Http3Exception.MessageError` and
   aborts the stream with `H3_MESSAGE_ERROR` (a response without `:status` is malformed, RFC 9114 section 4.1.2). It
   was `Http3Exception.Protocol` with `H3_REQUEST_INCOMPLETE`, which section 8.1 defines for an incomplete request.

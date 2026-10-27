@@ -31,11 +31,13 @@ import io.kuicksilver.quic.QuicPath
 import io.kuicksilver.quic.QuicStream
 import io.kuicksilver.quic.StreamPriority
 import io.kuicksilver.quic.awaitFinished
+import io.kuicksilver.quic.receivedAll
 import io.kuicksilver.quic.runtime.QuicStreamLimits
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineName
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -44,12 +46,12 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.random.Random
 import kotlin.time.Duration
@@ -62,7 +64,7 @@ import kotlin.time.TimeSource
  * streams (read greedily, RFC 9308 section 4.4), SETTINGS, and connection errors. Every coroutine runs on one
  * single-threaded dispatcher, so the session's state needs no locks; the mutexes only keep writes to one stream whole.
  */
-@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class, io.kuicksilver.annotations.InternalKuicksilverApi::class)
 internal class H3Session(
     val quic: QuicConnection,
     val role: Http3Role,
@@ -76,9 +78,31 @@ internal class H3Session(
     /** Where a [launchDrainer] reader started after the connection ended runs. */
     private val afterEnd = CoroutineScope(SupervisorJob() + dispatcher + CoroutineName("http3-drain"))
 
+    /** How [DRAIN_GRACE] is measured; a test replaces it to end the grace without real time passing. */
+    internal var drainTimer: suspend (Duration) -> Unit = { delay(it) }
+
+    /** Test hook: runs before each [launchDrainer] reader, so a test can hold one past the end of the connection. */
+    internal var beforeDrainerForTest: (suspend () -> Unit)? = null
+
     /** Coroutines reading what the peer sent, which may finish it when the connection is lost ([drains]); dispatcher only. */
-    private val drainers = ArrayList<Job>()
+    private val drainers = ArrayList<Drainer>()
     private var drainersPruneAt = DRAINERS_PRUNE_MIN
+
+    /** A [drains] reader, and the stream whose message it reads, if any. */
+    private class Drainer(
+        val job: Job,
+        val stream: QuicStream?,
+    )
+
+    /**
+     * The peer's QPACK encoder stream is being read. Once the connection is gone and this reader too, no insert can arrive
+     * any more: a field section still waiting for one never decodes ([noMoreInserts]). Session dispatcher only.
+     */
+    private var peerEncoderReading = false
+
+    /** No dynamic-table insert can arrive any more: the connection is gone, and with it the reader of the peer's encoder stream. */
+    fun noMoreInserts(): Boolean = closed.isCompleted && !peerEncoderReading
+
     val peerSettings = MutableStateFlow<Http3PeerSettings?>(null)
     private val peerSettingsArrived = CompletableDeferred<Http3PeerSettings>()
     val datagrams = DatagramDemux(this)
@@ -218,7 +242,7 @@ internal class H3Session(
             onTransportClosed(e)
         }
         scope.launch { guarded { openCriticalStreams(criticalStreamsDeadline) } }
-        scope.launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
+        scope.launch(start = CoroutineStart.UNDISPATCHED) {
             quic.pathEvents.collect { if (it is PathEvent.Changed) currentPath = it.new }
         }
         // each path reports its own peer address: a change before the collector started (a NAT rebinding right after the handshake)
@@ -360,6 +384,7 @@ internal class H3Session(
                             earlyPriority.remove(st.id) // a stream that never became a request (aborted) keeps no slot
                         }
                     },
+                    st,
                 )
             } else {
                 fail(Http3ErrorCode.STREAM_CREATION_ERROR, "server-initiated bidirectional stream ${st.id}")
@@ -396,9 +421,22 @@ internal class H3Session(
                 criticalStreamsSeen.value++
                 try {
                     when (type) {
-                        StreamType.CONTROL -> readControl(st)
-                        StreamType.QPACK_ENCODER -> readQpack(st) { b, n -> qpack.onPeerEncoderStream(b, n) }
-                        else -> readQpack(st) { b, n -> qpack.onPeerDecoderStream(b, n) }
+                        StreamType.CONTROL -> {
+                            readControl(st)
+                        }
+
+                        StreamType.QPACK_ENCODER -> {
+                            peerEncoderReading = true
+                            try {
+                                readQpack(st) { b, n -> qpack.onPeerEncoderStream(b, n) }
+                            } finally {
+                                peerEncoderReading = false
+                            }
+                        }
+
+                        else -> {
+                            readQpack(st) { b, n -> qpack.onPeerDecoderStream(b, n) }
+                        }
                     }
                 } catch (
                     e: IncompleteFrame,
@@ -775,47 +813,89 @@ internal class H3Session(
     /**
      * [job] reads a peer's stream (a message body, a unidirectional stream): when the connection is lost it goes on until
      * its input ends, which it does once it has read what the peer sent before the loss (`QuicStream.input`), so a
-     * response whose last bytes came with the peer's CONNECTION_CLOSE is still read whole. Session dispatcher only.
+     * response whose last bytes came with the peer's CONNECTION_CLOSE is still read whole. [stream] is the stream of the
+     * message it reads: one that came whole is never cut ([onTransportClosed]). Session dispatcher only.
      */
-    fun drains(job: Job): Job {
+    fun drains(
+        job: Job,
+        stream: QuicStream? = null,
+    ): Job {
         if (drainers.size >= drainersPruneAt) {
-            drainers.removeAll { it.isCompleted }
+            drainers.removeAll { it.job.isCompleted }
             drainersPruneAt = maxOf(DRAINERS_PRUNE_MIN, drainers.size * 2)
         }
-        drainers += job
+        drainers += Drainer(job, stream)
         return job
     }
 
     /**
-     * The connection is gone: every coroutine of the session ends, but the [drains] readers only once their inputs ended,
-     * for at most [DRAIN_GRACE] (a reader the application does not keep up with is cut there: it never holds the
-     * session). Cancelling them at once lost what the peer sent last, Firefox's WT_CLOSE_SESSION right before its close.
+     * The connection is gone: every coroutine of the session ends, but the [drains] readers only once their inputs ended.
+     * Cancelling them at once lost what the peer sent last, Firefox's WT_CLOSE_SESSION right before its close. A reader of
+     * a stream that came whole (its FIN and every byte before it, RFC 9000 section 3.2 "Data Recvd") goes on until it has
+     * handed all of it over: that is the peer's complete message (it ends with its stream, RFC 9114 section 4.1), the
+     * close does not take back what had arrived, and reading it needs nothing more from the network, only the
+     * application's reads, at its pace. Every other reader gets at most [DRAIN_GRACE] (one the application does not keep
+     * up with is cut there, never holding the session for a message that cannot complete).
      */
     private fun onTransportClosed(e: QuicException.ConnectionLost) {
         if (closed.complete(Http3Exception.fromQuic(e))) requests.close(closed.getCompleted())
-        val draining = drainers.filter { it.isActive }
+        val draining = drainers.filter { it.job.isActive }
         drainers.clear()
         if (draining.isEmpty()) {
             job.cancel()
             return
         }
-        for (c in job.children.toList()) if (c !in draining) c.cancel()
+        val readers = draining.map { it.job }.toSet()
+        for (c in job.children.toList()) if (c !in readers) c.cancel()
+        // read once the transport reported the end, which it does after it settled which streams came whole
+        val partial = draining.filter { it.stream?.receivedAll != true }.map { it.job }
         scope.launch {
-            withTimeoutOrNull(DRAIN_GRACE) { draining.forEach { it.join() } }
+            if (partial.isNotEmpty()) {
+                launch(start = CoroutineStart.UNDISPATCHED) {
+                    drainTimer(DRAIN_GRACE)
+                    for (r in partial) r.cancel()
+                }
+            }
+            for (r in readers) r.join()
             job.cancel()
         }
     }
 
     /**
-     * Launches a [drains] reader. Once the connection ended the session's scope is cancelled and a launch into it never
-     * runs: a response whose headers came with the peer's CONNECTION_CLOSE lost its body that way (seen on slow Windows
-     * and macOS runners). Such a reader runs on the session dispatcher outside the scope, for at most [DRAIN_GRACE], and
-     * reads only what the peer sent before the loss. Session dispatcher only.
+     * Launches a reader of a peer's stream that may finish it when the connection is lost, like a [drains] one, from any
+     * thread. It runs outside [scope]: a launch into the scope once the connection ended never runs, and a response whose
+     * headers were read after the session processed the peer's CONNECTION_CLOSE lost its body that way (seen on slow
+     * Windows and macOS runners). Once the session's coroutines are gone it gets at most [DRAIN_GRACE] more, then it is
+     * cut, unless [stream], the stream it reads, came whole: then it goes on until it has handed all of it over, however
+     * late it runs (a reader the scheduler paused past the grace cut a whole response with H3_NO_ERROR, seen on a loaded
+     * Android 7 emulator).
      */
-    fun launchDrainer(block: suspend CoroutineScope.() -> Unit): Job {
-        if (job.isActive) return drains(scope.launch(block = block))
-        return afterEnd.launch { withTimeout(DRAIN_GRACE) { block() } }
-    }
+    fun launchDrainer(
+        stream: QuicStream? = null,
+        block: suspend CoroutineScope.() -> Unit,
+    ): Job =
+        afterEnd.launch {
+            val reader =
+                launch {
+                    beforeDrainerForTest?.invoke()
+                    block()
+                }
+            select {
+                reader.onJoin {}
+                job.onJoin {}
+            }
+            if (reader.isCompleted) return@launch
+            val drainer = coroutineContext.job
+            if (stream?.receivedAll != true) {
+                // cut: this coroutine ends cancelled, the reader with it
+                launch(start = CoroutineStart.UNDISPATCHED) {
+                    drainTimer(DRAIN_GRACE)
+                    drainer.cancel()
+                }
+            }
+            reader.join()
+            drainer.children.forEach { it.cancel() }
+        }
 
     /**
      * Runs [cleanup] when [job] ends cancelled, with the connection's reason once it is gone. Unlike a catch or finally in

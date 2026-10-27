@@ -91,3 +91,5 @@ internal suspend fun QuicConnection.acceptBidi(): QuicStream {
 }
 
 internal val GET = listOf(":method" to "GET", ":scheme" to "https", ":authority" to "server.test", ":path" to "/")
+
+internal val POST = listOf(":method" to "POST", ":scheme" to "https", ":authority" to "server.test", ":path" to "/")
