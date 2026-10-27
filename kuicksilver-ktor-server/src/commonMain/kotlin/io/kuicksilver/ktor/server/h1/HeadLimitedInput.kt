@@ -144,6 +144,22 @@ internal class HeadLimitedInput(
     }
 
     /**
+     * Replaces the buffered byte at [index] with [value]: a request line the server reads as another version
+     * ([checkRequestHead]) before the parser sees it.
+     */
+    fun replaceBufferedByte(
+        index: Long,
+        value: Byte,
+    ) {
+        val front = Buffer()
+        buffer.readTo(front, index)
+        buffer.skip(1)
+        front.writeByte(value)
+        buffer.transferTo(front)
+        front.transferTo(buffer)
+    }
+
+    /**
      * Drops what is buffered. The socket's channel is not cancelled: copies cancel their source when they fail or are
      * stopped (a body the handler left unread), and the pipeline may then still read and drop the rest of the input
      * before it closes the connection, which it always does after such a failure.
