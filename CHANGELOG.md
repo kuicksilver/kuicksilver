@@ -355,6 +355,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - Ktor client: an HTTP proxy's interim 1xx responses (100 Continue, 103 Early Hints) before its answer to `CONNECT` are
   skipped, at most 5 as for a request, instead of failing the tunnel with a `ProxyException` (RFC 9110 section 15.2: a
   client MUST be able to parse 1xx responses it did not expect).
+- Ktor client, HTTP/1.1: a request body with a transfer coding of its own (`Transfer-Encoding: gzip` in the request's or
+  the content's headers) now goes out with `chunked` added as the final coding and without `Content-Length` (RFC 9112
+  sections 6.1 and 6.2). The head said `Transfer-Encoding: gzip` over a chunk-encoded body, which a server reads until
+  the connection closes, and a body with a length sent both fields.
 - QUIC: a datagram carrying an Initial packet now always reaches 1200 bytes (RFC 9000 section 14.1: a client pads every
   such datagram, a server every one with an ack-eliciting Initial). When the packet expected to pad the datagram did not
   fit behind the Initial or Handshake packet (a ClientHello ending in the last 64 bytes before 1200 with 0-RTT data
