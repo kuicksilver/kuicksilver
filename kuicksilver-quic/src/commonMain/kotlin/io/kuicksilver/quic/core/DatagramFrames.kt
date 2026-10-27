@@ -106,6 +106,7 @@ internal class DatagramWriter : DatagramPacketWriter {
  * The largest payload whose DATAGRAM frame (type 0x31, a Length varint, the payload) fits in [room] bytes, 0 when none does:
  * the frame cannot be split across packets (RFC 9221 section 5). The best of a 1-byte Length (up to 63), a 2-byte one (up to
  * 16 383) and a 4-byte one; sizing the Length from the room rather than from the payload left a 66-byte room offering 64
- * bytes, a 67-byte frame.
+ * bytes, a 67-byte frame. Two-argument maxOf calls only: the four-argument one is vararg and allocates an IntArray per
+ * packet on the send path.
  */
-internal fun largestDatagramPayload(room: Int): Int = maxOf(0, minOf(63, room - 2), minOf(16_383, room - 3), room - 5)
+internal fun largestDatagramPayload(room: Int): Int = maxOf(maxOf(0, minOf(63, room - 2)), maxOf(minOf(16_383, room - 3), room - 5))
