@@ -299,6 +299,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   a stream error `H3_MESSAGE_ERROR`, and our own requests, responses and trailers with one fail locally with
   `IllegalArgumentException`. Only NUL, CR and LF were refused, so a value such as `a<ESC>b` reached the application
   and the Ktor engines.
+- TLS over TCP: a connection updates its sending key (TLS 1.3 KeyUpdate) every 2^23 records it wrote, before the AES-GCM
+  record limit of RFC 8446 section 5.5 (2^24.5 records, about 384 GiB at full size). OpenSSL never does so by itself, so a
+  very long-lived bulk connection kept one key for good.
 - TLS server: a server that used the client's server name now acknowledges it with an empty `server_name` extension
   (in EncryptedExtensions for TLS 1.3, in the ServerHello of a full TLS 1.2 handshake), as RFC 6066 section 3 requires;
   before, the extension was never sent. Also on an SNI override and on QUIC.

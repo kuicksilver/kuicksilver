@@ -369,4 +369,40 @@ static void test_server_acknowledges_server_name(void) {
     ksl_ctx_free(cc); ksl_ctx_free(cc12); ksl_ctx_free(sc); ksl_ctx_free(base); ksl_ctx_free(proxy); END();
 }
 
-void run_tcp(void) { test_echo(); test_truncation(); test_tls12(); test_resumption(); test_sni_pause(); test_sni_override_alpn(); test_sni_override_settings_effective(); test_no_tls12_ticket_without_num_tickets(); test_session_context(); test_ticket_bound_to_server_name(); test_keyless_server_no_tickets(); test_server_acknowledges_server_name(); }
+/* Counts the KeyUpdate messages a session received (message callback on the receiving side) */
+static void key_update_cb(int write_p, int version, int content_type, const void *buf, size_t len, SSL *ssl, void *arg) {
+    (void)version; (void)ssl; const uint8_t *m = buf;
+    if (!write_p && content_type == SSL3_RT_HANDSHAKE && len >= 5 && m[0] == SSL3_MT_KEY_UPDATE) { int *n = arg; (*n)++; }
+}
+static int write_all(ksl_ssl *c, ksl_ssl *s, size_t total) {   /* client -> server only, the server reads and discards */
+    uint8_t chunk[16384] = {0}, buf[16384]; size_t sent = 0, n, got = 0, r;
+    for (int i = 0; i < 100000 && got < total; i++) {
+        if (sent < total && ksl_tcp_write(c, chunk, total - sent > sizeof chunk ? sizeof chunk : total - sent, &n) == KSL_OK) sent += n;
+        shuttle(c, s); while (ksl_tcp_read(s, buf, sizeof buf, &r) == KSL_OK && r) got += r; shuttle(s, c);
+    }
+    return got == total;
+}
+static void test_key_update_before_record_limit(void) {
+    SECTION("tcp_key_update_before_record_limit");
+    /* RFC 8446 section 5.5: for AES-GCM "up to 2^24.5 full-size records ... may be encrypted on a given connection ...
+       Implementations SHOULD do a key update before reaching this limit"; OpenSSL sends KeyUpdate only on SSL_key_update. ksl
+       sends one every 2^23 records it wrote; here the bound is lowered to 4 records (test hook). */
+    ksl_ctx *cc = client_ctx("test-ca", KSL_VERIFY_OPENSSL), *sc = server_ctx("server"); int updates = 0;
+    ksl_ssl *c = tcp_client(cc, "server.test"), *s = ksl_ssl_new(sc, KSL_MODE_TCP);
+    SSL *raw = ksl_ssl_raw_for_test(s); SSL_set_msg_callback(raw, key_update_cb); SSL_set_msg_callback_arg(raw, &updates);
+    CHECK(tcp_pump(c, s, NULL, NULL) == KSL_OK, "TLS 1.3 handshake");
+    CHECK(write_all(c, s, 1 << 20) && updates == 0, "control: 64 records under the default bound, no KeyUpdate");
+    ksl_tcp_set_key_update_records_for_test(c, 4);
+    CHECK(write_all(c, s, 16384 * 3) && updates == 0, "3 records: below the lowered bound");
+    CHECK(write_all(c, s, 16384 * 2) && updates == 1, "a KeyUpdate once 4 records were written");
+    CHECK(write_all(c, s, 16384 * 5) && updates == 2, "and again after 4 more, the stream intact");
+    CHECK(echo_bytes(c, s, 100000), "both directions still work after the updates");
+    ksl_ssl_free(c); ksl_ssl_free(s);
+    /* TLS 1.2 has no KeyUpdate: the writes go on (nothing is sent, nothing fails) */
+    ksl_ctx_set_option(cc, KSL_OPT_MIN_VERSION, KSL_TLS1_2); ksl_ctx_set_option(cc, KSL_OPT_MAX_VERSION, KSL_TLS1_2); ksl_ctx_set_option(sc, KSL_OPT_MIN_VERSION, KSL_TLS1_2);
+    c = tcp_client(cc, "server.test"); s = ksl_ssl_new(sc, KSL_MODE_TCP); CHECK(tcp_pump(c, s, NULL, NULL) == KSL_OK, "TLS 1.2 handshake");
+    ksl_tcp_set_key_update_records_for_test(c, 4); CHECK(write_all(c, s, 16384 * 10), "TLS 1.2: the writes past the bound succeed");
+    ksl_ssl_free(c); ksl_ssl_free(s); ksl_ctx_free(cc); ksl_ctx_free(sc); END();
+}
+
+void run_tcp(void) { test_echo(); test_truncation(); test_tls12(); test_resumption(); test_sni_pause(); test_sni_override_alpn(); test_sni_override_settings_effective(); test_no_tls12_ticket_without_num_tickets(); test_session_context(); test_ticket_bound_to_server_name(); test_keyless_server_no_tickets(); test_server_acknowledges_server_name(); test_key_update_before_record_limit(); }
