@@ -757,6 +757,16 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   `serverPort` as 443 whatever the request's `:scheme` said; an `http` request over HTTP/3 (RFC 9114 section 3.1.2) was
   seen as `https` on port 443. Both now follow `:scheme`: `http` with default port 80, `https` with 443.
 
+### Security
+
+- Ktor server, HTTP/1.1: a CONNECT request is now always the last on its connection. A CONNECT the application
+  refused (a 407, a 502 or 504, Ktor's 404 or 405 for no route, a 500 from a failing handler) left the connection
+  open, so the bytes behind it, which a proxy client may send optimistically as tunnel data, were read and executed as
+  the client's next request, with the authority of the connection (request smuggling; RFC 9931 section 8, which
+  updates RFC 9112: a server MUST close the connection when rejecting a CONNECT, without processing any further
+  request on it). Every response to CONNECT now says `Connection: close`, and what follows is read and dropped, never
+  parsed.
+
 ## [0.2.0] - 2026-10-18
 
 The first version published on Maven Central, made on top of the 0.1.0 candidate. That candidate, frozen on 2026-10-09,
