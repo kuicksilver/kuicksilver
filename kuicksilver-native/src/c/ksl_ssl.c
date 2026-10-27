@@ -18,6 +18,7 @@ ksl_ssl *ksl_ssl_new(ksl_ctx *c, int mode) {
     } else {
         BIO *internal = NULL; if (!BIO_new_bio_pair(&internal, 0, &s->net, 0)) { SSL_free(s->ssl); free(s); return NULL; }
         SSL_set_bio(s->ssl, internal, internal);
+        if (c->role == KSL_CLIENT) { SSL_set_msg_callback(s->ssl, ksl_msg_cb); SSL_set_msg_callback_arg(s->ssl, s); }   /* until the handshake ends */
     }
     ksl_live_add(KSL_LIVE_SSL, 1);
     return s;
@@ -181,6 +182,13 @@ int ksl_drive(ksl_ssl *s) {
         if (r == 1 && s->owner->role == KSL_SERVER && SSL_get_state(s->ssl) == TLS_ST_EARLY_DATA) r = SSL_do_handshake(s->ssl);
         if (r == 1) {
             s->done = 1;
+            int ours = s->mode == KSL_MODE_TCP && s->owner->role == KSL_CLIENT;
+#ifdef KSL_TEST
+            ours = ours && !s->msg_observer;
+#endif
+            if (ours) SSL_set_msg_callback(s->ssl, NULL);   /* ksl_msg_cb is needed for the handshake only */
+            /* both sides refuse TLS 1.2 without EMS before Finished, with handshake_failure (server_name_cb, ksl_cert_verify_cb): this
+               is the last line, for a handshake that reached the end without a certificate to check (a resumption) */
             if (s->mode == KSL_MODE_TCP && SSL_version(s->ssl) < TLS1_3_VERSION && !SSL_get_extms_support(s->ssl)) return ksl_ssl_fail(s, KSL_E_EMS_REQUIRED, "ksl: TLS 1.2 without extended master secret rejected");
             if (s->mode == KSL_MODE_QUIC) {
                 /* RFC 9001 section 8.1: "QUIC clients MUST use error 0x0178 to terminate a connection when ALPN negotiation fails"; an
@@ -201,11 +209,42 @@ int ksl_drive(ksl_ssl *s) {
     case SSL_ERROR_WANT_CLIENT_HELLO_CB: ERR_clear_error(); return KSL_WANT_SNI;
     case SSL_ERROR_ZERO_RETURN: ERR_clear_error(); return KSL_EOF;
     case SSL_ERROR_SYSCALL: if (!ERR_peek_error()) return ksl_ssl_fail(s, KSL_E_TRUNCATED, "ksl: unexpected EOF"); /* fallthrough */
-    default: s->fatal = 1; ksl_ssl_set_error(s, KSL_E_NOT_SUPPORTED, "ksl: handshake failed"); return KSL_ERROR;
+    default:
+        if (s->ems_refused) return ksl_ssl_fail(s, KSL_E_EMS_REQUIRED, "ksl: TLS 1.2 without extended master secret rejected");
+        s->fatal = 1; ksl_ssl_set_error(s, KSL_E_NOT_SUPPORTED, "ksl: handshake failed"); return KSL_ERROR;
     }
+}
+
+/* Whether a ServerHello (handshake header included) carries extended_master_secret (RFC 7627). */
+static int server_hello_has_ems(const uint8_t *m, size_t len) {
+    size_t off = 4 + 2 + 32; if (len < off + 1) return 0;   /* header, legacy_version, random */
+    off += 1 + m[off] + 2 + 1;   /* session id, cipher suite, compression method */
+    if (len < off + 2) return 0;
+    size_t end = off + 2 + (((size_t)m[off] << 8) | m[off + 1]); if (end > len) return 0;
+    for (off += 2; off + 4 <= end;) {
+        unsigned type = ((unsigned)m[off] << 8) | m[off + 1]; size_t l = ((size_t)m[off + 2] << 8) | m[off + 3];
+        if (type == TLSEXT_TYPE_extended_master_secret) return 1;
+        off += 4 + l;
+    }
+    return 0;
+}
+/* A TCP client's message callback during the handshake: notes whether the ServerHello carried extended_master_secret, which
+   ksl_cert_verify_cb needs before Finished (SSL_get_extms_support answers only after the handshake). */
+void ksl_msg_cb(int write_p, int version, int content_type, const void *buf, size_t len, SSL *ssl, void *arg) {
+    ksl_ssl *s = arg; const uint8_t *m = buf;
+    if (!write_p && content_type == SSL3_RT_HANDSHAKE && len >= 4 && m[0] == SSL3_MT_SERVER_HELLO) s->server_hello_ems = server_hello_has_ems(m, len);
+#ifdef KSL_TEST
+    if (s->msg_observer) s->msg_observer(write_p, version, content_type, buf, len, ssl, s->msg_observer_arg);
+#else
+    (void)version; (void)ssl;
+#endif
 }
 
 #ifdef KSL_TEST
 /* Test hook: the OpenSSL object behind a session, for tests that need to shape the client (groups, message callbacks). */
 SSL *ksl_ssl_raw_for_test(ksl_ssl *s) { return s->ssl; }
+/* Test hook: a message callback for tests, called for every message of the session after ksl's own (ksl_msg_cb) */
+void ksl_ssl_msg_observer_for_test(ksl_ssl *s, void (*cb)(int, int, int, const void *, size_t, SSL *, void *), void *arg) {
+    s->msg_observer = cb; s->msg_observer_arg = arg; SSL_set_msg_callback(s->ssl, ksl_msg_cb); SSL_set_msg_callback_arg(s->ssl, s);
+}
 #endif

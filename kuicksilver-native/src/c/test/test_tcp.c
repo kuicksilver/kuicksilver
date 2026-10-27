@@ -67,12 +67,23 @@ static void test_tls12(void) {
     CHECK((SSL_CTX_get_options(cc->ctx) & SSL_OP_NO_RENEGOTIATION) && (SSL_CTX_get_options(cc->ctx) & SSL_OP_NO_COMPRESSION), "renegotiation and compression disabled");
     CHECK(echo_bytes(c, s, 5000), "data over TLS 1.2 ECDHE+AEAD");
     ksl_ssl_free(c); ksl_ssl_free(s);
-    /* negative: a peer without EMS */
+    /* negative: a client without EMS. The server refuses it before Finished, so that OpenSSL sends handshake_failure (RFC 8446
+       section 6.1 / RFC 5246 section 7.2: an error alert, not a bare transport end; RFC 7627 section 5.2, RFC 9325 section 3.6) */
     SSL_CTX_set_options(cc->ctx, SSL_OP_NO_EXTENDED_MASTER_SECRET);
-    c = tcp_client(cc, "server.test"); s = ksl_ssl_new(sc, KSL_MODE_TCP); int r = tcp_pump(c, s, NULL, NULL);
-    CHECK(r == KSL_ERROR && (last_code(c, NULL) == KSL_E_EMS_REQUIRED || last_code(s, NULL) == KSL_E_EMS_REQUIRED), "negative: TLS 1.2 without EMS rejected (KSL_E_EMS_REQUIRED)");
+    c = tcp_client(cc, "server.test"); s = ksl_ssl_new(sc, KSL_MODE_TCP); int r = tcp_pump(c, s, NULL, NULL), alert = 0;
+    CHECK(r == KSL_ERROR && last_code(s, &alert) == KSL_E_EMS_REQUIRED, "negative: the server refuses a TLS 1.2 client without EMS (KSL_E_EMS_REQUIRED)");
+    CHECK(alert == SSL_AD_HANDSHAKE_FAILURE, "the server sent handshake_failure");
+    last_code(c, &alert); CHECK(alert == (SSL_AD_HANDSHAKE_FAILURE | 0x100) && !c->done, "the client received handshake_failure before the handshake completed");
     uint8_t cb[32]; CHECK(ksl_ssl_get(c, KSL_GET_CHANNEL_BINDING, cb, 32, &n) == KSL_ERROR, "negative: channel binding unavailable without EMS");
-    ksl_ssl_free(c); ksl_ssl_free(s); ksl_ctx_free(cc); ksl_ctx_free(sc); END();
+    ksl_ssl_free(c); ksl_ssl_free(s);
+    /* negative: a server without EMS (one that does not refuse a client without it: ksl's check removed) */
+    SSL_CTX_clear_options(cc->ctx, SSL_OP_NO_EXTENDED_MASTER_SECRET); ksl_ctx *legacy = server_ctx("server"); ksl_ctx_set_option(legacy, KSL_OPT_MIN_VERSION, KSL_TLS1_2);
+    SSL_CTX_set_options(legacy->ctx, SSL_OP_NO_EXTENDED_MASTER_SECRET); SSL_CTX_set_tlsext_servername_callback(legacy->ctx, NULL);
+    c = tcp_client(cc, "server.test"); s = ksl_ssl_new(legacy, KSL_MODE_TCP); r = tcp_pump(c, s, NULL, NULL);
+    CHECK(r == KSL_ERROR && last_code(c, &alert) == KSL_E_EMS_REQUIRED, "negative: the client refuses a TLS 1.2 server without EMS (KSL_E_EMS_REQUIRED)");
+    CHECK(alert == SSL_AD_HANDSHAKE_FAILURE && !c->done, "the client sent handshake_failure before its Finished");
+    last_code(s, &alert); CHECK(alert == (SSL_AD_HANDSHAKE_FAILURE | 0x100) && !s->done, "the server received handshake_failure");
+    ksl_ssl_free(c); ksl_ssl_free(s); ksl_ctx_free(legacy); ksl_ctx_free(cc); ksl_ctx_free(sc); END();
 }
 
 static void test_resumption(void) {
@@ -325,7 +336,7 @@ static void server_ext_cb(int write_p, int version, int content_type, const void
 }
 static void watch_server_ext(ksl_ssl *c, ext_seen *e, unsigned type) {
     e->type = type; e->in_server_hello = e->in_encrypted_extensions = -1;
-    SSL *raw = ksl_ssl_raw_for_test(c); SSL_set_msg_callback(raw, server_ext_cb); SSL_set_msg_callback_arg(raw, e);
+    ksl_ssl_msg_observer_for_test(c, server_ext_cb, e);   /* next to ksl's own message callback (a client's ServerHello check) */
 }
 
 static void test_server_acknowledges_server_name(void) {

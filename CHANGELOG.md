@@ -140,6 +140,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   a stream error `H3_MESSAGE_ERROR`, and our own requests, responses and trailers with one fail locally with
   `IllegalArgumentException`. Only NUL, CR and LF were refused, so a value such as `a<ESC>b` reached the application
   and the Ktor engines.
+- TLS 1.2: a peer without Extended Master Secret is now refused during the handshake with a `handshake_failure` alert (the
+  server on the ClientHello, the client on the ServerHello), instead of being dropped without an alert after both
+  Finished messages (RFC 7627, RFC 9325 section 3.6).
 - TLS over TCP: a connection updates its sending key (TLS 1.3 KeyUpdate) every 2^23 records it wrote, before the AES-GCM
   record limit of RFC 8446 section 5.5 (2^24.5 records, about 384 GiB at full size). OpenSSL never does so by itself, so a
   very long-lived bulk connection kept one key for good.

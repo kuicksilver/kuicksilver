@@ -79,6 +79,7 @@ void run_quic(void); void run_live(void); void run_early(void); void run_key(voi
 /* test hooks of ksl_udp.c (KSL_TEST builds) */
 struct ssl_st *ksl_ssl_raw_for_test(ksl_ssl *);
 void ksl_tcp_set_key_update_records_for_test(ksl_ssl *, uint64_t records);
+void ksl_ssl_msg_observer_for_test(ksl_ssl *, void (*cb)(int, int, int, const void *, size_t, struct ssl_st *, void *), void *arg);
 void ksl_trust_paths_for_test(const char *const *files, const char *const *dirs);   /* ksl_ctx.c: NULL restores the distribution paths */
 uint32_t ksl_udp_syscalls_for_test(ksl_udp *); uint32_t ksl_udp_recv_syscalls_for_test(ksl_udp *); void ksl_udp_fail_next_gso_for_test(ksl_udp *, int err); void ksl_udp_fail_next_send_for_test(ksl_udp *, int err); int ksl_udp_df_mode_for_test(int fd); int ksl_udp_close_wakes_for_test(ksl_udp *); void ksl_udp_no_ipv6_for_test(int on); void ksl_udp_set_err_for_test(ksl_udp *, int e, const char *what);
 #endif
