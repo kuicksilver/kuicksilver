@@ -38,6 +38,7 @@ import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
 @OptIn(ExperimentalKuicksilverApi::class, DelicateKuicksilverApi::class)
@@ -68,6 +69,13 @@ class HandshakeTest {
         val id = p.client.openStream(true)
         val hello = "hello".encodeToByteArray()
         p.client.writeStream(id, hello, 0, hello.size, true)
+        val oneRtt = pollOneRtt(p)
+        assertTrue(oneRtt.isNotEmpty(), "the client sent 1-RTT packets")
+        return HeldFinished(p, held, oneRtt)
+    }
+
+    /** Polls the client once; the 1-RTT packets of its datagrams, cut out of them (a short header runs to the datagram's end). */
+    private fun pollOneRtt(p: CorePair): List<ByteArray> {
         p.batch.clear()
         val n = p.client.poll(p.batch, p.now)
         val oneRtt = ArrayList<ByteArray>()
@@ -77,7 +85,7 @@ class HandshakeTest {
             val b = PacketBuffer.of(d)
             try {
                 var off = 0
-                while (off < d.size && PacketHeaderCodec.parse(b, off, d.size, s.localCid.length, hv)) {
+                while (off < d.size && PacketHeaderCodec.parse(b, off, d.size, p.server!!.localCid.length, hv)) {
                     if (d[off].toInt() and 0x80 == 0) {
                         oneRtt += d.copyOfRange(off, d.size)
                         break
@@ -88,8 +96,7 @@ class HandshakeTest {
                 b.close()
             }
         }
-        assertTrue(oneRtt.isNotEmpty(), "the client sent 1-RTT packets")
-        return HeldFinished(p, held, oneRtt)
+        return oneRtt
     }
 
     private fun feed(
@@ -142,6 +149,77 @@ class HandshakeTest {
             assertEquals(emptyList(), streamEvents(b.p.serverEvents), "the STREAM behind the bad Finished was not processed")
         } finally {
             b.p.close()
+        }
+    }
+
+    /**
+     * A datagram whose only packet is a held 1-RTT packet (RFC 9001 section 5.7) was processed, just not yet: it is no
+     * candidate Stateless Reset (RFC 9000 section 10.3.1) and must not count as an invalid one.
+     */
+    @Test fun heldOneRttPacketIsNoStatelessResetCandidate() {
+        val a = heldFinished()
+        try {
+            val s = a.p.server!!
+            val before = s.invalidResets
+            for (d in a.oneRtt) feed(a.p, d)
+            assertTrue(s.receiver.bufferedCount >= a.oneRtt.size, "held: ${s.receiver.bufferedCount}")
+            assertEquals(before, s.invalidResets, "no Stateless Reset check on a held packet")
+        } finally {
+            a.p.close()
+        }
+    }
+
+    /**
+     * RFC 9001 section 5.7: held 1-RTT packets share the 32-slot cap (`QuicLimits.undecryptablePackets`) with packets waiting
+     * for keys; the 33rd is dropped ("MAY be stored"), and the client's loss recovery resends what it carried once the
+     * handshake completed.
+     */
+    @Test fun heldOneRttBeyondTheCapIsDroppedAndResent() {
+        val a = heldFinished()
+        try {
+            val p = a.p
+            val s = p.server!!
+            val id = p.client.openStream(true)
+            val packets = ArrayList<ByteArray>(a.oneRtt)
+            var written = 0
+            while (packets.size < 40 && written < 400) {
+                p.client.writeStream(id, byteArrayOf(written.toByte()), 0, 1, false)
+                written++
+                packets += pollOneRtt(p)
+                p.advance(1.milliseconds)
+            }
+            p.client.writeStream(id, ByteArray(0), 0, 0, true)
+            packets += pollOneRtt(p)
+            assertTrue(packets.size >= 33, "${packets.size} client 1-RTT packets")
+            val dropped = s.stats.datagramsDropped
+            for (d in packets) feed(p, d)
+            assertEquals(32, s.receiver.bufferedCount, "held up to the cap")
+            assertEquals(packets.size - 32L, s.stats.datagramsDropped - dropped, "the rest dropped")
+            for (d in a.held) feed(p, d)
+            p.filterToServer = { _, _ -> true }
+            val buf = ByteArray(1024)
+            var got = 0
+            var fin = false
+            assertTrue(
+                p.runUntil(limit = 10.seconds) {
+                    while (!fin) {
+                        val n = s.readStream(id, buf, 0, buf.size)
+                        if (n > 0) {
+                            got += n
+                        } else {
+                            if (n < 0) fin = true
+                            break
+                        }
+                    }
+                    fin
+                },
+                "the stream completes: $got of $written bytes",
+            )
+            assertEquals(written, got)
+            val buf0 = ByteArray(16)
+            assertEquals("hello", buf0.decodeToString(0, s.readStream(0, buf0, 0, buf0.size)))
+        } finally {
+            a.p.close()
         }
     }
 

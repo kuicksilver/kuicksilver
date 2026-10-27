@@ -177,7 +177,7 @@ internal class PacketReceiver(
         return c.odcid.contentEquals(data, hv.dcidOff, hv.dcidLen) || c.retryScid?.contentEquals(data, hv.dcidOff, hv.dcidLen) == true
     }
 
-    /** Returns true when the packet was decrypted and processed. */
+    /** Returns true when the packet was decrypted and processed, or held until the server's handshake completes. */
     private fun processPacket(
         data: PacketBuffer,
         from: InetSocketAddress,
@@ -265,7 +265,9 @@ internal class PacketReceiver(
             val start = headerStart()
             data.copyTo(bytes, start, 0, bytes.size)
             buffered += Buffered(level, bytes, from, socket, datagramEcn, datagramLength)
-            return false
+            // a 1-RTT packet held for the handshake's end counts as handled: its datagram is no Stateless Reset candidate (RFC 9000
+            // section 10.3.1; the client's reset tokens come in 1-RTT frames the server has not processed yet)
+            return beforeFinished
         }
         val sp = c.loss.space(space)
         val kp = if (type == PacketType.OneRtt) c.keyPhase else null

@@ -326,7 +326,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   this for an endpoint that does not spin, as kuicksilver never does), so the bit tells an on-path observer nothing.
 - QUIC server: a client's 1-RTT packets that arrive before its TLS Finished is verified are held and processed only
   once the handshake completes (RFC 9001 section 5.7). Their frames, stream data included, were applied at once, even
-  when they came in the same datagram as a Finished (or client certificate) that then failed verification.
+  when they came in the same datagram as a Finished (or client certificate) that then failed verification. Up to 32
+  such packets are held (`QuicLimits.undecryptablePackets`, shared with packets waiting for keys); the client resends
+  what was dropped.
 - QUIC: a peer's first key update no longer closes the connection with KEY_UPDATE_ERROR when it arrives before any
   1-RTT packet of the first key phase was processed (RFC 9001 section 6.2), for instance when the peer updates right
   after the handshake and its earlier 1-RTT packets were lost. The packet is now taken as the update.
