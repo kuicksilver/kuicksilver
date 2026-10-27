@@ -196,7 +196,8 @@ internal object FieldValidator {
         if (name in CONNECTION_SPECIFIC) throw MalformedMessage("connection-specific field '$name'")
         if (name == "te") {
             if (!request) throw MalformedMessage("te in a response")
-            if (value != "trailers") throw MalformedMessage("te other than trailers")
+            // coding names are case-insensitive (RFC 9110 section 10.1.4); edge whitespace was refused by checkValue
+            if (!value.equals("trailers", ignoreCase = true)) throw MalformedMessage("te other than trailers")
         }
     }
 }

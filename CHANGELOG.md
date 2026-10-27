@@ -267,6 +267,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- HTTP/3: a request's `te: Trailers` (any case) is accepted; transfer coding names are case-insensitive (RFC 9110
+  section 10.1.4), and only the exact lowercase `trailers` passed, so such a request was reset with `H3_MESSAGE_ERROR`.
 - HTTP/3 with WebTransport: a WebTransport `WT_STREAM` signal as the first frame of the peer's control stream now closes
   the connection with `H3_MISSING_SETTINGS`, as RFC 9114 section 6.2.1 requires of any first frame other than SETTINGS,
   instead of `H3_FRAME_ERROR`.
