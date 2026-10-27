@@ -336,6 +336,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - Ktor server, HTTP/1.1: a response the application marks `Connection: close` now ends the connection after it, and
   no further pipelined request is processed (RFC 9112 section 9.6); before, the next request ran and was answered and
   the connection stayed open. The next pipelined request is now read once the previous response's head is out.
+- Ktor client, HTTP/1.1: a response head cut before its empty line (the server closed the connection in the middle of
+  the header section) now fails the request with `ClosedReadChannelException` instead of passing for a complete
+  response without fields (RFC 9112 section 8: the client MUST record it as incomplete); a redirect without its
+  `Location` or a 200 with an empty body were the result. The proxy's response to `CONNECT` fails the same way. An
+  idempotent request on a pooled connection is still retried once on a fresh one.
 - QUIC: a datagram carrying an Initial packet now always reaches 1200 bytes (RFC 9000 section 14.1: a client pads every
   such datagram, a server every one with an ack-eliciting Initial). When the packet expected to pad the datagram did not
   fit behind the Initial or Handshake packet (a ClientHello ending in the last 64 bytes before 1200 with 0-RTT data

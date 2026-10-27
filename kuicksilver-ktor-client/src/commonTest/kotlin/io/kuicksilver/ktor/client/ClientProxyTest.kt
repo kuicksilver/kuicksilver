@@ -139,8 +139,15 @@ class ClientProxyTest {
                                     output.writeStringUtf8("\r\n")
                                     output.flush()
                                 }
-                                // the client closes its side once it gives up on the head
-                                withTimeout(10.seconds) { input.awaitContent() }
+                                // the client closes its side once it gives up on the head; with the rest of the head
+                                // unread there, the close may arrive as a reset
+                                withTimeout(10.seconds) {
+                                    try {
+                                        input.awaitContent()
+                                    } catch (_: kotlinx.io.IOException) {
+                                        false
+                                    }
+                                }
                             }
                         }
                     val proxyPort = (listener.localAddress as InetSocketAddress).port

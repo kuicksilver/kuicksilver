@@ -386,31 +386,28 @@ internal suspend fun readResponse(
         }
     }
 
-/** One response head from [input], within [head]'s size limit when there is one. */
+/**
+ * One response head from [input] ([readResponseHeadBytes]), within [head]'s size limit when there is one; null when the
+ * connection ended before it.
+ */
 @OptIn(InternalAPI::class)
 private suspend fun readResponseHead(
     input: ByteReadChannel,
     head: HeadLimitedInput?,
 ): io.ktor.http.cio.Response? {
-    if (head == null) return parseResponse(input)
-    head.startHead()
-    val response =
+    head?.startHead()
+    val bytes =
         try {
-            parseResponse(input)
+            readResponseHeadBytes(input, MAX_RESPONSE_HEAD_BYTES)
         } catch (e: Throwable) {
-            // a head cut at the limit ends like a closed connection: an EOF, a parser error or no response at all
-            if (head.exceeded) throw responseHeadTooLarge()
+            // a head cut at the limit ends like a closed connection
+            if (head?.exceeded == true) throw responseHeadTooLarge()
             throw e
         }
-    if (head.exceeded) {
-        response?.release()
-        throw responseHeadTooLarge()
-    }
-    head.endHead()
-    return response
+    if (head?.exceeded == true) throw responseHeadTooLarge()
+    head?.endHead()
+    return bytes?.let { parseResponse(ByteReadChannel(it)) }
 }
-
-private fun responseHeadTooLarge() = ParserException("The response head is larger than $MAX_RESPONSE_HEAD_BYTES bytes")
 
 /**
  * HTTP CONNECT through a proxy (RFC 9110 section 9.3.6), before TLS to the origin or a WebSocket. The proxy's response
@@ -436,25 +433,10 @@ internal suspend fun startTunnel(
         output.writePacket(builder.build())
         output.flush()
 
-        // the proxy's head within the response-head limit, read byte by byte: the bytes after it are the tunnel's
-        val head = ExactHeadInput(input, MAX_RESPONSE_HEAD_BYTES)
+        // the proxy's head within the response-head limit, read up to its end: the bytes after it are the tunnel's
         val rawResponse =
-            try {
-                parseResponse(head)
-            } catch (e: Throwable) {
-                if (head.exceeded) throw responseHeadTooLarge()
-                throw e
-            } ?: throw (
-                if (head.exceeded) {
-                    responseHeadTooLarge()
-                } else {
-                    ClosedReadChannelException(EOFException("Failed to parse CONNECT response: unexpected EOF"))
-                }
-            )
-        if (head.exceeded) {
-            rawResponse.release()
-            throw responseHeadTooLarge()
-        }
+            readResponseHeadBytes(input, MAX_RESPONSE_HEAD_BYTES)?.let { parseResponse(ByteReadChannel(it)) }
+                ?: throw ClosedReadChannelException(EOFException("Failed to parse CONNECT response: unexpected EOF"))
         rawResponse.use {
             // a 2xx makes the connection a tunnel at the end of the head: Content-Length and Transfer-Encoding are ignored
             // (RFC 9110 section 9.3.6), the bytes that follow are the origin's
