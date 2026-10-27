@@ -11,10 +11,13 @@ import io.kuicksilver.annotations.DelicateKuicksilverApi
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.native.toByteArray
+import io.kuicksilver.quic.CapturingLogger
 import io.kuicksilver.quic.CoreFixtures
 import io.kuicksilver.quic.DatagramIo
 import io.kuicksilver.quic.DatagramSendResult
 import io.kuicksilver.quic.IoCapabilities
+import io.kuicksilver.quic.KuicksilverLogger
+import io.kuicksilver.quic.LogLevel
 import io.kuicksilver.quic.MemoryDatagramIo
 import io.kuicksilver.quic.MemoryNetwork
 import io.kuicksilver.quic.NullCryptoProvider
@@ -98,15 +101,18 @@ class RuntimeRobustnessTest {
         override fun close() = inner.close()
     }
 
-    private fun serverConfig(io: DatagramIo) =
-        QuicEndpointConfig
-            .Builder()
-            .apply {
-                server =
-                    QuicServerConfig.Builder(CoreFixtures.server()).build()
-                ; crypto = NullCryptoProvider
-                this.io = { io }
-            }.build()
+    private fun serverConfig(
+        io: DatagramIo,
+        log: KuicksilverLogger? = null,
+    ) = QuicEndpointConfig
+        .Builder()
+        .apply {
+            server =
+                QuicServerConfig.Builder(CoreFixtures.server()).build()
+            ; crypto = NullCryptoProvider
+            this.io = { io }
+            log?.let { logger = it }
+        }.build()
 
     private fun clientConfig(io: DatagramIo) =
         QuicEndpointConfig
@@ -157,9 +163,11 @@ class RuntimeRobustnessTest {
                 val net = MemoryNetwork()
                 val io = ShapedIo(net.open(b))
                 io.onReceive = { throw IOException("recvmsg: EBADF") }
-                val ep = QuicEndpoint.bind(b, serverConfig(io))
+                val log = CapturingLogger()
+                val ep = QuicEndpoint.bind(b, serverConfig(io, log))
                 assertFailsWith<QuicException.EndpointClosing> { withTimeout(5.seconds) { ep.accept() } }
                 assertFailsWith<QuicException.EndpointClosing> { ep.connect(a, QuicClientConfig.Builder(CoreFixtures.client()).build()) }
+                log.assertLogged(LogLevel.Error, "transport failed; closing the endpoint", "recvmsg: EBADF")
                 ep.close()
             }
         }

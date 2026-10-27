@@ -193,17 +193,21 @@ class KslDatagramIoTest {
                 refused++
                 KslUdpSocket.openOrNull(unassigned, f, failed)
             } // EADDRNOTAVAIL from the kernel, as an EPERM from a sandbox would be
+            val log = CapturingLogger()
+            KslDatagramIo.resetFallbackWarningForTest() // the warning is once per process: this test is the one that checks it
             try {
-                val io = DatagramIo.open(lo)
+                val io = openDatagramIo(lo, IoPreference.Accelerated, log)
                 try {
                     assertEquals(1, refused)
                     assertTrue(io !is KslDatagramIo, "portable socket expected, got $io")
                     assertTrue(io.localAddress.port != 0)
+                    log.assertLogged(LogLevel.Warn, "accelerated UDP socket refused", "using the portable socket")
                 } finally {
                     io.close()
                 }
             } finally {
                 KslDatagramIo.socketOpener = real
+                KslDatagramIo.resetFallbackWarningForTest()
             }
         }
 

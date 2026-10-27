@@ -6,7 +6,9 @@ import io.ktor.network.sockets.InetSocketAddress
 import io.ktor.utils.io.writeFully
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.native.KslLoader
+import io.kuicksilver.quic.CapturingLogger
 import io.kuicksilver.quic.CoreFixtures
+import io.kuicksilver.quic.LogLevel
 import io.kuicksilver.quic.MigrationEvent
 import io.kuicksilver.quic.NetworkMigrator
 import io.kuicksilver.quic.PathEvent
@@ -219,13 +221,16 @@ class SocketLostTest {
 
     @Test fun negative_serverSocketLossStillEndsTheServerEndpoint() =
         runBlocking<Unit> {
-            ApiPair.open().use { p ->
+            val log = CapturingLogger()
+            ApiPair.open(serverLogger = log).use { p ->
                 withTimeout(60.seconds) {
                     val (_, s) = p.connect()
                     p.serverIo.failWith(enotconn)
                     // its clients address this port: a server cannot move, so its endpoint ends as for any socket failure
                     assertIs<io.kuicksilver.quic.QuicException.ConnectionLost.Internal>(s.closed.await())
                     assertFailsWith<io.kuicksilver.quic.QuicException.EndpointClosing> { p.server.accept() }
+                    // the expected error line, kept off the test output
+                    log.assertLogged(LogLevel.Error, "transport failed; closing the endpoint", "socket defunct")
                 }
             }
         }

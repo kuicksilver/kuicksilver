@@ -8,8 +8,11 @@ import io.ktor.utils.io.writeFully
 import io.kuicksilver.annotations.DelicateKuicksilverApi
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.native.KslLoader
+import io.kuicksilver.quic.CapturingLogger
 import io.kuicksilver.quic.CoreFixtures
 import io.kuicksilver.quic.DatagramIo
+import io.kuicksilver.quic.KuicksilverLogger
+import io.kuicksilver.quic.LogLevel
 import io.kuicksilver.quic.MemoryDatagramIo
 import io.kuicksilver.quic.MemoryNetwork
 import io.kuicksilver.quic.NullCryptoProvider
@@ -66,7 +69,8 @@ class LoopGroupTest {
     private val serverAddr = InetSocketAddress("10.0.0.2", 2222)
     private val otherAddr = InetSocketAddress("10.0.0.3", 2222)
     private val clientAddr = InetSocketAddress("10.0.0.1", 1111)
-    private val config =
+
+    private fun configWith(log: KuicksilverLogger? = null) =
         QuicEndpointConfig
             .Builder()
             .apply {
@@ -74,7 +78,10 @@ class LoopGroupTest {
                 crypto =
                     NullCryptoProvider
                 loops = 2
+                log?.let { logger = it }
             }.build()
+
+    private val config = configWith()
 
     private fun client(io: DatagramIo) =
         QuicEndpointConfig
@@ -156,6 +163,7 @@ class LoopGroupTest {
         real: MemoryDatagramIo,
         twin: SharedPortTwin,
         owner: Int,
+        log: KuicksilverLogger? = null,
     ): LoopGroup {
         val withPreferred =
             QuicEndpointConfig
@@ -168,6 +176,7 @@ class LoopGroupTest {
                             .build()
                     crypto = NullCryptoProvider
                     loops = 2
+                    log?.let { logger = it }
                 }.build()
         val preferred = if (owner == 0) listOf(listOf<DatagramIo>(real), listOf(twin)) else listOf(listOf(twin), listOf(real))
         return LoopGroup.create(withPreferred, listOf(net.open(serverAddr), net.open(otherAddr)), preferred = preferred)
@@ -184,7 +193,8 @@ class LoopGroupTest {
                 val pref = InetSocketAddress("10.0.0.4", 4433)
                 val real = net.open(pref)
                 val twin = SharedPortTwin(real)
-                val group = groupWithPreferred(net, pref, real, twin, owner = 1)
+                val log = CapturingLogger()
+                val group = groupWithPreferred(net, pref, real, twin, owner = 1, log = log)
 
                 val released = kotlinx.coroutines.CompletableDeferred<Unit>()
                 val probed = kotlinx.coroutines.CompletableDeferred<Unit>()
@@ -208,6 +218,7 @@ class LoopGroupTest {
                     twin.failWith(io.kuicksilver.quic.SocketDefunctException("gone", 9))
                     while (group.stats.preferredAddressFailures < 1 || !real.closed) delay(5)
                     assertEquals(1L, group.stats.preferredAddressFailures, "one failure for the group")
+                    log.assertLogged(LogLevel.Warn, "the preferred-address socket", "no longer offering the preferred address")
                     released.complete(Unit)
                     val failed =
                         withTimeout(20.seconds) {
@@ -245,7 +256,8 @@ class LoopGroupTest {
                 val pref = InetSocketAddress("10.0.0.4", 4433)
                 val real = net.open(pref)
                 val twin = SharedPortTwin(real)
-                val group = groupWithPreferred(net, pref, real, twin, owner = 0)
+                val log = CapturingLogger()
+                val group = groupWithPreferred(net, pref, real, twin, owner = 0, log = log)
                 val client = QuicEndpoint.bind(clientAddr, client(net.open(clientAddr)))
                 try {
                     val accepted = async { group.accept() }
@@ -262,6 +274,7 @@ class LoopGroupTest {
                     real.failWith(io.kuicksilver.quic.SocketDefunctException("gone", 9))
                     withTimeout(10.seconds) { s.closed.await() }
                     assertEquals(1L, group.stats.preferredAddressFailures)
+                    log.assertLogged(LogLevel.Warn, "the preferred-address socket", "no longer offering the preferred address")
                     c.close()
                 } finally {
                     client.close()
@@ -426,7 +439,8 @@ class LoopGroupTest {
                 val net = MemoryNetwork()
                 val io0 = net.open(serverAddr)
                 val io1 = FailingIo(net.open(otherAddr))
-                val group = LoopGroup.create(config, listOf(io0, io1))
+                val log = CapturingLogger()
+                val group = LoopGroup.create(configWith(log), listOf(io0, io1))
                 try {
                     io1.fail = true
                     io1.inner.inbox.trySend(ByteArray(10) to clientAddr) // loop 1's socket dies
@@ -436,6 +450,7 @@ class LoopGroupTest {
                             withTimeout(2.seconds) { group.connect(clientAddr, clientConfig) }
                         }
                     }
+                    log.assertLogged(LogLevel.Error, "loop 1: transport failed; closing the endpoint", "recvmsg: EBADF")
                 } finally {
                     group.close()
                 }

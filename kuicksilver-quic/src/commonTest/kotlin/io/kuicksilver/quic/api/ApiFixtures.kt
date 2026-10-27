@@ -8,6 +8,7 @@ import io.ktor.utils.io.readAvailable
 import io.kuicksilver.annotations.DelicateKuicksilverApi
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.quic.CoreFixtures
+import io.kuicksilver.quic.KuicksilverLogger
 import io.kuicksilver.quic.MemoryDatagramIo
 import io.kuicksilver.quic.MemoryNetwork
 import io.kuicksilver.quic.NullCryptoProvider
@@ -43,6 +44,7 @@ internal class ApiPair private constructor(
             serverAnswers: Boolean = true,
             df: Boolean = false,
             serverEarlyData: Boolean = false,
+            serverLogger: KuicksilverLogger? = null,
         ): ApiPair {
             val net = MemoryNetwork()
             val a = net.open(InetSocketAddress("10.0.0.1", 1111), df = df)
@@ -62,6 +64,7 @@ internal class ApiPair private constructor(
                                     }.build()
                             ; this.crypto = crypto
                             io = { b }
+                            serverLogger?.let { logger = it }
                         }.build(),
                 )
             val client =
