@@ -93,6 +93,9 @@ public class InMemoryAltSvcStore : AltSvcStore {
 internal object AltSvcParser {
     private const val DEFAULT_MA_SECONDS = 86_400L
 
+    /** The `ma` of a delta-seconds value too large to represent: 2^31 (RFC 9111 section 1.2.2). */
+    private const val MA_OVERFLOW_SECONDS = 2_147_483_648L
+
     /** The `h3` entries of [value] (other protocols are ignored, malformed entries skipped); null for `clear`. */
     fun parse(
         value: String,
@@ -124,11 +127,20 @@ internal object AltSvcParser {
                 val raw = p.substringAfter('=', "").trim()
                 val v = unquote(raw) ?: raw
                 when (k) {
+                    // delta-seconds is 1*DIGIT; one too large for a Long is 2147483648 (RFC 9111 section 1.2.2, as RFC 7838
+                    // section 3.1 requires), and the expiry below caps what would overflow its milliseconds
                     "ma" -> {
-                        ma = v.toLongOrNull()?.takeIf { it >= 0 } ?: run {
-                            bad = true
-                            0L
-                        }
+                        ma =
+                            when {
+                                v.isEmpty() || v.any { it !in '0'..'9' } -> {
+                                    bad = true
+                                    0L
+                                }
+
+                                else -> {
+                                    v.toLongOrNull() ?: MA_OVERFLOW_SECONDS
+                                }
+                            }
                     }
 
                     "persist" -> {
