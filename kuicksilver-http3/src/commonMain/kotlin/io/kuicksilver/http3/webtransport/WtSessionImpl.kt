@@ -155,7 +155,8 @@ internal class WtSessionImpl(
         throw Http3Exception.MessageError(sessionId, reason)
     }
 
-    private enum class End { Locally, ByPeer, Failed }
+    /** [Over]: the CONNECT stream already ended both ways, so nothing is sent on it. */
+    private enum class End { Locally, ByPeer, Failed, Over }
 
     /**
      * The session is over: [closed] completes with [info], the session's streams end with WT_SESSION_GONE, and the CONNECT
@@ -197,6 +198,12 @@ internal class WtSessionImpl(
                         runCatching { stream.stopSending(Http3ErrorCode.WT_SESSION_GONE) }
                         null
                     }
+
+                    // a RESET_STREAM after our FIN could overtake it and discard what the peer has not read yet (RFC 9000
+                    // section 3.1)
+                    End.Over -> {
+                        null
+                    }
                 }
             }
         if (end == End.Locally) connectEnd?.join()
@@ -231,13 +238,17 @@ internal class WtSessionImpl(
 
     /**
      * The CONNECT stream ended both ways (its exchange is over): the session is over if nothing ended it before, and its
-     * id is forgotten by the router, which rejects late streams. Session dispatcher only.
+     * id is forgotten by the router, which rejects late streams. The exchange's end can come before the capsule reader
+     * read to the peer's FIN; the reader's verdict (a FIN without WT_CLOSE_SESSION is code 0, section 6) goes first, and
+     * the stream is left alone. Session dispatcher only.
      */
     fun ended() {
         h3.wt.unregister(sessionId)
         if (!closedInfo.isCompleted) {
+            val reader = watchers.firstOrNull()
             h3.scope.launch {
-                terminate(WebTransportCloseInfo(0, "", WebTransportException.SessionClosed("the CONNECT stream ended")), End.Failed)
+                withTimeoutOrNull(CLOSE_TIMEOUT) { reader?.join() }
+                terminate(WebTransportCloseInfo(0, "", WebTransportException.SessionClosed("the CONNECT stream ended")), End.Over)
             }
         }
     }

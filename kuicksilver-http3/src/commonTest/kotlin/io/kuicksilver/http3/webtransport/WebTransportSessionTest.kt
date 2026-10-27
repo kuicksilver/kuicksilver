@@ -220,6 +220,35 @@ class WebTransportSessionTest {
             }
         }
 
+    /**
+     * The exchange's end can reach the session before its capsule reader read the peer's FIN (both are dispatched from the
+     * same stream): the session then waits for the reader's verdict, a clean close with code 0 (section 6), and does not
+     * reset the CONNECT stream, whose RESET_STREAM could overtake the FIN it already sent (RFC 9000 section 3.1).
+     */
+    @Test fun exchangeEndBeforeTheReaderSawFinIsACleanClose() =
+        h3Test {
+            QuicPair.open().useScoped { q ->
+                val (c, s) = q.connect()
+                val server = Http3Connection.server(s, wtOn)
+                val raw = RawPeer(c)
+                raw.openControl(wtClientSettings)
+                val accepted = CompletableDeferred<WtSessionImpl>()
+                launch { accepted.complete(server.acceptRequest().acceptWebTransport() as WtSessionImpl) }
+                val first = c.openBidi()
+                first.output.writeFully(raw.wtConnect(first))
+                first.output.flush()
+                assertEquals("200", readHeaders(first)[":status"])
+                val session = withTimeout(5.seconds) { accepted.await() }
+                session.capsules.close() // the server's side ends
+                withContext(server.session.dispatcher) { session.ended() } // ahead of the reader, as the race had it
+                first.output.flushAndClose() // the client's FIN, no WT_CLOSE_SESSION
+                val seen = withTimeout(5.seconds) { session.closed.await() }
+                assertEquals(0L, seen.code)
+                assertNull(seen.cause)
+                assertEquals(0, withTimeout(5.seconds) { first.input.readAllBytes() }.size) // the server's FIN, not a reset
+            }
+        }
+
     @Test fun protocolNegotiated() =
         h3Test {
             H3Pair.open(clientSettings = wtOn, serverSettings = wtOn).useScoped { p ->
