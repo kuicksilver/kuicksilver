@@ -168,7 +168,7 @@ internal class H1Response(
         endsConnection?.complete(statusCode != HttpStatusCode.SwitchingProtocols && saysClose())
         val builder = RequestResponseBuilder()
         try {
-            builder.responseLine("HTTP/1.1", statusCode.value, statusCode.description)
+            builder.responseLine("HTTP/1.1", statusCode.value, reasonPhrase(statusCode))
             for (name in headersBuilder.names()) {
                 for (value in headersBuilder.getAll(name)!!) {
                     builder.headerLine(name, value)
@@ -201,6 +201,18 @@ internal class H1Response(
             headersBuilder.remove(HttpHeaders.TransferEncoding)
             if (headersBuilder.getAll(HttpHeaders.ContentLength) == listOf("0")) headersBuilder.remove(HttpHeaders.ContentLength)
         }
+    }
+
+    /**
+     * The reason phrase for [status]: its description when that is a reason-phrase, `*( HTAB / SP / VCHAR / obs-text )`
+     * (RFC 9112 section 4; obs-text is what a character above U+007F becomes in UTF-8), else the registered reason of the
+     * code, or none for an unregistered code. An application's description with CR LF would otherwise split the response
+     * and start fields of its own; Netty refuses such a reason, Go's net/http never takes one from the handler.
+     */
+    private fun reasonPhrase(status: HttpStatusCode): String {
+        val description = status.description
+        if (description.all { it == '\t' || it.code in 0x20..0x7E || it.code >= 0x80 }) return description
+        return HttpStatusCode.allStatusCodes.firstOrNull { it.value == status.value }?.description ?: ""
     }
 
     /** Whether a Connection field line of the response carries the `close` option (RFC 9110 section 7.6.1, any case). */
