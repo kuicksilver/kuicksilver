@@ -119,3 +119,14 @@ public fun QuicEndpoint.closeWith(
 public suspend fun QuicStream.awaitFinished() {
     (this as? io.kuicksilver.quic.runtime.StreamRuntime)?.done?.await()
 }
+
+/**
+ * True once the peer's FIN and every byte before it have arrived on [this] stream (RFC 9000 section 3.2, the receiving
+ * part's "Data Recvd" state, or "Data Read" once the application read them): reading [QuicStream.input] needs nothing more
+ * from the network, so it ends whole even after the connection is lost. It turns true once the endpoint's loop processed
+ * the packet that completed the stream and is final when [QuicConnection.closed] completes. False for a stream without a
+ * receiving part, one the peer reset before its FIN, and streams of other implementations.
+ */
+@InternalKuicksilverApi
+public val QuicStream.receivedAll: Boolean
+    get() = (this as? io.kuicksilver.quic.runtime.StreamRuntime)?.receivedAll ?: false

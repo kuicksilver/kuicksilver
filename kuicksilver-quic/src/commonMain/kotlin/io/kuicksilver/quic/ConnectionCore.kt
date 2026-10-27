@@ -370,6 +370,9 @@ public class ConnectionCore internal constructor(
     @ExperimentalKuicksilverApi
     public fun streamReceivedEarly(id: Long): Boolean = streams.receivedEarly(id)
 
+    /** The peer's FIN and every byte before it arrived on stream [id] (RFC 9000 section 3.2, "Data Recvd" or "Data Read"). */
+    internal fun streamReceivedAll(id: Long): Boolean = streams.receivedAll(id)
+
     /** Set by the endpoint so issued connection IDs route back to this core. */
     internal var registrar: CidRegistrar = NoopRegistrar
 
