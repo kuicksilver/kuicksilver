@@ -310,6 +310,27 @@ class ClientH1FramingTest {
         }
 
     /**
+     * An HTTP/1.0 response with Transfer-Encoding has faulty framing, even with a Content-Length (RFC 9112 section 6.1
+     * MUST): neither field frames it, so the body is read until the server closes (section 6.3 item 8), as it was sent,
+     * and the connection is not reused. Before, the chunked coding of an HTTP/1.0 response was decoded.
+     */
+    @Test fun http10ResponseWithTransferEncodingIsCloseDelimited() =
+        clientTest {
+            val served = ArrayList<Int>()
+            rawServerPerConnection({ index, input, output ->
+                readHead(input)
+                served += index
+                output.writeStringUtf8("HTTP/1.0 200 OK\r\nTransfer-Encoding: chunked\r\nContent-Length: 3\r\n\r\n5\r\nhello\r\n0\r\n\r\n")
+            }) { port ->
+                testClient().use { c ->
+                    assertEquals("5\r\nhello\r\n0\r\n\r\n", c.get("http://127.0.0.1:$port/1").bodyAsText())
+                    assertEquals("5\r\nhello\r\n0\r\n\r\n", c.get("http://127.0.0.1:$port/2").bodyAsText())
+                }
+            }
+            assertEquals(listOf(0, 1), served)
+        }
+
+    /**
      * A request body with a transfer coding of its own (`Transfer-Encoding: gzip` in the content's headers) goes out with
      * `chunked` as its final coding (RFC 9112 section 6.1: a sender that applies a coding other than chunked MUST apply
      * chunked last) and without Content-Length, even when the content has a length (section 6.2: MUST NOT send both).
