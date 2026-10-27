@@ -4,7 +4,10 @@ package io.kuicksilver.ktor.client.h1
 
 import io.ktor.client.request.HttpRequestBuilder
 import io.ktor.client.request.url
+import io.ktor.http.Url
 import io.ktor.http.cio.ParserException
+import io.ktor.utils.io.ByteChannel
+import io.ktor.utils.io.ClosedReadChannelException
 import io.ktor.utils.io.readLineStrict
 import io.ktor.utils.io.writeStringUtf8
 import kotlinx.coroutines.launch
@@ -92,5 +95,29 @@ class H1ResponseHeadTest {
                 send("HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n")
             }
             assertEquals(204, exchange(wire, get).statusCode.value)
+        }
+
+    /**
+     * A response head cut before its empty line is incomplete (RFC 9112 section 8: the client MUST record it as such): the
+     * request fails with a ClosedReadChannelException, which keeps the stale-connection retry of an idempotent request.
+     * Before, the fields read so far were dropped and the call succeeded with a 200 without fields and an empty body.
+     */
+    @Test fun negative_headCutBeforeTheEmptyLineFails() =
+        runTest(timeout = 20.seconds) {
+            val wire = Wire()
+            server(wire) { send ->
+                send("HTTP/1.1 200 OK\r\nContent-Length: 100\r\nLocation: /x\r\n")
+                wire.fromServer.flushAndClose()
+            }
+            assertFailsWith<ClosedReadChannelException> { exchange(wire, get) }
+        }
+
+    /** The proxy's CONNECT response cut before its empty line fails the tunnel the same way (RFC 9112 section 8). */
+    @Test fun negative_connectHeadCutBeforeTheEmptyLineFails() =
+        runTest(timeout = 20.seconds) {
+            val input = ByteChannel()
+            input.writeStringUtf8("HTTP/1.1 200 Connection established\r\nX-A: 1\r\n")
+            input.flushAndClose()
+            assertFailsWith<ClosedReadChannelException> { startTunnel(Url("https://origin.test/"), null, null, ByteChannel(), input) }
         }
 }
