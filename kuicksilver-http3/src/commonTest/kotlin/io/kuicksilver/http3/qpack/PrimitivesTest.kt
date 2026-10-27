@@ -135,6 +135,9 @@ class HuffmanTest {
     @Test fun paddingLongerThan7BitsRejected() {
         assertFailsWith<QpackError> { Huffman.decode(hex("1fff"), 0, 2, 100) } // 'a' (00011) + 11 one-bits of padding
         assertFailsWith<QpackError> { Huffman.decode(hex("00"), 0, 1, 100) } // '0' (00000) + "000": padding must be ones
+        assertFailsWith<QpackError> { Huffman.decode(hex("1a"), 0, 1, 100) } // 'a' (00011) + "010": short, but not all ones
+        assertFailsWith<QpackError> { Huffman.decode(hex("1e"), 0, 1, 100) } // 'a' + "110"
+        assertEquals("a", Huffman.decode(hex("1f"), 0, 1, 100).decodeToString()) // 'a' + "111": the EOS prefix
     }
 }
 

@@ -106,6 +106,13 @@ class QpackEncoderTest {
         ) // increment past the inserts
     }
 
+    /** RFC 9204 section 4.4.3: an Insert Count Increment of zero is QPACK_DECODER_STREAM_ERROR. */
+    @Test fun zeroInsertCountIncrementIsError() {
+        val e = QpackEncoder()
+        e.onPeerSettings(4096, 16)
+        assertEquals(Http3ErrorCode.QPACK_DECODER_STREAM_ERROR, assertFailsWith<QpackError> { e.feed(byteArrayOf(0x00)) }.code)
+    }
+
     /** Encoder state per stream is capped. A peer that acknowledges inserts but never a section would otherwise grow it without bound. */
     @Test fun negative_qpackUnackedSectionsCapped() {
         val e = QpackEncoder()

@@ -206,6 +206,62 @@ class QpackDecoderTest {
         assertEquals(Http3ErrorCode.QPACK_ENCODER_STREAM_ERROR, assertFailsWith<QpackError> { small.onEncoderStream(b2, 0, b2.size) }.code)
     }
 
+    private fun failCode(block: () -> Unit): Long = assertFailsWith<QpackError> { block() }.code
+
+    /** RFC 9204 section 4.5.1.2: with Sign=1 the Base is RIC - DeltaBase - 1; DeltaBase >= RIC would make it negative. */
+    @Test fun negativeBaseFails() {
+        val d = dec()
+        d.feed("3fbd01 c00f 7777 772e 6578 616d 706c 652e 636f 6d") // capacity 220, one insert
+        assertEquals(Http3ErrorCode.QPACK_DECOMPRESSION_FAILED, failCode { d.decode(0, hex("0281 10")) }) // RIC 1, Sign=1, DeltaBase 1
+        assertEquals(1, d.decode(4, hex("0280 10")).fields().size) // DeltaBase 0: Base 0, a post-base reference to entry 0
+    }
+
+    /** RFC 9204 section 4.5.1.1: an EncodedInsertCount above 2 * MaxEntries, or one decoding below zero, cannot come from a conformant encoder. */
+    @Test fun impossibleEncodedInsertCountFails() {
+        val d = dec(cap = 4096) // MaxEntries 128, FullRange 256
+        assertEquals(Http3ErrorCode.QPACK_DECOMPRESSION_FAILED, failCode { d.decode(0, hex("ff02 00")) }) // 257
+        // 200 with nothing inserted: wraps below 0
+        assertEquals(Http3ErrorCode.QPACK_DECOMPRESSION_FAILED, failCode { d.decode(0, hex("c8 00")) })
+    }
+
+    /** RFC 9204 section 3.1: a static index outside the table is QPACK_DECOMPRESSION_FAILED in a field line. */
+    @Test fun staticIndexOutOfRangeInFieldLineFails() {
+        val d = dec()
+        assertEquals(Http3ErrorCode.QPACK_DECOMPRESSION_FAILED, failCode { d.decode(0, hex("0000 ff24")) }) // indexed, static 99
+        assertEquals(Http3ErrorCode.QPACK_DECOMPRESSION_FAILED, failCode { d.decode(0, hex("0000 5f54 00")) }) // literal, static name 99
+        assertEquals(1, d.decode(0, hex("0000 ff23")).fields().size) // 98, the last entry
+    }
+
+    /** RFC 9204 section 3.1: a static index outside the table on the encoder stream is QPACK_ENCODER_STREAM_ERROR. */
+    @Test fun staticIndexOutOfRangeOnEncoderStreamFails() {
+        val d = dec()
+        d.feed("3fbd01")
+        assertEquals(Http3ErrorCode.QPACK_ENCODER_STREAM_ERROR, failCode { d.feed("ff24 00") }) // Insert with static name 99
+    }
+
+    /** RFC 9204 section 3.2.2: an entry larger than the table capacity is QPACK_ENCODER_STREAM_ERROR. */
+    @Test fun insertLargerThanCapacityFails() {
+        val d = dec()
+        val w = QpackWriter()
+        w.writeInt(0x20, 5, 56) // capacity 56
+        w.writeString(0x40, 5, "x", huffman = false)
+        w.writeString(0x00, 7, "a".repeat(24), huffman = false) // 1 + 24 + 32 = 57
+        val b = w.toByteArray()
+        assertEquals(Http3ErrorCode.QPACK_ENCODER_STREAM_ERROR, failCode { d.onEncoderStream(b, 0, b.size) })
+        assertEquals(0, d.insertCount)
+    }
+
+    /** RFC 9204 section 2.2.3: a Duplicate or a dynamic name reference on the encoder stream to an evicted entry is QPACK_ENCODER_STREAM_ERROR. */
+    @Test fun encoderStreamReferenceToEvictedEntryFails() {
+        for (instruction in listOf("01", "81 00")) { // Duplicate relative 1; Insert with dynamic name reference relative 1, empty value
+            val d = dec()
+            d.feed("3f19") // capacity 56
+            d.feed("4a63 7573 746f 6d2d 6b65 790c 6375 7374 6f6d 2d76 616c 7565") // 54 bytes, abs 0
+            d.feed("00") // duplicate: abs 1, evicts abs 0
+            assertEquals(Http3ErrorCode.QPACK_ENCODER_STREAM_ERROR, failCode { d.feed(instruction) }, instruction)
+        }
+    }
+
     @Test fun dynamicIndexAtOrAboveRequiredInsertCountFails() {
         val d = dec()
         d.feed("3fbd01 c00f 7777 772e 6578 616d 706c 652e 636f 6d c10c 2f73 616d 706c 652f 7061 7468")
