@@ -341,6 +341,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   response without fields (RFC 9112 section 8: the client MUST record it as incomplete); a redirect without its
   `Location` or a 200 with an empty body were the result. The proxy's response to `CONNECT` fails the same way. An
   idempotent request on a pooled connection is still retried once on a fresh one.
+- Ktor client, HTTP/1.1: a response whose head holds a control character other than HTAB (NUL, a bare CR, 0x01-0x1F,
+  0x7F) in a field value or the reason phrase now fails with `ParserException` and its connection is closed (RFC 9110
+  section 5.5: NUL, CR and LF in a field value MUST be rejected or replaced, other control characters are invalid);
+  before, `X-A: a<NUL>b` reached the application. The proxy's response to `CONNECT` is checked the same way.
 - QUIC: a datagram carrying an Initial packet now always reaches 1200 bytes (RFC 9000 section 14.1: a client pads every
   such datagram, a server every one with an ack-eliciting Initial). When the packet expected to pad the datagram did not
   fit behind the Initial or Handshake packet (a ClientHello ending in the last 64 bytes before 1200 with 0-RTT data
