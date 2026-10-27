@@ -35,8 +35,10 @@ import kotlin.time.Duration
 /*
  * Happy Eyeballs version 2 (RFC 8305) for the engines' TCP connects: every address a name resolves to, the two families
  * interleaved (section 4), attempts started one connection attempt delay apart or as soon as the previous one failed
- * (section 5), the first connected socket wins and the others are cancelled or, if they connected too, closed (section 6).
- * There is no resolution delay (section 3): getaddrinfo and InetAddress.getAllByName return both families in one answer.
+ * (section 5), the first connected socket wins and the others are cancelled or, if they connected too, closed (section 5).
+ * Not yet (docs/spec/rfc-compliance.md, RFC 8305 section 4-6 row): separate asynchronous AAAA and A queries with the
+ * resolution delay (section 3; getaddrinfo and InetAddress.getAllByName answer once, with both families), an RFC 6724
+ * sort where the platform resolver does not sort (section 4; the desktop JVM), NAT64 synthesis (section 7).
  */
 
 /**
