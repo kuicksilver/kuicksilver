@@ -171,6 +171,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   PTO probe or CRYPTO data) in a datagram of the budget's size, which RFC 9000 section 14.1 forbids and the client drops.
   The Initial data waits until the client's next datagram raises the budget (section 8.1); an Initial ACK and Handshake
   data still go out within the budget, and no PTO is armed while no probe can be sent (RFC 9002 section 6.2.2.1).
+- QUIC: a server discards an Initial packet carried in a datagram below 1200 bytes wherever it sits in the datagram
+  (RFC 9000 section 14.1). Only an Initial first in the datagram was checked; one coalesced behind another packet was
+  processed.
 - QUIC, Linux and Apple platforms: a UDP send interrupted by a signal (`EINTR`) is retried instead of failing the
   socket; on Linux an interrupted GSO send no longer withdraws GSO.
 - TLS: a server context without session ticket keys (a QUIC server with tickets off, a keyless SNI override base) no
