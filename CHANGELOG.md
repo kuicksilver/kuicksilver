@@ -348,6 +348,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - Ktor client, HTTP/1.1: a response field folded over several lines (obs-fold, a line that starts with SP or HTAB) is
   now unfolded into one value with a space, as RFC 9112 section 5.2 requires of a user agent; Ktor's parser failed
   such a response.
+- Ktor client, HTTP/1.1: a status code must be exactly three digits in 100..599 (RFC 9112 section 4, RFC 9110 section
+  15); `HTTP/1.1 20` and `HTTP/1.1 2000` without a reason phrase and `HTTP/1.1 600` were taken as statuses 20, 2000
+  and 600, and now fail with `ParserException`. A response in `HTTP/1.2` or a later minor version is processed as
+  HTTP/1.1 (RFC 9110 section 6.2) instead of failing.
 - QUIC: a datagram carrying an Initial packet now always reaches 1200 bytes (RFC 9000 section 14.1: a client pads every
   such datagram, a server every one with an ack-eliciting Initial). When the packet expected to pad the datagram did not
   fit behind the Initial or Handshake packet (a ClientHello ending in the last 64 bytes before 1200 with 0-RTT data
