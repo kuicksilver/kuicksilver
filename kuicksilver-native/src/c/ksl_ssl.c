@@ -152,11 +152,15 @@ int ksl_ssl_set_session(ksl_ssl *s, ksl_session *session) {
 }
 void ksl_session_free(ksl_session *session) { if (session) ksl_live_add(KSL_LIVE_SESSION, -1); SSL_SESSION_free((SSL_SESSION *)session); }
 int ksl_ssl_new_session_ticket(ksl_ssl *s) { ERR_clear_error(); s->ticket_authorized = 1; if (SSL_new_session_ticket(s->ssl) != 1) { ksl_ssl_set_error(s, KSL_E_NOT_SUPPORTED, "ksl: ticket request failed"); return KSL_ERROR; } return KSL_OK; }
-/* Past the epoch bound (RFC 9846 section 4.7.3, ksl_msg_cb) no key update is sent at all. */
+/* RFC 9846 section 4.7.3: "Until receiving a subsequent KeyUpdate from the peer, the sender MUST NOT send another KeyUpdate with
+   request_update set to update_requested": while ours is unanswered (ksl_msg_cb clears it on the peer's KeyUpdate) a request is
+   sent as update_not_requested, which still updates our sending key. Past the epoch bound no key update is sent at all. */
 int ksl_ssl_key_update(ksl_ssl *s, int request_peer) {
     ERR_clear_error();
     if (ksl_key_update_limit_check(s) != KSL_OK) return KSL_ERROR;
-    if (SSL_key_update(s->ssl, request_peer ? SSL_KEY_UPDATE_REQUESTED : SSL_KEY_UPDATE_NOT_REQUESTED) != 1) { ksl_ssl_set_error(s, KSL_E_NOT_SUPPORTED, "ksl: key update failed"); return KSL_ERROR; }
+    int requested = request_peer && !s->update_requested_pending;
+    if (SSL_key_update(s->ssl, requested ? SSL_KEY_UPDATE_REQUESTED : SSL_KEY_UPDATE_NOT_REQUESTED) != 1) { ksl_ssl_set_error(s, KSL_E_NOT_SUPPORTED, "ksl: key update failed"); return KSL_ERROR; }
+    if (requested) s->update_requested_pending = 1;
     return KSL_OK;
 }
 int ksl_key_update_limit_check(ksl_ssl *s) {
@@ -255,7 +259,10 @@ void ksl_msg_cb(int write_p, int version, int content_type, const void *buf, siz
     if (s->mode == KSL_MODE_TCP && content_type == SSL3_RT_HANDSHAKE && len >= 5 && m[0] == SSL3_MT_KEY_UPDATE) {
         uint64_t bound = s->key_update_limit ? s->key_update_limit : KSL_MAX_KEY_UPDATES;
         if (write_p) { if (++s->key_updates_sent >= bound) s->key_updates_exhausted = 1; }
-        else if (m[4] == SSL_KEY_UPDATE_REQUESTED && s->key_updates_sent >= bound) { s->key_updates_exhausted = 1; (void)BIO_shutdown_wr(SSL_get_wbio(ssl)); }
+        else {
+            s->update_requested_pending = 0;
+            if (m[4] == SSL_KEY_UPDATE_REQUESTED && s->key_updates_sent >= bound) { s->key_updates_exhausted = 1; (void)BIO_shutdown_wr(SSL_get_wbio(ssl)); }
+        }
     }
     if (!write_p && content_type == SSL3_RT_HANDSHAKE && len >= 6 && m[0] == SSL3_MT_SERVER_HELLO && s->owner->role == KSL_CLIENT) {
         s->server_hello_ems = server_hello_has_ems(m, len);

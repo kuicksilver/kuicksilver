@@ -502,6 +502,21 @@ static int send_one(ksl_ssl *c, ksl_ssl *s) {   /* one byte client -> server: ca
     uint8_t b = 7, r[16]; size_t n; if (ksl_tcp_write(c, &b, 1, &n) != KSL_OK) return 0;
     shuttle(c, s); return ksl_tcp_read(s, r, sizeof r, &n) == KSL_OK && n == 1;
 }
+static void test_key_update_request_waits_for_the_peer(void) {
+    SECTION("tcp_second_update_requested_waits_for_the_peer");
+    /* RFC 9846 section 4.7.3: "Until receiving a subsequent KeyUpdate from the peer, the sender MUST NOT send another KeyUpdate with
+       request_update set to update_requested"; OpenSSL tracks no outstanding request: ksl sends update_not_requested meanwhile */
+    ksl_ctx *cc = client_ctx("test-ca", KSL_VERIFY_OPENSSL), *sc = server_ctx("server"); key_updates k = {0, 0};
+    ksl_ssl *c = tcp_client(cc, "server.test"), *s = ksl_ssl_new(sc, KSL_MODE_TCP); ksl_ssl_msg_observer_for_test(s, key_update_kind_cb, &k);
+    CHECK(tcp_pump(c, s, NULL, NULL) == KSL_OK, "handshake");
+    CHECK(ksl_ssl_key_update(c, 1) == KSL_OK && send_one(c, s), "a requested key update");
+    CHECK(ksl_ssl_key_update(c, 1) == KSL_OK && send_one(c, s), "a second one before the server's answer reached the client");
+    CHECK(k.updates == 2 && k.requested == 1, "negative: only the first asked the server to update");
+    shuttle(s, c); uint8_t r[16]; size_t n; ksl_tcp_read(c, r, sizeof r, &n);   /* the server's answer */
+    CHECK(ksl_ssl_key_update(c, 1) == KSL_OK && send_one(c, s) && k.updates == 3 && k.requested == 2, "after the answer the client may ask again");
+    CHECK(echo_bytes(c, s, 5000), "the stream is intact");
+    ksl_ssl_free(c); ksl_ssl_free(s); ksl_ctx_free(cc); ksl_ctx_free(sc); END();
+}
 static void test_key_update_epoch_is_bounded(void) {
     SECTION("tcp_key_update_epoch_is_bounded");
     /* RFC 9846 section 4.7.3: "sending implementations MUST NOT allow the epoch -- and hence the number of key updates -- to exceed
@@ -533,4 +548,4 @@ static void test_key_update_epoch_is_bounded(void) {
     ksl_ssl_free(c); ksl_ssl_free(s); ksl_ctx_free(cc); ksl_ctx_free(sc); END();
 }
 
-void run_tcp(void) { test_echo(); test_truncation(); test_tls12(); test_resumption(); test_sni_pause(); test_sni_override_alpn(); test_sni_override_settings_effective(); test_no_tls12_ticket_without_num_tickets(); test_session_context(); test_ticket_bound_to_server_name(); test_keyless_server_no_tickets(); test_server_acknowledges_server_name(); test_key_update_before_record_limit(); test_abort_sends_an_alert(); test_legacy_version_must_be_0303(); test_key_update_epoch_is_bounded(); }
+void run_tcp(void) { test_echo(); test_truncation(); test_tls12(); test_resumption(); test_sni_pause(); test_sni_override_alpn(); test_sni_override_settings_effective(); test_no_tls12_ticket_without_num_tickets(); test_session_context(); test_ticket_bound_to_server_name(); test_keyless_server_no_tickets(); test_server_acknowledges_server_name(); test_key_update_before_record_limit(); test_abort_sends_an_alert(); test_legacy_version_must_be_0303(); test_key_update_request_waits_for_the_peer(); test_key_update_epoch_is_bounded(); }
