@@ -7,7 +7,6 @@ import io.kuicksilver.native.PacketBuffer
 import io.kuicksilver.quic.DatagramPacketWriter
 import io.kuicksilver.quic.recovery.SentFrames
 import io.kuicksilver.quic.wire.FrameEncoder
-import io.kuicksilver.quic.wire.VarInt
 import io.kuicksilver.quic.wire.WireWriter
 
 /** Received DATAGRAM payloads waiting for the application: a ring of [capacity] pooled buffers; a full ring drops the oldest (bounded memory, threat-model 3.2). */
@@ -84,9 +83,7 @@ internal class DatagramWriter : DatagramPacketWriter {
     override val remaining: Int get() {
         val w =
             w ?: return 0
-        val room =
-            w.remaining - 1 - VarInt.size(maxOf(0, w.remaining - 3).toLong())
-        return minOf(maxPayloadValue, maxOf(0, room))
+        return minOf(maxPayloadValue, largestDatagramPayload(w.remaining))
     }
 
     override fun write(
@@ -104,3 +101,11 @@ internal class DatagramWriter : DatagramPacketWriter {
         return true
     }
 }
+
+/**
+ * The largest payload whose DATAGRAM frame (type 0x31, a Length varint, the payload) fits in [room] bytes, 0 when none does:
+ * the frame cannot be split across packets (RFC 9221 section 5). The best of a 1-byte Length (up to 63), a 2-byte one (up to
+ * 16 383) and a 4-byte one; sizing the Length from the room rather than from the payload left a 66-byte room offering 64
+ * bytes, a 67-byte frame.
+ */
+internal fun largestDatagramPayload(room: Int): Int = maxOf(0, minOf(63, room - 2), minOf(16_383, room - 3), room - 5)
