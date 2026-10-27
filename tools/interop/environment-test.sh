@@ -175,6 +175,34 @@ check "port: another server (msquic: only packets of no connection)" 1 "" -- pyt
 check "port: our own server's cell"                               1 "" -- python3 "$pp" --decoded "$(pvar ours '.pair = "kuicksilver_ngtcp2"')"
 check "port: not a rebind test case"                              1 "" -- python3 "$pp" --decoded "$(pvar transfer '.case = "transfer"')"
 check "port: a malformed summary cannot be analysed"              2 "cannot analyse" -- python3 "$pp" --decoded "$(pvar broken "del($blocked.after[0].src)")"
+# the client's side (the fixture's client_* fields were added by hand: the artifact's client log line "connection lost:
+# ...Timeout: Idle timeout after 30s" and the shape of its qlog; the --dump of 2026-10-27 predates them)
+check "port: the client crashed with exit 1 (a stack trace)"     1 "" -- python3 "$pp" --decoded "$(pvar crash '.client_crash_lines = ["Exception in thread \"main\" java.lang.IllegalStateException: boom", "\tat io.kuicksilver.interop.MainKt.main(Main.kt:58)"]')"
+check "port: the client logged no idle timeout"                   1 "" -- python3 "$pp" --decoded "$(pvar noidle '.client_idle_timeout = null')"
+check "port: the client exited early (20 s after its last packet)" 1 "" -- python3 "$pp" --decoded "$(pvar early '.client_qlogs[0].closed = 29.83')"
+check "port:   (its last packet sent 1 s after its last received)" 1 "" -- python3 "$pp" --decoded "$(pvar sentlate '.client_qlogs[0].last_sent = 10.812')"
+check "port:   (an ACK 0.4 s after its last received is fine)"    0 "" -- python3 "$pp" --decoded "$(pvar acklate '.client_qlogs[0].last_sent = 10.212')"
+check "port: the connection closed otherwise (no idle trigger)"   1 "" -- python3 "$pp" --decoded "$(pvar trigger '.client_qlogs[0].trigger = null')"
+check "port: the qlog never closed the connection"                1 "" -- python3 "$pp" --decoded "$(pvar noclose '.client_qlogs[0].closed = null')"
+check "port: no client qlog"                                      1 "" -- python3 "$pp" --decoded "$(pvar noqlog '.client_qlogs = []')"
+check "port: two client qlogs"                                    1 "" -- python3 "$pp" --decoded "$(pvar twoqlogs '.client_qlogs += .client_qlogs')"
+check "port: the client exited 133 (Kotlin/Native uncaught)"      1 "" -- python3 "$pp" --decoded "$(pvar k133 '.client_exit = 133')"
+check "port: a summary without the client's side cannot be analysed" 2 "cannot analyse" -- python3 "$pp" --decoded "$(pvar noclient 'del(.client_qlogs)')"
+# the client's side as decoded from a cell (no tshark needed): the compose output's client lines and the client's qlog
+pc="$tmp/port-cell/ngtcp2_kuicksilver/rebind-addr"; mkdir -p "$pc/client/qlog"
+printf '%s\n' 'client  | congestion controller ' 'client  | connection lost: io.kuicksilver.quic.QuicException$ConnectionLost$Timeout: Idle timeout after 30s' \
+  'client exited with code 1' > "$pc/output.txt"
+printf '%s\n' '{"qlog_format":"JSON-SEQ","trace":{"common_fields":{"time_format":"relative"}}}' \
+  '{"time":9812.0,"name":"transport:packet_received","data":{}}' '{"time":9830.0,"name":"transport:packet_sent","data":{}}' \
+  '{"time":39812.0,"name":"connectivity:connection_closed","data":{"owner":"local","trigger":"idle_timeout"}}' > "$pc/client/qlog/a_client_b.sqlog"
+pj() { python3 "$pp" --client "$pc" | jq -c "$1"; }
+check "port: cell client side, JVM idle line and qlog"            0 '^\[1,30\(\.0\)*,0,"idle_timeout",39.812,9.83,9.812\]$' -- pj '[.client_exit, .client_idle_timeout, (.client_crash_lines | length), .client_qlogs[0].trigger, .client_qlogs[0].closed, .client_qlogs[0].last_sent, .client_qlogs[0].last_received]'
+sed -i.bak 's/\$ConnectionLost\$Timeout: Idle timeout after 30s/.ConnectionLost.Timeout: Idle timeout after 1m 0.5s/' "$pc/output.txt"
+check "port: cell client side, Kotlin/Native class name, 1m 0.5s" 0 '^60.5$' -- pj '.client_idle_timeout'
+printf '%s\n' 'client  | Exception in thread "main" java.lang.IllegalStateException: boom' 'client  | 	at io.kuicksilver.interop.MainKt.main(Main.kt:58)' >> "$pc/output.txt"
+check "port: cell client side, a stack trace is a crash"          0 '^2$' -- pj '.client_crash_lines | length'
+printf '%s\n' 'client  | connection lost: io.kuicksilver.quic.QuicException$ConnectionLost$Timeout: Idle timeout after 30s' >> "$pc/output.txt"
+check "port: cell client side, two idle lines are no idle timeout" 0 '^null$' -- pj '.client_idle_timeout'
 
 # cell mode: only our own server's cells, only with the runner's verdict, and never a guess without the captures
 mk() { mkdir -p "$tmp/res/$1/$2"; printf '%s\n' "${@:3}" > "$tmp/res/$1/$2/output.txt"; }

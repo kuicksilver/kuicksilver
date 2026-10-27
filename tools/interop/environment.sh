@@ -138,8 +138,10 @@ clienthello_lost() {
 # client that only downloads has nothing to send until its idle timeout (release/0.2.x run 40563746089: ngtcp2->kuicksilver:rebind-addr,
 # rebound to 193.167.0.155:745 at 11 s, the fixed-seed binding there, see sim-entrypoint.sh). tools/interop/prohibited-port-rebind.py proves it from the server-side capture and log:
 # the client's packets from the new binding reached the server's link, the server never answered there, kept to the old one, and
-# the client sent from no later binding. msquic's similar list applies only to packets of no connection (binding.c:1523), not here.
-# Prints "<server>_<client> <case>" per cell.
+# the client sent from no later binding; and from the client's own record that it idled out and did not crash: exit code 1, the
+# "connection lost: ...Timeout: Idle timeout after <d>" line of kuicksilver-interop Main.kt and no stack trace or exception in its
+# log, and its qlog closed on the idle timer at least <d> after its last packet. msquic's similar list applies only to packets
+# of no connection (binding.c:1523), not here. Prints "<server>_<client> <case>" per cell.
 prohibited_port_rebind() {
   local o cell
   while IFS= read -r o; do
@@ -151,7 +153,7 @@ prohibited_port_rebind() {
 }
 
 # The reason environment_cells gives for a prohibited_port_rebind cell.
-prohibited_port_why='the sim rebound the client to a source port the ngtcp2 server drops (below 1024 or a reflection port): the server kept sending to the old binding and the downloading client had nothing to send (prohibited-port-rebind.py)'
+prohibited_port_why='the sim rebound the client to a source port the ngtcp2 server drops (below 1024 or a reflection port): the server kept sending to the old binding and the downloading client had nothing to send until it idled out, no crash (prohibited-port-rebind.py)'
 
 # Cells of a result directory whose verdict rests on the environment, but for prohibited_port_rebind: "<server>_<client> <case> <why>".
 # run-local.sh reruns these, and one that stays red after its reruns fails the run.
