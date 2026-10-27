@@ -547,6 +547,14 @@ jobs:
           else
             bash tools/interop/run-local.sh --check-required -t "$KSL_INTEROP_CASES" "$PEER"
           fi
+      - name: 'interop: handshake with the runner debug log'   # what docker compose said when a cell or the compliance check failed
+        if: failure()
+        env:
+          IMAGE: ${{ matrix.image }}
+          PEER: ${{ matrix.peer }}
+        run: |
+          docker compose version; docker images --format '{{.Repository}}:{{.Tag}}'
+          KSL_INTEROP_DEBUG=1 bash tools/interop/run-local.sh --image "$IMAGE" -t handshake "$PEER" 2>&1 | tail -300 || true
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
