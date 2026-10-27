@@ -118,6 +118,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- HTTP/3: a request's `te: Trailers` (any case) is accepted; transfer coding names are case-insensitive (RFC 9110
+  section 10.1.4), and only the exact lowercase `trailers` passed, so such a request was reset with `H3_MESSAGE_ERROR`.
 - HTTP/3: the QPACK encoder-stream string ceiling follows the configuration: min(`qpackMaxTableCapacity`,
   `maxFieldSectionSize`), at least 64 KiB (at most 256 MiB), as RFC 9204 section 7.4 asks. It was a fixed 64 KiB, so with
   a raised table capacity and field-section limit a peer inserting a larger field into the dynamic table closed the
