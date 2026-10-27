@@ -82,7 +82,9 @@ internal class KeyPhase(
             if (pn < firstPnOfCurrent) firstPnOfCurrent = pn
             return
         }
-        if (pn < firstPnOfCurrent) {
+        // no packet of the current phase yet and no previous keys (generation 0): nothing to be below, so this is the peer's
+        // update, processed "using the next key phase" (RFC 9001 section 6.2) like any other
+        if (pn < firstPnOfCurrent && (previous != null || firstPnOfCurrent != Long.MAX_VALUE)) {
             if (previous != null) return // a reordered packet of the previous phase
             throw QuicWireException(
                 TransportError.KEY_UPDATE_ERROR,
