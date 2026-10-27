@@ -400,7 +400,7 @@ static void test_key_update_before_record_limit(void) {
        sends one every 2^23 records it wrote; here the bound is lowered to 4 records (test hook). */
     ksl_ctx *cc = client_ctx("test-ca", KSL_VERIFY_OPENSSL), *sc = server_ctx("server"); int updates = 0;
     ksl_ssl *c = tcp_client(cc, "server.test"), *s = ksl_ssl_new(sc, KSL_MODE_TCP);
-    SSL *raw = ksl_ssl_raw_for_test(s); SSL_set_msg_callback(raw, key_update_cb); SSL_set_msg_callback_arg(raw, &updates);
+    ksl_ssl_msg_observer_for_test(s, key_update_cb, &updates);
     CHECK(tcp_pump(c, s, NULL, NULL) == KSL_OK, "TLS 1.3 handshake");
     CHECK(write_all(c, s, 1 << 20) && updates == 0, "control: 64 records under the default bound, no KeyUpdate");
     ksl_tcp_set_key_update_records_for_test(c, 4);
@@ -445,4 +445,45 @@ static void test_legacy_version_must_be_0303(void) {
     ksl_ssl_free(c); ksl_ssl_free(s); ksl_ctx_free(cc); ksl_ctx_free(sc); END();
 }
 
-void run_tcp(void) { test_echo(); test_truncation(); test_tls12(); test_resumption(); test_sni_pause(); test_sni_override_alpn(); test_sni_override_settings_effective(); test_no_tls12_ticket_without_num_tickets(); test_session_context(); test_ticket_bound_to_server_name(); test_keyless_server_no_tickets(); test_server_acknowledges_server_name(); test_key_update_before_record_limit(); test_legacy_version_must_be_0303(); }
+/* What a session's peer saw of KeyUpdates: how many, how many with request_update = update_requested */
+typedef struct { int updates, requested; } key_updates;
+static void key_update_kind_cb(int write_p, int version, int content_type, const void *buf, size_t len, SSL *ssl, void *arg) {
+    (void)version; (void)ssl; const uint8_t *m = buf; key_updates *k = arg;
+    if (!write_p && content_type == SSL3_RT_HANDSHAKE && len >= 5 && m[0] == SSL3_MT_KEY_UPDATE) { k->updates++; if (m[4] == SSL_KEY_UPDATE_REQUESTED) k->requested++; }
+}
+static int send_one(ksl_ssl *c, ksl_ssl *s) {   /* one byte client -> server: carries any pending KeyUpdate */
+    uint8_t b = 7, r[16]; size_t n; if (ksl_tcp_write(c, &b, 1, &n) != KSL_OK) return 0;
+    shuttle(c, s); return ksl_tcp_read(s, r, sizeof r, &n) == KSL_OK && n == 1;
+}
+static void test_key_update_epoch_is_bounded(void) {
+    SECTION("tcp_key_update_epoch_is_bounded");
+    /* RFC 9846 section 4.7.3: "sending implementations MUST NOT allow the epoch -- and hence the number of key updates -- to exceed
+       2^48-1"; "receiving implementations MUST NOT enforce this rule". The bound is lowered to 3 KeyUpdates (test hook); the session
+       that reached it ends, as the section allows ("an eventual need to terminate the connection") */
+    ksl_ctx *cc = client_ctx("test-ca", KSL_VERIFY_OPENSSL), *sc = server_ctx("server"); key_updates k = {0, 0};
+    ksl_ssl *c = tcp_client(cc, "server.test"), *s = ksl_ssl_new(sc, KSL_MODE_TCP); ksl_ssl_msg_observer_for_test(s, key_update_kind_cb, &k);
+    CHECK(tcp_pump(c, s, NULL, NULL) == KSL_OK, "handshake");
+    ksl_ssl_set_key_update_limit_for_test(c, 3); ksl_ssl_set_key_update_limit_for_test(s, 1);
+    for (int i = 0; i < 2; i++) CHECK(ksl_ssl_key_update(c, 0) == KSL_OK && send_one(c, s), "a key update below the bound");
+    CHECK(ksl_ssl_key_update(c, 0) == KSL_OK, "the third is queued");
+    uint8_t b = 1, r[16]; size_t n; ksl_tcp_write(c, &b, 1, &n); shuttle(c, s); ksl_tcp_read(s, r, sizeof r, &n);
+    CHECK(k.updates == 3, "three KeyUpdates reached the server: the server, bounded at 1 itself, does not enforce the bound on what it receives");
+    CHECK(ksl_ssl_key_update(c, 0) == KSL_ERROR && ksl_tcp_write(c, &b, 1, &n) == KSL_ERROR, "negative: past the bound no key update and no data");
+    uint8_t out[64]; CHECK(ksl_tcp_drain(c, out, sizeof out, &n) == KSL_OK && n == 0, "negative: nothing more leaves the client");
+    ksl_ssl_free(c); ksl_ssl_free(s);
+    /* a peer's update_requested answered with the last allowed KeyUpdate: the session ends there, a further request is never answered */
+    c = tcp_client(cc, "server.test"); s = ksl_ssl_new(sc, KSL_MODE_TCP); key_updates kc = {0, 0}; ksl_ssl_msg_observer_for_test(c, key_update_kind_cb, &kc);
+    CHECK(tcp_pump(c, s, NULL, NULL) == KSL_OK, "handshake");
+    ksl_ssl_set_key_update_limit_for_test(c, 1);
+    CHECK(ksl_ssl_key_update(s, 1) == KSL_OK, "the server asks for an update");
+    ksl_tcp_write(s, &b, 1, &n); shuttle(s, c); ksl_tcp_read(c, r, sizeof r, &n); ksl_tcp_write(c, &b, 1, &n); shuttle(c, s);   /* the answer leaves ahead of the next write */
+    k.updates = 0; ksl_ssl_msg_observer_for_test(s, key_update_kind_cb, &k); ksl_tcp_read(s, r, sizeof r, &n);
+    CHECK(kc.updates == 1 && k.updates == 1, "the client answered with its one allowed KeyUpdate");
+    CHECK(ksl_ssl_key_update(s, 1) == KSL_OK, "the server asks again");
+    ksl_tcp_write(s, &b, 1, &n); shuttle(s, c); ksl_tcp_read(c, r, sizeof r, &n); ksl_tcp_write(c, &b, 1, &n); shuttle(c, s); ksl_tcp_read(s, r, sizeof r, &n);
+    CHECK(kc.updates == 1 && k.updates == 1, "negative: no KeyUpdate past the client's bound");
+    CHECK(ksl_tcp_write(c, &b, 1, &n) == KSL_ERROR, "the client's session ended");
+    ksl_ssl_free(c); ksl_ssl_free(s); ksl_ctx_free(cc); ksl_ctx_free(sc); END();
+}
+
+void run_tcp(void) { test_echo(); test_truncation(); test_tls12(); test_resumption(); test_sni_pause(); test_sni_override_alpn(); test_sni_override_settings_effective(); test_no_tls12_ticket_without_num_tickets(); test_session_context(); test_ticket_bound_to_server_name(); test_keyless_server_no_tickets(); test_server_acknowledges_server_name(); test_key_update_before_record_limit(); test_legacy_version_must_be_0303(); test_key_update_epoch_is_bounded(); }

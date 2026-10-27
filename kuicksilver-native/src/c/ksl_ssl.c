@@ -19,7 +19,8 @@ ksl_ssl *ksl_ssl_new(ksl_ctx *c, int mode) {
         BIO *internal = NULL; if (!BIO_new_bio_pair(&internal, 0, &s->net, 0)) { SSL_free(s->ssl); free(s); return NULL; }
         SSL_set_bio(s->ssl, internal, internal);
     }
-    if (c->role == KSL_CLIENT) { SSL_set_msg_callback(s->ssl, ksl_msg_cb); SSL_set_msg_callback_arg(s->ssl, s); }   /* until the handshake ends */
+    /* TCP: for the session's life (KeyUpdate accounting); a QUIC client: until the handshake ends (its ServerHello) */
+    if (mode == KSL_MODE_TCP || c->role == KSL_CLIENT) { SSL_set_msg_callback(s->ssl, ksl_msg_cb); SSL_set_msg_callback_arg(s->ssl, s); }
     ksl_live_add(KSL_LIVE_SSL, 1);
     return s;
 }
@@ -151,10 +152,17 @@ int ksl_ssl_set_session(ksl_ssl *s, ksl_session *session) {
 }
 void ksl_session_free(ksl_session *session) { if (session) ksl_live_add(KSL_LIVE_SESSION, -1); SSL_SESSION_free((SSL_SESSION *)session); }
 int ksl_ssl_new_session_ticket(ksl_ssl *s) { ERR_clear_error(); s->ticket_authorized = 1; if (SSL_new_session_ticket(s->ssl) != 1) { ksl_ssl_set_error(s, KSL_E_NOT_SUPPORTED, "ksl: ticket request failed"); return KSL_ERROR; } return KSL_OK; }
+/* Past the epoch bound (RFC 9846 section 4.7.3, ksl_msg_cb) no key update is sent at all. */
 int ksl_ssl_key_update(ksl_ssl *s, int request_peer) {
     ERR_clear_error();
+    if (ksl_key_update_limit_check(s) != KSL_OK) return KSL_ERROR;
     if (SSL_key_update(s->ssl, request_peer ? SSL_KEY_UPDATE_REQUESTED : SSL_KEY_UPDATE_NOT_REQUESTED) != 1) { ksl_ssl_set_error(s, KSL_E_NOT_SUPPORTED, "ksl: key update failed"); return KSL_ERROR; }
     return KSL_OK;
+}
+int ksl_key_update_limit_check(ksl_ssl *s) {
+    if (!s->key_updates_exhausted) return KSL_OK;
+    if (!s->fatal) ksl_ssl_fail(s, KSL_E_NOT_SUPPORTED, "ksl: the session reached the key update bound (RFC 9846 section 4.7.3)");
+    return KSL_ERROR;
 }
 int ksl_ssl_client_hello(ksl_ssl *s, ksl_client_hello *out) {
     if (!s->sni_pending) { ksl_ssl_set_error(s, KSL_E_NOT_PAUSED, "ksl: not paused at ClientHello"); return KSL_ERROR; }
@@ -171,7 +179,7 @@ int ksl_ssl_sni_resume(ksl_ssl *s, ksl_ctx *override, int alert) {
 
 /* Drives the handshake, then post-handshake messages. The verify name rule (ADR-0011: the host name is always checked by the shared matcher, also after a platform verdict) is enforced here. */
 int ksl_drive(ksl_ssl *s) {
-    if (s->fatal) return KSL_ERROR;
+    if (s->fatal || ksl_key_update_limit_check(s) != KSL_OK) return KSL_ERROR;
     if (!s->done && s->owner->role == KSL_CLIENT && s->owner->verify_mode != KSL_VERIFY_NONE && !s->verify_name_set)
         return ksl_ssl_fail(s, KSL_E_NO_VERIFY_NAME, "ksl: verify name not set (reference identifier is mandatory)");
     ERR_clear_error(); int r;
@@ -182,11 +190,11 @@ int ksl_drive(ksl_ssl *s) {
         if (r == 1 && s->owner->role == KSL_SERVER && SSL_get_state(s->ssl) == TLS_ST_EARLY_DATA) r = SSL_do_handshake(s->ssl);
         if (r == 1) {
             s->done = 1;
-            int ours = s->owner->role == KSL_CLIENT;
+            int ours = s->mode == KSL_MODE_QUIC && s->owner->role == KSL_CLIENT;
 #ifdef KSL_TEST
             ours = ours && !s->msg_observer;
 #endif
-            if (ours) SSL_set_msg_callback(s->ssl, NULL);   /* ksl_msg_cb is needed for the handshake only */
+            if (ours) SSL_set_msg_callback(s->ssl, NULL);   /* a QUIC client needs ksl_msg_cb for the handshake only */
             /* both sides refuse TLS 1.2 without EMS before Finished, with handshake_failure (server_name_cb, ksl_cert_verify_cb): this
                is the last line, for a handshake that reached the end without a certificate to check (a resumption) */
             if (s->mode == KSL_MODE_TCP && SSL_version(s->ssl) < TLS1_3_VERSION && !SSL_get_extms_support(s->ssl)) return ksl_ssl_fail(s, KSL_E_EMS_REQUIRED, "ksl: TLS 1.2 without extended master secret rejected");
@@ -237,7 +245,19 @@ static int server_hello_has_ems(const uint8_t *m, size_t len) {
      protocol_version (a TLS 1.2 ServerHello's legacy_version is its version, which OpenSSL checks itself). */
 void ksl_msg_cb(int write_p, int version, int content_type, const void *buf, size_t len, SSL *ssl, void *arg) {
     ksl_ssl *s = arg; const uint8_t *m = buf;
-    if (!write_p && content_type == SSL3_RT_HANDSHAKE && len >= 6 && m[0] == SSL3_MT_SERVER_HELLO) {
+    /* RFC 9846 section 4.7.3: "sending implementations MUST NOT allow the epoch -- and hence the number of key updates -- to exceed
+       2^48-1", also when answering the peer's update_requested ("it MUST NOT send its own KeyUpdate if that would cause it to exceed
+       these limits"). OpenSSL counts nothing and answers a request by itself. Once the last allowed KeyUpdate is written the session
+       ends: ksl sends no key update of its own any more and fails the session at its next call (ksl_key_update_limit_check). A
+       request from the peer that would need one more answer shuts the session's end of the BIO pair for writing before OpenSSL
+       processes it (this callback runs first), so the answer cannot leave. What the peer sends is never counted ("receiving
+       implementations MUST NOT enforce this rule"). */
+    if (s->mode == KSL_MODE_TCP && content_type == SSL3_RT_HANDSHAKE && len >= 5 && m[0] == SSL3_MT_KEY_UPDATE) {
+        uint64_t bound = s->key_update_limit ? s->key_update_limit : KSL_MAX_KEY_UPDATES;
+        if (write_p) { if (++s->key_updates_sent >= bound) s->key_updates_exhausted = 1; }
+        else if (m[4] == SSL_KEY_UPDATE_REQUESTED && s->key_updates_sent >= bound) { s->key_updates_exhausted = 1; (void)BIO_shutdown_wr(SSL_get_wbio(ssl)); }
+    }
+    if (!write_p && content_type == SSL3_RT_HANDSHAKE && len >= 6 && m[0] == SSL3_MT_SERVER_HELLO && s->owner->role == KSL_CLIENT) {
         s->server_hello_ems = server_hello_has_ems(m, len);
         if (((m[4] << 8) | m[5]) != TLS1_2_VERSION) SSL_set_options(ssl, SSL_OP_NO_TLSv1_2 | SSL_OP_NO_TLSv1_3);
     }
@@ -251,6 +271,8 @@ void ksl_msg_cb(int write_p, int version, int content_type, const void *buf, siz
 #ifdef KSL_TEST
 /* Test hook: the OpenSSL object behind a session, for tests that need to shape the client (groups, message callbacks). */
 SSL *ksl_ssl_raw_for_test(ksl_ssl *s) { return s->ssl; }
+/* Test hook: the KeyUpdate bound of ksl_msg_cb (KSL_MAX_KEY_UPDATES otherwise) */
+void ksl_ssl_set_key_update_limit_for_test(ksl_ssl *s, uint64_t updates) { s->key_update_limit = updates; }
 /* Test hook: a message callback for tests, called for every message of the session after ksl's own (ksl_msg_cb) */
 void ksl_ssl_msg_observer_for_test(ksl_ssl *s, void (*cb)(int, int, int, const void *, size_t, SSL *, void *), void *arg) {
     s->msg_observer = cb; s->msg_observer_arg = arg; SSL_set_msg_callback(s->ssl, ksl_msg_cb); SSL_set_msg_callback_arg(s->ssl, s);

@@ -13,9 +13,10 @@ int ksl_tcp_feed(ksl_ssl *s, const uint8_t *ciphertext, size_t len, size_t *cons
 int ksl_tcp_drain(ksl_ssl *s, uint8_t *out, size_t cap, size_t *written) {
     if (!tcp_only(s)) return KSL_ERROR; *written = 0; if (!cap) return KSL_OK;
     int n = BIO_read(s->net, out, (int)(cap > INT32_MAX ? INT32_MAX : cap));
-    if (n > 0) *written = (size_t)n; return n > 0 || BIO_should_retry(s->net) ? KSL_OK : KSL_ERROR;
+    if (n > 0) *written = (size_t)n; return n > 0 || BIO_should_retry(s->net) || s->key_updates_exhausted ? KSL_OK : KSL_ERROR;   /* shut at the KeyUpdate bound */
 }
 static int map_error(ksl_ssl *s, int r) {
+    if (ksl_key_update_limit_check(s) != KSL_OK) return KSL_ERROR;
     switch (SSL_get_error(s->ssl, r)) {
     case SSL_ERROR_WANT_READ: case SSL_ERROR_WANT_WRITE: ERR_clear_error(); return KSL_WANT_READ;
     case SSL_ERROR_ZERO_RETURN: ERR_clear_error(); return KSL_EOF;
@@ -37,22 +38,22 @@ static void count_records(ksl_ssl *s, size_t n) {
     uint64_t bound = s->key_update_records ? s->key_update_records : KSL_KEY_UPDATE_RECORDS;
     if (s->records_sent < bound) return;
     /* refused while a write is pending or a handshake message is under way (a KeyUpdate the peer asked for): tried after the next write */
-    if (SSL_key_update(s->ssl, SSL_KEY_UPDATE_NOT_REQUESTED) == 1) s->records_sent = 0; else ERR_clear_error();
+    if (ksl_ssl_key_update(s, 0) == KSL_OK) s->records_sent = 0; else ERR_clear_error();
 }
 int ksl_tcp_write(ksl_ssl *s, const uint8_t *plaintext, size_t len, size_t *consumed) {
-    if (!tcp_only(s)) return KSL_ERROR; if (s->fatal) return KSL_ERROR; *consumed = 0; if (!s->done) return KSL_WANT_READ;
+    if (!tcp_only(s)) return KSL_ERROR; if (s->fatal || ksl_key_update_limit_check(s) != KSL_OK) return KSL_ERROR; *consumed = 0; if (!s->done) return KSL_WANT_READ;
     ERR_clear_error(); size_t n = 0; int r = SSL_write_ex(s->ssl, plaintext, len, &n);
-    if (r == 1) { *consumed = n; count_records(s, n); return KSL_OK; }
+    if (r == 1) { *consumed = n; if (!s->key_updates_exhausted) count_records(s, n); return KSL_OK; }
     return map_error(s, r);
 }
 int ksl_tcp_read(ksl_ssl *s, uint8_t *out, size_t cap, size_t *read) {
-    if (!tcp_only(s)) return KSL_ERROR; if (s->fatal) return KSL_ERROR; *read = 0; if (!s->done) return KSL_WANT_READ;
+    if (!tcp_only(s)) return KSL_ERROR; if (s->fatal || ksl_key_update_limit_check(s) != KSL_OK) return KSL_ERROR; *read = 0; if (!s->done) return KSL_WANT_READ;
     ERR_clear_error(); size_t n = 0; int r = SSL_read_ex(s->ssl, out, cap, &n);
     if (r == 1) { *read = n; return KSL_OK; }
     return map_error(s, r);
 }
 int ksl_tcp_shutdown(ksl_ssl *s) {
-    if (!tcp_only(s)) return KSL_ERROR; if (s->fatal) return KSL_ERROR; ERR_clear_error();
+    if (!tcp_only(s)) return KSL_ERROR; if (s->fatal || ksl_key_update_limit_check(s) != KSL_OK) return KSL_ERROR; ERR_clear_error();
     int r = SSL_shutdown(s->ssl);
     if (r == 1) return KSL_OK;                 /* both close_notify alerts exchanged */
     if (r == 0) return KSL_WANT_READ;          /* ours sent, waiting for the peer's */
