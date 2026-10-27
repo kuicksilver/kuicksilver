@@ -163,6 +163,9 @@ internal class H1Response(
             headersBuilder.remove(HttpHeaders.TransferEncoding)
             if (!hasNoContent()) headersBuilder[HttpHeaders.Connection] = "close"
         }
+        // a sender MUST NOT send Content-Length in a message that contains Transfer-Encoding (RFC 9112 section 6.2): an
+        // application's Content-Length on content Ktor frames with `chunked` goes, the coding frames the body
+        if (headersBuilder.contains(HttpHeaders.TransferEncoding)) headersBuilder.remove(HttpHeaders.ContentLength)
         // a server that sends the "close" option MUST initiate the close after this response and MUST NOT process any
         // further request on the connection (RFC 9112 section 9.6); a 101 hands the connection to the new protocol
         endsConnection?.complete(statusCode != HttpStatusCode.SwitchingProtocols && saysClose())
