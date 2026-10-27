@@ -57,7 +57,7 @@ public class ConnectionStats internal constructor(
     public val reassemblyRanges: Int,
     /** Key updates so far, ours and the peer's (RFC 9001 section 6). */
     public val keyUpdates: Long,
-    /** Handshake and 1-RTT packets that failed authentication (RFC 9001 section 6.6 integrity limit). */
+    /** Packets that failed authentication under any key, Initial ones included (RFC 9001 section 6.6 integrity limit). */
     public val authenticationFailures: Long,
     /** Datagrams that looked like a Stateless Reset but carried no token of ours (RFC 9000 section 10.3.1). */
     public val invalidResets: Long,

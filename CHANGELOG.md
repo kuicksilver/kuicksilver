@@ -336,6 +336,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   packet being built has exactly 66 bytes left. The room offered to the datagram was one byte too large there (a 64-byte
   payload, whose Length field takes 2 bytes), so the frame overflowed the packet (RFC 9221 section 5). The room is now
   the largest payload whose whole frame fits, for every size.
+- QUIC: Initial packets that fail authentication now count toward the AEAD integrity limit with the rest (RFC 9001
+  section 6.6: "across all keys"), and in `ConnectionStats.authenticationFailures`. The limit (2^52 for AES-128-GCM)
+  stays out of reach, so this changes the count, not when a connection closes in practice.
 - QUIC, Linux and Apple platforms: a UDP send interrupted by a signal (`EINTR`) is retried instead of failing the
   socket; on Linux an interrupted GSO send no longer withdraws GSO.
 - TLS: a server context without session ticket keys (a QUIC server with tickets off, a keyless SNI override base) no
