@@ -6,7 +6,7 @@ package io.kuicksilver.native
 internal object JvmNativeNames {
     /** The operating system part of the classifier, from `os.name`: `osx`, `windows`, or `linux` for anything else. */
     val os: String =
-        System.getProperty("os.name").lowercase().let {
+        (System.getProperty("os.name") ?: error("the os.name system property is not set")).lowercase().let {
             when {
                 it.contains("mac") || it.contains("darwin") -> "osx"
                 it.contains("win") -> "windows"
@@ -16,7 +16,7 @@ internal object JvmNativeNames {
 
     /** The CPU part of the classifier, from `os.arch`: `aarch_64`, `x86_64`, or the lower-cased property value for anything else. */
     val arch: String =
-        System.getProperty("os.arch").lowercase().let {
+        (System.getProperty("os.arch") ?: error("the os.arch system property is not set")).lowercase().let {
             when (it) {
                 "aarch64", "arm64" -> "aarch_64"
                 "amd64", "x86_64" -> "x86_64"

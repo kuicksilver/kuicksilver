@@ -13,7 +13,7 @@ public actual fun recordFailure(
     params: LinkParams,
 ) {
     val f = File("build/sim-failures/$test.txt")
-    f.parentFile.mkdirs()
+    checkNotNull(f.parentFile) { "no parent directory for $f" }.mkdirs()
     f.appendText("seed=$seed $params\n")
 }
 

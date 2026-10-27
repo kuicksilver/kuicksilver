@@ -26,7 +26,7 @@ internal class NioDatagramIo private constructor(
 ) : DatagramIo {
     override val localAddress: InetSocketAddress =
         (channel.localAddress as java.net.InetSocketAddress).let {
-            InetSocketAddress(it.address.hostAddress, it.port)
+            InetSocketAddress(checkNotNull(it.address.hostAddress) { "the local address has no host address" }, it.port)
         }
     private val caps = MutableStateFlow(IoCapabilities.Portable)
     override val capabilities: StateFlow<IoCapabilities> get() = caps
@@ -67,7 +67,7 @@ internal class NioDatagramIo private constructor(
         ) {
             return lastKtor!!
         }
-        val k = InetSocketAddress(a.address.hostAddress, a.port)
+        val k = InetSocketAddress(checkNotNull(a.address.hostAddress) { "the peer address has no host address" }, a.port)
         lastJava = a
         lastKtor = k
         return k
