@@ -339,7 +339,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   Recvd"). The one-second drain grace after a lost connection cut such a reader too: a body reader the scheduler paused
   past it ended with `H3_NO_ERROR` from the peer instead of the bytes (`ConnectionEndTest` on a loaded Android 7 emulator,
   a Windows VM, macOS under memory pressure). The grace now applies only to readers of streams cut short, and a field
-  section waiting for a dynamic-table insert fails once no insert can arrive any more instead of waiting.
+  section waiting for a dynamic-table insert fails once no insert can arrive any more instead of waiting. Whether a
+  stream came whole is decided when the transport is gone, not at the HTTP/3 close: after a local close the last DATA
+  and FIN may still arrive, and an unread body that came whole that way no longer kept the session waiting for the
+  application.
 - HTTP/3 server with WebTransport: a WebTransport stream naming a Session ID beyond the bidirectional stream limit the
   server granted closes the connection with `H3_ID_ERROR` at once; the client could never open that session. Such a
   stream held one of the 16 buffer slots for 5 s before.
