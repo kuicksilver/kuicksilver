@@ -233,21 +233,26 @@ internal class RequestFraming private constructor(
 
 /**
  * The header fields of [request] as the client sent them: Ktor's parsed map, except for the values in [kept] (from
- * [checkRequestHead]: values that start with obs-text Ktor's parser takes for whitespace and strips). Every reader of a
- * request field in the engine and the application reads this.
+ * [checkRequestHead]: values that start with obs-text Ktor's parser takes for whitespace and strips), and without
+ * Upgrade in an HTTP/1.0 request: a server MUST ignore it there (RFC 9110 section 7.8), and MUST NOT send the 101 an
+ * upgrade would bring to an HTTP/1.0 client (section 15.2). Every reader of a request field in the engine and the
+ * application reads this.
  */
 internal fun requestFields(
     request: Request,
     kept: List<KeptFieldValue>,
+    version: HttpProtocolVersion?,
 ): Headers {
     val parsed = CIOHeaders(request.headers)
-    if (kept.isEmpty()) return parsed
+    val dropUpgrade = version == HttpProtocolVersion.HTTP_1_0 && parsed.contains("Upgrade")
+    if (kept.isEmpty() && !dropUpgrade) return parsed
     // names() lists each spelling of a name (`X-A`, `x-a`), getAll() ignores case: one pass per name
     val seen = HashSet<String>()
     return HeadersBuilder()
         .apply {
             for (name in parsed.names()) {
                 if (!seen.add(name.lowercase())) continue
+                if (dropUpgrade && name.equals("Upgrade", ignoreCase = true)) continue
                 val values = parsed.getAll(name).orEmpty()
                 for ((index, value) in values.withIndex()) {
                     append(name, kept.firstOrNull { it.name.equals(name, ignoreCase = true) && it.occurrence == index }?.value ?: value)
@@ -363,7 +368,7 @@ internal fun CoroutineScope.startH1Pipeline(
                     } ?: break
                 headBudget = headerTimeout
 
-                val fields = requestFields(request, input.keptFieldValues)
+                val fields = requestFields(request, input.keptFieldValues, HttpProtocolVersion.parse(request.version))
                 // faulty framing: 400 and close before anything of the request is handed on (RFC 9112 sections 6.1, 6.3)
                 val framing = RequestFraming.of(request, fields)
                 if (framing.fault != null) {

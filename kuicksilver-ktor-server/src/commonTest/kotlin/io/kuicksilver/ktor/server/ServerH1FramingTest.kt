@@ -4,6 +4,7 @@ package io.kuicksilver.ktor.server
 
 import io.ktor.http.HttpHeaders
 import io.ktor.server.application.Application
+import io.ktor.server.application.install
 import io.ktor.server.engine.connector
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.request.receiveText
@@ -14,7 +15,10 @@ import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
 import io.ktor.server.routing.post
 import io.ktor.server.routing.routing
+import io.ktor.server.websocket.WebSockets
+import io.ktor.server.websocket.webSocket
 import io.ktor.utils.io.writeStringUtf8
+import io.ktor.websocket.Frame
 import io.kuicksilver.native.KslLoader
 import kotlinx.coroutines.withTimeout
 import kotlin.concurrent.atomics.AtomicInt
@@ -284,6 +288,35 @@ class ServerH1FramingTest {
             plainServer { port ->
                 val resp = withTimeout(10.seconds) { rawHttp(port, "GET / HTTP/1.0\r\n\r\n", tls = null) }
                 assertTrue(resp.contains(" 200 ") && resp.endsWith("root"), resp)
+            }
+        }
+
+    /**
+     * RFC 9110 section 7.8: a server MUST ignore an Upgrade header field that is received in an HTTP/1.0 request (and
+     * MUST NOT send a 1xx response to an HTTP/1.0 client, section 15.2). The request reaches the application without
+     * it, so the WebSocket route does not take it. Before, Ktor's upgrade check did not look at the version and the
+     * HTTP/1.0 client got `101 Switching Protocols`.
+     */
+    @Test fun negative_http10UpgradeIsIgnored() =
+        serverTest {
+            val (server, port) =
+                tlsServer {
+                    install(WebSockets)
+                    routing { webSocket("/ws") { for (frame in incoming) if (frame is Frame.Text) send(frame) } }
+                }
+            try {
+                val resp =
+                    withTimeout(10.seconds) {
+                        rawHttp(
+                            port,
+                            "GET /ws HTTP/1.0\r\nHost: server.test\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n" +
+                                "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n",
+                        )
+                    }
+                assertFalse(resp.contains(" 101 "), resp)
+                assertTrue(resp.startsWith("HTTP/1.1 4"), resp)
+            } finally {
+                server.stop(100, 500)
             }
         }
 
