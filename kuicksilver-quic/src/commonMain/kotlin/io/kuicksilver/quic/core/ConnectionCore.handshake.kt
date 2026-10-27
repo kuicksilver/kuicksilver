@@ -353,7 +353,10 @@ internal class ConnectionHandshakeSink(
         // the key phase, which exists once both directions are installed: replay them then, whichever direction came last, or they sit
         // in the buffer until the peer's loss recovery resends their frames
         if (direction == Direction.Read && level != 3) core.receiver.replayBuffered(level)
-        if (level == 3 && core.keyPhase != null) core.receiver.replayBuffered(3)
+        // a server still Handshaking would only hold its 1-RTT packets again (RFC 9001 section 5.7): onHandshakeDone replays them
+        if (level == 3 && core.keyPhase != null && !(core.role == TlsRole.Server && core.state == ConnectionState.Handshaking)) {
+            core.receiver.replayBuffered(3)
+        }
         if (level == 2) core.loss.handshakeKeysAvailable = true
     }
 
