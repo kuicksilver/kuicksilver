@@ -2,11 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.kuicksilver.quic.wire
 
-import io.kotest.property.Arb
-import io.kotest.property.arbitrary.int
-import io.kotest.property.arbitrary.long
-import io.kotest.property.checkAll
-import kotlinx.coroutines.test.runTest
+import io.kuicksilver.quic.forAllSeeded
+import io.kuicksilver.quic.int
+import io.kuicksilver.quic.long
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -29,22 +27,23 @@ class PacketNumbersTest {
         )
     }
 
-    @Test fun encodeDecodeRoundTrip() =
-        runTest {
-            checkAll(5_000, Arb.long(0L..(1L shl 40)), Arb.int(1..4)) { largest, bytes ->
-                val bits = bytes * 8
-                val half = 1L shl (bits - 1)
-                // RFC 9000 appendix A.3: the window is (expected - half, expected + half] with expected = largest + 1
-                val lo = maxOf(0L, largest + 2 - half)
-                val hi = minOf(VarInt.MAX, largest + 1 + half)
-                for (pn in listOf(lo, largest + 1, hi, (lo + hi) / 2)) {
-                    if (pn in lo..hi) {
-                        val truncated = pn and ((1L shl bits) - 1)
-                        assertEquals(pn, PacketNumbers.decode(largest, truncated, bits), "largest=$largest bits=$bits pn=$pn")
-                    }
+    @Test fun encodeDecodeRoundTrip() {
+        forAllSeeded(5_000, seed = 0x9A3L) { rnd, _ ->
+            val largest = rnd.long(0L..(1L shl 40))
+            val bytes = rnd.int(1..4)
+            val bits = bytes * 8
+            val half = 1L shl (bits - 1)
+            // RFC 9000 appendix A.3: the window is (expected - half, expected + half] with expected = largest + 1
+            val lo = maxOf(0L, largest + 2 - half)
+            val hi = minOf(VarInt.MAX, largest + 1 + half)
+            for (pn in listOf(lo, largest + 1, hi, (lo + hi) / 2)) {
+                if (pn in lo..hi) {
+                    val truncated = pn and ((1L shl bits) - 1)
+                    assertEquals(pn, PacketNumbers.decode(largest, truncated, bits), "largest=$largest bits=$bits pn=$pn")
                 }
             }
         }
+    }
 
     @Test fun decodeNeverExceeds2Pow62() {
         assertTrue(PacketNumbers.decode(VarInt.MAX - 1, (VarInt.MAX + 1) and 0xff, 8) <= VarInt.MAX)

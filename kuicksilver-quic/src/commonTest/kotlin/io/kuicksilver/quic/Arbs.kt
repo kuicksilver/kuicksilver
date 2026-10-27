@@ -2,146 +2,143 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.kuicksilver.quic
 
-import io.kotest.property.Arb
-import io.kotest.property.arbitrary.arbitrary
-import io.kotest.property.arbitrary.boolean
-import io.kotest.property.arbitrary.byte
-import io.kotest.property.arbitrary.int
-import io.kotest.property.arbitrary.list
-import io.kotest.property.arbitrary.long
 import io.kuicksilver.quic.wire.VarInt
+import kotlin.random.Random
+import kotlin.random.nextInt
 
-/** Generators shared by the property tests of the core. */
+/** Generators shared by the property tests of the core: plain draws from a seeded [Random] (see [forAllSeeded]). */
 object Arbs {
-    fun varint(): Arb<Long> = Arb.long(0L..VarInt.MAX)
+    fun varint(rnd: Random): Long = rnd.long(0L..VarInt.MAX)
 
-    fun small(): Arb<Long> = Arb.long(0L..100_000L)
+    fun small(rnd: Random): Long = rnd.long(0L..100_000L)
 
-    fun bytes(max: Int): Arb<List<Byte>> = Arb.list(Arb.byte(), 0..max)
+    fun bytes(
+        rnd: Random,
+        max: Int,
+    ): List<Byte> = rnd.bytes(0..max)
 
     /** One frame of every type of RFC 9000 section 19 (and DATAGRAM, RFC 9221), with values the encoder accepts. */
-    fun frame(): Arb<TestFrame> =
-        arbitrary { rs ->
-            val b = Arb.boolean()
-            when (Arb.int(0..22).bind()) {
-                0 -> {
-                    TestFrame.Padding(Arb.int(1..300).bind())
-                }
+    fun frame(rnd: Random): TestFrame {
+        val b = { rnd.nextBoolean() }
+        return when (rnd.nextInt(0..22)) {
+            0 -> {
+                TestFrame.Padding(rnd.int(1..300))
+            }
 
-                1 -> {
-                    TestFrame.Ping
-                }
+            1 -> {
+                TestFrame.Ping
+            }
 
-                2 -> {
-                    val count = Arb.int(1..8).bind()
-                    val gaps = List(count) { Arb.long(0L..50L).bind() }
-                    val lens =
-                        List(count) {
-                            Arb.long(0L..50L).bind()
-                        }
-                    val ranges = ArrayList<Pair<Long, Long>>()
-                    var largest = Arb.long(1_000L..1_000_000L).bind()
-                    for (i in 0 until count) {
-                        val smallest =
-                            largest - lens[i]
-                        ranges += smallest to largest
-                        largest = smallest - gaps[i] - 2
+            2 -> {
+                val count = rnd.int(1..8)
+                val gaps = List(count) { rnd.long(0L..50L) }
+                val lens =
+                    List(count) {
+                        rnd.long(0L..50L)
                     }
-                    TestFrame.Ack(
-                        ranges[0].second,
-                        small().bind(),
-                        ranges,
-                        if (b.bind()) listOf(small().bind(), small().bind(), small().bind()) else null,
-                    )
+                val ranges = ArrayList<Pair<Long, Long>>()
+                var largest = rnd.long(1_000L..1_000_000L)
+                for (i in 0 until count) {
+                    val smallest =
+                        largest - lens[i]
+                    ranges += smallest to largest
+                    largest = smallest - gaps[i] - 2
                 }
+                TestFrame.Ack(
+                    ranges[0].second,
+                    small(rnd),
+                    ranges,
+                    if (b()) listOf(small(rnd), small(rnd), small(rnd)) else null,
+                )
+            }
 
-                3 -> {
-                    TestFrame.ResetStream(small().bind(), varint().bind(), varint().bind())
-                }
+            3 -> {
+                TestFrame.ResetStream(small(rnd), varint(rnd), varint(rnd))
+            }
 
-                4 -> {
-                    TestFrame.StopSending(small().bind(), varint().bind())
-                }
+            4 -> {
+                TestFrame.StopSending(small(rnd), varint(rnd))
+            }
 
-                5 -> {
-                    TestFrame.Crypto(Arb.long(0L..1_000_000L).bind(), bytes(200).bind())
-                }
+            5 -> {
+                TestFrame.Crypto(rnd.long(0L..1_000_000L), bytes(rnd, 200))
+            }
 
-                6 -> {
-                    TestFrame.NewToken(Arb.list(Arb.byte(), 1..64).bind())
-                }
+            6 -> {
+                TestFrame.NewToken(rnd.bytes(1..64))
+            }
 
-                7 -> {
-                    TestFrame.Stream(small().bind(), Arb.long(0L..1_000_000L).bind(), bytes(200).bind(), b.bind())
-                }
+            7 -> {
+                TestFrame.Stream(small(rnd), rnd.long(0L..1_000_000L), bytes(rnd, 200), b())
+            }
 
-                8 -> {
-                    TestFrame.MaxData(varint().bind())
-                }
+            8 -> {
+                TestFrame.MaxData(varint(rnd))
+            }
 
-                9 -> {
-                    TestFrame.MaxStreamData(small().bind(), varint().bind())
-                }
+            9 -> {
+                TestFrame.MaxStreamData(small(rnd), varint(rnd))
+            }
 
-                10 -> {
-                    TestFrame.MaxStreams(b.bind(), Arb.long(0L..(1L shl 60)).bind())
-                }
+            10 -> {
+                TestFrame.MaxStreams(b(), rnd.long(0L..(1L shl 60)))
+            }
 
-                11 -> {
-                    TestFrame.DataBlocked(varint().bind())
-                }
+            11 -> {
+                TestFrame.DataBlocked(varint(rnd))
+            }
 
-                12 -> {
-                    TestFrame.StreamDataBlocked(small().bind(), varint().bind())
-                }
+            12 -> {
+                TestFrame.StreamDataBlocked(small(rnd), varint(rnd))
+            }
 
-                13 -> {
-                    TestFrame.StreamsBlocked(b.bind(), Arb.long(0L..(1L shl 60)).bind())
-                }
+            13 -> {
+                TestFrame.StreamsBlocked(b(), rnd.long(0L..(1L shl 60)))
+            }
 
-                14 -> {
-                    val seq = small().bind()
-                    TestFrame.NewConnectionId(
-                        seq,
-                        Arb.long(0L..seq).bind(),
-                        Arb.list(Arb.byte(), 1..20).bind(),
-                        List(16) { Arb.byte().bind() },
-                    )
-                }
+            14 -> {
+                val seq = small(rnd)
+                TestFrame.NewConnectionId(
+                    seq,
+                    rnd.long(0L..seq),
+                    rnd.bytes(1..20),
+                    List(16) { rnd.byte() },
+                )
+            }
 
-                15 -> {
-                    TestFrame.RetireConnectionId(small().bind())
-                }
+            15 -> {
+                TestFrame.RetireConnectionId(small(rnd))
+            }
 
-                16 -> {
-                    TestFrame.PathChallenge(Arb.long().bind())
-                }
+            16 -> {
+                TestFrame.PathChallenge(rnd.long())
+            }
 
-                17 -> {
-                    TestFrame.PathResponse(Arb.long().bind())
-                }
+            17 -> {
+                TestFrame.PathResponse(rnd.long())
+            }
 
-                18 -> {
-                    val app = b.bind()
-                    TestFrame.ConnectionClose(app, varint().bind(), if (app) 0 else Arb.long(0L..0x31L).bind(), bytes(100).bind())
-                }
+            18 -> {
+                val app = b()
+                TestFrame.ConnectionClose(app, varint(rnd), if (app) 0 else rnd.long(0L..0x31L), bytes(rnd, 100))
+            }
 
-                19 -> {
-                    TestFrame.HandshakeDone
-                }
+            19 -> {
+                TestFrame.HandshakeDone
+            }
 
-                20 -> {
-                    TestFrame.Datagram(bytes(200).bind())
-                }
+            20 -> {
+                TestFrame.Datagram(bytes(rnd, 200))
+            }
 
-                22 -> {
-                    val finalSize = varint().bind()
-                    TestFrame.ResetStreamAt(small().bind(), varint().bind(), finalSize, Arb.long(0L..finalSize).bind())
-                }
+            22 -> {
+                val finalSize = varint(rnd)
+                TestFrame.ResetStreamAt(small(rnd), varint(rnd), finalSize, rnd.long(0L..finalSize))
+            }
 
-                else -> {
-                    TestFrame.Stream(small().bind(), 0, bytes(10).bind(), true)
-                }
+            else -> {
+                TestFrame.Stream(small(rnd), 0, bytes(rnd, 10), true)
             }
         }
+    }
 }

@@ -2,13 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.kuicksilver.quic.stream
 
-import io.kotest.property.Arb
-import io.kotest.property.arbitrary.int
-import io.kotest.property.arbitrary.long
-import io.kotest.property.checkAll
 import io.kuicksilver.native.PacketBuffer
 import io.kuicksilver.native.of
-import kotlinx.coroutines.test.runTest
+import io.kuicksilver.quic.forAllSeeded
+import io.kuicksilver.quic.int
+import io.kuicksilver.quic.long
 import kotlin.random.Random
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
@@ -42,34 +40,34 @@ class ReassemblerTest {
     }
 
     @Test fun outOfOrderAndDuplicatesDeliverExactBytes() =
-        runTest {
-            checkAll(200, Arb.long(1L..1000L), Arb.int(16..64)) { seed, chunk ->
-                // chunks of 16+ bytes keep the worst case under the 256-range cap
-                val data = ByteArray(2000) { (it * 7 + seed).toByte() }
-                val rnd = Random(seed)
-                val pieces = (0 until data.size step chunk).map { it to minOf(chunk, data.size - it) }.shuffled(rnd)
-                val r = Reassembler(256, RangeBudget(4096))
-                for ((off, len) in pieces) {
+        forAllSeeded(200, seed = 0x4EA55L) { draw, _ ->
+            val seed = draw.long(1L..1000L)
+            val chunk = draw.int(16..64)
+            // chunks of 16+ bytes keep the worst case under the 256-range cap
+            val data = ByteArray(2000) { (it * 7 + seed).toByte() }
+            val rnd = Random(seed)
+            val pieces = (0 until data.size step chunk).map { it to minOf(chunk, data.size - it) }.shuffled(rnd)
+            val r = Reassembler(256, RangeBudget(4096))
+            for ((off, len) in pieces) {
+                insert(r, off.toLong(), data.copyOfRange(off, off + len))
+                if (rnd.nextInt(4) ==
+                    0
+                ) {
                     insert(r, off.toLong(), data.copyOfRange(off, off + len))
-                    if (rnd.nextInt(4) ==
-                        0
-                    ) {
-                        insert(r, off.toLong(), data.copyOfRange(off, off + len))
-                    }
                 }
-                val overlapStart = rnd.nextInt(data.size - 100)
-                insert(
-                    r,
-                    overlapStart.toLong(),
-                    data.copyOfRange(
-                        overlapStart,
-                        overlapStart + 100,
-                    ),
-                )
-                assertEquals(data.size, r.readable)
-                assertContentEquals(data, readAll(r))
-                assertEquals(0, r.rangeCount)
             }
+            val overlapStart = rnd.nextInt(data.size - 100)
+            insert(
+                r,
+                overlapStart.toLong(),
+                data.copyOfRange(
+                    overlapStart,
+                    overlapStart + 100,
+                ),
+            )
+            assertEquals(data.size, r.readable)
+            assertContentEquals(data, readAll(r))
+            assertEquals(0, r.rangeCount)
         }
 
     @Test fun negative_fragmentedStreamRangesCap() {

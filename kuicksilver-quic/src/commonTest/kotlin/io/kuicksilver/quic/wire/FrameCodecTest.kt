@@ -2,13 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.kuicksilver.quic.wire
 
-import io.kotest.property.checkAll
 import io.kuicksilver.native.PacketBuffer
 import io.kuicksilver.native.of
 import io.kuicksilver.quic.Arbs
 import io.kuicksilver.quic.CollectingHandler
 import io.kuicksilver.quic.TestFrame
-import kotlinx.coroutines.test.runTest
+import io.kuicksilver.quic.forAllSeeded
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -192,8 +191,9 @@ class FrameCodecTest {
     }
 
     @Test fun everyFrameTypeRoundTrips() =
-        runTest {
-            checkAll(2_000, Arbs.frame()) { f -> assertEquals(listOf(f), decode(bytesOf(f)).first) }
+        forAllSeeded(2_000, seed = 0xF4A3EL) { rnd, _ ->
+            val f = Arbs.frame(rnd)
+            assertEquals(listOf(f), decode(bytesOf(f)).first, "$f")
         }
 
     @Test fun negative_unknownFrameType() =
