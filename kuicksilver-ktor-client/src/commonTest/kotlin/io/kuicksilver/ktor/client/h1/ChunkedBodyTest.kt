@@ -45,17 +45,20 @@ class ChunkedBodyTest {
     }
 
     /**
-     * Whitespace before the CRLF that ends the line is tolerated, as nginx and Go's net/http do (the grammar has BWS only
-     * around `;` and `=`): it cannot be read as part of the size or of an extension, so no recipient frames it differently.
+     * Whitespace right before the CRLF that ends the line is not in the grammar (RFC 9112 section 7.1: BWS only before a
+     * `;` and around the `=` of an extension) and fails the body; before, it was tolerated, so the parser accepted lines
+     * a stricter recipient in front of it rejects or reads differently (request smuggling hardening).
      */
-    @Test fun whitespaceBeforeTheLineEndIsTolerated() {
-        accepted("5 \r\nhello\r\n0\r\n\r\n", "hello")
-        accepted("5\t \r\nhello\r\n0 \r\n\r\n", "hello")
-        accepted("5;a=b \r\nhello\r\n0\r\n\r\n", "hello")
-        accepted("5;a \r\nhello\r\n0\r\n\r\n", "hello")
-        accepted("5;a=\"x\"\t\r\nhello\r\n0\r\n\r\n", "hello")
+    @Test fun negative_whitespaceBeforeTheLineEndIsRejected() {
+        rejected("5 \r\nhello\r\n0\r\n\r\n")
+        rejected("5\t \r\nhello\r\n0\r\n\r\n")
+        rejected("5\r\nhello\r\n0 \r\n\r\n")
+        rejected("5;a=b \r\nhello\r\n0\r\n\r\n")
+        rejected("5;a \r\nhello\r\n0\r\n\r\n")
+        rejected("5;a=\"x\"\t\r\nhello\r\n0\r\n\r\n")
         rejected("5 \rhello\r\n0\r\n\r\n")
         rejected("5 \nhello\r\n0\r\n\r\n")
+        accepted("5 ;a\r\nhello\r\n0\t; a\t=\t\"x\"\r\n\r\n", "hello")
     }
 
     /**

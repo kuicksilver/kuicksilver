@@ -162,6 +162,28 @@ class ServerH1FramingTest {
         }
 
     /**
+     * RFC 9112 section 7.1 allows whitespace in a chunk-size line only before a `;` and around the `=` of an extension, not
+     * right before the CRLF; a request whose chunk line has it gets 400 (before, it was tolerated and served).
+     */
+    @Test fun negative_whitespaceBeforeTheChunkLineEndIsRejected() =
+        serverTest {
+            plainServer { port ->
+                for (sizeLine in listOf("10 \r\n", "10;a\t\r\n", "10;a=b \r\n")) {
+                    val resp =
+                        withTimeout(10.seconds) {
+                            rawHttp(
+                                port,
+                                "POST /echo HTTP/1.1\r\nHost: s\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n" +
+                                    sizeLine + "0123456789abcdef\r\n0\r\n\r\n",
+                                tls = null,
+                            )
+                        }
+                    assertTrue(resp.contains(" 400 "), "${sizeLine.replace("\r", "\\r").replace("\t", "\\t")}: $resp")
+                }
+            }
+        }
+
+    /**
      * RFC 9112 section 3.2: a server MUST respond with 400 to an HTTP/1.1 request without Host and to any request with more
      * than one Host field line. Both were served with 200, the first value winning, while a front proxy that keys on the
      * last one routes and caches by another host.

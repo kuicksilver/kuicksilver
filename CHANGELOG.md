@@ -771,7 +771,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   section 2.2 makes a bare CR invalid, and section 7.1 defines the line as `1*HEXDIG [ chunk-ext ] CRLF`; a front proxy
   that reads such a line differently frames the body differently (the "funky chunks" class). Both engines now parse the
   line by that grammar: hex digits, extensions as `;` name `=` token or quoted-string with optional whitespace around
-  the separators, whitespace tolerated before the CRLF (as nginx and Go accept it), CRLF only, a size that fits a
+  the separators and none right before the CRLF (the grammar has none there), CRLF only, a size that fits a
   signed 64-bit length, 128 bytes at most. A bare LF stays invalid on a chunk line (section 2.2 lets a recipient accept
   it in the start line and field lines only; the trailer section keeps accepting it). For a malformed chunked request body the engine writes no response itself: the handler's receive of
   the body fails with `BadRequestException`, which Ktor answers with 400 and a fixed text unless the application

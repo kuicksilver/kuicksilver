@@ -182,6 +182,25 @@ class ClientH1FramingTest {
             }
         }
 
+    /**
+     * Whitespace right before the CRLF of a chunk-size line is outside the grammar of RFC 9112 section 7.1 and fails the
+     * response body; before, it was tolerated and the body delivered.
+     */
+    @Test fun negative_whitespaceBeforeTheChunkLineEndFails() =
+        clientTest {
+            for (sizeLine in listOf("5 \r\n", "5;a\t\r\n", "5;a=b \r\n")) {
+                rawServerPerConnection({ _, input, output ->
+                    readHead(input)
+                    output.writeStringUtf8("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n${sizeLine}hello\r\n0\r\n\r\n")
+                }) { port ->
+                    testClient().use { c ->
+                        val r = runCatching { c.get("http://127.0.0.1:$port/").bodyAsText() }
+                        assertTrue(r.isFailure, "${sizeLine.trimEnd()}: the body was delivered: ${r.getOrNull()}")
+                    }
+                }
+            }
+        }
+
     /** A chunked body cut before its last chunk is incomplete (RFC 9112 section 8), not a short body. */
     @Test fun negative_chunkedBodyCutBeforeLastChunkFails() =
         clientTest {

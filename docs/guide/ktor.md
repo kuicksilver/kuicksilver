@@ -35,8 +35,8 @@ server.start(wait = true)
   in the CIO engine. Request framing follows RFC 9112 section 6 more strictly than CIO: a request with both
   Content-Length and Transfer-Encoding is refused with 400 and the connection closed, a request with neither has no
   body (also with `Connection: close`), and a chunked trailer section is accepted (its fields are discarded). A
-  chunk-size line must follow RFC 9112 section 7.1 exactly (hex digits, extensions by their grammar, optional
-  whitespace before the CRLF): anything else, such as a bare CR or LF in it, makes the handler's receive of the body fail with
+  chunk-size line must follow RFC 9112 section 7.1 exactly (hex digits, extensions by their grammar, no whitespace
+  right before the CRLF): anything else, such as a bare CR or LF in it, makes the handler's receive of the body fail with
   `BadRequestException` (Ktor answers 400 unless the application handles it) and the connection closes. An HTTP/1.1
   request without a Host field, or any request with two, gets 400 and the connection closed (RFC 9112 section 3.2). The engine's own 400 has the fixed body `Bad Request`
   (Ktor CIO sends the parser's message, which can quote the request's header fields). ALPN on TCP is `http/1.1`.
