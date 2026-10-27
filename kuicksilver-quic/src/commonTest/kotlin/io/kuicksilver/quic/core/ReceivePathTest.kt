@@ -576,66 +576,30 @@ class ReceivePathTest {
         }
     }
 
-    /** msquic acknowledges the first Initial from a packet whose SCID is still the client's DCID and picks its own SCID with the ServerHello: the client follows the SCID of the first Initial that carries CRYPTO (RFC 9000 section 7.2 applies from there). */
-    @Test fun clientAdoptsScidOfFirstInitialWithCryptoNotOfAnAckOnlyOne() {
+    /**
+     * RFC 9000 section 7.2, msquic: until it has the whole ClientHello its connection sends from the client's own DCID
+     * (connection.c, the IsInitial source CID) and takes its real SCID only when the listener accepts (listener.c,
+     * QuicConnGenerateNewSourceCid). An Initial with nothing but ACK and PADDING from the DCID the client sends to is processed
+     * (its ACK gives an RTT sample) without fixing the SCID; its packet number is not recorded, so the ServerHello's Initial is
+     * no duplicate whatever its number. The first Initial with another SCID fixes it.
+     */
+    @Test fun ackOnlyInitialFromTheClientsOwnDcidDoesNotFixTheScid() {
         val p = CorePair(crypto = ksl)
-        var injected = false
-        var ackOnly = 0
-        p.filterToClient = { i, _ ->
-            if (i == 0 &&
-                !injected
-                // before the real server's flight: a stranger created from the first of the two client Initials only acknowledges, its
-                // ClientHello being incomplete
-            ) {
-                injected = true
-                val init = p.lastClientInitial!!
-                val b = PacketBuffer.of(init)
-                val other =
-                    try {
-                        ConnectionCore.server(
-                            QuicConfig.Default,
-                            CoreFixtures.server(),
-                            ksl,
-                            CoreFixtures.clientAddr,
-                            kotlin.random.Random(78),
-                            p.now,
-                            b,
-                            init.size,
-                        )!!
-                    } finally {
-                        b.close()
-                    }
-                // three deliveries of the same half ClientHello: three ACK-only Initials, the last one with packet number 2 (msquic numbers across its instances; a stranger's pn 0 would collide with the real server's)
-                val batch = PacketBatch(8)
-                var last: ByteArray? = null
-                repeat(3) {
-                    val bb = PacketBuffer.of(init)
-                    try {
-                        other.handleDatagram(bb, init.size, CoreFixtures.clientAddr, Ecn.NotEct, p.now)
-                    } finally {
-                        bb.close()
-                    }
-                    batch.clear()
-                    val n = other.poll(batch, p.now)
-                    if (n >
-                        0
-                    ) {
-                        last = batch.buffer(0).toByteArray(batch.length(0))
-                    }
-                }
-                last?.let {
-                    p.toClient.addLast(Dgram(it, CoreFixtures.serverAddr))
-                    ackOnly++
-                }
-                batch.close()
-                other.release()
-            }
-            true
-        }
         try {
-            p.step() // the client's two Initials are queued; lastClientInitial is the second (the first was recorded first)
-            assertTrue(p.handshake(), "the handshake completes with the server whose Initial carried the ServerHello")
-            assertTrue(injected && ackOnly >= 1, "an ACK-only Initial with a foreign SCID arrived first: $ackOnly")
+            p.filterToClient = { i, _ -> i > 0 } // the real server's answer to half the ClientHello is lost
+            p.step()
+            val dcid = p.client.remoteCid
+            p.advance(20.milliseconds)
+            val dropped = p.client.datagramsDropped
+            feed(p.client, ackOnlyInitial(p.client, scid = dcid, pn = 0, largestAcked = 0), CoreFixtures.serverAddr, p.now)
+            assertEquals(dropped, p.client.datagramsDropped, "the ACK-only Initial is processed")
+            assertTrue(p.client.rtt.hasSample, "its ACK counts")
+            assertEquals(dcid, p.client.remoteCid, "its SCID, the client's own DCID, is not adopted")
+            // the server's next Initial may carry packet number 0 again: not recorded, the provisional one is no duplicate for it
+            feed(p.client, ackOnlyInitial(p.client, scid = dcid, pn = 0, largestAcked = 0), CoreFixtures.serverAddr, p.now)
+            assertEquals(0L, p.client.duplicatesDropped, "the provisional packet number is not recorded")
+            assertTrue(p.handshake(), "the ServerHello's Initial fixes the SCID")
+            assertEquals(p.server!!.localCid, p.client.remoteCid)
         } finally {
             p.close()
         }
@@ -643,18 +607,16 @@ class ReceivePathTest {
 
     /**
      * RFC 9000 section 7.2: "Once a client has received a valid Initial packet from the server, it MUST discard any subsequent
-     * packet it receives on that connection with a different Source Connection ID." msquic acknowledges the first half of a
-     * two-datagram ClientHello from a provisional instance whose SCID is the client's DCID, then answers with the ServerHello
-     * from another SCID. The client does not take an Initial with nothing but ACK, PING and PADDING before the server's SCID
-     * is fixed: it is dropped unprocessed (as if lost), so the Initial it takes first, the ServerHello's, fixes the SCID.
+     * packet it receives on that connection with a different Source Connection ID." An ACK-only Initial from any SCID other
+     * than the client's own DCID is a valid Initial like any other (quic-go answers half a ClientHello that way, from its real
+     * SCID): it fixes the SCID, and a ServerHello from another one is discarded.
      */
-    @Test fun negative_ackOnlyInitialBeforeTheServerHelloIsNotTaken() {
+    @Test fun negative_ackOnlyInitialFromAnotherScidFixesIt() {
         val p = CorePair(crypto = ksl)
         try {
             p.filterToClient = { _, _ -> false } // nothing of the real server yet
             p.step()
             val init = p.lastClientInitial!!
-            val dcidBefore = p.client.remoteCid
             val b = PacketBuffer.of(init)
             val other =
                 try {
@@ -681,15 +643,52 @@ class ReceivePathTest {
             assertTrue(other.poll(batch, p.now) > 0, "the stranger acknowledges the half ClientHello")
             val ackOnly = batch.buffer(0).toByteArray(batch.length(0))
             batch.close()
+            val strangerCid = other.localCid
             other.release()
+            p.advance(20.milliseconds)
             val dropped = p.client.datagramsDropped
             feed(p.client, ackOnly, CoreFixtures.serverAddr, p.now)
-            assertEquals(dropped + 1, p.client.datagramsDropped, "the ACK-only Initial is not taken")
-            assertEquals(dcidBefore, p.client.remoteCid, "its SCID is not adopted")
+            assertEquals(dropped, p.client.datagramsDropped, "the ACK-only Initial is taken")
+            assertTrue(p.client.rtt.hasSample, "its ACK counts")
+            assertEquals(strangerCid, p.client.remoteCid, "its SCID is adopted")
             p.filterToClient = { _, _ -> true }
-            assertTrue(p.handshake(), "the real server's Initial fixes the SCID")
+            p.runUntil(500.milliseconds) { false }
+            assertFalse(p.client.hasHandshakeKeys, "the real server's ServerHello, from another SCID, is discarded")
+            assertTrue(p.client.datagramsDropped > dropped)
         } finally {
             p.close()
+        }
+    }
+
+    /** A server Initial from [scid] to [client] with an ACK of [largestAcked] and PADDING, sealed with the server's Initial keys. */
+    private fun ackOnlyInitial(
+        client: ConnectionCore,
+        scid: io.kuicksilver.quic.wire.ConnectionId,
+        pn: Long,
+        largestAcked: Int,
+    ): ByteArray {
+        val dcid = client.localCid.toByteArray()
+        val s = scid.toByteArray()
+        val payload = byteArrayOf(0x02, largestAcked.toByte(), 0, 0, 0) + ByteArray(30)
+        val length = 2 + payload.size + 16
+        val header =
+            byteArrayOf(0xc1.toByte(), 0, 0, 0, 1, dcid.size.toByte()) + dcid + byteArrayOf(s.size.toByte()) + s +
+                byteArrayOf(0, (0x40 or (length shr 8)).toByte(), length.toByte())
+        val pnOffset = header.size
+        val bytes = header + ByteArray(length)
+        payload.copyInto(bytes, pnOffset + 2)
+        val (r, w) = ksl.initialProtectors(client.initialKeyCid.toByteArray(), client.version.version, io.kuicksilver.tls.TlsRole.Server)
+        val buf = PacketBuffer.of(bytes)
+        try {
+            val end =
+                io.kuicksilver.quic.crypto.PacketProtection
+                    .protect(buf, 0, pnOffset, 2, pnOffset + 2 + payload.size, pn, w, ByteArray(5))
+            assertEquals(bytes.size, end)
+            return buf.toByteArray(end)
+        } finally {
+            buf.close()
+            r.close()
+            w.close()
         }
     }
 

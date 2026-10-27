@@ -60,6 +60,53 @@ class HandshakeLimitsTest {
         }
     }
 
+    /**
+     * Interop amplificationlimit (quic-go server, big chain; the network drops the client's datagrams 2 to 7): the server
+     * only has the first half of the ClientHello and answers with an ACK-only Initial from its real SCID, then sends the
+     * ServerHello from the same SCID once the second half arrives, its flight held to 3x what it received. The client takes
+     * the ACK-only Initial (RFC 9000 section 7.2: the first Initial fixes the SCID): its ACK gives an RTT sample, so the lost
+     * half is resent on a short PTO and reaches the server well inside quic-go's 5 s handshake idle timeout. Dropping that
+     * Initial left the client on the 1 s initial PTO (1 + 2 + 4 s until a resend got through), quic-go's connection timed
+     * out and each later half ClientHello made a new one with another SCID (3 handshakes in the runner's count).
+     */
+    @Test fun ackOnlyFirstInitialUnderAmplificationLimitKeepsOneQuickHandshake() {
+        val p = CorePair(serverTls = bigServer(), crypto = ksl)
+        var last: TimeMark? = null
+        var maxGap = kotlin.time.Duration.ZERO
+        var firstToClient = -1
+        var received = 0L
+        var sent = 0L
+        var violated = false
+        p.filterToServer = { i, b ->
+            val keep = i !in 1..6
+            if (keep) {
+                received += b.size
+                last?.let { if (p.now - it > maxGap) maxGap = p.now - it }
+                last = p.now
+            }
+            keep
+        }
+        p.filterToClient = { i, b ->
+            if (i == 0) firstToClient = b.size
+            sent += b.size
+            if (!p.server!!.addressValidated && sent > 3 * received) violated = true
+            true
+        }
+        try {
+            assertTrue(p.runUntil { p.sentToClient > 0 && p.toClient.isEmpty() }, "the server answered the half ClientHello")
+            assertTrue(firstToClient in 1..100, "its first datagram is an ACK-only Initial: $firstToClient bytes")
+            assertTrue(p.client.rtt.hasSample, "the client took its ACK")
+            assertEquals(p.server!!.localCid, p.client.remoteCid, "and the SCID it came from")
+            val dropped = p.client.stats.datagramsDropped
+            assertTrue(p.handshake())
+            assertEquals(dropped, p.client.stats.datagramsDropped, "no server datagram was discarded for its SCID")
+            assertTrue(maxGap < 5.seconds, "the client's Initials reach the server within its handshake idle timeout: $maxGap")
+            assertTrue(!violated, "server sent $sent after receiving $received before validation")
+        } finally {
+            p.close()
+        }
+    }
+
     @Test fun negative_amplificationCountsDiscarded() {
         val p = CorePair(serverTls = bigServer(), crypto = ksl)
         try {

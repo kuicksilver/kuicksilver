@@ -318,24 +318,28 @@ internal class PacketReceiver(
         reader.buf = data
         reader.pos = hv.pnOffset + pnLen
         reader.limit = hv.packetEnd - 16
+        var provisional = false
         if (c.role == TlsRole.Client && type == PacketType.Initial &&
             !remoteCidSet
         ) {
-            // msquic acknowledges the first half of a ClientHello from a provisional instance whose SCID is the client's DCID and
-            // answers with its own SCID only with the ServerHello: an Initial that carries nothing but ACK, PING and PADDING is not
-            // taken before the SCID is fixed (dropped unprocessed, as if lost), so the first Initial taken, which fixes the SCID
-            // (section 7.2), is one with CRYPTO or CONNECTION_CLOSE
-            if (onlyAcks()) {
-                c.datagramsDropped++
-                return false
+            // Section 7.2: the first Initial from the server fixes its SCID. One exception, for msquic: until it has the whole
+            // ClientHello its connection sends from the client's own DCID (connection.c, the IsInitial source CID) and only takes
+            // its real SCID when the listener accepts (listener.c, QuicConnGenerateNewSourceCid): an Initial with nothing but ACK,
+            // PING and PADDING whose SCID is the DCID we send to is processed (its ACK gives the RTT sample and stops resending
+            // what arrived) but does not fix the SCID. Any other Initial does, an ACK-only one included: quic-go answers half a
+            // ClientHello with an ACK-only Initial from its real SCID, and dropping it left the client on the 1 s initial PTO
+            // until quic-go's 5 s handshake idle timeout ended the attempt (interop amplificationlimit). The provisional packet's
+            // number and ECN mark are not recorded: it asks for no ACK, and the Initial that fixes the SCID numbers on its own
+            provisional = c.remoteCid.contentEquals(data, hv.scidOff, hv.scidLen) && onlyAcks()
+            if (!provisional) {
+                val scid =
+                    io.kuicksilver.quic.wire
+                        .ConnectionId(ByteArray(hv.scidLen).also { data.copyTo(it, hv.scidOff, 0, hv.scidLen) })
+                c.onPeerInitialCid(scid)
+                peerScid =
+                    scid
+                remoteCidSet = true
             }
-            val scid =
-                io.kuicksilver.quic.wire
-                    .ConnectionId(ByteArray(hv.scidLen).also { data.copyTo(it, hv.scidOff, 0, hv.scidLen) })
-            c.onPeerInitialCid(scid)
-            peerScid =
-                scid
-            remoteCidSet = true
         }
         c.anyPeerPacket = true
         c.timers.lastActivity = now
@@ -386,6 +390,7 @@ internal class PacketReceiver(
             }
         c.packetsReceived++
         c.qlog?.packetReceived(space, pn, hv.packetEnd - headerStart(), now)
+        if (provisional) return true
         sp.ack.onEcn(datagramEcn) // RFC 9000 section 13.4.1 / 21.10: only processed packets move the ECN counts
         // PING-only packets beyond a PTO pair (RFC 9002 section 6.2.4: two probes, both PING when nothing is left to resend) within one RTT
         // are a glitch

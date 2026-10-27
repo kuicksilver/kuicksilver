@@ -298,10 +298,14 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - QUIC on the portable JVM socket (`IoPreference.Portable`, or when the accelerated UDP cannot open): the Don't Fragment
   bit is set where the JDK has the option (`IP_DONTFRAGMENT`, JDK 19 and later), as RFC 9000 section 14 requires ("MUST
   be set if possible"). Datagrams there stay within 1200 bytes, so PMTUD stays off.
-- QUIC client: an Initial with nothing but ACK, PING and PADDING that arrives before the server's Source Connection ID is
-  fixed (msquic acknowledges half a ClientHello from a provisional instance) is dropped unprocessed. It used to be
-  processed and then replaced by the ServerHello's SCID, against RFC 9000 section 7.2 ("MUST discard any subsequent
-  packet ... with a different Source Connection ID").
+- QUIC client: the server's first Initial fixes its Source Connection ID, an ACK-only one too (RFC 9000 section 7.2,
+  "MUST discard any subsequent packet ... with a different Source Connection ID"); before, an Initial without CRYPTO
+  left the SCID open and a later one with another SCID was still adopted. The one exception is msquic's: an Initial with
+  nothing but ACK, PING and PADDING whose SCID is the client's own DCID (msquic's connection sends from it until it has
+  the whole ClientHello) is processed, its ACK included, without fixing the SCID or recording its packet number. An
+  interim change on the integration branch dropped every such ACK-only Initial unprocessed; against quic-go, which
+  answers half a ClientHello with an ACK-only Initial from its real SCID, the client then had no RTT sample, resent on
+  the 1 s initial PTO and missed quic-go's 5 s handshake idle timeout (interop `amplificationlimit`, 3 server handshakes).
 - QUIC server with 0-RTT: `QuicConfig.resetStreamAt` is part of the tickets' early-data context, so a server that turned
   it off no longer accepts the 0-RTT of tickets issued with it on (draft-ietf-quic-reliable-stream-reset section 3: the
   server "MUST NOT disable this extension" when it accepts 0-RTT; the client then closed with PROTOCOL_VIOLATION).
