@@ -219,6 +219,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - Ktor server, HTTP/1.1: a request field value with a control character other than HTAB (NUL, VT, FF, DEL) gets 400
   and the connection closes (RFC 9110 section 5.5: a recipient of NUL in a field value MUST reject the message or
   replace it). Before, Ktor's parser refused only CR and LF, and a NUL reached the application.
+- Ktor server, HTTP/1.1: the request-target must match its form (RFC 9112 section 3.2): an origin-form path and query
+  of RFC 3986 characters, an absolute-URI, the authority-form for CONNECT only (with a port from 1 to 65535, RFC 9110
+  section 9.3.6), `*` for OPTIONS only. Any other target is an invalid request line and gets 400 (section 3); a GET or
+  HEAD whose path or query only has characters to encode (`|`, `{`, `^`, `[`, `#`, non-ASCII bytes, as browsers send
+  them) gets `301 Moved Permanently` to the target properly encoded instead, the other answer section 3 names. Before,
+  any run of non-whitespace reached routing.
 - Ktor server, HTTP/1.1: the request line is checked before Ktor's parser reads it. A method that is not a token
   (`G"ET`, RFC 9112 section 3.1), a control character other than the whitespace section 3 allows as a separator, or a
   Unicode space (U+00A0), which Ktor's parser took as a separator, gets 400. A request in a higher minor version

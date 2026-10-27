@@ -349,7 +349,7 @@ internal fun CoroutineScope.startH1Pipeline(
                         if (refused.status == 400) {
                             respondBadRequest(actorChannel)
                         } else {
-                            respondStatus(actorChannel, refused.status, refused.reason)
+                            respondClosing(actorChannel, closingResponsePacket(refused.status, refused.reason, refused.location))
                         }
                         lingerAfterRefusal(actorChannel, connection)
                         break
@@ -645,15 +645,17 @@ private val BAD_REQUEST_BODY = "Bad Request".encodeToByteArray()
  */
 internal fun httpDateNow(): String = GMTDate().toHttpDate()
 
-/** An empty [status] response with `Connection: close`. */
+/** An empty [status] response with `Connection: close`, and a Location field when [location] is given. */
 private fun closingResponsePacket(
     status: Int,
     reason: String,
+    location: String? = null,
 ): Source =
     RequestResponseBuilder()
         .apply {
             responseLine("HTTP/1.1", status, reason)
             headerLine("Date", httpDateNow())
+            if (location != null) headerLine("Location", location)
             headerLine("Connection", "close")
             headerLine("Content-Length", "0")
             emptyLine()
