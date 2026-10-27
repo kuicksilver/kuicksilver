@@ -140,6 +140,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   a stream error `H3_MESSAGE_ERROR`, and our own requests, responses and trailers with one fail locally with
   `IllegalArgumentException`. Only NUL, CR and LF were refused, so a value such as `a<ESC>b` reached the application
   and the Ktor engines.
+- TLS: a ClientHello, or a TLS 1.3 ServerHello, whose `legacy_version` is not 0x0303 is refused with `protocol_version`
+  (RFC 9846 sections 4.2.2 and 4.2.3, MUST); OpenSSL 3.5 accepted 0x0301 and 0x0302 next to `supported_versions`.
 - TLS 1.2: a peer without Extended Master Secret is now refused during the handshake with a `handshake_failure` alert (the
   server on the ClientHello, the client on the ServerHello), instead of being dropped without an alert after both
   Finished messages (RFC 7627, RFC 9325 section 3.6).

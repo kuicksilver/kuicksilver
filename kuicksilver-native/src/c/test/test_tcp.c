@@ -416,4 +416,33 @@ static void test_key_update_before_record_limit(void) {
     ksl_ssl_free(c); ksl_ssl_free(s); ksl_ctx_free(cc); ksl_ctx_free(sc); END();
 }
 
-void run_tcp(void) { test_echo(); test_truncation(); test_tls12(); test_resumption(); test_sni_pause(); test_sni_override_alpn(); test_sni_override_settings_effective(); test_no_tls12_ticket_without_num_tickets(); test_session_context(); test_ticket_bound_to_server_name(); test_keyless_server_no_tickets(); test_server_acknowledges_server_name(); test_key_update_before_record_limit(); }
+/* Moves a's pending ciphertext to b with the legacy_version of the first record's hello (bytes 9-10: record header 5, handshake
+   header 4) set to v */
+static void shuttle_patched(ksl_ssl *a, ksl_ssl *b, uint16_t v) {
+    uint8_t buf[16384]; size_t n = 0, got, used;
+    while (n < sizeof buf && ksl_tcp_drain(a, buf + n, sizeof buf - n, &got) == KSL_OK && got) n += got;
+    if (n > 10 && buf[0] == 22) { buf[9] = (uint8_t)(v >> 8); buf[10] = (uint8_t)v; }
+    for (size_t off = 0; off < n; off += used) if (ksl_tcp_feed(b, buf + off, n - off, &used) != KSL_OK || !used) break;
+}
+static void test_legacy_version_must_be_0303(void) {
+    SECTION("tcp_legacy_version_must_be_0303");
+    /* RFC 9846 section 4.2.2: "A server which receives a legacy_version value not equal to 0x0303 MUST abort the handshake with a
+       protocol_version alert"; section 4.2.3: "A client which receives a TLS 1.3 Server Hello with a legacy_version value not equal
+       to 0x0303 MUST abort the handshake with a protocol_version alert". OpenSSL 3.5 tolerates 0x0301 and 0x0302 on both sides. */
+    ksl_ctx *cc = client_ctx("test-ca", KSL_VERIFY_OPENSSL), *sc = server_ctx("server"); int alert = 0;
+    ksl_ssl *c = tcp_client(cc, "server.test"), *s = ksl_ssl_new(sc, KSL_MODE_TCP);
+    ksl_drive(c); shuttle_patched(c, s, 0x0302);
+    CHECK(ksl_drive(s) == KSL_ERROR && (last_code(s, &alert), alert) == SSL_AD_PROTOCOL_VERSION, "negative: the server refuses a ClientHello with legacy_version 0x0302 (protocol_version)");
+    shuttle(s, c); ksl_drive(c); last_code(c, &alert); CHECK(alert == (SSL_AD_PROTOCOL_VERSION | 0x100), "the client received protocol_version");
+    ksl_ssl_free(c); ksl_ssl_free(s);
+    c = tcp_client(cc, "server.test"); s = ksl_ssl_new(sc, KSL_MODE_TCP);
+    ksl_drive(c); shuttle(c, s); ksl_drive(s); shuttle_patched(s, c, 0x0301);
+    CHECK(ksl_drive(c) == KSL_ERROR && (last_code(c, &alert), alert) == SSL_AD_PROTOCOL_VERSION, "negative: the client refuses a TLS 1.3 ServerHello with legacy_version 0x0301 (protocol_version)");
+    shuttle(c, s); ksl_drive(s); last_code(s, &alert); CHECK(alert == (SSL_AD_PROTOCOL_VERSION | 0x100), "the server received protocol_version");
+    ksl_ssl_free(c); ksl_ssl_free(s);
+    c = tcp_client(cc, "server.test"); s = ksl_ssl_new(sc, KSL_MODE_TCP);
+    ksl_drive(c); shuttle_patched(c, s, 0x0303); CHECK(tcp_pump(c, s, NULL, NULL) == KSL_OK, "control: 0x0303 passes the same path");
+    ksl_ssl_free(c); ksl_ssl_free(s); ksl_ctx_free(cc); ksl_ctx_free(sc); END();
+}
+
+void run_tcp(void) { test_echo(); test_truncation(); test_tls12(); test_resumption(); test_sni_pause(); test_sni_override_alpn(); test_sni_override_settings_effective(); test_no_tls12_ticket_without_num_tickets(); test_session_context(); test_ticket_bound_to_server_name(); test_keyless_server_no_tickets(); test_server_acknowledges_server_name(); test_key_update_before_record_limit(); test_legacy_version_must_be_0303(); }
