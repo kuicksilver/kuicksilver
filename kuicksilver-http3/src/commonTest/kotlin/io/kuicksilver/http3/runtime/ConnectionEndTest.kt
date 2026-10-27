@@ -14,6 +14,7 @@ import io.kuicksilver.http3.http3Request
 import io.kuicksilver.http3.readAllBytes
 import io.kuicksilver.http3.useScoped
 import io.kuicksilver.native.KslLoader
+import io.kuicksilver.quic.QuicConnection
 import io.kuicksilver.quic.receivedAll
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.TimeoutCancellationException
@@ -228,6 +229,70 @@ class ConnectionEndTest {
                 withTimeout(5.seconds) { while (!req.stream.receivedAll) delay(5) }
                 c.close(Http3ErrorCode.NO_ERROR, "")
                 withTimeout(5.seconds) { server.closed.await() }
+                withTimeout(5.seconds) {
+                    session.scope.coroutineContext.job
+                        .join()
+                }
+                val body = withTimeout(5.seconds) { req.body.readAllBytes() }
+                assertEquals(chunks * chunk.size, body.size)
+            }
+        }
+
+    /** Passes everything to [d], but holds [close] until [gate] opens: the HTTP/3 close is then ahead of the transport's. */
+    private class GatedClose(
+        val d: QuicConnection,
+    ) : QuicConnection by d {
+        val gate = CompletableDeferred<Unit>()
+
+        override suspend fun close(
+            code: Long,
+            reason: String,
+        ) {
+            gate.await()
+            d.close(code, reason)
+        }
+    }
+
+    /**
+     * A local close is decided before the transport settled which streams came whole: the session's `closed` completes
+     * at once, while the last DATA and FIN of an unread request body still sit in the network, and they arrive before the
+     * transport acts on the close. The stream then came whole, so the body's pump must not go on waiting for a handler that
+     * never reads: it hands the rest over once the transport is gone, and the session ends.
+     */
+    @Test fun unreadBodyWholeOnlyAfterALocalCloseLetsTheSessionEnd() =
+        h3Test {
+            QuicPair.open().useScoped { q ->
+                val (c, s) = q.connect()
+                val gated = GatedClose(s)
+                val server = Http3Connection.server(gated)
+                val session = server.session
+                session.drainTimer = { awaitCancellation() } // the grace never runs out: only the reader's own end counts
+                val raw = RawPeer(c)
+                raw.openControl()
+                val st = c.openBidi()
+                st.output.writeFully(raw.headers(st.id, POST))
+                st.output.flush()
+                val req = withTimeout(5.seconds) { server.acceptRequest() } as ServerRequestImpl
+                val chunk = ByteArray(16 * 1024) { (it * 7).toByte() }
+                val chunks = 80 // more than the body channel takes before its writer waits for the handler
+                repeat(chunks - 1) { st.output.writeFully(raw.data(chunk)) }
+                st.output.flush()
+                withTimeout(5.seconds) { while (s.stats.bytesReceived < (chunks - 1).toLong() * chunk.size) delay(5) }
+                // the last chunk and the FIN stay in the network until the session decided on its close
+                val held = ArrayList<Triple<InetSocketAddress, InetSocketAddress, ByteArray>>()
+                q.net.drop = { from, to, bytes -> from != q.server.localAddress && held.add(Triple(from, to, bytes)) }
+                st.output.writeFully(raw.data(chunk))
+                st.output.flushAndClose()
+                withTimeout(5.seconds) { while (held.isEmpty()) delay(5) }
+                val closing = async { session.close(Http3ErrorCode.NO_ERROR, "") }
+                withTimeout(5.seconds) { server.closed.await() }
+                repeat(2) { withContext(session.dispatcher) {} } // the pump saw the HTTP/3 close, the stream not yet whole
+                assertTrue(!req.stream.receivedAll, "the FIN is still in the network")
+                q.net.drop = null
+                for ((from, to, bytes) in held) q.net.deliver(from, to, bytes)
+                withTimeout(5.seconds) { while (!req.stream.receivedAll) delay(5) }
+                gated.gate.complete(Unit)
+                withTimeout(5.seconds) { closing.await() }
                 withTimeout(5.seconds) {
                     session.scope.coroutineContext.job
                         .join()

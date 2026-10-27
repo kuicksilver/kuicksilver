@@ -224,6 +224,10 @@ internal suspend fun H3Session.pumpBody(
  * moved into [out] at once, bounded by the stream's flow-control window, so the reader finishes and the session can end
  * whether or not the application ever reads. The bytes then live as long as the application keeps the body, and no longer
  * through the session or the transport.
+ *
+ * "Gone" is the transport's end (`quic.closed`), not the session's: a local close completes the session's `closed` first,
+ * and packets that were already in flight may still complete the stream before the transport acts on the close. Only the
+ * transport's end settles `receivedAll`, the same verdict [H3Session.drains] readers get, so the two always agree.
  */
 @OptIn(io.ktor.utils.io.InternalAPI::class) // flushWriteBuffer and hasFreeSpace: hand over without waiting
 internal suspend fun H3Session.handOver(
@@ -236,13 +240,14 @@ internal suspend fun H3Session.handOver(
         val waiting = launch { out.flush() }
         select {
             waiting.onJoin {}
-            closed.onAwait { if (detached(st)) waiting.cancel() else waiting.join() }
+            quic.closed.onAwait { if (detached(st)) waiting.cancel() else waiting.join() }
         }
     }
 }
 
+/** The transport is gone and [st] came whole: its verdict is final ([H3Session.drains]). */
 @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
-private fun H3Session.detached(st: QuicStream): Boolean = closed.isCompleted && st.receivedAll
+private fun H3Session.detached(st: QuicStream): Boolean = quic.closed.isCompleted && st.receivedAll
 
 /** A clean end of stream inside a frame: a connection error H3_FRAME_ERROR (RFC 9114 section 7.1). */
 internal suspend fun H3Session.truncated(
