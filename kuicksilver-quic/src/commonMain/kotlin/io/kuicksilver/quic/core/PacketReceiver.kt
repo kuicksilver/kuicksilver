@@ -303,11 +303,9 @@ internal class PacketReceiver(
             pn = PacketProtection.removeHeaderProtection(data, headerStart(), hv.pnOffset, hv.packetEnd, sp.ack.largestReceived, key, mask)
             if (pn < 0) return false
             if (!PacketProtection.openPayload(data, headerStart(), hv.pnOffset, hv.packetEnd, pn, key)) {
-                if (type !=
-                    PacketType.Initial
-                ) {
-                    c.onAuthenticationFailure(key.aead)
-                }
+                // RFC 9001 section 6.6: failures count "across all keys", Initial ones included (their limit, 2^52 for AES-128-GCM,
+                // is out of reach for a forger as for anyone)
+                c.onAuthenticationFailure(key.aead)
                 return false
             }
         }

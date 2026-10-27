@@ -327,7 +327,7 @@ public class ConnectionCore internal constructor(
     internal var keyPhase: KeyPhase? = null
     internal val keyPhaseForTest: KeyPhase? get() = keyPhase
 
-    /** Handshake and 1-RTT packets that failed authentication (Initial keys are public and do not count; RFC 9001 section 6.6). */
+    /** Packets that failed authentication, under any key (RFC 9001 section 6.6: the integrity limit counts "across all keys"). */
     internal var authenticationFailures = 0L
 
     /** Initial read keys of the client's Original Version on a server that negotiated another one. */

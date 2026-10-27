@@ -175,15 +175,24 @@ class AeadLimitsTest {
         }
     }
 
-    @Test fun initialAeadFailuresNotCounted() {
+    /**
+     * RFC 9001 section 6.6: endpoints "MUST count the number of received packets that fail authentication during the lifetime of
+     * a connection" and close with AEAD_LIMIT_REACHED once the total, "across all keys", exceeds the integrity limit. Initial
+     * packets were left out of the count.
+     */
+    @Test fun initialAeadFailuresCount() {
         val p = CorePair(serverQuic = quicConfig { limits = QuicLimits(integrityLimitAesGcm = 5) }, crypto = ksl)
         try {
             p.step()
             val initial = p.lastClientInitial!! // the server exists and still holds Initial keys
-            repeat(20) { feedServer(p, forged(initial)) }
-            assertEquals(0L, p.server!!.stats.authenticationFailures, "Initial keys are public: their failures say nothing about the AEAD")
-            assertTrue(confirmed(p))
-            assertNull(p.closedReason(p.serverEvents))
+            repeat(3) { feedServer(p, forged(initial)) }
+            assertEquals(3L, p.server!!.stats.authenticationFailures, "Initial failures count toward the limit")
+            assertNull(p.closedReason(p.serverEvents), "below the limit")
+            repeat(2) { feedServer(p, forged(initial)) }
+            p.drainEvents(p.server!!, p.serverEvents)
+            val r = p.closedReason(p.serverEvents)
+            assertIs<QuicException.ConnectionLost.TransportClosed>(r, "closed at the limit: $r")
+            assertEquals(0x0fL, r.code)
         } finally {
             p.close()
         }
