@@ -433,6 +433,7 @@ void run_udp(void) {
             for (int k = 0; k < 3; k++) {
               for (int i = 0; i < runs[k]; i++) (void)sendto(s, "", 0, 0, (struct sockaddr *)&to, sizeof to);
               (void)sendto(s, "q", 1, 0, (struct sockaddr *)&to, sizeof to);
+              usleep(50000);   /* the whole burst in the receive queue first: a slow runner (ASan, CI) delivers loopback late */
               got = 0; buf[0] = 0; int tries = 0; while (got == 0 && tries < 4) { (void)ksl_udp_recv(r, bufs, caps, lens, ra, re, 1, &got, 0); tries++; }
               CHECK(got == 1 && lens[0] == 1 && buf[0] == 'q', "timeout 0: the real datagram behind a dropped run is never lost");
               if (runs[k] == 63) CHECK(tries == 1, "63 dropped datagrams and a real one: the first call delivers it");
