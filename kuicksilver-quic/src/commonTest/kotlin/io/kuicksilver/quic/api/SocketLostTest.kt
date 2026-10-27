@@ -227,7 +227,6 @@ class SocketLostTest {
                     assertIs<io.kuicksilver.quic.QuicException.ConnectionLost.Internal>(s.closed.await())
                     assertFailsWith<io.kuicksilver.quic.QuicException.EndpointClosing> { p.server.accept() }
                 }
-                Unit
             }
         }
 }
