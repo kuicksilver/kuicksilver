@@ -468,11 +468,25 @@ class ServerH1FramingTest {
             }
         }
 
-    /** `chunked` applied twice (RFC 9112 section 6.1: a sender MUST NOT) or not final (section 6.3 item 4): 400. */
+    /**
+     * `chunked` applied twice (RFC 9112 section 6.1: a sender MUST NOT) or not final (section 6.3 item 4): 400. `identity`
+     * is no transfer coding since RFC 7230 and is not dropped: after `chunked` the final coding is not chunked (400),
+     * alone it is no chunked coding either (400); before `chunked` it is a coding the server does not implement (501,
+     * `negative_unimplementedTransferCodingGets501`). Before 0.2.1 it was dropped anywhere, so `chunked, identity` was
+     * framed as chunked.
+     */
     @Test fun negative_chunkedTwiceOrNotFinalIsRejected() =
         serverTest {
             plainServer { port ->
-                for (te in listOf("chunked, chunked", "chunked\r\nTransfer-Encoding: chunked", "chunked, gzip", "chunked;x=1")) {
+                for (te in listOf(
+                    "chunked, chunked",
+                    "chunked\r\nTransfer-Encoding: chunked",
+                    "chunked, gzip",
+                    "chunked;x=1",
+                    "chunked, identity",
+                    "chunked\r\nTransfer-Encoding: identity",
+                    "identity",
+                )) {
                     val resp =
                         withTimeout(10.seconds) {
                             rawHttp(port, "POST /echo HTTP/1.1\r\nHost: s\r\nTransfer-Encoding: $te\r\n\r\n0\r\n\r\n", tls = null)
