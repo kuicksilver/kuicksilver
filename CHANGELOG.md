@@ -174,6 +174,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - QUIC: a server discards an Initial packet carried in a datagram below 1200 bytes wherever it sits in the datagram
   (RFC 9000 section 14.1). Only an Initial first in the datagram was checked; one coalesced behind another packet was
   processed.
+- QUIC: a CONNECTION_CLOSE that does not fit the room left in its packet (a server closing below its anti-amplification
+  budget with a long reason) now goes out with its reason cut to fit (RFC 9000 sections 10.2.1 and 10.2.3). The frame
+  was skipped, and the packet, holding only padding, still counted as the close, so the peer never learned of it.
 - QUIC, Linux and Apple platforms: a UDP send interrupted by a signal (`EINTR`) is retried instead of failing the
   socket; on Linux an interrupted GSO send no longer withdraws GSO.
 - TLS: a server context without session ticket keys (a QUIC server with tickets off, a keyless SNI override base) no
