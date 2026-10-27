@@ -1,0 +1,186 @@
+{
+ "unanswered": [
+  "6dbee19dedfe64eb"
+ ],
+ "download_checked": true,
+ "runner_paths": [
+  {
+   "dst": "193.167.0.229:18108",
+   "challenge": "9ea82e42d538d12c"
+  },
+  {
+   "dst": "193.167.0.155:745",
+   "challenge": "6dbee19dedfe64eb"
+  }
+ ],
+ "on_path": [
+  {
+   "n": 16436,
+   "from_server": false,
+   "len": 32,
+   "frames": [
+    2
+   ],
+   "challenges": [],
+   "close_codes": []
+  },
+  {
+   "n": 16437,
+   "from_server": true,
+   "len": 47,
+   "frames": [
+    26
+   ],
+   "challenges": [
+    "6dbee19dedfe64eb"
+   ],
+   "close_codes": []
+  },
+  {
+   "n": 16439,
+   "from_server": false,
+   "len": 32,
+   "frames": [
+    2
+   ],
+   "challenges": [],
+   "close_codes": []
+  },
+  {
+   "n": 16440,
+   "from_server": false,
+   "len": 32,
+   "frames": [
+    2
+   ],
+   "challenges": [],
+   "close_codes": []
+  },
+  {
+   "n": 16441,
+   "from_server": false,
+   "len": 32,
+   "frames": [
+    2
+   ],
+   "challenges": [],
+   "close_codes": []
+  },
+  {
+   "n": 16442,
+   "from_server": false,
+   "len": 32,
+   "frames": [
+    2
+   ],
+   "challenges": [],
+   "close_codes": []
+  },
+  {
+   "n": 16443,
+   "from_server": false,
+   "len": 32,
+   "frames": [
+    2
+   ],
+   "challenges": [],
+   "close_codes": []
+  },
+  {
+   "n": 16444,
+   "from_server": false,
+   "len": 32,
+   "frames": [
+    2
+   ],
+   "challenges": [],
+   "close_codes": []
+  },
+  {
+   "n": 16445,
+   "from_server": false,
+   "len": 32,
+   "frames": [
+    2
+   ],
+   "challenges": [],
+   "close_codes": []
+  },
+  {
+   "n": 16446,
+   "from_server": false,
+   "len": 32,
+   "frames": [
+    2
+   ],
+   "challenges": [],
+   "close_codes": []
+  },
+  {
+   "n": 16447,
+   "from_server": false,
+   "len": 32,
+   "frames": [
+    2
+   ],
+   "challenges": [],
+   "close_codes": []
+  },
+  {
+   "n": 16448,
+   "from_server": false,
+   "len": 32,
+   "frames": [
+    2
+   ],
+   "challenges": [],
+   "close_codes": []
+  },
+  {
+   "n": 16449,
+   "from_server": false,
+   "len": 36,
+   "frames": [
+    29
+   ],
+   "challenges": [],
+   "close_codes": [
+    0
+   ]
+  }
+ ],
+ "server_close_n": 16449,
+ "responses": [
+  "36f33757865886bd",
+  "9ea82e42d538d12c"
+ ],
+ "client_sources": [
+  "193.167.0.100:41472"
+ ],
+ "client_side": [
+  {
+   "n": 16321,
+   "from_server": false,
+   "len": 36,
+   "frames": [
+    29
+   ],
+   "challenges": [],
+   "close_codes": [
+    0
+   ]
+  },
+  {
+   "n": 16322,
+   "from_server": true,
+   "len": 47,
+   "frames": [
+    26
+   ],
+   "challenges": [
+    "6dbee19dedfe64eb"
+   ],
+   "close_codes": []
+  }
+ ]
+}

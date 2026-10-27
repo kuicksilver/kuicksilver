@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
 # Copyright 2026 The Kuicksilver Authors
 # SPDX-License-Identifier: Apache-2.0
-# Cases for the ENVIRONMENT classification of run-local.sh (environment.sh, handshake-challenge.py, closing-rebind.py, clienthello-lost.py,
-# prohibited-port-rebind.py) and for check-required.py's environment-yellow cells on fixtures in testdata/,
+# Cases for the ENVIRONMENT classification of run-local.sh (environment.sh, handshake-challenge.py, closing-rebind.py, closing-challenge.py,
+# clienthello-lost.py, prohibited-port-rebind.py) and for check-required.py's environment-yellow cells on fixtures in testdata/,
 # and for sim-entrypoint.sh's rebind start gate on stubs (no runner, no Docker, no tshark; needs python3 and jq).
 # KSL_INTEROP_CELL=<a result cell directory with its pcaps> also runs the classification on that real cell (needs tshark), e.g.
 # build/interop/20261016-045713/quiche-server/kuicksilver_quiche/rebind-addr from the 0.2.0 gate; KSL_INTEROP_CLOSE_CELL the same for
 # closing-rebind.py, e.g. build/interop/20261017-054938/msquic-client/msquic_kuicksilver-native/rebind-port (0.2.0 gate 6); KSL_INTEROP_TIMEOUT_CELL
 # a cell the runner timed out, which must not be listed, e.g. build/interop/20261017-175019/picoquic-server/kuicksilver_picoquic/v2 (0.2.0 gate);
 # KSL_INTEROP_STALE_CELL a cell that ran on the sim of a timed-out cell, e.g. build/interop/20261020-031632/picoquic-server/kuicksilver_picoquic/zerortt.
+# KSL_INTEROP_CHALLENGE_CELL a cell whose closing client could not answer the server's challenge, e.g. the quiche-server/kuicksilver_quiche/rebind-addr
+# cell of CI run 40571281407 (closing-challenge.py).
 # KSL_INTEROP_LOST_CELL a cell whose peer client's ClientHello never reached our server in full, e.g.
 # build/interop/20261023-114548/quiche-server/kuicksilver_quiche/handshakeloss (0.2.1 gate 2).
 # KSL_INTEROP_PORT_CELL a cell of the ngtcp2 server whose client the sim rebound to a port that server drops, e.g. the release/0.2.x
@@ -81,6 +83,36 @@ check "close: two server packets on the new path (10.2.2: one)"    1 "" -- pytho
 check "close: the client closed with an error code"                1 "" -- python3 "$cr" --decoded "$(cvar error "$cli.close_codes = [10]")"
 check "close: the client's close code is unknown"                  1 "" -- python3 "$cr" --decoded "$(cvar nocode "$cli.close_codes = []")"
 check "close: a malformed summary cannot be analysed"              2 "cannot analyse" -- python3 "$cr" --decoded "$(cvar broken 'del(.on_path)')"
+
+# closing-challenge.py: the rebind landed after the client's CONNECTION_CLOSE left, before its last packets arrived (CI run
+# 40571281407, quiche->kuicksilver:rebind-addr, the JVM image; decoded with --dump): the server challenged the new path, the
+# closing client could not answer
+ch="$here/closing-challenge.py"; fh="$td/closing-challenge-quiche-rebind-addr.json"
+hvar() { jq "$2" "$fh" > "$tmp/$1.json"; echo "$tmp/$1.json"; }
+xs='(.on_path[] | select(.challenges | index("6dbee19dedfe64eb")))'
+ccl='(.client_side[] | select((.from_server | not) and (.frames | index(29))))'
+check "challenge: CI cell, the challenge reached the closed client"  0 "the new path 193.167.0.155:745" -- python3 "$ch" --decoded "$fh"
+check "challenge: it reached the client before its close"           1 "" -- python3 "$ch" --decoded "$(hvar early '.client_side |= reverse')"
+check "challenge: it never reached the client"                       1 "" -- python3 "$ch" --decoded "$(hvar lost '.client_side |= map(select(.challenges | index("6dbee19dedfe64eb") | not))')"
+check "challenge: the client never closed"                           1 "" -- python3 "$ch" --decoded "$(hvar open '.client_side |= map(select(.from_server))')"
+check "challenge: the client closed with an error code"              1 "" -- python3 "$ch" --decoded "$(hvar error "$ccl.close_codes = [10]")"
+check "challenge: the client sent more than closing frames after it" 1 "" -- python3 "$ch" --decoded "$(hvar after '.client_side += [{"n": 99999, "from_server": false, "len": 40, "frames": [2, 15], "challenges": [], "close_codes": []}]')"
+check "challenge:   an undecryptable client packet after it"         1 "" -- python3 "$ch" --decoded "$(hvar opaque '.client_side += [{"n": 99999, "from_server": false, "len": 40, "frames": [], "challenges": [], "close_codes": []}]')"
+check "challenge:   but its close repeated is fine"                  0 "" -- python3 "$ch" --decoded "$(hvar again ".client_side += [$ccl]")"
+check "challenge: the client moved itself (two source ports)"        1 "" -- python3 "$ch" --decoded "$(hvar moved '.client_sources += ["193.167.0.100:40000"]')"
+check "challenge: the close reached the server before the challenge" 1 "" -- python3 "$ch" --decoded "$(hvar knew '.server_close_n = 16436')"
+check "challenge:   the close never reached the server"              0 "" -- python3 "$ch" --decoded "$(hvar noclose '.server_close_n = null')"
+check "challenge: the server spoke first on the new path"            1 "" -- python3 "$ch" --decoded "$(hvar srvfirst '.on_path = [.on_path[1], .on_path[0]] + .on_path[2:]')"
+check "challenge: the server sent data there (STREAM)"               1 "" -- python3 "$ch" --decoded "$(hvar data "$xs.frames += [15]")"
+check "challenge: the server exceeded 3x there (RFC 9000 8.1)"       1 "" -- python3 "$ch" --decoded "$(hvar amp "([.on_path[] | select(.from_server | not) | .len] | add) as \$r | $xs.len = 3 * \$r + 1")"
+check "challenge:   exactly 3x is allowed"                           0 "" -- python3 "$ch" --decoded "$(hvar amp3 "([.on_path[] | select(.from_server | not) | .len] | add) as \$r | $xs.len = 3 * \$r")"
+check "challenge: the client answered it"                            1 "" -- python3 "$ch" --decoded "$(hvar answered '.responses += ["6dbee19dedfe64eb"]')"
+check "challenge: two challenges unanswered"                         1 "" -- python3 "$ch" --decoded "$(hvar two '.unanswered += ["36f33757865886bd"]')"
+check "challenge: an earlier challenge was never answered"           1 "" -- python3 "$ch" --decoded "$(hvar earlier '.responses -= ["9ea82e42d538d12c"]')"
+check "challenge: an earlier first packet had no challenge"          1 "" -- python3 "$ch" --decoded "$(hvar nochallenge '.runner_paths[0].challenge = ""')"
+check "challenge: not the last path of the runner's walk"            1 "" -- python3 "$ch" --decoded "$(hvar later '.runner_paths += [{"dst": "193.167.0.151:64331", "challenge": "00"}]')"
+check "challenge: the downloaded files were not checked"             1 "" -- python3 "$ch" --decoded "$(hvar nofiles '.download_checked = false')"
+check "challenge: a malformed summary cannot be analysed"            2 "cannot analyse" -- python3 "$ch" --decoded "$(hvar broken 'del(.on_path)')"
 
 # clienthello-lost.py: the peer client's ClientHello never reached our server in full (0.2.1 gate 2, run 20261023-114548:
 # kuicksilver->quiche:handshakeloss, decoded with --dump; and a rerun of it whose connection was still open at teardown, empty qlog)
@@ -162,6 +194,8 @@ check "lost: a client that exited with 0 is never analysed"        1 "" -- pytho
 mk msquic-client/msquic_kuicksilver-native rebind-port "Check of downloaded files succeeded." "First server packet on new path (('193.167.100.100', 443), ('193.167.0.100', 59022)) did not contain a PATH_CHALLENGE frame"
 check "close: a missing challenge without captures cannot be analysed" 2 "cannot analyse" -- python3 "$cr" "$tmp/res/msquic-client/msquic_kuicksilver-native/rebind-port"
 check "close: no missing challenge in the verdict"             1 "" -- python3 "$cr" "$tmp/res/quiche-client/quiche_kuicksilver/rebind-addr"
+check "challenge: an unanswered challenge without captures cannot be analysed" 2 "cannot analyse" -- python3 "$ch" "$tmp/res/quiche-server/kuicksilver_quiche/rebind-addr"
+check "challenge: no unanswered challenge in the verdict"      1 "" -- python3 "$ch" "$tmp/res/quiche-server/kuicksilver_quiche/rebind-port"
 # both roles on purpose (closing-rebind.py): our own server's cell is analysed too (here: no captures), not refused by role
 mk msquic-server/kuicksilver-native_msquic rebind-port "Check of downloaded files succeeded." "First server packet on new path (('193.167.100.100', 443), ('193.167.0.100', 59022)) did not contain a PATH_CHALLENGE frame"
 check "close: our server's cell is analysed as well"           2 "cannot analyse" -- python3 "$cr" "$tmp/res/msquic-server/kuicksilver-native_msquic/rebind-port"
@@ -346,6 +380,11 @@ if [ -n "${KSL_INTEROP_CLOSE_CELL:-}" ]; then   # the real gate 6 cell: pcaps an
   cell=${KSL_INTEROP_CLOSE_CELL%/}; res=$(dirname "$(dirname "$cell")")
   check "real close cell: classified ENVIRONMENT" 0 "$(basename "$(dirname "$cell")") $(basename "$cell") the rebind landed just before the client's CONNECTION_CLOSE" -- environment_cells "$res"
   check "real close cell: the decoded summary matches its fixture" 0 "" -- bash -c "python3 '$cr' --dump '$cell' | jq -e --slurpfile f '$fc' '. == \$f[0]' > /dev/null"
+fi
+if [ -n "${KSL_INTEROP_CHALLENGE_CELL:-}" ]; then   # the real CI cell: pcaps and key log through tshark
+  cell=${KSL_INTEROP_CHALLENGE_CELL%/}; res=$(dirname "$(dirname "$cell")")
+  check "real challenge cell: classified ENVIRONMENT" 0 "$(basename "$(dirname "$cell")") $(basename "$cell") the rebind landed just after the client's CONNECTION_CLOSE left" -- environment_cells "$res"
+  check "real challenge cell: the decoded summary matches its fixture" 0 "" -- bash -c "python3 '$ch' --dump '$cell' | jq -e --slurpfile f '$fh' '. == \$f[0]' > /dev/null"
 fi
 if [ -n "${KSL_INTEROP_LOST_CELL:-}" ]; then   # the real 0.2.1 gate 2 cell: qlogs and pcaps through tshark
   cell=${KSL_INTEROP_LOST_CELL%/}; res=$(dirname "$(dirname "$cell")")
