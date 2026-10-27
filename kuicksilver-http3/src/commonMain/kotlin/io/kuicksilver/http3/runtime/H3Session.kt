@@ -424,6 +424,7 @@ internal class H3Session(
                         } finally {
                             handledBidi -= st.id
                             earlyPriority.remove(st.id) // a stream that never became a request (aborted, WebTransport) keeps no slot
+                            datagrams.dropPending(st.id)
                         }
                     },
                 )
@@ -703,6 +704,16 @@ internal class H3Session(
     }
 
     fun takeEarlyPriority(id: Long): StreamPriority? = earlyPriority.remove(id)
+
+    /**
+     * Server: client bidirectional stream [id] may still become a request: the transport has not handed it out yet (and
+     * it is within the limit we granted), or its handler is still reading its HEADERS. Session dispatcher only.
+     */
+    fun requestMayStillOpen(id: Long): Boolean {
+        if (id in handledBidi) return true
+        if (id <= acceptedBidiUpTo) return false
+        return QuicStreamLimits.peerBidiStreamsGranted(quic)?.let { id / 4 < it } ?: true
+    }
 
     /** Spends a glitch token; an empty bucket is a connection error H3_EXCESSIVE_LOAD (RFC 9114 section 8.1). */
     fun glitch(what: String) {

@@ -267,6 +267,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- HTTP/3 server with WebTransport: datagrams that arrive before their session's CONNECT HEADERS (reordering, or a
+  client that sends right after its CONNECT) are kept and delivered once the session is accepted, at most 16 per
+  connection for 5 s, as early WebTransport streams already were (draft-ietf-webtrans-http3 section 4.6). They were
+  dropped.
 - HTTP/3 client: a response stream that ends without HEADERS fails the request with `Http3Exception.MessageError` and
   aborts the stream with `H3_MESSAGE_ERROR` (a response without `:status` is malformed, RFC 9114 section 4.1.2). It
   was `Http3Exception.Protocol` with `H3_REQUEST_INCOMPLETE`, which section 8.1 defines for an incomplete request.

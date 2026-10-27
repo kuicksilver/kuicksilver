@@ -6,6 +6,8 @@ import io.ktor.utils.io.writeFully
 import io.kuicksilver.http3.Http3Connection
 import io.kuicksilver.http3.Http3ErrorCode
 import io.kuicksilver.http3.QuicPair
+import io.kuicksilver.http3.WebTransportSession
+import io.kuicksilver.http3.acceptWebTransport
 import io.kuicksilver.http3.frame.SettingsId
 import io.kuicksilver.http3.frame.StreamType
 import io.kuicksilver.http3.frame.VarInt
@@ -22,9 +24,12 @@ import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.QuicStream
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -32,6 +37,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
 /** The settings a WebTransport client sends: Extended CONNECT is the server's, datagrams and WT both sides'. */
@@ -178,6 +184,40 @@ class WtStreamRoutingTest {
                 raw.uni(StreamType.WT_UNI, VarInt.encode(2))
                 assertEquals(Http3ErrorCode.ID_ERROR, withTimeout(5.seconds) { peerSawClose(c) })
             }
+        }
+
+    /**
+     * draft-ietf-webtrans-http3 section 4.6: datagrams for a session whose CONNECT HEADERS have not arrived yet are buffered
+     * and delivered once the session is established, at most 16 per connection (as for streams, a datagram over the cap is dropped), in arrival order.
+     */
+    private suspend fun datagramsBeforeConnect(count: Int): List<String> =
+        QuicPair.open().useScoped { q ->
+            val (c, s) = q.connect()
+            val server = Http3Connection.server(s, wtOn)
+            val raw = RawPeer(c)
+            raw.openControl(wtClientSettings)
+            withTimeout(5.seconds) { server.peerSettings.first { it != null } }
+            repeat(count) { c.sendDatagram(VarInt.encode(0) + "d$it".encodeToByteArray()) } // stream 0, not opened yet
+            delay(100) // the datagrams are in before the CONNECT
+            val accepted = CompletableDeferred<WebTransportSession>()
+            launch { accepted.complete(server.acceptRequest().acceptWebTransport()) }
+            val st = c.openBidi()
+            st.output.writeFully(raw.wtConnect(st))
+            st.output.flush()
+            val wt = withTimeout(5.seconds) { accepted.await() }
+            val got = ArrayList<String>()
+            while (true) got += (withTimeoutOrNull(500.milliseconds) { wt.receiveDatagram() } ?: break).decodeToString()
+            got
+        }
+
+    @Test fun datagramBeforeConnectHeadersIsDelivered() =
+        h3Test {
+            assertEquals(listOf("d0"), datagramsBeforeConnect(1))
+        }
+
+    @Test fun negative_pendingDatagramsBounded() =
+        h3Test {
+            assertEquals((0 until 16).map { "d$it" }, datagramsBeforeConnect(17)) // the 17th is dropped at the cap
         }
 
     /** Without WebTransport a `0x54` stream is an unknown type, stopped as before (RFC 9114 section 6.2). */

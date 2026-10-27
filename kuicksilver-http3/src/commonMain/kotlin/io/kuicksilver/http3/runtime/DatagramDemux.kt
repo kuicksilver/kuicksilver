@@ -16,6 +16,7 @@ import io.kuicksilver.http3.Http3ResponseWriter
 import io.kuicksilver.http3.Http3Stream
 import io.kuicksilver.http3.frame.VarInt
 import io.kuicksilver.http3.message.CapsuleRules
+import io.kuicksilver.http3.webtransport.WtStreamRouter
 import io.kuicksilver.quic.DatagramSendResult
 import io.kuicksilver.quic.DatagramUnsupportedReason
 import io.kuicksilver.quic.QuicException
@@ -31,17 +32,30 @@ import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
 import kotlin.concurrent.Volatile
 import kotlin.concurrent.atomics.AtomicBoolean
+import kotlin.time.Duration
+import kotlin.time.TimeMark
+import kotlin.time.TimeSource
 
 /**
  * HTTP datagrams of a connection (RFC 9297 section 2.1): one collector of the transport's datagrams, routed by quarter
  * stream ID to the streams that registered. Unknown IDs are dropped silently; a datagram without a valid quarter
  * stream ID is a connection error H3_DATAGRAM_ERROR. A stream is unregistered when its receive side closes, so later
- * datagrams for it are dropped as the RFC requires.
+ * datagrams for it are dropped as the RFC requires. With WebTransport a server keeps datagrams for a request stream whose
+ * CONNECT has not been read yet, bounded as early WebTransport streams are (draft-ietf-webtrans-http3 section 4.6).
  */
 internal class DatagramDemux(
     private val session: H3Session,
 ) {
     private val streams = HashMap<Long, Channel<ByteArray>>()
+
+    private class Pending(
+        val streamId: Long,
+        val payload: ByteArray,
+        val expires: TimeMark,
+    )
+
+    /** WebTransport datagrams whose session's CONNECT HEADERS have not been read yet (draft section 4.6), oldest first. */
+    private val pending = ArrayDeque<Pending>()
 
     fun start() {
         if (!session.settings.h3Datagram) return
@@ -65,10 +79,43 @@ internal class DatagramDemux(
             session.fail(Http3ErrorCode.DATAGRAM_ERROR, "datagram without a valid quarter stream ID")
             return
         }
-        streams[q * 4]?.trySend(b.copyOfRange(VarInt.encodedLength(b[0]), b.size))
+        val streamId = q * 4
+        val payload = b.copyOfRange(VarInt.encodedLength(b[0]), b.size)
+        val ch = streams[streamId]
+        if (ch != null) {
+            ch.trySend(payload)
+            return
+        }
+        // draft-ietf-webtrans-http3 section 4.6: a session's datagrams may overtake its CONNECT; kept, bounded as its
+        // streams are (WtStreamRouter: 16 per connection, 5 s each). Others are dropped (RFC 9297 section 2.1).
+        if (!session.isServer || !session.settings.webTransport || !session.requestMayStillOpen(streamId)) return
+        prunePending()
+        if (pending.size < MAX_PENDING) pending.addLast(Pending(streamId, payload, TimeSource.Monotonic.markNow() + PENDING_TIMEOUT))
     }
 
-    fun register(streamId: Long): Channel<ByteArray> = Channel<ByteArray>(QUEUE, BufferOverflow.DROP_OLDEST).also { streams[streamId] = it }
+    fun register(streamId: Long): Channel<ByteArray> {
+        val ch = Channel<ByteArray>(QUEUE, BufferOverflow.DROP_OLDEST)
+        streams[streamId] = ch
+        prunePending()
+        if (pending.any { it.streamId == streamId }) {
+            val mine = pending.filter { it.streamId == streamId }
+            pending.removeAll { it.streamId == streamId }
+            for (p in mine) ch.trySend(p.payload)
+        }
+        return ch
+    }
+
+    /** Stream [streamId] will not become a session (its handler ended): its waiting datagrams go. */
+    fun dropPending(streamId: Long) {
+        if (pending.isNotEmpty()) pending.removeAll { it.streamId == streamId }
+    }
+
+    private fun prunePending() {
+        while (pending.isNotEmpty() && pending.first().expires.hasPassedNow()) pending.removeFirst()
+    }
+
+    /** Datagrams waiting for their stream's CONNECT (test hook; session dispatcher only). */
+    val pendingCount: Int get() = pending.size
 
     fun unregister(streamId: Long) {
         streams.remove(streamId)?.close()
@@ -128,6 +175,12 @@ internal class DatagramDemux(
 
     companion object {
         const val QUEUE = 32
+
+        /** Datagrams per connection that may wait for their session's CONNECT: the bound of the streams that wait. */
+        const val MAX_PENDING = WtStreamRouter.MAX_BUFFERED_STREAMS
+
+        /** How long one of them may wait. */
+        val PENDING_TIMEOUT: Duration = WtStreamRouter.BUFFER_TIMEOUT
 
         /** Quarter stream IDs above 2^60 - 1 cannot name a client-initiated bidirectional stream. */
         const val MAX_QUARTER_ID = (1L shl 60) - 1
