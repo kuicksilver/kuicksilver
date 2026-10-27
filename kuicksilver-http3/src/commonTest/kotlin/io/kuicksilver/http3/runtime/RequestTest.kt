@@ -237,15 +237,44 @@ class RequestTest {
             }
         }
 
-    @Test fun tooManyInformationalIsExcessiveLoad() =
+    /**
+     * RFC 9110 section 15.2: "A client MUST be able to parse one or more 1xx responses received prior to a final response,
+     * even if the client does not expect one". Two hundred 103s reach `onInformational` and the final response follows.
+     */
+    @Test fun manyInformationalResponsesAreAccepted() =
         h3Test {
             H3Pair.open().useScoped { p ->
                 val server =
                     launch {
                         val r = p.server.acceptRequest()
+                        repeat(200) { r.sendInformational(103, Http3Headers.of("link" to "</s$it.css>; rel=preload")) }
+                        r.respond(200).finish()
+                    }
+                var seen = 0
+                val resp = p.client.request(http3Request("GET", "server.test", "/") { onInformational = { _, _ -> seen++ } })
+                assertEquals(200, resp.status)
+                assertEquals(200, seen)
+                server.join()
+            }
+        }
+
+    /**
+     * Endless 1xx: the interim responses of one request may hold `maxFieldSectionSize` (64 KiB) of decoded fields in all
+     * (RFC 9114 section 4.2.2 sizes); past that the request fails with H3_EXCESSIVE_LOAD, its stream is reset and stopped,
+     * and the connection lives on.
+     */
+    @Test fun negative_endlessInformationalIsExcessiveLoad() =
+        h3Test {
+            H3Pair.open().useScoped { p ->
+                var sent = 0
+                val server =
+                    launch {
+                        val r = p.server.acceptRequest()
                         runCatching {
-                            repeat(6) { r.sendInformational(103) }
-                            r.respond(200).finish()
+                            while (sent < 10_000) {
+                                r.sendInformational(103, Http3Headers.of("link" to "x".repeat(1000)))
+                                sent++
+                            }
                         }
                         p.server
                             .acceptRequest()
@@ -255,7 +284,8 @@ class RequestTest {
                 val e = assertFailsWith<Http3Exception.Protocol> { p.client.request(get()) }
                 assertEquals(Http3ErrorCode.EXCESSIVE_LOAD, e.h3Code)
                 assertEquals(200, p.client.request(get()).status) // the connection lives on
-                server.join() // the 200 arrives before finish() returns: closing earlier races the server's FIN
+                server.join()
+                assertTrue(sent < 10_000, "the client stopped the stream: the server's sends failed after $sent")
             }
         }
 

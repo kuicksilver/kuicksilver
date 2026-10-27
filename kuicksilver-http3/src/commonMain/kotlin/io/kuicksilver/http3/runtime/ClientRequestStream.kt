@@ -24,6 +24,7 @@ import io.kuicksilver.http3.message.PriorityField
 import io.kuicksilver.http3.message.PseudoHeaders
 import io.kuicksilver.http3.message.priorityFieldValue
 import io.kuicksilver.http3.qpack.QpackError
+import io.kuicksilver.http3.qpack.entrySize
 import io.kuicksilver.quic.Initiator
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.QuicStream
@@ -261,7 +262,7 @@ private suspend fun H3Session.exchange(
                 onBuffered = { bufferedHeaderBytes += it },
                 webTransport = settings.webTransport,
             )
-        var interim = 0
+        var interimBytes = 0L
         while (true) {
             when (val f = frames.next()) {
                 // no :status: a malformed response (RFC 9114 section 4.1.2); H3_REQUEST_INCOMPLETE names an incomplete request
@@ -281,9 +282,10 @@ private suspend fun H3Session.exchange(
                 }
 
                 is RequestFrame.Headers -> {
+                    val fields = decodeSection(st, f.block)
                     val (status, headers) =
                         try {
-                            PseudoHeaders.parseResponse(decodeSection(st, f.block))
+                            PseudoHeaders.parseResponse(fields)
                         } catch (
                             e: MalformedMessage,
                         ) {
@@ -291,16 +293,18 @@ private suspend fun H3Session.exchange(
                         }
                     if (status in 100..199) {
                         if (status == 101) throw malformed(st.id, MalformedMessage("101 is not allowed in HTTP/3"))
-                        if (++interim >
-                            settings.maxInformationalResponses
-                        ) {
+                        // RFC 9110 section 15.2: "A client MUST be able to parse one or more 1xx responses ... even if the client
+                        // does not expect one": no count limit, but all interim field sections of a request together hold at most
+                        // maxFieldSectionSize decoded bytes (RFC 9114 section 4.2.2 sizes), so endless 1xx still end
+                        for ((n, v) in fields) interimBytes += entrySize(n, v)
+                        if (interimBytes > settings.maxFieldSectionSize) {
                             throw StreamFailure(
                                 Http3ErrorCode.EXCESSIVE_LOAD,
                                 Http3Exception.Protocol(
                                     Http3ErrorCode.EXCESSIVE_LOAD,
                                     Initiator.Local,
                                     st.id,
-                                    "more than ${settings.maxInformationalResponses} interim responses",
+                                    "interim responses above ${settings.maxFieldSectionSize} bytes of fields",
                                 ),
                             )
                         }

@@ -107,8 +107,8 @@ takes a truncated body for a complete one; `closedCause` says why. The same hold
 
 A request body is any `ByteReadChannel`; it is copied into DATA frames as the transport accepts it, so a slow peer
 slows the producer instead of filling memory. `trailers` is called after the body ends. Interim responses (1xx,
-103 Early Hints included) reach `onInformational`; more than `maxInformationalResponses` (5) fail the request with
-`H3_EXCESSIVE_LOAD`. Both callbacks run on the dispatcher of the coroutine that called `request`, never on the
+103 Early Hints included) reach `onInformational`, any number of them (RFC 9110 section 15.2); once their fields together
+exceed `maxFieldSectionSize` (64 KiB) the request fails with `H3_EXCESSIVE_LOAD`. Both callbacks run on the dispatcher of the coroutine that called `request`, never on the
 connection's own single-threaded dispatcher, so a slow callback delays only its own request. There is no automatic
 `100-continue`. `Http3Response.cancel()` (or cancelling the calling
 coroutine) resets the stream with `H3_REQUEST_CANCELLED`; the connection keeps serving other requests.

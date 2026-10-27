@@ -287,6 +287,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   step 2, MUST): a WebSocket over HTTP/1.1 to an address and port another one is still connecting to waits until that
   handshake is answered or failed, also when it uses another name for the address; through a proxy that resolves names
   the name counts as the host. Before, any number connected at once.
+- HTTP/3 client: any number of interim (1xx) responses is accepted before the final one, as RFC 9110 section 15.2
+  requires ("A client MUST be able to parse one or more 1xx responses"); a request failed at the sixth. Endless 1xx
+  still end: the decoded fields of all of a request's interim responses together are bounded by `maxFieldSectionSize`
+  (64 KiB by default), past which the request fails with `H3_EXCESSIVE_LOAD` and its stream is reset, as the HTTP/1.1
+  client's 64 KiB budget. `Http3Settings.maxInformationalResponses` is deprecated and ignored (still validated, ABI
+  unchanged).
 - QUIC with BBR (`QuicConfig.congestionController`): persistent congestion reduces the window to the minimum congestion
   window of 2 datagrams, as RFC 9002 section 7.6.2 requires; it was max(bytes in flight + 1 datagram, 4 datagrams).
 - QUIC on the portable JVM socket (`IoPreference.Portable`, or when the accelerated UDP cannot open): the Don't Fragment

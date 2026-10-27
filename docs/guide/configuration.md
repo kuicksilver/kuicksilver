@@ -192,7 +192,7 @@ DER.
 | `h3Datagram` | `Boolean` | `true` | | `SETTINGS_H3_DATAGRAM` (always sent); `Http3Endpoint` sends 0 when `QuicConfig.maxDatagramFrameSize` is 0 |
 | `webTransport` | `Boolean` | `false` | needs `enableConnectProtocol` and `h3Datagram` | experimental: WebTransport over HTTP/3 (draft-ietf-webtrans-http3-16, with the draft-02 and draft-14 SETTINGS browsers use); `Http3Endpoint.bind` refuses it when `QuicConfig.maxDatagramFrameSize` is 0 |
 | `grease` | `Boolean` | `true` | | send a reserved setting, frame and stream type |
-| `maxInformationalResponses` | `Int` | 5 | at least 0 | 1xx responses a client accepts per request; one more fails it with `H3_EXCESSIVE_LOAD` |
+| `maxInformationalResponses` | `Int` | 5 | at least 0 | deprecated and ignored since 0.2.1: a client accepts any number of 1xx responses (RFC 9110 section 15.2); their fields together are bounded by `maxFieldSectionSize`, past which the request fails with `H3_EXCESSIVE_LOAD` |
 | `maxEarlyPriorityUpdates` | `Int` | 32 | at least 0 | PRIORITY_UPDATE frames remembered for streams not yet open |
 | `glitchProtection` | `Boolean` | `true` | | close with `H3_EXCESSIVE_LOAD` a peer that floods useless frames |
 | `earlyData` (*experimental*) | `Http3EarlyDataPolicy` | `WaitForHandshake()` | `WaitForHandshake(replayable)`, `Reject425(replayable)`; `replayable` admits GET, HEAD and OPTIONS by default | server: what happens to requests that arrive in 0-RTT ([HTTP/3 0-RTT](http3.md#0-rtt-opt-in-experimental)) |

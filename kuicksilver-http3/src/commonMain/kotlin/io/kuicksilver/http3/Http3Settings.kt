@@ -26,7 +26,11 @@ public class Http3Settings private constructor(
     public val h3Datagram: Boolean,
     /** Send a reserved setting, frame and unidirectional stream (RFC 9114 sections 6.2.3, 7.2.4.1, 7.2.8) to keep peers tolerant. */
     public val grease: Boolean,
-    /** Interim (1xx) responses a client accepts before the final one; 5 by default, at least 0. */
+    /**
+     * No longer a limit: a client accepts any number of interim (1xx) responses (RFC 9110 section 15.2), bounded only by
+     * [maxFieldSectionSize] over all of a request's interim field sections. Kept for compatibility; 5 by default, at least 0.
+     */
+    @Deprecated("Ignored: interim responses are bounded by maxFieldSectionSize over all of them (RFC 9110 section 15.2)")
     public val maxInformationalResponses: Int,
     /** PRIORITY_UPDATE frames remembered for streams not yet open; 32 by default, at least 0. */
     public val maxEarlyPriorityUpdates: Int,
@@ -66,7 +70,11 @@ public class Http3Settings private constructor(
         /** Send a reserved setting, frame and unidirectional stream (RFC 9114 section 7.2.8); true by default. */
         public var grease: Boolean = true
 
-        /** Interim (1xx) responses a client accepts per request; one more fails it with H3_EXCESSIVE_LOAD; 5 by default. */
+        /**
+         * No longer a limit (see [Http3Settings.maxInformationalResponses]): a client accepts any number of interim responses up to
+         * [maxFieldSectionSize] bytes of fields over all of them. Still validated (at least 0); 5 by default.
+         */
+        @Deprecated("Ignored: interim responses are bounded by maxFieldSectionSize over all of them (RFC 9110 section 15.2)")
         public var maxInformationalResponses: Int = 5
 
         /** PRIORITY_UPDATE frames kept for streams not yet open (RFC 9218 section 7); extra ones are dropped; 32 by default. */
@@ -96,6 +104,7 @@ public class Http3Settings private constructor(
         }
 
         /** The immutable settings; throws [IllegalArgumentException] when a value is outside the range given on its property. */
+        @Suppress("DEPRECATION") // maxInformationalResponses is still validated and carried
         public fun build(): Http3Settings {
             require(qpackMaxTableCapacity in 0..(1L shl 30)) { "qpackMaxTableCapacity must be 0..2^30" }
             require(qpackBlockedStreams in 0..65_535) { "qpackBlockedStreams must be 0..65535" }
@@ -124,6 +133,7 @@ public class Http3Settings private constructor(
     }
 
     /** A builder pre-filled with these values. */
+    @Suppress("DEPRECATION") // maxInformationalResponses is still carried
     public fun toBuilder(): Builder =
         Builder().also {
             it.qpackMaxTableCapacity = qpackMaxTableCapacity
