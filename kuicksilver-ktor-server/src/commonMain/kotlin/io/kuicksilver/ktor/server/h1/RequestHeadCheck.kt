@@ -63,10 +63,17 @@ internal suspend fun HeadLimitedInput.checkRequestHead() {
 
 /**
  * Checks the field lines of a request head ([fields]: each line with its line end, without the empty line that ends the
- * section). RFC 9110 section 5.5: a recipient of CR, LF or NUL within a field value MUST either reject the message or
- * replace each of them with SP; field-content is VCHAR, obs-text, SP and HTAB, so the other control characters (DEL
- * among them) are invalid too: 400, as Go's net/http does. Ktor's parser refuses only CR and LF in a value. A line
- * without a colon is left to the parser, which refuses it.
+ * section); 400 for:
+ * - a field name that is not a token (RFC 9110 section 5.1; DEL and bytes above 0x7F, which Ktor's parser passed), also
+ *   an empty one, whitespace before the colon (RFC 9112 section 5.1), a line without a colon and an obs-fold line
+ *   (section 5.2), which the parser refuses too;
+ * - a control character other than HTAB in a value. RFC 9110 section 5.5: a recipient of CR, LF or NUL within a field
+ *   value MUST either reject the message or replace each of them with SP; field-content is VCHAR, obs-text, SP and
+ *   HTAB, so the others (DEL among them) are invalid too, as Go's net/http holds. Ktor's parser refuses only CR and LF;
+ * - a Unicode space (U+00A0, ...) right after the OWS before a value: OWS is only SP and HTAB (RFC 9110 section 5.6.3),
+ *   but Ktor's parser skips any Unicode whitespace there, so the application (and the framing of the body, for
+ *   `Content-Length: <U+00A0>5`) would see another value than a recipient that holds to the grammar. Inside or at the
+ *   end of a value such bytes are obs-text, passed on.
  */
 internal fun checkFieldSection(fields: ByteArray) {
     var start = 0
@@ -74,12 +81,15 @@ internal fun checkFieldSection(fields: ByteArray) {
         var lf = start
         while (lf < fields.size && fields[lf] != LF_BYTE) lf++
         val end = if (lf > start && fields[lf - 1] == CR_BYTE) lf - 1 else lf
-        val colon = (start until end).firstOrNull { fields[it] == ':'.code.toByte() }
-        if (colon != null) {
-            for (i in colon + 1 until end) {
-                val c = fields[i].toInt() and 0xFF
-                if ((c < 0x20 && c != 0x09) || c == 0x7F) refuse("A control character in a field value")
-            }
+        var colon = start
+        while (colon < end && isTcharByte(fields[colon])) colon++
+        if (colon == start || colon == end || fields[colon] != ':'.code.toByte()) refuse("The field name is not a token")
+        var value = colon + 1
+        while (value < end && (fields[value] == SP_BYTE || fields[value] == HTAB_BYTE)) value++
+        if (value < end && unicodeSpaceLength(fields, value) > 0) refuse("A Unicode space before a field value")
+        for (i in value until end) {
+            val c = fields[i].toInt() and 0xFF
+            if ((c < 0x20 && c != 0x09) || c == 0x7F) refuse("A control character in a field value")
         }
         start = lf + 1
     }
