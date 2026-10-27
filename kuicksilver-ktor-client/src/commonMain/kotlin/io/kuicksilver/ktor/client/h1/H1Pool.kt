@@ -195,6 +195,50 @@ internal class H1Pool(
         dns: RequestDns = config.newRequestDns(),
         proxy: ResolvedProxy? = null,
     ): HttpResponseData {
+        @OptIn(io.ktor.utils.io.InternalAPI::class)
+        if (!data.attributes.contains(io.ktor.client.plugins.websocket.WEBSOCKETS_KEY)) {
+            return exchange(data, callContext, preopened, dns, proxy)
+        }
+        // a WebSocket is CONNECTING from its connection until the server answers its handshake (RFC 6455 section 4.1)
+        return webSocketConnecting.serialized(remoteHosts(data, dns, proxy)) {
+            exchange(data, callContext, preopened, dns, proxy)
+        }
+    }
+
+    /** One WebSocket at a time in the CONNECTING state per remote host (RFC 6455 section 4.1, step 2). */
+    internal val webSocketConnecting = WebSocketConnecting()
+
+    /**
+     * The remote hosts [data] may connect to, as [WebSocketConnecting] keys: the addresses of the origin when the engine
+     * resolves its name (the request's own resolution, which the connection then uses, under the connect timeout), else
+     * (an HTTP proxy, a SOCKS5 proxy that resolves names) the origin's name and port.
+     */
+    private suspend fun remoteHosts(
+        data: HttpRequestData,
+        dns: RequestDns,
+        proxy: ResolvedProxy?,
+    ): List<String> {
+        val url = data.url
+        if (proxy != null && (proxy.kind != ResolvedProxy.Kind.Socks5 || proxy.remoteDns)) {
+            return listOf("name ${socketHost(url.host)}:${url.port}")
+        }
+        val addresses =
+            try {
+                withTimeout(data.connectTimeoutMillis(config)) { dns.lookup(url.host, url.port) }
+            } catch (e: TimeoutCancellationException) {
+                throw ConnectTimeoutException(data, e)
+            }
+        return addresses.map { "address $it" }
+    }
+
+    /** [execute] without the WebSocket rule. */
+    private suspend fun exchange(
+        data: HttpRequestData,
+        callContext: CoroutineContext,
+        preopened: Opened?,
+        dns: RequestDns,
+        proxy: ResolvedProxy?,
+    ): HttpResponseData {
         // a request sent again over HTTP/1.1 (after a 421 or a failure over HTTP/3) leaves its HTTP/3 exchange behind:
         // HttpResponse.updatePriority must not reach that stream
         data.attributes.remove(H3ExchangeKey)

@@ -305,7 +305,10 @@ hands out Ktor's copy of the body, which keeps ktor-io's contract: its `readAvai
 `closedCause`, so a loop over that channel checks `closedCause` after -1 (or reads the rest with `readRemaining`).
 
 WebSockets use HTTP/1.1 `Upgrade` unless an HTTP/3 connection to the origin already allows Extended CONNECT (or the
-mode is `H3Only`); over HTTP/3 the handshake is RFC 9220 and the plugin sees the usual 101.
+mode is `H3Only`); over HTTP/3 the handshake is RFC 9220 and the plugin sees the usual 101. Over HTTP/1.1 at most one
+WebSocket is connecting to an address and port at a time (RFC 6455 section 4.1): another one to the same address, under
+any name, opens its connection once the first handshake was answered or failed; through a proxy that resolves names,
+the name counts as the host.
 
 ### Discovery and Alt-Svc
 

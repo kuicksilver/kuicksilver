@@ -275,6 +275,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- Ktor client: at most one WebSocket connection is in the CONNECTING state per remote host (RFC 6455 section 4.1,
+  step 2, MUST): a WebSocket over HTTP/1.1 to an address and port another one is still connecting to waits until that
+  handshake is answered or failed, also when it uses another name for the address; through a proxy that resolves names
+  the name counts as the host. Before, any number connected at once.
 - HTTP/3 server with WebTransport: a WebTransport stream naming a Session ID beyond the bidirectional stream limit the
   server granted closes the connection with `H3_ID_ERROR` at once; the client could never open that session. Such a
   stream held one of the 16 buffer slots for 5 s before.
