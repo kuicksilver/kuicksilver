@@ -400,6 +400,59 @@ class LifecycleTest {
         }
     }
 
+    /** The reason bytes of the CONNECTION_CLOSE (0x1d) leading the 1-RTT packet of [d]. */
+    private fun appCloseReason(
+        d: ByteArray,
+        dcidLen: Int,
+    ): ByteArray {
+        val f = nullOneRttPayload(d, dcidLen)
+        assertTrue(f != null && f[0].toInt() == 0x1d, "a 1-RTT CONNECTION_CLOSE in the ${d.size}-byte datagram")
+        val (_, cl) = varint(f, 1)
+        val (len, ll) = varint(f, 1 + cl)
+        return f.copyOfRange(1 + cl + ll, 1 + cl + ll + len.toInt())
+    }
+
+    /**
+     * RFC 9000 section 19.19: the Reason Phrase "SHOULD be a UTF-8 encoded string". The 1024-byte cap and the cut to fit a packet
+     * split the encoded bytes anywhere, so a reason ending in a multi-byte character went out with half of it.
+     */
+    @Test fun sentReasonTruncatedOnACodePointBoundary() {
+        val p = CorePair()
+        try {
+            assertTrue(p.handshake())
+            p.runUntil { p.client.state == ConnectionState.Confirmed }
+            p.client.close(1, "a".repeat(1023) + "\u00e9", p.now) // 1025 bytes
+            p.batch.clear()
+            check(p.client.poll(p.batch, p.now) >= 1)
+            val r = appCloseReason(p.batch.buffer(0).toByteArray(p.batch.length(0)), p.server!!.localCid.length)
+            assertEquals(1023, r.size, "cut before the 2-byte character")
+            assertEquals("a".repeat(1023), r.decodeToString())
+        } finally {
+            p.close()
+        }
+        // the cut to fit an anti-amplification budget (closeReasonIsTruncatedToFitTheBudget) keeps whole characters too
+        for (budget in 299L..301L) {
+            val q = CorePair()
+            q.filterToServer = { i, _ -> i == 0 }
+            try {
+                q.step()
+                q.step()
+                val s = q.server!!
+                val a = s.amplification
+                a.restore(a.received, 3 * a.received - budget, validated = false)
+                s.close(7, "\u00e9".repeat(512), q.now)
+                q.batch.clear()
+                check(s.poll(q.batch, q.now) == 1)
+                val r = appCloseReason(q.batch.buffer(0).toByteArray(q.batch.length(0)), q.client.localCid.length)
+                assertTrue(r.isNotEmpty() && r.size < 1024, "budget $budget: ${r.size} bytes")
+                assertEquals(0, r.size % 2, "budget $budget: ${r.size} bytes split a character")
+                assertEquals("\u00e9".repeat(r.size / 2), r.decodeToString())
+            } finally {
+                q.close()
+            }
+        }
+    }
+
     @Test fun errorCodeAbove2Pow62Rejected() {
         val p = CorePair()
         try {

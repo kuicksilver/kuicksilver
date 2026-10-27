@@ -1106,7 +1106,13 @@ public class ConnectionCore internal constructor(
         require(code in 0..((1L shl 62) - 1)) { "error code must be 0..2^62-1" }
         if (state == ConnectionState.Closing || state == ConnectionState.Draining || state == ConnectionState.Closed) return
         this.now = now
-        val bytes = reason.encodeToByteArray().let { if (it.size > 1024) it.copyOf(1024) else it }
+        val bytes =
+            reason.encodeToByteArray().let {
+                it.copyOf(
+                    io.kuicksilver.quic.core
+                        .utf8Prefix(it, io.kuicksilver.quic.core.MAX_REASON_BYTES),
+                )
+            }
         // the builder sends 0x1c APPLICATION_ERROR without the reason in Initial/Handshake copies (RFC 9000 section 10.2.3)
         closeFrame = CloseFrame(true, code, 0, bytes)
         enterClosing(QuicException.ConnectionLost.ApplicationClosed(code, reason, Initiator.Local))

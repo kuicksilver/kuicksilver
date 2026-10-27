@@ -384,8 +384,8 @@ internal class PacketBuilder(
                     close.code
                 }
             // the frame is what the closing state exists to deliver (RFC 9000 section 10.2.1): a reason that does not fit the room
-            // left (an anti-amplification budget, section 8.1) is cut, never the frame; a packet without room even for a bare frame
-            // is not built, and the space still owes its copy
+            // left (an anti-amplification budget, section 8.1) is cut, on a character boundary (section 19.19), never the frame; a
+            // packet without room even for a bare frame is not built, and the space still owes its copy
             val bare = FrameEncoder.connectionCloseOverhead(app, code, close.frameType, 0)
             if (w.remaining < bare) {
                 sp.release(p)
@@ -394,7 +394,7 @@ internal class PacketBuilder(
             var reasonLength = reason.size
             if (FrameEncoder.connectionCloseOverhead(app, code, close.frameType, reasonLength) > w.remaining) {
                 val room = w.remaining - bare // bare counts a 1-byte reason length; up to 63 bytes keep it
-                reasonLength = if (room <= 63) room else room - 1
+                reasonLength = utf8Prefix(reason, if (room <= 63) room else room - 1)
             }
             val sentReason = if (reasonLength == reason.size) reason else reason.copyOf(reasonLength)
             FrameEncoder.connectionClose(w, app, code, close.frameType, sentReason)
