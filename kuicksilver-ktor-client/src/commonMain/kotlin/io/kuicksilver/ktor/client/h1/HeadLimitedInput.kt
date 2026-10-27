@@ -44,6 +44,14 @@ internal class HeadLimitedInput(
         headBudget = -1
     }
 
+    /**
+     * Whether bytes wait to be read, in this channel's buffer or [source]'s: between two exchanges, bytes no request asked
+     * for. Looks into [source]'s buffer, so only for a connection no one reads (an idle one); a [source] that failed counts
+     * as having them.
+     */
+    val hasUnread: Boolean
+        get() = !buffer.exhausted() || runCatching { !source.readBuffer.exhausted() }.getOrDefault(true)
+
     override val closedCause: Throwable? get() = source.closedCause
 
     override val isClosedForRead: Boolean
