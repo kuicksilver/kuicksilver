@@ -181,6 +181,31 @@ class QpackDecoderTest {
         assertTrue(d.scannedBytes < 4L * b.size, "scanned ${d.scannedBytes} bytes for ${b.size}: quadratic reassembly")
     }
 
+    /**
+     * RFC 9204 section 7.4: the encoder-stream limits "SHOULD be large enough to process the largest individual field the
+     * HTTP implementation can be configured to accept". With a 1 MiB table and field-section limit, a 100 000-byte value
+     * inserted on the encoder stream (also arriving in pieces) is accepted, as it would be as a literal in a field section.
+     */
+    @Test fun largeInsertWithinCapacityAccepted() {
+        val d = QpackDecoder(1L shl 20, 0, 1L shl 20)
+        val w = QpackWriter()
+        w.writeInt(0x20, 5, 1L shl 20) // Set Dynamic Table Capacity
+        w.writeString(0x40, 5, "x-big", huffman = false) // Insert with Literal Name
+        w.writeString(0x00, 7, "v".repeat(100_000), huffman = false)
+        val b = w.toByteArray()
+        d.onEncoderStream(b, 0, 50_000)
+        d.onEncoderStream(b, 50_000, b.size - 50_000)
+        assertEquals(1, d.insertCount)
+        // the ceiling stays the table: an entry larger than it is still an encoder-stream error (section 3.2.2)
+        val small = QpackDecoder(1L shl 20, 0, 1L shl 20)
+        val w2 = QpackWriter()
+        w2.writeInt(0x20, 5, 100_000)
+        w2.writeString(0x40, 5, "x-big", huffman = false)
+        w2.writeString(0x00, 7, "v".repeat(100_000), huffman = false)
+        val b2 = w2.toByteArray()
+        assertEquals(Http3ErrorCode.QPACK_ENCODER_STREAM_ERROR, assertFailsWith<QpackError> { small.onEncoderStream(b2, 0, b2.size) }.code)
+    }
+
     @Test fun dynamicIndexAtOrAboveRequiredInsertCountFails() {
         val d = dec()
         d.feed("3fbd01 c00f 7777 772e 6578 616d 706c 652e 636f 6d c10c 2f73 616d 706c 652f 7061 7468")

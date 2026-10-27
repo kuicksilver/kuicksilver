@@ -33,7 +33,7 @@ internal class QpackStringTooLong(
 /**
  * Ceilings checked before memory is allocated (threat-model 3.17). The decoder reads field sections with
  * [maxStringLength] = our SETTINGS_MAX_FIELD_SECTION_SIZE (no single string can fit a larger section) and the encoder
- * stream with the 64 KiB default.
+ * stream with min(our table capacity, that limit), at least the 64 KiB default (`encoderStreamLimits`).
  */
 internal class QpackLimits(
     val maxInteger: Long = (1L shl 62) - 1,
@@ -106,7 +106,9 @@ internal class QpackReader(
         val len = readInt(prefixBits, limits)
         // ceilings first (a Huffman literal decodes to at least 8/30 of its length), then "not all here yet"
         if (len > limits.maxStringLength.toLong() * (if (huffman) 4 else 1)) tooLong(len, limits)
-        if (len > remaining) throw QpackTruncated(errorCode, needed = (pos - instructionStart) + len.toInt())
+        if (len > remaining) {
+            throw QpackTruncated(errorCode, needed = ((pos - instructionStart) + len).coerceAtMost(Int.MAX_VALUE.toLong()).toInt())
+        }
         val n = len.toInt()
         val s =
             if (huffman) {
