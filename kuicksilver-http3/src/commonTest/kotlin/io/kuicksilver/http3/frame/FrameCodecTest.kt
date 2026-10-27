@@ -145,6 +145,21 @@ class FrameRulesTest {
         assertEquals(FrameAction.Process, FrameRules.checkControl(FrameType.SETTINGS, first = true, isServer = false))
     }
 
+    /**
+     * RFC 9114 section 6.2.1: any first frame other than SETTINGS is H3_MISSING_SETTINGS, the WebTransport signal included
+     * (draft-ietf-webtrans-http3 makes it H3_FRAME_ERROR elsewhere on the control stream).
+     */
+    @Test fun wtStreamFirstOnControlIsMissingSettings() {
+        assertEquals(
+            Http3ErrorCode.MISSING_SETTINGS,
+            err { FrameRules.checkControl(FrameType.WT_STREAM, first = true, isServer = true, webTransport = true) },
+        )
+        assertEquals(
+            Http3ErrorCode.FRAME_ERROR,
+            err { FrameRules.checkControl(FrameType.WT_STREAM, first = false, isServer = true, webTransport = true) },
+        )
+    }
+
     @Test fun secondSettingsUnexpected() {
         assertEquals(Http3ErrorCode.FRAME_UNEXPECTED, err { FrameRules.checkControl(FrameType.SETTINGS, first = false, isServer = true) })
     }

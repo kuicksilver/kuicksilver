@@ -267,6 +267,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- HTTP/3 with WebTransport: a WebTransport `WT_STREAM` signal as the first frame of the peer's control stream now closes
+  the connection with `H3_MISSING_SETTINGS`, as RFC 9114 section 6.2.1 requires of any first frame other than SETTINGS,
+  instead of `H3_FRAME_ERROR`.
 - HTTP/3: the QPACK encoder-stream string ceiling follows the configuration: min(`qpackMaxTableCapacity`,
   `maxFieldSectionSize`), at least 64 KiB (at most 256 MiB), as RFC 9204 section 7.4 asks. It was a fixed 64 KiB, so with
   a raised table capacity and field-section limit a peer inserting a larger field into the dynamic table closed the

@@ -27,12 +27,13 @@ internal object FrameRules {
         isServer: Boolean,
         webTransport: Boolean = false,
     ): FrameAction {
-        if (webTransport && type == FrameType.WT_STREAM) wtStreamMisplaced("the control stream")
+        // the first-frame rule (RFC 9114 section 6.2.1) wins over the WebTransport one: any other first frame is MISSING_SETTINGS
         if (first &&
             type != FrameType.SETTINGS
         ) {
             throw H3ProtocolError(Http3ErrorCode.MISSING_SETTINGS, "control stream must start with SETTINGS")
         }
+        if (webTransport && type == FrameType.WT_STREAM) wtStreamMisplaced("the control stream")
         return when (type) {
             FrameType.SETTINGS -> {
                 if (first) FrameAction.Process else unexpected("second SETTINGS")
