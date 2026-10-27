@@ -49,6 +49,10 @@ class ServerH1ResponseFramingTest {
             get("/reason-crlf") { call.respond(HttpStatusCode(200, "OK\r\nX-Injected: 1")) }
             get("/reason-nul") { call.respond(HttpStatusCode(299, "a\u0000b")) }
             get("/reason-ok") { call.respond(HttpStatusCode(299, "Tr\u00e8s\tbien !")) }
+            get("/length-and-stream") {
+                call.response.header(HttpHeaders.ContentLength, "5")
+                call.respondBytesWriter { writeStringUtf8("hello") }
+            }
             get("/304-stream-text") { call.respondBytesWriter(status = HttpStatusCode.NotModified) { writeStringUtf8("abc") } }
         }
     }
@@ -170,6 +174,31 @@ class ServerH1ResponseFramingTest {
                     assertEquals(line, resp.substringBefore("\r\n"), "$path: $resp")
                     assertFalse(resp.contains("X-Injected"), "$path: $resp")
                 }
+            }
+        }
+
+    /**
+     * RFC 9112 section 6.2: a sender MUST NOT send a Content-Length field in any message that contains a
+     * Transfer-Encoding field. An application's Content-Length on a streamed response (which Ktor frames with
+     * `Transfer-Encoding: chunked`) is dropped; the chunked framing stays. Before, both went out, and a recipient that
+     * frames by Content-Length reads the chunk framing as the body.
+     */
+    @Test fun negative_noContentLengthWithTransferEncoding() =
+        serverTest {
+            plainServer { port ->
+                val resp =
+                    withTimeout(10.seconds) {
+                        rawHttp(
+                            port,
+                            "GET /length-and-stream HTTP/1.1\r\nHost: s\r\n\r\nGET / HTTP/1.1\r\nHost: s\r\nConnection: close\r\n\r\n",
+                            tls = null,
+                        )
+                    }
+                val head = resp.substringBefore("\r\n\r\n")
+                assertTrue(head.contains("\r\nTransfer-Encoding: chunked"), resp)
+                assertFalse(head.contains("Content-Length", ignoreCase = true), resp)
+                assertTrue(resp.contains("\r\n\r\n5\r\nhello\r\n0\r\n\r\nHTTP/1.1 200 "), resp)
+                assertTrue(resp.endsWith("root"), resp)
             }
         }
 

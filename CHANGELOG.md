@@ -165,6 +165,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   chunked<U+00A0>` a chunked one, so with a proxy in front that framed the response otherwise the bytes behind it
   became the response to the next request (response splitting). A `Transfer-Encoding` that is not a list of transfer
   codings or that applies `chunked` twice (RFC 9112 section 6.1) fails the same way.
+- Ktor server, HTTP/1.1: a response no longer carries both `Content-Length` and `Transfer-Encoding` (RFC 9112 section
+  6.2: a sender MUST NOT). A `Content-Length` the application set on a streamed response, which Ktor frames with
+  `Transfer-Encoding: chunked`, is dropped; before, both went out, and a client or proxy that framed the response by
+  the length read the chunk framing as the body.
 - Ktor server, HTTP/1.1: an application's status description with a character a reason phrase cannot hold (CR, LF,
   NUL; RFC 9112 section 4) is replaced by the registered reason of the code, or none. Before, it was written as it
   was: `HttpStatusCode(200, "OK\r\nX-Injected: 1")` split the response and added a field of its own.
