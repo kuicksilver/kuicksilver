@@ -70,39 +70,47 @@ class TransportParametersTest {
         assertEquals(0L, tp.maxDatagramFrameSize)
     }
 
-    @Test fun roundTripAllParameters() =
-        runTest {
-            checkAll(300, Arb.boolean()) { server ->
+    /**
+     * 300 random parameter sets per role survive encode and decode. A plain seeded loop rather than Kotest's checkAll:
+     * Android 7.0's ART aborted the test process in its garbage collector on proptest's frame ("Found invalid root",
+     * CI emulator API 24), a runtime bug no change to the codec could avoid.
+     */
+    @Test fun roundTripAllParameters() {
+        val rnd = kotlin.random.Random(0x7E5E_A11L)
+
+        fun varint() = rnd.nextLong(0L, VarInt.MAX + 1)
+        for (iteration in 0 until 300) {
+            for (server in listOf(false, true)) {
                 val tp = TransportParameters()
-                val cid = { Arb.list(Arb.byte(), 0..20).bind().toByteArray() }
+                val cid = { rnd.nextBytes(rnd.nextInt(0, 21)) }
                 tp.initialSourceConnectionId = ConnectionId(cid())
                 if (server) {
                     tp.originalDestinationConnectionId = ConnectionId(cid())
                     tp.retrySourceConnectionId = ConnectionId(cid())
                     tp.statelessResetToken =
-                        ByteArray(16) { Arb.byte().bind() }
+                        rnd.nextBytes(16)
                     tp.preferredAddressPresent = false
                 }
-                tp.maxIdleTimeoutMs = Arbs.varint().bind()
-                tp.maxUdpPayloadSize = Arb.long(1200L..65527L).bind()
+                tp.maxIdleTimeoutMs = varint()
+                tp.maxUdpPayloadSize = rnd.nextLong(1200L, 65528L)
                 tp.initialMaxData =
-                    Arbs.varint().bind()
-                tp.initialMaxStreamDataBidiLocal = Arbs.varint().bind()
-                tp.initialMaxStreamDataBidiRemote = Arbs.varint().bind()
+                    varint()
+                tp.initialMaxStreamDataBidiLocal = varint()
+                tp.initialMaxStreamDataBidiRemote = varint()
                 tp.initialMaxStreamDataUni =
-                    Arbs.varint().bind()
-                tp.initialMaxStreamsBidi = Arb.long(0L..(1L shl 60)).bind()
-                tp.initialMaxStreamsUni = Arb.long(0L..(1L shl 60)).bind()
+                    varint()
+                tp.initialMaxStreamsBidi = rnd.nextLong(0L, (1L shl 60) + 1)
+                tp.initialMaxStreamsUni = rnd.nextLong(0L, (1L shl 60) + 1)
                 tp.ackDelayExponent =
-                    Arb.int(0..20).bind()
-                tp.maxAckDelayMs = Arb.long(0L..16383L).bind()
-                tp.disableActiveMigration = Arb.boolean().bind()
+                    rnd.nextInt(0, 21)
+                tp.maxAckDelayMs = rnd.nextLong(0L, 16384L)
+                tp.disableActiveMigration = rnd.nextBoolean()
                 tp.activeConnectionIdLimit =
-                    Arb.long(2L..100L).bind()
-                tp.maxDatagramFrameSize = Arbs.varint().bind()
-                tp.greaseQuicBit = Arb.boolean().bind()
-                tp.resetStreamAt = Arb.boolean().bind()
-                if (Arb.boolean().bind()) {
+                    rnd.nextLong(2L, 101L)
+                tp.maxDatagramFrameSize = varint()
+                tp.greaseQuicBit = rnd.nextBoolean()
+                tp.resetStreamAt = rnd.nextBoolean()
+                if (rnd.nextBoolean()) {
                     tp.chosenVersion = 1
                     tp.availableVersions = intArrayOf(1, 0x6b3343cf)
                 }
@@ -131,6 +139,7 @@ class TransportParametersTest {
                 assertEquals(tp.availableVersions?.toList(), back.availableVersions?.toList())
             }
         }
+    }
 
     /**
      * Found by the `rememberedTicket` fuzz target: a server may list many versions in version_information (the decoder takes
