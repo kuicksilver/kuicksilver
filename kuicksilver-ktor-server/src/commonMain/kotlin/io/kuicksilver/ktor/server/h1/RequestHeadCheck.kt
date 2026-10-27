@@ -23,10 +23,11 @@ internal class RequestHeadRefused(
 /**
  * Checks the request head at the start of [this] input (empty lines before it already skipped) before Ktor's parser reads
  * it, and throws [RequestHeadRefused] for one the server refuses. A request line longer than [MAX_REQUEST_LINE_BYTES]
- * is a request-target longer than the server parses: 414 (RFC 9112 section 3: the server MUST respond with 414), unless
- * no method and separator start it (400, as before). The request line itself is checked by [checkRequestLine] as soon
- * as it is there, the field lines by [checkFieldSection] once the whole head is. Returns without a verdict when the
- * input ends or the head limit is reached before the head's end: the parser then reports that as it did.
+ * is a request-target longer than the server parses: 414 (RFC 9112 section 3: the server MUST respond with 414), or a
+ * method longer than any the server implements (501), see [refuseLongLine]. The request line itself is checked by
+ * [checkRequestLine] as soon as it is there, the field lines by [checkFieldSection] once the whole head is. Returns
+ * without a verdict when the input ends or the head limit is reached before the head's end: the parser then reports that
+ * as it did.
  */
 @OptIn(InternalAPI::class, InternalIoApi::class)
 internal suspend fun HeadLimitedInput.checkRequestHead() {
@@ -191,14 +192,19 @@ internal fun unicodeSpaceLength(
     }
 }
 
-/** 414 when the over-long line starts with a method token and a separator, else 400. */
+/**
+ * The answer to a request line longer than [MAX_REQUEST_LINE_BYTES]: 501 when its method alone is that long (RFC 9112
+ * section 3: a server that receives a method longer than any that it implements SHOULD respond with 501), 414 when a
+ * method and a separator start it, so the request-target is what is too long (section 3: MUST respond with 414), else
+ * 400 (not a request line).
+ */
 private fun refuseLongLine(buffer: kotlinx.io.Buffer): Nothing {
     var i = 0L
     while (i < buffer.size && isTcharByte(buffer[i])) i++
-    if (i > 0 && i < buffer.size && isRequestLineWhitespace(buffer[i])) {
-        throw RequestHeadRefused(414, "URI Too Long", "The request line is longer than $MAX_REQUEST_LINE_BYTES bytes")
-    }
-    throw RequestHeadRefused(400, "Bad Request", "The request line is longer than $MAX_REQUEST_LINE_BYTES bytes")
+    val message = "The request line is longer than $MAX_REQUEST_LINE_BYTES bytes"
+    if (i > MAX_REQUEST_LINE_BYTES) throw RequestHeadRefused(501, "Not Implemented", message)
+    if (i > 0 && i < buffer.size && isRequestLineWhitespace(buffer[i])) throw RequestHeadRefused(414, "URI Too Long", message)
+    throw RequestHeadRefused(400, "Bad Request", message)
 }
 
 /** tchar (RFC 9110 section 5.6.2) as a byte. */
