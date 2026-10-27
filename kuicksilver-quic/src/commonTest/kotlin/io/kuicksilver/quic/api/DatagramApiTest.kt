@@ -119,23 +119,24 @@ class DatagramApiTest {
                 withTimeout(30.seconds) {
                     val (c, s) = p.connect()
                     congest(p, c)
-                    repeat(
-                        32,
-                    ) {
-                        assertEquals(
-                            DatagramSendResult.Sent,
-                            c.trySendDatagram(payload(it, 1000), DatagramPolicy.Reject),
-                            "slot ${it + 1} of 32",
-                        )
+                    // the queue holds 32: under Reject, datagrams are accepted until it is full. A PTO probe may carry a queued
+                    // datagram past cwnd (RFC 9002 section 6.2.4; max_ack_delay does not delay the PTO of the handshake spaces,
+                    // section 6.2.1), freeing a slot, and each packet carries at most one of these 1000-byte datagrams: so at most
+                    // 32 plus the packets sent meanwhile are accepted, and never fewer than 32
+                    val sentBefore = c.stats.packetsSent
+                    var accepted = 0
+                    var last: DatagramSendResult = DatagramSendResult.Sent
+                    while (accepted < 64) {
+                        last = c.trySendDatagram(payload(accepted, 1000), DatagramPolicy.Reject)
+                        if (last != DatagramSendResult.Sent) break
+                        accepted++
                     }
-                    val before = c.stats
-                    val thirtyThird = c.trySendDatagram(payload(99, 1000), DatagramPolicy.Reject)
-                    // a slot that drained shows here: a PTO probe (ptoCount), a packet declared lost (lostPackets), or cwnd room
-                    assertEquals(
-                        DatagramSendResult.QueueFull,
-                        thirtyThird,
-                        "the 33rd under Reject (before it: ptoCount=${before.ptoCount} lost=${before.lostPackets} " +
-                            "inFlight=${before.bytesInFlight} cwnd=${before.cwnd} sent=${before.packetsSent}; now ${c.stats.packetsSent} sent)",
+                    val leftOnTheWire = c.stats.packetsSent - sentBefore
+                    assertEquals(DatagramSendResult.QueueFull, last, "Reject ends with QueueFull after $accepted")
+                    assertTrue(accepted >= 32, "all 32 slots are usable: $accepted accepted")
+                    assertTrue(
+                        accepted <= 32 + leftOnTheWire,
+                        "never more than 32 queued: $accepted accepted while $leftOnTheWire packets left (ptoCount=${c.stats.ptoCount})",
                     )
                     repeat(1000) {
                         assertEquals(DatagramSendResult.Sent, c.trySendDatagram(payload(it, 1000), DatagramPolicy.DropOldest))
