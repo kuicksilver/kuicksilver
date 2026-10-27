@@ -140,6 +140,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   a stream error `H3_MESSAGE_ERROR`, and our own requests, responses and trailers with one fail locally with
   `IllegalArgumentException`. Only NUL, CR and LF were refused, so a value such as `a<ESC>b` reached the application
   and the Ktor engines.
+- TLS server: a server that used the client's server name now acknowledges it with an empty `server_name` extension
+  (in EncryptedExtensions for TLS 1.3, in the ServerHello of a full TLS 1.2 handshake), as RFC 6066 section 3 requires;
+  before, the extension was never sent. Also on an SNI override and on QUIC.
 - Windows (mingwX64) TCP: a connect, send or receive no longer fails at random with "POSIX error 0: No error". The
   socket code read the Winsock error after Kotlin/Native had unpinned the buffer, which can reset it, so a pending
   connect or a would-block send/receive was taken for a failure. The error is now read right after each call (the POSIX

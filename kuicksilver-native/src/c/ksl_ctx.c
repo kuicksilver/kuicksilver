@@ -104,6 +104,15 @@ static SSL_TICKET_RETURN ticket_dec_cb(SSL *ssl, SSL_SESSION *sess, const unsign
     default: return SSL_TICKET_RETURN_IGNORE;
     }
 }
+/* RFC 6066 section 3: a server that used server_name "SHALL include an extension of type 'server_name' in the (extended) server
+   hello" with empty data (TLS 1.3: in EncryptedExtensions). OpenSSL sends it only when a servername callback answers
+   SSL_TLSEXT_ERR_OK, and itself leaves it out of a resumed TLS 1.2 ServerHello, as the RFC requires. The name is already chosen by
+   then (ksl_client_hello_cb); OpenSSL reads this callback from the session's current context, so every server context carries it,
+   an SNI override too. */
+static int servername_ack_cb(SSL *ssl, int *al, void *arg) {
+    (void)al; (void)arg;
+    return SSL_get_servername(ssl, TLSEXT_NAMETYPE_host_name) ? SSL_TLSEXT_ERR_OK : SSL_TLSEXT_ERR_NOACK;
+}
 static int allow_early_data_cb(SSL *ssl, void *arg) { (void)arg; ksl_ssl *s = SSL_get_ex_data(ssl, 1); return s && s->early_allow && s->early_ctx_match; }
 void ksl_ctx_enable_early_data(SSL_CTX *ctx) {
     /* OpenSSL's own anti-replay makes tickets stateful in the server cache ksl keeps off: with it every early data would be refused */
@@ -159,6 +168,7 @@ ksl_ctx *ksl_ctx_new(int role) {
        allows, and decrypts none: a full handshake. */
     if (role == KSL_SERVER) SSL_CTX_set_tlsext_ticket_key_evp_cb(c->ctx, ticket_cb);
     if (role == KSL_SERVER) SSL_CTX_set_client_hello_cb(c->ctx, ksl_client_hello_cb, c);   /* QUIC ALPN check, SNI pause (KSL_OPT_SNI_PAUSE) */
+    if (role == KSL_SERVER) SSL_CTX_set_tlsext_servername_callback(c->ctx, servername_ack_cb);
     ksl_live_add(KSL_LIVE_CTX, 1);
     return c;
 }

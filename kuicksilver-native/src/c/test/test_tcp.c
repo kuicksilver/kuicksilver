@@ -304,4 +304,69 @@ static void test_keyless_server_no_tickets(void) {
     ksl_ctx_free(cc); ksl_ctx_free(keyless); ksl_ctx_free(keyed); ksl_ctx_free(base); END();
 }
 
-void run_tcp(void) { test_echo(); test_truncation(); test_tls12(); test_resumption(); test_sni_pause(); test_sni_override_alpn(); test_sni_override_settings_effective(); test_no_tls12_ticket_without_num_tickets(); test_session_context(); test_ticket_bound_to_server_name(); test_keyless_server_no_tickets(); }
+/* What the client saw of one extension in the server's hello messages (ServerHello; in TLS 1.3 EncryptedExtensions), from a
+   message callback on the client: -1 none, else the length of the extension's data. */
+typedef struct { unsigned type; int in_server_hello, in_encrypted_extensions; } ext_seen;
+static int find_ext(const uint8_t *p, size_t len, unsigned type) {   /* p: the extensions block with its 2-byte length */
+    if (len < 2) return -1; size_t total = ((size_t)p[0] << 8) | p[1], off = 2; if (total + 2 > len) return -1;
+    while (off + 4 <= total + 2) {
+        unsigned t = ((unsigned)p[off] << 8) | p[off + 1]; size_t l = ((size_t)p[off + 2] << 8) | p[off + 3];
+        if (off + 4 + l > total + 2) return -1; if (t == type) return (int)l; off += 4 + l;
+    }
+    return -1;
+}
+static void server_ext_cb(int write_p, int version, int content_type, const void *buf, size_t len, SSL *ssl, void *arg) {
+    (void)version; (void)ssl; ext_seen *e = arg; const uint8_t *m = buf;
+    if (write_p || content_type != SSL3_RT_HANDSHAKE || len < 4) return;
+    if (m[0] == SSL3_MT_SERVER_HELLO && len >= 4 + 2 + 32 + 1) {
+        size_t off = 4 + 2 + 32; off += 1 + m[off]; off += 2 + 1;   /* session id, cipher suite, compression */
+        if (off <= len) e->in_server_hello = find_ext(m + off, len - off, e->type);
+    } else if (m[0] == SSL3_MT_ENCRYPTED_EXTENSIONS) e->in_encrypted_extensions = find_ext(m + 4, len - 4, e->type);
+}
+static void watch_server_ext(ksl_ssl *c, ext_seen *e, unsigned type) {
+    e->type = type; e->in_server_hello = e->in_encrypted_extensions = -1;
+    SSL *raw = ksl_ssl_raw_for_test(c); SSL_set_msg_callback(raw, server_ext_cb); SSL_set_msg_callback_arg(raw, e);
+}
+
+static void test_server_acknowledges_server_name(void) {
+    SECTION("tcp_server_acknowledges_server_name");
+    /* RFC 6066 section 3: a server that used the server_name extension "SHALL include an extension of type 'server_name' in the
+       (extended) server hello. The 'extension_data' field of this extension SHALL be empty"; in TLS 1.3 it travels in
+       EncryptedExtensions (RFC 8446 section 4.2). "When resuming a session, the server MUST NOT include a server_name extension in
+       the server hello" (TLS 1.2; TLS 1.3 negotiates the name in every handshake). */
+    uint8_t keys[80]; for (int i = 0; i < 80; i++) keys[i] = (uint8_t)(i * 11 + 5);
+    ksl_ctx *cc = client_ctx("test-ca", KSL_VERIFY_OPENSSL), *sc = server_ctx("server"); ext_seen e;
+    ksl_ctx_set_option(sc, KSL_OPT_MIN_VERSION, KSL_TLS1_2); ksl_ctx_set_option(sc, KSL_OPT_NUM_TICKETS, 1); ksl_ctx_set_ticket_keys(sc, keys, 1);
+    ksl_ssl *c = tcp_client(cc, "server.test"), *s = ksl_ssl_new(sc, KSL_MODE_TCP); watch_server_ext(c, &e, TLSEXT_TYPE_server_name);
+    CHECK(tcp_pump(c, s, NULL, NULL) == KSL_OK, "TLS 1.3 handshake with SNI");
+    CHECK(e.in_encrypted_extensions == 0 && e.in_server_hello == -1, "TLS 1.3: an empty server_name in EncryptedExtensions");
+    ksl_session *sess = client_session_after(c); ksl_ssl_free(c); ksl_ssl_free(s);
+    c = tcp_client(cc, "server.test"); s = ksl_ssl_new(sc, KSL_MODE_TCP); watch_server_ext(c, &e, TLSEXT_TYPE_server_name); ksl_ssl_set_session(c, sess);
+    uint8_t reused = 0; size_t n;
+    CHECK(tcp_pump(c, s, NULL, NULL) == KSL_OK && ksl_ssl_get(c, KSL_GET_SESSION_REUSED, &reused, 1, &n) == KSL_OK && reused == 1, "TLS 1.3 resumption");
+    CHECK(e.in_encrypted_extensions == 0, "TLS 1.3 resumption: server_name acknowledged again");
+    ksl_session_free(sess); ksl_ssl_free(c); ksl_ssl_free(s);
+    c = tcp_client(cc, NULL); s = ksl_ssl_new(sc, KSL_MODE_TCP); watch_server_ext(c, &e, TLSEXT_TYPE_server_name);
+    CHECK(tcp_pump(c, s, NULL, NULL) == KSL_OK, "TLS 1.3 handshake without SNI");
+    CHECK(e.in_encrypted_extensions == -1 && e.in_server_hello == -1, "negative: no server_name answers a ClientHello without one");
+    ksl_ssl_free(c); ksl_ssl_free(s);
+    /* TLS 1.2: in the ServerHello, and not on a resumption */
+    ksl_ctx *cc12 = client_ctx("test-ca", KSL_VERIFY_OPENSSL); ksl_ctx_set_option(cc12, KSL_OPT_MIN_VERSION, KSL_TLS1_2); ksl_ctx_set_option(cc12, KSL_OPT_MAX_VERSION, KSL_TLS1_2);
+    c = tcp_client(cc12, "server.test"); s = ksl_ssl_new(sc, KSL_MODE_TCP); watch_server_ext(c, &e, TLSEXT_TYPE_server_name);
+    CHECK(tcp_pump(c, s, NULL, NULL) == KSL_OK, "TLS 1.2 handshake with SNI");
+    CHECK(e.in_server_hello == 0, "TLS 1.2: an empty server_name in the ServerHello");
+    sess = ksl_ssl_get1_session(c); CHECK(sess != NULL, "a TLS 1.2 ticket"); ksl_ssl_free(c); ksl_ssl_free(s);
+    c = tcp_client(cc12, "server.test"); s = ksl_ssl_new(sc, KSL_MODE_TCP); watch_server_ext(c, &e, TLSEXT_TYPE_server_name); ksl_ssl_set_session(c, sess);
+    CHECK(tcp_pump(c, s, NULL, NULL) == KSL_OK && ksl_ssl_get(c, KSL_GET_SESSION_REUSED, &reused, 1, &n) == KSL_OK && reused == 1, "TLS 1.2 resumption");
+    CHECK(e.in_server_hello == -1, "negative: a resumed TLS 1.2 session gets no server_name");
+    ksl_session_free(sess); ksl_ssl_free(c); ksl_ssl_free(s);
+    /* an SNI override's context acknowledges too (OpenSSL reads the callback from the session's current context) */
+    ksl_ctx *base = server_ctx("server-other-ca"), *proxy = server_ctx("server"); ksl_ctx_set_option(base, KSL_OPT_SNI_PAUSE, 1);
+    c = tcp_client(cc, "server.test"); s = ksl_ssl_new(base, KSL_MODE_TCP); watch_server_ext(c, &e, TLSEXT_TYPE_server_name); sni_arg a = {proxy, 0, 0, {0}};
+    CHECK(tcp_pump(c, s, on_sni, &a) == KSL_OK, "handshake under the SNI override");
+    CHECK(e.in_encrypted_extensions == 0, "the override acknowledges server_name");
+    ksl_ssl_free(c); ksl_ssl_free(s);
+    ksl_ctx_free(cc); ksl_ctx_free(cc12); ksl_ctx_free(sc); ksl_ctx_free(base); ksl_ctx_free(proxy); END();
+}
+
+void run_tcp(void) { test_echo(); test_truncation(); test_tls12(); test_resumption(); test_sni_pause(); test_sni_override_alpn(); test_sni_override_settings_effective(); test_no_tls12_ticket_without_num_tickets(); test_session_context(); test_ticket_bound_to_server_name(); test_keyless_server_no_tickets(); test_server_acknowledges_server_name(); }
