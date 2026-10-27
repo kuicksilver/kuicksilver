@@ -56,6 +56,7 @@ struct ksl_ssl {
     int ticket_authorized;
     /* TCP mode */
     BIO *net;                                        /* our end of the bio pair */
+    uint64_t records_sent, key_update_records;       /* records written under the current key; the bound for a KeyUpdate (ksl_tcp_write) */
     /* keylog lines */
     char *keylog; size_t keylog_len, keylog_cap;
     /* errors */
