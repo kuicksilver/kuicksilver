@@ -24,12 +24,14 @@ internal sealed interface DecodeResult {
 /**
  * QPACK decoder (RFC 9204 sections 2.2, 3, 4.3-4.5): applies the peer's encoder stream to the dynamic table, decodes field
  * sections and produces the decoder-stream instructions. [maxTableCapacity] and [maxBlockedStreams] are what we advertised.
+ * [limits] bound the encoder stream; by default a string may be as long as the largest field we accept that fits the
+ * table (RFC 9204 section 7.4), at least 64 KiB: an entry never exceeds the advertised capacity, so memory stays bounded by it.
  */
 internal class QpackDecoder(
     val maxTableCapacity: Long,
     val maxBlockedStreams: Int,
     val maxFieldSectionSize: Long,
-    private val limits: QpackLimits = QpackLimits(),
+    private val limits: QpackLimits = encoderStreamLimits(maxTableCapacity, maxFieldSectionSize),
 ) {
     /** Field sections: no single string can exceed the section limit (RFC 9204 section 7.4 ties the ceiling to it). */
     private val fieldLimits = QpackLimits(limits.maxInteger, maxFieldSectionSize.coerceIn(1L, Int.MAX_VALUE.toLong()).toInt())
@@ -86,8 +88,8 @@ internal class QpackDecoder(
             } catch (t: QpackTruncated) {
                 scannedBytes += r.pos - mark
                 val rest = end - mark
-                val ceiling = 2 * limits.maxStringLength + 64
-                if (rest > ceiling || t.needed > ceiling) r.fail("encoder-stream instruction above ${2 * limits.maxStringLength} bytes")
+                val ceiling = 2L * limits.maxStringLength + 64
+                if (rest > ceiling || t.needed > ceiling) r.fail("encoder-stream instruction above ${2L * limits.maxStringLength} bytes")
                 pend.writeBytes(buf, mark, rest)
                 scannedBytes += rest
                 needed = t.needed
@@ -306,4 +308,21 @@ internal class QpackDecoder(
         out.reset()
         return b
     }
+}
+
+/** Largest encoder-stream string we ever read (256 MiB): keeps the instruction lengths (up to 4x for Huffman) within an Int. */
+internal const val MAX_ENCODER_STREAM_STRING: Int = 1 shl 28
+
+/**
+ * The encoder-stream string ceiling of RFC 9204 section 7.4: the largest field we accept that fits the table,
+ * min(table capacity, field-section limit), at least 64 KiB and at most [MAX_ENCODER_STREAM_STRING].
+ */
+internal fun encoderStreamLimits(
+    maxTableCapacity: Long,
+    maxFieldSectionSize: Long,
+): QpackLimits {
+    val default = QpackLimits()
+    val largest =
+        minOf(maxTableCapacity, maxFieldSectionSize).coerceIn(default.maxStringLength.toLong(), MAX_ENCODER_STREAM_STRING.toLong())
+    return QpackLimits(maxStringLength = largest.toInt())
 }
