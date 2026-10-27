@@ -23,11 +23,15 @@ internal class KeptFieldValue(
  */
 internal const val MAX_REQUEST_LINE_BYTES: Int = 8_192
 
-/** A request head the server refuses before Ktor's parser sees it: [status] with [reason], then the connection closes. */
+/**
+ * A request head the server refuses before Ktor's parser sees it: [status] with [reason], then the connection closes; a
+ * 301 carries the [location] to send.
+ */
 internal class RequestHeadRefused(
     val status: Int,
     val reason: String,
     message: String,
+    val location: String? = null,
 ) : Exception(message)
 
 /**
@@ -163,11 +167,13 @@ internal fun checkRequestLine(line: ByteArray): Int {
     skipWhitespace()
     val methodStart = i
     while (i < n && isTcharByte(line[i])) i++
+    val methodEnd = i
     if (i == methodStart || i == n || !isRequestLineWhitespace(line[i])) refuse("The method is not a token")
     skipWhitespace()
     val targetStart = i
     while (i < n && !isRequestLineWhitespace(line[i])) i++
     if (i == targetStart || i == n) refuse("No request-target or no version")
+    val targetEnd = i
     skipWhitespace()
     val version = i
     while (i < n && !isRequestLineWhitespace(line[i])) i++
@@ -183,8 +189,134 @@ internal fun checkRequestLine(line: ByteArray): Int {
     if (line[version + 5] != '1'.code.toByte()) {
         throw RequestHeadRefused(505, "HTTP Version Not Supported", "HTTP major version other than 1")
     }
+    checkRequestTarget(line.decodeToString(methodStart, methodEnd), line, targetStart, targetEnd)
     return version + 7
 }
+
+/**
+ * Checks the request-target `line[start, end)` of a [method] request against its forms (RFC 9112 section 3.2): the
+ * authority-form `uri-host ":" port` for CONNECT, and only there, with a port from 1 to 65535 (RFC 9110 section 9.3.6: a
+ * server MUST reject a CONNECT to an empty or invalid port); the asterisk-form for OPTIONS only; else the origin-form
+ * (`absolute-path [ "?" query ]`) or the absolute-form (an absolute-URI: no fragment). Characters follow RFC 3986:
+ * path and query characters, `%` with two hex digits. Anything else is an invalid request line, which the server SHOULD
+ * answer with 400 or with a 301 to the request-target properly encoded (RFC 9112 section 3): the 301 for an origin-form
+ * target of a GET or HEAD whose only fault is characters (browsers send `|`, `{`, `^`, `[` unencoded: the WHATWG URL
+ * standard leaves them), 400 otherwise.
+ */
+private fun checkRequestTarget(
+    method: String,
+    line: ByteArray,
+    start: Int,
+    end: Int,
+) {
+    val target = line.decodeToString(start, end)
+    val ascii = (start until end).all { (line[it].toInt() and 0xFF) < 0x80 }
+    if (method == "CONNECT") {
+        val colon = if (target.startsWith("[")) target.indexOf("]:").let { if (it < 0) -1 else it + 1 } else target.lastIndexOf(':')
+        val port =
+            if (colon <
+                0
+            ) {
+                null
+            } else {
+                target.substring(colon + 1).takeIf { p -> p.length in 1..5 && p.all { it in '0'..'9' } }?.toInt()
+            }
+        if (!ascii || colon < 0 || port == null || port !in 1..65_535 || !isValidHostField(target)) {
+            refuse("CONNECT needs a request-target of uri-host \":\" port")
+        }
+        return
+    }
+    if (target == "*") {
+        if (method != "OPTIONS") refuse("The asterisk-form is for OPTIONS only")
+        return
+    }
+    if (target.startsWith("/")) {
+        if (ascii && isPathAndQuery(target)) return
+        if (method == "GET" || method == "HEAD") {
+            val location = encodeOriginForm(line, start, end)
+            throw RequestHeadRefused(301, "Moved Permanently", "An origin-form request-target with invalid characters", location)
+        }
+        refuse("Invalid characters in the request-target")
+    }
+    if (!ascii || !isAbsoluteUri(target)) refuse("The request-target is no origin-form and no absolute-URI")
+}
+
+/** `absolute-path [ "?" query ]` (RFC 9112 section 3.2.1, RFC 3986 section 3.3, 3.4) of a target that starts with `/`. */
+private fun isPathAndQuery(s: String): Boolean {
+    var i = 0
+    while (i < s.length) {
+        val c = s[i]
+        when {
+            c == '%' -> {
+                if (i + 2 >= s.length || !isHexDigitChar(s[i + 1]) || !isHexDigitChar(s[i + 2])) return false
+                i += 3
+                continue
+            }
+
+            !isPchar(c) && c != '/' && c != '?' -> {
+                return false
+            }
+        }
+        i++
+    }
+    return true
+}
+
+/**
+ * absolute-URI = scheme ":" hier-part [ "?" query ] (RFC 3986 section 4.3): a scheme, then either `//` an authority
+ * (userinfo, which RequestFraming refuses for http and https, `@` a Host-like `uri-host [ ":" port ]`) and a path, or
+ * a path; then a query. No fragment.
+ */
+private fun isAbsoluteUri(s: String): Boolean {
+    val colon = s.indexOf(':')
+    if (colon < 1 || !s[0].isAsciiLetter() || !s.substring(1, colon).all { it.isAsciiLetter() || it in '0'..'9' || it in "+-." }) {
+        return false
+    }
+    var rest = s.substring(colon + 1)
+    if (rest.startsWith("//")) {
+        val authorityEnd = rest.indexOfAny(charArrayOf('/', '?'), 2).let { if (it < 0) rest.length else it }
+        val authority = rest.substring(2, authorityEnd)
+        // userinfo = *( unreserved / pct-encoded / sub-delims / ":" ): path characters without "@"
+        val at = authority.lastIndexOf('@')
+        val userinfo = if (at < 0) "" else authority.substring(0, at)
+        if ('@' in userinfo || !isPathAndQuery("/$userinfo") || !isValidHostField(authority.substring(at + 1))) return false
+        rest = rest.substring(authorityEnd)
+    }
+    return isPathAndQuery("/$rest")
+}
+
+/** pchar without pct-encoded (RFC 3986 section 3.3): unreserved, sub-delims, `:` and `@`. */
+private fun isPchar(c: Char) = c in 'a'..'z' || c in 'A'..'Z' || c in '0'..'9' || c in "-._~" || c in "!$&'()*+,;=" || c == ':' || c == '@'
+
+private fun isHexDigitChar(c: Char) = c in '0'..'9' || c in 'a'..'f' || c in 'A'..'F'
+
+private fun Char.isAsciiLetter() = this in 'a'..'z' || this in 'A'..'Z'
+
+/**
+ * The origin-form `line[start, end)` properly encoded (RFC 3986 section 2.1): every byte that is no path or query
+ * character, and a `%` without two hex digits after it, as `%XX`.
+ */
+private fun encodeOriginForm(
+    line: ByteArray,
+    start: Int,
+    end: Int,
+): String {
+    val out = StringBuilder()
+    for (i in start until end) {
+        val b = line[i].toInt() and 0xFF
+        val c = b.toChar()
+        val keep =
+            if (c == '%') {
+                i + 2 < end && isHexDigitChar(line[i + 1].toInt().toChar()) && isHexDigitChar(line[i + 2].toInt().toChar())
+            } else {
+                b < 0x80 && (isPchar(c) || c == '/' || c == '?')
+            }
+        if (keep) out.append(c) else out.append('%').append(HEX[b shr 4]).append(HEX[b and 0xF])
+    }
+    return out.toString()
+}
+
+private const val HEX = "0123456789ABCDEF"
 
 private val DIGITS = '0'.code.toByte()..'9'.code.toByte()
 

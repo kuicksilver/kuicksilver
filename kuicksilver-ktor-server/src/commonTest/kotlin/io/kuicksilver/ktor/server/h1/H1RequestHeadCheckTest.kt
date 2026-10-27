@@ -226,6 +226,80 @@ class H1RequestHeadCheckTest {
             assertTrue(response.endsWith("[a\u00a0b\u00a0]"), response)
         }
 
+    /**
+     * The request-target forms of RFC 9112 section 3.2: origin-form (RFC 3986 path and query characters), absolute-form
+     * (an absolute-URI, no fragment), authority-form for CONNECT only, asterisk-form for OPTIONS only. All are served.
+     */
+    @Test fun validRequestTargetsAreServed() =
+        runTest {
+            for (line in listOf(
+                "GET /a/b;c=d?e=f&g=%41:@!\$'()*+,~-._/? HTTP/1.1",
+                "GET / HTTP/1.1",
+                "OPTIONS * HTTP/1.1",
+                "CONNECT a.example:443 HTTP/1.1",
+                "CONNECT [::1]:8443 HTTP/1.1",
+                "GET http://a.example/x?y HTTP/1.1",
+                "GET http://a.example:8080 HTTP/1.1",
+                "GET urn:example:a%41 HTTP/1.1",
+            )) {
+                val response = exchange("$line\r\nHost: a.example\r\nConnection: close\r\n\r\n")
+                assertTrue(response.startsWith("HTTP/1.1 200 "), "$line: $response")
+                assertTrue(response.endsWith(line), "$line: $response")
+            }
+        }
+
+    /**
+     * A request-target that breaks its grammar is an invalid request line: the server SHOULD respond with 400 (RFC 9112
+     * section 3), and CONNECT to an empty or invalid port MUST be rejected (RFC 9110 section 9.3.6). Before, Ktor's parser
+     * passed any run of non-whitespace to routing.
+     */
+    @Test fun negative_invalidRequestTargetGets400() =
+        runTest {
+            for (line in listOf(
+                "POST /a|b HTTP/1.1",
+                "POST /a%zz HTTP/1.1",
+                "POST /a#b HTTP/1.1",
+                "PUT /\u00e9 HTTP/1.1",
+                "DELETE /a[1] HTTP/1.1",
+                "GET * HTTP/1.1",
+                "CONNECT /x HTTP/1.1",
+                "CONNECT a.example HTTP/1.1",
+                "CONNECT a.example: HTTP/1.1",
+                "CONNECT a.example:0 HTTP/1.1",
+                "CONNECT a.example:65536 HTTP/1.1",
+                "CONNECT http://a.example/ HTTP/1.1",
+                "GET http://a.example/a|b HTTP/1.1",
+                "GET http://a.example/#f HTTP/1.1",
+                "GET 1http://a.example/ HTTP/1.1",
+                "GET a HTTP/1.1",
+            )) {
+                val response = exchange("$line\r\nHost: a.example\r\n\r\nGET /next HTTP/1.1\r\nHost: s\r\n\r\n")
+                assertTrue(response.startsWith("HTTP/1.1 400 "), "${show(line)}: $response")
+                assertEquals(1, Regex("HTTP/1.1 ").findAll(response).count(), "${show(line)}: $response")
+            }
+        }
+
+    /**
+     * For GET and HEAD the other answer RFC 9112 section 3 names for an invalid request line: 301 with the request-target
+     * properly encoded. Browsers send `|`, `{`, `}`, `^` and `[` unencoded in a path or query (the WHATWG URL standard
+     * leaves them), so a 400 would turn away real pages; the redirect brings them back with the target encoded.
+     */
+    @Test fun invalidOriginFormOfGetIsRedirectedProperlyEncoded() =
+        runTest {
+            for ((line, location) in listOf(
+                "GET /a|b?c={d}^ HTTP/1.1" to "/a%7Cb?c=%7Bd%7D%5E",
+                "HEAD /\u00e9t\u00e9 HTTP/1.1" to "/%C3%A9t%C3%A9",
+                "GET /a#b HTTP/1.1" to "/a%23b",
+                "GET /%zz%4 HTTP/1.1" to "/%25zz%254",
+                "GET /a[1]?x=[2] HTTP/1.1" to "/a%5B1%5D?x=%5B2%5D",
+            )) {
+                val response = exchange("$line\r\nHost: a.example\r\n\r\nGET /next HTTP/1.1\r\nHost: s\r\n\r\n")
+                assertTrue(response.startsWith("HTTP/1.1 301 Moved Permanently\r\n"), "${show(line)}: $response")
+                assertTrue(response.contains("\r\nLocation: $location\r\n"), "${show(line)}: $response")
+                assertEquals(1, Regex("HTTP/1.1 ").findAll(response).count(), "${show(line)}: $response")
+            }
+        }
+
     private fun show(s: String) =
         s
             .map {
