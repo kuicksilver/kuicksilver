@@ -18,6 +18,11 @@ import kotlinx.io.readByteArray
  * stale-connection retry of an idempotent request. Lines end with LF, a CR before it included (section 2.2). The bytes
  * are taken one at a time up to the head's last LF: what follows (a body, a tunnel's bytes) stays in [input]. A head
  * above [maxBytes] fails with [ParserException].
+ *
+ * A control character other than HTAB anywhere in a line (NUL, a bare CR, 0x7F...) fails with [ParserException]: NUL,
+ * CR and LF in a field value are invalid and dangerous and MUST be rejected or replaced, the other CTLs are invalid too
+ * (RFC 9110 section 5.5; a bare CR, RFC 9112 section 2.2). The reason phrase allows the same characters as a field value
+ * (RFC 9112 section 4).
  */
 @OptIn(InternalAPI::class)
 internal suspend fun readResponseHeadBytes(
@@ -44,6 +49,9 @@ internal suspend fun readResponseHeadBytes(
             }
             var content = line.readByteArray()
             if (content.isNotEmpty() && content.last() == CR) content = content.copyOf(content.size - 1)
+            content.firstOrNull { isForbiddenControl(it) }?.let {
+                throw ParserException("Control character 0x${(it.toInt() and 0xff).toString(16).padStart(2, '0')} in the response head")
+            }
             if (!statusLine && content.isEmpty()) {
                 head.write(CRLF)
                 return head.readByteArray()
@@ -55,10 +63,15 @@ internal suspend fun readResponseHeadBytes(
     }
 }
 
+/** A CTL other than HTAB (RFC 5234 appendix B.1): 0x00-0x08, 0x0A-0x1F, 0x7F. */
+private fun isForbiddenControl(b: Byte): Boolean = (b in 0x00..0x1F && b != HTAB) || b == DEL
+
 /** The failure of a response head above [maxBytes]. */
 internal fun responseHeadTooLarge(maxBytes: Int = MAX_RESPONSE_HEAD_BYTES) =
     ParserException("The response head is larger than $maxBytes bytes")
 
+private const val HTAB: Byte = 0x09
 private const val CR: Byte = 0x0D
+private const val DEL: Byte = 0x7F
 private const val LF: Byte = 0x0A
 private val CRLF = byteArrayOf(CR, LF)

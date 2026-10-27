@@ -120,4 +120,30 @@ class H1ResponseHeadTest {
             input.flushAndClose()
             assertFailsWith<ClosedReadChannelException> { startTunnel(Url("https://origin.test/"), null, null, ByteChannel(), input) }
         }
+
+    /**
+     * NUL in a field value is invalid and dangerous (RFC 9110 section 5.5: reject or replace it); the client rejects it and
+     * every other control character but HTAB (0x01-0x08, 0x0A-0x1F, 0x7F), in field lines and the reason phrase alike.
+     * Before, `a<NUL>b` reached the application.
+     */
+    @Test fun negative_nulInFieldValueFails() =
+        runTest(timeout = 20.seconds) {
+            for (head in listOf("X-A: a\u0000b", "X-A: a\u0001b", "X-A: a\u007fb", "X-A: a\u001bb")) {
+                val wire = Wire()
+                server(wire) { send -> send("HTTP/1.1 200 OK\r\n$head\r\nContent-Length: 0\r\n\r\n") }
+                assertFailsWith<ParserException>(head) { exchange(wire, get) }
+            }
+            val wire = Wire()
+            server(wire) { send -> send("HTTP/1.1 200 O\u0000K\r\nContent-Length: 0\r\n\r\n") }
+            assertFailsWith<ParserException> { exchange(wire, get) }
+        }
+
+    /** HTAB and obs-text (bytes above 0x7F) are field-value characters (RFC 9110 section 5.5) and pass. */
+    @Test fun htabAndObsTextInFieldValuePass() =
+        runTest(timeout = 20.seconds) {
+            val wire = Wire()
+            server(wire) { send -> send("HTTP/1.1 200 OK\r\nX-A: a\tb\u00e9\r\nContent-Length: 0\r\nConnection: close\r\n\r\n") }
+            val value = exchange(wire, get).headers["X-A"]
+            assertEquals("a\tb", value?.substring(0, 3))
+        }
 }
