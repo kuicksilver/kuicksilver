@@ -298,21 +298,19 @@ internal fun CoroutineScope.startH1Pipeline(
                         break
                     } catch (_: RequestHeadTooLarge) {
                         respondStatus(actorChannel, 431, "Request Header Fields Too Large")
-                        // closing with unread input makes the kernel send a reset, which can destroy the 431 before the
-                        // client reads it: read and drop what follows for a while first (nginx `lingering_close`)
-                        withTimeoutOrNull(LINGER) { connection.input.discard() }
+                        lingerAfterRefusal(actorChannel, connection)
                         break
                     } catch (refused: RequestHeadRefused) {
                         if (refused.status == 400) {
                             respondBadRequest(actorChannel)
                         } else {
                             respondStatus(actorChannel, refused.status, refused.reason)
-                            // the rest of the head is unread: read and drop it for a while, as after a 431
-                            withTimeoutOrNull(LINGER) { connection.input.discard() }
                         }
+                        lingerAfterRefusal(actorChannel, connection)
                         break
                     } catch (_: TooLongLineException) {
                         respondBadRequest(actorChannel)
+                        lingerAfterRefusal(actorChannel, connection)
                         break
                     } catch (io: IOException) {
                         throw io
@@ -320,6 +318,7 @@ internal fun CoroutineScope.startH1Pipeline(
                         throw cancelled
                     } catch (_: Throwable) {
                         respondBadRequest(actorChannel)
+                        lingerAfterRefusal(actorChannel, connection)
                         break
                     } ?: break
                 headBudget = headerTimeout
@@ -329,6 +328,7 @@ internal fun CoroutineScope.startH1Pipeline(
                 if (framing.fault != null) {
                     request.release()
                     if (framing.faultStatus == 501) respondStatus(actorChannel, 501, "Not Implemented") else respondBadRequest(actorChannel)
+                    lingerAfterRefusal(actorChannel, connection)
                     break
                 }
 
@@ -464,17 +464,14 @@ internal fun CoroutineScope.startH1Pipeline(
                         }
 
                         BodyOutcome.Abandoned -> {
-                            // the client may still be sending the body: closing over unread input makes the kernel send a
-                            // reset, which can destroy the response before the client reads it. Let the writer finish (and
-                            // half-close), then read and drop for a while (Go's closeWriteAndWait, nginx `lingering_close`)
-                            actorChannel.close()
-                            if (!body.continueWithheld) {
-                                try {
-                                    withTimeoutOrNull(LINGER) { connection.input.discard() }
-                                } catch (_: IOException) {
-                                    // the client went away: nothing left to protect the response from
-                                }
-                            }
+                            // the client may still be sending the body
+                            if (body.continueWithheld) actorChannel.close() else lingerAfterRefusal(actorChannel, connection)
+                            break
+                        }
+
+                        BodyOutcome.Malformed -> {
+                            // the 400 for a broken chunked body: the rest of it may still be coming
+                            lingerAfterRefusal(actorChannel, connection)
                             break
                         }
 
@@ -614,6 +611,24 @@ private suspend fun respondClosing(
         bc.cancel(IOException("Response was not delivered"))
     }
     actorChannel.close()
+}
+
+/**
+ * After a response that ends the connection while the client may still be sending (a refused head, a body not read): a
+ * close over unread input makes the kernel send a reset, which can destroy that response before the client reads it
+ * (RFC 9112 section 9.6: servers close in stages). Lets the writer finish (and half-close), then reads and drops the
+ * input for up to [LINGER] (Go's closeWriteAndWait, nginx `lingering_close`).
+ */
+private suspend fun lingerAfterRefusal(
+    actorChannel: Channel<ByteReadChannel>,
+    connection: H1Connection,
+) {
+    actorChannel.close()
+    try {
+        withTimeoutOrNull(LINGER) { connection.input.discard() }
+    } catch (_: IOException) {
+        // the client went away: nothing left to protect the response from
+    }
 }
 
 /** `408 Request Timeout` (RFC 9110 section 15.5.9); its deadline starts only once earlier responses are written. */

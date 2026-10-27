@@ -165,6 +165,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   chunked<U+00A0>` a chunked one, so with a proxy in front that framed the response otherwise the bytes behind it
   became the response to the next request (response splitting). A `Transfer-Encoding` that is not a list of transfer
   codings or that applies `chunked` twice (RFC 9112 section 6.1) fails the same way.
+- Ktor server, HTTP/1.1: after a 400, 501 or 505 refusal (and a 400 for a malformed chunked body) the server reads and
+  drops what the client is still sending for up to 2 s before it closes, as it did after a 431 (RFC 9112 section
+  9.6: close in stages). Before, it closed over the unread rest of the request, the kernel answered with a reset, and
+  the client could lose the 400.
 - Ktor server, HTTP/1.1: a Host field that is not `uri-host [":" port]` (`Host: a b`, `[::1`, `h:x`, `a%zz`, a port
   above 65535) gets 400 and the connection closes (RFC 9112 section 3.2: a server MUST respond with 400 to a Host
   with an invalid value); so does an absolute-form target with such an authority. Before, only `/?#@` and a trailing
