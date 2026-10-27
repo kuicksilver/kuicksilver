@@ -472,7 +472,8 @@ jobs:
           disable-animations: true
           # the action hides the emulator's own exit message; free space before the AVD is created is the first suspect
           pre-emulator-launch-script: df -h / | tail -1
-          script: ./gradlew --stacktrace androidConnectedCheck
+          # on failure the emulator's crash and main logs go with the reports: an instrumentation "Process crashed" says nothing else
+          script: ./gradlew --stacktrace androidConnectedCheck || { mkdir -p build/reports && adb logcat -d -b crash -b main > build/reports/logcat.txt; exit 1; }
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: failure()
         with:
