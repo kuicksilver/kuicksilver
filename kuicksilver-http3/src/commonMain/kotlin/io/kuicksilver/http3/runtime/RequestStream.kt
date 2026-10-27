@@ -13,8 +13,12 @@ import io.kuicksilver.http3.qpack.DecodeResult
 import io.kuicksilver.http3.qpack.QpackError
 import io.kuicksilver.quic.Initiator
 import io.kuicksilver.quic.QuicStream
+import io.kuicksilver.quic.receivedAll
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.selects.select
 
 /** A failure confined to one stream (RFC 9114 section 8): abort it with [code] and give the application [error]. */
 internal class StreamFailure(
@@ -90,9 +94,9 @@ internal suspend fun H3Session.pumpBody(
                             Http3Exception.MessageError(st.id, "more DATA than content-length"),
                         )
                     }
-                    st.input.copyExact(f.length, out, buf)
-                    // suspends while the consumer lags by more than the channel's buffer: the body is never buffered without bound
-                    out.flush()
+                    // waits while the consumer lags by more than the channel's buffer: the body is never buffered without bound
+                    // (once the connection is gone with the stream whole, what is left is bounded by its window: no wait)
+                    st.input.copyExact(f.length, out, buf) { handOver(out, st) }
                 }
 
                 is RequestFrame.Headers -> {
@@ -135,7 +139,14 @@ internal suspend fun H3Session.pumpBody(
                             Http3Exception.MessageError(st.id, "DATA total $total differs from content-length $contentLength"),
                         )
                     }
-                    out.flushAndClose()
+                    // as flushAndClose: a consumer that already gave up the body changes nothing here
+                    try {
+                        handOver(out, st)
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (_: Throwable) {
+                    }
+                    out.close()
                     trailers.complete(trailerFields)
                     return
                 }
@@ -206,6 +217,32 @@ internal suspend fun H3Session.pumpBody(
         runCatching { qpack.cancelStream(st.id) }
     }
 }
+
+/**
+ * Hands what was written to [out] to its reader, waiting while the reader lags by more than the channel's buffer. Once the
+ * connection is gone and [st] came whole (RFC 9000 section 3.2, "Data Recvd") it never waits: the rest of the message is
+ * moved into [out] at once, bounded by the stream's flow-control window, so the reader finishes and the session can end
+ * whether or not the application ever reads. The bytes then live as long as the application keeps the body, and no longer
+ * through the session or the transport.
+ */
+@OptIn(io.ktor.utils.io.InternalAPI::class) // flushWriteBuffer and hasFreeSpace: hand over without waiting
+internal suspend fun H3Session.handOver(
+    out: ByteChannel,
+    st: QuicStream,
+) {
+    out.flushWriteBuffer()
+    if (out.hasFreeSpace || detached(st)) return
+    coroutineScope {
+        val waiting = launch { out.flush() }
+        select {
+            waiting.onJoin {}
+            closed.onAwait { if (detached(st)) waiting.cancel() else waiting.join() }
+        }
+    }
+}
+
+@OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+private fun H3Session.detached(st: QuicStream): Boolean = closed.isCompleted && st.receivedAll
 
 /** A clean end of stream inside a frame: a connection error H3_FRAME_ERROR (RFC 9114 section 7.1). */
 internal suspend fun H3Session.truncated(

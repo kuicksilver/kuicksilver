@@ -74,11 +74,12 @@ internal suspend fun ByteReadChannel.skipExact(n: Long) {
     }
 }
 
-/** Copies [n] payload bytes to [out] in chunks. */
+/** Copies [n] payload bytes to [out] in chunks, each handed over by [handOver]. */
 internal suspend fun ByteReadChannel.copyExact(
     n: Long,
     out: ByteWriteChannel,
     buf: ByteArray,
+    handOver: suspend () -> Unit = { out.flush() },
 ) {
     var left = n
     while (left >
@@ -91,7 +92,7 @@ internal suspend fun ByteReadChannel.copyExact(
             eof()
         }
         out.writeFully(buf, 0, r)
-        out.flush()
+        handOver()
         left -= r
     }
 }

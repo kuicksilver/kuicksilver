@@ -833,10 +833,12 @@ internal class H3Session(
      * The connection is gone: every coroutine of the session ends, but the [drains] readers only once their inputs ended.
      * Cancelling them at once lost what the peer sent last, Firefox's WT_CLOSE_SESSION right before its close. A reader of
      * a stream that came whole (its FIN and every byte before it, RFC 9000 section 3.2 "Data Recvd") goes on until it has
-     * handed all of it over: that is the peer's complete message (it ends with its stream, RFC 9114 section 4.1), the
-     * close does not take back what had arrived, and reading it needs nothing more from the network, only the
-     * application's reads, at its pace. Every other reader gets at most [DRAIN_GRACE] (one the application does not keep
-     * up with is cut there, never holding the session for a message that cannot complete).
+     * handed all of it over: that is the peer's complete message (it ends with its stream, RFC 9114 section 4.1), and
+     * the close does not take back what had arrived. Reading it needs nothing more from the network, and the reader does
+     * not wait for the application either ([handOver]): it moves the rest into the body and ends, so the session ends
+     * whether or not the application reads, and the bytes live only as long as the application keeps the body. Every
+     * other reader gets at most [DRAIN_GRACE] (one the application does not keep up with is cut there, never holding the
+     * session for a message that cannot complete).
      */
     private fun onTransportClosed(e: QuicException.ConnectionLost) {
         if (closed.complete(Http3Exception.fromQuic(e))) requests.close(closed.getCompleted())
@@ -867,8 +869,8 @@ internal class H3Session(
      * thread. It runs outside [scope]: a launch into the scope once the connection ended never runs, and a response whose
      * headers were read after the session processed the peer's CONNECTION_CLOSE lost its body that way (seen on slow
      * Windows and macOS runners). Once the session's coroutines are gone it gets at most [DRAIN_GRACE] more, then it is
-     * cut, unless [stream], the stream it reads, came whole: then it goes on until it has handed all of it over, however
-     * late it runs (a reader the scheduler paused past the grace cut a whole response with H3_NO_ERROR, seen on a loaded
+     * cut, unless [stream], the stream it reads, came whole: then it goes on until it has handed all of it over (without
+     * waiting for the application, [handOver]), however late it runs (a reader the scheduler paused past the grace cut a whole response with H3_NO_ERROR, seen on a loaded
      * Android 7 emulator).
      */
     fun launchDrainer(
