@@ -216,4 +216,28 @@ class H1ResponseHeadTest {
                 assertFailsWith<ParserException>(line) { exchange(other, get) }
             }
         }
+
+    /**
+     * Interim responses to the CONNECT are bounded as those to a request ([MAX_INTERIM_RESPONSES], as Go): a proxy that
+     * streams them fails the tunnel; a 101 is no answer to a CONNECT and fails it as a refusal.
+     */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    @Test
+    fun negative_endlessInterimResponsesToTheConnectFail() =
+        runTest(timeout = 20.seconds) {
+            val input = ByteChannel()
+            repeat(50) { input.writeStringUtf8("HTTP/1.1 103 Early Hints\r\n\r\n") }
+            input.writeStringUtf8("HTTP/1.1 200 Connection established\r\n\r\n")
+            input.flush()
+            val e = assertFailsWith<ParserException> { startTunnel(Url("https://origin.test/"), null, null, ByteChannel(), input) }
+            assertTrue(e.message!!.contains("interim"), e.message)
+            val upgrade = ByteChannel()
+            upgrade.writeStringUtf8("HTTP/1.1 101 Switching Protocols\r\n\r\n")
+            upgrade.flush()
+            val refused =
+                assertFailsWith<io.kuicksilver.ktor.client.ProxyException> {
+                    startTunnel(Url("https://origin.test/"), null, null, ByteChannel(), upgrade)
+                }
+            assertEquals(101, refused.replyCode)
+        }
 }

@@ -96,6 +96,29 @@ class ClientProxyTest {
         }
 
     /**
+     * A client MUST be able to parse 1xx responses before the final one (RFC 9110 section 15.2), the CONNECT's included:
+     * a 100 and a 103 from the proxy are skipped and its 200 opens the tunnel. Before, the first 1xx failed the tunnel
+     * with a ProxyException.
+     */
+    @Test fun interimResponsesBeforeTheConnectAnswerAreSkipped() =
+        clientTest {
+            val (server, port) = testServer { routing { get("/") { call.respondText("through") } } }
+            try {
+                val interim = "HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 103 Early Hints\r\nLink: </a.css>; rel=preload\r\n\r\n"
+                tunnelProxy(port, connectResponse = interim + "HTTP/1.1 200 Connection established\r\n\r\n") { proxyPort, _ ->
+                    testClient(engine = {
+                        proxy = ProxyBuilder.http(Url("http://127.0.0.1:$proxyPort"))
+                        connectTimeout = 5.seconds
+                    }).use { c ->
+                        assertEquals("through", c.get("https://127.0.0.1:$port/").bodyAsText())
+                    }
+                }
+            } finally {
+                server.stop(100, 500)
+            }
+        }
+
+    /**
      * HTTP/3 cannot go through the proxy (no UDP over HTTP CONNECT or SOCKS5), so `H3Only` with a proxy fails the request
      * without contacting the proxy. Before, the request silently went over HTTP/1.1 through the proxy, the opposite of
      * what `H3Only` promises (failures are reported, never retried over TCP).
