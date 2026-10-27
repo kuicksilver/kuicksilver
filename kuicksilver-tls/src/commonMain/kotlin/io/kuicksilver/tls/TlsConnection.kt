@@ -491,7 +491,7 @@ public class TlsConnection private constructor(
 
     // ---- public operations ----
 
-    /** RFC 5705 / RFC 8446 section 7.5 exporter; only after the handshake. Throws [IllegalStateException] when the exporter is unavailable, [TlsException.Protocol] for other TLS errors. */
+    /** RFC 5705 / RFC 9846 section 7.5 exporter; only after the handshake. Throws [IllegalStateException] when the exporter is unavailable, [TlsException.Protocol] for other TLS errors. */
     public suspend fun exportKeyingMaterial(
         label: String,
         context: ByteArray?,
@@ -512,7 +512,7 @@ public class TlsConnection private constructor(
             }
         }
 
-    /** RFC 8446 section 4.6.3 key update; takes effect with the next write. */
+    /** RFC 9846 section 4.7.3 key update; takes effect with the next write. */
     public suspend fun keyUpdate(requestPeer: Boolean = false) {
         lock.withLock { Ksl.sslKeyUpdate(s(), requestPeer) }
     }
@@ -691,7 +691,7 @@ public enum class TlsVersion {
     /** TLS 1.2 (RFC 5246) under the RFC 9325 profile, with Extended Master Secret; only with [TlsVersions.Tls12And13]. */
     Tls12,
 
-    /** TLS 1.3 (RFC 8446). */
+    /** TLS 1.3 (RFC 9846). */
     Tls13,
 }
 
@@ -758,7 +758,7 @@ public class SessionCache(
         ): String = "$sni|$reference|${trust.cacheKey()}|id:${identity?.chain?.firstOrNull()?.spkiSha256 ?: "none"}"
     }
 
-    /** Removes and returns the entry: a ticket is used at most once (RFC 8446 appendix C.4). */
+    /** Removes and returns the entry: a ticket is used at most once (RFC 9846 appendix C.4). */
     internal suspend fun take(key: String): Entry? =
         mutex.withLock {
             val e =

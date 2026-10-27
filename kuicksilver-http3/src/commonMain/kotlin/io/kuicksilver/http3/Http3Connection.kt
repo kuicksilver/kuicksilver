@@ -150,7 +150,7 @@ public interface Http3ServerRequest {
 
     /**
      * The request arrived in 0-RTT and reached the application before the handshake completed, so it may be a replay
-     * (RFC 8446 section 8); only requests the server's `Http3EarlyDataPolicy.replayable` admits are handed over this way.
+     * (RFC 9846 section 8); only requests the server's `Http3EarlyDataPolicy.replayable` admits are handed over this way.
      */
     @ExperimentalKuicksilverApi
     public val receivedEarly: Boolean get() = false

@@ -84,7 +84,7 @@ class SessionCacheTest {
             assertEquals(0, cache.size())
         }
 
-    /** A QUIC ticket is taken once (RFC 8446 appendix C.4) and only while its cached chain still passes the current trust. */
+    /** A QUIC ticket is taken once (RFC 9846 appendix C.4) and only while its cached chain still passes the current trust. */
     @Test fun clientTicketIsSingleUse(): Unit =
         runBlocking {
             val cache = SessionCache()

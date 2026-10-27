@@ -65,7 +65,7 @@ public suspend fun Socket.tlsServer(
  * A [Socket] over a [TlsConnection]; closing it sends `close_notify` and closes the underlying socket.
  *
  * @property tls the TLS session underneath, for what [Socket] cannot express: the protocol version, the exporter
- *   (RFC 8446 section 7.5), the `tls-exporter` channel binding (RFC 9266) and key updates. Read and write through the
+ *   (RFC 9846 section 7.5), the `tls-exporter` channel binding (RFC 9266) and key updates. Read and write through the
  *   socket's channels, not through `tls.input`/`tls.output` as well.
  */
 public class TlsSocket private constructor(

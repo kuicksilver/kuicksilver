@@ -67,8 +67,8 @@ static void test_tls12(void) {
     CHECK((SSL_CTX_get_options(cc->ctx) & SSL_OP_NO_RENEGOTIATION) && (SSL_CTX_get_options(cc->ctx) & SSL_OP_NO_COMPRESSION), "renegotiation and compression disabled");
     CHECK(echo_bytes(c, s, 5000), "data over TLS 1.2 ECDHE+AEAD");
     ksl_ssl_free(c); ksl_ssl_free(s);
-    /* negative: a client without EMS. The server refuses it before Finished, so that OpenSSL sends handshake_failure (RFC 8446
-       section 6.1 / RFC 5246 section 7.2: an error alert, not a bare transport end; RFC 7627 section 5.2, RFC 9325 section 3.6) */
+    /* negative: a client without EMS. The server refuses it before Finished, so that OpenSSL sends handshake_failure (RFC 9846
+       section 6.1 / RFC 5246 section 7.2: an error alert, not a bare transport end; RFC 9846 appendix D, RFC 9325 section 3.6) */
     SSL_CTX_set_options(cc->ctx, SSL_OP_NO_EXTENDED_MASTER_SECRET);
     c = tcp_client(cc, "server.test"); s = ksl_ssl_new(sc, KSL_MODE_TCP); int r = tcp_pump(c, s, NULL, NULL), alert = 0;
     CHECK(r == KSL_ERROR && last_code(s, &alert) == KSL_E_EMS_REQUIRED, "negative: the server refuses a TLS 1.2 client without EMS (KSL_E_EMS_REQUIRED)");
@@ -232,7 +232,7 @@ static void test_session_context(void) {
 /* Two virtual hosts behind one TCP server, as an SNI selector builds them: the same trust (so the same session context) and
    the same ticket keys (the process-wide generated ones). RFC 6066 section 3: a server "MUST NOT accept the request to resume
    the session if the server_name extension contains a different name. Instead, it proceeds with a full handshake to establish
-   a new session"; RFC 8446 sections 4.2.11 and 4.6.1 leave the ticket's binding to the server, which must ensure a compatible PSK. */
+   a new session"; RFC 9846 sections 4.3.11 and 4.7.1 leave the ticket's binding to the server, which must ensure a compatible PSK. */
 typedef struct { ksl_ctx *a, *b; } vhosts;
 static int on_vhost(ksl_ssl *s, int rc, void *arg) {
     vhosts *v = arg; if (rc != KSL_WANT_SNI) return 1; ksl_client_hello ch; ksl_ctx *pick = NULL;
@@ -288,7 +288,7 @@ static void test_ticket_bound_to_server_name(void) {
 
 static void test_keyless_server_no_tickets(void) {
     SECTION("tcp_server_without_ticket_keys_issues_and_accepts_none");
-    /* RFC 8446 section 4.6.1: a server may send no ticket. A context without ticket keys must not fall back to OpenSSL's own random
+    /* RFC 9846 section 4.7.1: a server may send no ticket. A context without ticket keys must not fall back to OpenSSL's own random
        keys for its SSL_CTX: it issues no ticket and resumes none */
     uint8_t keys[80]; for (int i = 0; i < 80; i++) keys[i] = (uint8_t)(i * 17 + 2);
     ksl_ctx *cc = client_ctx("test-ca", KSL_VERIFY_OPENSSL), *keyless = server_ctx("server"), *keyed = server_ctx("server");
@@ -343,7 +343,7 @@ static void test_server_acknowledges_server_name(void) {
     SECTION("tcp_server_acknowledges_server_name");
     /* RFC 6066 section 3: a server that used the server_name extension "SHALL include an extension of type 'server_name' in the
        (extended) server hello. The 'extension_data' field of this extension SHALL be empty"; in TLS 1.3 it travels in
-       EncryptedExtensions (RFC 8446 section 4.2). "When resuming a session, the server MUST NOT include a server_name extension in
+       EncryptedExtensions (RFC 9846 section 4.3). "When resuming a session, the server MUST NOT include a server_name extension in
        the server hello" (TLS 1.2; TLS 1.3 negotiates the name in every handshake). */
     uint8_t keys[80]; for (int i = 0; i < 80; i++) keys[i] = (uint8_t)(i * 11 + 5);
     ksl_ctx *cc = client_ctx("test-ca", KSL_VERIFY_OPENSSL), *sc = server_ctx("server"); ext_seen e;
@@ -395,8 +395,8 @@ static int write_all(ksl_ssl *c, ksl_ssl *s, size_t total) {   /* client -> serv
 }
 static void test_key_update_before_record_limit(void) {
     SECTION("tcp_key_update_before_record_limit");
-    /* RFC 8446 section 5.5: for AES-GCM "up to 2^24.5 full-size records ... may be encrypted on a given connection ...
-       Implementations SHOULD do a key update before reaching this limit"; OpenSSL sends KeyUpdate only on SSL_key_update. ksl
+    /* RFC 9846 section 5.5: for AES-GCM up to 2^24.5 full-size records under a given set of keys; "Implementations MUST either close
+       the connection or do a key update ... prior to reaching these limits"; OpenSSL sends KeyUpdate only on SSL_key_update. ksl
        sends one every 2^23 records it wrote; here the bound is lowered to 4 records (test hook). */
     ksl_ctx *cc = client_ctx("test-ca", KSL_VERIFY_OPENSSL), *sc = server_ctx("server"); int updates = 0;
     ksl_ssl *c = tcp_client(cc, "server.test"), *s = ksl_ssl_new(sc, KSL_MODE_TCP);

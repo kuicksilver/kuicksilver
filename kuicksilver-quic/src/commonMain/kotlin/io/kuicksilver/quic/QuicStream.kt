@@ -56,7 +56,7 @@ public interface QuicStream {
      */
     public fun stopSending(code: Long)
 
-    /** Server: data of this stream arrived in 0-RTT packets, before the handshake completed; it may be a replay (RFC 8446 section 8). */
+    /** Server: data of this stream arrived in 0-RTT packets, before the handshake completed; it may be a replay (RFC 9846 section 8). */
     @ExperimentalKuicksilverApi
     public val receivedEarly: Boolean get() = false
 }

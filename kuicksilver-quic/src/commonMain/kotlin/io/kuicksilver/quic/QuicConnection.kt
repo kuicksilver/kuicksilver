@@ -118,7 +118,7 @@ public interface QuicConnection : AutoCloseable {
     /**
      * Whether 0-RTT was accepted (RFC 9001 section 4.6.2): null until known or when none was attempted. Client: what we sent
      * early was rejected (false) and went again in 1-RTT, or accepted (true). Server: this connection's early data was
-     * accepted; it may be a replay (RFC 8446 section 8).
+     * accepted; it may be a replay (RFC 9846 section 8).
      */
     @ExperimentalKuicksilverApi
     public val earlyDataAccepted: Boolean? get() = null

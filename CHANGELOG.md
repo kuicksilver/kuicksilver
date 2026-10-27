@@ -154,9 +154,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   (RFC 9846 sections 4.2.2 and 4.2.3, MUST); OpenSSL 3.5 accepted 0x0301 and 0x0302 next to `supported_versions`.
 - TLS 1.2: a peer without Extended Master Secret is now refused during the handshake with a `handshake_failure` alert (the
   server on the ClientHello, the client on the ServerHello), instead of being dropped without an alert after both
-  Finished messages (RFC 7627, RFC 9325 section 3.6).
+  Finished messages (RFC 9846 appendix D, RFC 9325 section 3.6).
 - TLS over TCP: a connection updates its sending key (TLS 1.3 KeyUpdate) every 2^23 records it wrote, before the AES-GCM
-  record limit of RFC 8446 section 5.5 (2^24.5 records, about 384 GiB at full size). OpenSSL never does so by itself, so a
+  record limit of RFC 9846 section 5.5 (MUST since RFC 9846; 2^24.5 records, about 384 GiB at full size). OpenSSL never does so by itself, so a
   very long-lived bulk connection kept one key for good.
 - TLS server: a server that used the client's server name now acknowledges it with an empty `server_name` extension
   (in EncryptedExtensions for TLS 1.3, in the ServerHello of a full TLS 1.2 handshake), as RFC 6066 section 3 requires;
@@ -349,7 +349,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - QUIC, Linux and Apple platforms: a UDP send interrupted by a signal (`EINTR`) is retried instead of failing the
   socket; on Linux an interrupted GSO send no longer withdraws GSO.
 - TLS: a server context without session ticket keys (a QUIC server with tickets off, a keyless SNI override base) no
-  longer falls back to OpenSSL's own random ticket keys: it sends no ticket (RFC 8446 section 4.6.1 allows none) and
+  longer falls back to OpenSSL's own random ticket keys: it sends no ticket (RFC 9846 section 4.7.1 allows none) and
   resumes none, also when a ticket is requested explicitly after the pin verdict. A keyed SNI override under a keyless
   base context now seals its tickets with its own keys instead of the base context's random ones.
 - TLS: a session ticket now resumes only under the server name it was issued for (RFC 6066 section 3: a server "MUST

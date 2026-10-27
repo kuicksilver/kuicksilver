@@ -23,7 +23,7 @@ static int hkdf(int mode, int hash, const uint8_t *key, size_t klen, const uint8
 int ksl_hkdf_extract(int hash, const uint8_t *salt, size_t sl, const uint8_t *ikm, size_t il, uint8_t *out, size_t olen) {
     return hkdf(EVP_KDF_HKDF_MODE_EXTRACT_ONLY, hash, ikm, il, salt, sl, NULL, 0, out, olen) ? KSL_OK : KSL_ERROR;
 }
-/* RFC 8446 section 7.1: HkdfLabel = length(2) || "tls13 " + label || context */
+/* RFC 9846 section 7.1: HkdfLabel = length(2) || "tls13 " + label || context */
 int ksl_hkdf_expand_label(int hash, const uint8_t *secret, size_t slen, const char *label, const uint8_t *ctx, size_t clen, uint8_t *out, size_t olen) {
     size_t ll = strlen(label); if (ll > 249 || clen > 255 || olen > 0xffff) return KSL_ERROR;
     uint8_t info[2 + 1 + 255 + 1 + 255]; size_t n = 0;
@@ -51,7 +51,7 @@ int ksl_sign(int alg, const uint8_t *key_der, size_t klen, const uint8_t *msg, s
 int ksl_verify(int alg, const uint8_t *pub_der, size_t plen, const uint8_t *msg, size_t mlen, const uint8_t *sig, size_t slen) {
     const unsigned char *p = pub_der; EVP_PKEY *k = d2i_PUBKEY(NULL, &p, (long)plen); if (!k || !alg_ok(alg, k)) { EVP_PKEY_free(k); return KSL_ERROR; }
     /* once the key parsed and the context is set up, every answer but 1 is a bad signature: EVP_DigestVerify answers -1 (not 0)
-       for an ECDSA signature that is not a DER ECDSA-Sig-Value (RFC 8446 section 4.2.3), which comes from the peer, not from us */
+       for an ECDSA signature that is not a DER ECDSA-Sig-Value (RFC 9846 section 4.3.3), which comes from the peer, not from us */
     EVP_MD_CTX *m = EVP_MD_CTX_new(); int r = m && EVP_DigestVerifyInit(m, NULL, alg == KSL_SIG_ECDSA_P256 ? EVP_sha256() : NULL, NULL, k) == 1 ? (EVP_DigestVerify(m, sig, slen, msg, mlen) == 1 ? 1 : 0) : KSL_ERROR;
     EVP_MD_CTX_free(m); EVP_PKEY_free(k); ERR_clear_error(); return r;
 }

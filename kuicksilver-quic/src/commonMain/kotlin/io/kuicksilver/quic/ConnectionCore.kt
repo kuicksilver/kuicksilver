@@ -366,7 +366,7 @@ public class ConnectionCore internal constructor(
     @ExperimentalKuicksilverApi
     public val earlyDataAccepted: Boolean? get() = earlyAccepted ?: if (released) null else handshake.session.earlyDataAccepted
 
-    /** Server: true when any STREAM frame of stream [id] arrived in a 0-RTT packet (it may be a replay, RFC 8446 section 8). */
+    /** Server: true when any STREAM frame of stream [id] arrived in a 0-RTT packet (it may be a replay, RFC 9846 section 8). */
     @ExperimentalKuicksilverApi
     public fun streamReceivedEarly(id: Long): Boolean = streams.receivedEarly(id)
 
@@ -660,7 +660,7 @@ public class ConnectionCore internal constructor(
     public val negotiatedAlpn: String? get() = handshake.session.negotiatedAlpn
 
     /**
-     * Keying material from the TLS exporter (RFC 5705, RFC 8446 section 7.5) for [label] and [context], [length] bytes; usable once the
+     * Keying material from the TLS exporter (RFC 5705, RFC 9846 section 7.5) for [label] and [context], [length] bytes; usable once the
      * handshake completed.
      */
     public fun exportKeyingMaterial(

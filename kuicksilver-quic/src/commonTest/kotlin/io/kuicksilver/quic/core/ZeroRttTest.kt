@@ -653,7 +653,7 @@ private class WithMaxEarlyData(
             }
         }
 
-    /** Walks the NewSessionTicket messages (RFC 8446 section 4.6.1) and rewrites each early_data extension's value. */
+    /** Walks the NewSessionTicket messages (RFC 9846 section 4.7.1) and rewrites each early_data extension's value. */
     private fun patch(d: ByteArray): ByteArray {
         fun u(
             at: Int,

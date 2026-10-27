@@ -206,7 +206,7 @@ internal fun useTicketKeys(
     }
 }
 
-/** Maps a `ksl` failure to the TLS exception model and the alert to send (RFC 8446 section 6.2). */
+/** Maps a `ksl` failure to the TLS exception model and the alert to send (RFC 9846 section 6.2). */
 internal fun KslException.Internal.toTlsFailure(presented: List<Certificate>): Pair<TlsException, Int?> {
     val received = alert and 0x100 != 0
     val code = alert and 0xff

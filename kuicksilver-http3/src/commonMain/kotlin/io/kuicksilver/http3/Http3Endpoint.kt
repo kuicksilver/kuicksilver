@@ -59,7 +59,7 @@ public class Http3Endpoint private constructor(
      * As [connect] with 0-RTT (ADR-0015): resumes a ticket this endpoint kept from an earlier connection to the same
      * server and returns as soon as 0-RTT keys exist. Requests with `allowEarlyData` (safe methods without a body) then
      * go out in 0-RTT; every other request waits for the handshake. [earlyData] must not be [EarlyDataState.Disabled].
-     * Early requests can be replayed by an attacker (RFC 8446 section 8).
+     * Early requests can be replayed by an attacker (RFC 9846 section 8).
      */
     @ExperimentalKuicksilverApi
     public suspend fun connectEarly(

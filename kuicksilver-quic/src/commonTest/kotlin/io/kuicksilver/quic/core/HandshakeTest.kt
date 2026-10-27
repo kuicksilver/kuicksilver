@@ -618,7 +618,7 @@ private class WithoutPeerTransportParameters(
         }
 }
 
-/** A client whose ClientHello carries a 32-byte legacy_session_id (TLS 1.3 middlebox compatibility mode, RFC 8446 appendix D.4). */
+/** A client whose ClientHello carries a 32-byte legacy_session_id (TLS 1.3 middlebox compatibility mode, RFC 9846 appendix E.4). */
 private class WithLegacySessionId(
     private val inner: QuicCrypto,
 ) : QuicCrypto by inner {

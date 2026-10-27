@@ -130,7 +130,7 @@ completed is handled by `Http3Settings.earlyData`:
 - `Http3EarlyDataPolicy.Reject425()`: non-replayable early requests are answered with `425 Too Early` and never reach
   the application.
 
-> **Replay warning.** An early request may be a copy an attacker sent again (RFC 8446 section 8). Handlers of requests
+> **Replay warning.** An early request may be a copy an attacker sent again (RFC 9846 section 8). Handlers of requests
 > that run early, those with `receivedEarly = true`, must have no side effects. Narrow `replayable` if a GET handler
 > of yours changes state.
 

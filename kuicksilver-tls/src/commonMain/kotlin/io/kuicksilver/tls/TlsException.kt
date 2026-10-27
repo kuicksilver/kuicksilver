@@ -14,10 +14,10 @@ public expect sealed class TlsException(
         code: Int,
         description: String,
     ) : TlsException {
-        /** The alert description code (RFC 8446 section 6), e.g. 42 for `bad_certificate`, 48 for `unknown_ca`. */
+        /** The alert description code (RFC 9846 section 6), e.g. 42 for `bad_certificate`, 48 for `unknown_ca`. */
         public val code: Int
 
-        /** The RFC 8446 name of [code], e.g. `bad_certificate`, or `alert_<code>` for one without a known name. */
+        /** The RFC 9846 name of [code], e.g. `bad_certificate`, or `alert_<code>` for one without a known name. */
         public val description: String
     }
 
@@ -49,7 +49,7 @@ public expect sealed class TlsException(
     ) : TlsException
 }
 
-/** The TLS alert code that [TlsException.Verify] produces (RFC 8446 section 6.2). */
+/** The TLS alert code that [TlsException.Verify] produces (RFC 9846 section 6.2). */
 public val VerifyReason.alertCode: Int
     get() =
         when (this) {

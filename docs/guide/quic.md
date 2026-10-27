@@ -148,7 +148,7 @@ echoed.output.flushAndClose()
 0-RTT lets a returning client send data with its first flight instead of one round trip later (RFC 9001 section 4.6;
 design in [ADR-0015](../adr/0015-0rtt-implementation.md)). It is off on both sides by default.
 
-> **Replay warning.** An attacker who sees the client's first flight can send it to the server again (RFC 8446
+> **Replay warning.** An attacker who sees the client's first flight can send it to the server again (RFC 9846
 > section 8). Write early only what is safe to execute twice, and act on anything else only after
 > `awaitHandshake()`. The server limits replays (OpenSSL's ±10 s ticket-age check, one use per ticket in a replay
 > register shared by the endpoint's loops, tickets bound to the configuration that issued them), but a replay into
