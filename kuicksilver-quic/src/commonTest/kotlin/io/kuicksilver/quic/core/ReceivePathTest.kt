@@ -651,6 +651,66 @@ class ReceivePathTest {
         }
     }
 
+    /**
+     * A long-header v1 packet under Null protection (identity header protection, a 16-byte tag naming the packet number):
+     * [type] 0 is Initial, 2 Handshake; [badTag] makes it fail to open. The 4-byte packet number decodes as written.
+     */
+    private fun nullLongPacket(
+        type: Int,
+        dcid: ByteArray,
+        scid: ByteArray,
+        pn: Long,
+        payload: ByteArray,
+        badTag: Boolean = false,
+    ): ByteArray {
+        val out = ArrayList<Byte>()
+        out += (0xc0 or (type shl 4) or 3).toByte()
+        out += listOf<Byte>(0, 0, 0, 1)
+        out += dcid.size.toByte()
+        out += dcid.toList()
+        out += scid.size.toByte()
+        out += scid.toList()
+        if (type == 0) out += 0.toByte() // no token
+        val length = 4 + payload.size + 16
+        out += (0x40 or (length ushr 8)).toByte()
+        out += length.toByte()
+        for (i in 3 downTo 0) out += (pn ushr (8 * i)).toByte()
+        out += payload.toList()
+        repeat(16) { i -> out += if (i < 8) 0 else (if (badTag) pn + 1 else pn).ushr(8 * (15 - i)).toByte() }
+        return out.toByteArray()
+    }
+
+    /**
+     * RFC 9000 section 14.1: "A server MUST discard an Initial packet that is carried in a UDP datagram with a payload that is
+     * smaller than the smallest allowed maximum datagram size of 1200 bytes." Only an Initial first in the datagram was checked;
+     * one coalesced after another packet was processed whatever the datagram's size.
+     */
+    @Test fun negative_coalescedInitialInSmallDatagramIsDiscarded() {
+        val p = CorePair()
+        try {
+            p.step()
+            val s = p.server!!
+            val dcid = s.localCid.toByteArray()
+            val scid = p.client.localCid.toByteArray()
+            val ping = byteArrayOf(0x01) + ByteArray(40) // PING, then PADDING so the header-protection sample fits
+            // a Handshake packet that does not open: it is not processed, so the Initial space is not discarded by it
+            val lead = nullLongPacket(2, dcid, scid, 7, ping, badTag = true)
+            val small = lead + nullLongPacket(0, dcid, scid, 50, ping)
+            check(small.size < 1200)
+            feed(s, small, CoreFixtures.clientAddr, p.now)
+            val ack = s.loss.space(SpaceId.Initial).ack
+            assertFalse(ack.isDuplicate(50), "the Initial in a ${small.size}-byte datagram was discarded")
+            assertNull(p.closedReason(p.serverEvents))
+            // the control: the same layout padded to 1200 bytes inside the Initial is processed
+            val bigPayload = byteArrayOf(0x01) + ByteArray(1200)
+            val big = lead + nullLongPacket(0, dcid, scid, 51, bigPayload)
+            feed(s, big, CoreFixtures.clientAddr, p.now)
+            assertTrue(ack.isDuplicate(51), "the Initial in a ${big.size}-byte datagram was processed")
+        } finally {
+            p.close()
+        }
+    }
+
     /** RFC 9000 section 9: a client discards packets from a server address it does not know: no processing, and a PATH_CHALLENGE from there opens no path. */
     @Test fun negative_clientDropsPacketFromUnknownServerAddress() {
         val p = CorePair()

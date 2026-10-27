@@ -140,7 +140,13 @@ internal class PacketReceiver(
                 return
             }
             if (hv.unsupportedVersion) break
-            if (hv.type == PacketType.Initial && off == 0 && c.role == TlsRole.Server && length < 1200) return // RFC 9000 section 14.1
+            // RFC 9000 section 14.1: "A server MUST discard an Initial packet that is carried in a UDP datagram with a payload that is
+            // smaller than ... 1200 bytes", wherever the Initial sits in the datagram
+            if (hv.type == PacketType.Initial && c.role == TlsRole.Server && length < 1200) {
+                if (hv.packetEnd <= off) break
+                off = hv.packetEnd
+                continue
+            }
             if (processPacket(data, from)) processed = true
             if (hv.packetEnd <= off) break
             off = hv.packetEnd
