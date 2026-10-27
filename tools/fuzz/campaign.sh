@@ -17,7 +17,9 @@
 #          that override --goal)  --hours HOURS wall clock for this invocation (default: until every selected target
 #          reaches its goal)  --gap SEC between slices (default 60)  --jobs N slices at once, each on its own target
 #          (default 1)  --nice N (default 19; background QoS either way)  --targets id,id,...  --no-build (reuse the last
-#          classpath snapshot)
+#          classpath snapshot)  --fork N (default 0 = off: libFuzzer/Jazzer -fork=N, N worker processes on the slice's one
+#          target, stopping at the first crash, timeout or OOM like a single process; for CI runners, where one job owns
+#          the machine: .github/workflows/fuzz.yml)
 set -euo pipefail
 root="$(cd "$(dirname "$0")/../.." && pwd)"
 state="${KSL_FUZZ_STATE:-$root/build/fuzz-campaign}"
@@ -75,7 +77,7 @@ if [ "$cmd" = status ]; then
   exit 0
 fi
 
-slice=20; goal=2; goals=""; jobs=1; niceness=19; hours=0; gap=60; only=""; build=1
+slice=20; goal=2; goals=""; jobs=1; niceness=19; hours=0; gap=60; only=""; build=1; fork=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --slice) slice=$2; shift 2 ;;
@@ -86,6 +88,7 @@ while [ $# -gt 0 ]; do
     --hours) hours=$2; shift 2 ;;
     --gap) gap=$2; shift 2 ;;
     --targets) only=$2; shift 2 ;;
+    --fork) fork=$2; shift 2 ;;
     --no-build) build=0; shift ;;
     -*) die "unknown option $1" ;;
     *) only="${only:+$only,}$1"; shift ;;
@@ -94,6 +97,7 @@ done
 [ "$slice" -ge 1 ] && [ "$slice" -le 20 ] || die "--slice must be 1..20 minutes (the laptop stays quiet)"
 [ "$jobs" -ge 1 ] && [ "$jobs" -le 4 ] || die "--jobs must be 1..4"
 [ "$niceness" -ge 0 ] && [ "$niceness" -le 20 ] || die "--nice must be 0..20"
+[[ "$fork" =~ ^[0-9]+$ ]] && [ "$fork" -le 64 ] || die "--fork must be 0..64"
 selected=$(targets_table | awk '{ print $1 }')
 if [ -n "$only" ]; then
   for id in ${only//,/ }; do [ -n "$(field "$id" 1)" ] || die "unknown target $id (tools/fuzz/campaign.sh list)"; done
@@ -183,6 +187,8 @@ run_slice() {
   log="$state/logs/$id-$(date +%Y%m%dT%H%M%S).log"
   local dirs=("$corpus"); [ -d "$seeds" ] && dirs+=("$seeds"); [ -d "$committed" ] && dirs+=("$committed")
   local flags=(-max_total_time="$secs" -timeout=60 -rss_limit_mb=3072 -print_final_stats=1 -artifact_prefix="$crashes/")
+  # fork mode ignores timeouts and OOMs by default and goes on; here it stops on them, so a finding ends the slice as before
+  [ "$fork" -gt 0 ] && flags+=(-fork="$fork" -ignore_crashes=0 -ignore_timeouts=0 -ignore_ooms=0)
   echo "$(date '+%F %T') $id: slice of ${secs}s (log ${log#"$root"/})"
   start=$(date +%s); set +e
   if [ "$kind" = jvm ]; then
@@ -197,6 +203,7 @@ run_slice() {
   # a log without a match must not end the campaign (set -e with pipefail)
   execs=$(sed -n 's/^Done \([0-9]*\) runs in.*/\1/p' "$log" | tail -1)
   [ -n "$execs" ] || execs=$(sed -n 's/^stat::number_of_executed_units: *\([0-9]*\).*/\1/p' "$log" | tail -1)
+  [ -n "$execs" ] || execs=$(sed -n 's/^#\([0-9]*\): cov: .*/\1/p' "$log" | tail -1)   # fork mode: "#<total runs>: cov: ..."
   cov=$( (grep -Eo 'cov: [0-9]+' "$log" || true) | tail -1 | awk '{ print $2 }')
   ft=$( (grep -Eo 'ft: [0-9]+' "$log" || true) | tail -1 | awk '{ print $2 }')
   corp=$(find "$corpus" -type f | wc -l | tr -d ' ')

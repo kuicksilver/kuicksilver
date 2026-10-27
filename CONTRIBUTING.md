@@ -233,7 +233,11 @@ the gate is `tools/ci/local-matrix.sh`.
   `tools/fuzz/campaign.sh minimize` merges the grown corpora into `tools/fuzz/corpus/<target>/`, which is committed and
   seeds later campaigns. Options: `--slice MIN`, `--goal HOURS` per target, `--goals id=HOURS,...` per target, `--hours
   HOURS` of wall clock, `--jobs N` slices at once (each on its own target, default 1), `--nice N` (default 19),
-  `--targets id,...` (`tools/fuzz/campaign.sh list`). A crash you find becomes a `crash-*` input next to the seeds, a unit test that
+  `--targets id,...` (`tools/fuzz/campaign.sh list`), `--fork N` (libFuzzer/Jazzer fork mode, N workers on the slice's
+  target; default off, for a machine the campaign owns). On GitHub, *Actions → fuzz → Run workflow* (`.github/workflows/fuzz.yml`,
+  dispatch only) gives every target its own runner for `hours_per_target` (`--fork` with one worker per CPU, `--nice 0`,
+  `--gap 0`), keeps each grown corpus in the Actions cache between runs, fails the target's job on a finding and uploads
+  its reproducers, logs and `stats.tsv` as `fuzz-<target>`; the run summary is the `status` table. A crash you find becomes a `crash-*` input next to the seeds, a unit test that
   reproduces it and a fix; delete `build/fuzz-campaign/crashed-<target>` so the campaign takes the target again. A timeout
   is replayed first: one whose input runs in time alone (a slice starved on a busy machine) is recorded as `load-timeout`
   in `build/fuzz-campaign/load-timeouts/` and is not a finding. ClusterFuzzLite is not used: `.clusterfuzzlite/` and
