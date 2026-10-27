@@ -117,13 +117,20 @@ internal actual fun tcpOpen(family: Int): Int {
     return fd
 }
 
+/** errno when [failed], read at once (runtime code after the call may change it); 0 otherwise. */
+private fun errnoIf(failed: Boolean): Int = if (failed) errno else 0
+
 internal actual fun tcpConnect(
     fd: Int,
     to: Sockaddr,
 ): Boolean {
-    val rc = to.bytes.usePinned { connect(fd, it.addressOf(0).reinterpret(), to.bytes.size.convert()) }
+    // errno is read inside the pinned block, right after the call: unpinning may run runtime code that changes it
+    val (rc, e) =
+        to.bytes.usePinned {
+            val r = connect(fd, it.addressOf(0).reinterpret(), to.bytes.size.convert())
+            r to errnoIf(r != 0)
+        }
     if (rc == 0) return true
-    val e = errno
     if (e == EINPROGRESS || e == EINTR) return false
     throw PosixException.forErrno(e, "connect")
 }
@@ -144,9 +151,13 @@ internal actual fun tcpBindListen(
     to: Sockaddr,
     backlog: Int,
 ) {
-    if (to.bytes.usePinned { bind(fd, it.addressOf(0).reinterpret(), to.bytes.size.convert()) } != 0) {
-        throw PosixException.forErrno(errno, "bind")
-    }
+    val (bound, bindError) =
+        to.bytes.usePinned {
+            val r = bind(fd, it.addressOf(0).reinterpret(), to.bytes.size.convert())
+            r to
+                errnoIf(r != 0)
+        }
+    if (bound != 0) throw PosixException.forErrno(bindError, "bind")
     if (listen(fd, backlog) != 0) throw PosixException.forErrno(errno, "listen")
 }
 
@@ -154,14 +165,16 @@ internal actual fun tcpAccept(
     fd: Int,
     peer: ByteArray,
 ): Int? {
-    val client =
+    val (client, e) =
         memScoped {
             val size = alloc<socklen_tVar>()
             size.value = peer.size.convert()
-            peer.usePinned { accept(fd, it.addressOf(0).reinterpret(), size.ptr) }
+            peer.usePinned {
+                val c = accept(fd, it.addressOf(0).reinterpret(), size.ptr)
+                c to errnoIf(c < 0)
+            }
         }
     if (client < 0) {
-        val e = errno
         // a connection reset before it was accepted is not the listener's failure
         if (tcpWouldBlock(e) || e == EINTR || e == ECONNABORTED) return null
         throw PosixException.forErrno(e, "accept")
@@ -184,9 +197,12 @@ internal actual fun tcpRecv(
     fd: Int,
     buffer: ByteArray,
 ): Int {
-    val n = buffer.usePinned { recv(fd, it.addressOf(0), buffer.size.convert(), 0) }.toInt()
+    val (n, e) =
+        buffer.usePinned {
+            val r = recv(fd, it.addressOf(0), buffer.size.convert(), 0).toInt()
+            r to errnoIf(r < 0)
+        }
     if (n >= 0) return n
-    val e = errno
     if (tcpWouldBlock(e) || e == EINTR) return -1
     throw PosixException.forErrno(e, "recv")
 }
@@ -197,9 +213,12 @@ internal actual fun tcpSend(
     offset: Int,
     length: Int,
 ): Int {
-    val n = buffer.usePinned { send(fd, it.addressOf(offset), length.convert(), tcpSendFlags) }.toInt()
+    val (n, e) =
+        buffer.usePinned {
+            val r = send(fd, it.addressOf(offset), length.convert(), tcpSendFlags).toInt()
+            r to errnoIf(r < 0)
+        }
     if (n >= 0) return n
-    val e = errno
     if (tcpWouldBlock(e) || e == EINTR) return -1
     throw PosixException.forErrno(e, "send")
 }
@@ -209,23 +228,21 @@ internal actual fun tcpAddressOf(
     peer: Boolean,
 ): Sockaddr {
     val storage = ByteArray(SOCKADDR_STORAGE)
-    val rc =
+    val (rc, e) =
         memScoped {
             val size = alloc<socklen_tVar>()
             size.value = storage.size.convert()
             storage.usePinned {
-                if (peer) {
-                    getpeername(
-                        fd,
-                        it.addressOf(0).reinterpret(),
-                        size.ptr,
-                    )
-                } else {
-                    getsockname(fd, it.addressOf(0).reinterpret(), size.ptr)
-                }
+                val r =
+                    if (peer) {
+                        getpeername(fd, it.addressOf(0).reinterpret(), size.ptr)
+                    } else {
+                        getsockname(fd, it.addressOf(0).reinterpret(), size.ptr)
+                    }
+                r to errnoIf(r != 0)
             }
         }
-    if (rc != 0) throw PosixException.forErrno(errno, if (peer) "getpeername" else "getsockname")
+    if (rc != 0) throw PosixException.forErrno(e, if (peer) "getpeername" else "getsockname")
     return Sockaddr(storage)
 }
 
