@@ -276,9 +276,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - Ktor server, HTTP/1.1: the request-target must match its form (RFC 9112 section 3.2): an origin-form path and query
   of RFC 3986 characters, an absolute-URI, the authority-form for CONNECT only (with a port from 1 to 65535, RFC 9110
   section 9.3.6), `*` for OPTIONS only. Any other target is an invalid request line and gets 400 (section 3); a GET or
-  HEAD whose path or query only has characters to encode (`|`, `{`, `^`, `[`, `#`, non-ASCII bytes, as browsers send
-  them) gets `301 Moved Permanently` to the target properly encoded instead, the other answer section 3 names. Before,
-  any run of non-whitespace reached routing.
+  HEAD whose path or query only has characters to encode (`|`, `{`, `^`, `[`, which browsers send unencoded, and
+  non-ASCII bytes) gets `301 Moved Permanently` to the target properly encoded instead, the other answer section 3
+  names. Before, any run of non-whitespace reached routing.
 - Ktor server, HTTP/1.1: the request line is checked before Ktor's parser reads it. A method that is not a token
   (`G"ET`, RFC 9112 section 3.1), a control character other than the whitespace section 3 allows as a separator, or a
   Unicode space (U+00A0), which Ktor's parser took as a separator, gets 400. A request in a higher minor version
@@ -813,6 +813,13 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Security
 
+- Ktor server, HTTP/1.1: the `301 Moved Permanently` for a GET or HEAD target with characters to encode was an open
+  redirect. `GET //evil.example/^` got `Location: //evil.example/%5E`, a network-path reference (RFC 3986 section
+  4.2) that a browser resolves to `http://evil.example/`, so a link to `http://victim.example//evil.example/^` left
+  the site. A target whose Location could name another authority (it starts with `//`, also once `%2F`, `%5C` and
+  `%2E` are decoded, `\` is read as `/` and dot segments are removed) now gets 400, as does a target with a raw `#`
+  (redirected to `%23` it named another resource, RFC 3986 section 2.2). The redirect now never leaves the server;
+  valid targets that start with `//` are still served as paths.
 - Ktor server, HTTP/1.1: a CONNECT request is now always the last on its connection. A CONNECT the application
   refused (a 407, a 502 or 504, Ktor's 404 or 405 for no route, a 500 from a failing handler) left the connection
   open, so the bytes behind it, which a proxy client may send optimistically as tunnel data, were read and executed as

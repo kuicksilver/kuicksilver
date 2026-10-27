@@ -201,7 +201,7 @@ internal fun checkRequestLine(line: ByteArray): Int {
  * path and query characters, `%` with two hex digits. Anything else is an invalid request line, which the server SHOULD
  * answer with 400 or with a 301 to the request-target properly encoded (RFC 9112 section 3): the 301 for an origin-form
  * target of a GET or HEAD whose only fault is characters (browsers send `|`, `{`, `^`, `[` unencoded: the WHATWG URL
- * standard leaves them), 400 otherwise.
+ * standard leaves them) and whose Location stays on this server ([isSafeToRedirect]), 400 otherwise.
  */
 private fun checkRequestTarget(
     method: String,
@@ -232,13 +232,94 @@ private fun checkRequestTarget(
     }
     if (target.startsWith("/")) {
         if (ascii && isPathAndQuery(target)) return
-        if (method == "GET" || method == "HEAD") {
+        if ((method == "GET" || method == "HEAD") && isSafeToRedirect(target)) {
             val location = encodeOriginForm(line, start, end)
             throw RequestHeadRefused(301, "Moved Permanently", "An origin-form request-target with invalid characters", location)
         }
         refuse("Invalid characters in the request-target")
     }
     if (!ascii || !isAbsoluteUri(target)) refuse("The request-target is no origin-form and no absolute-URI")
+}
+
+/**
+ * Whether the 301 for the invalid origin-form [target] may be sent: its Location (the target encoded, a relative
+ * reference) must be an absolute-path reference that resolves against this server's own authority. A Location that
+ * starts with `//` is a network-path reference (RFC 3986 section 4.2) that a browser resolves to another host:
+ * `GET //evil.example/^` redirected to `//evil.example/%5E` would be an open redirect. So the target must not start
+ * with `//`, also not once its percent-encoded `/`, `\` and `.` are decoded, `\` is read as `/` (the WHATWG URL
+ * standard does so for http and https) and its dot segments are removed (section 5.2.4), as a lenient client or a proxy
+ * in front may do. And it must not contain a raw `#`: encoded as `%23` it names another resource than the path before
+ * the `#` with a fragment, which is what the client most likely meant (section 2.2: a reserved character and its
+ * percent-encoding are not equivalent), so there is no proper encoding to redirect to. Such targets get 400.
+ */
+private fun isSafeToRedirect(target: String): Boolean {
+    if ('#' in target) return false
+    val path = target.substringBefore('?')
+    val decoded = StringBuilder(path.length)
+    var i = 0
+    while (i < path.length) {
+        val c = path[i]
+        if (c == '%' && i + 2 < path.length) {
+            when (path.substring(i + 1, i + 3).uppercase()) {
+                "2F", "5C" -> {
+                    decoded.append('/')
+                    i += 3
+                    continue
+                }
+
+                "2E" -> {
+                    decoded.append('.')
+                    i += 3
+                    continue
+                }
+            }
+        }
+        decoded.append(if (c == '\\') '/' else c)
+        i++
+    }
+    return !removeDotSegments(decoded.toString()).startsWith("//")
+}
+
+/** remove_dot_segments of RFC 3986 section 5.2.4 for a path that starts with `/`. */
+private fun removeDotSegments(path: String): String {
+    var input = path
+    val output = StringBuilder()
+    while (input.isNotEmpty()) {
+        when {
+            input.startsWith("/./") -> {
+                input = input.substring(2)
+            }
+
+            input == "/." -> {
+                input = "/"
+            }
+
+            input.startsWith("/../") || input == "/.." -> {
+                input = if (input == "/..") "/" else input.substring(3)
+                val last = output.lastIndexOf("/")
+                output.setLength(if (last < 0) 0 else last)
+            }
+
+            input == "." || input == ".." -> {
+                input = ""
+            }
+
+            input.startsWith("./") -> {
+                input = input.substring(2)
+            }
+
+            input.startsWith("../") -> {
+                input = input.substring(3)
+            }
+
+            else -> {
+                val next = input.indexOf('/', 1).let { if (it < 0) input.length else it }
+                output.append(input, 0, next)
+                input = input.substring(next)
+            }
+        }
+    }
+    return output.toString()
 }
 
 /** `absolute-path [ "?" query ]` (RFC 9112 section 3.2.1, RFC 3986 section 3.3, 3.4) of a target that starts with `/`. */
