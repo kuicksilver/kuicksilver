@@ -293,7 +293,16 @@ public interface QuicTlsSession : AutoCloseable {
 
     /**
      * Client: resume [ticket] (it is consumed and closed by this session); call before the first [drive]. False when TLS
-     * refused it (the handshake then is a full one).
+     * refused it, or when the check below failed (the handshake then is a full one).
+     *
+     * What is verified again (ADR-0011: a resumed handshake carries no Certificate, so its trust comes from the chain cached
+     * with the ticket). With the OpenSSL verifier ([TrustConfig.AnchoredCa], and [TrustConfig.Platform] on Linux, also under
+     * [TrustConfig.Pinned] or [TrustConfig.ExpectedName]) this call verifies the cached chain again against the current
+     * anchors, time, host name and purpose and returns false when it no longer passes; the pins are checked again on the
+     * cached validated chain when the resumed handshake completes. With any other trust (the platform verifier on the JVM,
+     * Android, Apple platforms and Windows, a custom verifier, TOFU) this call checks nothing: the verdict is run again on the
+     * cached chain only by [SessionCache.takeQuic], which hands out a ticket only after it passed. A ticket kept by the caller,
+     * or taken for another [TlsConfig] than this session's, resumes on the verdict of the handshake that issued it.
      */
     @ExperimentalKuicksilverApi
     public fun resume(ticket: QuicSessionTicket): Boolean {
