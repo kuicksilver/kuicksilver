@@ -316,6 +316,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   members of a broken value such as `u=1, i,`. A `u` that is not an Integer 0 to 7 or an `i` that is not a Boolean is
   still ignored on its own (RFC 9218 sections 4.1, 4.2), and several `priority` field lines are combined before
   parsing; only the first one was read before.
+- HTTP/3 client: a server that sends GOAWAY before the client's SETTINGS went out (it is stopping right after the
+  handshake) no longer makes `Http3Endpoint.connect` and `Http3Connection.client` fail with "closed locally with
+  H3_NO_ERROR" (the client's own idle close after GOAWAY, RFC 9114 section 5.2). The connection is returned with
+  `goAwayReceived` set, and a request on it fails with the retry-safe `Http3Exception.RequestNotProcessed`.
 - HTTP/3: a response or request body whose stream came whole (its FIN and every byte before it) before the peer's
   CONNECTION_CLOSE is read whole however late its reader runs or the application reads it (RFC 9000 section 3.2, "Data
   Recvd"). The one-second drain grace after a lost connection cut such a reader too: a body reader the scheduler paused

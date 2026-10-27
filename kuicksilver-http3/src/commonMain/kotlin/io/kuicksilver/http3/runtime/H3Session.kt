@@ -304,7 +304,10 @@ internal class H3Session(
      * H3_GENERAL_PROTOCOL_ERROR. A server returns at once, so an accept loop never waits on one peer; a client returns once
      * its SETTINGS went out and throws the connection's error when the streams could not be opened. A client whose QUIC
      * handshake is still running (0-RTT) opens them once it completed and returns at once: a rejected 0-RTT resets every
-     * stream the client opened (RFC 9001 section 4.6.2), so only the early requests, which are sent again, ride 0-RTT.
+     * stream the client opened (RFC 9001 section 4.6.2), so only the early requests, which are sent again, ride 0-RTT. A
+     * client that received GOAWAY first (a server stopping right after the handshake) returns too: it closed itself, idle, as
+     * RFC 9114 section 5.2 lets it, and a request then fails with the retry-safe [Http3Exception.RequestNotProcessed]; its
+     * own H3_NO_ERROR close is no failure of the connection to report.
      */
     suspend fun start(criticalStreamsDeadline: Duration = CRITICAL_STREAMS_DEADLINE) {
         scope.launch {
@@ -320,7 +323,12 @@ internal class H3Session(
         quic.activePath?.let { currentPath = it }
         scope.launch { acceptLoop() }
         datagrams.start()
-        if (!isServer && quic.isHandshakeComplete) awaitCriticalStreams()
+        if (isServer || !quic.isHandshakeComplete) return
+        try {
+            awaitCriticalStreams()
+        } catch (e: Http3Exception) {
+            if (goAwayReceived.value == null) throw e
+        }
     }
 
     private suspend fun openCriticalStreams(deadline: Duration) {
