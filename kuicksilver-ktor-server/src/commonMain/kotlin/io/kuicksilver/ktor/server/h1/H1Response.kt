@@ -189,15 +189,23 @@ internal class H1Response(
     }
 
     /**
-     * A 1xx or 204 response has no content: a server MUST NOT send Content-Length in it (RFC 9110 section 8.6) nor
-     * Transfer-Encoding (RFC 9112 section 6.1). A 304 has none either: no Transfer-Encoding, and Content-Length only
+     * A 2xx response to CONNECT has neither Content-Length nor Transfer-Encoding (RFC 9110 section 8.6, RFC 9112 section
+     * 6.1): the connection is a tunnel after its header section, so the content the application writes goes out raw and
+     * the response says `Connection: close`. A 1xx or 204 response has no content: a server MUST NOT send Content-Length
+     * in it (RFC 9110 section 8.6) nor Transfer-Encoding (RFC 9112 section 6.1). A 304 has none either: no Transfer-Encoding, and Content-Length only
      * when it equals the length a 200 would have had (RFC 9110 section 8.6), which `Content-Length: 0` does not say for a
      * non-empty resource: Ktor adds it for every empty content (`respond(HttpStatusCode.NotModified)`), so it is dropped
      * (a 304 MAY omit it); another value is the application's and stays.
      */
     private fun dropFramingFieldsOfAResponseWithoutContent() {
         val status = statusCode.value
-        if (status in 100..199 || status == 204) {
+        if (status in 200..299 && call.request.local.method.value == "CONNECT") {
+            // a 2xx to CONNECT starts a tunnel: no Content-Length nor Transfer-Encoding (RFC 9110 section 8.6, RFC 9112
+            // section 6.1, MUST NOT); what the application writes goes out as is, and the close ends it
+            headersBuilder.remove(HttpHeaders.ContentLength)
+            headersBuilder.remove(HttpHeaders.TransferEncoding)
+            headersBuilder[HttpHeaders.Connection] = "close"
+        } else if (status in 100..199 || status == 204) {
             headersBuilder.remove(HttpHeaders.ContentLength)
             headersBuilder.remove(HttpHeaders.TransferEncoding)
         } else if (status == 304) {
