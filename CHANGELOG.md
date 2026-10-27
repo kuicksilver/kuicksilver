@@ -287,6 +287,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   step 2, MUST): a WebSocket over HTTP/1.1 to an address and port another one is still connecting to waits until that
   handshake is answered or failed, also when it uses another name for the address; through a proxy that resolves names
   the name counts as the host. Before, any number connected at once.
+- QUIC server with 0-RTT: `QuicConfig.resetStreamAt` is part of the tickets' early-data context, so a server that turned
+  it off no longer accepts the 0-RTT of tickets issued with it on (draft-ietf-quic-reliable-stream-reset section 3: the
+  server "MUST NOT disable this extension" when it accepts 0-RTT; the client then closed with PROTOCOL_VIOLATION).
+  Tickets issued before the upgrade refuse 0-RTT once.
 - QUIC with `resetStreamAt`: a RESET_STREAM sent after our RESET_STREAM_AT (our own `reset`, or the answer to the
   peer's STOP_SENDING) carries the RESET_STREAM_AT's error code, not the new one; draft-ietf-quic-reliable-stream-reset
   section 5.2 says the initiator "MUST NOT change the Application Error Code", and a peer closed the connection with

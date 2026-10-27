@@ -525,6 +525,17 @@ class ZeroRttTest {
         p.close()
     }
 
+    /**
+     * draft-ietf-quic-reliable-stream-reset section 3: "When the server accepts 0-RTT data, the server MUST NOT disable this
+     * extension on the resumed connection." The parameter is bound into the tickets' early-data context, so a server that
+     * turned `resetStreamAt` off refuses the 0-RTT of tickets issued with it on (and the other way round).
+     */
+    @Test fun negative_resetStreamAtIsPartOfTheEarlyDataContext() {
+        val off = early(QuicConfig.Default).context
+        val on = early(quicConfig { resetStreamAt = true }).context
+        assertTrue(!off.contentEquals(on), "a change of reset_stream_at refuses earlier tickets' 0-RTT")
+    }
+
     @Test fun noEarlyDataWithoutServerOption() {
         val t = ticket()
         val (p, id) = resumed(t, serverEarly = null)

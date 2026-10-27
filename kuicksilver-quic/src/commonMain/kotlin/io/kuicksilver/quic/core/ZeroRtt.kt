@@ -41,8 +41,8 @@ internal class ServerEarlyData(
     companion object {
         /**
          * The context: the ALPN list, the transport parameters a client may rely on in 0-RTT (RFC 9000 section 7.4.1:
-         * the limits, idle timeout, `max_udp_payload_size`, `disable_active_migration`, `max_datagram_frame_size`) and the
-         * application's blob (HTTP/3 SETTINGS), as two SipHash-64 values. The ticket is encrypted and authenticated, so the
+         * the limits, idle timeout, `max_udp_payload_size`, `disable_active_migration`, `max_datagram_frame_size`,
+         * `reset_stream_at`) and the application's blob (HTTP/3 SETTINGS), as two SipHash-64 values. The ticket is encrypted and authenticated, so the
          * digest only has to tell configurations apart; any change refuses 0-RTT once.
          */
         fun of(
@@ -70,6 +70,8 @@ internal class ServerEarlyData(
                 w.varint(quic.maxUdpPayloadSize.toLong())
                 w.varint(if (quic.allowMigration) 0 else 1)
                 w.varint(quic.maxDatagramFrameSize)
+                // draft-ietf-quic-reliable-stream-reset section 3: a server that accepts 0-RTT "MUST NOT disable this extension"
+                w.varint(if (quic.resetStreamAt) 1 else 0)
                 val app = application ?: ByteArray(0)
                 w.varint(app.size.toLong())
                 w.bytes(app, 0, app.size)
