@@ -12,6 +12,7 @@ import io.kuicksilver.http3.Http3Endpoint
 import io.kuicksilver.http3.Http3Headers
 import io.kuicksilver.http3.Http3Settings
 import io.kuicksilver.http3.MemoryNet
+import io.kuicksilver.http3.TestCerts
 import io.kuicksilver.http3.http3Request
 import io.kuicksilver.http3.http3Settings
 import io.kuicksilver.http3.readAllBytes
@@ -19,6 +20,10 @@ import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.QuicEndpointConfig
 import io.kuicksilver.quic.QuicServerConfig
 import io.kuicksilver.tls.KslQuicCrypto
+import io.kuicksilver.tls.SessionTicketConfig
+import io.kuicksilver.tls.TlsIdentity
+import io.kuicksilver.tls.TlsRole
+import io.kuicksilver.tls.tlsConfig
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -135,6 +140,103 @@ class EarlyDataTest {
             scope.cancel()
             client.close()
             server.close()
+        }
+    }
+
+    /**
+     * RFC 9297 section 2.1.1: a server "MUST NOT reduce" SETTINGS_H3_DATAGRAM for 0-RTT. The setting is bound into the
+     * ticket's early-data context: a ticket from a server with H3_DATAGRAM=1 gives no 0-RTT to one (sharing its ticket
+     * keys) that now sends 0, while the same settings accept it.
+     */
+    @Test fun h3DatagramChangeInvalidatesEarlyData(): Unit =
+        runBlocking {
+            withTimeout(30.seconds) {
+                for ((resumerDatagrams, expected) in listOf(true to true, false to false)) {
+                    assertEquals(
+                        expected,
+                        earlyAcceptedAfterResuming(
+                            issuer = http3Settings {},
+                            resumer =
+                                http3Settings {
+                                    h3Datagram =
+                                        resumerDatagrams
+                                },
+                        ),
+                    )
+                }
+            }
+        }
+
+    /** A client gets a ticket from a server with [issuer] settings, then resumes with 0-RTT at another with [resumer] and the same ticket keys. */
+    private suspend fun earlyAcceptedAfterResuming(
+        issuer: Http3Settings,
+        resumer: Http3Settings,
+    ): Boolean? {
+        val net = MemoryNet()
+        val a = net.open(InetSocketAddress("10.0.0.1", 1111))
+        val b1 = net.open(InetSocketAddress("10.0.0.2", 443))
+        val b2 = net.open(InetSocketAddress("10.0.0.3", 443))
+        val keys = SessionTicketConfig(keys = listOf(ByteArray(80) { 5 }))
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default + kotlinx.coroutines.CoroutineExceptionHandler { _, _ -> })
+
+        suspend fun server(
+            io: io.kuicksilver.quic.DatagramIo,
+            settings: Http3Settings,
+        ) = Http3Endpoint.bind(
+            io.localAddress,
+            QuicEndpointConfig
+                .Builder()
+                .apply {
+                    val tls =
+                        tlsConfig(TlsRole.Server) {
+                            alpn = listOf("h3")
+                            identity = TlsIdentity.fromDer(listOf(TestCerts.server), TestCerts.serverKey.copyOf())
+                            sessionTickets = keys
+                        }
+                    this.server = QuicServerConfig.Builder(tls).apply { earlyData = true }.build()
+                    crypto = KslQuicCrypto
+                    this.io = { io }
+                }.build(),
+            settings,
+        )
+        val first = server(b1, issuer)
+        val second = server(b2, resumer)
+        val client =
+            Http3Endpoint.bind(
+                a.localAddress,
+                QuicEndpointConfig
+                    .Builder()
+                    .apply {
+                        crypto = KslQuicCrypto
+                        io = { a }
+                    }.build(),
+            )
+        try {
+            for (srv in listOf(first, second)) {
+                scope.launch {
+                    while (true) {
+                        val c = srv.accept()
+                        scope.launch {
+                            while (true) {
+                                val r = c.acceptRequest()
+                                scope.launch { r.respond(204, Http3Headers.Empty).finish() }
+                            }
+                        }
+                    }
+                }
+            }
+            val warm = client.connectEarly(first.localAddress, H3Fixtures.client())
+            repeat(2) { assertEquals(204, warm.request(http3Request("GET", "server.test", "/")).status) } // the ticket arrives
+            warm.close()
+            val c = client.connectEarly(second.localAddress, H3Fixtures.client())
+            assertEquals(204, c.request(http3Request("GET", "server.test", "/")).status)
+            c.quic.awaitHandshake()
+            return c.quic.earlyDataAccepted
+        } finally {
+            scope.cancel()
+            client.close()
+            first.close()
+            second.close()
         }
     }
 
