@@ -299,6 +299,15 @@ internal fun CoroutineScope.startH1Pipeline(
                         // client reads it: read and drop what follows for a while first (nginx `lingering_close`)
                         withTimeoutOrNull(LINGER) { connection.input.discard() }
                         break
+                    } catch (refused: RequestHeadRefused) {
+                        if (refused.status == 400) {
+                            respondBadRequest(actorChannel)
+                        } else {
+                            respondStatus(actorChannel, refused.status, refused.reason)
+                            // the rest of the head is unread: read and drop it for a while, as after a 431
+                            withTimeoutOrNull(LINGER) { connection.input.discard() }
+                        }
+                        break
                     } catch (_: TooLongLineException) {
                         respondBadRequest(actorChannel)
                         break
@@ -655,18 +664,19 @@ private suspend fun readRequestHead(
 
 /**
  * Parses the next request head, or throws [RequestHeadTimeout] when it is not complete [budget] after every earlier
- * response has been written ([unwritten] is zero). Waiting for the first byte separately tells an idle connection from
+ * response has been written ([unwritten] is zero), or [RequestHeadRefused] for a head [checkRequestHead] refuses. Waiting for the first byte separately tells an idle connection from
  * one that started a request. Returns null, as at the end of the input, when [draining] completes before a head starts.
  */
 @OptIn(InternalAPI::class)
 private suspend fun readRequestHeadInTime(
-    input: ByteReadChannel,
+    input: HeadLimitedInput,
     budget: Duration,
     unwritten: StateFlow<Int>,
     draining: Job?,
 ): Request? {
     if (budget == Duration.INFINITE) {
         if (draining != null && !awaitRequestStart(input, draining)) return null
+        if (input.skipEmptyLines()) input.checkRequestHead()
         return parseRequest(input)
     }
     var started = false
@@ -683,6 +693,7 @@ private suspend fun readRequestHeadInTime(
                 // the server stopping ends a connection that is waiting for its next head (h1-client's draining)
                 if (draining != null && !awaitRequestStart(input, draining)) return@coroutineScope null
                 started = input.skipEmptyLines()
+                if (started) input.checkRequestHead()
                 parseRequest(input)
             } finally {
                 deadline.cancel()

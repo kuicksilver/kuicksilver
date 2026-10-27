@@ -71,6 +71,37 @@ class H1PipelineHeadLimitTest {
             assertTrue(response.startsWith("HTTP/1.1 431 "), response.take(200))
         }
 
+    /**
+     * A request-target longer than the server parses (a request line over Ktor's 8 KiB line limit): the server MUST
+     * respond with 414 (RFC 9112 section 3). Before, it answered 400.
+     */
+    @Test fun negative_longRequestTargetGets414() =
+        runTest {
+            val c = pipeline()
+            val response = exchange(c, "GET /" + "a".repeat(9_000) + " HTTP/1.1\r\nHost: s\r\n\r\nGET /next HTTP/1.1\r\nHost: s\r\n\r\n")
+            assertTrue(response.startsWith("HTTP/1.1 414 URI Too Long\r\n"), response.take(200))
+            assertTrue(response.contains("\r\nConnection: close\r\n"), response)
+            assertEquals(1, Regex("HTTP/1.1 ").findAll(response).count(), "the request after the refused head was served: $response")
+        }
+
+    /** A request line of exactly 8 KiB (Ktor's line limit) is served; one byte more is 414. */
+    @Test fun requestLineAtTheLineLimitIsServed() =
+        runTest {
+            val line = "GET /" + "a".repeat(8_192 - "GET / HTTP/1.1".length) + " HTTP/1.1"
+            assertEquals(8_192, line.length)
+            assertEquals(OK, exchange(pipeline(), "$line\r\nHost: s\r\nConnection: close\r\n\r\n"))
+            val response = exchange(pipeline(), "${line.replace("/a", "/aa")}\r\nHost: s\r\n\r\n")
+            assertTrue(response.startsWith("HTTP/1.1 414 "), response.take(200))
+        }
+
+    /** A field line over the 8 KiB line limit is no request-target: it stays 400. */
+    @Test fun negative_longFieldLineGets400() =
+        runTest {
+            val c = pipeline()
+            val response = exchange(c, "GET / HTTP/1.1\r\nHost: s\r\nX-Long: " + "a".repeat(9_000) + "\r\n\r\n")
+            assertTrue(response.startsWith("HTTP/1.1 400 "), response.take(200))
+        }
+
     /** A head of exactly the limit is served. */
     @Test fun headAtTheLimitIsServed() =
         runTest {
