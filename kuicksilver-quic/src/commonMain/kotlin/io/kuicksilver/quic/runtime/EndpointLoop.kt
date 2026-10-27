@@ -751,6 +751,7 @@ internal class EndpointLoop private constructor(
     }
 
     /** A client connection received a ticket: kept for a later 0-RTT connection with the same TLS configuration. */
+    @OptIn(kotlinx.coroutines.DelicateCoroutinesApi::class)
     internal fun storeTicket(
         tls: TlsConfig,
         ticket: QuicSessionTicket,
@@ -767,6 +768,7 @@ internal class EndpointLoop private constructor(
      * A client connection received a NEW_TOKEN token: handed to the configured store (RFC 9000 section 8.1.3). The store runs
      * in a coroutine of the loop's scope; what it throws is logged, never the connection's failure.
      */
+    @OptIn(kotlinx.coroutines.DelicateCoroutinesApi::class)
     internal fun storeToken(
         store: io.kuicksilver.quic.QuicTokenStore,
         key: String,
