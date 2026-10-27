@@ -20,6 +20,7 @@ import io.kuicksilver.http3.http3Settings
 import io.kuicksilver.http3.useScoped
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.StreamPriority
+import io.kuicksilver.quic.quicConfig
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -169,6 +170,49 @@ class PriorityTest {
                 val raw = RawPeer(c)
                 raw.openControl()
                 peerMayHaveClosed { raw.priorityUpdate(2, "u=1") } // a unidirectional stream id
+                assertEquals(Http3ErrorCode.ID_ERROR, peerSawClose(c))
+            }
+        }
+
+    /**
+     * RFC 9218 section 7: a PRIORITY_UPDATE for a request stream the transport opened (stream 8 arrived first, so 0 and
+     * 4 exist) whose HEADERS have not come yet is kept and applied once they do, not taken for a finished request.
+     */
+    @Test fun earlyPriorityUpdateForReorderedStreamApplies() =
+        h3Test {
+            QuicPair.open().use { q ->
+                val (c, s) = q.connect()
+                val server = Http3Connection.server(s)
+                val raw = RawPeer(c)
+                raw.openControl()
+                val streams = (0 until 3).map { c.openBidi() }
+                streams[2].output.writeFully(raw.headers(streams[2].id, GET))
+                streams[2].output.flushAndClose()
+                val r8 = withTimeout(5.seconds) { server.acceptRequest() }
+                assertEquals(8L, r8.streamId)
+                raw.priorityUpdate(4, "u=0")
+                raw.priorityUpdate(8, "u=1") // the control stream is read in order: once 8 has it, the update for 4 was seen
+                withTimeout(5.seconds) { r8.priority.first { it == u1 } }
+                streams[1].output.writeFully(raw.headers(streams[1].id, GET + ("priority" to "u=6")))
+                streams[1].output.flushAndClose()
+                val r4 = withTimeout(5.seconds) { server.acceptRequest() }
+                assertEquals(4L, r4.streamId)
+                assertEquals(StreamPriority(0), r4.priority.value)
+            }
+        }
+
+    /** RFC 9218 section 7.2: a PRIORITY_UPDATE naming a stream beyond the limit we granted (MAX_STREAMS) is H3_ID_ERROR. */
+    @Test fun priorityUpdateBeyondStreamLimitIsIdError() =
+        h3Test {
+            QuicPair.open(serverQuic = quicConfig { maxBidiStreams = 10 }).use { q ->
+                val (c, s) = q.connect()
+                val server = Http3Connection.server(s)
+                val raw = RawPeer(c)
+                raw.openControl()
+                raw.priorityUpdate(36, "u=1") // the tenth stream: within the limit, kept
+                raw.request()
+                withTimeout(5.seconds) { server.acceptRequest() }.respond(204).finish() // the connection lives on
+                peerMayHaveClosed { raw.priorityUpdate(40, "u=1") } // the eleventh
                 assertEquals(Http3ErrorCode.ID_ERROR, peerSawClose(c))
             }
         }

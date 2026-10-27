@@ -37,6 +37,7 @@ import io.kuicksilver.quic.QuicStream
 import io.kuicksilver.quic.StreamPriority
 import io.kuicksilver.quic.activePath
 import io.kuicksilver.quic.awaitFinished
+import io.kuicksilver.quic.runtime.QuicStreamLimits
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineName
@@ -247,6 +248,12 @@ internal class H3Session(
     // RFC 9218 (server)
     val activeServerRequests = HashMap<Long, ServerRequestImpl>()
     private val earlyPriority = LinkedHashMap<Long, StreamPriority>() // PRIORITY_UPDATE for streams not open yet
+
+    /** Server: the highest client bidirectional stream taken from the transport; the transport hands them out in id order. */
+    private var acceptedBidiUpTo = -1L
+
+    /** Server: client bidirectional streams taken from the transport whose handler has not ended (HEADERS may still be on the way). */
+    private val handledBidi = HashSet<Long>()
     private var peerMaxPushId = -1L // server: the client's last MAX_PUSH_ID (we never push; kept to catch a decrease)
 
     /** HEADERS frames above this are refused unread; QPACK output is never much larger than the decoded section it carries. */
@@ -408,7 +415,18 @@ internal class H3Session(
             if (st.id and 2L != 0L) {
                 drains(scope.launch { guarded { readUni(st) } })
             } else if (isServer) {
-                drains(scope.launch { guarded { handleRequestStream(this@H3Session, st) } })
+                acceptedBidiUpTo = st.id
+                handledBidi += st.id
+                drains(
+                    scope.launch {
+                        try {
+                            guarded { handleRequestStream(this@H3Session, st) }
+                        } finally {
+                            handledBidi -= st.id
+                            earlyPriority.remove(st.id) // a stream that never became a request (aborted, WebTransport) keeps no slot
+                        }
+                    },
+                )
             } else if (settings.webTransport) {
                 scope.launch { guarded { serverBidi(st) } }
             } else {
@@ -649,8 +667,9 @@ internal class H3Session(
 
     /**
      * RFC 9218 section 7 on a server: the client's new signal for a request stream. An open request takes it at once; a
-     * stream not open yet keeps it (at most `maxEarlyPriorityUpdates`); frames above 256 bytes and the excess are ignored
-     * and spend glitch tokens.
+     * stream whose request is not open yet (not opened, or its HEADERS still on the way) keeps it (at most
+     * `maxEarlyPriorityUpdates`) and applies it when it opens; a stream beyond the limit we granted is H3_ID_ERROR
+     * (section 7.2); frames above 256 bytes and the excess are ignored and spend glitch tokens.
      */
     private fun onPriorityUpdate(payload: ByteArray) {
         glitch("PRIORITY_UPDATE")
@@ -665,7 +684,15 @@ internal class H3Session(
             it.onPriorityUpdate(p)
             return
         }
-        if (id <= maxRequestId) return // the request is over
+        // the transport hands streams out in id order: one taken whose handler ended is over
+        if (id <= acceptedBidiUpTo && id !in handledBidi) return
+        QuicStreamLimits.peerBidiStreamsGranted(quic)?.let {
+            if (id / 4 >=
+                it
+            ) {
+                throw H3ProtocolError(Http3ErrorCode.ID_ERROR, "PRIORITY_UPDATE for stream $id beyond the limit of $it streams")
+            }
+        }
         if (id in earlyPriority ||
             earlyPriority.size < settings.maxEarlyPriorityUpdates
         ) {

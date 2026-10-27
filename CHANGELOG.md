@@ -267,6 +267,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- HTTP/3 server: a PRIORITY_UPDATE for a request stream the transport has opened but whose HEADERS have not arrived
+  yet (a reordered stream 4 behind stream 8, or a request whose HEADERS are delayed) is now kept and applied when the
+  request opens, as RFC 9218 section 7 asks; it was taken for a finished request and dropped. A PRIORITY_UPDATE naming a
+  stream beyond the bidirectional stream limit the server granted closes the connection with `H3_ID_ERROR` (section
+  7.2).
 - HTTP/3 server: a client's MAX_PUSH_ID is now read instead of skipped. A value smaller than the previous one closes the
   connection with `H3_ID_ERROR` (RFC 9114 section 7.2.7), a payload that is not exactly one push ID with
   `H3_FRAME_ERROR` (section 7.1), and a valid one no longer spends a glitch token as an unknown frame did.
