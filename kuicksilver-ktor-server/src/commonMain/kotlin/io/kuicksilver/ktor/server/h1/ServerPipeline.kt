@@ -337,6 +337,15 @@ internal fun CoroutineScope.startH1Pipeline(
                 val response = ByteChannel()
                 val upgrade = request.headers["Upgrade"]
                 val version = HttpProtocolVersion.parse(request.version)
+                // read before the handler runs: it may release the request's fields
+                val lastRequest =
+                    requestEndsConnection(
+                        version,
+                        request.headers
+                            .getAll("Connection")
+                            .map { it.toString() }
+                            .toList(),
+                    )
                 val connectionOptions: ConnectionOptions?
 
                 unwritten.update { it + 1 }
@@ -483,7 +492,7 @@ internal fun CoroutineScope.startH1Pipeline(
                     }
                 }
 
-                if (isLastHttpRequest(version, connectionOptions)) break
+                if (lastRequest) break
                 // a response that says `Connection: close` (the application's, a stopping server's, or an HTTP/1.0
                 // response of unknown length that the close delimits, section 6.3 item 8) ends the connection: the server
                 // MUST NOT process any further request received on it (RFC 9112 section 9.6), so the next one is read
@@ -965,14 +974,18 @@ private suspend fun settleUnreadBody(
     return reader.await()
 }
 
-private fun isLastHttpRequest(
-    version: HttpProtocolVersion,
-    connectionOptions: ConnectionOptions?,
-): Boolean =
-    when {
-        connectionOptions == null && version == HttpProtocolVersion.HTTP_1_0 -> true
-        connectionOptions == null -> version != HttpProtocolVersion.HTTP_1_1
-        connectionOptions.keepAlive -> false
-        connectionOptions.close -> true
-        else -> false
-    }
+/**
+ * Whether the connection ends after the response to a request of [version] with the Connection field lines
+ * [connection]: one with the `close` option (RFC 9112 section 9.6: the server MUST close after the response), in a list
+ * and in any case, also next to `keep-alive`, or an HTTP/1.0 request without `keep-alive` (section 9.3, RFC 9112
+ * appendix C.2.2). Ktor's `ConnectionOptions` read only the first line and took `keep-alive` over `close`, and an unknown
+ * option alone as `keep-alive`. [H1Response] says `close` in the response whenever this holds.
+ */
+internal fun requestEndsConnection(
+    version: HttpProtocolVersion?,
+    connection: List<String>,
+): Boolean {
+    val options = connection.flatMap { line -> line.split(',').map { it.trim(' ', '\t').lowercase() } }
+    if ("close" in options) return true
+    return version != HttpProtocolVersion.HTTP_1_1 && "keep-alive" !in options
+}

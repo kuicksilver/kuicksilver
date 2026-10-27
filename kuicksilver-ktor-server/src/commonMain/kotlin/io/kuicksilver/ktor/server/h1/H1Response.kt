@@ -139,6 +139,18 @@ internal class H1Response(
         if (altSvc != null && headersBuilder["Alt-Svc"] == null && statusCode.value != 421) headersBuilder.append("Alt-Svc", altSvc)
         // the server is stopping and reads no further request here: say so (RFC 9112 section 9.6), as Go's Shutdown does
         if (closing() && statusCode != HttpStatusCode.SwitchingProtocols) headersBuilder[HttpHeaders.Connection] = "close"
+        // a request that ends the connection: the server SHOULD send "close" in its final response (RFC 9112 section 9.6)
+        if (statusCode != HttpStatusCode.SwitchingProtocols &&
+            !saysClose() &&
+            requestEndsConnection(
+                HttpProtocolVersion.parse(call.request.local.version),
+                call.request.headers
+                    .getAll(HttpHeaders.Connection)
+                    .orEmpty(),
+            )
+        ) {
+            headersBuilder[HttpHeaders.Connection] = "close"
+        }
         dropFramingFieldsOfAResponseWithoutContent()
         // RFC 9110 section 6.6.1: an origin server with a clock MUST send Date (2xx to 4xx; MAY in 5xx)
         if (statusCode.value >= 200 && !headersBuilder.contains(HttpHeaders.Date)) headersBuilder.append(HttpHeaders.Date, httpDateNow())
