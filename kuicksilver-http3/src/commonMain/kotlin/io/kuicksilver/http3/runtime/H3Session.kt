@@ -164,6 +164,10 @@ internal class H3Session(
     private val glitch = if (settings.glitchProtection) GlitchLimiter() else null
     private val clock = TimeSource.Monotonic.markNow()
 
+    /** The glitch bucket's clock in nanoseconds (it refills 33 tokens a second); a test freezes it so the bucket cannot refill. */
+    @kotlin.concurrent.Volatile
+    internal var glitchClock: () -> Long = { clock.elapsedNow().inWholeNanoseconds }
+
     // GOAWAY (RFC 9114 section 5.2)
     private var goAwayPhase = 0 // 0 none, 1 first (2^62-4) sent, 2 final sent
 
@@ -642,10 +646,7 @@ internal class H3Session(
     fun glitch(what: String) {
         val g =
             glitch ?: return
-        if (!g.spend(
-                clock.elapsedNow().inWholeNanoseconds,
-            )
-        ) {
+        if (!g.spend(glitchClock())) {
             throw H3ProtocolError(Http3ErrorCode.EXCESSIVE_LOAD, "too much useless work: $what")
         }
     }

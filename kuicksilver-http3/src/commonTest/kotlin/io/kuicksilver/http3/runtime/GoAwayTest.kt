@@ -362,6 +362,8 @@ class GlitchLimiterTest {
             QuicPair.open().use { q ->
                 val (c, s) = q.connect()
                 val server = Http3Connection.server(s)
+                // the bucket's clock stands still: it cannot refill while a slow device reads the flood
+                server.session.glitchClock = { 0L }
                 val raw = RawPeer(c)
                 raw.openControl()
                 raw.control.output.writeFully(
