@@ -112,11 +112,12 @@ internal actual fun tcpResolve(
         }
     }
 
+/** Makes [fd] non-blocking; 0, or the Winsock error read right after the call (see [lastErrorIf]). */
 private fun nonBlocking(fd: Int): Int =
     memScoped {
         val on = alloc<UIntVar>()
         on.value = 1u
-        ioctlsocket(fd.convert(), FIONBIO.convert(), on.ptr)
+        lastErrorIf(ioctlsocket(fd.convert(), FIONBIO.convert(), on.ptr) != 0)
     }
 
 /** WSASocketW flag (winsock2.h; not in the platform klib): the handle is not inherited by child processes. */
@@ -143,21 +144,30 @@ internal actual fun tcpOpen(family: Int): Int {
     val s = WSASocketW(family, SOCK_STREAM, IPPROTO_TCP.convert(), null, 0u, WSA_FLAG_NO_HANDLE_INHERIT)
     if (s == INVALID_SOCKET) throw PosixException.forErrno(WSAGetLastError(), "socket")
     val fd = s.toInt()
-    if (nonBlocking(fd) != 0) {
-        val e = WSAGetLastError()
+    val nbError = nonBlocking(fd)
+    if (nbError != 0) {
+        val e = nbError
         closesocket(s)
         throw PosixException.forErrno(e, "ioctlsocket")
     }
     return fd
 }
 
+/** The calling thread's last Winsock error when [failed], read at once (any later Win32 call may reset it); 0 otherwise. */
+private fun lastErrorIf(failed: Boolean): Int = if (failed) WSAGetLastError() else 0
+
 internal actual fun tcpConnect(
     fd: Int,
     to: TcpAddress,
 ): Boolean {
-    val rc = to.bytes.usePinned { connect(fd.convert(), it.addressOf(0).reinterpret(), to.bytes.size) }
+    // the last error is read inside the pinned block, right after the call: unpinning (a GC safepoint) may make Win32 calls
+    // of its own that reset it, and a lost WSAEWOULDBLOCK read as error 0 failed connects that were only pending
+    val (rc, e) =
+        to.bytes.usePinned {
+            val r = connect(fd.convert(), it.addressOf(0).reinterpret(), to.bytes.size)
+            r to lastErrorIf(r != 0)
+        }
     if (rc == 0) return true
-    val e = WSAGetLastError()
     if (tcpWouldBlock(e)) return false
     throw PosixException.forErrno(e, "connect")
 }
@@ -186,12 +196,16 @@ internal actual fun tcpBindListen(
         memScoped {
             val one = alloc<IntVar>()
             one.value = 1
-            setsockopt(fd.convert(), SOL_SOCKET, SO_EXCLUSIVEADDRUSE, one.ptr.reinterpret(), sizeOf<IntVar>().toInt())
+            lastErrorIf(setsockopt(fd.convert(), SOL_SOCKET, SO_EXCLUSIVEADDRUSE, one.ptr.reinterpret(), sizeOf<IntVar>().toInt()) != 0)
         }
-    if (exclusive != 0) throw PosixException.forErrno(WSAGetLastError(), "setsockopt(SO_EXCLUSIVEADDRUSE)")
-    if (to.bytes.usePinned { bind(fd.convert(), it.addressOf(0).reinterpret(), to.bytes.size) } != 0) {
-        throw PosixException.forErrno(WSAGetLastError(), "bind")
-    }
+    if (exclusive != 0) throw PosixException.forErrno(exclusive, "setsockopt(SO_EXCLUSIVEADDRUSE)")
+    val (bound, bindError) =
+        to.bytes.usePinned {
+            val r = bind(fd.convert(), it.addressOf(0).reinterpret(), to.bytes.size)
+            r to
+                lastErrorIf(r != 0)
+        }
+    if (bound != 0) throw PosixException.forErrno(bindError, "bind")
     if (listen(fd.convert(), backlog) != 0) throw PosixException.forErrno(WSAGetLastError(), "listen")
 }
 
@@ -199,22 +213,25 @@ internal actual fun tcpAccept(
     fd: Int,
     peer: ByteArray,
 ): Int? {
-    val client =
+    val (client, e) =
         memScoped {
             val size = alloc<IntVar>()
             size.value = peer.size
-            peer.usePinned { accept(fd.convert(), it.addressOf(0).reinterpret(), size.ptr) }
+            peer.usePinned {
+                val c = accept(fd.convert(), it.addressOf(0).reinterpret(), size.ptr)
+                c to lastErrorIf(c == INVALID_SOCKET)
+            }
         }
     if (client == INVALID_SOCKET) {
-        val e = WSAGetLastError()
         // a connection reset before it was accepted is not the listener's failure
         if (tcpWouldBlock(e) || e == WSAEINTR || e == WSAECONNRESET) return null
         throw PosixException.forErrno(e, "accept")
     }
     noInherit(client.convert())
     val c = client.toInt()
-    if (nonBlocking(c) != 0) {
-        val e = WSAGetLastError()
+    val nbError = nonBlocking(c)
+    if (nbError != 0) {
+        val e = nbError
         closesocket(client)
         throw PosixException.forErrno(e, "ioctlsocket")
     }
@@ -225,9 +242,12 @@ internal actual fun tcpRecv(
     fd: Int,
     buffer: ByteArray,
 ): Int {
-    val n = buffer.usePinned { recv(fd.convert(), it.addressOf(0), buffer.size, 0) }
+    val (n, e) =
+        buffer.usePinned {
+            val r = recv(fd.convert(), it.addressOf(0), buffer.size, 0)
+            r to lastErrorIf(r < 0)
+        }
     if (n >= 0) return n
-    val e = WSAGetLastError()
     if (tcpWouldBlock(e) || e == WSAEINTR) return -1
     throw PosixException.forErrno(e, "recv")
 }
@@ -238,9 +258,12 @@ internal actual fun tcpSend(
     offset: Int,
     length: Int,
 ): Int {
-    val n = buffer.usePinned { send(fd.convert(), it.addressOf(offset), length, 0) }
+    val (n, e) =
+        buffer.usePinned {
+            val r = send(fd.convert(), it.addressOf(offset), length, 0)
+            r to lastErrorIf(r < 0)
+        }
     if (n >= 0) return n
-    val e = WSAGetLastError()
     if (tcpWouldBlock(e) || e == WSAEINTR) return -1
     throw PosixException.forErrno(e, "send")
 }
@@ -250,19 +273,21 @@ internal actual fun tcpAddressOf(
     peer: Boolean,
 ): TcpAddress {
     val storage = ByteArray(SOCKADDR_STORAGE)
-    val rc =
+    val (rc, e) =
         memScoped {
             val size = alloc<IntVar>()
             size.value = storage.size
             storage.usePinned {
-                if (peer) {
-                    getpeername(fd.convert(), it.addressOf(0).reinterpret(), size.ptr)
-                } else {
-                    getsockname(fd.convert(), it.addressOf(0).reinterpret(), size.ptr)
-                }
+                val r =
+                    if (peer) {
+                        getpeername(fd.convert(), it.addressOf(0).reinterpret(), size.ptr)
+                    } else {
+                        getsockname(fd.convert(), it.addressOf(0).reinterpret(), size.ptr)
+                    }
+                r to lastErrorIf(r != 0)
             }
         }
-    if (rc != 0) throw PosixException.forErrno(WSAGetLastError(), if (peer) "getpeername" else "getsockname")
+    if (rc != 0) throw PosixException.forErrno(e, if (peer) "getpeername" else "getsockname")
     return TcpAddress(storage)
 }
 
