@@ -365,6 +365,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - Ktor client: an `Alt-Svc` alternative whose `ma` is too large to represent (`ma=99999999999999999999`) is kept with a
   lifetime of 2147483648 seconds instead of being dropped (RFC 7838 section 3.1, RFC 9111 section 1.2.2); an `ma` with a
   sign (`ma=+5`) is no delta-seconds and makes its alternative invalid.
+- Ktor client, HTTP/1.1: an HTTP/1.0 response with `Transfer-Encoding` is no longer chunk-decoded: its framing is
+  faulty even with a `Content-Length` (RFC 9112 section 6.1), so the body is read as sent until the server closes the
+  connection, which is then not reused.
 - QUIC: a datagram carrying an Initial packet now always reaches 1200 bytes (RFC 9000 section 14.1: a client pads every
   such datagram, a server every one with an ack-eliciting Initial). When the packet expected to pad the datagram did not
   fit behind the Initial or Handshake packet (a ClientHello ending in the last 64 bytes before 1200 with 0-RTT data

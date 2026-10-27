@@ -283,7 +283,8 @@ internal suspend fun readResponse(
 
         rawResponse.use {
             val status = HttpStatusCode(rawResponse.status, rawResponse.statusText.toString())
-            val framing = ResponseFraming.of(rawResponse.headers)
+            val version = HttpProtocolVersion.parse(rawResponse.version)
+            val framing = ResponseFraming.of(rawResponse.headers, http10 = version == HttpProtocolVersion.HTTP_1_0)
             val connectionType = ConnectionOptions.parse(rawResponse.headers.joined(HttpHeaders.Connection))
             // Transfer-Encoding overrides Content-Length (RFC 9112 section 6.3 item 3): the stale length is not shown to Ktor,
             // which would check the body against it
@@ -291,7 +292,6 @@ internal suspend fun readResponse(
                 HeadersImpl(
                     rawResponse.headers.toMap().let { if (framing.transferEncoding != null) it - HttpHeaders.ContentLength else it },
                 )
-            val version = HttpProtocolVersion.parse(rawResponse.version)
             // a request that said `Connection: close` is the last one on the connection (RFC 9112 section 9.6); a response
             // with both Content-Length and Transfer-Encoding may be a smuggling or splitting attempt (section 6.3 item 3)
             val keepAlive =
@@ -468,7 +468,9 @@ private fun HttpHeadersMap.joined(name: String): String? = getAll(name).toList()
  * identical (RFC 9110 section 8.6); anything else is [invalidLength] (item 5). A Transfer-Encoding that is not a list of
  * transfer codings, that applies `chunked` twice (RFC 9112 section 6.1) or gives the final `chunked` parameters is
  * [invalidEncoding]: the framing is unknown, as with an invalid length. OWS is only SP and HTAB (RFC 9110 section
- * 5.6.3): `Content-Length: 5<VT>` or `Transfer-Encoding: chunked<U+00A0>` is invalid, not 5 or `chunked`.
+ * 5.6.3): `Content-Length: 5<VT>` or `Transfer-Encoding: chunked<U+00A0>` is invalid, not 5 or `chunked`. In an
+ * HTTP/1.0 response ([of] with `http10`) Transfer-Encoding makes the framing faulty, Content-Length included (RFC 9112
+ * section 6.1 MUST): neither frames the body, which is read as it is until the close (item 8); HTTP/1.0 is not kept alive.
  */
 internal class ResponseFraming private constructor(
     val transferEncoding: String?,
@@ -509,9 +511,15 @@ internal class ResponseFraming private constructor(
     }
 
     companion object {
-        fun of(headers: HttpHeadersMap): ResponseFraming {
+        fun of(
+            headers: HttpHeadersMap,
+            http10: Boolean = false,
+        ): ResponseFraming {
             val teValues = headers.getAll(HttpHeaders.TransferEncoding).toList()
             val te = teValues.takeIf { it.isNotEmpty() }?.joinToString(",")
+            if (http10 && te != null) {
+                return ResponseFraming(te, -1L, invalidLength = false, invalidEncoding = false, lengthAndEncoding = false, chunked = false)
+            }
             val codings = if (te == null) emptyList() else transferCodingsOf(teValues)
             val last = codings?.lastOrNull()
             val invalidEncoding =
