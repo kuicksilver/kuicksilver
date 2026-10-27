@@ -457,6 +457,30 @@ class RequestTest {
         }
     }
 
+    /**
+     * RFC 9114 section 4.1.2: a response stream that ends without HEADERS carries no :status, a malformed response: a
+     * stream error H3_MESSAGE_ERROR (H3_REQUEST_INCOMPLETE, section 8.1, is about the client's request stream).
+     */
+    @Test fun responseStreamEndingWithoutHeadersIsMessageError() =
+        h3Test {
+            QuicPair.open().useScoped { q ->
+                val (c, s) = q.connect()
+                val client = Http3Connection.client(c)
+                val raw = RawPeer(s)
+                raw.openControl()
+                client.peerSettings.filterNotNull().first()
+                val served =
+                    async {
+                        val st = s.acceptBidi()
+                        peerMayHaveClosed { st.output.flushAndClose() } // FIN, no frame at all
+                        st
+                    }
+                val e = assertFailsWith<Http3Exception.MessageError> { client.request(get("/")) }
+                assertEquals(served.await().id, e.streamId)
+                assertTrue(!client.closed.isCompleted, "a stream error, not a connection error")
+            }
+        }
+
     @Test fun dataInHeadResponseIsMessageError() = h3Test { dataOnBodilessResponseIsMessageError("HEAD", 200) }
 
     @Test fun dataIn204ResponseIsMessageError() = h3Test { dataOnBodilessResponseIsMessageError("GET", 204) }

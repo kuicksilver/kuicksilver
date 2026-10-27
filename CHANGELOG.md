@@ -267,6 +267,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- HTTP/3 client: a response stream that ends without HEADERS fails the request with `Http3Exception.MessageError` and
+  aborts the stream with `H3_MESSAGE_ERROR` (a response without `:status` is malformed, RFC 9114 section 4.1.2). It
+  was `Http3Exception.Protocol` with `H3_REQUEST_INCOMPLETE`, which section 8.1 defines for an incomplete request.
 - HTTP/3: a request's `te: Trailers` (any case) is accepted; transfer coding names are case-insensitive (RFC 9110
   section 10.1.4), and only the exact lowercase `trailers` passed, so such a request was reset with `H3_MESSAGE_ERROR`.
 - HTTP/3 with WebTransport: a WebTransport `WT_STREAM` signal as the first frame of the peer's control stream now closes
