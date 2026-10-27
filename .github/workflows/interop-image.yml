@@ -1,0 +1,140 @@
+# Copyright 2026 The Kuicksilver Authors
+# SPDX-License-Identifier: Apache-2.0
+# Publishes the two QUIC Interop Runner endpoint images of a release to the GitHub Container Registry (docs/release.md,
+# "Interop images"), started by hand with the released version (or called by another workflow with it):
+#
+#   gate (ubuntu): the version and the ref ── images (ubuntu-24.04): build both as build.yml's interop-images job, push
+#
+#   ghcr.io/kuicksilver/kuicksilver-interop:<version>          JVM endpoint (the manylinux libksl.so built in the
+#   ghcr.io/kuicksilver/kuicksilver-interop-native:<version>   OpenSSL image), Kotlin/Native endpoint
+#
+# plus :latest on both for a final version (a prerelease such as 0.3.0-rc1 gets only its own tag). linux/amd64 only, like
+# the images build.yml tests (the online runner at interop.seemann.io needs amd64). The images themselves are what
+# tools/interop/build-image.sh builds (same Dockerfiles, same run_endpoint.sh contract: ROLE, TESTCASE, REQUESTS, ...);
+# this workflow only adds the OCI labels (a FROM-only build on top) and pushes. Run it on the tag v<version> after the
+# release is published; main and release/<X.Y>.x are accepted too (the image is then built from that branch's head).
+# The first push creates the two packages private: set each one's visibility to public once (package settings).
+name: interop-image
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: released version the images are tagged with (e.g. 0.2.1); run on the tag v<version>
+        required: true
+        type: string
+  workflow_call:
+    inputs:
+      version:
+        description: released version the images are tagged with
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: interop-image-${{ inputs.version }}
+  cancel-in-progress: false
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  gate:
+    runs-on: ubuntu-24.04
+    permissions: { contents: read }
+    timeout-minutes: 5
+    outputs:
+      latest: ${{ steps.check.outputs.latest }}
+    steps:
+      - name: 'interop-image: version and ref'
+        id: check
+        env:
+          VERSION: ${{ inputs.version }}
+          REF: ${{ github.ref }}
+        run: |
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta|rc)\.?[0-9]+)?$ ]] || { echo "::error::version '$VERSION' is not X.Y.Z[-alpha|beta|rcN]"; exit 1; }
+          case "$REF" in
+            "refs/tags/v$VERSION") ;;
+            refs/heads/main|refs/heads/release/*) echo "::warning::building $VERSION from $REF, not from the tag v$VERSION" ;;
+            *) echo "::error::interop images are built from the tag v$VERSION, main or release/<X.Y>.x, not $REF"; exit 1 ;;
+          esac
+          # :latest follows the newest final version only
+          if [[ "$VERSION" == *-* ]]; then echo "latest=false" >> "$GITHUB_OUTPUT"; else echo "latest=true" >> "$GITHUB_OUTPUT"; fi
+
+  images:
+    needs: gate
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write   # push to ghcr.io/<owner>/kuicksilver-interop*
+    timeout-minutes: 150
+    env:
+      REGISTRY: ghcr.io/${{ github.repository_owner }}
+      VERSION: ${{ inputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - uses: ./.github/actions/setup
+        with: { ndk: 'true', konan: 'linux_x64 linux_arm64', openssl-cache: interop }
+      # build.yml's openssl-docker job (linux-x64), in place: the manylinux OpenSSL build.yml's interop-images job downloads
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            build/openssl-work/cache
+            build/openssl-work/src/*.tar.gz
+            build/openssl-work/src/*.tar.gz.asc
+          key: openssl-docker-linux-x64-${{ runner.arch }}-${{ hashFiles('gradle/openssl.toml', 'tools/openssl/**') }}
+      - name: 'openssl: fetch and verify'
+        run: bash tools/openssl/fetch.sh
+      - name: 'openssl: build linux-x64'
+        run: bash tools/openssl/build-docker.sh linux-x64
+      - name: 'openssl: no-sslkeylog (linux-x64)'
+        run: bash tools/check/keylog-disabled.sh build/openssl/linux-x64/include
+      # from here the steps of build.yml's interop-images job; build-image.sh builds the manylinux libksl.so in the OpenSSL image
+      - name: 'docker: image linux-x64'
+        run: bash tools/openssl/build-docker.sh --image linux-x64
+      - name: 'interop: jvm image'
+        run: bash tools/interop/build-image.sh
+      - name: 'interop: native image'
+        run: bash tools/interop/build-image.sh --native
+      - name: 'interop: OCI labels and registry tags'
+        env:
+          REVISION: ${{ github.sha }}
+          SOURCE: ${{ github.server_url }}/${{ github.repository }}
+          LATEST: ${{ needs.gate.outputs.latest }}
+        run: |
+          created=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          label() { # <local image> <registry name> <description>: the local image plus labels only (no layer), tagged for the registry
+            local tags=(-t "$REGISTRY/$2:$VERSION"); [ "$LATEST" = true ] && tags+=(-t "$REGISTRY/$2:latest")
+            docker build --platform linux/amd64 "${tags[@]}" \
+              --label "org.opencontainers.image.source=$SOURCE" \
+              --label "org.opencontainers.image.url=$SOURCE" \
+              --label "org.opencontainers.image.version=$VERSION" \
+              --label "org.opencontainers.image.revision=$REVISION" \
+              --label "org.opencontainers.image.created=$created" \
+              --label "org.opencontainers.image.licenses=Apache-2.0" \
+              --label "org.opencontainers.image.title=$2" \
+              --label "org.opencontainers.image.description=$3" - <<< "FROM $1"
+          }
+          label kuicksilver-interop:local kuicksilver-interop "Kuicksilver QUIC Interop Runner endpoint (JVM, libksl with OpenSSL)"
+          label kuicksilver-interop-native:local kuicksilver-interop-native "Kuicksilver QUIC Interop Runner endpoint (Kotlin/Native, linux/amd64)"
+          for n in kuicksilver-interop kuicksilver-interop-native; do
+            [ "$(docker image inspect -f '{{.Config.Entrypoint}}' "$REGISTRY/$n:$VERSION")" = "[/run_endpoint.sh]" ] \
+              || { echo "::error::$n: entrypoint is not /run_endpoint.sh"; exit 1; }
+          done
+          docker images --format '{{.Repository}}:{{.Tag}} {{.ID}} {{.Size}}' | grep -E 'kuicksilver-interop'
+      - name: 'interop: push to ${{ env.REGISTRY }}'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          ACTOR: ${{ github.actor }}
+          LATEST: ${{ needs.gate.outputs.latest }}
+        run: |
+          echo "$GITHUB_TOKEN" | docker login ghcr.io -u "$ACTOR" --password-stdin
+          trap 'docker logout ghcr.io' EXIT
+          { echo "### Interop images $VERSION"; echo; echo '| image | digest |'; echo '|---|---|'; } >> "$GITHUB_STEP_SUMMARY"
+          for n in kuicksilver-interop kuicksilver-interop-native; do
+            tags=("$VERSION"); [ "$LATEST" = true ] && tags+=(latest)
+            for t in "${tags[@]}"; do docker push "$REGISTRY/$n:$t"; done
+            digest=$(docker image inspect -f '{{index .RepoDigests 0}}' "$REGISTRY/$n:$VERSION")
+            also=""; [ "$LATEST" = true ] && also=", \`:latest\`"
+            echo "| \`$REGISTRY/$n:$VERSION\`$also | \`$digest\` |" >> "$GITHUB_STEP_SUMMARY"
+          done

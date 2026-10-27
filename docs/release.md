@@ -141,6 +141,8 @@ Done for the project in October 2026, kept here so it can be repeated for a new 
 7. Context7 (the documentation index coding agents read, configured by `context7.json` at the root): add the new tag to
    `previousVersions`, and point `branch` at the branch whose docs describe the newest published version (it must
    not name a branch with unreleased API). The index refreshes from GitHub; nothing is uploaded.
+8. Interop images: after the tag is pushed, *Actions → interop-image → Run workflow* on the tag `v<version>` publishes
+   the two QUIC Interop Runner endpoint images to GHCR ([below](#interop-images-on-ghcr)).
 
 ## Releasing from a maintenance branch
 
@@ -273,6 +275,17 @@ a push, the weekly schedule or a manual dispatch; a pull-request run builds the 
 jar, then runs the `publishToMavenCentral` command above with the credentials and the in-memory signing key from the
 repository secrets. Steps 4 to 6 are the same. The `build` workflow is the CI counterpart of `local-matrix.sh` (same
 step names, same lists from `tools/ci/matrix.sh`); its `jvm-jar` job fails unless the jar lists all five libraries.
+
+## Interop images on GHCR
+
+`.github/workflows/interop-image.yml` (dispatch with the version, or `workflow_call`) builds the JVM and Kotlin/Native
+endpoint images exactly as `build.yml`'s `interop-images` job does (`tools/interop/build-image.sh`, the manylinux
+`libksl.so` built in the OpenSSL image), adds OCI labels (source, version, revision, licence) and pushes
+`ghcr.io/kuicksilver/kuicksilver-interop:<version>` and `ghcr.io/kuicksilver/kuicksilver-interop-native:<version>`, plus
+`:latest` for a final version. linux/amd64 only, the platform the online runner uses. Its `gate` job accepts the tag
+`v<version>`, `main` or `release/<X.Y>.x`. Once, after the first push: set both packages' visibility to *Public*
+(organization *Packages* → the package → *Package settings*), or the runner cannot pull them. The images carry no build
+provenance attestation yet.
 
 ## Checks before publishing
 
