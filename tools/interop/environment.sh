@@ -57,6 +57,22 @@ closing_rebind() {
   done < <(find "$1" -mindepth 3 -maxdepth 3 -name output.txt 2>/dev/null | sort)
 }
 
+# Rebind cells failed only because a rebind landed after the client's CONNECTION_CLOSE had left but before its last packets
+# arrived: they reached the server from the new path, the server challenged it as RFC 9000 section 9.3 requires before the close
+# came in, and the client, already closing, could not answer (section 10.2.1). The runner wants every such challenge answered
+# (CI run 40571281407: quiche->kuicksilver:rebind-addr, the close at 10.99 s, the rebind at 11 s; rebind-addr
+# transfers end near 11 s, see sim-entrypoint.sh). tools/interop/closing-challenge.py proves it from both captures, including that
+# every earlier path passed the runner's check. Both roles, like closing_rebind. Prints "<server>_<client> <case>" per cell.
+closing_challenge() {
+  local o cell
+  while IFS= read -r o; do
+    grep -q "PATH_CHALLENGE without a PATH_RESPONSE" "$o" || continue
+    cell=$(dirname "$o")
+    python3 "$interop_tools/closing-challenge.py" "$cell" > /dev/null || continue
+    cell=${cell#"$1"/}; echo "${cell%%/*} ${cell#*/}"
+  done < <(find "$1" -mindepth 3 -maxdepth 3 -name output.txt 2>/dev/null | sort)
+}
+
 # Cells that ran on the sim left running by the cell just before them, which the runner timed out ("Container sim Running" in
 # the output): the runner's "docker compose stop" after a timeout lacks the cell's variables and fails ("invalid spec: :/www:ro"),
 # so compose reused that sim, whose ARP entry for the server still named the previous server container's MAC, and no client
@@ -147,6 +163,7 @@ environment_rerun_cells() {
     late_server "$1" | sed 's/$/ the server container started after the sim had stopped waiting for it: the scenario never ran, no packet was sent/'
     clienthello_lost "$1" | sed 's/$/ the peer client'"'"'s ClientHello never reached our server in full: the simulator dropped its one copy of the rest and every ACK of ours, and the client repeats only the first part on PTO (clienthello-lost.py)/'
     closing_rebind "$1" | sed 's/$/ the rebind landed just before the client'"'"'s CONNECTION_CLOSE: the server answered the close from the new path with its own close, no path left to validate (closing-rebind.py)/'
+    closing_challenge "$1" | sed 's/$/ the rebind landed just after the client'"'"'s CONNECTION_CLOSE left: the server challenged the new path before the close arrived, and the closing client could not answer (closing-challenge.py)/'
   } | sort -u -k1,2
 }
 
