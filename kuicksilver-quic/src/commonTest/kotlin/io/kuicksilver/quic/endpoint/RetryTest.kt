@@ -612,6 +612,43 @@ class RetryTest {
         }
     }
 
+    /**
+     * RFC 9000 section 17.2.5.2: "A client MUST NOT reset the packet number for any packet number space after processing a Retry
+     * packet." Null protection: the last 8 bytes of a packet are its full number.
+     */
+    @Test fun packetNumbersContinueAfterRetry() {
+        val p = EndpointPair { admission = ConnectionAdmission.AlwaysRetry }
+        val before = ArrayList<Long>()
+        val after = ArrayList<Long>()
+        var retried = false
+        p.filterToClient = { _, b ->
+            if (isRetry(b)) retried = true
+            true
+        }
+        p.filterToServer = { _, b ->
+            val v = PacketHeaderView()
+            val buf = PacketBuffer.of(b)
+            try {
+                if (PacketHeaderCodec.parse(buf, 0, b.size, 8, v) && v.type == PacketType.Initial) {
+                    var pn = 0L
+                    for (k in v.packetEnd - 8 until v.packetEnd) pn = (pn shl 8) or (b[k].toLong() and 0xff)
+                    (if (retried) after else before) += pn
+                }
+            } finally {
+                buf.close()
+            }
+            true
+        }
+        try {
+            val c = p.connect()
+            assertTrue(p.confirmed(c), "${p.closed(c)}")
+            assertTrue(before.isNotEmpty() && after.isNotEmpty(), "Initials before $before and after $after the Retry")
+            assertTrue(after.first() > before.max(), "packet numbers go on after the Retry: before $before, after $after")
+        } finally {
+            p.close()
+        }
+    }
+
     @Test fun retryNotCountedAsCongestion() {
         val p = EndpointPair { admission = ConnectionAdmission.AlwaysRetry }
         try {

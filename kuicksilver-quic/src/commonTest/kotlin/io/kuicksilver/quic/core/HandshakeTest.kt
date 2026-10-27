@@ -154,6 +154,27 @@ class HandshakeTest {
         return -1
     }
 
+    /**
+     * RFC 9000 section 7.2: "When an Initial packet is sent by a client that has not previously received an Initial or Retry
+     * packet from the server, the client populates the Destination Connection ID field with an unpredictable value. This
+     * Destination Connection ID MUST be at least 8 bytes in length." Whatever length the client uses for its own IDs.
+     */
+    @Test fun clientFirstDestinationConnectionIdIsAtLeast8Bytes() {
+        for (len in listOf(4, 8, 20)) {
+            val p = CorePair(clientQuic = io.kuicksilver.quic.quicConfig { connectionIdLength = len })
+            try {
+                p.step()
+                val d = p.lastClientInitial!!
+                val dcidLen = d[5].toInt() and 0xff
+                assertTrue(dcidLen >= 8, "connectionIdLength $len: first DCID of $dcidLen bytes")
+                assertEquals(len, d[6 + dcidLen].toInt() and 0xff, "the SCID has the configured length")
+                assertTrue(p.handshake(), "connectionIdLength $len")
+            } finally {
+                p.close()
+            }
+        }
+    }
+
     /** RFC 9001 section 8.4: a server treats a ClientHello with a non-empty legacy_session_id as a PROTOCOL_VIOLATION. */
     @Test fun negative_clientHelloWithLegacySessionIdIsProtocolViolation() {
         val p = CorePair(crypto = WithLegacySessionId(ksl))

@@ -24,6 +24,7 @@ import io.kuicksilver.quic.ksl
 import io.kuicksilver.quic.quicConfig
 import io.kuicksilver.quic.recovery.SpaceId
 import io.kuicksilver.quic.server
+import io.kuicksilver.quic.wire.PacketHeaderCodec
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -442,6 +443,65 @@ class ReceivePathTest {
             }
             assertTrue(toServer.size > 20 && toServer.any { it } && toServer.any { !it }, "client: $toServer")
             assertTrue(toClient.size > 10 && toClient.any { it } && toClient.any { !it }, "server: $toClient")
+        } finally {
+            p.close()
+        }
+    }
+
+    /**
+     * RFC 9000 section 12.2: "Senders MUST NOT coalesce QUIC packets with different connection IDs into a single UDP datagram."
+     * Every datagram of a handshake (coalesced Initial, Handshake and 1-RTT packets) and of a transfer, in both directions.
+     */
+    @Test fun coalescedPacketsShareOneConnectionId() {
+        val hv =
+            io.kuicksilver.quic.wire
+                .PacketHeaderView()
+        var coalesced = 0
+        var datagrams = 0
+
+        fun check(
+            b: ByteArray,
+            shortDcidLen: Int,
+        ) {
+            datagrams++
+            val buf = PacketBuffer.of(b)
+            try {
+                var off = 0
+                var first: ByteArray? = null
+                var packets = 0
+                while (off < b.size && PacketHeaderCodec.parse(buf, off, b.size, shortDcidLen, hv)) {
+                    val dcid = b.copyOfRange(hv.dcidOff, hv.dcidOff + hv.dcidLen)
+                    if (first == null) first = dcid else assertTrue(first.contentEquals(dcid), "packet $packets of a datagram")
+                    packets++
+                    if (hv.packetEnd <= off) break
+                    off = hv.packetEnd
+                }
+                if (packets > 1) coalesced++
+            } finally {
+                buf.close()
+            }
+        }
+        val p = CorePair()
+        p.filterToServer = { _, b ->
+            check(b, 8)
+            true
+        }
+        p.filterToClient = { _, b ->
+            check(b, 8)
+            true
+        }
+        try {
+            assertTrue(p.handshake())
+            val id = p.client.openStream(true)
+            var sent = 0
+            p.runUntil(limit = 1000.milliseconds) {
+                if (sent < 20) {
+                    p.client.writeStream(id, ByteArray(500), 0, 500, false)
+                    sent++
+                }
+                false
+            }
+            assertTrue(coalesced >= 2 && datagrams > 20, "$coalesced coalesced of $datagrams datagrams")
         } finally {
             p.close()
         }

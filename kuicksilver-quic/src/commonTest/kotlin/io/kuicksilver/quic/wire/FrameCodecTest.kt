@@ -183,6 +183,23 @@ class FrameCodecTest {
             Unit
         }
 
+    /** RFC 9000 section 19.7: "A client MUST treat receipt of a NEW_TOKEN frame with an empty Token field as a connection error of type FRAME_ENCODING_ERROR." */
+    @Test fun negative_emptyNewTokenIsFrameEncodingError() {
+        expectCode(0x07, hex("07 00"))
+        assertEquals(1, decode(hex("07 01 2a")).first.size, "a one-byte token decodes")
+    }
+
+    /**
+     * RFC 9000 section 19.14: a STREAMS_BLOCKED (0x16 bidi, 0x17 uni) whose Maximum Streams exceeds 2^60 "MUST be treated as a
+     * connection error of type STREAM_LIMIT_ERROR or FRAME_ENCODING_ERROR"; we answer FRAME_ENCODING_ERROR. 2^60 itself is valid.
+     */
+    @Test fun negative_streamsBlockedAbove2Pow60() {
+        for (type in listOf("16", "17")) {
+            expectCode(0x07, hex("$type d000000000000001")) // 2^60 + 1 as an 8-byte varint
+            assertEquals(1, decode(hex("$type d000000000000000")).first.size, "0x$type at 2^60 decodes")
+        }
+    }
+
     @Test fun frameNotAllowedInPacketTypeIsProtocolViolation() {
         expectCode(0x0a, bytesOf(TestFrame.Stream(0, 0, listOf(1), true)), PacketType.Initial)
         expectCode(0x0a, bytesOf(TestFrame.HandshakeDone), PacketType.Handshake)
