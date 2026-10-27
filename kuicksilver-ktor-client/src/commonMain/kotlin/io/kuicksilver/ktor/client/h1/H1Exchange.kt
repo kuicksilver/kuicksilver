@@ -71,9 +71,8 @@ internal suspend fun writeHeaders(
     val contentBody = body.getUnwrapped()
 
     val contentLength = headers[HttpHeaders.ContentLength] ?: contentBody.contentLength?.toString()
-    val contentEncoding = headers[HttpHeaders.TransferEncoding]
-    val responseEncoding = contentBody.headers[HttpHeaders.TransferEncoding]
-    val chunked = isChunked(contentLength, responseEncoding, contentEncoding)
+    val hasContent = contentBody !is OutgoingContent.NoContent
+    val transferEncoding = if (hasContent) chunkedTransferEncoding(request) else null
     val expected = headers[HttpHeaders.Expect]
 
     try {
@@ -88,22 +87,19 @@ internal suspend fun writeHeaders(
         builder.requestLine(method, urlString, HttpProtocolVersion.HTTP_1_1.toString())
         if (!headers.contains(HttpHeaders.Host)) builder.headerLine(HttpHeaders.Host, authority)
 
-        val hasContent = contentBody !is OutgoingContent.NoContent
-        if (contentLength != null) {
+        // never Content-Length with Transfer-Encoding (RFC 9112 section 6.2)
+        if (contentLength != null && transferEncoding == null) {
             if (method.supportsRequestBody || hasContent) builder.headerLine(HttpHeaders.ContentLength, contentLength)
         }
 
         mergeHeaders(headers, body) { key, value ->
             if (key == HttpHeaders.ContentLength || key == HttpHeaders.Expect) return@mergeHeaders
+            if (key.equals(HttpHeaders.TransferEncoding, true)) return@mergeHeaders // the framing below
             if (tunneled && (key.equals(HttpHeaders.ProxyAuthorization, true) || key.equals("Proxy-Connection", true))) return@mergeHeaders
             builder.headerLine(key, value)
         }
 
-        if (chunked && contentEncoding == null && responseEncoding == null &&
-            hasContent
-        ) {
-            builder.headerLine(HttpHeaders.TransferEncoding, "chunked")
-        }
+        transferEncoding?.let { builder.headerLine(HttpHeaders.TransferEncoding, it) }
         if (expected != null && expectsContinue(request)) builder.headerLine(HttpHeaders.Expect, expected)
 
         builder.emptyLine()
@@ -138,9 +134,7 @@ internal suspend fun writeBody(
     if (body is OutgoingContent.NoContent) return
     if (body is OutgoingContent.ProtocolUpgrade) throw UnsupportedContentTypeException(body)
 
-    val contentLength = request.headers[HttpHeaders.ContentLength] ?: body.contentLength?.toString()
-    val chunked = isChunked(contentLength, body.headers[HttpHeaders.TransferEncoding], request.headers[HttpHeaders.TransferEncoding])
-    if (!chunked) {
+    if (chunkedTransferEncoding(request) == null) {
         processOutgoingContent(body, output)
         output.flush()
         return
@@ -521,10 +515,24 @@ internal fun HttpHeadersMap.toMap(): Map<String, List<String>> {
     return result
 }
 
-internal fun isChunked(
-    contentLength: String?,
-    responseEncoding: String?,
-    contentEncoding: String?,
-) = contentLength == null || responseEncoding == "chunked" || contentEncoding == "chunked"
+/**
+ * The Transfer-Encoding a request with content goes out with, or null when its Content-Length frames it. The codings the
+ * application set (the request's and the content's Transfer-Encoding) come first, and `chunked` is added as the final one
+ * unless it already is: a sender that applies a coding other than chunked MUST apply chunked last (RFC 9112 section
+ * 6.1). With any coding, or without a length, the body is chunk-encoded and Content-Length is not sent (section 6.2:
+ * MUST NOT with Transfer-Encoding).
+ */
+internal fun chunkedTransferEncoding(request: HttpRequestData): String? {
+    val body = request.body.getUnwrapped()
+    val codings =
+        (request.headers.getAll(HttpHeaders.TransferEncoding).orEmpty() + body.headers.getAll(HttpHeaders.TransferEncoding).orEmpty())
+            .filter { it.isNotBlank() }
+    if (codings.isEmpty()) {
+        val length = request.headers[HttpHeaders.ContentLength] ?: body.contentLength?.toString()
+        return if (length == null) "chunked" else null
+    }
+    val value = codings.joinToString(", ")
+    return if (transferCodingsOf(codings)?.lastOrNull()?.name == "chunked") value else "$value, chunked"
+}
 
 internal fun Url.isHttps(): Boolean = protocol.isSecure()

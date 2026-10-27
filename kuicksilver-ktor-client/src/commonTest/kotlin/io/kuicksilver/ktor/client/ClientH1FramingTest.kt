@@ -2,26 +2,40 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.kuicksilver.ktor.client
 
+import io.ktor.client.request.HttpRequestBuilder
 import io.ktor.client.request.get
 import io.ktor.client.request.header
+import io.ktor.client.request.setBody
+import io.ktor.client.request.url
 import io.ktor.client.statement.bodyAsText
+import io.ktor.http.Headers
 import io.ktor.http.HttpHeaders
+import io.ktor.http.HttpMethod
+import io.ktor.http.content.OutgoingContent
+import io.ktor.http.headersOf
 import io.ktor.network.selector.SelectorManager
 import io.ktor.network.sockets.InetSocketAddress
 import io.ktor.network.sockets.aSocket
 import io.ktor.network.sockets.openReadChannel
 import io.ktor.network.sockets.openWriteChannel
+import io.ktor.utils.io.ByteChannel
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.ByteWriteChannel
+import io.ktor.utils.io.readRemaining
 import io.ktor.utils.io.readUTF8Line
 import io.ktor.utils.io.writeStringUtf8
+import io.kuicksilver.ktor.client.h1.writeBody
+import io.kuicksilver.ktor.client.h1.writeHeaders
 import io.kuicksilver.native.KslLoader
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.runTest
+import kotlinx.io.readString
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 /** How the client finds the end of an HTTP/1.1 response and whether the connection may carry another one (RFC 9112 section 6.3). */
@@ -292,6 +306,44 @@ class ClientH1FramingTest {
                     }
                 }
                 assertEquals(listOf(0, 0), served, "$case: the connection was not reused")
+            }
+        }
+
+    /**
+     * A request body with a transfer coding of its own (`Transfer-Encoding: gzip` in the content's headers) goes out with
+     * `chunked` as its final coding (RFC 9112 section 6.1: a sender that applies a coding other than chunked MUST apply
+     * chunked last) and without Content-Length, even when the content has a length (section 6.2: MUST NOT send both).
+     * Before, the head said `Transfer-Encoding: gzip` over a chunk-encoded body, or `Content-Length: 5` and
+     * `Transfer-Encoding: gzip` together.
+     */
+    @Test fun contentTransferEncodingEndsWithChunked() =
+        runTest {
+            for ((coding, length) in listOf("gzip" to null, "gzip" to 5L, "chunked" to 5L, "gzip, chunked" to null)) {
+                val content =
+                    object : OutgoingContent.ByteArrayContent() {
+                        override val headers: Headers = headersOf(HttpHeaders.TransferEncoding, coding)
+                        override val contentLength: Long? = length
+
+                        override fun bytes() = "hello".encodeToByteArray()
+                    }
+                val request =
+                    HttpRequestBuilder()
+                        .apply {
+                            url("http://127.0.0.1:8080/")
+                            method = HttpMethod.Post
+                            setBody(content)
+                        }.build()
+                val wire = ByteChannel()
+                writeHeaders(request, wire, overProxy = false)
+                writeBody(request, wire, coroutineContext)
+                wire.flushAndClose()
+                val sent = wire.readRemaining().readString()
+                val head = sent.substringBefore("\r\n\r\n").lines().drop(1)
+                val te = head.filter { it.startsWith("Transfer-Encoding:", ignoreCase = true) }
+                val expected = if (coding.endsWith("chunked")) coding else "$coding, chunked"
+                assertEquals(listOf("Transfer-Encoding: $expected"), te, "$coding/$length: $head")
+                assertFalse(head.any { it.startsWith("Content-Length:", ignoreCase = true) }, "$coding/$length: $head")
+                assertEquals("5\r\nhello\r\n0\r\n\r\n", sent.substringAfter("\r\n\r\n"), "$coding/$length")
             }
         }
 
