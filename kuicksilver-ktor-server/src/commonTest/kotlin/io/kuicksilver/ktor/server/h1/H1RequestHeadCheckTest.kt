@@ -291,7 +291,6 @@ class H1RequestHeadCheckTest {
             for ((line, location) in listOf(
                 "GET /a|b?c={d}^ HTTP/1.1" to "/a%7Cb?c=%7Bd%7D%5E",
                 "HEAD /\u00e9t\u00e9 HTTP/1.1" to "/%C3%A9t%C3%A9",
-                "GET /a#b HTTP/1.1" to "/a%23b",
                 "GET /%zz%4 HTTP/1.1" to "/%25zz%254",
                 "GET /a[1]?x=[2] HTTP/1.1" to "/a%5B1%5D?x=%5B2%5D",
             )) {
@@ -300,6 +299,56 @@ class H1RequestHeadCheckTest {
                 assertTrue(response.contains("\r\nLocation: $location\r\n"), "${show(line)}: $response")
                 assertEquals(1, Regex("HTTP/1.1 ").findAll(response).count(), "${show(line)}: $response")
             }
+        }
+
+    /**
+     * A 301 for an origin-form target that starts with `//` would carry a Location that is a network-path reference
+     * (RFC 3986 section 4.2): `GET //evil.example/^` redirected to `//evil.example/%5E` sends a browser to
+     * `http://evil.example/` (an open redirect). Every target whose Location could name another authority, once its
+     * percent-encoded `/`, `\` and `.` are decoded and its dot segments removed (section 5.2.4), as a lenient client or a
+     * proxy in front may do, gets 400, and so does a target with a raw `#`: `/a%23b` names another resource than the
+     * path `/a` with fragment `b` the client most likely meant (section 2.2), so no encoding of it is proper.
+     */
+    @Test fun negative_redirectNeverLeavesTheServer() =
+        runTest {
+            for (line in listOf(
+                "GET //evil.example/^ HTTP/1.1",
+                "HEAD //evil.example/^ HTTP/1.1",
+                "GET ///evil.example/^ HTTP/1.1",
+                "GET //a|b HTTP/1.1",
+                "GET /\\evil.example/^ HTTP/1.1",
+                "GET /\\/evil.example/^ HTTP/1.1",
+                "GET //\\evil.example/^ HTTP/1.1",
+                "GET /%2F%2Fevil.example/^ HTTP/1.1",
+                "GET /%2f/evil.example/^ HTTP/1.1",
+                "GET /%5Cevil.example/^ HTTP/1.1",
+                "GET /%5c%5cevil.example/^ HTTP/1.1",
+                "GET /.//evil.example/^ HTTP/1.1",
+                "GET /%2E//evil.example/^ HTTP/1.1",
+                "GET /a/..//evil.example/^ HTTP/1.1",
+                "GET /a/%2E%2E//evil.example/^ HTTP/1.1",
+                "GET /a/../../%2Fevil.example/^ HTTP/1.1",
+                "GET /a\\..\\..\\/evil.example/^ HTTP/1.1",
+                "GET //evil.example/\u00e9 HTTP/1.1",
+                "GET //evil.example/%zz HTTP/1.1",
+                "GET /a#b HTTP/1.1",
+                "GET /a^#b HTTP/1.1",
+                "HEAD /# HTTP/1.1",
+                "GET /a?b#c HTTP/1.1",
+            )) {
+                val response = exchange("$line\r\nHost: a.example\r\n\r\nGET /next HTTP/1.1\r\nHost: s\r\n\r\n")
+                assertTrue(response.startsWith("HTTP/1.1 400 "), "${show(line)}: $response")
+                assertTrue(!response.contains("Location"), "${show(line)}: $response")
+                assertEquals(1, Regex("HTTP/1.1 ").findAll(response).count(), "${show(line)}: $response")
+            }
+        }
+
+    /** A valid target that starts with `//` is a path (`absolute-path` allows an empty first segment), served as before. */
+    @Test fun validTargetThatStartsWithTwoSlashesIsServed() =
+        runTest {
+            val response = exchange("GET //evil.example/x HTTP/1.1\r\nHost: a.example\r\nConnection: close\r\n\r\n")
+            assertTrue(response.startsWith("HTTP/1.1 200 "), response)
+            assertTrue(response.endsWith("GET //evil.example/x HTTP/1.1"), response)
         }
 
     private fun show(s: String) =
