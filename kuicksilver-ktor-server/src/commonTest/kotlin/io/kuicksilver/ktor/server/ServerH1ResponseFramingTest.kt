@@ -5,6 +5,8 @@ package io.kuicksilver.ktor.server
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.Application
+import io.ktor.server.application.ApplicationCallPipeline
+import io.ktor.server.application.call
 import io.ktor.server.engine.connector
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.response.header
@@ -29,6 +31,17 @@ class ServerH1ResponseFramingTest {
     @BeforeTest fun load() = KslLoader.ensureLoaded()
 
     private val routes: Application.() -> Unit = {
+        // a CONNECT target is in authority-form, which routing by path does not see
+        intercept(ApplicationCallPipeline.Plugins) {
+            if (call.request.local.method.value == "CONNECT") {
+                if (call.request.local.uri == "stream.example:443") {
+                    call.respondBytesWriter { writeStringUtf8("tunnel") }
+                } else {
+                    call.respondText("tunnel")
+                }
+                finish()
+            }
+        }
         routing {
             get("/") { call.respondText("root") }
             get("/204") { call.respond(HttpStatusCode.NoContent) }
@@ -199,6 +212,30 @@ class ServerH1ResponseFramingTest {
                 assertFalse(head.contains("Content-Length", ignoreCase = true), resp)
                 assertTrue(resp.contains("\r\n\r\n5\r\nhello\r\n0\r\n\r\nHTTP/1.1 200 "), resp)
                 assertTrue(resp.endsWith("root"), resp)
+            }
+        }
+
+    /**
+     * RFC 9110 section 8.6 and RFC 9112 section 6.1: a server MUST NOT send Content-Length or Transfer-Encoding in a 2xx
+     * response to CONNECT: what follows the header section is the tunnel, ended by the close. Before, the application's
+     * content went out with `Content-Length: 6` (or chunked), framing that a client reads as tunnel data. The response
+     * says `Connection: close` and nothing more is read from the connection.
+     */
+    @Test fun negative_noFramingFieldsOn2xxToConnect() =
+        serverTest {
+            plainServer { port ->
+                for (target in listOf("a.example:443", "stream.example:443")) {
+                    val resp =
+                        withTimeout(10.seconds) {
+                            rawHttp(port, "CONNECT $target HTTP/1.1\r\nHost: $target\r\n\r\nGET / HTTP/1.1\r\nHost: s\r\n\r\n", tls = null)
+                        }
+                    val head = resp.substringBefore("\r\n\r\n") + "\r\n"
+                    assertTrue(head.startsWith("HTTP/1.1 200 "), "$target: $resp")
+                    assertFalse(head.contains("Content-Length", ignoreCase = true), "$target: $resp")
+                    assertFalse(head.contains("Transfer-Encoding", ignoreCase = true), "$target: $resp")
+                    assertTrue(head.contains("\r\nConnection: close\r\n"), "$target: $resp")
+                    assertEquals("tunnel", resp.substringAfter("\r\n\r\n"), "$target: $resp")
+                }
             }
         }
 
