@@ -84,6 +84,28 @@ class SessionStartTest {
             }
         }
 
+    /**
+     * Only the client's own idle H3_NO_ERROR close after GOAWAY is no failure to report: a server that breaks the protocol
+     * after its GOAWAY (a second SETTINGS, RFC 9114 section 7.2.4: "MUST treat receipt of a second SETTINGS frame as a
+     * connection error of type H3_FRAME_UNEXPECTED") still makes starting the client fail with that error.
+     */
+    @Test fun negative_protocolErrorAfterGoAwayFailsTheStart() =
+        h3Test {
+            QuicPair.open(serverQuic = quicConfig { maxUniStreams = 2 }).use { q ->
+                val (c, s) = q.connect()
+                val raw = RawPeer(s)
+                raw.openControl()
+                raw.control.output.writeFully(
+                    raw.frame(FrameType.GOAWAY, ControlFrames.goAwayPayload(0)) +
+                        raw.frame(FrameType.SETTINGS, ByteArray(0)),
+                )
+                raw.control.output.flush()
+                val e = assertFailsWith<Http3Exception.Protocol> { withTimeout(10.seconds) { Http3Connection.client(c) } }
+                assertEquals(Http3ErrorCode.FRAME_UNEXPECTED, e.h3Code)
+                assertEquals(Http3ErrorCode.FRAME_UNEXPECTED, peerSawClose(s))
+            }
+        }
+
     /** Exactly three streams is enough: the critical streams open, and the GREASE stream after them is optional. */
     @Test fun threeUniStreamsAreEnough() =
         h3Test {
