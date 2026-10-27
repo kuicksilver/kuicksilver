@@ -393,7 +393,8 @@ private suspend fun readResponseHead(
 
 /**
  * HTTP CONNECT through a proxy (RFC 9110 section 9.3.6), before TLS to the origin. The proxy's response head is limited
- * to [MAX_RESPONSE_HEAD_BYTES] ([ParserException] beyond); any status but 2xx, a 1xx included, fails the tunnel.
+ * to [MAX_RESPONSE_HEAD_BYTES] ([ParserException] beyond); interim 1xx heads before it are skipped, at most
+ * [MAX_INTERIM_RESPONSES]; any final status but 2xx, 101 included, fails the tunnel.
  */
 internal suspend fun startTunnel(
     url: Url,
@@ -414,10 +415,19 @@ internal suspend fun startTunnel(
         output.writePacket(builder.build())
         output.flush()
 
-        // the proxy's head within the response-head limit, read up to its end: the bytes after it are the tunnel's
-        val rawResponse =
-            readResponseHeadBytes(input, MAX_RESPONSE_HEAD_BYTES)?.let { parseResponse(ByteReadChannel(it)) }
+        // the proxy's heads within the response-head limit, each read up to its end: the bytes after the final one are
+        // the tunnel's; interim 1xx heads before it are skipped as for a request (RFC 9110 section 15.2), 101 is final
+        var interim = 0
+        var rawResponse: io.ktor.http.cio.Response
+        while (true) {
+            rawResponse = readResponseHeadBytes(input, MAX_RESPONSE_HEAD_BYTES)?.let { parseResponse(ByteReadChannel(it)) }
                 ?: throw ClosedReadChannelException(EOFException("Failed to parse CONNECT response: unexpected EOF"))
+            if (rawResponse.status / 100 != 1 || rawResponse.status == HttpStatusCode.SwitchingProtocols.value) break
+            rawResponse.release()
+            if (++interim > MAX_INTERIM_RESPONSES) {
+                throw ParserException("More than $MAX_INTERIM_RESPONSES interim (1xx) responses before the CONNECT response")
+            }
+        }
         rawResponse.use {
             // a 2xx makes the connection a tunnel at the end of the head: Content-Length and Transfer-Encoding are ignored
             // (RFC 9110 section 9.3.6), the bytes that follow are the origin's
