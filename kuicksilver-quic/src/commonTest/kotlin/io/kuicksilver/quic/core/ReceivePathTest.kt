@@ -143,13 +143,20 @@ class ReceivePathTest {
                 b.close()
             }
             val before = s.stats.packetsReceived
+            val heldBefore = s.receiver.bufferedCount
             val m = PacketBuffer.of(d)
             try {
                 s.handleDatagram(m, d.size, CoreFixtures.clientAddr, Ecn.NotEct, p.now)
             } finally {
                 m.close()
             }
-            assertEquals(packets - 1L, s.stats.packetsReceived - before, "the packet with another DCID is skipped, the rest processed")
+            // a 1-RTT packet behind them waits for the handshake to complete (RFC 9001 section 5.7)
+            val held = s.receiver.bufferedCount - heldBefore
+            assertEquals(
+                packets - 1L,
+                s.stats.packetsReceived - before + held,
+                "the packet with another DCID is skipped, the rest processed (or held: $held)",
+            )
         } finally {
             p.close()
         }
