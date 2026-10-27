@@ -182,6 +182,60 @@ class ServerH1FramingTest {
         }
 
     /**
+     * RFC 9112 section 3.2: a server MUST respond with 400 to a request with a Host field whose value is invalid; Host is
+     * `uri-host [ ":" port ]` (RFC 9110 section 7.2, RFC 3986 section 3.2). Ktor's parser refused only `/?#@` and a
+     * trailing colon, so these reached the application, its `serverHost` and `serverPort`.
+     */
+    @Test fun negative_invalidHostIsRejected() =
+        serverTest {
+            plainServer { port ->
+                for (host in listOf(
+                    "a b",
+                    "[::1",
+                    "h:x",
+                    "h:80:80",
+                    "a%zz",
+                    "[::1]x",
+                    "[zz]",
+                    "[::1::2]",
+                    "h:99999",
+                    "a\"b",
+                    "a<b",
+                    "[v1]",
+                )) {
+                    val resp =
+                        withTimeout(
+                            10.seconds,
+                        ) { rawHttp(port, "GET /echo-host HTTP/1.1\r\nHost: $host\r\nConnection: close\r\n\r\n", tls = null) }
+                    assertTrue(resp.startsWith("HTTP/1.1 400 "), "[$host]: $resp")
+                }
+            }
+        }
+
+    /** Valid Host values: a reg-name (with pct-encoded and sub-delims), IPv4, an IP-literal, a port, an empty value. */
+    @Test fun validHostsAreServed() =
+        serverTest {
+            plainServer { port ->
+                for ((host, expected) in listOf(
+                    "a.example:8080" to "a.example|8080|",
+                    "127.0.0.1" to "127.0.0.1|80|",
+                    "[::1]:8443" to "[::1]|8443|",
+                    "[2001:db8::7]" to "[2001:db8::7]|80|",
+                    "[::ffff:192.0.2.1]" to "[::ffff:192.0.2.1]|80|",
+                    "[v7.a:b]" to "[v7.a:b]|80|",
+                    "xn--d1a~_!\$&'()*+,;=%41" to "xn--d1a~_!\$&'()*+,;=%41|80|",
+                )) {
+                    val resp =
+                        withTimeout(
+                            10.seconds,
+                        ) { rawHttp(port, "GET /echo-host HTTP/1.1\r\nHost: $host\r\nConnection: close\r\n\r\n", tls = null) }
+                    assertTrue(resp.startsWith("HTTP/1.1 200 "), "[$host]: $resp")
+                    assertTrue(resp.substringAfter("\r\n\r\n").startsWith(expected), "[$host]: $resp")
+                }
+            }
+        }
+
+    /**
      * A response of unknown length to an HTTP/1.0 request: a server MUST NOT send Transfer-Encoding unless the request
      * indicates HTTP/1.1 or later (RFC 9112 section 6.1), so the body is delimited by the close of the connection
      * (section 6.3 item 8), which the response announces with `Connection: close` (section 9.6), also when the client
@@ -279,6 +333,8 @@ class ServerH1FramingTest {
                     "GET http:///echo-host HTTP/1.1\r\nHost: b.example\r\n",
                     "GET http://u:p@a.example/echo-host HTTP/1.1\r\nHost: b.example\r\n",
                     "GET http://a.example/echo-host HTTP/1.1\r\n",
+                    "GET http://a%zz/echo-host HTTP/1.1\r\nHost: b.example\r\n",
+                    "GET http://a.example:99999/echo-host HTTP/1.1\r\nHost: b.example\r\n",
                 )) {
                     val resp = withTimeout(10.seconds) { rawHttp(port, "${head}Connection: close\r\n\r\n", tls = null) }
                     assertTrue(resp.startsWith("HTTP/1.1 400 "), "[$head]: $resp")

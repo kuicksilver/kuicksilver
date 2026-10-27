@@ -94,6 +94,102 @@ internal fun contentLengthOf(values: List<CharSequence>): Long? {
     return result
 }
 
+/**
+ * Whether [value] is a valid Host field value, `uri-host [ ":" port ]` (RFC 9110 section 7.2), with `uri-host` the `host`
+ * of RFC 3986 section 3.2.2: an IP-literal (`[` IPv6address or IPvFuture `]`), or a reg-name (unreserved, pct-encoded
+ * and sub-delims characters, which covers IPv4 addresses), possibly empty (RFC 9112 section 3.2: an empty Host for a
+ * target without an authority). The port is digits, at most 65535: the URI's port is a TCP port (RFC 9110 section
+ * 4.2.1), as the HTTP/3 server checks `:authority`. A colon with no port after it is refused, as Ktor's parser did.
+ */
+internal fun isValidHostField(value: String): Boolean {
+    val hostEnd: Int
+    if (value.startsWith("[")) {
+        val close = value.indexOf(']')
+        if (close < 0 || !isIpLiteralBody(value.substring(1, close))) return false
+        hostEnd = close + 1
+    } else {
+        hostEnd = value.indexOf(':').let { if (it < 0) value.length else it }
+        if (!isRegName(value.substring(0, hostEnd))) return false
+    }
+    if (hostEnd == value.length) return true
+    if (value[hostEnd] != ':') return false
+    val port = value.substring(hostEnd + 1)
+    return port.isNotEmpty() && port.length <= 5 && port.all { it in '0'..'9' } && port.toInt() <= 65_535
+}
+
+/** reg-name = *( unreserved / pct-encoded / sub-delims ) (RFC 3986 section 3.2.2). */
+private fun isRegName(s: String): Boolean {
+    var i = 0
+    while (i < s.length) {
+        val c = s[i]
+        if (c == '%') {
+            if (i + 2 >= s.length || !isHexDigit(s[i + 1]) || !isHexDigit(s[i + 2])) return false
+            i += 3
+            continue
+        }
+        if (!isUnreserved(c) && !isSubDelim(c)) return false
+        i++
+    }
+    return true
+}
+
+/** IPv6address / IPvFuture, the inside of an IP-literal (RFC 3986 section 3.2.2; no zone identifier). */
+private fun isIpLiteralBody(s: String): Boolean {
+    if (s.startsWith("v") || s.startsWith("V")) {
+        // IPvFuture = "v" 1*HEXDIG "." 1*( unreserved / sub-delims / ":" )
+        val dot = s.indexOf('.')
+        if (dot < 2 || dot == s.length - 1) return false
+        if (!s.substring(1, dot).all(::isHexDigit)) return false
+        return s.substring(dot + 1).all { isUnreserved(it) || isSubDelim(it) || it == ':' }
+    }
+    return isIpv6(s)
+}
+
+/** IPv6address (RFC 3986 section 3.2.2): eight 16-bit pieces, `::` once for a run of zero pieces, an IPv4 tail allowed. */
+private fun isIpv6(s: String): Boolean {
+    val doubleColon = s.indexOf("::")
+    if (doubleColon >= 0 && s.indexOf("::", doubleColon + 1) >= 0) return false
+    val parts =
+        if (doubleColon < 0) {
+            listOf(s)
+        } else {
+            listOf(s.substring(0, doubleColon), s.substring(doubleColon + 2))
+        }
+    var pieces = 0
+    for ((index, part) in parts.withIndex()) {
+        if (part.isEmpty()) continue
+        val groups = part.split(':')
+        for ((g, group) in groups.withIndex()) {
+            val last = index == parts.size - 1 && g == groups.size - 1
+            if (last && '.' in group) {
+                if (!isIpv4(group)) return false
+                pieces += 2
+            } else {
+                if (group.isEmpty() || group.length > 4 || !group.all(::isHexDigit)) return false
+                pieces++
+            }
+        }
+    }
+    return if (doubleColon < 0) pieces == 8 else pieces <= 7
+}
+
+/** IPv4address = dec-octet "." dec-octet "." dec-octet "." dec-octet (RFC 3986 section 3.2.2). */
+private fun isIpv4(s: String): Boolean {
+    val octets = s.split('.')
+    return octets.size == 4 &&
+        octets.all { o ->
+            o.isNotEmpty() && o.length <= 3 && o.all { it in '0'..'9' } && (o.length == 1 || o[0] != '0') && o.toInt() <= 255
+        }
+}
+
+private fun isHexDigit(c: Char) = c in '0'..'9' || c in 'a'..'f' || c in 'A'..'F'
+
+/** unreserved (RFC 3986 section 2.3). */
+private fun isUnreserved(c: Char) = c in 'a'..'z' || c in 'A'..'Z' || c in '0'..'9' || c in "-._~"
+
+/** sub-delims (RFC 3986 section 2.2). */
+private fun isSubDelim(c: Char) = c in "!$&'()*+,;="
+
 /** OWS (RFC 9110 section 5.6.3). */
 private fun isOws(c: Char) = c == ' ' || c == '\t'
 
