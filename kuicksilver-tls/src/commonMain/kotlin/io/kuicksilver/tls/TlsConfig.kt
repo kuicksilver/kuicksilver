@@ -163,13 +163,14 @@ public class TlsConfig private constructor(
     /** Session ticket keys and lifetimes of a server (TCP, and QUIC with 0-RTT); see [Builder.sessionTickets]. */
     public val sessionTickets: SessionTicketConfig,
     /** Where TLS secrets are written for debugging, null (the default) for nowhere; see [Builder.keylog]. */
-    public val keylog: KeylogSink?,
+    @OptIn(DelicateKuicksilverApi::class) public val keylog: KeylogSink?,
     /** The deadline of a TLS-over-TCP handshake; see [Builder.handshakeTimeout]. */
     public val handshakeTimeout: Duration,
     /** Whether every verification failure is sent as `handshake_failure`; see [Builder.genericAlerts]. */
     public val genericAlerts: Boolean,
 ) {
     /** A copy with one connection's selector override applied (server side); the override passes the checks of [Builder.build]. */
+    @OptIn(DelicateKuicksilverApi::class)
     internal fun withOverride(o: ServerTlsOverride): TlsConfig {
         val overrideAlpn = o.alpn?.toList()?.also { validateAlpn(it) } // copy first: the stored list is the one validated
         checkServerAuth(o.clientAuth ?: clientAuth, o.trust ?: trust)

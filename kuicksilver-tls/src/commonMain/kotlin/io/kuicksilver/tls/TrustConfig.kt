@@ -40,6 +40,7 @@ public sealed interface TrustConfig {
      *   [TlsConfig] is built. SNI still carries [TlsConfig.serverName].
      * @property base the trust that validates the chain; default [Platform]. Any other kind throws on construction.
      */
+    @OptIn(DelicateKuicksilverApi::class)
     public class ExpectedName(
         public val name: String,
         public val base: TrustConfig = Platform,
@@ -66,6 +67,7 @@ public sealed interface TrustConfig {
      *   [Custom] (also inside [ExpectedName]) and another [Pinned] throw [TlsException.Config]: a Custom verifier decides on
      *   its own, so pins on top of it would only look like a second check.
      */
+    @OptIn(DelicateKuicksilverApi::class)
     public class Pinned(
         pins: Set<SpkiSha256>,
         public val scope: PinScope = PinScope.Leaf,
