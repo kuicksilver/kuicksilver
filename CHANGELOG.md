@@ -165,6 +165,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   chunked<U+00A0>` a chunked one, so with a proxy in front that framed the response otherwise the bytes behind it
   became the response to the next request (response splitting). A `Transfer-Encoding` that is not a list of transfer
   codings or that applies `chunked` twice (RFC 9112 section 6.1) fails the same way.
+- Ktor server, HTTP/1.1: a request field name that is not a token (with DEL or a byte above 0x7F, RFC 9110 section
+  5.1) gets 400, and so does a Unicode space (U+00A0, U+2000, ...) right before a field value: OWS is only SP and HTAB
+  (section 5.6.3), but Ktor's parser skipped it, so `Content-Length: <U+00A0>5` framed a 5-byte body while a front
+  proxy that finds the value invalid frames none (request smuggling).
 - Ktor server, HTTP/1.1: a request field value with a control character other than HTAB (NUL, VT, FF, DEL) gets 400
   and the connection closes (RFC 9110 section 5.5: a recipient of NUL in a field value MUST reject the message or
   replace it). Before, Ktor's parser refused only CR and LF, and a NUL reached the application.

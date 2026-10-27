@@ -165,6 +165,48 @@ class H1RequestHeadCheckTest {
             assertTrue(response.endsWith("GET / HTTP/1.1 [a\tb c\u00e9]"), response)
         }
 
+    /**
+     * field-name = token (RFC 9110 section 5.1): a name with DEL or a byte above 0x7F is invalid, 400. Ktor's parser
+     * refused only delimiters and whitespace in a name (and whitespace before the colon, RFC 9112 section 5.1).
+     */
+    @Test fun negative_fieldNameMustBeAToken() =
+        runTest {
+            for (name in listOf("X-\u007f", "X-\u00e9", "X\"A", "X-A ", "")) {
+                val response = exchange("GET / HTTP/1.1\r\nHost: s\r\n$name: a\r\n\r\nGET /next HTTP/1.1\r\nHost: s\r\n\r\n")
+                assertTrue(response.startsWith("HTTP/1.1 400 "), "${show(name)}: $response")
+                assertEquals(1, Regex("HTTP/1.1 ").findAll(response).count(), "${show(name)}: $response")
+            }
+        }
+
+    /**
+     * OWS is `*( SP / HTAB )` (RFC 9110 section 5.6.3). Ktor's parser skips any Unicode whitespace before a value, so
+     * `X-A: <U+00A0>a` reached the application as `a`, and `Content-Length: <U+00A0>5` framed a 5-byte body while a front
+     * proxy that finds the value invalid frames none (CL.0 smuggling). 400 and close (RFC 9112 section 6.3 item 5 for
+     * Content-Length).
+     */
+    @Test fun negative_unicodeSpaceBeforeAFieldValueIsRejected() =
+        runTest {
+            val next = "GET /next HTTP/1.1\r\nHost: s\r\n\r\n"
+            for (field in listOf(
+                "X-A: \u00a0a\r\n\r\n",
+                "X-A:\u2000a\r\n\r\n",
+                "X-A: \t\u3000a\r\n\r\n",
+                "Content-Length: \u00a05\r\n\r\nhello",
+                "Transfer-Encoding: \u2009chunked\r\n\r\n0\r\n\r\n",
+            )) {
+                val response = exchange("POST / HTTP/1.1\r\nHost: s\r\n$field$next")
+                assertTrue(response.startsWith("HTTP/1.1 400 "), "${show(field)}: $response")
+                assertEquals(1, Regex("HTTP/1.1 ").findAll(response).count(), "${show(field)}: $response")
+            }
+        }
+
+    /** A Unicode space inside or at the end of a value is obs-text, field content (RFC 9110 section 5.5): passed on. */
+    @Test fun unicodeSpaceInsideAFieldValueIsAccepted() =
+        runTest {
+            val response = exchange("GET / HTTP/1.1\r\nHost: s\r\nX-A: a\u00a0b\u00a0\r\nConnection: close\r\n\r\n")
+            assertTrue(response.endsWith("[a\u00a0b\u00a0]"), response)
+        }
+
     private fun show(s: String) =
         s
             .map {
