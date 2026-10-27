@@ -299,6 +299,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   a stream error `H3_MESSAGE_ERROR`, and our own requests, responses and trailers with one fail locally with
   `IllegalArgumentException`. Only NUL, CR and LF were refused, so a value such as `a<ESC>b` reached the application
   and the Ktor engines.
+- TLS: a received `general_error` alert (117, RFC 9846 section 6.2) is reported by that name instead of `alert_117`, and
+  in TLS 1.3 an error alert the peer sent at level warning is reported as `TlsException.AlertReceived` with its code
+  instead of a generic protocol error (RFC 9846 section 6: error alerts count regardless of their level).
 - TLS over TCP: a server now issues two session tickets after a full handshake (also the explicit post-verdict ones of a
   pinned-client server), and a client keeps up to four per origin, each used once, so parallel HTTP/1.1 connections to one
   origin each resume (RFC 9846 appendix C.4, SHOULD). Before, one ticket per connection and one per origin meant only one

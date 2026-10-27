@@ -306,6 +306,7 @@ internal fun alertName(code: Int): String =
         113 -> "bad_certificate_status_response"
         115 -> "unknown_psk_identity"
         116 -> "certificate_required"
+        117 -> "general_error"
         120 -> "no_application_protocol"
         else -> "alert_$code"
     }

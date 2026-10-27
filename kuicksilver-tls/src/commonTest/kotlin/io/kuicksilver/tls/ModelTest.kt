@@ -348,3 +348,12 @@ class TlsIdentityTest {
         }
     }
 }
+
+class AlertNameTest {
+    /** RFC 9846 sections 6.2 and 11.1 add general_error (117); a received alert is reported by its RFC name. */
+    @Test fun alertNames() {
+        assertEquals("general_error", alertName(117))
+        assertEquals("internal_error", alertName(80))
+        assertEquals("alert_255", alertName(255))
+    }
+}
