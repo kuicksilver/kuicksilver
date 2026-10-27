@@ -129,6 +129,8 @@ class H1RequestHeadCheckTest {
                 "GET\u00a0/ HTTP/1.1",
                 "GET /\u00a0HTTP/1.1",
                 "GET /\u001fHTTP/1.1",
+                // a TLS ClientHello sent optimistically after `Upgrade: TLS` (RFC 9931 section 6.1): 0x16 is no tchar
+                "\u0016\u0003\u0001\u0002\u0000GET / HTTP/1.1",
             )) {
                 val response = exchange("$line\r\nHost: s\r\n\r\n")
                 assertTrue(response.startsWith("HTTP/1.1 400 "), "${show(line)}: $response")
