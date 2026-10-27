@@ -15,6 +15,7 @@ import io.kuicksilver.quic.QlogSink
 import io.kuicksilver.quic.QlogTrace
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.quicConfig
+import io.kuicksilver.quic.receivedAll
 import io.kuicksilver.tls.TlsRole
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
@@ -29,6 +30,7 @@ import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
@@ -326,6 +328,38 @@ class StreamBridgeTest {
                     assertTrue(ss.input.readAvailable(ByteArray(4), 0, 4) < 0, "EOF: the FIN came before the close")
                     assertTrue(ss.input.isClosedForRead)
                     assertEquals(null, ss.input.closedCause)
+                }
+            }
+        }
+
+    /**
+     * [receivedAll]: false while the FIN is missing; true once it arrived after every byte, also when it comes alone behind
+     * bytes nobody read yet (no new readable bytes for the core to report); and it is final when the connection's end is
+     * seen, for the stream that came whole and for the one cut short.
+     */
+    @Test fun receivedAllFollowsTheFinAndOutlivesTheClose() =
+        runBlocking {
+            ApiPair.open().use { p ->
+                withTimeout(20.seconds) {
+                    val (c, s) = p.connect()
+                    val st = c.openBidi()
+                    st.output.writeFully(byteArrayOf(1, 2, 3), 0, 3)
+                    st.output.flush()
+                    val whole = s.acceptStream()
+                    val other = c.openBidi()
+                    other.output.writeFully(byteArrayOf(9), 0, 1)
+                    other.output.flush()
+                    val cut = s.acceptStream()
+                    assertFalse(whole.receivedAll, "no FIN yet")
+                    st.output.flushAndClose() // the FIN alone
+                    withTimeout(5.seconds) { while (!whole.receivedAll) delay(5) }
+                    c.close(7, "bye")
+                    s.closed.await()
+                    assertTrue(whole.receivedAll)
+                    assertFalse(cut.receivedAll, "a stream cut short by the close")
+                    assertContentEquals(byteArrayOf(1, 2, 3), whole.input.readExactly(3))
+                    assertTrue(whole.input.readAvailable(ByteArray(4), 0, 4) < 0)
+                    assertTrue(whole.receivedAll, "read to its end")
                 }
             }
         }

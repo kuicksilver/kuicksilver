@@ -513,7 +513,10 @@ internal class ConnectionRuntime(
                 }
 
                 is ConnectionEvent.StreamReadable -> {
-                    streams[e.id]?.signalReadable()
+                    streams[e.id]?.let {
+                        it.updateReceivedAll()
+                        it.signalReadable()
+                    }
                 }
 
                 is ConnectionEvent.StreamWritable -> {
@@ -628,6 +631,8 @@ internal class ConnectionRuntime(
         // the observer (application callbacks) runs last, once every waiter can see the end: whatever it does, `closed`,
         // the handshake and the streams are complete
         try {
+            // before `closed` completes: whoever learns of the end from it sees which streams arrived whole
+            for (s in streams.values) s.updateReceivedAll()
             closedDeferred.complete(reason)
             handshake.completeExceptionally(reason)
             accepted.close(reason)

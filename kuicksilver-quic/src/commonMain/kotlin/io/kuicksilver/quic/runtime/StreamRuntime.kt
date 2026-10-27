@@ -50,6 +50,16 @@ internal class StreamRuntime(
         readable.trySend(Unit)
     }
 
+    /** The peer's FIN and every byte before it arrived ([io.kuicksilver.quic.receivedAll]). Set on the loop, read anywhere. */
+    @Volatile
+    internal var receivedAll: Boolean = false
+        private set
+
+    /** On the loop: notes whether the core holds the whole stream now; once true it stays true. */
+    internal fun updateReceivedAll() {
+        if (!receivedAll && conn.core.streamReceivedAll(id)) receivedAll = true
+    }
+
     /** Completes when both halves are done (our data acknowledged or reset, the peer's consumed) or the connection ended. */
     internal val done = kotlinx.coroutines.CompletableDeferred<Unit>()
 

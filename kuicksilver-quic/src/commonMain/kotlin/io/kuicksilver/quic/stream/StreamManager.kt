@@ -162,6 +162,9 @@ internal class StreamManager(
 
     fun receivedEarly(id: Long): Boolean = id in early
 
+    /** The receiving part of [id] holds or held every byte up to the FIN ("Data Recvd" or "Data Read", RFC 9000 section 3.2). */
+    fun receivedAll(id: Long): Boolean = streams[id]?.recv?.state.let { it == RecvState.DataRecvd || it == RecvState.DataRead }
+
     /** After an accepted 0-RTT: streams we opened take the server's new initial limits (they only grow). */
     fun raiseLocalSendLimits(
         bidiRemote: Long,
@@ -458,12 +461,14 @@ internal class StreamManager(
         val e = peerStream(id, 0x08, receiving = true) ?: return
         val r = e.recv ?: throw QuicWireException(TransportError.STREAM_STATE_ERROR, 0x08, "STREAM frame on our send-only stream $id")
         val before = r.readable
+        val wasWhole = r.state == RecvState.DataRecvd
         connReceived += r.onData(offset, data, off, len, fin, connFlow, connReceived) // checks both windows before it changes anything
         if (r.stopped) {
             creditConnection(r.abandon())
             if (r.finished) maybeClose(id)
         } // nothing will read a stopped stream: its bytes go straight back to the connection window, and the FIN retires it
-        else if (r.readable > before || (fin && r.readable == 0)) {
+        // also when a FIN alone completes a stream whose bytes are not all read: the runtime learns the stream is whole
+        else if (r.readable > before || (fin && r.readable == 0) || (!wasWhole && r.state == RecvState.DataRecvd)) {
             events += e.readable
         }
     }
