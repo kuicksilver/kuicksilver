@@ -43,8 +43,9 @@ internal object FrameRules {
                 throw H3ProtocolError(Http3ErrorCode.ID_ERROR, "CANCEL_PUSH without server push")
             }
 
+            // a server reads it even without push: a decreasing or malformed one is a connection error (sections 7.2.7, 7.1)
             FrameType.MAX_PUSH_ID -> {
-                if (isServer) FrameAction.Skip else unexpected("MAX_PUSH_ID received by a client")
+                if (isServer) FrameAction.Process else unexpected("MAX_PUSH_ID received by a client")
             }
 
             FrameType.PRIORITY_UPDATE_REQUEST, FrameType.PRIORITY_UPDATE_PUSH -> {
@@ -129,6 +130,8 @@ internal object ControlFrames {
     fun parseGoAway(payload: ByteArray): Long = single(payload, "GOAWAY")
 
     fun maxPushIdPayload(id: Long): ByteArray = VarInt.encode(id)
+
+    fun parseMaxPushId(payload: ByteArray): Long = single(payload, "MAX_PUSH_ID")
 
     fun priorityUpdatePayload(
         elementId: Long,
