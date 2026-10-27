@@ -193,6 +193,12 @@ public class ConnectionCore internal constructor(
     internal var activeDcidSeq = -1L
     internal var oneRttSinceRotation = 0
     internal var testInjectPathChallenges = 0
+
+    /** Packets sealed with the 0-RTT key (RFC 9001 section 6.6 counts them toward its confidentiality limit). */
+    internal var zeroRttPacketsSealed = 0L
+
+    /** A lower AEAD confidentiality limit for the 0-RTT key only, for tests; null uses `QuicLimits.confidentialityLimitAesGcm`. */
+    internal var testZeroRttConfidentialityLimit: Long? = null
     internal var testInjectPathResponse: Long? = null
     internal var pathResponsesSentForTest = 0
     internal val challengedAddressesForTest = ArrayList<InetSocketAddress>()

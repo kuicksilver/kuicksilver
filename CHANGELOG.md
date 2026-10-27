@@ -339,6 +339,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - QUIC: Initial packets that fail authentication now count toward the AEAD integrity limit with the rest (RFC 9001
   section 6.6: "across all keys"), and in `ConnectionStats.authenticationFailures`. The limit (2^52 for AES-128-GCM)
   stays out of reach, so this changes the count, not when a connection closes in practice.
+- QUIC client: 0-RTT packets count toward the AEAD confidentiality limit of the 0-RTT key, and 0-RTT sending stops at
+  the limit, the rest of the early data waiting for 1-RTT (RFC 9846 section 5.5, RFC 9001 section 6.6). The limit
+  (2^23 packets for AES-GCM) is far above what a client sends before the server's answer, so in practice nothing
+  changes.
 - QUIC, Linux and Apple platforms: a UDP send interrupted by a signal (`EINTR`) is retried instead of failing the
   socket; on Linux an interrupted GSO send no longer withdraws GSO.
 - TLS: a server context without session ticket keys (a QUIC server with tickets off, a keyless SNI override base) no
