@@ -62,7 +62,6 @@ kotlin {
         commonTest.dependencies {
             implementation(kotlin("test"))
             implementation(catalog.findLibrary("kotlinx-coroutines-test").get())
-            implementation(catalog.findLibrary("kotest-property").get())
         }
         getByName("androidDeviceTest").dependencies {
             implementation(kotlin("test-junit"))
@@ -87,9 +86,6 @@ val licenseResources = tasks.register<Sync>("licenseResources") {
 kotlin.sourceSets.getByName("commonMain").resources.srcDir(licenseResources.map { it.destinationDir })
 kotlin.sourceSets.getByName("androidMain").resources.srcDir(licenseResources.map { it.destinationDir })   // the AAR packages androidMain resources, not commonMain ones
 tasks.withType<Jar>().configureEach { from(rootProject.file("LICENSE")) { into("META-INF") }; from(rootProject.file("NOTICE")) { into("META-INF") }; from(rootProject.file("licenses/LICENSE.openssl.txt")) { into("META-INF/licenses") }; duplicatesStrategy = DuplicatesStrategy.EXCLUDE }
-
-// kotest-property (commonTest) pulls in mordant, whose FFM code cannot be dexed for minSdk 24: keep it out of the device-test APK.
-configurations.matching { it.name.contains("AndroidDeviceTest") || it.name.contains("androidDeviceTest") }.configureEach { exclude(group = "com.github.ajalt.mordant") }
 
 // Explicit native library for the JVM tests (Linux containers, CI): -Pkuicksilver.native.path=... is forwarded to the test JVM.
 tasks.withType<Test>().configureEach { providers.gradleProperty("kuicksilver.native.path").orNull?.let { systemProperty("kuicksilver.native.path", it) } }

@@ -8,7 +8,6 @@ r8 = "9.3.35"
 coroutines = "1.11.0"
 kotlinx-io = "0.9.1"
 ktor = "3.6.0"
-kotest = "6.0.3"
 dokka = "2.2.0"
 kover = "0.9.11"
 kotlinter = "5.7.0"
@@ -36,7 +35,6 @@ ktor-server-partial-content = { module = "io.ktor:ktor-server-partial-content", 
 ktor-server-hsts = { module = "io.ktor:ktor-server-hsts", version.ref = "ktor" }
 ktor-server-forwarded-header = { module = "io.ktor:ktor-server-forwarded-header", version.ref = "ktor" }
 ktor-server-auto-head-response = { module = "io.ktor:ktor-server-auto-head-response", version.ref = "ktor" }
-kotest-property = { module = "io.kotest:kotest-property", version.ref = "kotest" }
 jazzer-junit = { module = "com.code-intelligence:jazzer-junit", version.ref = "jazzer" }
 # plugin artifacts for build-logic
 kotlin-gradle-plugin = { module = "org.jetbrains.kotlin:kotlin-gradle-plugin", version.ref = "kotlin" }
