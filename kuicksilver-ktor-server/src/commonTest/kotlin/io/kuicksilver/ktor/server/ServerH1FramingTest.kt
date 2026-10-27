@@ -366,6 +366,41 @@ class ServerH1FramingTest {
             }
         }
 
+    /**
+     * A request whose Connection options include `close` (in a list, in any case, on any of several lines) is the last
+     * on its connection, and the server SHOULD send `close` in its response (RFC 9112 section 9.6); `close` wins over
+     * `keep-alive`. An HTTP/1.0 request without `keep-alive` ends the connection too and is told so. Before, only a field
+     * of exactly `close` was announced (Ktor's commitHeaders), `keep-alive, close` and `Connection: TE` on HTTP/1.0 kept
+     * the connection open, and the pipelined `/after-close` was served.
+     */
+    @Test fun negative_connectionCloseInAListIsAnnouncedAndEndsTheConnection() =
+        serverTest {
+            plainServer { port ->
+                for ((version, connection) in listOf(
+                    "1.1" to "Connection: close, TE",
+                    "1.1" to "Connection: keep-alive, close",
+                    "1.1" to "Connection: TE\r\nConnection: CLOSE",
+                    "1.1" to "Connection: x,\tclose",
+                    "1.0" to "Connection: TE",
+                    "1.0" to "",
+                )) {
+                    val resp =
+                        withTimeout(10.seconds) {
+                            rawHttp(
+                                port,
+                                "GET / HTTP/$version\r\nHost: s\r\n$connection\r\n\r\nGET /after-close HTTP/1.1\r\nHost: s\r\n\r\n",
+                                tls = null,
+                            )
+                        }
+                    val head = resp.substringBefore("\r\n\r\n") + "\r\n"
+                    assertTrue(head.startsWith("HTTP/1.1 200 "), "[$connection]: $resp")
+                    assertTrue(head.contains("\r\nConnection: close\r\n"), "[$connection]: $resp")
+                    assertEquals(1, Regex("HTTP/1.1 ").findAll(resp).count(), "[$connection]: $resp")
+                }
+                assertEquals(0, afterClose.load())
+            }
+        }
+
     /** A transfer coding other than a final `chunked`: 400 and close (RFC 9112 section 6.3 item 4). */
     @Test fun negative_unknownTransferCodingIsRejected() =
         serverTest {
