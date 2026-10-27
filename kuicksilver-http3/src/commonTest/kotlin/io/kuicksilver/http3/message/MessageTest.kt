@@ -408,6 +408,169 @@ class PriorityFieldTest {
         assertEquals(StreamPriority.Default, PriorityField.parse("garbage ,,, u="))
         assertEquals(StreamPriority(3, false), PriorityField.parse("i=5"))
     }
+
+    /** RFC 8941 section 4.2: a valid dictionary, with OWS between members, parameters and SP around the value. */
+    @Test fun strictValidFields() {
+        assertEquals(StreamPriority(5, true), PriorityField.parse("u=5, i"))
+        assertEquals(StreamPriority(1, true), PriorityField.parse("u=1;foo=bar, i=?1"))
+        assertEquals(StreamPriority(0, true), PriorityField.parse("i, u=0"))
+        assertEquals(StreamPriority(1, true), PriorityField.parse("u=1,\ti"))
+        assertEquals(StreamPriority(1, true), PriorityField.parse("  u=1 ,i;a  "))
+        assertEquals(StreamPriority(2, true), PriorityField.parse("u=2;a;b=?0;*c=-1.5, i;x=\"y\""))
+        assertEquals(StreamPriority(0, false), PriorityField.parse("u=-0"))
+        assertEquals(StreamPriority(1, false), PriorityField.parse("u=1; i")) // SP after ';' is allowed: `i` is a parameter of `u`
+    }
+
+    /** RFC 8941 section 4.2.2: a key seen again overwrites the earlier value. */
+    @Test fun duplicateKeysLastWins() {
+        assertEquals(StreamPriority(4, false), PriorityField.parse("u=1, u=4"))
+        assertEquals(StreamPriority(3, false), PriorityField.parse("i, i=?0"))
+        assertEquals(StreamPriority(3, true), PriorityField.parse("u=1, i, u=9"))
+    }
+
+    /** Unknown members of every bare item type, and Inner Lists, are parsed and then ignored (RFC 9218 section 4). */
+    @Test fun unknownMembersOfEveryTypeAreHarmless() {
+        val unknown =
+            listOf(
+                "a=1",
+                "a=-123456789012345",
+                "a=123456789012345",
+                "a=-1.5",
+                "a=123456789012.123",
+                "a=\"x, y\\\"z\\\\ ;=()\"",
+                "a=\"\"",
+                "a=tok:en/x*",
+                "a=*t",
+                "a=:YWJj+/==:",
+                "a=::",
+                "a=:AA:",
+                "a=:AAA=:",
+                "a=?0",
+                "a",
+                "a;p",
+                "a=(1 \"a, b\" b;q=1 :AA==: ?1);p=*x",
+                "a=()",
+                "a=( 1  2 )",
+                "*k.-_9=1",
+            )
+        for (m in unknown) {
+            assertEquals(StreamPriority(2, true), PriorityField.parse("u=2, $m, i"), m)
+        }
+    }
+
+    private fun assertIgnored(value: String) {
+        assertEquals(StreamPriority.Default, PriorityField.parse(value), value)
+        val base = StreamPriority(5, true)
+        assertEquals(base, PriorityField.merge(base, value), value)
+    }
+
+    /** RFC 8941 section 4.2: one syntax error fails the whole field, which is then ignored (RFC 9218 section 4). */
+    @Test fun badKeyFailsTheField() {
+        assertIgnored("u=1, i, Foo=1")
+        assertIgnored("u=1, i, 1a=2")
+        assertIgnored("u=1, i, _a")
+        assertIgnored("u=1;A=1, i")
+        assertIgnored("u=1;, i")
+    }
+
+    @Test fun trailingCommaFailsTheField() {
+        assertIgnored("u=1, i,")
+        assertIgnored("u=1, i, ")
+    }
+
+    @Test fun emptyMemberFailsTheField() {
+        assertIgnored("u=1, , i")
+        assertIgnored("u=1,,i")
+        assertIgnored(", u=1, i")
+        assertIgnored("u=, i")
+    }
+
+    @Test fun longIntegerFailsTheField() {
+        assertIgnored("u=1, i, x=1234567890123456")
+        assertIgnored("u=1, i, x=-1234567890123456")
+        assertIgnored("u=1, i, x=-")
+        assertIgnored("u=1, i, x=-a")
+    }
+
+    @Test fun badDecimalFailsTheField() {
+        assertIgnored("u=1, i, x=1.2345")
+        assertIgnored("u=1, i, x=1.")
+        assertIgnored("u=1, i, x=1234567890123.1")
+        assertIgnored("u=1, i, x=1.2.3")
+    }
+
+    @Test fun unterminatedStringFailsTheField() {
+        assertIgnored("u=1, i, x=\"abc")
+        assertIgnored("u=1, i, x=\"abc\\")
+    }
+
+    @Test fun badEscapeFailsTheField() {
+        assertIgnored("u=1, i, x=\"a\\nb\"")
+        assertIgnored("u=1, i, x=\"a\\'b\"")
+    }
+
+    @Test fun nonAsciiOrControlInStringFailsTheField() {
+        assertIgnored("u=1, i, x=\"é\"")
+        assertIgnored("u=1, i, x=\"a\tb\"")
+        assertIgnored("u=1, i, x=\"a\u007fb\"")
+        assertIgnored("u=1, i, x=\"a\u0000b\"")
+    }
+
+    @Test fun badTokenFailsTheField() {
+        assertIgnored("u=1, i, x=/abc")
+        assertIgnored("u=1, i, x=_abc")
+        assertIgnored("u=1, i, x=#a")
+        assertIgnored("u=1, i, x=a\"b\"")
+        assertIgnored("u=1, i, x=té")
+    }
+
+    @Test fun badByteSequenceFailsTheField() {
+        assertIgnored("u=1, i, x=:ab-c:")
+        assertIgnored("u=1, i, x=:ab_c:")
+        assertIgnored("u=1, i, x=:abc")
+        assertIgnored("u=1, i, x=:a=bc:")
+        assertIgnored("u=1, i, x=:AAAAA:")
+        assertIgnored("u=1, i, x=:AA=:")
+        assertIgnored("u=1, i, x=:A===:")
+    }
+
+    @Test fun badBooleanFailsTheField() {
+        assertIgnored("u=1, i=?2")
+        assertIgnored("u=1, i=?")
+        assertIgnored("u=1, i=?10")
+    }
+
+    @Test fun garbageAfterValueFailsTheField() {
+        assertIgnored("i, u=1 x")
+        assertIgnored("u=1 i")
+        assertIgnored("u=1, i x")
+        assertIgnored("u=1, i;a=")
+        assertIgnored("\tu=1, i")
+    }
+
+    @Test fun badInnerListFailsTheField() {
+        assertIgnored("u=1, i, x=(1 2")
+        assertIgnored("u=1, i, x=(1\"a\")")
+        assertIgnored("u=1, i, x=((1))")
+        assertIgnored("u=1, i, x=(1,2)")
+    }
+
+    /** RFC 9218 sections 4.1 and 4.2: a `u` or `i` of the wrong type or range is ignored, the rest of the field still counts. */
+    @Test fun invalidParameterValueIsIgnoredAlone() {
+        assertEquals(StreamPriority(3, true), PriorityField.parse("u=9, i"))
+        assertEquals(StreamPriority(3, true), PriorityField.parse("u=-1, i"))
+        assertEquals(StreamPriority(3, true), PriorityField.parse("u=1.5, i"))
+        assertEquals(StreamPriority(3, true), PriorityField.parse("u=\"1\", i"))
+        assertEquals(StreamPriority(3, true), PriorityField.parse("u=(1), i"))
+        assertEquals(StreamPriority(3, true), PriorityField.parse("u, i"))
+        assertEquals(StreamPriority(3, true), PriorityField.parse("u=a, i"))
+        assertEquals(StreamPriority(1, false), PriorityField.parse("u=1, i=1"))
+        assertEquals(StreamPriority(1, false), PriorityField.parse("u=1, i=\"?1\""))
+        assertEquals(StreamPriority(1, false), PriorityField.parse("u=1, i=(?1)"))
+        val base = StreamPriority(5, true)
+        assertEquals(StreamPriority(5, false), PriorityField.merge(base, "u=9, i=?0"))
+        assertEquals(StreamPriority(1, true), PriorityField.merge(base, "u=1, i=1"))
+    }
 }
 
 class Http3ExceptionTest {

@@ -370,13 +370,11 @@ internal object PseudoHeaders {
 
 /**
  * The `Priority` field (RFC 9218 section 4): a Structured Fields dictionary with `u` (urgency, 0..7) and `i`
- * (incremental). Unknown keys, out-of-range values and malformed members are ignored, so a garbled field reads as the
- * defaults. Shared with the Ktor engines, hence public under [InternalKuicksilverApi].
- *
- * The parse is lenient and member by member, not RFC 8941's whole-field one: a strict parser fails the whole dictionary
- * on one syntax error (section 4.2), which RFC 9218 section 4 then reads as all defaults, while here the valid members
- * of `u=1, i=7, ;;` still count (`u=1`). Members are split at commas and parameters after `;` are dropped, so a comma
- * inside a String or Inner List value would split it; neither is a valid `u` or `i`, so only unknown keys are affected.
+ * (incremental). The value is parsed strictly as an RFC 8941 Dictionary: a value that is not one is ignored as a whole
+ * (RFC 8941 section 4.2), so every parameter counts as absent. In a valid one, unknown keys and member parameters are
+ * ignored, and a `u` that is not an Integer in 0..7 or an `i` that is not a Boolean is ignored as well (RFC 9218
+ * sections 4.1, 4.2). The same parser reads the Priority Field Value of a PRIORITY_UPDATE frame (section 7). Shared with
+ * the Ktor engines, hence public under [InternalKuicksilverApi].
  */
 @InternalKuicksilverApi
 public object PriorityField {
@@ -385,40 +383,17 @@ public object PriorityField {
 
     /**
      * [base] with the parameters [value] gives (RFC 9218 section 8: a parameter left out keeps its value, "disinterest to
-     * change"); [base] unchanged for null, blank or invalid members.
+     * change"); [base] unchanged for null or blank [value], or one that is not a valid Structured Fields dictionary, and
+     * per parameter for an invalid `u` or `i`.
      */
     public fun merge(
         base: StreamPriority,
         value: String?,
     ): StreamPriority {
         if (value.isNullOrBlank()) return base
-        var u = base.urgency
-        var i = base.incremental
-        for (member in value.split(',')) {
-            val item = member.substringBefore(';').trim()
-            if (item.isEmpty()) continue
-            val key = item.substringBefore('=').trim()
-            val v = if ('=' in item) item.substringAfter('=').trim() else null
-            when (key) {
-                "u" -> {
-                    v?.toIntOrNull()?.let { if (it in 0..7) u = it }
-                }
-
-                "i" -> {
-                    when (v) {
-                        null, "?1" -> {
-                            i = true
-                        }
-
-                        "?0" -> {
-                            i = false
-                        }
-
-                        else -> {}
-                    }
-                }
-            }
-        }
+        val d = PriorityDictionary.parse(value) ?: return base
+        val u = if (d.urgency >= 0) d.urgency else base.urgency
+        val i = if (d.incremental >= 0) d.incremental == 1 else base.incremental
         return StreamPriority(u, i)
     }
 

@@ -22,6 +22,7 @@ import io.kuicksilver.http3.http3Request
 import io.kuicksilver.http3.message.MalformedMessage
 import io.kuicksilver.http3.message.PriorityField
 import io.kuicksilver.http3.message.PseudoHeaders
+import io.kuicksilver.http3.message.priorityFieldValue
 import io.kuicksilver.http3.qpack.QpackError
 import io.kuicksilver.quic.Initiator
 import io.kuicksilver.quic.QuicException
@@ -370,7 +371,7 @@ private suspend fun H3Session.exchange(
  * a tunnel and goes incremental, so a long-lived one does not hold back every other stream (sections 10.1, 11).
  */
 internal fun localPriority(r: Http3Request): StreamPriority =
-    r.priority ?: r.headers["priority"]?.let { PriorityField.parse(it) }
+    r.priority ?: r.headers.priorityFieldValue()?.let { PriorityField.parse(it) }
         ?: if (r.method == "CONNECT") TUNNEL_PRIORITY else StreamPriority.Default
 
 /** A tunnel's scheduling without a signal from its client: the default urgency, incremental (h2o does the same). */

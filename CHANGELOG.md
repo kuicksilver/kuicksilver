@@ -287,6 +287,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   step 2, MUST): a WebSocket over HTTP/1.1 to an address and port another one is still connecting to waits until that
   handshake is answered or failed, also when it uses another name for the address; through a proxy that resolves names
   the name counts as the host. Before, any number connected at once.
+- HTTP/3: a `priority` field or PRIORITY_UPDATE Priority Field Value that is not a valid Structured Fields
+  dictionary is ignored as a whole, so the defaults (u=3, i=?0) apply, or the current values when a response's field
+  is merged (RFC 8941 section 4.2, RFC 9218 section 4). The parser read it member by member before and kept the valid
+  members of a broken value such as `u=1, i,`. A `u` that is not an Integer 0 to 7 or an `i` that is not a Boolean is
+  still ignored on its own (RFC 9218 sections 4.1, 4.2), and several `priority` field lines are combined before
+  parsing; only the first one was read before.
 - HTTP/3 server with WebTransport: a WebTransport stream naming a Session ID beyond the bidirectional stream limit the
   server granted closes the connection with `H3_ID_ERROR` at once; the client could never open that session. Such a
   stream held one of the 16 buffer slots for 5 s before.

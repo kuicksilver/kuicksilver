@@ -89,6 +89,37 @@ class PriorityTest {
             }
         }
 
+    /** RFC 8941 section 4.2: a Priority Field Value that is not a valid dictionary is ignored as a whole: the defaults. */
+    @Test fun invalidPriorityUpdateValueMeansDefaults() =
+        h3Test {
+            QuicPair.open().use { q ->
+                val (c, s) = q.connect()
+                val server = Http3Connection.server(s)
+                val raw = RawPeer(c)
+                raw.openControl()
+                val id = raw.request(GET + ("priority" to "u=5"))
+                val r = server.acceptRequest()
+                assertEquals(StreamPriority(5), r.priority.value)
+                raw.priorityUpdate(id, "u=1, i,")
+                withTimeout(5.seconds) { r.priority.first { it == StreamPriority.Default } }
+            }
+        }
+
+    /** RFC 8941 section 4.2: field lines of the same name are combined (RFC 9110 section 5.3) before parsing. */
+    @Test fun priorityFieldLinesAreCombined() =
+        h3Test {
+            QuicPair.open().use { q ->
+                val (c, s) = q.connect()
+                val server = Http3Connection.server(s)
+                val raw = RawPeer(c)
+                raw.openControl()
+                raw.request(GET + ("priority" to "u=1") + ("priority" to "i"))
+                assertEquals(StreamPriority(1, true), server.acceptRequest().priority.value)
+                raw.request(GET + ("priority" to "u=1") + ("priority" to "i=?2"))
+                assertEquals(StreamPriority.Default, server.acceptRequest().priority.value)
+            }
+        }
+
     @Test fun earlyPriorityUpdateRemembered() =
         h3Test {
             QuicPair.open().use { q ->

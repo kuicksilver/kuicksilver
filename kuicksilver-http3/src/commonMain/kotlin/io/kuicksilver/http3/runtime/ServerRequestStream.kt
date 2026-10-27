@@ -28,6 +28,7 @@ import io.kuicksilver.http3.message.FieldValidator
 import io.kuicksilver.http3.message.MalformedMessage
 import io.kuicksilver.http3.message.PriorityField
 import io.kuicksilver.http3.message.PseudoHeaders
+import io.kuicksilver.http3.message.priorityFieldValue
 import io.kuicksilver.http3.webtransport.WtProtocols
 import io.kuicksilver.http3.webtransport.WtSessionImpl
 import io.kuicksilver.http3.webtransport.WtTokens
@@ -271,7 +272,7 @@ internal class ServerRequestImpl(
 
     /** The client gave a signal: the `priority` field or a PRIORITY_UPDATE that came first. */
     private val signalled = earlyPriority != null || parsed.regular["priority"] != null
-    private val priorityFlow = MutableStateFlow(earlyPriority ?: PriorityField.parse(parsed.regular["priority"]))
+    private val priorityFlow = MutableStateFlow(earlyPriority ?: PriorityField.parse(parsed.regular.priorityFieldValue()))
     private var serverPriority: StreamPriority? = null
     internal val stream: QuicStream get() = st
     override val priority: StateFlow<StreamPriority> get() = priorityFlow
@@ -440,7 +441,7 @@ internal class ServerRequestImpl(
             // an explicit priority wins; else the response's own `priority` field merged into the stream's current schedule
             // (RFC 9218 section 8: a parameter it leaves out keeps that value), as h2o does: the client's signal, or for an
             // unsignalled tunnel its incremental default (sections 10.1, 11), which a field like `u=1` then keeps
-            (priority ?: headers["priority"]?.let { PriorityField.merge(st.priority, it) })?.let {
+            (priority ?: headers.priorityFieldValue()?.let { PriorityField.merge(st.priority, it) })?.let {
                 serverPriority = it
                 st.priority = it
             }
