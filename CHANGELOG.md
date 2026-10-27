@@ -129,10 +129,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
-- QUIC client: an Initial with nothing but ACK, PING and PADDING that arrives before the server's Source Connection ID is
-  fixed (msquic acknowledges half a ClientHello from a provisional instance) is dropped unprocessed. It used to be
-  processed and then replaced by the ServerHello's SCID, against RFC 9000 section 7.2 ("MUST discard any subsequent
-  packet ... with a different Source Connection ID").
+- QUIC client: the server's first Initial fixes its Source Connection ID, an ACK-only one too (RFC 9000 section 7.2,
+  "MUST discard any subsequent packet ... with a different Source Connection ID"); before, an Initial without CRYPTO
+  left the SCID open and a later one with another SCID was still adopted. The one exception is msquic's: an Initial with
+  nothing but ACK, PING and PADDING whose SCID is the client's own DCID (msquic's connection sends from it until it has
+  the whole ClientHello) is processed, its ACK included, without fixing the SCID or recording its packet number.
 - HTTP/3 client: a server that sends GOAWAY before the client's SETTINGS went out (it is stopping right after the
   handshake) no longer makes `Http3Endpoint.connect` and `Http3Connection.client` fail with "closed locally with
   H3_NO_ERROR" (the client's own idle close after GOAWAY, RFC 9114 section 5.2). The connection is returned with
