@@ -15,6 +15,7 @@ import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.readBuffer
 import io.ktor.utils.io.readByteArray
 import io.ktor.utils.io.readLineStrict
+import io.ktor.utils.io.writeFully
 import io.ktor.utils.io.writeStringUtf8
 import io.kuicksilver.ktor.client.EngineEvents
 import io.kuicksilver.ktor.client.KuicksilverEngineConfig
@@ -25,7 +26,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
-import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import kotlinx.io.IOException
 import kotlinx.io.readString
@@ -123,121 +123,249 @@ class H1IdleConnectionTest {
             }
         }
 
-    /** A request body of three bytes the test streams through [source]. */
+    /** A request body of [length] bytes the test streams through [source]. */
     private class Upload(
         private val source: ByteReadChannel,
+        private val length: Long = 3,
     ) : OutgoingContent.ReadChannelContent() {
-        override val contentLength: Long get() = 3
+        override val contentLength: Long get() = length
 
         override fun readFrom(): ByteReadChannel = source
     }
 
-    /**
-     * A POST whose streamed body ([upload]) is still being sent when the server has answered it in full, on a pooled
-     * connection of route "r": the response's body as an application reading it in an Unconfined coroutine sees it end,
-     * with the idle connections and the uploaded bytes still unsent at that moment ([observe] gets them), after [finish]
-     * ended the upload.
-     */
-    private fun TestScope.earlyAnswer(
-        finish: suspend (upload: ByteChannel) -> Unit,
-        observe: (body: String, idle: Int, conn: H1Connection, unsent: Boolean) -> Unit,
+    /** A pool with one connection on [wire], route "r", handed to [execute]; [released] lists connectionReleased's `kept`. */
+    private class Pooled(
+        val wire: Wire,
+        val selector: SelectorManager,
     ) {
-        val wire = Wire()
-        val selector = SelectorManager(Dispatchers.Default)
-        val upload = ByteChannel()
-        var releasedWithUnsentBody: Boolean? = null
-        val events =
-            EngineEvents(
-                object : KuicksilverEventListener() {
-                    override fun connectionReleased(
-                        request: HttpRequestData,
-                        protocol: HttpProtocolVersion,
-                        kept: Boolean,
-                    ) {
-                        if (kept) releasedWithUnsentBody = !upload.isClosedForRead
-                    }
-                },
-                KuicksilverLogger.None,
-            )
-        val h1 = H1Pool(KuicksilverEngineConfig(), selector, events)
-        h1.cleartextPermitted = { true }
+        val released = mutableListOf<Boolean>()
+
+        /** The first connectionReleased's `kept`. */
+        val firstRelease = CompletableDeferred<Boolean>()
+        val h1 =
+            H1Pool(
+                KuicksilverEngineConfig(),
+                selector,
+                EngineEvents(
+                    object : KuicksilverEventListener() {
+                        override fun connectionReleased(
+                            request: HttpRequestData,
+                            protocol: HttpProtocolVersion,
+                            kept: Boolean,
+                        ) {
+                            released += kept
+                            firstRelease.complete(kept)
+                        }
+                    },
+                    KuicksilverLogger.None,
+                ),
+            ).also { it.cleartextPermitted = { true } }
+        val conn = H1Connection(NoSocket(wire), null, wire.fromServer, wire.toServer, "r")
         val call = Job()
-        backgroundScope.launch {
-            while (wire.toServer.readLineStrict()?.isNotEmpty() == true) continue
-            // the whole answer before the request body, as a server may send it
-            wire.fromServer.writeStringUtf8("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok")
-            wire.fromServer.flush()
-            runCatching { wire.toServer.readByteArray(3) } // the body, which fails in the negative test
-        }
-        launch {
-            try {
-                assertNull(h1.pool.acquire("r"))
-                val conn = H1Connection(NoSocket(wire), null, wire.fromServer, wire.toServer, "r").also { h1.pool.adopt(it) }
-                val data =
-                    HttpRequestBuilder()
-                        .apply {
-                            url("http://127.0.0.1:8080/upload")
-                            method = HttpMethod.Post
-                            setBody(Upload(upload))
-                        }.build()
-                val response = h1.execute(data, coroutineContext + call, H1Pool.Opened(conn, reused = false))
-                val body = response.body as ByteReadChannel
-                val seen = CompletableDeferred<Unit>()
-                launch(Dispatchers.Unconfined) {
-                    val text = body.readBuffer().readString()
-                    observe(text, h1.pool.idleCount, conn, !upload.isClosedForRead)
-                    seen.complete(Unit)
-                }
-                advanceUntilIdle()
-                finish(upload)
-                seen.await()
-                assertEquals(false, releasedWithUnsentBody ?: false, "the connection went back before the request body was out")
-            } finally {
-                call.cancel()
-                selector.close()
-            }
+
+        suspend fun execute(
+            data: HttpRequestData,
+            context: kotlin.coroutines.CoroutineContext,
+        ): io.ktor.client.request.HttpResponseData {
+            assertNull(h1.pool.acquire("r"))
+            h1.pool.adopt(conn)
+            return h1.execute(data, context + call, H1Pool.Opened(conn, reused = false))
         }
     }
 
+    private fun TestScope.pooled(block: suspend Pooled.() -> Unit) =
+        launch {
+            val selector = SelectorManager(Dispatchers.Default) // H1Pool wants one; nothing here selects on it
+            val p = Pooled(Wire(), selector)
+            try {
+                p.block()
+            } finally {
+                p.call.cancel()
+                selector.close()
+            }
+        }
+
+    private fun request(
+        body: OutgoingContent? = null,
+        method: HttpMethod = if (body == null) HttpMethod.Get else HttpMethod.Post,
+    ): HttpRequestData =
+        HttpRequestBuilder()
+            .apply {
+                url("http://127.0.0.1:8080/upload")
+                this.method = method
+                body?.let { setBody(it) }
+            }.build()
+
+    /** The server: reads a request head, writes [answer], then reads [bodyBytes] of the request body into [received]. */
+    private fun TestScope.server(
+        wire: Wire,
+        answer: String,
+        bodyBytes: Int = 3,
+        received: CompletableDeferred<String> = CompletableDeferred(),
+    ): CompletableDeferred<String> {
+        backgroundScope.launch {
+            while (wire.toServer.readLineStrict()?.isNotEmpty() == true) continue
+            wire.fromServer.writeStringUtf8(answer)
+            wire.fromServer.flush()
+            runCatching { received.complete(wire.toServer.readByteArray(bodyBytes).decodeToString()) } // fails with a failed body
+        }
+        return received
+    }
+
+    private val ok = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok"
+
     /**
-     * A streamed request body still being sent when the response has been read: the connection goes back once the body is
-     * out, and before the response's end reaches the application, which therefore sees its end only then. Before, the
-     * response ended at once and the connection was released when the body's sender completed, after the application had
-     * seen both ends: a request it sent then found no idle connection.
+     * A streamed request body still being sent when the server has answered in full: the response ends at once, without
+     * waiting for the upload, and its connection is not reused (never pooled); the upload is not cut off, and the
+     * connection closes when it is out. Before, the response ended only once the upload was out.
      */
-    @Test fun connectionIsIdleWhenTheBodyEndsAfterAStreamedRequestBody() =
+    @Test fun aResponseThatEndsWhileTheRequestBodyIsSentIsNotReused() =
         runTest {
-            var ended = false
-            earlyAnswer(
-                finish = { upload ->
-                    assertFalse(ended, "the response ended while the request body was still being sent")
-                    upload.writeStringUtf8("abc")
-                    upload.flushAndClose()
-                },
-                observe = { body, idle, conn, unsent ->
-                    ended = true
-                    assertEquals("ok", body)
-                    assertEquals(false, unsent, "the response ended before the request body was out")
-                    assertEquals(1, idle, "the response ended before its connection was idle")
-                    assertFalse(conn.closed)
-                },
-            )
+            pooled {
+                val upload = ByteChannel()
+                val received = server(wire, ok)
+                val response = execute(request(Upload(upload)), coroutineContext)
+                assertEquals("ok", (response.body as ByteReadChannel).readBuffer().readString())
+                assertEquals(0, h1.pool.idleCount, "a connection whose request body is still being sent was pooled")
+                assertFalse(conn.closed, "the upload was cut off")
+                upload.writeStringUtf8("abc")
+                upload.flushAndClose()
+                assertEquals("abc", received.await())
+                assertEquals(false, firstRelease.await())
+                assertTrue(conn.closed)
+                assertEquals(listOf(false), released)
+                assertNull(h1.pool.acquire("r"), "a permit, not the connection")
+            }
+        }
+
+    /** Duplex: the application sends part of its body, reads the whole response, then ends its body. The call completes. */
+    @Test fun aDuplexExchangeCompletes() =
+        runTest {
+            pooled {
+                val upload = ByteChannel()
+                val received = server(wire, ok)
+                upload.writeStringUtf8("a")
+                upload.flush()
+                val response = execute(request(Upload(upload)), coroutineContext)
+                assertEquals("ok", (response.body as ByteReadChannel).readBuffer().readString())
+                upload.writeStringUtf8("bc")
+                upload.flushAndClose()
+                assertEquals("abc", received.await())
+                assertEquals(false, firstRelease.await())
+                assertTrue(conn.closed)
+                assertEquals(listOf(false), released)
+            }
+        }
+
+    /**
+     * An early `413 Content Too Large` without `Connection: close` from a server that stopped reading (RFC 9112 section 9.5:
+     * it should cease reading and close): the call completes with the 413 while the upload is stuck, and the connection
+     * closes when the call ends.
+     */
+    @Test fun anEarly413FromAServerThatStoppedReadingCompletes() =
+        runTest {
+            pooled {
+                val size = 4L * 1024 * 1024 // more than the in-memory wire buffers: the upload blocks
+                val upload = ByteChannel()
+                backgroundScope.launch { runCatching { upload.writeFully(ByteArray(size.toInt())) } }
+                backgroundScope.launch {
+                    while (wire.toServer.readLineStrict()?.isNotEmpty() == true) continue
+                    wire.fromServer.writeStringUtf8("HTTP/1.1 413 Content Too Large\r\nContent-Length: 0\r\n\r\n")
+                    wire.fromServer.flush()
+                }
+                val response = execute(request(Upload(upload, size)), coroutineContext)
+                assertEquals(413, response.statusCode.value)
+                assertEquals(0, (response.body as ByteReadChannel).readBuffer().size)
+                assertEquals(0, h1.pool.idleCount)
+                call.cancel() // the call ends
+                assertEquals(false, firstRelease.await())
+                assertTrue(conn.closed)
+                assertEquals(listOf(false), released)
+                assertEquals(0, h1.pool.liveCount)
+            }
+        }
+
+    /** A 204 (no body, as HEAD and 304) to a request without a body, or whose streamed body is out, goes back to the pool at once. */
+    @Test fun aResponseWithoutBodyIsReused() =
+        runTest {
+            for (streamed in listOf(false, true)) {
+                pooled {
+                    val upload = ByteChannel()
+                    val received = CompletableDeferred<String>()
+                    backgroundScope.launch {
+                        while (wire.toServer.readLineStrict()?.isNotEmpty() == true) continue
+                        if (streamed) received.complete(wire.toServer.readByteArray(3).decodeToString())
+                        wire.fromServer.writeStringUtf8("HTTP/1.1 204 No Content\r\n\r\n")
+                        wire.fromServer.flush()
+                    }
+                    if (streamed) {
+                        upload.writeStringUtf8("abc")
+                        upload.flushAndClose()
+                    }
+                    val response = execute(if (streamed) request(Upload(upload)) else request(), coroutineContext)
+                    assertEquals(204, response.statusCode.value)
+                    assertEquals(1, h1.pool.idleCount, "streamed=$streamed")
+                    assertEquals(listOf(true), released)
+                    assertSame(conn, h1.pool.acquire("r"))
+                    if (streamed) assertEquals("abc", received.await())
+                }
+            }
+        }
+
+    /** The call ending after its streamed body went out (the sender is cancelled with it) leaves the pooled connection open. */
+    @Test fun aCallEndingAfterItsBodyWentOutKeepsThePooledConnection() =
+        runTest {
+            pooled {
+                val upload = ByteChannel()
+                upload.writeStringUtf8("abc")
+                upload.flushAndClose()
+                backgroundScope.launch {
+                    while (wire.toServer.readLineStrict()?.isNotEmpty() == true) continue
+                    wire.toServer.readByteArray(3)
+                    wire.fromServer.writeStringUtf8(ok)
+                    wire.fromServer.flush()
+                }
+                val response = execute(request(Upload(upload)), coroutineContext)
+                assertEquals("ok", (response.body as ByteReadChannel).readBuffer().readString())
+                assertEquals(1, h1.pool.idleCount)
+                call.cancel()
+                assertFalse(conn.closed)
+                assertSame(conn, h1.pool.acquire("r"))
+            }
+        }
+
+    /** A call that ends while its connection waits for the upload to end closes the connection, once, and frees its slot. */
+    @Test fun aCallEndingDuringTheUploadClosesTheConnection() =
+        runTest {
+            pooled {
+                val upload = ByteChannel()
+                server(wire, ok)
+                val response = execute(request(Upload(upload)), coroutineContext)
+                assertEquals("ok", (response.body as ByteReadChannel).readBuffer().readString())
+                assertFalse(conn.closed)
+                call.cancel()
+                assertEquals(false, firstRelease.await())
+                assertTrue(conn.closed)
+                assertEquals(listOf(false), released)
+                assertEquals(0, h1.pool.liveCount)
+            }
         }
 
     /** A streamed request body that fails (the application's channel) leaves its connection closed; the response still ends. */
     @Test fun negative_aFailedStreamedRequestBodyClosesTheConnection() =
         runTest {
-            earlyAnswer(
-                finish = { upload ->
-                    upload.writeStringUtf8("a")
-                    upload.flush()
-                    upload.cancel(IOException("the application's body failed"))
-                },
-                observe = { body, idle, conn, _ ->
-                    assertEquals("ok", body)
-                    assertEquals(0, idle)
-                    assertTrue(conn.closed)
-                },
-            )
+            pooled {
+                val upload = ByteChannel()
+                server(wire, ok)
+                val response = execute(request(Upload(upload)), coroutineContext)
+                assertEquals("ok", (response.body as ByteReadChannel).readBuffer().readString())
+                upload.writeStringUtf8("a")
+                upload.flush()
+                upload.cancel(IOException("the application's body failed"))
+                assertEquals(false, firstRelease.await())
+                assertTrue(conn.closed)
+                assertEquals(listOf(false), released)
+                assertEquals(0, h1.pool.idleCount)
+            }
         }
 }

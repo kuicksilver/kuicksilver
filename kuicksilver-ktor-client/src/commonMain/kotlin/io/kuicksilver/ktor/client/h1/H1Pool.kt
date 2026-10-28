@@ -246,8 +246,18 @@ internal class H1Pool(
                                     }
 
                                     AfterResponse.Close -> {
-                                        conn.close()
-                                        released(false)
+                                        // a request body still being sent is not cut off: the connection closes when its
+                                        // sender ends (sent, failed, or cancelled with the call); at once when it has
+                                        val job = bodyJob?.job
+                                        if (job == null) {
+                                            conn.close()
+                                            released(false)
+                                        } else {
+                                            job.invokeOnCompletion {
+                                                conn.close()
+                                                released(false)
+                                            }
+                                        }
                                     }
 
                                     AfterResponse.HandOver -> {
@@ -258,7 +268,7 @@ internal class H1Pool(
                                     }
                                 }
                             }
-                            // a streamed request body is out when the response is Reuse: readResponse waited for it
+                            // Reuse only with a streamed request body already out (readResponse)
                             settle(after)
                         }
                     }
@@ -337,7 +347,9 @@ internal class H1Pool(
                     }
                 }
             }
-        // cancelled before the whole body was out; once it is, the connection may already serve the next request
+        // cancelled before the whole body was out: the connection is closed. Cancelled after (the call ended between the
+        // last flush and the sender's completion), it is left alone: it may already be idle in the pool or serve the next
+        // request
         sender.job.invokeOnCompletion { c -> if (c != null && sender.sent.complete(false)) conn.close() }
         callContext[Job]?.invokeOnCompletion { sender.job.cancel() } // not a child: the call does not wait for it, it ends with the call
         return sender
