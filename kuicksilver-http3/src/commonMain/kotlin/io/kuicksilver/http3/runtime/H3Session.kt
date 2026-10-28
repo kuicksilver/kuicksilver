@@ -245,6 +245,12 @@ internal class H3Session(
     /** Server: the highest client bidirectional stream taken from the transport; the transport hands them out in id order. */
     private var acceptedBidiUpTo = -1L
 
+    /** Test view of the highest client bidirectional stream handed to request handling, -1 before any. */
+    internal val acceptedBidiUpToForTest: Long get() = acceptedBidiUpTo
+
+    /** Test hook: bidirectional streams the accept loop took after the connection was lost and dropped. Dispatcher only. */
+    @kotlin.concurrent.Volatile internal var bidiDroppedAfterLossForTest = 0
+
     /** Server: client bidirectional streams taken from the transport whose handler has not ended (HEADERS may still be on the way). */
     private val handledBidi = HashSet<Long>()
 
@@ -462,6 +468,10 @@ internal class H3Session(
                 untypedUni.addAndFetch(1)
                 // once the connection is lost a launch would not be waited for: the stream is read here, to its end
                 if (closed.isCompleted) guarded { readUni(st) } else drains(scope.launch { guarded { readUni(st) } })
+            } else if (closed.isCompleted) {
+                // a request stream taken after the loss (the accept loop drains for the peer's control stream): nothing
+                // can answer it on a dead connection, so it never reaches the application
+                bidiDroppedAfterLossForTest++
             } else if (isServer) {
                 acceptedBidiUpTo = st.id
                 handledBidi += st.id

@@ -191,6 +191,7 @@ class SessionStartTest {
     @Test
     fun goAwayOnAControlStreamAcceptedAfterThePeersCloseStillRefusesRequestsAsNotProcessed() =
         h3Test {
+            H3Session.peerControlWaitTimedOutForTest = null
             val held = CompletableDeferred<Unit>()
             H3Session.beforeAcceptForTest = {
                 if (held.complete(Unit)) it.closed.await() // the first accept waits for the close
@@ -222,6 +223,7 @@ class SessionStartTest {
      */
     @Test fun negative_peerNoErrorCloseWithoutAControlStreamFailsTheStartWithoutWaiting() =
         h3Test {
+            H3Session.peerControlWaitTimedOutForTest = null
             QuicPair.open(serverQuic = quicConfig { maxUniStreams = 2 }).use { q ->
                 val (c, s) = q.connect()
                 val client = async { runCatching { withTimeout(10.seconds) { Http3Connection.client(c) } } }
@@ -280,6 +282,40 @@ class SessionStartTest {
                         H3Session.beforeIdleCloseForTest = null
                         c.close(Http3ErrorCode.NO_ERROR, "")
                     }
+                }
+            }
+        }
+
+    /**
+     * A request stream that reaches the server with the client's close (taken by the accept loop only after the loss, here
+     * held until then) is dropped: no handler runs for it on the dead connection, and the application never sees it.
+     */
+    @Test fun aRequestStreamTakenAfterTheLossNeverReachesTheApplication() =
+        h3Test {
+            val held = CompletableDeferred<H3Session>()
+            QuicPair.open().use { q ->
+                val (c, s) = q.connect()
+                val server = withTimeout(10.seconds) { Http3Connection.server(s) }
+                H3Session.beforeAcceptForTest = {
+                    if (it === server.session && held.complete(it)) it.closed.await() // the next accept comes after the close
+                }
+                try {
+                    // the server's accept loop is waiting in acceptStream: let it take one more turn into the hook
+                    val warm = c.openUni()
+                    warm.output.writeFully(byteArrayOf(0x21)) // a reserved stream type: discarded, no error
+                    warm.output.flush()
+                    val session = withTimeout(10.seconds) { held.await() }
+                    val st = c.openBidi()
+                    st.output.writeFully(byteArrayOf(0x01, 0x00)) // a HEADERS frame header, cut: what came does not matter
+                    st.output.flush()
+                    withTimeout(10.seconds) { while (c.stats.bytesInFlight > 0) kotlinx.coroutines.delay(5) } // the server has it
+                    c.close(Http3ErrorCode.NO_ERROR, "")
+                    withTimeout(10.seconds) { session.closed.await() }
+                    assertFailsWith<Throwable> { withTimeout(10.seconds) { server.acceptRequest() } }
+                    withTimeout(10.seconds) { while (session.bidiDroppedAfterLossForTest == 0) kotlinx.coroutines.delay(5) }
+                    assertEquals(-1L, session.acceptedBidiUpToForTest, "no request stream was handed to request handling")
+                } finally {
+                    H3Session.beforeAcceptForTest = null
                 }
             }
         }
