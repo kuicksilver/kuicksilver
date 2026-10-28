@@ -24,7 +24,7 @@ on:
   workflow_dispatch:
     inputs:
       hours_per_target:
-        description: fuzzing hours per target (0.1 .. 5; each target gets its own runner)
+        description: fuzzing hours per target (0.1 .. 4.5; each target gets its own runner)
         type: string
         default: '2'
       targets:
@@ -56,8 +56,9 @@ jobs:
           TARGETS: ${{ inputs.targets }}
           HOURS: ${{ inputs.hours_per_target }}
         run: |
-          # 5 h of fuzzing leaves the build and the uploads room under the jobs' 350-minute limit (6 h is GitHub's maximum)
-          awk -v h="$HOURS" 'BEGIN { exit !(h ~ /^[0-9]+(\.[0-9]+)?$/ && h >= 0.1 && h <= 5) }' || { echo "::error::hours_per_target '$HOURS' is not a number in 0.1 .. 5"; exit 1; }
+          # the fuzz job's 350 minutes (6 h is GitHub's maximum): at most 270 of slices, 20 for the prune step, and 60 for the
+          # set-up, the build, the cache save and the uploads
+          awk -v h="$HOURS" 'BEGIN { exit !(h ~ /^[0-9]+(\.[0-9]+)?$/ && h >= 0.1 && h <= 4.5) }' || { echo "::error::hours_per_target '$HOURS' is not a number in 0.1 .. 4.5"; exit 1; }
           all=$(bash tools/fuzz/campaign.sh list)
           set -f   # the ids are split on commas and blanks, never globbed against the checkout
           if [ -z "$TARGETS" ] || [ "$TARGETS" = all ]; then ids=$all; else
@@ -130,6 +131,7 @@ jobs:
       - name: 'fuzz: prune the ${{ matrix.target }} corpus'   # what the cache keeps: inputs beyond the committed corpus and the seeds
         if: always()
         timeout-minutes: 20
+        continue-on-error: true   # a prune that fails or times out is no finding: the corpus is then cached as it grew
         run: |
           [ -d "build/fuzz-campaign/corpus/$TARGET" ] || { echo "no corpus to prune"; exit 0; }
           bash tools/fuzz/campaign.sh prune --no-build --nice 0 --targets "$TARGET" \
