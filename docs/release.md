@@ -282,8 +282,13 @@ step names, same lists from `tools/ci/matrix.sh`); its `jvm-jar` job fails unles
 endpoint images exactly as `build.yml`'s `interop-images` job does (`tools/interop/build-image.sh`, the manylinux
 `libksl.so` built in the OpenSSL image), adds OCI labels (source, version, revision, licence) and pushes
 `ghcr.io/kuicksilver/kuicksilver-interop:<version>` and `ghcr.io/kuicksilver/kuicksilver-interop-native:<version>`, plus
-`:latest` for a final version. linux/amd64 only, the platform the online runner uses. Its `gate` job accepts the tag
-`v<version>`, `main` or `release/<X.Y>.x`. Once, after the first push: set both packages' visibility to *Public*
+`:latest` for a final version not older than the highest final version already published (a patch of an older line leaves
+`:latest` where it is). linux/amd64 only, the platform the online runner uses. Its `gate` job
+(`tools/ci/interop-image-gate.sh`, run again right before the push; cases in `tools/ci/interop-image-gate-test.sh`) builds a
+final version from its tag `v<version>` only, a prerelease also from `main` or `release/<X.Y>.x`; refuses a version whose
+image is in the registry already (GHCR tags are mutable, a second push would replace the released image) and a checkout
+whose Gradle version fallback is not `<X.Y.Z>-SNAPSHOT` of the version. The `force` input lifts the first two: a final
+version from `main` or `release/<X.Y>.x`, a replaced tag. Once, after the first push: set both packages' visibility to *Public*
 (organization *Packages* → the package → *Package settings*), or the runner cannot pull them. The images carry no build
 provenance attestation yet.
 
