@@ -31,8 +31,12 @@ internal class RaceResult<T>(
  * attempt"; the attempts are not simultaneous either, which the section says they SHOULD NOT be). [hardDelay] must keep
  * the same bounds as `connectionAttemptDelay`: 10 ms..2 s, or [Duration.INFINITE] for HTTP/1.1 only after HTTP/3 failed.
  * An HTTP/3 setup succeeds when its connection is usable: with 0-RTT that is before the handshake only on a network where
- * QUIC was confirmed (the caller's `h3` decides). The first success wins; the loser is cancelled, and an h1 setup that completed just as h3 won is handed to `onLoser`
- * so the caller can close it (a connection must not be leaked, RFC 8305 section 5) — also when the caller is cancelled.
+ * QUIC was confirmed (the caller's `h3` decides). The first success wins. A losing h1 setup is cancelled, and one that
+ * completed just as h3 won is handed to `onLoser` so the caller can close it (a connection must not be leaked, RFC 8305
+ * section 5), also when the caller is cancelled. A losing h3 setup is not cancelled: the race stops waiting for it, but
+ * the QUIC connection goes on in the engine's background scope, so later requests to the origin can use it (RFC 7838
+ * section 2.4: the client SHOULD use the alternative service as soon as it is available), the deviation from RFC 8305
+ * section 5's "SHOULD be canceled" the compliance row documents.
  */
 internal class ProtocolRace(
     private val hardDelay: Duration?,

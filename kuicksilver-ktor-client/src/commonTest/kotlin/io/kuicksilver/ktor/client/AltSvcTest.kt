@@ -40,8 +40,9 @@ class AltSvcTest {
     }
 
     /**
-     * `ma` is delta-seconds (RFC 7838 section 3.1): a value too large to represent is taken as 2147483648 (RFC 9111 section
-     * 1.2.2 MUST), not dropped; before, `ma=99999999999999999999` skipped the alternative. A sign is no delta-seconds.
+     * `ma` is delta-seconds (RFC 7838 section 3.1): a value too large to represent is taken as 2147483648, as RFC 9111
+     * section 1.2.2 says a cache MUST, not dropped; before, `ma=99999999999999999999` skipped the alternative. A sign is
+     * no delta-seconds.
      */
     @Test fun overflowingMaIsCapped() {
         for (ma in listOf("99999999999999999999", "\"99999999999999999999\"")) {

@@ -26,7 +26,8 @@ class H1IdleConnectionTest {
     /**
      * A server that answers nothing in particular on an idle keep-alive connection (`408 Request Timeout` and a close, RFC
      * 9110 section 15.5.9) leaves bytes no request asked for: the connection is not reused, and the next request gets a
-     * fresh one. Before, the 408 was read as the answer to that request (Go's net/http drops such a connection too).
+     * fresh one (RFC 9112 section 9.2: the client MUST NOT consider such data a valid response, and SHOULD close the
+     * connection). Before, the 408 was read as the answer to that request.
      */
     @Test fun unsolicitedResponseOnIdleConnectionIsNotReused() =
         runTest {

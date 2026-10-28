@@ -70,7 +70,9 @@ internal class H1Connection(
     /**
      * Not closed, not closed by the server, and nothing unread: bytes on a connection between exchanges answer no request
      * (an unsolicited `408 Request Timeout` before the server closes, RFC 9110 section 15.5.9) and would be read as the next
-     * response, so such a connection is not reused (as Go's net/http).
+     * response, so such a connection is not reused (as Go's net/http). RFC 9112 section 9.2: "If a client receives data on a
+     * connection that doesn't have outstanding requests, the client MUST NOT consider that data to be a valid response;
+     * the client SHOULD close the connection".
      */
     override val isOpen: Boolean get() = !closed && !input.isClosedForRead && !input.hasUnread
 

@@ -93,7 +93,13 @@ public class InMemoryAltSvcStore : AltSvcStore {
 internal object AltSvcParser {
     private const val DEFAULT_MA_SECONDS = 86_400L
 
-    /** The `ma` of a delta-seconds value too large to represent: 2^31 (RFC 9111 section 1.2.2). */
+    /**
+     * The `ma` of a delta-seconds value too large to represent: 2^31. RFC 7838 section 3.1 takes delta-seconds from the
+     * HTTP caching specification (now RFC 9111 section 1.2.2), whose rule is addressed to a cache: "If a cache receives a
+     * delta-seconds value greater than the greatest integer it can represent, or if any of its subsequent calculations
+     * overflows, the cache MUST consider the value to be 2147483648 (2^31) or the greatest positive integer it can
+     * conveniently represent." The Alt-Svc cache follows it.
+     */
     private const val MA_OVERFLOW_SECONDS = 2_147_483_648L
 
     /** The `h3` entries of [value] (other protocols are ignored, malformed entries skipped); null for `clear`. */
@@ -127,8 +133,8 @@ internal object AltSvcParser {
                 val raw = p.substringAfter('=', "").trim()
                 val v = unquote(raw) ?: raw
                 when (k) {
-                    // delta-seconds is 1*DIGIT; one too large for a Long is 2147483648 (RFC 9111 section 1.2.2, as RFC 7838
-                    // section 3.1 requires), and the expiry below caps what would overflow its milliseconds
+                    // delta-seconds is 1*DIGIT; one too large for a Long is 2147483648 (RFC 9111 section 1.2.2's rule for a
+                    // cache, which RFC 7838 section 3.1 refers to), and the expiry below caps what would overflow its milliseconds
                     "ma" -> {
                         ma =
                             when {
