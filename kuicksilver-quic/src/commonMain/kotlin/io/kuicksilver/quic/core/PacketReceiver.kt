@@ -35,6 +35,10 @@ internal class PacketReceiver(
          * leaves room for CRYPTO in 1200 bytes. A larger token cannot be sent, so its Retry is dropped.
          */
         const val MAX_RETRY_TOKEN = 1024
+
+        private const val FIRST_NONE = 0
+        private const val FIRST_HANDLED = 1
+        private const val FIRST_FAILED = 2
     }
 
     private val hv = PacketHeaderView()
@@ -108,7 +112,9 @@ internal class PacketReceiver(
         countOnly(length, from, socket)
         datagramEcn = ecn // a socket that cannot read marks delivers NotEct itself (ADR-0006)
         var off = 0
-        var processed = false
+        // the first packet of the datagram: FIRST_NONE until one parsed, then whether it was handled (processed, held, or an
+        // Initial discarded for the datagram's size) or failed (not associated, not opened)
+        var first = FIRST_NONE
         var firstDcidOff = -1
         var firstDcidLen = 0
         while (off < length) {
@@ -143,17 +149,22 @@ internal class PacketReceiver(
             // RFC 9000 section 14.1: "A server MUST discard an Initial packet that is carried in a UDP datagram with a payload that is
             // smaller than ... 1200 bytes", wherever the Initial sits in the datagram
             if (hv.type == PacketType.Initial && c.role == TlsRole.Server && length < 1200) {
+                if (first == FIRST_NONE) first = FIRST_HANDLED // associated and never tried: no reason to suspect a reset
                 if (hv.packetEnd <= off) break
                 off = hv.packetEnd
                 continue
             }
-            if (processPacket(data, from)) processed = true
+            val ok = processPacket(data, from)
+            if (first == FIRST_NONE) first = if (ok) FIRST_HANDLED else FIRST_FAILED
             if (hv.packetEnd <= off) break
             off = hv.packetEnd
         }
-        if (!processed && length >= io.kuicksilver.quic.endpoint.StatelessReset.MIN_SIZE) {
-            // RFC 9000 section 10.3: a reset looks like an undecryptable packet, and "endpoints MUST treat any packet ending in a valid
-            // stateless reset token as a Stateless Reset, as other QUIC versions might allow the use of a long header"
+        // RFC 9000 section 10.3.1: "Endpoints MAY skip this check if any packet from a datagram is successfully processed. However,
+        // the comparison MUST be performed when the first packet in an incoming datagram either cannot be associated with a
+        // connection or cannot be decrypted." A reset looks like an undecryptable packet, and "endpoints MUST treat any packet
+        // ending in a valid stateless reset token as a Stateless Reset, as other QUIC versions might allow the use of a long header"
+        // So the check follows the first packet: one that was handled leaves the datagram alone, whatever came after it
+        if (first != FIRST_HANDLED && length >= io.kuicksilver.quic.endpoint.StatelessReset.MIN_SIZE) {
             c.checkStatelessReset(data, length, now)
         }
     }

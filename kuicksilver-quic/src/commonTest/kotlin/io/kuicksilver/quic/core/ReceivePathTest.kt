@@ -864,6 +864,37 @@ class ReceivePathTest {
         }
     }
 
+    /**
+     * RFC 9000 section 10.3.1: "Endpoints MAY skip this check if any packet from a datagram is successfully processed. However,
+     * the comparison MUST be performed when the first packet in an incoming datagram either cannot be associated with a
+     * connection or cannot be decrypted." An Initial the server discards for the datagram's size (section 14.1) was associated
+     * and never tried, so a datagram of only that is no reset candidate (review 2026-10-28, QC-2); one whose first packet does
+     * not open is checked even when a later packet of it is processed.
+     */
+    @Test fun resetCheckFollowsTheFirstPacketOfTheDatagram() {
+        val p = CorePair()
+        try {
+            p.step()
+            val s = p.server!!
+            val dcid = s.localCid.toByteArray()
+            val scid = p.client.localCid.toByteArray()
+            val ping = byteArrayOf(0x01) + ByteArray(40)
+            val before = s.invalidResets
+            val onlyInitial = nullLongPacket(0, dcid, scid, 60, ping)
+            check(onlyInitial.size < 1200)
+            feed(s, onlyInitial, CoreFixtures.clientAddr, p.now)
+            assertEquals(before, s.invalidResets, "a discarded small Initial is no Stateless Reset candidate")
+            val lead = nullLongPacket(2, dcid, scid, 8, ping, badTag = true)
+            val good = nullLongPacket(0, dcid, scid, 61, byteArrayOf(0x01) + ByteArray(1200))
+            feed(s, lead + good, CoreFixtures.clientAddr, p.now)
+            val ack = s.loss.space(SpaceId.Initial).ack
+            assertTrue(ack.isDuplicate(61), "the second packet was processed")
+            assertEquals(before + 1, s.invalidResets, "the first packet did not open: the datagram is checked")
+        } finally {
+            p.close()
+        }
+    }
+
     /** RFC 9000 section 9: a client discards packets from a server address it does not know: no processing, and a PATH_CHALLENGE from there opens no path. */
     @Test fun negative_clientDropsPacketFromUnknownServerAddress() {
         val p = CorePair()
