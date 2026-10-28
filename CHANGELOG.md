@@ -508,9 +508,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   GET, HEAD, OPTIONS and TRACE requests still overlap.
 - Ktor server, HTTP/1.1: a request whose `Connection` field lists `close` (`close, TE`, `keep-alive, close`, or on a
   second `Connection` line) ends the connection after its response, which now says `Connection: close` (RFC 9112
-  section 9.6); so does an HTTP/1.0 request without `keep-alive`. Before, only a field of exactly `close` was
-  announced, and `keep-alive, close` or HTTP/1.0 with `Connection: TE` kept the connection open and served the next
-  pipelined request.
+  section 9.6); so does an HTTP/1.0 request without `keep-alive`. The `close` the engine announces (here, when the
+  server stops, for a CONNECT, or for an HTTP/1.0 body the close delimits) is added to the options the application put
+  in its `Connection` field (`Connection: X-Hop` becomes `X-Hop, close`; a contradicting `keep-alive` goes), so the
+  hop-by-hop fields they name are still removed by an intermediary (RFC 9110 section 7.6.1). Before, only a field of
+  exactly `close` was announced, `keep-alive, close` or HTTP/1.0 with `Connection: TE` kept the connection open and
+  served the next pipelined request, and the engine's `close` replaced the application's options.
 - Ktor server, HTTP/1.1: every final response carries a `Date` field unless the application set one (RFC 9110
   section 6.6.1: an origin server with a clock MUST send it), the engine's own 400, 408, 414, 431, 501 and 505
   included. Before, only the DefaultHeaders plugin added it.

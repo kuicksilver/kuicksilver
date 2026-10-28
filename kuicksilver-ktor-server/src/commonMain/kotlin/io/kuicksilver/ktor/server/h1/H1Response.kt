@@ -138,7 +138,7 @@ internal class H1Response(
         // HTTP/3 on the same port is announced on every response that does not carry its own Alt-Svc (RFC 7838)
         if (altSvc != null && headersBuilder["Alt-Svc"] == null && statusCode.value != 421) headersBuilder.append("Alt-Svc", altSvc)
         // the server is stopping and reads no further request here: say so (RFC 9112 section 9.6), as Go's Shutdown does
-        if (closing() && statusCode != HttpStatusCode.SwitchingProtocols) headersBuilder[HttpHeaders.Connection] = "close"
+        if (closing() && statusCode != HttpStatusCode.SwitchingProtocols) announceClose()
         // a request that ends the connection: the server SHOULD send "close" in its final response (RFC 9112 section 9.6);
         // a CONNECT always ends it (RFC 9931 section 8: a refused one MUST, a 2xx one is a tunnel)
         if (statusCode != HttpStatusCode.SwitchingProtocols &&
@@ -153,7 +153,7 @@ internal class H1Response(
                     )
             )
         ) {
-            headersBuilder[HttpHeaders.Connection] = "close"
+            announceClose()
         }
         dropFramingFieldsOfAResponseWithoutContent()
         // RFC 9110 section 6.6.1: an origin server with a clock MUST send Date (2xx to 4xx; MAY in 5xx)
@@ -165,7 +165,7 @@ internal class H1Response(
             // (Ktor asked for chunked) goes out raw and the close delimits it (section 6.3 item 8), which `Connection:
             // close` announces (section 9.6), whatever the request's keep-alive; a response without content needs no close
             headersBuilder.remove(HttpHeaders.TransferEncoding)
-            if (!hasNoContent()) headersBuilder[HttpHeaders.Connection] = "close"
+            if (!hasNoContent()) announceClose()
         }
         // a sender MUST NOT send Content-Length in a message that contains Transfer-Encoding (RFC 9112 section 6.2): an
         // application's Content-Length on content Ktor frames with `chunked` goes, the coding frames the body
@@ -208,7 +208,7 @@ internal class H1Response(
             // section 6.1, MUST NOT); what the application writes goes out as is, and the close ends it
             headersBuilder.remove(HttpHeaders.ContentLength)
             headersBuilder.remove(HttpHeaders.TransferEncoding)
-            headersBuilder[HttpHeaders.Connection] = "close"
+            announceClose()
         } else if (status in 100..199 || status == 204) {
             headersBuilder.remove(HttpHeaders.ContentLength)
             headersBuilder.remove(HttpHeaders.TransferEncoding)
@@ -228,6 +228,23 @@ internal class H1Response(
         val description = status.description
         if (description.all { it == '\t' || it.code in 0x20..0x7E || it.code >= 0x80 }) return description
         return HttpStatusCode.allStatusCodes.firstOrNull { it.value == status.value }?.description ?: ""
+    }
+
+    /**
+     * Adds the `close` option to the response's Connection field, after the options the application listed: each names
+     * a hop-by-hop field an intermediary must remove (RFC 9110 section 7.6.1), so they stay; `keep-alive`, which `close`
+     * contradicts, goes. One field line results.
+     */
+    private fun announceClose() {
+        if (saysClose()) return
+        val options =
+            headersBuilder
+                .getAll(HttpHeaders.Connection)
+                .orEmpty()
+                .flatMap { it.split(',') }
+                .map { it.trim() }
+                .filter { it.isNotEmpty() && !it.equals("keep-alive", ignoreCase = true) }
+        headersBuilder[HttpHeaders.Connection] = (options + "close").joinToString(", ")
     }
 
     /** Whether a Connection field line of the response carries the `close` option (RFC 9110 section 7.6.1, any case). */

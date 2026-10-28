@@ -66,6 +66,15 @@ class ServerH1ResponseFramingTest {
                 call.response.header(HttpHeaders.ContentLength, "5")
                 call.respondBytesWriter { writeStringUtf8("hello") }
             }
+            get("/hop") {
+                call.response.header(HttpHeaders.Connection, "X-Hop")
+                call.response.header("X-Hop", "1")
+                call.respondText("hop")
+            }
+            get("/keep-alive") {
+                call.response.header(HttpHeaders.Connection, "keep-alive, X-Hop")
+                call.respondText("kept")
+            }
             get("/304-stream-text") { call.respondBytesWriter(status = HttpStatusCode.NotModified) { writeStringUtf8("abc") } }
         }
     }
@@ -96,6 +105,28 @@ class ServerH1ResponseFramingTest {
                     assertTrue(resp.substringAfter("\r\n\r\n").startsWith("HTTP/1.1 200 "), "$path: $resp")
                     assertTrue(resp.endsWith("root"), "$path: $resp")
                     if (path == "/304") assertTrue(head.contains("\r\nETag: \"v1\""), resp)
+                }
+            }
+        }
+
+    /**
+     * The `close` the server announces for a request that said `Connection: close` (RFC 9112 section 9.6: the server
+     * SHOULD send a "close" connection option in its final response) joins the options the application listed: each
+     * names a hop-by-hop field an intermediary must remove (RFC 9110 section 7.6.1), so dropping `X-Hop` would let the
+     * field travel on. `keep-alive` goes, as it contradicts `close`. Before, the field was replaced by `close`.
+     */
+    @Test fun negative_closeIsAddedToTheApplicationsConnectionOptions() =
+        serverTest {
+            plainServer { port ->
+                for ((path, expected) in listOf("/hop" to "X-Hop, close", "/keep-alive" to "X-Hop, close")) {
+                    val resp =
+                        withTimeout(10.seconds) {
+                            rawHttp(port, "GET $path HTTP/1.1\r\nHost: s\r\nConnection: close\r\n\r\n", tls = null)
+                        }
+                    val head = resp.substringBefore("\r\n\r\n")
+                    assertTrue(head.startsWith("HTTP/1.1 200 "), "$path: $resp")
+                    val connection = head.lines().filter { it.startsWith("Connection:", ignoreCase = true) }
+                    assertEquals(listOf(expected), connection.map { it.substringAfter(':').trim() }, "$path: $resp")
                 }
             }
         }
