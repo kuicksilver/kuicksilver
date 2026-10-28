@@ -35,8 +35,11 @@ that run). The capture alone cannot tell this from a client that ignored a chall
 its qlog: exactly one kuicksilver client qlog, its connection_closed is local with application code 0, and that moment, mapped
 to the capture's clock, came before X arrived. The mapping is the smallest gap between a 1-RTT packet's packet_sent time in the
 qlog and its time on the client-side capture, over at least 10 packets in the second before the close left: a packet reaches
-the capture after the qlog records it, so the smallest gap bounds the close's capture time from above. Between X's arrival
-and the close the client must have sent nothing. Peer clients have no such proof and keep the stricter rule.
+the capture after the qlog records it, so the smallest gap bounds the close's capture time from above. X must arrive at least
+MARGIN (1 ms) after that bound: the qlog clock is monotonic, the capture's is wall time (NTP may slew it by up to 500 ppm, 0.5 ms
+over the 1 s window), and both are rounded to microseconds. Every client packet captured after the bound less MARGIN must carry
+CONNECTION_CLOSE (a closing endpoint sends nothing else, RFC 9000 section 10.2.1); an ACK or data then would be our violation,
+never an ENVIRONMENT verdict. Peer clients have no such proof and keep the stricter rule.
 
 The 3x bound is exact for our server. A peer server may instead start each datagram there while it still had budget, as quinn
 does on purpose ("If there is any anti-amplification budget left, we always allow a full MTU to be sent", quinn-rs/quinn#1082,
@@ -49,6 +52,8 @@ except the qlog variant above, which needs our client.
 Usage: closing-challenge.py CELL_DIR          decodes the cell's sim/trace_node_{right,left}.pcap with tshark
        closing-challenge.py --decoded FILE    the same analysis on a decoded summary (tools/interop/environment-test.sh)
        closing-challenge.py --dump CELL_DIR   prints the decoded summary as JSON (to make a test fixture)
+       closing-challenge.py --closing CELL_DIR CLIENT_SIDE  prints client_closing (JSON) for the cell's client qlogs and a JSON list
+                                              of client-side packets ({t, pn, from_server, frames}; environment-test.sh)
 Exit 0: the signature is present (one line on stdout); 1: absent; 2: the cell cannot be analysed.
 """
 import glob
@@ -59,6 +64,7 @@ import subprocess
 import sys
 
 SERVER_PORT = "443"
+MARGIN = 0.001  # seconds between our client's mapped close and X's arrival, and before the close for "sent nothing but closes"
 PADDING, ACK, ACK_ECN, RETIRE_CONNECTION_ID, PATH_CHALLENGE, CLOSE_TRANSPORT, CLOSE_APPLICATION = 0x00, 0x02, 0x03, 0x19, 0x1A, 0x1C, 0x1D
 CLOSES = {CLOSE_TRANSPORT, CLOSE_APPLICATION}
 CLOSING = {PADDING, ACK, ACK_ECN} | CLOSES
@@ -113,7 +119,7 @@ def runner_paths(server_side):
     return firsts
 
 
-def client_qlog(cell):
+def client_qlog(cell):  # tested on synthetic qlogs by environment-test.sh through --closing
     """Our client's qlog when the cell has exactly one (kuicksilver writes "title": "kuicksilver"): 1-RTT packet numbers sent and
     their times (ms), and its first connection_closed (time ms, owner, application code); None otherwise."""
     found = []
@@ -167,7 +173,10 @@ def decode(cell):
     close_at = next((i for i, x in enumerate(client_side) if not x["from_server"] and CLOSES & set(x["frames"])), None)
     # from the client's close, or from a named challenge's arrival if that came first, on
     first_x = next((i for i, x in enumerate(client_side) if set(x["challenges"]) & set(unanswered)), None)
-    start = min(i for i in (close_at, first_x) if i is not None) if close_at is not None else None
+    closing = client_closing(cell, client_side)
+    # and from the first packet captured after our client's mapped close less MARGIN, so that what it sent then is checked
+    first_closing = next((i for i, x in enumerate(client_side) if x["t"] > closing["at"] - MARGIN), None) if closing else None
+    start = min(i for i in (close_at, first_x, first_closing) if i is not None) if close_at is not None else None
     upto = next((i for i, x in enumerate(client_sent) if CLOSES & set(x["frames"])), len(client_sent) - 1)
     return {"server": os.path.basename(os.path.dirname(cell)).split("_", 1)[0], "unanswered": unanswered, "download_checked": checked, "runner_paths": firsts,
             "on_path": [{k: x[k] for k in keep} for x in server_side if p and p in (x["src"], x["dst"])],
@@ -178,7 +187,7 @@ def decode(cell):
             # that which carried a named challenge
             "client_side": [{k: (round(x[k], 6) if k == "t" else x[k]) for k in keep + ("t",)} for i, x in enumerate(client_side)
                             if (start is not None and i >= start) or set(x["challenges"]) & set(unanswered)],
-            "client_closing": client_closing(cell, client_side)}
+            "client_closing": closing}
 
 
 def analyse(d):
@@ -223,8 +232,10 @@ def analyse(d):
     if min(arrived) < close:
         # X reached the client before its close left: only our client's qlog can show it was closing by then (module doc)
         q, a = d.get("client_closing"), min(arrived)
-        if not q or q["owner"] != "local" or q["code"] != 0 or q["at"] >= cs[a]["t"]: return None
+        if not q or q["owner"] != "local" or q["code"] != 0 or q["at"] + MARGIN > cs[a]["t"]: return None
         if any(not y["from_server"] for y in cs[a:close]): return None
+        # once closing, our client sends CONNECTION_CLOSE only (RFC 9000 10.2.1): anything else is ours to fix, not to excuse
+        if any(not y["from_server"] and y["t"] > q["at"] - MARGIN and not CLOSES & set(y["frames"]) for y in cs): return None
         return (f"the rebind landed as the transfer ended: the client's last packets reached the server from the new path {p}, the "
                 f"server's PATH_CHALLENGE {x} there (RFC 9000 9.3) left before the client's close arrived and reached the client "
                 f"{(cs[a]['t'] - q['at']) * 1000:.1f} ms after its qlog shows it entered the closing state, before its "
@@ -242,7 +253,9 @@ def main(argv):
         except (OSError, ValueError) as e:
             print(f"closing-challenge: {where}: cannot analyse: {e}", file=sys.stderr); return 2
     elif len(argv) == 3 and argv[1] == "--dump":
-        print(json.dumps(decode(argv[2]), indent=1)); return 0
+        print(json.dumps(decode(argv[2].rstrip("/")), indent=1)); return 0
+    elif len(argv) == 4 and argv[1] == "--closing":
+        print(json.dumps(client_closing(argv[2].rstrip("/"), json.load(open(argv[3]))))); return 0
     elif len(argv) == 2:
         cell = argv[1].rstrip("/"); where = cell
         try:

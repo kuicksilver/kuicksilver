@@ -139,6 +139,44 @@ check "challenge: our server is held to 3x exactly"                   1 "" -- py
 check "challenge:   so is a summary that names no server"             1 "" -- python3 "$ch" --decoded "$(qvar noserver 'del(.server)')"
 check "challenge: the peer server started a datagram past its budget" 1 "" -- python3 "$ch" --decoded "$(qvar overbudget '.on_path = .on_path[:2] + [{"n": 12459, "from_server": true, "len": 1200, "frames": [0], "challenges": [], "close_codes": []}] + .on_path[2:]')"
 check "challenge: the peer server sent NEW_CONNECTION_ID there"       1 "" -- python3 "$ch" --decoded "$(qvar newcid "$qx.frames += [24]")"
+# R4: X must arrive at least 1 ms (MARGIN) after the mapped close; the CI cell has 1.879 ms
+check "challenge: X arrived 0.999 ms after the mapped close (margin)"  1 "" -- python3 "$ch" --decoded "$(qvar margin '.client_closing.at = 11.015544')"
+check "challenge:   1.001 ms is enough"                               0 "" -- python3 "$ch" --decoded "$(qvar margin2 '.client_closing.at = 11.015542')"
+# R5: once closing (from the mapped close less the margin) our client sends nothing but CONNECTION_CLOSE (RFC 9000 10.2.1);
+# in the CI cell its last other packet left at 10.990204, 24 ms before
+cack() { printf '{"n": 12271, "from_server": false, "len": 37, "frames": [%s], "challenges": [], "close_codes": [%s], "t": %s}' "$1" "${3:-}" "$2"; }
+check "challenge: our client sent an ACK after its qlog close"         1 "" -- python3 "$ch" --decoded "$(qvar ackclosing ".client_side = [$(cack 3 11.015)] + .client_side")"
+check "challenge:   or within the margin before it"                   1 "" -- python3 "$ch" --decoded "$(qvar ackmargin ".client_side = [$(cack 3 11.014)] + .client_side")"
+check "challenge:   or STREAM data"                                   1 "" -- python3 "$ch" --decoded "$(qvar streamclosing ".client_side = [$(cack 15 11.015)] + .client_side")"
+check "challenge:   an ACK well before the close is fine"             0 "" -- python3 "$ch" --decoded "$(qvar ackbefore ".client_side = [$(cack 3 11.013)] + .client_side")"
+check "challenge:   a CONNECTION_CLOSE then is fine"                  0 "" -- python3 "$ch" --decoded "$(qvar closeclosing ".client_side = [$(cack 29 11.015 0)] + .client_side")"
+# R6: the clock mapping itself (client_qlog, client_closing) on a synthetic qlog and client-side capture: 1-RTT packets 1-12
+# logged at 1001-1012 ms and captured 2.0003 s later, packet 5 only 2.0001 s later (the smallest gap, the one used); the close
+# logged at 1020 ms, its packet captured at 3.03 s: the close maps to 1.020 + 2.0001 = 3.0201 s
+sq() {   # name [title] [vantage]: a synthetic cell with one client qlog
+  local d="$tmp/sq/$1/client/qlog"; mkdir -p "$d"
+  { printf '\036{"qlog_format":"JSON-SEQ","title":"%s","trace":{"vantage_point":{"type":"%s"}}}\n' "${2:-kuicksilver}" "${3:-client}"
+    for i in $(seq 1 12); do printf '\036{"time":%s.000,"name":"transport:packet_sent","data":{"header":{"packet_type":"1RTT","packet_number":%s}}}\n' $((1000 + i)) "$i"; done
+    printf '{"time":1005.000,"name":"transport:packet_sent","data":{"header":{"packet_type":"handshake","packet_number":105}}}\n'
+    printf '\036{"time":1020.000,"name":"connectivity:connection_closed","data":{"owner":"local","application_code":0,"reason":"done"}}\n'
+  } > "$d/x_client.sqlog"; echo "$tmp/sq/$1"
+}
+scs() {   # name [jq filter]: the client-side packets
+  jq -n '[range(1; 13) | {t: (2 + (1000 + .) / 1000 + (if . == 5 then 0.0001 else 0.0003 end)), pn: ., from_server: false, frames: [3]}]
+         + [{t: 3.0205, pn: null, from_server: true, frames: [26]}, {t: 3.03, pn: 13, from_server: false, frames: [29]}]' | jq "${2:-.}" > "$tmp/$1.cs.json"
+  echo "$tmp/$1.cs.json"
+}
+check "closing: synthetic, the smallest gap maps the close"           0 '"at": 3.0201, "owner": "local", "code": 0, "samples": 12' -- python3 "$ch" --closing "$(sq base)" "$(scs base)"
+check "closing: a trailing slash on the cell"                         0 '"at": 3.0201' -- python3 "$ch" --closing "$(sq slash)/" "$(scs slash)"
+check "closing: 9 samples are too few"                                0 '^null$' -- python3 "$ch" --closing "$(sq nine)" "$(scs nine 'map(select(.pn == null or .pn <= 9 or .pn == 13))')"
+check "closing: 3 of 12 more than 1 s before the close"               0 '^null$' -- python3 "$ch" --closing "$(sq window)" "$(scs window 'map(if .pn != null and .pn <= 3 then .t -= 1.5 else . end)')"
+check "closing:   a smaller gap outside the window is not used"      0 '"at": 3.0203, "owner": "local", "code": 0, "samples": 11' -- python3 "$ch" --closing "$(sq window11)" "$(scs window11 'map(if .pn == 5 then .t -= 1.5 else . end)')"
+check "closing: a qlog not titled kuicksilver"                       0 '^null$' -- python3 "$ch" --closing "$(sq title quiche)" "$(scs title)"
+check "closing: a server's qlog"                                      0 '^null$' -- python3 "$ch" --closing "$(sq vantage kuicksilver server)" "$(scs vantage)"
+check "closing: two client qlogs"                                     0 '^null$' -- python3 "$ch" --closing "$(d=$(sq two); cp "$d/client/qlog/x_client.sqlog" "$d/client/qlog/y_client.sqlog"; echo "$d")" "$(scs two)"
+check "closing: packet numbers that match no logged packet"           0 '^null$' -- python3 "$ch" --closing "$(sq pn)" "$(scs pn 'map(if .pn != null and .pn != 13 then .pn += 100 else . end)')"
+check "closing: no CONNECTION_CLOSE from the client on the capture"   0 '^null$' -- python3 "$ch" --closing "$(sq nowire)" "$(scs nowire 'map(select(.frames != [29]))')"
+check "closing: no connection_closed in the qlog"                     0 '^null$' -- python3 "$ch" --closing "$(d=$(sq noclosed); grep -v connection_closed "$d/client/qlog/x_client.sqlog" > "$d/q"; mv "$d/q" "$d/client/qlog/x_client.sqlog"; echo "$d")" "$(scs noclosed)"
 
 # clienthello-lost.py: the peer client's ClientHello never reached our server in full (0.2.1 gate 2, run 20261023-114548:
 # kuicksilver->quiche:handshakeloss, decoded with --dump; and a rerun of it whose connection was still open at teardown, empty qlog)

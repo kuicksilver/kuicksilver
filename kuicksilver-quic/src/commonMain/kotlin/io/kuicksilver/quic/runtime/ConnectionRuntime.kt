@@ -794,6 +794,8 @@ internal class ConnectionRuntime(
         reason: String,
     ) {
         withContext(loop.dispatcher) {
+            // a fresh clock reading, taken on the loop: enterClosing logs it as the qlog connection_closed time, which
+            // tools/interop/closing-challenge.py relies on; do not pass a cached `core.now`
             core.close(code, reason, loop.now())
             loop.flush(core)
         }
