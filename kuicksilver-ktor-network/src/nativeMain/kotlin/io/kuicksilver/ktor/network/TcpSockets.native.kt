@@ -393,9 +393,10 @@ internal class NativeTcpSocket(
      * connection [lost]. Without the bound, a writer on Windows waited for ever on a reset connection: ktor-network's
      * selector there (`WSAEventSelect`) waits for `FD_WRITE`, which a reset never brings (it is reported as `FD_CLOSE`,
      * once), where `poll`/`select` on POSIX report a reset socket as writable. The select outlives a wait that gave up and
-     * serves the next one, so a peer that reads nothing for long leaves one select behind, not one per recheck.
+     * serves the next one, so a peer that reads nothing for long leaves one select behind, not one per recheck. Internal for
+     * the tests.
      */
-    private inner class RoomWait(
+    internal inner class RoomWait(
         private val scope: CoroutineScope,
     ) {
         private val waits = SupervisorJob(scope.coroutineContext.job)
@@ -418,6 +419,9 @@ internal class NativeTcpSocket(
             } catch (e: CancellationException) {
                 val cause = lost.load()
                 if (cause != null && scope.isActive) throw IOException("Connection reset by peer", cause)
+                throw e
+            } catch (e: Throwable) {
+                select = null // a select that failed is not kept: its failure is thrown once, the next wait selects again
                 throw e
             }
         }

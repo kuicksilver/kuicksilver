@@ -20,6 +20,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -29,6 +30,7 @@ import kotlinx.io.readByteArray
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -201,6 +203,37 @@ class TcpSocketsNativeTest {
         writerResetTest(SelectorKind.Platform, recheck = null, finFirst = true)
 
     /**
+     * A wait for room whose select failed (not cancelled) rethrows that failure once and starts a select of its own next time.
+     * Before, the failed select was kept and every later wait rethrew it without selecting again.
+     */
+    @Test fun aFailedSelectIsNotKeptForTheNextWaitForRoom() =
+        runBlocking {
+            val selector = SelectorManager(Dispatchers.Default)
+            val failing = FailOnceWriteSelector(selector)
+            try {
+                withTimeout(30.seconds) {
+                    val server = bindTcp(selector, "127.0.0.1", 0)
+                    val port = (server.localAddress as InetSocketAddress).port
+                    val client = connectTcp(failing, InetSocketAddress("127.0.0.1", port)) as NativeTcpSocket
+                    val accepted = server.accept()
+                    client.roomRecheck = 100.milliseconds
+                    coroutineScope {
+                        val room = client.RoomWait(this)
+                        assertFailsWith<IOException> { room.await() }
+                        room.await() // a select of its own, given up after the recheck
+                        assertEquals(2, failing.writeSelects, "the second wait selected again")
+                        room.cancel()
+                    }
+                    client.close()
+                    accepted.close()
+                    server.close()
+                }
+            } finally {
+                selector.close()
+            }
+        }
+
+    /**
      * A server closes the connection gracefully while its response is still being sent and the client is still sending:
      * the read loop ends at the close, before the end of the client's stream, and the client's next bytes stay unread.
      * The client still reads the response. Before, on Windows, the read loop's `shutdown(SD_RECEIVE)` made Winsock reset
@@ -321,6 +354,24 @@ class TcpSocketsNativeTest {
             interest: SelectInterest,
         ) {
             if (interest == SelectInterest.WRITE) awaitCancellation()
+            delegate.select(selectable, interest)
+        }
+    }
+
+    /** [delegate], whose first wait for room fails with an IOException; the later ones never end (the job's cancellation ends them). */
+    private class FailOnceWriteSelector(
+        private val delegate: SelectorManager,
+    ) : SelectorManager by delegate {
+        var writeSelects = 0
+
+        override suspend fun select(
+            selectable: Selectable,
+            interest: SelectInterest,
+        ) {
+            if (interest == SelectInterest.WRITE) {
+                if (++writeSelects == 1) throw IOException("the selector failed")
+                awaitCancellation()
+            }
             delegate.select(selectable, interest)
         }
     }
