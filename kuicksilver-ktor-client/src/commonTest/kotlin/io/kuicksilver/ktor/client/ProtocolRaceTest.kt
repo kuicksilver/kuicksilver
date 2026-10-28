@@ -114,6 +114,28 @@ class ProtocolRaceTest {
         for (d in listOf(10.milliseconds, 2.seconds, Duration.INFINITE)) ProtocolRace(d)
     }
 
+    /**
+     * `hardDelay = Duration.INFINITE` is "HTTP/1.1 only after HTTP/3 failed" on every network, also one where QUIC was
+     * never confirmed: no second attempt runs at the same time, which RFC 8305 section 5 allows (it bounds how soon the
+     * next attempt starts, not how late). Before, such a network got the 10 ms head start anyway.
+     */
+    @Test fun infiniteHardDelayWaitsForHttp3OnAnUnconfirmedNetwork() =
+        runTest {
+            val race = ProtocolRace(Duration.INFINITE)
+            assertEquals(Duration.INFINITE, race.headStart(null, false))
+            var h1Started = false
+            val result =
+                race.race({
+                    delay(5_000)
+                    "h3"
+                }, {
+                    h1Started = true
+                    "h1"
+                }, srtt = null, quicConfirmed = false)
+            assertEquals("h3", result.value)
+            assertFalse(h1Started, "HTTP/1.1 started while HTTP/3 was still connecting")
+        }
+
     /** An h1 setup that completed just as h3 won is handed to [onLoser] (the engine closes it) instead of being leaked. */
     @Test fun losingH1ResultIsHandedToOnLoser() =
         runTest {

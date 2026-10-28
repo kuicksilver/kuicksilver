@@ -72,8 +72,9 @@ public class Http3ClientConfig {
     /**
      * Head start of HTTP/3 over HTTP/1.1 on a network where QUIC was confirmed; null: 1.5 x the host's smoothed RTT, or
      * 250 ms without history, clamped to 100 ms..2 s. An explicit value must be 10 ms..2 s (RFC 8305 section 5), or
-     * [Duration.INFINITE] for HTTP/1.1 only after HTTP/3 failed; another one fails the engine's creation with
-     * [IllegalArgumentException]. On a network where QUIC was never confirmed the head start is 10 ms.
+     * [Duration.INFINITE] for HTTP/1.1 only after HTTP/3 failed, on every network; another one fails the engine's creation
+     * with [IllegalArgumentException]. On a network where QUIC was never confirmed the head start is 10 ms, whatever
+     * finite value is set.
      */
     public var hardDelay: Duration? = null
 

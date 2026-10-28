@@ -29,7 +29,8 @@ internal class RaceResult<T>(
  * or 250 ms without history, clamped to 100 ms..2 s — and after [MIN_HEAD_START] on a network where QUIC was never seen
  * working (RFC 8305 section 5: "a subsequent connection MUST NOT be started within 10 milliseconds of the previous
  * attempt"; the attempts are not simultaneous either, which the section says they SHOULD NOT be). [hardDelay] must keep
- * the same bounds as `connectionAttemptDelay`: 10 ms..2 s, or [Duration.INFINITE] for HTTP/1.1 only after HTTP/3 failed.
+ * the same bounds as `connectionAttemptDelay`: 10 ms..2 s, or [Duration.INFINITE] for HTTP/1.1 only after HTTP/3 failed,
+ * on every network (the 10 ms head start of an unconfirmed network does not apply to it).
  * An HTTP/3 setup succeeds when its connection is usable: with 0-RTT that is before the handshake only on a network where
  * QUIC was confirmed (the caller's `h3` decides). The first success wins. A losing h1 setup is cancelled, and one that
  * completed just as h3 won is handed to `onLoser` so the caller can close it (a connection must not be leaked, RFC 8305
@@ -51,6 +52,8 @@ internal class ProtocolRace(
         srtt: Duration?,
         quicConfirmed: Boolean,
     ): Duration {
+        // INFINITE is "HTTP/1.1 only after HTTP/3 failed" on any network: never two attempts at once
+        if (hardDelay?.isInfinite() == true) return hardDelay
         if (!quicConfirmed) return MIN_HEAD_START
         return hardDelay ?: (srtt?.times(1.5) ?: 250.milliseconds).coerceIn(100.milliseconds, 2.seconds)
     }
