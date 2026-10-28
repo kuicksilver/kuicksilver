@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Vendored from Ktor 3.6.0 ktor-server-cio CIOApplicationResponse.kt (internal there), adapted: Alt-Svc for HTTP/3 (RFC 7838),
 // `Connection: close` once the server is stopping, WebSocket frames checked against the negotiated extensions, no
-// framing fields and no content where a response has none (RFC 9110 sections 8.6 and 9.3.2).
+// framing fields and no content where a response has none (RFC 9110 sections 8.6 and 9.3.2), 501 for a 2xx to CONNECT.
 @file:OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
 
 package io.kuicksilver.ktor.server.h1
@@ -135,12 +135,13 @@ internal class H1Response(
     }
 
     private suspend fun sendResponseMessage(contentReady: Boolean) {
+        if (call.request.local.method.value == "CONNECT" && statusCode.value in 200..299) refuseTunnel()
         // HTTP/3 on the same port is announced on every response that does not carry its own Alt-Svc (RFC 7838)
         if (altSvc != null && headersBuilder["Alt-Svc"] == null && statusCode.value != 421) headersBuilder.append("Alt-Svc", altSvc)
         // the server is stopping and reads no further request here: say so (RFC 9112 section 9.6), as Go's Shutdown does
         if (closing() && statusCode != HttpStatusCode.SwitchingProtocols) announceClose()
         // a request that ends the connection: the server SHOULD send "close" in its final response (RFC 9112 section 9.6);
-        // a CONNECT always ends it (RFC 9931 section 8: a refused one MUST, a 2xx one is a tunnel)
+        // a CONNECT always ends it (RFC 9931 section 8: a refused one MUST; the engine refuses every one, see refuseTunnel)
         if (statusCode != HttpStatusCode.SwitchingProtocols &&
             !saysClose() &&
             (
@@ -183,6 +184,7 @@ internal class H1Response(
             }
             builder.emptyLine()
             output.writePacket(builder.build())
+            if (tunnelRefused) output.writeFully(TUNNEL_NOT_SUPPORTED)
 
             if (!contentReady) {
                 output.flush()
@@ -192,10 +194,31 @@ internal class H1Response(
         }
     }
 
+    /** The application answered CONNECT with a 2xx, which [refuseTunnel] turned into a 501: its content is dropped. */
+    private var tunnelRefused = false
+
     /**
-     * A 2xx response to CONNECT has neither Content-Length nor Transfer-Encoding (RFC 9110 section 8.6, RFC 9112 section
-     * 6.1): the connection is a tunnel after its header section, so the content the application writes goes out raw and
-     * the response says `Connection: close`. A 1xx or 204 response has no content: a server MUST NOT send Content-Length
+     * A 2xx to CONNECT promises a tunnel (RFC 9110 section 9.3.6: "Any 2xx (Successful) response indicates that the
+     * sender (and all inbound proxies) will switch to tunnel mode immediately after the response header section"), and
+     * the engine cannot tunnel: the handler gets neither the connection nor the bytes behind the request, which the
+     * pipeline reads and drops before it closes (RFC 9931 section 8). So the response becomes `501 Not Implemented` with
+     * a short text instead of the application's fields and content, and the application log gets a warning (a CONNECT
+     * ends its connection, so that is one per connection at most). Tunnels are a 0.3.0 feature.
+     */
+    private fun refuseTunnel() {
+        call.application.environment.log.warn(
+            "HTTP/1.1: the application answered CONNECT ${call.request.local.uri} with $statusCode; the engine cannot tunnel " +
+                "and sends 501 Not Implemented instead",
+        )
+        tunnelRefused = true
+        statusCode = HttpStatusCode.NotImplemented
+        headersBuilder.clear()
+        headersBuilder.append(HttpHeaders.ContentType, "text/plain; charset=utf-8")
+        headersBuilder.append(HttpHeaders.ContentLength, TUNNEL_NOT_SUPPORTED.size.toString())
+    }
+
+    /**
+     * A 1xx or 204 response has no content: a server MUST NOT send Content-Length
      * in it (RFC 9110 section 8.6) nor Transfer-Encoding (RFC 9112 section 6.1). A 304 has none either: no Transfer-Encoding, and Content-Length only
      * when it equals the length a 200 would have had (RFC 9110 section 8.6), which `Content-Length: 0` does not say for a
      * non-empty resource: Ktor adds it for every empty content (`respond(HttpStatusCode.NotModified)`), so it is dropped
@@ -203,13 +226,7 @@ internal class H1Response(
      */
     private fun dropFramingFieldsOfAResponseWithoutContent() {
         val status = statusCode.value
-        if (status in 200..299 && call.request.local.method.value == "CONNECT") {
-            // a 2xx to CONNECT starts a tunnel: no Content-Length nor Transfer-Encoding (RFC 9110 section 8.6, RFC 9112
-            // section 6.1, MUST NOT); what the application writes goes out as is, and the close ends it
-            headersBuilder.remove(HttpHeaders.ContentLength)
-            headersBuilder.remove(HttpHeaders.TransferEncoding)
-            announceClose()
-        } else if (status in 100..199 || status == 204) {
+        if (status in 100..199 || status == 204) {
             headersBuilder.remove(HttpHeaders.ContentLength)
             headersBuilder.remove(HttpHeaders.TransferEncoding)
         } else if (status == 304) {
@@ -257,14 +274,18 @@ internal class H1Response(
      * Whether this response has no content, whatever the application writes: the response to HEAD (RFC 9110 section
      * 9.3.2: the server MUST NOT send content), a 1xx, a 204 or a 304 (sections 15.2, 15.3.5, 15.4.5; RFC 9112 section
      * 6.3 item 1: such a response ends with its header section). Its fields stay as they are: a HEAD response keeps the
-     * Content-Length or Transfer-Encoding a GET would have had (RFC 9110 sections 8.6 and 9.3.2).
+     * Content-Length or Transfer-Encoding a GET would have had (RFC 9110 sections 8.6 and 9.3.2). Also the 501 that
+     * replaced a 2xx to CONNECT ([refuseTunnel]): the application's content is dropped, the engine writes its own.
      */
     private fun hasNoContent(): Boolean {
         val status = statusCode.value
-        return call.request.local.method == HttpMethod.Head || status in 100..199 || status == 204 || status == 304
+        return tunnelRefused || call.request.local.method == HttpMethod.Head || status in 100..199 || status == 204 || status == 304
     }
 
-    /** The body channel of a response without content was handed out: its writes are dropped, [output] closed at the end. */
+    /**
+     * The body channel of a response without content (or with the engine's own, [tunnelRefused]) was handed out: its
+     * writes are dropped, [output] closed at the end.
+     */
     private var bodyDiscarded = false
 
     private fun preparedBodyChannel(): ByteWriteChannel {
@@ -285,3 +306,6 @@ internal class H1Response(
         return chunkedOutput
     }
 }
+
+/** The content of the 501 that replaces a 2xx to CONNECT. */
+private val TUNNEL_NOT_SUPPORTED = "This server does not support CONNECT tunnels.\n".encodeToByteArray()

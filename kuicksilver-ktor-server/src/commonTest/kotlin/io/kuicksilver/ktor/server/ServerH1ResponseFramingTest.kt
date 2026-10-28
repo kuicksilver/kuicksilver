@@ -247,32 +247,41 @@ class ServerH1ResponseFramingTest {
         }
 
     /**
-     * RFC 9110 section 8.6 and RFC 9112 section 6.1: a server MUST NOT send Content-Length or Transfer-Encoding in a 2xx
-     * response to CONNECT: what follows the header section is the tunnel, ended by the close. Before, the application's
-     * content went out with `Content-Length: 6` (or chunked), framing that a client reads as tunnel data. The response
-     * says `Connection: close` and nothing more is read from the connection.
+     * A 2xx to CONNECT promises a tunnel: "Any 2xx (Successful) response indicates that the sender (and all inbound
+     * proxies) will switch to tunnel mode immediately after the response header section" (RFC 9110 section 9.3.6). The
+     * engine cannot tunnel (the handler gets no connection), so it answers `501 Not Implemented` instead, with
+     * `Connection: close` and a short text, warns in the application log, and closes the connection without reading
+     * anything behind the CONNECT as a request (RFC 9931 section 8). Before, the 2xx went out and the client's tunnel
+     * bytes were read and dropped until the close.
      */
-    @Test fun negative_noFramingFieldsOn2xxToConnect() =
+    @Test fun negative_2xxToConnectIsAnswered501() =
         serverTest {
-            plainServer { port ->
+            val log = CapturedLog()
+            plainServer(log) { port ->
                 for (target in listOf("a.example:443", "stream.example:443")) {
                     val resp =
                         withTimeout(10.seconds) {
                             rawHttp(port, "CONNECT $target HTTP/1.1\r\nHost: $target\r\n\r\nGET / HTTP/1.1\r\nHost: s\r\n\r\n", tls = null)
                         }
                     val head = resp.substringBefore("\r\n\r\n") + "\r\n"
-                    assertTrue(head.startsWith("HTTP/1.1 200 "), "$target: $resp")
-                    assertFalse(head.contains("Content-Length", ignoreCase = true), "$target: $resp")
-                    assertFalse(head.contains("Transfer-Encoding", ignoreCase = true), "$target: $resp")
+                    val body = resp.substringAfter("\r\n\r\n")
+                    assertTrue(head.startsWith("HTTP/1.1 501 Not Implemented\r\n"), "$target: $resp")
                     assertTrue(head.contains("\r\nConnection: close\r\n"), "$target: $resp")
-                    assertEquals("tunnel", resp.substringAfter("\r\n\r\n"), "$target: $resp")
+                    assertTrue(head.contains("\r\nContent-Type: text/plain; charset=utf-8\r\n"), "$target: $resp")
+                    assertTrue(head.contains("\r\nContent-Length: ${body.length}\r\n"), "$target: $resp")
+                    assertFalse(head.contains("Transfer-Encoding", ignoreCase = true), "$target: $resp")
+                    assertEquals("This server does not support CONNECT tunnels.\n", body, "$target: $resp")
                 }
             }
+            assertEquals(2, log.lines.count { it.level == "WARN" && "CONNECT" in it.message }, "${log.lines}")
         }
 
-    private suspend fun plainServer(block: suspend (Int) -> Unit) {
+    private suspend fun plainServer(
+        log: CapturedLog? = null,
+        block: suspend (Int) -> Unit,
+    ) {
         val server =
-            embeddedServer(Kuicksilver, configure = {
+            kuicksilverServer(log, configure = {
                 connector {
                     host = "127.0.0.1"
                     port = 0

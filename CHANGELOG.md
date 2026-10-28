@@ -173,6 +173,13 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   still receiving aborts that request with `H3_DATAGRAM_ERROR` (RFC 9297 section 2, MUST); and on a server every
   MAX_PUSH_ID after the first spends a glitch token, so a client that keeps re-sending it (some stacks send one with every
   push-credit update) meets `H3_EXCESSIVE_LOAD` once the bucket is empty (RFC 9114 section 10.5).
+- Ktor server, HTTP/1.1 (behaviour): the engine answers `501 Not Implemented` (with `Connection: close` and the text
+  "This server does not support CONNECT tunnels.") when the application answers a CONNECT with a 2xx, and logs a
+  warning in the application log. A 2xx to CONNECT says the server "will switch to tunnel mode immediately after the
+  response header section" (RFC 9110 section 9.3.6), and the engine cannot tunnel: the handler gets no connection.
+  Before, the 2xx went out framed as an ordinary body and the connection served the next request, so the client's
+  tunnel bytes were read as requests. The connection still closes after every CONNECT (RFC 9931 section 8).
+  Tunnelling is planned for 0.3.0.
 - Ktor client and server, HTTP/1.1: a chunk-size line with SP or HTAB right before its CRLF (`5 \r\n`, `0 \r\n`,
   `5;a=b \r\n`) is now refused: the server answers the request with 400 and closes the connection, and the client fails
   the response with `MalformedChunkedBodyException` ("Whitespace before the end of a chunk size line"). RFC 9112
@@ -494,10 +501,6 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - Ktor server, HTTP/1.1: an application's status description with a character a reason phrase cannot hold (CR, LF,
   NUL; RFC 9112 section 4) is replaced by the registered reason of the code, or none. Before, it was written as it
   was: `HttpStatusCode(200, "OK\r\nX-Injected: 1")` split the response and added a field of its own.
-- Ktor server, HTTP/1.1: a 2xx response to CONNECT no longer carries `Content-Length` or `Transfer-Encoding` (RFC
-  9110 section 8.6, RFC 9112 section 6.1: a server MUST NOT send them): what the application writes goes out as is,
-  as the start of the tunnel, and the connection closes after it. Before, it was framed as an ordinary body and the
-  connection served the next request.
 - Ktor server, HTTP/1.0: the `Upgrade` field of an HTTP/1.0 request is ignored (RFC 9110 section 7.8: a server MUST
   ignore it), so a WebSocket route no longer answers an HTTP/1.0 client with `101 Switching Protocols`, a 1xx it
   MUST NOT get (section 15.2); the application does not see the field.
