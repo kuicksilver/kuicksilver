@@ -126,9 +126,10 @@ static int server_name_cb(SSL *ssl, int *al, void *arg) {
     return SSL_get_servername(ssl, TLSEXT_NAMETYPE_host_name) ? SSL_TLSEXT_ERR_OK : SSL_TLSEXT_ERR_NOACK;
 }
 /* A client extension that is never sent: its callback runs while OpenSSL builds a TLS 1.2 ClientHello, before any of it is written,
-   and fails it with internal_error once ksl_tcp_abort asked for that (a renegotiation ClientHello). The type is from the private use
-   range (RFC 9846 section 4.3); OpenSSL refuses a server's answer to an extension the client did not send. */
-#define KSL_ABORT_EXT_TYPE 0xfe5a
+   and fails it with internal_error once ksl_tcp_abort asked for that (a renegotiation ClientHello). The type is from the Private Use
+   range (RFC 9846 section 11: "Values with the first byte 255 (decimal) are reserved for Private Use"); OpenSSL refuses a server's
+   answer to an extension the client did not send (RFC 9846 section 4.3). */
+#define KSL_ABORT_EXT_TYPE 0xff5a
 static int abort_ext_add_cb(SSL *ssl, unsigned int type, const unsigned char **out, size_t *outlen, int *al, void *arg) {
     (void)type; (void)out; (void)outlen; (void)arg; ksl_ssl *s = SSL_get_ex_data(ssl, 1);
     if (s && s->abort_alert) { *al = SSL_AD_INTERNAL_ERROR; return -1; }

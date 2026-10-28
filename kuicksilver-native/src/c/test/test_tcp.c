@@ -462,6 +462,10 @@ static void test_abort_sends_an_alert(void) {
     CHECK(shuttle(c, s) > 0 && read_after_abort(s, &alert) == KSL_ERROR && alert == (SSL_AD_INTERNAL_ERROR | 0x100), "the server receives internal_error");
     CHECK(hellos == 1, "negative: no renegotiation ClientHello left the client");
     CHECK((SSL_get_options(ksl_ssl_raw_for_test(c)) & SSL_OP_NO_RENEGOTIATION) != 0, "renegotiation is refused again on the aborted session");
+    /* the extension that fails the ClientHello is never sent; its type is from the Private Use range all the same (RFC 9846 section
+       11: "Values with the first byte 255 (decimal) are reserved for Private Use") */
+    int outside = 0, inside = 0; for (unsigned t = 0; t <= 0xffff; t++) if (SSL_CTX_has_client_custom_ext(cc12->ctx, t)) { if (t >> 8 == 0xff) inside++; else outside++; }
+    CHECK(inside == 1 && outside == 0, "the client's custom extension type has the first byte 255");
     ksl_ssl_free(c); ksl_ssl_free(s);
     c = tcp_client(cc12, "server.test"); s = ksl_ssl_new(sc, KSL_MODE_TCP); CHECK(tcp_pump(c, s, NULL, NULL) == KSL_OK, "TLS 1.2 handshake");
     CHECK(ksl_tcp_abort(s) == KSL_ERROR && last_code(s, NULL) == KSL_E_NOT_SUPPORTED, "a TLS 1.2 server: no alert (KSL_E_NOT_SUPPORTED)");
