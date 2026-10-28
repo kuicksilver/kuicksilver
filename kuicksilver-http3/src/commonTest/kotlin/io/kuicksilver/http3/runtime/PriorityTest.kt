@@ -32,6 +32,7 @@ import kotlinx.coroutines.withTimeout
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
@@ -89,7 +90,12 @@ class PriorityTest {
             }
         }
 
-    /** RFC 8941 section 4.2: a Priority Field Value that is not a valid dictionary is ignored as a whole: the defaults. */
+    /**
+     * RFC 8941 section 4.2: a Priority Field Value that is not a valid dictionary is ignored as a whole, so the frame
+     * carries no parameter, and RFC 9218 section 7: "A PRIORITY_UPDATE frame communicates a complete set of all priority
+     * parameters [...] Omitting a priority parameter is a signal to use its default value": the defaults, not the earlier
+     * u=5. The connection stays open (the section 7 connection error is a MAY we do not take).
+     */
     @Test fun invalidPriorityUpdateValueMeansDefaults() =
         h3Test {
             QuicPair.open().use { q ->
@@ -102,6 +108,7 @@ class PriorityTest {
                 assertEquals(StreamPriority(5), r.priority.value)
                 raw.priorityUpdate(id, "u=1, i,")
                 withTimeout(5.seconds) { r.priority.first { it == StreamPriority.Default } }
+                assertFalse(server.closed.isCompleted)
             }
         }
 

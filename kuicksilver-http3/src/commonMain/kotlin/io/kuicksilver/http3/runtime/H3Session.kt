@@ -969,6 +969,9 @@ internal class H3Session(
         }
         val (id, value) = ControlFrames.parsePriorityUpdate(payload)
         if (id % 4 != 0L) throw H3ProtocolError(Http3ErrorCode.ID_ERROR, "PRIORITY_UPDATE for stream $id, not a request stream")
+        // a value that fails to parse carries no parameter (RFC 8941 section 4.2: "treated as if the field were not present"),
+        // and the frame is "a complete set of all priority parameters" in which an omitted one means its default (RFC 9218
+        // section 7): the defaults; the connection error section 7 allows (MAY) is not used
         val p = PriorityField.parse(value)
         activeServerRequests[id]?.let {
             it.onPriorityUpdate(p)
