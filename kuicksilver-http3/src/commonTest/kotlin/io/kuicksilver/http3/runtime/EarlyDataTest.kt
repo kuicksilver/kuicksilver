@@ -13,10 +13,13 @@ import io.kuicksilver.http3.Http3Headers
 import io.kuicksilver.http3.Http3Settings
 import io.kuicksilver.http3.MemoryNet
 import io.kuicksilver.http3.TestCerts
+import io.kuicksilver.http3.frame.ControlFrames
+import io.kuicksilver.http3.frame.FrameType
 import io.kuicksilver.http3.http3Request
 import io.kuicksilver.http3.http3Settings
 import io.kuicksilver.http3.readAllBytes
 import io.kuicksilver.native.KslLoader
+import io.kuicksilver.quic.ConnectionState
 import io.kuicksilver.quic.QuicEndpointConfig
 import io.kuicksilver.quic.QuicServerConfig
 import io.kuicksilver.tls.KslQuicCrypto
@@ -31,6 +34,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.concurrent.atomics.AtomicInt
@@ -177,6 +181,8 @@ class EarlyDataTest {
         resumerRequests: AtomicInt = AtomicInt(0),
         clientSettings: Http3Settings = Http3Settings.Default,
         responseHeaders: Http3Headers = Http3Headers.Empty,
+        /** Sees the resuming client's HTTP/3 session before it starts. */
+        clientSession: ((H3Session) -> Unit)? = null,
         /** Runs once the early request was answered, with the client connection and the resuming server's connections. */
         after: suspend (Http3Connection, () -> List<Http3Connection>) -> Unit = { _, _ -> },
     ): Boolean? {
@@ -239,7 +245,13 @@ class EarlyDataTest {
             val warm = client.connectEarly(first.localAddress, H3Fixtures.client())
             repeat(2) { assertEquals(204, warm.request(http3Request("GET", "server.test", "/")).status) } // the ticket arrives
             warm.close()
-            val c = client.connectEarly(second.localAddress, H3Fixtures.client(), settings = clientSettings)
+            if (clientSession != null) H3Session.createdForTest = { if (!it.isServer) clientSession(it) }
+            val c =
+                try {
+                    client.connectEarly(second.localAddress, H3Fixtures.client(), settings = clientSettings)
+                } finally {
+                    H3Session.createdForTest = null
+                }
             val request =
                 http3Request("GET", "server.test", "/") {
                     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
@@ -352,6 +364,30 @@ class EarlyDataTest {
                     }
                 assertEquals(false, accepted)
                 assertEquals(4, seen.load(), "the early request once, after the rejection, and three more")
+            }
+        }
+
+    /**
+     * Review 2026-10-28 N3: the session's state is its dispatcher's alone. The early request sent again after the rejection
+     * notes the rejection, and `updatePriority` writes on the control stream, from the caller's thread; both hop to the
+     * session's dispatcher first (the hook fails the call otherwise).
+     */
+    @Test fun rejectionBookkeepingRunsOnTheSessionDispatcher(): Unit =
+        runBlocking {
+            withTimeout(30.seconds) {
+                val accepted =
+                    earlyAcceptedAfterResuming(
+                        issuer = http3Settings {},
+                        resumer = http3Settings { h3Datagram = false },
+                        earlyRequest = true,
+                        clientSession = { it.assertOnDispatcherForTest = true },
+                    ) { c, _ ->
+                        val r = c.request(http3Request("GET", "server.test", "/again"))
+                        assertEquals(204, r.status)
+                        r.updatePriority(io.kuicksilver.quic.StreamPriority(urgency = 1, incremental = false)) // from this thread
+                        assertTrue(!c.session.closed.isCompleted)
+                    }
+                assertEquals(false, accepted)
             }
         }
 

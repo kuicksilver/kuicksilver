@@ -146,14 +146,15 @@ internal suspend fun H3Session.request(
         } catch (e: Throwable) {
             if (!early || H3Session.transportCause(e) !is QuicException.StreamError.EarlyDataRejected) throw e
             quic.awaitHandshake()
-            noteRejectedZeroRtt() // before anything of the request sent again is read
-            earlyRejectedRetries++
+            // on the session's dispatcher, before anything of the request sent again is read
+            noteRejectedZeroRtt()
+            withContext(dispatcher) { earlyRejectedRetries++ }
             return requestOnce(r, keepOpen, caller)
         }
     if (!early || first.status != 425) return first
     runCatching { first.body.cancel() }
     quic.awaitHandshake()
-    early425Retries++
+    withContext(dispatcher) { early425Retries++ }
     return requestOnce(r, keepOpen, caller)
 }
 

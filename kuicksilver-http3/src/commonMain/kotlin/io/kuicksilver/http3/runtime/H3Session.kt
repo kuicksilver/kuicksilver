@@ -212,6 +212,17 @@ internal class H3Session(
     /** Client: the rejected 0-RTT was noted ([noteRejectedZeroRtt]). Dispatcher only. */
     private var zeroRttRejectionNoted = false
 
+    /** Test hook: fail when the critical-stream bookkeeping runs anywhere but on [dispatcher] (review 2026-10-28 N3). */
+    @kotlin.concurrent.Volatile
+    internal var assertOnDispatcherForTest = false
+
+    /** Throws under [assertOnDispatcherForTest] when the caller is not on [dispatcher]. */
+    private suspend fun checkOnDispatcher() {
+        if (assertOnDispatcherForTest) {
+            check(currentCoroutineContext()[kotlin.coroutines.ContinuationInterceptor] === dispatcher) { "off the session's dispatcher" }
+        }
+    }
+
     private val controlLock = Mutex()
     private val encoderLock = Mutex()
     private val decoderLock = Mutex()
@@ -223,43 +234,46 @@ internal class H3Session(
         )
 
     /**
-     * Writes [b] on our critical stream [pick] once the streams are open. Bytes made for streams a rejected 0-RTT dropped
-     * (an older [criticalGen], or a write the drop failed) never reach the newer ones: QPACK instructions made then can only
-     * be about early request streams the server never saw, whose IDs the requests sent again reuse (a Stream Cancellation
-     * there would cancel the new request's sections, review 2026-10-28 H3C-1). [again] says whether such a frame is still
-     * wanted on the new control stream (a GOAWAY is).
+     * Writes [b] on our critical stream [pick] once the streams are open, on the session's dispatcher (the bookkeeping
+     * below is the dispatcher's alone; callers such as `updatePriority` run on the application's thread). Bytes made for
+     * streams a rejected 0-RTT dropped (an older [criticalGen], or a write the drop failed) never reach the newer ones:
+     * QPACK instructions made then can only be about early request streams the server never saw, whose IDs the requests
+     * sent again reuse (a Stream Cancellation there would cancel the new request's sections, review 2026-10-28 H3C-1).
+     * [again] says whether such a frame is still wanted on the new control stream (a GOAWAY is).
      */
     private suspend fun writeCritical(
         lock: Mutex,
         pick: (Critical) -> QuicStream,
         b: ByteArray,
-        again: () -> Boolean = { false },
-    ) {
-        var gen = criticalGen
-        while (true) {
-            awaitCriticalStreams()
-            val written =
-                lock.withLock {
-                    val c = critical
-                    if (gen != criticalGen || c == null) return@withLock false
-                    try {
-                        pick(c).output.writeFully(b)
-                        pick(c).output.flush()
-                        true
-                    } catch (e: CancellationException) {
-                        throw e
-                    } catch (e: Throwable) {
-                        if (transportCause(e) !is QuicException.StreamError.EarlyDataRejected) throw e
-                        false
+        again: (() -> Boolean)? = null,
+    ): Unit =
+        withContext(dispatcher) {
+            checkOnDispatcher()
+            var gen = criticalGen
+            while (true) {
+                awaitCriticalStreams()
+                val written =
+                    lock.withLock {
+                        val c = critical
+                        if (gen != criticalGen || c == null) return@withLock false
+                        try {
+                            pick(c).output.writeFully(b)
+                            pick(c).output.flush()
+                            true
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (e: Throwable) {
+                            if (transportCause(e) !is QuicException.StreamError.EarlyDataRejected) throw e
+                            false
+                        }
                     }
-                }
-            if (written) return
-            // the stream it was for is gone with the rejected 0-RTT
-            noteRejectedZeroRtt()
-            if (!again()) return
-            gen = criticalGen
+                if (written) return@withContext
+                // the stream it was for is gone with the rejected 0-RTT
+                noteRejectedZeroRttHere()
+                if (again == null || !again()) return@withContext
+                gen = criticalGen
+            }
         }
-    }
 
     /** [st] was dropped by the server's rejection of 0-RTT (RFC 9001 section 4.6.2): the server never saw anything of it. */
     fun droppedByRejectedZeroRtt(st: QuicStream): Boolean {
@@ -274,7 +288,7 @@ internal class H3Session(
      */
     suspend fun cancelSections(st: QuicStream) {
         if (droppedByRejectedZeroRtt(st)) return
-        qpack.cancelStream(st.id)
+        withContext(dispatcher) { qpack.cancelStream(st.id) } // QPACK is the dispatcher's
     }
 
     /**
@@ -282,9 +296,13 @@ internal class H3Session(
      * including application state bound to those streams"). Runs before anything of the server is read (the accept loop and
      * the request sent again call it first), so whatever QPACK holds unsent can only be about the dropped streams: it goes.
      * Critical streams the rejection dropped are given up, and [criticalStreamsLoop] opens new ones and sends SETTINGS again.
-     * Idempotent; dispatcher only.
+     * Idempotent; on the session's dispatcher, whoever calls it.
      */
-    fun noteRejectedZeroRtt() {
+    suspend fun noteRejectedZeroRtt() = withContext(dispatcher) { noteRejectedZeroRttHere() }
+
+    /** [noteRejectedZeroRtt], for a caller already on the dispatcher. */
+    private suspend fun noteRejectedZeroRttHere() {
+        checkOnDispatcher()
         if (isServer || zeroRttRejectionNoted || quic.earlyDataAccepted != false) return
         zeroRttRejectionNoted = true
         qpack.onEarlyDataRejected()
@@ -405,7 +423,7 @@ internal class H3Session(
         datagrams.start()
         if (isServer) return
         try {
-            awaitCriticalStreams()
+            withContext(dispatcher) { awaitCriticalStreams() }
         } catch (e: Http3Exception) {
             if (goAwayReceived.value == null) throw e
         }
@@ -428,7 +446,7 @@ internal class H3Session(
             } catch (_: Throwable) {
                 return // the connection is gone: its closed handler reports it
             }
-            noteRejectedZeroRtt()
+            noteRejectedZeroRttHere()
             if (opened && gen == criticalGen) return
         }
     }
@@ -585,7 +603,7 @@ internal class H3Session(
                     return
                 }
             // nothing of the server is read before a rejected 0-RTT is noted: QPACK must have forgotten the early streams first
-            noteRejectedZeroRtt()
+            noteRejectedZeroRttHere()
             // the peer's streams are read to their end even when the connection is lost (drains)
             if (st.id and 2L != 0L) {
                 drains(scope.launch { guarded { readUni(st) } })
@@ -1185,7 +1203,15 @@ internal class H3Session(
         return if (q is QuicException.ConnectionLost && closed.isCompleted) closed.getCompleted() else Http3Exception.fromQuic(q)
     }
 
+    init {
+        createdForTest?.invoke(this) // last: every property above is set
+    }
+
     companion object {
+        /** Test hook: sees every session as it is made, before it starts (to install the per-session hooks). */
+        @kotlin.concurrent.Volatile
+        internal var createdForTest: ((H3Session) -> Unit)? = null
+
         /** A client that started a request before GOAWAY gets this long to finish its HEADERS (no RFC value; see docs/guide/http3.md). */
         val HEADER_DEADLINE_AFTER_GOAWAY: Duration = 10.seconds
         val GOAWAY_CLOSE_FALLBACK: Duration = 3.seconds
