@@ -248,6 +248,9 @@ internal class H3Session(
     /** Test view of the highest client bidirectional stream handed to request handling, -1 before any. */
     internal val acceptedBidiUpToForTest: Long get() = acceptedBidiUpTo
 
+    /** Whether this session's wait for the peer's control stream ([awaitPeerControlRead]) ran into its bound; null: none ran. */
+    @kotlin.concurrent.Volatile internal var peerControlWaitTimedOut: Boolean? = null
+
     /** Test hook: bidirectional streams the accept loop took after the connection was lost and dropped. Dispatcher only. */
     @kotlin.concurrent.Volatile internal var bidiDroppedAfterLossForTest = 0
 
@@ -279,6 +282,7 @@ internal class H3Session(
      * or the server's that came first, is no failure of the connection to report. Every other error still fails the start.
      */
     suspend fun start(criticalStreamsDeadline: Duration = CRITICAL_STREAMS_DEADLINE) {
+        startingForTest?.invoke(this)
         scope.launch {
             val e = quic.closed.await()
             onTransportClosed(e)
@@ -320,7 +324,10 @@ internal class H3Session(
      * order the two were dispatched in.
      */
     private suspend fun awaitPeerControlRead() {
-        if (goAwayReceived.value != null) return
+        if (goAwayReceived.value != null) {
+            peerControlWaitTimedOut = false
+            return
+        }
         val settled =
             withTimeoutOrNull(DRAIN_GRACE) {
                 coroutineScope {
@@ -332,7 +339,7 @@ internal class H3Session(
                     goAway.cancel()
                 }
             }
-        peerControlWaitTimedOutForTest = settled == null
+        peerControlWaitTimedOut = settled == null
     }
 
     /**
@@ -442,6 +449,9 @@ internal class H3Session(
             fail(e.code, e.message ?: "")
         } catch (e: QuicException.ConnectionLost) {
         } catch (e: Throwable) {
+            // the transport is gone (ktor-io wraps its cause, a ClosedWriteChannelException carrying ZeroRttRejected for
+            // one): the close reports it, never an H3_INTERNAL_ERROR of ours that races it to complete [closed]
+            if (transportCause(e) is QuicException.ConnectionLost) return
             if (!closed.isCompleted) {
                 fail(
                     Http3ErrorCode.INTERNAL_ERROR,
@@ -1046,13 +1056,13 @@ internal class H3Session(
         @kotlin.concurrent.Volatile
         internal var beforeGoAwayForTest: (suspend (H3Session) -> Unit)? = null
 
+        /** Test hook: sees every session as its start begins. */
+        @kotlin.concurrent.Volatile
+        internal var startingForTest: ((H3Session) -> Unit)? = null
+
         /** Test hook: runs before each accept of a peer stream, so a test can let the peer's close come first. */
         @kotlin.concurrent.Volatile
         internal var beforeAcceptForTest: (suspend (H3Session) -> Unit)? = null
-
-        /** Test hook: whether the last wait for the peer's control stream ([awaitPeerControlRead]) ran into its bound. */
-        @kotlin.concurrent.Volatile
-        internal var peerControlWaitTimedOutForTest: Boolean? = null
 
         /** A client that started a request before GOAWAY gets this long to finish its HEADERS (no RFC value; see docs/guide/http3.md). */
         val HEADER_DEADLINE_AFTER_GOAWAY: Duration = 10.seconds
