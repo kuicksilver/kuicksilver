@@ -27,7 +27,9 @@ lines of the compose output and its log directory) holds the line Main.kt prints
 <...>Timeout: Idle timeout after <duration>", and no stack trace, uncaught exception or other exception or error line; and
 its one qlog shows the connection closed by the idle timer (trigger idle_timeout) at least that duration after the last packet
 it received and, less the 0.5 s an ACK may wait, after the last packet it sent. Its last sent packet is its last one from B:
-on the server-side capture it sent from no later binding. A client that died of anything else between the rebind and its
+on the server-side capture it sent from no later binding. And it had nothing to send: its last recovery:metrics_updated has
+bytes_in_flight 0 and every packet it sent after that is ACK-only (no frames in the qlog's packet_sent), so no PTO was due
+(RFC 9002 section 6.2); a client that went quiet with something in flight has a broken loss timer, not an idle connection. A client that died of anything else between the rebind and its
 idle timeout (an exception, a crash, an early exit) is no ENVIRONMENT verdict. Anything else is none either.
 
 Usage: prohibited-port-rebind.py CELL_DIR          decodes the cell's output.txt, server log, client log and qlog and
@@ -135,12 +137,13 @@ def client_log(cell):
 
 
 def client_qlogs(cell):
-    """Per qlog of the client: the trigger and time (s) of its connection_closed, and of its last sent and received packet."""
+    """Per qlog of the client: the trigger and time (s) of its connection_closed, of its last sent and received packet, the
+    bytes_in_flight of its last recovery:metrics_updated, and how many packets it sent after that with frames recovery tracks."""
     result = []
     for root, _, files in os.walk(os.path.join(cell, "client")):
         for name in sorted(files):
             if not name.endswith((".sqlog", ".qlog")): continue
-            q = {"trigger": None, "closed": None, "last_sent": None, "last_received": None}
+            q = {"trigger": None, "closed": None, "last_sent": None, "last_received": None, "bytes_in_flight": None, "tracked_after": 0}
             with open(os.path.join(root, name), errors="replace") as f:
                 for line in f:
                     line = line.strip().lstrip("\x1e")
@@ -149,7 +152,12 @@ def client_qlogs(cell):
                     except ValueError: continue
                     if not isinstance(e, dict) or "time" not in e: continue
                     t, ev = round(float(e["time"]) / 1000.0, 6), e.get("name")  # qlog ms, to s (µs, no float noise)
-                    if ev == "transport:packet_sent": q["last_sent"] = t
+                    if ev == "transport:packet_sent":
+                        q["last_sent"] = t
+                        # QlogWriter lists the frames recovery tracks (ack-eliciting ones, ACK with them); none: ACK-only
+                        if e.get("data", {}).get("frames"): q["tracked_after"] += 1
+                    elif ev == "recovery:metrics_updated":
+                        q["bytes_in_flight"], q["tracked_after"] = e.get("data", {}).get("bytes_in_flight"), 0
                     elif ev == "transport:packet_received": q["last_received"] = t
                     elif ev == "connectivity:connection_closed": q["closed"], q["trigger"] = t, e.get("data", {}).get("trigger")
             result.append(q)
@@ -184,6 +192,9 @@ def idled_out(d):
     if not isinstance(idle, (int, float)) or idle <= 0 or len(qlogs) != 1: return False
     q = qlogs[0]
     if q["trigger"] != "idle_timeout" or any(not isinstance(q[k], (int, float)) for k in ("closed", "last_sent", "last_received")): return False
+    # it had nothing to send: nothing in flight at its last recovery update, and only ACK-only packets after it (a client
+    # with an ack-eliciting packet outstanding must probe, RFC 9002 6.2; one that stayed silent then is broken, not idle)
+    if q["bytes_in_flight"] != 0 or q["tracked_after"] != 0: return False
     return q["closed"] - q["last_received"] >= idle - 1e-3 and q["closed"] - q["last_sent"] >= idle - ACK_WAIT_S
 
 

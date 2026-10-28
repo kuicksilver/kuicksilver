@@ -205,7 +205,9 @@
    "trigger": "idle_timeout",
    "closed": 39.148874,
    "last_sent": 9.148449,
-   "last_received": 9.148436
+   "last_received": 9.148436,
+   "bytes_in_flight": 0,
+   "tracked_after": 0
   }
  ]
 }
