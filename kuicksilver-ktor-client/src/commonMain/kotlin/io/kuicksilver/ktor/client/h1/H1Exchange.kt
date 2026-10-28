@@ -283,12 +283,15 @@ internal suspend fun readResponse(
         var rawResponse: io.ktor.http.cio.Response
         val interim = InterimHeads("the final response")
         var unsentBody = continueBody
+        var kept: List<KeptFieldValue>
         while (true) {
-            val bytes =
+            val read =
                 readResponseHead(input, head)
                     ?: throw ClosedReadChannelException(
                         EOFException("Failed to parse HTTP response: the server prematurely closed the connection"),
                     )
+            val bytes = read.bytes
+            kept = read.keptValues
             rawResponse = parseResponse(ByteReadChannel(bytes))
                 ?: throw ParserException("Failed to parse HTTP response")
             // an interim 1xx (100 Continue, 103 Early Hints) is not the response: drop it and read the next head (RFC 9110 section 15.2)
@@ -306,13 +309,25 @@ internal suspend fun readResponse(
         rawResponse.use {
             val status = HttpStatusCode(rawResponse.status, rawResponse.statusText.toString())
             val version = HttpProtocolVersion.parse(rawResponse.version)
-            val framing = ResponseFraming.of(rawResponse.headers, http10 = version == HttpProtocolVersion.HTTP_1_0)
-            val connectionType = ConnectionOptions.parse(rawResponse.headers.joined(HttpHeaders.Connection))
+            val fields = responseFields(rawResponse.headers, kept)
+            val framing = ResponseFraming.of(fields, http10 = version == HttpProtocolVersion.HTTP_1_0)
+            val connectionType =
+                ConnectionOptions.parse(
+                    fields.valuesOf(HttpHeaders.Connection).takeIf { it.isNotEmpty() }?.joinToString(","),
+                )
             // Transfer-Encoding overrides Content-Length (RFC 9112 section 6.3 item 3): the stale length is not shown to Ktor,
             // which would check the body against it
             val headers =
                 HeadersImpl(
-                    rawResponse.headers.toMap().let { if (framing.transferEncoding != null) it - HttpHeaders.ContentLength else it },
+                    fields.let {
+                        if (framing.transferEncoding !=
+                            null
+                        ) {
+                            it.filterKeys { k -> !k.equals(HttpHeaders.ContentLength, ignoreCase = true) }
+                        } else {
+                            it
+                        }
+                    },
                 )
             // a request that said `Connection: close` is the last one on the connection (RFC 9112 section 9.6); a response
             // with both Content-Length and Transfer-Encoding may be a smuggling or splitting attempt (section 6.3 item 3)
@@ -358,7 +373,7 @@ internal suspend fun readResponse(
                     framing.invalidLength -> {
                         throw ParserException(
                             "Invalid or conflicting Content-Length in the response: " +
-                                rawResponse.headers.getAll(HttpHeaders.ContentLength).joinToString(),
+                                fields.valuesOf(HttpHeaders.ContentLength).joinToString(),
                         )
                     }
 
@@ -367,7 +382,7 @@ internal suspend fun readResponse(
                     framing.invalidEncoding -> {
                         throw ParserException(
                             "Invalid Transfer-Encoding in the response: " +
-                                rawResponse.headers.getAll(HttpHeaders.TransferEncoding).joinToString(),
+                                fields.valuesOf(HttpHeaders.TransferEncoding).joinToString(),
                         )
                     }
 
@@ -403,13 +418,13 @@ internal suspend fun readResponse(
     }
 
 /**
- * The bytes of one response head from [input] ([readResponseHeadBytes]), within [head]'s size limit when there is one;
- * null when the connection ended before it.
+ * One response head from [input] ([readResponseHeadBytes]), within [head]'s size limit when there is one; null when the
+ * connection ended before it.
  */
 private suspend fun readResponseHead(
     input: ByteReadChannel,
     head: HeadLimitedInput?,
-): ByteArray? {
+): ResponseHeadBytes? {
     head?.startHead()
     val bytes =
         try {
@@ -455,7 +470,7 @@ internal suspend fun startTunnel(
         var rawResponse: io.ktor.http.cio.Response
         while (true) {
             val bytes =
-                readResponseHeadBytes(input, MAX_RESPONSE_HEAD_BYTES)
+                readResponseHeadBytes(input, MAX_RESPONSE_HEAD_BYTES)?.bytes
                     ?: throw ClosedReadChannelException(EOFException("Failed to parse CONNECT response: unexpected EOF"))
             rawResponse = parseResponse(ByteReadChannel(bytes))
                 ?: throw ParserException("Failed to parse CONNECT response")
@@ -481,7 +496,6 @@ internal suspend fun startTunnel(
 }
 
 /** All values of [name], comma-joined (RFC 9110 section 5.3), or null when absent. */
-private fun HttpHeadersMap.joined(name: String): String? = getAll(name).toList().takeIf { it.isNotEmpty() }?.joinToString(",")
 
 /**
  * How a response body ends (RFC 9112 section 6.3), for a response that has one: by the chunked coding when it is the final
@@ -534,10 +548,10 @@ internal class ResponseFraming private constructor(
 
     companion object {
         fun of(
-            headers: HttpHeadersMap,
+            headers: Map<String, List<String>>,
             http10: Boolean = false,
         ): ResponseFraming {
-            val teValues = headers.getAll(HttpHeaders.TransferEncoding).toList()
+            val teValues = headers.valuesOf(HttpHeaders.TransferEncoding)
             val te = teValues.takeIf { it.isNotEmpty() }?.joinToString(",")
             if (http10 && te != null) {
                 return ResponseFraming(te, -1L, invalidLength = false, invalidEncoding = false, lengthAndEncoding = false, chunked = false)
@@ -547,7 +561,7 @@ internal class ResponseFraming private constructor(
             val invalidEncoding =
                 te != null &&
                     (codings == null || codings.count { it.name == "chunked" } > 1 || (last?.name == "chunked" && last.hasParameters))
-            val values = headers.getAll(HttpHeaders.ContentLength).toList()
+            val values = headers.valuesOf(HttpHeaders.ContentLength)
             val length = if (values.isEmpty()) -1L else contentLengthOf(values)
             return ResponseFraming(
                 transferEncoding = te,
@@ -560,6 +574,10 @@ internal class ResponseFraming private constructor(
         }
     }
 }
+
+/** The values of [name] in these fields, in order, whatever the spelling of the name. */
+internal fun Map<String, List<String>>.valuesOf(name: String): List<String> =
+    entries.filter { it.key.equals(name, ignoreCase = true) }.flatMap { it.value }
 
 internal fun HttpHeadersMap.toMap(): Map<String, List<String>> {
     val result = mutableMapOf<String, MutableList<String>>()

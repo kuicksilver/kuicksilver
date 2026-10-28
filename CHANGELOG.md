@@ -498,7 +498,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   and 8.6, RFC 9112 section 6.3 item 5). `Content-Length: 5<VT>` framed a 5-byte body and `Transfer-Encoding:
   chunked<U+00A0>` a chunked one, so with a proxy in front that framed the response otherwise the bytes behind it
   became the response to the next request (response splitting). A `Transfer-Encoding` that is not a list of transfer
-  codings or that applies `chunked` twice (RFC 9112 section 6.1) fails the same way.
+  codings or that applies `chunked` twice (RFC 9112 section 6.1) fails the same way. So does one that starts with a
+  Unicode space (`Transfer-Encoding: <U+00A0>chunked`, `Content-Length: <U+00A0>5`), which Ktor's parser skipped:
+  any response field value that starts with one (obs-text, opaque field content, RFC 9110 section 5.5) now reaches the
+  application as sent, as on the server.
 - Ktor server, HTTP/1.1: a response no longer carries both `Content-Length` and `Transfer-Encoding` (RFC 9112 section
   6.2: a sender MUST NOT). A `Content-Length` the application set on a streamed response, which Ktor frames with
   `Transfer-Encoding: chunked`, is dropped; before, both went out, and a client or proxy that framed the response by

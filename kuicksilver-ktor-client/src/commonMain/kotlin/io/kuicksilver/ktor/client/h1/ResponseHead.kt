@@ -27,18 +27,31 @@ import kotlinx.io.readByteArray
  * An obs-fold (a field line that starts with SP or HTAB continues the one before) is replaced with one SP, as a user
  * agent MUST (RFC 9112 section 5.2); such a line right after the status line continues no field and fails with
  * [ParserException] (section 2.2 allows rejecting it). The status line is checked and normalized by [statusLineOf].
+ *
+ * A field value that starts with obs-text decoding to a Unicode space (U+00A0, ...) is returned as sent in
+ * [ResponseHeadBytes.keptValues]: OWS is only SP and HTAB (RFC 9110 section 5.6.3), obs-text is field content a recipient
+ * SHOULD treat as opaque data (section 5.5), but Ktor's parser skips any Unicode whitespace before a value
+ * ([responseFields] puts such values back).
  */
 @OptIn(InternalAPI::class)
 internal suspend fun readResponseHeadBytes(
     input: ByteReadChannel,
     maxBytes: Int,
-): ByteArray? {
+): ResponseHeadBytes? {
     val head = Buffer()
     val line = Buffer()
     var taken = 0
     var statusLine = true
     // the field line read last, held back while the next line may continue it (obs-fold)
     var field: ByteArray? = null
+    val kept = ArrayList<KeptFieldValue>(0)
+    val occurrences = HashMap<String, Int>()
+
+    fun writeField(f: ByteArray) {
+        keptValueOf(f, occurrences)?.let { kept += it }
+        head.write(f)
+        head.write(CRLF)
+    }
     while (true) {
         if (input.readBuffer.exhausted() && !input.awaitContent()) {
             if (taken == 0) return null
@@ -66,12 +79,9 @@ internal suspend fun readResponseHeadBytes(
                 }
 
                 content.isEmpty() -> {
-                    field?.let {
-                        head.write(it)
-                        head.write(CRLF)
-                    }
+                    field?.let { writeField(it) }
                     head.write(CRLF)
-                    return head.readByteArray()
+                    return ResponseHeadBytes(head.readByteArray(), kept)
                 }
 
                 isOws(content[0]) -> {
@@ -80,10 +90,7 @@ internal suspend fun readResponseHeadBytes(
                 }
 
                 else -> {
-                    field?.let {
-                        head.write(it)
-                        head.write(CRLF)
-                    }
+                    field?.let { writeField(it) }
                     field = content
                 }
             }
@@ -124,6 +131,105 @@ private fun statusLineOf(line: ByteArray): ByteArray {
 }
 
 private val HTTP_SLASH = "HTTP/".encodeToByteArray()
+
+/** One response head as [readResponseHeadBytes] read it: the [bytes] for Ktor's parser, and the values it would change. */
+internal class ResponseHeadBytes(
+    val bytes: ByteArray,
+    val keptValues: List<KeptFieldValue>,
+)
+
+/**
+ * A field value as the server sent it, for the [occurrence]-th field line (from 0) named [name] (lower case): one that
+ * Ktor's parser would hand on changed.
+ */
+internal class KeptFieldValue(
+    val name: String,
+    val occurrence: Int,
+    val value: String,
+)
+
+/**
+ * The value of the field line [f] (name, colon, value; unfolded, without its line end) when it starts, after OWS, with a
+ * Unicode space Ktor's parser would skip, without its trailing OWS; null otherwise. Counts the line's name in
+ * [occurrences] either way.
+ */
+private fun keptValueOf(
+    f: ByteArray,
+    occurrences: MutableMap<String, Int>,
+): KeptFieldValue? {
+    val colon = f.indexOf(':'.code.toByte())
+    if (colon <= 0) return null // not a field line: Ktor's parser refuses it
+    val name = f.decodeToString(0, colon).lowercase()
+    val occurrence = occurrences[name] ?: 0
+    occurrences[name] = occurrence + 1
+    var start = colon + 1
+    while (start < f.size && isOws(f[start])) start++
+    if (start == f.size || unicodeSpaceLength(f, start) == 0) return null
+    var end = f.size
+    while (end > start && isOws(f[end - 1])) end--
+    return KeptFieldValue(name, occurrence, f.decodeToString(start, end))
+}
+
+/**
+ * The fields of a parsed response head as the server sent them: Ktor's [headers], with the values in [kept] put back
+ * (as [readResponseHeadBytes] found them). Every reader of a response field in the engine and the application reads this.
+ */
+internal fun responseFields(
+    headers: io.ktor.http.cio.HttpHeadersMap,
+    kept: List<KeptFieldValue>,
+): Map<String, List<String>> {
+    if (kept.isEmpty()) return headers.toMap()
+    val seen = HashMap<String, Int>()
+    val result = LinkedHashMap<String, MutableList<String>>()
+    for (offset in headers.offsets()) {
+        val key = headers.nameAtOffset(offset).toString()
+        val lower = key.lowercase()
+        val occurrence = seen[lower] ?: 0
+        seen[lower] = occurrence + 1
+        val value = kept.firstOrNull { it.name == lower && it.occurrence == occurrence }?.value ?: headers.valueAtOffset(offset).toString()
+        result.getOrPut(key) { ArrayList(1) } += value
+    }
+    return result
+}
+
+/**
+ * The length of the UTF-8 sequence at [i] when it encodes a character above U+007F that Kotlin's `Char.isWhitespace` takes
+ * as whitespace (U+00A0, U+1680, U+2000 to U+200A, U+2028, U+2029, U+202F, U+205F, U+3000), else 0: Ktor's parser
+ * decodes the head as UTF-8 and skips such characters before a value. The same as the server engine's.
+ */
+private fun unicodeSpaceLength(
+    bytes: ByteArray,
+    i: Int,
+): Int {
+    fun at(k: Int) = if (i + k < bytes.size) bytes[i + k].toInt() and 0xFF else -1
+    return when (at(0)) {
+        0xC2 -> {
+            if (at(1) == 0xA0) 2 else 0
+        }
+
+        0xE1 -> {
+            if (at(1) == 0x9A && at(2) == 0x80) 3 else 0
+        }
+
+        0xE2 -> {
+            val b1 = at(1)
+            val b2 = at(2)
+            when {
+                b1 == 0x80 && (b2 in 0x80..0x8A || b2 == 0xA8 || b2 == 0xA9 || b2 == 0xAF) -> 3
+                b1 == 0x81 && b2 == 0x9F -> 3
+                else -> 0
+            }
+        }
+
+        0xE3 -> {
+            if (at(1) == 0x80 && at(2) == 0x80) 3 else 0
+        }
+
+        else -> {
+            0
+        }
+    }
+}
 
 private fun isOws(b: Byte) = b == SP || b == HTAB
 

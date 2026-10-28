@@ -222,6 +222,34 @@ class H1ResponseHeadTest {
             }
         }
 
+    /**
+     * OWS is only SP and HTAB (RFC 9110 section 5.6.3) and obs-text is field content a recipient SHOULD treat as opaque
+     * data (section 5.5), but Ktor's parser skips any Unicode whitespace before a value. A value that starts with
+     * U+00A0 (or another Unicode space, sent as obs-text) is kept as sent, as the server does for requests: the
+     * application sees it, and a Content-Length or Transfer-Encoding with it is invalid (RFC 9112 section 6.3 items 4 and
+     * 5: the framing is unknown, the response is discarded and the connection closed). Before, `Transfer-Encoding:
+     * <U+00A0>chunked` framed the body as chunked while a recipient that reads OWS as SP and HTAB only sees no coding it
+     * knows, and `Content-Length: <U+00A0>5` framed 5 bytes.
+     */
+    @Test fun negative_unicodeSpaceBeforeAFramingValueIsInvalid() =
+        runTest(timeout = 20.seconds) {
+            for (field in listOf("Transfer-Encoding: \u00a0chunked", "Content-Length: \u00a05", "Content-Length: \u20035")) {
+                val wire = Wire()
+                server(wire) { send -> send("HTTP/1.1 200 OK\r\n$field\r\n\r\n5\r\nhello\r\n0\r\n\r\n") }
+                assertFailsWith<ParserException>(field) { exchange(wire, get) }
+            }
+        }
+
+    /** Any other value that starts with a Unicode space reaches the application as sent. */
+    @Test fun unicodeSpaceBeforeAFieldValueIsKept() =
+        runTest(timeout = 20.seconds) {
+            val wire = Wire()
+            server(wire) { send -> send("HTTP/1.1 200 OK\r\nX-A: b\r\nX-A: \u00a0a \r\nX-B: \u3000c\r\nContent-Length: 0\r\n\r\n") }
+            val response = exchange(wire, get)
+            assertEquals(listOf("b", "\u00a0a"), response.headers.getAll("X-A"))
+            assertEquals("\u3000c", response.headers["x-b"])
+        }
+
     /** A status line without a reason phrase is accepted, with or without the SP before it (as Go and OkHttp). */
     @Test fun statusLineWithoutReasonPhraseIsAccepted() =
         runTest(timeout = 20.seconds) {
