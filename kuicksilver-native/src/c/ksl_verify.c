@@ -43,15 +43,17 @@ int ksl_cert_verify_cb(X509_STORE_CTX *xctx, void *arg) {
     (void)arg;
     SSL *ssl = X509_STORE_CTX_get_ex_data(xctx, SSL_get_ex_data_X509_STORE_CTX_idx());
     ksl_ssl *s = SSL_get_ex_data(ssl, 1); ksl_ctx *c = s->owner;
-    int peer_is_server = c->role == KSL_CLIENT;
+    /* the side comes from the SSL itself, not from the owner context: a context of the other role (an SNI override is refused one,
+       ksl_ssl_sni_resume) never changes whose rules apply */
+    int client = !SSL_is_server(ssl), peer_is_server = client;
     sk_X509_pop_free(s->presented_chain, X509_free); s->presented_chain = capture_presented(xctx);
     /* RFC 9846 appendix D, RFC 9325 section 3.6: a TLS 1.2 server without extended master secret is refused here, the first callback after its
        ServerHello, so that OpenSSL sends handshake_failure (X509_V_ERR_APPLICATION_VERIFICATION) before our Finished (RFC 9846
        section 6.1); the check after the handshake (ksl_drive) could only drop the connection without an alert */
-    if (c->role == KSL_CLIENT && s->mode == KSL_MODE_TCP && SSL_version(ssl) < TLS1_3_VERSION && !s->server_hello_ems) {
+    if (client && s->mode == KSL_MODE_TCP && SSL_version(ssl) < TLS1_3_VERSION && !s->server_hello_ems) {
         s->ems_refused = 1; X509_STORE_CTX_set_error(xctx, X509_V_ERR_APPLICATION_VERIFICATION); return 0;
     }
-    if (c->role == KSL_CLIENT && c->verify_mode == KSL_VERIFY_PAUSE) {
+    if (client && c->verify_mode == KSL_VERIFY_PAUSE) {
         /* statem_clnt.c: the pause happens only when the callback returns 1 AND retry_verify is set; 0 is a plain failure. */
         if (s->verify_pending == 0) { s->verify_pending = 1; (void)SSL_set_retry_verify(ssl); return 1; }
         if (s->verify_pending == 1) { (void)SSL_set_retry_verify(ssl); return 1; }

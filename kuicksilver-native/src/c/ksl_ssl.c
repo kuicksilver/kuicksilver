@@ -180,6 +180,9 @@ int ksl_ssl_client_hello(ksl_ssl *s, ksl_client_hello *out) {
 }
 int ksl_ssl_sni_resume(ksl_ssl *s, ksl_ctx *override, int alert) {
     if (!s->sni_pending) { ksl_ssl_set_error(s, KSL_E_NOT_PAUSED, "ksl: not paused at ClientHello"); return KSL_ERROR; }
+    /* the override's settings become the session's (ksl_client_hello_cb, ksl_ctx_apply_to_ssl): a client context's would judge
+       client certificates by a client's rules */
+    if (override && override->role != KSL_SERVER) { ERR_clear_error(); ksl_ssl_set_error(s, KSL_E_BAD_ARG, "ksl: an SNI override must be a server context"); return KSL_ERROR; }
     s->sni_pending = 2; s->sni_override = override; s->sni_decision_alert = alert; return KSL_OK;
 }
 

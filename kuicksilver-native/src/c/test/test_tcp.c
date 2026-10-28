@@ -144,7 +144,15 @@ static void test_sni_override_alpn(void) {
     CHECK(tcp_pump(c, s, on_sni, &a) == KSL_OK, "handshake with the override identity");
     uint8_t alpn[16]; size_t n; CHECK(ksl_ssl_get(c, KSL_GET_ALPN, alpn, sizeof alpn, &n) == KSL_OK && n == 2 && !memcmp(alpn, "h3", 2), "h3 selected from the override's list");
     CHECK(sc->alpn_len == sizeof ALPN_H3 && !memcmp(sc->alpn, ALPN_H3, sizeof ALPN_H3), "the base context's ALPN list is unchanged");
-    ksl_ssl_free(c); ksl_ssl_free(s); ksl_ctx_free(cc); ksl_ctx_free(sc); ksl_ctx_free(proxy); END();
+    ksl_ssl_free(c); ksl_ssl_free(s);
+    /* negative: an override must be a server context. A client context's settings (its verify mode among them: a client one under
+       KSL_VERIFY_NONE accepts every chain) would otherwise judge the server's client certificates */
+    ksl_ctx *client_role = client_ctx(NULL, KSL_VERIFY_NONE); ksl_ctx_freeze(client_role);
+    c = tcp_client(cc, "server.test"); s = ksl_ssl_new(sc, KSL_MODE_TCP); int rc = KSL_OK;
+    for (int i = 0; i < 10 && (rc = ksl_drive(s)) != KSL_WANT_SNI; i++) { ksl_drive(c); shuttle(c, s); }
+    CHECK(rc == KSL_WANT_SNI && ksl_ssl_sni_resume(s, client_role, 0) == KSL_ERROR && last_code(s, NULL) == KSL_E_BAD_ARG, "negative: a client-role context is refused as an SNI override");
+    CHECK(ksl_ssl_sni_resume(s, proxy, 0) == KSL_OK && tcp_pump(c, s, NULL, NULL) == KSL_OK, "control: a server override still works after the refusal");
+    ksl_ssl_free(c); ksl_ssl_free(s); ksl_ctx_free(client_role); ksl_ctx_free(cc); ksl_ctx_free(sc); ksl_ctx_free(proxy); END();
 }
 
 static ksl_session *client_session_after(ksl_ssl *c) { uint8_t buf[16]; size_t n; ksl_tcp_read(c, buf, sizeof buf, &n); return ksl_ssl_get1_session(c); }   /* consumes a NewSessionTicket */

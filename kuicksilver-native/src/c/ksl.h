@@ -210,7 +210,7 @@ int      ksl_ssl_get(ksl_ssl *, int what, uint8_t *out, size_t cap, size_t *len)
 int      ksl_ssl_get_peer_chain(ksl_ssl *, int which, int idx, uint8_t *out, size_t cap, size_t *len); /* idx -1 -> count; on a resumed session both selectors yield the peer leaf stored in the session */
 int      ksl_ssl_verify_resume(ksl_ssl *, int accept, int alert);   /* after KSL_WANT_VERIFY */
 int      ksl_ssl_client_hello(ksl_ssl *, ksl_client_hello *out);     /* during KSL_WANT_SNI */
-int      ksl_ssl_sni_resume(ksl_ssl *, ksl_ctx *override_or_null, int alert); /* after KSL_WANT_SNI */
+int      ksl_ssl_sni_resume(ksl_ssl *, ksl_ctx *override_or_null, int alert); /* after KSL_WANT_SNI; the override is a server context (KSL_E_BAD_ARG otherwise) */
 int      ksl_ssl_export_keying_material(ksl_ssl *, uint8_t *out, size_t out_len, const char *label, size_t label_len, const uint8_t *context, size_t context_len);
 ksl_session *ksl_ssl_get1_session(ksl_ssl *);                     /* client: the resumable session (a new reference) or NULL; the same pointer until the session changes */
 int      ksl_ssl_set_session(ksl_ssl *, ksl_session *);           /* client, before the handshake; the caller keeps its reference */
