@@ -116,6 +116,17 @@ class Socks5Test {
         assertTrue(long is IllegalArgumentException, "a name longer than 255 bytes: $long")
     }
 
+    /**
+     * RFC 1929 section 2: "The PASSWD field contains the password association with the given UNAME" and PLEN is 1 to 255
+     * octets, so an empty password cannot be sent; it fails before anything is sent (the engine's configuration refuses
+     * it earlier, see ClientSocksProxyTest).
+     */
+    @Test fun negative_socksEmptyPasswordRejected() {
+        val (sent, failure) = handshake(bytes(5, 2, 1, 0) + ok, credentials = ProxyCredentials("u", ""))
+        assertTrue(failure is IllegalArgumentException, "$failure")
+        assertEquals(0, sent.size, "something was sent before the credentials were checked")
+    }
+
     @Test fun socksReplyCodesMapped() {
         val e = handshake(bytes(5, 0, 5, 5, 0, 1, 0, 0, 0, 0, 0, 0)).second
         assertTrue(e is ProxyException && e.replyCode == 5 && "connection refused" in e.message!!, "$e")

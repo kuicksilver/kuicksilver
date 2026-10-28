@@ -173,6 +173,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   still receiving aborts that request with `H3_DATAGRAM_ERROR` (RFC 9297 section 2, MUST); and on a server every
   MAX_PUSH_ID after the first spends a glitch token, so a client that keeps re-sending it (some stacks send one with every
   push-credit update) meets `H3_EXCESSIVE_LOAD` once the bucket is empty (RFC 9114 section 10.5).
+- Ktor client: a SOCKS5 proxy configured with an empty password fails with `IllegalArgumentException` at once: the
+  engine's creation for its `proxy` with such `proxyCredentials` (or URL user info), `ResolvedProxy.socks5` for a
+  resolver's. RFC 1929 section 2 gives PASSWD 1 to 255 octets, so PLEN 0 is outside the protocol (curl and Go send it
+  anyway). Before, the empty password was sent. An HTTP proxy still takes an empty password (RFC 7617).
 - Ktor server, HTTP/1.1 (behaviour): the engine answers `501 Not Implemented` (with `Connection: close` and the text
   "This server does not support CONNECT tunnels.") when the application answers a CONNECT with a 2xx, and logs a
   warning in the application log. A 2xx to CONNECT says the server "will switch to tunnel mode immediately after the

@@ -216,7 +216,9 @@ public class KuicksilverEngineConfig : HttpClientEngineConfig() {
      * sent with the first request (no 407 round trip) unless the request sets its own `Proxy-Authorization`. Off the JVM
      * the proxy URL's user info (`http://user:password@proxy:3128`) wins over these. Null (the default) for none. Both go
      * in clear to the proxy (RFC 1929 section 5, RFC 7617 section 4), never to the origin, and never into the engine's
-     * logs or events.
+     * logs or events. A SOCKS5 `proxy` with an empty password (here or in its URL) fails the engine's creation with
+     * [IllegalArgumentException]: RFC 1929 section 2 gives the password 1 to 255 octets (curl and Go send an empty one
+     * anyway, outside the protocol).
      */
     @ExperimentalKuicksilverApi
     public var proxyCredentials: ProxyCredentials? = null

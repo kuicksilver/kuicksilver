@@ -4,6 +4,8 @@
 
 package io.kuicksilver.ktor.client
 
+import io.ktor.client.engine.ProxyType
+import io.ktor.client.engine.type
 import io.ktor.http.Url
 import io.ktor.http.decodeURLPart
 import io.ktor.http.isSecure
@@ -480,6 +482,14 @@ internal class ProxyRouting(
     private val inFlight = HashMap<String, kotlinx.coroutines.Deferred<ResolvedProxy?>>()
     private val slots = kotlinx.coroutines.sync.Semaphore(MAX_ROUTES)
     private val warned = AtomicInt(0)
+
+    init {
+        // a SOCKS5 `proxy` whose credentials RFC 1929 cannot carry fails the engine's creation, not each request
+        val proxy = config.proxy
+        if (proxy != null && proxy.type == ProxyType.SOCKS) {
+            (proxy.platformProxyCredentials() ?: config.proxyCredentials)?.let { requireSocks5Password(it) }
+        }
+    }
 
     /** The engine's `proxy` with `proxyCredentials`, converted once (one credentials instance, so one pool route). */
     private val explicitProxy: Result<ResolvedProxy?> by lazy {

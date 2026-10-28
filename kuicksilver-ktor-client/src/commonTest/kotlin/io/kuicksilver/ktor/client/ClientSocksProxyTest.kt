@@ -4,6 +4,7 @@
 
 package io.kuicksilver.ktor.client
 
+import io.ktor.client.HttpClient
 import io.ktor.client.engine.ProxyBuilder
 import io.ktor.client.plugins.websocket.WebSockets
 import io.ktor.client.plugins.websocket.webSocket
@@ -53,6 +54,34 @@ import io.ktor.server.websocket.webSocket as serverWebSocket
 /** SOCKS5 proxies (RFC 1928, RFC 1929) and the HTTP proxy's CONNECT for WebSockets, through hand-driven loopback proxies. */
 class ClientSocksProxyTest {
     @BeforeTest fun load() = KslLoader.ensureLoaded()
+
+    /**
+     * RFC 1929 section 2 gives PASSWD 1 to 255 octets (PLEN 1..255), so a SOCKS5 proxy with an empty password is refused
+     * when it is configured: the engine's `proxy` with such `proxyCredentials` fails the engine's creation, and
+     * `ResolvedProxy.socks5` fails at once. An empty password stays allowed for an HTTP proxy (`Basic`, RFC 7617).
+     */
+    @Test fun negative_socks5ProxyWithAnEmptyPasswordIsAConfigurationError() {
+        val e =
+            assertFailsWith<IllegalArgumentException> {
+                HttpClient(Kuicksilver) {
+                    engine {
+                        proxy = ProxyBuilder.socks("127.0.0.1", 1080)
+                        proxyCredentials = ProxyCredentials("u", "")
+                    }
+                }.close()
+            }
+        assertTrue(e.message!!.contains("RFC 1929"), e.message)
+        assertFailsWith<IllegalArgumentException> { ResolvedProxy.socks5("proxy.test", 1080, ProxyCredentials("u", "")) }
+        assertFailsWith<IllegalArgumentException> { ResolvedProxy.socks5("proxy.test", 1080, ProxyCredentials("u", "p".repeat(256))) }
+        ResolvedProxy.socks5("proxy.test", 1080, ProxyCredentials("u", "p"))
+        ResolvedProxy.http("proxy.test", 3128, ProxyCredentials("u", ""))
+        HttpClient(Kuicksilver) {
+            engine {
+                proxy = ProxyBuilder.http(Url("http://127.0.0.1:3128"))
+                proxyCredentials = ProxyCredentials("u", "")
+            }
+        }.close()
+    }
 
     /** What a [socksProxy] saw: the methods offered, the RFC 1929 credentials, the CONNECT's ATYP and destination bytes. */
     private class Seen {

@@ -15,7 +15,10 @@ import kotlin.io.encoding.Base64
 /**
  * A user name and password for a proxy: SOCKS5 username/password authentication (RFC 1929) or HTTP `Basic`
  * (`Proxy-Authorization`, RFC 9110 section 11.7.2, RFC 7617). [toString] leaves the password out, and [hashCode]
- * depends on the user name only.
+ * depends on the user name only. For SOCKS5 the password must have 1 to 255 bytes in UTF-8: RFC 1929 section 2 gives
+ * PASSWD 1 to 255 octets (curl and Go's x/net/proxy send an empty one with PLEN 0, which the RFC does not allow), so a
+ * SOCKS5 proxy configured with an empty password fails at once with [IllegalArgumentException] (the engine's creation
+ * for its `proxy`, [ResolvedProxy.socks5] for a resolver's). An HTTP proxy takes an empty password (RFC 7617).
  */
 @ExperimentalKuicksilverApi
 public class ProxyCredentials(
@@ -74,6 +77,7 @@ public class ResolvedProxy private constructor(
     init {
         require(host.isNotEmpty()) { "a proxy needs a host" }
         require(port in 1..0xffff) { "proxy port out of range: $port" }
+        if (kind == Kind.Socks5) credentials?.let { requireSocks5Password(it) }
     }
 
     /** [ProxyType.HTTP] or [ProxyType.SOCKS] (SOCKS5). */
@@ -113,13 +117,28 @@ public class ResolvedProxy private constructor(
             credentials: ProxyCredentials? = null,
         ): ResolvedProxy = ResolvedProxy(Kind.Http, socketHost(host), port, credentials, remoteDns = true)
 
-        /** A SOCKS5 proxy at [host]:[port]; [remoteDns] true (`socks5h`) lets it resolve the origin's name. */
+        /**
+         * A SOCKS5 proxy at [host]:[port]; [remoteDns] true (`socks5h`) lets it resolve the origin's name. Fails with
+         * [IllegalArgumentException] for [credentials] whose password is empty or longer than 255 bytes (RFC 1929
+         * section 2: PASSWD has 1 to 255 octets).
+         */
         public fun socks5(
             host: String,
             port: Int,
             credentials: ProxyCredentials? = null,
             remoteDns: Boolean = true,
         ): ResolvedProxy = ResolvedProxy(Kind.Socks5, socketHost(host), port, credentials, remoteDns)
+    }
+}
+
+/**
+ * Refuses [credentials] whose password RFC 1929 section 2 cannot carry: PASSWD has 1 to 255 octets. curl and Go's
+ * x/net/proxy send an empty password as PLEN 0, outside the protocol; a proxy may read that as a malformed request.
+ */
+@OptIn(ExperimentalKuicksilverApi::class)
+internal fun requireSocks5Password(credentials: ProxyCredentials) {
+    require(credentials.password.encodeToByteArray().size in 1..255) {
+        "a SOCKS5 password has 1 to 255 bytes (RFC 1929 section 2: PASSWD is 1 to 255 octets); an empty one cannot be sent"
     }
 }
 

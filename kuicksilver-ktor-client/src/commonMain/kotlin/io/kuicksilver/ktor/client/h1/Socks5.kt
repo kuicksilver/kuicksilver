@@ -42,7 +42,7 @@ private const val CMD_CONNECT: Byte = 1
  * Fails with [ProxyException] when the proxy offers no method we proposed, rejects the credentials, answers with a reply
  * other than "succeeded" (its REP field as [ProxyException.replyCode]) or with a malformed reply, and with an
  * IllegalArgumentException, before anything is sent, for a user name, password or destination name longer than 255
- * bytes or an empty user name. [proxy] names the proxy in messages; the credentials never appear in them.
+ * bytes, an empty user name or an empty password (RFC 1929 section 2: UNAME and PASSWD have 1 to 255 octets). [proxy] names the proxy in messages; the credentials never appear in them.
  */
 @OptIn(ExperimentalKuicksilverApi::class)
 internal suspend fun socks5Connect(
@@ -57,7 +57,7 @@ internal suspend fun socks5Connect(
     val user = credentials?.user?.encodeToByteArray()
     val password = credentials?.password?.encodeToByteArray()
     if (user != null) require(user.size in 1..255) { "a SOCKS5 user name has 1 to 255 bytes (RFC 1929)" }
-    if (password != null) require(password.size <= 255) { "a SOCKS5 password has at most 255 bytes (RFC 1929)" }
+    if (password != null) require(password.size in 1..255) { "a SOCKS5 password has 1 to 255 bytes (RFC 1929 section 2)" }
     val name = (target as? Socks5Target.Domain)?.name?.encodeToByteArray()
     if (name != null) require(name.size in 1..255) { "a SOCKS5 destination name has 1 to 255 bytes (RFC 1928 section 5)" }
 

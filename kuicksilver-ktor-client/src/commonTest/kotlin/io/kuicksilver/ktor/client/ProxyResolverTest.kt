@@ -104,6 +104,19 @@ class ProxyResolverTest {
         assertEquals("http://p.test:3128", p.toString(), "the credentials stay out of its text")
     }
 
+    /**
+     * A `socks5://` URL whose user info has no password (or an empty one) cannot authenticate: RFC 1929 section 2 gives
+     * PASSWD 1 to 255 octets. The lookup fails, so the request fails rather than going direct; an HTTP proxy URL keeps
+     * its empty password (Basic).
+     */
+    @Test fun negative_socks5UrlWithAnEmptyPasswordFails() {
+        for (url in listOf("socks5://u@p.test:1080", "socks5h://u:@p.test:1080")) {
+            val e = assertFailsWith<IllegalArgumentException>(url) { env("all_proxy" to url).at("https://x.test/") }
+            assertFalse(e.message!!.contains("p.test"), "the message stays free of the URL: ${e.message}")
+        }
+        assertEquals(ProxyCredentials("u", ""), env("https_proxy" to "http://u@p.test:3128").at("https://x.test/")!!.credentials)
+    }
+
     @Test fun loopbackAlwaysDirect() {
         val r = env("https_proxy" to "http://p.test:1", "http_proxy" to "http://p.test:1")
         for (u in listOf(
