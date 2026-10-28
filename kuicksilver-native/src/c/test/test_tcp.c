@@ -21,6 +21,8 @@ static int tcp_pump(ksl_ssl *c, ksl_ssl *s, int (*on_want)(ksl_ssl *, int, void 
     }
     return rc;
 }
+/* The message of a session's last error */
+static int last_message_has(ksl_ssl *s, const char *part) { uint32_t c; int a; char m[256]; ksl_ssl_last_error(s, &c, &a, m, sizeof m); return strstr(m, part) != NULL; }
 static int echo_bytes(ksl_ssl *c, ksl_ssl *s, size_t total) {
     uint8_t *data = malloc(total), *back = malloc(total); for (size_t i = 0; i < total; i++) data[i] = (uint8_t)(i * 7); size_t sent = 0, got = 0, n;
     for (int i = 0; i < 100000 && got < total; i++) {
@@ -399,6 +401,14 @@ static int write_all(ksl_ssl *c, ksl_ssl *s, size_t total) {   /* client -> serv
     }
     return got == total;
 }
+/* Puts the session in init while its first application record is being written, so that the automatic KeyUpdate after the write is
+   refused (SSL_R_STILL_IN_INIT). OpenSSL 3.5 leaves no session in init after a successful write, and SSL_key_update refuses during
+   one (the record is pending): the state is forced with libssl's internal ossl_statem_set_in_init (a TLS SSL is its SSL_CONNECTION). */
+void ossl_statem_set_in_init(void *connection, int init);
+static void in_init_during_write_cb(int write_p, int version, int content_type, const void *buf, size_t len, SSL *ssl, void *arg) {
+    (void)version; int *done = arg;
+    if (write_p && content_type == SSL3_RT_INNER_CONTENT_TYPE && len == 1 && ((const uint8_t *)buf)[0] == SSL3_RT_APPLICATION_DATA && !*done) { *done = 1; ossl_statem_set_in_init(ssl, 1); }
+}
 static void test_key_update_before_record_limit(void) {
     SECTION("tcp_key_update_before_record_limit");
     /* RFC 9846 section 5.5: for AES-GCM up to 2^24.5 full-size records under a given set of keys; "Implementations MUST either close
@@ -414,6 +424,13 @@ static void test_key_update_before_record_limit(void) {
     CHECK(write_all(c, s, 16384 * 2) && updates == 1, "a KeyUpdate once 4 records were written");
     CHECK(write_all(c, s, 16384 * 5) && updates == 2, "and again after 4 more, the stream intact");
     CHECK(echo_bytes(c, s, 100000), "both directions still work after the updates");
+    ksl_ssl_free(c); ksl_ssl_free(s);
+    /* a refused automatic KeyUpdate leaves no error behind the write that succeeded (nothing reads one then, but the session's last
+       error must stay the last failure's) */
+    c = tcp_client(cc, "server.test"); s = ksl_ssl_new(sc, KSL_MODE_TCP); int injected = 0; CHECK(tcp_pump(c, s, NULL, NULL) == KSL_OK, "TLS 1.3 handshake");
+    ksl_ssl_msg_observer_for_test(c, in_init_during_write_cb, &injected); ksl_tcp_set_key_update_records_for_test(c, 1);
+    uint8_t one = 1; size_t wn; CHECK(ksl_tcp_write(c, &one, 1, &wn) == KSL_OK && wn == 1 && injected, "a write whose automatic KeyUpdate is refused (the session is in init)");
+    CHECK(last_code(c, NULL) == 0 && !last_message_has(c, "key update"), "negative: the successful write left no error behind");
     ksl_ssl_free(c); ksl_ssl_free(s);
     /* TLS 1.2 has no KeyUpdate: the writes go on (nothing is sent, nothing fails) */
     ksl_ctx_set_option(cc, KSL_OPT_MIN_VERSION, KSL_TLS1_2); ksl_ctx_set_option(cc, KSL_OPT_MAX_VERSION, KSL_TLS1_2); ksl_ctx_set_option(sc, KSL_OPT_MIN_VERSION, KSL_TLS1_2);
@@ -473,8 +490,6 @@ static void test_abort_sends_an_alert(void) {
     ksl_ssl_free(c); ksl_ssl_free(s); ksl_ctx_free(cc); ksl_ctx_free(cc12); ksl_ctx_free(sc); END();
 }
 
-/* The message of a session's last error */
-static int last_message_has(ksl_ssl *s, const char *part) { uint32_t c; int a; char m[256]; ksl_ssl_last_error(s, &c, &a, m, sizeof m); return strstr(m, part) != NULL; }
 /* Moves from a to b as much ciphertext as b's end of the pair has room for (shuttle drops what does not fit) */
 static size_t shuttle_room(ksl_ssl *a, ksl_ssl *b) {
     uint8_t buf[4096]; size_t total = 0, n, used, room;

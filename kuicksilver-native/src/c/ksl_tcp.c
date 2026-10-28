@@ -39,8 +39,9 @@ static void count_records(ksl_ssl *s, size_t n) {
     s->records_sent += (n + frag - 1) / frag;
     uint64_t bound = s->key_update_records ? s->key_update_records : KSL_KEY_UPDATE_RECORDS;
     if (s->records_sent < bound) return;
-    /* refused while a write is pending or a handshake message is under way (a KeyUpdate the peer asked for): tried after the next write */
-    if (ksl_ssl_key_update(s, 0) == KSL_OK) s->records_sent = 0; else ERR_clear_error();
+    /* refused while a write is pending or a handshake message is under way (a KeyUpdate the peer asked for): tried after the next
+       write. Called directly: the write succeeded, and the session's last error stays the last failure's */
+    if (SSL_key_update(s->ssl, SSL_KEY_UPDATE_NOT_REQUESTED) == 1) s->records_sent = 0; else ERR_clear_error();
 }
 static void drop_pending_write(ksl_ssl *s) {
     if (!s->pending_write) return;
