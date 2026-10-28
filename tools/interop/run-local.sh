@@ -63,22 +63,27 @@ fi
 [ -n "$tests" ] || tests="handshake,transfer"
 [ ${#peers[@]} -gt 0 ] || peers=(quic-go ngtcp2 quiche picoquic quinn msquic)
 runner=build/interop/runner; lock=$(cat tools/interop/runner.lock)
-# the runner needs tshark 4.5 or later: 4.2 cannot follow a connection whose peer switched to a new connection ID (keyupdate:
-# "Failed to read key phase bits"; rebind-*: "Unknown QUIC connection") and crashed in amplificationlimit (CI run 40515478566)
-tv=$(tshark --version 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
-if [ -z "$tv" ] || [ "$(printf '%s\n4.5.0\n' "$tv" | sort -V | head -1)" != 4.5.0 ]; then
-  if [ -n "${CI:-}" ]; then echo "tshark ${tv:-missing} is older than 4.5.0, which the interop runner needs" >&2; exit 2; fi
-  echo "WARNING: tshark ${tv:-missing} is older than 4.5.0, which the interop runner needs; red keyupdate/rebind cells may be the capture's" >&2
-fi
-[ -d "$runner" ] || git clone -q https://github.com/quic-interop/quic-interop-runner "$runner"
-git -C "$runner" fetch -q origin "$lock" 2>/dev/null || true; git -C "$runner" checkout -q "$lock"
-venv=build/interop/venv; [ -x "$venv/bin/python" ] || { python3 -m venv "$venv"; "$venv/bin/pip" -q install -r "$runner/requirements.txt"; }
-# the sim's entrypoint waits for its dumpcaps (see sim-entrypoint.sh); compose reads docker-compose.override.yml beside docker-compose.yml.
-# KSL_INTEROP_SIM_CELL is left to compose to fill in (escaped here) from the variables the runner sets for each cell, its fresh log
-# directories among them, so the sim's configuration differs in every cell and compose recreates the sim instead of reusing one
-# still running: after a runner timeout its "docker compose stop" lacks those variables and fails ("invalid spec: :/www:ro"), the
-# previous cell's sim keeps running, and its ARP entry for the server still names the previous server container's MAC, so not one
-# client packet reaches the new server (run 20261020-031632: kuicksilver->picoquic:zerortt right after the timed-out v2 cell).
+# shellcheck source=tools/interop/environment.sh
+source tools/interop/environment.sh   # truncated_captures, handshake_rebind, environment_cells
+environment_memo=$(mktemp -d); yellow_keys=""; trap 'rm -rf "$environment_memo" ${yellow_keys:+"$yellow_keys"}' EXIT   # one classification per role directory
+if [ -z "$results" ]; then   # the runner and its prerequisites: --results only classifies existing results
+  # the runner needs tshark 4.5 or later: 4.2 cannot follow a connection whose peer switched to a new connection ID (keyupdate:
+  # "Failed to read key phase bits"; rebind-*: "Unknown QUIC connection") and crashed in amplificationlimit (CI run 40515478566)
+  tv=$(tshark --version 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+  if [ -z "$tv" ] || [ "$(printf '%s\n4.5.0\n' "$tv" | sort -V | head -1)" != 4.5.0 ]; then
+    if [ -n "${CI:-}" ]; then echo "tshark ${tv:-missing} is older than 4.5.0, which the interop runner needs" >&2; exit 2; fi
+    echo "WARNING: tshark ${tv:-missing} is older than 4.5.0, which the interop runner needs; red keyupdate/rebind cells may be the capture's" >&2
+  fi
+  [ -d "$runner" ] || git clone -q https://github.com/quic-interop/quic-interop-runner "$runner"
+  git -C "$runner" fetch -q origin "$lock" 2>/dev/null || true; git -C "$runner" checkout -q "$lock"
+  venv=build/interop/venv; [ -x "$venv/bin/python" ] || { python3 -m venv "$venv"; "$venv/bin/pip" -q install -r "$runner/requirements.txt"; }
+  # the sim's entrypoint waits for its dumpcaps (see sim-entrypoint.sh); compose reads docker-compose.override.yml beside docker-compose.yml.
+  # KSL_INTEROP_SIM_CELL is left to compose to fill in (escaped here) from the variables the runner sets for each cell, its fresh log
+  # directories among them, so the sim's configuration differs in every cell and compose recreates the sim instead of reusing one
+  # still running: after a runner timeout its "docker compose stop" lacks those variables and fails ("invalid spec: :/www:ro"), the
+  # previous cell's sim keeps running, and its ARP entry for the server still names the previous server container's MAC, so not one
+  # client packet reaches the new server (run 20261020-031632: kuicksilver->picoquic:zerortt right after the timed-out v2 cell).
+  # (unindented: environment-test.sh extracts this heredoc from its first line to EOF)
 cat > "$runner/docker-compose.override.yml" <<EOF
 services:
   sim:
@@ -89,11 +94,8 @@ services:
     volumes:
       - "$root/tools/interop/sim-entrypoint.sh:/kuicksilver/sim-entrypoint.sh:ro"
 EOF
-# shellcheck source=tools/interop/environment.sh
-source tools/interop/environment.sh   # truncated_captures, handshake_rebind, environment_cells
-environment_memo=$(mktemp -d); yellow_keys=""; trap 'rm -rf "$environment_memo" ${yellow_keys:+"$yellow_keys"}' EXIT   # one classification per role directory
-# register our image in the runner's QUIC implementation list (a copy, the checkout stays clean)
-python3 - "$runner" "${KSL_INTEROP_TAG:-local}" <<'PY'
+  # register our image in the runner's QUIC implementation list (a copy, the checkout stays clean)
+  python3 - "$runner" "${KSL_INTEROP_TAG:-local}" <<'PY'
 import json, sys
 p, tag = sys.argv[1] + "/implementations_quic.json", sys.argv[2]   # the runner keeps QUIC and WebTransport lists apart
 d = json.load(open(p))
@@ -101,6 +103,9 @@ d["kuicksilver"] = {"image": f"kuicksilver-interop:{tag}", "url": "https://githu
 d["kuicksilver-native"] = {"image": f"kuicksilver-interop-native:{tag}", "url": "https://github.com/kuicksilver/kuicksilver", "role": "both"}
 json.dump(d, open(p, "w"), indent=2)
 PY
+elif ! command -v tshark >/dev/null 2>&1; then
+  echo "WARNING: no tshark: the ENVIRONMENT classifiers that read the captures cannot analyse a cell (any version will do for them)" >&2
+fi
 dbg=(); [ -z "${KSL_INTEROP_DEBUG:-}" ] || dbg=(-d)   # the runner's debug log, docker compose output included (CI prints it for a failed job)
 fail=0
 if [ -n "$results" ]; then out="$results"; else
