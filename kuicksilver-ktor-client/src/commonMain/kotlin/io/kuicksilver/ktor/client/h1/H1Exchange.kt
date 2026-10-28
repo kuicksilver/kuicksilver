@@ -342,24 +342,23 @@ internal suspend fun readResponse(
 
                     else -> {
                         val scope = CoroutineScope(callContext + CoroutineName("kuicksilver-h1-body-reader"))
-                        // set only when the whole body went through: a writer whose reader gave up (an abandoned body) can
-                        // complete without an exception, and that connection still has the rest of the body on the wire
-                        var bodyComplete = false
+                        // reusable only when the whole body went through and ended by its framing (length or chunks), not
+                        // by connection close: a writer whose reader gave up (an abandoned body) can complete without an
+                        // exception, and that connection still has the rest of the body on the wire. A reusable connection
+                        // goes back before the body's channel closes (the writer closes it after this block): the
+                        // application that sees the body's end, and sends its next request at once, finds it idle. Released
+                        // when the writer completed, the connection could be missing then and the next request opened
+                        // another one
+                        var settled = false
                         val parser =
                             scope.writer(autoFlush = true) {
                                 framing.readBody(input.withSocketTimeout(request), channel)
-                                bodyComplete = true
+                                if (keepAlive && framing.delimited) {
+                                    settled = true
+                                    onBodyDone(AfterResponse.Reuse)
+                                }
                             }
-                        // reusable only when the body ended by its framing (length or chunks), not by connection close
-                        parser.job.invokeOnCompletion { cause ->
-                            onBodyDone(
-                                if (cause == null && bodyComplete && keepAlive && framing.delimited) {
-                                    AfterResponse.Reuse
-                                } else {
-                                    AfterResponse.Close
-                                },
-                            )
-                        }
+                        parser.job.invokeOnCompletion { if (!settled) onBodyDone(AfterResponse.Close) }
                         parser.channel
                     }
                 }

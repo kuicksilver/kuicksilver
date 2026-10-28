@@ -349,6 +349,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - Ktor server, HTTP/1.1: a response the application marks `Connection: close` now ends the connection after it, and
   no further pipelined request is processed (RFC 9112 section 9.6); before, the next request ran and was answered and
   the connection stayed open. The next pipelined request is now read once the previous response's head is out.
+- Ktor client, HTTP/1.1: the keep-alive connection of a response whose body was read to its end is back in the pool
+  when the application sees that end, so the request it sends next reuses it. Before, the body ended first and the
+  connection was released a moment later, when the body's reader completed: a request sent in between (a thread
+  preempted there, as on a slow Android emulator) found no idle connection and opened another one.
 - Ktor client, HTTP/1.1: a response head cut before its empty line (the server closed the connection in the middle of
   the header section) now fails the request with `ClosedReadChannelException` instead of passing for a complete
   response without fields (RFC 9112 section 8: the client MUST record it as incomplete); a redirect without its
