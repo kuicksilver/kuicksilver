@@ -371,8 +371,17 @@ class WtStreamRoutingTest {
                     while (withContext(server.session.dispatcher) { server.session.datagrams.pendingCount } == 0) delay(5)
                 }
                 val get = c.openBidi()
-                get.output.writeFully(raw.headers(get.id, GET))
-                get.output.flush()
+                // the abort follows the HEADERS at once, so it can reach us while the flush still waits: then our side
+                // sees the STOP_SENDING, which must carry the same code as the RESET_STREAM
+                try {
+                    get.output.writeFully(raw.headers(get.id, GET))
+                    get.output.flush()
+                } catch (e: Throwable) {
+                    val stopped =
+                        generateSequence(e) { it.cause }.filterIsInstance<QuicException.StreamError.Stopped>().firstOrNull()
+                            ?: throw e
+                    assertEquals(Http3ErrorCode.DATAGRAM_ERROR, stopped.code)
+                }
                 assertEquals(Http3ErrorCode.DATAGRAM_ERROR, resetCode(get))
                 assertEquals(0, withContext(server.session.dispatcher) { server.session.datagrams.pendingCount })
                 assertFalse(server.closed.isCompleted)
