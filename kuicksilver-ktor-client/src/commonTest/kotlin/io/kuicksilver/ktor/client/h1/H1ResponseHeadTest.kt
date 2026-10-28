@@ -267,6 +267,30 @@ class H1ResponseHeadTest {
             }
         }
 
+    /**
+     * "Any Content-Length field value greater than or equal to zero is valid ... a recipient MUST anticipate potentially
+     * large decimal numerals and prevent parsing errors due to integer conversion overflows" (RFC 9110 section 8.6):
+     * leading zeros count for nothing, so `0000000000000000000005` is 5 and equals `5` in a list. A length of 10^18 or
+     * more is valid but more than this client reads: the response fails with a ParserException that says so, not as an
+     * invalid length. Before, any value of more than 18 characters was invalid.
+     */
+    @Test fun longContentLengthValuesAreRead() =
+        runTest(timeout = 20.seconds) {
+            for (cl in listOf("0000000000000000000005", "05, 5", "5, 000000000000000000000005")) {
+                val wire = Wire()
+                server(wire) { send -> send("HTTP/1.1 200 OK\r\nContent-Length: $cl\r\n\r\nhello") }
+                exchange(wire, get) { response ->
+                    assertEquals("hello", (response.body as ByteReadChannel).readBuffer().readString(), cl)
+                }
+            }
+            for (cl in listOf("1000000000000000000", "99999999999999999999")) {
+                val wire = Wire()
+                server(wire) { send -> send("HTTP/1.1 200 OK\r\nContent-Length: $cl\r\n\r\nhello") }
+                val e = assertFailsWith<ParserException>(cl) { exchange(wire, get) }
+                assertTrue(e.message!!.contains("larger than this client reads"), "$cl: ${e.message}")
+            }
+        }
+
     /** A status line without a reason phrase is accepted, with or without the SP before it (as Go and OkHttp). */
     @Test fun statusLineWithoutReasonPhraseIsAccepted() =
         runTest(timeout = 20.seconds) {

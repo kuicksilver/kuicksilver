@@ -173,6 +173,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   still receiving aborts that request with `H3_DATAGRAM_ERROR` (RFC 9297 section 2, MUST); and on a server every
   MAX_PUSH_ID after the first spends a glitch token, so a client that keeps re-sending it (some stacks send one with every
   push-credit update) meets `H3_EXCESSIVE_LOAD` once the bucket is empty (RFC 9114 section 10.5).
+- Ktor client, HTTP/1.1: a response `Content-Length` with leading zeros (`0000000000000000000005`) is read as its value
+  instead of failing as invalid when it has more than 18 characters (RFC 9110 section 8.6: "Any Content-Length field
+  value greater than or equal to zero is valid"). A valid length of 10^18 bytes or more still fails the response, now
+  with a `ParserException` that names it as this client's limit, not as an invalid length.
 - Ktor server, HTTP/1.1: a request whose `Content-Length` has 19 or more significant digits (10^18 bytes or more)
   gets `413 Content Too Large` and the connection closes, instead of 400: RFC 9110 section 8.6 says "Any
   Content-Length field value greater than or equal to zero is valid", so such a length is too large to process
