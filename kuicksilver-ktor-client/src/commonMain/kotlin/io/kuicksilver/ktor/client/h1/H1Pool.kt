@@ -245,9 +245,12 @@ internal class H1Pool(
                                         released(pool.release(conn))
                                     }
 
-                                    // at once, which ends a request body still being sent (RFC 9112 section 9.5)
+                                    // at once, and a request body still being sent with it (RFC 9112 section 9.5): its
+                                    // sender is cancelled too, so one waiting for the application's body (not for the
+                                    // connection, which the close fails) ends now rather than at its next write
                                     AfterResponse.Close -> {
                                         conn.close()
+                                        bodyJob?.job?.cancel()
                                         released(false)
                                     }
 

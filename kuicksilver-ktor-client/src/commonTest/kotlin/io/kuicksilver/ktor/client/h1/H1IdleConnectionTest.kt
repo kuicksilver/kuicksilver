@@ -315,6 +315,46 @@ class H1IdleConnectionTest {
         }
 
     /**
+     * A response that closes its connection at once (`Connection: close`) while the request body's writer waits for the
+     * application (not for the connection): the sender is cancelled with the close, so the writer ends now, without
+     * waiting for its next write to fail.
+     */
+    @Test fun anImmediateCloseEndsAWriterWaitingForTheApplication() =
+        runTest {
+            pooled {
+                val writing = CompletableDeferred<Unit>()
+                val ended = CompletableDeferred<Throwable?>()
+                val body =
+                    object : OutgoingContent.WriteChannelContent() {
+                        override val contentLength: Long = 3
+
+                        override suspend fun writeTo(channel: io.ktor.utils.io.ByteWriteChannel) {
+                            try {
+                                channel.writeStringUtf8("a")
+                                channel.flush()
+                                writing.complete(Unit)
+                                CompletableDeferred<Unit>().await() // the application's slow source, never ready
+                            } catch (e: Throwable) {
+                                ended.complete(e)
+                                throw e
+                            }
+                        }
+                    }
+                backgroundScope.launch {
+                    while (wire.toServer.readLineStrict()?.isNotEmpty() == true) continue
+                    writing.await()
+                    wire.fromServer.writeStringUtf8("HTTP/1.1 413 Content Too Large\r\nConnection: close\r\nContent-Length: 0\r\n\r\n")
+                    wire.fromServer.flush()
+                }
+                val response = execute(request(body), coroutineContext)
+                assertEquals(413, response.statusCode.value)
+                assertEquals(0, (response.body as ByteReadChannel).readBuffer().size)
+                assertTrue(conn.closed)
+                assertTrue(ended.await() is kotlinx.coroutines.CancellationException, "the writer was not cancelled")
+            }
+        }
+
+    /**
      * The sender's job cancelled after its whole body went out (the call ended between the last flush and the job's
      * completion) leaves the connection open: it may already be idle in the pool or serve the next request. Cancelled
      * before, the connection is closed.
