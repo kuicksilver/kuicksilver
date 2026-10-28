@@ -387,8 +387,8 @@ The server logs why:
 - "HTTP/3 is not served on <host>:<port>: sniSelector is not supported by QUIC in v1": a `tlsConnector` with an
   `sniSelector`.
 - "HTTP/3 is not served on port <port>: <reason>": the platform cannot run a QUIC server here.
-- "HTTP/3 is not served: no free UDP port next to an ephemeral TCP one after 16 attempts (<cause>)": `port = 0` and
-  no free UDP twin.
+- "HTTP/3 is not served: no TCP + UDP pair free on one port number after 16 attempts (<cause>)": `port = 0`, and
+  neither the UDP twin of a TCP port nor the TCP twin of a UDP port the OS picked was free.
 - A fixed port whose UDP side is taken fails the start instead.
 
 Without HTTP/3 the server sends no `Alt-Svc`. Also check `http3 = true`, that a firewall passes UDP to the port, and

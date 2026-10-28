@@ -141,7 +141,7 @@ private suspend fun KuicksilverApplicationEngine.bindTcpAndUdp(
         }
     }
     environment.log.warn(
-        "HTTP/3 is not served: no free UDP port next to an ephemeral TCP one after $EPHEMERAL_PAIR_ATTEMPTS attempts ($last)",
+        "HTTP/3 is not served: no TCP + UDP pair free on one port number after $EPHEMERAL_PAIR_ATTEMPTS attempts ($last)",
     )
     return bindTcp(selector, l.config.host, l.config.port) to null
 }
