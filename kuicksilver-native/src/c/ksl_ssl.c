@@ -163,7 +163,7 @@ int ksl_ssl_set_session(ksl_ssl *s, ksl_session *session) {
 void ksl_session_free(ksl_session *session) { if (session) ksl_live_add(KSL_LIVE_SESSION, -1); SSL_SESSION_free((SSL_SESSION *)session); }
 int ksl_ssl_new_session_ticket(ksl_ssl *s) { ERR_clear_error(); s->ticket_authorized = 1; if (SSL_new_session_ticket(s->ssl) != 1) { ksl_ssl_set_error(s, KSL_E_NOT_SUPPORTED, "ksl: ticket request failed"); return KSL_ERROR; } return KSL_OK; }
 /* RFC 9846 section 4.7.3: "Until receiving a subsequent KeyUpdate from the peer, the sender MUST NOT send another KeyUpdate with
-   request_update set to update_requested": while ours is unanswered (ksl_msg_cb clears it on the peer's KeyUpdate) a request is
+   request_update set to update_requested": while ours is unanswered (ksl_msg_cb clears it on the peer's next KeyUpdate) a request is
    sent as update_not_requested, which still updates our sending key. Past the epoch bound no key update is sent at all. */
 int ksl_ssl_key_update(ksl_ssl *s, int request_peer) {
     ERR_clear_error();
@@ -266,11 +266,19 @@ void ksl_msg_cb(int write_p, int version, int content_type, const void *buf, siz
        request from the peer that would need one more answer shuts the session's end of the BIO pair for writing before OpenSSL
        processes it (this callback runs first), so the answer cannot leave. What the peer sends is never counted ("receiving
        implementations MUST NOT enforce this rule"). */
+    /* RFC 9846 section 4.7.3: "implementations may receive an arbitrary number of messages between sending a KeyUpdate with
+       request_update set to update_requested and receiving the peer's KeyUpdate, including unrelated KeyUpdates, because those
+       messages may already be in flight". A KeyUpdate whose record had been fed in full before ours left was sent before the peer
+       could see ours: it is not the subsequent one that ends the wait. OpenSSL reads exactly one record at a time (no read-ahead),
+       so when this callback runs, what was fed and is not in the BIO pair any more ends with this message's record. */
     if (s->mode == KSL_MODE_TCP && content_type == SSL3_RT_HANDSHAKE && len >= 5 && m[0] == SSL3_MT_KEY_UPDATE) {
         uint64_t bound = s->key_update_limit ? s->key_update_limit : KSL_MAX_KEY_UPDATES;
-        if (write_p) { if (++s->key_updates_sent >= bound) s->key_updates_exhausted = 1; }
-        else {
-            s->update_requested_pending = 0;
+        if (write_p) {
+            if (m[4] == SSL_KEY_UPDATE_REQUESTED) s->update_requested_at = s->fed;
+            if (++s->key_updates_sent >= bound) s->key_updates_exhausted = 1;
+        } else {
+            uint64_t record_end = s->fed - (uint64_t)BIO_ctrl_pending(SSL_get_rbio(ssl));
+            if (record_end > s->update_requested_at) s->update_requested_pending = 0;
             if (m[4] == SSL_KEY_UPDATE_REQUESTED && s->key_updates_sent >= bound) { s->key_updates_exhausted = 1; (void)BIO_shutdown_wr(SSL_get_wbio(ssl)); }
         }
     }

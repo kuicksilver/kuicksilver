@@ -619,6 +619,21 @@ static void test_key_update_request_waits_for_the_peer(void) {
     shuttle(s, c); uint8_t r[16]; size_t n; ksl_tcp_read(c, r, sizeof r, &n);   /* the server's answer */
     CHECK(ksl_ssl_key_update(c, 1) == KSL_OK && send_one(c, s) && k.updates == 3 && k.requested == 2, "after the answer the client may ask again");
     CHECK(echo_bytes(c, s, 5000), "the stream is intact");
+    ksl_ssl_free(c); ksl_ssl_free(s);
+    /* "Note that implementations may receive an arbitrary number of messages between sending a KeyUpdate with request_update set
+       to update_requested and receiving the peer's KeyUpdate, including unrelated KeyUpdates, because those messages may already be
+       in flight": a KeyUpdate of the server's that had arrived before the client's request left is not the answer to it */
+    c = tcp_client(cc, "server.test"); s = ksl_ssl_new(sc, KSL_MODE_TCP); k.updates = k.requested = 0; ksl_ssl_msg_observer_for_test(s, key_update_kind_cb, &k);
+    CHECK(tcp_pump(c, s, NULL, NULL) == KSL_OK, "handshake");
+    uint8_t b = 5; CHECK(ksl_ssl_key_update(s, 0) == KSL_OK && ksl_tcp_write(s, &b, 1, &n) == KSL_OK, "the server updates its key on its own");
+    shuttle(s, c);   /* its KeyUpdate is at the client, not yet read */
+    CHECK(ksl_ssl_key_update(c, 1) == KSL_OK && send_one(c, s) && k.requested == 1, "the client's update_requested crosses it");
+    ksl_tcp_read(c, r, sizeof r, &n);   /* the client reads the server's earlier KeyUpdate */
+    CHECK(ksl_ssl_key_update(c, 1) == KSL_OK && send_one(c, s) && k.updates == 2 && k.requested == 1, "negative: the crossing KeyUpdate is no answer: the next request goes out as update_not_requested");
+    CHECK(ksl_tcp_write(s, &b, 1, &n) == KSL_OK, "the server answers the request ahead of its next write");
+    shuttle(s, c); ksl_tcp_read(c, r, sizeof r, &n);
+    CHECK(ksl_ssl_key_update(c, 1) == KSL_OK && send_one(c, s) && k.updates == 3 && k.requested == 2, "after the answer the client may ask again");
+    CHECK(echo_bytes(c, s, 5000), "the stream is intact");
     ksl_ssl_free(c); ksl_ssl_free(s); ksl_ctx_free(cc); ksl_ctx_free(sc); END();
 }
 static void test_key_update_epoch_is_bounded(void) {

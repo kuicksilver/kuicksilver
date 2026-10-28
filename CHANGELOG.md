@@ -410,7 +410,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   origin each resume (RFC 9846 appendix C.4, SHOULD). Before, one ticket per connection and one per origin meant only one
   of them resumed. A QUIC origin still keeps its newest ticket only.
 - TLS over TCP: `TlsConnection.keyUpdate(requestPeer = true)` called again before the peer answered the previous request
-  now updates only our key (`update_not_requested`) instead of asking the peer again (RFC 9846 section 4.7.3, MUST).
+  now updates only our key (`update_not_requested`) instead of asking the peer again (RFC 9846 section 4.7.3, MUST). A
+  KeyUpdate of the peer's that had already arrived when the request left is not taken for the answer.
 - TLS over TCP: a connection never lets its key update epoch pass 2^48-1 (RFC 9846 section 4.7.3, MUST); the session
   that sent its last allowed KeyUpdate ends instead of sending another, also in answer to the peer. OpenSSL counts none.
 - TLS: a ClientHello, or a TLS 1.3 ServerHello, whose `legacy_version` is not 0x0303 is refused with `protocol_version`

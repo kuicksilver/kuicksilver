@@ -8,7 +8,7 @@ static int tcp_only(ksl_ssl *s) { if (s->mode != KSL_MODE_TCP) { ksl_ssl_set_err
 int ksl_tcp_feed(ksl_ssl *s, const uint8_t *ciphertext, size_t len, size_t *consumed) {
     if (!tcp_only(s)) return KSL_ERROR; *consumed = 0; if (!len) return KSL_OK;
     int n = BIO_write(s->net, ciphertext, (int)(len > INT32_MAX ? INT32_MAX : len));
-    if (n > 0) *consumed = (size_t)n; return n > 0 || BIO_should_retry(s->net) ? KSL_OK : KSL_ERROR;
+    if (n > 0) { *consumed = (size_t)n; s->fed += (uint64_t)n; } return n > 0 || BIO_should_retry(s->net) ? KSL_OK : KSL_ERROR;
 }
 int ksl_tcp_drain(ksl_ssl *s, uint8_t *out, size_t cap, size_t *written) {
     if (!tcp_only(s)) return KSL_ERROR; *written = 0; if (!cap) return KSL_OK;
