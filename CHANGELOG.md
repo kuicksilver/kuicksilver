@@ -121,9 +121,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - HTTP/3 client: a server that sends GOAWAY before the client's SETTINGS went out (it is stopping right after the
   handshake) no longer makes `Http3Endpoint.connect` and `Http3Connection.client` fail with "closed locally with
   H3_NO_ERROR" (the client's own idle close after GOAWAY, RFC 9114 section 5.2). The connection is returned with
-  `goAwayReceived` set, and a request on it fails with the retry-safe `Http3Exception.RequestNotProcessed`. Only that
-  close is passed over: a protocol error after the GOAWAY (a second SETTINGS, `H3_FRAME_UNEXPECTED`) or the server's
-  own error close still fails the start.
+  `goAwayReceived` set, and a request on it fails with the retry-safe `Http3Exception.RequestNotProcessed`; likewise when
+  the server's own `H3_NO_ERROR` close after its GOAWAY comes first (RFC 9114 section 5.2 lets it close at once). Only
+  these graceful ends are passed over: a protocol error after the GOAWAY (a second SETTINGS, `H3_FRAME_UNEXPECTED`) or
+  the server's own error close still fails the start.
 - HTTP/3: a response or request body whose stream came whole (its FIN and every byte before it) before the peer's
   CONNECTION_CLOSE is read whole however late its reader runs or the application reads it (RFC 9000 section 3.2, "Data
   Recvd"). The one-second drain grace after a lost connection cut such a reader too, and a response body reader started
