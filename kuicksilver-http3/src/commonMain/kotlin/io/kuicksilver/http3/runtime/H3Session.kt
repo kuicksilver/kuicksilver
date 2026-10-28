@@ -567,8 +567,9 @@ internal class H3Session(
         if (!done) {
             // only an attempt that holds a stream the rejection dropped gives up ([noteRejectedZeroRttHere]), and the streams
             // are typed in the order they were opened, after all three were: the live 1-RTT ones it opened after the dropped
-            // ones carry nothing yet. They are reset before their type, which RFC 9114 section 6.2 allows: "a receiver MUST
-            // tolerate unidirectional streams being closed or reset prior to the reception of the stream header". A typed one is never reset (section 6.2.1: a closed control stream is H3_CLOSED_CRITICAL_STREAM)
+            // ones carry nothing yet. They are reset before their type, which RFC 9114 section 6.2 allows: "A receiver MUST
+            // tolerate unidirectional streams being closed or reset prior to the reception of the unidirectional stream
+            // header". A typed one is never reset (section 6.2.1: a closed control stream is H3_CLOSED_CRITICAL_STREAM)
             for (st in opened) {
                 if (!droppedByRejectedZeroRtt(st) && typedStreams.none { it === st }) runCatching { st.reset(Http3ErrorCode.NO_ERROR) }
             }
