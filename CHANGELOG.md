@@ -183,6 +183,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   (and, in some interleavings, `FD_READ`) can be lost by ktor-network's selector there, which re-issues `WSAEventSelect`
   every round and completes only the waits that match; Winsock records `FD_CLOSE` once. The wait for data now tries the
   receive again every second.
+- Ktor server: with `port = 0` a TLS connector could start without HTTP/3 where the OS hands out TCP ports one after the
+  other (Windows): each retry of the TCP + UDP pair took the next TCP number, and a run of UDP ports held by other
+  sockets refused all 16 twins. The retries now alternate with pairs whose UDP port the OS picks first and TCP follows.
 - HTTP/3 server: a client's PRIORITY_UPDATE now reaches the stream's scheduling before `ServerRequest.priority` shows it,
   so code that reacts to the new value finds the stream already scheduled by it (RFC 9218 section 7).
 - HTTP/3 server: `goAway()` no longer throws when the client answers the GOAWAY by closing the connection at once (RFC 9114

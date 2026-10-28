@@ -269,43 +269,51 @@ class ServerH3Test {
 
     /**
      * `port = 0`: the UDP twin of the port the OS gave TCP may be taken. The hook occupies it before the first HTTP/3 bind,
-     * so that bind fails for real; the server retries the TCP + UDP pair and serves h3 and Alt-Svc on one new number.
-     * Other processes hold UDP ports too (a parallel test run opens hundreds), so a later pair may also be refused: the
-     * contract is "the taken port is skipped, within the budget", not an exact attempt count.
+     * so that bind fails for real; the server retries the pair and serves h3 and Alt-Svc on one new number. Other
+     * processes hold UDP ports too (a parallel test run opens hundreds), so a later pair may also be refused: the contract
+     * is "the taken port is skipped, within the budget", not an exact attempt count.
      */
     @Test fun ephemeralPortRetriesWhenUdpTwinIsTaken() = ephemeralPairRetry(occupied = 1)
 
-    /** Several taken twins in a row (what parallel load does by chance) still end on one free TCP + UDP number. */
-    @Test fun ephemeralPortRetriesPastSeveralTakenTwins() = ephemeralPairRetry(occupied = 3)
+    /**
+     * Every UDP twin of a port the OS gives TCP is taken: what the Windows runner did to a busy test run (CI 40645584772,
+     * two ktor-client HTTP/3 tests timed out connecting to a server that served HTTP/1.1 only). Windows hands out TCP ports
+     * one after the other, so each TCP-first retry lands on the next number, and a run of UDP ports held by other sockets
+     * refuses them all. The server still serves HTTP/3, on a pair whose UDP side the OS picked (port 0) and TCP followed.
+     * Red before: sixteen refused twins, then HTTP/1.1 alone.
+     */
+    @Test fun ephemeralPortServesHttp3WhenEveryTcpTwinIsTaken() = ephemeralPairRetry(occupied = EPHEMERAL_PAIR_ATTEMPTS)
 
     /**
-     * Occupies the UDP twin of the first [occupied] pairs the server tries, then checks the retry contract: every taken
-     * port is skipped, the server ends on the pair it tried last, TCP and UDP share that number (Alt-Svc names it, h3
-     * answers on it) and it took at most [EPHEMERAL_PAIR_ATTEMPTS] pairs.
+     * Occupies the UDP twin of the first [occupied] TCP-chosen ports the server tries (a port 0 bind is the UDP side
+     * chosen first: nothing to occupy), then checks the retry contract: every taken port is skipped, the server ends on
+     * the pair it bound last, TCP and UDP share that number (Alt-Svc names it, h3 answers on it) and it took at most
+     * [EPHEMERAL_PAIR_ATTEMPTS] pairs.
      */
     private fun ephemeralPairRetry(occupied: Int) =
         h3ServerTest {
             val taken = ArrayList<DatagramIo>()
             val takenPorts = HashSet<Int>()
             val tried = ArrayList<Int>()
+            val bound = ArrayList<Int>()
             val (server, port) =
                 tlsServer(configure = {
                     http3Bind = { a, c, s ->
                         tried += a.port
-                        if (takenPorts.size < occupied && a.port !in takenPorts) {
+                        if (a.port != 0 && takenPorts.size < occupied && a.port !in takenPorts) {
                             // Already held by another process: the bind below fails all the same.
                             val held = runCatching { DatagramIo.open(InetSocketAddress("127.0.0.1", a.port)) }
                             held.getOrNull()?.let { taken += it }
                             takenPorts += a.port
                         }
-                        Http3Endpoint.bind(a, c, s)
+                        Http3Endpoint.bind(a, c, s).also { bound += it.localAddress.port }
                     }
                 }) { routing { get("/") { call.respondText("ok") } } }
             try {
-                val why = "taken $takenPorts, tried $tried, serving $port"
-                assertEquals(occupied, takenPorts.size, why)
-                assertTrue(tried.size in occupied + 1..EPHEMERAL_PAIR_ATTEMPTS, why)
-                assertEquals(port, tried.last(), why)
+                val why = "taken $takenPorts, tried $tried, bound $bound, serving $port"
+                assertTrue(takenPorts.isNotEmpty() && takenPorts.size <= occupied, why)
+                assertTrue(tried.size in 2..EPHEMERAL_PAIR_ATTEMPTS, why)
+                assertEquals(port, bound.lastOrNull(), why)
                 assertTrue(port !in takenPorts, why)
                 val resp = rawHttp(port, "GET / HTTP/1.1\r\nHost: server.test\r\nConnection: close\r\n\r\n")
                 assertTrue(resp.contains("Alt-Svc: h3=\":$port\""), resp)
