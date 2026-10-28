@@ -62,7 +62,7 @@ class H1RequestHeadCheckTest {
 
     private suspend fun TestScope.exchange(text: String): String = exchange(text.encodeToByteArray())
 
-    /** method = token (RFC 9112 section 3.1): anything else is an invalid request line, 400 (section 3). */
+    /** method = token (RFC 9112 section 3.1): anything else is an invalid request line, 400 (section 3.2). */
     @Test fun negative_methodMustBeAToken() =
         runTest {
             for (line in listOf(
@@ -306,7 +306,7 @@ class H1RequestHeadCheckTest {
         }
 
     /**
-     * For GET and HEAD the other answer RFC 9112 section 3 names for an invalid request line: 301 with the request-target
+     * For GET and HEAD the other answer RFC 9112 section 3.2 names for an invalid request line: 301 with the request-target
      * properly encoded. Browsers send `|`, `{`, `}`, `^` and `[` unencoded in a path or query (the WHATWG URL standard
      * leaves them), so a 400 would turn away real pages; the redirect brings them back with the target encoded.
      */
