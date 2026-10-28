@@ -317,7 +317,20 @@ echo '{"required": ["ngtcp2->kuicksilver:rebind-addr", "kuicksilver->ngtcp2:rebi
   environment_warn "r/ngtcp2-client/ngtcp2_kuicksilver/rebind-addr" "why" > "$yd/warn-local.txt"
   GITHUB_ACTIONS=true environment_warn "r/ngtcp2-client/ngtcp2_kuicksilver/rebind-addr" "why" > "$yd/warn-ci.txt"
 ) 2>/dev/null
+# the memo: each role directory is classified once however often run-local.sh asks, with the same answers
+(
+  environment_memo="$yd/memo"; mkdir -p "$environment_memo"
+  prohibited_port_rebind() { echo "$1" >> "$yd/calls"; case "${1##*/}" in ngtcp2-client) echo "ngtcp2_kuicksilver rebind-addr" ;; esac; }
+  closing_rebind() { case "$1" in */run/ngtcp2-server|*/both/ngtcp2-client) echo "${1##*/}" | sed 's/ngtcp2-server/kuicksilver_ngtcp2 rebind-port/; s/ngtcp2-client/ngtcp2_kuicksilver rebind-addr/' ;; esac; }
+  environment_yellow_cells "$yd/run/ngtcp2-client" > /dev/null
+  environment_cells "$yd/run/ngtcp2-client" > "$yd/memo-cells.txt"
+  environment_yellow_keys "$yd/run" > "$yd/memo-keys.txt"
+  environment_yellow_keys "$yd/run" > /dev/null
+) 2>/dev/null
 ck="$here/check-required.py"
+check "memo: each role directory is classified once"             0 "" -- test "$(sort -u "$yd/calls" | wc -l | tr -d ' '),$(wc -l < "$yd/calls" | tr -d ' ')" = 2,2
+check "memo:   with the same cells"                              0 "" -- cmp "$yd/memo-cells.txt" "$yd/cells-client.txt"
+check "memo:   and the same yellow keys"                         0 "" -- cmp "$yd/memo-keys.txt" "$yd/keys-run.txt"
 check "yellow: the prohibited-port cell is environment-yellow"   0 "^ngtcp2->kuicksilver:rebind-addr	the sim rebound the client" -- cat "$yd/keys-run.txt"
 check "yellow:   and only that cell"                             0 "" -- test "$(wc -l < "$yd/keys-run.txt" | tr -d ' ')" = 1
 check "yellow:   environment_cells still lists it with its reason" 0 "ngtcp2_kuicksilver rebind-addr the sim rebound the client" -- cat "$yd/cells-client.txt"
