@@ -50,6 +50,7 @@ internal suspend fun HeadLimitedInput.checkRequestHead() {
     var lineStart = 0L
     var fieldsStart = -1L
     while (true) {
+        if (fieldsStart < 0 && !headMethod) headMethod = startsWithHeadMethod(buffer)
         val limit = if (fieldsStart < 0) minOf(buffer.size, MAX_REQUEST_LINE_BYTES + 2L) else buffer.size
         val lf = if (scanned < limit) buffer.indexOf(LF_BYTE, scanned, limit) else -1L
         if (lf < 0) {
@@ -450,6 +451,15 @@ private fun refuseLongLine(buffer: kotlinx.io.Buffer): Nothing {
     if (i > MAX_REQUEST_LINE_BYTES) throw RequestHeadRefused(501, "Not Implemented", message)
     if (i > 0 && i < buffer.size && isRequestLineWhitespace(buffer[i])) throw RequestHeadRefused(414, "URI Too Long", message)
     throw RequestHeadRefused(400, "Bad Request", message)
+}
+
+/** Whether [buffer] starts, after request-line whitespace, with the method `HEAD` and a separator. */
+private fun startsWithHeadMethod(buffer: kotlinx.io.Buffer): Boolean {
+    var i = 0L
+    while (i < buffer.size && isRequestLineWhitespace(buffer[i])) i++
+    if (buffer.size < i + 5) return false
+    for ((k, c) in "HEAD".withIndex()) if (buffer[i + k] != c.code.toByte()) return false
+    return isRequestLineWhitespace(buffer[i + 4])
 }
 
 /** tchar (RFC 9110 section 5.6.2) as a byte. */

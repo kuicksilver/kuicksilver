@@ -108,6 +108,30 @@ class H1RequestHeadCheckTest {
             }
         }
 
+    /**
+     * RFC 9110 section 9.3.2: the server MUST NOT send content in the response to HEAD, also in the engine's own
+     * refusals: the 400 keeps the Content-Length it has for GET (the same header fields as for GET, a SHOULD of the same
+     * section) and ends at the empty line, also after leading whitespace. Before, it carried its text. (The 0.2.x 505
+     * carries no content for any method.)
+     */
+    @Test fun negative_noContentInARefusalOfHead() =
+        runTest {
+            for ((head, status) in listOf(
+                " HEAD / HTTP/1.1\r\nHost: s\r\nX-A: a\u0000b\r\n" to "400",
+                "HEAD / HTTP/1.1\r\nHost: s\r\nX-A: a\u0000b\r\n" to "400",
+                "HEAD / HTTP/1.1\r\nHost: a\r\nHost: b\r\n" to "400",
+                "HEAD /\u0001 HTTP/1.1\r\nHost: s\r\n" to "400",
+            )) {
+                val get = exchange(head.trimStart().replaceFirst("HEAD", "GET") + "\r\n")
+                val response = exchange("$head\r\nGET /next HTTP/1.1\r\nHost: s\r\n\r\n")
+                assertTrue(response.startsWith("HTTP/1.1 $status "), "${show(head)}: $response")
+                assertTrue(response.endsWith("\r\n\r\n"), "${show(head)}: content after the head: $response")
+                val length = Regex("\r\nContent-Length: (\\d+)\r\n").find(get)!!.groupValues[1]
+                assertTrue(length.toInt() > 0, get)
+                assertTrue(response.contains("\r\nContent-Length: $length\r\n"), "${show(head)}: $response")
+            }
+        }
+
     /** HTTP-version = "HTTP/" DIGIT "." DIGIT, case-sensitive (RFC 9112 section 2.3); anything else: 400. */
     @Test fun negative_malformedVersionIsRejected() =
         runTest {

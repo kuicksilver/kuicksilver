@@ -342,19 +342,20 @@ internal fun CoroutineScope.startH1Pipeline(
                         if (e.partial) respondRequestTimeout(actorChannel) else actorChannel.close()
                         break
                     } catch (_: RequestHeadTooLarge) {
+                        // empty, also for HEAD
                         respondStatus(actorChannel, 431, "Request Header Fields Too Large")
                         lingerAfterRefusal(actorChannel, connection)
                         break
                     } catch (refused: RequestHeadRefused) {
                         if (refused.status == 400) {
-                            respondBadRequest(actorChannel)
+                            respondBadRequest(actorChannel, input.headMethod)
                         } else {
                             respondClosing(actorChannel, closingResponsePacket(refused.status, refused.reason, refused.location))
                         }
                         lingerAfterRefusal(actorChannel, connection)
                         break
                     } catch (_: TooLongLineException) {
-                        respondBadRequest(actorChannel)
+                        respondBadRequest(actorChannel, input.headMethod)
                         lingerAfterRefusal(actorChannel, connection)
                         break
                     } catch (io: IOException) {
@@ -362,7 +363,7 @@ internal fun CoroutineScope.startH1Pipeline(
                     } catch (cancelled: CancellationException) {
                         throw cancelled
                     } catch (_: Throwable) {
-                        respondBadRequest(actorChannel)
+                        respondBadRequest(actorChannel, input.headMethod)
                         lingerAfterRefusal(actorChannel, connection)
                         break
                     } ?: break
@@ -373,7 +374,11 @@ internal fun CoroutineScope.startH1Pipeline(
                 val framing = RequestFraming.of(request, fields)
                 if (framing.fault != null) {
                     request.release()
-                    if (framing.faultStatus == 501) respondStatus(actorChannel, 501, "Not Implemented") else respondBadRequest(actorChannel)
+                    if (framing.faultStatus == 501) {
+                        respondStatus(actorChannel, 501, "Not Implemented")
+                    } else {
+                        respondBadRequest(actorChannel, input.headMethod)
+                    }
                     lingerAfterRefusal(actorChannel, connection)
                     break
                 }
@@ -404,7 +409,7 @@ internal fun CoroutineScope.startH1Pipeline(
                     expectedHttpUpgrade = !expectedHttpBody && expectHttpUpgrade(request.method, upgrade, connectionOptions)
                 } catch (_: Throwable) {
                     request.release()
-                    response.writePacket(badRequestPacket())
+                    response.writePacket(badRequestPacket(input.headMethod))
                     response.close()
                     break
                 }
@@ -636,7 +641,7 @@ private fun Channel<ByteReadChannel>.cancelPendingResponses(cause: Throwable?) {
  * added would be echoed to the client (the class of Apache's CVE-2012-0053). Its version is HTTP/1.1: a server SHOULD
  * send the highest version it conforms to (RFC 9110 section 6.2), as it does for every other response.
  */
-private fun badRequestPacket(): Source =
+private fun badRequestPacket(head: Boolean = false): Source =
     RequestResponseBuilder()
         .apply {
             responseLine("HTTP/1.1", 400, "Bad Request")
@@ -645,7 +650,8 @@ private fun badRequestPacket(): Source =
             headerLine("Content-Type", "text/plain; charset=utf-8")
             headerLine("Content-Length", BAD_REQUEST_BODY.size.toString())
             emptyLine()
-            bytes(BAD_REQUEST_BODY)
+            // to HEAD the server MUST NOT send content (RFC 9110 section 9.3.2); the fields stay as for GET
+            if (!head) bytes(BAD_REQUEST_BODY)
         }.build()
 
 private val BAD_REQUEST_BODY = "Bad Request".encodeToByteArray()
@@ -846,7 +852,10 @@ private suspend fun ByteReadChannel.skipEmptyLines(): Boolean {
 private const val CR: Byte = '\r'.code.toByte()
 private const val LF: Byte = '\n'.code.toByte()
 
-private suspend fun respondBadRequest(actorChannel: Channel<ByteReadChannel>) = respondClosing(actorChannel, badRequestPacket())
+private suspend fun respondBadRequest(
+    actorChannel: Channel<ByteReadChannel>,
+    head: Boolean,
+) = respondClosing(actorChannel, badRequestPacket(head))
 
 @OptIn(InternalAPI::class)
 private suspend fun pipelineWriterLoop(
@@ -1012,7 +1021,7 @@ private suspend fun readRequestBody(
         throw cause
     } catch (cause: Throwable) {
         requestBody.close(ChannelReadException("Failed to read request body", cause))
-        response.writePacket(badRequestPacket())
+        response.writePacket(badRequestPacket(body.input.headMethod))
         response.close()
         BodyOutcome.Malformed
     } finally {

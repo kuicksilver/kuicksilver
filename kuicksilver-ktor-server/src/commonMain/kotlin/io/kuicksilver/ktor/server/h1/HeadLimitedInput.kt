@@ -48,11 +48,18 @@ internal class HeadLimitedInput(
      */
     var keptFieldValues: List<KeptFieldValue> = emptyList()
 
+    /**
+     * Whether the current head's request line starts with the method HEAD ([checkRequestHead] sets it as soon as the
+     * method is there): the engine's own refusal of it then carries no content (RFC 9110 section 9.3.2).
+     */
+    var headMethod: Boolean = false
+
     /** A request head starts at the next unread byte. */
     fun startHead() {
         headBudget = (maxHeadBytes - buffer.size).coerceAtLeast(0)
         exceeded = false
         keptFieldValues = emptyList()
+        headMethod = false
     }
 
     /** The head was read: what follows (a body) is not limited. */
