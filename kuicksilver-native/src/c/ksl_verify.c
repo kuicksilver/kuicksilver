@@ -51,6 +51,7 @@ int ksl_cert_verify_cb(X509_STORE_CTX *xctx, void *arg) {
     if (c->role == KSL_CLIENT && s->mode == KSL_MODE_TCP && SSL_version(ssl) < TLS1_3_VERSION && !s->server_hello_ems) {
         s->ems_refused = 1; X509_STORE_CTX_set_error(xctx, X509_V_ERR_APPLICATION_VERIFICATION); return 0;
     }
+    if (c->role == KSL_CLIENT && c->verify_mode == KSL_VERIFY_NONE) return 1;   /* no verification (tests); the client's SSL is SSL_VERIFY_PEER */
     if (c->role == KSL_CLIENT && c->verify_mode == KSL_VERIFY_PAUSE) {
         /* statem_clnt.c: the pause happens only when the callback returns 1 AND retry_verify is set; 0 is a plain failure. */
         if (s->verify_pending == 0) { s->verify_pending = 1; (void)SSL_set_retry_verify(ssl); return 1; }

@@ -85,7 +85,45 @@ static void test_tls12(void) {
     CHECK(r == KSL_ERROR && last_code(c, &alert) == KSL_E_EMS_REQUIRED, "negative: the client refuses a TLS 1.2 server without EMS (KSL_E_EMS_REQUIRED)");
     CHECK(alert == SSL_AD_HANDSHAKE_FAILURE && !c->done, "the client sent handshake_failure before its Finished");
     last_code(s, &alert); CHECK(alert == (SSL_AD_HANDSHAKE_FAILURE | 0x100) && !s->done, "the server received handshake_failure");
-    ksl_ssl_free(c); ksl_ssl_free(s); ksl_ctx_free(legacy); ksl_ctx_free(cc); ksl_ctx_free(sc); END();
+    ksl_ssl_free(c); ksl_ssl_free(s);
+    /* the same with a client that verifies nothing (KSL_VERIFY_NONE): OpenSSL ignores a failed verification then, so the refusal
+       must still come before the client's Finished */
+    ksl_ctx *none = client_ctx(NULL, KSL_VERIFY_NONE); ksl_ctx_set_option(none, KSL_OPT_MIN_VERSION, KSL_TLS1_2); ksl_ctx_set_option(none, KSL_OPT_MAX_VERSION, KSL_TLS1_2);
+    c = ksl_ssl_new(none, KSL_MODE_TCP); s = ksl_ssl_new(legacy, KSL_MODE_TCP); r = tcp_pump(c, s, NULL, NULL);
+    CHECK(r == KSL_ERROR && last_code(c, &alert) == KSL_E_EMS_REQUIRED, "negative: a client without verification refuses a TLS 1.2 server without EMS");
+    CHECK(alert == SSL_AD_HANDSHAKE_FAILURE && !c->done, "it sent handshake_failure before its Finished");
+    last_code(s, &alert); CHECK(alert == (SSL_AD_HANDSHAKE_FAILURE | 0x100) && !s->done, "the server received handshake_failure");
+    ksl_ssl_free(c); ksl_ssl_free(s);
+    c = ksl_ssl_new(none, KSL_MODE_TCP); s = ksl_ssl_new(sc, KSL_MODE_TCP);
+    CHECK(tcp_pump(c, s, NULL, NULL) == KSL_OK && echo_bytes(c, s, 1000), "control: the client without verification accepts a server with EMS (an untrusted certificate)");
+    ksl_ssl_free(c); ksl_ssl_free(s); ksl_ctx_free(none); ksl_ctx_free(legacy); ksl_ctx_free(cc); ksl_ctx_free(sc); END();
+}
+
+/* Answers a paused verification with a rejection (unknown_ca), as Kotlin's verifier does for an untrusted chain */
+static int reject_chain(ksl_ssl *s, int rc, void *a) { (void)a; return rc != KSL_WANT_VERIFY || ksl_ssl_verify_resume(s, 0, 48) == KSL_OK; }
+static void test_client_verification_still_refuses(void) {
+    SECTION("tcp_client_verification_still_refuses_bad_chains");
+    /* A client SSL is always SSL_VERIFY_PEER and ksl_cert_verify_cb accepts every chain only under KSL_VERIFY_NONE (its guard reads
+       the client context's verify mode, which cannot change once the context is frozen). With verification configured, a chain
+       from another CA still fails the handshake with unknown_ca, in TLS 1.3 and TLS 1.2, under the OpenSSL verifier and under a
+       paused verification that is rejected; also for a context that was set to KSL_VERIFY_NONE before. */
+    for (int v = 0; v < 2; v++) {
+        int version = v ? KSL_TLS1_2 : KSL_TLS1_3, alert = 0;
+        struct { int mode, none_first; } cases[] = {{KSL_VERIFY_OPENSSL, 0}, {KSL_VERIFY_OPENSSL, 1}, {KSL_VERIFY_PAUSE, 0}};
+        for (size_t i = 0; i < sizeof cases / sizeof cases[0]; i++) {
+            ksl_ctx *cc = client_ctx("test-ca", cases[i].none_first ? KSL_VERIFY_NONE : cases[i].mode), *sc = server_ctx("server-other-ca");
+            if (cases[i].none_first) ksl_ctx_set_option(cc, KSL_OPT_VERIFY_MODE, cases[i].mode);
+            ksl_ctx_set_option(cc, KSL_OPT_MIN_VERSION, version); ksl_ctx_set_option(cc, KSL_OPT_MAX_VERSION, version); ksl_ctx_set_option(sc, KSL_OPT_MIN_VERSION, KSL_TLS1_2);
+            ksl_ctx_freeze(cc);
+            CHECK(ksl_ctx_set_option(cc, KSL_OPT_VERIFY_MODE, KSL_VERIFY_NONE) == KSL_ERROR, "negative: a frozen context cannot switch verification off");
+            ksl_ssl *c = tcp_client(cc, "server.test"), *s = ksl_ssl_new(sc, KSL_MODE_TCP);
+            int r = tcp_pump(c, s, cases[i].mode == KSL_VERIFY_PAUSE ? reject_chain : NULL, NULL); last_code(c, &alert);
+            CHECK(r == KSL_ERROR && !c->done && alert == 48, "negative: a chain from another CA fails the handshake with unknown_ca");
+            last_code(s, &alert); CHECK(!s->done && alert == (48 | 0x100), "the server received unknown_ca");
+            ksl_ssl_free(c); ksl_ssl_free(s); ksl_ctx_free(cc); ksl_ctx_free(sc);
+        }
+    }
+    END();
 }
 
 static void test_resumption(void) {
@@ -729,4 +767,4 @@ static void test_default_versions_and_tls12_profile(void) {
     END();
 }
 
-void run_tcp(void) { test_echo(); test_truncation(); test_tls12(); test_resumption(); test_sni_pause(); test_sni_override_alpn(); test_sni_override_settings_effective(); test_no_tls12_ticket_without_num_tickets(); test_session_context(); test_ticket_bound_to_server_name(); test_keyless_server_no_tickets(); test_server_acknowledges_server_name(); test_key_update_before_record_limit(); test_abort_sends_an_alert(); test_abort_after_pending_messages(); test_legacy_version_must_be_0303(); test_key_update_request_waits_for_the_peer(); test_key_update_epoch_is_bounded(); test_client_keeps_every_ticket(); test_default_versions_and_tls12_profile(); }
+void run_tcp(void) { test_echo(); test_truncation(); test_tls12(); test_client_verification_still_refuses(); test_resumption(); test_sni_pause(); test_sni_override_alpn(); test_sni_override_settings_effective(); test_no_tls12_ticket_without_num_tickets(); test_session_context(); test_ticket_bound_to_server_name(); test_keyless_server_no_tickets(); test_server_acknowledges_server_name(); test_key_update_before_record_limit(); test_abort_sends_an_alert(); test_abort_after_pending_messages(); test_legacy_version_must_be_0303(); test_key_update_request_waits_for_the_peer(); test_key_update_epoch_is_bounded(); test_client_keeps_every_ticket(); test_default_versions_and_tls12_profile(); }

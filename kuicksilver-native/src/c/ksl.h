@@ -47,7 +47,7 @@ extern "C" {
 #define KSL_SERVER 1
 #define KSL_MODE_QUIC 0
 #define KSL_MODE_TCP 1
-#define KSL_VERIFY_NONE 0
+#define KSL_VERIFY_NONE 0         /* client: no certificate verification (tests); a TLS 1.2 server without EMS is still refused before Finished */
 #define KSL_VERIFY_PAUSE 1
 #define KSL_VERIFY_OPENSSL 2
 #define KSL_CLIENT_CERT_NONE 0

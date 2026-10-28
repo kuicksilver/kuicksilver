@@ -363,7 +363,9 @@ int ksl_ctx_set_option(ksl_ctx *c, int option, int value) {
         if (value < KSL_VERIFY_NONE || value > KSL_VERIFY_OPENSSL) { ksl_ctx_set_error(c, KSL_E_BAD_ARG, "ksl: verify mode is 0..2"); return KSL_ERROR; }
         if (c->role == KSL_SERVER && value == KSL_VERIFY_PAUSE) { ksl_ctx_set_error(c, KSL_E_SERVER_PAUSE_FORBIDDEN, "ksl: verify pause is client-only (OpenSSL would accept silently)"); return KSL_ERROR; }
         c->verify_mode = value;
-        if (c->role == KSL_CLIENT) SSL_CTX_set_verify(c->ctx, value == KSL_VERIFY_NONE ? SSL_VERIFY_NONE : SSL_VERIFY_PEER, NULL);
+        /* a client always verifies through ksl_cert_verify_cb, which accepts every chain under KSL_VERIFY_NONE: with SSL_VERIFY_NONE
+           OpenSSL would ignore its refusal of a TLS 1.2 server without extended master secret (statem_clnt.c) */
+        if (c->role == KSL_CLIENT) SSL_CTX_set_verify(c->ctx, SSL_VERIFY_PEER, NULL);
         return KSL_OK;
     case KSL_OPT_CLIENT_CERT:
         /* on a client this would rewrite SSL_CTX_set_verify and switch server verification off */
