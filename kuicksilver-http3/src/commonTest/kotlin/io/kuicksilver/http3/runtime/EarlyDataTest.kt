@@ -188,6 +188,8 @@ class EarlyDataTest {
         beforeRequest: (suspend (Http3Connection, () -> Unit) -> Unit)? = null,
         /** Sees the client's socket. */
         clientIo: (io.kuicksilver.http3.MemoryIo) -> Unit = {},
+        /** 1 while the network holds the server's answers to the resuming client back (the client stays in 0-RTT); the test lets them go. */
+        clientHold: AtomicInt? = null,
         /** Sees the resuming client's HTTP/3 session before it starts. */
         clientSession: ((H3Session) -> Unit)? = null,
         /** false: the test ends the connection in [beforeRequest]; no request follows and the result is null. */
@@ -255,7 +257,7 @@ class EarlyDataTest {
             val warm = client.connectEarly(first.localAddress, H3Fixtures.client())
             repeat(2) { assertEquals(204, warm.request(http3Request("GET", "server.test", "/")).status) } // the ticket arrives
             warm.close()
-            val holding = AtomicInt(if (beforeRequest != null) 1 else 0)
+            val holding = clientHold ?: AtomicInt(if (beforeRequest != null) 1 else 0)
             net.drop = { _, to, _ -> holding.load() == 1 && to == a.localAddress }
             if (clientSession != null) H3Session.createdForTest = { if (!it.isServer) clientSession(it) }
             val c =
@@ -442,15 +444,21 @@ class EarlyDataTest {
         runBlocking {
             withTimeout(30.seconds) {
                 val attempts = AtomicInt(0)
+                val hold = AtomicInt(1) // the client stays in 0-RTT until its first attempt opened its streams
                 val accepted =
                     earlyAcceptedAfterResuming(
                         issuer = http3Settings {},
                         resumer = http3Settings { h3Datagram = false },
+                        clientHold = hold,
                         clientSession = { session ->
                             session.criticalAttemptHookForTest = { step, gen ->
                                 if (step == H3Session.AttemptStep.Started) attempts.incrementAndFetch()
                                 // opened in 0-RTT; the rejection drops them before their type is written
-                                if (step == H3Session.AttemptStep.Opened && gen == 0) runCatching { session.quic.awaitHandshake() }
+                                if (step == H3Session.AttemptStep.Opened && gen == 0) {
+                                    assertEquals(false, session.quic.isHandshakeComplete, "opened in 0-RTT")
+                                    hold.store(0)
+                                    runCatching { session.quic.awaitHandshake() }
+                                }
                             }
                         },
                     ) { c, resumed ->
