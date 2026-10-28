@@ -59,12 +59,16 @@ jobs:
           # 5 h of fuzzing leaves the build and the uploads room under the jobs' 350-minute limit (6 h is GitHub's maximum)
           awk -v h="$HOURS" 'BEGIN { exit !(h ~ /^[0-9]+(\.[0-9]+)?$/ && h >= 0.1 && h <= 5) }' || { echo "::error::hours_per_target '$HOURS' is not a number in 0.1 .. 5"; exit 1; }
           all=$(bash tools/fuzz/campaign.sh list)
+          set -f   # the ids are split on commas and blanks, never globbed against the checkout
           if [ -z "$TARGETS" ] || [ "$TARGETS" = all ]; then ids=$all; else
             ids=""; for id in ${TARGETS//,/ }; do
               grep -qxF "$id" <<< "$all" || { echo "::error::unknown target $id; known: $(echo "$all" | tr '\n' ' ')"; exit 1; }
               ids="$ids$id"$'\n'
             done
           fi
+          set +f
+          # blanks or commas only: no target, which would otherwise reach the fuzz job as an empty matrix
+          [ -n "$ids" ] || { echo "::error::targets '$TARGETS' names no target; give ids (tools/fuzz/campaign.sh list) or all"; exit 1; }
           json=$(printf '%s\n' "$ids" | jq -R -s -c 'split("\n") | map(select(length > 0)) | unique')
           echo "targets: $json, $HOURS h each"
           { echo "targets=$json"; echo "hours=$HOURS"; } >> "$GITHUB_OUTPUT"
