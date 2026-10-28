@@ -374,22 +374,23 @@ internal fun CoroutineScope.startH1Pipeline(
                         if (e.partial) respondRequestTimeout(actorChannel) else actorChannel.close()
                         break
                     } catch (_: RequestHeadTooLarge) {
+                        // empty, also for HEAD
                         respondStatus(actorChannel, 431, "Request Header Fields Too Large")
                         lingerAfterRefusal(actorChannel, connection, draining)
                         break
                     } catch (refused: RequestHeadRefused) {
                         if (refused.status == 400) {
-                            respondBadRequest(actorChannel)
+                            respondBadRequest(actorChannel, input.headMethod)
                         } else {
                             respondClosing(
                                 actorChannel,
-                                closingResponsePacket(refused.status, refused.reason, refused.location, refused.body),
+                                closingResponsePacket(refused.status, refused.reason, refused.location, refused.body, input.headMethod),
                             )
                         }
                         lingerAfterRefusal(actorChannel, connection, draining)
                         break
                     } catch (_: TooLongLineException) {
-                        respondBadRequest(actorChannel)
+                        respondBadRequest(actorChannel, input.headMethod)
                         lingerAfterRefusal(actorChannel, connection, draining)
                         break
                     } catch (io: IOException) {
@@ -397,7 +398,7 @@ internal fun CoroutineScope.startH1Pipeline(
                     } catch (cancelled: CancellationException) {
                         throw cancelled
                     } catch (_: Throwable) {
-                        respondBadRequest(actorChannel)
+                        respondBadRequest(actorChannel, input.headMethod)
                         lingerAfterRefusal(actorChannel, connection, draining)
                         break
                     } ?: break
@@ -411,7 +412,7 @@ internal fun CoroutineScope.startH1Pipeline(
                     if (framing.faultStatus != 400) {
                         respondStatus(actorChannel, framing.faultStatus, framing.faultReason)
                     } else {
-                        respondBadRequest(actorChannel)
+                        respondBadRequest(actorChannel, input.headMethod)
                     }
                     lingerAfterRefusal(actorChannel, connection, draining)
                     break
@@ -443,7 +444,7 @@ internal fun CoroutineScope.startH1Pipeline(
                     expectedHttpUpgrade = !expectedHttpBody && expectHttpUpgrade(request.method, upgrade, connectionOptions)
                 } catch (_: Throwable) {
                     request.release()
-                    response.writePacket(badRequestPacket())
+                    response.writePacket(badRequestPacket(input.headMethod))
                     response.close()
                     break
                 }
@@ -675,7 +676,7 @@ private fun Channel<ByteReadChannel>.cancelPendingResponses(cause: Throwable?) {
  * added would be echoed to the client (the class of Apache's CVE-2012-0053). Its version is HTTP/1.1: a server SHOULD
  * send the highest version it conforms to (RFC 9110 section 6.2), as it does for every other response.
  */
-private fun badRequestPacket(): Source =
+private fun badRequestPacket(head: Boolean = false): Source =
     RequestResponseBuilder()
         .apply {
             responseLine("HTTP/1.1", 400, "Bad Request")
@@ -684,7 +685,8 @@ private fun badRequestPacket(): Source =
             headerLine("Content-Type", "text/plain; charset=utf-8")
             headerLine("Content-Length", BAD_REQUEST_BODY.size.toString())
             emptyLine()
-            bytes(BAD_REQUEST_BODY)
+            // to HEAD the server MUST NOT send content (RFC 9110 section 9.3.2); the fields stay as for GET
+            if (!head) bytes(BAD_REQUEST_BODY)
         }.build()
 
 private val BAD_REQUEST_BODY = "Bad Request".encodeToByteArray()
@@ -726,13 +728,15 @@ internal class HttpDateCache(
 
 /**
  * A [status] response with `Connection: close`, a Location field when [location] is given, and [body] as `text/plain`
- * when given, else empty.
+ * when given, else empty. To a [head] request the body's fields go out without it (RFC 9110 section 9.3.2: the server
+ * MUST NOT send content in the response to HEAD).
  */
 private fun closingResponsePacket(
     status: Int,
     reason: String,
     location: String? = null,
     body: String? = null,
+    head: Boolean = false,
 ): Source {
     val content = body?.encodeToByteArray()
     return RequestResponseBuilder()
@@ -744,7 +748,7 @@ private fun closingResponsePacket(
             if (content != null) headerLine("Content-Type", "text/plain; charset=utf-8")
             headerLine("Content-Length", (content?.size ?: 0).toString())
             emptyLine()
-            if (content != null) bytes(content)
+            if (content != null && !head) bytes(content)
         }.build()
 }
 
@@ -936,7 +940,10 @@ private suspend fun ByteReadChannel.skipEmptyLines(): Boolean {
 private const val CR: Byte = '\r'.code.toByte()
 private const val LF: Byte = '\n'.code.toByte()
 
-private suspend fun respondBadRequest(actorChannel: Channel<ByteReadChannel>) = respondClosing(actorChannel, badRequestPacket())
+private suspend fun respondBadRequest(
+    actorChannel: Channel<ByteReadChannel>,
+    head: Boolean,
+) = respondClosing(actorChannel, badRequestPacket(head))
 
 @OptIn(InternalAPI::class)
 private suspend fun pipelineWriterLoop(
@@ -1102,7 +1109,7 @@ private suspend fun readRequestBody(
         throw cause
     } catch (cause: Throwable) {
         requestBody.close(ChannelReadException("Failed to read request body", cause))
-        response.writePacket(badRequestPacket())
+        response.writePacket(badRequestPacket(body.input.headMethod))
         response.close()
         BodyOutcome.Malformed
     } finally {
