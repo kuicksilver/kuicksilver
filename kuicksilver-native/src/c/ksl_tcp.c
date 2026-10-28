@@ -100,6 +100,10 @@ int ksl_tcp_abort(ksl_ssl *s) {
         if (started) (void)SSL_do_handshake(s->ssl);
     }
     int sent = s->last_alert == SSL_AD_INTERNAL_ERROR;   /* info_cb: a fatal alert we sent */
+    /* a TLS 1.2 client whose last received record arrived in part: OpenSSL keeps its first bytes and starts no renegotiation while
+       it does (ssl3_renegotiate_check), and only the rest of the record, from the peer, would release them */
+    if (!sent && !stuck && client && started && SSL_version(s->ssl) < TLS1_3_VERSION && SSL_has_pending(s->ssl) && SSL_pending(s->ssl) == 0)
+        stuck = "ksl: session aborted without an alert: a received record is incomplete, and OpenSSL starts no renegotiation before its rest arrives";
     ksl_ssl_fail(s, KSL_E_NOT_SUPPORTED, sent ? "ksl: session aborted with internal_error" : stuck ? stuck : "ksl: session aborted; OpenSSL can send no alert for this role and version");
     return sent ? KSL_OK : KSL_ERROR;
 }

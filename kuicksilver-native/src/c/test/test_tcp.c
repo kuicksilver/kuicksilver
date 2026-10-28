@@ -543,7 +543,30 @@ static void test_abort_after_pending_messages(void) {
     c = tcp_client(cc, "server.test"); s = ksl_ssl_new(sc, KSL_MODE_TCP);
     CHECK(tcp_pump(c, s, NULL, NULL) == KSL_OK, "TLS 1.3 handshake");
     uint8_t *large = calloc(1, 3 * sizeof big); CHECK(ksl_tcp_write(s, large, 3 * sizeof big, &n) == KSL_OK && n == sizeof big, "a 48 KiB write takes 16 KiB");
-    free(large); (void)out; ksl_ssl_free(c); ksl_ssl_free(s); ksl_ctx_free(cc); ksl_ctx_free(sc); END();
+    free(large); ksl_ssl_free(c); ksl_ssl_free(s);
+    /* TLS 1.2 client: a received record read in part (OpenSSL starts no renegotiation while received bytes are unprocessed),
+       and two records of which the first was read: the abort still sends internal_error */
+    ksl_ctx *cc12 = client_ctx("test-ca", KSL_VERIFY_OPENSSL); ksl_ctx_set_option(cc12, KSL_OPT_MIN_VERSION, KSL_TLS1_2); ksl_ctx_set_option(cc12, KSL_OPT_MAX_VERSION, KSL_TLS1_2); ksl_ctx_set_option(sc, KSL_OPT_MIN_VERSION, KSL_TLS1_2);
+    for (int unread = 0; unread < 2; unread++) {
+        int hellos = 0; c = tcp_client(cc12, "server.test"); s = ksl_ssl_new(sc, KSL_MODE_TCP); ksl_ssl_msg_observer_for_test(s, client_hello_count_cb, &hellos);
+        CHECK(tcp_pump(c, s, NULL, NULL) == KSL_OK, "TLS 1.2 handshake");
+        uint8_t hundred[100] = {0}, part[16];
+        CHECK(ksl_tcp_write(s, hundred, sizeof hundred, &n) == KSL_OK && (!unread || ksl_tcp_write(s, hundred, sizeof hundred, &n) == KSL_OK), "the server sends 100 bytes (and 100 more)");
+        shuttle(s, c); CHECK(ksl_tcp_read(c, part, sizeof part, &n) == KSL_OK && n == sizeof part, "the client reads 16 of them");
+        CHECK(ksl_tcp_abort(c) == KSL_OK, "the TLS 1.2 client aborts with an alert");
+        CHECK(shuttle(c, s) > 0 && read_after_abort(s, &alert) == KSL_ERROR && alert == (SSL_AD_INTERNAL_ERROR | 0x100) && hellos == 1, "the server receives internal_error, no ClientHello");
+        ksl_ssl_free(c); ksl_ssl_free(s);
+    }
+    /* a record that arrived in part: OpenSSL keeps its first bytes in the record layer, and while any are there it starts no
+       renegotiation (ssl3_renegotiate_check) and has no other message a TLS 1.2 client could fail: no alert, and the error says why */
+    c = tcp_client(cc12, "server.test"); s = ksl_ssl_new(sc, KSL_MODE_TCP); CHECK(tcp_pump(c, s, NULL, NULL) == KSL_OK, "TLS 1.2 handshake");
+    { uint8_t hundred[100] = {0}, wire[256], part[16]; size_t w = 0, used;
+      CHECK(ksl_tcp_write(s, hundred, sizeof hundred, &n) == KSL_OK && ksl_tcp_drain(s, wire, sizeof wire, &w) == KSL_OK && w > 20, "a 100-byte record");
+      CHECK(ksl_tcp_feed(c, wire, 20, &used) == KSL_OK && used == 20 && ksl_tcp_read(c, part, sizeof part, &n) == KSL_WANT_READ, "its first 20 bytes reached the client");
+      CHECK(ksl_tcp_abort(c) == KSL_ERROR && last_code(c, NULL) == KSL_E_NOT_SUPPORTED && last_message_has(c, "incomplete"), "negative: no alert behind an incomplete record, and the error names the cause");
+      CHECK(ksl_tcp_drain(c, out, sizeof out, &n) == KSL_OK && n == 0, "nothing left the client"); }
+    ksl_ssl_free(c); ksl_ssl_free(s);
+    ksl_ctx_free(cc12); ksl_ctx_free(cc); ksl_ctx_free(sc); END();
 }
 
 /* Moves a's pending ciphertext to b with the legacy_version of the first record's hello (bytes 9-10: record header 5, handshake
