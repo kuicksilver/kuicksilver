@@ -495,7 +495,14 @@ public class TlsConnection private constructor(
     private suspend fun alertAfterFailedWrite(e: KslException.Internal) {
         val sent = e.alert and 0x100 == 0 && e.alert and 0xff != 0
         if (!sent) return
-        runCatching { drainToTransport() }.onSuccess { failureAlertSent = true }
+        try {
+            drainToTransport()
+            failureAlertSent = true
+        } catch (c: CancellationException) {
+            throw c // the writer's cancellation stays its cause
+        } catch (_: Throwable) {
+            // the transport failed: no alert reached it, and the ksl failure stays the writer's cause
+        }
     }
 
     /**
