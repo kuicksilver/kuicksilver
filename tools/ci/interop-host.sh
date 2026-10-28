@@ -13,7 +13,7 @@
 set -euo pipefail
 DOCKER_CE_SERIES=28                                          # 28.1 or later within it; a new series is a deliberate change here
 DOCKER_KEY_FPR=9DC858229FC7DD38854AE2D88D81803C0EBFCD88      # https://docs.docker.com/engine/install/ubuntu/ ("Docker Release (CE deb)")
-WIRESHARK_PPA_KEY_FPR=A2E402C42FDD5D1F2D4DB8D4D875551314ECA0F0   # Launchpad PPA for Wireshark Developers (launchpad.net/~wireshark-dev)
+WIRESHARK_PPA_KEY_FPR=A2E402B85A4B70CD78D8A3D9D875551314ECA0F0   # signing_key_fingerprint of ~wireshark-dev/+archive/ubuntu/stable (Launchpad API)
 summary() { [ -z "${GITHUB_STEP_SUMMARY:-}" ] || printf '%s\n' "$@" >> "$GITHUB_STEP_SUMMARY"; }
 
 # <url> <fingerprint> <keyring>: the key at <url>, refused unless it is exactly the one key <fingerprint>, as a binary keyring
