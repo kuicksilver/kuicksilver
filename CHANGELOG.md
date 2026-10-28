@@ -615,14 +615,15 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   differs from its Content-Length fails the request and closes the connection (RFC 9112 section 6.3: the server takes
   that many octets as the body). A shorter one went out as complete and its connection was kept, so the server waited
   for the rest or read the next request as it; a longer one sent its excess where the next request goes (section 11.2).
-  The excess is no longer sent.
+  The excess is no longer sent, and the producer of a longer streamed body is cancelled rather than left waiting.
 - Ktor client, HTTP/1.1: the keep-alive connection of a response whose body was read to its end is back in the pool
   when the application sees that end, so the request it sends next reuses it. Before, the body ended first and the
   connection was released a moment later, when the body's reader completed: a request sent in between (a thread
   preempted there, as on a slow Android emulator) found no idle connection and opened another one. A streamed request
-  body still being sent when the response has been read never delays the response's end: that connection is not
-  reused and closes once the upload ends or the call does (before, it went back to the pool only when its sender
-  completed).
+  body still being sent when the response has been read never delays the response's end: after a response that would
+  keep the connection, it is not reused and closes once the upload ends or the call does (before, it went back to the
+  pool only when its sender completed); after one that does not (`Connection: close`, HTTP/1.0, a close-delimited or
+  failed body), it closes at once and the upload stops (RFC 9112 section 9.5).
 - Ktor client, HTTP/1.1: a response head cut before its empty line (the server closed the connection in the middle of
   the header section) now fails the request with `ClosedReadChannelException` instead of passing for a complete
   response without fields (RFC 9112 section 8: the client MUST record it as incomplete); a redirect without its

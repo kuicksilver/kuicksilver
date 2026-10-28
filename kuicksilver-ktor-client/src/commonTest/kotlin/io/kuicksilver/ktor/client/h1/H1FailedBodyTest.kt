@@ -24,6 +24,7 @@ import io.kuicksilver.quic.KuicksilverLogger
 import io.kuicksilver.quic.LogLevel
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceUntilIdle
@@ -296,20 +297,32 @@ class H1FailedBodyTest {
     private suspend fun TestScope.mismatched(
         length: Long,
         bytes: String,
-        writeChannel: Boolean,
+        kind: BodyKind,
     ): Pair<String, Throwable?> {
         val body =
-            if (writeChannel) {
-                object : OutgoingContent.WriteChannelContent() {
-                    override val contentLength: Long = length
+            when (kind) {
+                BodyKind.WriteChannel -> {
+                    object : OutgoingContent.WriteChannelContent() {
+                        override val contentLength: Long = length
 
-                    override suspend fun writeTo(channel: ByteWriteChannel) = channel.writeStringUtf8(bytes)
+                        override suspend fun writeTo(channel: ByteWriteChannel) = channel.writeStringUtf8(bytes)
+                    }
                 }
-            } else {
-                object : OutgoingContent.ReadChannelContent() {
-                    override val contentLength: Long = length
 
-                    override fun readFrom(): ByteReadChannel = ByteReadChannel(bytes.encodeToByteArray())
+                BodyKind.ReadChannel -> {
+                    object : OutgoingContent.ReadChannelContent() {
+                        override val contentLength: Long = length
+
+                        override fun readFrom(): ByteReadChannel = ByteReadChannel(bytes.encodeToByteArray())
+                    }
+                }
+
+                BodyKind.Bytes -> {
+                    object : OutgoingContent.ByteArrayContent() {
+                        override val contentLength: Long = length
+
+                        override fun bytes(): ByteArray = bytes.encodeToByteArray()
+                    }
                 }
             }
         val wire = Wire()
@@ -337,12 +350,12 @@ class H1FailedBodyTest {
      */
     @Test fun negative_aStreamedBodyShorterThanItsContentLengthFailsTheCall() =
         runTest {
-            for (writeChannel in listOf(false, true)) {
-                val (received, failure) = mismatched(length = 5, bytes = "abc", writeChannel = writeChannel)
-                assertEquals("abc", received, "writeChannel=$writeChannel")
+            for (kind in listOf(BodyKind.ReadChannel, BodyKind.WriteChannel)) {
+                val (received, failure) = mismatched(length = 5, bytes = "abc", kind = kind)
+                assertEquals("abc", received, "$kind")
                 assertTrue(
                     failure?.message?.contains("fewer bytes than its Content-Length 5") == true,
-                    "writeChannel=$writeChannel: $failure",
+                    "$kind: $failure",
                 )
             }
         }
@@ -353,15 +366,52 @@ class H1FailedBodyTest {
      */
     @Test fun negative_aStreamedBodyLongerThanItsContentLengthFailsTheCall() =
         runTest {
-            for (writeChannel in listOf(false, true)) {
-                val (received, failure) = mismatched(length = 3, bytes = "abcGET /x", writeChannel = writeChannel)
-                assertEquals("abc", received, "writeChannel=$writeChannel")
+            for (kind in listOf(BodyKind.ReadChannel, BodyKind.WriteChannel)) {
+                val (received, failure) = mismatched(length = 3, bytes = "abcGET /x", kind = kind)
+                assertEquals("abc", received, "$kind")
                 assertTrue(
                     failure?.message?.contains("more bytes than its Content-Length 3") == true,
-                    "writeChannel=$writeChannel: $failure",
+                    "$kind: $failure",
                 )
             }
         }
+
+    /** A byte-array body of another length than its Content-Length fails before any of it is sent, shorter or longer. */
+    @Test fun negative_aByteArrayBodyOfAnotherLengthThanItsContentLengthFailsTheCall() =
+        runTest {
+            for ((length, word) in listOf(5L to "fewer", 2L to "more")) {
+                val (received, failure) = mismatched(length = length, bytes = "abc", kind = BodyKind.Bytes)
+                assertEquals("", received, "Content-Length $length")
+                assertTrue(failure?.message?.contains("$word bytes than its Content-Length $length") == true, "$length: $failure")
+            }
+        }
+
+    /**
+     * A streamed body longer than its Content-Length whose producer waits for room in its channel: the rest is never
+     * read, and the channel is cancelled with the failure, so the producer ends instead of waiting for ever.
+     */
+    @Test fun negative_aLongerBodysProducerIsNotLeftWaiting() =
+        runTest {
+            val source = ByteChannel()
+            val chunk = ByteArray(64 * 1024)
+            val producer = async { runCatching { while (true) source.writeFully(chunk) }.exceptionOrNull() }
+            val body =
+                object : OutgoingContent.ReadChannelContent() {
+                    override val contentLength: Long = 3
+
+                    override fun readFrom(): ByteReadChannel = source
+                }
+            val wire = Wire()
+            backgroundScope.launch {
+                while (wire.toServer.readLineStrict()?.isNotEmpty() == true) continue
+                runCatching { wire.toServer.readByteArray(4) }
+            }
+            val call = runCatching { exchange(wire, post(body, socketTimeout = 5_000)) { it.statusCode } }
+            assertTrue(call.exceptionOrNull()?.message?.contains("more bytes than its Content-Length 3") == true, "$call")
+            assertTrue(producer.await() != null, "the producer is still writing")
+        }
+
+    private enum class BodyKind { ReadChannel, WriteChannel, Bytes }
 
     /** Bytes to the end; an end with a cause throws it (ktor's `readAvailable` answers -1 for both). */
     private suspend fun ByteReadChannel.readToEnd(): Long {

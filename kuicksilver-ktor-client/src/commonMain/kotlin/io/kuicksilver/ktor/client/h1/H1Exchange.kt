@@ -203,7 +203,12 @@ private suspend fun processOutgoingContent(
     suspend fun copy(source: ByteReadChannel): Long {
         if (limit == null) return source.copyTo(channel)
         val copied = source.copyTo(channel, limit)
-        if (copied == limit && source.awaitContent()) throw bodyLengthMismatch(longer = true, limit)
+        if (copied == limit && source.awaitContent()) {
+            // the rest is never read: a producer waiting for room in [source] ends with the failure instead of waiting for ever
+            val e = bodyLengthMismatch(longer = true, limit)
+            source.cancel(e)
+            throw e
+        }
         return copied
     }
     return when (body) {
@@ -256,10 +261,29 @@ private suspend fun processOutgoingContent(
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 private fun Deferred<Boolean>?.isOut(): Boolean = this == null || (isCompleted && !isCancelled && getCompleted())
 
+/** After a response whose connection may persist when [reusable]: reused, or closed after a request body still under way. */
+private fun afterResponse(
+    reusable: Boolean,
+    requestBodySent: Deferred<Boolean>?,
+): AfterResponse =
+    when {
+        !reusable -> AfterResponse.Close
+        requestBodySent.isOut() -> AfterResponse.Reuse
+        else -> AfterResponse.CloseAfterUpload
+    }
+
 /** What happens to the connection after a response. */
 internal enum class AfterResponse {
     Reuse,
+
+    /** closed at once, which also ends a request body still being sent (RFC 9112 section 9.5) */
     Close,
+
+    /**
+     * a reusable response whose request body is still being sent: not reused, and closed once that body ends (sent,
+     * failed, or cancelled with the call), so the upload is not cut off
+     */
+    CloseAfterUpload,
 
     /** an upgraded connection lives as long as the call */
     HandOver,
@@ -311,9 +335,12 @@ internal class InterimHeads(
  * [requestBodySent] is the request body sent while the response is read (a streamed body), completed with whether all of
  * it went out; null when there is none. A reusable connection is given back ([AfterResponse.Reuse]) before the response's
  * body ends, so the application that sees that end, and sends its next request at once, finds it idle; only when that
- * request body is already out. One still being sent when the response ends makes it [AfterResponse.Close] at once: the
- * response never waits for the upload (a duplex application closes it after reading the response, a server that answered
- * early may have stopped reading), and the caller closes the connection once the upload ends.
+ * request body is already out. One still being sent when a reusable response ends makes it
+ * [AfterResponse.CloseAfterUpload] at once: the response never waits for the upload (a duplex application closes it after
+ * reading the response, a server that answered early may have stopped reading), and the caller closes the connection once
+ * the upload ends. A response after which the connection does not persist ([AfterResponse.Close]: `Connection: close`,
+ * HTTP/1.0, a close-delimited or failed body) closes it at once, the upload with it (RFC 9112 section 9.5: the client
+ * SHOULD immediately cease transmitting and close).
  */
 @OptIn(InternalAPI::class)
 internal suspend fun readResponse(
@@ -405,7 +432,7 @@ internal suspend fun readResponse(
                 when {
                     request.method == HttpMethod.Head || status == HttpStatusCode.NotModified || status == HttpStatusCode.NoContent -> {
                         val reusable = keepAlive && !framing.invalidLength && !framing.invalidEncoding
-                        onBodyDone(if (reusable && requestBodySent().isOut()) AfterResponse.Reuse else AfterResponse.Close)
+                        onBodyDone(afterResponse(reusable, requestBodySent()))
                         ByteReadChannel.Empty
                     }
 
@@ -450,13 +477,7 @@ internal suspend fun readResponse(
                         val parser =
                             scope.writer(autoFlush = true) {
                                 framing.readBody(input.withSocketTimeout(request), channel)
-                                onBodyDone(
-                                    if (keepAlive && framing.delimited && requestBodySent().isOut()) {
-                                        AfterResponse.Reuse
-                                    } else {
-                                        AfterResponse.Close
-                                    },
-                                )
+                                onBodyDone(afterResponse(keepAlive && framing.delimited, requestBodySent()))
                                 settled = true
                             }
                         parser.job.invokeOnCompletion { if (!settled) onBodyDone(AfterResponse.Close) }

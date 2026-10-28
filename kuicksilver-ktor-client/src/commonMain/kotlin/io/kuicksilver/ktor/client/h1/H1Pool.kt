@@ -345,9 +345,15 @@ internal class H1Pool(
                                         released(pool.release(conn))
                                     }
 
+                                    // at once, which ends a request body still being sent (RFC 9112 section 9.5)
                                     AfterResponse.Close -> {
-                                        // a request body still being sent is not cut off: the connection closes when its
-                                        // sender ends (sent, failed, or cancelled with the call); at once when it has
+                                        conn.close()
+                                        released(false)
+                                    }
+
+                                    // a request body still being sent is not cut off: the connection closes when its
+                                    // sender ends (sent, failed, or cancelled with the call)
+                                    AfterResponse.CloseAfterUpload -> {
                                         val job = bodyJob?.job
                                         if (job == null) {
                                             conn.close()
@@ -484,21 +490,30 @@ internal class H1Pool(
                     }
                 }
             }
-        // cancelled before the whole body was out: the connection is closed. Cancelled after (the call ended between the
-        // last flush and the sender's completion), it is left alone: it may already be idle in the pool or serve the next
-        // request
-        sender.job.invokeOnCompletion { c -> if (c != null && sender.sent.complete(false)) conn.close() }
+        sender.job.invokeOnCompletion { c -> sender.ended(c, conn) }
         callContext[Job]?.invokeOnCompletion { sender.job.cancel() } // not a child: the call does not wait for it, it ends with the call
         return sender
     }
 
-    private class BodySender {
+    internal class BodySender {
         lateinit var job: Job
 
         @kotlin.concurrent.Volatile var failure: Throwable? = null
 
         /** Completed when the sending ends: true once the whole body was written and flushed, false when it failed or was cancelled. */
         val sent = CompletableDeferred<Boolean>()
+
+        /**
+         * The sender's job completed with [cause]. Cancelled before the whole body was out: [conn] is closed. Cancelled
+         * after (the call ended between the last flush and the job's completion), [conn] is left alone: it may already be
+         * idle in the pool or serve the next request.
+         */
+        fun ended(
+            cause: Throwable?,
+            conn: PooledConnection,
+        ) {
+            if (cause != null && sent.complete(false)) conn.close()
+        }
     }
 
     /**
