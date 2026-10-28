@@ -183,8 +183,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   its way to the runtime (a flush waiting for socket room) is a stream of its own: it never gets the wrapper of the early
   stream whose ID it took, and a reset or STOP_SENDING issued on an early stream never reaches it. A rejection closes the connection with
   `ZeroRttRejected` only for another ALPN or under `EarlyDataState.Required` (no longer for lower limits). The HTTP/3
-  client opens its control and QPACK streams once the handshake completed and repeats each early request once after a
-  rejection.
+  client still sends its SETTINGS in 0-RTT (RFC 9114 section 7.2.4.2: "settings MUST be sent as soon as the transport is
+  ready to send data"); after a rejection it opens its control and QPACK streams again, sends SETTINGS once more, sends
+  no QPACK Stream Cancellation for the early requests (the request sent again reuses the stream ID, and a cancellation
+  arriving after its response was encoded made the server fail the connection with `QPACK_DECODER_STREAM_ERROR`) and
+  repeats each early request once.
 - QUIC: a lost connection no longer takes the bytes a peer sent before it (`QuicStream.input`): what was received is
   still read, up to the FIN when it came too (then the stream ends cleanly), and only then do reads fail with the
   `QuicException.ConnectionLost`. Before, every read failed at once, even with the whole stream received. A reset still

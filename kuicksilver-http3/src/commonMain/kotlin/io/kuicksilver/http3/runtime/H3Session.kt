@@ -194,30 +194,109 @@ internal class H3Session(
     var currentPath: QuicPath = quic.paths.first()
         private set
 
-    private lateinit var control: QuicStream
-    private lateinit var encoderStream: QuicStream
-    private lateinit var decoderStream: QuicStream
+    /** Our control and QPACK streams, once open, typed and with SETTINGS sent; null until then and after a rejected 0-RTT dropped them. */
+    private class Critical(
+        val control: QuicStream,
+        val encoder: QuicStream,
+        val decoder: QuicStream,
+    )
+
+    private var critical: Critical? = null
+
+    /**
+     * Client: how often our critical streams were given up because the server rejected the 0-RTT that carried them (RFC 9001
+     * section 4.6.2). What was made for the streams of an older generation is not written on newer ones. Dispatcher only.
+     */
+    private var criticalGen = 0
+
+    /** Client: the rejected 0-RTT was noted ([noteRejectedZeroRtt]). Dispatcher only. */
+    private var zeroRttRejectionNoted = false
+
     private val controlLock = Mutex()
     private val encoderLock = Mutex()
     private val decoderLock = Mutex()
     val qpack =
         QpackRuntime(
             settings,
-            { b ->
-                awaitCriticalStreams()
-                encoderLock.withLock {
-                    encoderStream.output.writeFully(b)
-                    encoderStream.output.flush()
-                }
-            },
-            { b ->
-                awaitCriticalStreams()
-                decoderLock.withLock {
-                    decoderStream.output.writeFully(b)
-                    decoderStream.output.flush()
-                }
-            },
+            { b -> writeCritical(encoderLock, { it.encoder }, b) },
+            { b -> writeCritical(decoderLock, { it.decoder }, b) },
         )
+
+    /**
+     * Writes [b] on our critical stream [pick] once the streams are open. Bytes made for streams a rejected 0-RTT dropped
+     * (an older [criticalGen], or a write the drop failed) never reach the newer ones: QPACK instructions made then can only
+     * be about early request streams the server never saw, whose IDs the requests sent again reuse (a Stream Cancellation
+     * there would cancel the new request's sections, review 2026-10-28 H3C-1). [again] says whether such a frame is still
+     * wanted on the new control stream (a GOAWAY is).
+     */
+    private suspend fun writeCritical(
+        lock: Mutex,
+        pick: (Critical) -> QuicStream,
+        b: ByteArray,
+        again: () -> Boolean = { false },
+    ) {
+        var gen = criticalGen
+        while (true) {
+            awaitCriticalStreams()
+            val written =
+                lock.withLock {
+                    val c = critical
+                    if (gen != criticalGen || c == null) return@withLock false
+                    try {
+                        pick(c).output.writeFully(b)
+                        pick(c).output.flush()
+                        true
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Throwable) {
+                        if (transportCause(e) !is QuicException.StreamError.EarlyDataRejected) throw e
+                        false
+                    }
+                }
+            if (written) return
+            // the stream it was for is gone with the rejected 0-RTT
+            noteRejectedZeroRtt()
+            if (!again()) return
+            gen = criticalGen
+        }
+    }
+
+    /** [st] was dropped by the server's rejection of 0-RTT (RFC 9001 section 4.6.2): the server never saw anything of it. */
+    fun droppedByRejectedZeroRtt(st: QuicStream): Boolean {
+        val causes = listOf(runCatching { st.output.closedCause }.getOrNull(), runCatching { st.input.closedCause }.getOrNull())
+        return causes.any { it != null && transportCause(it) is QuicException.StreamError.EarlyDataRejected }
+    }
+
+    /**
+     * RFC 9204 section 2.2.2.2: a stream reset or abandoned before its field sections were all processed gets a Stream
+     * Cancellation. Not one the server's rejection of 0-RTT dropped: the server never saw it, so its encoder holds no
+     * section of it, and the request sent again reuses its ID (RFC 9001 section 4.6.2; review 2026-10-28 H3C-1).
+     */
+    suspend fun cancelSections(st: QuicStream) {
+        if (droppedByRejectedZeroRtt(st)) return
+        qpack.cancelStream(st.id)
+    }
+
+    /**
+     * Client: the server rejected 0-RTT (RFC 9001 section 4.6.2: "The client therefore MUST reset the state of all streams,
+     * including application state bound to those streams"). Runs before anything of the server is read (the accept loop and
+     * the request sent again call it first), so whatever QPACK holds unsent can only be about the dropped streams: it goes.
+     * Critical streams the rejection dropped are given up, and [criticalStreamsLoop] opens new ones and sends SETTINGS again.
+     * Idempotent; dispatcher only.
+     */
+    fun noteRejectedZeroRtt() {
+        if (isServer || zeroRttRejectionNoted || quic.earlyDataAccepted != false) return
+        zeroRttRejectionNoted = true
+        qpack.onEarlyDataRejected()
+        val c = critical
+        // streams not open yet are opened again too: an attempt still running may hold some the rejection dropped
+        if (c == null || listOf(c.control, c.encoder, c.decoder).any { droppedByRejectedZeroRtt(it) }) {
+            criticalGen++
+            critical = null
+            if (criticalStreams.isCompleted) criticalStreams = CompletableDeferred()
+        }
+    }
+
     private val peerUni = HashSet<Long>() // stream types seen: one control, one encoder, one decoder
 
     /** The peer's critical streams whose type was read (a test hook). */
@@ -293,8 +372,8 @@ internal class H3Session(
     /** Bytes of HEADERS payloads being read on request streams right now (a test hook; session dispatcher only). */
     var bufferedHeaderBytes = 0L
 
-    /** Completes once our control and QPACK streams are open and typed and our SETTINGS went out. */
-    private val criticalStreams = CompletableDeferred<Unit>()
+    /** Completes once our control and QPACK streams are open and typed and our SETTINGS went out; a new one after a rejected 0-RTT. */
+    private var criticalStreams = CompletableDeferred<Unit>()
 
     /**
      * Starts the session. A coroutine of the session opens our control and QPACK streams: opening a stream waits for the
@@ -302,9 +381,10 @@ internal class H3Session(
      * unidirectional streams HTTP/3 needs (RFC 9114 section 6.2: they "MUST allow the peer to create at least three") would
      * hold the caller forever. Without them after [criticalStreamsDeadline] the connection closes with
      * H3_GENERAL_PROTOCOL_ERROR. A server returns at once, so an accept loop never waits on one peer; a client returns once
-     * its SETTINGS went out and throws the connection's error when the streams could not be opened. A client whose QUIC
-     * handshake is still running (0-RTT) opens them once it completed and returns at once: a rejected 0-RTT resets every
-     * stream the client opened (RFC 9001 section 4.6.2), so only the early requests, which are sent again, ride 0-RTT. A
+     * its SETTINGS went out and throws the connection's error when the streams could not be opened. A client in 0-RTT
+     * opens them and sends SETTINGS at once too, as RFC 9114 section 7.2.4.2 requires ("settings MUST be sent as soon as the
+     * transport is ready to send data"); when the server rejects the 0-RTT, which resets every stream the client opened
+     * (RFC 9001 section 4.6.2), it opens them again and sends SETTINGS once more ([criticalStreamsLoop]). A
      * client that received GOAWAY first (a server stopping right after the handshake) returns too: it closed itself, idle, as
      * RFC 9114 section 5.2 lets it, and a request then fails with the retry-safe [Http3Exception.RequestNotProcessed]; its
      * own H3_NO_ERROR close is no failure of the connection to report.
@@ -314,7 +394,7 @@ internal class H3Session(
             val e = quic.closed.await()
             onTransportClosed(e)
         }
-        scope.launch { guarded { openCriticalStreams(criticalStreamsDeadline) } }
+        scope.launch { guarded { criticalStreamsLoop(criticalStreamsDeadline) } }
         scope.launch(start = CoroutineStart.UNDISPATCHED) {
             quic.pathEvents.collect { if (it is PathEvent.Changed) currentPath = it.new }
         }
@@ -323,7 +403,7 @@ internal class H3Session(
         quic.activePath?.let { currentPath = it }
         scope.launch { acceptLoop() }
         datagrams.start()
-        if (isServer || !quic.isHandshakeComplete) return
+        if (isServer) return
         try {
             awaitCriticalStreams()
         } catch (e: Http3Exception) {
@@ -331,40 +411,90 @@ internal class H3Session(
         }
     }
 
-    private suspend fun openCriticalStreams(deadline: Duration) {
-        if (!isServer) quic.awaitHandshake()
-        // RFC 9114 section 6.2: the critical streams first, then others (GREASE) as the peer allows
-        val opened =
-            withTimeoutOrNull(deadline) {
-                control = quic.openUni(CRITICAL)
-                encoderStream = quic.openUni(CRITICAL)
-                decoderStream = quic.openUni(CRITICAL)
-                controlLock.withLock {
-                    control.output.writeFully(VarInt.encode(StreamType.CONTROL))
-                    control.output.writeFully(FrameHeaders.frame(FrameType.SETTINGS, SettingsCodec.encode(ourSettings())))
-                    if (settings.grease) {
-                        control.output.writeFully(
-                            FrameHeaders.frame(FrameType.grease(Random.nextLong(0, 1000)), Random.nextBytes(Random.nextInt(0, 8))),
-                        )
-                    }
-                    control.output.flush()
-                }
-                encoderLock.withLock {
-                    encoderStream.output.writeFully(VarInt.encode(StreamType.QPACK_ENCODER))
-                    encoderStream.output.flush()
-                }
-                decoderLock.withLock {
-                    decoderStream.output.writeFully(VarInt.encode(StreamType.QPACK_DECODER))
-                    decoderStream.output.flush()
-                }
-                true
+    /**
+     * Opens our critical streams; a client does so again when the server rejected the 0-RTT that carried them (RFC 9001
+     * section 4.6.2 resets every stream the client opened), which it knows for sure once the handshake completed. At most
+     * twice: streams opened after the rejection are 1-RTT streams.
+     */
+    private suspend fun criticalStreamsLoop(deadline: Duration) {
+        while (true) {
+            val gen = criticalGen
+            val opened = openCriticalStreams(deadline, gen) ?: return
+            if (isServer) return
+            try {
+                quic.awaitHandshake()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Throwable) {
+                return // the connection is gone: its closed handler reports it
             }
-        if (opened == null) {
+            noteRejectedZeroRtt()
+            if (opened && gen == criticalGen) return
+        }
+    }
+
+    /**
+     * Opens the control and QPACK streams and sends SETTINGS (RFC 9114 section 6.2: the critical streams first, then
+     * others, GREASE, as the peer allows): true once done, false when a rejected 0-RTT took them first (generation [gen]
+     * passed), null when the connection failed for want of stream credit.
+     */
+    private suspend fun openCriticalStreams(
+        deadline: Duration,
+        gen: Int,
+    ): Boolean? {
+        val opened = ArrayList<QuicStream>(3)
+        val done =
+            try {
+                withTimeoutOrNull(deadline) {
+                    for (i in 0 until 3) {
+                        opened += quic.openUni(CRITICAL)
+                        if (gen != criticalGen) return@withTimeoutOrNull false
+                    }
+                    val (control, encoder, decoder) = opened
+                    controlLock.withLock {
+                        if (gen != criticalGen) return@withTimeoutOrNull false
+                        control.output.writeFully(VarInt.encode(StreamType.CONTROL))
+                        control.output.writeFully(FrameHeaders.frame(FrameType.SETTINGS, SettingsCodec.encode(ourSettings())))
+                        if (settings.grease) {
+                            control.output.writeFully(
+                                FrameHeaders.frame(FrameType.grease(Random.nextLong(0, 1000)), Random.nextBytes(Random.nextInt(0, 8))),
+                            )
+                        }
+                        control.output.flush()
+                    }
+                    encoderLock.withLock {
+                        if (gen != criticalGen) return@withTimeoutOrNull false
+                        encoder.output.writeFully(VarInt.encode(StreamType.QPACK_ENCODER))
+                        encoder.output.flush()
+                    }
+                    decoderLock.withLock {
+                        if (gen != criticalGen) return@withTimeoutOrNull false
+                        decoder.output.writeFully(VarInt.encode(StreamType.QPACK_DECODER))
+                        decoder.output.flush()
+                    }
+                    if (gen != criticalGen) return@withTimeoutOrNull false
+                    critical = Critical(control, encoder, decoder)
+                    true
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                if (transportCause(e) !is QuicException.StreamError.EarlyDataRejected) throw e
+                false
+            }
+        if (done == null) {
             fail(
                 Http3ErrorCode.GENERAL_PROTOCOL_ERROR,
                 "control and QPACK streams not open after $deadline: the peer must allow at least three unidirectional streams",
             )
-            return
+            return null
+        }
+        if (!done) {
+            // a 1-RTT stream opened after the rejection carries nothing yet: given up before its type, which a receiver tolerates
+            // (RFC 9114 section 6.2: "a receiver MUST tolerate unidirectional streams being closed or reset prior to the
+            // reception of the stream header")
+            for (st in opened) if (!droppedByRejectedZeroRtt(st)) runCatching { st.reset(Http3ErrorCode.NO_ERROR) }
+            return false
         }
         criticalStreams.complete(Unit)
         // the peer stops a reserved stream at once (RFC 9114 section 6.2.3), so failures here are expected and never fatal
@@ -382,6 +512,7 @@ internal class H3Session(
                 }
             }
         }
+        return true
     }
 
     /** Waits until our control and QPACK streams exist; throws the connection's error if it closes first. */
@@ -453,6 +584,8 @@ internal class H3Session(
                 } catch (_: Throwable) {
                     return
                 }
+            // nothing of the server is read before a rejected 0-RTT is noted: QPACK must have forgotten the early streams first
+            noteRejectedZeroRtt()
             // the peer's streams are read to their end even when the connection is lost (drains)
             if (st.id and 2L != 0L) {
                 drains(scope.launch { guarded { readUni(st) } })
@@ -895,16 +1028,16 @@ internal class H3Session(
         scope.launch { close(Http3ErrorCode.NO_ERROR, "") }
     }
 
-    /** Sends a frame on our control stream. */
+    /**
+     * Sends a frame on our control stream. One that a rejected 0-RTT dropped with the stream goes again on the new control
+     * stream while [again] says it is still wanted.
+     */
     suspend fun sendControl(
         type: Long,
         payload: ByteArray,
+        again: () -> Boolean = { true },
     ) {
-        awaitCriticalStreams()
-        controlLock.withLock {
-            control.output.writeFully(FrameHeaders.frame(type, payload))
-            control.output.flush()
-        }
+        writeCritical(controlLock, { it.control }, FrameHeaders.frame(type, payload), again)
     }
 
     /** Connection error (RFC 9114 section 8): close with [code], fail everything waiting. */

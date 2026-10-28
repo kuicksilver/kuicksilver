@@ -62,7 +62,7 @@ internal suspend fun H3Session.abort(
 ) {
     runCatching { st.stopSending(code) }
     runCatching { st.reset(code) }
-    runCatching { qpack.cancelStream(st.id) }
+    runCatching { cancelSections(st) }
 }
 
 /**
@@ -216,7 +216,7 @@ internal suspend fun H3Session.pumpBody(
         }
         trailers.completeExceptionally(mapped)
         // trailers may still have been on the way: the peer's encoder must not wait for their acknowledgment (RFC 9204 section 2.2.2.2)
-        runCatching { qpack.cancelStream(st.id) }
+        runCatching { cancelSections(st) }
     }
 }
 

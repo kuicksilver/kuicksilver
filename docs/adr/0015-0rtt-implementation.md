@@ -121,8 +121,11 @@ a connection whose handshake does not complete. A replayer cannot complete the h
   streams"). Now, if the ALPN did not change, every stream the client opened is dropped without a frame (its ID, its
   credit and the stream counts start over from the server's new transport parameters, RFC 9000 section 7.4.1, as
   ngtcp2's `conn_discard_early_data_state` and quic-go's `streamsMap.ResetFor0RTT`), and the runtime fails its
-  `QuicStream` with `StreamError.EarlyDataRejected`. The application sends again what it still wants; the HTTP/3 client
-  opens its control and QPACK streams only after the handshake and repeats its early requests once. Otherwise the
+  `QuicStream` with `StreamError.EarlyDataRejected`. The application sends again what it still wants. The HTTP/3 client
+  sends its SETTINGS in 0-RTT (RFC 9114 section 7.2.4.2: "settings MUST be sent as soon as the transport is ready to
+  send data"); on a rejection it opens its control and QPACK streams again and sends SETTINGS once more, drops what its
+  QPACK codecs had for the early streams (never a Stream Cancellation for them: the request sent again reuses the ID),
+  and repeats its early requests once. Otherwise the
   connection closes with `ZeroRttRejected`. `EarlyDataState.Required` also turns a rejection into `ZeroRttRejected`.
 - Server: 0-RTT packets that arrive before their keys are buffered with the other undecryptable packets. They are
   dropped when the handshake shows that 0-RTT was rejected. 0-RTT packets for a connection that does not exist yet

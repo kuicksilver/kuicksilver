@@ -109,7 +109,7 @@ internal suspend fun handleRequestStream(
             } catch (e: QuicException.StreamError) {
                 // reset before its HEADERS were read: no request, but the peer's encoder may count a section that was lost
                 // or dropped with the reset (RFC 9204 section 4.4.2)
-                runCatching { qpack.cancelStream(st.id) }
+                runCatching { cancelSections(st) }
                 return@with
             }
         val block =
@@ -221,7 +221,7 @@ private suspend fun H3Session.reject425(st: QuicStream) {
         st.output.writeFrame(FrameType.HEADERS, qpack.encode(st.id, PseudoHeaders.buildResponse(425, Http3Headers.Empty)))
         st.output.flushAndClose()
     }
-    runCatching { qpack.cancelStream(st.id) }
+    runCatching { cancelSections(st) }
 }
 
 private suspend fun H3Session.reject431(st: QuicStream) {
@@ -230,7 +230,7 @@ private suspend fun H3Session.reject431(st: QuicStream) {
         st.output.writeFrame(FrameType.HEADERS, qpack.encode(st.id, PseudoHeaders.buildResponse(431, Http3Headers.Empty)))
         st.output.flushAndClose()
     }
-    runCatching { qpack.cancelStream(st.id) }
+    runCatching { cancelSections(st) }
 }
 
 internal class ServerRequestImpl(

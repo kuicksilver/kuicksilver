@@ -40,6 +40,10 @@ internal class QpackEncoder(
     var outstandingSections: Int = 0
         private set
 
+    /** Stream Cancellation instructions the peer's decoder sent (a test hook). */
+    var streamCancellationsReceived: Long = 0
+        private set
+
     fun onPeerSettings(
         peerMaxTableCapacity: Long,
         peerBlockedStreams: Long,
@@ -219,6 +223,7 @@ internal class QpackEncoder(
 
                     b and 0x40 != 0 -> {
                         val id = r.readInt(6, limits)
+                        streamCancellationsReceived++
                         sections.remove(id)?.forEach {
                             release(it)
                             outstandingSections--

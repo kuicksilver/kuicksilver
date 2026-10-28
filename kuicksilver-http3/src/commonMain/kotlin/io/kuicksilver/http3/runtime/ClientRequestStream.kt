@@ -146,6 +146,7 @@ internal suspend fun H3Session.request(
         } catch (e: Throwable) {
             if (!early || H3Session.transportCause(e) !is QuicException.StreamError.EarlyDataRejected) throw e
             quic.awaitHandshake()
+            noteRejectedZeroRtt() // before anything of the request sent again is read
             earlyRejectedRetries++
             return requestOnce(r, keepOpen, caller)
         }
@@ -364,7 +365,7 @@ private suspend fun H3Session.exchange(
         sender?.cancel()
         // the stream was reset, or we stopped it (refused trailers), before the response HEADERS were read: a section the
         // peer's encoder sent may be lost with it, and must not stay outstanding there (RFC 9204 section 4.4.2)
-        withContext(NonCancellable) { runCatching { qpack.cancelStream(st.id) } }
+        withContext(NonCancellable) { runCatching { cancelSections(st) } }
         throw sendFailure.failureOr(map(e)) // transport failures (possibly wrapped by ktor-io) become HTTP/3 exceptions
     }
 }
@@ -521,18 +522,20 @@ internal class ResponseImpl(
     private suspend fun abortClient(code: Long) {
         runCatching { st.stopSending(code) }
         runCatching { st.reset(code) }
-        runCatching { session.qpack.cancelStream(st.id) }
+        runCatching { session.cancelSections(st) }
     }
 
     override suspend fun updatePriority(priority: StreamPriority) {
         st.priority = priority
+        // a stream a rejected 0-RTT dropped is no request of this connection any more: its ID may name the one sent again
+        if (session.droppedByRejectedZeroRtt(st)) return
         session.sendControl(
             FrameType.PRIORITY_UPDATE_REQUEST,
             ControlFrames.priorityUpdatePayload(
                 st.id,
                 PriorityField.format(priority) ?: "u=3",
             ),
-        )
+        ) { !session.droppedByRejectedZeroRtt(st) }
     }
 
     override fun cancel(code: Long) {
@@ -540,7 +543,7 @@ internal class ResponseImpl(
         sender?.cancel()
         runCatching { st.stopSending(code) }
         runCatching { st.reset(code) }
-        session.scope.launch { runCatching { session.qpack.cancelStream(st.id) } }
+        session.scope.launch { runCatching { session.cancelSections(st) } }
         val e = CancellationException("response cancelled with ${Http3ErrorCode.name(code)}")
         bodyChannel.cancel(e)
         trailersDeferred.cancel(e)

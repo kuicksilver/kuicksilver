@@ -28,9 +28,11 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.concurrent.atomics.AtomicInt
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.concurrent.atomics.incrementAndFetch
@@ -173,6 +175,10 @@ class EarlyDataTest {
         resumer: Http3Settings,
         earlyRequest: Boolean = false,
         resumerRequests: AtomicInt = AtomicInt(0),
+        clientSettings: Http3Settings = Http3Settings.Default,
+        responseHeaders: Http3Headers = Http3Headers.Empty,
+        /** Runs once the early request was answered, with the client connection and the resuming server's connections. */
+        after: suspend (Http3Connection, () -> List<Http3Connection>) -> Unit = { _, _ -> },
     ): Boolean? {
         val net = MemoryNet()
         val a = net.open(InetSocketAddress("10.0.0.1", 1111))
@@ -213,16 +219,18 @@ class EarlyDataTest {
                         io = { a }
                     }.build(),
             )
+        val resumed = kotlin.concurrent.atomics.AtomicReference<List<Http3Connection>>(emptyList())
         try {
             for (srv in listOf(first, second)) {
                 scope.launch {
                     while (true) {
                         val c = srv.accept()
+                        if (srv === second) resumed.store(resumed.load() + c)
                         scope.launch {
                             while (true) {
                                 val r = c.acceptRequest()
                                 if (srv === second) resumerRequests.incrementAndFetch()
-                                scope.launch { r.respond(204, Http3Headers.Empty).finish() }
+                                scope.launch { r.respond(204, responseHeaders).finish() }
                             }
                         }
                     }
@@ -231,7 +239,7 @@ class EarlyDataTest {
             val warm = client.connectEarly(first.localAddress, H3Fixtures.client())
             repeat(2) { assertEquals(204, warm.request(http3Request("GET", "server.test", "/")).status) } // the ticket arrives
             warm.close()
-            val c = client.connectEarly(second.localAddress, H3Fixtures.client())
+            val c = client.connectEarly(second.localAddress, H3Fixtures.client(), settings = clientSettings)
             val request =
                 http3Request("GET", "server.test", "/") {
                     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
@@ -239,6 +247,7 @@ class EarlyDataTest {
                 }
             assertEquals(204, c.request(request).status)
             c.quic.awaitHandshake()
+            after(c) { resumed.load() }
             return c.quic.earlyDataAccepted
         } finally {
             scope.cancel()
@@ -266,6 +275,83 @@ class EarlyDataTest {
                     )
                 assertEquals(false, accepted)
                 assertEquals(1, seen.load())
+            }
+        }
+
+    /**
+     * RFC 9114 section 7.2.4.2: "Endpoints MUST NOT require any data to be received from the peer prior to sending the
+     * SETTINGS frame; settings MUST be sent as soon as the transport is ready to send data." In 0-RTT the transport is ready
+     * at once: the server has the client's SETTINGS while the client still waits for the server's handshake flight, which
+     * the network holds back here.
+     */
+    @Test fun clientSendsSettingsIn0Rtt(): Unit =
+        runBlocking {
+            Fixture(Http3EarlyDataPolicy.WaitForHandshake()).use { f ->
+                withTimeout(30.seconds) {
+                    f.start()
+                    f.warmUp()
+                    val clientAddr = InetSocketAddress("10.0.0.1", 1111)
+                    val holding = AtomicInt(1)
+                    f.net.drop = { _, to, _ -> holding.load() == 1 && to == clientAddr }
+                    val before = f.accepted.size
+                    val c = f.client.connectEarly(f.server.localAddress, H3Fixtures.client())
+                    while (f.accepted.size == before) kotlinx.coroutines.yield() // accepted in 0-RTT
+                    val s = f.accepted.last()
+                    // a bound, not a wait: the client's handshake cannot complete while the network holds its flight back
+                    val got = withTimeoutOrNull(10.seconds) { s.session.peerSettings.first { it != null } }
+                    assertTrue(got != null, "the client's SETTINGS did not arrive while its handshake waited")
+                    assertEquals(false, c.quic.isHandshakeComplete, "the client's SETTINGS went out before its handshake completed")
+                    holding.store(0)
+                    c.quic.awaitHandshake()
+                    assertEquals(true, c.quic.earlyDataAccepted)
+                    assertEquals(200, c.request(f.get()).also { it.body.readAllBytes() }.status)
+                    c.close()
+                }
+            }
+        }
+
+    /**
+     * RFC 9001 section 4.6.2: a rejected 0-RTT resets every stream the client opened, its control and QPACK streams too; it
+     * opens them again and sends SETTINGS once more (RFC 9114 section 6.2.1: "Each side MUST initiate a single control stream
+     * at the beginning of the connection and send its SETTINGS frame as the first frame on this stream"). Nothing of the early
+     * streams reaches the server, a QPACK Stream Cancellation for the early request neither (RFC 9204 section 2.2.2.2: one
+     * is for a stream whose field sections the decoder may still be owed; the server never saw this one, and the request
+     * that is sent again reuses its stream ID, review 2026-10-28 H3C-1), and both dynamic tables work on the connection.
+     */
+    @Test fun rejectedZeroRttReopensTheControlAndQpackStreams(): Unit =
+        runBlocking {
+            withTimeout(30.seconds) {
+                val seen = AtomicInt(0)
+                val dynamic = http3Settings { enableQpackDynamicTable() }
+                val headers = Http3Headers.of("x-session-detail" to "a value worth putting into the dynamic table")
+                val accepted =
+                    earlyAcceptedAfterResuming(
+                        issuer = http3Settings { enableQpackDynamicTable() },
+                        resumer =
+                            http3Settings {
+                                enableQpackDynamicTable()
+                                h3Datagram = false
+                            },
+                        earlyRequest = true,
+                        resumerRequests = seen,
+                        clientSettings = dynamic,
+                        responseHeaders = headers,
+                    ) { c, resumed ->
+                        val s = resumed().single()
+                        val ps = s.session.peerSettings.first { it != null }!!
+                        assertEquals(4096L, ps.qpackMaxTableCapacity, "the client's SETTINGS reached the server")
+                        repeat(3) {
+                            val r = c.request(http3Request("GET", "server.test", "/again"))
+                            assertEquals(204, r.status)
+                            assertEquals("a value worth putting into the dynamic table", r.headers["x-session-detail"])
+                        }
+                        s.session.criticalStreamsSeen.first { it == 3 }
+                        assertEquals(0L, s.session.qpack.peerStreamCancellations, "no Stream Cancellation for the early request")
+                        assertTrue(s.session.qpack.encoderInserts > 0, "the server's encoder used the dynamic table")
+                        assertTrue(!s.session.closed.isCompleted && !c.session.closed.isCompleted, "the connection lives")
+                    }
+                assertEquals(false, accepted)
+                assertEquals(4, seen.load(), "the early request once, after the rejection, and three more")
             }
         }
 
