@@ -482,10 +482,19 @@ jobs:
           api-level: ${{ matrix.api }}
           arch: x86_64
           disable-animations: true
+          # Runs 40636584799 and 40645584772: on API 24 a test APK of 11-14 MB failed in `pm install-write` (ddmlib
+          # "Failed to install-write all apks"), once the first module's, once a later one's, while API 35 installed the same
+          # APKs, and the APKs did not grow. The AVD created here sets no disk.dataPartition.size, so each level boots with
+          # its system image's own userdata size; the API 24 one, the oldest image, is the suspect. 4 GiB for API 24; API 35
+          # keeps its image's default (an empty disk-size leaves the AVD as it is).
+          disk-size: ${{ matrix.api == 24 && '4096M' || '' }}
           # the action hides the emulator's own exit message; free space before the AVD is created is the first suspect
           pre-emulator-launch-script: df -h / | tail -1
-          # on failure the emulator's crash and main logs go with the reports: an instrumentation "Process crashed" says nothing else
-          script: ./gradlew --stacktrace androidConnectedCheck || { mkdir -p build/reports && adb logcat -d -b crash -b main > build/reports/logcat.txt; exit 1; }
+          # the device's /data before the tests and, on failure, again with the logs: PackageManager's refusals are in the
+          # system buffer, an instrumentation "Process crashed" in crash and main
+          script: |
+            adb shell df /data
+            ./gradlew --stacktrace androidConnectedCheck || { mkdir -p build/reports && adb shell df /data > build/reports/df.txt; adb logcat -d -b crash -b main -b system > build/reports/logcat.txt; exit 1; }
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: failure()
         with:
