@@ -96,13 +96,19 @@ class SessionStartTest {
     @Test fun peerNoErrorCloseAfterGoAwayRefusesRequestsAsNotProcessed() =
         h3Test {
             val idleCloseDue = CompletableDeferred<Unit>()
-            H3Session.beforeIdleCloseForTest = {
-                idleCloseDue.complete(Unit) // the client read the GOAWAY and is about to close idle
-                it.quic.closed.await()
-            }
             try {
                 QuicPair.open(serverQuic = quicConfig { maxUniStreams = 2 }).use { q ->
                     val (c, s) = q.connect()
+                    // only this test's client: a session of another test still closing never runs the JVM-wide hook
+                    H3Session.beforeIdleCloseForTest = {
+                        if (it.quic === c) {
+                            idleCloseDue.complete(Unit) // the client read the GOAWAY and is about to close idle
+                            // until the session itself saw the transport's end, not only the transport: when this thread
+                            // is descheduled right here, the transport can end before the wait starts, and the idle close
+                            // that follows ran ahead of the session's own handling of the end, still queued behind it
+                            it.closed.await()
+                        }
+                    }
                     val raw = RawPeer(s)
                     raw.openControl()
                     raw.control.output.writeFully(raw.frame(FrameType.GOAWAY, ControlFrames.goAwayPayload(0)))
