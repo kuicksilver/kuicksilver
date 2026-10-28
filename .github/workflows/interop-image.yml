@@ -77,23 +77,18 @@ jobs:
     permissions:
       contents: read
       packages: write   # push to ghcr.io/<owner>/kuicksilver-interop*
-    timeout-minutes: 150
+    timeout-minutes: 180   # build.yml's openssl-docker (60) and interop-images (120) in one job, for a cold OpenSSL cache
     env:
       REGISTRY: ghcr.io/${{ github.repository_owner }}
       VERSION: ${{ inputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { persist-credentials: false }
+      # one OpenSSL cache, build.yml's interop-images one (the Kotlin/Native builds); a second cache step on the same paths
+      # under build.yml's openssl-docker key would save the union of both into whichever key missed
       - uses: ./.github/actions/setup
         with: { ndk: 'true', konan: 'linux_x64 linux_arm64', openssl-cache: interop }
       # build.yml's openssl-docker job (linux-x64), in place: the manylinux OpenSSL build.yml's interop-images job downloads
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: |
-            build/openssl-work/cache
-            build/openssl-work/src/*.tar.gz
-            build/openssl-work/src/*.tar.gz.asc
-          key: openssl-docker-linux-x64-${{ runner.arch }}-${{ hashFiles('gradle/openssl.toml', 'tools/openssl/**') }}
       - name: 'openssl: fetch and verify'
         run: bash tools/openssl/fetch.sh
       - name: 'openssl: build linux-x64'
