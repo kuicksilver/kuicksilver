@@ -295,12 +295,26 @@ internal class Workload(
         return Outcome.Ok
     }
 
-    /** Resumption with 0-RTT on the endpoint that keeps the tickets; the first ever connection has none and runs 1-RTT. */
+    /**
+     * Resumption with 0-RTT on the endpoint that keeps the tickets; the first ever connection has none and runs 1-RTT. A
+     * rejected 0-RTT (a ticket the server no longer accepts) closes the connection with ZeroRttRejected (RFC 9001 section
+     * 4.6.2): an expected outcome, not a failure.
+     */
     private suspend fun zeroRtt(r: Random): Outcome {
-        val c = zeroRtt.connectEarly(rawAddr, early)
+        val c =
+            try {
+                zeroRtt.connectEarly(rawAddr, early)
+            } catch (_: QuicException.ConnectionLost.ZeroRttRejected) {
+                return Outcome.Expected("0rtt-rejected")
+            }
         try {
             c.get(size(r, 64 shl 10))
             c.awaitHandshake()
+        } catch (e: Throwable) {
+            if (generateSequence(e) { it.cause }.take(8).any { it is QuicException.ConnectionLost.ZeroRttRejected }) {
+                return Outcome.Expected("0rtt-rejected")
+            }
+            throw e
         } finally {
             c.close(0, "0rtt")
         }

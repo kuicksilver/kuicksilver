@@ -606,6 +606,46 @@ class ZeroRttTest {
         assertTrue(bEvents.none { it is ConnectionEvent.StreamOpened || it is ConnectionEvent.StreamReadable }, "the other reads nothing")
     }
 
+    /**
+     * A client that offered 0-RTT and opened nothing before the handshake has no stream to reset (RFC 9001 section 4.6.2):
+     * the rejection leaves the connection up, reports EarlyDataRejected, and the server's lower limits replace the
+     * remembered ones (RFC 9000 section 7.4.1), so traffic after the handshake stays within them.
+     */
+    @Test fun rejectedZeroRttThatCarriedNothingGoesOnUnderTheNewLimits() {
+        val lower =
+            quicConfig {
+                initialConnectionWindow = 1000
+                initialStreamWindow = 1500
+                maxBidiStreams = 2
+            }
+        val t = ticket()
+        val p =
+            CorePair(
+                crypto = ksl,
+                clientEarly = EarlyDataState.Allowed,
+                serverEarly = early(lower),
+                serverQuic = lower,
+                clientSetup = { c -> assertTrue(c.useTicket(t), "0-RTT available with this ticket") },
+            )
+        assertTrue(p.handshake())
+        assertEquals(false, p.client.earlyDataAccepted)
+        assertNull(p.closedReason(p.clientEvents), "nothing went out in 0-RTT: the connection goes on")
+        assertTrue(p.clientEvents.any { it == ConnectionEvent.EarlyDataRejected }, "the rejection is reported")
+        // the application never reads: only the transport's limits hold the client back
+        val big = ByteArray(3000) { 'y'.code.toByte() }
+        val more = List(3) { p.client.openStream(bidi = true) }
+        assertEquals(listOf(true, true, false), more.map { it >= 0 }, "the new limit is 2 streams")
+        p.client.writeStream(more[0], big, 0, big.size, fin = false) // more than the new 1500-byte stream window
+        p.runUntil(limit = 2.seconds) { p.closedReason(p.serverEvents) != null || p.closedReason(p.clientEvents) != null }
+        assertNull(p.closedReason(p.serverEvents), "the server saw no limit violation")
+        assertNull(p.closedReason(p.clientEvents))
+        assertTrue(
+            p.serverEvents.any { it is ConnectionEvent.StreamReadable && it.id == more[0] },
+            "traffic continues within the new limits",
+        )
+        p.close()
+    }
+
     @Test fun rejectedZeroRttWithLowerLimitsClosesTheConnection() {
         // the server restarted with lower limits (so it also refuses the ticket's early data): the client keeps neither the
         // remembered limits (RFC 9000 section 7.4.1) nor its early streams (RFC 9001 section 4.6.2): it closes with
