@@ -168,37 +168,10 @@ class EarlyDataTest {
             }
         }
 
-    /**
-     * The 0.2.1 close on a rejected 0-RTT is no graceful end after GOAWAY (re-review R4): a server that rejects the 0-RTT
-     * and sends GOAWAY at once still makes the early request fail with the rejection, never with the retry-safe
-     * RequestNotProcessed a GOAWAY gives, and the connection ends with ZeroRttRejected, not H3_NO_ERROR, so the caller
-     * knows to reconnect without 0-RTT.
-     */
-    @Test fun negative_rejectedZeroRttWithAnImmediateGoAwayStillReportsTheRejection(): Unit =
-        runBlocking {
-            withTimeout(30.seconds) {
-                assertEquals(
-                    false,
-                    earlyAcceptedAfterResuming(
-                        issuer = http3Settings {},
-                        resumer = http3Settings { h3Datagram = false },
-                        goAwayAtAccept = true,
-                        earlyRequest = true,
-                    ),
-                )
-            }
-        }
-
-    /**
-     * A client gets a ticket from a server with [issuer] settings, then resumes with 0-RTT at another with [resumer] and the
-     * same ticket keys; that one sends GOAWAY as soon as it accepts with [goAwayAtAccept], and the request rides 0-RTT with
-     * [earlyRequest].
-     */
+    /** A client gets a ticket from a server with [issuer] settings, then resumes with 0-RTT at another with [resumer] and the same ticket keys. */
     private suspend fun earlyAcceptedAfterResuming(
         issuer: Http3Settings,
         resumer: Http3Settings,
-        goAwayAtAccept: Boolean = false,
-        earlyRequest: Boolean = false,
     ): Boolean? {
         val net = MemoryNet()
         val a = net.open(InetSocketAddress("10.0.0.1", 1111))
@@ -244,7 +217,6 @@ class EarlyDataTest {
                 scope.launch {
                     while (true) {
                         val c = srv.accept()
-                        if (goAwayAtAccept && srv === second) scope.launch { c.goAway() }
                         scope.launch {
                             while (true) {
                                 val r = c.acceptRequest()
@@ -263,15 +235,7 @@ class EarlyDataTest {
                 } catch (e: io.kuicksilver.quic.QuicException.ConnectionLost.ZeroRttRejected) {
                     return false // the rejection came before the critical streams were out: the connect reports it
                 }
-            val status =
-                runCatching {
-                    c
-                        .request(
-                            http3Request("GET", "server.test", "/") {
-                                allowEarlyData = earlyRequest
-                            },
-                        ).status
-                }
+            val status = runCatching { c.request(http3Request("GET", "server.test", "/")).status }
             runCatching { c.quic.awaitHandshake() }
             val accepted = c.quic.earlyDataAccepted
             if (accepted == true) {

@@ -13,6 +13,8 @@ import io.kuicksilver.http3.frame.ControlFrames
 import io.kuicksilver.http3.frame.FrameType
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.Initiator
+import io.kuicksilver.quic.QuicException
+import io.kuicksilver.quic.awaitFinished
 import io.kuicksilver.quic.quicConfig
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
@@ -176,6 +178,109 @@ class SessionStartTest {
                 }
             } finally {
                 H3Session.beforeGoAwayForTest = null
+            }
+        }
+
+    /**
+     * The server's control stream (SETTINGS, GOAWAY and its end) and its H3_NO_ERROR close reach the client before the
+     * client's accept loop took the stream (here held until the session saw the close): the accept loop still takes the
+     * streams the peer opened before the loss, the GOAWAY is read, and the start returns the connection with it. Before,
+     * the session's end cancelled the accept loop, and the start waited a second and failed with the peer's H3_NO_ERROR.
+     */
+    @OptIn(io.kuicksilver.annotations.InternalKuicksilverApi::class)
+    @Test
+    fun goAwayOnAControlStreamAcceptedAfterThePeersCloseStillRefusesRequestsAsNotProcessed() =
+        h3Test {
+            val held = CompletableDeferred<Unit>()
+            H3Session.beforeAcceptForTest = {
+                if (held.complete(Unit)) it.closed.await() // the first accept waits for the close
+            }
+            try {
+                QuicPair.open(serverQuic = quicConfig { maxUniStreams = 2 }).use { q ->
+                    val (c, s) = q.connect()
+                    val client = async { runCatching { withTimeout(10.seconds) { Http3Connection.client(c) } } }
+                    withTimeout(10.seconds) { held.await() }
+                    val raw = RawPeer(s)
+                    raw.openControl()
+                    raw.control.output.writeFully(raw.frame(FrameType.GOAWAY, ControlFrames.goAwayPayload(0)))
+                    raw.control.output.flushAndClose()
+                    withTimeout(10.seconds) { raw.control.awaitFinished() } // the client's transport has it all
+                    s.close(Http3ErrorCode.NO_ERROR, "")
+                    val conn = withTimeout(10.seconds) { client.await() }.getOrThrow()
+                    assertEquals(0L, conn.goAwayReceived.value)
+                    assertEquals(false, H3Session.peerControlWaitTimedOutForTest, "the GOAWAY ended the wait, not its bound")
+                    assertFailsWith<Http3Exception.RequestNotProcessed> { withTimeout(10.seconds) { conn.request(get()) } }
+                }
+            } finally {
+                H3Session.beforeAcceptForTest = null
+            }
+        }
+
+    /**
+     * The peer closes with H3_NO_ERROR before it opened any control stream: no GOAWAY can come, so the start fails at once
+     * with the close, without waiting for one ([H3Session.DRAIN_GRACE]).
+     */
+    @Test fun negative_peerNoErrorCloseWithoutAControlStreamFailsTheStartWithoutWaiting() =
+        h3Test {
+            QuicPair.open(serverQuic = quicConfig { maxUniStreams = 2 }).use { q ->
+                val (c, s) = q.connect()
+                val client = async { runCatching { withTimeout(10.seconds) { Http3Connection.client(c) } } }
+                s.close(Http3ErrorCode.NO_ERROR, "")
+                val e = assertIs<Http3Exception.Protocol>(withTimeout(10.seconds) { client.await() }.exceptionOrNull())
+                assertEquals(Http3ErrorCode.NO_ERROR, e.h3Code)
+                assertEquals(Initiator.Peer, e.initiator)
+                assertEquals(false, H3Session.peerControlWaitTimedOutForTest, "the start did not wait for a control stream that never came")
+            }
+        }
+
+    /**
+     * Re-review R4: the close of a rejected 0-RTT is no graceful end after GOAWAY. The server's GOAWAY is read (the start
+     * waits for stream credit), and the transport then ends with [QuicException.ConnectionLost.ZeroRttRejected], as the
+     * 0.2.1 transport reports a rejection: the start fails with it, so the caller reconnects without 0-RTT, instead of
+     * returning a closed connection whose requests are "not processed". Control: the same end reported as an H3_NO_ERROR
+     * close, which a close-on-rejection patch closing with H3_NO_ERROR would give, is passed over and the connection
+     * returned; that is the behaviour the rejection must never get.
+     */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    @Test
+    fun negative_aRejectedZeroRttAfterGoAwayFailsTheStart() =
+        h3Test {
+            for (rejected in listOf(true, false)) {
+                QuicPair.open(serverQuic = quicConfig { maxUniStreams = 2 }).use { q ->
+                    val (c, s) = q.connect()
+                    val end = CompletableDeferred<QuicException.ConnectionLost>()
+                    val transport =
+                        object : io.kuicksilver.quic.QuicConnection by c {
+                            override val closed: kotlinx.coroutines.Deferred<QuicException.ConnectionLost> get() = end
+                        }
+                    H3Session.beforeIdleCloseForTest = {
+                        // the GOAWAY was applied; the transport ends now, before the client's own idle close
+                        end.complete(
+                            if (rejected) {
+                                QuicException.ConnectionLost.ZeroRttRejected()
+                            } else {
+                                QuicException.ConnectionLost.ApplicationClosed(Http3ErrorCode.NO_ERROR, "", Initiator.Local)
+                            },
+                        )
+                        kotlinx.coroutines.awaitCancellation()
+                    }
+                    try {
+                        val raw = RawPeer(s)
+                        raw.openControl()
+                        raw.control.output.writeFully(raw.frame(FrameType.GOAWAY, ControlFrames.goAwayPayload(0)))
+                        raw.control.output.flush()
+                        val started = withTimeout(10.seconds) { runCatching { Http3Connection.client(transport) } }
+                        if (rejected) {
+                            assertIs<QuicException.ConnectionLost.ZeroRttRejected>(started.exceptionOrNull(), "$started")
+                        } else {
+                            val conn = started.getOrThrow()
+                            assertEquals(0L, conn.goAwayReceived.value, "control: an H3_NO_ERROR end is passed over")
+                        }
+                    } finally {
+                        H3Session.beforeIdleCloseForTest = null
+                        c.close(Http3ErrorCode.NO_ERROR, "")
+                    }
+                }
             }
         }
 

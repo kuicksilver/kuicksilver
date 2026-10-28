@@ -109,8 +109,28 @@ internal class H3Session(
     val peerSettings = MutableStateFlow<Http3PeerSettings?>(null)
     private val peerSettingsArrived = CompletableDeferred<Http3PeerSettings>()
 
-    /** The reader of the peer's control stream ended, whatever the way ([awaitPeerControlRead]). */
+    /**
+     * Completed once no GOAWAY of the peer can still be applied ([awaitPeerControlRead]): the reader of its control stream
+     * ended, whatever the way, or the accept loop ended without a control stream among the peer's streams.
+     */
     private val peerControlEnded = CompletableDeferred<Unit>()
+
+    /** The accept loop ended; peer unidirectional streams whose type is still unread; whether one was the control stream. */
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    private val acceptEnded = kotlin.concurrent.atomics.AtomicInt(0)
+
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    private val untypedUni = kotlin.concurrent.atomics.AtomicInt(0)
+
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    private val peerControlSeen = kotlin.concurrent.atomics.AtomicInt(0)
+
+    /** No peer stream can still turn out to be the control stream: nothing of it will come. */
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+    private fun checkPeerControlSettled() {
+        if (acceptEnded.load() == 1 && untypedUni.load() == 0 && peerControlSeen.load() == 0) peerControlEnded.complete(Unit)
+    }
+
     val datagrams = DatagramDemux(this)
     val goAwayReceived = MutableStateFlow<Long?>(null)
     val closed = CompletableDeferred<Throwable>()
@@ -265,7 +285,17 @@ internal class H3Session(
         // must not leave the session on the path the peer left
         val active = quic.stats.currentPath
         quic.paths.firstOrNull { it.id == active }?.let { currentPath = it }
-        scope.launch { acceptLoop() }
+        // a reader of the peer's streams like the [drains] ones: after a lost connection it still takes the streams the peer
+        // opened before the loss, so a control stream that came in the same batch as the close is read too
+        scope
+            .launch {
+                drains(coroutineContext.job)
+                acceptLoop()
+            }.invokeOnCompletion {
+                @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+                acceptEnded.store(1)
+                checkPeerControlSettled()
+            }
         datagrams.start()
         if (isServer) return
         try {
@@ -285,16 +315,18 @@ internal class H3Session(
      */
     private suspend fun awaitPeerControlRead() {
         if (goAwayReceived.value != null) return
-        withTimeoutOrNull(DRAIN_GRACE) {
-            coroutineScope {
-                val goAway = async { goAwayReceived.first { it != null } }
-                select<Unit> {
-                    goAway.onAwait { }
-                    peerControlEnded.onAwait { }
+        val settled =
+            withTimeoutOrNull(DRAIN_GRACE) {
+                coroutineScope {
+                    val goAway = async { goAwayReceived.first { it != null } }
+                    select<Unit> {
+                        goAway.onAwait { }
+                        peerControlEnded.onAwait { }
+                    }
+                    goAway.cancel()
                 }
-                goAway.cancel()
             }
-        }
+        peerControlWaitTimedOutForTest = settled == null
     }
 
     /**
@@ -415,6 +447,7 @@ internal class H3Session(
 
     private suspend fun acceptLoop() {
         while (true) {
+            beforeAcceptForTest?.invoke(this)
             val st =
                 try {
                     quic.acceptStream()
@@ -425,7 +458,10 @@ internal class H3Session(
                 }
             // the peer's streams are read to their end even when the connection is lost (drains)
             if (st.id and 2L != 0L) {
-                drains(scope.launch { guarded { readUni(st) } })
+                @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+                untypedUni.addAndFetch(1)
+                // once the connection is lost a launch would not be waited for: the stream is read here, to its end
+                if (closed.isCompleted) guarded { readUni(st) } else drains(scope.launch { guarded { readUni(st) } })
             } else if (isServer) {
                 acceptedBidiUpTo = st.id
                 handledBidi += st.id
@@ -453,8 +489,9 @@ internal class H3Session(
      * unidirectional stream header" (quic-go's `handleUnidirectionalStream` returns the same way). Each such stream spends
      * a glitch token, so a peer that only opens and abandons streams still meets H3_EXCESSIVE_LOAD (section 10.5).
      */
+    @OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
     private suspend fun readUni(st: QuicStream) {
-        val type =
+        val read =
             try {
                 st.input.readVarIntOrNull()
             } catch (_: IncompleteFrame) {
@@ -464,7 +501,13 @@ internal class H3Session(
             } catch (e: Throwable) {
                 if (transportCause(e) !is QuicException.StreamError) throw e
                 null
-            } ?: run {
+            } finally {
+                untypedUni.addAndFetch(-1)
+            }
+        if (read == StreamType.CONTROL) peerControlSeen.store(1)
+        checkPeerControlSettled()
+        val type =
+            read ?: run {
                 discardedUniStreams.value++
                 glitch("unidirectional stream ended or reset before its type")
                 return
@@ -992,6 +1035,14 @@ internal class H3Session(
         /** Test hook: runs before a received GOAWAY is applied, so a test can let the peer's close be seen first. */
         @kotlin.concurrent.Volatile
         internal var beforeGoAwayForTest: (suspend (H3Session) -> Unit)? = null
+
+        /** Test hook: runs before each accept of a peer stream, so a test can let the peer's close come first. */
+        @kotlin.concurrent.Volatile
+        internal var beforeAcceptForTest: (suspend (H3Session) -> Unit)? = null
+
+        /** Test hook: whether the last wait for the peer's control stream ([awaitPeerControlRead]) ran into its bound. */
+        @kotlin.concurrent.Volatile
+        internal var peerControlWaitTimedOutForTest: Boolean? = null
 
         /** A client that started a request before GOAWAY gets this long to finish its HEADERS (no RFC value; see docs/guide/http3.md). */
         val HEADER_DEADLINE_AFTER_GOAWAY: Duration = 10.seconds
