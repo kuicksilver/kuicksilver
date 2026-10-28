@@ -374,6 +374,14 @@ class EarlyDataTest {
                         }
                         s.session.criticalStreamsSeen.first { it == 3 }
                         assertEquals(0L, s.session.qpack.peerStreamCancellations, "no Stream Cancellation for the early request")
+                        withContext(c.session.dispatcher) {
+                            // not merely dropped on the way: none was made for the stream the rejection dropped
+                            assertEquals(
+                                0L,
+                                c.session.qpack.streamCancellationsMade,
+                                "a Stream Cancellation was made for the early request",
+                            )
+                        }
                         assertTrue(s.session.qpack.encoderInserts > 0, "the server's encoder used the dynamic table")
                         assertTrue(!s.session.closed.isCompleted && !c.session.closed.isCompleted, "the connection lives")
                     }
@@ -422,6 +430,70 @@ class EarlyDataTest {
                     }
                 assertEquals(false, accepted)
                 assertEquals(1, attempts.load(), "the first attempt's streams were live: no second one")
+            }
+        }
+
+    /**
+     * An attempt that opened its critical streams in 0-RTT, which the rejection then dropped, gives up (its writes fail) and
+     * a second attempt opens new ones and sends SETTINGS (RFC 9001 section 4.6.2; RFC 9114 section 6.2.1). The server sees
+     * one set of critical streams.
+     */
+    @Test fun anAttemptTheRejectionInterruptsIsMadeAgain(): Unit =
+        runBlocking {
+            withTimeout(30.seconds) {
+                val attempts = AtomicInt(0)
+                val accepted =
+                    earlyAcceptedAfterResuming(
+                        issuer = http3Settings {},
+                        resumer = http3Settings { h3Datagram = false },
+                        clientSession = { session ->
+                            session.criticalAttemptHookForTest = { step, gen ->
+                                if (step == H3Session.AttemptStep.Started) attempts.incrementAndFetch()
+                                // opened in 0-RTT; the rejection drops them before their type is written
+                                if (step == H3Session.AttemptStep.Opened && gen == 0) runCatching { session.quic.awaitHandshake() }
+                            }
+                        },
+                    ) { c, resumed ->
+                        val s = resumed().single()
+                        assertTrue(s.session.peerSettings.first { it != null } != null, "the client's SETTINGS reached the server")
+                        assertEquals(204, c.request(http3Request("GET", "server.test", "/again")).status)
+                        s.session.criticalStreamsSeen.first { it == 3 }
+                        assertTrue(!s.session.closed.isCompleted && !c.session.closed.isCompleted, "the connection lives")
+                    }
+                assertEquals(false, accepted)
+                assertEquals(2, attempts.load(), "the interrupted attempt and the one after it")
+            }
+        }
+
+    /**
+     * Control frames written in 0-RTT go with the dropped control stream; the new one carries those still wanted after
+     * SETTINGS: a GOAWAY does, a PRIORITY_UPDATE for a request stream the rejection dropped does not (its ID names the next
+     * request now).
+     */
+    @Test fun controlFramesOfTheDroppedControlStreamAreSentAgainWhenStillWanted(): Unit =
+        runBlocking {
+            withTimeout(30.seconds) {
+                val accepted =
+                    earlyAcceptedAfterResuming(
+                        issuer = http3Settings {},
+                        resumer = http3Settings { h3Datagram = false },
+                        beforeRequest = { c, _ ->
+                            assertEquals(false, c.quic.isHandshakeComplete)
+                            c.session.sendControl(FrameType.GOAWAY, ControlFrames.goAwayPayload(8))
+                            val early = c.quic.openBidi()
+                            c.session.sendControl(FrameType.PRIORITY_UPDATE_REQUEST, ControlFrames.priorityUpdatePayload(early.id, "u=1")) {
+                                !c.session.droppedByRejectedZeroRtt(early)
+                            }
+                        },
+                    ) { _, resumed ->
+                        val s = resumed().single()
+                        s.session.goAwayReceived.first { it != null }
+                        assertEquals(8L, s.session.goAwayReceived.value, "the GOAWAY went again on the new control stream")
+                        withContext(s.session.dispatcher) {
+                            assertEquals(0, s.session.priorityUpdatesForTest, "no PRIORITY_UPDATE for the dropped stream")
+                        }
+                    }
+                assertEquals(false, accepted)
             }
         }
 

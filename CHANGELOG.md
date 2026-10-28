@@ -184,7 +184,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   stream whose ID it took, and a reset or STOP_SENDING issued on an early stream never reaches it. A rejection closes the connection with
   `ZeroRttRejected` only for another ALPN or under `EarlyDataState.Required` (no longer for lower limits). The HTTP/3
   client still sends its SETTINGS in 0-RTT (RFC 9114 section 7.2.4.2: "settings MUST be sent as soon as the transport is
-  ready to send data"); after a rejection it opens its control and QPACK streams again, sends SETTINGS once more, sends
+  ready to send data"); after a rejection it opens its control and QPACK streams again, sends SETTINGS once more and
+  after it the control frames of the dropped control stream that are still wanted (a GOAWAY; not a PRIORITY_UPDATE
+  for a dropped request), sends
   no QPACK Stream Cancellation for the early requests (the request sent again reuses the stream ID, and a cancellation
   arriving after its response was encoded made the server fail the connection with `QPACK_DECODER_STREAM_ERROR`) and
   repeats each early request once.

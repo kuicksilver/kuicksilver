@@ -293,8 +293,15 @@ internal class QpackDecoder(
     /** The stream was reset or abandoned before its field sections were processed (RFC 9204 section 4.4.2). */
     fun cancelStream(streamId: Long) {
         unblock(streamId)
-        if (maxTableCapacity > 0) out.writeInt(0x40, 6, streamId)
+        if (maxTableCapacity > 0) {
+            out.writeInt(0x40, 6, streamId)
+            cancellationsMade++
+        }
     }
+
+    /** Stream Cancellation instructions made (a test hook). */
+    var cancellationsMade: Long = 0
+        private set
 
     /** Pending decoder-stream bytes: acknowledgments and cancellations first, then an Insert Count Increment for unannounced inserts. */
     fun drainDecoderStream(): ByteArray {

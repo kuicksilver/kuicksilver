@@ -37,6 +37,9 @@ internal class QpackRuntime(
         private set
     val encoderInserts: Long get() = encoder.insertCount
 
+    /** Stream Cancellations our decoder made, sent or not (a test hook). */
+    val streamCancellationsMade: Long get() = decoder.cancellationsMade
+
     /** Stream Cancellations the peer's decoder sent our encoder (a test hook). */
     val peerStreamCancellations: Long get() = encoder.streamCancellationsReceived
 

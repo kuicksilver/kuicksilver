@@ -183,6 +183,9 @@ internal class H3Session(
     /** Requests repeated after a 425 Too Early (RFC 8470 section 5.2). */
     internal var early425Retries = 0
 
+    /** PRIORITY_UPDATE frames for request streams the peer sent (a test hook; dispatcher only). */
+    internal var priorityUpdatesForTest = 0
+
     /** Early requests sent again after the server rejected 0-RTT (RFC 9001 section 4.6.2). */
     internal var earlyRejectedRetries = 0
 
@@ -221,6 +224,13 @@ internal class H3Session(
     /** Streams of [attemptStreams] whose type went to the transport: never reset, a typed critical stream is for good. Dispatcher only. */
     private val typedStreams = ArrayList<QuicStream>(3)
 
+    /**
+     * Client: control frames written on the first control stream before the handshake told whether the server took the 0-RTT
+     * it rode, with whether each is still wanted. A rejection drops that stream with them; the new control stream carries
+     * them again, after SETTINGS. Null once settled. Dispatcher only.
+     */
+    private var earlyControl: ArrayList<Pair<ByteArray, () -> Boolean>>? = if (role == Http3Role.Client) ArrayList() else null
+
     /** Test hook: fail when the critical-stream bookkeeping runs anywhere but on [dispatcher] (review 2026-10-28 N3). */
     @kotlin.concurrent.Volatile
     internal var assertOnDispatcherForTest = false
@@ -257,7 +267,8 @@ internal class H3Session(
      * streams a rejected 0-RTT dropped (an older [criticalGen], or a write the drop failed) never reach the newer ones:
      * QPACK instructions made then can only be about early request streams the server never saw, whose IDs the requests
      * sent again reuse (a Stream Cancellation there would cancel the new request's sections, review 2026-10-28 H3C-1).
-     * [again] says whether such a frame is still wanted on the new control stream (a GOAWAY is).
+     * [again] says whether such a frame is still wanted on the new control stream (a GOAWAY is); one written before the
+     * handshake told the 0-RTT's fate is kept for that ([earlyControl]).
      */
     private suspend fun writeCritical(
         lock: Mutex,
@@ -277,6 +288,7 @@ internal class H3Session(
                         try {
                             pick(c).output.writeFully(b)
                             pick(c).output.flush()
+                            if (again != null && gen == 0) earlyControl?.add(b to again)
                             true
                         } catch (e: CancellationException) {
                             throw e
@@ -475,7 +487,10 @@ internal class H3Session(
                 return // the connection is gone: its closed handler reports it
             }
             noteRejectedZeroRttHere()
-            if (opened && gen == criticalGen) return
+            if (opened && gen == criticalGen) {
+                earlyControl = null // the 0-RTT's fate is known and these streams stay
+                return
+            }
         }
     }
 
@@ -511,6 +526,11 @@ internal class H3Session(
                             control.output.writeFully(
                                 FrameHeaders.frame(FrameType.grease(Random.nextLong(0, 1000)), Random.nextBytes(Random.nextInt(0, 8))),
                             )
+                        }
+                        // what went on the dropped control stream before the 0-RTT's fate was known, and is still wanted
+                        if (gen > 0) {
+                            earlyControl?.forEach { (frame, wanted) -> if (wanted()) control.output.writeFully(frame) }
+                            earlyControl = null
                         }
                         control.output.flush()
                     }
@@ -920,6 +940,7 @@ internal class H3Session(
      * (section 7.2); frames above 256 bytes and the excess are ignored and spend glitch tokens.
      */
     private fun onPriorityUpdate(payload: ByteArray) {
+        priorityUpdatesForTest++
         glitch("PRIORITY_UPDATE")
         if (payload.size > MAX_PRIORITY_UPDATE) {
             glitch("oversized PRIORITY_UPDATE")
