@@ -38,8 +38,9 @@ import kotlin.time.TimeSource
 
 /**
  * HTTP datagrams of a connection (RFC 9297 section 2.1): one collector of the transport's datagrams, routed by quarter
- * stream ID to the streams that registered. Unknown IDs are dropped silently; a datagram without a valid quarter
- * stream ID is a connection error H3_DATAGRAM_ERROR. A stream is unregistered when its receive side closes, so later
+ * stream ID to the streams that registered. Unknown IDs are dropped silently, but for a stream beyond the bidirectional
+ * stream limit, which is a connection error H3_ID_ERROR; a datagram without a valid quarter stream ID is a connection
+ * error H3_DATAGRAM_ERROR. A stream is unregistered when its receive side closes, so later
  * datagrams for it are dropped as the RFC requires. With WebTransport a server keeps datagrams for a request stream whose
  * CONNECT has not been read yet, bounded as early WebTransport streams are (draft-ietf-webtrans-http3 section 4.6).
  */
@@ -84,6 +85,12 @@ internal class DatagramDemux(
         val ch = streams[streamId]
         if (ch != null) {
             ch.trySend(payload)
+            return
+        }
+        // RFC 9297 section 2.1: "maps to a stream that cannot be created due to client-initiated bidirectional stream
+        // limits, it SHOULD be treated as an HTTP/3 connection error of type H3_ID_ERROR"
+        if (session.beyondBidiStreamLimit(streamId)) {
+            session.fail(Http3ErrorCode.ID_ERROR, "datagram for stream $streamId beyond the bidirectional stream limit")
             return
         }
         // draft-ietf-webtrans-http3 section 4.6: a session's datagrams may overtake its CONNECT; kept, bounded as its

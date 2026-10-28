@@ -401,15 +401,49 @@ class H3DatagramTest {
             }
         }
 
+    /**
+     * RFC 9297 section 2.1: a datagram for a stream "that has not yet been created" is dropped silently (or buffered); one
+     * within the stream limit here (stream 200, the 51st of 100; stream 400, the 101st, lies beyond it, see below).
+     */
     @Test fun unknownStreamDroppedSilently() =
         h3Test {
             QuicPair.open().use { q ->
                 val (c, s) = q.connect()
                 val server = Http3Connection.server(s)
                 RawPeer(c).openControl(listOf(SettingsId.H3_DATAGRAM to 1L))
-                c.sendDatagram(VarInt.encode(100) + byteArrayOf(1, 2, 3))
+                c.sendDatagram(VarInt.encode(50) + byteArrayOf(1, 2, 3))
                 delay(300)
                 assertFalse(server.closed.isCompleted)
+            }
+        }
+
+    /**
+     * RFC 9297 section 2.1: a datagram whose stream "cannot be created due to client-initiated bidirectional stream limits
+     * ... SHOULD be treated as an HTTP/3 connection error of type H3_ID_ERROR". The server granted 10 streams: stream 40 is
+     * the eleventh.
+     */
+    @Test fun negative_datagramBeyondTheStreamLimitIsIdErrorOnTheServer() =
+        h3Test {
+            QuicPair.open(serverQuic = quicConfig { maxBidiStreams = 10 }).use { q ->
+                val (c, s) = q.connect()
+                val server = Http3Connection.server(s)
+                RawPeer(c).openControl(listOf(SettingsId.H3_DATAGRAM to 1L))
+                c.sendDatagram(VarInt.encode(10) + byteArrayOf(1))
+                assertEquals(Http3ErrorCode.ID_ERROR, withTimeout(5.seconds) { peerSawClose(c) })
+                assertEquals(Http3ErrorCode.ID_ERROR, assertIs<Http3Exception.Protocol>(server.closed.await()).h3Code)
+            }
+        }
+
+    /** The client's mirror: the server allowed it 10 streams, so a datagram for stream 40 names no request it could make. */
+    @Test fun negative_datagramBeyondTheStreamLimitIsIdErrorOnTheClient() =
+        h3Test {
+            QuicPair.open(serverQuic = quicConfig { maxBidiStreams = 10 }).use { q ->
+                val (c, s) = q.connect()
+                RawPeer(s).openControl(listOf(SettingsId.H3_DATAGRAM to 1L))
+                val client = Http3Connection.client(c)
+                withTimeout(5.seconds) { client.peerSettings.filterNotNull().first() }
+                s.sendDatagram(VarInt.encode(10) + byteArrayOf(1))
+                assertEquals(Http3ErrorCode.ID_ERROR, withTimeout(5.seconds) { peerSawClose(s) })
             }
         }
 

@@ -994,6 +994,16 @@ internal class H3Session(
         return QuicStreamLimits.peerBidiStreamsGranted(quic)?.let { id / 4 < it } ?: true
     }
 
+    /**
+     * Client bidirectional stream [id] lies beyond the stream limit: the one we granted on a server, the one the server
+     * granted us on a client. No request can ever use it. False when the transport does not say.
+     */
+    fun beyondBidiStreamLimit(id: Long): Boolean {
+        val limit =
+            if (isServer) QuicStreamLimits.peerBidiStreamsGranted(quic) else QuicStreamLimits.localBidiStreamsAllowed(quic)
+        return limit != null && id / 4 >= limit
+    }
+
     /** Spends a glitch token; an empty bucket is a connection error H3_EXCESSIVE_LOAD (RFC 9114 section 8.1). */
     fun glitch(what: String) {
         val g =
