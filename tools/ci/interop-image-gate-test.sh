@@ -49,6 +49,12 @@ tree 0.2.9-SNAPSHOT
 check "  and 0.2.9 is older than 0.2.10"                     0 '^latest=false$' -- 0.2.9 refs/tags/v0.2.9 false
 registry "0.3.0-rc1" "-"; tree 0.3.0-SNAPSHOT
 check "a published prerelease does not hold :latest back"    0 '^latest=true$'  -- 0.3.0 refs/tags/v0.3.0 false
+registry "0.2.0 0.3.0 latest" "0.2.0 0.3.0 latest"; tree 0.2.1-SNAPSHOT; touch "$tmp/tags/kuicksilver-interop.fail" "$tmp/tags/kuicksilver-interop-native.fail"
+check "tags unreadable: refused"                             1 'tags of kuicksilver-interop are unknown' -- 0.2.1 refs/tags/v0.2.1 false
+check "  forced: pushed, but :latest does not move"          0 '^latest=false$' -- 0.2.1 refs/tags/v0.2.1 true
+rm "$tmp/tags/kuicksilver-interop.fail"
+check "  one image unreadable, forced: :latest does not move" 0 'tags unknown for kuicksilver-interop-native, :latest not moved' -- 0.2.1 refs/tags/v0.2.1 true
+tree 0.3.0-SNAPSHOT
 registry - -
 check "first publish: no package yet"                        0 '^latest=true$'  -- 0.3.0 refs/tags/v0.3.0 false
 tree 0.3.0-SNAPSHOT
