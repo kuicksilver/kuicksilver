@@ -168,6 +168,33 @@ class EarlyDataTest {
             }
         }
 
+    /** Whether [datagram] holds a QUIC v1 0-RTT packet (long header type 1), coalesced behind an Initial or not. */
+    private fun carriesZeroRtt(datagram: ByteArray): Boolean {
+        var i = 0
+
+        fun varint(): Long {
+            val first = datagram[i].toInt() and 0xff
+            val len = 1 shl (first shr 6)
+            var v = (first and 0x3f).toLong()
+            for (k in 1 until len) v = (v shl 8) or (datagram[i + k].toLong() and 0xff)
+            i += len
+            return v
+        }
+        while (i < datagram.size) {
+            val b0 = datagram[i].toInt() and 0xff
+            if (b0 and 0x80 == 0) return false // a short header runs to the datagram's end
+            val type = (b0 shr 4) and 0x3
+            if (type == 1) return true
+            i += 5 // flags and version
+            i += 1 + (datagram[i].toInt() and 0xff) // destination connection ID
+            i += 1 + (datagram[i].toInt() and 0xff) // source connection ID
+            if (type == 0) i += varint().toInt() // the Initial's token
+            if (type == 3) return false // Retry: no length
+            i += varint().toInt() // packet number and payload
+        }
+        return false
+    }
+
     /** A client gets a ticket from a server with [issuer] settings, then resumes with 0-RTT at another with [resumer] and the same ticket keys. */
     private suspend fun earlyAcceptedAfterResuming(
         issuer: Http3Settings,
@@ -229,6 +256,12 @@ class EarlyDataTest {
             val warm = client.connectEarly(first.localAddress, H3Fixtures.client())
             repeat(2) { assertEquals(204, warm.request(http3Request("GET", "server.test", "/")).status) } // the ticket arrives
             warm.close()
+            // the second server's answers wait until the client has sent a 0-RTT packet: the rejection then always meets
+            // 0-RTT that carried the session's streams, never a session that had sent nothing yet
+            val sentZeroRtt = AtomicInt(0)
+            net.tap =
+                { from, to, bytes -> if (from == a.localAddress && to == b2.localAddress && carriesZeroRtt(bytes)) sentZeroRtt.store(1) }
+            net.drop = { from, to, _ -> from == b2.localAddress && to == a.localAddress && sentZeroRtt.load() == 0 }
             val c =
                 try {
                     client.connectEarly(second.localAddress, H3Fixtures.client())
@@ -240,11 +273,6 @@ class EarlyDataTest {
             val accepted = c.quic.earlyDataAccepted
             if (accepted == true) {
                 assertEquals(204, status.getOrThrow())
-            } else if (status.isSuccess) {
-                // the session had sent nothing in 0-RTT yet when the handshake ended (a scheduler that ran it late): a
-                // rejection with nothing to reset leaves the connection up, and the request goes in 1-RTT
-                assertEquals(204, status.getOrThrow())
-                assertTrue(!c.quic.closed.isCompleted, "a rejected 0-RTT that carried nothing keeps the connection")
             } else {
                 // a rejected 0-RTT that carried the session's streams closes the connection (RFC 9001 section 4.6.2): its
                 // requests fail with ZeroRttRejected
