@@ -27,7 +27,10 @@ internal object FrameRules {
         isServer: Boolean,
         webTransport: Boolean = false,
     ): FrameAction {
-        // the first-frame rule (RFC 9114 section 6.2.1) wins over the WebTransport one: any other first frame is MISSING_SETTINGS
+        // two MUSTs meet for WT_STREAM as the first frame: RFC 9114 section 6.2.1 (any other first frame, H3_MISSING_SETTINGS)
+        // and draft-ietf-webtrans-http3-16 section 4.3 (WT_STREAM "in any other circumstances", H3_FRAME_ERROR). The base
+        // protocol's rule wins: it applies before the type is interpreted, with or without WebTransport, as a peer without
+        // WebTransport would apply it (docs/spec/rfc-compliance.md, the SETTINGS row)
         if (first &&
             type != FrameType.SETTINGS
         ) {
