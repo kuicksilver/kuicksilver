@@ -269,7 +269,8 @@ private fun afterResponse(
     when {
         !reusable -> AfterResponse.Close
         requestBodySent.isOut() -> AfterResponse.Reuse
-        else -> AfterResponse.CloseAfterUpload
+        !requestBodySent!!.isCompleted -> AfterResponse.CloseAfterUpload
+        else -> AfterResponse.Close // the request body failed: its connection is closed already
     }
 
 /** What happens to the connection after a response. */
