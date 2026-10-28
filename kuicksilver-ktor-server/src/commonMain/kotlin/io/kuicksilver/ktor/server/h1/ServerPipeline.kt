@@ -188,25 +188,42 @@ internal class RequestFraming private constructor(
         fun of(
             request: Request,
             fields: Headers = CIOHeaders(request.headers),
+        ): RequestFraming =
+            of(
+                HttpProtocolVersion.parse(request.version),
+                request.uri.toString(),
+                hosts = fields.getAll("Host").orEmpty(),
+                te = fields.getAll("Transfer-Encoding").orEmpty(),
+                cl = fields.getAll("Content-Length").orEmpty(),
+            )
+
+        /**
+         * The framing of a request in [version] to [target] with these [hosts], Transfer-Encoding ([te]) and
+         * Content-Length ([cl]) values, as sent; for a parsed request ([of]) and for a head the server refuses before
+         * Ktor's parser runs ([checkRequestHead]: a 301 goes out only for an otherwise valid head).
+         */
+        fun of(
+            version: HttpProtocolVersion?,
+            target: String,
+            hosts: List<String>,
+            te: List<String>,
+            cl: List<String>,
         ): RequestFraming {
-            val hosts = fields.getAll("Host").orEmpty().size
-            if (hosts > 1) return faulty("More than one Host field")
-            if (hosts == 0 && HttpProtocolVersion.parse(request.version) == HttpProtocolVersion.HTTP_1_1) {
+            if (hosts.size > 1) return faulty("More than one Host field")
+            if (hosts.isEmpty() && version == HttpProtocolVersion.HTTP_1_1) {
                 return faulty("No Host field in an HTTP/1.1 request")
             }
-            fields["Host"]?.let { if (!isValidHostField(it)) return faulty("Invalid Host field") }
-            splitAbsoluteForm(request.uri.toString())?.let { (authority, _) ->
+            hosts.firstOrNull()?.let { if (!isValidHostField(it)) return faulty("Invalid Host field") }
+            splitAbsoluteForm(target)?.let { (authority, _) ->
                 // RFC 9110 section 4.2.1: an "http" URI with an empty host MUST be rejected as invalid; section 4.2.4:
                 // userinfo SHOULD be treated as an error (it is likely used to obscure the authority)
                 if (splitHostField(authority).first.isEmpty()) return faulty("Empty host in an absolute-form target")
                 if ('@' in authority) return faulty("Userinfo in an absolute-form target")
                 if (!isValidHostField(authority)) return faulty("Invalid authority in an absolute-form target")
             }
-            val te = fields.getAll("Transfer-Encoding").orEmpty()
-            val cl = fields.getAll("Content-Length").orEmpty()
             if (te.isNotEmpty()) {
                 if (cl.isNotEmpty()) return faulty("Content-Length and Transfer-Encoding in one request")
-                if (HttpProtocolVersion.parse(request.version) == HttpProtocolVersion.HTTP_1_0) {
+                if (version == HttpProtocolVersion.HTTP_1_0) {
                     return faulty("Transfer-Encoding in an HTTP/1.0 request")
                 }
                 val codings = transferCodingsOf(te) ?: return faulty("Invalid Transfer-Encoding")

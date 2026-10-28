@@ -369,6 +369,35 @@ class H1RequestHeadCheckTest {
             }
         }
 
+    /**
+     * The 301 goes out only for a head that is valid but for its target's characters: one without the Host an HTTP/1.1
+     * request MUST have, with two or an invalid one (RFC 9112 section 3.2: 400), or with faulty framing (section 6.3
+     * items 4 and 5: 400; section 6.1: 501 for a coding the server does not implement) gets that refusal, never a
+     * Location. Before, the 301 was decided from the request line alone.
+     */
+    @Test fun negative_redirectOnlyForAnOtherwiseValidHead() =
+        runTest {
+            for ((fields, status) in listOf(
+                "" to "400",
+                "Host: a\r\nHost: b\r\n" to "400",
+                "Host: a b\r\n" to "400",
+                "Host: h:99999\r\n" to "400",
+                "Host: a\r\nContent-Length: 1\r\nTransfer-Encoding: chunked\r\n" to "400",
+                "Host: a\r\nContent-Length: 1, 2\r\n" to "400",
+                "Host: a\r\nTransfer-Encoding: chunked, identity\r\n" to "400",
+                "Host: a\r\nTransfer-Encoding: gzip, chunked\r\n" to "501",
+            )) {
+                val response = exchange("GET /a|b HTTP/1.1\r\n$fields\r\nGET /next HTTP/1.1\r\nHost: s\r\n\r\n")
+                assertTrue(response.startsWith("HTTP/1.1 $status "), "${show(fields)}: $response")
+                assertTrue(!response.contains("Location"), "${show(fields)}: $response")
+                assertEquals(1, Regex("HTTP/1.1 ").findAll(response).count(), "${show(fields)}: $response")
+            }
+            // HTTP/1.0 needs no Host
+            val response = exchange("GET /a|b HTTP/1.0\r\n\r\n")
+            assertTrue(response.startsWith("HTTP/1.1 301 "), response)
+            assertTrue(response.contains("\r\nLocation: /a%7Cb\r\n"), response)
+        }
+
     /** A valid target that starts with `//` is a path (`absolute-path` allows an empty first segment), served as before. */
     @Test fun validTargetThatStartsWithTwoSlashesIsServed() =
         runTest {

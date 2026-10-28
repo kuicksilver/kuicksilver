@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.kuicksilver.ktor.server.h1
 
+import io.ktor.http.HttpProtocolVersion
 import io.ktor.utils.io.InternalAPI
 import kotlinx.io.InternalIoApi
 import kotlinx.io.indexOf
@@ -39,9 +40,10 @@ internal class RequestHeadRefused(
  * it, and throws [RequestHeadRefused] for one the server refuses. A request line longer than [MAX_REQUEST_LINE_BYTES]
  * is a request-target longer than the server parses: 414 (RFC 9112 section 3: the server MUST respond with 414), or a
  * method longer than any the server implements (501), see [refuseLongLine]. The request line itself is checked by
- * [checkRequestLine] as soon as it is there, the field lines by [checkFieldSection] once the whole head is. Returns
- * without a verdict when the input ends or the head limit is reached before the head's end: the parser then reports that
- * as it did.
+ * [checkRequestLine] as soon as it is there, the field lines by [checkFieldSection] once the whole head is. A 301 the
+ * target earned goes out only after that, and only when the head's Host and framing fields are valid too (their
+ * refusal wins, see [RequestFraming.of]). Returns without a verdict when the input ends or the head limit is reached
+ * before the head's end: the parser then reports that as it did (a head that earned a 301 and ended early gets 400).
  */
 @OptIn(InternalAPI::class, InternalIoApi::class)
 internal suspend fun HeadLimitedInput.checkRequestHead() {
@@ -50,6 +52,9 @@ internal suspend fun HeadLimitedInput.checkRequestHead() {
     var lineStart = 0L
     var fieldsStart = -1L
     val headScan = HeadMethodScan()
+    // the Location of a 301 the request line earned, sent once the field section is checked too
+    var redirect: String? = null
+    var http10 = false
     while (true) {
         if (fieldsStart < 0 && !headScan.decided) {
             headScan.update(buffer)
@@ -60,20 +65,45 @@ internal suspend fun HeadLimitedInput.checkRequestHead() {
         if (lf < 0) {
             if (fieldsStart < 0 && buffer.size >= MAX_REQUEST_LINE_BYTES + 2L) refuseLongLine(buffer)
             scanned = limit
-            if (!awaitContent((buffer.size + 1).toInt())) return
+            if (!awaitContent((buffer.size + 1).toInt())) {
+                // the head ended or outgrew its limit before its end: the parser reports that, but never gets a target
+                // the redirect was for
+                if (redirect != null && !exceeded) refuse("The request head ended before its empty line")
+                return
+            }
             continue
         }
         val end = if (lf > lineStart && buffer[lf - 1] == CR_BYTE) lf - 1 else lf
         if (fieldsStart < 0) {
             if (end > MAX_REQUEST_LINE_BYTES) refuseLongLine(buffer)
             val line = buffer.peek().readByteArray(end.toInt())
-            val minor = checkRequestLine(line)
-            if (line[minor] > '1'.code.toByte()) replaceBufferedByte(minor.toLong(), '1'.code.toByte())
+            val checkedLine = checkRequestLine(line)
+            val minor = checkedLine.minor
+            redirect = checkedLine.redirect
+            http10 = line[minor] == '0'.code.toByte()
+            if (redirect == null && line[minor] > '1'.code.toByte()) replaceBufferedByte(minor.toLong(), '1'.code.toByte())
             fieldsStart = lf + 1
         } else if (end == lineStart) {
             val fields = buffer.peek()
             fields.skip(fieldsStart)
             val checked = checkFieldSection(fields.readByteArray((lineStart - fieldsStart).toInt()))
+            redirect?.let { location ->
+                // RFC 9112 section 3.2 (Host) and section 6.3 (framing) come first: the redirect is for a head that is
+                // valid but for its target's characters
+                val framing =
+                    RequestFraming.of(
+                        if (http10) HttpProtocolVersion.HTTP_1_0 else HttpProtocolVersion.HTTP_1_1,
+                        target = "/",
+                        hosts = checked.values("host"),
+                        te = checked.values("transfer-encoding"),
+                        cl = checked.values("content-length"),
+                    )
+                framing.fault?.let { fault ->
+                    if (framing.faultStatus == 501) throw RequestHeadRefused(501, "Not Implemented", fault)
+                    refuse(fault)
+                }
+                throw RequestHeadRefused(301, "Moved Permanently", "An origin-form request-target with invalid characters", location)
+            }
             for (colon in checked.emptyPortColons) replaceBufferedByte(fieldsStart + colon, SP_BYTE)
             keptFieldValues = checked.keptValues
             return
@@ -89,7 +119,12 @@ internal class FieldSectionCheck(
     val emptyPortColons: List<Int>,
     /** Values that start with obs-text Ktor's parser takes for whitespace, as sent. */
     val keptValues: List<KeptFieldValue>,
-)
+    /** The values of the Host, Transfer-Encoding and Content-Length lines, as sent (without OWS), by lower-case name. */
+    private val framingValues: Map<String, List<String>>,
+) {
+    /** The values of the field [name] (lower case, one of the framing fields), in order. */
+    fun values(name: String): List<String> = framingValues[name].orEmpty()
+}
 
 /**
  * Checks the field lines of a request head ([fields]: each line with its line end, without the empty line that ends the
@@ -114,6 +149,7 @@ internal fun checkFieldSection(fields: ByteArray): FieldSectionCheck {
     val emptyPortColons = ArrayList<Int>(0)
     val kept = ArrayList<KeptFieldValue>(0)
     val occurrences = HashMap<String, Int>()
+    val framingValues = HashMap<String, MutableList<String>>()
     var start = 0
     while (start < fields.size) {
         var lf = start
@@ -137,14 +173,24 @@ internal fun checkFieldSection(fields: ByteArray): FieldSectionCheck {
             kept += KeptFieldValue(name, occurrence, fields.decodeToString(value, last + 1))
         }
         if (name == "host" && last >= value && fields[last] == ':'.code.toByte()) emptyPortColons += last
+        if (name == "host" || name == "transfer-encoding" || name == "content-length") {
+            framingValues.getOrPut(name) { ArrayList(1) } += fields.decodeToString(value, last + 1)
+        }
         start = lf + 1
     }
-    return FieldSectionCheck(emptyPortColons, kept)
+    return FieldSectionCheck(emptyPortColons, kept, framingValues)
 }
+
+/** What [checkRequestLine] found: the index of the minor version digit, and the Location of a 301 the target earned. */
+internal class RequestLineCheck(
+    val minor: Int,
+    val redirect: String?,
+)
 
 /**
  * Checks a request line (without its line end) against `method SP request-target SP HTTP-version` (RFC 9112 section 3)
- * and returns the index of the minor version digit, or throws [RequestHeadRefused]. Ktor's parser is lenient where this
+ * and returns the index of the minor version digit with the 301 the target earned (see [checkRequestTarget]; the
+ * caller sends it only for an otherwise valid head), or throws [RequestHeadRefused]. Ktor's parser is lenient where this
  * is not: it takes any run of non-whitespace as the method (section 3.1: method = token), any Unicode whitespace (U+00A0
  * among them) as a separator, and passes control characters in the target. Here:
  * - the separators are the whitespace section 3 lets a recipient take as SP (SP, HTAB, VT, FF, a bare CR), also before
@@ -155,7 +201,7 @@ internal fun checkFieldSection(fields: ByteArray): FieldSectionCheck {
  *   server conforms to (RFC 9110 section 6.2: a recipient SHOULD), so the caller rewrites the digit before Ktor's parser,
  *   which knows only 1.0 and 1.1, sees it. Go's net/http does the same (505 for a major other than 1).
  */
-internal fun checkRequestLine(line: ByteArray): Int {
+internal fun checkRequestLine(line: ByteArray): RequestLineCheck {
     for (i in line.indices) {
         val b = line[i]
         val c = b.toInt() and 0xFF
@@ -194,8 +240,8 @@ internal fun checkRequestLine(line: ByteArray): Int {
     if (line[version + 5] != '1'.code.toByte()) {
         throw RequestHeadRefused(505, "HTTP Version Not Supported", "HTTP major version other than 1")
     }
-    checkRequestTarget(line.decodeToString(methodStart, methodEnd), line, targetStart, targetEnd)
-    return version + 7
+    val redirect = checkRequestTarget(line.decodeToString(methodStart, methodEnd), line, targetStart, targetEnd)
+    return RequestLineCheck(version + 7, redirect)
 }
 
 /**
@@ -207,14 +253,15 @@ internal fun checkRequestLine(line: ByteArray): Int {
  * path and query characters, `%` with two hex digits. Anything else is an invalid request line, which the server SHOULD
  * answer with 400 or with a 301 to the request-target properly encoded (RFC 9112 section 3.2): the 301 for an origin-form
  * target of a GET or HEAD whose only fault is characters (browsers send `|`, `{`, `^`, `[` unencoded: the WHATWG URL
- * standard leaves them) and whose Location stays on this server ([isSafeToRedirect]), 400 otherwise.
+ * standard leaves them) and whose Location stays on this server ([isSafeToRedirect]), 400 otherwise. Returns that
+ * Location for a 301, null for a valid target.
  */
 private fun checkRequestTarget(
     method: String,
     line: ByteArray,
     start: Int,
     end: Int,
-) {
+): String? {
     val target = line.decodeToString(start, end)
     val ascii = (start until end).all { (line[it].toInt() and 0xFF) < 0x80 }
     if (method == "CONNECT") {
@@ -231,21 +278,19 @@ private fun checkRequestTarget(
         if (!ascii || colon < 1 || port == null || port !in 1..65_535 || !isValidHostField(target)) {
             refuse("CONNECT needs a request-target of uri-host \":\" port")
         }
-        return
+        return null
     }
     if (target == "*") {
         if (method != "OPTIONS") refuse("The asterisk-form is for OPTIONS only")
-        return
+        return null
     }
     if (target.startsWith("/")) {
-        if (ascii && isPathAndQuery(target)) return
-        if ((method == "GET" || method == "HEAD") && isSafeToRedirect(target)) {
-            val location = encodeOriginForm(line, start, end)
-            throw RequestHeadRefused(301, "Moved Permanently", "An origin-form request-target with invalid characters", location)
-        }
+        if (ascii && isPathAndQuery(target)) return null
+        if ((method == "GET" || method == "HEAD") && isSafeToRedirect(target)) return encodeOriginForm(line, start, end)
         refuse("Invalid characters in the request-target")
     }
     if (!ascii || !isAbsoluteUri(target)) refuse("The request-target is no origin-form and no absolute-URI")
+    return null
 }
 
 /**
