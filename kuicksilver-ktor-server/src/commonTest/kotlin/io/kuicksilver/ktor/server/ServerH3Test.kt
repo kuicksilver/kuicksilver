@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.kuicksilver.ktor.server
 
+import io.ktor.network.selector.SelectorManager
 import io.ktor.network.sockets.InetSocketAddress
 import io.ktor.server.request.httpVersion
 import io.ktor.server.request.receive
@@ -19,14 +20,17 @@ import io.ktor.utils.io.writeFully
 import io.kuicksilver.http3.Http3Connection
 import io.kuicksilver.http3.Http3Endpoint
 import io.kuicksilver.http3.http3Request
+import io.kuicksilver.ktor.network.bindTcp
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.DatagramIo
 import io.kuicksilver.quic.QuicClientConfig
 import io.kuicksilver.quic.QuicEndpoint
 import io.kuicksilver.quic.quicConfig
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.io.readByteArray
 import kotlin.test.BeforeTest
 import kotlin.test.Test
@@ -315,6 +319,7 @@ class ServerH3Test {
                 val why = "taken $takenPorts, tried $tried, bound $bound, serving $port"
                 assertTrue(takenPorts.isNotEmpty() && takenPorts.size <= occupied, why)
                 assertTrue(tried.size in 2..EPHEMERAL_PAIR_ATTEMPTS, why)
+                assertTrue(0 in tried, why) // a pair whose UDP side the OS picked was tried
                 assertEquals(port, bound.lastOrNull(), why)
                 assertTrue(port !in takenPorts, why)
                 val resp = rawHttp(port, "GET / HTTP/1.1\r\nHost: server.test\r\nConnection: close\r\n\r\n")
@@ -322,6 +327,63 @@ class ServerH3Test {
                 h3(port) { c -> assertEquals(200, c.request(get()).status) }
             } finally {
                 server.stop(100, 500)
+                taken.forEach { it.close() }
+            }
+        }
+
+    /**
+     * The UDP-first pair loses its TCP twin: the first pair's UDP twin is taken (TCP first), then the hook binds the
+     * UDP-first endpoint and holds a TCP listener on the number the OS gave it, so the engine's TCP bind there fails. The
+     * engine closes that endpoint (its UDP port can be bound again) and the third pair, TCP first again, serves h3.
+     */
+    @Test fun ephemeralPortUdpFirstPairWhoseTcpTwinIsTakenIsReleased() =
+        h3ServerTest {
+            val taken = ArrayList<DatagramIo>()
+            val tried = ArrayList<Int>()
+            val bound = ArrayList<Int>()
+            var heldPort = -1
+            val selector = SelectorManager(Dispatchers.Default)
+            var heldTcp: io.ktor.network.sockets.ServerSocket? = null
+            val log = CapturedLog()
+            val (server, port) =
+                tlsServer(configure = {
+                    logger = log.quic
+                    http3Bind = { a, c, s ->
+                        tried += a.port
+                        if (a.port != 0 && tried.size == 1) {
+                            // the first pair's UDP twin: already held, the bind below fails all the same
+                            runCatching { DatagramIo.open(InetSocketAddress("127.0.0.1", a.port)) }.getOrNull()?.let { taken += it }
+                        }
+                        Http3Endpoint.bind(a, c, s).also { e ->
+                            bound += e.localAddress.port
+                            if (a.port == 0 && heldTcp == null) {
+                                heldPort = e.localAddress.port
+                                heldTcp = bindTcp(selector, "127.0.0.1", heldPort)
+                            }
+                        }
+                    }
+                }, log = log) { routing { get("/") { call.respondText("ok") } } }
+            try {
+                val why = "tried $tried, bound $bound, held TCP $heldPort, serving $port"
+                assertTrue(tried.size >= 3 && tried[1] == 0 && tried[2] != 0, why)
+                assertTrue(heldPort > 0 && port != heldPort, why)
+                assertEquals(port, bound.lastOrNull(), why)
+                val resp = rawHttp(port, "GET / HTTP/1.1\r\nHost: server.test\r\nConnection: close\r\n\r\n")
+                assertTrue(resp.contains("Alt-Svc: h3=\":$port\""), resp)
+                h3(port) { c -> assertEquals(200, c.request(get()).status) }
+                // the endpoint of the failed UDP-first pair was closed: its port is free again (the close is asynchronous)
+                var again: Result<DatagramIo> = Result.failure(IllegalStateException("not tried"))
+                for (i in 0 until 60) {
+                    again = runCatching { DatagramIo.open(InetSocketAddress("127.0.0.1", heldPort)) }
+                    if (again.isSuccess) break
+                    delay(50)
+                }
+                again.getOrNull()?.close()
+                assertTrue(again.isSuccess, "UDP $heldPort still bound 3 s after its pair failed ($why): ${again.exceptionOrNull()}")
+            } finally {
+                server.stop(100, 500)
+                heldTcp?.close()
+                selector.close()
                 taken.forEach { it.close() }
             }
         }
@@ -340,7 +402,7 @@ class ServerH3Test {
                 }, log = log) { routing { get("/") { call.respondText("ok") } } }
             try {
                 assertEquals(EPHEMERAL_PAIR_ATTEMPTS, tried.size, "tried $tried")
-                log.assertLogged("WARN", "HTTP/3 is not served: no free UDP port next to an ephemeral TCP one")
+                log.assertLogged("WARN", "HTTP/3 is not served: no TCP + UDP pair free on one port number")
                 val resp = rawHttp(port, "GET / HTTP/1.1\r\nHost: server.test\r\nConnection: close\r\n\r\n")
                 assertTrue(resp.endsWith("ok") && !resp.contains("Alt-Svc"), resp)
             } finally {

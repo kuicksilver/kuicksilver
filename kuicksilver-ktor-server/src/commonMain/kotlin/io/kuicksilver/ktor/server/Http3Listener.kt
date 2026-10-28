@@ -57,8 +57,9 @@ internal class H3Listener(
 
 /**
  * How a TLS connector binds its HTTP/3 endpoint on a given port, or null when it serves no HTTP/3: turned off, or a
- * connector with a `sniSelector` (QUIC cannot pick an identity per SNI name in v1; logged as a warning). The bind runs
- * right after the TCP bind ([bindTcpAndUdp]), so `port = 0` resolves first.
+ * connector with a `sniSelector` (QUIC cannot pick an identity per SNI name in v1; logged as a warning). [bindTcpAndUdp]
+ * calls it with the port of the TCP socket it just bound, or, on its UDP-first attempts with `port = 0`, with 0 (the OS
+ * picks the UDP port and TCP follows).
  */
 internal fun KuicksilverApplicationEngine.http3Binder(tls: KuicksilverTlsConnector): (suspend (Int) -> Http3Endpoint)? {
     if (!configuration.http3) return null
