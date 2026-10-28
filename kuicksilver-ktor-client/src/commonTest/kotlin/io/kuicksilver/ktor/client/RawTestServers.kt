@@ -26,6 +26,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.withLock
 
 /** Reads a request head and its Content-Length body; returns the request line ("" at end of stream). */
 internal suspend fun readRequest(input: ByteReadChannel): String {
@@ -186,8 +187,18 @@ internal class UdpRelay(
     /** While true every datagram is dropped, both ways: QUIC is blocked on the path. */
     @kotlin.concurrent.Volatile var blocked: Boolean = false
 
-    /** Each datagram from the server is held this long before it goes on to the client. */
-    @kotlin.concurrent.Volatile var downDelay: kotlin.time.Duration = kotlin.time.Duration.ZERO
+    /** While true the server's datagrams are queued, not dropped; [release] sends them on, in order, and lifts it for good. */
+    @kotlin.concurrent.Volatile var holdDown: Boolean = false
+
+    internal val heldDown = ArrayDeque<io.ktor.network.sockets.Datagram>()
+    internal val downLock = kotlinx.coroutines.sync.Mutex()
+    internal val released = kotlinx.coroutines.CompletableDeferred<Unit>()
+
+    /** Ends [holdDown]: what it queued goes to the client now. */
+    fun release() {
+        holdDown = false
+        released.complete(Unit)
+    }
 
     /** Completed by the first datagram from the client dropped while [blocked]. */
     val dropped: kotlinx.coroutines.CompletableDeferred<Unit> = kotlinx.coroutines.CompletableDeferred()
@@ -255,25 +266,47 @@ internal suspend fun udpRelay(
                         )
                     }
                 }
+
+            suspend fun drainHeld(c: io.ktor.network.sockets.SocketAddress) {
+                while (true) {
+                    val h = relay.heldDown.removeFirstOrNull() ?: return
+                    front.send(
+                        io.ktor.network.sockets
+                            .Datagram(h.packet, c),
+                    )
+                }
+            }
             val down =
                 launch {
                     while (true) {
                         val d = back.receive()
                         val c = client
-                        if (relay.downDelay.isPositive()) kotlinx.coroutines.delay(relay.downDelay)
                         if (relay.blocked || c == null) {
                             d.packet.close()
                             continue
                         }
-                        front.send(
-                            io.ktor.network.sockets
-                                .Datagram(d.packet, c),
-                        )
+                        relay.downLock.withLock {
+                            if (relay.holdDown) {
+                                relay.heldDown.addLast(d)
+                            } else {
+                                drainHeld(c)
+                                front.send(
+                                    io.ktor.network.sockets
+                                        .Datagram(d.packet, c),
+                                )
+                            }
+                        }
                     }
+                }
+            val flush =
+                launch {
+                    relay.released.await()
+                    relay.downLock.withLock { client?.let { drainHeld(it) } }
                 }
             block((front.localAddress as InetSocketAddress).port, relay)
             up.cancel()
             down.cancel()
+            flush.cancel()
         }
     } finally {
         front.close()

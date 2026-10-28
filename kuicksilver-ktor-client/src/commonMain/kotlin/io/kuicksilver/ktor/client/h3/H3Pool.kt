@@ -260,6 +260,9 @@ internal class H3Pool(
         }
     }
 
+    /** Test hook: runs in a request that is about to wait for its connection's handshake. */
+    internal var beforeHandshakeWaitForTest: (suspend () -> Unit)? = null
+
     /** Test hook: runs in the caller that sets up a connection, before it connects. */
     internal var beforeSetupForTest: (suspend () -> Unit)? = null
 
@@ -493,6 +496,7 @@ internal class H3Pool(
                 // touched: a handshake that fails leaves it provably unsent (RFC 8470 section 4 — the client starts over)
                 @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
                 if (!conn.quic.isHandshakeComplete && !(early && goesEarly(data))) {
+                    beforeHandshakeWaitForTest?.invoke()
                     try {
                         conn.quic.awaitHandshake()
                     } catch (e: CancellationException) {
