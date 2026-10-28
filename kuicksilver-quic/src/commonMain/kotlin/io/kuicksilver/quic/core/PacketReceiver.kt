@@ -39,6 +39,13 @@ internal class PacketReceiver(
         private const val FIRST_NONE = 0
         private const val FIRST_HANDLED = 1
         private const val FIRST_FAILED = 2
+
+        /** Ours but no longer to be opened (its space's keys are gone): checked as section 10.3.1 asks, no invalid reset. */
+        private const val FIRST_STALE = 3
+
+        private const val OUTCOME_NONE = 0
+        private const val OUTCOME_DUPLICATE = 1
+        private const val OUTCOME_DISCARDED_SPACE = 2
     }
 
     private val hv = PacketHeaderView()
@@ -154,8 +161,19 @@ internal class PacketReceiver(
                 off = hv.packetEnd
                 continue
             }
+            lastOutcome = OUTCOME_NONE
             val ok = processPacket(data, from)
-            if (first == FIRST_NONE) first = if (ok) FIRST_HANDLED else FIRST_FAILED
+            if (first == FIRST_NONE) {
+                // a duplicate was decrypted: the check may be skipped
+                first =
+                    if (ok || lastOutcome == OUTCOME_DUPLICATE) {
+                        FIRST_HANDLED
+                    } else if (lastOutcome == OUTCOME_DISCARDED_SPACE) {
+                        FIRST_STALE
+                    } else {
+                        FIRST_FAILED
+                    }
+            }
             if (hv.packetEnd <= off) break
             off = hv.packetEnd
         }
@@ -164,8 +182,9 @@ internal class PacketReceiver(
         // connection or cannot be decrypted." A reset looks like an undecryptable packet, and "endpoints MUST treat any packet
         // ending in a valid stateless reset token as a Stateless Reset, as other QUIC versions might allow the use of a long header"
         // So the check follows the first packet: one that was handled leaves the datagram alone, whatever came after it
+        // A first packet of a space whose keys are gone is ours, so a mismatch there is no invalid reset of the peer's
         if (first != FIRST_HANDLED && length >= io.kuicksilver.quic.endpoint.StatelessReset.MIN_SIZE) {
-            c.checkStatelessReset(data, length, now)
+            c.checkStatelessReset(data, length, now, countInvalid = first != FIRST_STALE)
         }
     }
 
@@ -187,6 +206,9 @@ internal class PacketReceiver(
         // RFC 9000 section 7.2: a client's Initials (and 0-RTT packets) carry the original DCID or, after a Retry, our Retry SCID
         return c.odcid.contentEquals(data, hv.dcidOff, hv.dcidLen) || c.retryScid?.contentEquals(data, hv.dcidOff, hv.dcidLen) == true
     }
+
+    /** Why the last [processPacket] that returned false did so, where it matters to the Stateless Reset check. */
+    private var lastOutcome = OUTCOME_NONE
 
     /** Returns true when the packet was decrypted and processed, or held until the server's handshake completes. */
     private fun processPacket(
@@ -222,7 +244,10 @@ internal class PacketReceiver(
                 else -> 3
             }
         packetType = type
-        if (c.spaceDiscarded[space.ordinal]) return false
+        if (c.spaceDiscarded[space.ordinal]) {
+            lastOutcome = OUTCOME_DISCARDED_SPACE
+            return false
+        }
         // RFC 9000 section 17.2/17.3.1: not a valid packet of this version unless we allowed it (RFC 9287)
         if (!hv.fixedBitSet && !c.config.greaseQuicBit) return false
         // section 17.2.2: a server Initial carries no token
@@ -315,6 +340,7 @@ internal class PacketReceiver(
         }
         if (sp.ack.isDuplicate(pn)) {
             c.duplicatesDropped++
+            lastOutcome = OUTCOME_DUPLICATE
             return false
         }
         if (data[headerStart()].toInt() and (if (type == PacketType.OneRtt) 0x18 else 0x0c) !=

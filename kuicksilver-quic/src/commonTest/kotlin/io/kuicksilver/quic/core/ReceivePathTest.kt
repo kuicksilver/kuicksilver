@@ -895,6 +895,39 @@ class ReceivePathTest {
         }
     }
 
+    /**
+     * RFC 9000 section 10.3.1 asks for the reset comparison when the first packet "cannot be associated with a connection or
+     * cannot be decrypted". A duplicate was decrypted (the check may be skipped), and a packet of a space whose keys are
+     * gone is ours but cannot be opened any more (the check runs). Neither is an invalid reset of the peer: a network
+     * duplicate or a late retransmission counted in `invalidResets` made the statistic noisy (review 2026-10-28, N4).
+     */
+    @Test fun aDuplicateOrADiscardedSpaceLeadingTheDatagramIsNoInvalidReset() {
+        val p = CorePair()
+        try {
+            p.step()
+            val s = p.server!!
+            val dcid = s.localCid.toByteArray()
+            val scid = p.client.localCid.toByteArray()
+            val big = byteArrayOf(0x01) + ByteArray(1200)
+            val before = s.invalidResets
+            val initial = nullLongPacket(0, dcid, scid, 80, big)
+            feed(s, initial, CoreFixtures.clientAddr, p.now)
+            val ack = s.loss.space(SpaceId.Initial).ack
+            assertTrue(ack.isDuplicate(80))
+            val duplicates = s.duplicatesDropped
+            feed(s, initial, CoreFixtures.clientAddr, p.now) // the network duplicated it
+            assertEquals(duplicates + 1, s.duplicatesDropped)
+            assertEquals(before, s.invalidResets, "a duplicate was decrypted: no invalid reset")
+            s.spaceDiscarded[SpaceId.Initial.ordinal] = true // as after the handshake: the Initial keys are gone
+            feed(s, nullLongPacket(0, dcid, scid, 81, big), CoreFixtures.clientAddr, p.now)
+            assertEquals(before, s.invalidResets, "a packet of a discarded space is ours: no invalid reset")
+            feed(s, ByteArray(60) { 0x40 }, CoreFixtures.clientAddr, p.now) // a short header nobody can open
+            assertEquals(before + 1, s.invalidResets, "an undecryptable first packet still counts")
+        } finally {
+            p.close()
+        }
+    }
+
     /** RFC 9000 section 9: a client discards packets from a server address it does not know: no processing, and a PATH_CHALLENGE from there opens no path. */
     @Test fun negative_clientDropsPacketFromUnknownServerAddress() {
         val p = CorePair()
