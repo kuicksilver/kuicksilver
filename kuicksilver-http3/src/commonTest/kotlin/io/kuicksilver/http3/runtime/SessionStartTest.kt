@@ -101,11 +101,14 @@ class SessionStartTest {
             try {
                 QuicPair.open(serverQuic = quicConfig { maxUniStreams = 2 }).use { q ->
                     val (c, s) = q.connect()
-                    // only this test's client: a session of another test that is still closing never runs the hook
+                    // only this test's client: a session of another test still closing never runs the JVM-wide hook
                     H3Session.beforeIdleCloseForTest = {
                         if (it.quic === c) {
                             idleCloseDue.complete(Unit) // the client read the GOAWAY and is about to close idle
-                            it.quic.closed.await()
+                            // until the session itself saw the transport's end, not only the transport: when this thread
+                            // is descheduled right here, the transport can end before the wait starts, and the idle close
+                            // that follows ran ahead of the session's own handling of the end, still queued behind it
+                            it.closed.await()
                         }
                     }
                     val raw = RawPeer(s)
