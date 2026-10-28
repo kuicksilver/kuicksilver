@@ -240,8 +240,14 @@ class EarlyDataTest {
             val accepted = c.quic.earlyDataAccepted
             if (accepted == true) {
                 assertEquals(204, status.getOrThrow())
+            } else if (status.isSuccess) {
+                // the session had sent nothing in 0-RTT yet when the handshake ended (a scheduler that ran it late): a
+                // rejection with nothing to reset leaves the connection up, and the request goes in 1-RTT
+                assertEquals(204, status.getOrThrow())
+                assertTrue(!c.quic.closed.isCompleted, "a rejected 0-RTT that carried nothing keeps the connection")
             } else {
-                // a rejected 0-RTT closes the connection (RFC 9001 section 4.6.2): its requests fail with ZeroRttRejected
+                // a rejected 0-RTT that carried the session's streams closes the connection (RFC 9001 section 4.6.2): its
+                // requests fail with ZeroRttRejected
                 val e = status.exceptionOrNull()
                 assertTrue(
                     generateSequence(e) { it.cause }.any { it is io.kuicksilver.quic.QuicException.ConnectionLost.ZeroRttRejected },

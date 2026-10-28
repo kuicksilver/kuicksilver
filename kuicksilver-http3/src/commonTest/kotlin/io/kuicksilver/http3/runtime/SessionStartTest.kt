@@ -98,13 +98,16 @@ class SessionStartTest {
     @Test fun peerNoErrorCloseAfterGoAwayRefusesRequestsAsNotProcessed() =
         h3Test {
             val idleCloseDue = CompletableDeferred<Unit>()
-            H3Session.beforeIdleCloseForTest = {
-                idleCloseDue.complete(Unit) // the client read the GOAWAY and is about to close idle
-                it.quic.closed.await()
-            }
             try {
                 QuicPair.open(serverQuic = quicConfig { maxUniStreams = 2 }).use { q ->
                     val (c, s) = q.connect()
+                    // only this test's client: a session of another test that is still closing never runs the hook
+                    H3Session.beforeIdleCloseForTest = {
+                        if (it.quic === c) {
+                            idleCloseDue.complete(Unit) // the client read the GOAWAY and is about to close idle
+                            it.quic.closed.await()
+                        }
+                    }
                     val raw = RawPeer(s)
                     raw.openControl()
                     raw.control.output.writeFully(raw.frame(FrameType.GOAWAY, ControlFrames.goAwayPayload(0)))
@@ -155,13 +158,15 @@ class SessionStartTest {
     @Test fun goAwayParsedAfterThePeersNoErrorCloseStillRefusesRequestsAsNotProcessed() =
         h3Test {
             val held = CompletableDeferred<Unit>()
-            H3Session.beforeGoAwayForTest = {
-                held.complete(Unit)
-                it.closed.await() // the transport close went first
-            }
             try {
                 QuicPair.open(serverQuic = quicConfig { maxUniStreams = 2 }).use { q ->
                     val (c, s) = q.connect()
+                    H3Session.beforeGoAwayForTest = {
+                        if (it.quic === c) {
+                            held.complete(Unit)
+                            it.closed.await() // the transport close went first
+                        }
+                    }
                     val raw = RawPeer(s)
                     raw.openControl()
                     raw.control.output.writeFully(raw.frame(FrameType.GOAWAY, ControlFrames.goAwayPayload(0)))
@@ -191,14 +196,14 @@ class SessionStartTest {
     @Test
     fun goAwayOnAControlStreamAcceptedAfterThePeersCloseStillRefusesRequestsAsNotProcessed() =
         h3Test {
-            H3Session.peerControlWaitTimedOutForTest = null
             val held = CompletableDeferred<Unit>()
-            H3Session.beforeAcceptForTest = {
-                if (held.complete(Unit)) it.closed.await() // the first accept waits for the close
-            }
             try {
                 QuicPair.open(serverQuic = quicConfig { maxUniStreams = 2 }).use { q ->
                     val (c, s) = q.connect()
+                    H3Session.beforeAcceptForTest = {
+                        // this client's first accept waits for the close; another test's session never matches
+                        if (it.quic === c && held.complete(Unit)) it.closed.await()
+                    }
                     val client = async { runCatching { withTimeout(10.seconds) { Http3Connection.client(c) } } }
                     withTimeout(10.seconds) { held.await() }
                     val raw = RawPeer(s)
@@ -209,7 +214,7 @@ class SessionStartTest {
                     s.close(Http3ErrorCode.NO_ERROR, "")
                     val conn = withTimeout(10.seconds) { client.await() }.getOrThrow()
                     assertEquals(0L, conn.goAwayReceived.value)
-                    assertEquals(false, H3Session.peerControlWaitTimedOutForTest, "the GOAWAY ended the wait, not its bound")
+                    assertEquals(false, conn.session.peerControlWaitTimedOut, "the GOAWAY ended the wait, not its bound")
                     assertFailsWith<Http3Exception.RequestNotProcessed> { withTimeout(10.seconds) { conn.request(get()) } }
                 }
             } finally {
@@ -223,15 +228,25 @@ class SessionStartTest {
      */
     @Test fun negative_peerNoErrorCloseWithoutAControlStreamFailsTheStartWithoutWaiting() =
         h3Test {
-            H3Session.peerControlWaitTimedOutForTest = null
             QuicPair.open(serverQuic = quicConfig { maxUniStreams = 2 }).use { q ->
                 val (c, s) = q.connect()
-                val client = async { runCatching { withTimeout(10.seconds) { Http3Connection.client(c) } } }
-                s.close(Http3ErrorCode.NO_ERROR, "")
-                val e = assertIs<Http3Exception.Protocol>(withTimeout(10.seconds) { client.await() }.exceptionOrNull())
-                assertEquals(Http3ErrorCode.NO_ERROR, e.h3Code)
-                assertEquals(Initiator.Peer, e.initiator)
-                assertEquals(false, H3Session.peerControlWaitTimedOutForTest, "the start did not wait for a control stream that never came")
+                val session = CompletableDeferred<H3Session>()
+                // the session as its start begins: its accept loop may never run once the close came first
+                H3Session.startingForTest = { if (it.quic === c) session.complete(it) }
+                try {
+                    val client = async { runCatching { withTimeout(10.seconds) { Http3Connection.client(c) } } }
+                    s.close(Http3ErrorCode.NO_ERROR, "")
+                    val e = assertIs<Http3Exception.Protocol>(withTimeout(10.seconds) { client.await() }.exceptionOrNull())
+                    assertEquals(Http3ErrorCode.NO_ERROR, e.h3Code)
+                    assertEquals(Initiator.Peer, e.initiator)
+                    assertEquals(
+                        false,
+                        withTimeout(10.seconds) { session.await() }.peerControlWaitTimedOut,
+                        "the start did not wait for a control stream that never came",
+                    )
+                } finally {
+                    H3Session.startingForTest = null
+                }
             }
         }
 
@@ -257,14 +272,16 @@ class SessionStartTest {
                         }
                     H3Session.beforeIdleCloseForTest = {
                         // the GOAWAY was applied; the transport ends now, before the client's own idle close
-                        end.complete(
-                            if (rejected) {
-                                QuicException.ConnectionLost.ZeroRttRejected()
-                            } else {
-                                QuicException.ConnectionLost.ApplicationClosed(Http3ErrorCode.NO_ERROR, "", Initiator.Local)
-                            },
-                        )
-                        kotlinx.coroutines.awaitCancellation()
+                        if (it.quic === transport) {
+                            end.complete(
+                                if (rejected) {
+                                    QuicException.ConnectionLost.ZeroRttRejected()
+                                } else {
+                                    QuicException.ConnectionLost.ApplicationClosed(Http3ErrorCode.NO_ERROR, "", Initiator.Local)
+                                },
+                            )
+                            kotlinx.coroutines.awaitCancellation()
+                        }
                     }
                     try {
                         val raw = RawPeer(s)
