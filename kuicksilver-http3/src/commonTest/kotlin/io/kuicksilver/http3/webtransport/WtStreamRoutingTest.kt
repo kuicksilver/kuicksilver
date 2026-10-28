@@ -41,6 +41,7 @@ import kotlin.test.assertTrue
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
+import kotlin.time.TestTimeSource
 
 /** The settings a WebTransport client sends: Extended CONNECT is the server's, datagrams and WT both sides'. */
 internal val wtClientSettings: List<Pair<Long, Long>> =
@@ -88,6 +89,12 @@ class WtStreamRoutingTest {
     ) = withContext(session.dispatcher) { session.wt.register(sessionId, sink) }
 
     private suspend fun Http3Connection.unregister(sessionId: Long) = withContext(session.dispatcher) { session.wt.unregister(sessionId) }
+
+    /** Waits until the server's session has received [n] HTTP/3 datagrams. */
+    private suspend fun Http3Connection.awaitDatagrams(n: Int) =
+        withTimeout(5.seconds) {
+            while (withContext(session.dispatcher) { session.datagrams.receivedCount } < n) delay(5)
+        }
 
     private suspend fun Http3Connection.awaitBuffered(n: Int) = withTimeout(5.seconds) { session.wt.bufferedCount.first { it == n } }
 
@@ -191,16 +198,18 @@ class WtStreamRoutingTest {
     /**
      * draft-ietf-webtrans-http3 section 4.6: datagrams for a session whose CONNECT HEADERS have not arrived yet are buffered
      * and delivered once the session is established, at most 16 per connection (as for streams, a datagram over the cap is dropped), in arrival order.
+     * The buffer's clock stands still here: how long they may wait is [datagramKeptPastItsHoldIsDropped]'s concern.
      */
     private suspend fun datagramsBeforeConnect(count: Int): List<String> =
         QuicPair.open().useScoped { q ->
             val (c, s) = q.connect()
             val server = Http3Connection.server(s, wtOn)
+            withContext(server.session.dispatcher) { server.session.datagrams.clock = TestTimeSource() }
             val raw = RawPeer(c)
             raw.openControl(wtClientSettings)
             withTimeout(5.seconds) { server.peerSettings.first { it != null } }
             repeat(count) { c.sendDatagram(VarInt.encode(0) + "d$it".encodeToByteArray()) } // stream 0, not opened yet
-            delay(100) // the datagrams are in before the CONNECT
+            server.awaitDatagrams(count) // the datagrams are in before the CONNECT
             val accepted = CompletableDeferred<WebTransportSession>()
             launch { accepted.complete(server.acceptRequest().acceptWebTransport()) }
             val st = c.openBidi()
@@ -216,6 +225,76 @@ class WtStreamRoutingTest {
         h3Test {
             assertEquals(listOf("d0"), datagramsBeforeConnect(1))
         }
+
+    /**
+     * RFC 9297 section 2.1: a datagram for a stream "that has not yet been created" may be buffered only "temporarily (on
+     * the order of a round trip)". One kept past its hold, which follows the connection's RTT, is gone: the session that
+     * opens later never sees it, only what came after.
+     */
+    @Test fun datagramKeptPastItsHoldIsDropped() =
+        h3Test {
+            QuicPair.open().useScoped { q ->
+                val (c, s) = q.connect()
+                val server = Http3Connection.server(s, wtOn)
+                val clock = TestTimeSource()
+                withContext(server.session.dispatcher) { server.session.datagrams.clock = clock }
+                val raw = RawPeer(c)
+                raw.openControl(wtClientSettings)
+                withTimeout(5.seconds) { server.peerSettings.first { it != null } }
+                c.sendDatagram(VarInt.encode(0) + "stale".encodeToByteArray()) // stream 0, not opened yet
+                server.awaitDatagrams(1)
+                val hold = withContext(server.session.dispatcher) { server.session.datagrams.pendingHold() }
+                assertTrue(hold <= DatagramDemux.MAX_HOLD, "hold $hold")
+                clock += hold + 1.milliseconds
+                c.sendDatagram(VarInt.encode(0) + "fresh".encodeToByteArray())
+                server.awaitDatagrams(2)
+                assertEquals(1, withContext(server.session.dispatcher) { server.session.datagrams.pendingCount }) // "stale" went
+                val accepted = CompletableDeferred<WebTransportSession>()
+                launch { accepted.complete(server.acceptRequest().acceptWebTransport()) }
+                val st = c.openBidi()
+                st.output.writeFully(raw.wtConnect(st))
+                st.output.flush()
+                val wt = withTimeout(5.seconds) { accepted.await() }
+                assertEquals("fresh", withTimeout(5.seconds) { wt.receiveDatagram() }.decodeToString())
+            }
+        }
+
+    /** One within its hold is kept: the clock moves to just before the end of it. */
+    @Test fun datagramWithinItsHoldIsKept() =
+        h3Test {
+            QuicPair.open().useScoped { q ->
+                val (c, s) = q.connect()
+                val server = Http3Connection.server(s, wtOn)
+                val clock = TestTimeSource()
+                withContext(server.session.dispatcher) { server.session.datagrams.clock = clock }
+                val raw = RawPeer(c)
+                raw.openControl(wtClientSettings)
+                withTimeout(5.seconds) { server.peerSettings.first { it != null } }
+                c.sendDatagram(VarInt.encode(0) + "early".encodeToByteArray())
+                server.awaitDatagrams(1)
+                val hold = withContext(server.session.dispatcher) { server.session.datagrams.pendingHold() }
+                clock += hold - 1.milliseconds
+                val accepted = CompletableDeferred<WebTransportSession>()
+                launch { accepted.complete(server.acceptRequest().acceptWebTransport()) }
+                val st = c.openBidi()
+                st.output.writeFully(raw.wtConnect(st))
+                st.output.flush()
+                val wt = withTimeout(5.seconds) { accepted.await() }
+                assertEquals("early", withTimeout(5.seconds) { wt.receiveDatagram() }.decodeToString())
+            }
+        }
+
+    /**
+     * The hold is on the order of a round trip: one PTO (RFC 9002 section 6.2.1, with the default max_ack_delay of 25 ms,
+     * RFC 9000 section 18.2), the time after which a lost CONNECT is sent again, plus one smoothed RTT for it to arrive;
+     * never below 50 ms nor above 5 s.
+     */
+    @Test fun pendingHoldFollowsTheRtt() {
+        assertEquals(265.milliseconds, DatagramDemux.pendingHold(100.milliseconds, 10.milliseconds)) // 2 x 100 + 4 x 10 + 25
+        assertEquals(226.milliseconds, DatagramDemux.pendingHold(100.milliseconds, 0.milliseconds)) // kGranularity, 1 ms
+        assertEquals(DatagramDemux.MIN_HOLD, DatagramDemux.pendingHold(1.milliseconds, 0.milliseconds))
+        assertEquals(DatagramDemux.MAX_HOLD, DatagramDemux.pendingHold(3.seconds, 1.seconds))
+    }
 
     @Test fun negative_pendingDatagramsBounded() =
         h3Test {

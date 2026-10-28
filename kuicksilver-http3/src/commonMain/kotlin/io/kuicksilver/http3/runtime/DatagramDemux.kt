@@ -33,6 +33,7 @@ import kotlinx.coroutines.launch
 import kotlin.concurrent.Volatile
 import kotlin.concurrent.atomics.AtomicBoolean
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.TimeMark
 import kotlin.time.TimeSource
 
@@ -40,9 +41,13 @@ import kotlin.time.TimeSource
  * HTTP datagrams of a connection (RFC 9297 section 2.1): one collector of the transport's datagrams, routed by quarter
  * stream ID to the streams that registered. Unknown IDs are dropped silently, but for a stream beyond the bidirectional
  * stream limit, which is a connection error H3_ID_ERROR; a datagram without a valid quarter stream ID is a connection
- * error H3_DATAGRAM_ERROR. A stream is unregistered when its receive side closes, so later
- * datagrams for it are dropped as the RFC requires. With WebTransport a server keeps datagrams for a request stream whose
- * CONNECT has not been read yet, bounded as early WebTransport streams are (draft-ietf-webtrans-http3 section 4.6).
+ * error H3_DATAGRAM_ERROR. A stream is unregistered when its receive side closes, so later datagrams for it are dropped as
+ * the RFC requires. With WebTransport a server keeps datagrams for a request stream whose HEADERS have not been read yet:
+ * draft-ietf-webtrans-http3-16 section 4.6, "WebTransport endpoints SHOULD buffer streams and datagrams until they can be
+ * associated with an established session. To avoid resource exhaustion, endpoints MUST limit the number of buffered
+ * streams and datagrams." At most [MAX_PENDING] per connection, the excess dropped ("a datagram MUST be dropped"), and
+ * each for [pendingHold], on the order of a round trip, as RFC 9297 section 2.1 allows for a stream not yet created
+ * ("buffer it temporarily (on the order of a round trip)").
  */
 internal class DatagramDemux(
     private val session: H3Session,
@@ -99,11 +104,20 @@ internal class DatagramDemux(
             return
         }
         if (session.abortRequestWithoutDatagrams(streamId)) return
-        // draft-ietf-webtrans-http3 section 4.6: a session's datagrams may overtake its CONNECT; kept, bounded as its
-        // streams are (WtStreamRouter: 16 per connection, 5 s each). Others are dropped (RFC 9297 section 2.1).
+        // draft-ietf-webtrans-http3-16 section 4.6: a session's datagrams may overtake its CONNECT; kept, 16 per connection
+        // (as its streams, WtStreamRouter), each on the order of a round trip (RFC 9297 section 2.1). Others are dropped.
         if (!session.isServer || !session.settings.webTransport || !session.requestMayStillOpen(streamId)) return
         prunePending()
-        if (pending.size < MAX_PENDING) pending.addLast(Pending(streamId, payload, TimeSource.Monotonic.markNow() + PENDING_TIMEOUT))
+        if (pending.size < MAX_PENDING) pending.addLast(Pending(streamId, payload, clock.markNow() + pendingHold()))
+    }
+
+    /** How the hold of a kept datagram is measured; a test replaces it to move time by hand. Session dispatcher only. */
+    var clock: TimeSource = TimeSource.Monotonic
+
+    /** How long a datagram kept now may wait for its stream's HEADERS: [pendingHold] of the connection's RTT estimate. */
+    fun pendingHold(): Duration {
+        val stats = session.quic.stats
+        return pendingHold(stats.smoothedRtt, stats.rttVar)
     }
 
     fun register(streamId: Long): Channel<ByteArray> {
@@ -190,8 +204,28 @@ internal class DatagramDemux(
         /** Datagrams per connection that may wait for their session's CONNECT: the bound of the streams that wait. */
         const val MAX_PENDING = WtStreamRouter.MAX_BUFFERED_STREAMS
 
-        /** How long one of them may wait. */
-        val PENDING_TIMEOUT: Duration = WtStreamRouter.BUFFER_TIMEOUT
+        /** The shortest hold: the RTT estimate of a fast path is below what scheduling the CONNECT's reader takes. */
+        val MIN_HOLD: Duration = 50.milliseconds
+
+        /** The longest hold, whatever the RTT estimate says (the bound early WebTransport streams have). */
+        val MAX_HOLD: Duration = WtStreamRouter.BUFFER_TIMEOUT
+
+        /** RFC 9000 section 18.2: the max_ack_delay of a peer that does not send the parameter. */
+        private val DEFAULT_MAX_ACK_DELAY: Duration = 25.milliseconds
+
+        /** RFC 9002 section 6.2.1, kGranularity. */
+        private val GRANULARITY: Duration = 1.milliseconds
+
+        /**
+         * The hold of a datagram for a stream not created yet, "on the order of a round trip" (RFC 9297 section 2.1): one PTO
+         * (RFC 9002 section 6.2.1, `smoothed_rtt + max(4*rttvar, kGranularity) + max_ack_delay`, with the default
+         * max_ack_delay), after which a lost CONNECT is sent again, plus one [smoothedRtt] for it to arrive; within
+         * [MIN_HOLD] and [MAX_HOLD].
+         */
+        fun pendingHold(
+            smoothedRtt: Duration,
+            rttVar: Duration,
+        ): Duration = (smoothedRtt * 2 + maxOf(rttVar * 4, GRANULARITY) + DEFAULT_MAX_ACK_DELAY).coerceIn(MIN_HOLD, MAX_HOLD)
 
         /** Quarter stream IDs above 2^60 - 1 cannot name a client-initiated bidirectional stream. */
         const val MAX_QUARTER_ID = (1L shl 60) - 1
