@@ -75,10 +75,13 @@ internal class TcpServer(
 internal const val EPHEMERAL_PAIR_ATTEMPTS = 16
 
 /**
- * Binds the TCP socket of [l] and, with [h3], its HTTP/3 endpoint on the same port number. With `port = 0` the OS picks
- * a TCP port whose UDP twin may be taken: the pair is retried (the TCP socket closed) up to [EPHEMERAL_PAIR_ATTEMPTS]
- * times, then HTTP/3 is skipped with a warning and HTTP/1.1 is served alone. A fixed port whose UDP side cannot be bound
- * fails the start, as before. A platform without a QUIC server (UnsupportedOperationException) skips HTTP/3 at once.
+ * Binds the TCP socket of [l] and, with [h3], its HTTP/3 endpoint on the same port number. With `port = 0` the pair is
+ * retried up to [EPHEMERAL_PAIR_ATTEMPTS] times, then HTTP/3 is skipped with a warning and HTTP/1.1 is served alone. The
+ * attempts alternate which side the OS picks: first the TCP port, whose UDP twin may be taken, then a free UDP port, whose
+ * TCP twin may be taken, and so on. Retrying only the TCP side is not enough where the OS hands out TCP ports one after
+ * the other (Windows does): every retry then lands on the next number, and a run of taken UDP ports (handed out one after
+ * the other too) refuses them all. A fixed port whose UDP side cannot be bound fails the start, as before. A platform
+ * without a QUIC server (UnsupportedOperationException) skips HTTP/3 at once.
  */
 private suspend fun KuicksilverApplicationEngine.bindTcpAndUdp(
     selector: SelectorManager,
@@ -86,18 +89,38 @@ private suspend fun KuicksilverApplicationEngine.bindTcpAndUdp(
     h3: (suspend (Int) -> Http3Endpoint)?,
 ): Pair<ServerSocket, Http3Endpoint?> {
     val ephemeral = l.config.port == 0
+    if (h3 == null) return bindTcp(selector, l.config.host, l.config.port) to null
     var last: Throwable? = null
-    repeat(
-        if (h3 == null) {
-            1
-        } else if (ephemeral) {
-            EPHEMERAL_PAIR_ATTEMPTS
-        } else {
-            1
-        },
-    ) {
+    repeat(if (ephemeral) EPHEMERAL_PAIR_ATTEMPTS else 1) { attempt ->
+        if (ephemeral && attempt % 2 == 1) {
+            // the UDP side first: the OS picks a UDP port that is free, then TCP takes the same number
+            val endpoint =
+                try {
+                    h3(0)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: UnsupportedOperationException) {
+                    environment.log.warn("HTTP/3 is not served: ${e.message}")
+                    return bindTcp(selector, l.config.host, l.config.port) to null
+                } catch (e: Throwable) {
+                    environment.log.debug("no free UDP port ($e); trying another TCP + UDP pair")
+                    last = e
+                    return@repeat
+                }
+            val port = endpoint.localAddress.port
+            try {
+                return bindTcp(selector, l.config.host, port) to endpoint
+            } catch (e: CancellationException) {
+                endpoint.close()
+                throw e
+            } catch (e: Throwable) {
+                environment.log.debug("TCP port $port is taken ($e); trying another TCP + UDP pair")
+                endpoint.close()
+                last = e
+                return@repeat
+            }
+        }
         val server = bindTcp(selector, l.config.host, l.config.port)
-        if (h3 == null) return server to null
         val port = (server.localAddress as? InetSocketAddress)?.port ?: l.config.port
         try {
             return server to h3(port)
