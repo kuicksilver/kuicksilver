@@ -24,6 +24,7 @@ import io.kuicksilver.quic.KuicksilverLogger
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runTest
@@ -284,6 +285,48 @@ class H1IdleConnectionTest {
                 assertEquals(0, h1.pool.liveCount)
             }
         }
+
+    /**
+     * An early response with `Connection: close` while the upload is stuck (the server stopped reading): the connection
+     * closes as soon as the response ends, and the upload stops with it (RFC 9112 section 9.5: the client SHOULD
+     * immediately cease transmitting the body and close the connection). Only a response after which the connection could
+     * persist waits for the upload to end.
+     */
+    @Test fun anEarlyResponseWithConnectionCloseStopsTheUpload() =
+        runTest {
+            pooled {
+                val size = 4L * 1024 * 1024 // more than the in-memory wire buffers: the upload blocks
+                val upload = ByteChannel()
+                val chunk = ByteArray(64 * 1024)
+                val producer = backgroundScope.async { runCatching { while (true) upload.writeFully(chunk) }.isSuccess }
+                backgroundScope.launch {
+                    while (wire.toServer.readLineStrict()?.isNotEmpty() == true) continue
+                    wire.fromServer.writeStringUtf8("HTTP/1.1 413 Content Too Large\r\nConnection: close\r\nContent-Length: 0\r\n\r\n")
+                    wire.fromServer.flush()
+                }
+                val response = execute(request(Upload(upload, size)), coroutineContext)
+                assertEquals(413, response.statusCode.value)
+                assertEquals(0, (response.body as ByteReadChannel).readBuffer().size)
+                assertTrue(conn.closed, "the connection outlived a response that closes it")
+                assertEquals(listOf(false), released)
+                assertEquals(false, producer.await(), "the upload went on after the connection closed")
+                assertEquals(0, h1.pool.liveCount)
+            }
+        }
+
+    /**
+     * The sender's job cancelled after its whole body went out (the call ended between the last flush and the job's
+     * completion) leaves the connection open: it may already be idle in the pool or serve the next request. Cancelled
+     * before, the connection is closed.
+     */
+    @Test fun aSenderCancelledAfterItsBodyWentOutLeavesTheConnectionOpen() {
+        val sentConn = H1Connection(NoSocket(Wire()), null, ByteChannel(), ByteChannel(), "r")
+        H1Pool.BodySender().apply { sent.complete(true) }.ended(kotlinx.coroutines.CancellationException("the call ended"), sentConn)
+        assertFalse(sentConn.closed, "a connection whose request body was out was closed by its sender's late cancellation")
+        val cutConn = H1Connection(NoSocket(Wire()), null, ByteChannel(), ByteChannel(), "r")
+        H1Pool.BodySender().ended(kotlinx.coroutines.CancellationException("the call ended"), cutConn)
+        assertTrue(cutConn.closed, "a connection whose request body was cut stayed open")
+    }
 
     /** A 204 (no body, as HEAD and 304) to a request without a body, or whose streamed body is out, goes back to the pool at once. */
     @Test fun aResponseWithoutBodyIsReused() =
