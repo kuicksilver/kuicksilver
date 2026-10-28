@@ -457,7 +457,8 @@ internal class H3Session(
      * (RFC 9001 section 4.6.2), it opens them again and sends SETTINGS once more ([criticalStreamsLoop]). A
      * client that received GOAWAY first (a server stopping right after the handshake) returns too: it closed itself, idle, as
      * RFC 9114 section 5.2 lets it, and a request then fails with the retry-safe [Http3Exception.RequestNotProcessed]; its
-     * own H3_NO_ERROR close is no failure of the connection to report. Every other error still fails the start.
+     * own H3_NO_ERROR close, or the server's that came first, is no failure of the connection to report. Every other error
+     * still fails the start.
      */
     suspend fun start(criticalStreamsDeadline: Duration = CRITICAL_STREAMS_DEADLINE) {
         scope.launch {
@@ -477,19 +478,20 @@ internal class H3Session(
         try {
             withContext(dispatcher) { awaitCriticalStreams() }
         } catch (e: Http3Exception) {
-            if (!isIdleCloseAfterGoAway(e)) throw e
+            if (!isGracefulEndAfterGoAway(e)) throw e
         }
     }
 
     /**
-     * [e] is the close [closeIfIdleAfterGoAway] makes: our own H3_NO_ERROR after the peer's GOAWAY. Any other end (a protocol
-     * error of the peer after its GOAWAY, its own error close) is a failure to report, whether or not a GOAWAY came first.
+     * [e] is a graceful end after the peer's GOAWAY (RFC 9114 section 5.2): our own H3_NO_ERROR idle close
+     * ([closeIfIdleAfterGoAway]), or the peer's H3_NO_ERROR close, which it "MAY initiate" at once and which can come
+     * before ours. Any other end (a protocol error after the GOAWAY, an error close of either side) is a failure to report,
+     * whether or not a GOAWAY came first.
      */
-    private fun isIdleCloseAfterGoAway(e: Http3Exception): Boolean =
+    private fun isGracefulEndAfterGoAway(e: Http3Exception): Boolean =
         goAwayReceived.value != null &&
             e is Http3Exception.Protocol &&
-            e.h3Code == Http3ErrorCode.NO_ERROR &&
-            e.initiator == Initiator.Local
+            e.h3Code == Http3ErrorCode.NO_ERROR
 
     /**
      * Opens our critical streams; a client does so again when the server rejected the 0-RTT that carried them (RFC 9001
@@ -1169,7 +1171,10 @@ internal class H3Session(
      */
     private fun closeIfIdleAfterGoAway() {
         if (isServer || goAwayReceived.value == null || openExchanges > 0 || closed.isCompleted) return
-        scope.launch { close(Http3ErrorCode.NO_ERROR, "") }
+        scope.launch {
+            beforeIdleCloseForTest?.invoke(this@H3Session)
+            close(Http3ErrorCode.NO_ERROR, "")
+        }
     }
 
     /**
@@ -1337,6 +1342,10 @@ internal class H3Session(
         /** Test hook: sees every session as it is made, before it starts (to install the per-session hooks). */
         @kotlin.concurrent.Volatile
         internal var createdForTest: ((H3Session) -> Unit)? = null
+
+        /** Test hook: runs before a client's idle close after GOAWAY, so a test can let the peer's close win the race. */
+        @kotlin.concurrent.Volatile
+        internal var beforeIdleCloseForTest: (suspend (H3Session) -> Unit)? = null
 
         /** A client that started a request before GOAWAY gets this long to finish its HEADERS (no RFC value; see docs/guide/http3.md). */
         val HEADER_DEADLINE_AFTER_GOAWAY: Duration = 10.seconds

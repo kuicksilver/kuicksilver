@@ -12,7 +12,10 @@ import io.kuicksilver.http3.QuicPair
 import io.kuicksilver.http3.frame.ControlFrames
 import io.kuicksilver.http3.frame.FrameType
 import io.kuicksilver.native.KslLoader
+import io.kuicksilver.quic.Initiator
 import io.kuicksilver.quic.quicConfig
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
 import kotlinx.coroutines.withTimeout
 import kotlin.test.BeforeTest
 import kotlin.test.Test
@@ -81,6 +84,40 @@ class SessionStartTest {
                 val client = withTimeout(10.seconds) { Http3Connection.client(c) }
                 assertEquals(0L, client.goAwayReceived.value)
                 assertFailsWith<Http3Exception.RequestNotProcessed> { withTimeout(10.seconds) { client.request(get()) } }
+            }
+        }
+
+    /**
+     * RFC 9114 section 5.2 lets a stopping server close at once after its GOAWAY ("it MAY initiate an immediate closure of
+     * the connection. An endpoint that completes a graceful shutdown SHOULD use the H3_NO_ERROR error code"). Its
+     * H3_NO_ERROR close can come before the client's own idle close; here the client's waits until the transport is gone.
+     * That graceful end is no failure of the start either: the connection is returned and requests are not processed.
+     */
+    @Test fun peerNoErrorCloseAfterGoAwayRefusesRequestsAsNotProcessed() =
+        h3Test {
+            val idleCloseDue = CompletableDeferred<Unit>()
+            H3Session.beforeIdleCloseForTest = {
+                idleCloseDue.complete(Unit) // the client read the GOAWAY and is about to close idle
+                it.quic.closed.await()
+            }
+            try {
+                QuicPair.open(serverQuic = quicConfig { maxUniStreams = 2 }).use { q ->
+                    val (c, s) = q.connect()
+                    val raw = RawPeer(s)
+                    raw.openControl()
+                    raw.control.output.writeFully(raw.frame(FrameType.GOAWAY, ControlFrames.goAwayPayload(0)))
+                    raw.control.output.flush()
+                    val client = async { runCatching { withTimeout(10.seconds) { Http3Connection.client(c) } } }
+                    withTimeout(10.seconds) { idleCloseDue.await() }
+                    s.close(Http3ErrorCode.NO_ERROR, "")
+                    val conn = withTimeout(10.seconds) { client.await() }.getOrThrow()
+                    val end = assertIs<Http3Exception.Protocol>(conn.closed.await())
+                    assertEquals(Initiator.Peer, end.initiator, "the server's close came first")
+                    assertEquals(0L, conn.goAwayReceived.value)
+                    assertFailsWith<Http3Exception.RequestNotProcessed> { withTimeout(10.seconds) { conn.request(get()) } }
+                }
+            } finally {
+                H3Session.beforeIdleCloseForTest = null
             }
         }
 
