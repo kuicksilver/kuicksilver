@@ -43,6 +43,7 @@ import io.kuicksilver.tls.SessionCache
 import io.kuicksilver.tls.TlsConnection
 import io.kuicksilver.tls.TlsException
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineName
 import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.GlobalScope
@@ -325,9 +326,16 @@ internal class H1Pool(
                         val answered = expectsContinue(data) && withTimeoutOrNull(CONTINUE_TIMEOUT) { input.awaitContent() } != null
                         if (!answered) sendBody()
                         val continueBody: (suspend () -> Unit)? = if (answered) ({ sendBody() }) else null
-                        readResponse(requestTime, data, input, conn.output, callContext, conn.input, continueBody) { after ->
-                            val job = bodyJob
-
+                        readResponse(
+                            requestTime,
+                            data,
+                            input,
+                            conn.output,
+                            callContext,
+                            conn.input,
+                            continueBody,
+                            requestBodySent = { bodyJob?.sent },
+                        ) { after ->
                             fun released(kept: Boolean) =
                                 events.emit("connectionReleased") { connectionReleased(data, HttpProtocolVersion.HTTP_1_1, kept) }
 
@@ -350,14 +358,8 @@ internal class H1Pool(
                                     }
                                 }
                             }
-                            if (job == null || after != AfterResponse.Reuse) {
-                                settle(after)
-                            } else {
-                                // reusable once the body is out
-                                job.job.invokeOnCompletion { c ->
-                                    settle(if (c == null && job.failure == null) AfterResponse.Reuse else AfterResponse.Close)
-                                }
-                            }
+                            // a streamed request body is out when the response is Reuse: readResponse waited for it
+                            settle(after)
                         }
                     }
                 val response =
@@ -452,10 +454,12 @@ internal class H1Pool(
             GlobalScope.launch(callContext.minusKey(Job) + CoroutineName("kuicksilver-h1-request-body")) {
                 try {
                     writeBody(data, output, callContext)
+                    sender.sent.complete(true)
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Throwable) {
                     sender.failure = e
+                    sender.sent.complete(false)
                     conn.close()
                     val logger = events.logger
                     runCatching {
@@ -470,7 +474,8 @@ internal class H1Pool(
                     }
                 }
             }
-        sender.job.invokeOnCompletion { c -> if (c != null) conn.close() }
+        // cancelled before the whole body was out; once it is, the connection may already serve the next request
+        sender.job.invokeOnCompletion { c -> if (c != null && sender.sent.complete(false)) conn.close() }
         callContext[Job]?.invokeOnCompletion { sender.job.cancel() } // not a child: the call does not wait for it, it ends with the call
         return sender
     }
@@ -479,6 +484,9 @@ internal class H1Pool(
         lateinit var job: Job
 
         @kotlin.concurrent.Volatile var failure: Throwable? = null
+
+        /** Completed when the sending ends: true once the whole body was written and flushed, false when it failed or was cancelled. */
+        val sent = CompletableDeferred<Boolean>()
     }
 
     /**

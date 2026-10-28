@@ -614,7 +614,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - Ktor client, HTTP/1.1: the keep-alive connection of a response whose body was read to its end is back in the pool
   when the application sees that end, so the request it sends next reuses it. Before, the body ended first and the
   connection was released a moment later, when the body's reader completed: a request sent in between (a thread
-  preempted there, as on a slow Android emulator) found no idle connection and opened another one.
+  preempted there, as on a slow Android emulator) found no idle connection and opened another one. With a streamed
+  request body still being sent when the response has been read, the response now ends once that body is out, after
+  the connection went back (closed instead when the body failed); before, it ended at once and the connection was
+  released only when its sender completed.
 - Ktor client, HTTP/1.1: a response head cut before its empty line (the server closed the connection in the middle of
   the header section) now fails the request with `ClosedReadChannelException` instead of passing for a complete
   response without fields (RFC 9112 section 8: the client MUST record it as incomplete); a redirect without its
