@@ -23,6 +23,7 @@ import io.ktor.http.toHttpDate
 import io.ktor.server.plugins.BadRequestException
 import io.ktor.util.cio.ChannelReadException
 import io.ktor.util.date.GMTDate
+import io.ktor.util.date.getTimeMillis
 import io.ktor.util.network.NetworkAddress
 import io.ktor.utils.io.ByteChannel
 import io.ktor.utils.io.ByteReadChannel
@@ -658,7 +659,35 @@ private val BAD_REQUEST_BODY = "Bad Request".encodeToByteArray()
  * generate a Date field in its 2xx, 3xx and 4xx responses and MAY in its 1xx and 5xx ones; the engine sends one on every
  * final response it writes or frames, unless the application set its own (as Ktor's DefaultHeaders plugin does).
  */
-internal fun httpDateNow(): String = GMTDate().toHttpDate()
+internal fun httpDateNow(): String = HTTP_DATE.now()
+
+private val HTTP_DATE = HttpDateCache { getTimeMillis() }
+
+/**
+ * The Date field value for the time [clock] gives (milliseconds since the epoch), formatted once per second: IMF-fixdate
+ * has a one-second resolution, so every response within a second shares one string (nginx and Go cache it the same
+ * way). Safe from any thread: a race formats the same second twice at worst.
+ */
+@OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+internal class HttpDateCache(
+    private val clock: () -> Long,
+) {
+    private class Formatted(
+        val second: Long,
+        val text: String,
+    )
+
+    private val last = kotlin.concurrent.atomics.AtomicReference<Formatted?>(null)
+
+    fun now(): String {
+        val millis = clock()
+        val second = millis.floorDiv(1000L)
+        last.load()?.let { if (it.second == second) return it.text }
+        val text = GMTDate(second * 1000L).toHttpDate()
+        last.store(Formatted(second, text))
+        return text
+    }
+}
 
 /**
  * A [status] response with `Connection: close`, a Location field when [location] is given, and [body] as `text/plain`
