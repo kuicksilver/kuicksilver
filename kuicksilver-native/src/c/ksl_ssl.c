@@ -7,7 +7,7 @@ extern const OSSL_DISPATCH ksl_quic_dispatch[];
 
 ksl_ssl *ksl_ssl_new(ksl_ctx *c, int mode) {
     ksl_ssl *s = calloc(1, sizeof *s); if (!s) return NULL;
-    s->owner = c; s->mode = mode; s->rcd_level = -1; s->quic_version = 0x00000001u; s->ssl = SSL_new(c->ctx);
+    s->owner = c; s->verify_mode = c->verify_mode; s->mode = mode; s->rcd_level = -1; s->quic_version = 0x00000001u; s->ssl = SSL_new(c->ctx);
     if (!s->ssl) { free(s); return NULL; }
     SSL_set_ex_data(s->ssl, 1, s);
     if (c->role == KSL_CLIENT) SSL_set_connect_state(s->ssl); else SSL_set_accept_state(s->ssl);
@@ -193,7 +193,7 @@ int ksl_ssl_sni_resume(ksl_ssl *s, ksl_ctx *override, int alert) {
 /* Drives the handshake, then post-handshake messages. The verify name rule (ADR-0011: the host name is always checked by the shared matcher, also after a platform verdict) is enforced here. */
 int ksl_drive(ksl_ssl *s) {
     if (s->fatal) return KSL_ERROR;
-    if (!s->done && s->owner->role == KSL_CLIENT && s->owner->verify_mode != KSL_VERIFY_NONE && !s->verify_name_set)
+    if (!s->done && s->owner->role == KSL_CLIENT && s->verify_mode != KSL_VERIFY_NONE && !s->verify_name_set)
         return ksl_ssl_fail(s, KSL_E_NO_VERIFY_NAME, "ksl: verify name not set (reference identifier is mandatory)");
     ERR_clear_error(); int r;
     if (!s->done) {

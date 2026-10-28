@@ -122,6 +122,15 @@ static void test_client_verification_still_refuses(void) {
             last_code(s, &alert); CHECK(!s->done && alert == (48 | 0x100), "the server received unknown_ca");
             ksl_ssl_free(c); ksl_ssl_free(s); ksl_ctx_free(cc); ksl_ctx_free(sc);
         }
+        /* a session keeps the verify mode of its creation: an unfrozen context switched to KSL_VERIFY_NONE afterwards cannot turn
+           verification off for it */
+        ksl_ctx *cc = client_ctx("test-ca", KSL_VERIFY_OPENSSL), *sc = server_ctx("server-other-ca");
+        ksl_ctx_set_option(cc, KSL_OPT_MIN_VERSION, version); ksl_ctx_set_option(cc, KSL_OPT_MAX_VERSION, version); ksl_ctx_set_option(sc, KSL_OPT_MIN_VERSION, KSL_TLS1_2);
+        ksl_ssl *c = tcp_client(cc, "server.test"), *s = ksl_ssl_new(sc, KSL_MODE_TCP);
+        CHECK(ksl_ctx_set_option(cc, KSL_OPT_VERIFY_MODE, KSL_VERIFY_NONE) == KSL_OK, "the unfrozen context switches to KSL_VERIFY_NONE");
+        int r = tcp_pump(c, s, NULL, NULL); last_code(c, &alert);
+        CHECK(r == KSL_ERROR && !c->done && alert == 48, "negative: the session made before still verifies: unknown_ca");
+        ksl_ssl_free(c); ksl_ssl_free(s); ksl_ctx_free(cc); ksl_ctx_free(sc);
     }
     END();
 }
