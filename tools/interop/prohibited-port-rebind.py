@@ -148,7 +148,7 @@ def client_qlogs(cell):
                     try: e = json.loads(line)
                     except ValueError: continue
                     if not isinstance(e, dict) or "time" not in e: continue
-                    t, ev = float(e["time"]) / 1000.0, e.get("name")
+                    t, ev = round(float(e["time"]) / 1000.0, 6), e.get("name")  # qlog ms, to s (µs, no float noise)
                     if ev == "transport:packet_sent": q["last_sent"] = t
                     elif ev == "transport:packet_received": q["last_received"] = t
                     elif ev == "connectivity:connection_closed": q["closed"], q["trigger"] = t, e.get("data", {}).get("trigger")

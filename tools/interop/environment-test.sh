@@ -182,13 +182,13 @@ check "port: another server (msquic: only packets of no connection)" 1 "" -- pyt
 check "port: our own server's cell"                               1 "" -- python3 "$pp" --decoded "$(pvar ours '.pair = "kuicksilver_ngtcp2"')"
 check "port: not a rebind test case"                              1 "" -- python3 "$pp" --decoded "$(pvar transfer '.case = "transfer"')"
 check "port: a malformed summary cannot be analysed"              2 "cannot analyse" -- python3 "$pp" --decoded "$(pvar broken "del($blocked.after[0].src)")"
-# the client's side (the fixture's client_* fields were added by hand: the artifact's client log line "connection lost:
-# ...Timeout: Idle timeout after 30s" and the shape of its qlog; the --dump of 2026-10-27 predates them)
+# the client's side (decoded from the same cell: "connection lost: ...Timeout: Idle timeout after 30s" in its compose output,
+# its qlog closed with trigger idle_timeout at 39.148874 s, 30.000438 s after the last packet it received at 9.148436 s)
 check "port: the client crashed with exit 1 (a stack trace)"     1 "" -- python3 "$pp" --decoded "$(pvar crash '.client_crash_lines = ["Exception in thread \"main\" java.lang.IllegalStateException: boom", "\tat io.kuicksilver.interop.MainKt.main(Main.kt:58)"]')"
 check "port: the client logged no idle timeout"                   1 "" -- python3 "$pp" --decoded "$(pvar noidle '.client_idle_timeout = null')"
-check "port: the client exited early (20 s after its last packet)" 1 "" -- python3 "$pp" --decoded "$(pvar early '.client_qlogs[0].closed = 29.83')"
-check "port:   (its last packet sent 1 s after its last received)" 1 "" -- python3 "$pp" --decoded "$(pvar sentlate '.client_qlogs[0].last_sent = 10.812')"
-check "port:   (an ACK 0.4 s after its last received is fine)"    0 "" -- python3 "$pp" --decoded "$(pvar acklate '.client_qlogs[0].last_sent = 10.212')"
+check "port: the client exited early (20 s after its last packet)" 1 "" -- python3 "$pp" --decoded "$(pvar early '.client_qlogs[0].closed = 29.148874')"
+check "port:   (its last packet sent 1 s after its last received)" 1 "" -- python3 "$pp" --decoded "$(pvar sentlate '.client_qlogs[0].last_sent = 10.148874')"
+check "port:   (an ACK 0.4 s after its last received is fine)"    0 "" -- python3 "$pp" --decoded "$(pvar acklate '.client_qlogs[0].last_sent = 9.548874')"
 check "port: the connection closed otherwise (no idle trigger)"   1 "" -- python3 "$pp" --decoded "$(pvar trigger '.client_qlogs[0].trigger = null')"
 check "port: the qlog never closed the connection"                1 "" -- python3 "$pp" --decoded "$(pvar noclose '.client_qlogs[0].closed = null')"
 check "port: no client qlog"                                      1 "" -- python3 "$pp" --decoded "$(pvar noqlog '.client_qlogs = []')"
