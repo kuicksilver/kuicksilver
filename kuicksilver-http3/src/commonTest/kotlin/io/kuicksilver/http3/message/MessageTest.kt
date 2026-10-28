@@ -89,7 +89,10 @@ class FieldValidatorTest {
         assertFailsWith<MalformedMessage> { PseudoHeaders.parseRequest(req + ("te" to "gzip"), false) }
     }
 
-    /** RFC 9110 section 10.1.4: transfer coding names, `trailers` among them, are case-insensitive (RFC 9114 section 4.2). */
+    /**
+     * RFC 9114 section 4.2 allows only "trailers" in `te`; that is a quoted string of the ABNF of RFC 9110 section 10.1.4,
+     * which section 2.1 takes from RFC 5234, and "ABNF strings are case insensitive" (RFC 5234 section 2.3).
+     */
     @Test fun teTrailersCaseInsensitive() {
         PseudoHeaders.parseRequest(req + ("te" to "Trailers"), false)
         PseudoHeaders.parseRequest(req + ("te" to "TRAILERS"), false)
