@@ -36,6 +36,15 @@ internal class QpackDecoder(
     /** Field sections: no single string can exceed the section limit (RFC 9204 section 7.4 ties the ceiling to it). */
     private val fieldLimits = QpackLimits(limits.maxInteger, maxFieldSectionSize.coerceIn(1L, Int.MAX_VALUE.toLong()).toInt())
     private val table = DynamicTable(0)
+
+    /**
+     * The longest encoder-stream instruction we wait for whole: its name and value fit the table together (RFC 9204 section
+     * 3.2.2) and are each within the string ceiling, and a Huffman literal takes up to 4 bytes per octet it carries (codes of
+     * up to 30 bits, RFC 7541 appendix B), plus the prefixes. Twice the ceiling, as it was, refused inserts the table takes.
+     */
+    private val instructionCeiling: Long =
+        ((4L * minOf(maxTableCapacity, 2L * limits.maxStringLength)).coerceAtLeast(2L * limits.maxStringLength) + 64)
+            .coerceAtMost(Int.MAX_VALUE.toLong())
     private val pend = QpackWriter(0) // an encoder-stream instruction cut by the transport, appended to as its bytes arrive
     private var needed = 0 // the full length of the instruction in [pend] once known (0: parse again when more arrives)
     private val out = QpackWriter() // decoder-stream instructions not yet sent
@@ -88,8 +97,9 @@ internal class QpackDecoder(
             } catch (t: QpackTruncated) {
                 scannedBytes += r.pos - mark
                 val rest = end - mark
-                val ceiling = 2L * limits.maxStringLength + 64
-                if (rest > ceiling || t.needed > ceiling) r.fail("encoder-stream instruction above ${2L * limits.maxStringLength} bytes")
+                if (rest > instructionCeiling || t.needed > instructionCeiling) {
+                    r.fail("encoder-stream instruction above $instructionCeiling bytes")
+                }
                 pend.writeBytes(buf, mark, rest)
                 scannedBytes += rest
                 needed = t.needed

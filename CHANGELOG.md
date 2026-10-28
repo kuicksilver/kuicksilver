@@ -374,7 +374,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - HTTP/3: the QPACK encoder-stream string ceiling follows the configuration: min(`qpackMaxTableCapacity`,
   `maxFieldSectionSize`), at least 64 KiB (at most 256 MiB), as RFC 9204 section 7.4 asks. It was a fixed 64 KiB, so with
   a raised table capacity and field-section limit a peer inserting a larger field into the dynamic table closed the
-  connection with `QPACK_ENCODER_STREAM_ERROR`, though the same field sent as a literal was accepted.
+  connection with `QPACK_ENCODER_STREAM_ERROR`, though the same field sent as a literal was accepted. An insert cut by the
+  transport also waits whole when Huffman coding makes it longer than the field (up to 4 bytes per octet): one longer
+  than twice the ceiling failed that way too.
 - HTTP/3 server: a PRIORITY_UPDATE for a request stream the transport has opened but whose HEADERS have not arrived
   yet (a reordered stream 4 behind stream 8, or a request whose HEADERS are delayed) is now kept and applied when the
   request opens, as RFC 9218 section 7 asks; it was taken for a finished request and dropped. A PRIORITY_UPDATE naming a

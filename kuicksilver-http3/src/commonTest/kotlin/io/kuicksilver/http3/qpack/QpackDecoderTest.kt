@@ -206,6 +206,27 @@ class QpackDecoderTest {
         assertEquals(Http3ErrorCode.QPACK_ENCODER_STREAM_ERROR, assertFailsWith<QpackError> { small.onEncoderStream(b2, 0, b2.size) }.code)
     }
 
+    /**
+     * A Huffman literal can be longer than the string it carries (codes of up to 30 bits for an 8-bit octet, RFC 7541
+     * appendix B): an insert that fits the table (RFC 9204 section 3.2.2) with a value of obs-text octets of long codes is
+     * about 3.4 times its decoded size on the wire. Arriving in pieces it waits whole for its last byte and is accepted;
+     * the wait for it was bounded at twice the string ceiling, which such an insert passes.
+     */
+    @Test fun huffmanInsertLongerThanTwiceTheCeilingAccepted() {
+        val d = QpackDecoder(65_536, 0, 65_536) // string ceiling 64 KiB
+        val longest = (0x80..0xFF).maxBy { Huffman.encodedLength(byteArrayOf(it.toByte())) }.toChar()
+        val value = longest.toString().repeat(60_000)
+        val w = QpackWriter()
+        w.writeInt(0x20, 5, 65_536) // Set Dynamic Table Capacity
+        w.writeString(0x40, 5, "x-n", huffman = true) // Insert with Literal Name
+        w.writeString(0x00, 7, value, huffman = true)
+        val b = w.toByteArray()
+        assertTrue(b.size > 2 * 65_536 + 64, "the insert is ${b.size} bytes on the wire")
+        d.onEncoderStream(b, 0, 100)
+        d.onEncoderStream(b, 100, b.size - 100)
+        assertEquals(1, d.insertCount)
+    }
+
     private fun failCode(block: () -> Unit): Long = assertFailsWith<QpackError> { block() }.code
 
     /** RFC 9204 section 4.5.1.2: with Sign=1 the Base is RIC - DeltaBase - 1; DeltaBase >= RIC would make it negative. */
