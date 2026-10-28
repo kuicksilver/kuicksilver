@@ -180,7 +180,7 @@ replay_times_out() {
 
 # One slice of [seconds] on target [id]; appends a line to stats.tsv.
 run_slice() {
-  local id=$1 secs=$2 kind module cls method corpus seeds committed crashes log start end rc execs cov ft corp result
+  local id=$1 secs=$2 kind module cls method corpus seeds committed crashes log start end rc execs cov ft corp result f
   kind=$(field "$id" 2); module=$(field "$id" 3); cls=$(field "$id" 4); method=$(field "$id" 5)
   corpus="$state/corpus/$id"; crashes="$state/crashes/$id"; seeds=$(seeds_dir "$id"); committed="$root/tools/fuzz/corpus/$id"
   mkdir -p "$corpus" "$crashes" "$state/logs" "$state/work/$id"
@@ -209,7 +209,11 @@ run_slice() {
   corp=$(find "$corpus" -type f | wc -l | tr -d ' ')
   result=ok
   if [ $rc -ne 0 ]; then
-    result=$( (ls -t "$crashes" 2>/dev/null | grep -E '^(crash|timeout|oom|leak)-' | head -1) || true)
+    result=""   # the newest reproducer of this slice, if the fuzzer left one
+    for f in "$crashes"/crash-* "$crashes"/timeout-* "$crashes"/oom-* "$crashes"/leak-*; do
+      [ -f "$f" ] || continue
+      if [ -z "$result" ] || [ "$f" -nt "$crashes/$result" ]; then result=${f##*/}; fi
+    done
     [ -n "$result" ] || result="exit-$rc"
     if [ "${result#timeout-}" != "$result" ] && ! replay_times_out "$id" "$crashes/$result"; then
       # at background priority on a machine under heavy load a unit can be starved past -timeout (the first one also loads
