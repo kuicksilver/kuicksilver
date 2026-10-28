@@ -63,7 +63,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   `EarlyDataState.Required`), and `ConnectionEvent.EarlyDataRejected` is emitted only for it. The HTTP/3 layer reports
   the rejection as that `ZeroRttRejected`, never as a graceful end after a GOAWAY, and the Ktor client with
   `http3 { earlyData = true }` sends the requests of such a connection again once, on a new connection without 0-RTT,
-  over HTTP/3 (`KuicksilverEventListener.retry`); before, they fell back to HTTP/1.1 and the alternative was marked broken.
+  over HTTP/3 (`KuicksilverEventListener.retry`), a request with a streamed body that was waiting for the handshake
+  too (its body was never touched); before, they fell back to HTTP/1.1 and the alternative was marked broken, which a
+  rejected 0-RTT no longer does.
 - Ktor client, HTTP/1.1: a response `Content-Length` with leading zeros (`0000000000000000000005`) is read as its value
   instead of failing as invalid when it has more than 18 characters (RFC 9110 section 8.6: "Any Content-Length field
   value greater than or equal to zero is valid"). A valid length of 10^18 bytes or more still fails the response, now
@@ -143,7 +145,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   or `Http3Connection.client` now and then. When both arrived in one receive batch, the close could end the session before
   the control stream's GOAWAY was applied, and the start failed with "H3_NO_ERROR from Peer" instead of returning the
   connection with `goAwayReceived` set. The start now lets the control stream's reader finish what the server sent before
-  its close (at most one second) before it decides (RFC 9114 section 5.2).
+  its close (at most one second) before it decides (RFC 9114 section 5.2), also when the control stream came in the same
+  batch and had not been accepted yet; a close before any control stream decides at once.
 - QUIC client: the server's first Initial fixes its Source Connection ID, an ACK-only one too (RFC 9000 section 7.2,
   "MUST discard any subsequent packet ... with a different Source Connection ID"); before, an Initial without CRYPTO
   left the SCID open and a later one with another SCID was still adopted. The one exception is msquic's: an Initial with
@@ -303,7 +306,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   does an absolute-form target with such an authority. Before, only `/?#@` and a trailing colon were refused, and the
   rest reached `serverHost` and `serverPort`. A trailing colon (`Host: a.example:`, an empty port, valid by RFC 3986's
   `port = *DIGIT`) is now accepted as the default port instead of refused; a port above 65535 (`Host: h:99999`), which
-  names no TCP port (RFC 9110 section 4.2.1), gets 400, in an absolute-form target too.
+  names no TCP port (RFC 9110 sections 4.2.1 and 4.2.2), gets 400, in an absolute-form target too.
 - Ktor server, HTTP/1.1: a request field name that is not a token (with DEL or a byte above 0x7F, RFC 9110 section
   5.1) gets 400. A field value that starts with a Unicode space (U+00A0, U+2000, ... sent as obs-text) now reaches
   the application as sent: OWS is only SP and HTAB (section 5.6.3) and obs-text is opaque field content (section
