@@ -185,6 +185,8 @@ int      ksl_ctx_set_identity_pkey(ksl_ctx *, const uint8_t *chain, size_t chain
 ksl_pkey *ksl_pkey_new(const uint8_t *der, size_t len);              /* PKCS#8 (or traditional) DER; NULL if it is not one key with nothing after it */
 void     ksl_pkey_free(ksl_pkey *);                                   /* drops one reference; the last one frees and cleanses the key */
 int      ksl_ctx_set_roots(ksl_ctx *, const uint8_t *roots, size_t roots_len);  /* same framing; empty = system store */
+/* NULL keeps a list. A TLS 1.2 list must name ECDHE suites with RSA or ECDSA and an AEAD of 128 bits or more only (RFC 10015, RFC
+   9325 section 4.1), else KSL_E_BAD_ARG; a refused call changes nothing (ABI 7) */
 int      ksl_ctx_set_ciphers(ksl_ctx *, const char *tls13_suites, const char *tls12_list);
 int      ksl_ctx_set_ticket_keys(ksl_ctx *, const uint8_t *keys, size_t n);     /* n x 80 bytes: name16 | aes32 | hmac32; first encrypts */
 /* Session ticket keys that never leave ksl (threat model 3.7). The process-wide generated keys: the context gets the current key

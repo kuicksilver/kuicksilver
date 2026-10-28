@@ -296,6 +296,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- ksl: `ksl_ctx_set_ciphers` holds a TLS 1.2 list to the RFC 10015 profile itself: a list with any suite that is not
+  ECDHE with RSA or ECDSA and an AEAD of 128 bits or more (static RSA, FFDHE, CBC, CCM_8, anonymous, PSK) is refused
+  with `KSL_E_BAD_ARG`, as the version bounds are. Kotlin never passed one; the C ABI accepted any. A refused list also
+  no longer leaves the context without TLS 1.2 suites (OpenSSL replaces the list before it refuses one that matches
+  none).
 - Ktor client: at most one WebSocket connection is in the CONNECTING state per remote host (RFC 6455 section 4.1,
   step 2, MUST): a WebSocket over HTTP/1.1 to an address and port another one is still connecting to waits until that
   handshake is answered or failed, also when it uses another name for the address; through a proxy that resolves names

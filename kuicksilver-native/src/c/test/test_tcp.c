@@ -826,6 +826,7 @@ static void test_client_keeps_every_ticket(void) {
     ksl_session_free(t1); ksl_session_free(t2); ksl_session_free(t3); ksl_ctx_free(cc); ksl_ctx_free(sc); END();
 }
 
+#define TLS12_PROFILE_FOR_TEST "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305"
 static void test_default_versions_and_tls12_profile(void) {
     SECTION("tcp_default_versions_and_tls12_profile");
     /* RFC 9852 section 4 (TLS 1.3 by default), RFC 9846 section 4.2.3 and App. E.5 (TLS 1.0 and 1.1 "MUST NOT be negotiated for any
@@ -845,6 +846,16 @@ static void test_default_versions_and_tls12_profile(void) {
             ok = ok && SSL_CIPHER_get_kx_nid(ci) == NID_kx_ecdhe && (auth == NID_auth_rsa || auth == NID_auth_ecdsa) && SSL_CIPHER_is_aead(ci);
         }
         CHECK(tls12 == 6 && ok, "the TLS 1.2 suites: six, all ECDHE with RSA or ECDSA and AEAD (no static RSA, no FFDHE, no static (EC)DH)");
+        /* RFC 10015 sections 2-4: "Clients MUST NOT offer and servers MUST NOT select" non-ephemeral FFDH, FFDHE or RSA cipher suites in
+           TLS 1.2; RFC 9325 section 4.1: no NULL encryption, nothing below 112 bits. ksl_ctx_set_ciphers holds a TLS 1.2 list to the
+           profile too: ECDHE, authenticated with RSA or ECDSA, an AEAD of at least 128 bits */
+        const char *refused[] = {"AES128-GCM-SHA256", "DHE-RSA-AES128-GCM-SHA256", "ECDHE-RSA-AES128-SHA256", "ECDHE-ECDSA-AES128-CCM8", "AECDH-AES128-SHA", "ECDHE-RSA-AES128-GCM-SHA256:AES256-GCM-SHA384", "PSK-AES128-GCM-SHA256"};
+        int all_refused = 1; for (size_t k = 0; k < sizeof refused / sizeof refused[0]; k++) all_refused = all_refused && ksl_ctx_set_ciphers(c, NULL, refused[k]) == KSL_ERROR;
+        CHECK(all_refused, "negative: static RSA, FFDHE, CBC, CCM_8 (64-bit), anonymous and PSK TLS 1.2 lists are refused, also as part of a list");
+        STACK_OF(SSL_CIPHER) *after = SSL_CTX_get_ciphers(c->ctx); int still = 0;
+        for (int k = 0; k < sk_SSL_CIPHER_num(after); k++) if (SSL_CIPHER_get_kx_nid(sk_SSL_CIPHER_value(after, k)) != NID_kx_any) still++;
+        CHECK(still == 6 && !strcmp(c->list12, TLS12_PROFILE_FOR_TEST), "the refused lists changed nothing");
+        CHECK(ksl_ctx_set_ciphers(c, NULL, "ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-AES128-CCM") == KSL_OK, "control: ECDHE with an AEAD is accepted");
         ksl_ctx_free(c);
     }
     END();

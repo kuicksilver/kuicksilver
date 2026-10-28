@@ -336,10 +336,34 @@ int ksl_ctx_set_roots(ksl_ctx *c, const uint8_t *roots, size_t roots_len) {
     if (!ok) { ksl_ctx_set_error(c, KSL_E_BAD_ARG, "ksl: root rejected"); return KSL_ERROR; }
     return KSL_OK;
 }
+/* RFC 10015 sections 2-4: "Clients MUST NOT offer and servers MUST NOT select" non-ephemeral FFDH, FFDHE and RSA cipher suites in
+   TLS 1.2 (and SHOULD NOT static ECDH); RFC 9325 section 4.1: no NULL encryption, no RC4, nothing below 112 bits. A TLS 1.2 list is
+   held to the profile ksl ships (TLS12_PROFILE): every TLS 1.2 suite ECDHE, authenticated with RSA or ECDSA, with an AEAD of at
+   least 128 bits; otherwise the whole list is refused. */
+static int tls12_profile_only(SSL_CTX *ctx) {
+    STACK_OF(SSL_CIPHER) *sk = SSL_CTX_get_ciphers(ctx);
+    for (int i = 0; i < sk_SSL_CIPHER_num(sk); i++) {
+        const SSL_CIPHER *ci = sk_SSL_CIPHER_value(sk, i); int kx = SSL_CIPHER_get_kx_nid(ci), auth = SSL_CIPHER_get_auth_nid(ci);
+        if (kx == NID_kx_any) continue;   /* a TLS 1.3 suite */
+        if (kx != NID_kx_ecdhe || (auth != NID_auth_rsa && auth != NID_auth_ecdsa) || !SSL_CIPHER_is_aead(ci) || SSL_CIPHER_get_bits(ci, NULL) < 128) return 0;
+    }
+    return 1;
+}
 int ksl_ctx_set_ciphers(ksl_ctx *c, const char *tls13_suites, const char *tls12_list) {
     if (frozen(c)) return KSL_ERROR; ERR_clear_error();
     if (tls13_suites && (strlen(tls13_suites) >= sizeof c->suites13 || SSL_CTX_set_ciphersuites(c->ctx, tls13_suites) != 1)) { ksl_ctx_set_error(c, KSL_E_BAD_ARG, "ksl: bad TLS 1.3 suites"); return KSL_ERROR; }
-    if (tls12_list && (strlen(tls12_list) >= sizeof c->list12 || SSL_CTX_set_cipher_list(c->ctx, tls12_list) != 1)) { ksl_ctx_set_error(c, KSL_E_BAD_ARG, "ksl: bad TLS 1.2 list"); return KSL_ERROR; }
+    if (tls12_list) {
+        /* OpenSSL replaces the context's list also when it then refuses it for matching no TLS 1.2 suite: the list before, which passed,
+           comes back on every refusal */
+        const char *why = strlen(tls12_list) >= sizeof c->list12 || SSL_CTX_set_cipher_list(c->ctx, tls12_list) != 1 ? "ksl: bad TLS 1.2 list"
+            : !tls12_profile_only(c->ctx) ? "ksl: a TLS 1.2 suite outside the profile (RFC 10015: ECDHE only; RFC 9325: an AEAD of 128 bits or more)" : NULL;
+        if (why) {
+            ksl_ctx_set_error(c, KSL_E_BAD_ARG, why);
+            (void)SSL_CTX_set_cipher_list(c->ctx, c->list12);
+            if (tls13_suites) (void)SSL_CTX_set_ciphersuites(c->ctx, c->suites13);
+            ERR_clear_error(); return KSL_ERROR;
+        }
+    }
     if (tls13_suites) snprintf(c->suites13, sizeof c->suites13, "%s", tls13_suites);
     if (tls12_list) snprintf(c->list12, sizeof c->list12, "%s", tls12_list);
     return KSL_OK;
