@@ -430,7 +430,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   ksl's refusal is by policy; RFC 9325 section 3.5).
 - TLS over TCP: a connection updates its sending key (TLS 1.3 KeyUpdate) every 2^23 records it wrote, before the AES-GCM
   record limit of RFC 9846 section 5.5 (MUST since RFC 9846; 2^24.5 records, about 384 GiB at full size). OpenSSL never does so by itself, so a
-  very long-lived bulk connection kept one key for good.
+  very long-lived bulk connection kept one key for good. The point follows the negotiated AEAD: 2^22 records under
+  AES-CCM, whose limit is 2^23 (RFC 9147 appendix B.1; 2^23 would have reached it), none under ChaCha20-Poly1305 (no
+  limit before the sequence number wraps); a connection whose KeyUpdate could not go out ends before its keys reach the
+  limit, with internal_error where an alert can be sent.
 - TLS server: a server that used the client's server name now acknowledges it with an empty `server_name` extension
   (in EncryptedExtensions for TLS 1.3, in the ServerHello of a full TLS 1.2 handshake), as RFC 6066 section 3 requires;
   before, the extension was never sent. Also on an SNI override and on QUIC.

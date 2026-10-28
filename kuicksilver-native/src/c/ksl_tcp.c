@@ -24,25 +24,47 @@ static int map_error(ksl_ssl *s, int r) {
     default: s->fatal = 1; ksl_ssl_set_error(s, KSL_E_NOT_SUPPORTED, "ksl: TLS error"); return KSL_ERROR;
     }
 }
-/* RFC 9846 section 5.5: for AES-GCM up to 2^24.5 full-size records may be encrypted under a given set of keys, and
-   "Implementations MUST either close the connection or do a key update ... prior to reaching these limits". OpenSSL
-   sends a KeyUpdate only on SSL_key_update, so ksl requests one every 2^23 records it wrote under one key (a third of the limit;
-   one bound for every suite: ChaCha20-Poly1305's limit is far higher). Records are counted as full ones of the negotiated size
-   (16 KiB, or the max_fragment_length), at least one per write: never fewer than were sent. The KeyUpdate goes out ahead of the
-   next record. TLS 1.2 has no KeyUpdate (and renegotiation is off): its records are not counted. */
-#define KSL_KEY_UPDATE_RECORDS (UINT64_C(1) << 23)
+/* RFC 9846 section 5.5: "For AES-GCM, up to 2^24.5 full-size records (about 24 million) may be encrypted under a given set of keys
+   ... For ChaCha20/Poly1305, the record sequence number would wrap before the safety limit is reached", and "Implementations MUST
+   either close the connection or do a key update as described in Section 4.7.3 prior to reaching these limits". RFC 9846 gives no
+   figure for AES-CCM; RFC 9147 appendix B.1 derives it for the same margin as TLS 1.3's: "q <= 2^23" records (the confidentiality
+   bound; CCM_8 alike, appendix B.3), for records of 2^14 bytes. OpenSSL sends a KeyUpdate only on SSL_key_update, so ksl requests
+   one well before the negotiated AEAD's limit: every 2^23 records for AES-GCM, 2^22 for AES-CCM (and any other AEAD), none for
+   ChaCha20-Poly1305. Records are counted as full ones of the negotiated size (16 KiB, or the max_fragment_length), at least one per
+   write: never fewer than were sent. The KeyUpdate goes out ahead of the next record. A session whose KeyUpdates do not go out ends
+   before its keys reach the limit (ksl_tcp_write). TLS 1.2 has no KeyUpdate (and renegotiation is off): its records are not
+   counted. */
+#define KSL_GCM_RECORD_LIMIT UINT64_C(23726566)   /* 2^24.5, rounded down */
+#define KSL_CCM_RECORD_LIMIT (UINT64_C(1) << 23)
+#define KSL_NO_RECORD_LIMIT UINT64_MAX
+static uint64_t aead_record_limit(ksl_ssl *s) {
+    const SSL_CIPHER *c = SSL_get_current_cipher(s->ssl); int nid = c ? SSL_CIPHER_get_cipher_nid(c) : NID_undef;
+    if (nid == NID_chacha20_poly1305) return KSL_NO_RECORD_LIMIT;
+    if (nid == NID_aes_128_gcm || nid == NID_aes_256_gcm) return KSL_GCM_RECORD_LIMIT;
+    return KSL_CCM_RECORD_LIMIT;   /* AES-CCM and CCM_8; the lowest figure for anything else */
+}
+static uint64_t record_limit(ksl_ssl *s) {
+    if (!s->record_limit) s->record_limit = SSL_version(s->ssl) >= TLS1_3_VERSION ? aead_record_limit(s) : KSL_NO_RECORD_LIMIT;
+    return s->record_limit;
+}
+/* The record count at which the sending key is updated: half of AES-CCM's limit and a third of AES-GCM's */
+static uint64_t key_update_records(ksl_ssl *s) {
+    if (s->key_update_records) return s->key_update_records;
+    uint64_t limit = record_limit(s);
+    return limit == KSL_NO_RECORD_LIMIT ? KSL_NO_RECORD_LIMIT : limit == KSL_GCM_RECORD_LIMIT ? UINT64_C(1) << 23 : UINT64_C(1) << 22;
+}
 /* The plaintext size of a full record: 16 KiB, or the negotiated max_fragment_length (RFC 6066 section 4) */
 static size_t record_size(ksl_ssl *s) { uint8_t mfl = SSL_SESSION_get_max_fragment_length(SSL_get_session(s->ssl)); return mfl >= 1 && mfl <= 4 ? (size_t)256 << mfl : 16384; }
 static void count_records(ksl_ssl *s, size_t n) {
     if (SSL_version(s->ssl) < TLS1_3_VERSION) return;
     size_t frag = record_size(s);
     s->records_sent += (n + frag - 1) / frag;
-    uint64_t bound = s->key_update_records ? s->key_update_records : KSL_KEY_UPDATE_RECORDS;
-    if (s->records_sent < bound) return;
+    if (s->records_sent < key_update_records(s)) return;
     /* refused while a write is pending or a handshake message is under way (a KeyUpdate the peer asked for): tried after the next
        write. Called directly: the write succeeded, and the session's last error stays the last failure's */
     if (SSL_key_update(s->ssl, SSL_KEY_UPDATE_NOT_REQUESTED) == 1) s->records_sent = 0; else ERR_clear_error();
 }
+static int abort_session(ksl_ssl *s, const char *why);
 static void drop_pending_write(ksl_ssl *s) {
     if (!s->pending_write) return;
     OPENSSL_cleanse(s->pending_write, s->pending_write_len); free(s->pending_write); s->pending_write = NULL; s->pending_write_len = 0;
@@ -53,6 +75,9 @@ static void drop_pending_write(ksl_ssl *s) {
 int ksl_tcp_write(ksl_ssl *s, const uint8_t *plaintext, size_t len, size_t *consumed) {
     if (!tcp_only(s)) return KSL_ERROR; if (s->fatal || ksl_key_update_limit_check(s) != KSL_OK) return KSL_ERROR; *consumed = 0; if (!s->done) return KSL_WANT_READ;
     size_t frag = record_size(s); if (len > frag) len = frag;
+    /* one more record would reach the keys' limit: the session ends, with internal_error where an alert can be sent */
+    if (len && !s->pending_write && record_limit(s) != KSL_NO_RECORD_LIMIT && s->records_sent + 1 >= record_limit(s))
+        { (void)abort_session(s, "ksl: the sending keys reached their record limit (RFC 9846 section 5.5)"); return KSL_ERROR; }
     ERR_clear_error(); size_t n = 0; int r = SSL_write_ex(s->ssl, plaintext, len, &n);
     if (r == 1) { drop_pending_write(s); *consumed = n; if (!s->key_updates_exhausted) count_records(s, n); return KSL_OK; }
     if (SSL_get_error(s->ssl, r) == SSL_ERROR_WANT_WRITE && !s->pending_write && len) {
@@ -78,8 +103,7 @@ int ksl_tcp_read(ksl_ssl *s, uint8_t *out, size_t cap, size_t *read) {
    drops an alert behind a pending write, ssl3_dispatch_alert), then a handshake message in progress (a KeyUpdate ksl_ssl_key_update
    or the record bound queued, or the answer to the peer's update_requested), during which SSL_new_session_ticket starts nothing.
    Either needs room in the BIO pair: the caller drained it before (ksl_tcp_drain), else no alert can follow. */
-int ksl_tcp_abort(ksl_ssl *s) {
-    if (!tcp_only(s)) return KSL_ERROR;
+static int abort_session(ksl_ssl *s, const char *why) {
     /* a session that failed already (the KeyUpdate bound included) keeps the error that ended it */
     if (s->fatal || ksl_key_update_limit_check(s) != KSL_OK) return KSL_ERROR;
     if (!s->done) { ksl_ssl_fail(s, KSL_E_NOT_SUPPORTED, "ksl: no alert: the session is not established"); return KSL_ERROR; }
@@ -106,9 +130,13 @@ int ksl_tcp_abort(ksl_ssl *s) {
        it does (ssl3_renegotiate_check), and only the rest of the record, from the peer, would release them */
     if (!sent && !stuck && client && started && SSL_version(s->ssl) < TLS1_3_VERSION && SSL_has_pending(s->ssl) && SSL_pending(s->ssl) == 0)
         stuck = "ksl: session aborted without an alert: a received record is incomplete, and OpenSSL starts no renegotiation before its rest arrives";
-    ksl_ssl_fail(s, KSL_E_NOT_SUPPORTED, sent ? "ksl: session aborted with internal_error" : stuck ? stuck : "ksl: session aborted; OpenSSL can send no alert for this role and version");
+    char m[KSL_MSG];
+    const char *how = sent ? "ksl: session aborted with internal_error" : stuck ? stuck : "ksl: session aborted; OpenSSL can send no alert for this role and version";
+    if (why) snprintf(m, sizeof m, "%s; %s", why, how + 5); else snprintf(m, sizeof m, "%s", how);   /* how without its "ksl: " */
+    ksl_ssl_fail(s, KSL_E_NOT_SUPPORTED, m);
     return sent ? KSL_OK : KSL_ERROR;
 }
+int ksl_tcp_abort(ksl_ssl *s) { return tcp_only(s) ? abort_session(s, NULL) : KSL_ERROR; }
 int ksl_tcp_shutdown(ksl_ssl *s) {
     if (!tcp_only(s)) return KSL_ERROR; if (s->fatal || ksl_key_update_limit_check(s) != KSL_OK) return KSL_ERROR; ERR_clear_error();
     int r = SSL_shutdown(s->ssl);
@@ -118,6 +146,10 @@ int ksl_tcp_shutdown(ksl_ssl *s) {
 }
 
 #ifdef KSL_TEST
-/* Test hook: the number of records after which ksl_tcp_write updates the sending key (KSL_KEY_UPDATE_RECORDS otherwise), counted from now. */
+/* Test hook: the number of records after which ksl_tcp_write updates the sending key (by the AEAD otherwise; UINT64_MAX, never), counted from now. */
 void ksl_tcp_set_key_update_records_for_test(ksl_ssl *s, uint64_t records) { s->key_update_records = records; s->records_sent = 0; }
+/* Test hook: the records the keys may protect (the AEAD's limit otherwise); UINT64_MAX, none */
+void ksl_tcp_set_record_limit_for_test(ksl_ssl *s, uint64_t records) { s->record_limit = records; }
+/* Test hook: the record count of the automatic KeyUpdate and the record limit, as the session applies them */
+void ksl_tcp_record_bounds_for_test(ksl_ssl *s, uint64_t *key_update_at, uint64_t *limit) { *key_update_at = key_update_records(s); *limit = record_limit(s); }
 #endif

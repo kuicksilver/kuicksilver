@@ -451,7 +451,7 @@ static void test_key_update_before_record_limit(void) {
     SECTION("tcp_key_update_before_record_limit");
     /* RFC 9846 section 5.5: for AES-GCM up to 2^24.5 full-size records under a given set of keys; "Implementations MUST either close
        the connection or do a key update ... prior to reaching these limits"; OpenSSL sends KeyUpdate only on SSL_key_update. ksl
-       sends one every 2^23 records it wrote; here the bound is lowered to 4 records (test hook). */
+       sends one every 2^23 records it wrote under AES-GCM; here the bound is lowered to 4 records (test hook). */
     ksl_ctx *cc = client_ctx("test-ca", KSL_VERIFY_OPENSSL), *sc = server_ctx("server"); int updates = 0;
     ksl_ssl *c = tcp_client(cc, "server.test"), *s = ksl_ssl_new(sc, KSL_MODE_TCP);
     ksl_ssl_msg_observer_for_test(s, key_update_cb, &updates);
@@ -626,6 +626,43 @@ static void test_abort_after_pending_messages(void) {
     ksl_ctx_free(cc12); ksl_ctx_free(cc); ksl_ctx_free(sc); END();
 }
 
+static void test_record_limits_per_cipher(void) {
+    SECTION("tcp_record_limits_per_cipher");
+    /* RFC 9846 section 5.5: "For AES-GCM, up to 2^24.5 full-size records (about 24 million) may be encrypted under a given set of
+       keys ... For ChaCha20/Poly1305, the record sequence number would wrap before the safety limit is reached"; for AES-CCM
+       (CCM_8 alike) RFC 9147 appendix B.1 derives the same margin at "q <= 2^23". The automatic KeyUpdate comes well before the
+       limit of the negotiated AEAD: 2^23 records for AES-GCM, 2^22 for AES-CCM, none for ChaCha20-Poly1305 */
+    struct { const char *suite; uint64_t update_at, limit; } want[] = {
+        {"TLS_AES_128_GCM_SHA256", UINT64_C(1) << 23, UINT64_C(23726566)}, {"TLS_AES_256_GCM_SHA384", UINT64_C(1) << 23, UINT64_C(23726566)},
+        {"TLS_CHACHA20_POLY1305_SHA256", UINT64_MAX, UINT64_MAX},
+        {"TLS_AES_128_CCM_SHA256", UINT64_C(1) << 22, UINT64_C(1) << 23},
+    };   /* TLS_AES_128_CCM_8_SHA256 (64-bit strength in OpenSSL) is below OpenSSL's default security level: never negotiated */
+    for (size_t i = 0; i < sizeof want / sizeof want[0]; i++) {
+        ksl_ctx *cc = client_ctx("test-ca", KSL_VERIFY_OPENSSL), *sc = server_ctx("server");
+        ksl_ctx_set_ciphers(cc, want[i].suite, NULL); ksl_ctx_set_ciphers(sc, want[i].suite, NULL);
+        ksl_ssl *c = tcp_client(cc, "server.test"), *s = ksl_ssl_new(sc, KSL_MODE_TCP); uint64_t at = 0, limit = 0;
+        CHECK(tcp_pump(c, s, NULL, NULL) == KSL_OK && echo_bytes(c, s, 100), want[i].suite);
+        ksl_tcp_record_bounds_for_test(c, &at, &limit);
+        CHECK(at == want[i].update_at && limit == want[i].limit && (at < limit || limit == UINT64_MAX), "the KeyUpdate point and the record limit of the suite");
+        ksl_ssl_free(c); ksl_ssl_free(s); ksl_ctx_free(cc); ksl_ctx_free(sc);
+    }
+    /* a session whose KeyUpdates do not go out ends before its keys reach the limit (here 4 records, test hook): with internal_error
+       where an alert can be sent (a TLS 1.3 server), else with nothing more (a TLS 1.3 client) */
+    ksl_ctx *cc = client_ctx("test-ca", KSL_VERIFY_OPENSSL), *sc = server_ctx("server"); uint8_t b = 3, r[16], out[64]; size_t n; int alert = 0, rc;
+    for (int server = 1; server >= 0; server--) {
+        ksl_ssl *c = tcp_client(cc, "server.test"), *s = ksl_ssl_new(sc, KSL_MODE_TCP); CHECK(tcp_pump(c, s, NULL, NULL) == KSL_OK, "TLS 1.3 handshake");
+        ksl_ssl *w = server ? s : c, *peer = server ? c : s;
+        ksl_tcp_set_key_update_records_for_test(w, UINT64_MAX); ksl_tcp_set_record_limit_for_test(w, 4);
+        int ok = 1; for (int k = 0; k < 3; k++) { ok = ok && ksl_tcp_write(w, &b, 1, &n) == KSL_OK; shuttle(w, peer); ok = ok && ksl_tcp_read(peer, r, sizeof r, &n) == KSL_OK && n == 1; }
+        CHECK(ok, "three records under the keys");
+        CHECK(ksl_tcp_write(w, &b, 1, &n) == KSL_ERROR && last_message_has(w, "record limit"), "negative: the fourth would reach the limit: the session ends");
+        if (server) CHECK(shuttle(w, peer) > 0 && read_all_after_abort(peer, &alert, &rc) == 0 && alert == (SSL_AD_INTERNAL_ERROR | 0x100), "the client receives internal_error");
+        else CHECK(ksl_tcp_drain(w, out, sizeof out, &n) == KSL_OK && n == 0 && ksl_tcp_shutdown(w) == KSL_ERROR, "the client sends nothing more, no close_notify");
+        ksl_ssl_free(c); ksl_ssl_free(s);
+    }
+    ksl_ctx_free(cc); ksl_ctx_free(sc); END();
+}
+
 /* Moves a's pending ciphertext to b with the legacy_version of the first record's hello (bytes 9-10: record header 5, handshake
    header 4) set to v */
 static void shuttle_patched(ksl_ssl *a, ksl_ssl *b, uint16_t v) {
@@ -768,4 +805,4 @@ static void test_default_versions_and_tls12_profile(void) {
     END();
 }
 
-void run_tcp(void) { test_echo(); test_truncation(); test_tls12(); test_client_verification_still_refuses(); test_resumption(); test_sni_pause(); test_sni_override_alpn(); test_sni_override_settings_effective(); test_no_tls12_ticket_without_num_tickets(); test_session_context(); test_ticket_bound_to_server_name(); test_keyless_server_no_tickets(); test_server_acknowledges_server_name(); test_key_update_before_record_limit(); test_abort_sends_an_alert(); test_abort_after_pending_messages(); test_legacy_version_must_be_0303(); test_key_update_request_waits_for_the_peer(); test_key_update_epoch_is_bounded(); test_client_keeps_every_ticket(); test_default_versions_and_tls12_profile(); }
+void run_tcp(void) { test_echo(); test_truncation(); test_tls12(); test_client_verification_still_refuses(); test_resumption(); test_sni_pause(); test_sni_override_alpn(); test_sni_override_settings_effective(); test_no_tls12_ticket_without_num_tickets(); test_session_context(); test_ticket_bound_to_server_name(); test_keyless_server_no_tickets(); test_server_acknowledges_server_name(); test_key_update_before_record_limit(); test_abort_sends_an_alert(); test_abort_after_pending_messages(); test_record_limits_per_cipher(); test_legacy_version_must_be_0303(); test_key_update_request_waits_for_the_peer(); test_key_update_epoch_is_bounded(); test_client_keeps_every_ticket(); test_default_versions_and_tls12_profile(); }
