@@ -241,8 +241,9 @@ int      ksl_tcp_read(ksl_ssl *, uint8_t *out, size_t cap, size_t *read);  /* KS
 int      ksl_tcp_shutdown(ksl_ssl *);                                       /* sends close_notify; KSL_OK when the peer's arrived */
 /* Ends a session whose application failed with a fatal internal_error alert instead of close_notify (RFC 9846 section 6.1), where
    OpenSSL 3.5 can send one: a TLS 1.3 server, a TLS 1.2 client. KSL_OK: the alert is queued, drain it (ksl_tcp_drain); KSL_ERROR
-   with KSL_E_NOT_SUPPORTED: no alert can be sent (a TLS 1.3 client, a TLS 1.2 server, a session not established or already failed, a
-   TLS 1.2 client whose last received record arrived only in part); the error message names the cause.
+   with KSL_E_NOT_SUPPORTED: no alert can be sent (a TLS 1.3 client, a TLS 1.2 server, a session not established, a TLS 1.2 client whose
+   last received record arrived only in part); the error message names the cause. A session that failed already answers KSL_ERROR and
+   keeps the error that ended it.
    A record write left pending (KSL_WANT_READ) and a KeyUpdate under way go out ahead of the alert, so drain the pair before the call;
    when it has no room for them, no alert follows and the error message says so. The session is failed either way: it takes no more
    data and never sends close_notify. Additive in ABI 7. */

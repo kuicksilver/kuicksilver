@@ -704,6 +704,7 @@ static void test_key_update_epoch_is_bounded(void) {
     CHECK(k.updates == 3, "three KeyUpdates reached the server: the server, bounded at 1 itself, does not enforce the bound on what it receives");
     CHECK(ksl_ssl_key_update(c, 0) == KSL_ERROR && ksl_tcp_write(c, &b, 1, &n) == KSL_ERROR, "negative: past the bound no key update and no data");
     uint8_t out[64]; CHECK(ksl_tcp_drain(c, out, sizeof out, &n) == KSL_OK && n == 0, "negative: nothing more leaves the client");
+    CHECK(ksl_tcp_abort(c) == KSL_ERROR && last_message_has(c, "key update bound"), "an abort of the ended session keeps the error that ended it");
     ksl_ssl_free(c); ksl_ssl_free(s);
     /* a peer's update_requested answered with the last allowed KeyUpdate: the session ends there, a further request is never answered */
     c = tcp_client(cc, "server.test"); s = ksl_ssl_new(sc, KSL_MODE_TCP); key_updates kc = {0, 0}; ksl_ssl_msg_observer_for_test(c, key_update_kind_cb, &kc);

@@ -80,8 +80,9 @@ int ksl_tcp_read(ksl_ssl *s, uint8_t *out, size_t cap, size_t *read) {
    Either needs room in the BIO pair: the caller drained it before (ksl_tcp_drain), else no alert can follow. */
 int ksl_tcp_abort(ksl_ssl *s) {
     if (!tcp_only(s)) return KSL_ERROR;
-    if (s->fatal || !s->done) { ksl_ssl_set_error(s, KSL_E_NOT_SUPPORTED, "ksl: no alert: the session is not established"); s->fatal = 1; return KSL_ERROR; }
-    if (ksl_key_update_limit_check(s) != KSL_OK) return KSL_ERROR;   /* a session past the KeyUpdate bound writes nothing more */
+    /* a session that failed already (the KeyUpdate bound included) keeps the error that ended it */
+    if (s->fatal || ksl_key_update_limit_check(s) != KSL_OK) return KSL_ERROR;
+    if (!s->done) { ksl_ssl_fail(s, KSL_E_NOT_SUPPORTED, "ksl: no alert: the session is not established"); return KSL_ERROR; }
     ERR_clear_error(); int started = 0, client = s->owner->role == KSL_CLIENT; const char *stuck = NULL;
     s->abort_alert = 1; s->last_alert = 0;
     if (s->pending_write) {
