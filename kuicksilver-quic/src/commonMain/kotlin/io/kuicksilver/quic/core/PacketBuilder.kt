@@ -361,8 +361,22 @@ internal class PacketBuilder(
             pnExhausted = true
             return 0
         }
-        val pn = sp.takePn(c.random)
+        // taken (commitPn) only once the packet is built: one that does not fit or has nothing to carry costs no number
+        val pn = sp.peekPn(c.random)
         val pnLen = PacketNumbers.encodedLength(pn, sp.largestAcked)
+        val type = packetType(space)
+        val token = if (type == PacketType.Initial && c.role == TlsRole.Client) (c.retryToken ?: c.testInitialToken) else null
+        val headerLen =
+            if (type != PacketType.OneRtt) {
+                // flags, version, both connection IDs with their lengths, the Initial's token, the 2-byte Length, the number
+                7 + c.remoteCid.length + c.localCid.length + 2 + pnLen +
+                    (if (type == PacketType.Initial) VarInt.size((token?.size ?: 0).toLong()) + (token?.size ?: 0) else 0)
+            } else {
+                1 + dcid.length + pnLen
+            }
+        // the header and at least 4 bytes of payload (the header-protection sample) before the tag; 20-byte connection IDs and
+        // a small anti-amplification budget left the long header itself without room (it threw while being written)
+        if (maxLen - 16 - start < headerLen + 4) return 0
         val w =
             writer?.also {
                 it.buf = buf
@@ -370,7 +384,6 @@ internal class PacketBuilder(
                 it.limit = maxLen - 16
             }
                 ?: WireWriter(buf, start, maxLen - 16).also { writer = it }
-        val type = packetType(space)
         var lengthOff = -1
         if (type !=
             PacketType.OneRtt
@@ -383,13 +396,7 @@ internal class PacketBuilder(
                     type,
                     c.remoteCid,
                     c.localCid,
-                    if (type == PacketType.Initial &&
-                        c.role == TlsRole.Client
-                    ) {
-                        (c.retryToken ?: c.testInitialToken)
-                    } else {
-                        null
-                    },
+                    token,
                     pnLen,
                     false,
                 )
@@ -407,7 +414,7 @@ internal class PacketBuilder(
         val pnOff = w.pos
         w.zero(pnLen)
         val payloadStart = w.pos
-        if (w.remaining < 4) return 0
+        check(w.remaining >= 4 && pnOff - start == headerLen - pnLen) { "header of ${pnOff - start + pnLen} bytes, $headerLen expected" }
         val p = sp.newSentPacket()
         val frames = p.frames
         frames.clear()
@@ -425,9 +432,10 @@ internal class PacketBuilder(
                 } else {
                     close.code
                 }
-            // the frame is what the closing state exists to deliver (RFC 9000 section 10.2.1): a reason that does not fit the room
-            // left (an anti-amplification budget, section 8.1) is cut, on a character boundary (section 19.19), never the frame; a
-            // packet without room even for a bare frame is not built, and the space still owes its copy
+            // a CONNECTION_CLOSE cannot be split between packets, "any limits on packet size will also limit the space available
+            // for a reason phrase" (RFC 9000 section 19.19): a reason that does not fit the room left (an anti-amplification
+            // budget, section 8.1) is cut, on a character boundary, never the frame; a packet without room even for a bare frame
+            // is not built (it takes no packet number) and the space still owes its copy
             val bare = FrameEncoder.connectionCloseOverhead(app, code, close.frameType, 0)
             if (w.remaining < bare) {
                 sp.release(p)
@@ -757,6 +765,7 @@ internal class PacketBuilder(
         if (type == PacketType.OneRtt) c.onOneRttPacketSealed(pn)
         if (type == PacketType.ZeroRtt) c.zeroRttPacketsSealed++ // its confidentiality limit (zeroRttWritable)
         p.zeroRtt = type == PacketType.ZeroRtt
+        sp.commitPn(pn)
         p.pn = pn
         p.timeSent = now
         p.size = end - start

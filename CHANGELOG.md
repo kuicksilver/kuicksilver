@@ -371,6 +371,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - QUIC: a server discards an Initial packet carried in a datagram below 1200 bytes wherever it sits in the datagram
   (RFC 9000 section 14.1). Only an Initial first in the datagram was checked; one coalesced behind another packet was
   processed.
+- QUIC: a packet that is not built takes no packet number. A packet without room for its header and the 4 bytes after
+  it, or for the bare CONNECTION_CLOSE of a closing connection, or with nothing to carry used up a number on every poll
+  (gaps are legal, RFC 9000 section 12.3, but a closing server below its anti-amplification budget spent one per
+  attempt). With 20-byte connection IDs (`connectionIdLength = 20`) and an anti-amplification budget of 64 to 70 bytes the
+  long header did not even fit: writing it threw and the connection failed with an internal error.
 - QUIC: the Stateless Reset check follows the first packet of a datagram (RFC 9000 section 10.3.1: "the comparison MUST
   be performed when the first packet in an incoming datagram either cannot be associated with a connection or cannot be
   decrypted"). A datagram whose first packet does not open is checked even when a later packet of it is processed; one
