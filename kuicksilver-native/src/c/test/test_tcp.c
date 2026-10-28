@@ -452,6 +452,24 @@ static void test_session_keeps_its_verify_mode(void) {
         CHECK(ksl_ctx_set_option(cc, KSL_OPT_VERIFY_MODE, KSL_VERIFY_NONE) == KSL_OK && tcp_pump(c, s, NULL, NULL) == KSL_OK && echo_bytes(c, s, 1000), "control: with its name and a trusted chain it connects");
         ksl_ssl_free(c); ksl_ssl_free(s); ksl_ctx_free(cc); ksl_ctx_free(sc);
     }
+    /* a session is stamped with the verify mode it was made under: one made without verification does not resume on a context that
+       verifies (a resumption carries no Certificate to check), one made with verification does */
+    uint8_t keys[80]; for (int i = 0; i < 80; i++) keys[i] = (uint8_t)(i * 11 + 3);
+    ksl_ctx *none = client_ctx(NULL, KSL_VERIFY_NONE), *verifying = client_ctx("test-ca", KSL_VERIFY_OPENSSL), *sc = server_ctx("server");
+    ksl_ctx_set_option(sc, KSL_OPT_NUM_TICKETS, 1); ksl_ctx_set_ticket_keys(sc, keys, 1);
+    ksl_session *unverified = NULL, *verified = NULL; uint8_t buf[16]; size_t n;
+    for (int k = 0; k < 2; k++) {
+        ksl_ssl *c = tcp_client(k ? verifying : none, "server.test"), *s = ksl_ssl_new(sc, KSL_MODE_TCP);
+        CHECK(tcp_pump(c, s, NULL, NULL) == KSL_OK, "a full handshake that leaves a ticket");
+        ksl_tcp_read(c, buf, sizeof buf, &n); if (k) verified = ksl_ssl_get1_session(c); else unverified = ksl_ssl_get1_session(c);
+        ksl_ssl_free(c); ksl_ssl_free(s);
+    }
+    ksl_ssl *c = tcp_client(verifying, "server.test");
+    CHECK(unverified && ksl_ssl_set_session(c, unverified) == KSL_ERROR && last_code(c, NULL) == KSL_E_BAD_ARG, "negative: a session made without verification is refused where verification is on");
+    CHECK(verified && ksl_ssl_set_session(c, verified) == KSL_OK, "control: a session made with verification is accepted");
+    ksl_ssl_free(c); c = tcp_client(none, "server.test");
+    CHECK(ksl_ssl_set_session(c, unverified) == KSL_OK && ksl_ssl_set_session(c, verified) == KSL_OK, "control: a context without verification takes either");
+    ksl_ssl_free(c); ksl_session_free(unverified); ksl_session_free(verified); ksl_ctx_free(none); ksl_ctx_free(verifying); ksl_ctx_free(sc);
     END();
 }
 /* Moves from a to b as much ciphertext as b's end of the pair has room for (shuttle drops what does not fit) */

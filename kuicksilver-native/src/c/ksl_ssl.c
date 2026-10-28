@@ -140,15 +140,28 @@ int ksl_ssl_export_keying_material(ksl_ssl *s, uint8_t *out, size_t out_len, con
     if (SSL_export_keying_material(s->ssl, out, out_len, label, label_len, context, context_len, context != NULL) != 1) { ksl_ssl_set_error(s, KSL_E_NOT_SUPPORTED, "ksl: exporter failed"); return KSL_ERROR; }
     return KSL_OK;
 }
+/* Each session handed out carries the verify mode of the session it came from (ex data, KSL_VERIFY_* + 1), and ksl_ssl_set_session
+   resumes one made without verification only where verification is off as well: a resumed handshake carries no Certificate, so
+   nothing would verify the server there. KSL_VERIFY_PAUSE and KSL_VERIFY_OPENSSL both verify; Kotlin's cache key binds a ticket to
+   its trust configuration besides (and re-verifies the cached chain, ksl_ctx_verify_chain). */
+static CRYPTO_ONCE session_mode_once = CRYPTO_ONCE_STATIC_INIT;
+static int session_mode_idx = -1;
+static void session_mode_index(void) { session_mode_idx = SSL_SESSION_get_ex_new_index(0, NULL, NULL, NULL, NULL); }
+static int session_mode_ready(void) { return CRYPTO_THREAD_run_once(&session_mode_once, session_mode_index) && session_mode_idx >= 0; }
+static void stamp_session(ksl_ssl *s, SSL_SESSION *sess) { if (session_mode_ready()) (void)SSL_SESSION_set_ex_data(sess, session_mode_idx, (void *)(intptr_t)(s->verify_mode + 1)); }
 /* ksl_session is an SSL_SESSION: reference-counted, its master key cleansed by OpenSSL on the last free (never serialized to Kotlin, so the secret stays in native memory) */
 ksl_session *ksl_ssl_get1_session(ksl_ssl *s) {
     ERR_clear_error(); SSL_SESSION *sess = SSL_get1_session(s->ssl);
     if (sess && !SSL_SESSION_is_resumable(sess)) { SSL_SESSION_free(sess); sess = NULL; }
-    if (sess) ksl_live_add(KSL_LIVE_SESSION, 1);
+    if (sess) { stamp_session(s, sess); ksl_live_add(KSL_LIVE_SESSION, 1); }
     return (ksl_session *)sess;
 }
 int ksl_ssl_set_session(ksl_ssl *s, ksl_session *session) {
     ERR_clear_error();
+    if (session && s->verify_mode != KSL_VERIFY_NONE) {
+        intptr_t made = session_mode_ready() ? (intptr_t)SSL_SESSION_get_ex_data((SSL_SESSION *)session, session_mode_idx) : 0;
+        if (made == 0 || made - 1 == KSL_VERIFY_NONE) { ksl_ssl_set_error(s, KSL_E_BAD_ARG, "ksl: a session made without verification does not resume where verification is on"); return KSL_ERROR; }
+    }
     if (!session || SSL_set_session(s->ssl, (SSL_SESSION *)session) != 1) { ksl_ssl_set_error(s, KSL_E_BAD_ARG, "ksl: session rejected"); return KSL_ERROR; }
     return KSL_OK;
 }
