@@ -70,7 +70,7 @@ static void test_tls12(void) {
     CHECK(echo_bytes(c, s, 5000), "data over TLS 1.2 ECDHE+AEAD");
     ksl_ssl_free(c); ksl_ssl_free(s);
     /* negative: a client without EMS. The server refuses it before Finished, so that OpenSSL sends handshake_failure (RFC 9846
-       section 6.1 / RFC 5246 section 7.2: an error alert, not a bare transport end; RFC 9846 appendix D, RFC 9325 section 3.6) */
+       section 6.1 / RFC 5246 section 7.2: an error alert, not a bare transport end; RFC 7627 section 5.2, RFC 9325 section 3.5) */
     SSL_CTX_set_options(cc->ctx, SSL_OP_NO_EXTENDED_MASTER_SECRET);
     c = tcp_client(cc, "server.test"); s = ksl_ssl_new(sc, KSL_MODE_TCP); int r = tcp_pump(c, s, NULL, NULL), alert = 0;
     CHECK(r == KSL_ERROR && last_code(s, &alert) == KSL_E_EMS_REQUIRED, "negative: the server refuses a TLS 1.2 client without EMS (KSL_E_EMS_REQUIRED)");

@@ -108,7 +108,10 @@ static SSL_TICKET_RETURN ticket_dec_cb(SSL *ssl, SSL_SESSION *sess, const unsign
     }
 }
 /* Runs once the ClientHello's extensions are parsed and the version is chosen, before the server's first flight is built.
-   TLS 1.2 without extended master secret is refused here (RFC 9846 appendix D, RFC 9325 section 3.6; the exporter and tls-exporter need it):
+   TLS 1.2 without extended master secret is refused here. RFC 7627 section 5.2: "If the server receives a ClientHello without the
+   extension, it SHOULD abort the handshake if it does not wish to interoperate with legacy clients": ksl does not (local policy,
+   which that SHOULD allows; the exporter and tls-exporter need EMS), and RFC 9325 section 3.5 requires TLS 1.2 implementations to
+   support the extension (named extended_main_secret since RFC 9846 appendix D, which renames it and leaves RFC 7627's rules).
    failing now makes OpenSSL send handshake_failure, where the check after Finished (ksl_drive) could only drop the connection
    without an alert (RFC 9846 section 6.1, RFC 5246 section 7.2.2). OpenSSL ignores the client's extension under
    SSL_OP_NO_EXTENDED_MASTER_SECRET, so that option counts as its absence.

@@ -29,7 +29,9 @@ public enum class TlsVersions {
 
     /**
      * TLS 1.3, or TLS 1.2 (RFC 5246, obsoleted by RFC 9846) with a peer that lacks 1.3, under the RFC 9325 profile as narrowed
-     * by RFC 10015: ECDHE with AEAD suites only and Extended Master Secret (RFC 9846 appendix D) required. TCP only; it lets any peer without 1.3 downgrade the connection to 1.2.
+     * by RFC 10015: ECDHE with AEAD suites only and Extended Master Secret (RFC 7627; renamed Extended Main Secret by RFC 9846
+     * appendix D) required: a peer without it is refused, as RFC 7627 section 5.2 allows (SHOULD) for an endpoint that does not
+     * interoperate with legacy peers. TCP only; it lets any peer without 1.3 downgrade the connection to 1.2.
      */
     Tls12And13,
 }

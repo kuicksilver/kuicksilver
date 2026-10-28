@@ -45,7 +45,9 @@ int ksl_cert_verify_cb(X509_STORE_CTX *xctx, void *arg) {
     ksl_ssl *s = SSL_get_ex_data(ssl, 1); ksl_ctx *c = s->owner;
     int peer_is_server = c->role == KSL_CLIENT;
     sk_X509_pop_free(s->presented_chain, X509_free); s->presented_chain = capture_presented(xctx);
-    /* RFC 9846 appendix D, RFC 9325 section 3.6: a TLS 1.2 server without extended master secret is refused here, the first callback after its
+    /* RFC 7627 section 5.2: "If a client receives a ServerHello without the extension, it SHOULD abort the handshake if it does not
+       wish to interoperate with legacy servers" (ksl does not: local policy, which that SHOULD allows; RFC 9325 section 3.5 requires
+       the extension's support). A TLS 1.2 server without extended master secret is refused here, the first callback after its
        ServerHello, so that OpenSSL sends handshake_failure (X509_V_ERR_APPLICATION_VERIFICATION) before our Finished (RFC 9846
        section 6.1); the check after the handshake (ksl_drive) could only drop the connection without an alert */
     if (c->role == KSL_CLIENT && s->mode == KSL_MODE_TCP && SSL_version(ssl) < TLS1_3_VERSION && !s->server_hello_ems) {

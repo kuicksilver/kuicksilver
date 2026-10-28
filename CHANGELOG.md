@@ -426,7 +426,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   most one record per call and accepts the retry of a pending write from another buffer with the same bytes.
 - TLS 1.2: a peer without Extended Master Secret is now refused during the handshake with a `handshake_failure` alert (the
   server on the ClientHello, the client on the ServerHello), instead of being dropped without an alert after both
-  Finished messages (RFC 9846 appendix D, RFC 9325 section 3.6).
+  Finished messages (RFC 7627 section 5.2, SHOULD for an endpoint that does not interoperate with legacy peers, which
+  ksl's refusal is by policy; RFC 9325 section 3.5).
 - TLS over TCP: a connection updates its sending key (TLS 1.3 KeyUpdate) every 2^23 records it wrote, before the AES-GCM
   record limit of RFC 9846 section 5.5 (MUST since RFC 9846; 2^24.5 records, about 384 GiB at full size). OpenSSL never does so by itself, so a
   very long-lived bulk connection kept one key for good.
