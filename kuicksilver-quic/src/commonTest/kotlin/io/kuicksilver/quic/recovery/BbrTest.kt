@@ -285,24 +285,65 @@ class BbrTest {
         assertTrue(b.seen(Bbr.State.Drain))
     }
 
-    /**
-     * RFC 9002 section 7.6.2: "When persistent congestion is declared, the sender's congestion window MUST be reduced to the
-     * minimum congestion window (kMinimumWindow)", whose RECOMMENDED value is 2 * max_datagram_size (section 7.2), whatever
-     * is still in flight; BBR's own 4-datagram floor applies again as its model sets the window on the next ACK.
-     */
-    @Test fun persistentCongestionReducesTheWindowToTheMinimum() {
-        val cc = bbr()
-        val t = TimeMark(1_000_000_000L)
-        repeat(10) {
+    private fun inFlight(
+        cc: Bbr,
+        t: TimeMark,
+        n: Int,
+    ): List<SentPacket> =
+        List(n) {
             val p = SentPacket()
             p.size = 1200
             p.timeSent = t
             p.inFlight = true
             cc.onPacketSent(t, 1200)
             cc.onPacketStamped(p, t)
+            p
         }
+
+    /**
+     * Persistent congestion is BBR's retransmission timeout (RFC 9002 section 7.6.2: "similar to a TCP sender's response on
+     * an RTO"). draft-ietf-ccwg-bbr-06 section 5.6.4.4: "Upon a retransmission timeout (RTO), BBR conservatively reduces
+     * C.cwnd to a value that will allow 1 C.SMSS to be transmitted", `OnEnterRTO(): ... C.cwnd = C.inflight + 1`, and
+     * SetCwnd's floor `C.cwnd = max(C.cwnd, BBR.MinPipeCwnd)` (4 packets). RFC 9002's kMinimumWindow belongs to its NewReno
+     * controller (section 7: "If a sender uses a different controller than that specified in this document, the chosen
+     * controller MUST conform to the congestion control guidelines specified in Section 3.1 of [RFC8085]").
+     */
+    @Test fun persistentCongestionLeavesRoomForOneDatagramAboveTheFlight() {
+        val t = TimeMark(1_000_000_000L)
+        val cc = bbr()
+        inFlight(cc, t, 10)
         cc.onLoss(t + 1.seconds, 5 * 1200, t, persistentCongestion = true) // five datagrams still in flight
-        assertEquals(2L * 1200, cc.cwnd)
+        assertEquals(6L * 1200, cc.cwnd, "C.inflight + 1 SMSS")
+        val few = bbr()
+        inFlight(few, t, 10)
+        few.onLoss(t + 1.seconds, 9 * 1200, t, persistentCongestion = true)
+        assertEquals(4L * 1200, few.cwnd, "BBR.MinPipeCwnd is the floor")
+    }
+
+    /**
+     * draft-ietf-ccwg-bbr-06 section 5.6.4.4: "When BBR exits loss recovery it restores C.cwnd to the "last known good" value
+     * that C.cwnd held before entering recovery", and "Upon exiting loss recovery (RTO recovery or Fast Recovery) ... BBR
+     * restores the best-known cwnd value we had upon entering loss recovery: RestoreCwnd()". Persistent congestion is that RTO
+     * recovery: it ends with the acknowledgement of a packet sent after it began.
+     */
+    @Test fun theWindowBeforePersistentCongestionComesBackWhenItsRecoveryEnds() {
+        val t = TimeMark(1_000_000_000L)
+        val cc = bbr()
+        val before = cc.cwnd
+        inFlight(cc, t, 10)
+        cc.onLoss(t + 1.seconds, 9 * 1200, t, persistentCongestion = true)
+        assertEquals(4L * 1200, cc.cwnd)
+        val old = inFlight(cc, t, 1).single() // sent before the recovery began: its ACK does not end it
+        cc.onPacketAcked(old, t + 1.seconds + 10.milliseconds)
+        cc.onAck(t + 1.seconds + 10.milliseconds, t, 1200, 100.milliseconds, false)
+        cc.onAckProcessed(t + 1.seconds + 10.milliseconds)
+        assertTrue(cc.cwnd < before, "still in the recovery: ${cc.cwnd}")
+        val after = inFlight(cc, t + 1.seconds + 20.milliseconds, 1).single()
+        cc.onPacketAcked(after, t + 1.seconds + 120.milliseconds)
+        cc.onAck(t + 1.seconds + 120.milliseconds, after.timeSent, 1200, 100.milliseconds, false)
+        cc.onAckProcessed(t + 1.seconds + 120.milliseconds)
+        // RestoreCwnd, then SetCwnd (section 5.6.4.6) adds the newly acknowledged datagram: Startup, the pipe is not full yet
+        assertEquals(before + 1200, cc.cwnd, "RestoreCwnd")
     }
 
     @Test fun pacesTheInitialWindowAtTheStartupGainBeforeTheFirstAck() {
@@ -475,9 +516,9 @@ class BbrTest {
         val t = TimeMark(1_000_000_000L)
         repeat(10) { cc.onPacketSent(t, 1200) }
         cc.onLoss(t + 1.seconds, 9 * 1200, t, persistentCongestion = true)
-        assertEquals(2400L, cc.cwnd)
+        assertEquals(4800L, cc.cwnd)
         cc.onMtuUpdate(1452)
-        assertEquals(2400L, cc.cwnd, "the minimum window in the new size is not a reason to grow")
+        assertEquals(4800L, cc.cwnd, "the 4-datagram floor in the new size is not a reason to grow")
         val fresh = bbr()
         fresh.onMtuUpdate(1452)
         assertEquals(12_000L, fresh.cwnd, "before the first ACK either: the initial window stays in bytes")

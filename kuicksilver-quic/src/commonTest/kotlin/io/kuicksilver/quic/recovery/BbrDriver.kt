@@ -179,11 +179,9 @@ internal class BbrDriver(
     fun check() {
         val flight = outstanding.sumOf { it.size.toLong() }
         check(cc.bytesInFlight == flight) { "op $ops: bytes in flight ${cc.bytesInFlight}, outstanding $flight" }
-        // the minimum congestion window is 2 datagrams (RFC 9002 section 7.2; persistent congestion sets it), half BBR's pipelining floor
-        if (cc.cwnd >= cc.minPipeCwnd / 2) oldFloor = Long.MAX_VALUE
-        check(
-            cc.cwnd >= minOf(cc.minPipeCwnd, oldFloor) / 2,
-        ) { "op $ops: cwnd ${cc.cwnd} below the 2-datagram minimum ${cc.minPipeCwnd / 2}" }
+        // BBR.MinPipeCwnd (draft-ietf-ccwg-bbr-06 section 5.6.4.6) floors the window, after persistent congestion too (OnEnterRTO)
+        if (cc.cwnd >= cc.minPipeCwnd) oldFloor = Long.MAX_VALUE
+        check(cc.cwnd >= minOf(cc.minPipeCwnd, oldFloor)) { "op $ops: cwnd ${cc.cwnd} below the 4-datagram minimum ${cc.minPipeCwnd}" }
         for (srtt in SRTTS) {
             val r = cc.pacingRate(srtt.nanoseconds)
             check(r > 0) { "op $ops: pacing rate $r at srtt $srtt ns" }

@@ -295,8 +295,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   (64 KiB by default), past which the request fails with `H3_EXCESSIVE_LOAD` and its stream is reset, as the HTTP/1.1
   client's 64 KiB budget. `Http3Settings.maxInformationalResponses` is deprecated and ignored (still validated, ABI
   unchanged).
-- QUIC with BBR (`QuicConfig.congestionController`): persistent congestion reduces the window to the minimum congestion
-  window of 2 datagrams, as RFC 9002 section 7.6.2 requires; it was max(bytes in flight + 1 datagram, 4 datagrams).
+- QUIC with BBR (`QuicConfig.congestionController`): persistent congestion is BBR's retransmission timeout
+  (draft-ietf-ccwg-bbr-06 section 5.6.4.4): the window still drops to max(bytes in flight + 1 datagram, 4 datagrams)
+  (`OnEnterRTO`), and now the window from before comes back once a packet sent after it is acknowledged (`RestoreCwnd`,
+  "Upon exiting loss recovery (RTO recovery or Fast Recovery)"). Before, it was never restored, except by a spurious-loss
+  undo.
 - QUIC on the portable JVM socket (`IoPreference.Portable`, or when the accelerated UDP cannot open): the Don't Fragment
   bit is set where the JDK has the option (`IP_DONTFRAGMENT`, JDK 19 and later), as RFC 9000 section 14 requires ("MUST
   be set if possible"). Datagrams there stay within 1200 bytes, so PMTUD stays off.
