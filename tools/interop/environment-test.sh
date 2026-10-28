@@ -102,6 +102,13 @@ check "challenge:   but its close repeated is fine"                  0 "" -- pyt
 check "challenge: the client moved itself (two source ports)"        1 "" -- python3 "$ch" --decoded "$(hvar moved '.client_sources += ["193.167.0.100:40000"]')"
 check "challenge: the close reached the server before the challenge" 1 "" -- python3 "$ch" --decoded "$(hvar knew '.server_close_n = 16436')"
 check "challenge:   the close never reached the server"              0 "" -- python3 "$ch" --decoded "$(hvar noclose '.server_close_n = null')"
+# RFC 9000 10.2.2: once the client's close reached the server (16449), the server sends at most one packet there, a close
+srvpkt() { printf '{"n": %s, "from_server": true, "len": 30, "frames": %s, "challenges": %s, "close_codes": %s}' "$@"; }
+check "challenge: the server challenged again after the close arrived" 1 "" -- python3 "$ch" --decoded "$(hvar rechallenge ".on_path += [$(srvpkt 16450 '[26]' '["00112233445566ff"]' '[]')]")"
+check "challenge: the server sent an ACK after the close arrived"      1 "" -- python3 "$ch" --decoded "$(hvar ackafter ".on_path += [$(srvpkt 16450 '[2]' '[]' '[]')]")"
+check "challenge: two closes after the close arrived"                  1 "" -- python3 "$ch" --decoded "$(hvar twocloses ".on_path += [$(srvpkt 16450 '[28]' '[]' '[0]'), $(srvpkt 16451 '[28]' '[]' '[0]')]")"
+check "challenge:   one close after it is fine"                        0 "" -- python3 "$ch" --decoded "$(hvar oneclose ".on_path += [$(srvpkt 16450 '[28]' '[]' '[0]')]")"
+check "challenge:   a repeated challenge before the close arrived is fine" 0 "" -- python3 "$ch" --decoded "$(hvar before ".on_path = .on_path[:2] + [$(srvpkt 16438 '[26]' '["6dbee19dedfe64eb"]' '[]')] + .on_path[2:]")"
 check "challenge: the server spoke first on the new path"            1 "" -- python3 "$ch" --decoded "$(hvar srvfirst '.on_path = [.on_path[1], .on_path[0]] + .on_path[2:]')"
 check "challenge: the server sent data there (STREAM)"               1 "" -- python3 "$ch" --decoded "$(hvar data "$xs.frames += [15]")"
 check "challenge: the server exceeded 3x there (RFC 9000 8.1)"       1 "" -- python3 "$ch" --decoded "$(hvar amp "([.on_path[] | select(.from_server | not) | .len] | add) as \$r | $xs.len = 3 * \$r + 1")"

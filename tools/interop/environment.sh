@@ -62,7 +62,8 @@ closing_rebind() {
 # came in, and the client, already closing, could not answer (section 10.2.1). The runner wants every such challenge answered
 # (CI run 40571281407: quiche->kuicksilver:rebind-addr, the close at 10.99 s, the rebind at 11 s; rebind-addr
 # transfers end near 11 s, see sim-entrypoint.sh). tools/interop/closing-challenge.py proves it from both captures, including that
-# every earlier path passed the runner's check. Both roles, like closing_rebind. Prints "<server>_<client> <case>" per cell.
+# every earlier path passed the runner's check, and that once the close reached the server it sent at most one packet on the
+# new path, its own CONNECTION_CLOSE (RFC 9000 section 10.2.2). Both roles, like closing_rebind. Prints "<server>_<client> <case>" per cell.
 closing_challenge() {
   local o cell
   while IFS= read -r o; do
