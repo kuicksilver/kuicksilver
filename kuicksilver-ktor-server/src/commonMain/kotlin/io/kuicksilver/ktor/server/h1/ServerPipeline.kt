@@ -539,9 +539,10 @@ internal fun CoroutineScope.startH1Pipeline(
                 }
 
                 if (connect) {
-                    // a CONNECT is the last request on its connection, whatever the answer: a 2xx makes it a tunnel, and
-                    // a server MUST close when it rejects one, without processing any further request, close option or
-                    // not (RFC 9931 section 8, updating RFC 9112): the bytes behind it may be the client's tunnel data
+                    // a CONNECT is the last request on its connection: the engine refuses every one (a 2xx from the
+                    // application goes out as 501, see H1Response.refuseTunnel), and a server MUST close when it rejects
+                    // one, without processing any further request, close option or not (RFC 9931 section 8, updating
+                    // RFC 9112): the bytes behind it may be the client's tunnel data
                     // sent optimistically, which read as a request would be smuggled. The handler's response goes out,
                     // then the input is drained so the refusal (a 407 the client needs) is not lost to a reset
                     handlerJob.join()

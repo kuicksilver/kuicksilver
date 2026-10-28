@@ -54,6 +54,13 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Changed
 
+- Ktor server, HTTP/1.1 (behaviour): the engine answers `501 Not Implemented` (with `Connection: close` and the text
+  "This server does not support CONNECT tunnels.") when the application answers a CONNECT with a 2xx, and logs a
+  warning in the application log. A 2xx to CONNECT says the server "will switch to tunnel mode immediately after the
+  response header section" (RFC 9110 section 9.3.6), and the engine cannot tunnel: the handler gets no connection.
+  Before, the 2xx went out framed as an ordinary body and the connection served the next request, so the client's
+  tunnel bytes were read as requests. The connection still closes after every CONNECT (RFC 9931 section 8).
+  Tunnelling is planned for 0.3.0.
 - QUIC: a lost connection no longer takes the bytes a peer sent before it (`QuicStream.input`): what was received is
   still read, up to the FIN when it came too (then the stream ends cleanly), and only then do reads fail with the
   `QuicException.ConnectionLost`. Before, every read failed at once, even with the whole stream received. A reset still
@@ -226,10 +233,6 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - Ktor server, HTTP/1.1: an application's status description with a character a reason phrase cannot hold (CR, LF,
   NUL; RFC 9112 section 4) is replaced by the registered reason of the code, or none. Before, it was written as it
   was: `HttpStatusCode(200, "OK\r\nX-Injected: 1")` split the response and added a field of its own.
-- Ktor server, HTTP/1.1: a 2xx response to CONNECT no longer carries `Content-Length` or `Transfer-Encoding` (RFC
-  9110 section 8.6, RFC 9112 section 6.1: a server MUST NOT send them): what the application writes goes out as is,
-  as the start of the tunnel, and the connection closes after it. Before, it was framed as an ordinary body and the
-  connection served the next request.
 - Ktor server, HTTP/1.0: the `Upgrade` field of an HTTP/1.0 request is ignored (RFC 9110 section 7.8: a server MUST
   ignore it), so a WebSocket route no longer answers an HTTP/1.0 client with `101 Switching Protocols`, a 1xx it
   MUST NOT get (section 15.2); the application does not see the field.

@@ -38,7 +38,10 @@ server.start(wait = true)
   chunk-size line must follow RFC 9112 section 7.1 exactly (hex digits, extensions by their grammar, optional
   whitespace before the CRLF): anything else, such as a bare CR or LF in it, makes the handler's receive of the body fail with
   `BadRequestException` (Ktor answers 400 unless the application handles it) and the connection closes. An HTTP/1.1
-  request without a Host field, or any request with two, gets 400 and the connection closed (RFC 9112 section 3.2). The engine's own 400 has the fixed body `Bad Request`
+  request without a Host field, or any request with two, gets 400 and the connection closed (RFC 9112 section 3.2).
+  The engine cannot act as a CONNECT proxy yet (planned for 0.3.0): a CONNECT reaches the application, but a 2xx answer
+  goes out as `501 Not Implemented` with a warning in the application log, since a 2xx would promise a tunnel; every
+  CONNECT ends its connection (RFC 9931 section 8). The engine's own 400 has the fixed body `Bad Request`
   (Ktor CIO sends the parser's message, which can quote the request's header fields). ALPN on TCP is `http/1.1`.
 - `configuration.identity = ...` turns plain connectors into TLS ones, so `embeddedServer(Kuicksilver, port = 443,
   configure = { identity = ... })` works as expected. Without an identity a plain `connector { port = ... }` serves
