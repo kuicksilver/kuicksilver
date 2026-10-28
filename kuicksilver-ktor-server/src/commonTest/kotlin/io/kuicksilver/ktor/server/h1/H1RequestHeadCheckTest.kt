@@ -97,13 +97,21 @@ class H1RequestHeadCheckTest {
             }
         }
 
-    /** A major version the server does not support: 505 (RFC 9110 section 15.6.6), the connection closes. Before, 400. */
+    /**
+     * A major version the server does not support: 505 (RFC 9110 section 15.6.6), the connection closes. Before, 400.
+     * "The server SHOULD generate a representation for the 505 response that describes why that version is not supported
+     * and what other protocols are supported by that server": a short text says which versions this connection speaks.
+     */
     @Test fun negative_unsupportedMajorVersionGets505() =
         runTest {
             for (line in listOf("GET / HTTP/2.0", "GET / HTTP/0.9", "GET / HTTP/3.0", "PRI * HTTP/2.0")) {
                 val response = exchange("$line\r\nHost: s\r\n\r\nGET / HTTP/1.1\r\nHost: s\r\n\r\n")
                 assertTrue(response.startsWith("HTTP/1.1 505 HTTP Version Not Supported\r\n"), "$line: $response")
                 assertTrue(response.contains("\r\nConnection: close\r\n"), "$line: $response")
+                assertTrue(response.contains("\r\nContent-Type: text/plain; charset=utf-8\r\n"), "$line: $response")
+                val body = response.substringAfter("\r\n\r\n")
+                assertEquals(VERSION_NOT_SUPPORTED, body, "$line: $response")
+                assertTrue(response.contains("\r\nContent-Length: ${body.length}\r\n"), "$line: $response")
                 assertEquals(1, Regex("HTTP/1.1 ").findAll(response).count(), "$line: $response")
             }
         }
@@ -350,6 +358,12 @@ class H1RequestHeadCheckTest {
             assertTrue(response.startsWith("HTTP/1.1 200 "), response)
             assertTrue(response.endsWith("GET //evil.example/x HTTP/1.1"), response)
         }
+
+    private companion object {
+        const val VERSION_NOT_SUPPORTED =
+            "This server does not support the HTTP major version of the request. Supported on this connection: HTTP/1.1, " +
+                "HTTP/1.0 (HTTP/2 is not supported).\n"
+    }
 
     private fun show(s: String) =
         s

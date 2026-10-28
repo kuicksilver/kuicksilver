@@ -349,7 +349,10 @@ internal fun CoroutineScope.startH1Pipeline(
                         if (refused.status == 400) {
                             respondBadRequest(actorChannel)
                         } else {
-                            respondClosing(actorChannel, closingResponsePacket(refused.status, refused.reason, refused.location))
+                            respondClosing(
+                                actorChannel,
+                                closingResponsePacket(refused.status, refused.reason, refused.location, refused.body),
+                            )
                         }
                         lingerAfterRefusal(actorChannel, connection)
                         break
@@ -656,21 +659,29 @@ private val BAD_REQUEST_BODY = "Bad Request".encodeToByteArray()
  */
 internal fun httpDateNow(): String = GMTDate().toHttpDate()
 
-/** An empty [status] response with `Connection: close`, and a Location field when [location] is given. */
+/**
+ * A [status] response with `Connection: close`, a Location field when [location] is given, and [body] as `text/plain`
+ * when given, else empty.
+ */
 private fun closingResponsePacket(
     status: Int,
     reason: String,
     location: String? = null,
-): Source =
-    RequestResponseBuilder()
+    body: String? = null,
+): Source {
+    val content = body?.encodeToByteArray()
+    return RequestResponseBuilder()
         .apply {
             responseLine("HTTP/1.1", status, reason)
             headerLine("Date", httpDateNow())
             if (location != null) headerLine("Location", location)
             headerLine("Connection", "close")
-            headerLine("Content-Length", "0")
+            if (content != null) headerLine("Content-Type", "text/plain; charset=utf-8")
+            headerLine("Content-Length", (content?.size ?: 0).toString())
             emptyLine()
+            if (content != null) bytes(content)
         }.build()
+}
 
 /**
  * Queues an empty [status] response that closes the connection behind the responses already queued and ends the

@@ -25,14 +25,24 @@ internal const val MAX_REQUEST_LINE_BYTES: Int = 8_192
 
 /**
  * A request head the server refuses before Ktor's parser sees it: [status] with [reason], then the connection closes; a
- * 301 carries the [location] to send.
+ * 301 carries the [location] to send, a refusal with a [body] sends it as `text/plain`.
  */
 internal class RequestHeadRefused(
     val status: Int,
     val reason: String,
     message: String,
     val location: String? = null,
+    val body: String? = null,
 ) : Exception(message)
+
+/**
+ * The representation of a 505: RFC 9110 section 15.6.6, "The server SHOULD generate a representation for the 505
+ * response that describes why that version is not supported and what other protocols are supported by that server".
+ * HTTP/3 is not named: whether the server offers it is announced by Alt-Svc on its other responses.
+ */
+internal const val VERSION_NOT_SUPPORTED_BODY: String =
+    "This server does not support the HTTP major version of the request. Supported on this connection: HTTP/1.1, " +
+        "HTTP/1.0 (HTTP/2 is not supported).\n"
 
 /**
  * Checks the request head at the start of [this] input (empty lines before it already skipped) before Ktor's parser reads
@@ -187,7 +197,7 @@ internal fun checkRequestLine(line: ByteArray): Int {
     skipWhitespace()
     if (i != n) refuse("Extra characters in the request line")
     if (line[version + 5] != '1'.code.toByte()) {
-        throw RequestHeadRefused(505, "HTTP Version Not Supported", "HTTP major version other than 1")
+        throw RequestHeadRefused(505, "HTTP Version Not Supported", "HTTP major version other than 1", body = VERSION_NOT_SUPPORTED_BODY)
     }
     checkRequestTarget(line.decodeToString(methodStart, methodEnd), line, targetStart, targetEnd)
     return version + 7
