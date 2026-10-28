@@ -44,19 +44,24 @@ tasks.matching { it.name.startsWith("compileAndroid") || it.name.contains("merge
 
 // The Kotlin tests' native hooks (src/testhooks, tools/build-test-hooks.sh): a library of their own, never packaged or published.
 // kuicksilver-tls loads the JNI one in jvmTest and links the static one into its macosArm64 tests.
-val hostOpenSsl = "opensslBuild" + (if (hostClassifier == "osx-aarch_64") "MacosArm64" else if (hostClassifier == "osx-x86_64") "MacosX64" else if (hostClassifier == "linux-aarch_64") "LinuxArm64" else if (hostClassifier == "linux-x86_64") "LinuxX64" else "MingwX64")
+// They need the OpenSSL headers of the host target (ksl_internal.h), reused like any other with kuicksilver.openssl.prebuilt. Where a
+// task is skipped by host, it must not depend on that OpenSSL build either: onlyIf does not prune dependencies, and on the Windows
+// runner (windows-jvm) opensslBuildMingwX64 finds no build/openssl/mingw-x64 to reuse, so opensslFetch ran and failed.
+val hostOpenSsl = "opensslBuild" + (if (hostClassifier == "osx-aarch_64") "MacosArm64" else if (hostClassifier == "osx-x86_64") "MacosX64" else if (hostClassifier == "linux-aarch_64") "LinuxArm64" else "LinuxX64")
+val testHooksJniHost = !hostClassifier.startsWith("windows")
+val testHooksMacHost = System.getProperty("os.name").lowercase().contains("mac")
 tasks.register<Exec>("buildTestHooksJni") {
     group = "native"; description = "Builds the JVM tests' native hooks for the host"
-    onlyIf { !hostClassifier.startsWith("windows") }
-    dependsOn(hostOpenSsl)
+    onlyIf("the host is not Windows") { testHooksJniHost }
+    if (testHooksJniHost) dependsOn(hostOpenSsl)
     inputs.files(fileTree("src/c"), fileTree("src/testhooks"), root.resolve("tools/build-test-hooks.sh"))
     outputs.dir(layout.buildDirectory.dir("test-hooks/jni"))
     commandLine("bash", root.resolve("tools/build-test-hooks.sh").path, "jni", layout.buildDirectory.dir("test-hooks/jni").get().asFile.path)
 }
 tasks.register<Exec>("buildTestHooksMacosArm64") {
     group = "native"; description = "Builds the macosArm64 tests' native hooks"
-    onlyIf { System.getProperty("os.name").lowercase().contains("mac") }
-    dependsOn("opensslBuildMacosArm64")
+    onlyIf("the host is macOS") { testHooksMacHost }
+    if (testHooksMacHost) dependsOn("opensslBuildMacosArm64")
     inputs.files(fileTree("src/c"), fileTree("src/testhooks"), root.resolve("tools/build-test-hooks.sh"))
     outputs.dir(layout.buildDirectory.dir("test-hooks/macos-arm64"))
     commandLine("bash", root.resolve("tools/build-test-hooks.sh").path, "macos-arm64", layout.buildDirectory.dir("test-hooks/macos-arm64").get().asFile.path)
