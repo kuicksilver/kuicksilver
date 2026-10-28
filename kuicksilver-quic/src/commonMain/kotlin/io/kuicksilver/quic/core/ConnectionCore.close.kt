@@ -45,6 +45,9 @@ internal fun ConnectionCore.enterClosing(reason: QuicException.ConnectionLost) {
         false
     timers.closeDeadline = now + pto() * 3
     events += ConnectionEvent.Closed(reason)
+    // `now` must be the moment the closing state begins (a fresh `loop.now()`, see ConnectionRuntime.close), never a cached
+    // time: tools/interop/closing-challenge.py takes this connection_closed time as proof that our client was closing before a
+    // PATH_CHALLENGE arrived
     qlog?.connectionClosed(reason, now)
 }
 
