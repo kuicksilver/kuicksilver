@@ -167,6 +167,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Changed
 
+- HTTP/3: stricter towards peers (each also under "Fixed"); a peer that got away with these before now fails a request or
+  the connection. An HTTP/3 datagram for a stream beyond the client-initiated bidirectional stream limit closes the
+  connection with `H3_ID_ERROR` (RFC 9297 section 2.1, SHOULD); one for a request other than CONNECT whose stream is
+  still receiving aborts that request with `H3_DATAGRAM_ERROR` (RFC 9297 section 2, MUST); and on a server every
+  MAX_PUSH_ID after the first spends a glitch token, so a client that keeps re-sending it (some stacks send one with every
+  push-credit update) meets `H3_EXCESSIVE_LOAD` once the bucket is empty (RFC 9114 section 10.5).
 - Ktor client: the h3/h1 race starts HTTP/1.1 10 ms after HTTP/3 on a network where QUIC was never confirmed, instead
   of at the same time, and an explicit `http3 { hardDelay }` must be 10 ms..2 s or `Duration.INFINITE` (else the
   engine's creation fails with `IllegalArgumentException`; before, any value was used as is). RFC 8305 section 5: a
