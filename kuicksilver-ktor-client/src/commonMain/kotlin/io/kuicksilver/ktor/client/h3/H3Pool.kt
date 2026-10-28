@@ -36,6 +36,7 @@ import io.kuicksilver.ktor.client.Http3DiscoveryMode
 import io.kuicksilver.ktor.client.KuicksilverEngineConfig
 import io.kuicksilver.ktor.client.connectTimeoutMillis
 import io.kuicksilver.ktor.client.h1.toMillisOrMax
+import io.kuicksilver.ktor.client.isZeroRttRejected
 import io.kuicksilver.ktor.client.socketHost
 import io.kuicksilver.ktor.client.socketTimeoutMillis
 import io.kuicksilver.ktor.client.tlsConfigFor
@@ -351,11 +352,6 @@ internal class H3Pool(
         return e to d.await()
     }
 
-    /** Whether this failure, or one of its causes, is the rejected 0-RTT that closed its connection. */
-    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-    private fun Throwable.isZeroRttRejected(): Boolean =
-        generateSequence(this) { it.cause }.take(8).any { it is io.kuicksilver.quic.QuicException.ConnectionLost.ZeroRttRejected }
-
     /** The caller setting up a shared connection was cancelled; the callers waiting for it try again. */
     private class SetupAbandoned(
         cause: CancellationException,
@@ -540,7 +536,9 @@ internal class H3Pool(
                         if (it === entry) connections.remove(t.key)
                     }
                 } // a new connection for the retry (RFC 9114 section 5.2)
-                if (!data.body.isReplayable()) {
+                // a request that failed before it was sent ([H3NotSent]: it waited for the handshake the rejection ended)
+                // never touched its body, so a streamed one goes again as well
+                if (e !is H3NotSent && !data.body.isReplayable()) {
                     throw H3BodyConsumed(
                         "the server did not process the request and its streamed body was already consumed",
                         e,

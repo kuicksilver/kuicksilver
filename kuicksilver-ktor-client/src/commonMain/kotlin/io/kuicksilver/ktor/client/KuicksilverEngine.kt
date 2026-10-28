@@ -495,13 +495,25 @@ internal class KuicksilverEngine(
  */
 internal fun marksAlternativeBroken(e: Throwable): Boolean =
     when (e) {
-        is H3NotSent -> e.cause !is Http3Exception.RequestNotProcessed
+        // a rejected 0-RTT says nothing against the alternative: its retries without 0-RTT may only have met another
+        // rejected 0-RTT connection being set up (RFC 9001 section 4.6.2)
+        is H3NotSent -> e.cause !is Http3Exception.RequestNotProcessed && !e.isZeroRttRejected()
+
         is QuicException.StreamError -> false
+
         is QuicException -> true
+
         is Http3Exception.Protocol -> e.streamId == null
+
         is Http3Exception.Qpack, is Http3Exception.Settings -> true
+
         else -> false
     }
+
+/** Whether [this] failure, or one of its causes, is a rejected 0-RTT that closed its connection. */
+@OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+internal fun Throwable.isZeroRttRejected(): Boolean =
+    generateSequence(this) { it.cause }.take(8).any { it is QuicException.ConnectionLost.ZeroRttRejected }
 
 /** RFC 9110 section 9.2.2. */
 internal fun HttpMethod.isIdempotent(): Boolean =

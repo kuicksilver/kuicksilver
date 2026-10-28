@@ -20,6 +20,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.TimeSource
 
@@ -71,9 +72,55 @@ class ClientEarlyDataTest {
      * processed nothing of its 0-RTT, and the GET is sent again once, on a new connection without 0-RTT, over HTTP/3: no
      * fallback to HTTP/1.1, no alternative marked broken. Before 0.2.1 the transport sent the 0-RTT streams again in 1-RTT.
      */
-    @Test fun rejected0RttIsRetriedOnANewConnectionWithout0Rtt() =
+    @Test fun rejected0RttIsRetriedOnANewConnectionWithout0Rtt() = h3Test { rejected0RttRetry { c, url -> c.get(url) } }
+
+    /**
+     * A POST with a streamed body as the first request on the 0-RTT connection waits for the handshake the rejection ends,
+     * so its body was never touched: it is sent again on the new connection too, not failed as a consumed body.
+     */
+    @Test fun aStreamedUploadWaitingForTheHandshakeIsRetriedAfterARejected0Rtt() =
         h3Test {
-            kotlinx.coroutines.coroutineScope {
+            rejected0RttRetry { c, url ->
+                c.post(url) {
+                    setBody(
+                        io.ktor.utils.io
+                            .ByteReadChannel("payload"),
+                    )
+                }
+            }
+        }
+
+    /** A rejected 0-RTT does not mark the alternative broken: it says nothing against the server's HTTP/3. */
+    @Test fun aRejected0RttDoesNotMarkTheAlternativeBroken() {
+        @OptIn(ExperimentalKuicksilverApi::class)
+        val rejected =
+            io.kuicksilver.quic.QuicException.ConnectionLost
+                .ZeroRttRejected()
+        assertFalse(
+            marksAlternativeBroken(
+                io.kuicksilver.ktor.client.h3
+                    .H3NotSent(rejected),
+            ),
+        )
+        assertTrue(
+            marksAlternativeBroken(
+                io.kuicksilver.ktor.client.h3
+                    .H3NotSent(
+                        io.kuicksilver.quic.QuicException.ConnectionLost
+                            .StatelessReset(),
+                    ),
+            ),
+        )
+    }
+
+    /**
+     * A ticket from one server, then the same port served with other ticket keys, so the client's 0-RTT is rejected there;
+     * [send] makes the first request on that new connection and must be answered "h3" over HTTP/3 after exactly one retry
+     * for the rejection, with no fallback to HTTP/1.1.
+     */
+    private suspend fun rejected0RttRetry(send: suspend (io.ktor.client.HttpClient, String) -> io.ktor.client.statement.HttpResponse) =
+        kotlinx.coroutines.coroutineScope {
+            run {
                 val retries = java.util.concurrent.CopyOnWriteArrayList<Throwable>()
                 val fallbacks = java.util.concurrent.CopyOnWriteArrayList<Throwable>()
                 val events =
@@ -96,44 +143,49 @@ class ClientEarlyDataTest {
                 var ep = h3Origin(earlyData = true, ticketKeys = io.kuicksilver.tls.SessionTicketConfig(keys = listOf(ByteArray(80) { 1 })))
                 val port = ep.localAddress.port
                 try {
-                    testClient(Http3DiscoveryMode.H3Only, engine = {
-                        eventListener = events
-                        http3 { earlyData = true }
-                    }).use { c ->
-                        val engine = c.engine as KuicksilverEngine
-                        val url = "https://127.0.0.1:$port/"
-                        assertEquals("h3", c.get(url).bodyAsText())
-                        assertEquals("h3", c.get(url).bodyAsText()) // the ticket arrived meanwhile
-                        engine.h3.dropConnectionsForTest().forEach { it.close() }
-                        ep.close()
-                        // the same port, other ticket keys: the client's ticket opens nothing there, so its 0-RTT is rejected
-                        var next: io.kuicksilver.http3.Http3Endpoint? = null
-                        for (i in 0 until 100) {
-                            next =
-                                runCatching {
-                                    h3Origin(
-                                        earlyData = true,
-                                        port = port,
-                                        ticketKeys = io.kuicksilver.tls.SessionTicketConfig(keys = listOf(ByteArray(80) { 2 })),
-                                    )
-                                }.getOrNull()
-                            if (next != null) break
-                            kotlinx.coroutines.delay(50)
+                    udpRelay(port) { front, relay ->
+                        testClient(Http3DiscoveryMode.H3Only, engine = {
+                            eventListener = events
+                            http3 { earlyData = true }
+                        }).use { c ->
+                            val engine = c.engine as KuicksilverEngine
+                            val url = "https://127.0.0.1:$front/"
+                            assertEquals("h3", c.get(url).bodyAsText())
+                            assertEquals("h3", c.get(url).bodyAsText()) // the ticket arrived meanwhile
+                            engine.h3.dropConnectionsForTest().forEach { it.close() }
+                            ep.close()
+                            // the same port, other ticket keys: the client's ticket opens nothing there, so its 0-RTT is rejected
+                            var next: io.kuicksilver.http3.Http3Endpoint? = null
+                            for (i in 0 until 100) {
+                                next =
+                                    runCatching {
+                                        h3Origin(
+                                            earlyData = true,
+                                            port = port,
+                                            ticketKeys = io.kuicksilver.tls.SessionTicketConfig(keys = listOf(ByteArray(80) { 2 })),
+                                        )
+                                    }.getOrNull()
+                                if (next != null) break
+                                kotlinx.coroutines.delay(50)
+                            }
+                            ep = next ?: kotlin.test.fail("UDP $port could not be bound again")
+                            // the server's answers come late: connectEarly returns on its 0-RTT keys, and the request starts
+                            // (in 0-RTT, or waiting for the handshake) before the rejection arrives
+                            relay.downDelay = 300.milliseconds
+                            val r = send(c, url)
+                            assertEquals(HttpProtocolVersion.HTTP_3_0, r.version)
+                            assertEquals("h3", r.bodyAsText())
+                            assertEquals(1, retries.size, "one retry: $retries")
+                            assertTrue(
+                                generateSequence(
+                                    retries.single(),
+                                ) { it.cause }.any { it is io.kuicksilver.quic.QuicException.ConnectionLost.ZeroRttRejected },
+                                "the retry was for the rejected 0-RTT: ${retries.single()}",
+                            )
+                            assertTrue(fallbacks.isEmpty(), "no fallback to HTTP/1.1: $fallbacks")
+                            val conn = engine.h3.connectionsForTest().single()
+                            assertTrue(conn.quic.isHandshakeComplete && !conn.closed.isCompleted, "the retry's connection stays")
                         }
-                        ep = next ?: kotlin.test.fail("UDP $port could not be bound again")
-                        val r = c.get(url)
-                        assertEquals(HttpProtocolVersion.HTTP_3_0, r.version)
-                        assertEquals("h3", r.bodyAsText())
-                        assertEquals(1, retries.size, "one retry: $retries")
-                        assertTrue(
-                            generateSequence(
-                                retries.single(),
-                            ) { it.cause }.any { it is io.kuicksilver.quic.QuicException.ConnectionLost.ZeroRttRejected },
-                            "the retry was for the rejected 0-RTT: ${retries.single()}",
-                        )
-                        assertTrue(fallbacks.isEmpty(), "no fallback to HTTP/1.1: $fallbacks")
-                        val conn = engine.h3.connectionsForTest().single()
-                        assertTrue(conn.quic.isHandshakeComplete && !conn.closed.isCompleted, "the retry's connection stays")
                     }
                 } finally {
                     ep.close()

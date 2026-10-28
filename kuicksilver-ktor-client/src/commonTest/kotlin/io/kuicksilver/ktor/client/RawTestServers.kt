@@ -186,6 +186,9 @@ internal class UdpRelay(
     /** While true every datagram is dropped, both ways: QUIC is blocked on the path. */
     @kotlin.concurrent.Volatile var blocked: Boolean = false
 
+    /** Each datagram from the server is held this long before it goes on to the client. */
+    @kotlin.concurrent.Volatile var downDelay: kotlin.time.Duration = kotlin.time.Duration.ZERO
+
     /** Completed by the first datagram from the client dropped while [blocked]. */
     val dropped: kotlinx.coroutines.CompletableDeferred<Unit> = kotlinx.coroutines.CompletableDeferred()
 }
@@ -257,6 +260,7 @@ internal suspend fun udpRelay(
                     while (true) {
                         val d = back.receive()
                         val c = client
+                        if (relay.downDelay.isPositive()) kotlinx.coroutines.delay(relay.downDelay)
                         if (relay.blocked || c == null) {
                             d.packet.close()
                             continue
