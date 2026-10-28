@@ -232,6 +232,9 @@ internal class H3Session(
         }
     }
 
+    /** Writes on our critical streams that a rejected 0-RTT failed (a test hook). */
+    internal val criticalWriteFailuresForTest = kotlin.concurrent.atomics.AtomicInt(0)
+
     /** Test hook: runs on the dispatcher at the steps of each [openCriticalStreams] attempt ([AttemptStep]), with the attempt's generation. */
     internal var criticalAttemptHookForTest: (suspend (AttemptStep, Int) -> Unit)? = null
 
@@ -279,13 +282,23 @@ internal class H3Session(
                             throw e
                         } catch (e: Throwable) {
                             if (transportCause(e) !is QuicException.StreamError.EarlyDataRejected) throw e
+                            criticalWriteFailuresForTest.addAndFetch(1)
                             false
                         }
                     }
                 if (written) return@withContext
-                // the stream it was for is gone with the rejected 0-RTT
+                // the stream it was for is gone with the rejected 0-RTT. The runtime may not have reported the rejection yet
+                // (its event waits behind a flush): the handshake's end comes after it, and a connection that ends first
+                // leaves nothing to write on. Waiting here also keeps this loop from spinning on a failed stream
+                try {
+                    quic.awaitHandshake()
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Throwable) {
+                    return@withContext
+                }
                 noteRejectedZeroRttHere()
-                if (again == null || !again()) return@withContext
+                if (criticalGen == gen || again == null || !again()) return@withContext // no newer streams, or not wanted there
                 gen = criticalGen
             }
         }

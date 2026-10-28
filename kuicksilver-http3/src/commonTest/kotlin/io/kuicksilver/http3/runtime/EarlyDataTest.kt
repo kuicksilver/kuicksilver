@@ -181,13 +181,23 @@ class EarlyDataTest {
         resumerRequests: AtomicInt = AtomicInt(0),
         clientSettings: Http3Settings = Http3Settings.Default,
         responseHeaders: Http3Headers = Http3Headers.Empty,
+        /**
+         * Runs right after `connectEarly`, while the network holds the server's answers back (the client is in 0-RTT), with
+         * a function that lets them through; they go through when it returns at the latest.
+         */
+        beforeRequest: (suspend (Http3Connection, () -> Unit) -> Unit)? = null,
+        /** Sees the client's socket. */
+        clientIo: (io.kuicksilver.http3.MemoryIo) -> Unit = {},
         /** Sees the resuming client's HTTP/3 session before it starts. */
         clientSession: ((H3Session) -> Unit)? = null,
+        /** false: the test ends the connection in [beforeRequest]; no request follows and the result is null. */
+        sendRequest: Boolean = true,
         /** Runs once the early request was answered, with the client connection and the resuming server's connections. */
         after: suspend (Http3Connection, () -> List<Http3Connection>) -> Unit = { _, _ -> },
     ): Boolean? {
         val net = MemoryNet()
         val a = net.open(InetSocketAddress("10.0.0.1", 1111))
+        clientIo(a)
         val b1 = net.open(InetSocketAddress("10.0.0.2", 443))
         val b2 = net.open(InetSocketAddress("10.0.0.3", 443))
         val keys = SessionTicketConfig(keys = listOf(ByteArray(80) { 5 }))
@@ -245,6 +255,8 @@ class EarlyDataTest {
             val warm = client.connectEarly(first.localAddress, H3Fixtures.client())
             repeat(2) { assertEquals(204, warm.request(http3Request("GET", "server.test", "/")).status) } // the ticket arrives
             warm.close()
+            val holding = AtomicInt(if (beforeRequest != null) 1 else 0)
+            net.drop = { _, to, _ -> holding.load() == 1 && to == a.localAddress }
             if (clientSession != null) H3Session.createdForTest = { if (!it.isServer) clientSession(it) }
             val c =
                 try {
@@ -252,6 +264,9 @@ class EarlyDataTest {
                 } finally {
                     H3Session.createdForTest = null
                 }
+            beforeRequest?.invoke(c) { holding.store(0) }
+            holding.store(0)
+            if (!sendRequest) return null
             val request =
                 http3Request("GET", "server.test", "/") {
                     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
@@ -407,6 +422,67 @@ class EarlyDataTest {
                     }
                 assertEquals(false, accepted)
                 assertEquals(1, attempts.load(), "the first attempt's streams were live: no second one")
+            }
+        }
+
+    /**
+     * Review 2026-10-28 N2: the core dropped the critical streams, and the runtime has not reported the rejection yet (its
+     * flush waits in a socket send). A control write meanwhile fails on the dropped stream; it waits for the handshake's end
+     * instead of retrying at once, so the session's only thread stays free, and it ends once the connection does.
+     */
+    @Test fun aControlWriteInTheRejectionWindowWaitsInsteadOfSpinning(): Unit =
+        runBlocking {
+            withTimeout(30.seconds) {
+                val reached = kotlinx.coroutines.CompletableDeferred<Unit>()
+                val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
+                val conn = kotlin.concurrent.atomics.AtomicReference<Http3Connection?>(null)
+                earlyAcceptedAfterResuming(
+                    issuer = http3Settings {},
+                    resumer = http3Settings { h3Datagram = false },
+                    sendRequest = false,
+                    clientIo = { io ->
+                        io.beforeSend = {
+                            val q = conn.load()?.quic
+                            // the core completed the handshake, which reset the early streams of the rejected 0-RTT, and the runtime
+                            // has not drained that yet: the window
+                            val core = q?.core
+                            if (!reached.isCompleted && core != null && core.earlyDataAccepted == false &&
+                                core.state != ConnectionState.Handshaking && q.earlyDataAccepted == null
+                            ) {
+                                reached.complete(Unit)
+                                gate.await()
+                            }
+                        }
+                    },
+                    beforeRequest = { c, release ->
+                        conn.store(c)
+                        release()
+                        reached.await()
+                        // still wanted on a new control stream, so a write that does not wait would retry at once: counted, and
+                        // bounded so that such a spin ends the test instead of holding the session's thread for good
+                        val retries = AtomicInt(0)
+                        val write =
+                            c.session.scope.launch {
+                                runCatching {
+                                    c.session.sendControl(FrameType.GOAWAY, ControlFrames.goAwayPayload(8)) {
+                                        retries.incrementAndFetch() <
+                                            1000
+                                    }
+                                }
+                            }
+                        while (c.session.criticalWriteFailuresForTest.load() == 0) kotlinx.coroutines.yield() // it met the dropped stream
+                        withTimeout(5.seconds) { withContext(c.session.dispatcher) { kotlinx.coroutines.yield() } }
+                        assertEquals(0, retries.load(), "it retried on the failed stream instead of waiting for the handshake's end")
+                        assertTrue(!write.isCompleted, "it waits for the handshake's end")
+                        // the connection ends; its close waits behind the stalled flush, which reports the rejection and the
+                        // handshake's end first: the write asks once whether the GOAWAY is still wanted on new streams, and then
+                        // ends with the connection instead of waiting for streams that never come
+                        c.quic.close()
+                        gate.complete(Unit)
+                        withTimeout(10.seconds) { write.join() }
+                        assertEquals(1, retries.load(), "one try for the new control stream, after the handshake's end")
+                    },
+                ) { _, _ -> }
             }
         }
 

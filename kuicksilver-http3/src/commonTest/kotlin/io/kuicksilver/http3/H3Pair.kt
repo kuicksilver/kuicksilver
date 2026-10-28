@@ -97,7 +97,13 @@ internal class MemoryIo(
         return 1
     }
 
-    override suspend fun send(batch: PacketBatch): Int = trySend(batch)
+    /** Runs before each suspending send: a test stalls the loop's flush in it, as a socket without room would. */
+    @Volatile var beforeSend: (suspend () -> Unit)? = null
+
+    override suspend fun send(batch: PacketBatch): Int {
+        beforeSend?.invoke()
+        return trySend(batch)
+    }
 
     override fun trySend(batch: PacketBatch): Int {
         for (i in 0 until batch.count) net.deliver(localAddress, batch.address(i) ?: continue, batch.buffer(i).toByteArray(batch.length(i)))
