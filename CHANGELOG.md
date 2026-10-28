@@ -591,10 +591,13 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - Ktor client, HTTP/1.1: a response field folded over several lines (obs-fold, a line that starts with SP or HTAB) is
   now unfolded into one value with a space, as RFC 9112 section 5.2 requires of a user agent; Ktor's parser failed
   such a response.
-- Ktor client, HTTP/1.1: a status code must be exactly three digits in 100..599 (RFC 9112 section 4, RFC 9110 section
-  15); `HTTP/1.1 20` and `HTTP/1.1 2000` without a reason phrase and `HTTP/1.1 600` were taken as statuses 20, 2000
-  and 600, and now fail with `ParserException`. A response in `HTTP/1.2` or a later minor version is processed as
-  HTTP/1.1 (RFC 9110 section 6.2) instead of failing.
+- Ktor client, HTTP/1.1: a status code must be exactly three digits (RFC 9112 section 4); `HTTP/1.1 20` and
+  `HTTP/1.1 2000` without a reason phrase were taken as statuses 20 and 2000, and now fail with `ParserException`.
+  Three digits outside 100..599 (`HTTP/1.1 600 Six`, `HTTP/1.1 042`) are an invalid status code that a client SHOULD
+  process as a 5xx (RFC 9110 section 15): the response is a 500 whose description is the code and reason sent
+  (`600 Six`), so response validation and retries on server errors take it as one, and a 0xx is never skipped as an
+  interim response. Before, it was passed on as is, 042 looking like a success. A response in `HTTP/1.2` or a later
+  minor version is processed as HTTP/1.1 (RFC 9110 section 6.2) instead of failing.
 - Ktor client: an HTTP proxy's interim 1xx responses (100 Continue, 103 Early Hints) before its answer to `CONNECT` are
   skipped, bounded by bytes as for a request, instead of failing the tunnel with a `ProxyException` (RFC 9110 section 15.2: a
   client MUST be able to parse 1xx responses it did not expect).

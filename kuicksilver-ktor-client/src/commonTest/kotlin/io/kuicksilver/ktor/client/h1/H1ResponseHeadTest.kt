@@ -8,12 +8,15 @@ import io.ktor.http.HttpProtocolVersion
 import io.ktor.http.Url
 import io.ktor.http.cio.ParserException
 import io.ktor.utils.io.ByteChannel
+import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.ClosedReadChannelException
+import io.ktor.utils.io.readBuffer
 import io.ktor.utils.io.readLineStrict
 import io.ktor.utils.io.writeStringUtf8
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runTest
+import kotlinx.io.readString
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -180,16 +183,42 @@ class H1ResponseHeadTest {
         }
 
     /**
-     * The status code is exactly three digits (RFC 9112 section 4) in 100..599 (RFC 9110 section 15): a shorter or longer
-     * code, or one outside the range, fails the response. Before, `HTTP/1.1 20` or `HTTP/1.1 2000` without a reason
-     * phrase and `HTTP/1.1 600 X` were taken as statuses 20, 2000 and 600.
+     * The status code is exactly three digits (RFC 9112 section 4: `status-code = 3DIGIT`): a shorter or longer code
+     * fails the response. Before, `HTTP/1.1 20` or `HTTP/1.1 2000` without a reason phrase were taken as statuses 20 and
+     * 2000.
      */
     @Test fun negative_statusCodeNotThreeDigitsFails() =
         runTest(timeout = 20.seconds) {
-            for (line in listOf("HTTP/1.1 20", "HTTP/1.1 2000", "HTTP/1.1 20 OK", "HTTP/1.1 600 Six", "HTTP/1.1 099 X", "HTTP/1.1 2x0 X")) {
+            for (line in listOf("HTTP/1.1 20", "HTTP/1.1 2000", "HTTP/1.1 20 OK", "HTTP/1.1 2x0 X")) {
                 val wire = Wire()
                 server(wire) { send -> send("$line\r\nContent-Length: 0\r\n\r\n") }
                 assertFailsWith<ParserException>(line) { exchange(wire, get) }
+            }
+        }
+
+    /**
+     * Three digits outside 100..599 are an invalid status code, and "A client that receives a response with an invalid
+     * status code SHOULD process the response as if it had a 5xx (Server Error) status code" (RFC 9110 section 15): the
+     * response is a 500 whose description keeps the code and reason the server sent, its body is read by its framing,
+     * and a 0xx is not taken for an interim response. Before 0.2.1's checks such codes were passed on as they were;
+     * then they failed the response.
+     */
+    @Test fun invalidStatusCodeIsProcessedAs5xx() =
+        runTest(timeout = 20.seconds) {
+            for ((line, description) in listOf(
+                "HTTP/1.1 600 Six" to "600 Six",
+                "HTTP/1.1 999 Nine" to "999 Nine",
+                "HTTP/1.1 099 X" to "099 X",
+                "HTTP/1.1 000" to "000",
+                "HTTP/1.1 042 " to "042",
+            )) {
+                val wire = Wire()
+                server(wire) { send -> send("$line\r\nContent-Length: 3\r\n\r\nabc") }
+                exchange(wire, get) { response ->
+                    assertEquals(500, response.statusCode.value, line)
+                    assertEquals(description, response.statusCode.description, line)
+                    assertEquals("abc", (response.body as ByteReadChannel).readBuffer().readString(), line)
+                }
             }
         }
 

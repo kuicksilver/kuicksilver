@@ -92,10 +92,14 @@ internal suspend fun readResponseHeadBytes(
 }
 
 /**
- * [line] as a status line `HTTP-version SP 3DIGIT [SP reason-phrase]` (RFC 9112 section 4) with a status in 100..599
- * (RFC 9110 section 15), else [ParserException]; Ktor's parser took `HTTP/1.1 20` for status 20. The SP before an absent
- * reason phrase may be missing, as Go and OkHttp accept. `HTTP/1.x` with x above 1 is returned as `HTTP/1.1`, the highest
- * minor version this client conforms to (RFC 9110 section 6.2 SHOULD); another major version fails.
+ * [line] as a status line `HTTP-version SP 3DIGIT [SP reason-phrase]` (RFC 9112 section 4), else [ParserException];
+ * Ktor's parser took `HTTP/1.1 20` for status 20. The SP before an absent reason phrase may be missing, as Go and OkHttp
+ * accept. `HTTP/1.x` with x above 1 is returned as `HTTP/1.1`, the highest minor version this client conforms to (RFC
+ * 9110 section 6.2 SHOULD); another major version fails. Three digits outside 100..599 are an invalid status code, and
+ * "A client that receives a response with an invalid status code SHOULD process the response as if it had a 5xx (Server
+ * Error) status code" (RFC 9110 section 15): the line is returned as a 500 whose reason phrase is the code and reason
+ * the server sent (`HTTP/1.1 600 Six` as `HTTP/1.1 500 600 Six`), so Ktor's response validation, retries on server
+ * errors and the framing all take it for a 5xx, and a 0xx is never taken for an interim response.
  */
 private fun statusLineOf(line: ByteArray): ByteArray {
     fun invalid(): Nothing = throw ParserException("Invalid status line: ${line.decodeToString().take(64)}")
@@ -105,10 +109,18 @@ private fun statusLineOf(line: ByteArray): ByteArray {
     if (line.size < 12 || !HTTP_SLASH.indices.all { line[it] == HTTP_SLASH[it] }) invalid()
     if (!digit(5) || line[6] != '.'.code.toByte() || !digit(7) || line[8] != SP) invalid()
     if (!digit(9) || !digit(10) || !digit(11) || (line.size > 12 && line[12] != SP)) invalid()
-    if ((line[9] - '0'.code.toByte()) * 100 + (line[10] - '0'.code.toByte()) * 10 + (line[11] - '0'.code.toByte()) !in 100..599) invalid()
     if (line[5] != '1'.code.toByte()) throw ParserException("Unsupported HTTP version: ${line.decodeToString(0, 8)}")
-    if (line[7] <= '1'.code.toByte()) return line
-    return line.copyOf().also { it[7] = '1'.code.toByte() }
+    val code = (line[9] - '0'.code.toByte()) * 100 + (line[10] - '0'.code.toByte()) * 10 + (line[11] - '0'.code.toByte())
+    val status =
+        if (code in 100..599) {
+            line
+        } else {
+            var end = line.size
+            while (end > 9 && isOws(line[end - 1])) end--
+            line.copyOf(9) + "500 ".encodeToByteArray() + line.copyOfRange(9, end)
+        }
+    if (status[7] <= '1'.code.toByte()) return status
+    return status.copyOf().also { it[7] = '1'.code.toByte() }
 }
 
 private val HTTP_SLASH = "HTTP/".encodeToByteArray()
