@@ -99,7 +99,7 @@ internal suspend fun HeadLimitedInput.checkRequestHead() {
                         cl = checked.values("content-length"),
                     )
                 framing.fault?.let { fault ->
-                    if (framing.faultStatus == 501) throw RequestHeadRefused(501, "Not Implemented", fault)
+                    if (framing.faultStatus != 400) throw RequestHeadRefused(framing.faultStatus, framing.faultReason, fault)
                     refuse(fault)
                 }
                 throw RequestHeadRefused(301, "Moved Permanently", "An origin-form request-target with invalid characters", location)

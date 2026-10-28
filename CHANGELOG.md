@@ -141,6 +141,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- Ktor server, HTTP/1.1: a request whose `Content-Length` has 19 or more significant digits (10^18 bytes or more)
+  gets `413 Content Too Large` and the connection closes, instead of 400: RFC 9110 section 8.6 says "Any
+  Content-Length field value greater than or equal to zero is valid", so such a length is too large to process
+  (section 15.5.14), not invalid. Leading zeros no longer count towards the digits (`000000000000000000005` is 5).
 - HTTP/3 client: a server that sends GOAWAY and closes with `H3_NO_ERROR` at once no longer fails `Http3Endpoint.connect`
   or `Http3Connection.client` now and then. When both arrived in one receive batch, the close could end the session before
   the control stream's GOAWAY was applied, and the start failed with "H3_NO_ERROR from Peer" instead of returning the
