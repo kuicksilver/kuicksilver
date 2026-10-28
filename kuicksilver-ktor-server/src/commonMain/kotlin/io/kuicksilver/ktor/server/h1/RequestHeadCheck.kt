@@ -252,7 +252,7 @@ private fun checkRequestTarget(
  * the `#` with a fragment, which is what the client most likely meant (section 2.2: a reserved character and its
  * percent-encoding are not equivalent), so there is no proper encoding to redirect to. Such targets get 400.
  */
-private fun isSafeToRedirect(target: String): Boolean {
+internal fun isSafeToRedirect(target: String): Boolean {
     if ('#' in target) return false
     val path = target.substringBefore('?')
     val decoded = StringBuilder(path.length)
@@ -280,46 +280,41 @@ private fun isSafeToRedirect(target: String): Boolean {
     return !removeDotSegments(decoded.toString()).startsWith("//")
 }
 
-/** remove_dot_segments of RFC 3986 section 5.2.4 for a path that starts with `/`. */
-private fun removeDotSegments(path: String): String {
-    var input = path
-    val output = StringBuilder()
-    while (input.isNotEmpty()) {
-        when {
-            input.startsWith("/./") -> {
-                input = input.substring(2)
+/**
+ * remove_dot_segments of RFC 3986 section 5.2.4 for a path that starts with `/`, in time linear in its length (the
+ * check runs before any authentication, so it must not copy the rest of the path at every step): the segments go on a
+ * stack, `.` is dropped, `..` drops the segment before it (none above the root), and a `.` or `..` at the end leaves
+ * the path ending with `/`, as the algorithm's steps do. [copied] is told how many characters each copy takes (a test
+ * hook: the work is bounded by twice the path's length).
+ */
+internal fun removeDotSegments(
+    path: String,
+    copied: ((Int) -> Unit)? = null,
+): String {
+    val kept = ArrayList<String>()
+    var start = 1
+    while (start <= path.length) {
+        val slash = path.indexOf('/', start).let { if (it < 0) path.length else it }
+        val segment = path.substring(start, slash)
+        copied?.invoke(segment.length)
+        val last = slash == path.length
+        when (segment) {
+            "." -> {
+                if (last) kept += ""
             }
 
-            input == "/." -> {
-                input = "/"
-            }
-
-            input.startsWith("/../") || input == "/.." -> {
-                input = if (input == "/..") "/" else input.substring(3)
-                val last = output.lastIndexOf("/")
-                output.setLength(if (last < 0) 0 else last)
-            }
-
-            input == "." || input == ".." -> {
-                input = ""
-            }
-
-            input.startsWith("./") -> {
-                input = input.substring(2)
-            }
-
-            input.startsWith("../") -> {
-                input = input.substring(3)
+            ".." -> {
+                if (kept.isNotEmpty()) kept.removeAt(kept.size - 1)
+                if (last) kept += ""
             }
 
             else -> {
-                val next = input.indexOf('/', 1).let { if (it < 0) input.length else it }
-                output.append(input, 0, next)
-                input = input.substring(next)
+                kept += segment
             }
         }
+        start = slash + 1
     }
-    return output.toString()
+    return kept.joinToString("/", prefix = "/").also { copied?.invoke(it.length) }
 }
 
 /** `absolute-path [ "?" query ]` (RFC 9112 section 3.2.1, RFC 3986 section 3.3, 3.4) of a target that starts with `/`. */
