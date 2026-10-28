@@ -250,6 +250,23 @@ class H1ResponseHeadTest {
             assertEquals("\u3000c", response.headers["x-b"])
         }
 
+    /**
+     * The head is read a line at a time from what is buffered: a head that arrives one byte per write, and one that
+     * arrives with its body in a single write, are read the same, and the body bytes after the head stay for the body.
+     */
+    @Test fun headIsReadWhateverItsChunks() =
+        runTest(timeout = 20.seconds) {
+            val wire = "HTTP/1.1 200 OK\r\nX-A: a\r\n b\r\nContent-Length: 5\r\n\r\nhello"
+            for (split in listOf(true, false)) {
+                val w = Wire()
+                server(w) { send -> if (split) wire.forEach { send(it.toString()) } else send(wire) }
+                exchange(w, get) { response ->
+                    assertEquals("a b", response.headers["X-A"], "split=$split")
+                    assertEquals("hello", (response.body as ByteReadChannel).readBuffer().readString(), "split=$split")
+                }
+            }
+        }
+
     /** A status line without a reason phrase is accepted, with or without the SP before it (as Go and OkHttp). */
     @Test fun statusLineWithoutReasonPhraseIsAccepted() =
         runTest(timeout = 20.seconds) {

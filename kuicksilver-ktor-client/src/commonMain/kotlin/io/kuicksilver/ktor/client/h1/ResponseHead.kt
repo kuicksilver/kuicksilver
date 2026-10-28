@@ -8,6 +8,8 @@ import io.ktor.utils.io.ClosedReadChannelException
 import io.ktor.utils.io.InternalAPI
 import kotlinx.io.Buffer
 import kotlinx.io.EOFException
+import kotlinx.io.InternalIoApi
+import kotlinx.io.indexOf
 import kotlinx.io.readByteArray
 
 /**
@@ -16,8 +18,8 @@ import kotlinx.io.readByteArray
  * one without fields, so the head is read here first: a head cut before its empty line is incomplete (RFC 9112 section
  * 8) and fails with [ClosedReadChannelException], as a connection closed before any response does, which keeps the
  * stale-connection retry of an idempotent request. Lines end with LF, a CR before it included (section 2.2). The bytes
- * are taken one at a time up to the head's last LF: what follows (a body, a tunnel's bytes) stays in [input]. A head
- * above [maxBytes] fails with [ParserException].
+ * are taken a line at a time (a scan for LF in what is buffered) up to the head's last LF: what follows (a body, a
+ * tunnel's bytes) stays in [input]. A head above [maxBytes] fails with [ParserException].
  *
  * A control character other than HTAB anywhere in a line (NUL, a bare CR, 0x7F...) fails with [ParserException]: NUL,
  * CR and LF in a field value are invalid and dangerous and MUST be rejected or replaced, the other CTLs are invalid too
@@ -33,7 +35,7 @@ import kotlinx.io.readByteArray
  * SHOULD treat as opaque data (section 5.5), but Ktor's parser skips any Unicode whitespace before a value
  * ([responseFields] puts such values back).
  */
-@OptIn(InternalAPI::class)
+@OptIn(InternalAPI::class, InternalIoApi::class)
 internal suspend fun readResponseHeadBytes(
     input: ByteReadChannel,
     maxBytes: Int,
@@ -57,15 +59,20 @@ internal suspend fun readResponseHeadBytes(
             if (taken == 0) return null
             throw ClosedReadChannelException(EOFException("The response head ended before its empty line"))
         }
-        val from = input.readBuffer
+        val from = input.readBuffer.buffer
         while (!from.exhausted()) {
             if (taken == maxBytes) throw responseHeadTooLarge(maxBytes)
-            val b = from.readByte()
-            taken++
-            if (b != LF) {
-                line.writeByte(b)
+            // the buffered bytes up to the line's LF, never past the head's limit, in one move
+            val window = minOf(from.size, (maxBytes - taken).toLong())
+            val lf = from.indexOf(LF, 0, window)
+            if (lf < 0) {
+                from.readTo(line, window)
+                taken += window.toInt()
                 continue
             }
+            from.readTo(line, lf)
+            from.skip(1)
+            taken += lf.toInt() + 1
             var content = line.readByteArray()
             if (content.isNotEmpty() && content.last() == CR) content = content.copyOf(content.size - 1)
             content.firstOrNull { isForbiddenControl(it) }?.let {
