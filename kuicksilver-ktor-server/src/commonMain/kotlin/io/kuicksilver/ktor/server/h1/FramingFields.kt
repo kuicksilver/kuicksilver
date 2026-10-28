@@ -99,8 +99,8 @@ internal fun contentLengthOf(values: List<CharSequence>): Long? {
  * of RFC 3986 section 3.2.2: an IP-literal (`[` IPv6address or IPvFuture `]`), or a reg-name (unreserved, pct-encoded
  * and sub-delims characters, which covers IPv4 addresses), possibly empty (RFC 9112 section 3.2: an empty Host for a
  * target without an authority), and `port = *DIGIT` (section 3.2.3): digits, or none after the colon (the default
- * port). The digits must name a TCP port, at most 65535 (RFC 9110 section 4.2.1: the port of an "http" or "https" URI
- * is a TCP port), leading zeros allowed: `h:99999` is no port any connection can have.
+ * port). The digits must name a TCP port, at most 65535 (RFC 9110 sections 4.2.1 and 4.2.2: the port of an "http" or
+ * "https" URI is a TCP port), leading zeros allowed: `h:99999` is no port any connection can have.
  */
 internal fun isValidHostField(value: String): Boolean {
     val hostEnd: Int

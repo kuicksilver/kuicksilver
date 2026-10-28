@@ -51,10 +51,10 @@ internal suspend fun HeadLimitedInput.checkRequestHead() {
     var scanned = 0L
     var lineStart = 0L
     var fieldsStart = -1L
-    val headScan = HeadMethodScan()
     // the Location of a 301 the request line earned, sent once the field section is checked too
     var redirect: String? = null
     var http10 = false
+    val headScan = HeadMethodScan()
     while (true) {
         if (fieldsStart < 0 && !headScan.decided) {
             headScan.update(buffer)
