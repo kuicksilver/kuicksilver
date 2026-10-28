@@ -390,6 +390,11 @@ connections. Read or cancel every body; raise the limits only for real concurren
 the server's stream credit (MAX_STREAMS) until the request or socket timeout
 ([Ktor: Connection pool](ktor.md#connection-pool)).
 
+A WebSocket over HTTP/1.1 fails with `ConnectTimeoutException` ("The WebSocket was not connected within the connect
+timeout") when the server accepted the connection but did not answer the opening handshake within the connect timeout.
+WebSockets to one IP address connect one at a time (RFC 6455 section 4.1), so the next one to that address waited for
+this one until then.
+
 ### `H3BodyConsumed`
 
 "421 Misdirected Request from the alternative, and the request body was already consumed": a streamed

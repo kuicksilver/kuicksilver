@@ -138,7 +138,7 @@ internal class H1Pool(
     suspend fun open(
         data: HttpRequestData,
         dns: RequestDns = config.newRequestDns(),
-    ): Opened = obtain(data, keyOf(data, null), dns, null).let { Opened(it.first, it.second) }
+    ): Opened = obtain(data, keyOf(data, null), dns, null, webSocketKeys = null).let { Opened(it.connection, it.reused) }
 
     /** A connection [open] handed out and whether it came from the idle pool. */
     class Opened(
@@ -146,26 +146,40 @@ internal class H1Pool(
         val reused: Boolean,
     )
 
+    /** A connection from [obtain], whether it came from the idle pool, and the WebSocket keys it holds. */
+    private class Obtained(
+        val connection: H1Connection,
+        val reused: Boolean,
+        val held: WebSocketConnecting.Held?,
+    )
+
     /**
-     * An idle connection for [key] (second: true), else a new one once the limits allow; waiting for room and connecting
-     * share the connect timeout, as in the CIO engine ([ConnectTimeoutException]).
+     * An idle connection for [key] ([Obtained.reused]), else a new one once the limits allow; waiting for room and
+     * connecting share the connect timeout, as in the CIO engine ([ConnectTimeoutException]). For a WebSocket
+     * ([webSocketKeys] not null) the remote host's keys are taken once the pool granted a connection or the room to open
+     * one, and before a new one is opened: the connection is CONNECTING from then on (RFC 6455 section 4.1), and a
+     * WebSocket that waits for a slot holds no key.
      */
     private suspend fun obtain(
         data: HttpRequestData,
         key: String,
         dns: RequestDns,
         proxy: ResolvedProxy?,
-    ): Pair<H1Connection, Boolean> {
+        webSocketKeys: List<String>?,
+    ): Obtained {
         var conn: H1Connection? = null
         var reused = false
+        var held: WebSocketConnecting.Held? = null
         try {
             withTimeout(data.connectTimeoutMillis(config)) {
                 val idle = pool.acquire(key)
                 if (idle != null) {
                     conn = idle
                     reused = true
+                    if (webSocketKeys != null) held = webSocketConnecting.acquire(webSocketKeys)
                 } else {
                     try {
+                        if (webSocketKeys != null) held = webSocketConnecting.acquire(webSocketKeys)
                         conn =
                             connect(data, data.url, data.url.protocol.isSecure(), proxy, key, dns)
                                 .also { pool.adopt(it) }
@@ -175,13 +189,16 @@ internal class H1Pool(
                     }
                 }
             }
-        } catch (e: CancellationException) {
-            // a timeout that fired as the block returned: the connection is not handed out, so its slot comes back here
-            conn?.let { if (reused) pool.release(it) else it.close() }
-            if (e is TimeoutCancellationException) throw ConnectTimeoutException(data, e)
+        } catch (e: Throwable) {
+            held?.release()
+            if (e is CancellationException) {
+                // a timeout that fired as the block returned: the connection is not handed out, so its slot comes back here
+                conn?.let { if (reused) pool.release(it) else it.close() }
+                if (e is TimeoutCancellationException) throw ConnectTimeoutException(data, e)
+            }
             throw e
         }
-        return conn!! to reused
+        return Obtained(conn!!, reused, held)
     }
 
     /**
@@ -196,22 +213,18 @@ internal class H1Pool(
         proxy: ResolvedProxy? = null,
     ): HttpResponseData {
         @OptIn(io.ktor.utils.io.InternalAPI::class)
-        if (!data.attributes.contains(io.ktor.client.plugins.websocket.WEBSOCKETS_KEY)) {
-            return exchange(data, callContext, preopened, dns, proxy)
-        }
+        val webSocket = data.attributes.contains(io.ktor.client.plugins.websocket.WEBSOCKETS_KEY)
         // a WebSocket is CONNECTING from its connection until the server answers its handshake (RFC 6455 section 4.1)
-        return webSocketConnecting.serialized(remoteHosts(data, dns, proxy)) {
-            exchange(data, callContext, preopened, dns, proxy)
-        }
+        return exchange(data, callContext, preopened, dns, proxy, if (webSocket) remoteHosts(data, dns, proxy) else null)
     }
 
     /** One WebSocket at a time in the CONNECTING state per remote host (RFC 6455 section 4.1, step 2). */
     internal val webSocketConnecting = WebSocketConnecting()
 
     /**
-     * The remote hosts [data] may connect to, as [WebSocketConnecting] keys: the addresses of the origin when the engine
-     * resolves its name (the request's own resolution, which the connection then uses, under the connect timeout), else
-     * (an HTTP proxy, a SOCKS5 proxy that resolves names) the origin's name and port.
+     * The remote hosts [data] may connect to, as [WebSocketConnecting] keys: the IP addresses of the origin, without the
+     * port, when the engine resolves its name (the request's own resolution, which the connection then uses, under the
+     * connect timeout), else (an HTTP proxy, a SOCKS5 proxy that resolves names) the origin's name.
      */
     private suspend fun remoteHosts(
         data: HttpRequestData,
@@ -220,7 +233,7 @@ internal class H1Pool(
     ): List<String> {
         val url = data.url
         if (proxy != null && (proxy.kind != ResolvedProxy.Kind.Socks5 || proxy.remoteDns)) {
-            return listOf("name ${socketHost(url.host)}:${url.port}")
+            return listOf("name ${socketHost(url.host)}")
         }
         val addresses =
             try {
@@ -228,16 +241,24 @@ internal class H1Pool(
             } catch (e: TimeoutCancellationException) {
                 throw ConnectTimeoutException(data, e)
             }
-        return addresses.map { "address $it" }
+        return addresses.map { "address ${it.hostText}" }
     }
 
-    /** [execute] without the WebSocket rule. */
+    /**
+     * [execute]; [webSocketKeys] are the remote hosts of a WebSocket ([remoteHosts]), null for any other request. A
+     * WebSocket holds them from [obtain] until the server answered its handshake (the response head, the 101 or a
+     * refusal), or the exchange failed or was cancelled; that answer must arrive within the connect timeout, counted
+     * from the moment the connection is in hand, or the WebSocket fails with [ConnectTimeoutException]: its opening
+     * handshake is part of connecting, and a server that never answers would otherwise keep every later WebSocket to
+     * the address waiting.
+     */
     private suspend fun exchange(
         data: HttpRequestData,
         callContext: CoroutineContext,
         preopened: Opened?,
         dns: RequestDns,
         proxy: ResolvedProxy?,
+        webSocketKeys: List<String>?,
     ): HttpResponseData {
         // a request sent again over HTTP/1.1 (after a 421 or a failure over HTTP/3) leaves its HTTP/3 exchange behind:
         // HttpResponse.updatePriority must not reach that stream
@@ -259,11 +280,15 @@ internal class H1Pool(
         var given = preopened
         while (true) {
             // a connection the race just opened is fresh and never earns the stale retry; an idle one it took from the pool does
-            val (conn, reused) = given?.let { it.connection to it.reused } ?: obtain(data, key, dns, proxy)
+            val obtained = given?.let { Obtained(it.connection, it.reused, null) } ?: obtain(data, key, dns, proxy, webSocketKeys)
             given = null
+            val conn = obtained.connection
+            val reused = obtained.reused
+            var held = obtained.held
             events.emit("connectionAcquired") { connectionAcquired(data, HttpProtocolVersion.HTTP_1_1, reused) }
             var bodyJob: BodySender? = null
             try {
+                if (webSocketKeys != null && held == null) held = connectingWithin(data) { webSocketConnecting.acquire(webSocketKeys) }
                 val requestTime = GMTDate()
                 // the socket timeout measures inactivity in both directions (Ktor: "maximum time of inactivity between two
                 // data packets"): sending the request and waiting for the response head share one timer, which every
@@ -272,7 +297,8 @@ internal class H1Pool(
                 val output = activity?.let { ActivityOutput(conn.output, it) } ?: conn.output
                 val input = activity?.let { ActivityInput(conn.input, it) } ?: conn.input
                 var bodySent = false
-                val response =
+
+                suspend fun exchangeOnce(): HttpResponseData =
                     withSocketInactivityTimeout(data, activity, onExpiry = { conn.close() }) {
                         writeHeaders(
                             data,
@@ -332,6 +358,15 @@ internal class H1Pool(
                             }
                         }
                     }
+                val response =
+                    try {
+                        when (webSocketKeys) {
+                            null -> exchangeOnce()
+                            else -> connectingWithin(data, onExpiry = { conn.close() }) { exchangeOnce() }
+                        }
+                    } finally {
+                        held?.release()
+                    }
                 // a 417 to a request that waited for 100 Continue only says that something on the way does not support
                 // expectations: the request is repeated once without one (RFC 9110 section 10.1.1, as CIO); its body was
                 // never sent, so it can be. The 417's connection was closed: it promised a body it never got
@@ -342,22 +377,25 @@ internal class H1Pool(
                 }
                 return response
             } catch (e: CancellationException) {
+                held?.release()
                 conn.close()
                 events.emit("connectionReleased") { connectionReleased(data, HttpProtocolVersion.HTTP_1_1, kept = false) }
                 throw e
             } catch (e: Throwable) {
+                held?.release()
                 conn.close()
                 // every connectionAcquired gets its connectionReleased, also when the exchange failed before a response
                 events.emit("connectionReleased") { connectionReleased(data, HttpProtocolVersion.HTTP_1_1, kept = false) }
                 bodyJob?.failure?.let { throw it }
                 // a pooled connection the server already closed: one transparent retry on a fresh connection, for an
                 // idempotent request with a replayable body only (a non-idempotent one may have been processed, RFC 9112 section 9.3.1);
-                // a socket timeout is an IOException too, but a slow server, not a closed connection: it is not repeated.
+                // a socket timeout is an IOException too, but a slow server, not a closed connection: it is not repeated,
+                // nor is a WebSocket handshake the server did not answer within the connect timeout.
                 // `e !is TlsException` is intentionally not reached for a TLS failure read through the connection's channel
                 // (it arrives wrapped): a TLS failure on a reused connection is the stale-connection case this retry is for
                 if (reused && first && bodyJob == null && data.method.isIdempotent() &&
                     (e is ClosedReadChannelException || e is kotlinx.io.IOException) && e !is TlsException &&
-                    e !is SocketTimeoutException
+                    e !is SocketTimeoutException && e !is io.ktor.client.network.sockets.ConnectTimeoutException
                 ) {
                     first = false
                     events.emit("retry") { retry(data, 2, e) }
@@ -366,6 +404,31 @@ internal class H1Pool(
                 throw e
             }
         }
+    }
+
+    /**
+     * [block] within the request's connect timeout, else [ConnectTimeoutException]: a WebSocket's wait for its keys
+     * (a connection handed over by the protocol race) and for the answer to its handshake. [onExpiry] ends a wait that
+     * cancellation does not reach (the response reader runs in the call's context): it closes the connection.
+     */
+    private suspend fun <T> connectingWithin(
+        data: HttpRequestData,
+        onExpiry: () -> Unit = {},
+        block: suspend () -> T,
+    ): T {
+        val millis = data.connectTimeoutMillis(config)
+        // an Activity nobody ticks: a plain deadline
+        return Activity().within(
+            millis,
+            timeout = {
+                io.ktor.client.network.sockets.ConnectTimeoutException(
+                    "The WebSocket was not connected within the connect timeout [url=${data.url}, connect_timeout=$millis ms]",
+                    it,
+                )
+            },
+            onExpiry = onExpiry,
+            block = block,
+        )
     }
 
     /**

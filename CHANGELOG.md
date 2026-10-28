@@ -302,9 +302,14 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   no longer leaves the context without TLS 1.2 suites (OpenSSL replaces the list before it refuses one that matches
   none).
 - Ktor client: at most one WebSocket connection is in the CONNECTING state per remote host (RFC 6455 section 4.1,
-  step 2, MUST): a WebSocket over HTTP/1.1 to an address and port another one is still connecting to waits until that
-  handshake is answered or failed, also when it uses another name for the address; through a proxy that resolves names
-  the name counts as the host. Before, any number connected at once.
+  step 2, MUST: "If multiple connections to the same IP address are attempted simultaneously, the client MUST
+  serialize them"): a WebSocket over HTTP/1.1 to an IP address another one is still connecting to, on any port, waits
+  until that handshake is answered or failed, also when it uses another name for the address; through a proxy that
+  resolves names the name counts as the host. A WebSocket holds the address from the moment the pool gives it a
+  connection or the room to open one (not while it waits for a slot) until the server answers the handshake, and the
+  answer must arrive within the connect timeout (`HttpTimeout`'s, else `connectTimeout`, 10 s), counted from then, or
+  the WebSocket fails with `ConnectTimeoutException`: a server that accepts the connection and never answers holds up
+  the next WebSocket to the address for at most that long. Before, any number connected at once.
 - HTTP/3 client: any number of interim (1xx) responses is accepted before the final one, as RFC 9110 section 15.2
   requires ("A client MUST be able to parse one or more 1xx responses"); a request failed at the sixth. Endless 1xx
   still end: the decoded fields of all of a request's interim responses together are bounded by `maxFieldSectionSize`

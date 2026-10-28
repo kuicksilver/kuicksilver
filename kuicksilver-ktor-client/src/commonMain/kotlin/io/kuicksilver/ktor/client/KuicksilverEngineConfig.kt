@@ -187,7 +187,12 @@ public class KuicksilverEngineConfig : HttpClientEngineConfig() {
     @ExperimentalKuicksilverApi
     public var maxConnectionLifetime: Duration = Duration.INFINITE
 
-    /** Connect timeout when `HttpTimeout` sets none (TCP + TLS, or the QUIC handshake). */
+    /**
+     * Connect timeout when `HttpTimeout` sets none (TCP + TLS, or the QUIC handshake). A WebSocket over HTTP/1.1 is
+     * connecting until the server answers its opening handshake (RFC 6455 section 4.1): that answer must arrive within
+     * the same timeout, counted from the moment the WebSocket has its connection, else the WebSocket fails with
+     * `ConnectTimeoutException`.
+     */
     public var connectTimeout: Duration = 10.seconds
 
     /**

@@ -241,7 +241,7 @@ Guide: [Ktor: Client](ktor.md#client).
 | `maxConnectionsPerRoute` (*experimental*) | `Int` | 100 | at least 1 | HTTP/1.1 connections to one route (scheme, host, port, proxy) |
 | `idleTimeout` (*experimental*) | `Duration` | 5 min | positive | idle HTTP/1.1 connections, and HTTP/3 connections without requests, are closed after this |
 | `maxConnectionLifetime` (*experimental*) | `Duration` | infinite | positive | age after which a connection takes no new requests |
-| `connectTimeout` | `Duration` | 10 s | | connect timeout (TCP + TLS, or the QUIC handshake) when `HttpTimeout` sets none |
+| `connectTimeout` | `Duration` | 10 s | | connect timeout (TCP + TLS, or the QUIC handshake) when `HttpTimeout` sets none; a WebSocket over HTTP/1.1 also waits at most this long for the answer to its opening handshake (`ConnectTimeoutException`) |
 | `connectionAttemptDelay` (*experimental*) | `Duration` | 250 ms | 10 ms..2 s, or `Duration.INFINITE`; anything else fails the engine's creation | Happy Eyeballs (RFC 8305) for HTTP/1.1's TCP connects: the delay before the next address is tried while earlier attempts are still pending; `INFINITE` tries one address after another ([Ktor: IPv6 over TCP](ktor.md#ipv6-over-tcp-on-kotlinnative)) |
 | `logger` (*experimental*) | `KuicksilverLogger?` | `null` (keeps `http3.endpoint.logger`) | | the engine's and its QUIC endpoint's diagnostics |
 | `eventListener` (*experimental*) | `KuicksilverEventListener?` | `null` | | call, protocol, race, Alt-Svc and pool events ([Ktor: Observability](ktor.md#observability-experimental)) |
