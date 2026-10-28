@@ -867,7 +867,18 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   the site. A target whose Location could name another authority (it starts with `//`, also once `%2F`, `%5C` and
   `%2E` are decoded, `\` is read as `/` and dot segments are removed) now gets 400, as does a target with a raw `#`
   (redirected to `%23` it named another resource, RFC 3986 section 2.2). The redirect now never leaves the server;
-  valid targets that start with `//` are still served as paths.
+  valid targets that start with `//` are still served as paths. The check removes dot segments in time linear in the
+  target's length (a straight reading of RFC 3986 section 5.2.4 is quadratic, a CPU cost an unauthenticated client
+  could raise with an 8 KiB target), and whether a head is for HEAD is decided once per head, not by rescanning the
+  buffered request line on every read.
+- TLS, `ksl` C ABI (not reachable from Kotlin, whose contexts and sessions are already used this way):
+  `ksl_ssl_sni_resume` refuses an SNI override that is not a server context (`KSL_E_BAD_ARG`, the pause stays open for
+  a valid answer), and the certificate callback takes its side from the SSL, not from the owning context; a session
+  keeps the verify mode of the context it was made with, so switching an unfrozen context to `KSL_VERIFY_NONE`
+  afterwards no longer drops the reference identifier rule (ADR-0011) for it; and every session `ksl_ssl_get1_session`
+  hands out carries the verify mode it was made under, so `ksl_ssl_set_session` refuses (`KSL_E_BAD_ARG`) a session
+  made under `KSL_VERIFY_NONE`, or one ksl did not hand out, on a session that verifies: a resumed handshake carries no
+  certificate, so nothing would have verified the server.
 - Ktor server, HTTP/1.1: a CONNECT request is now always the last on its connection. A CONNECT the application
   refused (a 407, a 502 or 504, Ktor's 404 or 405 for no route, a 500 from a failing handler) left the connection
   open, so the bytes behind it, which a proxy client may send optimistically as tunnel data, were read and executed as
