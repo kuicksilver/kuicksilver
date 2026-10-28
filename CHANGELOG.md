@@ -173,6 +173,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   still receiving aborts that request with `H3_DATAGRAM_ERROR` (RFC 9297 section 2, MUST); and on a server every
   MAX_PUSH_ID after the first spends a glitch token, so a client that keeps re-sending it (some stacks send one with every
   push-credit update) meets `H3_EXCESSIVE_LOAD` once the bucket is empty (RFC 9114 section 10.5).
+- Ktor server, HTTP/1.1: a request whose `Content-Length` has 19 or more significant digits (10^18 bytes or more)
+  gets `413 Content Too Large` and the connection closes, instead of 400: RFC 9110 section 8.6 says "Any
+  Content-Length field value greater than or equal to zero is valid", so such a length is too large to process
+  (section 15.5.14), not invalid. Leading zeros no longer count towards the digits (`000000000000000000005` is 5).
 - Ktor client: a SOCKS5 proxy configured with an empty password fails with `IllegalArgumentException` at once: the
   engine's creation for its `proxy` with such `proxyCredentials` (or URL user info), `ResolvedProxy.socks5` for a
   resolver's. RFC 1929 section 2 gives PASSWD 1 to 255 octets, so PLEN 0 is outside the protocol (curl and Go send it

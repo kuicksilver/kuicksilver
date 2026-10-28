@@ -100,6 +100,37 @@ class ServerH1FramingTest {
         }
 
     /**
+     * "Any Content-Length field value greater than or equal to zero is valid" (RFC 9110 section 8.6), however many digits
+     * it has: one too large for the server to process gets `413 Content Too Large` (section 15.5.14) and the connection
+     * closes, and leading zeros are only zeros. Before, a value of 19 or more digits was invalid (400), also
+     * `000000000000000000005`.
+     */
+    @Test fun negative_contentLengthTooLargeGets413() =
+        serverTest {
+            plainServer { port ->
+                for (cl in listOf("99999999999999999999", "9223372036854775808", "1000000000000000000", "5, 99999999999999999999999")) {
+                    val resp =
+                        withTimeout(10.seconds) {
+                            rawHttp(port, "POST /echo HTTP/1.1\r\nHost: s\r\nContent-Length: $cl\r\n\r\nabcd", tls = null)
+                        }
+                    val status = if (cl.startsWith("5,")) "400" else "413"
+                    assertTrue(resp.startsWith("HTTP/1.1 $status "), "$cl: $resp")
+                    assertTrue(resp.contains("\r\nConnection: close\r\n"), "$cl: $resp")
+                }
+                val resp =
+                    withTimeout(10.seconds) {
+                        rawHttp(
+                            port,
+                            "POST /echo HTTP/1.1\r\nHost: s\r\nConnection: close\r\nContent-Length: 000000000000000000005\r\n\r\nhello",
+                            tls = null,
+                        )
+                    }
+                assertTrue(resp.startsWith("HTTP/1.1 200 "), resp)
+                assertTrue(resp.endsWith("body=hello"), resp)
+            }
+        }
+
+    /**
      * A request without Content-Length or Transfer-Encoding has no body (RFC 9112 section 6.3 item 7), also with
      * `Connection: close`. Before, the server read the connection to its end as the body, and `receiveText()` waited for
      * a half-close the client never sends.

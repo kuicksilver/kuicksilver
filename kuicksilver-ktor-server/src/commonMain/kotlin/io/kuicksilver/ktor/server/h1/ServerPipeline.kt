@@ -160,9 +160,21 @@ internal class RequestFraming private constructor(
     val chunked: Boolean,
     val contentLength: Long,
     val fault: String?,
-    /** The status that refuses a request with a [fault]: 400, or 501 for a transfer coding the server does not implement. */
+    /**
+     * The status that refuses a request with a [fault]: 400, 501 for a transfer coding the server does not implement, or
+     * 413 for a Content-Length larger than it can process.
+     */
     val faultStatus: Int = 400,
 ) {
+    /** The reason phrase of [faultStatus]. */
+    val faultReason: String
+        get() =
+            when (faultStatus) {
+                501 -> "Not Implemented"
+                413 -> "Content Too Large"
+                else -> "Bad Request"
+            }
+
     /** Whether the request has body bytes to read. */
     val hasBody: Boolean get() = fault == null && (chunked || contentLength > 0)
 
@@ -239,6 +251,8 @@ internal class RequestFraming private constructor(
             }
             if (cl.isEmpty()) return RequestFraming(chunked = false, contentLength = 0, fault = null)
             val length = contentLengthOf(cl) ?: return faulty("Invalid or conflicting Content-Length")
+            // a valid length, larger than the server can process (RFC 9110 sections 8.6 and 15.5.14)
+            if (length == CONTENT_LENGTH_TOO_LARGE) return faulty("Content-Length too large", status = 413)
             return RequestFraming(chunked = false, contentLength = length, fault = null)
         }
 
@@ -394,7 +408,11 @@ internal fun CoroutineScope.startH1Pipeline(
                 val framing = RequestFraming.of(request, fields)
                 if (framing.fault != null) {
                     request.release()
-                    if (framing.faultStatus == 501) respondStatus(actorChannel, 501, "Not Implemented") else respondBadRequest(actorChannel)
+                    if (framing.faultStatus != 400) {
+                        respondStatus(actorChannel, framing.faultStatus, framing.faultReason)
+                    } else {
+                        respondBadRequest(actorChannel)
+                    }
                     lingerAfterRefusal(actorChannel, connection, draining)
                     break
                 }
