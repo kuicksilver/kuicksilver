@@ -233,12 +233,14 @@ the gate is `tools/ci/local-matrix.sh`.
   between slices, resumes where it stopped (state in `build/fuzz-campaign/`) and gives each slice to the target with the
   least time so far. `tools/fuzz/campaign.sh status` prints hours, executions and coverage per target;
   `tools/fuzz/campaign.sh minimize` merges the grown corpora into `tools/fuzz/corpus/<target>/`, which is committed and
-  seeds later campaigns. Options: `--slice MIN`, `--goal HOURS` per target, `--goals id=HOURS,...` per target, `--hours
+  seeds later campaigns; `tools/fuzz/campaign.sh prune` instead reduces each grown corpus in place to the inputs that add
+  coverage beyond that committed corpus and the seeds. Options: `--slice MIN`, `--goal HOURS` per target, `--goals id=HOURS,...` per target, `--hours
   HOURS` of wall clock, `--jobs N` slices at once (each on its own target, default 1), `--nice N` (default 19),
   `--targets id,...` (`tools/fuzz/campaign.sh list`), `--fork N` (libFuzzer/Jazzer fork mode, N workers on the slice's
   target; default off, for a machine the campaign owns). On GitHub, *Actions → fuzz → Run workflow* (`.github/workflows/fuzz.yml`,
   dispatch only) gives every target its own runner for `hours_per_target` (`--fork` with one worker per CPU, `--nice 0`,
-  `--gap 0`), keeps each grown corpus in the Actions cache between runs, fails the target's job on a finding and uploads
+  `--gap 0`), keeps each grown corpus, pruned, in the Actions cache between runs (one entry per target and branch: the
+  `corpus-cache` job deletes the older ones), fails the target's job on a finding and uploads
   its reproducers, logs and `stats.tsv` as `fuzz-<target>`; the run summary is the `status` table. A crash you find becomes a `crash-*` input next to the seeds, a unit test that
   reproduces it and a fix; delete `build/fuzz-campaign/crashed-<target>` so the campaign takes the target again. A timeout
   is replayed first: one whose input runs in time alone (a slice starved on a busy machine) is recorded as `load-timeout`

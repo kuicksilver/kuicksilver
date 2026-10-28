@@ -12,6 +12,8 @@
 # Usage: tools/fuzz/campaign.sh [run] [options]   fuzz in slices
 #        tools/fuzz/campaign.sh status            per-target time, executions, coverage, findings
 #        tools/fuzz/campaign.sh minimize [ids]     merge the grown corpora into tools/fuzz/corpus/<id>/ (committed)
+#        tools/fuzz/campaign.sh prune [ids]        reduce the grown corpora in place to the inputs that add coverage beyond the
+#                                                  committed corpus and the seeds (.github/workflows/fuzz.yml, before it caches them)
 #        tools/fuzz/campaign.sh list              target ids
 # Options: --slice MIN (≤ 20, default 20)  --goal HOURS per target (default 2)  --goals id=HOURS,... (per-target goals
 #          that override --goal)  --hours HOURS wall clock for this invocation (default: until every selected target
@@ -62,7 +64,7 @@ seeds_dir() { # committed seed inputs (Jazzer regression inputs) of a target
 total_seconds() { [ -f "$stats" ] && awk -F'\t' -v id="$1" '$2 == id { s += $3 } END { print s + 0 }' "$stats" || echo 0; }
 
 cmd=run
-case "${1:-}" in run|status|minimize|list) cmd=$1; shift ;; esac
+case "${1:-}" in run|status|minimize|prune|list) cmd=$1; shift ;; esac
 
 if [ "$cmd" = list ]; then targets_table | awk '{ print $1 }'; exit 0; fi
 
@@ -231,26 +233,39 @@ run_slice() {
   printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$(date '+%FT%T')" "$id" "$((end - start))" "${execs:-0}" "${cov:-0}" "${ft:-0}" "$corp" "$result" >> "$stats"
 }
 
-if [ "$cmd" = minimize ]; then
+if [ "$cmd" = minimize ] || [ "$cmd" = prune ]; then
   snapshot_classpath
   for id in $selected; do
     corpus="$state/corpus/$id"; [ -d "$corpus" ] || continue
     kind=$(field "$id" 2); module=$(field "$id" 3); cls=$(field "$id" 4); method=$(field "$id" 5)
     seeds=$(seeds_dir "$id"); committed="$root/tools/fuzz/corpus/$id"; out="$state/merge/$id"
     rm -rf "$out"; mkdir -p "$out/min" "$committed"
-    # the committed seeds go in first, so the merged set keeps only inputs that add coverage beyond them; then they are removed
+    # the baseline goes in first, so the merged set keeps only inputs that add coverage beyond it; then it is removed.
+    # minimize: the seeds are the baseline, the committed and the grown corpus the inputs, the result the committed corpus;
+    # prune: the seeds and the committed corpus are the baseline, the grown corpus the input, the result the grown corpus
     [ -d "$seeds" ] && for f in "$seeds"/*; do [ -f "$f" ] && cp "$f" "$out/min/seed-baseline-$(basename "$f")"; done
+    inputs=("$committed" "$corpus")
+    if [ "$cmd" = prune ]; then
+      for f in "$committed"/*; do [ -f "$f" ] && cp "$f" "$out/min/seed-baseline-committed-$(basename "$f")"; done
+      inputs=("$corpus")
+    fi
     if [ "$kind" = jvm ]; then
       (cd "$state/work/$id" 2>/dev/null || cd "$state"; quiet java -Xmx1536m -Xss4m -XX:+UseSerialGC -cp "$(cat "$state/cp/$module.cp")" \
         com.code_intelligence.jazzer.Jazzer --target_class="$cls" --target_method="$method" \
-        --instrumentation_includes='io.kuicksilver.**' -merge=1 -timeout=60 -rss_limit_mb=3072 "$out/min" "$committed" "$corpus") \
+        --instrumentation_includes='io.kuicksilver.**' -merge=1 -timeout=60 -rss_limit_mb=3072 "$out/min" "${inputs[@]}") \
         > "$out/merge.log" 2>&1 || { echo "$id: merge failed (see $out/merge.log)"; continue; }
     else
-      quiet "$(ksl_harness)" -merge=1 "$out/min" "$committed" "$corpus" > "$out/merge.log" 2>&1 || { echo "$id: merge failed"; continue; }
+      quiet "$(ksl_harness)" -merge=1 "$out/min" "${inputs[@]}" > "$out/merge.log" 2>&1 || { echo "$id: merge failed"; continue; }
     fi
     rm -f "$out/min"/seed-baseline-*
-    rm -rf "$committed"; mkdir -p "$committed"; cp "$out/min"/* "$committed"/ 2>/dev/null || true
-    echo "$id: $(find "$corpus" -type f | wc -l | tr -d ' ') grown inputs -> $(find "$committed" -type f | wc -l | tr -d ' ') in tools/fuzz/corpus/$id"
+    before=$(find "$corpus" -type f | wc -l | tr -d ' ')
+    if [ "$cmd" = prune ]; then
+      rm -rf "$corpus"; mkdir -p "$corpus"; cp "$out/min"/* "$corpus"/ 2>/dev/null || true
+      echo "$id: $before grown inputs -> $(find "$corpus" -type f | wc -l | tr -d ' ') beyond tools/fuzz/corpus/$id and the seeds"
+    else
+      rm -rf "$committed"; mkdir -p "$committed"; cp "$out/min"/* "$committed"/ 2>/dev/null || true
+      echo "$id: $before grown inputs -> $(find "$committed" -type f | wc -l | tr -d ' ') in tools/fuzz/corpus/$id"
+    fi
   done
   exit 0
 fi

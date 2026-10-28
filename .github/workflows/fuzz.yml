@@ -3,11 +3,15 @@
 # Fuzzing campaign on GitHub-hosted runners: tools/fuzz/campaign.sh (CONTRIBUTING.md, "Fuzzing"), one runner per target.
 #
 #   prepare: target list, OpenSSL linux-x64 ── fuzz (one job per target, campaign.sh run --goal H --fork <cpus>) ── summary
+#                                                                                                              └─ corpus-cache
 #
 # Each fuzz job owns its runner, so campaign.sh runs without its laptop manners: nice 0, no gap between slices, and
 # libFuzzer/Jazzer fork mode with one worker per CPU on the job's one target (slices stay at the 20-minute maximum; every
 # slice restarts the fuzzer on the grown corpus). The grown corpus of each target persists across runs in the Actions cache
-# (fuzz-corpus-<target>-*: the newest entry is restored, a new one saved at the end of every run, crash or not);
+# (fuzz-corpus-<target>-<run>-<attempt>: the newest entry is restored, readable from main by every branch; at the end of
+# every run, crash or not, campaign.sh prune reduces it to the inputs that add coverage beyond tools/fuzz/corpus/ and the
+# seeds, and it is saved under a new key, since a cache entry cannot be replaced; the corpus-cache job, the only one with
+# actions: write, then deletes this ref's older entries, so each target keeps one entry per ref);
 # tools/fuzz/campaign.sh minimize locally is still how inputs reach tools/fuzz/corpus/. Statistics and slice logs start
 # fresh every run, so --goal is the time of this run. A finding (crash-*, a reproducible timeout-*, oom-*) fails the job;
 # the reproducers, logs and stats.tsv are the fuzz-<target> artifact, and the summary job prints the campaign.sh status
@@ -119,6 +123,13 @@ jobs:
         run: |
           n=$(find "build/fuzz-campaign/corpus/$TARGET" -type f 2>/dev/null | wc -l | tr -d ' '); echo "restored corpus: $n inputs"
           bash tools/fuzz/campaign.sh run --targets "$TARGET" --goal "$HOURS" --jobs 1 --fork "$(nproc)" --nice 0 --gap 0 --slice 20
+      - name: 'fuzz: prune the ${{ matrix.target }} corpus'   # what the cache keeps: inputs beyond the committed corpus and the seeds
+        if: always()
+        timeout-minutes: 20
+        run: |
+          [ -d "build/fuzz-campaign/corpus/$TARGET" ] || { echo "no corpus to prune"; exit 0; }
+          bash tools/fuzz/campaign.sh prune --no-build --nice 0 --targets "$TARGET" \
+            || echo "::warning::$TARGET: the corpus could not be pruned, it is cached as it grew"
       - name: 'fuzz: save the ${{ matrix.target }} corpus'
         if: always()
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -173,3 +184,25 @@ jobs:
           printf '%s\n' "$table"
           { echo "### Fuzzing, $HOURS h per target"; echo; echo '```'; printf '%s\n' "$table"; echo '```'
             echo; echo "Reproducers, logs and stats.tsv: the \`fuzz-<target>\` artifacts of this run."; } >> "$GITHUB_STEP_SUMMARY"
+
+  corpus-cache:
+    # one corpus entry per target and ref: a cache entry cannot be overwritten, so every run saves a new key and this job
+    # deletes the older ones of this run's ref (branches only read main's entries, they never delete them)
+    needs: [prepare, fuzz]
+    if: always() && needs.prepare.result == 'success'
+    runs-on: ubuntu-24.04
+    permissions: { actions: write }
+    timeout-minutes: 10
+    steps:
+      - name: 'fuzz: keep the newest corpus entry per target'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGETS: ${{ needs.prepare.outputs.targets }}
+        run: |
+          caches=$(gh cache list --repo "$GITHUB_REPOSITORY" --ref "$GITHUB_REF" --key fuzz-corpus- --limit 1000 --json id,key,createdAt)
+          for t in $(jq -r '.[]' <<< "$TARGETS"); do
+            old=$(jq -r --arg p "fuzz-corpus-$t-" '[.[] | select((.key | startswith($p)) and (.key | ltrimstr($p) | test("^[0-9]+-[0-9]+$")))]
+              | sort_by(.createdAt) | reverse | .[1:] | .[].id' <<< "$caches")
+            for id in $old; do gh cache delete --repo "$GITHUB_REPOSITORY" "$id"; done
+            echo "$t: $(wc -w <<< "$old" | tr -d ' ') older entr(y/ies) deleted"
+          done
