@@ -539,8 +539,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   `Transfer-Encoding: chunked`.
 - Ktor server, HTTP/1.1: after a 400, 501 or 505 refusal (and a 400 for a malformed chunked body) the server reads and
   drops what the client is still sending for up to 2 s before it closes, as it did after a 431 (RFC 9112 section
-  9.6: close in stages). Before, it closed over the unread rest of the request, the kernel answered with a reset, and
-  the client could lose the 400.
+  9.6: close in stages); a stopping server ends that wait at once. Before, it closed over the unread rest of the
+  request, the kernel answered with a reset, and the client could lose the 400.
 - Ktor server, HTTP/1.1: a Host field that is not `uri-host [":" port]` (`Host: a b`, `[::1`, `h:x`, `a%zz`) gets 400
   and the connection closes (RFC 9112 section 3.2: a server MUST respond with 400 to a Host with an invalid value); so
   does an absolute-form target with such an authority. Before, only `/?#@` and a trailing colon were refused, and the

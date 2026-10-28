@@ -343,7 +343,7 @@ internal fun CoroutineScope.startH1Pipeline(
                         break
                     } catch (_: RequestHeadTooLarge) {
                         respondStatus(actorChannel, 431, "Request Header Fields Too Large")
-                        lingerAfterRefusal(actorChannel, connection)
+                        lingerAfterRefusal(actorChannel, connection, draining)
                         break
                     } catch (refused: RequestHeadRefused) {
                         if (refused.status == 400) {
@@ -354,11 +354,11 @@ internal fun CoroutineScope.startH1Pipeline(
                                 closingResponsePacket(refused.status, refused.reason, refused.location, refused.body),
                             )
                         }
-                        lingerAfterRefusal(actorChannel, connection)
+                        lingerAfterRefusal(actorChannel, connection, draining)
                         break
                     } catch (_: TooLongLineException) {
                         respondBadRequest(actorChannel)
-                        lingerAfterRefusal(actorChannel, connection)
+                        lingerAfterRefusal(actorChannel, connection, draining)
                         break
                     } catch (io: IOException) {
                         throw io
@@ -366,7 +366,7 @@ internal fun CoroutineScope.startH1Pipeline(
                         throw cancelled
                     } catch (_: Throwable) {
                         respondBadRequest(actorChannel)
-                        lingerAfterRefusal(actorChannel, connection)
+                        lingerAfterRefusal(actorChannel, connection, draining)
                         break
                     } ?: break
                 headBudget = headerTimeout
@@ -377,7 +377,7 @@ internal fun CoroutineScope.startH1Pipeline(
                 if (framing.fault != null) {
                     request.release()
                     if (framing.faultStatus == 501) respondStatus(actorChannel, 501, "Not Implemented") else respondBadRequest(actorChannel)
-                    lingerAfterRefusal(actorChannel, connection)
+                    lingerAfterRefusal(actorChannel, connection, draining)
                     break
                 }
 
@@ -525,13 +525,13 @@ internal fun CoroutineScope.startH1Pipeline(
 
                         BodyOutcome.Abandoned -> {
                             // the client may still be sending the body
-                            if (body.continueWithheld) actorChannel.close() else lingerAfterRefusal(actorChannel, connection)
+                            if (body.continueWithheld) actorChannel.close() else lingerAfterRefusal(actorChannel, connection, draining)
                             break
                         }
 
                         BodyOutcome.Malformed -> {
                             // the 400 for a broken chunked body: the rest of it may still be coming
-                            lingerAfterRefusal(actorChannel, connection)
+                            lingerAfterRefusal(actorChannel, connection, draining)
                             break
                         }
 
@@ -549,7 +549,7 @@ internal fun CoroutineScope.startH1Pipeline(
                     // sent optimistically, which read as a request would be smuggled. The handler's response goes out,
                     // then the input is drained so the refusal (a 407 the client needs) is not lost to a reset
                     handlerJob.join()
-                    lingerAfterRefusal(actorChannel, connection)
+                    lingerAfterRefusal(actorChannel, connection, draining)
                     break
                 }
                 if (lastRequest) break
@@ -720,15 +720,30 @@ private suspend fun respondClosing(
  * After a response that ends the connection while the client may still be sending (a refused head, a body not read): a
  * close over unread input makes the kernel send a reset, which can destroy that response before the client reads it
  * (RFC 9112 section 9.6: servers close in stages). Lets the writer finish (and half-close), then reads and drops the
- * input for up to [LINGER] (Go's closeWriteAndWait, nginx `lingering_close`).
+ * input for up to [LINGER] (Go's closeWriteAndWait, nginx `lingering_close`), or until [draining] completes: a stopping
+ * server does not wait out the linger of every refused connection.
  */
 private suspend fun lingerAfterRefusal(
     actorChannel: Channel<ByteReadChannel>,
     connection: H1Connection,
+    draining: Job?,
 ) {
     actorChannel.close()
     try {
-        withTimeoutOrNull(LINGER) { connection.input.discard() }
+        withTimeoutOrNull(LINGER) {
+            if (draining == null) {
+                connection.input.discard()
+            } else {
+                coroutineScope {
+                    val discarded = async(start = CoroutineStart.UNDISPATCHED) { connection.input.discard() }
+                    select {
+                        discarded.onAwait {}
+                        draining.onJoin {}
+                    }
+                    discarded.cancel()
+                }
+            }
+        }
     } catch (_: IOException) {
         // the client went away: nothing left to protect the response from
     }

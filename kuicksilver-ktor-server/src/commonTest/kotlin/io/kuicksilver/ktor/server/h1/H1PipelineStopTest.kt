@@ -129,4 +129,31 @@ class H1PipelineStopTest {
                     .endsWith("late"),
             )
         }
+
+    /**
+     * A refused request head is followed by a linger: the input is read and dropped for up to 2 s so the refusal is not
+     * lost to a reset (RFC 9112 section 9.6). A stop ends that linger at once: the refusal is already written, and the
+     * server is closing its connections anyway. Before, a stop waited out the linger of every refused connection whose
+     * client kept its side open.
+     */
+    @Test fun lingerAfterARefusalEndsAtStop() =
+        runTest {
+            val draining = Job()
+            val c = pipeline(draining) { respond("ok") }
+            c.toServer.writeStringUtf8("G\u0000ET / HTTP/1.1\r\nHost: s\r\n\r\n")
+            c.toServer.flush()
+            runCurrent()
+            assertTrue(c.job.isActive, "the refused connection did not linger")
+
+            draining.complete()
+            runCurrent()
+            assertTrue(c.job.isCompleted, "the linger outlasted the stop")
+            assertEquals(0L, currentTime, "virtual time passed")
+            assertTrue(
+                c.fromServer
+                    .readBuffer()
+                    .readString()
+                    .startsWith("HTTP/1.1 400 "),
+            )
+        }
 }
