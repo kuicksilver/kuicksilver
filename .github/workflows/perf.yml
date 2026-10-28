@@ -90,10 +90,7 @@ jobs:
         run: gunzip -c interop-image.tar.gz | docker load && rm interop-image.tar.gz
       - name: Runner prerequisites
         run: |
-          sudo add-apt-repository -y ppa:wireshark-dev/stable   # the runner needs tshark 4.5 or later (its README); Ubuntu 24.04 ships 4.2
-          sudo apt-get update -q
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends tshark python3-venv jq
-          tshark --version | head -1
+          bash tools/ci/interop-host.sh tshark jq   # the runner needs tshark 4.5 or later (its README); Ubuntu 24.04 ships 4.2
           sudo modprobe ip6table_filter   # the simulator's IPv6 network
       - name: 'perf: kuicksilver vs ${{ matrix.peer }}'
         env:
