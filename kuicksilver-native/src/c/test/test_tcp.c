@@ -806,24 +806,26 @@ static void test_key_update_epoch_is_bounded(void) {
 static void test_client_keeps_every_ticket(void) {
     SECTION("tcp_client_keeps_every_ticket");
     /* RFC 9846 appendix C.4: "Servers that issue tickets SHOULD offer at least as many tickets as the number of connections that a
-       client might use". Two tickets that arrive in one read are both handed out by ksl_ssl_get1_session, oldest first, and each
-       resumes a connection of its own. */
+       client might use; for example, a web browser using HTTP/1.1 [RFC9112] might open six connections to a server". Six tickets
+       that arrive in one read are all handed out by ksl_ssl_get1_session, oldest first, and each resumes a connection of its own. */
     uint8_t keys[80]; for (int i = 0; i < 80; i++) keys[i] = (uint8_t)(i * 5 + 9);
-    ksl_ctx *cc = client_ctx("test-ca", KSL_VERIFY_OPENSSL), *sc = server_ctx("server"); ksl_ctx_set_option(sc, KSL_OPT_NUM_TICKETS, 2); ksl_ctx_set_ticket_keys(sc, keys, 1);
+    ksl_ctx *cc = client_ctx("test-ca", KSL_VERIFY_OPENSSL), *sc = server_ctx("server"); ksl_ctx_set_option(sc, KSL_OPT_NUM_TICKETS, 6); ksl_ctx_set_ticket_keys(sc, keys, 1);
     ksl_ssl *c = tcp_client(cc, "server.test"), *s = ksl_ssl_new(sc, KSL_MODE_TCP);
     CHECK(tcp_pump(c, s, NULL, NULL) == KSL_OK, "full handshake");
-    uint8_t buf[16]; size_t n; ksl_tcp_read(c, buf, sizeof buf, &n);   /* both NewSessionTickets in one read */
-    ksl_session *t1 = ksl_ssl_get1_session(c), *t2 = ksl_ssl_get1_session(c), *t3 = ksl_ssl_get1_session(c);
-    CHECK(t1 && t2 && t1 != t2, "two tickets, one after the other");
-    CHECK(t3 == t2, "then the current session again");
+    uint8_t buf[16]; size_t n; ksl_tcp_read(c, buf, sizeof buf, &n);   /* the six NewSessionTickets in one read */
+    ksl_session *ts[6]; int distinct = 1; for (int i = 0; i < 6; i++) { ts[i] = ksl_ssl_get1_session(c); for (int j = 0; j < i; j++) distinct = distinct && ts[i] && ts[i] != ts[j]; }
+    ksl_session *t7 = ksl_ssl_get1_session(c);
+    CHECK(ts[0] && distinct, "six tickets, one after the other");
+    CHECK(t7 == ts[5], "then the current session again");
     ksl_ssl_free(c); ksl_ssl_free(s);
-    ksl_session *ts[2] = {t1, t2}; uint8_t reused;
-    for (int i = 0; i < 2; i++) {
+    uint8_t reused;
+    for (int i = 0; i < 6; i++) {
         c = tcp_client(cc, "server.test"); s = ksl_ssl_new(sc, KSL_MODE_TCP); ksl_ssl_set_session(c, ts[i]);
         CHECK(tcp_pump(c, s, NULL, NULL) == KSL_OK && ksl_ssl_get(s, KSL_GET_SESSION_REUSED, &reused, 1, &n) == KSL_OK && reused == 1, "each ticket resumes");
         ksl_ssl_free(c); ksl_ssl_free(s);
     }
-    ksl_session_free(t1); ksl_session_free(t2); ksl_session_free(t3); ksl_ctx_free(cc); ksl_ctx_free(sc); END();
+    for (int i = 0; i < 6; i++) ksl_session_free(ts[i]);
+    ksl_session_free(t7); ksl_ctx_free(cc); ksl_ctx_free(sc); END();
 }
 
 #define TLS12_PROFILE_FOR_TEST "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305"

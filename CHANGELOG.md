@@ -410,10 +410,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - TLS: a received `general_error` alert (117, RFC 9846 section 6.2) is reported by that name instead of `alert_117`, and
   in TLS 1.3 an error alert the peer sent at level warning is reported as `TlsException.AlertReceived` with its code
   instead of a generic protocol error (RFC 9846 section 6: error alerts count regardless of their level).
-- TLS over TCP: a server now issues two session tickets after a full handshake (also the explicit post-verdict ones of a
-  pinned-client server), and a client keeps up to four per origin, each used once, so parallel HTTP/1.1 connections to one
-  origin each resume (RFC 9846 appendix C.4, SHOULD). Before, one ticket per connection and one per origin meant only one
-  of them resumed. A QUIC origin still keeps its newest ticket only.
+- TLS over TCP: a server now issues six session tickets after a full handshake (also the explicit post-verdict ones of a
+  pinned-client server), and a client keeps up to six per origin, each used once, so up to six parallel HTTP/1.1
+  connections to one origin each resume (RFC 9846 appendix C.4, SHOULD, whose example is a browser's six HTTP/1.1
+  connections). Before, one ticket per connection and one per origin meant only one of them resumed. A QUIC origin still
+  keeps its newest ticket only.
 - TLS over TCP: `TlsConnection.keyUpdate(requestPeer = true)` called again before the peer answered the previous request
   now updates only our key (`update_not_requested`) instead of asking the peer again (RFC 9846 section 4.7.3, MUST). A
   KeyUpdate of the peer's that had already arrived when the request left is not taken for the answer.

@@ -140,11 +140,12 @@ static int abort_ext_add_cb(SSL *ssl, unsigned int type, const unsigned char **o
 }
 /* A TCP client keeps every NewSessionTicket until ksl_ssl_get1_session hands it out: a server sends several (RFC 9846 appendix C.4:
    "at least as many tickets as the number of connections that a client might use"), and two that arrive in one read would leave
-   only the last one as the session's current one. At most four are kept (the oldest goes first). */
+   only the last one as the session's current one. At most KSL_CLIENT_TICKETS are kept, six as the RFC's example (the oldest goes
+   first). */
 static int new_session_cb(SSL *ssl, SSL_SESSION *sess) {
     ksl_ssl *s = SSL_get_ex_data(ssl, 1);
     if (!s || s->mode != KSL_MODE_TCP || !SSL_SESSION_is_resumable(sess)) return 0;
-    if (s->new_sessions_n == 4) { SSL_SESSION_free(s->new_sessions[0]); memmove(s->new_sessions, s->new_sessions + 1, 3 * sizeof *s->new_sessions); s->new_sessions_n--; }
+    if (s->new_sessions_n == KSL_CLIENT_TICKETS) { SSL_SESSION_free(s->new_sessions[0]); memmove(s->new_sessions, s->new_sessions + 1, (KSL_CLIENT_TICKETS - 1) * sizeof *s->new_sessions); s->new_sessions_n--; }
     s->new_sessions[s->new_sessions_n++] = sess;
     return 1;   /* the reference is ours */
 }

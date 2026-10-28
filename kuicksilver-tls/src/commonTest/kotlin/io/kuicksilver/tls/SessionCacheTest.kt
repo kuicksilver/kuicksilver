@@ -92,17 +92,17 @@ class SessionCacheTest {
     @Test fun severalTicketsPerOrigin(): Unit =
         runBlocking {
             val cache = SessionCache()
-            val es = List(5) { SessionCache.Entry(0L, emptyList(), emptyList()) }
+            val es = List(7) { SessionCache.Entry(0L, emptyList(), emptyList()) }
             es.forEach { cache.put("k", it) }
-            assertEquals(4, cache.size(), "four tickets per origin")
-            assertTrue(es[0].closed && !es[1].closed, "the oldest beyond four is released")
-            assertTrue(cache.take("k") === es[4] && cache.take("k") === es[3], "the newest first, each once")
-            assertEquals(2, cache.size())
+            assertEquals(6, cache.size(), "six tickets per origin, as the RFC's example of six HTTP/1.1 connections")
+            assertTrue(es[0].closed && !es[1].closed, "the oldest beyond six is released")
+            assertTrue(cache.take("k") === es[6] && cache.take("k") === es[5], "the newest first, each once")
+            assertEquals(4, cache.size())
             val cfg = Fixtures.client()
             val q1 = QuicSessionTicket(SessionCache.Entry(0L, emptyList(), emptyList()))
             cache.putQuic(cfg, q1)
             cache.putQuic(cfg, QuicSessionTicket(SessionCache.Entry(0L, emptyList(), emptyList())))
-            assertTrue(q1.entry.closed && cache.size() == 3, "a QUIC origin keeps only its newest ticket")
+            assertTrue(q1.entry.closed && cache.size() == 5, "a QUIC origin keeps only its newest ticket")
         }
 
     /** A QUIC ticket is taken once (RFC 9846 appendix C.4) and only while its cached chain still passes the current trust. */

@@ -282,7 +282,7 @@ public class TlsConnection private constructor(
                 val r = Verification(effective).pinCheck(validated())
                 if (r is VerifyResult.Rejected) abort(TlsException.Verify(r.reason, presented))
             }
-            // explicit tickets: after the pin verdict (never before), two after a full handshake as KslContext's count for the other
+            // explicit tickets: after the pin verdict (never before), six after a full handshake as KslContext's count for the other
             // servers (RFC 9846 appendix C.4), and one after a resumption (client tickets are single-use)
             if (pinnedClients || reused) {
                 lock.withLock { repeat(if (reused) 1 else TCP_TICKETS) { Ksl.sslNewSessionTicket(s()) } }
@@ -659,9 +659,11 @@ public class TlsConnection private constructor(
 
         /**
          * Tickets a TCP server issues after a full handshake: RFC 9846 appendix C.4, "Servers that issue tickets SHOULD offer at least
-         * as many tickets as the number of connections that a client might use"; every resumption then brings one more.
+         * as many tickets as the number of connections that a client might use; for example, a web browser using HTTP/1.1 [RFC9112]
+         * might open six connections to a server". Six, the RFC's example; every resumption then brings one more, so a client
+         * keeps as many as it uses at once. A server cannot see the client's parallelism before the connections arrive.
          */
-        internal const val TCP_TICKETS: Int = 2
+        internal const val TCP_TICKETS: Int = 6
 
         /**
          * Runs a client handshake over [transportIn]/[transportOut] and returns once it completed and the server passed
@@ -820,8 +822,11 @@ public class SessionCache(
         /** Sessions a cache keeps before the oldest is evicted. */
         public const val DEFAULT_MAX_ENTRIES: Int = 256
 
-        /** Tickets kept per TCP origin (RFC 9846 appendix C.4: one for each of the client's parallel connections); a QUIC origin keeps one. */
-        internal const val TICKETS_PER_ORIGIN: Int = 4
+        /**
+         * Tickets kept per TCP origin (RFC 9846 appendix C.4: one for each of the client's parallel connections; six, as a server's
+         * [TlsConnection.TCP_TICKETS]); a QUIC origin keeps one.
+         */
+        internal const val TICKETS_PER_ORIGIN: Int = 6
         private const val TTL_SECONDS = 7L * 24 * 3600
 
         /** The cache of connections opened without an engine (`TlsConnection.client`, `Socket.tls`). */

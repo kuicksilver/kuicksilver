@@ -948,17 +948,17 @@ class SessionResumptionTest {
 
     /**
      * RFC 9846 appendix C.4: "Servers that issue tickets SHOULD offer at least as many tickets as the number of connections that
-     * a client might use". A TCP full handshake leaves two tickets, so two connections opened together both resume.
+     * a client might use; for example, a web browser using HTTP/1.1 [RFC9112] might open six connections to a server". A TCP
+     * full handshake leaves six tickets, so six connections opened together all resume.
      */
-    @Test fun twoConnectionsResumeFromOneFullHandshake() {
+    @Test fun sixConnectionsResumeFromOneFullHandshake() {
         val client = TcpFixtures.client()
         val server = TcpFixtures.server()
         val (_, r1) = once(client, server)
         assertTrue(!r1, "first connection is a full handshake")
-        assertEquals(2, runBlocking { SessionCache.Default.size() }, "the full handshake left two tickets")
-        val (_, r2) = once(client, server, exchange = false)
-        val (_, r3) = once(client, server, exchange = false)
-        assertTrue(r2 && r3, "both connections resumed")
+        assertEquals(6, runBlocking { SessionCache.Default.size() }, "the full handshake left six tickets")
+        val resumed = List(6) { once(client, server, exchange = false).second }
+        assertTrue(resumed.all { it }, "all six connections resumed: $resumed")
     }
 
     @Test fun ticketIsSingleUse() {

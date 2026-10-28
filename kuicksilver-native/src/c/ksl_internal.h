@@ -16,6 +16,7 @@
 #define KSL_NLEVELS 4
 #define KSL_QUIC_LEVEL_MAX (256u * 1024u)   /* unread CRYPTO bytes ksl holds per level (ksl_quic_provide) */
 #define KSL_MSG 512
+#define KSL_CLIENT_TICKETS 6   /* tickets a TCP client session keeps until they are handed out (ksl_ctx.c new_session_cb) */
 
 typedef struct { uint8_t *buf; size_t len, cap, consumed; } ksl_inbuf;
 
@@ -58,7 +59,7 @@ struct ksl_ssl {
     BIO *net;                                        /* our end of the bio pair */
     int abort_alert;                                 /* ksl_tcp_abort: the next ticket (server) or ClientHello (client) fails with internal_error */
     uint8_t *pending_write; size_t pending_write_len;   /* a copy of the record ksl_tcp_write left pending in OpenSSL (WANT_READ), for ksl_tcp_abort */
-    SSL_SESSION *new_sessions[4]; int new_sessions_n;   /* client: tickets not yet handed out by ksl_ssl_get1_session, oldest first */
+    SSL_SESSION *new_sessions[KSL_CLIENT_TICKETS]; int new_sessions_n;   /* client: tickets not yet handed out by ksl_ssl_get1_session, oldest first */
     uint64_t key_updates_sent, key_update_limit;     /* KeyUpdates written; the bound (RFC 9846 4.7.3), 0 = KSL_MAX_KEY_UPDATES */
     int key_updates_exhausted, update_requested_pending;   /* the bound was reached: no more KeyUpdates of ours; our update_requested awaits the peer's KeyUpdate */
     uint64_t fed, update_requested_at;              /* ciphertext bytes fed (ksl_tcp_feed); how many had been when our update_requested was written */

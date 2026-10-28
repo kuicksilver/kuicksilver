@@ -28,7 +28,7 @@ class EngineSessionCacheTest {
                 val engine = client.engine as KuicksilverEngine
                 assertEquals("ok", client.get("https://127.0.0.1:$port/").bodyAsText())
                 withTimeout(10.seconds) { while (engine.h1.sessions.size() == 0) yield() } // the ticket lands from the reader pump
-                assertTrue(engine.h1.sessions.size() in 1..2, "the tickets are in the engine's cache (two per full handshake)")
+                assertTrue(engine.h1.sessions.size() in 1..6, "the tickets are in the engine's cache (six per full handshake)")
                 assertEquals(0, SessionCache.Default.size(), "and not in the process-wide one")
                 client.close()
                 engine.cleanup.join()
