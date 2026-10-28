@@ -257,7 +257,7 @@ internal fun checkRequestLine(line: ByteArray): RequestLineCheck {
  * section: a server MUST reject a CONNECT to an empty or invalid port); the asterisk-form for OPTIONS only; else the origin-form
  * (`absolute-path [ "?" query ]`) or the absolute-form (an absolute-URI: no fragment). Characters follow RFC 3986:
  * path and query characters, `%` with two hex digits. Anything else is an invalid request line, which the server SHOULD
- * answer with 400 or with a 301 to the request-target properly encoded (RFC 9112 section 3): the 301 for an origin-form
+ * answer with 400 or with a 301 to the request-target properly encoded (RFC 9112 section 3.2): the 301 for an origin-form
  * target of a GET or HEAD whose only fault is characters (browsers send `|`, `{`, `^`, `[` unencoded: the WHATWG URL
  * standard leaves them) and whose Location stays on this server ([isSafeToRedirect]), 400 otherwise. Returns that
  * Location for a 301, null for a valid target.
