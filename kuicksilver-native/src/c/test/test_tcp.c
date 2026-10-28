@@ -416,6 +416,37 @@ static void test_key_update_before_record_limit(void) {
     ksl_ssl_free(c); ksl_ssl_free(s); ksl_ctx_free(cc); ksl_ctx_free(sc); END();
 }
 
+/* Moves from a to b as much ciphertext as b's end of the pair has room for (shuttle drops what does not fit) */
+static size_t shuttle_room(ksl_ssl *a, ksl_ssl *b) {
+    uint8_t buf[4096]; size_t total = 0, n, used, room;
+    while ((room = BIO_ctrl_get_write_guarantee(b->net)) > 0 && ksl_tcp_drain(a, buf, room < sizeof buf ? room : sizeof buf, &n) == KSL_OK && n) {
+        for (size_t off = 0; off < n; off += used) if (ksl_tcp_feed(b, buf + off, n - off, &used) != KSL_OK || !used) return total;
+        total += n;
+    }
+    return total;
+}
+static void test_pending_write_retried_from_a_copy(void) {
+    SECTION("tcp_pending_write_retried_from_another_buffer");
+    /* A write the BIO pair had no room for stays pending in OpenSSL; its retry comes with the same bytes from another buffer (the JNI
+       layer copies each call's bytes into a fresh one). Without SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER OpenSSL refused it with bad write
+       retry and failed the session. */
+    static uint8_t big[16384]; for (size_t i = 0; i < sizeof big; i++) big[i] = (uint8_t)(i * 3);
+    ksl_ctx *cc = client_ctx("test-ca", KSL_VERIFY_OPENSSL), *sc = server_ctx("server"); size_t n;
+    ksl_ssl *c = tcp_client(cc, "server.test"), *s = ksl_ssl_new(sc, KSL_MODE_TCP);
+    CHECK(tcp_pump(c, s, NULL, NULL) == KSL_OK, "TLS 1.3 handshake");
+    uint8_t *copy = malloc(sizeof big); memcpy(copy, big, sizeof big);
+    CHECK(ksl_tcp_write(s, big, sizeof big, &n) == KSL_OK && n == sizeof big, "one record fills the pair");
+    CHECK(ksl_tcp_write(s, big, sizeof big, &n) == KSL_WANT_READ && n == 0, "the next one is pending");
+    shuttle(s, c); CHECK(ksl_tcp_write(s, copy, sizeof big, &n) == KSL_OK && n == sizeof big, "its retry from a copy completes it");
+    uint8_t got[16384]; size_t total = 0, r; int same = 1;
+    for (int i = 0; i < 10 && total < 2 * sizeof big; i++) {
+        shuttle_room(s, c);
+        while (ksl_tcp_read(c, got, sizeof got, &r) == KSL_OK && r) { for (size_t j = 0; j < r; j++) same = same && got[j] == big[(total + j) % sizeof big]; total += r; }
+    }
+    CHECK(total == 2 * sizeof big && same, "the client reads both records intact");
+    free(copy); ksl_ssl_free(c); ksl_ssl_free(s); ksl_ctx_free(cc); ksl_ctx_free(sc); END();
+}
+
 /* Moves a's pending ciphertext to b with the legacy_version of the first record's hello (bytes 9-10: record header 5, handshake
    header 4) set to v */
 static void shuttle_patched(ksl_ssl *a, ksl_ssl *b, uint16_t v) {
@@ -525,4 +556,4 @@ static void test_default_versions_and_tls12_profile(void) {
     END();
 }
 
-void run_tcp(void) { test_echo(); test_truncation(); test_tls12(); test_resumption(); test_sni_pause(); test_sni_override_alpn(); test_sni_override_settings_effective(); test_no_tls12_ticket_without_num_tickets(); test_session_context(); test_ticket_bound_to_server_name(); test_keyless_server_no_tickets(); test_server_acknowledges_server_name(); test_key_update_before_record_limit(); test_legacy_version_must_be_0303(); test_key_update_request_waits_for_the_peer(); test_key_update_epoch_is_bounded(); test_default_versions_and_tls12_profile(); }
+void run_tcp(void) { test_echo(); test_truncation(); test_tls12(); test_resumption(); test_sni_pause(); test_sni_override_alpn(); test_sni_override_settings_effective(); test_no_tls12_ticket_without_num_tickets(); test_session_context(); test_ticket_bound_to_server_name(); test_keyless_server_no_tickets(); test_server_acknowledges_server_name(); test_key_update_before_record_limit(); test_legacy_version_must_be_0303(); test_key_update_request_waits_for_the_peer(); test_key_update_epoch_is_bounded(); test_default_versions_and_tls12_profile(); test_pending_write_retried_from_a_copy(); }

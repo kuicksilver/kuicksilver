@@ -185,6 +185,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - TLS over TCP: a connection updates its sending key (TLS 1.3 KeyUpdate) every 2^23 records it wrote, before the AES-GCM
   record limit of RFC 9846 section 5.5 (MUST since RFC 9846; 2^24.5 records, about 384 GiB at full size). OpenSSL never does so by itself, so a
   very long-lived bulk connection kept one key for good.
+- TLS over TCP on the JVM and Android: a write the transport had no room for is retried with the same bytes from
+  another buffer (the JNI layer copies each call's bytes), and OpenSSL refused that retry with `bad write retry`
+  (`SSL_R_BAD_WRITE_RETRY`), failing the connection with "ksl: TLS error". It took a full 16 KiB write behind a record
+  that left the transport short of room, such as a server's session ticket after a pinned client certificate. TCP
+  sessions now set `SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER`; `ksl_tcp_write` accepts the retry from any buffer holding the
+  same bytes.
 - TLS server: a server that used the client's server name now acknowledges it with an empty `server_name` extension
   (in EncryptedExtensions for TLS 1.3, in the ServerHello of a full TLS 1.2 handshake), as RFC 6066 section 3 requires;
   before, the extension was never sent. Also on an SNI override and on QUIC.

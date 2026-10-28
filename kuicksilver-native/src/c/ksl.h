@@ -230,6 +230,7 @@ int      ksl_quic_peek_event(ksl_ssl *, ksl_event *out);  /* same without consum
 /* --- TLS over TCP through memory --- */
 int      ksl_tcp_feed(ksl_ssl *, const uint8_t *ciphertext, size_t len, size_t *consumed);
 int      ksl_tcp_drain(ksl_ssl *, uint8_t *out, size_t cap, size_t *written);
+/* KSL_WANT_READ when the pair has no room: drain it and retry with the same bytes, from this or another buffer */
 int      ksl_tcp_write(ksl_ssl *, const uint8_t *plaintext, size_t len, size_t *consumed);
 int      ksl_tcp_read(ksl_ssl *, uint8_t *out, size_t cap, size_t *read);  /* KSL_EOF after close_notify */
 int      ksl_tcp_shutdown(ksl_ssl *);                                       /* sends close_notify; KSL_OK when the peer's arrived */
