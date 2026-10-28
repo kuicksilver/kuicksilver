@@ -8,11 +8,15 @@
 #   ghcr.io/kuicksilver/kuicksilver-interop:<version>          JVM endpoint (the manylinux libksl.so built in the
 #   ghcr.io/kuicksilver/kuicksilver-interop-native:<version>   OpenSSL image), Kotlin/Native endpoint
 #
-# plus :latest on both for a final version (a prerelease such as 0.3.0-rc1 gets only its own tag). linux/amd64 only, like
+# plus :latest on both for a final version not older than the highest final version already published (a prerelease such
+# as 0.3.0-rc1 gets only its own tag, and a patch of an older line leaves :latest where it is). linux/amd64 only, like
 # the images build.yml tests (the online runner at interop.seemann.io needs amd64). The images themselves are what
 # tools/interop/build-image.sh builds (same Dockerfiles, same run_endpoint.sh contract: ROLE, TESTCASE, REQUESTS, ...);
 # this workflow only adds the OCI labels (a FROM-only build on top) and pushes. Run it on the tag v<version> after the
-# release is published; main and release/<X.Y>.x are accepted too (the image is then built from that branch's head).
+# release is published: a final version is built from its tag only, a prerelease also from main or release/<X.Y>.x; a
+# version whose image is in the registry already is refused (GHCR tags are mutable). The input force lifts both: it builds
+# a final version from main or release/<X.Y>.x and replaces a published tag. tools/ci/interop-image-gate.sh decides, in the
+# gate job and again right before the push (another run may have pushed meanwhile).
 # The first push creates the two packages private: set each one's visibility to public once (package settings).
 name: interop-image
 on:
@@ -22,12 +26,22 @@ on:
         description: released version the images are tagged with (e.g. 0.2.1); run on the tag v<version>
         required: true
         type: string
+      force:
+        description: build a final version from main or release/<X.Y>.x, and replace its images if published already
+        required: false
+        default: false
+        type: boolean
   workflow_call:
     inputs:
       version:
         description: released version the images are tagged with
         required: true
         type: string
+      force:
+        description: build a final version from main or release/<X.Y>.x, and replace its images if published already
+        required: false
+        default: false
+        type: boolean
 permissions:
   contents: read
 concurrency:
@@ -40,25 +54,22 @@ defaults:
 jobs:
   gate:
     runs-on: ubuntu-24.04
-    permissions: { contents: read }
+    permissions:
+      contents: read
+      packages: read   # the registry's tags of both images
     timeout-minutes: 5
-    outputs:
-      latest: ${{ steps.check.outputs.latest }}
     steps:
-      - name: 'interop-image: version and ref'
-        id: check
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - name: 'interop-image: version, ref, checkout and registry'
         env:
           VERSION: ${{ inputs.version }}
           REF: ${{ github.ref }}
-        run: |
-          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta|rc)\.?[0-9]+)?$ ]] || { echo "::error::version '$VERSION' is not X.Y.Z[-alpha|beta|rcN]"; exit 1; }
-          case "$REF" in
-            "refs/tags/v$VERSION") ;;
-            refs/heads/main|refs/heads/release/*) echo "::warning::building $VERSION from $REF, not from the tag v$VERSION" ;;
-            *) echo "::error::interop images are built from the tag v$VERSION, main or release/<X.Y>.x, not $REF"; exit 1 ;;
-          esac
-          # :latest follows the newest final version only
-          if [[ "$VERSION" == *-* ]]; then echo "latest=false" >> "$GITHUB_OUTPUT"; else echo "latest=true" >> "$GITHUB_OUTPUT"; fi
+          FORCE: ${{ inputs.force && 'true' || 'false' }}
+          OWNER: ${{ github.repository_owner }}
+          GITHUB_TOKEN: ${{ github.token }}
+          ACTOR: ${{ github.actor }}
+        run: bash tools/ci/interop-image-gate.sh "$VERSION" "$REF" "$FORCE" "$OWNER"
 
   images:
     needs: gate
@@ -100,11 +111,10 @@ jobs:
         env:
           REVISION: ${{ github.sha }}
           SOURCE: ${{ github.server_url }}/${{ github.repository }}
-          LATEST: ${{ needs.gate.outputs.latest }}
         run: |
           created=$(date -u +%Y-%m-%dT%H:%M:%SZ)
           label() { # <local image> <registry name> <description>: the local image plus labels only (no layer), tagged for the registry
-            local tags=(-t "$REGISTRY/$2:$VERSION"); [ "$LATEST" = true ] && tags+=(-t "$REGISTRY/$2:latest")
+            local tags=(-t "$REGISTRY/$2:$VERSION")
             docker build --platform linux/amd64 "${tags[@]}" \
               --label "org.opencontainers.image.source=$SOURCE" \
               --label "org.opencontainers.image.url=$SOURCE" \
@@ -126,15 +136,22 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           ACTOR: ${{ github.actor }}
-          LATEST: ${{ needs.gate.outputs.latest }}
+          REF: ${{ github.ref }}
+          FORCE: ${{ inputs.force && 'true' || 'false' }}
+          OWNER: ${{ github.repository_owner }}
         run: |
+          # the gate again, on the registry as it is now (another version's run may have pushed since the gate job)
+          gate=$(bash tools/ci/interop-image-gate.sh "$VERSION" "$REF" "$FORCE" "$OWNER") || { printf '%s\n' "$gate"; exit 1; }
+          printf '%s\n' "$gate" | grep -v '^latest=' || true
+          latest=$(sed -n 's/^latest=//p' <<< "$gate")
+          [ "$latest" = true ] || [ "$latest" = false ] || { echo "::error::interop-image: the gate gave no :latest decision"; exit 1; }
           echo "$GITHUB_TOKEN" | docker login ghcr.io -u "$ACTOR" --password-stdin
           trap 'docker logout ghcr.io' EXIT
           { echo "### Interop images $VERSION"; echo; echo '| image | digest |'; echo '|---|---|'; } >> "$GITHUB_STEP_SUMMARY"
           for n in kuicksilver-interop kuicksilver-interop-native; do
-            tags=("$VERSION"); [ "$LATEST" = true ] && tags+=(latest)
-            for t in "${tags[@]}"; do docker push "$REGISTRY/$n:$t"; done
+            docker push "$REGISTRY/$n:$VERSION"
+            if [ "$latest" = true ]; then docker tag "$REGISTRY/$n:$VERSION" "$REGISTRY/$n:latest" && docker push "$REGISTRY/$n:latest"; fi
             digest=$(docker image inspect -f '{{index .RepoDigests 0}}' "$REGISTRY/$n:$VERSION")
-            also=""; [ "$LATEST" = true ] && also=", \`:latest\`"
+            also=""; [ "$latest" = true ] && also=", \`:latest\`"
             echo "| \`$REGISTRY/$n:$VERSION\`$also | \`$digest\` |" >> "$GITHUB_STEP_SUMMARY"
           done
