@@ -5,6 +5,7 @@
 package io.kuicksilver.ktor.network
 
 import io.ktor.network.sockets.InetSocketAddress
+import kotlin.time.Duration
 
 /*
  * The system calls of the native TCP sockets (TcpSockets.native.kt): POSIX on Linux and Apple, Winsock on Windows. Every
@@ -27,6 +28,16 @@ internal expect val bsdSockaddr: Boolean
  * arrives after `SD_RECEIVE`, which can destroy a response still to be written. At the end of the stream it always does.
  */
 internal expect val tcpShutdownReadBeforeEnd: Boolean
+
+/**
+ * How long the read loop waits for the selector to report data or the end of the stream before it tries the receive
+ * again, or null to wait until it does. ktor-network's selector on Windows (`WSAEventSelect`, `WSAEnumNetworkEvents`)
+ * takes in a socket's events whenever it watches the socket, for any interest, and completes only the waits that match:
+ * an `FD_READ` or `FD_CLOSE` taken in while only a wait for room is registered is cleared and lost, and Winsock records
+ * `FD_CLOSE` once and `FD_READ` again only after a receive. The wait for data that follows then never ends. POSIX
+ * `poll`/`select` report readiness for as long as it lasts.
+ */
+internal expect val tcpReadRecheck: Duration?
 
 /** Starts the socket library once (Winsock); nothing elsewhere. */
 internal expect fun tcpStartup()

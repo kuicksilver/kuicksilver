@@ -497,6 +497,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   sent. The read loop's end (a graceful close, a stopped reader) shut the receiving direction down, and Winsock resets
   the connection when data arrives after `SD_RECEIVE`. On Windows the read loop now does so only at the end of the
   peer's stream; unread input stays buffered until the close, as on Linux.
+- Windows (mingwX64) TCP: a read could wait for ever for data or an end of stream that had already arrived. ktor-network's
+  selector there takes in a socket's events whenever it watches the socket, and an `FD_READ` or `FD_CLOSE` taken in
+  while only a wait for room was registered (the connection still sending) was lost; Winsock reports `FD_CLOSE` once.
+  The wait for data now tries the receive again every second.
 - HTTP/3 server: a client's PRIORITY_UPDATE now reaches the stream's scheduling before `ServerRequest.priority` shows it,
   so code that reacts to the new value finds the stream already scheduled by it (RFC 9218 section 7).
 - HTTP/3 server: `goAway()` no longer throws when the client answers the GOAWAY by closing the connection at once (RFC 9114
