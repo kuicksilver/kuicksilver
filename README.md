@@ -20,7 +20,7 @@ SPDX-License-Identifier: Apache-2.0
   <a href="gradle/libs.versions.toml"><img alt="Kotlin 2.4" src="https://img.shields.io/badge/Kotlin-2.4-7F52FF?logo=kotlin&logoColor=white"></a>
   <a href="docs/guide/ktor.md"><img alt="Ktor 3.6" src="https://img.shields.io/badge/Ktor-3.6-087CFA"></a>
   <img alt="Platforms" src="https://img.shields.io/badge/platforms-JVM%20%7C%20Android%20%7C%20iOS%20%7C%20macOS%20%7C%20Linux%20%7C%20Windows-555">
-  <a href="docs/spec/rfc-compliance.md"><img alt="Interop: msquic, ngtcp2, picoquic, quic-go, quiche, quinn" src="https://img.shields.io/badge/interop-6%20QUIC%20stacks-2EA44F"></a>
+  <a href="docs/spec/interop.md"><img alt="Interop: msquic, ngtcp2, picoquic, quic-go, quiche, quinn" src="https://img.shields.io/badge/interop-6%20QUIC%20stacks-2EA44F"></a>
 </p>
 
 > **Status: 0.x, experimental.** The API can change between any two 0.x releases, and 0.2.0 is on Maven Central. Do
@@ -187,9 +187,9 @@ quiche and quinn, with Kuicksilver as server and as client, from two images: the
 | Kotlin/Native `linuxArm64` | handshake, transfer, retry, keyupdate, ecn, rebind-port, http3, resumption, zerortt x 6 peers x 2 roles | 96 of the 99 cells both sides support |
 | both | `resumption`, `zerortt` | green in both roles against all six peers |
 
-Every red cell is analysed, cell by cell, in the interop section of
-[docs/spec/rfc-compliance.md](docs/spec/rfc-compliance.md); `tools/interop/required.json` lists the cells that must
-stay green. RFC coverage, section by section, with the tests behind each row, is in the same document.
+Every red cell is analysed, cell by cell, in [docs/spec/interop.md](docs/spec/interop.md);
+`tools/interop/required.json` lists the cells that must stay green. RFC coverage, section by section, is summarised in
+[docs/spec/rfc-compliance.md](docs/spec/rfc-compliance.md), with the tests behind each row in `docs/spec/rfc/`.
 
 ## Documentation
 
@@ -201,7 +201,9 @@ stay green. RFC coverage, section by section, with the tests behind each row, is
   (every option with its default) and [troubleshooting](docs/guide/troubleshooting.md).
 - [docs/stability.md](docs/stability.md) — what 0.2.x promises: stable and experimental API, the ABI checks, the `ksl`
   ABI, the Ktor and OpenSSL version policies, supported platforms.
-- [docs/spec/rfc-compliance.md](docs/spec/rfc-compliance.md) — RFC coverage and the interop matrix.
+- [docs/spec/rfc-compliance.md](docs/spec/rfc-compliance.md) — RFC coverage, one row per requirement, with a details
+  file per RFC in [docs/spec/rfc/](docs/spec/rfc/).
+- [docs/spec/interop.md](docs/spec/interop.md) — the interop matrix and the analysis of its red cells.
 - [docs/benchmarks.md](docs/benchmarks.md) — goodput, CPU per GB and handshakes per second against quiche, quinn and
   msquic, with the method and its caveats (one Apple Silicon host; the amd64 peer images run emulated).
 - [docs/spec/threat-model.md](docs/spec/threat-model.md) — threat model and the `negative_*` security controls.

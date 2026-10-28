@@ -26,7 +26,7 @@ server engine, TLS 1.3 over OpenSSL 3.5 through the `ksl` shim.
 Known limits of 0.1.0, stated on purpose:
 - A handshake under heavy loss with an ML-KEM peer: both flights span two datagrams and the RFC 9002 initial PTO
   (1 s, 2 s, 4 s before an RTT sample) gives three retransmissions before a 10 s peer timeout
-  ([rfc-compliance.md](spec/rfc-compliance.md), interop `handshakecorruption`).
+  ([interop.md](spec/interop.md), interop `handshakecorruption`).
 - No 0-RTT (ADR-0008), no HTTP/2 in the client engine (ADR-0009), no HTTP/3 server push, no certificate
   compression (RFC 8879), no OCSP/CRL checks of our own (the platform verifier decides under `TrustConfig.Platform`).
 - No macosX64 target.
@@ -133,8 +133,9 @@ bug fixed with a test before a release).
 - RFC 9460 HTTPS records as a source of h3, off by default.
 - QUIC server, rebind during the handshake: keep both candidate addresses as separate paths and challenge both, so that
   a client that really rebinds while an observer races copies of its packets from the old address is not held on the
-  dead one until the handshake timeout (the known limit in [rfc-compliance.md](spec/rfc-compliance.md), RFC 9000 §9
-  rebind row; the reference implementations lose that handshake as well).
+  dead one until the handshake timeout (the known limit in
+  [RFC 9000 §9, rebind during the handshake](spec/rfc/9000.md#s9-rebind-during-the-handshake); the reference
+  implementations lose that handshake as well).
 - The client follows a server's preferred address (RFC 9000 §9.6).
 - NEW_TOKEN: the server issues tokens, the client stores and returns them (RFC 9000 §8.1.3).
 - The Capsule Protocol on CONNECT streams (RFC 9297 §3).

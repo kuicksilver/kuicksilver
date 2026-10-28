@@ -30,6 +30,7 @@ bash tools/c-test.sh                                         # ksl C tests (ASan
 ./gradlew :<module>:checkKotlinAbi                           # :<module>:updateKotlinAbi after an intended API change
 bash tools/check/links.sh                                    # Markdown links
 bash tools/check/doc-refs.sh                                 # doc paths, anchors, symbols; private markers in docs and comments
+bash tools/check/rfc-table.sh                                # RFC compliance summary table format
 ```
 
 Always pass `--max-workers=2`. The first build of a module compiles OpenSSL for the host; Linux and mingw OpenSSL builds

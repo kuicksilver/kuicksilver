@@ -20,5 +20,5 @@ Security fixes are not proposed here: report them privately (SECURITY.md).
 - [ ] Public API changed: KDoc written, `./gradlew updateKotlinAbi` run and the `api/` dump diff is part of this PR
       (or: no public API change).
 - [ ] `checkSpdxHeaders`, `checkLayerDependencies` and the architecture checks pass; new files carry the SPDX header.
-- [ ] Docs updated where behaviour changed (guides, `docs/spec/rfc-compliance.md`, `docs/spec/threat-model.md`).
+- [ ] Docs updated where behaviour changed (guides, `docs/spec/rfc-compliance.md` and its details in `docs/spec/rfc/`, `docs/spec/interop.md`, `docs/spec/threat-model.md`).
 - [ ] `CHANGELOG.md` has an entry under `Unreleased` (or: not user-visible).

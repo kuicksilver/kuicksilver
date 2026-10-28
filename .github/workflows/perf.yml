@@ -23,7 +23,7 @@ defaults:
 jobs:
   image:
     # The JVM interop image (kuicksilver-interop:local) with the manylinux libksl.so, as build-image.sh builds it locally.
-    # Only the JVM image: the thresholds come from JVM-image measurements (docs/spec/rfc-compliance.md).
+    # Only the JVM image: the thresholds come from JVM-image measurements (docs/spec/interop.md).
     runs-on: ubuntu-24.04
     permissions:
       contents: read

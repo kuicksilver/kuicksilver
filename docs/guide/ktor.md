@@ -171,7 +171,7 @@ wt.pem` (OpenSSL 3, which writes the PKCS#8 key the server reads): `./gradlew :k
 `https://localhost:<port>/wt/index.html?hash=<b64>` with `<b64>` from `openssl x509 -in wt.pem -outform der | openssl
 dgst -sha256 -binary | base64` (percent-encoded in the URL) and accept the certificate warning for the page; each step
 prints `ok` on the page and the Gradle run passes once the page has posted its result. Record the result in
-`docs/spec/rfc-compliance.md`, "Interop WebTransport".
+`docs/spec/interop.md`, "Interop WebTransport".
 
 ### EngineMain and configuration keys
 

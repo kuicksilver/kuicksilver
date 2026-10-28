@@ -53,6 +53,8 @@ jobs:
         run: bash tools/check/doc-refs.sh
       - name: 'lint: doc-refs negative controls'
         run: bash tools/check/doc-refs-test.sh
+      - name: 'lint: RFC compliance summary table'
+        run: bash tools/check/rfc-table.sh
       - name: 'lint: links (Markdown, llms.txt)'
         run: bash tools/check/links.sh
       - name: 'lint: SPDX headers'
