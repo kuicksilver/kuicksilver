@@ -167,8 +167,8 @@ internal class StreamManager(
     }
 
     /**
-     * After a rejected 0-RTT whose data fits ([localSendFits]): the server's new limits replace the remembered ones on every
-     * stream we opened and for the stream counts, also where they are lower (RFC 9000 section 7.4.1).
+     * After a rejected 0-RTT that used nothing ([openedAnyLocal]): the server's new limits replace the remembered ones for the
+     * stream counts and on any stream we opened, also where they are lower (RFC 9000 section 7.4.1).
      */
     fun adoptLocalSendLimits(
         bidiRemote: Long,
@@ -184,20 +184,8 @@ internal class StreamManager(
         }
     }
 
-    /** After a rejected 0-RTT: whether what our streams already used fits the server's new limits, so resending it is allowed. */
-    fun localSendFits(
-        bidiRemote: Long,
-        uni: Long,
-        maxStreamsBidi: Long,
-        maxStreamsUni: Long,
-    ): Boolean {
-        if (limits.localOpened(true) > maxStreamsBidi || limits.localOpened(false) > maxStreamsUni) return false
-        for ((id, limit) in sendLimit) {
-            if (!StreamIds.isLocal(id, role)) continue
-            if (limit.used > if (StreamIds.isBidi(id)) bidiRemote else uni) return false
-        }
-        return true
-    }
+    /** After a rejected 0-RTT: whether we opened any stream (before the handshake completed, so in 0-RTT). */
+    fun openedAnyLocal(): Boolean = limits.localOpened(true) > 0 || limits.localOpened(false) > 0
 
     /** Receive window of stream [id] and of the connection (test hooks: auto-tuning). */
     internal fun recvWindowForTest(id: Long): Long = streams[id]?.recv?.flow?.window ?: -1

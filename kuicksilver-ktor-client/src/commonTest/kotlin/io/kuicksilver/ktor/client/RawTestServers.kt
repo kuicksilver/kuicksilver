@@ -123,18 +123,21 @@ internal suspend fun tlsH1WithSilentUdp(
 
 /**
  * An HTTP/3 server on 127.0.0.1:[port] (0: a free UDP port) that answers every request 200 "h3" with [headers]; with
- * [earlyData] it accepts 0-RTT. Nothing listens on the TCP port of the same number.
+ * [earlyData] it accepts 0-RTT, and with [ticketKeys] its tickets use those keys (else the process-wide ones). Nothing
+ * listens on the TCP port of the same number.
  */
 @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
 internal suspend fun CoroutineScope.h3Origin(
     headers: List<Pair<String, String>> = emptyList(),
     earlyData: Boolean = false,
     port: Int = 0,
+    ticketKeys: io.kuicksilver.tls.SessionTicketConfig? = null,
 ): Http3Endpoint {
     val tls =
         tlsConfig(TlsRole.Server) {
             alpn = listOf(Http3Endpoint.H3)
             identity = ClientFixtures.identity()
+            if (ticketKeys != null) sessionTickets = ticketKeys
         }
     val ep =
         Http3Endpoint.bind(

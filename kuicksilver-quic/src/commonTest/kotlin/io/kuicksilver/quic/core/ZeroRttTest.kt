@@ -281,28 +281,29 @@ class ZeroRttTest {
         }
     }
 
-    @Test fun zeroRttRejectedRetransmitsIn1Rtt() {
-        // the server's application context changed: TLS refuses the early data (RFC 9001 section 4.6.3), the stream goes again in 1-RTT
+    /**
+     * The server's application context changed: TLS refuses the early data (RFC 9001 section 4.6.3). "When 0-RTT is
+     * rejected, all connection characteristics that the client assumed might be incorrect ... The client therefore MUST
+     * reset the state of all streams" (section 4.6.2): the client closes the connection with ZeroRttRejected, and nothing of
+     * the early stream is sent again in 1-RTT. Before 0.2.1 the stream went again in 1-RTT and the server answered it.
+     */
+    @Test fun zeroRttRejectedClosesTheConnection() {
         val (p, id) = resumed(ticket(), serverEarly = early(app = byteArrayOf(9)))
-        var got = ""
-        var readWhile: ConnectionState? = null
-        assertTrue(
-            p.runUntil(limit = 3.seconds) {
-                val s = p.server
-                if (s != null && readWhile == null && p.serverEvents.any { it is ConnectionEvent.StreamReadable && it.id == id }) {
-                    assertEquals("GET /index.html", streamText(s, id))
-                    readWhile = s.state
-                    s.writeStream(id, "200 OK".encodeToByteArray(), 0, 6, fin = true)
-                }
-                got += streamText(p.client, id)
-                got == "200 OK"
-            },
-        )
-        assertTrue(readWhile != ConnectionState.Handshaking, "a rejected 0-RTT packet is never processed: the data arrived in 1-RTT")
+        assertTrue(p.runUntil(limit = 3.seconds) { p.closedReason(p.clientEvents) != null })
+        assertIs<QuicException.ConnectionLost.ZeroRttRejected>(p.closedReason(p.clientEvents))
+        p.runUntil(limit = 1.seconds) { p.closedReason(p.serverEvents) != null }
         assertEquals(false, p.client.earlyDataAccepted)
         assertEquals(false, p.server!!.earlyDataAccepted)
-        assertTrue(!p.server!!.streamReceivedEarly(id))
-        assertNull(p.closedReason(p.clientEvents))
+        assertTrue(
+            p.serverEvents.none { it is ConnectionEvent.StreamOpened || it is ConnectionEvent.StreamReadable },
+            "negative: nothing of the rejected 0-RTT stream $id reaches the server, in 0-RTT or 1-RTT",
+        )
+        val r = p.closedReason(p.serverEvents)
+        assertTrue(
+            r == null || r is QuicException.ConnectionLost.TransportClosed,
+            "the server sees the client's close, not an error of its own: $r",
+        )
+        if (r is QuicException.ConnectionLost.TransportClosed) assertEquals(TransportError.NO_ERROR, r.code)
         p.close()
     }
 
@@ -512,12 +513,20 @@ class ZeroRttTest {
         p.close()
     }
 
+    /** A server without 0-RTT refuses it; the client closes with ZeroRttRejected and sends nothing of it again (RFC 9001 section 4.6.2). */
     @Test fun noEarlyDataWithoutServerOption() {
         val t = ticket()
         val (p, id) = resumed(t, serverEarly = null)
-        assertTrue(p.handshake())
+        assertTrue(p.runUntil(limit = 3.seconds) { p.closedReason(p.clientEvents) != null })
         assertEquals(false, p.client.earlyDataAccepted, "a server without 0-RTT refuses (and cannot resume: it has no ticket keys)")
-        assertTrue(p.runUntil(limit = 2.seconds) { p.serverEvents.any { it is ConnectionEvent.StreamReadable && it.id == id } })
+        assertIs<QuicException.ConnectionLost.ZeroRttRejected>(p.closedReason(p.clientEvents))
+        p.runUntil(limit = 1.seconds) { p.closedReason(p.serverEvents) != null }
+        assertTrue(
+            p.serverEvents.none {
+                it is ConnectionEvent.StreamReadable && it.id == id
+            },
+            "negative: the early stream is not sent again in 1-RTT",
+        )
         p.close()
     }
 
@@ -597,29 +606,25 @@ class ZeroRttTest {
         assertTrue(bEvents.none { it is ConnectionEvent.StreamOpened || it is ConnectionEvent.StreamReadable }, "the other reads nothing")
     }
 
-    @Test fun rejectedZeroRttAdoptsLowerLimits() {
-        // the server restarted with lower limits (so it also refuses the ticket's early data): the client must not keep the
-        // remembered ones (RFC 9000 section 7.4.1), or it would exceed the new limits (FLOW_CONTROL_ERROR / STREAM_LIMIT_ERROR)
+    @Test fun rejectedZeroRttWithLowerLimitsClosesTheConnection() {
+        // the server restarted with lower limits (so it also refuses the ticket's early data): the client keeps neither the
+        // remembered limits (RFC 9000 section 7.4.1) nor its early streams (RFC 9001 section 4.6.2): it closes with
+        // ZeroRttRejected, and the server sees no limit violation. Before 0.2.1 the connection went on under the new limits.
         val lower =
             quicConfig {
                 initialConnectionWindow = 1000
                 initialStreamWindow = 1500
                 maxBidiStreams = 2
             }
-        val (p, id) = resumed(ticket(), request = "GET /a", serverQuic = lower, serverEarly = early(lower))
-        assertTrue(p.handshake())
+        val (p, _) = resumed(ticket(), request = "GET /a", serverQuic = lower, serverEarly = early(lower))
+        assertTrue(p.runUntil(limit = 3.seconds) { p.closedReason(p.clientEvents) != null })
         assertEquals(false, p.client.earlyDataAccepted)
-        // the application never reads: only the transport's limits hold the client back
-        val big = ByteArray(3000) { 'y'.code.toByte() }
-        val more = List(3) { p.client.openStream(bidi = true) }
-        assertEquals(listOf(true, false, false), more.map { it >= 0 }, "one more stream than the early one: the new limit is 2")
-        p.client.writeStream(more[0], big, 0, big.size, fin = false) // more than the new 1500-byte stream window
-        p.runUntil(limit = 2.seconds) { p.closedReason(p.serverEvents) != null || p.closedReason(p.clientEvents) != null }
-        assertNull(p.closedReason(p.serverEvents), "the server saw no limit violation")
-        assertNull(p.closedReason(p.clientEvents))
+        assertIs<QuicException.ConnectionLost.ZeroRttRejected>(p.closedReason(p.clientEvents))
+        p.runUntil(limit = 1.seconds) { p.closedReason(p.serverEvents) != null }
+        val r = p.closedReason(p.serverEvents)
         assertTrue(
-            p.serverEvents.any { it is ConnectionEvent.StreamReadable && it.id == more[0] },
-            "traffic continues within the new limits",
+            r == null || (r is QuicException.ConnectionLost.TransportClosed && r.code == TransportError.NO_ERROR),
+            "the server saw no limit violation: $r",
         )
         p.close()
     }

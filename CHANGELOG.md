@@ -54,6 +54,16 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Changed
 
+- QUIC client (behaviour): when the server rejects a 0-RTT that carried anything (a stream opened before the handshake
+  completed), the connection now closes with `QuicException.ConnectionLost.ZeroRttRejected`, which every such stream
+  fails with, and nothing of them is sent again in 1-RTT. RFC 9001 section 4.6.2: "When 0-RTT is rejected, all
+  connection characteristics that the client assumed might be incorrect ... The client therefore MUST reset the state of
+  all streams". Before, the transport sent their data again in 1-RTT whenever the ALPN and the new limits allowed it. A
+  connection that offered 0-RTT and opened nothing before the handshake goes on as before (except under
+  `EarlyDataState.Required`), and `ConnectionEvent.EarlyDataRejected` is emitted only for it. The HTTP/3 layer reports
+  the rejection as that `ZeroRttRejected`, never as a graceful end after a GOAWAY, and the Ktor client with
+  `http3 { earlyData = true }` sends the requests of such a connection again once, on a new connection without 0-RTT,
+  over HTTP/3 (`KuicksilverEventListener.retry`); before, they fell back to HTTP/1.1 and the alternative was marked broken.
 - Ktor client, HTTP/1.1: a response `Content-Length` with leading zeros (`0000000000000000000005`) is read as its value
   instead of failing as invalid when it has more than 18 characters (RFC 9110 section 8.6: "Any Content-Length field
   value greater than or equal to zero is valid"). A valid length of 10^18 bytes or more still fails the response, now
@@ -129,6 +139,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- HTTP/3 client: a server that sends GOAWAY and closes with `H3_NO_ERROR` at once no longer fails `Http3Endpoint.connect`
+  or `Http3Connection.client` now and then. When both arrived in one receive batch, the close could end the session before
+  the control stream's GOAWAY was applied, and the start failed with "H3_NO_ERROR from Peer" instead of returning the
+  connection with `goAwayReceived` set. The start now lets the control stream's reader finish what the server sent before
+  its close (at most one second) before it decides (RFC 9114 section 5.2).
 - QUIC client: the server's first Initial fixes its Source Connection ID, an ACK-only one too (RFC 9000 section 7.2,
   "MUST discard any subsequent packet ... with a different Source Connection ID"); before, an Initial without CRYPTO
   left the SCID open and a later one with another SCID was still adopted. The one exception is msquic's: an Initial with

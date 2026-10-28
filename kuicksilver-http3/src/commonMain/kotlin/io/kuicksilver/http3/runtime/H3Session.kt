@@ -41,11 +41,14 @@ import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.selects.select
@@ -105,6 +108,9 @@ internal class H3Session(
 
     val peerSettings = MutableStateFlow<Http3PeerSettings?>(null)
     private val peerSettingsArrived = CompletableDeferred<Http3PeerSettings>()
+
+    /** The reader of the peer's control stream ended, whatever the way ([awaitPeerControlRead]). */
+    private val peerControlEnded = CompletableDeferred<Unit>()
     val datagrams = DatagramDemux(this)
     val goAwayReceived = MutableStateFlow<Long?>(null)
     val closed = CompletableDeferred<Throwable>()
@@ -265,7 +271,29 @@ internal class H3Session(
         try {
             awaitCriticalStreams()
         } catch (e: Http3Exception) {
+            if (e is Http3Exception.Protocol && e.h3Code == Http3ErrorCode.NO_ERROR && e.initiator == Initiator.Peer) awaitPeerControlRead()
             if (!isGracefulEndAfterGoAway(e)) throw e
+        }
+    }
+
+    /**
+     * The peer closed with H3_NO_ERROR while its control stream may still hold a GOAWAY we have not parsed: a server that
+     * writes GOAWAY and closes at once can have both arrive in one receive batch, and the close completes [closed] before
+     * the control reader's turn. The reader goes on through what the peer sent before the loss ([drains]): wait until it
+     * has reported a GOAWAY or ended, at most [DRAIN_GRACE], so that whether a GOAWAY came first does not depend on the
+     * order the two were dispatched in.
+     */
+    private suspend fun awaitPeerControlRead() {
+        if (goAwayReceived.value != null) return
+        withTimeoutOrNull(DRAIN_GRACE) {
+            coroutineScope {
+                val goAway = async { goAwayReceived.first { it != null } }
+                select<Unit> {
+                    goAway.onAwait { }
+                    peerControlEnded.onAwait { }
+                }
+                goAway.cancel()
+            }
         }
     }
 
@@ -448,7 +476,11 @@ internal class H3Session(
                 try {
                     when (type) {
                         StreamType.CONTROL -> {
-                            readControl(st)
+                            try {
+                                readControl(st)
+                            } finally {
+                                peerControlEnded.complete(Unit)
+                            }
                         }
 
                         StreamType.QPACK_ENCODER -> {
@@ -535,6 +567,7 @@ internal class H3Session(
             }
 
             FrameType.GOAWAY -> {
+                beforeGoAwayForTest?.invoke(this)
                 onGoAway(ControlFrames.parseGoAway(payload))
             }
 
@@ -955,6 +988,10 @@ internal class H3Session(
         /** Test hook: runs before a client's idle close after GOAWAY, so a test can let the peer's close win the race. */
         @kotlin.concurrent.Volatile
         internal var beforeIdleCloseForTest: (suspend (H3Session) -> Unit)? = null
+
+        /** Test hook: runs before a received GOAWAY is applied, so a test can let the peer's close be seen first. */
+        @kotlin.concurrent.Volatile
+        internal var beforeGoAwayForTest: (suspend (H3Session) -> Unit)? = null
 
         /** A client that started a request before GOAWAY gets this long to finish its HEADERS (no RFC value; see docs/guide/http3.md). */
         val HEADER_DEADLINE_AFTER_GOAWAY: Duration = 10.seconds

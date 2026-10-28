@@ -143,6 +143,57 @@ class SessionStartTest {
             }
         }
 
+    /**
+     * A server that writes GOAWAY and closes with H3_NO_ERROR at once can have both arrive in one receive batch, and the
+     * close can complete the session before the control reader has applied the GOAWAY. Here the reader holds the GOAWAY
+     * frame it read until the session saw the server's close: the start still returns the connection with the GOAWAY (RFC
+     * 9114 section 5.2, a graceful end) instead of failing with the peer's H3_NO_ERROR. Before, whether the start failed
+     * depended on that order (red: it failed every time here).
+     */
+    @Test fun goAwayParsedAfterThePeersNoErrorCloseStillRefusesRequestsAsNotProcessed() =
+        h3Test {
+            val held = CompletableDeferred<Unit>()
+            H3Session.beforeGoAwayForTest = {
+                held.complete(Unit)
+                it.closed.await() // the transport close went first
+            }
+            try {
+                QuicPair.open(serverQuic = quicConfig { maxUniStreams = 2 }).use { q ->
+                    val (c, s) = q.connect()
+                    val raw = RawPeer(s)
+                    raw.openControl()
+                    raw.control.output.writeFully(raw.frame(FrameType.GOAWAY, ControlFrames.goAwayPayload(0)))
+                    raw.control.output.flush()
+                    val client = async { runCatching { withTimeout(10.seconds) { Http3Connection.client(c) } } }
+                    withTimeout(10.seconds) { held.await() } // the client read the GOAWAY frame and has not applied it yet
+                    s.close(Http3ErrorCode.NO_ERROR, "")
+                    val conn = withTimeout(10.seconds) { client.await() }.getOrThrow()
+                    val end = assertIs<Http3Exception.Protocol>(conn.closed.await())
+                    assertEquals(Initiator.Peer, end.initiator)
+                    assertEquals(Http3ErrorCode.NO_ERROR, end.h3Code)
+                    assertEquals(0L, conn.goAwayReceived.value)
+                    assertFailsWith<Http3Exception.RequestNotProcessed> { withTimeout(10.seconds) { conn.request(get()) } }
+                }
+            } finally {
+                H3Session.beforeGoAwayForTest = null
+            }
+        }
+
+    /** Without a GOAWAY the peer's H3_NO_ERROR close before our SETTINGS went out still fails the start. */
+    @Test fun negative_peerNoErrorCloseWithoutGoAwayFailsTheStart() =
+        h3Test {
+            QuicPair.open(serverQuic = quicConfig { maxUniStreams = 2 }).use { q ->
+                val (c, s) = q.connect()
+                val raw = RawPeer(s)
+                raw.openControl()
+                raw.control.output.flush()
+                s.close(Http3ErrorCode.NO_ERROR, "")
+                val e = assertFailsWith<Http3Exception.Protocol> { withTimeout(10.seconds) { Http3Connection.client(c) } }
+                assertEquals(Http3ErrorCode.NO_ERROR, e.h3Code)
+                assertEquals(Initiator.Peer, e.initiator)
+            }
+        }
+
     /** Exactly three streams is enough: the critical streams open, and the GREASE stream after them is optional. */
     @Test fun threeUniStreamsAreEnough() =
         h3Test {

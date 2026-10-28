@@ -121,6 +121,9 @@ a connection whose handshake does not complete. A replayer cannot complete the h
   (RFC 9000 section 7.4.1); this is the one place a send limit may shrink. The stream state
   stays because the server never saw those streams (RFC 9001 §4.6.2 retransmission, as msquic does). Otherwise the
   connection closes with `ZeroRttRejected`. `EarlyDataState.Required` also turns a rejection into `ZeroRttRejected`.
+  Superseded in 0.2.1: RFC 9001 §4.6.2 says the client "MUST reset the state of all streams", so a rejection of 0-RTT
+  that carried anything always closes the connection with `ZeroRttRejected`, and the Ktor client repeats the requests
+  once on a new connection without 0-RTT.
 - Server: 0-RTT packets that arrive before their keys are buffered with the other undecryptable packets. They are
   dropped when the handshake shows that 0-RTT was rejected. 0-RTT packets for a connection that does not exist yet
   wait at the endpoint (quic-go's bounds: 100 ms, 32 connection IDs, 31 packets each) for the Initial that creates it.
@@ -156,7 +159,7 @@ engines are opt-in: client `earlyData`, server `quicEarlyData`. 0-RTT is never o
 
 - Resumption and 0-RTT are one opt-in. With every option at its default, nothing changes on the wire.
 - ADR-0013's planned tests become `negative_0rttReplayRejected`, `negative_0rttTransportParamsReduced`,
-  `zeroRttRejectedRetransmitsIn1Rtt`, `clientTicketIsSingleUse` and the HTTP/3 cases
+  `zeroRttRejectedClosesTheConnection`, `clientTicketIsSingleUse` and the HTTP/3 cases
   (`negative_unsafeMethodNotProcessedInEarlyData`, `reject425PolicyAndOneRetry`).
 - The interop `zerortt` and `resumption` cases are required and green against all six peers in both roles (0.2.0),
   except quinn's client against our server in `zerortt` (`tools/interop/required.json`).

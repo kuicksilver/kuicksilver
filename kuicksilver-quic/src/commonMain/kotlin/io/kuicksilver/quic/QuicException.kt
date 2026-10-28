@@ -143,9 +143,11 @@ public sealed class QuicException(
         }
 
         /**
-         * The server rejected 0-RTT and its answer leaves no safe way to resend it in 1-RTT (another ALPN, or lower limits
-         * than the 0-RTT data already used), or `EarlyDataState.Required` was asked for and 0-RTT was refused or unavailable.
-         * The connection closed with NO_ERROR; retry on a new connection.
+         * The server rejected a 0-RTT that carried anything (a stream opened before the handshake completed), or
+         * `EarlyDataState.Required` was asked for and 0-RTT was refused or unavailable. A rejected 0-RTT is never sent
+         * again in 1-RTT (RFC 9001 section 4.6.2: the client "MUST reset the state of all streams"; before 0.2.1 it was,
+         * when the ALPN and the limits allowed): the connection closed with NO_ERROR and the streams opened on it failed
+         * with this, nothing of them processed by the server. Retry on a new connection.
          */
         @ExperimentalKuicksilverApi
         public class ZeroRttRejected : ConnectionLost("0-RTT rejected") {

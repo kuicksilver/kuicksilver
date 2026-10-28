@@ -243,13 +243,15 @@ internal class H3Pool(
         data: HttpRequestData,
     ): Http3Connection = connectionEntry(t, data).second
 
+    /** As [connectionEntryOnce]; a new connection is set up with 0-RTT only when [early] (and the engine's `earlyData`). */
     private suspend fun connectionEntry(
         t: H3Target,
         data: HttpRequestData,
+        early: Boolean = true,
     ): Pair<H3Entry, Http3Connection> {
         while (true) {
             try {
-                return connectionEntryOnce(t, data)
+                return connectionEntryOnce(t, data, early)
             } catch (_: SetupAbandoned) {
                 // the caller that was setting the connection up was cancelled: not a failure of the origin, so this caller
                 // starts (or joins) a new setup instead of failing or falling back
@@ -268,6 +270,7 @@ internal class H3Pool(
     private suspend fun connectionEntryOnce(
         t: H3Target,
         data: HttpRequestData,
+        early: Boolean,
     ): Pair<H3Entry, Http3Connection> {
         val ep = endpoint()
         val (e, connect) =
@@ -296,7 +299,7 @@ internal class H3Pool(
                 withTimeout(data.connectTimeoutMillis(config)) {
                     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
                     made =
-                        if (config.http3.earlyData) {
+                        if (config.http3.earlyData && early) {
                             // returns as soon as 0-RTT keys exist: the connect timeout still bounds the setup, through
                             // the handshake timer (a request sent early then fails, and falls back, at that time)
                             ep.connectEarly(
@@ -348,6 +351,11 @@ internal class H3Pool(
         return e to d.await()
     }
 
+    /** Whether this failure, or one of its causes, is the rejected 0-RTT that closed its connection. */
+    @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
+    private fun Throwable.isZeroRttRejected(): Boolean =
+        generateSequence(this) { it.cause }.take(8).any { it is io.kuicksilver.quic.QuicException.ConnectionLost.ZeroRttRejected }
+
     /** The caller setting up a shared connection was cancelled; the callers waiting for it try again. */
     private class SetupAbandoned(
         cause: CancellationException,
@@ -360,9 +368,10 @@ internal class H3Pool(
     private suspend fun acquire(
         t: H3Target,
         data: HttpRequestData,
+        early: Boolean,
     ): Pair<H3Entry, Http3Connection> {
         while (true) {
-            val (e, c) = connectionEntry(t, data)
+            val (e, c) = connectionEntry(t, data, early)
             val counted =
                 lock.withLock {
                     if ((connections[t.key] === e || e in retired) && !c.closed.isCompleted) {
@@ -454,7 +463,10 @@ internal class H3Pool(
 
     /**
      * One exchange over HTTP/3. Requests the server did not process (GOAWAY, H3_REQUEST_REJECTED) are repeated on a new
-     * connection, at most twice. Failures before the request could reach the server are [H3NotSent].
+     * connection, at most twice. So are requests on a connection whose 0-RTT the server rejected
+     * (`QuicException.ConnectionLost.ZeroRttRejected`): the rejection closed that connection and the server processed
+     * nothing of its 0-RTT, and the request starts over on a new connection without 0-RTT (RFC 9001 section 4.6.2: the
+     * client "MUST reset the state of all streams"). Failures before the request could reach the server are [H3NotSent].
      */
     suspend fun execute(
         t: H3Target,
@@ -463,13 +475,20 @@ internal class H3Pool(
         extraHeaders: List<Pair<String, String>> = emptyList(),
     ): HttpResponseData {
         var attempts = 0
+        var early = true // false once a rejected 0-RTT sent the request back: it then never rides 0-RTT
         while (true) {
             val (entry, conn) =
                 try {
-                    acquire(t, data)
+                    acquire(t, data, early)
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Throwable) {
+                    // the setup itself ended in a rejected 0-RTT (connectEarly waits for the critical streams)
+                    if (e.isZeroRttRejected() && ++attempts <= 2) {
+                        early = false
+                        events.emit("retry") { retry(data, attempts + 1, e) }
+                        continue
+                    }
                     throw H3NotSent(e)
                 }
             var reported = false // connectionAcquired went out: a failure below reports the release too
@@ -477,7 +496,7 @@ internal class H3Pool(
                 // a request that cannot go in 0-RTT waits for the handshake here, before any stream is opened or its body
                 // touched: a handshake that fails leaves it provably unsent (RFC 8470 section 4 — the client starts over)
                 @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-                if (!conn.quic.isHandshakeComplete && !goesEarly(data)) {
+                if (!conn.quic.isHandshakeComplete && !(early && goesEarly(data))) {
                     try {
                         conn.quic.awaitHandshake()
                     } catch (e: CancellationException) {
@@ -513,7 +532,9 @@ internal class H3Pool(
                         "connectionReleased",
                     ) { connectionReleased(data, HttpProtocolVersion.HTTP_3_0, kept = !conn.closed.isCompleted) }
                 }
-                if (e !is Http3Exception.RequestNotProcessed) throw e
+                val rejectedZeroRtt = e !is CancellationException && e.isZeroRttRejected()
+                if (e !is Http3Exception.RequestNotProcessed && !rejectedZeroRtt) throw e
+                if (rejectedZeroRtt) early = false
                 lock.withLock {
                     connections[t.key]?.let {
                         if (it === entry) connections.remove(t.key)

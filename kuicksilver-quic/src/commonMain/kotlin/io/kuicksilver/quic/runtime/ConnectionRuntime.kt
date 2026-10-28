@@ -541,6 +541,12 @@ internal class ConnectionRuntime(
                 }
 
                 is ConnectionEvent.Closed -> {
+                    // a rejected 0-RTT closes the connection at handshake completion, before any HandshakeCompleted
+                    if (earlyAccepted == null &&
+                        e.reason is QuicException.ConnectionLost.ZeroRttRejected
+                    ) {
+                        earlyAccepted = core.earlyDataAccepted
+                    }
                     failed(e.reason)
                 }
 

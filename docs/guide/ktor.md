@@ -366,7 +366,9 @@ default.
   its handshake. Gate side effects on `receivedEarly`, not on the TLS state of your own connection.
 - **Client:** set `http3 { earlyData = true }`. The engine keeps the servers' session tickets for its lifetime, and
   on a new connection to a server it has a ticket for, it sends GET, HEAD and OPTIONS requests without a body in 0-RTT.
-  Other requests wait for the handshake. A `425` is retried once. 0-RTT keeps the h3/h1 race and the fallback intact:
+  Other requests wait for the handshake. A `425` is retried once. When the server rejects the 0-RTT, the connection
+  closes (RFC 9001 section 4.6.2: nothing of it is sent again in 1-RTT), and its requests start over once on a new
+  connection without 0-RTT, over HTTP/3. 0-RTT keeps the h3/h1 race and the fallback intact:
   - A 0-RTT connection wins the race at once only on a network where QUIC was already seen working; elsewhere it must
     complete its handshake first, as in Chromium, so a network that drops UDP loses nothing over HTTP/1.1.
   - QUIC counts as working on the network, the alternative as working, and the connection's RTT is remembered only

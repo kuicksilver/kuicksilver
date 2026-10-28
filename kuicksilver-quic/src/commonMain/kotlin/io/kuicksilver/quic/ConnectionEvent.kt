@@ -137,7 +137,12 @@ public sealed interface ConnectionEvent {
     @ExperimentalKuicksilverApi
     public object EarlyDataAccepted : ConnectionEvent
 
-    /** Client: the server rejected our 0-RTT; what it carried is being sent again in 1-RTT (RFC 9001 section 4.6.2). */
+    /**
+     * Client: the server rejected a 0-RTT offer that carried nothing (no stream was opened before the handshake completed),
+     * and the connection goes on. Since 0.2.1 a rejection of 0-RTT that carried anything closes the connection with
+     * [QuicException.ConnectionLost.ZeroRttRejected] instead of sending it again in 1-RTT (RFC 9001 section 4.6.2: the
+     * client "MUST reset the state of all streams").
+     */
     @ExperimentalKuicksilverApi
     public object EarlyDataRejected : ConnectionEvent
 

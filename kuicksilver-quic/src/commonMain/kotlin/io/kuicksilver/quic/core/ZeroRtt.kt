@@ -196,10 +196,15 @@ private val ConnectionCore.zeroRttLimitReached: Boolean get() {
 /**
  * Client, at handshake completion: the server's answer to our 0-RTT (RFC 9001 section 4.6.2). Accepted: the new limits
  * and max_datagram_frame_size must not be lower than the remembered ones (RFC 9000 section 7.4.1, RFC 9221 section 3;
- * PROTOCOL_VIOLATION, as quic-go). Rejected: the
- * 0-RTT packets leave flight without a congestion signal and their frames are queued again for 1-RTT, provided the ALPN
- * is the same and the new limits cover what was already sent; otherwise (and always under [EarlyDataState.Required]) the
- * connection closes with [QuicException.ConnectionLost.ZeroRttRejected].
+ * PROTOCOL_VIOLATION, as quic-go). Rejected: "the client MUST reset the state of all streams, including application
+ * state bound to those streams" (RFC 9001 section 4.6.2), since the ALPN, the limits and the application's settings it
+ * assumed may all differ. The 0-RTT packets leave flight without a congestion signal and nothing of them is sent again.
+ * When anything went out in 0-RTT or a stream was opened before the handshake completed (and always under
+ * [EarlyDataState.Required]), the connection closes with [QuicException.ConnectionLost.ZeroRttRejected]: every such
+ * stream fails with it, and the application starts over on a new connection (the Ktor client does so without 0-RTT).
+ * Sending the frames again in 1-RTT, as 0.2.0 did, carried state the server never agreed to. A connection that offered
+ * 0-RTT and used none of it (`connect`, which returns after the handshake) has nothing to reset: it goes on under the
+ * server's new limits.
  */
 internal fun ConnectionCore.settleZeroRtt() {
     val old = remembered ?: return
@@ -227,22 +232,12 @@ internal fun ConnectionCore.settleZeroRtt() {
         streams.raiseLocalSendLimits(tp.initialMaxStreamDataBidiRemote, tp.initialMaxStreamDataUni)
         return
     }
-    val fits =
-        earlyMode != EarlyDataState.Required &&
-            (rememberedAlpn ?: "") == (negotiatedAlpn ?: "") &&
-            connSend.used <= tp.initialMaxData &&
-            streams.localSendFits(
-                tp.initialMaxStreamDataBidiRemote,
-                tp.initialMaxStreamDataUni,
-                tp.initialMaxStreamsBidi,
-                tp.initialMaxStreamsUni,
-            )
-    loss.discardZeroRtt { p -> if (fits) streams.onFramesLost(p.frames) }
-    if (!fits) {
+    loss.discardZeroRtt { }
+    if (earlyMode == EarlyDataState.Required || zeroRttPacketsSealed > 0 || streams.openedAnyLocal()) {
         closeZeroRttRejected()
         return
     }
-    // the remembered limits no longer hold: the server's new ones replace them, also where lower (RFC 9000 section 7.4.1)
+    // nothing used the remembered limits: the server's new ones replace them, also where lower (RFC 9000 section 7.4.1)
     applyPeerLimits(tp)
     connSend.resetLimit(tp.initialMaxData)
     streams.adoptLocalSendLimits(
