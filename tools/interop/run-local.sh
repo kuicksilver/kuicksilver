@@ -91,6 +91,7 @@ services:
 EOF
 # shellcheck source=tools/interop/environment.sh
 source tools/interop/environment.sh   # truncated_captures, handshake_rebind, environment_cells
+environment_memo=$(mktemp -d); yellow_keys=""; trap 'rm -rf "$environment_memo" ${yellow_keys:+"$yellow_keys"}' EXIT   # one classification per role directory
 # register our image in the runner's QUIC implementation list (a copy, the checkout stays clean)
 python3 - "$runner" "${KSL_INTEROP_TAG:-local}" <<'PY'
 import json, sys
@@ -153,7 +154,7 @@ if [ $perf -eq 1 ]; then
   exit $fail   # a runner crash that left no result file for a role also fails the run
 fi
 if [ $check -eq 1 ]; then
-  yellow_keys=$(mktemp); trap 'rm -f "$yellow_keys"' EXIT
+  yellow_keys=$(mktemp)
   environment_yellow_keys "$out" > "$yellow_keys"
   python3 tools/interop/check-required.py "$out" tools/interop/required.json "$yellow_keys"
 exit $?   # with --check-required only the required cells decide; a red optional cell is reported, not fatal

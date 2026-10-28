@@ -170,15 +170,34 @@ environment_rerun_cells() {
   } | sort -u -k1,2
 }
 
-# Environment-yellow cells (owner's decision 2026-10-28): prohibited_port_rebind cells that no other rule lists, "<server>_<client> <case>".
-# The ngtcp2 server drops the simulator's fixed-seed binding at 11 s in rebind-addr, so on a host where the transfer still runs then
+# The classification of one role directory, computed once: "<server>_<client> <case> rerun|yellow <why>" per cell. rerun: a cell
+# of environment_rerun_cells; yellow (owner's decision 2026-10-28): a prohibited_port_rebind cell that no other rule lists. The
+# ngtcp2 server drops the simulator's fixed-seed binding at 11 s in rebind-addr, so on a host where the transfer still runs then
 # every rerun fails the same way: run-local.sh does not rerun such a cell, warns, and check-required.py does not count it red.
-environment_yellow_cells() {
+# Every rule runs tshark on its candidate cells, and run-local.sh asks for a role directory three times (its yellow cells, its
+# cells, the yellow keys at the end): with environment_memo set to a directory (run-local.sh makes one per run) the result of a
+# directory is kept there; a result directory does not change once the runner is done with it.
+environment_memo=""
+environment_classified() {
+  local memo
+  [ -n "$environment_memo" ] || { environment_classify "$1"; return; }
+  memo="$environment_memo/$(printf '%s' "$1" | cksum | tr ' ' '-')"
+  [ -f "$memo" ] || { environment_classify "$1" > "$memo.tmp" && mv "$memo.tmp" "$memo"; }
+  cat "$memo"
+}
+environment_classify() {   # environment_classified without the memo
   local others pair case
-  others=$(environment_rerun_cells "$1" | cut -d' ' -f1,2)
-  prohibited_port_rebind "$1" | while read -r pair case; do
-    grep -qxF "$pair $case" <<< "$others" || echo "$pair $case"
-  done
+  others=$(environment_rerun_cells "$1")
+  { [ -z "$others" ] || printf '%s\n' "$others" | sed 's/^\([^ ]* [^ ]*\) /\1 rerun /'
+    prohibited_port_rebind "$1" | while read -r pair case; do
+      cut -d' ' -f1,2 <<< "$others" | grep -qxF "$pair $case" || echo "$pair $case yellow $prohibited_port_why"
+    done
+  } | sort -u -k1,2
+}
+
+# Environment-yellow cells of a result directory, "<server>_<client> <case>" (see environment_classified).
+environment_yellow_cells() {
+  environment_classified "$1" | awk '$3 == "yellow" { print $1, $2 }'
 }
 
 # The environment-yellow cells of result directories (comma-separated, as run-local.sh --results takes them) for check-required.py:
@@ -201,8 +220,5 @@ environment_warn() {
 
 # Cells of a result directory whose verdict rests on the environment: "<server>_<client> <case> <why>", one line per cell.
 environment_cells() {
-  local pair case
-  { environment_rerun_cells "$1"
-    prohibited_port_rebind "$1" | while read -r pair case; do echo "$pair $case $prohibited_port_why"; done
-  } | sort -u -k1,2
+  environment_classified "$1" | sed 's/^\([^ ]* [^ ]*\) [a-z]* /\1 /'
 }
