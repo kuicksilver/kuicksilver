@@ -142,6 +142,9 @@ internal class DatagramDemux(
     /** Datagrams waiting for their stream's CONNECT (test hook; session dispatcher only). */
     val pendingCount: Int get() = pending.size
 
+    /** When the oldest waiting datagram's hold ends (test hook; session dispatcher only). */
+    fun pendingDeadlineForTest(): TimeMark? = pending.firstOrNull()?.expires
+
     fun unregister(streamId: Long) {
         streams.remove(streamId)?.close()
     }

@@ -243,9 +243,15 @@ class WtStreamRoutingTest {
                 withTimeout(5.seconds) { server.peerSettings.first { it != null } }
                 c.sendDatagram(VarInt.encode(0) + "stale".encodeToByteArray()) // stream 0, not opened yet
                 server.awaitDatagrams(1)
-                val hold = withContext(server.session.dispatcher) { server.session.datagrams.pendingHold() }
-                assertTrue(hold <= DatagramDemux.MAX_HOLD, "hold $hold")
-                clock += hold + 1.milliseconds
+                // the hold stored with it (an RTT sample since would change what pendingHold() says now)
+                val left =
+                    withContext(server.session.dispatcher) {
+                        -server.session.datagrams
+                            .pendingDeadlineForTest()!!
+                            .elapsedNow()
+                    }
+                assertTrue(left in DatagramDemux.MIN_HOLD..DatagramDemux.MAX_HOLD, "hold $left")
+                clock += left + 1.milliseconds
                 c.sendDatagram(VarInt.encode(0) + "fresh".encodeToByteArray())
                 server.awaitDatagrams(2)
                 assertEquals(1, withContext(server.session.dispatcher) { server.session.datagrams.pendingCount }) // "stale" went
@@ -272,8 +278,13 @@ class WtStreamRoutingTest {
                 withTimeout(5.seconds) { server.peerSettings.first { it != null } }
                 c.sendDatagram(VarInt.encode(0) + "early".encodeToByteArray())
                 server.awaitDatagrams(1)
-                val hold = withContext(server.session.dispatcher) { server.session.datagrams.pendingHold() }
-                clock += hold - 1.milliseconds
+                val left =
+                    withContext(server.session.dispatcher) {
+                        -server.session.datagrams
+                            .pendingDeadlineForTest()!!
+                            .elapsedNow()
+                    }
+                clock += left - 1.milliseconds
                 val accepted = CompletableDeferred<WebTransportSession>()
                 launch { accepted.complete(server.acceptRequest().acceptWebTransport()) }
                 val st = c.openBidi()
@@ -311,6 +322,8 @@ class WtStreamRoutingTest {
             QuicPair.open().useScoped { q ->
                 val (c, s) = q.connect()
                 val server = Http3Connection.server(s, wtOn)
+                // the buffer's clock stands still: this is about which streams keep datagrams, not how long
+                withContext(server.session.dispatcher) { server.session.datagrams.clock = TestTimeSource() }
                 val raw = RawPeer(c)
                 raw.openControl(wtClientSettings)
                 withTimeout(5.seconds) { server.peerSettings.first { it != null } }
@@ -348,6 +361,8 @@ class WtStreamRoutingTest {
             QuicPair.open().useScoped { q ->
                 val (c, s) = q.connect()
                 val server = Http3Connection.server(s, wtOn)
+                // the buffer's clock stands still: this is about which streams keep datagrams, not how long
+                withContext(server.session.dispatcher) { server.session.datagrams.clock = TestTimeSource() }
                 val raw = RawPeer(c)
                 raw.openControl(wtClientSettings)
                 withTimeout(5.seconds) { server.peerSettings.first { it != null } }
