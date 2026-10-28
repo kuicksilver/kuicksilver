@@ -16,8 +16,10 @@ import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.TimeoutKind
 import io.kuicksilver.quic.ksl
 import io.kuicksilver.quic.quicConfig
+import io.kuicksilver.quic.recovery.SpaceId
 import io.kuicksilver.quic.wire.PacketHeaderCodec
 import io.kuicksilver.quic.wire.PacketHeaderView
+import io.kuicksilver.quic.wire.PacketType
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -395,6 +397,62 @@ class LifecycleTest {
             val reason = f.copyOfRange(1 + cl + ll, 1 + cl + ll + len.toInt())
             assertTrue(reason.all { it == 'x'.code.toByte() })
             assertTrue(s.closeSent, "the close counts as sent")
+        } finally {
+            p.close()
+        }
+    }
+
+    /**
+     * RFC 9000 section 12.3: "A QUIC endpoint MUST NOT reuse a packet number within the same packet number space in one
+     * connection"; gaps are allowed, but a packet that is not built must not cost one. A closing server below its
+     * anti-amplification budget whose packet has no room for the bare CONNECTION_CLOSE (20-byte connection IDs, a two-byte
+     * error code) built nothing and still took a packet number on every poll (review 2026-10-28, QC-4). The close is still
+     * owed, and goes out once the budget allows it, with the next unused number.
+     */
+    @Test fun aPacketWithoutRoomForTheCloseTakesNoPacketNumber() {
+        val long = quicConfig { connectionIdLength = 20 }
+        val p = CorePair(clientQuic = long, serverQuic = long)
+        p.filterToServer = { i, _ -> i == 0 }
+        try {
+            p.step()
+            p.step()
+            val s = p.server!!
+            assertTrue(!s.addressValidated)
+            s.fail(0x128, 0, "", null) // CRYPTO_ERROR: a two-byte code
+            val a = s.amplification
+            val spaces = SpaceId.entries.map { s.loss.space(it) }
+            val hv = PacketHeaderView()
+            // every budget from below the builder's own minimum to well above the bare frame in each space's header
+            for (budget in 40L..160L) {
+                val before = spaces.map { it.nextPn }
+                a.restore(a.received, 3 * a.received - budget, validated = false)
+                p.batch.clear()
+                val n = s.poll(p.batch, p.now)
+                val built = IntArray(spaces.size)
+                for (i in 0 until n) {
+                    var off = 0
+                    val len = p.batch.length(i)
+                    while (off < len && PacketHeaderCodec.parse(p.batch.buffer(i), off, len, p.client.localCid.length, hv)) {
+                        val space =
+                            when (hv.type) {
+                                PacketType.Initial -> SpaceId.Initial
+                                PacketType.Handshake -> SpaceId.Handshake
+                                else -> SpaceId.Application
+                            }
+                        built[space.ordinal]++
+                        if (hv.packetEnd <= off) break
+                        off = hv.packetEnd
+                    }
+                }
+                for (sp in SpaceId.entries) {
+                    assertEquals(
+                        built[sp.ordinal].toLong(),
+                        spaces[sp.ordinal].nextPn - before[sp.ordinal],
+                        "budget $budget, $sp: packet numbers taken against packets built",
+                    )
+                }
+            }
+            assertTrue(s.closeSent, "the close went out once the budget allowed it")
         } finally {
             p.close()
         }

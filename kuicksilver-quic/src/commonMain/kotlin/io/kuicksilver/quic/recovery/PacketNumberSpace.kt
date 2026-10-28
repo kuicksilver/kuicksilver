@@ -131,8 +131,12 @@ internal class PacketNumberSpace(
         ackedUnknownBelow = -1L
     }
 
-    /** The next packet number; now and then one is skipped so an optimistic ACK is detectable (RFC 9000 section 21.4; one in every [128, 1024) packets). */
-    fun takePn(random: Random): Long {
+    /**
+     * The number the next packet gets, not yet taken ([commitPn] takes it once the packet is built, so a packet that is not
+     * built costs none); now and then one is skipped so an optimistic ACK is detectable (RFC 9000 section 21.4; one in every
+     * [128, 1024) packets). Asking again before the commit gives the same number.
+     */
+    fun peekPn(random: Random): Long {
         if (id == SpaceId.Application) {
             if (nextSkip < 0) nextSkip = nextPn + random.nextInt(128, 1024)
             if (nextPn == nextSkip) {
@@ -141,8 +145,17 @@ internal class PacketNumberSpace(
                 nextSkip = lastSkipped + random.nextInt(128, 1024)
             }
         }
-        return nextPn++
+        return nextPn
     }
+
+    /** [pn], from [peekPn], is used by a packet now. */
+    fun commitPn(pn: Long) {
+        check(pn == nextPn) { "packet number $pn is not the next one ($nextPn)" }
+        nextPn = pn + 1
+    }
+
+    /** [peekPn] and [commitPn] at once. */
+    fun takePn(random: Random): Long = peekPn(random).also { commitPn(it) }
 
     fun newSentPacket(): SentPacket = pool.removeLastOrNull() ?: SentPacket()
 
