@@ -130,6 +130,31 @@ internal class H1Response(
         if (bodyDiscarded) output.flushAndClose()
     }
 
+    /**
+     * A response without content ([hasNoContent], or a 2xx to CONNECT that [refuseTunnel] will replace) goes out without
+     * running the application's writer: what it writes would only go to a discarding sink. Ktor's AutoHeadResponse does
+     * the same for HEAD.
+     */
+    override suspend fun respondWriteChannelContent(content: OutgoingContent.WriteChannelContent) {
+        if (contentDropped()) {
+            responseChannel()
+            return
+        }
+        super.respondWriteChannelContent(content)
+    }
+
+    /** As [respondWriteChannelContent]: the application's channel is not read for a response without content. */
+    override suspend fun respondFromChannel(readChannel: ByteReadChannel) {
+        if (contentDropped()) {
+            responseChannel()
+            return
+        }
+        super.respondFromChannel(readChannel)
+    }
+
+    /** Whether the application's content of this response is dropped, decided before its head goes out. */
+    private fun contentDropped(): Boolean = hasNoContent() || (call.request.local.method.value == "CONNECT" && statusCode.value in 200..299)
+
     override fun setStatus(statusCode: HttpStatusCode) {
         this.statusCode = statusCode
     }

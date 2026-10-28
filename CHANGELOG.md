@@ -531,7 +531,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - Ktor server, HTTP/1.1: what the application writes for a response to HEAD, or for a 1xx, 204 or 304 response, is
   dropped; the fields stay (RFC 9110 section 9.3.2: the server MUST NOT send content in the response to HEAD). Before,
   `head("/") { call.respondText("x") }` without the AutoHeadResponse plugin sent `x`, which a keep-alive client read
-  as the start of the next response.
+  as the start of the next response. A streamed body (`respondBytesWriter`, a `ReadChannelContent`) for such a
+  response is not produced at all: its writer does not run and its channel is not read.
 - Ktor server, HTTP/1.1: a 1xx or 204 response no longer carries `Content-Length` or `Transfer-Encoding`, and a 304
   no longer `Transfer-Encoding` or the `Content-Length: 0` Ktor adds for empty content (RFC 9110 section 8.6: a server
   MUST NOT send Content-Length in a 1xx or 204 response, nor in a 304 one other than the 200's length). Before,

@@ -4,6 +4,7 @@ package io.kuicksilver.ktor.server
 
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
+import io.ktor.http.content.OutgoingContent
 import io.ktor.server.application.Application
 import io.ktor.server.application.ApplicationCallPipeline
 import io.ktor.server.application.call
@@ -16,9 +17,14 @@ import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
 import io.ktor.server.routing.head
 import io.ktor.server.routing.routing
+import io.ktor.utils.io.ByteReadChannel
+import io.ktor.utils.io.writeFully
 import io.ktor.utils.io.writeStringUtf8
 import io.kuicksilver.native.KslLoader
 import kotlinx.coroutines.withTimeout
+import kotlin.concurrent.atomics.AtomicInt
+import kotlin.concurrent.atomics.ExperimentalAtomicApi
+import kotlin.concurrent.atomics.incrementAndFetch
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -27,8 +33,12 @@ import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 
 /** How the server frames the responses the application gives it (RFC 9110 sections 6 and 8.6, RFC 9112 sections 4 and 6). */
+@OptIn(ExperimentalAtomicApi::class)
 class ServerH1ResponseFramingTest {
     @BeforeTest fun load() = KslLoader.ensureLoaded()
+
+    /** Bodies the application produced for responses that have none (the streamed routes below count them). */
+    private val producedForNothing = AtomicInt(0)
 
     private val routes: Application.() -> Unit = {
         // a CONNECT target is in authority-form, which routing by path does not see
@@ -65,6 +75,24 @@ class ServerH1ResponseFramingTest {
             get("/length-and-stream") {
                 call.response.header(HttpHeaders.ContentLength, "5")
                 call.respondBytesWriter { writeStringUtf8("hello") }
+            }
+            head("/head-heavy") {
+                call.respondBytesWriter {
+                    producedForNothing.incrementAndFetch()
+                    writeFully(ByteArray(1 shl 20))
+                }
+            }
+            get("/204-heavy") {
+                call.respond(
+                    object : OutgoingContent.ReadChannelContent() {
+                        override val status = HttpStatusCode.NoContent
+
+                        override fun readFrom(): ByteReadChannel {
+                            producedForNothing.incrementAndFetch()
+                            return ByteReadChannel(ByteArray(1 shl 20))
+                        }
+                    },
+                )
             }
             get("/hop") {
                 call.response.header(HttpHeaders.Connection, "X-Hop")
@@ -162,6 +190,31 @@ class ServerH1ResponseFramingTest {
                     assertEquals(2, Regex("HTTP/1.1 ").findAll(resp).count(), "$request: $resp")
                     assertTrue(resp.endsWith("root"), "$request: $resp")
                 }
+            }
+        }
+
+    /**
+     * A response that has no content (HEAD here, a 204 with a channel) goes out without running the application's body
+     * writer: what it would write is never sent (RFC 9110 section 9.3.2, RFC 9112 section 6.3 item 1), so producing it
+     * is work for nothing. Before, a streamed HEAD body was produced in full into a discarding sink. A channel the
+     * application hands over is never read (Ktor itself cancels it afterwards).
+     */
+    @Test fun noBodyIsProducedForAResponseWithoutContent() =
+        serverTest {
+            plainServer { port ->
+                for (request in listOf("HEAD /head-heavy", "GET /204-heavy")) {
+                    val resp =
+                        withTimeout(10.seconds) {
+                            rawHttp(
+                                port,
+                                "$request HTTP/1.1\r\nHost: s\r\n\r\nGET / HTTP/1.1\r\nHost: s\r\nConnection: close\r\n\r\n",
+                                tls = null,
+                            )
+                        }
+                    assertEquals(2, Regex("HTTP/1.1 ").findAll(resp).count(), "$request: $resp")
+                    assertTrue(resp.endsWith("root"), "$request: $resp")
+                }
+                assertEquals(1, producedForNothing.load(), "the HEAD writer ran (the 204's readFrom is Ktor's own call)")
             }
         }
 
