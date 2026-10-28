@@ -40,7 +40,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   when the proxy picks that method; `Proxy-Authorization: Basic` with the first CONNECT or absolute-form request to an
   HTTP proxy) and `ProxyException` (a SOCKS5 reply or CONNECT status other than success, as `replyCode`). Off the JVM
   a proxy URL's user info is used as its credentials, and an `https://` proxy URL is refused instead of being spoken
-  to in clear.
+  to in clear. A SOCKS5 password has 1 to 255 bytes (RFC 1929 section 2: PASSWD is 1 to 255 octets): a SOCKS5 proxy
+  configured with an empty one, also a URL with a user name only (`socks5h://user@host`), fails with
+  `IllegalArgumentException` at once, the engine's creation for its `proxy`, `ResolvedProxy.socks5` or the request
+  for a resolver's (curl and Go send PLEN 0 anyway; there is no user-only form, so give a one-byte password). An HTTP
+  proxy takes an empty password (RFC 7617).
 - QUIC: ICMP Packet Too Big (Linux, Android) and EMSGSIZE (every accelerated socket) speed up path MTU discovery as
   hints (experimental `QuicConfig.pmtudIcmpHints`, on by default; RFC 8899 section 4.6, RFC 9000 section 14.2.1). A
   Packet Too Big must quote one of the connection's packets on its active path and leave at least 1200 bytes of payload,
@@ -181,10 +185,6 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   gets `413 Content Too Large` and the connection closes, instead of 400: RFC 9110 section 8.6 says "Any
   Content-Length field value greater than or equal to zero is valid", so such a length is too large to process
   (section 15.5.14), not invalid. Leading zeros no longer count towards the digits (`000000000000000000005` is 5).
-- Ktor client: a SOCKS5 proxy configured with an empty password fails with `IllegalArgumentException` at once: the
-  engine's creation for its `proxy` with such `proxyCredentials` (or URL user info), `ResolvedProxy.socks5` for a
-  resolver's. RFC 1929 section 2 gives PASSWD 1 to 255 octets, so PLEN 0 is outside the protocol (curl and Go send it
-  anyway). Before, the empty password was sent. An HTTP proxy still takes an empty password (RFC 7617).
 - Ktor server, HTTP/1.1 (behaviour): the engine answers `501 Not Implemented` (with `Connection: close` and the text
   "This server does not support CONNECT tunnels.") when the application answers a CONNECT with a 2xx, and logs a
   warning in the application log. A 2xx to CONNECT says the server "will switch to tunnel mode immediately after the
