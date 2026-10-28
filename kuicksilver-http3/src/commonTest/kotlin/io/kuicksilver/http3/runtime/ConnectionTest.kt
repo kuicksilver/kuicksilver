@@ -24,10 +24,12 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
@@ -250,27 +252,45 @@ class ConnectionTest {
         }
 
     /**
-     * A valid MAX_PUSH_ID (the same or a larger value) is a frame the client may send: unlike an unknown frame it spends
-     * no glitch token, so more of them than the bucket holds (1000) leave the connection open.
+     * We never push, so a MAX_PUSH_ID does no useful work once the client has told us its limit: after the first valid
+     * one, each further one spends a glitch token (RFC 9114 section 10.5: "Implementations SHOULD track the use of these
+     * features and set limits on their use"). [count] increasing MAX_PUSH_IDs (0, 1, ...) with the bucket's clock frozen
+     * at its 1000 tokens; returns whether the connection stayed open once the server had read the last one.
      */
-    @Test fun validMaxPushIdsCostNoGlitchToken() =
-        h3Test {
-            QuicPair.open().use { q ->
-                val (c, s) = q.connect()
-                val server = Http3Connection.server(s)
-                val raw = RawPeer(c)
-                raw.openControl()
-                val frames = (0 until 2002).map { raw.frame(FrameType.MAX_PUSH_ID, VarInt.encode(it / 2L)) }.reduce { a, b -> a + b }
+    private suspend fun maxPushIdsLeaveTheConnectionOpen(count: Int): Boolean =
+        QuicPair.open().use { q ->
+            val (c, s) = q.connect()
+            val server = Http3Connection.server(s)
+            server.session.glitchClock = { 0L } // no refill: exactly 1000 tokens
+            val raw = RawPeer(c)
+            raw.openControl()
+            val frames = (0 until count).map { raw.frame(FrameType.MAX_PUSH_ID, VarInt.encode(it.toLong())) }.reduce { a, b -> a + b }
+            peerMayHaveClosed {
                 raw.control.output.writeFully(frames)
                 raw.control.output.flush()
-                val st = c.openBidi()
-                st.output.writeFully(raw.headers(st.id, GET))
-                st.output.flushAndClose()
-                val r = withTimeout(5.seconds) { server.acceptRequest() }
-                r.respond(204).finish()
-                assertTrue(st.input.readAllBytes().isNotEmpty())
-                assertTrue(!server.closed.isCompleted, "MAX_PUSH_ID frames closed the connection")
             }
+            withTimeout(5.seconds) {
+                while (!server.closed.isCompleted &&
+                    withContext(server.session.dispatcher) { server.session.peerMaxPushId } < count - 1L
+                ) {
+                    delay(5)
+                }
+            }
+            if (!server.closed.isCompleted) return@use true
+            assertEquals(Http3ErrorCode.EXCESSIVE_LOAD, peerSawClose(c))
+            false
+        }
+
+    /** The first MAX_PUSH_ID is free and each later one spends one token: 1 + 1000 empty the bucket but fit it. */
+    @Test fun firstMaxPushIdIsFreeAndLaterOnesSpendGlitchTokens() =
+        h3Test {
+            assertTrue(maxPushIdsLeaveTheConnectionOpen(1001), "1 free + 1000 tokens")
+        }
+
+    /** A flood of increasing MAX_PUSH_IDs, each valid on its own, closes the connection with H3_EXCESSIVE_LOAD. */
+    @Test fun negative_maxPushIdFloodIsExcessiveLoad() =
+        h3Test {
+            assertFalse(maxPushIdsLeaveTheConnectionOpen(1002), "1 free + 1001 tokens")
         }
 
     @Test fun serverInitiatedBidiIsCreationError() =

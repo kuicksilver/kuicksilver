@@ -431,7 +431,10 @@ internal class H3Session(
      * exchange settled. Session dispatcher only.
      */
     val clientRequestsWithoutDatagrams = HashMap<Long, QuicStream>()
-    private var peerMaxPushId = -1L // server: the client's last MAX_PUSH_ID (we never push; kept to catch a decrease)
+
+    /** Server: the client's last MAX_PUSH_ID, -1 before the first (we never push; kept to catch a decrease). Dispatcher only. */
+    var peerMaxPushId = -1L
+        private set
 
     /** HEADERS frames above this are refused unread; QPACK output is never much larger than the decoded section it carries. */
     val maxHeadersFrame: Long get() = 2 * settings.maxFieldSectionSize
@@ -874,6 +877,8 @@ internal class H3Session(
             FrameType.MAX_PUSH_ID -> {
                 val id = ControlFrames.parseMaxPushId(payload)
                 if (id < peerMaxPushId) throw H3ProtocolError(Http3ErrorCode.ID_ERROR, "MAX_PUSH_ID fell from $peerMaxPushId to $id")
+                // we never push: after the first, a MAX_PUSH_ID does no useful work and spends a glitch token (section 10.5)
+                if (peerMaxPushId >= 0) glitch("MAX_PUSH_ID after the first")
                 peerMaxPushId = id
             }
 
