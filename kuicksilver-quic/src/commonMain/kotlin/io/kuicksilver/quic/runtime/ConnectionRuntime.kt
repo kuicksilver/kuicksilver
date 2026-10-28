@@ -496,10 +496,11 @@ internal class ConnectionRuntime(
                 }
 
                 ConnectionEvent.EarlyDataRejected -> {
-                    earlyAccepted = false
                     // the core dropped every stream we opened (RFC 9001 section 4.6.2) and reuses their IDs: the wrappers made before
-                    // fail and go; one made since (a stream opened while this event waited) names a live stream and stays
+                    // fail and go; one made since (a stream opened while this event waited) names a live stream and stays. Before
+                    // earlyDataAccepted turns false: whoever reads that on another thread sees the dropped streams failed
                     for (s in streams.values.filter { !it.current }) dropRejected(s)
+                    earlyAccepted = false
                     loop.observer.zeroRtt(this, io.kuicksilver.quic.ZeroRttOutcome.Rejected)
                 }
 
