@@ -536,7 +536,9 @@ internal class ProxyRouting(
 
     /**
      * The call in flight for [key], or a new one once one of the [MAX_ROUTES] slots is free (a caller queues for it). It
-     * runs detached on [resolverDispatcher] and frees its slot when it completes, however long that takes.
+     * runs detached on [resolverDispatcher] and frees its slot when it completes, however long that takes. A completed call
+     * is never shared: its entry leaves [inFlight] only once a coroutine of its own gets the lock, and until then a caller
+     * whose cached answer had expired would get that old answer again instead of asking the resolver.
      */
     @OptIn(kotlinx.coroutines.DelicateCoroutinesApi::class)
     private suspend fun callFor(
@@ -544,12 +546,12 @@ internal class ProxyRouting(
         key: String,
         url: Url,
     ): kotlinx.coroutines.Deferred<ResolvedProxy?> {
-        lock.withLock { inFlight[key] }?.let { return it }
+        lock.withLock { inFlight[key]?.takeUnless { it.isCompleted } }?.let { return it }
         slots.acquire()
         var started = false
         try {
             return lock.withLock {
-                inFlight[key] ?: kotlinx.coroutines.GlobalScope
+                inFlight[key]?.takeUnless { it.isCompleted } ?: kotlinx.coroutines.GlobalScope
                     .async(resolverDispatcher) {
                         if (resolver is WarningProxyResolver) resolver.proxyFor(url, ::warnOnce) else resolver.proxyFor(url)
                     }.also { d ->
