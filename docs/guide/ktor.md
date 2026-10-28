@@ -36,7 +36,7 @@ server.start(wait = true)
   Content-Length and Transfer-Encoding is refused with 400 and the connection closed, a request with neither has no
   body (also with `Connection: close`), and a chunked trailer section is accepted (its fields are discarded). A
   chunk-size line must follow RFC 9112 section 7.1 exactly (hex digits, extensions by their grammar, no whitespace
-  right before the CRLF): anything else, such as a bare CR or LF in it, makes the handler's receive of the body fail with
+  right before the CRLF, which 0.2.0 and Go's net/http tolerate): anything else, such as a bare CR or LF in it, makes the handler's receive of the body fail with
   `BadRequestException` (Ktor answers 400 unless the application handles it) and the connection closes. An HTTP/1.1
   request without a Host field, or any request with two, gets 400 and the connection closed (RFC 9112 section 3.2). The engine's own 400 has the fixed body `Bad Request`
   (Ktor CIO sends the parser's message, which can quote the request's header fields). ALPN on TCP is `http/1.1`.
@@ -209,7 +209,10 @@ val client = HttpClient(Kuicksilver) {
   sequential; `pipelining` is not used. Limits and idle cleanup: see "Connection pool" below. A response head (status
   line and header fields) is limited to 64 KiB, the same as the HTTP/3 field section, and the interim (1xx) responses
   skipped before the final one to 64 KiB in all, however many they are (RFC 9110 section 15.2); beyond either the
-  request fails with Ktor's `ParserException` and the connection is closed. A proxy's response to `CONNECT` has the same
+  request fails with Ktor's `ParserException` and the connection is closed. A chunked response body must follow RFC
+  9112 section 7.1 exactly, as on the server: a chunk-size line with whitespace right before its CRLF (`5 \r\n`, which
+  Go's net/http and nginx tolerate) fails the response with "Whitespace before the end of a chunk size line" since
+  0.2.1. A proxy's response to `CONNECT` has the same
   limits.
 - Requests go through a proxy when one applies (by default the platform's proxy settings): HTTP/1.1 only, see
   [Proxies](#proxies).

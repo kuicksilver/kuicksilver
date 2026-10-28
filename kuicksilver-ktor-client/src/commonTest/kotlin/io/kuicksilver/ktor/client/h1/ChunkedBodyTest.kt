@@ -62,6 +62,23 @@ class ChunkedBodyTest {
     }
 
     /**
+     * The failure names what is wrong, so the operator of a peer that writes `5 \r\n` (some servlet containers and
+     * hand-written servers do; Go's net/http and nginx tolerate it on reading) can tell it from a broken body.
+     */
+    @Test fun whitespaceBeforeTheLineEndFailsWithAClearMessage() =
+        runTest {
+            for (wire in listOf("5 \r\nhello\r\n0\r\n\r\n", "5;a\t\r\nhello\r\n0\r\n\r\n", "5;a=b \r\nhello\r\n0\r\n\r\n")) {
+                val e = assertFailsWith<IOException>(wire.visible()) { decode(wire) }
+                assertEquals(
+                    "Whitespace before the end of a chunk size line (RFC 9112 section 7.1 allows it only before the \";\" " +
+                        "and around the \"=\" of a chunk extension)",
+                    e.message,
+                    wire.visible(),
+                )
+            }
+        }
+
+    /**
      * RFC 9112 section 2.2: a bare CR MUST be treated as invalid. Before, the parser skipped a CR anywhere in the line, so
      * `1\r0` was read as 0x10 where a recipient that ends the line at the CR reads 1, and `\r\r\n` was a last chunk.
      */

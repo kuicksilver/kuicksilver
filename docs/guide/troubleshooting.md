@@ -395,6 +395,14 @@ timeout") when the server accepted the connection but did not answer the opening
 WebSockets to one IP address connect one at a time (RFC 6455 section 4.1), so the next one to that address waited for
 this one until then.
 
+### A chunked body fails with "Whitespace before the end of a chunk size line"
+
+The peer wrote a chunk-size line with SP or HTAB right before its CRLF (`5 \r\n`). RFC 9112 section 7.1 allows
+whitespace in that line only before the `;` of a chunk extension and around its `=`; since 0.2.1 both engines refuse
+any other (the server with 400, the client by failing the response), because a recipient that reads such a line
+otherwise than an intermediary is open to request smuggling. Fix the peer: it is out of the grammar, even where other
+implementations tolerate it.
+
 ### `H3BodyConsumed`
 
 "421 Misdirected Request from the alternative, and the request body was already consumed": a streamed

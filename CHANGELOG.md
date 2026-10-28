@@ -173,6 +173,13 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   still receiving aborts that request with `H3_DATAGRAM_ERROR` (RFC 9297 section 2, MUST); and on a server every
   MAX_PUSH_ID after the first spends a glitch token, so a client that keeps re-sending it (some stacks send one with every
   push-credit update) meets `H3_EXCESSIVE_LOAD` once the bucket is empty (RFC 9114 section 10.5).
+- Ktor client and server, HTTP/1.1: a chunk-size line with SP or HTAB right before its CRLF (`5 \r\n`, `0 \r\n`,
+  `5;a=b \r\n`) is now refused: the server answers the request with 400 and closes the connection, and the client fails
+  the response with `MalformedChunkedBodyException` ("Whitespace before the end of a chunk size line"). RFC 9112
+  section 7.1 has BWS only before the `;` of a chunk extension and around its `=`, and a recipient that frames such a
+  line otherwise than a peer in front of it is the chunk-line request smuggling class. Before, both engines tolerated
+  it, as Go's net/http and nginx do on reading; a peer that writes such lines (some servlet containers and
+  hand-written servers) has to be fixed.
 - Ktor client: the h3/h1 race starts HTTP/1.1 10 ms after HTTP/3 on a network where QUIC was never confirmed, instead
   of at the same time, and an explicit `http3 { hardDelay }` must be 10 ms..2 s or `Duration.INFINITE` (else the
   engine's creation fails with `IllegalArgumentException`; before, any value was used as is). RFC 8305 section 5: a

@@ -173,6 +173,7 @@ private suspend fun parseChunkSize(input: ByteReadChannel): Long {
                     when {
                         b == SEMICOLON -> LineState.BEFORE_NAME
                         isWhitespace(b) -> state
+                        b == CR_INT -> whitespaceBeforeLineEnd()
                         else -> invalid(b)
                     }
                 }
@@ -202,6 +203,7 @@ private suspend fun parseChunkSize(input: ByteReadChannel): Long {
                         b == SEMICOLON -> LineState.BEFORE_NAME
                         b == EQUALS -> LineState.BEFORE_VALUE
                         isWhitespace(b) -> state
+                        b == CR_INT -> whitespaceBeforeLineEnd()
                         else -> invalid(b)
                     }
                 }
@@ -264,6 +266,17 @@ private const val SEMICOLON = ';'.code
 private const val EQUALS = '='.code
 private const val QUOTE = '"'.code
 private const val BACKSLASH = '\\'.code
+
+/**
+ * SP or HTAB right before the line end (`5 \r\n`): outside the grammar, which has BWS only before a `;` and around the
+ * `=` of an extension (RFC 9112 section 7.1), so the line is refused as any other invalid one; the message says why, as
+ * the peer that writes such lines is otherwise hard to tell from a broken body.
+ */
+private fun whitespaceBeforeLineEnd(): Nothing =
+    throw MalformedChunkedBodyException(
+        "Whitespace before the end of a chunk size line (RFC 9112 section 7.1 allows it only before the \";\" and around " +
+            "the \"=\" of a chunk extension)",
+    )
 
 private fun invalid(b: Int): Nothing =
     throw MalformedChunkedBodyException(
