@@ -11,9 +11,11 @@ import io.kuicksilver.http3.Http3Connection
 import io.kuicksilver.http3.Http3ErrorCode
 import io.kuicksilver.http3.Http3Exception
 import io.kuicksilver.http3.Http3Headers
+import io.kuicksilver.http3.Http3Settings
 import io.kuicksilver.http3.QuicPair
 import io.kuicksilver.http3.frame.FrameType
 import io.kuicksilver.http3.http3Request
+import io.kuicksilver.http3.qpack.entrySize
 import io.kuicksilver.http3.readAllBytes
 import io.kuicksilver.http3.useScoped
 import io.kuicksilver.native.KslLoader
@@ -261,7 +263,8 @@ class RequestTest {
     /**
      * Endless 1xx: the interim responses of one request may hold `maxFieldSectionSize` (64 KiB) of decoded fields in all
      * (RFC 9114 section 4.2.2 sizes); past that the request fails with H3_EXCESSIVE_LOAD, its stream is reset and stopped,
-     * and the connection lives on.
+     * and the connection lives on. It is that byte budget which ends them, not a count: every interim response that fits
+     * reaches `onInformational` (60 of these 1078-byte ones; the count limit of 5 before 0.2.1 stopped at 5).
      */
     @Test fun negative_endlessInformationalIsExcessiveLoad() =
         h3Test {
@@ -281,8 +284,15 @@ class RequestTest {
                             .respond(200)
                             .finish()
                     }
-                val e = assertFailsWith<Http3Exception.Protocol> { p.client.request(get()) }
+                var seen = 0
+                val e =
+                    assertFailsWith<Http3Exception.Protocol> {
+                        p.client.request(http3Request("GET", "server.test", "/") { onInformational = { _, _ -> seen++ } })
+                    }
                 assertEquals(Http3ErrorCode.EXCESSIVE_LOAD, e.h3Code)
+                val perInterim = entrySize(":status", "103") + entrySize("link", "x".repeat(1000))
+                assertEquals(1078L, perInterim)
+                assertEquals(Http3Settings.Default.maxFieldSectionSize / perInterim, seen.toLong(), "1xx within the byte budget")
                 assertEquals(200, p.client.request(get()).status) // the connection lives on
                 server.join()
                 assertTrue(sent < 10_000, "the client stopped the stream: the server's sends failed after $sent")
