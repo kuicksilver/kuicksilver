@@ -368,6 +368,49 @@ class EarlyDataTest {
         }
 
     /**
+     * Review 2026-10-28 N1: the rejection is known before the first attempt opens its critical streams, so they are 1-RTT
+     * streams, and the client notes the rejection (the server's control stream arrives) while that attempt is between its
+     * control stream and its QPACK streams. Nothing of the attempt was dropped, so it goes on: giving it up reset the typed
+     * control stream, which the server must treat as H3_CLOSED_CRITICAL_STREAM (RFC 9114 section 6.2.1: "If either control
+     * stream is closed at any point, this MUST be treated as a connection error of type H3_CLOSED_CRITICAL_STREAM").
+     */
+    @Test fun liveCriticalStreamsSurviveARejectionNotedWhileTheyAreSetUp(): Unit =
+        runBlocking {
+            withTimeout(30.seconds) {
+                val attempts = AtomicInt(0)
+                val accepted =
+                    earlyAcceptedAfterResuming(
+                        issuer = http3Settings {},
+                        resumer = http3Settings { h3Datagram = false },
+                        clientSession = { session ->
+                            session.criticalAttemptHookForTest = { step, _ ->
+                                when (step) {
+                                    H3Session.AttemptStep.Started -> {
+                                        attempts.incrementAndFetch()
+                                        runCatching { session.quic.awaitHandshake() } // the rejection came first
+                                    }
+
+                                    H3Session.AttemptStep.ControlWritten -> {
+                                        // the server's control stream is taken meanwhile, and the rejection noted
+                                        while (!session.zeroRttRejectionNotedForTest) kotlinx.coroutines.yield()
+                                    }
+
+                                    else -> {}
+                                }
+                            }
+                        },
+                    ) { c, resumed ->
+                        val s = resumed().single()
+                        repeat(2) { assertEquals(204, c.request(http3Request("GET", "server.test", "/again")).status) }
+                        s.session.criticalStreamsSeen.first { it == 3 }
+                        assertTrue(!s.session.closed.isCompleted && !c.session.closed.isCompleted, "the connection lives")
+                    }
+                assertEquals(false, accepted)
+                assertEquals(1, attempts.load(), "the first attempt's streams were live: no second one")
+            }
+        }
+
+    /**
      * Review 2026-10-28 N3: the session's state is its dispatcher's alone. The early request sent again after the rejection
      * notes the rejection, and `updatePriority` writes on the control stream, from the caller's thread; both hop to the
      * session's dispatcher first (the hook fails the call otherwise).

@@ -212,6 +212,15 @@ internal class H3Session(
     /** Client: the rejected 0-RTT was noted ([noteRejectedZeroRtt]). Dispatcher only. */
     private var zeroRttRejectionNoted = false
 
+    /** [zeroRttRejectionNoted] (a test hook; dispatcher only). */
+    internal val zeroRttRejectionNotedForTest: Boolean get() = zeroRttRejectionNoted
+
+    /** The streams the running [openCriticalStreams] attempt opened so far (the set of [critical] once it is done). Dispatcher only. */
+    private var attemptStreams: List<QuicStream> = emptyList()
+
+    /** Streams of [attemptStreams] whose type went to the transport: never reset, a typed critical stream is for good. Dispatcher only. */
+    private val typedStreams = ArrayList<QuicStream>(3)
+
     /** Test hook: fail when the critical-stream bookkeeping runs anywhere but on [dispatcher] (review 2026-10-28 N3). */
     @kotlin.concurrent.Volatile
     internal var assertOnDispatcherForTest = false
@@ -222,6 +231,12 @@ internal class H3Session(
             check(currentCoroutineContext()[kotlin.coroutines.ContinuationInterceptor] === dispatcher) { "off the session's dispatcher" }
         }
     }
+
+    /** Test hook: runs on the dispatcher at the steps of each [openCriticalStreams] attempt ([AttemptStep]), with the attempt's generation. */
+    internal var criticalAttemptHookForTest: (suspend (AttemptStep, Int) -> Unit)? = null
+
+    /** Where an [openCriticalStreams] attempt is ([criticalAttemptHookForTest]). */
+    internal enum class AttemptStep { Started, Opened, ControlWritten }
 
     private val controlLock = Mutex()
     private val encoderLock = Mutex()
@@ -295,7 +310,8 @@ internal class H3Session(
      * Client: the server rejected 0-RTT (RFC 9001 section 4.6.2: "The client therefore MUST reset the state of all streams,
      * including application state bound to those streams"). Runs before anything of the server is read (the accept loop and
      * the request sent again call it first), so whatever QPACK holds unsent can only be about the dropped streams: it goes.
-     * Critical streams the rejection dropped are given up, and [criticalStreamsLoop] opens new ones and sends SETTINGS again.
+     * Critical streams the rejection dropped are given up, and [criticalStreamsLoop] opens new ones and sends SETTINGS again;
+     * live ones, opened after the rejection, stay (review 2026-10-28 N1: giving those up reset a typed control stream).
      * Idempotent; on the session's dispatcher, whoever calls it.
      */
     suspend fun noteRejectedZeroRtt() = withContext(dispatcher) { noteRejectedZeroRttHere() }
@@ -306,9 +322,8 @@ internal class H3Session(
         if (isServer || zeroRttRejectionNoted || quic.earlyDataAccepted != false) return
         zeroRttRejectionNoted = true
         qpack.onEarlyDataRejected()
-        val c = critical
-        // streams not open yet are opened again too: an attempt still running may hold some the rejection dropped
-        if (c == null || listOf(c.control, c.encoder, c.decoder).any { droppedByRejectedZeroRtt(it) }) {
+        val held = critical?.let { listOf(it.control, it.encoder, it.decoder) } ?: attemptStreams
+        if (held.any { droppedByRejectedZeroRtt(it) }) {
             criticalGen++
             critical = null
             if (criticalStreams.isCompleted) criticalStreams = CompletableDeferred()
@@ -461,16 +476,22 @@ internal class H3Session(
         gen: Int,
     ): Boolean? {
         val opened = ArrayList<QuicStream>(3)
+        attemptStreams = opened
+        typedStreams.clear()
+        val hook = criticalAttemptHookForTest
         val done =
             try {
                 withTimeoutOrNull(deadline) {
+                    hook?.invoke(AttemptStep.Started, gen)
                     for (i in 0 until 3) {
                         opened += quic.openUni(CRITICAL)
                         if (gen != criticalGen) return@withTimeoutOrNull false
                     }
+                    hook?.invoke(AttemptStep.Opened, gen)
                     val (control, encoder, decoder) = opened
                     controlLock.withLock {
                         if (gen != criticalGen) return@withTimeoutOrNull false
+                        typedStreams += control
                         control.output.writeFully(VarInt.encode(StreamType.CONTROL))
                         control.output.writeFully(FrameHeaders.frame(FrameType.SETTINGS, SettingsCodec.encode(ourSettings())))
                         if (settings.grease) {
@@ -480,13 +501,16 @@ internal class H3Session(
                         }
                         control.output.flush()
                     }
+                    hook?.invoke(AttemptStep.ControlWritten, gen)
                     encoderLock.withLock {
                         if (gen != criticalGen) return@withTimeoutOrNull false
+                        typedStreams += encoder
                         encoder.output.writeFully(VarInt.encode(StreamType.QPACK_ENCODER))
                         encoder.output.flush()
                     }
                     decoderLock.withLock {
                         if (gen != criticalGen) return@withTimeoutOrNull false
+                        typedStreams += decoder
                         decoder.output.writeFully(VarInt.encode(StreamType.QPACK_DECODER))
                         decoder.output.flush()
                     }
@@ -508,10 +532,13 @@ internal class H3Session(
             return null
         }
         if (!done) {
-            // a 1-RTT stream opened after the rejection carries nothing yet: given up before its type, which a receiver tolerates
-            // (RFC 9114 section 6.2: "a receiver MUST tolerate unidirectional streams being closed or reset prior to the
-            // reception of the stream header")
-            for (st in opened) if (!droppedByRejectedZeroRtt(st)) runCatching { st.reset(Http3ErrorCode.NO_ERROR) }
+            // only an attempt that holds a stream the rejection dropped gives up ([noteRejectedZeroRttHere]), and the streams
+            // are typed in the order they were opened, after all three were: the live 1-RTT ones it opened after the dropped
+            // ones carry nothing yet. They are reset before their type, which RFC 9114 section 6.2 allows: "a receiver MUST
+            // tolerate unidirectional streams being closed or reset prior to the reception of the stream header". A typed one is never reset (section 6.2.1: a closed control stream is H3_CLOSED_CRITICAL_STREAM)
+            for (st in opened) {
+                if (!droppedByRejectedZeroRtt(st) && typedStreams.none { it === st }) runCatching { st.reset(Http3ErrorCode.NO_ERROR) }
+            }
             return false
         }
         criticalStreams.complete(Unit)
