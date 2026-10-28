@@ -288,6 +288,81 @@ class H1FailedBodyTest {
         return ending
     }
 
+    /**
+     * A streamed request body whose length differs from its Content-Length (RFC 9112 section 6.3: the recipient takes
+     * that many octets as the body; RFC 9110 section 8.6: the field is the body's length): what the server reads, and how
+     * the call ends. [length] is declared, [bytes] are what the body gives.
+     */
+    private suspend fun TestScope.mismatched(
+        length: Long,
+        bytes: String,
+        writeChannel: Boolean,
+    ): Pair<String, Throwable?> {
+        val body =
+            if (writeChannel) {
+                object : OutgoingContent.WriteChannelContent() {
+                    override val contentLength: Long = length
+
+                    override suspend fun writeTo(channel: ByteWriteChannel) = channel.writeStringUtf8(bytes)
+                }
+            } else {
+                object : OutgoingContent.ReadChannelContent() {
+                    override val contentLength: Long = length
+
+                    override fun readFrom(): ByteReadChannel = ByteReadChannel(bytes.encodeToByteArray())
+                }
+            }
+        val wire = Wire()
+        val received = CompletableDeferred<String>()
+        backgroundScope.launch {
+            while (wire.toServer.readLineStrict()?.isNotEmpty() == true) continue
+            // all the request bytes the server ever gets, to the connection's end
+            val got = StringBuilder()
+            val buf = ByteArray(64)
+            while (true) {
+                val n = runCatching { wire.toServer.readAvailable(buf, 0, buf.size) }.getOrDefault(-1)
+                if (n < 0) break
+                got.append(buf.decodeToString(0, n))
+            }
+            received.complete(got.toString())
+        }
+        val call = runCatching { exchange(wire, post(body, socketTimeout = 5_000)) { it.statusCode } }
+        return received.await() to call.exceptionOrNull()
+    }
+
+    /**
+     * A streamed body shorter than its Content-Length fails its call and closes the connection: the server, which waits
+     * for the rest, sees the connection end, never a complete request. Before, the short body went out as complete and
+     * the connection was kept for the next request, whose bytes the server would read as the rest of this body.
+     */
+    @Test fun negative_aStreamedBodyShorterThanItsContentLengthFailsTheCall() =
+        runTest {
+            for (writeChannel in listOf(false, true)) {
+                val (received, failure) = mismatched(length = 5, bytes = "abc", writeChannel = writeChannel)
+                assertEquals("abc", received, "writeChannel=$writeChannel")
+                assertTrue(
+                    failure?.message?.contains("fewer bytes than its Content-Length 5") == true,
+                    "writeChannel=$writeChannel: $failure",
+                )
+            }
+        }
+
+    /**
+     * A streamed body longer than its Content-Length fails its call and closes the connection, and its excess is never
+     * sent: the server would read it as the start of the next request (RFC 9112 section 11.2, request smuggling).
+     */
+    @Test fun negative_aStreamedBodyLongerThanItsContentLengthFailsTheCall() =
+        runTest {
+            for (writeChannel in listOf(false, true)) {
+                val (received, failure) = mismatched(length = 3, bytes = "abcGET /x", writeChannel = writeChannel)
+                assertEquals("abc", received, "writeChannel=$writeChannel")
+                assertTrue(
+                    failure?.message?.contains("more bytes than its Content-Length 3") == true,
+                    "writeChannel=$writeChannel: $failure",
+                )
+            }
+        }
+
     /** Bytes to the end; an end with a cause throws it (ktor's `readAvailable` answers -1 for both). */
     private suspend fun ByteReadChannel.readToEnd(): Long {
         val buf = ByteArray(65536)

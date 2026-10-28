@@ -79,7 +79,7 @@ internal suspend fun writeHeaders(
     val body = request.body
     val contentBody = body.getUnwrapped()
 
-    val contentLength = headers[HttpHeaders.ContentLength] ?: contentBody.contentLength?.toString()
+    val contentLength = declaredContentLength(request)
     val hasContent = contentBody !is OutgoingContent.NoContent
     val transferEncoding = if (hasContent) chunkedTransferEncoding(request) else null
     val expected = headers[HttpHeaders.Expect]
@@ -151,8 +151,14 @@ internal suspend fun writeBody(
     if (body is OutgoingContent.ProtocolUpgrade) throw UnsupportedContentTypeException(body)
 
     if (chunkedTransferEncoding(request) == null) {
-        processOutgoingContent(body, output)
+        // the Content-Length sent is the body's length (RFC 9112 section 6.2; section 6.3: the recipient reads that many
+        // octets as the body): a body that gives fewer bytes leaves the server waiting for the rest or reading the next
+        // request's bytes as them, one that gives more puts its excess where the next request goes. Neither is sent as
+        // complete: the request fails (an IllegalStateException, never retried) and the connection is closed
+        val declared = declaredContentLength(request)?.toLongOrNull()
+        val written = processOutgoingContent(body, output, declared)
         output.flush()
+        if (declared != null && written < declared) throw bodyLengthMismatch(longer = false, declared)
         return
     }
     val encoder = encodeChunked(output, callContext)
@@ -172,20 +178,48 @@ internal suspend fun writeBody(
 private fun OutgoingContent.getUnwrapped(): OutgoingContent =
     if (this is OutgoingContent.ContentWrapper) delegate().getUnwrapped() else this
 
+/** The Content-Length a request goes out with when it is not chunked: its own field, else its body's length. */
+internal fun declaredContentLength(request: HttpRequestData): String? =
+    request.headers[HttpHeaders.ContentLength] ?: request.body
+        .getUnwrapped()
+        .contentLength
+        ?.toString()
+
+private fun bodyLengthMismatch(
+    longer: Boolean,
+    declared: Long,
+) = IllegalStateException("The request body has ${if (longer) "more" else "fewer"} bytes than its Content-Length $declared")
+
+/**
+ * Writes [body] to [channel]; returns the bytes written. With a [limit] (the Content-Length sent), at most [limit] bytes
+ * are written, and a body that has more fails without writing the excess; one with fewer returns what it had.
+ */
 private suspend fun processOutgoingContent(
     body: OutgoingContent,
     channel: ByteWriteChannel,
-) {
-    when (body) {
+    limit: Long? = null,
+): Long {
+    /** Copies [source], up to [limit]: fails when [source] has bytes past it. */
+    suspend fun copy(source: ByteReadChannel): Long {
+        if (limit == null) return source.copyTo(channel)
+        val copied = source.copyTo(channel, limit)
+        if (copied == limit && source.awaitContent()) throw bodyLengthMismatch(longer = true, limit)
+        return copied
+    }
+    return when (body) {
         is OutgoingContent.ByteArrayContent -> {
-            channel.writeFully(body.bytes())
+            val bytes = body.bytes()
+            if (limit != null && bytes.size.toLong() != limit) throw bodyLengthMismatch(bytes.size > limit, limit)
+            channel.writeFully(bytes)
+            bytes.size.toLong()
         }
 
         is OutgoingContent.ReadChannelContent -> {
             // ktor's copyTo ends on a source that failed as on one that ended: only a clean end is the body's end
             val source = body.readFrom()
-            source.copyTo(channel)
+            val n = copy(source)
             source.closedCause?.let { throw it }
+            n
         }
 
         // writeTo may close the channel it gets: give it its own, the connection's output stays open for keep-alive
@@ -202,13 +236,14 @@ private suspend fun processOutgoingContent(
                         own.flushAndClose()
                     }
                 }
-                own.copyTo(channel)
+                val n = copy(own) // one longer than its Content-Length fails, which cancels its writer
                 own.closedCause?.let { throw it }
+                n
             }
         }
 
         is OutgoingContent.ContentWrapper -> {
-            processOutgoingContent(body.delegate(), channel)
+            processOutgoingContent(body.delegate(), channel, limit)
         }
 
         is OutgoingContent.ProtocolUpgrade, is OutgoingContent.NoContent -> {
