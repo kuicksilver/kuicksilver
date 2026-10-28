@@ -18,8 +18,9 @@ the cell. No server can do otherwise: it cannot know about a close still in flig
 
 A cell has the signature when the downloaded files were checked; the runner names exactly one unanswered challenge X, the one in
 the first server packet on the last path P of its walk; every earlier path's challenge was answered; on the server-side capture
-the client's packets opened P, the server's packets there carry nothing but PATH_CHALLENGE, ACK, PADDING and CONNECTION_CLOSE
-within three times the client's bytes there, the packet with X left before the client's CONNECTION_CLOSE arrived, and after
+the client's packets opened P, the server's packets there carry nothing but PATH_CHALLENGE, ACK, PADDING, RETIRE_CONNECTION_ID
+(quinn retires the old path's ID as it moves, RFC 9000 section 9.5) and CONNECTION_CLOSE within three times the client's bytes
+there, the packet with X left before the client's CONNECTION_CLOSE arrived, and after
 that close arrived the server sent at most one packet on P, carrying its own CONNECTION_CLOSE (RFC 9000 section 10.2.2: a
 draining endpoint sends nothing else; closing-rebind.py has the same bound); on the
 client-side capture every client packet up to its close left from one address (the client did not move itself), the close has
@@ -27,13 +28,30 @@ error code 0, X arrived only after the close went out, and after the close the c
 challenge that never reached the client, one that arrived before its close, an error close, data on P, or a server that kept
 probing or acknowledging on P after the close reached it is no ENVIRONMENT verdict.
 
-Both roles: the proof rests on the captures alone (closing-rebind.py, the same race a moment later, is likewise role-blind).
+X may also reach the client between its entering the closing state and its CONNECTION_CLOSE leaving (CI run 40645584772, result
+20261028-070320, quinn->kuicksilver:rebind-addr, the JVM image: our client closed at 11.0147 s, quinn's challenge reached the
+client's link at 11.0165 s, our close left at 11.0225 s; the JVM client's close takes 4-10 ms to reach the wire in every cell of
+that run). The capture alone cannot tell this from a client that ignored a challenge, so it is excused only for our client, by
+its qlog: exactly one kuicksilver client qlog, its connection_closed is local with application code 0, and that moment, mapped
+to the capture's clock, came before X arrived. The mapping is the smallest gap between a 1-RTT packet's packet_sent time in the
+qlog and its time on the client-side capture, over at least 10 packets in the second before the close left: a packet reaches
+the capture after the qlog records it, so the smallest gap bounds the close's capture time from above. Between X's arrival
+and the close the client must have sent nothing. Peer clients have no such proof and keep the stricter rule.
+
+The 3x bound is exact for our server. A peer server may instead start each datagram there while it still had budget, as quinn
+does on purpose ("If there is any anti-amplification budget left, we always allow a full MTU to be sent", quinn-rs/quinn#1082,
+quinn-proto/src/connection/mod.rs:612-622): quinn padded its 1200-byte challenge after one 37-byte ACK. That is the peer's
+choice and changes nothing here: the challenge reached the client either way.
+
+Both roles: the proof rests on the captures alone (closing-rebind.py, the same race a moment later, is likewise role-blind),
+except the qlog variant above, which needs our client.
 
 Usage: closing-challenge.py CELL_DIR          decodes the cell's sim/trace_node_{right,left}.pcap with tshark
        closing-challenge.py --decoded FILE    the same analysis on a decoded summary (tools/interop/environment-test.sh)
        closing-challenge.py --dump CELL_DIR   prints the decoded summary as JSON (to make a test fixture)
 Exit 0: the signature is present (one line on stdout); 1: absent; 2: the cell cannot be analysed.
 """
+import glob
 import json
 import os
 import re
@@ -41,10 +59,10 @@ import subprocess
 import sys
 
 SERVER_PORT = "443"
-PADDING, ACK, ACK_ECN, PATH_CHALLENGE, CLOSE_TRANSPORT, CLOSE_APPLICATION = 0x00, 0x02, 0x03, 0x1A, 0x1C, 0x1D
+PADDING, ACK, ACK_ECN, RETIRE_CONNECTION_ID, PATH_CHALLENGE, CLOSE_TRANSPORT, CLOSE_APPLICATION = 0x00, 0x02, 0x03, 0x19, 0x1A, 0x1C, 0x1D
 CLOSES = {CLOSE_TRANSPORT, CLOSE_APPLICATION}
 CLOSING = {PADDING, ACK, ACK_ECN} | CLOSES
-SERVER_ON_PATH = CLOSING | {PATH_CHALLENGE}
+SERVER_ON_PATH = CLOSING | {PATH_CHALLENGE, RETIRE_CONNECTION_ID}
 
 
 def verdict(cell):
@@ -64,17 +82,21 @@ def dissect(pcap, keys):
     out = subprocess.run(["tshark", "-r", pcap, "-o", "tls.keylog_file:" + keys, "-Y", "quic && !icmp && udp.port == " + SERVER_PORT, "-T", "fields",
                           "-E", "separator=|", "-e", "frame.number", "-e", "ip.src", "-e", "ipv6.src", "-e", "udp.srcport", "-e", "ip.dst",
                           "-e", "ipv6.dst", "-e", "udp.dstport", "-e", "udp.length", "-e", "quic.frame_type", "-e", "quic.path_challenge.data",
-                          "-e", "quic.path_response.data", "-e", "quic.cc.error_code", "-e", "quic.cc.error_code.app"],
+                          "-e", "quic.path_response.data", "-e", "quic.cc.error_code", "-e", "quic.cc.error_code.app",
+                          "-e", "frame.time_relative", "-e", "quic.header_form", "-e", "quic.packet_number"],
                          check=True, capture_output=True, text=True).stdout
     result = []
     for line in out.splitlines():
-        n, s4, s6, sp, d4, d6, dp, length, frames, challenges, responses, codes, app_codes = (line.split("|") + [""] * 13)[:13]
+        n, s4, s6, sp, d4, d6, dp, length, frames, challenges, responses, codes, app_codes, t, forms, pns = (line.split("|") + [""] * 16)[:16]
         result.append({"n": int(n), "src": f"{s4 or s6}:{sp}", "dst": f"{d4 or d6}:{dp}", "from_server": sp == SERVER_PORT,
                        "len": max(int(length or 0) - 8, 0),  # the QUIC datagram: UDP payload
                        "frames": [int(f, 16) for f in frames.split(",") if f],
                        "challenges": [c.replace(":", "").lower() for c in challenges.split(",") if c],
                        "responses": [c.replace(":", "").lower() for c in responses.split(",") if c],
-                       "close_codes": [int(c, 0) for c in f"{codes},{app_codes}".split(",") if c]})
+                       "close_codes": [int(c, 0) for c in f"{codes},{app_codes}".split(",") if c],
+                       "t": float(t or 0),
+                       # the packet number of a datagram holding one short-header (1-RTT) packet, else None
+                       "pn": int(pns) if forms == "0" and pns.isdigit() else None})
     return result
 
 
@@ -91,6 +113,45 @@ def runner_paths(server_side):
     return firsts
 
 
+def client_qlog(cell):
+    """Our client's qlog when the cell has exactly one (kuicksilver writes "title": "kuicksilver"): 1-RTT packet numbers sent and
+    their times (ms), and its first connection_closed (time ms, owner, application code); None otherwise."""
+    found = []
+    for p in sorted(glob.glob(os.path.join(cell, "client", "qlog", "*.sqlog")) + glob.glob(os.path.join(cell, "client", "qlog", "*.qlog"))):
+        ours, sent, closed = False, {}, None
+        with open(p, errors="replace") as f:
+            for line in f:
+                line = line.strip().lstrip("\x1e")
+                if not line: continue
+                try:
+                    e = json.loads(line)
+                except ValueError:
+                    continue
+                if "trace" in e:
+                    ours = e.get("title") == "kuicksilver" and e["trace"].get("vantage_point", {}).get("type") == "client"; continue
+                name, data = e.get("name"), e.get("data", {})
+                if name == "transport:packet_sent" and data.get("header", {}).get("packet_type") == "1RTT":
+                    sent[data["header"]["packet_number"]] = float(e["time"])
+                elif name == "connectivity:connection_closed" and closed is None:
+                    closed = {"t": float(e["time"]), "owner": data.get("owner"), "code": data.get("application_code")}
+        if ours: found.append((sent, closed))
+    return found[0] if len(found) == 1 else None
+
+
+def client_closing(cell, client_side):
+    """When our client entered the closing state, on the client-side capture's clock (an upper bound, see the module doc), with
+    its close owner and application code; None without our client's qlog, its local close, or 10 packets to map the clocks."""
+    q = client_qlog(cell)
+    if q is None or q[1] is None: return None
+    sent, closed = q
+    wire = next((x["t"] for x in client_side if not x["from_server"] and CLOSES & set(x["frames"])), None)
+    if wire is None: return None
+    gaps = [x["t"] - sent[x["pn"]] / 1000 for x in client_side
+            if not x["from_server"] and x["pn"] in sent and wire - 1.0 <= x["t"] <= wire]
+    if len(gaps) < 10: return None
+    return {"at": round(closed["t"] / 1000 + min(gaps), 6), "owner": closed["owner"], "code": closed["code"], "samples": len(gaps)}
+
+
 def decode(cell):
     keys = next((k for k in (os.path.join(cell, "client", "keys.log"), os.path.join(cell, "server", "keys.log")) if os.path.isfile(k) and os.path.getsize(k) > 0), None)
     right, left = (os.path.join(cell, "sim", f"trace_node_{s}.pcap") for s in ("right", "left"))
@@ -104,15 +165,20 @@ def decode(cell):
     keep = ("n", "from_server", "len", "frames", "challenges", "close_codes")
     client_sent = [x for x in client_side if not x["from_server"]]
     close_at = next((i for i, x in enumerate(client_side) if not x["from_server"] and CLOSES & set(x["frames"])), None)
+    # from the client's close, or from a named challenge's arrival if that came first, on
+    first_x = next((i for i, x in enumerate(client_side) if set(x["challenges"]) & set(unanswered)), None)
+    start = min(i for i in (close_at, first_x) if i is not None) if close_at is not None else None
     upto = next((i for i, x in enumerate(client_sent) if CLOSES & set(x["frames"])), len(client_sent) - 1)
-    return {"unanswered": unanswered, "download_checked": checked, "runner_paths": firsts,
+    return {"server": os.path.basename(os.path.dirname(cell)).split("_", 1)[0], "unanswered": unanswered, "download_checked": checked, "runner_paths": firsts,
             "on_path": [{k: x[k] for k in keep} for x in server_side if p and p in (x["src"], x["dst"])],
             "server_close_n": next((x["n"] for x in server_side if not x["from_server"] and CLOSES & set(x["frames"])), None),
             "responses": sorted({r for x in client_sent for r in x["responses"]}),
             "client_sources": sorted({x["src"] for x in client_sent[:upto + 1]}),
-            # the client-side capture from the client's first close on, and any packet before it that carried a named challenge
-            "client_side": [{k: x[k] for k in keep} for i, x in enumerate(client_side)
-                            if (close_at is not None and i >= close_at) or set(x["challenges"]) & set(unanswered)]}
+            # the client-side capture from the client's first close (or a named challenge before it) on, and any packet before
+            # that which carried a named challenge
+            "client_side": [{k: (round(x[k], 6) if k == "t" else x[k]) for k in keep + ("t",)} for i, x in enumerate(client_side)
+                            if (start is not None and i >= start) or set(x["challenges"]) & set(unanswered)],
+            "client_closing": client_closing(cell, client_side)}
 
 
 def analyse(d):
@@ -129,7 +195,16 @@ def analyse(d):
     srv = [y for y in on if y["from_server"]]
     if any(not y["frames"] or not set(y["frames"]) <= SERVER_ON_PATH for y in srv): return None
     sent, received = (sum(y["len"] for y in on if y["from_server"] == s) for s in (True, False))
-    if sent > 3 * received: return None
+    if sent > 3 * received:
+        # ours (or an unnamed server) is held to 3x; a peer server may start each datagram while budget remains (module doc)
+        if d.get("server", "kuicksilver").startswith("kuicksilver"): return None
+        before_sent = before_received = 0
+        for y in on:
+            if y["from_server"]:
+                if before_sent >= 3 * before_received: return None
+                before_sent += y["len"]
+            else:
+                before_received += y["len"]
     with_x = next((y for y in srv if x in y["challenges"]), None)
     if with_x is None: return None
     # the server could not know: its challenge left before the client's close reached it
@@ -143,8 +218,17 @@ def analyse(d):
     close = next((i for i, y in enumerate(cs) if not y["from_server"] and CLOSES & set(y["frames"])), None)
     if close is None or not cs[close]["close_codes"] or any(c != 0 for c in cs[close]["close_codes"]): return None
     arrived = [i for i, y in enumerate(cs) if y["from_server"] and x in y["challenges"]]
-    if not arrived or min(arrived) < close: return None
+    if not arrived: return None
     if any(not y["frames"] or not set(y["frames"]) <= CLOSING for y in cs[close:] if not y["from_server"]): return None
+    if min(arrived) < close:
+        # X reached the client before its close left: only our client's qlog can show it was closing by then (module doc)
+        q, a = d.get("client_closing"), min(arrived)
+        if not q or q["owner"] != "local" or q["code"] != 0 or q["at"] >= cs[a]["t"]: return None
+        if any(not y["from_server"] for y in cs[a:close]): return None
+        return (f"the rebind landed as the transfer ended: the client's last packets reached the server from the new path {p}, the "
+                f"server's PATH_CHALLENGE {x} there (RFC 9000 9.3) left before the client's close arrived and reached the client "
+                f"{(cs[a]['t'] - q['at']) * 1000:.1f} ms after its qlog shows it entered the closing state, before its "
+                f"CONNECTION_CLOSE left (10.2.1: a closing endpoint answers nothing); every earlier path was challenged and answered")
     return (f"the rebind landed after the client's CONNECTION_CLOSE left: its last packets reached the server from the new path {p}, "
             f"the server's PATH_CHALLENGE {x} there (RFC 9000 9.3) left before the close arrived and reached the client only after it "
             f"had closed (10.2.1: a closing endpoint answers nothing); every earlier path was challenged and answered")

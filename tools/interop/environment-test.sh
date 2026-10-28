@@ -10,7 +10,8 @@
 # a cell the runner timed out, which must not be listed, e.g. build/interop/20261017-175019/picoquic-server/kuicksilver_picoquic/v2 (0.2.0 gate);
 # KSL_INTEROP_STALE_CELL a cell that ran on the sim of a timed-out cell, e.g. build/interop/20261020-031632/picoquic-server/kuicksilver_picoquic/zerortt.
 # KSL_INTEROP_CHALLENGE_CELL a cell whose closing client could not answer the server's challenge, e.g. the quiche-server/kuicksilver_quiche/rebind-addr
-# cell of CI run 40571281407 (closing-challenge.py).
+# cell of CI run 40571281407 (closing-challenge.py); KSL_INTEROP_QLOG_CHALLENGE_CELL one where only our client's qlog shows it was
+# closing, e.g. the quinn-client/quinn_kuicksilver/rebind-addr cell of CI run 40645584772.
 # KSL_INTEROP_LOST_CELL a cell whose peer client's ClientHello never reached our server in full, e.g.
 # build/interop/20261023-114548/quiche-server/kuicksilver_quiche/handshakeloss (0.2.1 gate 2).
 # KSL_INTEROP_PORT_CELL a cell of the ngtcp2 server whose client the sim rebound to a port that server drops, e.g. the release/0.2.x
@@ -120,6 +121,24 @@ check "challenge: an earlier first packet had no challenge"          1 "" -- pyt
 check "challenge: not the last path of the runner's walk"            1 "" -- python3 "$ch" --decoded "$(hvar later '.runner_paths += [{"dst": "193.167.0.151:64331", "challenge": "00"}]')"
 check "challenge: the downloaded files were not checked"             1 "" -- python3 "$ch" --decoded "$(hvar nofiles '.download_checked = false')"
 check "challenge: a malformed summary cannot be analysed"            2 "cannot analyse" -- python3 "$ch" --decoded "$(hvar broken 'del(.on_path)')"
+# the same race a moment earlier (CI run 40645584772, quinn->kuicksilver:rebind-addr, the JVM image; decoded with --dump): quinn's
+# challenge reached our client 1.9 ms after its qlog shows it closing, 6 ms before its CONNECTION_CLOSE left; quinn padded the
+# challenge to 1200 bytes after one 37-byte ACK (a full datagram while any budget is left, quinn-proto mod.rs:612-622)
+fq="$td/closing-challenge-quinn-rebind-addr.json"
+qvar() { jq "$2" "$fq" > "$tmp/$1.json"; echo "$tmp/$1.json"; }
+qx='(.on_path[] | select(.challenges | index("17c17117f7ebd40d")))'
+check "challenge: CI cell, the challenge reached our closing client"   0 "1.9 ms after its qlog shows it entered the closing state" -- python3 "$ch" --decoded "$fq"
+check "challenge: no qlog of ours (a peer client) proves the closing"  1 "" -- python3 "$ch" --decoded "$(qvar noqlog '.client_closing = null')"
+check "challenge:   a summary without the field either"                1 "" -- python3 "$ch" --decoded "$(qvar nofield 'del(.client_closing)')"
+check "challenge: our client closed only after it arrived"            1 "" -- python3 "$ch" --decoded "$(qvar later '.client_closing.at = 11.016544')"
+check "challenge:   at the same instant"                              1 "" -- python3 "$ch" --decoded "$(qvar same '.client_closing.at = 11.016543')"
+check "challenge: the qlog close was the peer's"                      1 "" -- python3 "$ch" --decoded "$(qvar peer '.client_closing.owner = "remote"')"
+check "challenge: the qlog close carried an error code"               1 "" -- python3 "$ch" --decoded "$(qvar qerror '.client_closing.code = 10')"
+check "challenge: the client sent an ACK between it and its close"    1 "" -- python3 "$ch" --decoded "$(qvar acked '.client_side = [.client_side[0], {"n": 12273, "from_server": false, "len": 37, "frames": [3], "challenges": [], "close_codes": [], "t": 11.02}] + .client_side[1:]')"
+check "challenge: our server is held to 3x exactly"                   1 "" -- python3 "$ch" --decoded "$(qvar ours '.server = "kuicksilver-native"')"
+check "challenge:   so is a summary that names no server"             1 "" -- python3 "$ch" --decoded "$(qvar noserver 'del(.server)')"
+check "challenge: the peer server started a datagram past its budget" 1 "" -- python3 "$ch" --decoded "$(qvar overbudget '.on_path = .on_path[:2] + [{"n": 12459, "from_server": true, "len": 1200, "frames": [0], "challenges": [], "close_codes": []}] + .on_path[2:]')"
+check "challenge: the peer server sent NEW_CONNECTION_ID there"       1 "" -- python3 "$ch" --decoded "$(qvar newcid "$qx.frames += [24]")"
 
 # clienthello-lost.py: the peer client's ClientHello never reached our server in full (0.2.1 gate 2, run 20261023-114548:
 # kuicksilver->quiche:handshakeloss, decoded with --dump; and a rerun of it whose connection was still open at teardown, empty qlog)
@@ -438,8 +457,13 @@ if [ -n "${KSL_INTEROP_CLOSE_CELL:-}" ]; then   # the real gate 6 cell: pcaps an
 fi
 if [ -n "${KSL_INTEROP_CHALLENGE_CELL:-}" ]; then   # the real CI cell: pcaps and key log through tshark
   cell=${KSL_INTEROP_CHALLENGE_CELL%/}; res=$(dirname "$(dirname "$cell")")
-  check "real challenge cell: classified ENVIRONMENT" 0 "$(basename "$(dirname "$cell")") $(basename "$cell") the rebind landed just after the client's CONNECTION_CLOSE left" -- environment_cells "$res"
+  check "real challenge cell: classified ENVIRONMENT" 0 "$(basename "$(dirname "$cell")") $(basename "$cell") the rebind landed just after the client closed" -- environment_cells "$res"
   check "real challenge cell: the decoded summary matches its fixture" 0 "" -- bash -c "python3 '$ch' --dump '$cell' | jq -e --slurpfile f '$fh' '. == \$f[0]' > /dev/null"
+fi
+if [ -n "${KSL_INTEROP_QLOG_CHALLENGE_CELL:-}" ]; then   # the real quinn cell: pcaps, key log and our client's qlog
+  cell=${KSL_INTEROP_QLOG_CHALLENGE_CELL%/}; res=$(dirname "$(dirname "$cell")")
+  check "real qlog challenge cell: classified ENVIRONMENT" 0 "$(basename "$(dirname "$cell")") $(basename "$cell") the rebind landed just after the client closed" -- environment_cells "$res"
+  check "real qlog challenge cell: the decoded summary matches its fixture" 0 "" -- bash -c "python3 '$ch' --dump '$cell' | jq -e --slurpfile f '$fq' '. == \$f[0]' > /dev/null"
 fi
 if [ -n "${KSL_INTEROP_LOST_CELL:-}" ]; then   # the real 0.2.1 gate 2 cell: qlogs and pcaps through tshark
   cell=${KSL_INTEROP_LOST_CELL%/}; res=$(dirname "$(dirname "$cell")")

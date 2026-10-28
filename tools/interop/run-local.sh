@@ -25,7 +25,8 @@
 # with its own close there instead of a PATH_CHALLENGE (tools/interop/closing-rebind.py; 0.2.0 gate 6,
 # msquic->kuicksilver-native:rebind-port), and a rebind cell whose client had closed when the server's PATH_CHALLENGE on the new
 # path reached it, the rebind having landed just after its close left (tools/interop/closing-challenge.py; CI run 40571281407,
-# quiche->kuicksilver:rebind-addr), and a cell that ran on the sim the timed-out cell before it left running ("Container sim
+# quiche->kuicksilver:rebind-addr; or, for our client by its qlog, just after it entered the closing state: CI run 40645584772,
+# quinn->kuicksilver:rebind-addr), and a cell that ran on the sim the timed-out cell before it left running ("Container sim
 # Running": a stale ARP entry for the server; the override below has compose recreate the sim in every cell, this is the backstop),
 # and a cell whose server container started only after the sim had stopped waiting for it (no scenario ran, no packet was sent),
 # and a loss cell of our server whose peer client idled out because the rest of its two-packet ClientHello never reached us while the

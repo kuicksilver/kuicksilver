@@ -63,7 +63,10 @@ closing_rebind() {
 # (CI run 40571281407: quiche->kuicksilver:rebind-addr, the close at 10.99 s, the rebind at 11 s; rebind-addr
 # transfers end near 11 s, see sim-entrypoint.sh). tools/interop/closing-challenge.py proves it from both captures, including that
 # every earlier path passed the runner's check, and that once the close reached the server it sent at most one packet on the
-# new path, its own CONNECTION_CLOSE (RFC 9000 section 10.2.2). Both roles, like closing_rebind. Prints "<server>_<client> <case>" per cell.
+# new path, its own CONNECTION_CLOSE (RFC 9000 section 10.2.2). Both roles, like closing_rebind. The challenge may also reach our
+# client after it entered the closing state but before its close reached the wire (CI run 40645584772: quinn->kuicksilver JVM
+# rebind-addr, 1.9 ms after the close, 6 ms before the CONNECTION_CLOSE left); only our client's qlog proves that, so a peer
+# client gets no such excuse. Prints "<server>_<client> <case>" per cell.
 closing_challenge() {
   local o cell
   while IFS= read -r o; do
@@ -166,7 +169,7 @@ environment_rerun_cells() {
     late_server "$1" | sed 's/$/ the server container started after the sim had stopped waiting for it: the scenario never ran, no packet was sent/'
     clienthello_lost "$1" | sed 's/$/ the peer client'"'"'s ClientHello never reached our server in full: the simulator dropped its one copy of the rest and every ACK of ours, and the client repeats only the first part on PTO (clienthello-lost.py)/'
     closing_rebind "$1" | sed 's/$/ the rebind landed just before the client'"'"'s CONNECTION_CLOSE: the server answered the close from the new path with its own close, no path left to validate (closing-rebind.py)/'
-    closing_challenge "$1" | sed 's/$/ the rebind landed just after the client'"'"'s CONNECTION_CLOSE left: the server challenged the new path before the close arrived, and the closing client could not answer (closing-challenge.py)/'
+    closing_challenge "$1" | sed 's/$/ the rebind landed just after the client closed: the server challenged the new path before the close arrived, and the closing client could not answer (closing-challenge.py)/'
   } | sort -u -k1,2
 }
 
