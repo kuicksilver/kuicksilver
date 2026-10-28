@@ -70,6 +70,7 @@ internal suspend fun handleRequestStream(
             null
         }
     if (firstType == FrameType.WT_STREAM) {
+        bidiSettled(st.id) // a WebTransport stream, not a request: never a session
         wt.onBidi(st)
         return@with
     }
@@ -153,6 +154,13 @@ internal suspend fun handleRequestStream(
                 return@with
             }
         pendingHeaders.remove(st.id)
+        bidiSettled(st.id)
+        // datagrams kept while the HEADERS were on the way belong to a request without datagram semantics: RFC 9297 section
+        // 2 has it aborted with H3_DATAGRAM_ERROR (a CONNECT takes them when its channel registers)
+        if (parsed.method != "CONNECT" && datagrams.dropPending(st.id)) {
+            abort(st, Http3ErrorCode.DATAGRAM_ERROR)
+            return@with
+        }
         if (settings.webTransport && parsed.method == "CONNECT" && WtTokens.isWebTransport(parsed.protocol)) {
             // one session per connection without flow control: a second is refused before the application (section 5.1)
             if (wtSessionStream != null) {

@@ -12,6 +12,7 @@ import io.kuicksilver.http3.frame.SettingsId
 import io.kuicksilver.http3.frame.StreamType
 import io.kuicksilver.http3.frame.VarInt
 import io.kuicksilver.http3.readAllBytes
+import io.kuicksilver.http3.runtime.DatagramDemux
 import io.kuicksilver.http3.runtime.GET
 import io.kuicksilver.http3.runtime.RawPeer
 import io.kuicksilver.http3.runtime.h3Test
@@ -219,6 +220,69 @@ class WtStreamRoutingTest {
     @Test fun negative_pendingDatagramsBounded() =
         h3Test {
             assertEquals((0 until 16).map { "d$it" }, datagramsBeforeConnect(17)) // the 17th is dropped at the cap
+        }
+
+    /**
+     * Only a stream that may still become a session keeps datagrams (draft-ietf-webtrans-http3-16 section 4.6). A GET has
+     * no datagram semantics, so a datagram for it aborts it with H3_DATAGRAM_ERROR (RFC 9297 section 2) instead of taking
+     * one of the 16 shared slots: datagrams for the open GET leave the slots to a real session's early datagram.
+     */
+    @Test fun datagramsForAnOpenGetLeaveTheSlotsToASession() =
+        h3Test {
+            QuicPair.open().useScoped { q ->
+                val (c, s) = q.connect()
+                val server = Http3Connection.server(s, wtOn)
+                val raw = RawPeer(c)
+                raw.openControl(wtClientSettings)
+                withTimeout(5.seconds) { server.peerSettings.first { it != null } }
+                val get = c.openBidi()
+                get.output.writeFully(raw.headers(get.id, GET))
+                get.output.flush() // no FIN: the GET's handler is still running
+                withTimeout(5.seconds) { server.acceptRequest() }
+                repeat(DatagramDemux.MAX_PENDING) { c.sendDatagram(VarInt.encode(get.id / 4) + "g$it".encodeToByteArray()) }
+                assertEquals(Http3ErrorCode.DATAGRAM_ERROR, resetCode(get))
+                val sessionStream = 4L // the next stream, not opened yet
+                c.sendDatagram(VarInt.encode(sessionStream / 4) + "early".encodeToByteArray())
+                withTimeout(5.seconds) {
+                    while (withContext(server.session.dispatcher) { server.session.datagrams.receivedCount } <
+                        DatagramDemux.MAX_PENDING + 1
+                    ) {
+                        delay(5)
+                    }
+                }
+                assertEquals(1, withContext(server.session.dispatcher) { server.session.datagrams.pendingCount })
+                val accepted = CompletableDeferred<WebTransportSession>()
+                launch { accepted.complete(server.acceptRequest().acceptWebTransport()) }
+                val st = c.openBidi()
+                assertEquals(sessionStream, st.id)
+                st.output.writeFully(raw.wtConnect(st))
+                st.output.flush()
+                val wt = withTimeout(5.seconds) { accepted.await() }
+                assertEquals("early", withTimeout(5.seconds) { wt.receiveDatagram() }.decodeToString())
+                assertFalse(server.closed.isCompleted)
+            }
+        }
+
+    /** A datagram kept for a stream whose HEADERS then turn out to be a GET: the GET is aborted with H3_DATAGRAM_ERROR. */
+    @Test fun datagramKeptForWhatBecomesAGetAbortsIt() =
+        h3Test {
+            QuicPair.open().useScoped { q ->
+                val (c, s) = q.connect()
+                val server = Http3Connection.server(s, wtOn)
+                val raw = RawPeer(c)
+                raw.openControl(wtClientSettings)
+                withTimeout(5.seconds) { server.peerSettings.first { it != null } }
+                c.sendDatagram(VarInt.encode(0) + "d".encodeToByteArray()) // stream 0, not opened yet
+                withTimeout(5.seconds) {
+                    while (withContext(server.session.dispatcher) { server.session.datagrams.pendingCount } == 0) delay(5)
+                }
+                val get = c.openBidi()
+                get.output.writeFully(raw.headers(get.id, GET))
+                get.output.flush()
+                assertEquals(Http3ErrorCode.DATAGRAM_ERROR, resetCode(get))
+                assertEquals(0, withContext(server.session.dispatcher) { server.session.datagrams.pendingCount })
+                assertFalse(server.closed.isCompleted)
+            }
         }
 
     /**

@@ -72,7 +72,12 @@ internal class DatagramDemux(
         }
     }
 
+    /** Datagrams received so far (test hook; session dispatcher only). */
+    var receivedCount = 0
+        private set
+
     private suspend fun onDatagram(b: ByteArray) {
+        receivedCount++
         val q = VarInt.read(b, 0, b.size)
         if (q < 0 ||
             q > MAX_QUARTER_ID
@@ -93,6 +98,7 @@ internal class DatagramDemux(
             session.fail(Http3ErrorCode.ID_ERROR, "datagram for stream $streamId beyond the bidirectional stream limit")
             return
         }
+        if (session.abortRequestWithoutDatagrams(streamId)) return
         // draft-ietf-webtrans-http3 section 4.6: a session's datagrams may overtake its CONNECT; kept, bounded as its
         // streams are (WtStreamRouter: 16 per connection, 5 s each). Others are dropped (RFC 9297 section 2.1).
         if (!session.isServer || !session.settings.webTransport || !session.requestMayStillOpen(streamId)) return
@@ -112,10 +118,8 @@ internal class DatagramDemux(
         return ch
     }
 
-    /** Stream [streamId] will not become a session (its handler ended): its waiting datagrams go. */
-    fun dropPending(streamId: Long) {
-        if (pending.isNotEmpty()) pending.removeAll { it.streamId == streamId }
-    }
+    /** Stream [streamId] will not become a session: its waiting datagrams go. Returns whether there were any. */
+    fun dropPending(streamId: Long): Boolean = pending.isNotEmpty() && pending.removeAll { it.streamId == streamId }
 
     private fun prunePending() {
         while (pending.isNotEmpty() && pending.first().expires.hasPassedNow()) pending.removeFirst()

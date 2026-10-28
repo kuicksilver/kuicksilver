@@ -422,6 +422,15 @@ internal class H3Session(
 
     /** Server: client bidirectional streams taken from the transport whose handler has not ended (HEADERS may still be on the way). */
     private val handledBidi = HashSet<Long>()
+
+    /** Server: [handledBidi] streams whose HEADERS were read (or that are no request): they never become a session now. */
+    private val settledBidi = HashSet<Long>()
+
+    /**
+     * Client: requests other than CONNECT, whose streams have no datagram semantics (RFC 9297 section 2), until their
+     * exchange settled. Session dispatcher only.
+     */
+    val clientRequestsWithoutDatagrams = HashMap<Long, QuicStream>()
     private var peerMaxPushId = -1L // server: the client's last MAX_PUSH_ID (we never push; kept to catch a decrease)
 
     /** HEADERS frames above this are refused unread; QPACK output is never much larger than the decoded section it carries. */
@@ -687,6 +696,7 @@ internal class H3Session(
                             guarded { handleRequestStream(this@H3Session, st) }
                         } finally {
                             handledBidi -= st.id
+                            settledBidi -= st.id
                             earlyPriority.remove(st.id) // a stream that never became a request (aborted, WebTransport) keeps no slot
                             datagrams.dropPending(st.id)
                         }
@@ -989,9 +999,35 @@ internal class H3Session(
      * it is within the limit we granted), or its handler is still reading its HEADERS. Session dispatcher only.
      */
     fun requestMayStillOpen(id: Long): Boolean {
-        if (id in handledBidi) return true
+        if (id in handledBidi) return id !in settledBidi
         if (id <= acceptedBidiUpTo) return false
         return QuicStreamLimits.peerBidiStreamsGranted(quic)?.let { id / 4 < it } ?: true
+    }
+
+    /** Server: stream [id] read its HEADERS, or turned out to be no request (a WebTransport stream): see [requestMayStillOpen]. */
+    fun bidiSettled(id: Long) {
+        settledBidi += id
+    }
+
+    /**
+     * RFC 9297 section 2: "If an HTTP Datagram is received and it is associated with a request that has no known semantics
+     * for HTTP Datagrams, the receiver MUST terminate the request. If HTTP/3 is in use, the request stream MUST be aborted
+     * with H3_DATAGRAM_ERROR". Requests other than CONNECT have none (GET and POST are the RFC's examples). Section 2.1
+     * comes first once the request's direction is over ("MUST be silently dropped"): only a stream still receiving is
+     * aborted. Returns whether [id] was such a request.
+     */
+    suspend fun abortRequestWithoutDatagrams(id: Long): Boolean {
+        if (isServer) {
+            val req = activeServerRequests[id] ?: return false
+            if (req.method == "CONNECT" || req.stream.input.isClosedForRead) return false
+            abort(req.stream, Http3ErrorCode.DATAGRAM_ERROR)
+            req.done()
+        } else {
+            val st = clientRequestsWithoutDatagrams[id] ?: return false
+            if (st.input.isClosedForRead) return false
+            abort(st, Http3ErrorCode.DATAGRAM_ERROR)
+        }
+        return true
     }
 
     /**

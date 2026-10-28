@@ -20,6 +20,7 @@ import io.kuicksilver.http3.http3Request
 import io.kuicksilver.http3.http3Settings
 import io.kuicksilver.http3.readAllBytes
 import io.kuicksilver.http3.useScoped
+import io.kuicksilver.http3.webtransport.resetCode
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.DatagramSendResult
 import io.kuicksilver.quic.DatagramUnsupportedReason
@@ -32,6 +33,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.take
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.test.BeforeTest
@@ -42,6 +44,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
@@ -444,6 +447,90 @@ class H3DatagramTest {
                 withTimeout(5.seconds) { client.peerSettings.filterNotNull().first() }
                 s.sendDatagram(VarInt.encode(10) + byteArrayOf(1))
                 assertEquals(Http3ErrorCode.ID_ERROR, withTimeout(5.seconds) { peerSawClose(s) })
+            }
+        }
+
+    /**
+     * RFC 9297 section 2: "If an HTTP Datagram is received and it is associated with a request that has no known semantics
+     * for HTTP Datagrams, the receiver MUST terminate the request. If HTTP/3 is in use, the request stream MUST be aborted
+     * with H3_DATAGRAM_ERROR (0x33)." A GET whose request side is still open; the connection lives on.
+     */
+    @Test fun negative_datagramForAGetAbortsItsStreamOnTheServer() =
+        h3Test {
+            QuicPair.open().useScoped { q ->
+                val (c, s) = q.connect()
+                val server = Http3Connection.server(s, connectOn)
+                val raw = RawPeer(c)
+                raw.openControl(listOf(SettingsId.H3_DATAGRAM to 1L))
+                withTimeout(5.seconds) { server.peerSettings.filterNotNull().first() }
+                val st = c.openBidi()
+                st.output.writeFully(raw.headers(st.id, GET))
+                st.output.flush() // no FIN: the request's direction stays open
+                withTimeout(5.seconds) { server.acceptRequest() }
+                c.sendDatagram(VarInt.encode(st.id / 4) + byteArrayOf(1))
+                assertEquals(Http3ErrorCode.DATAGRAM_ERROR, resetCode(st))
+                assertFalse(server.closed.isCompleted)
+            }
+        }
+
+    /**
+     * Section 2.1 takes precedence once the request's direction is over: "If a datagram is received after the
+     * corresponding stream's receive side is closed, the received datagrams MUST be silently dropped". The GET is answered.
+     */
+    @Test fun datagramForAWholeGetIsDropped() =
+        h3Test {
+            QuicPair.open().useScoped { q ->
+                val (c, s) = q.connect()
+                val server = Http3Connection.server(s, connectOn)
+                val raw = RawPeer(c)
+                raw.openControl(listOf(SettingsId.H3_DATAGRAM to 1L))
+                withTimeout(5.seconds) { server.peerSettings.filterNotNull().first() }
+                val st = c.openBidi()
+                st.output.writeFully(raw.headers(st.id, GET))
+                st.output.flushAndClose()
+                val req = withTimeout(5.seconds) { server.acceptRequest() }
+                withTimeout(5.seconds) { req.body.readAllBytes() } // the request's direction ended
+                val seen = withContext(server.session.dispatcher) { server.session.datagrams.receivedCount }
+                c.sendDatagram(VarInt.encode(st.id / 4) + byteArrayOf(1))
+                withTimeout(5.seconds) {
+                    while (withContext(server.session.dispatcher) { server.session.datagrams.receivedCount } == seen) delay(5)
+                }
+                req.respond(204).output.flushAndClose()
+                val answer = withTimeout(5.seconds) { st.input.readAllBytes() }
+                assertTrue(answer.isNotEmpty(), "the response arrived, the stream was not reset")
+                assertFalse(server.closed.isCompleted)
+            }
+        }
+
+    /** The client's mirror: a datagram on a GET's stream before its response ends aborts the request with H3_DATAGRAM_ERROR. */
+    @Test fun negative_datagramForAGetAbortsItsStreamOnTheClient() =
+        h3Test {
+            QuicPair.open().useScoped { q ->
+                val (c, s) = q.connect()
+                val raw = RawPeer(s)
+                raw.openControl(listOf(SettingsId.H3_DATAGRAM to 1L))
+                val client = Http3Connection.client(c)
+                withTimeout(5.seconds) { client.peerSettings.filterNotNull().first() }
+                val response = async { runCatching { client.request(get()) } }
+                val st = withTimeout(5.seconds) { s.acceptBidi() }
+                withTimeout(5.seconds) { st.input.readAllBytes() }
+                s.sendDatagram(VarInt.encode(st.id / 4) + byteArrayOf(1))
+                // the request side is over (FIN sent), so what the server sees of the abort is its STOP_SENDING; the probe
+                // writes reserved (GREASE) frames, which a request stream must ignore (RFC 9114 section 7.2.8)
+                val stopped =
+                    assertFailsWith<Throwable> {
+                        withTimeout(5.seconds) {
+                            while (true) {
+                                st.output.writeFully(raw.frame(0x21, ByteArray(0)))
+                                st.output.flush()
+                                delay(5)
+                            }
+                        }
+                    }
+                val stop = generateSequence(stopped) { it.cause }.filterIsInstance<QuicException.StreamError.Stopped>().firstOrNull()
+                assertEquals(Http3ErrorCode.DATAGRAM_ERROR, stop?.code, "STOP_SENDING H3_DATAGRAM_ERROR, got $stopped")
+                assertTrue(withTimeout(5.seconds) { response.await() }.isFailure, "the request failed")
+                assertFalse(client.closed.isCompleted)
             }
         }
 

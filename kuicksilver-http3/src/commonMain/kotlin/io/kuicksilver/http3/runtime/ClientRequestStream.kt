@@ -205,18 +205,25 @@ private suspend fun H3Session.requestOnDispatcher(
             }
         }
         clientStreams[st.id] = st
+        if (!keepOpen && r.method != "CONNECT") clientRequestsWithoutDatagrams[st.id] = st
         exchangeOpened()
         val dgrams = if (keepOpen) datagrams.register(st.id) else null
         try {
             exchange(st, r, keepOpen, callbacks).also {
                 it.datagramChannel = dgrams
                 // a tunnel ends when both directions did: connect() reports it; a request when its body is out and its response in
-                if (!keepOpen) it.whenSettled { exchangeEnded() }
+                if (!keepOpen) {
+                    it.whenSettled {
+                        clientRequestsWithoutDatagrams.remove(st.id)
+                        exchangeEnded()
+                    }
+                }
                 made(it)
                 afterRequestForTest?.invoke()
             }
         } catch (e: Throwable) {
             exchangeEnded()
+            clientRequestsWithoutDatagrams.remove(st.id)
             if (dgrams != null) datagrams.unregister(st.id)
             // a GOAWAY that did not cover this stream aborted it: the server never processed it (RFC 9114 section 5.2)
             if (st.id in rejectedByGoAway && e !is CancellationException) throw Http3Exception.RequestNotProcessed(true)
