@@ -43,6 +43,7 @@ struct ksl_ssl {
     ksl_event q[KSL_EVQ]; uint8_t *qbuf[KSL_EVQ]; int qh, qt;
     uint8_t *last_popped;
     /* verification */
+    int verify_mode;                                 /* the owner's KSL_VERIFY_* when the session was made (or its SNI override's) */
     int verify_name_set; char *verify_host; char *verify_ip; unsigned verify_flags;
     int verify_pending, verify_decision, verify_alert;
     STACK_OF(X509) *presented_chain, *validated_chain;

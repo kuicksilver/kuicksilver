@@ -42,7 +42,7 @@ static int fail_with(ksl_ssl *s, X509_STORE_CTX *xctx, int x509_err) {
 int ksl_cert_verify_cb(X509_STORE_CTX *xctx, void *arg) {
     (void)arg;
     SSL *ssl = X509_STORE_CTX_get_ex_data(xctx, SSL_get_ex_data_X509_STORE_CTX_idx());
-    ksl_ssl *s = SSL_get_ex_data(ssl, 1); ksl_ctx *c = s->owner;
+    ksl_ssl *s = SSL_get_ex_data(ssl, 1);
     /* the side comes from the SSL itself, not from the owner context: a context of the other role (an SNI override is refused one,
        ksl_ssl_sni_resume) never changes whose rules apply */
     int client = !SSL_is_server(ssl), peer_is_server = client;
@@ -53,7 +53,7 @@ int ksl_cert_verify_cb(X509_STORE_CTX *xctx, void *arg) {
     if (client && s->mode == KSL_MODE_TCP && SSL_version(ssl) < TLS1_3_VERSION && !s->server_hello_ems) {
         s->ems_refused = 1; X509_STORE_CTX_set_error(xctx, X509_V_ERR_APPLICATION_VERIFICATION); return 0;
     }
-    if (client && c->verify_mode == KSL_VERIFY_PAUSE) {
+    if (client && s->verify_mode == KSL_VERIFY_PAUSE) {   /* the session's mode: a context switched after ksl_ssl_new does not change it */
         /* statem_clnt.c: the pause happens only when the callback returns 1 AND retry_verify is set; 0 is a plain failure. */
         if (s->verify_pending == 0) { s->verify_pending = 1; (void)SSL_set_retry_verify(ssl); return 1; }
         if (s->verify_pending == 1) { (void)SSL_set_retry_verify(ssl); return 1; }
@@ -127,7 +127,7 @@ int ksl_client_hello_cb(SSL *ssl, int *al, void *arg) {
         ksl_ctx *o = s->sni_override;
         if (!SSL_set_SSL_CTX(ssl, o->ctx) || !ksl_ctx_apply_to_ssl(o, ssl)) { *al = SSL_AD_INTERNAL_ERROR; return SSL_CLIENT_HELLO_ERROR; }
         /* ALPN: the override's SSL_CTX carries its own select callback (arg = o); the frozen base context, shared by other sessions, is never written */
-        s->owner = o;   /* ownership of the session's settings moves to the override context */
+        s->owner = o; s->verify_mode = o->verify_mode;   /* ownership of the session's settings moves to the override context */
         SSL_set_ex_data(ssl, 1, s);
     }
     return SSL_CLIENT_HELLO_SUCCESS;

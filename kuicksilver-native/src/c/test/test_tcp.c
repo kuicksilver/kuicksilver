@@ -424,6 +424,36 @@ static void test_key_update_before_record_limit(void) {
     ksl_ssl_free(c); ksl_ssl_free(s); ksl_ctx_free(cc); ksl_ctx_free(sc); END();
 }
 
+static void test_session_keeps_its_verify_mode(void) {
+    SECTION("tcp_session_keeps_its_verify_mode");
+    /* A session keeps the verify mode of its creation (ksl.h makes a context immutable only once frozen, and ksl_ssl_new takes an
+       unfrozen one): a context switched to KSL_VERIFY_NONE afterwards neither drops the reference identifier rule (ADR-0011) nor
+       the chain check for it, over TLS 1.3 and 1.2. */
+    for (int v = 0; v < 2; v++) {
+        int version = v ? KSL_TLS1_2 : KSL_TLS1_3, alert = 0;
+        ksl_ctx *cc = client_ctx("test-ca", KSL_VERIFY_OPENSSL), *sc = server_ctx("server");
+        ksl_ctx_set_option(cc, KSL_OPT_MIN_VERSION, version); ksl_ctx_set_option(cc, KSL_OPT_MAX_VERSION, version); ksl_ctx_set_option(sc, KSL_OPT_MIN_VERSION, KSL_TLS1_2);
+        ksl_ssl *c = ksl_ssl_new(cc, KSL_MODE_TCP), *s = ksl_ssl_new(sc, KSL_MODE_TCP);   /* no verify name */
+        ksl_ssl_set(c, KSL_SET_SNI, (const uint8_t *)"server.test", sizeof "server.test" - 1);
+        CHECK(ksl_ctx_set_option(cc, KSL_OPT_VERIFY_MODE, KSL_VERIFY_NONE) == KSL_OK, "the unfrozen context switches to KSL_VERIFY_NONE");
+        CHECK(tcp_pump(c, s, NULL, NULL) == KSL_ERROR && last_code(c, NULL) == KSL_E_NO_VERIFY_NAME && !c->done, "negative: the session made before still needs its verify name");
+        ksl_ssl_free(c); ksl_ssl_free(s); ksl_ctx_free(sc);
+        sc = server_ctx("server-other-ca"); ksl_ctx_set_option(sc, KSL_OPT_MIN_VERSION, KSL_TLS1_2);
+        ksl_ctx_free(cc); cc = client_ctx("test-ca", KSL_VERIFY_OPENSSL);
+        ksl_ctx_set_option(cc, KSL_OPT_MIN_VERSION, version); ksl_ctx_set_option(cc, KSL_OPT_MAX_VERSION, version);
+        c = tcp_client(cc, "server.test"); s = ksl_ssl_new(sc, KSL_MODE_TCP);
+        CHECK(ksl_ctx_set_option(cc, KSL_OPT_VERIFY_MODE, KSL_VERIFY_NONE) == KSL_OK, "switched again, for a session that has its name");
+        int r = tcp_pump(c, s, NULL, NULL); last_code(c, &alert);
+        CHECK(r == KSL_ERROR && !c->done && alert == 48, "negative: the session made before still verifies: unknown_ca");
+        ksl_ssl_free(c); ksl_ssl_free(s); ksl_ctx_free(cc); ksl_ctx_free(sc);
+        cc = client_ctx("test-ca", KSL_VERIFY_OPENSSL); sc = server_ctx("server");
+        ksl_ctx_set_option(cc, KSL_OPT_MIN_VERSION, version); ksl_ctx_set_option(cc, KSL_OPT_MAX_VERSION, version); ksl_ctx_set_option(sc, KSL_OPT_MIN_VERSION, KSL_TLS1_2);
+        c = tcp_client(cc, "server.test"); s = ksl_ssl_new(sc, KSL_MODE_TCP);
+        CHECK(ksl_ctx_set_option(cc, KSL_OPT_VERIFY_MODE, KSL_VERIFY_NONE) == KSL_OK && tcp_pump(c, s, NULL, NULL) == KSL_OK && echo_bytes(c, s, 1000), "control: with its name and a trusted chain it connects");
+        ksl_ssl_free(c); ksl_ssl_free(s); ksl_ctx_free(cc); ksl_ctx_free(sc);
+    }
+    END();
+}
 /* Moves from a to b as much ciphertext as b's end of the pair has room for (shuttle drops what does not fit) */
 static size_t shuttle_room(ksl_ssl *a, ksl_ssl *b) {
     uint8_t buf[4096]; size_t total = 0, n, used, room;
@@ -564,4 +594,4 @@ static void test_default_versions_and_tls12_profile(void) {
     END();
 }
 
-void run_tcp(void) { test_echo(); test_truncation(); test_tls12(); test_resumption(); test_sni_pause(); test_sni_override_alpn(); test_sni_override_settings_effective(); test_no_tls12_ticket_without_num_tickets(); test_session_context(); test_ticket_bound_to_server_name(); test_keyless_server_no_tickets(); test_server_acknowledges_server_name(); test_key_update_before_record_limit(); test_legacy_version_must_be_0303(); test_key_update_request_waits_for_the_peer(); test_key_update_epoch_is_bounded(); test_default_versions_and_tls12_profile(); test_pending_write_retried_from_a_copy(); }
+void run_tcp(void) { test_echo(); test_truncation(); test_tls12(); test_resumption(); test_sni_pause(); test_sni_override_alpn(); test_sni_override_settings_effective(); test_no_tls12_ticket_without_num_tickets(); test_session_context(); test_ticket_bound_to_server_name(); test_keyless_server_no_tickets(); test_server_acknowledges_server_name(); test_key_update_before_record_limit(); test_legacy_version_must_be_0303(); test_key_update_request_waits_for_the_peer(); test_key_update_epoch_is_bounded(); test_default_versions_and_tls12_profile(); test_pending_write_retried_from_a_copy(); test_session_keeps_its_verify_mode(); }
