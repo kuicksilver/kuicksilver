@@ -8,12 +8,15 @@ import io.ktor.http.HttpProtocolVersion
 import io.ktor.http.Url
 import io.ktor.http.cio.ParserException
 import io.ktor.utils.io.ByteChannel
+import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.ClosedReadChannelException
 import io.ktor.utils.io.readLineStrict
+import io.ktor.utils.io.readRemaining
 import io.ktor.utils.io.writeStringUtf8
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runTest
+import kotlinx.io.readString
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -186,6 +189,30 @@ class H1ResponseHeadTest {
                 val wire = Wire()
                 server(wire) { send -> send("$line\r\nContent-Length: 0\r\n\r\n") }
                 assertFailsWith<ParserException>(line) { exchange(wire, get) }
+            }
+        }
+
+    /**
+     * "Any Content-Length field value greater than or equal to zero is valid ... a recipient MUST anticipate potentially
+     * large decimal numerals and prevent parsing errors due to integer conversion overflows" (RFC 9110 section 8.6):
+     * leading zeros count for nothing, so `0000000000000000000005` is 5 and equals `5` in a list. A length of 10^18 or
+     * more is valid but more than this client reads: the response fails with a ParserException that says so, not as an
+     * invalid length. Before, any value of more than 18 characters was invalid.
+     */
+    @Test fun longContentLengthValuesAreRead() =
+        runTest(timeout = 20.seconds) {
+            for (cl in listOf("0000000000000000000005", "05, 5", "5, 000000000000000000000005")) {
+                val wire = Wire()
+                server(wire) { send -> send("HTTP/1.1 200 OK\r\nContent-Length: $cl\r\n\r\nhello") }
+                exchange(wire, get) { response ->
+                    assertEquals("hello", (response.body as ByteReadChannel).readRemaining().readString(), cl)
+                }
+            }
+            for (cl in listOf("1000000000000000000", "99999999999999999999")) {
+                val wire = Wire()
+                server(wire) { send -> send("HTTP/1.1 200 OK\r\nContent-Length: $cl\r\n\r\nhello") }
+                val e = assertFailsWith<ParserException>(cl) { exchange(wire, get) }
+                assertTrue(e.message!!.contains("larger than this client reads"), "$cl: ${e.message}")
             }
         }
 

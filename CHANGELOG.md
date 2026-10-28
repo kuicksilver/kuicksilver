@@ -54,6 +54,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Changed
 
+- Ktor client, HTTP/1.1: a response `Content-Length` with leading zeros (`0000000000000000000005`) is read as its value
+  instead of failing as invalid when it has more than 18 characters (RFC 9110 section 8.6: "Any Content-Length field
+  value greater than or equal to zero is valid"). A valid length of 10^18 bytes or more still fails the response, now
+  with a `ParserException` that names it as this client's limit, not as an invalid length.
 - Ktor server, HTTP/1.1 (behaviour): the engine answers `501 Not Implemented` (with `Connection: close` and the text
   "This server does not support CONNECT tunnels.") when the application answers a CONNECT with a 2xx, and logs a
   warning in the application log. A 2xx to CONNECT says the server "will switch to tunnel mode immediately after the

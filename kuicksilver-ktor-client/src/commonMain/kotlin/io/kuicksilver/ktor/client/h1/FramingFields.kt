@@ -78,21 +78,27 @@ internal fun transferCodingsOf(values: List<CharSequence>): List<TransferCoding>
 /**
  * The one length that every Content-Length value in [values] states, or null when one is not `1*DIGIT` or they differ
  * (RFC 9110 section 8.6: a list of identical values may be taken as that one value). Only SP and HTAB are OWS around a
- * value or a list element (RFC 9110 section 5.6.3).
+ * value or a list element (RFC 9110 section 5.6.3). Any number of digits is valid ("Any Content-Length field value
+ * greater than or equal to zero is valid", section 8.6, and a recipient MUST prevent parsing errors due to integer
+ * conversion overflows): leading zeros count for nothing, and a length of 10^18 or more is [CONTENT_LENGTH_TOO_LARGE].
+ * The same as the server engine's.
  */
 internal fun contentLengthOf(values: List<CharSequence>): Long? {
-    var result: Long? = null
+    var result: String? = null
     for (v in values) {
         for (part in v.split(',')) {
             val t = part.trim(::isOws)
-            if (t.isEmpty() || t.length > 18 || t.any { it !in '0'..'9' }) return null
-            val n = t.toLong()
+            if (t.isEmpty() || t.any { it !in '0'..'9' }) return null
+            val n = t.trimStart('0').ifEmpty { "0" }
             if (result != null && result != n) return null
             result = n
         }
     }
-    return result
+    return result?.let { if (it.length > 18) CONTENT_LENGTH_TOO_LARGE else it.toLong() }
 }
+
+/** What [contentLengthOf] returns for a valid length of 10^18 or more, more than the client reads. */
+internal const val CONTENT_LENGTH_TOO_LARGE: Long = Long.MAX_VALUE
 
 /** OWS (RFC 9110 section 5.6.3). */
 private fun isOws(c: Char) = c == ' ' || c == '\t'

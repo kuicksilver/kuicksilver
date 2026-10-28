@@ -322,6 +322,15 @@ internal suspend fun readResponse(
                         )
                     }
 
+                    // a valid Content-Length of 10^18 bytes or more (RFC 9110 section 8.6): a limit of this client, not an
+                    // invalid length; refused the same way, the body is never read
+                    framing.transferEncoding == null && framing.contentLength == CONTENT_LENGTH_TOO_LARGE -> {
+                        throw ParserException(
+                            "The response's Content-Length is larger than this client reads (10^18 bytes or more): " +
+                                rawResponse.headers.getAll(HttpHeaders.ContentLength).joinToString(),
+                        )
+                    }
+
                     // an invalid Transfer-Encoding: the framing is unknown, handled as an invalid Content-Length (RFC 9112
                     // sections 6.1 and 6.3 items 4 and 5)
                     framing.invalidEncoding -> {
