@@ -16,7 +16,8 @@
 # of the registry query go to stderr), a usage error exits 2.
 # The registry's tags come from the OCI distribution API of ghcr.io with a pull token for $ACTOR / $GITHUB_TOKEN (the job's
 # token, packages: read); a missing package (HTTP 404) has no tags. KSL_GHCR_TAGS_DIR=<dir> reads <dir>/<image>.tags instead,
-# one tag per line (absent file: no package; tools/ci/interop-image-gate-test.sh).
+# one tag per line (absent file: no package; <dir>/<image>.fail: the query fails; tools/ci/interop-image-gate-test.sh).
+# When an image's tags cannot be read the run is refused, or with <force> pushed without moving :latest.
 # Usage: interop-image-gate.sh <version> <ref> <force: true|false> <registry owner>
 set -euo pipefail
 [ $# -eq 4 ] || { echo "usage: $0 <version> <ref> <force: true|false> <registry owner>" >&2; exit 2; }
@@ -44,7 +45,10 @@ fallback=$(grep -ohE '[0-9]+\.[0-9]+\.[0-9]+-SNAPSHOT' "$root/build-logic/src/ma
 
 tags() {   # <image>: its tags in the registry, one per line (none when the package does not exist)
   local repo="$owner/$1" token url status body next
-  if [ -n "${KSL_GHCR_TAGS_DIR:-}" ]; then [ ! -f "$KSL_GHCR_TAGS_DIR/$1.tags" ] || cat "$KSL_GHCR_TAGS_DIR/$1.tags"; return 0; fi
+  if [ -n "${KSL_GHCR_TAGS_DIR:-}" ]; then
+    [ ! -f "$KSL_GHCR_TAGS_DIR/$1.fail" ] || { echo "::error::interop-image: stub: the tags of $1 cannot be read" >&2; return 1; }
+    [ ! -f "$KSL_GHCR_TAGS_DIR/$1.tags" ] || cat "$KSL_GHCR_TAGS_DIR/$1.tags"; return 0
+  fi
   : "${GITHUB_TOKEN:?GITHUB_TOKEN is needed to read the registry}" "${ACTOR:?ACTOR is needed to read the registry}"
   token=$(curl -fsS --retry 3 -u "$ACTOR:$GITHUB_TOKEN" "https://ghcr.io/token?service=ghcr.io&scope=repository:$repo:pull" | jq -er .token) \
     || { echo "::error::interop-image: no pull token for ghcr.io/$repo" >&2; return 1; }
@@ -63,11 +67,11 @@ tags() {   # <image>: its tags in the registry, one per line (none when the pack
   rm -f "$body" "$body.h"
 }
 
-published=""
+published=""; unknown=""
 for n in "${images[@]}"; do
   if ! t=$(tags "$n"); then
     [ "$force" = true ] || refuse "the registry's tags of $n are unknown, so neither an overwrite nor :latest can be ruled out (dispatch with force to push anyway)"
-    echo "::warning::interop-image: the registry's tags of $n are unknown, pushing anyway (force)"; t=""
+    echo "::warning::interop-image: the registry's tags of $n are unknown, pushing anyway (force)"; t=""; unknown+=" $n"
   fi
   if grep -qxF "$version" <<< "$t"; then
     [ "$force" = true ] || refuse "ghcr.io/$owner/$n:$version exists already; a published image is not replaced (dispatch with force to do so)"
@@ -77,7 +81,10 @@ for n in "${images[@]}"; do
 done
 highest=$(grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' <<< "$published" | sort -V | tail -1 || true)
 latest=false
-if [ "$final" = true ]; then
+if [ "$final" = true ] && [ -n "$unknown" ]; then
+  # without every image's tags a newer published final cannot be ruled out: force replaces a tag, it never moves :latest blind
+  echo "::warning::interop-image: tags unknown for$unknown, :latest not moved"
+elif [ "$final" = true ]; then
   if [ -z "$highest" ] || [ "$(printf '%s\n%s\n' "$highest" "$version" | sort -V | tail -1)" = "$version" ]; then latest=true
   else echo "::notice::interop-image: $version is older than the published $highest, :latest stays there"; fi
 fi
