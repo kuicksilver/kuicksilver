@@ -31,8 +31,12 @@ static int map_error(ksl_ssl *s, int r) {
    one well before the negotiated AEAD's limit: every 2^23 records for AES-GCM, 2^22 for AES-CCM (and any other AEAD), none for
    ChaCha20-Poly1305. Records are counted as full ones of the negotiated size (16 KiB, or the max_fragment_length), at least one per
    write: never fewer than were sent. The KeyUpdate goes out ahead of the next record. A session whose KeyUpdates do not go out ends
-   before its keys reach the limit (ksl_tcp_write). TLS 1.2 has no KeyUpdate (and renegotiation is off): its records are not
-   counted. */
+   before its keys reach the limit (ksl_tcp_write).
+   TLS 1.2 has no KeyUpdate. RFC 9325 section 4.4: "When a sender is approaching CL, the implementation SHOULD initiate a new
+   handshake", and for AES-GCM "it is RECOMMENDED that the same limit of 2^24.5 records is used for both versions". ksl allows no
+   renegotiation (a new handshake on the connection), so a TLS 1.2 connection ends before its keys reach the same limit of its
+   AEAD (the CCM figure is the AEAD's, not the version's), with internal_error where an alert can be sent (a TLS 1.2 client):
+   close_notify would end the application's stream as if it were complete. */
 #define KSL_GCM_RECORD_LIMIT UINT64_C(23726566)   /* 2^24.5, rounded down */
 #define KSL_CCM_RECORD_LIMIT (UINT64_C(1) << 23)
 #define KSL_NO_RECORD_LIMIT UINT64_MAX
@@ -43,11 +47,12 @@ static uint64_t aead_record_limit(ksl_ssl *s) {
     return KSL_CCM_RECORD_LIMIT;   /* AES-CCM and CCM_8; the lowest figure for anything else */
 }
 static uint64_t record_limit(ksl_ssl *s) {
-    if (!s->record_limit) s->record_limit = SSL_version(s->ssl) >= TLS1_3_VERSION ? aead_record_limit(s) : KSL_NO_RECORD_LIMIT;
+    if (!s->record_limit) s->record_limit = aead_record_limit(s);
     return s->record_limit;
 }
 /* The record count at which the sending key is updated: half of AES-CCM's limit and a third of AES-GCM's */
 static uint64_t key_update_records(ksl_ssl *s) {
+    if (SSL_version(s->ssl) < TLS1_3_VERSION) return KSL_NO_RECORD_LIMIT;
     if (s->key_update_records) return s->key_update_records;
     uint64_t limit = record_limit(s);
     return limit == KSL_NO_RECORD_LIMIT ? KSL_NO_RECORD_LIMIT : limit == KSL_GCM_RECORD_LIMIT ? UINT64_C(1) << 23 : UINT64_C(1) << 22;
@@ -55,7 +60,6 @@ static uint64_t key_update_records(ksl_ssl *s) {
 /* The plaintext size of a full record: 16 KiB, or the negotiated max_fragment_length (RFC 6066 section 4) */
 static size_t record_size(ksl_ssl *s) { uint8_t mfl = SSL_SESSION_get_max_fragment_length(SSL_get_session(s->ssl)); return mfl >= 1 && mfl <= 4 ? (size_t)256 << mfl : 16384; }
 static void count_records(ksl_ssl *s, size_t n) {
-    if (SSL_version(s->ssl) < TLS1_3_VERSION) return;
     size_t frag = record_size(s);
     s->records_sent += (n + frag - 1) / frag;
     if (s->records_sent < key_update_records(s) || s->key_updates_exhausted) return;   /* past the epoch bound: the record limit ends the session */

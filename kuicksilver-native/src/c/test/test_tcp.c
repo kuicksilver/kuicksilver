@@ -661,6 +661,38 @@ static void test_record_limits_per_cipher(void) {
         else CHECK(ksl_tcp_drain(w, out, sizeof out, &n) == KSL_OK && n == 0 && ksl_tcp_shutdown(w) == KSL_ERROR, "the client sends nothing more, no close_notify");
         ksl_ssl_free(c); ksl_ssl_free(s);
     }
+    ksl_ctx_free(cc); ksl_ctx_free(sc);
+    /* RFC 9325 section 4.4: "When a sender is approaching CL, the implementation SHOULD initiate a new handshake ... it is RECOMMENDED
+       that the same limit of 2^24.5 records is used for both versions" (AES-GCM). TLS 1.2 has no KeyUpdate and ksl allows no
+       renegotiation: the connection ends before its keys reach the limit, with internal_error where an alert can be sent (a TLS 1.2
+       client). ChaCha20-Poly1305 has no limit. */
+    struct { const char *list; uint64_t limit; } want12[] = {
+        {"ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256", UINT64_C(23726566)}, {"ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384", UINT64_C(23726566)},
+        {"ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305", UINT64_MAX},
+    };
+    for (size_t i = 0; i < sizeof want12 / sizeof want12[0]; i++) {
+        cc = client_ctx("test-ca", KSL_VERIFY_OPENSSL); sc = server_ctx("server");
+        ksl_ctx_set_option(cc, KSL_OPT_MIN_VERSION, KSL_TLS1_2); ksl_ctx_set_option(cc, KSL_OPT_MAX_VERSION, KSL_TLS1_2); ksl_ctx_set_option(sc, KSL_OPT_MIN_VERSION, KSL_TLS1_2);
+        ksl_ctx_set_ciphers(cc, NULL, want12[i].list); ksl_ctx_set_ciphers(sc, NULL, want12[i].list);
+        ksl_ssl *c = tcp_client(cc, "server.test"), *s = ksl_ssl_new(sc, KSL_MODE_TCP); uint64_t at = 0, limit = 0;
+        CHECK(tcp_pump(c, s, NULL, NULL) == KSL_OK && echo_bytes(c, s, 100), want12[i].list);
+        ksl_tcp_record_bounds_for_test(c, &at, &limit);
+        CHECK(at == UINT64_MAX && limit == want12[i].limit, "TLS 1.2: no KeyUpdate, the record limit of the suite");
+        ksl_ssl_free(c); ksl_ssl_free(s); ksl_ctx_free(cc); ksl_ctx_free(sc);
+    }
+    cc = client_ctx("test-ca", KSL_VERIFY_OPENSSL); sc = server_ctx("server");
+    ksl_ctx_set_option(cc, KSL_OPT_MIN_VERSION, KSL_TLS1_2); ksl_ctx_set_option(cc, KSL_OPT_MAX_VERSION, KSL_TLS1_2); ksl_ctx_set_option(sc, KSL_OPT_MIN_VERSION, KSL_TLS1_2);
+    for (int client = 1; client >= 0; client--) {
+        ksl_ssl *c = tcp_client(cc, "server.test"), *s = ksl_ssl_new(sc, KSL_MODE_TCP); CHECK(tcp_pump(c, s, NULL, NULL) == KSL_OK, "TLS 1.2 handshake");
+        ksl_ssl *w = client ? c : s, *peer = client ? s : c;
+        ksl_tcp_set_record_limit_for_test(w, 4);
+        int ok = 1; for (int k = 0; k < 3; k++) { ok = ok && ksl_tcp_write(w, &b, 1, &n) == KSL_OK; shuttle(w, peer); ok = ok && ksl_tcp_read(peer, r, sizeof r, &n) == KSL_OK && n == 1; }
+        CHECK(ok, "TLS 1.2: three records under the keys");
+        CHECK(ksl_tcp_write(w, &b, 1, &n) == KSL_ERROR && last_message_has(w, "record limit"), "negative: TLS 1.2: the fourth would reach the limit: the session ends");
+        if (client) CHECK(shuttle(w, peer) > 0 && read_after_abort(peer, &alert) == KSL_ERROR && alert == (SSL_AD_INTERNAL_ERROR | 0x100), "the server receives internal_error");
+        else CHECK(ksl_tcp_drain(w, out, sizeof out, &n) == KSL_OK && n == 0 && ksl_tcp_shutdown(w) == KSL_ERROR, "the server sends nothing more, no close_notify");
+        ksl_ssl_free(c); ksl_ssl_free(s);
+    }
     ksl_ctx_free(cc); ksl_ctx_free(sc); END();
 }
 
