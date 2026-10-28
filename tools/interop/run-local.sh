@@ -2,11 +2,12 @@
 # Copyright 2026 The Kuicksilver Authors
 # SPDX-License-Identifier: Apache-2.0
 # Runs the QUIC Interop Runner locally with kuicksilver as server and as client against the given peers, one peer at a time.
-# Usage: run-local.sh [--check-required | --perf] [--results DIR] [--image native] [-t testcases] [peer ...]   (default peers: quic-go ngtcp2 quiche picoquic quinn msquic)
+# Usage: run-local.sh [--check-required | --perf] [--results DIR | --out DIR] [--image native] [-t testcases] [peer ...]   (default peers: quic-go ngtcp2 quiche picoquic quinn msquic)
 # --image native runs kuicksilver-interop-native:local (the Kotlin/Native executable) under the name kuicksilver-native.
 # KSL_INTEROP_TAG=<tag> runs the images tagged <tag> instead of local (as tools/interop/build-image.sh built them with the same variable).
 # --results DIR[,DIR...] checks existing results directories (the union of their cells) instead of running the matrix again.
-# Results: build/interop/<date>/<peer>-{server,client}/ (logs) and <peer>-{server,client}.json (matrix). With --check-required every cell listed in
+# Results: build/interop/<date>/<peer>-{server,client}/ (logs) and <peer>-{server,client}.json (matrix); --out DIR puts this run's
+# results there instead (relative to the repository, not existing yet; CI's debug rerun keeps them out of the results artifact). With --check-required every cell listed in
 # tools/interop/required.json that this run could produce (its implementations and test cases) must be successful, otherwise exit 1; --results dir1,dir2 merges runs.
 # --perf runs only the runner's measurements (goodput, crosstraffic; -t narrows them) against the peers of tools/interop/perf-thresholds.json
 # (unless peers are given) and then tools/interop/check-perf.sh on the results: exit 1 on a measurement below its threshold or missing.
@@ -40,9 +41,15 @@ set -euo pipefail
 root="$(cd "$(dirname "$0")/../.." && pwd)"; cd "$root"
 [ -d /Applications/Wireshark.app/Contents/MacOS ] && export PATH="$PATH:/Applications/Wireshark.app/Contents/MacOS"   # the runner needs tshark
 export LC_ALL=C   # the runner's certs.sh pipes /dev/urandom through tr, which rejects bytes under a UTF-8 locale on macOS (long chains of amplificationlimit failed silently)
-check=0; perf=0; results=""; tests=""; peers=(); image=jvm; me=kuicksilver
-env_reruns=${KSL_INTEROP_ENV_RERUNS:-5}   # reruns of a cell while its verdict rests on the environment (see environment.sh)
-while [ $# -gt 0 ]; do case "$1" in --check-required) check=1 ;; --perf) perf=1 ;; --results) results="$2"; shift ;; --image) image="$2"; shift ;; -t) tests="$2"; shift ;; *) peers+=("$1") ;; esac; shift; done
+check=0; perf=0; results=""; outdir=""; tests=""; peers=(); image=jvm; me=kuicksilver
+env_reruns=${KSL_INTEROP_ENV_RERUNS:-5}   # reruns of a cell while its verdict rests on the environment (see environment.sh); 0: none
+[[ "$env_reruns" =~ ^[0-9]+$ ]] || { echo "KSL_INTEROP_ENV_RERUNS must be a number, not '$env_reruns'" >&2; exit 2; }
+while [ $# -gt 0 ]; do case "$1" in --check-required) check=1 ;; --perf) perf=1 ;; --results) results="$2"; shift ;; --out) outdir="$2"; shift ;; --image) image="$2"; shift ;; -t) tests="$2"; shift ;; *) peers+=("$1") ;; esac; shift; done
+[ -z "$results" ] || [ -z "$outdir" ] || { echo "--results checks existing results, --out names a new run's: one of them" >&2; exit 2; }
+if [ -n "$outdir" ]; then   # the runner is given the paths relative to its checkout, build/interop/runner
+  case "$outdir" in /*|*..*) echo "--out takes a path relative to the repository, without '..', not $outdir" >&2; exit 2 ;; esac
+  [ ! -e "$outdir" ] || { echo "--out $outdir exists already" >&2; exit 2; }
+fi
 [ "$image" = native ] && me=kuicksilver-native
 thresholds=tools/interop/perf-thresholds.json
 [[ "${KSL_INTEROP_START_GATE:-}" =~ ^([0-9]+(\.[0-9]+)?)?$ ]] || { echo "KSL_INTEROP_START_GATE must be a number of seconds, not '$KSL_INTEROP_START_GATE'" >&2; exit 2; }
@@ -96,7 +103,7 @@ PY
 dbg=(); [ -z "${KSL_INTEROP_DEBUG:-}" ] || dbg=(-d)   # the runner's debug log, docker compose output included (CI prints it for a failed job)
 fail=0
 if [ -n "$results" ]; then out="$results"; else
-out="build/interop/$(date +%Y%m%d-%H%M%S)"; mkdir -p "$out"
+out=${outdir:-"build/interop/$(date +%Y%m%d-%H%M%S)"}; mkdir -p "$out"
 for peer in "${peers[@]}"; do
   for role in server client; do
     if [ "$role" = server ]; then s=$me; c=$peer; else s=$peer; c=$me; fi
@@ -116,6 +123,7 @@ for peer in "${peers[@]}"; do
       if grep -qxF "$pair $case" <<< "$yellow"; then   # deterministic on a slow host: a rerun fails the same way, --check-required excuses it
         environment_warn "$dir/$pair/$case" "$why; not rerun, environment-yellow"; continue
       fi
+      if [ "$env_reruns" -eq 0 ]; then echo "ENVIRONMENT: $dir/$pair/$case: $why; not rerun (KSL_INTEROP_ENV_RERUNS=0)"; continue; fi
       echo "ENVIRONMENT: $dir/$pair/$case: $why; rerunning the cell"
       for attempt in $(seq 1 "$env_reruns"); do
         rerun="$dir-rerun-$case"; [ "$attempt" -gt 1 ] && rerun="$dir-rerun$attempt-$case"

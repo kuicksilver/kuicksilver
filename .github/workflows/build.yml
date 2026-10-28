@@ -604,7 +604,9 @@ jobs:
           PEER: ${{ matrix.peer }}
         run: |
           docker version --format 'engine {{.Server.Version}}'; docker compose version; docker images --format '{{.Repository}}:{{.Tag}}'
-          KSL_INTEROP_DEBUG=1 bash tools/interop/run-local.sh --image "$IMAGE" -t handshake "$PEER" 2>&1 | tail -300 || true
+          # its results stay out of the uploaded build/interop/2* (they are not this job's verdict), and no ENVIRONMENT reruns
+          KSL_INTEROP_DEBUG=1 KSL_INTEROP_ENV_RERUNS=0 bash tools/interop/run-local.sh --out build/interop-debug/handshake \
+            --image "$IMAGE" -t handshake "$PEER" 2>&1 | tail -300 || true
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
