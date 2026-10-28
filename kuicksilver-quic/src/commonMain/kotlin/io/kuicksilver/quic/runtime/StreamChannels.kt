@@ -75,6 +75,8 @@ internal class StreamInput(
             while (true) {
                 if (eof) return@withContext buffer.size >= min
                 closedCause?.let { throw it }
+                // a stream a rejected 0-RTT dropped: its ID may name a new stream of the core by now
+                if (!stream.live()) throw closedCause ?: QuicException.StreamError.EarlyDataRejected(stream.id)
                 pendingCause?.let { if (buffer.size >= min) return@withContext true else throw failNow(it) }
                 var pulled = 0
                 var touched = false
@@ -138,6 +140,7 @@ internal class StreamInput(
         }
         closeWith(cause ?: IOException("stream input cancelled"))
         stream.loop.scope.launch {
+            if (!stream.live()) return@launch
             stream.conn.core.stopSending(stream.id, stream.conn.defaultCode())
             stream.loop.flush(stream.conn.core)
         }
@@ -261,8 +264,10 @@ internal class StreamOutput(
         off: Int,
         len: Int,
         fin: Boolean,
-    ): Int =
-        try {
+    ): Int {
+        // a stream a rejected 0-RTT dropped: its ID may name a new stream of the core by now
+        if (!stream.live()) throw ClosedWriteChannelException(closedCause ?: QuicException.StreamError.EarlyDataRejected(stream.id))
+        return try {
             stream.conn.core.writeStream(stream.id, data, off, len, fin)
         } catch (e: IllegalStateException) {
             throw ClosedWriteChannelException(
@@ -276,11 +281,13 @@ internal class StreamOutput(
                     },
             )
         }
+    }
 
     override fun cancel(cause: Throwable?) {
         if (isClosedForWrite) return
         closeWith(cause ?: IOException("stream output cancelled"))
         stream.loop.scope.launch {
+            if (!stream.live()) return@launch
             stream.conn.core.resetStream(stream.id, stream.conn.defaultCode())
             stream.loop.flush(stream.conn.core)
         }

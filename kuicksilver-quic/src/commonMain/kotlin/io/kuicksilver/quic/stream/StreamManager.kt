@@ -182,6 +182,13 @@ internal class StreamManager(
     }
 
     /**
+     * How many times a rejected 0-RTT dropped our streams ([resetForRejectedZeroRtt]; at most once per connection). A
+     * runtime wrapper made under an older count names a dropped stream, whatever stream its ID names now: the IDs restart.
+     */
+    var zeroRttResets: Int = 0
+        private set
+
+    /**
      * Client, after a rejected 0-RTT (RFC 9001 section 4.6.2: the client "MUST reset the state of all streams"): every stream we
      * opened is dropped without a frame (the server never saw it), with its buffered data, its pending control frames and
      * events; stream IDs start again at 0, the stream counts and the connection's send credit start again from the server's
@@ -242,6 +249,7 @@ internal class StreamManager(
         limits.resetPeerMaxStreams(true, maxStreamsBidi)
         limits.resetPeerMaxStreams(false, maxStreamsUni)
         connSend.restart(maxData)
+        zeroRttResets++
         return dropped
     }
 

@@ -179,7 +179,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   RFC 9001 section 4.6.2 requires ("MUST reset the state of all streams"); before, it sent their data again in 1-RTT. The
   streams fail with the new `QuicException.StreamError.EarlyDataRejected` (experimental), nothing of them reached the
   server, their IDs and the connection's credit start over from the server's new transport parameters, and the
-  connection goes on; send again on new streams what is still wanted. A rejection closes the connection with
+  connection goes on; send again on new streams what is still wanted. A stream opened while the rejection was still on
+  its way to the runtime (a flush waiting for socket room) is a stream of its own: it never gets the wrapper of the early
+  stream whose ID it took, and a reset or STOP_SENDING issued on an early stream never reaches it. A rejection closes the connection with
   `ZeroRttRejected` only for another ALPN or under `EarlyDataState.Required` (no longer for lower limits). The HTTP/3
   client opens its control and QPACK streams once the handshake completed and repeats each early request once after a
   rejection.

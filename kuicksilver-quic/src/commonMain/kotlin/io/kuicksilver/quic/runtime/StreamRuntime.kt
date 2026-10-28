@@ -29,6 +29,11 @@ internal class StreamRuntime(
     recv: Boolean,
     send: Boolean,
     initialPriority: StreamPriority = StreamPriority.Default,
+    /**
+     * The core's [io.kuicksilver.quic.stream.StreamManager.zeroRttResets] when this wrapper was made for a stream we
+     * opened; -1 for a peer's stream, which no rejected 0-RTT drops.
+     */
+    private val epoch: Int = -1,
 ) : QuicStream {
     @Volatile
     override var receivedEarly: Boolean = false
@@ -43,7 +48,7 @@ internal class StreamRuntime(
     override var priority: StreamPriority = initialPriority
         set(v) {
             field = v
-            loop.scope.launch { if (!dropped) conn.core.setPriority(id, v) }
+            loop.scope.launch { if (live()) conn.core.setPriority(id, v) }
         }
 
     internal fun signalReadable() {
@@ -57,7 +62,7 @@ internal class StreamRuntime(
 
     /** On the loop: notes whether the core holds the whole stream now; once true it stays true. */
     internal fun updateReceivedAll() {
-        if (!receivedAll && conn.core.streamReceivedAll(id)) receivedAll = true
+        if (!receivedAll && current && conn.core.streamReceivedAll(id)) receivedAll = true
     }
 
     /** Completes when both halves are done (our data acknowledged or reset, the peer's consumed) or the connection ended. */
@@ -96,14 +101,27 @@ internal class StreamRuntime(
         outChannel?.closeWith(QuicException.StreamError.Stopped(id, code, Initiator.Peer))
     }
 
-    /**
-     * The server rejected 0-RTT and the core dropped this stream (RFC 9001 section 4.6.2); its ID may already name a new
-     * stream, so nothing here touches the core again.
-     */
+    /** The server rejected 0-RTT and the core dropped this stream (RFC 9001 section 4.6.2): the wrapper failed for good. */
     @Volatile
     internal var dropped = false
         private set
 
+    /**
+     * On the loop: whether this wrapper still names the core's stream [id]. A rejected 0-RTT drops every stream we opened
+     * and restarts their IDs inside the core; the runtime learns it only when it drains the event, a suspension later (a
+     * flush waiting in a socket send in between). Until then a stream opened meanwhile may own [id] already, so every core
+     * access of this wrapper asks this first, never the event.
+     */
+    internal val current: Boolean get() = !dropped && (epoch < 0 || epoch == conn.core.streams.zeroRttResets)
+
+    /** On the loop: [current]; a wrapper that is not fails now with EarlyDataRejected and leaves the connection, and false. */
+    internal fun live(): Boolean {
+        if (current) return true
+        if (!dropped) conn.dropRejected(this)
+        return false
+    }
+
+    /** The core dropped this stream at a rejected 0-RTT: nothing here touches the core again, its ID may name a new stream. */
     internal fun earlyDataRejected() {
         dropped = true
         val e = QuicException.StreamError.EarlyDataRejected(id)
@@ -121,7 +139,7 @@ internal class StreamRuntime(
     override fun reset(code: Long) {
         outChannel?.closeWith(QuicException.StreamError.Reset(id, code, Initiator.Local))
         loop.scope.launch {
-            if (dropped) return@launch
+            if (!live()) return@launch
             conn.core.resetStream(id, code)
             loop.flush(conn.core)
         }
@@ -133,7 +151,7 @@ internal class StreamRuntime(
     ) {
         outChannel?.closeWith(QuicException.StreamError.Reset(id, code, Initiator.Local))
         loop.scope.launch {
-            if (dropped) return@launch
+            if (!live()) return@launch
             conn.core.resetStreamAt(id, code, reliableSize)
             loop.flush(conn.core)
         }
@@ -142,7 +160,7 @@ internal class StreamRuntime(
     override fun stopSending(code: Long) {
         inChannel?.closeWith(QuicException.StreamError.Stopped(id, code, Initiator.Local))
         loop.scope.launch {
-            if (dropped) return@launch
+            if (!live()) return@launch
             conn.core.stopSending(id, code)
             loop.flush(conn.core)
         }

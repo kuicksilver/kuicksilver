@@ -147,7 +147,13 @@ internal class MemoryDatagramIo internal constructor(
         return 1
     }
 
-    override suspend fun send(batch: PacketBatch): Int = trySend(batch)
+    /** Runs before each suspending send: a test stalls the loop's flush in it, as a socket without room would. */
+    var beforeSend: (suspend () -> Unit)? = null
+
+    override suspend fun send(batch: PacketBatch): Int {
+        beforeSend?.invoke()
+        return trySend(batch)
+    }
 
     override fun trySend(batch: PacketBatch): Int {
         failure?.let { throw it }

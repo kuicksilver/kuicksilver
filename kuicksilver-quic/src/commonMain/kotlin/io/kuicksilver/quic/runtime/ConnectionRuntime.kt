@@ -497,9 +497,9 @@ internal class ConnectionRuntime(
 
                 ConnectionEvent.EarlyDataRejected -> {
                     earlyAccepted = false
-                    // the core dropped every stream we opened (RFC 9001 section 4.6.2) and reuses their IDs: their wrappers fail and go
-                    val gone = streams.keys.filter { isLocal(it) }
-                    for (id in gone) streams.remove(id)?.earlyDataRejected()
+                    // the core dropped every stream we opened (RFC 9001 section 4.6.2) and reuses their IDs: the wrappers made before
+                    // fail and go; one made since (a stream opened while this event waited) names a live stream and stays
+                    for (s in streams.values.filter { !it.current }) dropRejected(s)
                     loop.observer.zeroRtt(this, io.kuicksilver.quic.ZeroRttOutcome.Rejected)
                 }
 
@@ -513,18 +513,18 @@ internal class ConnectionRuntime(
                 }
 
                 is ConnectionEvent.StreamReadable -> {
-                    streams[e.id]?.let {
+                    wrapper(e.id)?.let {
                         it.updateReceivedAll()
                         it.signalReadable()
                     }
                 }
 
                 is ConnectionEvent.StreamWritable -> {
-                    streams[e.id]?.ticker?.trySend(Unit) // the broadcast tick after each flush stays as the fallback
+                    wrapper(e.id)?.ticker?.trySend(Unit) // the broadcast tick after each flush stays as the fallback
                 }
 
                 is ConnectionEvent.StreamReset -> {
-                    val s = streams[e.id]
+                    val s = wrapper(e.id)
                     s?.peerReset(e.code, e.afterData)
                     if (s == null || !s.deferReset()) core.readStream(e.id, NO_BYTES, 0, 0)
                 }
@@ -532,11 +532,14 @@ internal class ConnectionRuntime(
                 // the reset is surfaced: acknowledge it in the core (ResetRecvd -> ResetRead) so the half retires, MAX_STREAMS credit returns and
                 // StreamFinished follows; for a stream still waiting for acceptStream that happens when acceptStream hands it out
                 is ConnectionEvent.StopSendingReceived -> {
-                    streams[e.id]?.peerStopped(e.code)
+                    wrapper(e.id)?.peerStopped(e.code)
                 }
 
                 is ConnectionEvent.StreamFinished -> {
-                    streams.remove(e.id)?.finished()
+                    wrapper(e.id)?.let {
+                        streams.remove(e.id)
+                        it.finished()
+                    }
                 }
 
                 // both halves done and consumed: the wrapper and its ticker go
@@ -659,21 +662,36 @@ internal class ConnectionRuntime(
         }
     }
 
+    /** The wrapper of the core's stream [id], unless the one in the map names a stream a rejected 0-RTT dropped. Loop only. */
+    private fun wrapper(id: Long): StreamRuntime? = streams[id]?.takeIf { it.current }
+
+    /** [s] names a stream a rejected 0-RTT dropped: it fails with EarlyDataRejected and leaves the map, if it is still there. Loop only. */
+    internal fun dropRejected(s: StreamRuntime) {
+        if (streams[s.id] === s) streams.remove(s.id)
+        s.earlyDataRejected()
+    }
+
+    /**
+     * The wrapper of the core's stream [id], made on first use. One in the map that names a stream a rejected 0-RTT dropped
+     * (the runtime has not drained that event yet, and the core gave the freed ID to a new stream) is failed and replaced,
+     * never handed out for the new stream.
+     */
     private fun stream(
         id: Long,
         priority: StreamPriority = StreamPriority.Default,
-    ): StreamRuntime =
-        streams.getOrPut(id) {
-            StreamRuntime(
-                this,
-                loop,
-                id,
-                recv =
-                    (id and 2L == 0L) || !isLocal(id),
-                send = (id and 2L == 0L) || isLocal(id),
-                initialPriority = priority,
-            )
-        }
+    ): StreamRuntime {
+        streams[id]?.let { if (it.live()) return it }
+        val local = isLocal(id)
+        return StreamRuntime(
+            this,
+            loop,
+            id,
+            recv = (id and 2L == 0L) || !local,
+            send = (id and 2L == 0L) || local,
+            initialPriority = priority,
+            epoch = if (local) core.streams.zeroRttResets else -1,
+        ).also { streams[id] = it }
+    }
 
     internal fun newTicker(): Channel<Unit> = Channel<Unit>(Channel.CONFLATED).also { tickers += it }
 

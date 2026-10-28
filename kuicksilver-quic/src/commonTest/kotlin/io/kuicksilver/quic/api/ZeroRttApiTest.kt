@@ -13,6 +13,7 @@ import io.kuicksilver.quic.QuicClientConfig
 import io.kuicksilver.quic.QuicConnection
 import io.kuicksilver.quic.QuicException
 import io.kuicksilver.quic.quicConfig
+import io.kuicksilver.quic.runtime.ConnectionRuntime
 import io.kuicksilver.quic.runtime.EndpointLoop
 import io.kuicksilver.tls.EarlyDataState
 import io.kuicksilver.tls.KslQuicCrypto
@@ -20,12 +21,15 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.yield
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertNotSame
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 
@@ -224,6 +228,86 @@ class ZeroRttApiTest {
                         assertEquals("three!", second.echo("three"), "a new stream after the rejection")
                         serving.await()
                         assertEquals(listOf("three"), seen, "nothing of the rejected stream reached the server")
+                        second.close()
+                    } finally {
+                        server.close()
+                    }
+                }
+            }
+        }
+
+    /**
+     * QC-1 (review 2026-10-28): the core drops the early streams and restarts their IDs while it handles the server's
+     * flight; the runtime learns it when it drains the events, after the flush that follows. A flush stalled in a socket
+     * send (a socket without room) parks the receive path in between. A stream opened in that window takes the
+     * freed ID 0: it must get a wrapper of its own, not the early stream's, and a reset the application issues on the
+     * early stream meanwhile must not reach the new one.
+     */
+    @Test fun streamOpenedBeforeTheRuntimeSawTheRejectionIsItsOwn(): Unit =
+        runBlocking {
+            ApiPair.open(crypto = KslQuicCrypto, serverEarlyData = true).use { p ->
+                withTimeout(20.seconds) {
+                    val firstServer =
+                        async {
+                            val c = p.server.accept()
+                            val s = c.acceptStream()
+                            s.output.writeFully(s.input.readAll().encodeToByteArray())
+                            s.output.flushAndClose()
+                        }
+                    val first = p.client.connect(p.server.localAddress, clientConfig())
+                    assertEquals("one", first.echo("one"))
+                    val loop = p.client as EndpointLoop
+                    while (loop.sessions.size() == 0) yield()
+                    first.close()
+                    firstServer.await()
+                    val server = p.restartServer(quicConfig { initialConnectionWindow = 700_000 }, KslQuicCrypto)
+                    try {
+                        val seen = mutableListOf<String>()
+                        val serving =
+                            async {
+                                val c = server.accept()
+                                val s = c.acceptStream()
+                                val got = s.input.readAll()
+                                seen += got
+                                s.output.writeFully("$got!".encodeToByteArray())
+                                s.output.flushAndClose()
+                            }
+                        p.net.hold(p.clientIo.localAddress)
+                        val second = p.client.connectEarly(server.localAddress, clientConfig()) as ConnectionRuntime
+                        val early = second.openBidi()
+                        early.output.writeFully("two".encodeToByteArray())
+                        early.output.flushAndClose()
+                        assertEquals(false, second.isHandshakeComplete)
+                        // the flush that follows the core's rejection stalls in a send before it drains the events
+                        val reached = CompletableDeferred<Unit>()
+                        val gate = CompletableDeferred<Unit>()
+                        p.clientIo.beforeSend = {
+                            if (!reached.isCompleted && !second.core.streams.isOpen(early.id)) {
+                                reached.complete(Unit)
+                                gate.await()
+                            }
+                        }
+                        p.net.release(p.clientIo.localAddress)
+                        reached.await()
+                        val opening = async { second.openBidi() }
+                        // open() took the freed ID and now waits for the stalled flush
+                        while (!withContext(second.loopDispatcherForTest) { second.core.streams.isOpen(early.id) }) yield()
+                        early.reset(9) // the application gives the early stream up before it learnt of the rejection
+                        withContext(second.loopDispatcherForTest) {} // the launched reset ran
+                        p.clientIo.beforeSend = null
+                        gate.complete(Unit)
+                        val fresh = opening.await()
+                        assertEquals(early.id, fresh.id, "the rejection freed the ID")
+                        assertNotSame(early, fresh, "the new stream got the early stream's wrapper")
+                        withContext(second.loopDispatcherForTest) {
+                            assertSame<Any?>(fresh, second.streams[fresh.id], "the core's live stream has its wrapper")
+                        }
+                        assertFailsWith<QuicException.StreamError.EarlyDataRejected> { early.input.readAll() }
+                        fresh.output.writeFully("three".encodeToByteArray())
+                        fresh.output.flushAndClose()
+                        assertEquals("three!", fresh.input.readAll(), "the early stream's reset reached the new stream")
+                        serving.await()
+                        assertEquals(listOf("three"), seen)
                         second.close()
                     } finally {
                         server.close()
