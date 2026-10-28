@@ -151,8 +151,13 @@ jobs:
       - name: 'fuzz: findings'
         run: |
           found=$(find "build/fuzz-campaign/crashes/$TARGET" -type f \( -name 'crash-*' -o -name 'timeout-*' -o -name 'oom-*' -o -name 'leak-*' \) 2>/dev/null || true)
-          if [ -f "build/fuzz-campaign/crashed-$TARGET" ] || [ -n "$found" ]; then
+          if [ -n "$found" ]; then
             echo "::error::$TARGET: finding(s), reproducers in the fuzz-$TARGET artifact: $(echo "$found" | xargs -n1 basename 2>/dev/null | tr '\n' ' ')"
+            exit 1
+          fi
+          if [ -f "build/fuzz-campaign/crashed-$TARGET" ]; then   # campaign.sh records exit-N when the fuzzer left no reproducer
+            last=$(awk -F'\t' -v id="$TARGET" '$2 == id { r = $8 } END { print r }' build/fuzz-campaign/stats.tsv 2>/dev/null || true)
+            echo "::error::$TARGET: the fuzzer ended with ${last:-a non-zero exit} and left no reproducer (a JVM that did not start, a flag Jazzer rejected, the runner's OOM killer): see logs/ in the fuzz-$TARGET artifact"
             exit 1
           fi
           echo "$TARGET: no finding"
