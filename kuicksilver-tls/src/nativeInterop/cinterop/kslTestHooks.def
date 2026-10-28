@@ -1,0 +1,6 @@
+# Copyright 2026 The Kuicksilver Authors
+# SPDX-License-Identifier: Apache-2.0
+# The macosArm64 tests' native hooks (kuicksilver-native/src/testhooks, tools/build-test-hooks.sh); test compilation only.
+package = io.kuicksilver.tls.testhooks
+headers = ksl_test_hooks.h
+staticLibraries = libksl_test_hooks.a

@@ -41,3 +41,23 @@ val buildAndroidJni = tasks.register<AndroidJniTask>("buildAndroidJni") {
     script.set(root.resolve("tools/build-android-so.sh")); sources.from(fileTree("src/c"), fileTree("src/jni")); abis.set(androidAbis); outDir.set(file("src/androidMain/jniLibs"))
 }
 tasks.matching { it.name.startsWith("compileAndroid") || it.name.contains("mergeAndroid") || it.name.contains("JniLib") }.configureEach { dependsOn(buildAndroidJni) }
+
+// The Kotlin tests' native hooks (src/testhooks, tools/build-test-hooks.sh): a library of their own, never packaged or published.
+// kuicksilver-tls loads the JNI one in jvmTest and links the static one into its macosArm64 tests.
+val hostOpenSsl = "opensslBuild" + (if (hostClassifier == "osx-aarch_64") "MacosArm64" else if (hostClassifier == "osx-x86_64") "MacosX64" else if (hostClassifier == "linux-aarch_64") "LinuxArm64" else if (hostClassifier == "linux-x86_64") "LinuxX64" else "MingwX64")
+tasks.register<Exec>("buildTestHooksJni") {
+    group = "native"; description = "Builds the JVM tests' native hooks for the host"
+    onlyIf { !hostClassifier.startsWith("windows") }
+    dependsOn(hostOpenSsl)
+    inputs.files(fileTree("src/c"), fileTree("src/testhooks"), root.resolve("tools/build-test-hooks.sh"))
+    outputs.dir(layout.buildDirectory.dir("test-hooks/jni"))
+    commandLine("bash", root.resolve("tools/build-test-hooks.sh").path, "jni", layout.buildDirectory.dir("test-hooks/jni").get().asFile.path)
+}
+tasks.register<Exec>("buildTestHooksMacosArm64") {
+    group = "native"; description = "Builds the macosArm64 tests' native hooks"
+    onlyIf { System.getProperty("os.name").lowercase().contains("mac") }
+    dependsOn("opensslBuildMacosArm64")
+    inputs.files(fileTree("src/c"), fileTree("src/testhooks"), root.resolve("tools/build-test-hooks.sh"))
+    outputs.dir(layout.buildDirectory.dir("test-hooks/macos-arm64"))
+    commandLine("bash", root.resolve("tools/build-test-hooks.sh").path, "macos-arm64", layout.buildDirectory.dir("test-hooks/macos-arm64").get().asFile.path)
+}

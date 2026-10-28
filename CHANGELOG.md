@@ -440,7 +440,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   very long-lived bulk connection kept one key for good. The point follows the negotiated AEAD: 2^22 records under
   AES-CCM, whose limit is 2^23 (RFC 9147 appendix B.1; 2^23 would have reached it), none under ChaCha20-Poly1305 (no
   limit before the sequence number wraps); a connection whose KeyUpdate could not go out ends before its keys reach the
-  limit, with internal_error where an alert can be sent. A TLS 1.2 connection, which has no KeyUpdate and no
+  limit, with internal_error where an alert can be sent; `TlsConnection` sends that alert on the transport before the
+  connection ends (with a FIN on a `Socket.tls`), as it does for an application's failed stream. A TLS 1.2 connection, which has no KeyUpdate and no
   renegotiation, ends the same way before its keys reach the limit RFC 9325 section 4.4 recommends for TLS 1.2 too
   (2^24.5 records for AES-GCM); before, it counted nothing.
 - TLS server: a server that used the client's server name now acknowledges it with an empty `server_name` extension

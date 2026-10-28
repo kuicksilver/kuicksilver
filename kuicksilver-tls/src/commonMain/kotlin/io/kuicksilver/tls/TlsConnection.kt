@@ -47,6 +47,10 @@ public class TlsConnection private constructor(
     private val config = ctx.config
     private var ssl: Long = Ksl.sslNew(ctx.handle, KslConst.MODE_TCP)
     private val lock = Mutex()
+
+    /** Runs [block] with the session's ksl handle under the session lock (the native test hooks). */
+    internal suspend fun <T> withSslForTest(block: (Long) -> T): T = lock.withLock { block(s()) }
+
     private val scope = CoroutineScope(context + SupervisorJob(context[Job]) + Dispatchers.Default)
     private val inputChannel = ByteChannel(autoFlush = true)
     private val outputChannel = ByteChannel(autoFlush = true)
@@ -438,6 +442,7 @@ public class TlsConnection private constructor(
                         } catch (
                             e: KslException.Internal,
                         ) {
+                            alertAfterFailedWrite(e)
                             throw e.toTlsFailure(presented).first
                         }
                     if (w > 0) off += w
@@ -480,6 +485,18 @@ public class TlsConnection private constructor(
     private fun canSendFailureAlert(): Boolean = (protocolVersion == TlsVersion.Tls13) == (config.role == TlsRole.Server)
 
     @Volatile private var failureAlertSent = false
+
+    /**
+     * A write ksl refused may have ended the session with a fatal alert it queued: at the sending keys' record limit (RFC 9846
+     * section 5.5) internal_error where one can be sent, or an alert OpenSSL raised. It leaves on the transport now, after
+     * everything sent before, as [sendFailureAlert]'s does, and the connection then counts as alerted ([abortOutput] true: the
+     * socket ends with a FIN, the peer failing on the alert); a failure with no alert sent leaves it reset.
+     */
+    private suspend fun alertAfterFailedWrite(e: KslException.Internal) {
+        val sent = e.alert and 0x100 == 0 && e.alert and 0xff != 0
+        if (!sent) return
+        runCatching { drainToTransport() }.onSuccess { failureAlertSent = true }
+    }
 
     /**
      * Fails [output] with [cause] (the application's stream failed) and waits, at most [timeout], until the internal_error
