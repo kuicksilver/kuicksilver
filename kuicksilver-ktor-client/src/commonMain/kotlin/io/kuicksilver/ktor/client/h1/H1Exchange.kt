@@ -217,6 +217,10 @@ private suspend fun processOutgoingContent(
     }
 }
 
+/** No request body is being sent, or all of it went out: a streamed one still under way or failed is not out. */
+@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+private fun Deferred<Boolean>?.isOut(): Boolean = this == null || (isCompleted && !isCancelled && getCompleted())
+
 /** What happens to the connection after a response. */
 internal enum class AfterResponse {
     Reuse,
@@ -269,11 +273,12 @@ internal class InterimHeads(
  * `Expect: 100-continue` whose body waits) a 100 Continue sends the body; a final response before it is the answer, the
  * body is never sent and the connection, which promised one, is closed after the response.
  *
- * [requestBodySent] is the request body still being sent while the response is read (a streamed body), completed with
- * whether all of it went out; null when none is. A reusable connection is given back ([AfterResponse.Reuse]) only once
- * that body is out, and always before the response's body ends: the application that sees the response's end, and sends
- * its next request at once, finds the connection idle. A response read to its end therefore ends only when the request
- * body is out, or failed (then the connection is closed).
+ * [requestBodySent] is the request body sent while the response is read (a streamed body), completed with whether all of
+ * it went out; null when there is none. A reusable connection is given back ([AfterResponse.Reuse]) before the response's
+ * body ends, so the application that sees that end, and sends its next request at once, finds it idle; only when that
+ * request body is already out. One still being sent when the response ends makes it [AfterResponse.Close] at once: the
+ * response never waits for the upload (a duplex application closes it after reading the response, a server that answered
+ * early may have stopped reading), and the caller closes the connection once the upload ends.
  */
 @OptIn(InternalAPI::class)
 internal suspend fun readResponse(
@@ -365,22 +370,8 @@ internal suspend fun readResponse(
                 when {
                     request.method == HttpMethod.Head || status == HttpStatusCode.NotModified || status == HttpStatusCode.NoContent -> {
                         val reusable = keepAlive && !framing.invalidLength && !framing.invalidEncoding
-                        val sending = requestBodySent()?.takeIf { reusable }
-                        if (sending == null) {
-                            onBodyDone(if (reusable) AfterResponse.Reuse else AfterResponse.Close)
-                            ByteReadChannel.Empty
-                        } else {
-                            // the empty body ends once the request body is out, after the connection went back
-                            var settled = false
-                            val waiter =
-                                CoroutineScope(callContext + CoroutineName("kuicksilver-h1-body-reader")).writer {
-                                    val sent = sending.await()
-                                    settled = true
-                                    onBodyDone(if (sent) AfterResponse.Reuse else AfterResponse.Close)
-                                }
-                            waiter.job.invokeOnCompletion { if (!settled) onBodyDone(AfterResponse.Close) }
-                            waiter.channel
-                        }
+                        onBodyDone(if (reusable && requestBodySent().isOut()) AfterResponse.Reuse else AfterResponse.Close)
+                        ByteReadChannel.Empty
                     }
 
                     // an invalid Content-Length: the framing is unknown, the response is discarded and the connection
@@ -414,21 +405,24 @@ internal suspend fun readResponse(
                         val scope = CoroutineScope(callContext + CoroutineName("kuicksilver-h1-body-reader"))
                         // reusable only when the whole body went through and ended by its framing (length or chunks), not
                         // by connection close: a writer whose reader gave up (an abandoned body) can complete without an
-                        // exception, and that connection still has the rest of the body on the wire. A reusable connection
-                        // goes back before the body's channel closes (the writer closes it after this block): the
-                        // application that sees the body's end, and sends its next request at once, finds it idle. Released
-                        // when the writer completed, the connection could be missing then and the next request opened
-                        // another one
+                        // exception, and that connection still has the rest of the body on the wire. The connection is
+                        // settled before the body's channel closes (the writer closes it after this block): the
+                        // application that sees the body's end, and sends its next request at once, finds it idle (or
+                        // knows it gone). Settled when the writer completed, the connection could be missing then and the
+                        // next request opened another one. [settled] only once onBodyDone returned: one that threw is
+                        // settled again, as Close
                         var settled = false
                         val parser =
                             scope.writer(autoFlush = true) {
                                 framing.readBody(input.withSocketTimeout(request), channel)
-                                if (keepAlive && framing.delimited) {
-                                    // a request body still being sent: the connection is reusable once it is out
-                                    val sent = requestBodySent()?.await() ?: true
-                                    settled = true
-                                    onBodyDone(if (sent) AfterResponse.Reuse else AfterResponse.Close)
-                                }
+                                onBodyDone(
+                                    if (keepAlive && framing.delimited && requestBodySent().isOut()) {
+                                        AfterResponse.Reuse
+                                    } else {
+                                        AfterResponse.Close
+                                    },
+                                )
+                                settled = true
                             }
                         parser.job.invokeOnCompletion { if (!settled) onBodyDone(AfterResponse.Close) }
                         parser.channel
