@@ -412,8 +412,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 - TLS over TCP: `TlsConnection.keyUpdate(requestPeer = true)` called again before the peer answered the previous request
   now updates only our key (`update_not_requested`) instead of asking the peer again (RFC 9846 section 4.7.3, MUST). A
   KeyUpdate of the peer's that had already arrived when the request left is not taken for the answer.
-- TLS over TCP: a connection never lets its key update epoch pass 2^48-1 (RFC 9846 section 4.7.3, MUST); the session
-  that sent its last allowed KeyUpdate ends instead of sending another, also in answer to the peer. OpenSSL counts none.
+- TLS over TCP: a connection never lets its key update epoch pass 2^48-1 (RFC 9846 section 4.7.3, MUST): after its
+  2^48-1st KeyUpdate it sends no more, ignores the peer's `update_requested` flag (SHOULD) and goes on under its last
+  keys until their record limit (RFC 9846 section 5.5), where it ends. OpenSSL counts none.
 - TLS: a ClientHello, or a TLS 1.3 ServerHello, whose `legacy_version` is not 0x0303 is refused with `protocol_version`
   (RFC 9846 sections 4.2.2 and 4.2.3, MUST); OpenSSL 3.5 accepted 0x0301 and 0x0302 next to `supported_versions`.
 - TLS over TCP: a connection whose application stream failed (a handler that threw mid-response) now ends with the fatal

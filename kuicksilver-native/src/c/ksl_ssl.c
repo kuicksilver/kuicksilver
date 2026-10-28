@@ -164,19 +164,15 @@ void ksl_session_free(ksl_session *session) { if (session) ksl_live_add(KSL_LIVE
 int ksl_ssl_new_session_ticket(ksl_ssl *s) { ERR_clear_error(); s->ticket_authorized = 1; if (SSL_new_session_ticket(s->ssl) != 1) { ksl_ssl_set_error(s, KSL_E_NOT_SUPPORTED, "ksl: ticket request failed"); return KSL_ERROR; } return KSL_OK; }
 /* RFC 9846 section 4.7.3: "Until receiving a subsequent KeyUpdate from the peer, the sender MUST NOT send another KeyUpdate with
    request_update set to update_requested": while ours is unanswered (ksl_msg_cb clears it on the peer's next KeyUpdate) a request is
-   sent as update_not_requested, which still updates our sending key. Past the epoch bound no key update is sent at all. */
+   sent as update_not_requested, which still updates our sending key. At the epoch bound no key update is sent at all; the session
+   goes on under its last keys (ksl_msg_cb). */
 int ksl_ssl_key_update(ksl_ssl *s, int request_peer) {
     ERR_clear_error();
-    if (ksl_key_update_limit_check(s) != KSL_OK) return KSL_ERROR;
+    if (s->key_updates_exhausted) { ksl_ssl_set_error(s, KSL_E_NOT_SUPPORTED, "ksl: no key update: the epoch reached 2^48-1 (RFC 9846 section 4.7.3); the keys stay in use until their record limit"); return KSL_ERROR; }
     int requested = request_peer && !s->update_requested_pending;
     if (SSL_key_update(s->ssl, requested ? SSL_KEY_UPDATE_REQUESTED : SSL_KEY_UPDATE_NOT_REQUESTED) != 1) { ksl_ssl_set_error(s, KSL_E_NOT_SUPPORTED, "ksl: key update failed"); return KSL_ERROR; }
     if (requested) s->update_requested_pending = 1;
     return KSL_OK;
-}
-int ksl_key_update_limit_check(ksl_ssl *s) {
-    if (!s->key_updates_exhausted) return KSL_OK;
-    if (!s->fatal) ksl_ssl_fail(s, KSL_E_NOT_SUPPORTED, "ksl: the session reached the key update bound (RFC 9846 section 4.7.3)");
-    return KSL_ERROR;
 }
 int ksl_ssl_client_hello(ksl_ssl *s, ksl_client_hello *out) {
     if (!s->sni_pending) { ksl_ssl_set_error(s, KSL_E_NOT_PAUSED, "ksl: not paused at ClientHello"); return KSL_ERROR; }
@@ -193,7 +189,7 @@ int ksl_ssl_sni_resume(ksl_ssl *s, ksl_ctx *override, int alert) {
 
 /* Drives the handshake, then post-handshake messages. The verify name rule (ADR-0011: the host name is always checked by the shared matcher, also after a platform verdict) is enforced here. */
 int ksl_drive(ksl_ssl *s) {
-    if (s->fatal || ksl_key_update_limit_check(s) != KSL_OK) return KSL_ERROR;
+    if (s->fatal) return KSL_ERROR;
     if (!s->done && s->owner->role == KSL_CLIENT && s->owner->verify_mode != KSL_VERIFY_NONE && !s->verify_name_set)
         return ksl_ssl_fail(s, KSL_E_NO_VERIFY_NAME, "ksl: verify name not set (reference identifier is mandatory)");
     ERR_clear_error(); int r;
@@ -260,11 +256,14 @@ static int server_hello_has_ems(const uint8_t *m, size_t len) {
 void ksl_msg_cb(int write_p, int version, int content_type, const void *buf, size_t len, SSL *ssl, void *arg) {
     ksl_ssl *s = arg; const uint8_t *m = buf;
     /* RFC 9846 section 4.7.3: "sending implementations MUST NOT allow the epoch -- and hence the number of key updates -- to exceed
-       2^48-1", also when answering the peer's update_requested ("it MUST NOT send its own KeyUpdate if that would cause it to exceed
-       these limits"). OpenSSL counts nothing and answers a request by itself. Once the last allowed KeyUpdate is written the session
-       ends: ksl sends no key update of its own any more and fails the session at its next call (ksl_key_update_limit_check). A
-       request from the peer that would need one more answer shuts the session's end of the BIO pair for writing before OpenSSL
-       processes it (this callback runs first), so the answer cannot leave. What the peer sends is never counted ("receiving
+       2^48-1"; "If a sending implementation receives a KeyUpdate with request_update set to update_requested, it MUST NOT send its
+       own KeyUpdate if that would cause it to exceed these limits and SHOULD instead ignore the update_requested flag. This may result
+       in an eventual need to terminate the connection when the limits in Section 5.5 are reached." OpenSSL counts nothing and answers
+       a request by itself. ksl counts the KeyUpdates it writes; once the last allowed one is written it sends no key update of its
+       own any more (ksl_ssl_key_update, count_records), and the session goes on under those keys until their record limit, where
+       ksl_tcp_write ends it. A request from the peer that would need one more is turned into update_not_requested here, before
+       OpenSSL processes the message (this callback runs first, on the buffer OpenSSL then parses; a KeyUpdate is not part of the
+       transcript): OpenSSL updates its receiving key and sends nothing. What the peer sends is never counted ("receiving
        implementations MUST NOT enforce this rule"). */
     /* RFC 9846 section 4.7.3: "implementations may receive an arbitrary number of messages between sending a KeyUpdate with
        request_update set to update_requested and receiving the peer's KeyUpdate, including unrelated KeyUpdates, because those
@@ -279,7 +278,7 @@ void ksl_msg_cb(int write_p, int version, int content_type, const void *buf, siz
         } else {
             uint64_t record_end = s->fed - (uint64_t)BIO_ctrl_pending(SSL_get_rbio(ssl));
             if (record_end > s->update_requested_at) s->update_requested_pending = 0;
-            if (m[4] == SSL_KEY_UPDATE_REQUESTED && s->key_updates_sent >= bound) { s->key_updates_exhausted = 1; (void)BIO_shutdown_wr(SSL_get_wbio(ssl)); }
+            if (m[4] == SSL_KEY_UPDATE_REQUESTED && s->key_updates_sent >= bound) ((uint8_t *)(uintptr_t)buf)[4] = SSL_KEY_UPDATE_NOT_REQUESTED;
         }
     }
     if (!write_p && content_type == SSL3_RT_HANDSHAKE && len >= 6 && m[0] == SSL3_MT_SERVER_HELLO && s->owner->role == KSL_CLIENT) {

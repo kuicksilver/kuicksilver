@@ -13,10 +13,9 @@ int ksl_tcp_feed(ksl_ssl *s, const uint8_t *ciphertext, size_t len, size_t *cons
 int ksl_tcp_drain(ksl_ssl *s, uint8_t *out, size_t cap, size_t *written) {
     if (!tcp_only(s)) return KSL_ERROR; *written = 0; if (!cap) return KSL_OK;
     int n = BIO_read(s->net, out, (int)(cap > INT32_MAX ? INT32_MAX : cap));
-    if (n > 0) *written = (size_t)n; return n > 0 || BIO_should_retry(s->net) || s->key_updates_exhausted ? KSL_OK : KSL_ERROR;   /* shut at the KeyUpdate bound */
+    if (n > 0) *written = (size_t)n; return n > 0 || BIO_should_retry(s->net) ? KSL_OK : KSL_ERROR;
 }
 static int map_error(ksl_ssl *s, int r) {
-    if (ksl_key_update_limit_check(s) != KSL_OK) return KSL_ERROR;
     switch (SSL_get_error(s->ssl, r)) {
     case SSL_ERROR_WANT_READ: case SSL_ERROR_WANT_WRITE: ERR_clear_error(); return KSL_WANT_READ;
     case SSL_ERROR_ZERO_RETURN: ERR_clear_error(); return KSL_EOF;
@@ -59,7 +58,7 @@ static void count_records(ksl_ssl *s, size_t n) {
     if (SSL_version(s->ssl) < TLS1_3_VERSION) return;
     size_t frag = record_size(s);
     s->records_sent += (n + frag - 1) / frag;
-    if (s->records_sent < key_update_records(s)) return;
+    if (s->records_sent < key_update_records(s) || s->key_updates_exhausted) return;   /* past the epoch bound: the record limit ends the session */
     /* refused while a write is pending or a handshake message is under way (a KeyUpdate the peer asked for): tried after the next
        write. Called directly: the write succeeded, and the session's last error stays the last failure's */
     if (SSL_key_update(s->ssl, SSL_KEY_UPDATE_NOT_REQUESTED) == 1) s->records_sent = 0; else ERR_clear_error();
@@ -73,20 +72,20 @@ static void drop_pending_write(ksl_ssl *s) {
    keeps (pending_write), so that ksl_tcp_abort can complete it ahead of its alert. The caller retries a KSL_WANT_READ with the same
    bytes, from any buffer (SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER). */
 int ksl_tcp_write(ksl_ssl *s, const uint8_t *plaintext, size_t len, size_t *consumed) {
-    if (!tcp_only(s)) return KSL_ERROR; if (s->fatal || ksl_key_update_limit_check(s) != KSL_OK) return KSL_ERROR; *consumed = 0; if (!s->done) return KSL_WANT_READ;
+    if (!tcp_only(s)) return KSL_ERROR; if (s->fatal) return KSL_ERROR; *consumed = 0; if (!s->done) return KSL_WANT_READ;
     size_t frag = record_size(s); if (len > frag) len = frag;
     /* one more record would reach the keys' limit: the session ends, with internal_error where an alert can be sent */
     if (len && !s->pending_write && record_limit(s) != KSL_NO_RECORD_LIMIT && s->records_sent + 1 >= record_limit(s))
         { (void)abort_session(s, "ksl: the sending keys reached their record limit (RFC 9846 section 5.5)"); return KSL_ERROR; }
     ERR_clear_error(); size_t n = 0; int r = SSL_write_ex(s->ssl, plaintext, len, &n);
-    if (r == 1) { drop_pending_write(s); *consumed = n; if (!s->key_updates_exhausted) count_records(s, n); return KSL_OK; }
+    if (r == 1) { drop_pending_write(s); *consumed = n; count_records(s, n); return KSL_OK; }
     if (SSL_get_error(s->ssl, r) == SSL_ERROR_WANT_WRITE && !s->pending_write && len) {
         s->pending_write = malloc(len); if (s->pending_write) { memcpy(s->pending_write, plaintext, len); s->pending_write_len = len; }
     }
     return map_error(s, r);
 }
 int ksl_tcp_read(ksl_ssl *s, uint8_t *out, size_t cap, size_t *read) {
-    if (!tcp_only(s)) return KSL_ERROR; if (s->fatal || ksl_key_update_limit_check(s) != KSL_OK) return KSL_ERROR; *read = 0; if (!s->done) return KSL_WANT_READ;
+    if (!tcp_only(s)) return KSL_ERROR; if (s->fatal) return KSL_ERROR; *read = 0; if (!s->done) return KSL_WANT_READ;
     ERR_clear_error(); size_t n = 0; int r = SSL_read_ex(s->ssl, out, cap, &n);
     if (r == 1) { *read = n; return KSL_OK; }
     return map_error(s, r);
@@ -104,8 +103,8 @@ int ksl_tcp_read(ksl_ssl *s, uint8_t *out, size_t cap, size_t *read) {
    or the record bound queued, or the answer to the peer's update_requested), during which SSL_new_session_ticket starts nothing.
    Either needs room in the BIO pair: the caller drained it before (ksl_tcp_drain), else no alert can follow. */
 static int abort_session(ksl_ssl *s, const char *why) {
-    /* a session that failed already (the KeyUpdate bound included) keeps the error that ended it */
-    if (s->fatal || ksl_key_update_limit_check(s) != KSL_OK) return KSL_ERROR;
+    /* a session that failed already (its record limit included) keeps the error that ended it */
+    if (s->fatal) return KSL_ERROR;
     if (!s->done) { ksl_ssl_fail(s, KSL_E_NOT_SUPPORTED, "ksl: no alert: the session is not established"); return KSL_ERROR; }
     ERR_clear_error(); int started = 0, client = s->owner->role == KSL_CLIENT; const char *stuck = NULL;
     s->abort_alert = 1; s->last_alert = 0;
@@ -138,7 +137,7 @@ static int abort_session(ksl_ssl *s, const char *why) {
 }
 int ksl_tcp_abort(ksl_ssl *s) { return tcp_only(s) ? abort_session(s, NULL) : KSL_ERROR; }
 int ksl_tcp_shutdown(ksl_ssl *s) {
-    if (!tcp_only(s)) return KSL_ERROR; if (s->fatal || ksl_key_update_limit_check(s) != KSL_OK) return KSL_ERROR; ERR_clear_error();
+    if (!tcp_only(s)) return KSL_ERROR; if (s->fatal) return KSL_ERROR; ERR_clear_error();
     int r = SSL_shutdown(s->ssl);
     if (r == 1) return KSL_OK;                 /* both close_notify alerts exchanged */
     if (r == 0) return KSL_WANT_READ;          /* ours sent, waiting for the peer's */

@@ -656,6 +656,7 @@ static void test_record_limits_per_cipher(void) {
         int ok = 1; for (int k = 0; k < 3; k++) { ok = ok && ksl_tcp_write(w, &b, 1, &n) == KSL_OK; shuttle(w, peer); ok = ok && ksl_tcp_read(peer, r, sizeof r, &n) == KSL_OK && n == 1; }
         CHECK(ok, "three records under the keys");
         CHECK(ksl_tcp_write(w, &b, 1, &n) == KSL_ERROR && last_message_has(w, "record limit"), "negative: the fourth would reach the limit: the session ends");
+        CHECK(ksl_tcp_abort(w) == KSL_ERROR && last_message_has(w, "record limit"), "an abort of the ended session keeps the error that ended it");
         if (server) CHECK(shuttle(w, peer) > 0 && read_all_after_abort(peer, &alert, &rc) == 0 && alert == (SSL_AD_INTERNAL_ERROR | 0x100), "the client receives internal_error");
         else CHECK(ksl_tcp_drain(w, out, sizeof out, &n) == KSL_OK && n == 0 && ksl_tcp_shutdown(w) == KSL_ERROR, "the client sends nothing more, no close_notify");
         ksl_ssl_free(c); ksl_ssl_free(s);
@@ -729,32 +730,44 @@ static void test_key_update_request_waits_for_the_peer(void) {
 static void test_key_update_epoch_is_bounded(void) {
     SECTION("tcp_key_update_epoch_is_bounded");
     /* RFC 9846 section 4.7.3: "sending implementations MUST NOT allow the epoch -- and hence the number of key updates -- to exceed
-       2^48-1"; "receiving implementations MUST NOT enforce this rule". The bound is lowered to 3 KeyUpdates (test hook); the session
-       that reached it ends, as the section allows ("an eventual need to terminate the connection") */
+       2^48-1"; "receiving implementations MUST NOT enforce this rule"; "If a sending implementation receives a KeyUpdate with
+       request_update set to update_requested, it MUST NOT send its own KeyUpdate if that would cause it to exceed these limits and
+       SHOULD instead ignore the update_requested flag. This may result in an eventual need to terminate the connection when the
+       limits in Section 5.5 are reached." The bound is the number of KeyUpdates sent; lowered here by the test hook. */
+    CHECK(KSL_MAX_KEY_UPDATES == (UINT64_C(1) << 48) - 1, "the bound is 2^48-1 updates");
     ksl_ctx *cc = client_ctx("test-ca", KSL_VERIFY_OPENSSL), *sc = server_ctx("server"); key_updates k = {0, 0};
     ksl_ssl *c = tcp_client(cc, "server.test"), *s = ksl_ssl_new(sc, KSL_MODE_TCP); ksl_ssl_msg_observer_for_test(s, key_update_kind_cb, &k);
     CHECK(tcp_pump(c, s, NULL, NULL) == KSL_OK, "handshake");
     ksl_ssl_set_key_update_limit_for_test(c, 3); ksl_ssl_set_key_update_limit_for_test(s, 1);
-    for (int i = 0; i < 2; i++) CHECK(ksl_ssl_key_update(c, 0) == KSL_OK && send_one(c, s), "a key update below the bound");
-    CHECK(ksl_ssl_key_update(c, 0) == KSL_OK, "the third is queued");
-    uint8_t b = 1, r[16]; size_t n; ksl_tcp_write(c, &b, 1, &n); shuttle(c, s); ksl_tcp_read(s, r, sizeof r, &n);
+    for (int i = 0; i < 3; i++) CHECK(ksl_ssl_key_update(c, 0) == KSL_OK && send_one(c, s), "a key update up to the bound");
     CHECK(k.updates == 3, "three KeyUpdates reached the server: the server, bounded at 1 itself, does not enforce the bound on what it receives");
-    CHECK(ksl_ssl_key_update(c, 0) == KSL_ERROR && ksl_tcp_write(c, &b, 1, &n) == KSL_ERROR, "negative: past the bound no key update and no data");
-    uint8_t out[64]; CHECK(ksl_tcp_drain(c, out, sizeof out, &n) == KSL_OK && n == 0, "negative: nothing more leaves the client");
-    CHECK(ksl_tcp_abort(c) == KSL_ERROR && last_message_has(c, "key update bound"), "an abort of the ended session keeps the error that ended it");
+    CHECK(ksl_ssl_key_update(c, 0) == KSL_ERROR && last_message_has(c, "2^48-1"), "negative: no fourth key update, and the error says why");
+    ksl_tcp_set_key_update_records_for_test(c, 1);
+    CHECK(send_one(c, s) && send_one(c, s) && k.updates == 3, "negative: no automatic KeyUpdate either; the data goes on under the last keys");
+    CHECK(echo_bytes(c, s, 5000), "the stream is intact both ways");
     ksl_ssl_free(c); ksl_ssl_free(s);
-    /* a peer's update_requested answered with the last allowed KeyUpdate: the session ends there, a further request is never answered */
+    /* a peer's update_requested at the bound: the flag is ignored, the connection goes on */
     c = tcp_client(cc, "server.test"); s = ksl_ssl_new(sc, KSL_MODE_TCP); key_updates kc = {0, 0}; ksl_ssl_msg_observer_for_test(c, key_update_kind_cb, &kc);
     CHECK(tcp_pump(c, s, NULL, NULL) == KSL_OK, "handshake");
-    ksl_ssl_set_key_update_limit_for_test(c, 1);
-    CHECK(ksl_ssl_key_update(s, 1) == KSL_OK, "the server asks for an update");
-    ksl_tcp_write(s, &b, 1, &n); shuttle(s, c); ksl_tcp_read(c, r, sizeof r, &n); ksl_tcp_write(c, &b, 1, &n); shuttle(c, s);   /* the answer leaves ahead of the next write */
-    k.updates = 0; ksl_ssl_msg_observer_for_test(s, key_update_kind_cb, &k); ksl_tcp_read(s, r, sizeof r, &n);
-    CHECK(kc.updates == 1 && k.updates == 1, "the client answered with its one allowed KeyUpdate");
-    CHECK(ksl_ssl_key_update(s, 1) == KSL_OK, "the server asks again");
-    ksl_tcp_write(s, &b, 1, &n); shuttle(s, c); ksl_tcp_read(c, r, sizeof r, &n); ksl_tcp_write(c, &b, 1, &n); shuttle(c, s); ksl_tcp_read(s, r, sizeof r, &n);
-    CHECK(kc.updates == 1 && k.updates == 1, "negative: no KeyUpdate past the client's bound");
-    CHECK(ksl_tcp_write(c, &b, 1, &n) == KSL_ERROR, "the client's session ended");
+    ksl_ssl_set_key_update_limit_for_test(c, 1); k.updates = k.requested = 0; ksl_ssl_msg_observer_for_test(s, key_update_kind_cb, &k);
+    uint8_t b = 1, r[16]; size_t n;
+    CHECK(ksl_ssl_key_update(s, 1) == KSL_OK && ksl_tcp_write(s, &b, 1, &n) == KSL_OK, "the server asks for an update");
+    shuttle(s, c); ksl_tcp_read(c, r, sizeof r, &n); CHECK(send_one(c, s) && kc.updates == 1 && k.updates == 1, "the client answers with its one allowed KeyUpdate");
+    shuttle(s, c); ksl_tcp_read(c, r, sizeof r, &n);   /* the server's next request may follow its answer */
+    CHECK(ksl_ssl_key_update(s, 1) == KSL_OK && ksl_tcp_write(s, &b, 1, &n) == KSL_OK, "the server asks again");
+    shuttle(s, c); CHECK(ksl_tcp_read(c, r, sizeof r, &n) == KSL_OK && n == 1 && kc.updates == 2, "the client reads the request and the byte");
+    CHECK(send_one(c, s) && k.updates == 1, "negative: no KeyUpdate past the client's bound, the update_requested flag ignored");
+    CHECK(echo_bytes(c, s, 5000), "the connection goes on both ways");
+    ksl_ssl_free(c); ksl_ssl_free(s);
+    /* past the bound the keys stay in use until their record limit (4 records here, test hook); then the session ends, a server with
+       internal_error */
+    c = tcp_client(cc, "server.test"); s = ksl_ssl_new(sc, KSL_MODE_TCP); CHECK(tcp_pump(c, s, NULL, NULL) == KSL_OK, "handshake");
+    ksl_ssl_set_key_update_limit_for_test(s, 1); ksl_tcp_set_key_update_records_for_test(s, 2); ksl_tcp_set_record_limit_for_test(s, 4);
+    int ok = 1; for (int i = 0; i < 5; i++) { ok = ok && ksl_tcp_write(s, &b, 1, &n) == KSL_OK; shuttle(s, c); ok = ok && ksl_tcp_read(c, r, sizeof r, &n) == KSL_OK && n == 1; }
+    CHECK(ok, "two records, the one allowed KeyUpdate, three records under its keys");
+    int alert = 0, rc;
+    CHECK(ksl_tcp_write(s, &b, 1, &n) == KSL_ERROR && last_message_has(s, "record limit"), "negative: the fourth record would reach the keys' limit: the session ends");
+    CHECK(shuttle(s, c) > 0 && read_all_after_abort(c, &alert, &rc) == 0 && alert == (SSL_AD_INTERNAL_ERROR | 0x100), "the client receives internal_error");
     ksl_ssl_free(c); ksl_ssl_free(s); ksl_ctx_free(cc); ksl_ctx_free(sc); END();
 }
 
