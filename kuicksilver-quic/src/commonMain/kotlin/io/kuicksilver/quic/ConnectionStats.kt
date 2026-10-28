@@ -59,7 +59,11 @@ public class ConnectionStats internal constructor(
     public val keyUpdates: Long,
     /** Packets that failed authentication under any key, Initial ones included (RFC 9001 section 6.6 integrity limit). */
     public val authenticationFailures: Long,
-    /** Datagrams that looked like a Stateless Reset but carried no token of ours (RFC 9000 section 10.3.1). */
+    /**
+     * Datagrams checked for a Stateless Reset (RFC 9000 section 10.3.1: their first packet was not ours or did not
+     * authenticate) that carried no token of the peer's. A duplicate, a packet held for the handshake's end, a small
+     * Initial a server discards, or one of a space whose keys we discarded leads no datagram counted here.
+     */
     public val invalidResets: Long,
     /** Glitch tokens the peer spent on useless work (docs/guide/quic.md, "Glitch protection"); 0 for an honest peer. */
     public val glitchTokensSpent: Long,

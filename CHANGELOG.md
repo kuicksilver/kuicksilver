@@ -570,7 +570,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   be performed when the first packet in an incoming datagram either cannot be associated with a connection or cannot be
   decrypted"). A datagram whose first packet does not open is checked even when a later packet of it is processed; one
   whose first packet is an Initial the server discards for the datagram's size is not (it no longer counts in
-  `ConnectionStats.invalidResets`).
+  `ConnectionStats.invalidResets`). A datagram led by a duplicate is not checked either, and one led by a packet of a
+  space whose keys were discarded is checked but not counted: `invalidResets` counts only datagrams whose first packet
+  was not ours or did not authenticate.
 - QUIC: a CONNECTION_CLOSE that does not fit the room left in its packet (a server closing below its anti-amplification
   budget with a long reason) now goes out with its reason cut to fit (RFC 9000 section 19.19: "Because a CONNECTION_CLOSE
   frame cannot be split between packets, any limits on packet size will also limit the space available for a reason
