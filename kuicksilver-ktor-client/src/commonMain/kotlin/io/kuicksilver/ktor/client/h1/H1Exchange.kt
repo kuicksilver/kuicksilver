@@ -43,6 +43,7 @@ import io.ktor.websocket.RawWebSocket
 import io.kuicksilver.ktor.client.withSocketTimeout
 import kotlinx.coroutines.CoroutineName
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -231,6 +232,12 @@ internal const val MAX_INTERIM_RESPONSES: Int = 5
  * which is not an IOException, so a pooled connection is not retried. With [continueBody] (a request with
  * `Expect: 100-continue` whose body waits) a 100 Continue sends the body; a final response before it is the answer, the
  * body is never sent and the connection, which promised one, is closed after the response.
+ *
+ * [requestBodySent] is the request body still being sent while the response is read (a streamed body), completed with
+ * whether all of it went out; null when none is. A reusable connection is given back ([AfterResponse.Reuse]) only once
+ * that body is out, and always before the response's body ends: the application that sees the response's end, and sends
+ * its next request at once, finds the connection idle. A response read to its end therefore ends only when the request
+ * body is out, or failed (then the connection is closed).
  */
 @OptIn(InternalAPI::class)
 internal suspend fun readResponse(
@@ -241,6 +248,7 @@ internal suspend fun readResponse(
     callContext: CoroutineContext,
     head: HeadLimitedInput? = null,
     continueBody: (suspend () -> Unit)? = null,
+    requestBodySent: () -> Deferred<Boolean>? = { null },
     onBodyDone: (AfterResponse) -> Unit,
 ): HttpResponseData =
     withContext(callContext) {
@@ -301,16 +309,23 @@ internal suspend fun readResponse(
             val body =
                 when {
                     request.method == HttpMethod.Head || status == HttpStatusCode.NotModified || status == HttpStatusCode.NoContent -> {
-                        onBodyDone(
-                            if (keepAlive && !framing.invalidLength &&
-                                !framing.invalidEncoding
-                            ) {
-                                AfterResponse.Reuse
-                            } else {
-                                AfterResponse.Close
-                            },
-                        )
-                        ByteReadChannel.Empty
+                        val reusable = keepAlive && !framing.invalidLength && !framing.invalidEncoding
+                        val sending = requestBodySent()?.takeIf { reusable }
+                        if (sending == null) {
+                            onBodyDone(if (reusable) AfterResponse.Reuse else AfterResponse.Close)
+                            ByteReadChannel.Empty
+                        } else {
+                            // the empty body ends once the request body is out, after the connection went back
+                            var settled = false
+                            val waiter =
+                                CoroutineScope(callContext + CoroutineName("kuicksilver-h1-body-reader")).writer {
+                                    val sent = sending.await()
+                                    settled = true
+                                    onBodyDone(if (sent) AfterResponse.Reuse else AfterResponse.Close)
+                                }
+                            waiter.job.invokeOnCompletion { if (!settled) onBodyDone(AfterResponse.Close) }
+                            waiter.channel
+                        }
                     }
 
                     // an invalid Content-Length: the framing is unknown, the response is discarded and the connection
@@ -354,8 +369,10 @@ internal suspend fun readResponse(
                             scope.writer(autoFlush = true) {
                                 framing.readBody(input.withSocketTimeout(request), channel)
                                 if (keepAlive && framing.delimited) {
+                                    // a request body still being sent: the connection is reusable once it is out
+                                    val sent = requestBodySent()?.await() ?: true
                                     settled = true
-                                    onBodyDone(AfterResponse.Reuse)
+                                    onBodyDone(if (sent) AfterResponse.Reuse else AfterResponse.Close)
                                 }
                             }
                         parser.job.invokeOnCompletion { if (!settled) onBodyDone(AfterResponse.Close) }
