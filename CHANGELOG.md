@@ -151,6 +151,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   connection with `goAwayReceived` set. The start now lets the control stream's reader finish what the server sent before
   its close (at most one second) before it decides (RFC 9114 section 5.2), also when the control stream came in the same
   batch and had not been accepted yet; a close before any control stream decides at once.
+- HTTP/3: a connection the peer closed (H3_NO_ERROR after GOAWAY, an idle timeout, a stateless reset, the client's own close on a rejected 0-RTT) is no longer
+  reported now and then as a local `H3_INTERNAL_ERROR`. A session coroutine that failed with ktor-io's wrapper of the
+  loss (a `ClosedWriteChannelException` whose cause is the `ConnectionLost`) could run before the session saw the
+  transport's end and closed with `H3_INTERNAL_ERROR`, which the Ktor client also took as a reason to mark the
+  alternative broken. A failure caused by the session's own lost transport now leaves the end to the transport's close;
+  a `ConnectionLost` of another connection (a handler relaying elsewhere) is still an internal error.
 - QUIC client: the server's first Initial fixes its Source Connection ID, an ACK-only one too (RFC 9000 section 7.2,
   "MUST discard any subsequent packet ... with a different Source Connection ID"); before, an Initial without CRYPTO
   left the SCID open and a later one with another SCID was still adopted. The one exception is msquic's: an Initial with
