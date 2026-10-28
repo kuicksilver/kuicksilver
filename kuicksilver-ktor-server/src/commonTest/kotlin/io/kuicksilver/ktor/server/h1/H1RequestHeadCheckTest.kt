@@ -293,6 +293,8 @@ class H1RequestHeadCheckTest {
                 "CONNECT a.example: HTTP/1.1",
                 "CONNECT a.example:0 HTTP/1.1",
                 "CONNECT a.example:65536 HTTP/1.1",
+                "CONNECT :443 HTTP/1.1",
+                "GET http://a.example:65536/ HTTP/1.1",
                 "CONNECT http://a.example/ HTTP/1.1",
                 "GET http://a.example/a|b HTTP/1.1",
                 "GET http://a.example/#f HTTP/1.1",

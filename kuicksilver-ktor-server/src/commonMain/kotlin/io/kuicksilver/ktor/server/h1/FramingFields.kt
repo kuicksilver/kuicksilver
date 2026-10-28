@@ -98,8 +98,9 @@ internal fun contentLengthOf(values: List<CharSequence>): Long? {
  * Whether [value] is a valid Host field value, `uri-host [ ":" port ]` (RFC 9110 section 7.2), with `uri-host` the `host`
  * of RFC 3986 section 3.2.2: an IP-literal (`[` IPv6address or IPvFuture `]`), or a reg-name (unreserved, pct-encoded
  * and sub-delims characters, which covers IPv4 addresses), possibly empty (RFC 9112 section 3.2: an empty Host for a
- * target without an authority), and `port = *DIGIT` (section 3.2.3): any digits, or none after the colon (the default
- * port).
+ * target without an authority), and `port = *DIGIT` (section 3.2.3): digits, or none after the colon (the default
+ * port). The digits must name a TCP port, at most 65535 (RFC 9110 section 4.2.1: the port of an "http" or "https" URI
+ * is a TCP port), leading zeros allowed: `h:99999` is no port any connection can have.
  */
 internal fun isValidHostField(value: String): Boolean {
     val hostEnd: Int
@@ -113,7 +114,10 @@ internal fun isValidHostField(value: String): Boolean {
     }
     if (hostEnd == value.length) return true
     if (value[hostEnd] != ':') return false
-    return value.substring(hostEnd + 1).all { it in '0'..'9' }
+    val port = value.substring(hostEnd + 1)
+    if (!port.all { it in '0'..'9' }) return false
+    val significant = port.trimStart('0')
+    return significant.length < 5 || (significant.length == 5 && significant.toInt() <= 65_535)
 }
 
 /** reg-name = *( unreserved / pct-encoded / sub-delims ) (RFC 3986 section 3.2.2). */

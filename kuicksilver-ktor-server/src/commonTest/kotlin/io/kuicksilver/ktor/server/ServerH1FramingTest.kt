@@ -188,7 +188,9 @@ class ServerH1FramingTest {
     /**
      * RFC 9112 section 3.2: a server MUST respond with 400 to a request with a Host field whose value is invalid; Host is
      * `uri-host [ ":" port ]` (RFC 9110 section 7.2, RFC 3986 section 3.2). Ktor's parser refused only `/?#@` and a
-     * trailing colon, so these reached the application, its `serverHost` and `serverPort`.
+     * trailing colon, so these reached the application, its `serverHost` and `serverPort`. The port is a TCP port (RFC
+     * 9110 section 4.2.1), so one above 65535 names none: invalid too (before, `h:99999` was served with `serverPort`
+     * 99999, and a port too large for an Int fell back to the local port).
      */
     @Test fun negative_invalidHostIsRejected() =
         serverTest {
@@ -205,6 +207,10 @@ class ServerH1FramingTest {
                     "a\"b",
                     "a<b",
                     "[v1]",
+                    "h:65536",
+                    "h:99999",
+                    "h:12345678901",
+                    "[::1]:65536",
                 )) {
                     val resp =
                         withTimeout(
@@ -216,8 +222,8 @@ class ServerH1FramingTest {
         }
 
     /**
-     * Valid Host values: a reg-name (with pct-encoded and sub-delims), IPv4, an IP-literal, a port of any digits or none
-     * after the colon (RFC 3986 section 3.2.3: port = *DIGIT). Before, Ktor's parser refused `a.example:` with 400.
+     * Valid Host values: a reg-name (with pct-encoded and sub-delims), IPv4, an IP-literal, a port of digits up to 65535
+     * or none after the colon (RFC 3986 section 3.2.3: port = *DIGIT). Before, Ktor's parser refused `a.example:` with 400.
      */
     @Test fun validHostsAreServed() =
         serverTest {
@@ -230,11 +236,12 @@ class ServerH1FramingTest {
                     "[::ffff:192.0.2.1]" to "[::ffff:192.0.2.1]|80|",
                     "[v7.a:b]" to "[v7.a:b]|80|",
                     "xn--d1a~_!\$&'()*+,;=%41" to "xn--d1a~_!\$&'()*+,;=%41|80|",
-                    // port = *DIGIT (RFC 3986 section 3.2.3): an empty port is the default one, any digits are a port
+                    // port = *DIGIT (RFC 3986 section 3.2.3): an empty port is the default one, digits up to 65535 a port
                     "a.example:" to "a.example|80|",
                     "[::1]:" to "[::1]|80|",
-                    "h:99999" to "h|99999|",
+                    "h:65535" to "h|65535|",
                     "h:0080" to "h|80|",
+                    "h:00000000000000000080" to "h|80|",
                 )) {
                     val resp =
                         withTimeout(

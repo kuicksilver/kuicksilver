@@ -302,7 +302,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   and the connection closes (RFC 9112 section 3.2: a server MUST respond with 400 to a Host with an invalid value); so
   does an absolute-form target with such an authority. Before, only `/?#@` and a trailing colon were refused, and the
   rest reached `serverHost` and `serverPort`. A trailing colon (`Host: a.example:`, an empty port, valid by RFC 3986's
-  `port = *DIGIT`) is now accepted as the default port instead of refused.
+  `port = *DIGIT`) is now accepted as the default port instead of refused; a port above 65535 (`Host: h:99999`), which
+  names no TCP port (RFC 9110 section 4.2.1), gets 400, in an absolute-form target too.
 - Ktor server, HTTP/1.1: a request field name that is not a token (with DEL or a byte above 0x7F, RFC 9110 section
   5.1) gets 400. A field value that starts with a Unicode space (U+00A0, U+2000, ... sent as obs-text) now reaches
   the application as sent: OWS is only SP and HTAB (section 5.6.3) and obs-text is opaque field content (section
@@ -313,10 +314,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   and the connection closes (RFC 9110 section 5.5: a recipient of NUL in a field value MUST reject the message or
   replace it). Before, Ktor's parser refused only CR and LF, and a NUL reached the application.
 - Ktor server, HTTP/1.1: the request-target must match its form (RFC 9112 section 3.2): an origin-form path and query
-  of RFC 3986 characters, an absolute-URI, the authority-form for CONNECT only (with a port from 1 to 65535, RFC 9110
-  section 9.3.6), `*` for OPTIONS only. Any other target is an invalid request line and gets 400 (section 3.2); a GET
-  or HEAD whose path or query only has characters to encode (`|`, `{`, `^`, `[`, which browsers send unencoded, and
-  non-ASCII bytes) gets `301 Moved Permanently` to the target properly encoded instead, the other answer section 3.2
+  of RFC 3986 characters, an absolute-URI, the authority-form for CONNECT only (with a host, not `CONNECT :443`, and
+  a port from 1 to 65535, RFC 9110 section 9.3.6), `*` for OPTIONS only. Any other target is an invalid request line
+  and gets 400 (section 3.2); a GET or HEAD whose path or query only has characters to encode (`|`, `{`, `^`, `[`,
+  which browsers send unencoded, and non-ASCII bytes) gets `301 Moved Permanently` to the target properly encoded
+  instead, the other answer section 3.2
   names. Before, any run of non-whitespace reached routing.
 - Ktor server, HTTP/1.1: the request line is checked before Ktor's parser reads it. A method that is not a token
   (`G"ET`, RFC 9112 section 3.1), a control character other than the whitespace section 3 allows as a separator, or a

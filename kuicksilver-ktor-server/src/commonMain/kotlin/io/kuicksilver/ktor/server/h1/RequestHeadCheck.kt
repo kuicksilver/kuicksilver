@@ -200,8 +200,9 @@ internal fun checkRequestLine(line: ByteArray): Int {
 
 /**
  * Checks the request-target `line[start, end)` of a [method] request against its forms (RFC 9112 section 3.2): the
- * authority-form `uri-host ":" port` for CONNECT, and only there, with a port from 1 to 65535 (RFC 9110 section 9.3.6: a
- * server MUST reject a CONNECT to an empty or invalid port); the asterisk-form for OPTIONS only; else the origin-form
+ * authority-form `uri-host ":" port` for CONNECT, and only there, with a non-empty host (the target consists "of only
+ * the host and port number of the tunnel destination", RFC 9110 section 9.3.6) and a port from 1 to 65535 (the same
+ * section: a server MUST reject a CONNECT to an empty or invalid port); the asterisk-form for OPTIONS only; else the origin-form
  * (`absolute-path [ "?" query ]`) or the absolute-form (an absolute-URI: no fragment). Characters follow RFC 3986:
  * path and query characters, `%` with two hex digits. Anything else is an invalid request line, which the server SHOULD
  * answer with 400 or with a 301 to the request-target properly encoded (RFC 9112 section 3.2): the 301 for an origin-form
@@ -226,7 +227,8 @@ private fun checkRequestTarget(
             } else {
                 target.substring(colon + 1).takeIf { p -> p.length in 1..5 && p.all { it in '0'..'9' } }?.toInt()
             }
-        if (!ascii || colon < 0 || port == null || port !in 1..65_535 || !isValidHostField(target)) {
+        // the host and port of the tunnel destination (RFC 9110 section 9.3.6): an empty host names none
+        if (!ascii || colon < 1 || port == null || port !in 1..65_535 || !isValidHostField(target)) {
             refuse("CONNECT needs a request-target of uri-host \":\" port")
         }
         return
