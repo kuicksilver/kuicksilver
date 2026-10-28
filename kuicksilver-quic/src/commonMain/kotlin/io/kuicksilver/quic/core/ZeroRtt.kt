@@ -183,8 +183,10 @@ internal fun ConnectionCore.useTicket(ticket: QuicSessionTicket): Boolean {
 
 /**
  * The connection may still send 0-RTT packets: a 0-RTT write key, no 1-RTT one yet, and the key below its AEAD confidentiality
- * limit. RFC 9846 section 5.5: "it is not possible to perform a KeyUpdate for early data; therefore, implementations MUST NOT
- * exceed the limits when sending early data" (RFC 9001 section 6.6 for QUIC); what is left waits for 1-RTT.
+ * limit. RFC 9001 section 6.6: "If the total number of encrypted packets with the same key exceeds the confidentiality
+ * limit for the selected AEAD, the endpoint MUST stop using those keys"; a key update, the way on for 1-RTT, does not exist
+ * for early data (RFC 9846 section 5.5: "implementations MUST NOT exceed the limits when sending early data"). What is left
+ * waits for 1-RTT.
  */
 internal val ConnectionCore.zeroRttWritable: Boolean get() = writeKeys[1] != null && writeKeys[3] == null && !zeroRttLimitReached
 

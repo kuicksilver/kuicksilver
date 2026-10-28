@@ -329,8 +329,9 @@ size; probes are not congestion controlled and their loss is not a congestion si
 packets, or two PTOs in a row while sending above 1200, mean the path shrank: the connection drops back to 1200, tells
 the congestion controller, waits a minute, and searches again; a successful search repeats every ten minutes. The core
 raises `MtuUpdated(path, mtu)`, `stats.pathMtu` and `maxDatagramSize` follow, and queued datagrams that no longer fit are
-dropped (`stats.datagramsDroppedSend`). `pmtud = false` keeps 1200. The portable socket does not set DF, so there the MTU
-stays 1200; the accelerated socket sets DF (in probe mode on Linux, Android and Windows; Darwin has no probe mode) and the
+dropped (`stats.datagramsDroppedSend`). `pmtud = false` keeps 1200. The portable socket sets DF where the JDK has the
+option (`IP_DONTFRAGMENT`, JDK 19 and later; RFC 9000 section 14: "MUST be set if possible") but reports no DF capability,
+so there the MTU stays 1200 and the search does not run; the accelerated socket sets DF (in probe mode on Linux, Android and Windows; Darwin has no probe mode) and the
 search runs (1452 on loopback).
 
 ICMP helps only as a hint (`pmtudIcmpHints`, experimental, on by default; RFC 8899 section 4.6). On Linux and Android the

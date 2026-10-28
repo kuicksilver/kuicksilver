@@ -152,7 +152,7 @@ Http3ServerConfig.earlyData: EarlyDataPolicy                         // WaitForH
 - **`MemoryNetwork` and the simulator:** `negative_zeroRttReplay`, `negative_zeroRttReplayAcrossLoops`,
   `negative_zeroRttStaleTicket` (a ticket past its lifetime or `maxTicketAge`; a reported age outside
   the allowance needs a test hook, since OpenSSL reads the wall clock), `negative_zeroRttAcrossRestart`,
-  `negative_zeroRttTransportParamsShrunk`, `zeroRttRejectedRetransmitsIn1Rtt`, `zeroRttBeforeInitialIsBuffered`,
+  `negative_zeroRttTransportParamsShrunk`, `zeroRttRejectedResetsStreams`, `zeroRttBeforeInitialIsBuffered`,
   `clientTicketIsSingleUse`.
 - **HTTP/3:** `negative_unsafeMethodEarlyWaitsForHandshake`, `reject425PolicyAnd425Retry`,
   `negative_h3SettingsChangedRejects0Rtt`.
@@ -163,7 +163,8 @@ As implemented (ADR-0015), the planned names above did not land as such: the tes
 `negative_0rttReplayRejected` (QUIC core and TLS), `negative_0rttReplayToSecondEndpointRejected`,
 `concurrentSameTicketGetsEarlyDataOnce`, `negative_0rttTransportParamsReduced`,
 `negative_0rttMaxDatagramFrameSizeReduced`, `contextMismatchRejectsEarlyDataButResumes`,
-`zeroRttRejectedRetransmitsIn1Rtt`, `zeroRttBeforeInitialIsBuffered`, `clientTicketIsSingleUse`,
+`zeroRttRejectedResetsStreams` (`zeroRttRejectedRetransmitsIn1Rtt` until a rejected 0-RTT reset the client's streams,
+ADR-0015), `zeroRttBeforeInitialIsBuffered`, `clientTicketIsSingleUse`,
 `negative_unsafeMethodNotProcessedInEarlyData`, `unsafeRequestWaitsForHandshakeOnTheClient` and
 `reject425PolicyAndOneRetry`.
 

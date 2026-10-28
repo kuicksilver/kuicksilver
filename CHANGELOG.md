@@ -572,7 +572,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   whose first packet is an Initial the server discards for the datagram's size is not (it no longer counts in
   `ConnectionStats.invalidResets`).
 - QUIC: a CONNECTION_CLOSE that does not fit the room left in its packet (a server closing below its anti-amplification
-  budget with a long reason) now goes out with its reason cut to fit (RFC 9000 sections 10.2.1 and 10.2.3). The frame
+  budget with a long reason) now goes out with its reason cut to fit (RFC 9000 section 19.19: "Because a CONNECTION_CLOSE
+  frame cannot be split between packets, any limits on packet size will also limit the space available for a reason
+  phrase"). The frame
   was skipped, and the packet, holding only padding, still counted as the close, so the peer never learned of it.
 - QUIC: the reason phrase of a CONNECTION_CLOSE that is cut (to 1024 bytes, or to fit its packet) ends on a whole
   character, so the peer receives valid UTF-8 (RFC 9000 section 19.19). The encoded bytes were cut anywhere, which could
@@ -595,7 +597,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   section 6.6: "across all keys"), and in `ConnectionStats.authenticationFailures`. The limit (2^52 for AES-128-GCM)
   stays out of reach, so this changes the count, not when a connection closes in practice.
 - QUIC client: 0-RTT packets count toward the AEAD confidentiality limit of the 0-RTT key, and 0-RTT sending stops at
-  the limit, the rest of the early data waiting for 1-RTT (RFC 9846 section 5.5, RFC 9001 section 6.6). The limit
+  the limit, the rest of the early data waiting for 1-RTT (RFC 9001 section 6.6: "the endpoint MUST stop using those
+  keys"; RFC 9846 section 5.5, as early data has no key update). The limit
   (2^23 packets for AES-GCM) is far above what a client sends before the server's answer, so in practice nothing
   changes.
 - QUIC, Linux and Apple platforms: a UDP send interrupted by a signal (`EINTR`) is retried instead of failing the
