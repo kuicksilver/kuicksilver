@@ -203,9 +203,9 @@
  "client_qlogs": [
   {
    "trigger": "idle_timeout",
-   "closed": 39.812,
-   "last_sent": 9.83,
-   "last_received": 9.812
+   "closed": 39.148874,
+   "last_sent": 9.148449,
+   "last_received": 9.148436
   }
  ]
 }
