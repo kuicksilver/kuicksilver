@@ -1,0 +1,130 @@
+{
+ "server": "quinn",
+ "unanswered": [
+  "17c17117f7ebd40d"
+ ],
+ "download_checked": true,
+ "runner_paths": [
+  {
+   "dst": "193.167.0.229:18108",
+   "challenge": "2c3b9c3147009fbc"
+  },
+  {
+   "dst": "193.167.0.155:745",
+   "challenge": "17c17117f7ebd40d"
+  }
+ ],
+ "on_path": [
+  {
+   "n": 12457,
+   "from_server": false,
+   "len": 37,
+   "frames": [
+    3
+   ],
+   "challenges": [],
+   "close_codes": []
+  },
+  {
+   "n": 12459,
+   "from_server": true,
+   "len": 1200,
+   "frames": [
+    3,
+    26,
+    25,
+    0
+   ],
+   "challenges": [
+    "17c17117f7ebd40d"
+   ],
+   "close_codes": []
+  },
+  {
+   "n": 12460,
+   "from_server": false,
+   "len": 37,
+   "frames": [
+    3
+   ],
+   "challenges": [],
+   "close_codes": []
+  },
+  {
+   "n": 12461,
+   "from_server": false,
+   "len": 37,
+   "frames": [
+    3
+   ],
+   "challenges": [],
+   "close_codes": []
+  },
+  {
+   "n": 12462,
+   "from_server": false,
+   "len": 37,
+   "frames": [
+    3
+   ],
+   "challenges": [],
+   "close_codes": []
+  },
+  {
+   "n": 12463,
+   "from_server": false,
+   "len": 33,
+   "frames": [
+    29
+   ],
+   "challenges": [],
+   "close_codes": [
+    0
+   ]
+  }
+ ],
+ "server_close_n": 12463,
+ "responses": [
+  "2c3b9c3147009fbc"
+ ],
+ "client_sources": [
+  "193.167.0.100:45906"
+ ],
+ "client_side": [
+  {
+   "n": 12272,
+   "from_server": true,
+   "len": 1200,
+   "frames": [
+    3,
+    26,
+    25,
+    0
+   ],
+   "challenges": [
+    "17c17117f7ebd40d"
+   ],
+   "close_codes": [],
+   "t": 11.016543
+  },
+  {
+   "n": 12273,
+   "from_server": false,
+   "len": 33,
+   "frames": [
+    29
+   ],
+   "challenges": [],
+   "close_codes": [
+    0
+   ],
+   "t": 11.022509
+  }
+ ],
+ "client_closing": {
+  "at": 11.014664,
+  "owner": "local",
+  "code": 0,
+  "samples": 418
+ }
+}
