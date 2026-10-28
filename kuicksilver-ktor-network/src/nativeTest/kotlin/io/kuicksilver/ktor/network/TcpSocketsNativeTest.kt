@@ -256,6 +256,43 @@ class TcpSocketsNativeTest {
             }
         }
 
+    /**
+     * The peer's data and end of stream arrive while the selector never reports the socket readable: on Windows
+     * ktor-network's selector can lose `FD_CLOSE` (and, in some interleavings, `FD_READ`): it re-issues `WSAEventSelect`
+     * every round and completes only the waits that match, and Winsock records `FD_CLOSE` once. The read loop tries the
+     * receive again after its bounded wait and reads both. Before, it waited for
+     * ever (`ServerH1HeadLimitTest.negative_headerSectionSizeIsBounded` timed out on Windows: the client never saw the end
+     * of the 431 the server had sent and half-closed).
+     */
+    @Test fun negative_dataAndEndTheSelectorMissesStillReachTheReader() =
+        runBlocking {
+            val selector = SelectorManager(Dispatchers.Default)
+            val deaf = NoReadWakeUpSelector(selector)
+            try {
+                withTimeout(30.seconds) {
+                    val server = bindTcp(selector, "127.0.0.1", 0)
+                    val port = (server.localAddress as InetSocketAddress).port
+                    val client = connectTcp(deaf, InetSocketAddress("127.0.0.1", port)) as NativeTcpSocket
+                    client.readRecheck = 200.milliseconds
+                    val accepted = server.accept()
+                    val input = client.openReadChannel()
+                    // the read loop's first receive found nothing: it waits in a select that never ends
+                    delay(300.milliseconds)
+                    val out = accepted.openWriteChannel()
+                    out.writeFully("HTTP/1.1 431 \r\n\r\n".encodeToByteArray())
+                    out.flushAndClose() // the peer's end of stream
+                    val got =
+                        withTimeoutOrNull(5.seconds) { input.readRemaining().readByteArray().decodeToString() }
+                    assertEquals("HTTP/1.1 431 \r\n\r\n", got, "the reader still waits after 5 s, or read something else")
+                    client.close()
+                    accepted.close()
+                    server.close()
+                }
+            } finally {
+                selector.close()
+            }
+        }
+
     private enum class SelectorKind { Platform, NoWriteWakeUp }
 
     /**
@@ -321,6 +358,19 @@ class TcpSocketsNativeTest {
             interest: SelectInterest,
         ) {
             if (interest == SelectInterest.WRITE) awaitCancellation()
+            delegate.select(selectable, interest)
+        }
+    }
+
+    /** [delegate], whose waits for data never end (as on Windows for an event it lost); the job's cancellation ends them. */
+    private class NoReadWakeUpSelector(
+        private val delegate: SelectorManager,
+    ) : SelectorManager by delegate {
+        override suspend fun select(
+            selectable: Selectable,
+            interest: SelectInterest,
+        ) {
+            if (interest == SelectInterest.READ) awaitCancellation()
             delegate.select(selectable, interest)
         }
     }

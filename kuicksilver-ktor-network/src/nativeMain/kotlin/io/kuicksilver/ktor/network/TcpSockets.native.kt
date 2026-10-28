@@ -213,6 +213,12 @@ internal class NativeTcpSocket(
     /** How long a wait for room lasts before the send is tried again ([ROOM_RECHECK]; tests shorten or lengthen it). */
     @Volatile internal var roomRecheck: Duration = ROOM_RECHECK
 
+    /**
+     * How long a wait for data lasts before the receive is tried again ([ReadWait]); null: until the selector reports the
+     * socket readable ([tcpReadRecheck]: bounded on Windows only; tests set it).
+     */
+    @Volatile internal var readRecheck: Duration? = tcpReadRecheck
+
     override fun close() {
         if (!closeFlag.compareAndSet(expectedValue = false, newValue = true)) return
         launch(CoroutineName("socket-close")) {
@@ -284,6 +290,7 @@ internal class NativeTcpSocket(
         writer(Dispatchers.IO, user) {
             val buffer = ByteArray(IO_BUFFER)
             var atEnd = false
+            val data = ReadWait(this)
             try {
                 while (!channel.isClosedForWrite) {
                     val n =
@@ -300,7 +307,7 @@ internal class NativeTcpSocket(
                         atEnd = true
                         break
                     } else {
-                        selector.select(this@NativeTcpSocket, SelectInterest.READ)
+                        data.await()
                     }
                 }
             } catch (e: Throwable) {
@@ -310,6 +317,7 @@ internal class NativeTcpSocket(
                 if (e !is CancellationException) channel.cancel(e)
                 throw e
             } finally {
+                data.cancel()
                 // not on Windows before the end of the stream: input arriving after SD_RECEIVE resets the connection there,
                 // so a server that stopped reading a request could lose the response it is about to write
                 if (atEnd || tcpShutdownReadBeforeEnd) tcpShutdown(descriptor, TCP_SHUT_RD)
@@ -357,6 +365,38 @@ internal class NativeTcpSocket(
                 room.cancel()
             }
         }.apply { invokeOnCompletion { if (!resetFlag.load()) tcpShutdown(descriptor, TCP_SHUT_WR) } }
+
+    /**
+     * The read loop's wait for data: a READ select, given up after [readRecheck] (when set) so the loop tries the receive
+     * again, which returns the data or the end of the stream the selector did not report (see [tcpReadRecheck]). Like
+     * [RoomWait], the select outlives a wait that gave up and serves the next one: an idle connection leaves one select
+     * behind, not one per recheck.
+     */
+    private inner class ReadWait(
+        scope: CoroutineScope,
+    ) {
+        private val waits = SupervisorJob(scope.coroutineContext.job)
+        private val waitScope = CoroutineScope(scope.coroutineContext + waits)
+        private var select: Deferred<Unit>? = null
+
+        /** Returns when the receive may be tried again: the socket is readable, or [readRecheck] has passed. */
+        suspend fun await() {
+            val recheck = readRecheck ?: return selector.select(this@NativeTcpSocket, SelectInterest.READ)
+            val pending =
+                select ?: waitScope
+                    .async(start = CoroutineStart.UNDISPATCHED) { selector.select(this@NativeTcpSocket, SelectInterest.READ) }
+                    .also { select = it }
+            try {
+                if (withTimeoutOrNull(recheck) { pending.await() } != null) select = null
+            } catch (e: Throwable) {
+                select = null // a select that failed is not kept: the read loop ends with its failure
+                throw e
+            }
+        }
+
+        /** Cancels the select in flight: the read loop has ended. */
+        fun cancel() = waits.cancel()
+    }
 
     /**
      * The read loop's receive failed (a reset): the connection is gone in both directions, so a write loop waiting for room
