@@ -380,6 +380,12 @@ static void test_server_acknowledges_server_name(void) {
     ksl_ctx_free(cc); ksl_ctx_free(cc12); ksl_ctx_free(sc); ksl_ctx_free(base); ksl_ctx_free(proxy); END();
 }
 
+/* What a session's peer saw of KeyUpdates: how many, how many with request_update = update_requested */
+typedef struct { int updates, requested; } key_updates;
+static void key_update_kind_cb(int write_p, int version, int content_type, const void *buf, size_t len, SSL *ssl, void *arg) {
+    (void)version; (void)ssl; const uint8_t *m = buf; key_updates *k = arg;
+    if (!write_p && content_type == SSL3_RT_HANDSHAKE && len >= 5 && m[0] == SSL3_MT_KEY_UPDATE) { k->updates++; if (m[4] == SSL_KEY_UPDATE_REQUESTED) k->requested++; }
+}
 /* Counts the KeyUpdate messages a session received (message callback on the receiving side) */
 static void key_update_cb(int write_p, int version, int content_type, const void *buf, size_t len, SSL *ssl, void *arg) {
     (void)version; (void)ssl; const uint8_t *m = buf;
@@ -463,6 +469,83 @@ static void test_abort_sends_an_alert(void) {
     ksl_ssl_free(c); ksl_ssl_free(s); ksl_ctx_free(cc); ksl_ctx_free(cc12); ksl_ctx_free(sc); END();
 }
 
+/* The message of a session's last error */
+static int last_message_has(ksl_ssl *s, const char *part) { uint32_t c; int a; char m[256]; ksl_ssl_last_error(s, &c, &a, m, sizeof m); return strstr(m, part) != NULL; }
+/* Moves from a to b as much ciphertext as b's end of the pair has room for (shuttle drops what does not fit) */
+static size_t shuttle_room(ksl_ssl *a, ksl_ssl *b) {
+    uint8_t buf[4096]; size_t total = 0, n, used, room;
+    while ((room = BIO_ctrl_get_write_guarantee(b->net)) > 0 && ksl_tcp_drain(a, buf, room < sizeof buf ? room : sizeof buf, &n) == KSL_OK && n) {
+        for (size_t off = 0; off < n; off += used) if (ksl_tcp_feed(b, buf + off, n - off, &used) != KSL_OK || !used) return total;
+        total += n;
+    }
+    return total;
+}
+/* Reads at peer what the aborted session sent, moving it over as the reads make room: the bytes before the alert, then the alert */
+static size_t read_all_after_abort_from(ksl_ssl *aborted, ksl_ssl *peer, int *alert, int *rc) {
+    uint8_t buf[16384]; size_t n, total = 0; int r = KSL_OK;
+    for (int i = 0; i < 100 && r != KSL_ERROR && r != KSL_EOF; i++) {
+        if (aborted) shuttle_room(aborted, peer);
+        while ((r = ksl_tcp_read(peer, buf, sizeof buf, &n)) == KSL_OK && n) total += n;
+    }
+    *rc = r; last_code(peer, alert); return total;
+}
+static size_t read_all_after_abort(ksl_ssl *peer, int *alert, int *rc) { return read_all_after_abort_from(NULL, peer, alert, rc); }
+static void test_abort_after_pending_messages(void) {
+    SECTION("tcp_abort_flushes_what_is_pending");
+    /* ksl_tcp_abort on a TLS 1.3 server sends its internal_error also when the connection was busy: a KeyUpdate queued and not yet
+       written (SSL_new_session_ticket starts nothing while it is), or a record write the transport had no room for (OpenSSL drops
+       an alert behind a pending write). Both go out first, then the alert. */
+    ksl_ctx *cc = client_ctx("test-ca", KSL_VERIFY_OPENSSL), *sc = server_ctx("server"); int alert = 0, rc; uint8_t b = 9, out[512]; size_t n;
+    ksl_ssl *c = tcp_client(cc, "server.test"), *s = ksl_ssl_new(sc, KSL_MODE_TCP);
+    CHECK(tcp_pump(c, s, NULL, NULL) == KSL_OK, "TLS 1.3 handshake");
+    CHECK(ksl_ssl_key_update(s, 0) == KSL_OK, "a KeyUpdate is queued, nothing written after it");
+    CHECK(ksl_tcp_abort(s) == KSL_OK, "the server still aborts with an alert");
+    CHECK(shuttle(s, c) > 0 && read_all_after_abort(c, &alert, &rc) == 0 && rc == KSL_ERROR && alert == (SSL_AD_INTERNAL_ERROR | 0x100), "the client receives the KeyUpdate, then internal_error");
+    ksl_ssl_free(c); ksl_ssl_free(s);
+    /* the automatic KeyUpdate (the record bound, lowered to 1 by the test hook) is queued after a write and goes out ahead of the next one */
+    c = tcp_client(cc, "server.test"); s = ksl_ssl_new(sc, KSL_MODE_TCP); key_updates k = {0, 0}; ksl_ssl_msg_observer_for_test(c, key_update_kind_cb, &k);
+    CHECK(tcp_pump(c, s, NULL, NULL) == KSL_OK, "TLS 1.3 handshake");
+    ksl_tcp_set_key_update_records_for_test(s, 1);
+    CHECK(ksl_tcp_write(s, &b, 1, &n) == KSL_OK && n == 1 && ksl_tcp_abort(s) == KSL_OK, "a write that queued the automatic KeyUpdate, then the abort");
+    CHECK(shuttle(s, c) > 0 && read_all_after_abort(c, &alert, &rc) == 1 && alert == (SSL_AD_INTERNAL_ERROR | 0x100) && k.updates == 1, "the client receives the byte, the KeyUpdate, then internal_error");
+    ksl_ssl_free(c); ksl_ssl_free(s);
+    /* a record the transport had no room for: the BIO pair holds one full record, the next stays pending in OpenSSL */
+    static uint8_t big[16384]; for (size_t i = 0; i < sizeof big; i++) big[i] = (uint8_t)(i * 3);
+    c = tcp_client(cc, "server.test"); s = ksl_ssl_new(sc, KSL_MODE_TCP);
+    CHECK(tcp_pump(c, s, NULL, NULL) == KSL_OK, "TLS 1.3 handshake");
+    CHECK(ksl_tcp_write(s, big, sizeof big, &n) == KSL_OK && n == sizeof big, "one record fills the pair");
+    CHECK(ksl_tcp_write(s, big, sizeof big, &n) == KSL_WANT_READ && n == 0, "the next one is pending");
+    CHECK(ksl_tcp_abort(s) == KSL_ERROR && last_code(s, NULL) == KSL_E_NOT_SUPPORTED && last_message_has(s, "pending"), "negative: no room for the pending record: no alert, and the error names the cause");
+    ksl_ssl_free(c); ksl_ssl_free(s);
+    c = tcp_client(cc, "server.test"); s = ksl_ssl_new(sc, KSL_MODE_TCP);
+    CHECK(tcp_pump(c, s, NULL, NULL) == KSL_OK, "TLS 1.3 handshake");
+    CHECK(ksl_tcp_write(s, big, sizeof big, &n) == KSL_OK && ksl_tcp_write(s, big, sizeof big, &n) == KSL_WANT_READ, "a pending record");
+    uint8_t held[17 * 1024]; size_t held_n = 0, k2;
+    while (held_n < sizeof held && ksl_tcp_drain(s, held + held_n, sizeof held - held_n, &k2) == KSL_OK && k2) held_n += k2;   /* the transport took what the pair held */
+    CHECK(held_n > 0 && ksl_tcp_abort(s) == KSL_OK, "the pending record goes out, then the alert");
+    size_t used; for (size_t off = 0; off < held_n; off += used) if (ksl_tcp_feed(c, held + off, held_n - off, &used) != KSL_OK || !used) break;
+    CHECK(read_all_after_abort_from(s, c, &alert, &rc) == 2 * sizeof big && rc == KSL_ERROR && alert == (SSL_AD_INTERNAL_ERROR | 0x100), "the client receives both records, then internal_error");
+    ksl_ssl_free(c); ksl_ssl_free(s);
+    /* a pending write is retried from another buffer holding the same bytes (the JNI layer copies each call's bytes) */
+    c = tcp_client(cc, "server.test"); s = ksl_ssl_new(sc, KSL_MODE_TCP);
+    CHECK(tcp_pump(c, s, NULL, NULL) == KSL_OK, "TLS 1.3 handshake");
+    uint8_t *copy = malloc(sizeof big); memcpy(copy, big, sizeof big);
+    CHECK(ksl_tcp_write(s, big, sizeof big, &n) == KSL_OK && ksl_tcp_write(s, big, sizeof big, &n) == KSL_WANT_READ, "a pending record");
+    shuttle(s, c); CHECK(ksl_tcp_write(s, copy, sizeof big, &n) == KSL_OK && n == sizeof big, "its retry from a copy completes it");
+    uint8_t got[16384]; size_t total = 0, r; int same = 1;
+    for (int i = 0; i < 10 && total < 2 * sizeof big; i++) {
+        shuttle_room(s, c);
+        while (ksl_tcp_read(c, got, sizeof got, &r) == KSL_OK && r) { for (size_t j = 0; j < r; j++) same = same && got[j] == big[(total + j) % sizeof big]; total += r; }
+    }
+    CHECK(total == 2 * sizeof big && same, "the client reads both records intact");
+    free(copy); ksl_ssl_free(c); ksl_ssl_free(s);
+    /* a write longer than one record takes one record: what is left of it is never pending inside OpenSSL */
+    c = tcp_client(cc, "server.test"); s = ksl_ssl_new(sc, KSL_MODE_TCP);
+    CHECK(tcp_pump(c, s, NULL, NULL) == KSL_OK, "TLS 1.3 handshake");
+    uint8_t *large = calloc(1, 3 * sizeof big); CHECK(ksl_tcp_write(s, large, 3 * sizeof big, &n) == KSL_OK && n == sizeof big, "a 48 KiB write takes 16 KiB");
+    free(large); (void)out; ksl_ssl_free(c); ksl_ssl_free(s); ksl_ctx_free(cc); ksl_ctx_free(sc); END();
+}
+
 /* Moves a's pending ciphertext to b with the legacy_version of the first record's hello (bytes 9-10: record header 5, handshake
    header 4) set to v */
 static void shuttle_patched(ksl_ssl *a, ksl_ssl *b, uint16_t v) {
@@ -492,12 +575,6 @@ static void test_legacy_version_must_be_0303(void) {
     ksl_ssl_free(c); ksl_ssl_free(s); ksl_ctx_free(cc); ksl_ctx_free(sc); END();
 }
 
-/* What a session's peer saw of KeyUpdates: how many, how many with request_update = update_requested */
-typedef struct { int updates, requested; } key_updates;
-static void key_update_kind_cb(int write_p, int version, int content_type, const void *buf, size_t len, SSL *ssl, void *arg) {
-    (void)version; (void)ssl; const uint8_t *m = buf; key_updates *k = arg;
-    if (!write_p && content_type == SSL3_RT_HANDSHAKE && len >= 5 && m[0] == SSL3_MT_KEY_UPDATE) { k->updates++; if (m[4] == SSL_KEY_UPDATE_REQUESTED) k->requested++; }
-}
 static int send_one(ksl_ssl *c, ksl_ssl *s) {   /* one byte client -> server: carries any pending KeyUpdate */
     uint8_t b = 7, r[16]; size_t n; if (ksl_tcp_write(c, &b, 1, &n) != KSL_OK) return 0;
     shuttle(c, s); return ksl_tcp_read(s, r, sizeof r, &n) == KSL_OK && n == 1;
@@ -595,4 +672,4 @@ static void test_default_versions_and_tls12_profile(void) {
     END();
 }
 
-void run_tcp(void) { test_echo(); test_truncation(); test_tls12(); test_resumption(); test_sni_pause(); test_sni_override_alpn(); test_sni_override_settings_effective(); test_no_tls12_ticket_without_num_tickets(); test_session_context(); test_ticket_bound_to_server_name(); test_keyless_server_no_tickets(); test_server_acknowledges_server_name(); test_key_update_before_record_limit(); test_abort_sends_an_alert(); test_legacy_version_must_be_0303(); test_key_update_request_waits_for_the_peer(); test_key_update_epoch_is_bounded(); test_client_keeps_every_ticket(); test_default_versions_and_tls12_profile(); }
+void run_tcp(void) { test_echo(); test_truncation(); test_tls12(); test_resumption(); test_sni_pause(); test_sni_override_alpn(); test_sni_override_settings_effective(); test_no_tls12_ticket_without_num_tickets(); test_session_context(); test_ticket_bound_to_server_name(); test_keyless_server_no_tickets(); test_server_acknowledges_server_name(); test_key_update_before_record_limit(); test_abort_sends_an_alert(); test_abort_after_pending_messages(); test_legacy_version_must_be_0303(); test_key_update_request_waits_for_the_peer(); test_key_update_epoch_is_bounded(); test_client_keeps_every_ticket(); test_default_versions_and_tls12_profile(); }

@@ -420,6 +420,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   (RFC 9846 section 6.1). Before, it ended with a reset and no alert; it still never ends with `close_notify`, so a peer
   never takes the cut stream for a whole one. A TLS 1.3 client and a TLS 1.2 server still reset the connection: OpenSSL
   3.5 offers no way to send an alert there. New internal `TlsConnection.abortOutput` and `ksl_tcp_abort` (additive, ABI 7).
+  The alert also follows a KeyUpdate that was queued and not yet written, and a record write the transport had no room
+  for: both go out first (OpenSSL started no alert behind them, so the connection was reset). `ksl_tcp_write` takes at
+  most one record per call and accepts the retry of a pending write from another buffer with the same bytes.
 - TLS 1.2: a peer without Extended Master Secret is now refused during the handshake with a `handshake_failure` alert (the
   server on the ClientHello, the client on the ServerHello), instead of being dropped without an alert after both
   Finished messages (RFC 9846 appendix D, RFC 9325 section 3.6).

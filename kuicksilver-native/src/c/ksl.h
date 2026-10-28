@@ -234,13 +234,17 @@ int      ksl_quic_peek_event(ksl_ssl *, ksl_event *out);  /* same without consum
 /* --- TLS over TCP through memory --- */
 int      ksl_tcp_feed(ksl_ssl *, const uint8_t *ciphertext, size_t len, size_t *consumed);
 int      ksl_tcp_drain(ksl_ssl *, uint8_t *out, size_t cap, size_t *written);
+/* Takes at most one record's worth (16 KiB, or the negotiated max_fragment_length) per call (ABI 7); KSL_WANT_READ when the pair has no
+   room: drain it and retry with the same bytes, from this or another buffer */
 int      ksl_tcp_write(ksl_ssl *, const uint8_t *plaintext, size_t len, size_t *consumed);
 int      ksl_tcp_read(ksl_ssl *, uint8_t *out, size_t cap, size_t *read);  /* KSL_EOF after close_notify */
 int      ksl_tcp_shutdown(ksl_ssl *);                                       /* sends close_notify; KSL_OK when the peer's arrived */
 /* Ends a session whose application failed with a fatal internal_error alert instead of close_notify (RFC 9846 section 6.1), where
    OpenSSL 3.5 can send one: a TLS 1.3 server, a TLS 1.2 client. KSL_OK: the alert is queued, drain it (ksl_tcp_drain); KSL_ERROR
    with KSL_E_NOT_SUPPORTED: no alert can be sent (a TLS 1.3 client, a TLS 1.2 server, a session not established or already failed).
-   The session is failed either way: it takes no more data and never sends close_notify. Additive in ABI 7. */
+   A record write left pending (KSL_WANT_READ) and a KeyUpdate under way go out ahead of the alert, so drain the pair before the call;
+   when it has no room for them, no alert follows and the error message says so. The session is failed either way: it takes no more
+   data and never sends close_notify. Additive in ABI 7. */
 int      ksl_tcp_abort(ksl_ssl *);
 
 /* --- packet protection keys --- */

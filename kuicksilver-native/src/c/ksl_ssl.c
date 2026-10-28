@@ -18,6 +18,9 @@ ksl_ssl *ksl_ssl_new(ksl_ctx *c, int mode) {
     } else {
         BIO *internal = NULL; if (!BIO_new_bio_pair(&internal, 0, &s->net, 0)) { SSL_free(s->ssl); free(s); return NULL; }
         SSL_set_bio(s->ssl, internal, internal);
+        /* a write left pending is retried from another buffer holding the same bytes: the JNI layer copies each call's bytes, and
+           ksl_tcp_abort retries from its own copy */
+        SSL_set_mode(s->ssl, SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER);
     }
     /* TCP: for the session's life (KeyUpdate accounting); a QUIC client: until the handshake ends (its ServerHello) */
     if (mode == KSL_MODE_TCP || c->role == KSL_CLIENT) { SSL_set_msg_callback(s->ssl, ksl_msg_cb); SSL_set_msg_callback_arg(s->ssl, s); }
@@ -30,6 +33,7 @@ void ksl_ssl_free(ksl_ssl *s) {
     SSL_set_shutdown(s->ssl, SSL_SENT_SHUTDOWN | SSL_RECEIVED_SHUTDOWN);   /* keeps the session resumable */
     SSL_free(s->ssl); BIO_free(s->net);
     for (int i = 0; i < s->new_sessions_n; i++) SSL_SESSION_free(s->new_sessions[i]);
+    if (s->pending_write) { OPENSSL_cleanse(s->pending_write, s->pending_write_len); free(s->pending_write); }
     for (int i = 0; i < KSL_NLEVELS; i++) { free(s->in[i].buf); free(s->stash[i].buf); }
     while (s->qh != s->qt) { if (s->q[s->qh].type == KSL_EV_KEY) ksl_key_free(s->q[s->qh].key); free(s->qbuf[s->qh]); s->qh = (s->qh + 1) % KSL_EVQ; }
     free(s->last_popped); free(s->tp); free(s->verify_host); free(s->verify_ip);

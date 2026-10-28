@@ -31,19 +31,32 @@ static int map_error(ksl_ssl *s, int r) {
    (16 KiB, or the max_fragment_length), at least one per write: never fewer than were sent. The KeyUpdate goes out ahead of the
    next record. TLS 1.2 has no KeyUpdate (and renegotiation is off): its records are not counted. */
 #define KSL_KEY_UPDATE_RECORDS (UINT64_C(1) << 23)
+/* The plaintext size of a full record: 16 KiB, or the negotiated max_fragment_length (RFC 6066 section 4) */
+static size_t record_size(ksl_ssl *s) { uint8_t mfl = SSL_SESSION_get_max_fragment_length(SSL_get_session(s->ssl)); return mfl >= 1 && mfl <= 4 ? (size_t)256 << mfl : 16384; }
 static void count_records(ksl_ssl *s, size_t n) {
     if (SSL_version(s->ssl) < TLS1_3_VERSION) return;
-    uint8_t mfl = SSL_SESSION_get_max_fragment_length(SSL_get_session(s->ssl)); size_t frag = mfl >= 1 && mfl <= 4 ? (size_t)256 << mfl : 16384;
+    size_t frag = record_size(s);
     s->records_sent += (n + frag - 1) / frag;
     uint64_t bound = s->key_update_records ? s->key_update_records : KSL_KEY_UPDATE_RECORDS;
     if (s->records_sent < bound) return;
     /* refused while a write is pending or a handshake message is under way (a KeyUpdate the peer asked for): tried after the next write */
     if (ksl_ssl_key_update(s, 0) == KSL_OK) s->records_sent = 0; else ERR_clear_error();
 }
+static void drop_pending_write(ksl_ssl *s) {
+    if (!s->pending_write) return;
+    OPENSSL_cleanse(s->pending_write, s->pending_write_len); free(s->pending_write); s->pending_write = NULL; s->pending_write_len = 0;
+}
+/* One record per call: a write the transport has no room for leaves exactly that record pending inside OpenSSL, whose bytes ksl
+   keeps (pending_write), so that ksl_tcp_abort can complete it ahead of its alert. The caller retries a KSL_WANT_READ with the same
+   bytes, from any buffer (SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER). */
 int ksl_tcp_write(ksl_ssl *s, const uint8_t *plaintext, size_t len, size_t *consumed) {
     if (!tcp_only(s)) return KSL_ERROR; if (s->fatal || ksl_key_update_limit_check(s) != KSL_OK) return KSL_ERROR; *consumed = 0; if (!s->done) return KSL_WANT_READ;
+    size_t frag = record_size(s); if (len > frag) len = frag;
     ERR_clear_error(); size_t n = 0; int r = SSL_write_ex(s->ssl, plaintext, len, &n);
-    if (r == 1) { *consumed = n; if (!s->key_updates_exhausted) count_records(s, n); return KSL_OK; }
+    if (r == 1) { drop_pending_write(s); *consumed = n; if (!s->key_updates_exhausted) count_records(s, n); return KSL_OK; }
+    if (SSL_get_error(s->ssl, r) == SSL_ERROR_WANT_WRITE && !s->pending_write && len) {
+        s->pending_write = malloc(len); if (s->pending_write) { memcpy(s->pending_write, plaintext, len); s->pending_write_len = len; }
+    }
     return map_error(s, r);
 }
 int ksl_tcp_read(ksl_ssl *s, uint8_t *out, size_t cap, size_t *read) {
@@ -59,22 +72,35 @@ int ksl_tcp_read(ksl_ssl *s, uint8_t *out, size_t cap, size_t *read) {
    (ksl_ctx.c ticket_gen_cb) and a TLS 1.2 client's renegotiation ClientHello (ksl_ctx.c abort_ext_add_cb, before any byte of it is
    written). With abort_alert set both fail with internal_error (80), and OpenSSL writes the alert under the current keys, after
    everything it wrote before. A TLS 1.3 client (it can only start a KeyUpdate, which runs no callback) and a TLS 1.2 server (its
-   HelloRequest runs none either) have no such message: they send nothing, and the caller resets the transport. */
+   HelloRequest runs none either) have no such message: they send nothing, and the caller resets the transport.
+   What is under way goes out first, as OpenSSL would send it before anything after it: a record ksl_tcp_write left pending (OpenSSL
+   drops an alert behind a pending write, ssl3_dispatch_alert), then a handshake message in progress (a KeyUpdate ksl_ssl_key_update
+   or the record bound queued, or the answer to the peer's update_requested), during which SSL_new_session_ticket starts nothing.
+   Either needs room in the BIO pair: the caller drained it before (ksl_tcp_drain), else no alert can follow. */
 int ksl_tcp_abort(ksl_ssl *s) {
     if (!tcp_only(s)) return KSL_ERROR;
-    (void)ksl_key_update_limit_check(s);   /* a session past the KeyUpdate bound writes nothing more */
     if (s->fatal || !s->done) { ksl_ssl_set_error(s, KSL_E_NOT_SUPPORTED, "ksl: no alert: the session is not established"); s->fatal = 1; return KSL_ERROR; }
-    ERR_clear_error(); int started = 0, client = s->owner->role == KSL_CLIENT;
+    if (ksl_key_update_limit_check(s) != KSL_OK) return KSL_ERROR;   /* a session past the KeyUpdate bound writes nothing more */
+    ERR_clear_error(); int started = 0, client = s->owner->role == KSL_CLIENT; const char *stuck = NULL;
     s->abort_alert = 1; s->last_alert = 0;
-    if (SSL_version(s->ssl) >= TLS1_3_VERSION) started = !client && SSL_new_session_ticket(s->ssl) == 1;
-    else if (client) {
-        SSL_clear_options(s->ssl, SSL_OP_NO_RENEGOTIATION);   /* SSL_renegotiate refuses otherwise; the ClientHello is never sent */
-        started = SSL_renegotiate(s->ssl) == 1;
-        SSL_set_options(s->ssl, SSL_OP_NO_RENEGOTIATION);
+    if (s->pending_write) {
+        size_t n = 0;
+        if (SSL_write_ex(s->ssl, s->pending_write, s->pending_write_len, &n) == 1) drop_pending_write(s);
+        else stuck = "ksl: session aborted without an alert: a record write is pending and the transport takes no more";
     }
-    if (started) (void)SSL_do_handshake(s->ssl);
+    if (!stuck && SSL_in_init(s->ssl) && SSL_do_handshake(s->ssl) != 1 && s->last_alert != SSL_AD_INTERNAL_ERROR)
+        stuck = "ksl: session aborted without an alert: a handshake message is pending and the transport takes no more";
+    if (!stuck && s->last_alert != SSL_AD_INTERNAL_ERROR) {   /* a queued ticket fails as soon as it is built (ticket_gen_cb) */
+        if (SSL_version(s->ssl) >= TLS1_3_VERSION) started = !client && SSL_new_session_ticket(s->ssl) == 1;
+        else if (client) {
+            SSL_clear_options(s->ssl, SSL_OP_NO_RENEGOTIATION);   /* SSL_renegotiate refuses otherwise; the ClientHello is never sent */
+            started = SSL_renegotiate(s->ssl) == 1;
+            SSL_set_options(s->ssl, SSL_OP_NO_RENEGOTIATION);
+        }
+        if (started) (void)SSL_do_handshake(s->ssl);
+    }
     int sent = s->last_alert == SSL_AD_INTERNAL_ERROR;   /* info_cb: a fatal alert we sent */
-    ksl_ssl_fail(s, KSL_E_NOT_SUPPORTED, sent ? "ksl: session aborted with internal_error" : "ksl: session aborted; OpenSSL can send no alert for this role and version");
+    ksl_ssl_fail(s, KSL_E_NOT_SUPPORTED, sent ? "ksl: session aborted with internal_error" : stuck ? stuck : "ksl: session aborted; OpenSSL can send no alert for this role and version");
     return sent ? KSL_OK : KSL_ERROR;
 }
 int ksl_tcp_shutdown(ksl_ssl *s) {
