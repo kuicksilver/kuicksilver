@@ -323,6 +323,12 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- HTTP/3: a connection the peer closed (H3_NO_ERROR after GOAWAY, an idle timeout, a stateless reset) is no longer
+  reported now and then as a local `H3_INTERNAL_ERROR`. A session coroutine that failed with ktor-io's wrapper of the
+  loss (a `ClosedWriteChannelException` whose cause is the `ConnectionLost`) could run before the session saw the
+  transport's end and closed with `H3_INTERNAL_ERROR`, which the Ktor client also took as a reason to mark the
+  alternative broken. A failure caused by the session's own lost transport now leaves the end to the transport's close;
+  a `ConnectionLost` of another connection (a handler relaying elsewhere) is still an internal error.
 - ksl: `ksl_ctx_set_ciphers` holds a TLS 1.2 list to the RFC 10015 profile itself: a list with any suite that is not
   ECDHE with RSA or ECDSA and an AEAD of 128 bits or more (static RSA, FFDHE, CBC, CCM_8, anonymous, PSK) is refused
   with `KSL_E_BAD_ARG`, as the version bounds are. Kotlin never passed one; the C ABI accepted any. A refused list also

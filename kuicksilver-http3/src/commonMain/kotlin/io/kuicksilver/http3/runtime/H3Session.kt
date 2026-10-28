@@ -668,6 +668,11 @@ internal class H3Session(
             fail(e.code, e.message ?: "")
         } catch (e: QuicException.ConnectionLost) {
         } catch (e: Throwable) {
+            // our transport is gone and ktor-io wrapped its cause (a ClosedWriteChannelException after a peer close, an idle
+            // timeout, a stateless reset): its close reports the end, never an H3_INTERNAL_ERROR of ours that won the race
+            // to complete [closed] (onTransportClosed runs in a coroutine of its own). A ConnectionLost of another
+            // connection (a handler relaying elsewhere) is still a failure here.
+            if (transportCause(e) is QuicException.ConnectionLost && quic.closed.isCompleted) return
             if (!closed.isCompleted) {
                 fail(
                     Http3ErrorCode.INTERNAL_ERROR,
