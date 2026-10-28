@@ -562,7 +562,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   a port from 1 to 65535, RFC 9110 section 9.3.6), `*` for OPTIONS only. Any other target is an invalid request line and gets 400 (section 3); a GET or
   HEAD whose path or query only has characters to encode (`|`, `{`, `^`, `[`, which browsers send unencoded, and
   non-ASCII bytes) gets `301 Moved Permanently` to the target properly encoded instead, the other answer section 3
-  names. Before, any run of non-whitespace reached routing.
+  names, once the rest of its head is valid (a missing, repeated or invalid Host or faulty framing gets its own 400 or
+  501). Before, any run of non-whitespace reached routing.
 - Ktor server, HTTP/1.1: the request line is checked before Ktor's parser reads it. A method that is not a token
   (`G"ET`, RFC 9112 section 3.1), a control character other than the whitespace section 3 allows as a separator, or a
   Unicode space (U+00A0), which Ktor's parser took as a separator, gets 400. A request in a higher minor version
