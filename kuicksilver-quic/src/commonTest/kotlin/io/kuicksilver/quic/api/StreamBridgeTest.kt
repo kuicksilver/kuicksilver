@@ -23,6 +23,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.yield
 import kotlinx.io.readByteArray
 import kotlin.concurrent.Volatile
 import kotlin.test.BeforeTest
@@ -352,7 +353,7 @@ class StreamBridgeTest {
                     val cut = s.acceptStream()
                     assertFalse(whole.receivedAll, "no FIN yet")
                     st.output.flushAndClose() // the FIN alone
-                    withTimeout(5.seconds) { while (!whole.receivedAll) delay(5) }
+                    withTimeout(5.seconds) { while (!whole.receivedAll) yield() }
                     c.close(7, "bye")
                     s.closed.await()
                     assertTrue(whole.receivedAll)
