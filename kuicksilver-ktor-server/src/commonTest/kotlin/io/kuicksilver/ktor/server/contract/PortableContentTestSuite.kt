@@ -502,8 +502,20 @@ abstract class PortableContentTestSuite<TEngine : ApplicationEngine, TConfigurat
                 "/",
                 {
                     method = HttpMethod.Post
-                    headers.append("Content-Length", (Int.MAX_VALUE.toLong() + 1).toString())
-                    setBody(ByteArray(1))
+                    // a body as long as its Content-Length says (RFC 9112 section 6.3): its first byte, then nothing until the
+                    // call ends. Kuicksilver's client refuses a body shorter than its Content-Length since 0.2.1; the
+                    // upstream test sent one byte under that header
+                    setBody(
+                        object : io.ktor.http.content.OutgoingContent.WriteChannelContent() {
+                            override val contentLength: Long = Int.MAX_VALUE.toLong() + 1
+
+                            override suspend fun writeTo(channel: io.ktor.utils.io.ByteWriteChannel) {
+                                channel.writeByte(1)
+                                channel.flush()
+                                kotlinx.coroutines.awaitCancellation()
+                            }
+                        },
+                    )
                 },
             ) {
                 assertEquals(200, status.value)
