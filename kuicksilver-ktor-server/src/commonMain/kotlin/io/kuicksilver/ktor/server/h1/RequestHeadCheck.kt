@@ -64,8 +64,12 @@ internal suspend fun HeadLimitedInput.checkRequestHead() {
     // the Location of a 301 the request line earned, sent once the field section is checked too
     var redirect: String? = null
     var http10 = false
+    val headScan = HeadMethodScan()
     while (true) {
-        if (fieldsStart < 0 && !headMethod) headMethod = startsWithHeadMethod(buffer)
+        if (fieldsStart < 0 && !headScan.decided) {
+            headScan.update(buffer)
+            headMethod = headScan.head
+        }
         val limit = if (fieldsStart < 0) minOf(buffer.size, MAX_REQUEST_LINE_BYTES + 2L) else buffer.size
         val lf = if (scanned < limit) buffer.indexOf(LF_BYTE, scanned, limit) else -1L
         if (lf < 0) {
@@ -510,13 +514,49 @@ private fun refuseLongLine(buffer: kotlinx.io.Buffer): Nothing {
     throw RequestHeadRefused(400, "Bad Request", message)
 }
 
-/** Whether [buffer] starts, after request-line whitespace, with the method `HEAD` and a separator. */
-private fun startsWithHeadMethod(buffer: kotlinx.io.Buffer): Boolean {
-    var i = 0L
-    while (i < buffer.size && isRequestLineWhitespace(buffer[i])) i++
-    if (buffer.size < i + 5) return false
-    for ((k, c) in "HEAD".withIndex()) if (buffer[i + k] != c.code.toByte()) return false
-    return isRequestLineWhitespace(buffer[i + 4])
+/**
+ * Whether a request head starts, after request-line whitespace, with the method `HEAD` and a separator, decided as its
+ * bytes arrive: [update] is called after every read with the buffer that holds the head from its first byte, and looks
+ * at each byte once (the request line may start with up to 8 KiB of whitespace, sent one byte per segment). [inspected]
+ * counts the bytes looked at, for tests.
+ */
+internal class HeadMethodScan {
+    /** The next byte of the buffer to look at. */
+    private var next = 0L
+
+    /** Where the method starts; -1 while only whitespace has been seen. */
+    private var methodStart = -1L
+
+    /** Whether the answer is known. */
+    var decided: Boolean = false
+        private set
+
+    /** The method is HEAD (false until [decided]). */
+    var head: Boolean = false
+        private set
+
+    var inspected: Long = 0
+        private set
+
+    fun update(buffer: kotlinx.io.Buffer) {
+        while (!decided && next < buffer.size) {
+            val b = buffer[next]
+            inspected++
+            if (methodStart < 0) {
+                if (!isRequestLineWhitespace(b)) methodStart = next
+            }
+            if (methodStart >= 0) {
+                val k = (next - methodStart).toInt()
+                if (k < 4) {
+                    if (b != "HEAD"[k].code.toByte()) decided = true
+                } else {
+                    head = isRequestLineWhitespace(b)
+                    decided = true
+                }
+            }
+            next++
+        }
+    }
 }
 
 /** tchar (RFC 9110 section 5.6.2) as a byte. */
