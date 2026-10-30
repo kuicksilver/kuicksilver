@@ -141,6 +141,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- QUIC: an empty DATAGRAM (RFC 9221 section 4 allows a zero-length payload) queued behind one that filled the
+  packet no longer overflows it. `DatagramPacketWriter.remaining` is 0 both when an empty payload fits and when no frame
+  fits, and `write` wrote the 2-byte frame into the 0 or 1 byte left, which threw on the endpoint loop. `write` now returns
+  false when the frame does not fit, and the datagram goes in the next packet. Found by the `connectionNull` fuzz target.
 - Ktor server, HTTP/1.1: a request whose `Content-Length` has 19 or more significant digits (10^18 bytes or more)
   gets `413 Content Too Large` and the connection closes, instead of 400: RFC 9110 section 8.6 says "Any
   Content-Length field value greater than or equal to zero is valid", so such a length is too large to process
