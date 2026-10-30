@@ -32,13 +32,16 @@ public interface DatagramSender {
 /** Room for DATAGRAM frames in the packet being built. */
 @ExperimentalKuicksilverApi
 public interface DatagramPacketWriter {
-    /** Payload bytes that still fit (frame header already accounted for); never above `ConnectionCore.maxDatagramPayload`. */
+    /**
+     * Payload bytes that still fit (frame header already accounted for); never above `ConnectionCore.maxDatagramPayload`. 0 also when
+     * no frame fits at all: an empty datagram still needs 2 bytes, and [write] then returns false.
+     */
     public val remaining: Int
 
     /** The largest payload any frame of this packet could carry (`ConnectionCore.maxDatagramPayload`); a queued datagram above it can never be sent. */
     public val maxPayload: Int
 
-    /** Writes one DATAGRAM frame; false when [length] exceeds [remaining]. [id] comes back in `onAcked` / `onLost` (-1: no callback). */
+    /** Writes one DATAGRAM frame; false when [length] exceeds [remaining] or the frame does not fit (an empty one still takes 2 bytes). [id] comes back in `onAcked` / `onLost` (-1: no callback). */
     public fun write(
         data: ByteArray,
         offset: Int,
