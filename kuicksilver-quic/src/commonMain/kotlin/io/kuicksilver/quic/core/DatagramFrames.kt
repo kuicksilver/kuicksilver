@@ -7,6 +7,7 @@ import io.kuicksilver.native.PacketBuffer
 import io.kuicksilver.quic.DatagramPacketWriter
 import io.kuicksilver.quic.recovery.SentFrames
 import io.kuicksilver.quic.wire.FrameEncoder
+import io.kuicksilver.quic.wire.VarInt
 import io.kuicksilver.quic.wire.WireWriter
 
 /** Received DATAGRAM payloads waiting for the application: a ring of [capacity] pooled buffers; a full ring drops the oldest (bounded memory, threat-model 3.2). */
@@ -95,6 +96,8 @@ internal class DatagramWriter : DatagramPacketWriter {
         val w = w ?: return false
         val f = frames ?: return false
         if (length < 0 || length > remaining) return false
+        // remaining is 0 both when an empty payload fits and when no frame does: an empty DATAGRAM still takes 2 bytes
+        if (1 + VarInt.size(length.toLong()) + length > w.remaining) return false
         FrameEncoder.datagram(w, data, offset, length)
         f.addDatagram(id)
         wrote = true

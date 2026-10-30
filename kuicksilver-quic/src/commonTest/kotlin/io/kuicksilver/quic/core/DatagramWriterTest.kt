@@ -10,6 +10,7 @@ import io.kuicksilver.quic.wire.WireWriter
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class DatagramWriterTest {
@@ -36,6 +37,61 @@ class DatagramWriterTest {
                 }
                 val more = r + 1
                 assertTrue(1 + VarInt.size(more.toLong()) + more > limit, "room $limit: $more bytes would fit too")
+                writer.unbind()
+            }
+        } finally {
+            buf.close()
+        }
+    }
+
+    /**
+     * An empty DATAGRAM (RFC 9221 section 4 allows one) is a 2-byte frame, type and a zero Length, but [DatagramWriter.remaining] is 0
+     * both then and when no frame fits: a queue that wrote a full-size datagram and then an empty one into the 0 or 1 byte left
+     * overflowed the packet (found by the connectionNull fuzz target). The write now refuses a frame that does not fit the room.
+     */
+    @Test fun emptyDatagramNeedsRoomForItsFrame() {
+        val buf = PacketBuffer.allocate(16)
+        try {
+            val writer = DatagramWriter()
+            val frames = SentFrames()
+            for (limit in 0..2) {
+                val w = WireWriter(buf, 0, limit)
+                writer.bind(w, frames, Int.MAX_VALUE)
+                assertEquals(0, writer.remaining, "room $limit")
+                if (limit < 2) {
+                    assertFalse(writer.write(ByteArray(0), 0, 0, 0), "room $limit: an empty frame does not fit")
+                    assertEquals(0, w.pos, "room $limit: nothing written")
+                } else {
+                    assertTrue(writer.write(ByteArray(0), 0, 0, 7), "room $limit: an empty frame fits")
+                    assertEquals(2, w.pos, "room $limit")
+                    assertEquals(0x31, buf[0].toInt() and 0xff, "DATAGRAM with Length")
+                    assertEquals(0, buf[1].toInt(), "a zero Length")
+                    assertEquals(1, frames.dgCount)
+                    assertEquals(7L, frames.dgId[0])
+                }
+                writer.unbind()
+            }
+        } finally {
+            buf.close()
+        }
+    }
+
+    /**
+     * The queue's sequence: a datagram that fills the packet, then an empty one, which waits for the next packet instead of
+     * overflowing this one (the fuzz input wrote it into the byte left).
+     */
+    @Test fun emptyDatagramAfterAFullOneWaitsForTheNextPacket() {
+        val buf = PacketBuffer.allocate(100)
+        try {
+            val writer = DatagramWriter()
+            for (limit in 4..100) {
+                val w = WireWriter(buf, 0, limit)
+                writer.bind(w, SentFrames(), Int.MAX_VALUE)
+                val r = writer.remaining
+                assertTrue(writer.write(ByteArray(r), 0, r, 0), "room $limit")
+                val left = limit - w.pos
+                assertEquals(left >= 2, writer.write(ByteArray(0), 0, 0, 1), "room $limit: $left bytes left")
+                assertTrue(w.pos <= limit, "room $limit: frames of ${w.pos} bytes")
                 writer.unbind()
             }
         } finally {
