@@ -54,6 +54,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Changed
 
+- Ktor 3.6.1 (was 3.6.0). It fixes KTOR-9959, ktor-network's JVM socket writer spinning at 100 % CPU when a write
+  answered 0, which the engines never used (their JVM sockets have their own writer, which stays). Applications on Ktor
+  3.6.0 keep working: Kuicksilver supports Ktor 3.6.x.
 - QUIC client (behaviour): when the server rejects a 0-RTT that carried anything (a stream opened before the handshake
   completed), the connection now closes with `QuicException.ConnectionLost.ZeroRttRejected`, which every such stream
   fails with, and nothing of them is sent again in 1-RTT. RFC 9001 section 4.6.2: "When 0-RTT is rejected, all
@@ -141,6 +144,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- Ktor engines on Kotlin/Native: the TCP sockets they open and accept have `TCP_NODELAY` on, as on the JVM. With
+  Nagle on, a request or response whose head and body went out in separate writes waited for the peer's delayed ACK
+  (about 40 ms on Linux). ktor-network 3.6.1 fixed the same gap in its own accepted sockets (KTOR-10005).
 - QUIC: an empty DATAGRAM (RFC 9221 section 4 allows a zero-length payload) queued behind one that filled the
   packet no longer overflows it. `DatagramPacketWriter.remaining` is 0 both when an empty payload fits and when no frame
   fits, and `write` wrote the 2-byte frame into the 0 or 1 byte left, which threw on the endpoint loop. `write` now returns
