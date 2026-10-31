@@ -15,7 +15,8 @@ import kotlin.time.Duration
  * (Happy Eyeballs) instead.
  *
  * On the JVM and Android this is ktor-network's `aSocket(selector).tcp().connect(remote)`, writing through Kuicksilver's own
- * writer (ktor-network 3.6.0's spins at 100 % CPU while the peer's window is closed; threat model 3.21). On Kotlin/Native it is a socket of
+ * writer (ktor-network 3.6.0's spun at 100 % CPU while the peer's window was closed, KTOR-9959, fixed in 3.6.1; ours also
+ * counts the bytes sent and bounds the close; threat model 3.21). On Kotlin/Native it is a socket of
  * this module on [selector] that connects to the resolved address itself, instead of ktor-network's native connect (Ktor
  * issue KTOR-10017, security, under coordinated disclosure). An IPv4-mapped IPv6 address
  * (`::ffff:a.b.c.d`) is connected over IPv4, as the JVM does.

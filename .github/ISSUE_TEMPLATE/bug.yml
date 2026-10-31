@@ -53,7 +53,7 @@ body:
     attributes:
       label: Environment
       description: JDK or Android API level, OS and version, CPU architecture, Kotlin and Ktor versions.
-      placeholder: Temurin 21, Ubuntu 24.04, x86_64, Kotlin 2.4.20, Ktor 3.6.0
+      placeholder: Temurin 21, Ubuntu 24.04, x86_64, Kotlin 2.4.20, Ktor 3.6.1
   - type: textarea
     id: what-happened
     attributes:
