@@ -108,7 +108,7 @@ minor release may raise this with the Kotlin it is built with, and says so in th
 
 ## Ktor versions
 
-Kuicksilver 0.2.x supports **Ktor 3.6.x** (built and tested against 3.6.0). This holds for every module, not only the
+Kuicksilver 0.2.x supports **Ktor 3.6.x** (built and tested against 3.6.1). This holds for every module, not only the
 engines: `kuicksilver-quic`, `kuicksilver-tls`, `kuicksilver-http3` and `kuicksilver-ktor-network` expose Ktor types in
 their public API (`io.ktor.network.sockets.InetSocketAddress`, the `ByteReadChannel` / `ByteWriteChannel` of ktor-io;
 the address type by design, ADR-0004) and depend on `ktor-network` and `ktor-io` 3.6 as `api`. Only the engines check the version at
