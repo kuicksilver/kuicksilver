@@ -11,7 +11,8 @@ import io.kuicksilver.annotations.InternalKuicksilverApi
 import kotlin.time.Duration
 
 // The JDK's sockets carry the full address: ktor-network connects and binds as it is, but writes through KslNioSocket
-// (ktor 3.6.0's writer spins at 100 % CPU while a peer's window is closed).
+// (ktor 3.6.0's writer spun at 100 % CPU while a peer's window was closed, KTOR-9959, fixed in 3.6.1; KslNioSocket also counts
+// the bytes sent and bounds the close).
 @InternalKuicksilverApi
 public actual suspend fun connectTcp(
     selector: SelectorManager,

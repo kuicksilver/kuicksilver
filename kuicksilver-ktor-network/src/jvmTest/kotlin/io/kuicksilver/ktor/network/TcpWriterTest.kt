@@ -43,7 +43,7 @@ import kotlin.time.Duration.Companion.seconds
  * The engines' JVM TCP sockets write through Kuicksilver's own writer, not ktor-network's: ktor 3.6.0's `cio-to-nio-writer`
  * (CIOWriter.kt, attachForWritingDirectImpl) retries `SocketChannel.write` in a loop that never reaches its select while the
  * kernel's send buffer is full, so every peer that reads slower than we write kept a `Dispatchers.IO` thread at 100 % CPU,
- * uncancellable (found in the 0.2.1 review). The peer here accepts and never reads.
+ * uncancellable (found in the 0.2.1 review; KTOR-9959, fixed in Ktor 3.6.1). The peer here accepts and never reads.
  */
 class TcpWriterTest {
     @BeforeTest fun load() {
