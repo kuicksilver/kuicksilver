@@ -38,7 +38,8 @@ import kotlin.time.Duration.Companion.seconds
  * than we write kept a `Dispatchers.IO` thread at 100 % CPU, and the loop cannot be cancelled; some 64 such peers exhaust
  * `Dispatchers.IO` (0.2.1 review). This writer writes what the channel holds, and when `write` answers 0
  * suspends in [SelectorManager.select] on the socket's own selector until the socket is writable again: a slow or silent peer
- * costs a suspended coroutine, and cancelling the socket's job ends the wait.
+ * costs a suspended coroutine, and cancelling the socket's job ends the wait. Ktor fixed its writer in 3.6.1 (KTOR-9959); this
+ * one stays for what it adds: the bytes the kernel took ([bytesSent]), a reset on failure and the bounded close.
  *
  * Closing: the write channel is flushed and closed, the writer drains it and shuts the output down (a FIN, as ktor's writer
  * does), and then the ktor socket is closed, which closes the descriptor once its reader has ended; when the writer had ended

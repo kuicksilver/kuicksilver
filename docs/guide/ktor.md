@@ -624,7 +624,7 @@ val client = HttpClient(Kuicksilver) {
 
 ## Supported Ktor versions
 
-Kuicksilver 0.x supports **Ktor 3.6.x** (built and tested against 3.6.0). The engines use a few Ktor internals and
+Kuicksilver 0.x supports **Ktor 3.6.x** (built and tested against 3.6.1). The engines use a few Ktor internals and
 vendor parts of Ktor CIO (`docs/ktor-internal-api.md`), which Ktor may change in any minor release, so another
 major.minor is not supported even when it happens to link.
 
@@ -640,7 +640,7 @@ major.minor is not supported even when it happens to link.
   `NoSuchMethodError` or `AbstractMethodError`.
 - **Kotlin/Native.** klibs are resolved when the binary is linked: a Ktor whose ABI differs fails the link (unresolved
   symbols), so there is no runtime check. Keep every `io.ktor` dependency on the same 3.6.x, best with
-  `platform("io.ktor:ktor-bom:3.6.0")`.
+  `platform("io.ktor:ktor-bom:3.6.1")`.
 - **Upgrades.** A new Ktor minor is adopted in a Kuicksilver release: the version catalog moves, every entry of
   `docs/ktor-internal-api.md` is re-checked, the vendored CIO code and contract tests are re-vendored from the new tag,
   and `KtorVersionPolicy.SUPPORTED` moves with them. Ktor patch releases (3.6.x) need nothing and are accepted at once.
@@ -711,7 +711,7 @@ request now contains its own failure.
 ### IPv6 over TCP on Kotlin/Native
 
 On Kotlin/Native (Linux, Apple, Windows) Kuicksilver binds and connects its TCP sockets itself instead of through Ktor
-3.6.0's `ktor-network`, because of a Ktor issue reported as
+3.6's `ktor-network`, because of a Ktor issue reported as
 [KTOR-10017](https://youtrack.jetbrains.com/issue/KTOR-10017) (security, under coordinated disclosure).
 
 Both engines therefore open their HTTP/1.1 TCP sockets through `kuicksilver-ktor-network` (`bindTcp`, `connectTcp`): on

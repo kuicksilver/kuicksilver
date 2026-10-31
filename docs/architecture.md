@@ -121,7 +121,7 @@ stable surface; `ConnectionCore`, `EndpointCore`, `CongestionController` and `Da
 `connectTcp`/`bindTcp` (`@InternalKuicksilverApi`) open the engines' TCP sockets: ktor-network's on the JVM and Android, on
 Kotlin/Native a socket of this module on ktor-network's selector (`TcpSockets.native.kt` over the system calls of
 `TcpSys.kt`: `posixMain` for Linux and Apple, `mingwMain`) instead of ktor-network's own bind and connect, because of a
-Ktor 3.6.0 issue reported as [KTOR-10017](https://youtrack.jetbrains.com/issue/KTOR-10017) (security, under coordinated
+Ktor 3.6 issue reported as [KTOR-10017](https://youtrack.jetbrains.com/issue/KTOR-10017) (security, under coordinated
 disclosure).
 
 ### `kuicksilver-http3`
