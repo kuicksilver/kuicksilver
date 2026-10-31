@@ -322,8 +322,12 @@ class SessionStartTest {
                 try {
                     // the server's accept loop is waiting in acceptStream: let it take one more turn into the hook
                     val warm = c.openUni()
-                    warm.output.writeFully(byteArrayOf(0x21)) // a reserved stream type: discarded, no error
-                    warm.output.flush()
+                    // a reserved stream type: discarded, no error. The server may answer it with STOP_SENDING (RFC 9114 section
+                    // 6.2.3) before our flush returns, which then fails with Stopped: the byte reached it either way
+                    runCatching {
+                        warm.output.writeFully(byteArrayOf(0x21))
+                        warm.output.flush()
+                    }
                     val session = withTimeout(10.seconds) { held.await() }
                     val st = c.openBidi()
                     st.output.writeFully(byteArrayOf(0x01, 0x00)) // a HEADERS frame header, cut: what came does not matter
