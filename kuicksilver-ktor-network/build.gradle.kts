@@ -20,6 +20,9 @@ kotlin.sourceSets {
     val posixMain = create("posixMain") { dependsOn(getByName("nativeMain")) }
     getByName("appleMain").dependsOn(posixMain)
     getByName("linuxMain").dependsOn(posixMain)
+    val posixTest = create("posixTest") { dependsOn(getByName("nativeTest")) }
+    getByName("appleTest").dependsOn(posixTest)
+    getByName("linuxTest").dependsOn(posixTest)
 }
 
 // Windows: the Winsock calls with WSAGetLastError() read in the same C function (kslwsa.def; the reason is there)

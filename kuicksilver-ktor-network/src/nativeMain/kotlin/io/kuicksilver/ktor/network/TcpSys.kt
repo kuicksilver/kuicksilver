@@ -45,7 +45,7 @@ internal expect fun tcpResolve(
     port: Int,
 ): List<TcpAddress>
 
-/** A non-blocking stream socket of [family] (close-on-exec, no SIGPIPE). */
+/** A non-blocking stream socket of [family] (close-on-exec, no SIGPIPE, [tcpNoDelay]). */
 internal expect fun tcpOpen(family: Int): Int
 
 /** Starts connecting [fd] to [to]: true when connected at once, false while the connect is in progress. */
@@ -98,6 +98,13 @@ internal expect fun tcpShutdown(
     fd: Int,
     how: Int,
 )
+
+/**
+ * `TCP_NODELAY` on: every write goes out at once, as on the JVM (ktor-network's default socket options there). With Nagle on,
+ * a request or response whose head and body are flushed separately waits for the peer's delayed ACK (write-write-read, about
+ * 40 ms on Linux); ktor-network 3.6.1 sets it on the native sockets it accepts too (KTOR-10005). Set by [tcpOpen] and [tcpAccept].
+ */
+internal expect fun tcpNoDelay(fd: Int)
 
 /** `SO_LINGER` on with a zero timeout: closing [fd] then sends a reset and drops what is unsent. */
 internal expect fun tcpLingerZero(fd: Int)
