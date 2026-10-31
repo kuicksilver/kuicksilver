@@ -162,6 +162,12 @@ internal actual fun tcpOpen(family: Int): Int {
         closesocket(s)
         throw PosixException.forErrno(nbError, "ioctlsocket")
     }
+    try {
+        tcpNoDelay(fd)
+    } catch (e: Throwable) {
+        closesocket(s)
+        throw e
+    }
     return fd
 }
 
@@ -243,6 +249,12 @@ internal actual fun tcpAccept(
         closesocket(client)
         throw PosixException.forErrno(nbError, "ioctlsocket")
     }
+    try {
+        tcpNoDelay(c)
+    } catch (e: Throwable) {
+        closesocket(client)
+        throw e
+    }
     return c
 }
 
@@ -297,6 +309,21 @@ internal actual fun tcpShutdown(
     how: Int,
 ) {
     shutdown(fd.convert(), how)
+}
+
+// IPPROTO_TCP and TCP_NODELAY of ws2def.h / ws2ipdef.h (the same values as on Linux and Apple)
+private const val IPPROTO_TCP_WS = 6
+private const val TCP_NODELAY_WS = 1
+
+internal actual fun tcpNoDelay(fd: Int) {
+    memScoped {
+        val one = alloc<IntVar>()
+        one.value = 1
+        val err = alloc<IntVar>()
+        if (ksl_wsa_setsockopt(fd.convert(), IPPROTO_TCP_WS, TCP_NODELAY_WS, one.ptr, sizeOf<IntVar>().toInt(), err.ptr) != 0) {
+            throw PosixException.forErrno(err.value, "setsockopt(TCP_NODELAY)")
+        }
+    }
 }
 
 internal actual fun tcpLingerZero(fd: Int) {
