@@ -71,14 +71,14 @@ internal object SipHash {
         return v0 xor v1 xor v2 xor v3
     }
 
-    /** As the [PacketBuffer] variant, over a heap array (the 0-RTT replay register's ticket identities). */
+    /** As the [PacketBuffer] variant, over a heap array slice (the 0-RTT replay register's ticket identities, the CID registry's keys). */
     fun hash24(
         k0: Long,
         k1: Long,
         buf: ByteArray,
+        off: Int = 0,
+        len: Int = buf.size,
     ): Long {
-        val off = 0
-        val len = buf.size
         var v0 =
             k0 xor 0x736f6d6570736575L
         var v1 =

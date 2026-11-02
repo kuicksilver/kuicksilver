@@ -20,12 +20,14 @@ internal class ConnectionIdRegistry(
     )
 
     private val buckets = HashMap<Long, ArrayList<Entry>>()
-    private val scratch = PacketBuffer.allocate(20)
+
+    // a heap array: a native buffer here would outlive the registry, which nothing closes (one leaked per endpoint on Kotlin/Native)
+    private val scratch = ByteArray(20)
     var size: Int = 0
         private set
 
     private fun key(cid: ConnectionId): Long {
-        cid.copyTo(scratch, 0)
+        cid.copyToArray(scratch, 0)
         return SipHash.hash24(k0, k1, scratch, 0, cid.length)
     }
 

@@ -30,6 +30,18 @@ class SipHashTest {
         assertEquals(0x726fdb47dd0e0e31uL.toLong(), hash(k0, k1, ByteArray(0)))
     }
 
+    @Test fun heapSliceHashesAsTheBuffer() {
+        // the CID registry keys its entries from a heap array and looks them up from the packet buffer: both must agree
+        val all = ByteArray(24) { (it * 37 + 11).toByte() }
+        for (off in 0..3) {
+            for (len in 0..20) {
+                val slice = all.copyOfRange(off, off + len)
+                assertEquals(hash(7, 9, slice), SipHash.hash24(7, 9, all, off, len), "off $off len $len")
+                assertEquals(hash(7, 9, slice), SipHash.hash24(7, 9, slice), "whole $len")
+            }
+        }
+    }
+
     @Test fun differentKeysDifferentHashes() {
         val m = ByteArray(8) { 5 }
         assertNotEquals(hash(1, 2, m), hash(3, 4, m))
