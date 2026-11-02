@@ -24,7 +24,7 @@ import io.kuicksilver.quic.wire.VersionNegotiationPacket
 import io.kuicksilver.quic.wire.WireReader
 import io.kuicksilver.tls.TlsRole
 
-/** The reader's buffer until the first packet: one for the process, as nothing closes a receiver (one leaked per connection on Kotlin/Native). */
+/** The reader's buffer until the first packet: one for the process, since nothing closes a receiver. */
 private val NO_PACKET = PacketBuffer.allocate(1)
 
 /** The receive path of a connection: header parsing, key selection, decryption, frames handed to [FrameDispatcher] (RFC 9000 sections 12–13). */

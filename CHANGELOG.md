@@ -161,6 +161,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   connection with `goAwayReceived` set. The start now lets the control stream's reader finish what the server sent before
   its close (at most one second) before it decides (RFC 9114 section 5.2), also when the control stream came in the same
   batch and had not been accepted yet; a close before any control stream decides at once.
+- QUIC on Kotlin/Native: a connection and an endpoint no longer each leak a small native buffer (the receive path's
+  placeholder and the connection ID registry's key scratch were allocated outside the heap and never freed), which grew
+  RSS by about 3 MB per hour under the soak's churn. `EndpointCore.close` also frees the endpoint's own buffers and keys
+  when a connection's release throws.
 - HTTP/3: a connection the peer closed (H3_NO_ERROR after GOAWAY, an idle timeout, a stateless reset, the client's own close on a rejected 0-RTT) is no longer
   reported now and then as a local `H3_INTERNAL_ERROR`. A session coroutine that failed with ktor-io's wrapper of the
   loss (a `ClosedWriteChannelException` whose cause is the `ConnectionLost`) could run before the session saw the

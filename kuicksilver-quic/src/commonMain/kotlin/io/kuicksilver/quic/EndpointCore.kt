@@ -549,15 +549,19 @@ public class EndpointCore(
 
     /** Frees the queue, the stateless buffer and every connection's native resources. */
     public fun close() {
-        for (c in connections) c.release()
-        connections.clear()
-        accepted.clear()
-        perIp.clear()
-        registry.clear()
-        vnBuffer.close()
-        resetKey.close()
-        retryTokens?.close()
-        queue?.close()
+        try {
+            for (c in connections) c.release()
+        } finally {
+            // the endpoint's own buffers and keys even when a connection's release failed
+            connections.clear()
+            accepted.clear()
+            perIp.clear()
+            registry.clear()
+            vnBuffer.close()
+            resetKey.close()
+            retryTokens?.close()
+            queue?.close()
+        }
     }
 
     /** The next server connection the application has not taken yet. */

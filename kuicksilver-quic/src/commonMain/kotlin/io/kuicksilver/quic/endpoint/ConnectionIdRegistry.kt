@@ -21,7 +21,7 @@ internal class ConnectionIdRegistry(
 
     private val buckets = HashMap<Long, ArrayList<Entry>>()
 
-    // a heap array: a native buffer here would outlive the registry, which nothing closes (one leaked per endpoint on Kotlin/Native)
+    // a heap array: nothing closes the registry, so a native buffer would leak
     private val scratch = ByteArray(20)
     var size: Int = 0
         private set
