@@ -641,16 +641,20 @@ public class EndpointCore internal constructor(
 
     /** Frees the queue, the stateless buffer and every connection's native resources. */
     public fun close() {
-        for (c in connections) c.release()
-        connections.clear()
-        accepted.clear()
-        perIp.clear()
-        registry.clear()
-        vnBuffer.close()
-        resetKey.close()
-        if (!tokensReleased) addressTokens?.close() // one release per owner: a group's other loops may still use the keys
-        tokensReleased = true
-        queue?.close()
+        try {
+            for (c in connections) c.release()
+        } finally {
+            // the endpoint's own buffers and keys even when a connection's release failed
+            connections.clear()
+            accepted.clear()
+            perIp.clear()
+            registry.clear()
+            vnBuffer.close()
+            resetKey.close()
+            if (!tokensReleased) addressTokens?.close() // one release per owner: a group's other loops may still use the keys
+            tokensReleased = true
+            queue?.close()
+        }
     }
 
     /** The next server connection the application has not taken yet. */

@@ -333,6 +333,10 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   packet no longer overflows it. `DatagramPacketWriter.remaining` is 0 both when an empty payload fits and when no frame
   fits, and `write` wrote the 2-byte frame into the 0 or 1 byte left, which threw on the endpoint loop. `write` now returns
   false when the frame does not fit, and the datagram goes in the next packet. Found by the `connectionNull` fuzz target.
+- QUIC on Kotlin/Native: a connection and an endpoint no longer each leak a small native buffer (the receive path's
+  placeholder and the connection ID registry's key scratch were allocated outside the heap and never freed), which grew
+  RSS by about 3 MB per hour under the soak's churn. `EndpointCore.close` also frees the endpoint's own buffers and keys
+  when a connection's release throws.
 - HTTP/3: a connection the peer closed (H3_NO_ERROR after GOAWAY, an idle timeout, a stateless reset) is no longer
   reported now and then as a local `H3_INTERNAL_ERROR`. A session coroutine that failed with ktor-io's wrapper of the
   loss (a `ClosedWriteChannelException` whose cause is the `ConnectionLost`) could run before the session saw the
