@@ -31,7 +31,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   frames, empty DATA frames, a glitch budget for PRIORITY, SETTINGS, PING, unknown frames and the stream errors the peer
   causes (MadeYouReset), a server's budget for the client's RST_STREAM frames (Rapid Reset), with reset streams counted
   until their handler returns. Field lists are HPACK-encoded in wire order. New experimental `Http2Settings`.
-  Two new fuzz targets, `http2.frames` and `http2.hpackDecode`, with seeds from `tools/http/gen-fuzz-seeds.py`.
+  New fuzz targets `http2.frames`, `http2.hpackDecode`, `http2.connectionServer` and `http2.hpackRoundTrip` (differential),
+  with seeds from `tools/http/gen-fuzz-seeds.py`.
 - QUIC: a server can advertise a preferred address (experimental `QuicServerConfig.preferredAddress`,
   `PreferredAddress`; RFC 9000 section 9.6). The endpoint listens there too (every loop of a group), advertises it with its
   sequence-1 connection ID, and moves a connection there once the client's address is validated on that socket,

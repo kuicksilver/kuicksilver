@@ -398,9 +398,13 @@ Status: the sans-IO core of `kuicksilver-http2` (ADR-0017); the engines do not u
   payload above the limit, allocation within the input plus one frame) and `http2.hpackDecode` (two blocks through one
   decoder with input-chosen table size and list limit: only `HpackError` escapes, the list stays within the limit,
   literals within 8/5 of the block) in `kuicksilver-http2/src/jvmTest/…/fuzz`, seeds from `tools/http/gen-fuzz-seeds.py`
-  (every frame type; the RFC 7541 appendix C blocks), listed in `tools/fuzz/campaign.sh`; `jvmTest` runs them on the
-  seeds. A first 60 s run each (2026-11-04): no findings in the code (one harness assertion was too strict and was
-  corrected). The connection-level targets come with the engines.
+  (every frame type; the RFC 7541 appendix C blocks), `http2.connectionServer` (a server core fed arbitrary bytes after
+  the preface and driven like an engine: nothing escapes, streams, queued control frames and the field-block buffer stay
+  within their settings) and `http2.hpackRoundTrip` (differential: our encoder's blocks, with peer table size changes,
+  decoded by an independent decoder must give back the same lists), listed in `tools/fuzz/campaign.sh`; `jvmTest` runs
+  them on the seeds. 60 s runs each (2026-11-04/05): no findings in the code; two harness findings were corrected (an
+  allocation bound that ignored one frame's buffer; a driver that did not handle `H2HeaderListTooLarge`, kept as the
+  reproducer `finding-peer-list-limit-1`). The client connection target comes with the engine.
 
 ## 4. What we do not protect against
 

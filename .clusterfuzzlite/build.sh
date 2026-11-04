@@ -79,6 +79,8 @@ kuicksilver-http3 io.kuicksilver.http3.fuzz H3FrameFuzzTest capsules
 kuicksilver-http3 io.kuicksilver.http3.fuzz QpackDecodeFuzzTest qpackDecode
 kuicksilver-http2 io.kuicksilver.http2.fuzz H2FrameFuzzTest frames
 kuicksilver-http2 io.kuicksilver.http2.fuzz HpackDecodeFuzzTest hpackDecode
+kuicksilver-http2 io.kuicksilver.http2.fuzz H2ConnectionFuzzTest connectionServer
+kuicksilver-http2 io.kuicksilver.http2.fuzz HpackRoundTripFuzzTest hpackRoundTrip
 "
 echo "$targets" | while read -r module pkg cls method; do
   [ -n "$module" ] || continue

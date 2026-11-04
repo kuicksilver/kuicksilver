@@ -2,8 +2,10 @@
 # Copyright 2026 The Kuicksilver Authors
 # SPDX-License-Identifier: Apache-2.0
 # Writes the seed inputs of the HTTP/2 Jazzer targets (kuicksilver-http2/src/jvmTest/.../fuzz/Http2FuzzTest.kt): every
-# frame type of RFC 9113 section 6 for `frames`, and the RFC 7541 appendix C blocks (tools/vectors) for `hpackDecode`.
-# Usage: gen-fuzz-seeds.py   (run after tools/http/gen-tables.py; the output is committed)
+# frame type of RFC 9113 section 6 for `frames`, the RFC 7541 appendix C blocks (tools/vectors) for `hpackDecode`, client
+# conversations (a request with a body, Rapid Reset, CONTINUATION) for `connectionServer`, field lists for `hpackRoundTrip`.
+# Usage: gen-fuzz-seeds.py   (run after tools/http/gen-tables.py; the output is committed; files named finding-* are kept
+# reproducers of harness findings and are not written here)
 import json, os, struct
 root = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", ".."))
 base = os.path.join(root, "kuicksilver-http2/src/jvmTest/resources/io/kuicksilver/http2/fuzz")
@@ -28,8 +30,22 @@ for group in ("C.3", "C.4", "C.5", "C.6"):
     b1, b2 = bytes.fromhex(ex[0]["encoded"]), bytes.fromhex(ex[1]["encoded"])
     sel = (2 if ex[0]["tableSize"] == 4096 else 1) | (3 << 2)  # the example's table size, a 64 KiB list limit
     hpack[group.lower().replace(".", "")] = bytes([sel]) + struct.pack(">H", len(b1)) + b1 + b2
-for d, files in {"H2FrameFuzzTestInputs/frames": frames, "HpackDecodeFuzzTestInputs/hpackDecode": hpack}.items():
+def hdr(sid, block, flags=0x5):
+    return frame(1, flags, sid, block)
+conn = {
+    "get-then-data": bytes([255]) + frame(4, 0, 0) + frame(4, 1, 0) + hdr(1, h("82848786"), 0x4) + frame(0, 1, 1, b"body")
+    + frame(8, 0, 1, struct.pack(">I", 100)),
+    "rapid-reset": bytes([31]) + frame(4, 0, 0) + b"".join(hdr(2 * i + 1, h("82848786")) + frame(3, 0, 2 * i + 1, struct.pack(">I", 8)) for i in range(20)),
+    "continuation": bytes([7]) + frame(4, 0, 0) + frame(1, 0x1, 3, h("8284")) + frame(9, 0, 3, h("87")) + frame(9, 4, 3, h("86"))
+    + frame(6, 0, 0, bytes(8)) + frame(7, 0, 0, struct.pack(">II", 3, 0)),
+}
+roundtrip = {
+    "lists": bytes([3, 0, 0, 3, 1, 2, 3, 1, 1, 1, 2, 4, 120, 121, 122, 120, 0xff, 0, 2, 0, 4, 1, 2, 3, 4, 0, 1, 5, 1]),
+    "sensitive": bytes([2, 0, 1, 6, 115, 101, 99, 114, 101, 116, 0, 2, 3, 105, 100, 61]),
+}
+for d, files in {"H2FrameFuzzTestInputs/frames": frames, "HpackDecodeFuzzTestInputs/hpackDecode": hpack,
+                 "H2ConnectionFuzzTestInputs/connectionServer": conn, "HpackRoundTripFuzzTestInputs/hpackRoundTrip": roundtrip}.items():
     os.makedirs(os.path.join(base, d), exist_ok=True)
     for name, data in files.items():
         open(os.path.join(base, d, name), "wb").write(data)
-print(f"seeds written: {len(frames)} frames, {len(hpack)} hpackDecode")
+print(f"seeds written: {len(frames)} frames, {len(hpack)} hpackDecode, {len(conn)} connectionServer, {len(roundtrip)} hpackRoundTrip")
