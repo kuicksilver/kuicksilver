@@ -103,12 +103,20 @@ check "challenge:   but its close repeated is fine"                  0 "" -- pyt
 check "challenge: the client moved itself (two source ports)"        1 "" -- python3 "$ch" --decoded "$(hvar moved '.client_sources += ["193.167.0.100:40000"]')"
 check "challenge: the close reached the server before the challenge" 1 "" -- python3 "$ch" --decoded "$(hvar knew '.server_close_n = 16436')"
 check "challenge:   the close never reached the server"              0 "" -- python3 "$ch" --decoded "$(hvar noclose '.server_close_n = null')"
-# RFC 9000 10.2.2: once the client's close reached the server (16449), the server sends at most one packet there, a close
+# RFC 9000 10.2.2: once the client's close reached the server (16449), the server sends at most one packet, on any path, a close
+# with nothing but ACK and PADDING besides
 srvpkt() { printf '{"n": %s, "from_server": true, "len": 30, "frames": %s, "challenges": %s, "close_codes": %s}' "$@"; }
-check "challenge: the server challenged again after the close arrived" 1 "" -- python3 "$ch" --decoded "$(hvar rechallenge ".on_path += [$(srvpkt 16450 '[26]' '["00112233445566ff"]' '[]')]")"
-check "challenge: the server sent an ACK after the close arrived"      1 "" -- python3 "$ch" --decoded "$(hvar ackafter ".on_path += [$(srvpkt 16450 '[2]' '[]' '[]')]")"
-check "challenge: two closes after the close arrived"                  1 "" -- python3 "$ch" --decoded "$(hvar twocloses ".on_path += [$(srvpkt 16450 '[28]' '[]' '[0]'), $(srvpkt 16451 '[28]' '[]' '[0]')]")"
-check "challenge:   one close after it is fine"                        0 "" -- python3 "$ch" --decoded "$(hvar oneclose ".on_path += [$(srvpkt 16450 '[28]' '[]' '[0]')]")"
+drained() { printf '{"n": %s, "dst": "%s", "frames": %s}' "$@"; }
+p_dst=193.167.0.155:745; old_dst=193.167.0.229:18108   # P and the path before it
+check "challenge: the server challenged again after the close arrived" 1 "" -- python3 "$ch" --decoded "$(hvar rechallenge ".server_after_close += [$(drained 16450 $p_dst '[26]')]")"
+check "challenge: the server sent an ACK after the close arrived"      1 "" -- python3 "$ch" --decoded "$(hvar ackafter ".server_after_close += [$(drained 16450 $p_dst '[2]')]")"
+check "challenge: two closes after the close arrived"                  1 "" -- python3 "$ch" --decoded "$(hvar twocloses ".server_after_close += [$(drained 16450 $p_dst '[28]'), $(drained 16451 $p_dst '[28]')]")"
+check "challenge:   one close on P and one on the old path"           1 "" -- python3 "$ch" --decoded "$(hvar twopaths ".server_after_close += [$(drained 16450 $p_dst '[28]'), $(drained 16451 $old_dst '[28]')]")"
+check "challenge:   a packet on the old path after it"                1 "" -- python3 "$ch" --decoded "$(hvar oldpath ".server_after_close += [$(drained 16450 $old_dst '[2]')]")"
+check "challenge:   a close that carries a challenge"                 1 "" -- python3 "$ch" --decoded "$(hvar closechallenge ".server_after_close += [$(drained 16450 $p_dst '[26, 28]')]")"
+check "challenge:   one close after it is fine"                        0 "" -- python3 "$ch" --decoded "$(hvar oneclose ".server_after_close += [$(drained 16450 $p_dst '[28]')]")"
+check "challenge:   one close with an ACK and PADDING is fine"         0 "" -- python3 "$ch" --decoded "$(hvar closeack ".server_after_close += [$(drained 16450 $old_dst '[2, 28, 0]')]")"
+check "challenge:   a summary without the field cannot be analysed"   2 "cannot analyse" -- python3 "$ch" --decoded "$(hvar noafter 'del(.server_after_close)')"
 check "challenge:   a repeated challenge before the close arrived is fine" 0 "" -- python3 "$ch" --decoded "$(hvar before ".on_path = .on_path[:2] + [$(srvpkt 16438 '[26]' '["6dbee19dedfe64eb"]' '[]')] + .on_path[2:]")"
 check "challenge: the server spoke first on the new path"            1 "" -- python3 "$ch" --decoded "$(hvar srvfirst '.on_path = [.on_path[1], .on_path[0]] + .on_path[2:]')"
 check "challenge: the server sent data there (STREAM)"               1 "" -- python3 "$ch" --decoded "$(hvar data "$xs.frames += [15]")"

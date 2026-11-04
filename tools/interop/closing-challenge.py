@@ -21,12 +21,15 @@ the first server packet on the last path P of its walk; every earlier path's cha
 the client's packets opened P, the server's packets there carry nothing but PATH_CHALLENGE, ACK, PADDING, RETIRE_CONNECTION_ID
 (quinn retires the old path's ID as it moves, RFC 9000 section 9.5) and CONNECTION_CLOSE within three times the client's bytes
 there, the packet with X left before the client's CONNECTION_CLOSE arrived, and after
-that close arrived the server sent at most one packet on P, carrying its own CONNECTION_CLOSE (RFC 9000 section 10.2.2: a
-draining endpoint sends nothing else; closing-rebind.py has the same bound); on the
+that close arrived the server sent at most one packet in all, on any path, carrying its own CONNECTION_CLOSE and nothing but
+ACK and PADDING besides (RFC 9000 section 10.2.2: a draining endpoint sends nothing else; closing-rebind.py has the same bound);
+on the
 client-side capture every client packet up to its close left from one address (the client did not move itself), the close has
 error code 0, X arrived only after the close went out, and after the close the client sent nothing but closing frames. A
 challenge that never reached the client, one that arrived before its close, an error close, data on P, or a server that kept
-probing or acknowledging on P after the close reached it is no ENVIRONMENT verdict.
+probing or acknowledging after the close reached it is no ENVIRONMENT verdict. The opposite race is not excused: a challenge
+that left the server after the close reached its link but before the server processed it (microseconds) counts as sent after
+the close, so such a cell stays red; that errs on the safe side.
 
 X may also reach the client between its entering the closing state and its CONNECTION_CLOSE leaving (CI run 40645584772, result
 20261028-070320, quinn->kuicksilver:rebind-addr, the JVM image: our client closed at 11.0147 s, quinn's challenge reached the
@@ -178,9 +181,13 @@ def decode(cell):
     first_closing = next((i for i, x in enumerate(client_side) if x["t"] > closing["at"] - MARGIN), None) if closing else None
     start = min(i for i in (close_at, first_x, first_closing) if i is not None) if close_at is not None else None
     upto = next((i for i, x in enumerate(client_sent) if CLOSES & set(x["frames"])), len(client_sent) - 1)
+    server_close_n = next((x["n"] for x in server_side if not x["from_server"] and CLOSES & set(x["frames"])), None)
     return {"server": os.path.basename(os.path.dirname(cell)).split("_", 1)[0], "unanswered": unanswered, "download_checked": checked, "runner_paths": firsts,
             "on_path": [{k: x[k] for k in keep} for x in server_side if p and p in (x["src"], x["dst"])],
-            "server_close_n": next((x["n"] for x in server_side if not x["from_server"] and CLOSES & set(x["frames"])), None),
+            "server_close_n": server_close_n,
+            # every server packet after the client's close reached the server, on any path (the draining bound)
+            "server_after_close": [{"n": x["n"], "dst": x["dst"], "frames": x["frames"]} for x in server_side
+                                   if x["from_server"] and server_close_n is not None and x["n"] > server_close_n],
             "responses": sorted({r for x in client_sent for r in x["responses"]}),
             "client_sources": sorted({x["src"] for x in client_sent[:upto + 1]}),
             # the client-side capture from the client's first close (or a named challenge before it) on, and any packet before
@@ -218,10 +225,11 @@ def analyse(d):
     if with_x is None: return None
     # the server could not know: its challenge left before the client's close reached it
     if d["server_close_n"] is not None and d["server_close_n"] < with_x["n"]: return None
-    # and once the close reached it, the server drained (RFC 9000 10.2.2): on P at most one packet, carrying its CONNECTION_CLOSE
+    # and once the close reached it, the server drained (RFC 9000 10.2.2): on every path together at most one packet, carrying
+    # its CONNECTION_CLOSE and at most ACK and PADDING besides (no challenge, no data)
     if d["server_close_n"] is not None:
-        drained = [y for y in srv if y["n"] > d["server_close_n"]]
-        if len(drained) > 1 or any(not CLOSES & set(y["frames"]) for y in drained): return None
+        drained = d["server_after_close"]
+        if len(drained) > 1 or any(not CLOSES & set(y["frames"]) or not set(y["frames"]) <= CLOSING for y in drained): return None
     # client side: one source up to its close, a graceful close, X arriving only after it, and nothing but closing frames after it
     if len(d["client_sources"]) != 1: return None
     close = next((i for i, y in enumerate(cs) if not y["from_server"] and CLOSES & set(y["frames"])), None)
