@@ -239,6 +239,7 @@ internal class LoopGroup private constructor(
             config: QuicEndpointConfig,
             ios: List<io.kuicksilver.quic.DatagramIo>,
             preferred: List<List<io.kuicksilver.quic.DatagramIo>> = emptyList(),
+            allocate: (Int) -> PacketBuffer = PacketBuffer::allocate,
             afterBuild: suspend () -> Unit = {},
         ): LoopGroup {
             val g = LoopGroup(config)
@@ -272,6 +273,7 @@ internal class LoopGroup private constructor(
                             g.sessions,
                             tokens,
                             preferred.getOrElse(i) { emptyList() },
+                            allocate,
                         )
                 }
                 afterBuild()

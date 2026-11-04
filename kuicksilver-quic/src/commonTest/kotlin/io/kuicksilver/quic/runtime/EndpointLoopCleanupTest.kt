@@ -63,9 +63,14 @@ class EndpointLoopCleanupTest {
         runBlocking {
             val net = MemoryNetwork()
             val crypto = TrackingCrypto(resetKeys = 1) // loop 0 is built, loop 1 is not
+            val alloc = CountingAllocator()
             val ios = listOf(net.open(serverAddr), net.open(otherAddr))
             val preferred = listOf(listOf<DatagramIo>(net.open(preferredAddr)), emptyList())
-            assertFailsWith<IllegalStateException> { LoopGroup.create(config(crypto, loops = 2), ios, preferred) }
+            assertFailsWith<IllegalStateException> {
+                LoopGroup.create(config(crypto, loops = 2), ios, preferred, allocate = alloc::allocate)
+            }
+            assertEquals(49, alloc.made.size, "loop 0's batches")
+            assertTrue(alloc.allClosed, "loop 0's batches (discardUnstarted)")
             assertTrue(ios.all { it.closed }, "the loops' sockets")
             assertTrue((preferred[0][0] as MemoryDatagramIo).closed, "the preferred socket")
             assertEquals(0, crypto.live, "loop 0's reset key and its reference to the group's token keys")
@@ -108,5 +113,68 @@ class EndpointLoopCleanupTest {
             ep.closeAndJoin()
             assertTrue(preferred!!.closed, "the preferred socket after the main socket's close threw")
             assertEquals(0, crypto.live, "the endpoint core's keys")
+        }
+
+    /** Hands out buffers, remembers them, and fails the [failAt]-th allocation (1-based; 0 never). */
+    private class CountingAllocator(
+        val failAt: Int = 0,
+    ) {
+        val made = ArrayList<io.kuicksilver.native.PacketBuffer>()
+        private var n = 0
+
+        fun allocate(size: Int): io.kuicksilver.native.PacketBuffer {
+            if (++n == failAt) throw IllegalStateException("out of native memory (test)")
+            return io.kuicksilver.native.PacketBuffer
+                .allocate(size)
+                .also { made += it }
+        }
+
+        val allClosed: Boolean
+            get() = made.all { runCatching { it[0] }.exceptionOrNull() is IllegalStateException }
+    }
+
+    @Test fun aLoopWhoseLastBatchCannotBeAllocatedFreesTheOthers() =
+        runBlocking {
+            val net = MemoryNetwork()
+            val crypto = TrackingCrypto()
+            val alloc = CountingAllocator(failAt = 16 + 32 + 1) // the single-slot batch, after both others
+            val opened = ArrayList<MemoryDatagramIo>()
+            assertFailsWith<IllegalStateException> {
+                EndpointLoop.bind(serverAddr, config(crypto) { at -> net.open(at).also { opened += it } }, alloc::allocate)
+            }
+            assertEquals(48, alloc.made.size)
+            assertTrue(alloc.allClosed, "the in and out batches")
+            assertTrue(opened.all { it.closed })
+            assertEquals(0, crypto.live, "the endpoint core")
+        }
+
+    @Test fun aLoopThatFailsToStartIsClosedWhole() =
+        runBlocking {
+            val net = MemoryNetwork()
+            val crypto = TrackingCrypto()
+            val alloc = CountingAllocator()
+            val opened = ArrayList<MemoryDatagramIo>()
+            assertFailsWith<IllegalStateException> {
+                EndpointLoop.bind(
+                    serverAddr,
+                    config(crypto) { at -> net.open(at).also { opened += it } },
+                    alloc::allocate,
+                    beforeStartForTest = { throw IllegalStateException("start refused (test)") },
+                )
+            }
+            assertEquals(49, alloc.made.size)
+            assertTrue(alloc.allClosed, "every batch")
+            assertTrue(opened.size == 2 && opened.all { it.closed }, "the main and the preferred socket")
+            assertEquals(0, crypto.live, "the endpoint core")
+        }
+
+    @Test fun aClosedLoopHasStoppedItsTimerAndReceiversBeforeItFreesTheBatches() =
+        runBlocking {
+            val net = MemoryNetwork()
+            val alloc = CountingAllocator()
+            val ep = EndpointLoop.bind(serverAddr, config(TrackingCrypto()) { at -> net.open(at) }, alloc::allocate) as EndpointLoop
+            ep.closeAndJoin()
+            assertTrue(ep.writersEndedForTest, "receive, timer and preferred receivers joined by the close job")
+            assertTrue(alloc.allClosed)
         }
 }

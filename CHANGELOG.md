@@ -220,7 +220,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   closes every loop's sockets and frees the loops already built.
 - QUIC: closing an endpoint frees its endpoint core, datagram batches and remaining sockets even when one release in
   the sequence throws (a socket whose close fails); before, the rest was skipped and leaked. The first failure is still
-  counted as the loop's uncaught failure.
+  counted as the loop's uncaught failure. The close also stops and waits for the timer and the preferred-address
+  receivers before it frees the batches, and a flush after that does nothing: a timer resumed during the close could
+  otherwise poll into a freed batch.
 - QUIC on Kotlin/Native: a `PacketBatch` whose slot allocation fails part-way frees the slots it had already allocated,
   and its `close` frees every slot even when one of them fails to close.
 - QUIC server: the Retry token key is freed when making the NEW_TOKEN key fails while a server endpoint is set up,
