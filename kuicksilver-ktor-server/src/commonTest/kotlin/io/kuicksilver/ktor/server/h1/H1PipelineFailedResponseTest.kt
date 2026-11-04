@@ -16,14 +16,16 @@ import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.io.IOException
 import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 
 /**
  * A response whose handler failed before the writer reached it (it waited behind an earlier pipelined response) ends the
- * connection with its failure. The writer copied responses with a loop on `isClosedForRead`, which a channel failed
- * with a cause also answers: the failed response wrote nothing and the writer went on to the next one, so the client
- * took the third request's response for the second's ([a, c] before). In-memory channels, virtual time.
+ * connection. The writer copied responses with a loop on `isClosedForRead`, which a channel failed with a cause also
+ * answers: the failed response wrote nothing and the writer went on to the next one, so the client took the third
+ * request's response for the second's ([a, c] before). In-memory channels, virtual time.
  */
 class H1PipelineFailedResponseTest {
     private fun TestScope.pipeline(handler: suspend H1RequestScope.(Request) -> Unit): Pair<ByteChannel, ByteChannel> {
@@ -34,6 +36,11 @@ class H1PipelineFailedResponseTest {
         return toServer to fromServer
     }
 
+    /**
+     * The failed response wrote nothing, so the connection ends cleanly (KTOR-10037, as upstream Ktor since 516fe19e4): the
+     * response before it arrives whole, then the end of the stream, not a failure that could take it with it (RFC 9112
+     * section 9.6: close in stages); the one after it is never sent, so it cannot stand in for the failed one.
+     */
     @Test fun negative_aFailedPipelinedResponseIsNotSkipped() =
         runTest {
             val firstMayAnswer = Job()
@@ -65,10 +72,49 @@ class H1PipelineFailedResponseTest {
             runCurrent() // /b failed and /c answered while /a waits
             firstMayAnswer.complete()
             val (seen, failed) = fromServer.readToEnd()
-            val responses = Regex("HTTP/1.1 200 OK\r\nContent-Length: 1\r\n\r\n(.)").findAll(seen).map { it.groupValues[1] }.toList()
-            // /a's response may be cut by the reset that ends the connection; /c's must never stand in for /b's
-            assertTrue(responses == listOf("a") || responses.isEmpty(), "the client got these bodies for /a, /b and /c: $responses")
-            assertTrue(failed, "the connection ended cleanly after a failed response")
+            assertEquals("HTTP/1.1 200 OK\r\nContent-Length: 1\r\n\r\na", seen, "what the client got for /a, /b and /c")
+            assertFalse(failed, "the connection ended with a failure, not cleanly, after a response that wrote nothing")
+        }
+
+    /** The same with nothing pipelined behind the failed response, the client still connected: the output still ends cleanly. */
+    @Test fun aFailedLastResponseEndsTheConnectionCleanly() =
+        runTest {
+            val (toServer, fromServer) =
+                pipeline { request ->
+                    val path = request.uri.toString()
+                    request.release()
+                    if (path == "/b") throw IOException("the handler failed")
+                    output.writeStringUtf8("HTTP/1.1 200 OK\r\nContent-Length: 1\r\n\r\na")
+                    output.flush()
+                }
+            toServer.writeStringUtf8("GET /a HTTP/1.1\r\nHost: s\r\n\r\nGET /b HTTP/1.1\r\nHost: s\r\n\r\n")
+            toServer.flush()
+            val (seen, failed) = fromServer.readToEnd()
+            assertEquals("HTTP/1.1 200 OK\r\nContent-Length: 1\r\n\r\na", seen)
+            assertFalse(failed, "the connection ended with a failure after a response that wrote nothing")
+        }
+
+    /**
+     * A response that failed after part of it went out cannot be ended cleanly: the client would take what it got for the
+     * whole response (a close-delimited or chunked one). The connection ends with the failure, as before KTOR-10037.
+     */
+    @Test fun negative_aResponseCutAfterItsFirstBytesEndsTheConnectionWithItsFailure() =
+        runTest {
+            val cut = Job()
+            val (toServer, fromServer) =
+                pipeline { request ->
+                    request.release()
+                    output.writeStringUtf8("HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nab")
+                    output.flush()
+                    cut.join()
+                    throw IOException("the handler failed")
+                }
+            toServer.writeStringUtf8("GET /a HTTP/1.1\r\nHost: s\r\n\r\n")
+            toServer.flush()
+            runCurrent() // the head and "ab" are out
+            cut.complete()
+            val (_, failed) = fromServer.readToEnd()
+            assertTrue(failed, "a response cut after its first bytes ended the connection cleanly")
         }
 
     /**

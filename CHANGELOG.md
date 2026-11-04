@@ -208,6 +208,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- Ktor server, HTTP/1.1: a pipelined response that failed before any of its bytes went out (its handler failed while it
+  waited behind an earlier response) ended the connection with a reset, which could destroy the earlier responses
+  still on their way. The connection now ends cleanly: the responses before it are sent whole, then the close, and no
+  later request is read or answered (KTOR-10037, as upstream Ktor). A response that fails after part of it went out
+  still ends the connection with its failure, so the client cannot take that part for the whole response.
 - ksl: `ksl_ctx_set_ciphers` holds a TLS 1.2 list to the RFC 10015 profile itself: a list with any suite that is not
   ECDHE with RSA or ECDSA and an AEAD of 128 bits or more (static RSA, FFDHE, CBC, CCM_8, anonymous, PSK) is refused
   with `KSL_E_BAD_ARG`, as the version bounds are. Kotlin never passed one; the C ABI accepted any. A refused list also
