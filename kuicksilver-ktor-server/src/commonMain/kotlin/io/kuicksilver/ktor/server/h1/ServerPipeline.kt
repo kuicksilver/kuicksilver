@@ -836,9 +836,21 @@ private suspend fun lingerAfterRefusal(
     sendTimeout: Duration = Duration.ZERO,
 ) {
     actorChannel.close()
-    // the responses still to write go out first (as long as the client takes them, at most a send-stall deadline without
-    // progress): the linger window then starts once they are on their way, not while they still queue behind the writer
-    if (writer != null) withTimeoutOrNull(sendTimeout) { writer.join() }
+    // the responses still to write go out first, for at most [sendTimeout] in all (a fixed total, not a deadline on progress)
+    // and not once the server stops ([draining]): the linger window then starts once they are on their way, not while they
+    // still queue behind the writer
+    if (writer != null) {
+        withTimeoutOrNull(sendTimeout) {
+            if (draining == null) {
+                writer.join()
+            } else {
+                select {
+                    writer.onJoin {}
+                    draining.onJoin {}
+                }
+            }
+        }
+    }
     try {
         withTimeoutOrNull(LINGER) {
             if (draining == null) {
