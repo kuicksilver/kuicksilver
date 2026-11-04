@@ -311,6 +311,8 @@ public class KuicksilverApplicationEngine(
                     resolvedConnectorsDeferred.complete(resolved)
                 } catch (cause: Throwable) {
                     servers.forEach { it.rootJob.cancel() }
+                    // connectors that never started are no part of the probe's count
+                    servers.forEach { tcpConnectionsForProbe -= it.connections }
                     // an endpoint bound next to its TCP socket but not yet serving (another connector failed) is closed here
                     servers.forEach { srv ->
                         runCatching { srv.h3Endpoint.getCompleted() }.getOrNull()?.let { e -> if (h3.none { it.endpoint === e }) e.close() }

@@ -95,6 +95,7 @@ class ServerQuicConfigTest {
                         }
                     }) {}
                 assertFailsWith<IllegalArgumentException> { server.startSuspend(false) }
+                assertEquals(0, server.engine.tcpConnectionsForProbe.size, "a connector that failed to start is still counted by the probe")
                 // without stop(): the first connector's port is free again, its listener closed by the failed start itself
                 val again =
                     kotlinx.coroutines.withTimeoutOrNull(5.seconds) {

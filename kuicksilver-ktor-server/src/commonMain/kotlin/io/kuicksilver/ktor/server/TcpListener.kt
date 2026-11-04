@@ -70,6 +70,8 @@ internal class TcpServer(
     val h3Endpoint: CompletableDeferred<Http3Endpoint?>,
     /** Completed when the server stops: its HTTP/1.1 connections read no further request ([startH1Pipeline]). */
     val draining: CompletableJob,
+    /** The parent of its HTTP/1.1 connections, listed for the probe ([KuicksilverApplicationEngine.tcpConnectionsForProbe]). */
+    val connections: Job,
 )
 
 /** `port = 0`: TCP + UDP pairs tried before HTTP/3 is given up for the connector. */
@@ -293,7 +295,7 @@ internal fun KuicksilverApplicationEngine.startTcp(
             latch.complete()
         }
         rootJob.invokeOnCompletion { selector.close() }
-        return TcpServer(rootJob, acceptJob, socket, h3Endpoint, draining)
+        return TcpServer(rootJob, acceptJob, socket, h3Endpoint, draining, connections)
     }
 }
 

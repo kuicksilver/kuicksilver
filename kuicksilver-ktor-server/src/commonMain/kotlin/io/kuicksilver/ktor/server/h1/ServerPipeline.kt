@@ -358,24 +358,27 @@ internal fun CoroutineScope.startH1Pipeline(
         // completed when the writer stopped at a response that failed before any of its bytes went out: it closed the output
         // cleanly after the responses before it, so the connection ends without reading or processing any further request
         val writerStopped = Job()
-        startPipelineWriter(actorChannel, timeout, sendTimeout, connection, unwritten, writerStopped) { why ->
-            pipelineJob.cancel(CancellationException(why))
-        }
+        val writerJob =
+            startPipelineWriter(actorChannel, timeout, sendTimeout, connection, unwritten, writerStopped) { why ->
+                pipelineJob.cancel(CancellationException(why))
+            }
         // what ends the wait for the next request head: the server stopping, or the writer having stopped
         val stopReading = Job()
         // the listener's draining job outlives every connection: its handler goes when this pipeline ends (review M1)
         val drainingHandle = draining?.invokeOnCompletion { stopReading.complete() }
         writerStopped.invokeOnCompletion { stopReading.complete() }
-        // completed when a handler failed: no later request is processed (RFC 9112 section 9.6), whatever the writer has
-        // reached by then (it may still be writing an earlier response the client reads slowly)
+        // completed when a handler failed: no later request is processed (RFC 9112 section 9.3.2: a server may process only
+        // what it then answers in order, and the connection ends after the failed response), whatever the writer has reached
+        // by then (it may still be writing an earlier response the client reads slowly)
         val responseFailed = Job()
+        responseFailed.invokeOnCompletion { stopReading.complete() }
         // the input is lingered on once at most, by whichever path ends the connection first
         var lingered = false
 
         suspend fun linger() {
             if (lingered) return
             lingered = true
-            lingerAfterRefusal(actorChannel, connection, draining)
+            lingerAfterRefusal(actorChannel, connection, draining, writerJob, sendTimeout)
         }
 
         val requestContext = RequestHandlerName + Dispatchers.Unconfined
@@ -829,8 +832,13 @@ private suspend fun lingerAfterRefusal(
     actorChannel: Channel<ByteReadChannel>,
     connection: H1Connection,
     draining: Job?,
+    writer: Job? = null,
+    sendTimeout: Duration = Duration.ZERO,
 ) {
     actorChannel.close()
+    // the responses still to write go out first (as long as the client takes them, at most a send-stall deadline without
+    // progress): the linger window then starts once they are on their way, not while they still queue behind the writer
+    if (writer != null) withTimeoutOrNull(sendTimeout) { writer.join() }
     try {
         withTimeoutOrNull(LINGER) {
             if (draining == null) {
