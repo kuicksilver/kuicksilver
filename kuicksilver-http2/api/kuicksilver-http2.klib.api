@@ -1,0 +1,11 @@
+// Klib ABI Dump
+// Targets: [iosArm64, iosSimulatorArm64, linuxArm64, linuxX64, macosArm64, mingwX64]
+// Rendering settings:
+// - Signature version: 2
+// - Show manifest properties: true
+// - Show declarations: true
+
+// Library unique name: <io.kuicksilver:kuicksilver-http2>
+final class io.kuicksilver.http2/Http2Settings { // io.kuicksilver.http2/Http2Settings|null[0]
+    constructor <init>() // io.kuicksilver.http2/Http2Settings.<init>|<init>(){}[0]
+}

@@ -1,0 +1,558 @@
+{
+ "source": "RFC 7541 appendix C",
+ "examples": [
+  {
+   "id": "C.2.1",
+   "tableSize": 4096,
+   "huffman": false,
+   "fields": [
+    [
+     "custom-key",
+     "custom-header"
+    ]
+   ],
+   "encoded": "400a637573746f6d2d6b65790d637573746f6d2d686561646572",
+   "table": [
+    [
+     "custom-key",
+     "custom-header"
+    ]
+   ],
+   "tableBytes": 55
+  },
+  {
+   "id": "C.2.2",
+   "tableSize": 4096,
+   "huffman": false,
+   "fields": [
+    [
+     ":path",
+     "/sample/path"
+    ]
+   ],
+   "encoded": "040c2f73616d706c652f70617468",
+   "table": [],
+   "tableBytes": 0
+  },
+  {
+   "id": "C.2.3",
+   "tableSize": 4096,
+   "huffman": false,
+   "fields": [
+    [
+     "password",
+     "secret"
+    ]
+   ],
+   "encoded": "100870617373776f726406736563726574",
+   "table": [],
+   "tableBytes": 0
+  },
+  {
+   "id": "C.2.4",
+   "tableSize": 4096,
+   "huffman": false,
+   "fields": [
+    [
+     ":method",
+     "GET"
+    ]
+   ],
+   "encoded": "82",
+   "table": [],
+   "tableBytes": 0
+  },
+  {
+   "id": "C.3.1",
+   "tableSize": 4096,
+   "huffman": false,
+   "fields": [
+    [
+     ":method",
+     "GET"
+    ],
+    [
+     ":scheme",
+     "http"
+    ],
+    [
+     ":path",
+     "/"
+    ],
+    [
+     ":authority",
+     "www.example.com"
+    ]
+   ],
+   "encoded": "828684410f7777772e6578616d706c652e636f6d",
+   "table": [
+    [
+     ":authority",
+     "www.example.com"
+    ]
+   ],
+   "tableBytes": 57
+  },
+  {
+   "id": "C.3.2",
+   "tableSize": 4096,
+   "huffman": false,
+   "fields": [
+    [
+     ":method",
+     "GET"
+    ],
+    [
+     ":scheme",
+     "http"
+    ],
+    [
+     ":path",
+     "/"
+    ],
+    [
+     ":authority",
+     "www.example.com"
+    ],
+    [
+     "cache-control",
+     "no-cache"
+    ]
+   ],
+   "encoded": "828684be58086e6f2d6361636865",
+   "table": [
+    [
+     "cache-control",
+     "no-cache"
+    ],
+    [
+     ":authority",
+     "www.example.com"
+    ]
+   ],
+   "tableBytes": 110
+  },
+  {
+   "id": "C.3.3",
+   "tableSize": 4096,
+   "huffman": false,
+   "fields": [
+    [
+     ":method",
+     "GET"
+    ],
+    [
+     ":scheme",
+     "https"
+    ],
+    [
+     ":path",
+     "/index.html"
+    ],
+    [
+     ":authority",
+     "www.example.com"
+    ],
+    [
+     "custom-key",
+     "custom-value"
+    ]
+   ],
+   "encoded": "828785bf400a637573746f6d2d6b65790c637573746f6d2d76616c7565",
+   "table": [
+    [
+     "custom-key",
+     "custom-value"
+    ],
+    [
+     "cache-control",
+     "no-cache"
+    ],
+    [
+     ":authority",
+     "www.example.com"
+    ]
+   ],
+   "tableBytes": 164
+  },
+  {
+   "id": "C.4.1",
+   "tableSize": 4096,
+   "huffman": true,
+   "fields": [
+    [
+     ":method",
+     "GET"
+    ],
+    [
+     ":scheme",
+     "http"
+    ],
+    [
+     ":path",
+     "/"
+    ],
+    [
+     ":authority",
+     "www.example.com"
+    ]
+   ],
+   "encoded": "828684418cf1e3c2e5f23a6ba0ab90f4ff",
+   "table": [
+    [
+     ":authority",
+     "www.example.com"
+    ]
+   ],
+   "tableBytes": 57
+  },
+  {
+   "id": "C.4.2",
+   "tableSize": 4096,
+   "huffman": true,
+   "fields": [
+    [
+     ":method",
+     "GET"
+    ],
+    [
+     ":scheme",
+     "http"
+    ],
+    [
+     ":path",
+     "/"
+    ],
+    [
+     ":authority",
+     "www.example.com"
+    ],
+    [
+     "cache-control",
+     "no-cache"
+    ]
+   ],
+   "encoded": "828684be5886a8eb10649cbf",
+   "table": [
+    [
+     "cache-control",
+     "no-cache"
+    ],
+    [
+     ":authority",
+     "www.example.com"
+    ]
+   ],
+   "tableBytes": 110
+  },
+  {
+   "id": "C.4.3",
+   "tableSize": 4096,
+   "huffman": true,
+   "fields": [
+    [
+     ":method",
+     "GET"
+    ],
+    [
+     ":scheme",
+     "https"
+    ],
+    [
+     ":path",
+     "/index.html"
+    ],
+    [
+     ":authority",
+     "www.example.com"
+    ],
+    [
+     "custom-key",
+     "custom-value"
+    ]
+   ],
+   "encoded": "828785bf408825a849e95ba97d7f8925a849e95bb8e8b4bf",
+   "table": [
+    [
+     "custom-key",
+     "custom-value"
+    ],
+    [
+     "cache-control",
+     "no-cache"
+    ],
+    [
+     ":authority",
+     "www.example.com"
+    ]
+   ],
+   "tableBytes": 164
+  },
+  {
+   "id": "C.5.1",
+   "tableSize": 256,
+   "huffman": false,
+   "fields": [
+    [
+     ":status",
+     "302"
+    ],
+    [
+     "cache-control",
+     "private"
+    ],
+    [
+     "date",
+     "Mon, 21 Oct 2013 20:13:21 GMT"
+    ],
+    [
+     "location",
+     "https://www.example.com"
+    ]
+   ],
+   "encoded": "4803333032580770726976617465611d4d6f6e2c203231204f637420323031332032303a31333a323120474d546e1768747470733a2f2f7777772e6578616d706c652e636f6d",
+   "table": [
+    [
+     "location",
+     "https://www.example.com"
+    ],
+    [
+     "date",
+     "Mon, 21 Oct 2013 20:13:21 GMT"
+    ],
+    [
+     "cache-control",
+     "private"
+    ],
+    [
+     ":status",
+     "302"
+    ]
+   ],
+   "tableBytes": 222
+  },
+  {
+   "id": "C.5.2",
+   "tableSize": 256,
+   "huffman": false,
+   "fields": [
+    [
+     ":status",
+     "307"
+    ],
+    [
+     "cache-control",
+     "private"
+    ],
+    [
+     "date",
+     "Mon, 21 Oct 2013 20:13:21 GMT"
+    ],
+    [
+     "location",
+     "https://www.example.com"
+    ]
+   ],
+   "encoded": "4803333037c1c0bf",
+   "table": [
+    [
+     ":status",
+     "307"
+    ],
+    [
+     "location",
+     "https://www.example.com"
+    ],
+    [
+     "date",
+     "Mon, 21 Oct 2013 20:13:21 GMT"
+    ],
+    [
+     "cache-control",
+     "private"
+    ]
+   ],
+   "tableBytes": 222
+  },
+  {
+   "id": "C.5.3",
+   "tableSize": 256,
+   "huffman": false,
+   "fields": [
+    [
+     ":status",
+     "200"
+    ],
+    [
+     "cache-control",
+     "private"
+    ],
+    [
+     "date",
+     "Mon, 21 Oct 2013 20:13:22 GMT"
+    ],
+    [
+     "location",
+     "https://www.example.com"
+    ],
+    [
+     "content-encoding",
+     "gzip"
+    ],
+    [
+     "set-cookie",
+     "foo=ASDJKHQKBZXOQWEOPIUAXQWEOIU; max-age=3600; version=1"
+    ]
+   ],
+   "encoded": "88c1611d4d6f6e2c203231204f637420323031332032303a31333a323220474d54c05a04677a69707738666f6f3d4153444a4b48514b425a584f5157454f50495541585157454f49553b206d61782d6167653d333630303b2076657273696f6e3d31",
+   "table": [
+    [
+     "set-cookie",
+     "foo=ASDJKHQKBZXOQWEOPIUAXQWEOIU; max-age=3600; version=1"
+    ],
+    [
+     "content-encoding",
+     "gzip"
+    ],
+    [
+     "date",
+     "Mon, 21 Oct 2013 20:13:22 GMT"
+    ]
+   ],
+   "tableBytes": 215
+  },
+  {
+   "id": "C.6.1",
+   "tableSize": 256,
+   "huffman": true,
+   "fields": [
+    [
+     ":status",
+     "302"
+    ],
+    [
+     "cache-control",
+     "private"
+    ],
+    [
+     "date",
+     "Mon, 21 Oct 2013 20:13:21 GMT"
+    ],
+    [
+     "location",
+     "https://www.example.com"
+    ]
+   ],
+   "encoded": "488264025885aec3771a4b6196d07abe941054d444a8200595040b8166e082a62d1bff6e919d29ad171863c78f0b97c8e9ae82ae43d3",
+   "table": [
+    [
+     "location",
+     "https://www.example.com"
+    ],
+    [
+     "date",
+     "Mon, 21 Oct 2013 20:13:21 GMT"
+    ],
+    [
+     "cache-control",
+     "private"
+    ],
+    [
+     ":status",
+     "302"
+    ]
+   ],
+   "tableBytes": 222
+  },
+  {
+   "id": "C.6.2",
+   "tableSize": 256,
+   "huffman": true,
+   "fields": [
+    [
+     ":status",
+     "307"
+    ],
+    [
+     "cache-control",
+     "private"
+    ],
+    [
+     "date",
+     "Mon, 21 Oct 2013 20:13:21 GMT"
+    ],
+    [
+     "location",
+     "https://www.example.com"
+    ]
+   ],
+   "encoded": "4883640effc1c0bf",
+   "table": [
+    [
+     ":status",
+     "307"
+    ],
+    [
+     "location",
+     "https://www.example.com"
+    ],
+    [
+     "date",
+     "Mon, 21 Oct 2013 20:13:21 GMT"
+    ],
+    [
+     "cache-control",
+     "private"
+    ]
+   ],
+   "tableBytes": 222
+  },
+  {
+   "id": "C.6.3",
+   "tableSize": 256,
+   "huffman": true,
+   "fields": [
+    [
+     ":status",
+     "200"
+    ],
+    [
+     "cache-control",
+     "private"
+    ],
+    [
+     "date",
+     "Mon, 21 Oct 2013 20:13:22 GMT"
+    ],
+    [
+     "location",
+     "https://www.example.com"
+    ],
+    [
+     "content-encoding",
+     "gzip"
+    ],
+    [
+     "set-cookie",
+     "foo=ASDJKHQKBZXOQWEOPIUAXQWEOIU; max-age=3600; version=1"
+    ]
+   ],
+   "encoded": "88c16196d07abe941054d444a8200595040b8166e084a62d1bffc05a839bd9ab77ad94e7821dd7f2e6c7b335dfdfcd5b3960d5af27087f3672c1ab270fb5291f9587316065c003ed4ee5b1063d5007",
+   "table": [
+    [
+     "set-cookie",
+     "foo=ASDJKHQKBZXOQWEOPIUAXQWEOIU; max-age=3600; version=1"
+    ],
+    [
+     "content-encoding",
+     "gzip"
+    ],
+    [
+     "date",
+     "Mon, 21 Oct 2013 20:13:22 GMT"
+    ]
+   ],
+   "tableBytes": 215
+  }
+ ]
+}

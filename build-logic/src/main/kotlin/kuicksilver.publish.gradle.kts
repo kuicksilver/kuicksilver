@@ -18,6 +18,7 @@ private val descriptions = mapOf(
     "kuicksilver-ktor-network" to "Socket.tls() and Socket.tlsServer() for ktor-network sockets",
     "kuicksilver-quic" to "QUIC transport (v1 and v2) for Kotlin Multiplatform: streams, datagrams, migration, a coroutine API over a sans-IO core",
     "kuicksilver-http3" to "HTTP/3 and QPACK over kuicksilver-quic",
+    "kuicksilver-http2" to "HTTP/2 and HPACK as a sans-IO core over any byte stream",
     "kuicksilver-ktor-client" to "Ktor client engine: HTTP/1.1 over TLS and HTTP/3 with Alt-Svc discovery, racing and fallback",
     "kuicksilver-ktor-server" to "Ktor server engine: HTTP/1.1 over TLS on TCP and HTTP/3 on UDP on the same port",
 )

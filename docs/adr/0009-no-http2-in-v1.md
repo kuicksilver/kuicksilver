@@ -1,6 +1,6 @@
 # ADR-0009. No HTTP/2 in v1
 
-Date: 2026-10-02. Status: accepted (approved by the owner 2026-10-02).
+Date: 2026-10-02. Status: superseded by [ADR-0017](0017-http2.md) (2026-11-04: HTTP/2 client and server in 0.3.0); accepted by the owner 2026-10-02.
 
 ## Context
 

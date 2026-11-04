@@ -9,7 +9,7 @@
 //                     secretKeyRingFile), so the provenance and the SBOM archive are signed exactly as the artifacts are
 plugins { signing }
 
-private val publishedModules = listOf("native", "tls", "ktor-network", "quic", "http3", "ktor-client", "ktor-server", "bom").map { "kuicksilver-$it" }
+private val publishedModules = listOf("native", "tls", "ktor-network", "quic", "http3", "http2", "ktor-client", "ktor-server", "bom").map { "kuicksilver-$it" }
 private val releaseVersion = providers.gradleProperty("kuicksilver.version").getOrElse("0.3.0-SNAPSHOT")
 
 val cyclonedxValidator: Configuration = configurations.create("cyclonedxValidator") {

@@ -25,7 +25,8 @@ Two properties shape the code more than anything else:
   injected. That makes the core deterministic, which the network simulator and the fuzzers rely on.
 - **Every layer sees only the layer directly below it** (ADR-0005): `kuicksilver-ktor-client` / `kuicksilver-ktor-server`
   → `kuicksilver-http3` → `kuicksilver-quic` → `kuicksilver-tls` → `kuicksilver-native` (the Ktor engines also use
-  `kuicksilver-ktor-network` for HTTP/1.1 over TLS). The transport depends on the `QuicCrypto` interface, not on
+  `kuicksilver-ktor-network` for HTTP/1.1 over TLS; `kuicksilver-http2`, HTTP/2 for the engines, sits on
+  `kuicksilver-native` only, ADR-0017). The transport depends on the `QuicCrypto` interface, not on
   OpenSSL (ADR-0002); the engines see the transport only through `Http3Endpoint` (ADR-0014).
 
 ## Entry Points
@@ -136,6 +137,12 @@ both share). The public API is
 `Http3Endpoint`, `Http3Connection`, `Http3Request`/`Http3Response`, `Http3ServerRequest`, `Http3Stream`, `Http3Settings`
 and `Http3Exception`. Every HTTP/3 resource bound (field section size, blocked streams, buffered PRIORITY_UPDATEs, frame
 length never pre-allocated) lives here.
+
+### `kuicksilver-http2`
+
+HTTP/2 (RFC 9113) and HPACK (RFC 7541) as a sans-IO core (`io.kuicksilver.http2`, ADR-0017), without QUIC or TLS: the
+engines bring the TLS socket. `hpack` holds the static and Huffman tables generated from the RFC text
+(`tools/http/gen-tables.py`). The public API is `Http2Settings`.
 
 ### `kuicksilver-ktor-client`, `kuicksilver-ktor-server`
 

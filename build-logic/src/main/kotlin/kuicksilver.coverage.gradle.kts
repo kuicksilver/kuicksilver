@@ -14,12 +14,12 @@ plugins { id("org.jetbrains.kotlinx.kover") }
 kover { currentProject { instrumentation { disabledForAll = !providers.gradleProperty("kuicksilver.coverage").isPresent } } }
 
 if (project == rootProject) {
-    val published = listOf("native", "tls", "ktor-network", "quic", "http3", "ktor-client", "ktor-server")
+    val published = listOf("native", "tls", "ktor-network", "quic", "http3", "http2", "ktor-client", "ktor-server")
     dependencies { published.forEach { add("kover", project(":kuicksilver-$it")) } }
     kover { currentProject { createVariant("jvmTests") {} } }   // empty here: the merged report collects the modules' variants
 } else {
     kover { currentProject { createVariant("jvmTests") { add("jvm") } } }
 }
 
-// generated QPACK tables (tools generate them; RFC 9204 appendix A, RFC 7541 appendix B): data, not logic
-kover { reports { filters { excludes { classes("io.kuicksilver.http3.qpack.StaticTableData*", "io.kuicksilver.http3.qpack.HuffmanTable*") } } } }
+// generated QPACK and HPACK tables (tools generate them; RFC 9204 appendix A, RFC 7541 appendices A and B): data, not logic
+kover { reports { filters { excludes { classes("io.kuicksilver.http3.qpack.StaticTableData*", "io.kuicksilver.http3.qpack.HuffmanTable*", "io.kuicksilver.http2.hpack.StaticTableData*", "io.kuicksilver.http2.hpack.HuffmanTable*") } } } }

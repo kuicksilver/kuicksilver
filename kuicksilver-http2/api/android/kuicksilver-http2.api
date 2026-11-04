@@ -1,0 +1,4 @@
+public final class io/kuicksilver/http2/Http2Settings {
+	public fun <init> ()V
+}
+
