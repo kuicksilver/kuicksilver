@@ -15,11 +15,14 @@ DOCKER_CE_SERIES=28                                          # 28.1 or later wit
 DOCKER_KEY_FPR=9DC858229FC7DD38854AE2D88D81803C0EBFCD88      # https://docs.docker.com/engine/install/ubuntu/ ("Docker Release (CE deb)")
 WIRESHARK_PPA_KEY_FPR=A2E402B85A4B70CD78D8A3D9D875551314ECA0F0   # signing_key_fingerprint of ~wireshark-dev/+archive/ubuntu/stable (Launchpad API)
 summary() { [ -z "${GITHUB_STEP_SUMMARY:-}" ] || printf '%s\n' "$@" >> "$GITHUB_STEP_SUMMARY"; }
+# every network fetch retries, refused connections and failed name lookups too (curl's plain --retry covers only HTTP-level and
+# timeout errors; keyserver.ubuntu.com fails with refused connections from time to time)
+apt_get() { sudo DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=5 "$@"; }
 
 # <url> <fingerprint> <keyring>: the key at <url>, refused unless it is exactly the one key <fingerprint>, as a binary keyring
 key() {
   local tmp got; tmp=$(mktemp)
-  curl -fsSL --retry 3 "$1" -o "$tmp"
+  curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 "$1" -o "$tmp"
   got=$(gpg --show-keys --with-colons "$tmp" 2>/dev/null | awk -F: '$1 == "pub" { want = 1 } $1 == "fpr" && want { print $10; want = 0 }')
   if [ "$got" != "$2" ]; then echo "::error::the key from $1 has the fingerprint(s) '${got//$'\n'/ }', not $2"; rm -f "$tmp"; exit 1; fi
   sudo install -m 0755 -d /etc/apt/keyrings
@@ -32,10 +35,10 @@ case "${1:-}" in
     sudo apt-get remove -y -q moby-engine moby-cli moby-buildx moby-compose moby-containerd moby-runc || true
     key https://download.docker.com/linux/ubuntu/gpg "$DOCKER_KEY_FPR" /etc/apt/keyrings/docker.gpg
     echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu noble stable" | sudo tee /etc/apt/sources.list.d/docker.list
-    sudo apt-get update -q
+    apt_get update -q
     v=$(apt-cache madison docker-ce | awk -v s="5:$DOCKER_CE_SERIES." 'index($3, s) == 1 { print $3 }' | sort -V | tail -1)
     [ -n "$v" ] || { echo "::error::Docker's repository has no docker-ce $DOCKER_CE_SERIES.x"; exit 1; }
-    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q --allow-downgrades "docker-ce=$v" "docker-ce-cli=$v" containerd.io docker-compose-plugin docker-buildx-plugin
+    apt_get install -y -q --allow-downgrades "docker-ce=$v" "docker-ce-cli=$v" containerd.io docker-compose-plugin docker-buildx-plugin
     e=$(docker version --format '{{.Server.Version}}'); echo "after: $e"
     [ "$(printf '%s\n28.1\n' "$e" | sort -V | head -1)" = 28.1 ] || { echo "::error::Docker Engine $e is older than 28.1"; exit 1; }
     summary "Docker Engine $e (docker-ce $v), $(docker compose version --short 2>/dev/null | sed 's/^/compose /'), containerd.io $(dpkg-query -W -f '${Version}' containerd.io)"
@@ -44,8 +47,8 @@ case "${1:-}" in
     shift
     key "https://keyserver.ubuntu.com/pks/lookup?op=get&options=mr&search=0x$WIRESHARK_PPA_KEY_FPR" "$WIRESHARK_PPA_KEY_FPR" /etc/apt/keyrings/wireshark-dev.gpg
     echo "deb [signed-by=/etc/apt/keyrings/wireshark-dev.gpg] https://ppa.launchpadcontent.net/wireshark-dev/stable/ubuntu noble main" | sudo tee /etc/apt/sources.list.d/wireshark-dev.list
-    sudo apt-get update -q
-    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends tshark python3-venv "$@"
+    apt_get update -q
+    apt_get install -y -q --no-install-recommends tshark python3-venv "$@"
     t=$(tshark --version | head -1); echo "$t"
     tv=$(grep -oE '[0-9]+\.[0-9]+\.[0-9]+' <<< "$t" | head -1)
     [ -n "$tv" ] && [ "$(printf '%s\n4.5.0\n' "$tv" | sort -V | head -1)" = 4.5.0 ] || { echo "::error::tshark ${tv:-?} is older than 4.5.0"; exit 1; }
