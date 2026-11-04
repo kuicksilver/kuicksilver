@@ -50,6 +50,12 @@ grep -Eq "VALIDSIG .* $fpr\$" <<< "$status" \
 if command -v sha256sum >/dev/null 2>&1; then sum=(sha256sum -c -); else sum=(shasum -a 256 -c -); fi
 echo "$sha256  $tarball" | "${sum[@]}" || { echo "FAILED: sha256 mismatch" >&2; exit 1; }
 
-rm -rf "openssl-$version"
-tar xzf "$tarball"
+# Unpacked once per verified tarball: the marker names the sha256 the tree came from, so a later run (the Docker JVM steps
+# run this script again inside an image whose tar cannot write into the bind-mounted checkout) leaves the tree alone.
+marker="openssl-$version/.ksl-unpacked-sha256"
+if [ "$(cat "$marker" 2>/dev/null || true)" != "$sha256" ]; then
+  rm -rf "openssl-$version"
+  tar xzf "$tarball"
+  echo "$sha256" > "$marker"
+fi
 echo "OK: $src/openssl-$version verified (pgp $fpr, sha256 $sha256)"
