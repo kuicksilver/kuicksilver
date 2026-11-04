@@ -46,7 +46,7 @@ class MonteCarloTest {
                     df = true,
                     batch = 1,
                 )
-            val res = SimScenario.transfer(Simulator(seed, params, pathCapabilities = df), 128 shl 10)
+            val res = Simulator(seed, params, pathCapabilities = df).use { SimScenario.transfer(it, 128 shl 10) }
             if (!res.finished || res.violations.isNotEmpty()) recordFailure("MonteCarloTest", seed, params)
             assertTrue(
                 res.finished && res.violations.isEmpty(),
