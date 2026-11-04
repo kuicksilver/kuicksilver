@@ -80,7 +80,7 @@ check "  and neither staging directory is left" 1 "" -- test -e "$corpus.old" -o
 # the replacement and its recovery share a lock: while a live process holds it, a second run waits instead of touching the
 # corpus; a lock whose holder died is taken over
 sleep 30 & holder=$!
-mkdir -p "$state/replace.lock"; echo "$holder" > "$state/replace.lock/pid"
+ln -s "$holder" "$state/replace.lock"
 rm -rf "$corpus"; mkdir -p "$corpus.old"; echo a > "$corpus.old/in-a"
 campaign status > /dev/null 2>&1 & waiter=$!
 for _ in 1 2 3 4 5 6 7 8 9 10; do kill -0 "$waiter" 2>/dev/null || break; sleep 0.2; done
@@ -89,7 +89,27 @@ check "  and leaves the corpus being replaced alone" 1 "" -- test -e "$corpus"
 kill "$holder" 2>/dev/null; wait "$holder" 2>/dev/null
 wait "$waiter"
 check "  then, its holder gone, takes the lock and recovers the corpus" 0 "" -- test -f "$corpus/in-a"
-check "  and releases the lock" 1 "" -- test -e "$state/replace.lock"
+check "  and releases the lock" 1 "" -- test -L "$state/replace.lock"
+# a holder we may not signal (EPERM: pid 1 for a user) counts as alive; the run waits
+if [ "$(id -u)" != 0 ]; then
+  ln -s 1 "$state/replace.lock"
+  campaign status > /dev/null 2>&1 & waiter=$!
+  for _ in 1 2 3 4 5 6 7 8 9 10; do kill -0 "$waiter" 2>/dev/null || break; sleep 0.2; done
+  check "a holder that may not be signalled (EPERM) counts as alive" 0 "" -- kill -0 "$waiter"
+  rm -f "$state/replace.lock"; wait "$waiter"
+fi
+# two takers of a dead holder's lock: both get through, one at a time, and leave neither the lock nor a stale link behind
+sleep 0.1 & dead=$!; wait "$dead" 2>/dev/null
+ln -s "$dead" "$state/replace.lock"
+campaign status > "$tmp/t1" 2>&1 & t1=$!
+campaign status > "$tmp/t2" 2>&1 & t2=$!
+wait "$t1"; r1=$?; wait "$t2"; r2=$?
+check "two takers of a dead holder's lock both finish" 0 "" -- test "$r1$r2" = 00
+check "  and leave no lock or stale link" 0 "" -- bash -c "! ls -d '$state'/replace.lock* 2> /dev/null | grep -q ."
+# a run killed between its two renames of a takeover left a stale link of its own: it does not block the next run
+ln -s "$dead" "$state/replace.lock.stale.99999"
+check "a stale link left by a killed taker does not block" 0 "" -- campaign status
+rm -f "$state/replace.lock.stale.99999"
 # a merge that keeps nothing leaves an empty corpus, not an error
 cat > "$tmp/bin/java" <<'SH'
 #!/bin/bash

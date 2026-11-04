@@ -31,18 +31,36 @@ mkdir -p "$state"
 shopt -s nullglob   # a glob that matches nothing expands to nothing, never to itself
 
 # Corpus replacement (replace_dir) and its recovery run under their own lock, so that a second invocation (status, a run
-# started meanwhile) never restores or removes what a running prune is replacing. A lock whose holder died is taken over.
+# started meanwhile) never restores or removes what a running prune is replacing. The lock is a symbolic link whose target
+# is the holder's pid, made in one step (ln -s fails when it exists). A holder that is gone is taken over by renaming the
+# link to a name of our own (of two takers only one rename succeeds) and checking that it still names that pid; a process we
+# may not signal (EPERM) counts as alive; a lock that names no pid (a non-link) and is older than a minute is stale.
 replace_lock="$state/replace.lock"
-take_replace_lock() {
-  local holder
-  until mkdir "$replace_lock" 2>/dev/null; do
-    holder=$(cat "$replace_lock/pid" 2>/dev/null || true)
-    if [ -n "$holder" ] && ! kill -0 "$holder" 2>/dev/null; then rm -rf "$replace_lock"; continue; fi
-    sleep 1
-  done
-  echo $$ > "$replace_lock/pid"
+holder_alive() {
+  local out
+  out=$(kill -0 "$1" 2>&1) && return 0
+  case "$out" in *ermitted*) return 0 ;; esac
+  return 1
 }
-drop_replace_lock() { rm -rf "$replace_lock"; }
+take_replace_lock() {
+  local holder stale
+  while :; do
+    ln -s "$$" "$replace_lock" 2>/dev/null && return 0
+    holder=$(readlink "$replace_lock" 2>/dev/null || true)
+    if [ -z "$holder" ]; then
+      [ -e "$replace_lock" ] || [ -L "$replace_lock" ] || continue
+      if [ -n "$(find "$replace_lock" -maxdepth 0 -mmin +1 2>/dev/null)" ]; then rm -rf "$replace_lock"; else sleep 1; fi
+      continue
+    fi
+    if holder_alive "$holder"; then sleep 1; continue; fi
+    stale="$replace_lock.stale.$$"
+    if mv "$replace_lock" "$stale" 2>/dev/null; then
+      # ours now, unless another taker replaced the dead holder's link before our rename: then it goes back
+      if [ "$(readlink "$stale" 2>/dev/null)" = "$holder" ]; then rm -f "$stale"; else mv "$stale" "$replace_lock" 2>/dev/null || rm -f "$stale"; fi
+    fi
+  done
+}
+drop_replace_lock() { [ "$(readlink "$replace_lock" 2>/dev/null)" != "$$" ] || rm -f "$replace_lock"; }
 
 # A prune or minimize killed while it replaced a corpus (replace_dir) left the old one as <dir>.old: put it back, and drop a
 # half-copied <dir>.new, so an interruption never loses what had grown.
