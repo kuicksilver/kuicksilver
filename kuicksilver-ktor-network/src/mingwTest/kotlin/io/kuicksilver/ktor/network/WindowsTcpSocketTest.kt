@@ -25,6 +25,7 @@ import platform.posix.closesocket
 import platform.posix.setsockopt
 import platform.posix.socket
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
@@ -32,6 +33,33 @@ import kotlin.test.assertTrue
 /** The Winsock TCP sockets: no handle reaches a child process, and no other socket binds over a listener (as msquic, Go). */
 class WindowsTcpSocketTest {
     private fun loopback(port: Int) = Sockaddr.v4(byteArrayOf(127, 0, 0, 1), port)
+
+    /**
+     * Windows bounds the read loop's wait for data, since its selector can lose FD_CLOSE (review 2026-10-28 readwait.md N2):
+     * the default is one second, and a socket the engine connects starts from it (the bounded-wait tests set it by hand).
+     */
+    @Test fun readsRecheckEverySecondByDefault() =
+        kotlinx.coroutines.runBlocking {
+            assertEquals(kotlin.time.Duration.parse("1s"), tcpReadRecheck)
+            val selector =
+                io.ktor.network.selector
+                    .SelectorManager(kotlinx.coroutines.Dispatchers.Default)
+            try {
+                val server = bindTcp(selector, "127.0.0.1", 0)
+                val port = (server.localAddress as io.ktor.network.sockets.InetSocketAddress).port
+                val client =
+                    connectTcp(
+                        selector,
+                        io.ktor.network.sockets
+                            .InetSocketAddress("127.0.0.1", port),
+                    ) as NativeTcpSocket
+                assertEquals(tcpReadRecheck, client.readRecheck)
+                client.close()
+                server.close()
+            } finally {
+                selector.close()
+            }
+        }
 
     @Test fun listenersAreExclusiveAndNoSocketIsInheritable() {
         tcpStartup()
