@@ -400,7 +400,8 @@ internal class ConnectionRuntime(
         // RFC 9221 section 3: any max_datagram_frame_size above 0 is support; a small one only bounds the payload
         val max = datagramLimit
         if (max == NO_DATAGRAMS) return DatagramSendResult.Unsupported(DatagramUnsupportedReason.PeerDoesNotSupport)
-        if (size > max) return DatagramSendResult.TooLarge(max) // -1 at a peer limit of 1: not even an empty datagram fits
+        // max is never below 0: at a peer limit of 1 (max -1) not even an empty datagram fits, and that is TooLarge(0)
+        if (size > max) return DatagramSendResult.TooLarge(maxOf(max, 0))
         return null
     }
 

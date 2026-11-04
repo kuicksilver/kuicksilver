@@ -42,8 +42,9 @@ public sealed interface DatagramSendResult {
     }
 
     /**
-     * The payload exceeds what the peer's limit and the path allow, [max] bytes at the call ([QuicConnection.maxDatagramSize]);
-     * -1 when the peer's `max_datagram_frame_size` is 1, which no DATAGRAM frame this endpoint writes fits, not even an empty one.
+     * The payload exceeds what the peer's limit and the path allow at the call ([QuicConnection.maxDatagramSize]). [max] is the
+     * largest payload that fits, 0 also when none fits; a TooLarge for an empty payload means not even an empty datagram fits
+     * (e.g. a peer `max_datagram_frame_size` of 1). Machine-readable: `peerSupportsDatagrams && maxDatagramSize.value == 0`.
      */
     public class TooLarge(
         public val max: Int,

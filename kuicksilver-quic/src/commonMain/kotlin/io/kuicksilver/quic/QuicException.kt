@@ -226,7 +226,8 @@ public sealed class QuicException(
      * `sendDatagram` with a payload above [QuicConnection.maxDatagramSize] (RFC 9221).
      *
      * @property size The payload's size in bytes.
-     * @property max The largest payload accepted at the call.
+     * @property max The largest payload that fits at the call, 0 also when none fits; with [size] 0 it means not even an
+     *   empty datagram fits (e.g. a peer `max_datagram_frame_size` of 1).
      */
     public class DatagramTooLarge(
         public val size: Int,

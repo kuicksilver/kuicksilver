@@ -100,7 +100,7 @@ public interface QuicConnection : AutoCloseable {
      * [DatagramUnsupportedReason.PeerDoesNotSupport] exactly when this is false; with a small limit it answers
      * [DatagramSendResult.TooLarge] for what does not fit. [maxDatagramSize] cannot tell these apart: it is 0 without
      * support, with a limit of 2 (room for an empty datagram only) and with a limit of 1 (room for none: an empty datagram
-     * too is `TooLarge(max = -1)`). False before the handshake has delivered the parameters (or, for 0-RTT, the
+     * too is `TooLarge(max = 0)`; `peerSupportsDatagrams && maxDatagramSize.value == 0` tells it). False before the handshake has delivered the parameters (or, for 0-RTT, the
      * remembered ones).
      */
     @ExperimentalKuicksilverApi

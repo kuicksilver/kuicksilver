@@ -16,7 +16,7 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 - QUIC: experimental `QuicConnection.peerSupportsDatagrams`, true once the peer advertised `max_datagram_frame_size`
   above 0 (RFC 9221 section 3), exactly when `sendDatagram` does not answer `PeerDoesNotSupport`. `maxDatagramSize` is 0
-  without support and also with a limit of 2 (room for an empty datagram only) or 1 (room for none: `TooLarge(-1)`); this
+  without support and also with a limit of 2 (room for an empty datagram only) or 1 (room for none: even an empty datagram is `TooLarge(0)`); this
   tells them apart.
 - QUIC: a server can advertise a preferred address (experimental `QuicServerConfig.preferredAddress`,
   `PreferredAddress`; RFC 9000 section 9.6). The endpoint listens there too (every loop of a group), advertises it with its
@@ -237,8 +237,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   `PeerDoesNotSupport`, although RFC 9221 section 3 makes any value above 0 support. The payload limit is now what the
   peer's frame size allows (8 bytes for a 10-byte limit, an empty datagram for 2), the reserve only shrinking the
   packet's bound; a peer limit below the packet's is no longer cut by 32 bytes either (497 instead of 465 bytes for a
-  500-byte limit). A limit of 1, which no DATAGRAM frame with a Length field fits, is support too: every datagram is
-  `TooLarge(max = -1)`.
+  500-byte limit). A limit of 1, which no DATAGRAM frame with a Length field fits, is support too: every datagram, an
+  empty one included, is `TooLarge(max = 0)` (`max` is never negative).
 - QUIC BBR (experimental): after persistent congestion the window from before comes back only once the losses are
   repaired (draft-ietf-ccwg-bbr-06 section 5.6.4.4, "by repairing all losses"): a packet sent since must be acknowledged
   and every packet declared lost up to the congestion settled, acknowledged late or kept past the persistent congestion
