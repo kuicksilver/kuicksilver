@@ -306,7 +306,7 @@ internal class ConnectionRuntime(
     private var seen = 0
 
     /** Each path reports its own peer address ([PathRuntime.remote]); a handshake-time rebinding moves it. Loop dispatcher only. */
-    private fun refreshPathRemotes() {
+    internal fun refreshPathRemotes() {
         val all = core.paths.all
         for (i in 0 until all.size) {
             val p = all[i]

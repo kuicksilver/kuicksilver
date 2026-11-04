@@ -472,6 +472,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   and every packet declared lost settled, acknowledged late or kept past the persistent congestion period. Before, the
   first acknowledgement of a newer packet restored it about one round trip after the congestion, while most of the lost
   data was still being resent.
+- QUIC: a local close puts its CONNECTION_CLOSE on the wire sooner. The endpoint loop now sends the frame before it fails
+  the connection's streams, wakes its waiters and calls the listener's `onClosed`, and an endpoint loads the close
+  exceptions' classes once when it starts instead of on the first close: on a cold JVM, close() to the first datagram
+  went from about 8 ms to 1.3-2.7 ms (in-memory sockets, local measurement), which narrows the window in which a peer's
+  packet can still reach an open connection (the interop closing-challenge race).
 - HTTP/3: a connection the peer closed (H3_NO_ERROR after GOAWAY, an idle timeout, a stateless reset, the client's own close on a rejected 0-RTT) is no longer
   reported now and then as a local `H3_INTERNAL_ERROR`. A session coroutine that failed with ktor-io's wrapper of the
   loss (a `ClosedWriteChannelException` whose cause is the `ConnectionLost`) could run before the session saw the

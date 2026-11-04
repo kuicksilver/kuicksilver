@@ -209,6 +209,7 @@ internal class EndpointLoop private constructor(
     /** Starts the receive, timer and forward coroutines; a [LoopGroup] calls it only once every loop exists, so no datagram is forwarded to a loop not built yet. */
     internal fun start() {
         QuicResourceProbe.register(this)
+        if (closeClassesLoaded.compareAndSet(0, 1)) scope.launch(Dispatchers.Default) { loadCloseClasses() }
         receiveJob = scope.launch { receiveLoop() }
         scope.launch { timerLoop() }
         scope.launch { followCapabilities(io, PathId.Initial) }
@@ -741,7 +742,9 @@ internal class EndpointLoop private constructor(
                 for (c in list) {
                     val rt = runtimes[c] ?: continue
                     try {
-                        rt.drainEvents()
+                        // a connection closing: its CONNECTION_CLOSE goes to the socket first, and the application side of the end
+                        // (failing streams, waking waiters, the listener's onClosed) follows; the paths' addresses are what the send needs
+                        if (c.state == ConnectionState.Closing) rt.refreshPathRemotes() else rt.drainEvents()
                         outBatch.clear()
                         if (c.poll(outBatch, now) > 0) sendOut(rt, outBatch)
                         rt.drainEvents()
@@ -1160,6 +1163,20 @@ internal class EndpointLoop private constructor(
                     throw IllegalArgumentException("preferred address $a is the endpoint's own address ($main)")
                 }
             }
+        }
+
+        private val closeClassesLoaded = AtomicInt(0)
+
+        /**
+         * Makes the exceptions a close carries once, so their classes are loaded and their message templates linked before the
+         * first close() needs them: on a cold JVM the first `ConnectionLost` took 3 to 5 ms to make (measured inside
+         * `ConnectionCore.close`, where it sat between close() and the CONNECTION_CLOSE on the wire); the next takes about 20 us.
+         * Once per process, off the loop.
+         */
+        internal fun loadCloseClasses() {
+            // a reason, so the message's inner template is linked too (on the JVM each string template links on its first run)
+            QuicException.ConnectionLost.ApplicationClosed(0, "-", io.kuicksilver.quic.Initiator.Local)
+            QuicException.ConnectionLost.TransportClosed(0, 0, "-", ByteArray(0), io.kuicksilver.quic.Initiator.Local, null)
         }
 
         /** Forwarded datagrams handled before admission, flush and a yield. */
