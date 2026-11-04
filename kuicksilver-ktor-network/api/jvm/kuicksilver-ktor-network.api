@@ -19,3 +19,38 @@ public final class io/kuicksilver/ktor/network/TlsSocket : io/ktor/network/socke
 	public final fun getTls ()Lio/kuicksilver/tls/TlsConnection;
 }
 
+public final class io/kuicksilver/ktor/network/websocket/PerMessageDeflate : io/ktor/websocket/WebSocketExtension {
+	public static final field Companion Lio/kuicksilver/ktor/network/websocket/PerMessageDeflate$Companion;
+	public static final field DEFAULT_MAX_INFLATED_MESSAGE_SIZE J
+	public fun clientNegotiation (Ljava/util/List;)Z
+	public fun getFactory ()Lio/ktor/websocket/WebSocketExtensionFactory;
+	public fun getProtocols ()Ljava/util/List;
+	public fun processIncomingFrame (Lio/ktor/websocket/Frame;)Lio/ktor/websocket/Frame;
+	public fun processOutgoingFrame (Lio/ktor/websocket/Frame;)Lio/ktor/websocket/Frame;
+	public fun serverNegotiation (Ljava/util/List;)Ljava/util/List;
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/kuicksilver/ktor/network/websocket/PerMessageDeflate$Companion : io/ktor/websocket/WebSocketExtensionFactory {
+	public fun getKey ()Lio/ktor/util/AttributeKey;
+	public fun getRsv1 ()Z
+	public fun getRsv2 ()Z
+	public fun getRsv3 ()Z
+	public synthetic fun install (Lkotlin/jvm/functions/Function1;)Lio/ktor/websocket/WebSocketExtension;
+	public fun install (Lkotlin/jvm/functions/Function1;)Lio/kuicksilver/ktor/network/websocket/PerMessageDeflate;
+}
+
+public final class io/kuicksilver/ktor/network/websocket/PerMessageDeflate$Config {
+	public fun <init> ()V
+	public final fun getClientNoContextTakeover ()Z
+	public final fun getCompressionLevel ()I
+	public final fun getMaxInflatedMessageSize ()J
+	public final fun getMinSizeToCompress ()I
+	public final fun getServerNoContextTakeover ()Z
+	public final fun setClientNoContextTakeover (Z)V
+	public final fun setCompressionLevel (I)V
+	public final fun setMaxInflatedMessageSize (J)V
+	public final fun setMinSizeToCompress (I)V
+	public final fun setServerNoContextTakeover (Z)V
+}
+

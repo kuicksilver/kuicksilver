@@ -7,14 +7,19 @@ package io.kuicksilver.ktor.server
 import io.ktor.http.HttpProtocolVersion
 import io.ktor.server.application.Application
 import io.ktor.server.application.ApplicationCall
+import io.ktor.server.application.install
+import io.ktor.server.application.pluginOrNull
+import io.ktor.server.engine.connector
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
 import io.ktor.server.routing.routing
+import io.ktor.server.websocket.WebSockets
 import io.ktor.utils.io.copyTo
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
 import io.kuicksilver.http3.Http3EarlyDataPolicy
 import io.kuicksilver.http3.http3Settings
+import io.kuicksilver.ktor.network.websocket.PerMessageDeflate
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.quic.KuicksilverLogger
 import io.kuicksilver.quic.LogLevel
@@ -50,6 +55,7 @@ class GuideSamplesTest {
         assertTrue("guide:ktor:webtransport-server" in guide, "marker webtransport-server")
         assertTrue("guide:ktor:priority-server" in guide, "marker priority-server")
         assertTrue("guide:ktor:certificate-rotation" in guide, "marker certificate-rotation")
+        assertTrue("guide:ktor:websocket-deflate-server" in guide, "marker websocket-deflate-server")
     }
 
     private object Metrics {
@@ -93,6 +99,28 @@ class GuideSamplesTest {
                 http3Settings = http3Settings { earlyData = Http3EarlyDataPolicy.Reject425() } // or keep the default: safe methods early
             }, module = Application::module)
         assertTrue(server.engine.configuration.http3Settings.earlyData is Http3EarlyDataPolicy.Reject425)
+    }
+
+    @Test fun webSocketDeflateSample() {
+        val server =
+            embeddedServer(Kuicksilver, configure = {
+                connector {
+                    host = "127.0.0.1"
+                    port = 0
+                }
+            }) {
+                // guide:ktor:websocket-deflate-server
+                install(WebSockets) {
+                    extensions { install(PerMessageDeflate) { maxInflatedMessageSize = 1024 * 1024 } }
+                }
+            }
+        server.start(wait = false)
+        try {
+            // ServerDeflateTest and ClientDeflateTest talk to such a server
+            assertTrue(server.application.pluginOrNull(WebSockets) != null)
+        } finally {
+            server.stop(100, 1000)
+        }
     }
 
     @Test fun webTransportSample() {

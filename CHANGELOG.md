@@ -168,6 +168,14 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   with `WebSocketException`. Both engines end a session whose peer sets an RSV bit no negotiated extension defines, or
   uses a reserved opcode, or masks its frames in the wrong direction (RFC 6455 section 5.1), with a Close frame with code
   1002 (threat model 3.20.1).
+- WebSockets: permessage-deflate on every target (RFC 7692; experimental `PerMessageDeflate` in
+  `kuicksilver-ktor-network`; `docs/guide/ktor.md`, "WebSocket compression"). A Ktor `WebSocketExtension` for the client
+  and server `WebSockets` plugins on any engine: java.util.zip on the JVM and Android, the platform's zlib on
+  Kotlin/Native (Linux binaries now need `libz.so.1`; Windows links it statically). The negotiation follows RFC 7692
+  sections 5 and 7.1 (invalid offers declined, invalid answers fail the handshake, `server_max_window_bits` honoured
+  where the deflater can keep to it); RSV1 goes on the first frame of a message only; an incoming message may inflate
+  to `maxInflatedMessageSize` (16 MiB by default). Kuicksilver's engines decompress the frames as they arrive and close
+  a connection whose message passes the limit with 1009, over HTTP/1.1 and HTTP/3 (threat model 3.20.2).
 - Ktor server: RFC 9218 priorities (experimental). `call.request.priority` is the client's signal (the `priority`
   field, over HTTP/3 also its PRIORITY_UPDATE frames, which `call.request.priorityUpdates` follows as a `StateFlow`),
   and `call.response.priority(urgency, incremental)` sets the response's `Priority` field with only the given

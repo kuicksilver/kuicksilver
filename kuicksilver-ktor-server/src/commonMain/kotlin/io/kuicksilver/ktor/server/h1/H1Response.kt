@@ -24,8 +24,7 @@ import io.ktor.utils.io.asByteWriteChannel
 import io.ktor.utils.io.cancel
 import io.ktor.utils.io.writeFully
 import io.ktor.utils.io.writePacket
-import io.kuicksilver.ktor.network.guardWebSocketInput
-import io.kuicksilver.ktor.server.webSocketRsv
+import io.kuicksilver.ktor.server.ServerWebSocketInput
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -82,17 +81,20 @@ internal class H1Response(
         // a WebSocket's frames are checked against the extensions negotiated here (RFC 6455 section 5.2); the check
         // ends with the upgrade
         val guard = Job()
+        var webSocket: ServerWebSocketInput? = null
         try {
             val upgradedInput =
                 if (call.request.headers[HttpHeaders.Upgrade]?.contains("websocket", ignoreCase = true) == true) {
-                    val allowedRsv = webSocketRsv(call.request.headers, headersBuilder)
-                    guardWebSocketInput(input, allowedRsv, untilClose = false, peerMasks = true, context = engineDispatcher + guard)
+                    ServerWebSocketInput(input, call.request.headers, headersBuilder, call.attributes, engineDispatcher + guard)
+                        .also { webSocket = it }
+                        .channel
                 } else {
                     input
                 }
             val upgradedJob = upgrade.upgrade(upgradedInput, output, engineDispatcher, userDispatcher)
             upgradedJob.join()
         } finally {
+            webSocket?.done()
             guard.cancel()
             output.flushAndClose()
             input.cancel()

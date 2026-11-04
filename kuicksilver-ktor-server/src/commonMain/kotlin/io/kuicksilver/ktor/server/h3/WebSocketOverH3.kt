@@ -11,8 +11,7 @@ import io.ktor.server.application.PipelineCall
 import io.ktor.utils.io.cancel
 import io.kuicksilver.http3.Http3Headers
 import io.kuicksilver.http3.Http3ServerRequest
-import io.kuicksilver.ktor.network.guardWebSocketInput
-import io.kuicksilver.ktor.server.webSocketRsv
+import io.kuicksilver.ktor.server.ServerWebSocketInput
 import kotlinx.coroutines.Job
 import kotlin.coroutines.CoroutineContext
 import kotlin.io.encoding.Base64
@@ -56,19 +55,14 @@ internal class H3UpgradeResponse(
         // the frames are checked against the extensions negotiated here (RFC 6455 section 5.2, RFC 9220 section 3); the
         // check ends with the upgrade
         val guard = Job()
+        var webSocket: ServerWebSocketInput? = null
         try {
-            val allowedRsv = webSocketRsv(call.request.headers, headersBuilder)
             val input =
-                guardWebSocketInput(
-                    stream.input,
-                    allowedRsv,
-                    untilClose = false,
-                    peerMasks = true,
-                    context =
-                        engineDispatcher + guard,
-                )
-            upgrade.upgrade(input, stream.output, engineDispatcher, userDispatcher).join()
+                ServerWebSocketInput(stream.input, call.request.headers, headersBuilder, call.attributes, engineDispatcher + guard)
+                    .also { webSocket = it }
+            upgrade.upgrade(input.channel, stream.output, engineDispatcher, userDispatcher).join()
         } finally {
+            webSocket?.done()
             guard.cancel()
             stream.output.flushAndClose()
             stream.input.cancel()

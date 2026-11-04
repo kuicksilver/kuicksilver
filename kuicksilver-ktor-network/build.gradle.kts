@@ -10,6 +10,7 @@ kotlin {
         commonMain.dependencies {
             api(project(":kuicksilver-tls"))
             api(libs.ktor.network)
+            api(libs.ktor.websockets) // PerMessageDeflate is a WebSocketExtension (RFC 7692)
         }
     }
 }

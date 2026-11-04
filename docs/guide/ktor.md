@@ -272,7 +272,8 @@ val client = HttpClient(Kuicksilver) {
 - Capabilities: `HttpTimeoutCapability`, `WebSocketCapability`, `WebSocketExtensionsCapability`, `SSECapability`; no
   Unix sockets. With `WebSocketExtensionsCapability` Ktor's `WebSockets` plugin offers the extensions installed with
   `extensions { install(...) }` in `Sec-WebSocket-Extensions` and negotiates them, over HTTP/1.1 and HTTP/3 (RFC 9220).
-  Ktor's own permessage-deflate, `WebSocketDeflateExtension`, exists on the JVM and Android only. Both engines check the
+  permessage-deflate on every target is `PerMessageDeflate` ([WebSocket compression](#websocket-compression-experimental));
+  Ktor's own `WebSocketDeflateExtension` exists on the JVM and Android only. Both engines check the
   handshake and the frames (RFC 6455 sections 4.1, 5.2 and 9.1): an answer that accepts an extension the client did not
   offer fails the call with `WebSocketException` before a session opens, and a frame with an RSV bit that no negotiated
   extension defines (RSV1 for permessage-deflate, on the first frame of a message only, RFC 7692 section 6.1), a
@@ -550,6 +551,68 @@ client.prepareGet("$origin/video.mp4") { priority(urgency = 5, incremental = tru
 }
 ```
 
+## WebSocket compression (experimental)
+
+`PerMessageDeflate` (`kuicksilver-ktor-network`, `@ExperimentalKuicksilverApi`) is permessage-deflate (RFC 7692) for
+Ktor's `WebSockets` plugins on every target: java.util.zip on the JVM and Android, the platform's zlib on Kotlin/Native.
+Install it in the client plugin, the server plugin, or both; it works on any Ktor engine, and on Kuicksilver's engines
+over HTTP/1.1 and HTTP/3 (RFC 9220) alike.
+
+```kotlin
+// guide:ktor:websocket-deflate-client
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+val client =
+    HttpClient(Kuicksilver) {
+        install(WebSockets) { extensions { install(PerMessageDeflate) } }
+    }
+```
+
+```kotlin
+// guide:ktor:websocket-deflate-server
+@file:OptIn(ExperimentalKuicksilverApi::class)   // experimental API (at the top of the file)
+install(WebSockets) {
+    extensions { install(PerMessageDeflate) { maxInflatedMessageSize = 1024 * 1024 } }
+}
+```
+
+| `PerMessageDeflate.Config` | Default | |
+|---|---|---|
+| `compressionLevel` | 6 | zlib level of outgoing messages, 0..9 |
+| `clientNoContextTakeover` | false | the client compresses each message on its own: a client offers it (and keeps to it whatever the answer), a server asks it of the client |
+| `serverNoContextTakeover` | false | the server compresses each message on its own: a client requires it (an answer without it fails the handshake), a server announces it |
+| `maxInflatedMessageSize` | 16 MiB | the largest size an incoming compressed message may inflate to |
+| `minSizeToCompress` | 0 | smaller messages go uncompressed; a fragmented message is always compressed |
+
+Only Text and Binary messages are compressed, with RSV1 on a message's first frame only (RFC 7692 section 6.1); a
+fragmented message is one DEFLATE stream across its frames. As a client the extension does not offer
+`client_max_window_bits`, so it compresses with a 32 KiB window; a server answer that is not a valid acceptance of its
+offer (an unknown, repeated or malformed parameter, `client_max_window_bits`, `permessage-deflate` twice, or a requested
+`server_no_context_takeover` left out) fails the call: Kuicksilver's client engine fails it with `WebSocketException`
+before a session opens, other engines with the `ProtocolViolationException` the extension throws. As a server it
+accepts the first offer it can keep to and declines the others (RFC 7692 section 5.1): an offered
+`server_max_window_bits` is answered with the same value when the deflater can keep to it (9 to 15 on Kotlin/Native;
+only 15 on the JVM and Android, whose `Deflater` has a fixed 32 KiB window: a smaller one is declined, and a client that
+offered nothing else gets an uncompressed session), `client_max_window_bits` is a hint it leaves unanswered. Incoming
+messages are always inflated with a 32 KiB window, which reads every smaller one.
+
+Decompression bombs. A compressed message may inflate to at most `maxInflatedMessageSize` bytes. Kuicksilver's engines
+decompress the frames as they arrive, in pieces of 64 KiB, and close the connection with 1009 (message too big, RFC 6455
+section 7.4.1) once a message passes the limit, after at most one piece more; malformed compressed data closes it with
+1002. On another engine the extension decompresses each message Ktor's session has reassembled (Ktor's `maxFrameSize`
+bounds that compressed size) and fails it with `FrameTooBigException`; what goes on the wire then is Ktor's choice
+(its session sends no 1009 for an extension's exception). DEFLATE cannot expand more than about 1032 times, so the
+time spent on a message is bounded by its compressed size as well; there is no separate ratio limit, which would only
+refuse legitimate, very repetitive messages.
+
+Memory per connection with permessage-deflate: the deflater's zlib state (about 256 KiB with a 32 KiB window, made on
+the first outgoing compressed message), the inflater's (about 40 KiB, on the first incoming one) and 80 KiB of
+buffers, plus the message being reassembled (at most the limit). Kuicksilver's engines free the zlib state when the
+session ends; on another engine it is freed when the extension is garbage collected.
+
+Linux Kotlin/Native binaries that use `kuicksilver-ktor-network` link the system's zlib dynamically (`libz.so.1`, in
+every glibc distribution, though a distroless or scratch image may need it added); on Windows zlib is linked statically,
+on Apple platforms it is the system's.
+
 ## Observability (experimental)
 
 Both engines report what they do without a logging dependency (the API is `@ExperimentalKuicksilverApi`). The QUIC side
@@ -749,6 +812,10 @@ request now contains its own failure.
   messages, the common case, pass.
 - A client that does not mask its frames, or a server that masks them, is closed with 1002, as the RFC requires; Ktor's
   own frame readers accept either.
+- Ktor 3.6.1's `WebSocketDeflateExtension` fails (`IllegalArgumentException: byteCount: -5 < 0`, the session closes
+  with 1011) when it compresses an empty message after an earlier one; it reads an empty message from
+  `PerMessageDeflate` (a single 0x00 byte, RFC 7692 section 7.2.3.6) correctly. Otherwise the two interoperate in both
+  directions over HTTP/1.1 and HTTP/3, context takeover included (`ClientDeflateKtorTest`).
 
 ### IPv6 over TCP on Kotlin/Native
 

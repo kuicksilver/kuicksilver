@@ -8,12 +8,15 @@ import io.ktor.client.HttpClient
 import io.ktor.client.engine.ProxyBuilder
 import io.ktor.client.engine.http
 import io.ktor.client.plugins.HttpTimeout
+import io.ktor.client.plugins.websocket.WebSockets
+import io.ktor.client.plugins.websocket.webSocket
 import io.ktor.client.request.HttpRequestData
 import io.ktor.client.request.get
 import io.ktor.client.request.prepareGet
 import io.ktor.client.statement.bodyAsChannel
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpProtocolVersion
+import io.ktor.server.application.install
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
 import io.ktor.server.routing.routing
@@ -21,7 +24,10 @@ import io.ktor.utils.io.copyTo
 import io.ktor.utils.io.discard
 import io.ktor.utils.io.readBuffer
 import io.ktor.utils.io.writeFully
+import io.ktor.websocket.Frame
+import io.ktor.websocket.readText
 import io.kuicksilver.annotations.ExperimentalKuicksilverApi
+import io.kuicksilver.ktor.network.websocket.PerMessageDeflate
 import io.kuicksilver.quic.qlog.AsyncQlogSink
 import io.kuicksilver.quic.qlog.DirectoryQlogSink
 import io.kuicksilver.tls.SpkiSha256
@@ -33,6 +39,8 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.minutes
+import io.ktor.server.websocket.WebSockets as ServerWebSockets
+import io.ktor.server.websocket.webSocket as serverWebSocket
 import io.kuicksilver.ktor.server.webTransport as webTransportRoute
 
 /** The client code blocks of docs/guide/ktor.md, kept compiling and running (block markers `guide:ktor:client*`). */
@@ -47,7 +55,32 @@ class GuideSamplesTest {
         assertTrue("guide:ktor:webtransport-client" in guide, "marker webtransport-client")
         assertTrue("guide:ktor:priority-client" in guide, "marker priority-client")
         assertTrue("guide:ktor:proxy" in guide, "marker proxy")
+        assertTrue("guide:ktor:websocket-deflate-client" in guide, "marker websocket-deflate-client")
     }
+
+    @Test fun webSocketDeflateSample() =
+        clientTest {
+            // guide:ktor:websocket-deflate-client
+            val client =
+                HttpClient(Kuicksilver) {
+                    install(WebSockets) { extensions { install(PerMessageDeflate) } }
+                }
+
+            val (server, port) =
+                testServer(plain = true) {
+                    install(ServerWebSockets) { extensions { install(PerMessageDeflate) } }
+                    routing { serverWebSocket("/ws") { send(Frame.Text(call.request.headers["Sec-WebSocket-Extensions"] ?: "none")) } }
+                }
+            try {
+                client.use { c ->
+                    c.webSocket("ws://127.0.0.1:$port/ws") {
+                        assertEquals("permessage-deflate", (incoming.receive() as Frame.Text).readText())
+                    }
+                }
+            } finally {
+                server.stopSuspend(100, 1000)
+            }
+        }
 
     @Test fun observabilityAndZeroRttSamples() {
         // guide:ktor:client-observability

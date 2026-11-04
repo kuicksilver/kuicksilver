@@ -45,7 +45,7 @@ import io.ktor.utils.io.writer
 import io.ktor.websocket.RawWebSocket
 import io.kuicksilver.http3.message.PriorityField
 import io.kuicksilver.ktor.client.priority
-import io.kuicksilver.ktor.client.webSocketRsvAfterHandshake
+import io.kuicksilver.ktor.client.webSocketAfterHandshake
 import io.kuicksilver.ktor.client.withSocketTimeout
 import io.kuicksilver.ktor.network.guardWebSocketInput
 import kotlinx.coroutines.CoroutineName
@@ -415,12 +415,21 @@ internal suspend fun readResponse(
             if (status == HttpStatusCode.SwitchingProtocols) {
                 // an extension the client did not offer fails the handshake before the connection is handed over
                 val extensions = headers.getAll(HttpHeaders.SecWebSocketExtensions).orEmpty()
-                val allowedRsv = webSocketRsvAfterHandshake(request, extensions)
+                val handshake = webSocketAfterHandshake(request, extensions, callContext)
                 onBodyDone(AfterResponse.HandOver)
                 val wsConfig = request.attributes[WEBSOCKETS_KEY]
+                val guarded =
+                    guardWebSocketInput(
+                        input,
+                        handshake.allowedRsv,
+                        untilClose = false,
+                        peerMasks = false,
+                        context = callContext,
+                        inflate = handshake.inflate,
+                    )
                 val session =
                     RawWebSocket(
-                        input = guardWebSocketInput(input, allowedRsv, untilClose = false, peerMasks = false, context = callContext),
+                        input = guarded,
                         output = output,
                         masking = true,
                         coroutineContext = callContext,
