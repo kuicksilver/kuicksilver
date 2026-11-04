@@ -158,6 +158,10 @@ public class Bbr(
     // loss recovery (section 5.6.4.4) and C.is_cwnd_limited over the last round
     private var inRecovery = false
     private var recoveryStart: TimeMark = TimeMark.NEVER
+
+    // the RTO recovery of persistent congestion: it ends once a packet sent since is acknowledged and every loss is settled
+    private var rtoRecovery = false
+    private var rtoNewAcked = false
     private var cwndLimitedThisRound = false
     private var cwndLimitedLastRound = false
     private var ackPending = false
@@ -208,9 +212,13 @@ public class Bbr(
         }
         sampler.onAcked(p, now)
         if (inRecovery && p.timeSent > recoveryStart) {
-            inRecovery = false
-            restoreCwnd()
-        } // a packet sent after recovery began was acknowledged: recovery is over
+            if (!rtoRecovery) {
+                endRecovery()
+            } else {
+                rtoNewAcked = true
+                if (lossesPending == 0L) endRecovery()
+            }
+        } // a packet sent after recovery began was acknowledged: a fast recovery is over, an RTO recovery once its losses settled
     }
 
     override fun onAck(
@@ -285,9 +293,13 @@ public class Bbr(
             // kMinimumWindow (section 7.6.2) is its NewReno controller's response. The loss state was saved when the episode began
             saveCwnd()
             cwnd = maxOf(sat(bytesInFlight, mss.toLong()), minPipeCwnd)
-            // an RTO recovery: a packet sent from now on acknowledged ends it, and RestoreCwnd brings the last good window back
+            // an RTO recovery, which ends "by repairing all losses" (section 5.6.4.4): once a packet sent from now on is
+            // acknowledged (the path carries data again) and no loss is left unsettled (each lost packet acknowledged late or
+            // past the persistent congestion period, while its data went again in packets sent since); then RestoreCwnd
             inRecovery = true
             recoveryStart = now
+            rtoRecovery = true
+            rtoNewAcked = false
             return
         }
         if (!inRecovery && (recoveryStart == TimeMark.NEVER || largestLostSentTime > recoveryStart)) {
@@ -313,15 +325,29 @@ public class Bbr(
 
     private fun settleEpisode(now: TimeMark) {
         if (lossesPending != 0L) return
-        if (spuriousInEpisode && !realLossInEpisode) handleSpuriousLossDetection(now)
+        if (spuriousInEpisode && !realLossInEpisode) {
+            handleSpuriousLossDetection(now)
+        } else if (rtoRecovery && rtoNewAcked && inRecovery) {
+            endRecovery() // the last loss of the RTO recovery settled after a packet sent since was acknowledged
+        }
         spuriousInEpisode = false
         realLossInEpisode = false
+    }
+
+    /** Leaves loss recovery having repaired its losses: RestoreCwnd (section 5.6.4.4). */
+    private fun endRecovery() {
+        inRecovery = false
+        rtoRecovery = false
+        rtoNewAcked = false
+        restoreCwnd()
     }
 
     /** HandleSpuriousLossDetection (section 5.5.11.2): every loss of the episode was spurious, back to the state before it. */
     private fun handleSpuriousLossDetection(now: TimeMark) {
         spuriousUndos++
         inRecovery = false
+        rtoRecovery = false
+        rtoNewAcked = false
         recoveryStart = TimeMark.NEVER
         restoreCwnd()
         isLossInRound = false

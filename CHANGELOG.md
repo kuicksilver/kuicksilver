@@ -467,6 +467,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   peer's frame size allows (8 bytes for a 10-byte limit, an empty datagram for 2), the reserve only shrinking the
   packet's bound; a peer limit below the packet's is no longer cut by 32 bytes either (497 instead of 465 bytes for a
   500-byte limit). A limit of 1, which no DATAGRAM frame with a Length field fits, still counts as no support.
+- QUIC BBR (experimental): after persistent congestion the window from before comes back only once the losses are
+  repaired (draft-ietf-ccwg-bbr-06 section 5.6.4.4, "by repairing all losses"): a packet sent since must be acknowledged
+  and every packet declared lost settled, acknowledged late or kept past the persistent congestion period. Before, the
+  first acknowledgement of a newer packet restored it about one round trip after the congestion, while most of the lost
+  data was still being resent.
 - HTTP/3: a connection the peer closed (H3_NO_ERROR after GOAWAY, an idle timeout, a stateless reset, the client's own close on a rejected 0-RTT) is no longer
   reported now and then as a local `H3_INTERNAL_ERROR`. A session coroutine that failed with ktor-io's wrapper of the
   loss (a `ClosedWriteChannelException` whose cause is the `ConnectionLost`) could run before the session saw the
