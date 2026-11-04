@@ -221,6 +221,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- Ktor server on Kotlin/Native: a connector that could not bind (a port in use, an HTTP/3 endpoint that refused its
+  configuration) aborted the process: the failure was thrown out of the accept coroutine, where no handler took it. It
+  now fails the start only, as on the JVM.
 - Windows (mingwX64) TCP: a pending connect could wait for ever when the selector lost its `FD_CONNECT`, which Winsock
   posts once, like `FD_CLOSE`. The engines bound it with their connect timeout; a direct `connectTcp` had no bound. The
   wait now looks at the socket itself every second (`SO_ERROR` and its peer address).

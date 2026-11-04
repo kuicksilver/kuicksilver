@@ -186,7 +186,18 @@ internal fun KuicksilverApplicationEngine.startTcp(
         val scheme = if (l.tls != null) "https" else "http"
         val acceptJob =
             launch(rootJob + CoroutineName("accept-${l.config}")) {
-                val (server, endpoint) = bindTcpAndUdp(selector, l, h3)
+                val (server, endpoint) =
+                    try {
+                        bindTcpAndUdp(selector, l, h3)
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Throwable) {
+                        // a start that cannot bind fails the start ([socket]), not this coroutine: a failure thrown out of it
+                        // reached no handler, which aborts the process on Kotlin/Native
+                        socket.completeExceptionally(e)
+                        h3Endpoint.completeExceptionally(e)
+                        return@launch
+                    }
                 h3Endpoint.complete(endpoint)
                 server.use {
                     socket.complete(server)
