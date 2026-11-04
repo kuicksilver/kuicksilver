@@ -450,6 +450,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   placeholder and the connection ID registry's key scratch were allocated outside the heap and never freed), which grew
   RSS by about 3 MB per hour under the soak's churn. `EndpointCore.close` also frees the endpoint's own buffers and keys
   when a connection's release throws.
+- QUIC on Kotlin/Native: an `EndpointCore` whose construction fails (a refused key, a loop group's keys already
+  released) frees the stateless buffer, the reset key, the address-token keys and the admission queue it had made
+  instead of leaking them, and `EndpointCore.close` runs every release even when one of them throws.
 - HTTP/3: a connection the peer closed (H3_NO_ERROR after GOAWAY, an idle timeout, a stateless reset, the client's own close on a rejected 0-RTT) is no longer
   reported now and then as a local `H3_INTERNAL_ERROR`. A session coroutine that failed with ktor-io's wrapper of the
   loss (a `ClosedWriteChannelException` whose cause is the `ConnectionLost`) could run before the session saw the
