@@ -187,6 +187,24 @@ class FloodTest {
     }
 
     @Test
+    fun negative_interimResponseFloodBounded() {
+        // a server that answers with 1xx responses forever: all of them together stay within the field section limit
+        val c = RawH2Peer(Role.CLIENT, Http2Settings(maxHeaderListSize = 4_096))
+        c.handshake()
+        val id = c.core.openStream(GET, endStream = true)
+        c.read()
+        val interim = listOf(":status" to "103", "link" to "</style.css>; rel=preload")
+        var delivered = 0
+        repeat(1_000) {
+            c.send(c.headers(id, interim, endStream = false))
+            delivered += c.events().count { it is H2Event.HeadersReceived }
+        }
+        assertTrue(delivered in 1..60, "interim responses delivered: $delivered")
+        c.assertStreamError(id, Http2ErrorCode.CANCEL)
+        assertEquals(1, c.allEvents.filterIsInstance<H2Event.StreamReset>().size)
+    }
+
+    @Test
     fun negative_priorityFloodCreatesNoState() {
         // CVE-2019-9513: PRIORITY frames build no tree here (section 5.3.2): no state, no output
         val s = server()

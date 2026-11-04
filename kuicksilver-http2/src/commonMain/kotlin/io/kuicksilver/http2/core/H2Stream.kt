@@ -30,6 +30,9 @@ internal class H2Stream(
     /** Receive side: a final (non-1xx) field section arrived, so DATA and trailers may follow (section 8.1). */
     var finalHeadersReceived = false
 
+    /** Receive side: the decoded size of the interim (1xx) field sections so far (RFC 9110 section 15.2: any number of them). */
+    var interimBytes = 0L
+
     /** Send side: the first field section went out. */
     var headersSent = false
 

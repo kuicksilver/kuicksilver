@@ -382,7 +382,14 @@ internal class H2ConnectionCore(
             ) {
                 return streamError(id, Http2ErrorCode.PROTOCOL_ERROR, "an interim response with END_STREAM", now)
             }
-            if (!informational) s.finalHeadersReceived = true
+            if (informational) {
+                // any number of interim responses (RFC 9110 section 15.2), but not unbounded: all of them together within
+                // our field section limit, as kuicksilver-http3 does; past it the response is discarded (section 8.2)
+                s.interimBytes += fields.sumOf { entrySize(it.first, it.second).toLong() }
+                if (s.interimBytes > settings.maxHeaderListSize) return resetStream(id, Http2ErrorCode.CANCEL, now, causedByPeer = true)
+            } else {
+                s.finalHeadersReceived = true
+            }
         }
         events.addLast(H2Event.HeadersReceived(id, fields, endStream, !fits))
         if (endStream) remoteEnded(s)
