@@ -276,6 +276,13 @@ printf '%s\n' '{"qlog_format":"JSON-SEQ","trace":{"common_fields":{"time_format"
 pj() { python3 "$pp" --client "$pc" | jq -c "$1"; }
 check "port: cell client side, JVM idle line and qlog"            0 '^\[1,30\(\.0\)*,0,"idle_timeout",39.812,9.83,9.812\]$' -- pj '[.client_exit, .client_idle_timeout, (.client_crash_lines | length), .client_qlogs[0].trigger, .client_qlogs[0].closed, .client_qlogs[0].last_sent, .client_qlogs[0].last_received]'
 check "port: cell client side, in flight and tracked packets after the last update" 0 '^\[0,0\]$' -- pj '[.client_qlogs[0].bytes_in_flight, .client_qlogs[0].tracked_after]'
+# an ACK-only packet is one whose frames are ACK and PADDING at most, however the qlog lists them (review 2026-10-28 C-N2)
+cp "$pc/client/qlog/a_client_b.sqlog" "$tmp/qlog.keep"
+sed -i.bak 's/^{"time":9830.0,"name":"transport:packet_sent","data":{"frames":\[\]}}$/{"time":9830.0,"name":"transport:packet_sent","data":{"frames":[{"frame_type":"ack"},{"frame_type":"padding"}]}}/' "$pc/client/qlog/a_client_b.sqlog"
+check "port: cell client side, a packet listing only ACK and PADDING is ACK-only" 0 '^\[0,0\]$' -- pj '[.client_qlogs[0].bytes_in_flight, .client_qlogs[0].tracked_after]'
+sed -i.bak 's/{"frame_type":"padding"}/{"frame_type":"ping"}/' "$pc/client/qlog/a_client_b.sqlog"
+check "port: cell client side, ACK with PING is tracked"          0 '^\[0,1\]$' -- pj '[.client_qlogs[0].bytes_in_flight, .client_qlogs[0].tracked_after]'
+cp "$tmp/qlog.keep" "$pc/client/qlog/a_client_b.sqlog"
 sed -i.bak 's/\$ConnectionLost\$Timeout: Idle timeout after 30s/.ConnectionLost.Timeout: Idle timeout after 1m 0.5s/' "$pc/output.txt"
 check "port: cell client side, Kotlin/Native class name, 1m 0.5s" 0 '^60.5$' -- pj '.client_idle_timeout'
 printf '%s\n' 'client  | Exception in thread "main" java.lang.IllegalStateException: boom' 'client  | 	at io.kuicksilver.interop.MainKt.main(Main.kt:58)' >> "$pc/output.txt"

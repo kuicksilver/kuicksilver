@@ -28,8 +28,8 @@ lines of the compose output and its log directory) holds the line Main.kt prints
 its one qlog shows the connection closed by the idle timer (trigger idle_timeout) at least that duration after the last packet
 it received and, less the 0.5 s an ACK may wait, after the last packet it sent. Its last sent packet is its last one from B:
 on the server-side capture it sent from no later binding. And it had nothing to send: its last recovery:metrics_updated has
-bytes_in_flight 0 and every packet it sent after that is ACK-only (no frames in the qlog's packet_sent), so no PTO was due
-(RFC 9002 section 6.2); a client that went quiet with something in flight has a broken loss timer, not an idle connection. A client that died of anything else between the rebind and its
+bytes_in_flight 0 and every packet it sent after that is ACK-only (no frames but ACK and PADDING in the qlog's packet_sent),
+so no PTO was due (RFC 9002 section 6.2); a client that went quiet with something in flight has a broken loss timer, not an idle connection. A client that died of anything else between the rebind and its
 idle timeout (an exception, a crash, an early exit) is no ENVIRONMENT verdict. Anything else is none either.
 
 Usage: prohibited-port-rebind.py CELL_DIR          decodes the cell's output.txt, server log, client log and qlog and
@@ -136,6 +136,11 @@ def client_log(cell):
     return (idle[0] if len(idle) == 1 else None), crash
 
 
+def ack_only(frames):
+    """Whether a qlog packet_sent's frames are ACK and PADDING at most: neither ack-eliciting nor in flight."""
+    return all(isinstance(f, dict) and f.get("frame_type") in ("ack", "padding") for f in frames)
+
+
 def client_qlogs(cell):
     """Per qlog of the client: the trigger and time (s) of its connection_closed, of its last sent and received packet, the
     bytes_in_flight of its last recovery:metrics_updated, and how many packets it sent after that with frames recovery tracks."""
@@ -154,8 +159,9 @@ def client_qlogs(cell):
                     t, ev = round(float(e["time"]) / 1000.0, 6), e.get("name")  # qlog ms, to s (µs, no float noise)
                     if ev == "transport:packet_sent":
                         q["last_sent"] = t
-                        # QlogWriter lists the frames recovery tracks (ack-eliciting ones, ACK with them); none: ACK-only
-                        if e.get("data", {}).get("frames"): q["tracked_after"] += 1
+                        # ACK-only: no frame but ACK and PADDING (RFC 9002 section 2), whether the qlog lists them or, as
+                        # QlogWriter does today for a packet recovery does not track, leaves the list empty
+                        if not ack_only(e.get("data", {}).get("frames") or []): q["tracked_after"] += 1
                     elif ev == "recovery:metrics_updated":
                         q["bytes_in_flight"], q["tracked_after"] = e.get("data", {}).get("bytes_in_flight"), 0
                     elif ev == "transport:packet_received": q["last_received"] = t
