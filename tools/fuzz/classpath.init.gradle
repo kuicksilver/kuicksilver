@@ -1,9 +1,9 @@
 // Copyright 2026 The Kuicksilver Authors
 // SPDX-License-Identifier: Apache-2.0
-// Gradle init script for tools/fuzz/campaign.sh: compiles the jvmTest classes of kuicksilver-tls, kuicksilver-quic, kuicksilver-http3 and kuicksilver-http2 and
+// Gradle init script for tools/fuzz/campaign.sh: compiles the jvmTest classes of kuicksilver-tls, kuicksilver-quic, kuicksilver-http3, kuicksilver-http2 and kuicksilver-ktor-network and
 // prints their test runtime classpath as one line per module, `FUZZ_CP <module>=<entries separated by ':'>`.
 allprojects {
-    if (name in ['kuicksilver-tls', 'kuicksilver-quic', 'kuicksilver-http3', 'kuicksilver-http2']) {
+    if (name in ['kuicksilver-tls', 'kuicksilver-quic', 'kuicksilver-http3', 'kuicksilver-http2', 'kuicksilver-ktor-network']) {
         afterEvaluate {
             def module = name
             tasks.register('printFuzzClasspath') {

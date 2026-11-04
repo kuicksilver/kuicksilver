@@ -41,7 +41,7 @@ import kotlin.time.Duration.Companion.seconds
  * costs a suspended coroutine, and cancelling the socket's job ends the wait. Ktor fixed its writer in 3.6.1 (KTOR-9959); this
  * one stays for what it adds: the bytes the kernel took ([bytesSent]), a reset on failure and the bounded close.
  *
- * Closing: the write channel is flushed and closed, the writer drains it and shuts the output down (a FIN, as ktor's writer
+ * Closing: the write channel is closed (without suspending: closeFromSocketClose), the writer drains it and shuts the output down (a FIN, as ktor's writer
  * does), and then the ktor socket is closed, which closes the descriptor once its reader has ended; when the writer had ended
  * already, at once. The drain is bounded by [closeTimeout] when one is set: past it the writer is cancelled. A writer that is cancelled (by that bound or
  * by the socket's job) or fails (a reset, or a failed channel) closes the descriptor itself, so a socket never stays open
@@ -61,6 +61,9 @@ internal class KslNioSocket(
     @Volatile private var aborted = false
 
     @Volatile private var writer: ReaderJob? = null
+
+    /** The application's side of [writer], as given to [attachForWriting] (closeFromSocketClose). */
+    @Volatile private var writeChannel: ByteChannel? = null
 
     /**
      * How long [close] lets the writer drain what is queued before it drops the rest and closes the socket; null: as long as
@@ -90,6 +93,7 @@ internal class KslNioSocket(
         }
         check(writer == null) { "writing channel has already been set" }
         val job = delegate.reader(Dispatchers.IO + CoroutineName("ksl-tcp-writer"), channel) { writeLoop(this.channel) }
+        writeChannel = channel
         writer = job
         // cancelled (the socket's job, or close()'s bound): nothing will drain the rest, release the descriptor; a failed writer
         // closed it already (writeLoop), since `reader` completes its job normally after a failure
@@ -152,8 +156,9 @@ internal class KslNioSocket(
         delegate.launch(CoroutineName("ksl-tcp-close")) {
             // bounded, the flush too: a peer that stops reading would hold the drain, and with it the socket, as long as it likes
             val drain: suspend () -> Unit = {
+                // not a suspending flushAndClose, which would take a waiting application write's slot (closeFromSocketClose)
                 try {
-                    w.channel.flushAndClose()
+                    writeChannel?.closeFromSocketClose() ?: w.channel.flushAndClose()
                 } catch (e: CancellationException) {
                     throw e
                 } catch (_: Throwable) {

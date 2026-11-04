@@ -10,13 +10,16 @@ import io.ktor.network.sockets.openReadChannel
 import io.ktor.network.sockets.openWriteChannel
 import io.ktor.utils.io.ByteChannel
 import io.ktor.utils.io.ByteWriteChannel
+import io.ktor.utils.io.ClosedWriteChannelException
 import io.ktor.utils.io.close
 import io.ktor.utils.io.readAvailable
 import io.ktor.utils.io.writeFully
 import io.kuicksilver.native.KslLoader
 import io.kuicksilver.tls.SessionCache
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
@@ -86,17 +89,30 @@ class TcpWriterTest {
         error("the writes never stalled ($last bytes): is the peer reading?")
     }
 
-    /** Writes up to 64 MiB in 64 KiB chunks, counting what [out] accepted, until the peer's window and every buffer are full. */
+    /**
+     * Writes up to 64 MiB in 64 KiB chunks, counting what [out] accepted, until the peer's window and every buffer are full.
+     * The writes fail once the test closes the socket or the peer resets it: the result is that failure (null when all were
+     * written), never an exception that escapes [this] scope (a SupervisorJob's child would report it as uncaught, and
+     * kotlinx-coroutines-test fails the next runTest of the JVM with it).
+     */
     private fun CoroutineScope.flood(
         out: ByteWriteChannel,
         written: AtomicLong,
-    ) = launch {
-        val chunk = ByteArray(64 shl 10)
-        repeat(1024) {
-            out.writeFully(chunk, 0, chunk.size)
-            written.addAndGet(chunk.size.toLong())
+    ): Deferred<Throwable?> =
+        async {
+            val chunk = ByteArray(64 shl 10)
+            try {
+                repeat(1024) {
+                    out.writeFully(chunk, 0, chunk.size)
+                    written.addAndGet(chunk.size.toLong())
+                }
+                null
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                e
+            }
         }
-    }
 
     private class NeverReadingPeer(
         val selector: SelectorManager,
@@ -192,20 +208,54 @@ class TcpWriterTest {
                 val c = connectTcp(peer.selector, InetSocketAddress("127.0.0.1", peer.port))
                 val out = c.openWriteChannel(autoFlush = true)
                 val written = AtomicLong()
-                val flood = scope.async { runCatching { scope.flood(out, written).join() } }
+                val flood = scope.flood(out, written)
                 awaitStall(written)
                 reset.complete(Unit)
-                val failure =
-                    withTimeoutOrNull(20.seconds) {
-                        val chunk = ByteArray(64 shl 10)
-                        runCatching { while (true) out.writeFully(chunk, 0, chunk.size) }.exceptionOrNull()
-                    }
+                // the application's one writer (a second one would race it for the channel's write slot)
+                val failure = withTimeoutOrNull(20.seconds) { flood.await() }
                 assertTrue(failure != null, "the application's writes fail after the peer's reset")
-                flood.cancel()
                 c.close()
                 val released = withTimeoutOrNull(10.seconds) { c.socketContext.join() }
                 assertTrue(released != null, "close() after a reset completes the socket")
                 assertTrue(!(c as KslNioSocket).isOpen, "and closes its descriptor")
+            } finally {
+                scope.cancel()
+                peer.selector.close()
+            }
+        }
+
+    /**
+     * close() while the application's write waits for room (a slow peer) must not take that write's place in the channel:
+     * the waiting write ends because the channel closed (ClosedWriteChannelException), not with ktor-io's
+     * "Concurrent write attempts", which the drain's suspending flush used to hand it.
+     */
+    @Test fun negative_closeWhileAWriteWaitsForRoomFailsItAsClosed(): Unit =
+        runBlocking {
+            val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+            val peer = neverReadingPeer(scope)
+            try {
+                val c = connectTcp(peer.selector, InetSocketAddress("127.0.0.1", peer.port))
+                (c as KslNioSocket).closeTimeout = 300.milliseconds
+                val written = AtomicLong()
+                val ended = CompletableDeferred<Throwable?>()
+                val out = c.openWriteChannel(autoFlush = true)
+                scope.launch {
+                    val chunk = ByteArray(64 shl 10)
+                    try {
+                        repeat(1024) {
+                            out.writeFully(chunk, 0, chunk.size)
+                            written.addAndGet(chunk.size.toLong())
+                        }
+                        ended.complete(null)
+                    } catch (e: Throwable) {
+                        ended.complete(e)
+                    }
+                }
+                awaitStall(written) // the write is waiting for room
+                c.close()
+                val failure = withTimeoutOrNull(20.seconds) { ended.await() }
+                assertTrue(failure is ClosedWriteChannelException, "the waiting write ends as closed, got $failure")
+                assertTrue(withTimeoutOrNull(20.seconds) { c.socketContext.join() } != null, "and the socket is released")
             } finally {
                 scope.cancel()
                 peer.selector.close()

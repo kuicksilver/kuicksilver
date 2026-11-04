@@ -166,8 +166,19 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   `WebSockets` plugin offers and negotiates the installed extensions over HTTP/1.1 and HTTP/3 (Ktor's JVM
   `WebSocketDeflateExtension` included); an answer that accepts an extension the client did not offer fails the call
   with `WebSocketException`. Both engines end a session whose peer sets an RSV bit no negotiated extension defines, or
-  uses a reserved opcode, or masks its frames in the wrong direction (RFC 6455 section 5.1), with a Close frame with code
-  1002 (threat model 3.20.1).
+  uses a reserved opcode, or masks its frames in the wrong direction (RFC 6455 section 5.1), or gives a 64-bit payload
+  length with its most significant bit set (section 5.2), with a Close frame with code 1002 (threat model 3.20.1).
+- WebSockets: permessage-deflate on every target (RFC 7692; experimental `PerMessageDeflate` in
+  `kuicksilver-ktor-network`; `docs/guide/ktor.md`, "WebSocket compression"). A Ktor `WebSocketExtension` for the client
+  and server `WebSockets` plugins on any engine: java.util.zip on the JVM and Android, the platform's zlib on
+  Kotlin/Native (Linux binaries now need `libz.so.1`; Windows links it statically). The negotiation follows RFC 7692
+  sections 5, 7 and 7.1 (invalid offers declined, invalid answers fail the handshake, `server_max_window_bits` honoured
+  where the deflater can keep to it; the engines refuse, as server, and fail, as client, permessage-deflate negotiated
+  next to another extension that uses RSV1); RSV1 goes on the first frame of a message only; an incoming message may inflate
+  to `maxInflatedMessageSize` (16 MiB by default). Kuicksilver's engines decompress the frames as they arrive and close
+  a connection whose message passes the limit with 1009, over HTTP/1.1 and HTTP/3 (threat model 3.20.2).
+  `compressIf { }` keeps chosen messages uncompressed (CRIME/BREACH, RFC 7692 section 8; the guide says when). Two
+  Jazzer targets, `ktor-network.inflate` and `ktor-network.wsGuard`.
 - Ktor server: RFC 9218 priorities (experimental). `call.request.priority` is the client's signal (the `priority`
   field, over HTTP/3 also its PRIORITY_UPDATE frames, which `call.request.priorityUpdates` follows as a `StateFlow`),
   and `call.response.priority(urgency, incremental)` sets the response's `Priority` field with only the given
@@ -278,6 +289,13 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- Ktor engines: closing a TCP or TLS socket while the application's write waits for room (a peer reading slower than
+  we write) ends that write as the close does: it returns, and later writes fail with `ClosedWriteChannelException`.
+  The close flushed the channel with a suspending `flushAndClose`, which took the channel's single write slot, and
+  ktor-io resumed the waiting write with `ConcurrentIOException` ("Concurrent write attempts") instead.
+- Ktor server: an HTTP/3 request whose call fails after Ktor committed its response but before any answer went out (an
+  upgrade that fails before its `:status 200`) is reset with H3_INTERNAL_ERROR; before, the request stream stayed open
+  and the client waited for an answer that never came.
 - QUIC server: a client that really rebinds during the handshake while an off-path observer races copies of its datagrams
   from the old address now completes the handshake on its new address. Each copy from the old address used to take the
   path back there and forget the PATH_CHALLENGE sent to the new one, so the client never got HANDSHAKE_DONE and the

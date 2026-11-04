@@ -11,8 +11,8 @@ import io.ktor.server.application.PipelineCall
 import io.ktor.utils.io.cancel
 import io.kuicksilver.http3.Http3Headers
 import io.kuicksilver.http3.Http3ServerRequest
-import io.kuicksilver.ktor.network.guardWebSocketInput
-import io.kuicksilver.ktor.server.webSocketRsv
+import io.kuicksilver.ktor.server.ServerWebSocketInput
+import io.kuicksilver.ktor.server.checkWebSocketRsvConflicts
 import kotlinx.coroutines.Job
 import kotlin.coroutines.CoroutineContext
 import kotlin.io.encoding.Base64
@@ -49,26 +49,30 @@ internal class H3UpgradeResponse(
     h3: Http3ServerRequest,
     private val engineDispatcher: CoroutineContext,
     private val userDispatcher: CoroutineContext,
+    private val beforeUpgradeForTest: (() -> Unit)? = null,
 ) : H3Response(call, h3) {
+    override suspend fun respondOutgoingContent(content: OutgoingContent) {
+        // before anything is committed, so the refusal can still be an ordinary error response
+        if (content is OutgoingContent.ProtocolUpgrade) checkWebSocketRsvConflicts(call.attributes)
+        super.respondOutgoingContent(content)
+    }
+
     override suspend fun respondUpgrade(upgrade: OutgoingContent.ProtocolUpgrade) {
+        beforeUpgradeForTest?.invoke()
         val headers = Http3Headers(h3Headers().fields.filter { it.first !in WebSocketOverH3.DROPPED })
         val stream = h3.acceptConnect(headers)
+        answered = true
         // the frames are checked against the extensions negotiated here (RFC 6455 section 5.2, RFC 9220 section 3); the
         // check ends with the upgrade
         val guard = Job()
+        var webSocket: ServerWebSocketInput? = null
         try {
-            val allowedRsv = webSocketRsv(call.request.headers, headersBuilder)
             val input =
-                guardWebSocketInput(
-                    stream.input,
-                    allowedRsv,
-                    untilClose = false,
-                    peerMasks = true,
-                    context =
-                        engineDispatcher + guard,
-                )
-            upgrade.upgrade(input, stream.output, engineDispatcher, userDispatcher).join()
+                ServerWebSocketInput(stream.input, call.request.headers, headersBuilder, call.attributes, engineDispatcher + guard)
+                    .also { webSocket = it }
+            upgrade.upgrade(input.channel, stream.output, engineDispatcher, userDispatcher).join()
         } finally {
+            webSocket?.done()
             guard.cancel()
             stream.output.flushAndClose()
             stream.input.cancel()

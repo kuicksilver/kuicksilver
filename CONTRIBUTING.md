@@ -85,6 +85,7 @@ bash tools/c-test.sh                                             # the ksl C tes
 bash tools/check/links.sh                                        # relative links in the Markdown files
 bash tools/check/doc-refs.sh                                     # docs: paths, anchors, symbols; docs and comments: private markers
 bash tools/check/rfc-table.sh                                    # the RFC compliance summary table: status, version, details link
+bash tools/check/guide-sync.sh                                   # the guides' code samples match their GuideSamplesTest blocks
 tools/ci/local-matrix.sh --dry-run                               # list the gate's steps; drop --dry-run to run them
 ```
 

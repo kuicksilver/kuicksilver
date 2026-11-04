@@ -124,6 +124,10 @@ Interop results (QUIC Interop Runner matrices, the analyses of red cells, WebTra
 | RFC 9218 | Ktor server | 🔶 | 0.3.0 | The Ktor server exposes the client's priority signal and its updates to the application. | [details](rfc/9218.md#ktor-server) |
 | RFC 9218 | Ktor client | 🔶 | 0.3.0 | The Ktor client sets a request's priority over h3 and h1. | [details](rfc/9218.md#ktor-client) |
 | RFC 6455 | §4.1, §5.1, §5.2, §9.1; RFC 7692 §6.1; RFC 9220 §3 — WebSocket extensions in the Ktor engines | ✅ | 0.3.0 | The Ktor client engine negotiates WebSocket extensions over HTTP/1.1 and HTTP/3. | [details](rfc/6455.md#s4-1-websocket-extensions-in-the-ktor-engines) |
+| RFC 7692 | §5, §7, §7.1 — negotiation of permessage-deflate | ✅ | 0.3.0 | `PerMessageDeflate` offers, accepts and declines permessage-deflate parameters as the RFC requires, on every target. | [details](rfc/7692.md#s5-negotiation) |
+| RFC 7692 | §6, §7.2 — compression and decompression | ✅ | 0.3.0 | Text and Binary messages are compressed and decompressed with context takeover, with RSV1 on the first frame only. | [details](rfc/7692.md#s6-compression-and-decompression) |
+| RFC 7692 | decompression limit (RFC 6455 §7.4.1, §10.4) | ✅ | 0.3.0 | An incoming compressed message may inflate to 16 MiB by default, and the engines close with 1009 past the limit. | [details](rfc/7692.md#decompression-limit) |
+| RFC 7692 | §8 — compression side channels (CRIME) | ✅ | 0.3.0 | The application can keep messages out of compression or out of a shared window, and the guide says when to. | [details](rfc/7692.md#s8-security-considerations) |
 | RFC 9220 | Extended CONNECT / WebSocket over h3 | ✅ | 0.2.0 | Extended CONNECT and WebSocket over HTTP/3 work at the HTTP/3 level. | [details](rfc/9220.md#extended-connect-websocket-over-h3) |
 | RFC 9297 | HTTP datagrams | ✅ | 0.3.0 | HTTP/3 datagrams and the Capsule Protocol on Extended CONNECT streams are supported. | [details](rfc/9297.md#http-datagrams) |
 | RFC 7838 | Alt-Svc | ✅ | 0.2.0 | The client caches Alt-Svc alternatives and the server can announce h3. | [details](rfc/7838.md#alt-svc) |

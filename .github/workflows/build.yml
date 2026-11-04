@@ -61,6 +61,8 @@ jobs:
         run: python3 tools/http/gen-tables.py --check
       - name: 'lint: links (Markdown, llms.txt)'
         run: bash tools/check/links.sh
+      - name: 'lint: guide code samples match GuideSamplesTest'
+        run: bash tools/check/guide-sync.sh
       - name: 'lint: SPDX headers'
         run: bash tools/check/spdx.sh .
       - name: 'lint: shell syntax'

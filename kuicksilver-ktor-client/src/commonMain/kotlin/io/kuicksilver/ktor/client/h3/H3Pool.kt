@@ -44,7 +44,7 @@ import io.kuicksilver.ktor.client.newRequestDns
 import io.kuicksilver.ktor.client.priority
 import io.kuicksilver.ktor.client.socketTimeoutMillis
 import io.kuicksilver.ktor.client.tlsConfigFor
-import io.kuicksilver.ktor.client.webSocketRsvAfterHandshake
+import io.kuicksilver.ktor.client.webSocketAfterHandshake
 import io.kuicksilver.ktor.client.withSocketInactivityTimeout
 import io.kuicksilver.ktor.client.withSocketTimeout
 import io.kuicksilver.ktor.network.guardWebSocketInput
@@ -748,10 +748,17 @@ internal class H3Pool(
             stream.headers.fields
                 .filter { it.first == "sec-websocket-extensions" }
                 .map { it.second }
-        val allowedRsv = webSocketRsvAfterHandshake(data, extensions)
+        val handshake = webSocketAfterHandshake(data, extensions, callContext)
         val session =
             RawWebSocket(
-                guardWebSocketInput(stream.input, allowedRsv, untilClose = true, peerMasks = false, context = callContext),
+                guardWebSocketInput(
+                    stream.input,
+                    handshake.allowedRsv,
+                    untilClose = true,
+                    peerMasks = false,
+                    context = callContext,
+                    inflate = handshake.inflate,
+                ),
                 stream.output,
                 masking = true,
                 coroutineContext = callContext,

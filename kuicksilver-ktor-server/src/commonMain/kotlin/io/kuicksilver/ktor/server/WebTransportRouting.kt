@@ -125,16 +125,20 @@ internal class WebTransportUpgrade(
         userContext: CoroutineContext,
     ): Job = throw UnsupportedOperationException("a WebTransport session is accepted by the Kuicksilver engine over HTTP/3 only")
 
+    /** Accepts the session on [request] and runs the handler; [answered] runs once the stream has its answer (200 or 400). */
     suspend fun acceptAndRun(
         request: Http3ServerRequest,
         headers: Http3Headers,
+        answered: () -> Unit = {},
     ) {
         val session =
             try {
-                request.acceptWebTransport(headers, protocol)
+                request.acceptWebTransport(headers, protocol).also { answered() }
             } catch (_: Http3Exception.Settings) {
+                answered()
                 return // the client's fault (no SETTINGS or datagrams): it was answered with 400
             } catch (_: Http3Exception.MessageError) {
+                answered()
                 return // the client's fault (a request that rules out capsules): answered with 400
             }
         try {

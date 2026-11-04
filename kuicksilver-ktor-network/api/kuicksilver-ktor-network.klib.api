@@ -6,6 +6,57 @@
 // - Show declarations: true
 
 // Library unique name: <io.kuicksilver:kuicksilver-ktor-network>
+final class io.kuicksilver.ktor.network.websocket/PerMessageDeflate : io.ktor.websocket/WebSocketExtension<io.kuicksilver.ktor.network.websocket/PerMessageDeflate.Config> { // io.kuicksilver.ktor.network.websocket/PerMessageDeflate|null[0]
+    final val factory // io.kuicksilver.ktor.network.websocket/PerMessageDeflate.factory|{}factory[0]
+        final fun <get-factory>(): io.ktor.websocket/WebSocketExtensionFactory<io.kuicksilver.ktor.network.websocket/PerMessageDeflate.Config, out io.ktor.websocket/WebSocketExtension<io.kuicksilver.ktor.network.websocket/PerMessageDeflate.Config>> // io.kuicksilver.ktor.network.websocket/PerMessageDeflate.factory.<get-factory>|<get-factory>(){}[0]
+    final val protocols // io.kuicksilver.ktor.network.websocket/PerMessageDeflate.protocols|{}protocols[0]
+        final fun <get-protocols>(): kotlin.collections/List<io.ktor.websocket/WebSocketExtensionHeader> // io.kuicksilver.ktor.network.websocket/PerMessageDeflate.protocols.<get-protocols>|<get-protocols>(){}[0]
+
+    final fun clientNegotiation(kotlin.collections/List<io.ktor.websocket/WebSocketExtensionHeader>): kotlin/Boolean // io.kuicksilver.ktor.network.websocket/PerMessageDeflate.clientNegotiation|clientNegotiation(kotlin.collections.List<io.ktor.websocket.WebSocketExtensionHeader>){}[0]
+    final fun processIncomingFrame(io.ktor.websocket/Frame): io.ktor.websocket/Frame // io.kuicksilver.ktor.network.websocket/PerMessageDeflate.processIncomingFrame|processIncomingFrame(io.ktor.websocket.Frame){}[0]
+    final fun processOutgoingFrame(io.ktor.websocket/Frame): io.ktor.websocket/Frame // io.kuicksilver.ktor.network.websocket/PerMessageDeflate.processOutgoingFrame|processOutgoingFrame(io.ktor.websocket.Frame){}[0]
+    final fun serverNegotiation(kotlin.collections/List<io.ktor.websocket/WebSocketExtensionHeader>): kotlin.collections/List<io.ktor.websocket/WebSocketExtensionHeader> // io.kuicksilver.ktor.network.websocket/PerMessageDeflate.serverNegotiation|serverNegotiation(kotlin.collections.List<io.ktor.websocket.WebSocketExtensionHeader>){}[0]
+    final fun toString(): kotlin/String // io.kuicksilver.ktor.network.websocket/PerMessageDeflate.toString|toString(){}[0]
+
+    final class Config { // io.kuicksilver.ktor.network.websocket/PerMessageDeflate.Config|null[0]
+        constructor <init>() // io.kuicksilver.ktor.network.websocket/PerMessageDeflate.Config.<init>|<init>(){}[0]
+
+        final var clientNoContextTakeover // io.kuicksilver.ktor.network.websocket/PerMessageDeflate.Config.clientNoContextTakeover|{}clientNoContextTakeover[0]
+            final fun <get-clientNoContextTakeover>(): kotlin/Boolean // io.kuicksilver.ktor.network.websocket/PerMessageDeflate.Config.clientNoContextTakeover.<get-clientNoContextTakeover>|<get-clientNoContextTakeover>(){}[0]
+            final fun <set-clientNoContextTakeover>(kotlin/Boolean) // io.kuicksilver.ktor.network.websocket/PerMessageDeflate.Config.clientNoContextTakeover.<set-clientNoContextTakeover>|<set-clientNoContextTakeover>(kotlin.Boolean){}[0]
+        final var compressionLevel // io.kuicksilver.ktor.network.websocket/PerMessageDeflate.Config.compressionLevel|{}compressionLevel[0]
+            final fun <get-compressionLevel>(): kotlin/Int // io.kuicksilver.ktor.network.websocket/PerMessageDeflate.Config.compressionLevel.<get-compressionLevel>|<get-compressionLevel>(){}[0]
+            final fun <set-compressionLevel>(kotlin/Int) // io.kuicksilver.ktor.network.websocket/PerMessageDeflate.Config.compressionLevel.<set-compressionLevel>|<set-compressionLevel>(kotlin.Int){}[0]
+        final var maxInflatedMessageSize // io.kuicksilver.ktor.network.websocket/PerMessageDeflate.Config.maxInflatedMessageSize|{}maxInflatedMessageSize[0]
+            final fun <get-maxInflatedMessageSize>(): kotlin/Long // io.kuicksilver.ktor.network.websocket/PerMessageDeflate.Config.maxInflatedMessageSize.<get-maxInflatedMessageSize>|<get-maxInflatedMessageSize>(){}[0]
+            final fun <set-maxInflatedMessageSize>(kotlin/Long) // io.kuicksilver.ktor.network.websocket/PerMessageDeflate.Config.maxInflatedMessageSize.<set-maxInflatedMessageSize>|<set-maxInflatedMessageSize>(kotlin.Long){}[0]
+        final var minSizeToCompress // io.kuicksilver.ktor.network.websocket/PerMessageDeflate.Config.minSizeToCompress|{}minSizeToCompress[0]
+            final fun <get-minSizeToCompress>(): kotlin/Int // io.kuicksilver.ktor.network.websocket/PerMessageDeflate.Config.minSizeToCompress.<get-minSizeToCompress>|<get-minSizeToCompress>(){}[0]
+            final fun <set-minSizeToCompress>(kotlin/Int) // io.kuicksilver.ktor.network.websocket/PerMessageDeflate.Config.minSizeToCompress.<set-minSizeToCompress>|<set-minSizeToCompress>(kotlin.Int){}[0]
+        final var serverNoContextTakeover // io.kuicksilver.ktor.network.websocket/PerMessageDeflate.Config.serverNoContextTakeover|{}serverNoContextTakeover[0]
+            final fun <get-serverNoContextTakeover>(): kotlin/Boolean // io.kuicksilver.ktor.network.websocket/PerMessageDeflate.Config.serverNoContextTakeover.<get-serverNoContextTakeover>|<get-serverNoContextTakeover>(){}[0]
+            final fun <set-serverNoContextTakeover>(kotlin/Boolean) // io.kuicksilver.ktor.network.websocket/PerMessageDeflate.Config.serverNoContextTakeover.<set-serverNoContextTakeover>|<set-serverNoContextTakeover>(kotlin.Boolean){}[0]
+
+        final fun compressIf(kotlin/Function1<io.ktor.websocket/Frame, kotlin/Boolean>) // io.kuicksilver.ktor.network.websocket/PerMessageDeflate.Config.compressIf|compressIf(kotlin.Function1<io.ktor.websocket.Frame,kotlin.Boolean>){}[0]
+    }
+
+    final object Companion : io.ktor.websocket/WebSocketExtensionFactory<io.kuicksilver.ktor.network.websocket/PerMessageDeflate.Config, io.kuicksilver.ktor.network.websocket/PerMessageDeflate> { // io.kuicksilver.ktor.network.websocket/PerMessageDeflate.Companion|null[0]
+        final const val DEFAULT_MAX_INFLATED_MESSAGE_SIZE // io.kuicksilver.ktor.network.websocket/PerMessageDeflate.Companion.DEFAULT_MAX_INFLATED_MESSAGE_SIZE|{}DEFAULT_MAX_INFLATED_MESSAGE_SIZE[0]
+            final fun <get-DEFAULT_MAX_INFLATED_MESSAGE_SIZE>(): kotlin/Long // io.kuicksilver.ktor.network.websocket/PerMessageDeflate.Companion.DEFAULT_MAX_INFLATED_MESSAGE_SIZE.<get-DEFAULT_MAX_INFLATED_MESSAGE_SIZE>|<get-DEFAULT_MAX_INFLATED_MESSAGE_SIZE>(){}[0]
+
+        final val key // io.kuicksilver.ktor.network.websocket/PerMessageDeflate.Companion.key|{}key[0]
+            final fun <get-key>(): io.ktor.util/AttributeKey<io.kuicksilver.ktor.network.websocket/PerMessageDeflate> // io.kuicksilver.ktor.network.websocket/PerMessageDeflate.Companion.key.<get-key>|<get-key>(){}[0]
+        final val rsv1 // io.kuicksilver.ktor.network.websocket/PerMessageDeflate.Companion.rsv1|{}rsv1[0]
+            final fun <get-rsv1>(): kotlin/Boolean // io.kuicksilver.ktor.network.websocket/PerMessageDeflate.Companion.rsv1.<get-rsv1>|<get-rsv1>(){}[0]
+        final val rsv2 // io.kuicksilver.ktor.network.websocket/PerMessageDeflate.Companion.rsv2|{}rsv2[0]
+            final fun <get-rsv2>(): kotlin/Boolean // io.kuicksilver.ktor.network.websocket/PerMessageDeflate.Companion.rsv2.<get-rsv2>|<get-rsv2>(){}[0]
+        final val rsv3 // io.kuicksilver.ktor.network.websocket/PerMessageDeflate.Companion.rsv3|{}rsv3[0]
+            final fun <get-rsv3>(): kotlin/Boolean // io.kuicksilver.ktor.network.websocket/PerMessageDeflate.Companion.rsv3.<get-rsv3>|<get-rsv3>(){}[0]
+
+        final fun install(kotlin/Function1<io.kuicksilver.ktor.network.websocket/PerMessageDeflate.Config, kotlin/Unit>): io.kuicksilver.ktor.network.websocket/PerMessageDeflate // io.kuicksilver.ktor.network.websocket/PerMessageDeflate.Companion.install|install(kotlin.Function1<io.kuicksilver.ktor.network.websocket.PerMessageDeflate.Config,kotlin.Unit>){}[0]
+    }
+}
+
 final class io.kuicksilver.ktor.network/TlsSocket : io.ktor.network.sockets/Socket { // io.kuicksilver.ktor.network/TlsSocket|null[0]
     final val coroutineContext // io.kuicksilver.ktor.network/TlsSocket.coroutineContext|{}coroutineContext[0]
         final fun <get-coroutineContext>(): kotlin.coroutines/CoroutineContext // io.kuicksilver.ktor.network/TlsSocket.coroutineContext.<get-coroutineContext>|<get-coroutineContext>(){}[0]
