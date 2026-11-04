@@ -25,7 +25,8 @@ Two properties shape the code more than anything else:
   injected. That makes the core deterministic, which the network simulator and the fuzzers rely on.
 - **Every layer sees only the layer directly below it** (ADR-0005): `kuicksilver-ktor-client` / `kuicksilver-ktor-server`
   → `kuicksilver-http3` → `kuicksilver-quic` → `kuicksilver-tls` → `kuicksilver-native` (the Ktor engines also use
-  `kuicksilver-ktor-network` for HTTP/1.1 over TLS). The transport depends on the `QuicCrypto` interface, not on
+  `kuicksilver-ktor-network` for HTTP/1.1 over TLS; `kuicksilver-http2`, HTTP/2 for the engines, sits on
+  `kuicksilver-native` only, ADR-0017). The transport depends on the `QuicCrypto` interface, not on
   OpenSSL (ADR-0002); the engines see the transport only through `Http3Endpoint` (ADR-0014).
 
 ## Entry Points
@@ -136,6 +137,19 @@ both share). The public API is
 `Http3Endpoint`, `Http3Connection`, `Http3Request`/`Http3Response`, `Http3ServerRequest`, `Http3Stream`, `Http3Settings`
 and `Http3Exception`. Every HTTP/3 resource bound (field section size, blocked streams, buffered PRIORITY_UPDATEs, frame
 length never pre-allocated) lives here.
+
+### `kuicksilver-http2`
+
+HTTP/2 (RFC 9113) and HPACK (RFC 7541) as a sans-IO core (`io.kuicksilver.http2`, ADR-0017), without QUIC or TLS: the
+engines bring the TLS socket. `frame` holds the frame codec (`FrameDecoder` checks a frame's declared length against the
+local maximum before it buffers anything, and streams unknown frames past without buffering them), `hpack` the encoder
+and decoder with the dynamic table and the generated static and Huffman tables (`tools/http/gen-tables.py`), and `core`
+the connection (`H2ConnectionCore`: the preface, SETTINGS and their acknowledgement deadline, stream states, flow control
+with WINDOW_UPDATE only after the application consumed the data and window auto-tuning, PING, two-phase GOAWAY) and every
+per-connection limit against floods (`H2Limits.kt`: CONTINUATION frames and bytes, queued control frames, empty DATA
+frames, a glitch budget, a server's budget for the client's stream resets). Field lists are HPACK-encoded when `poll`
+writes them, so the encoder follows the wire order. Bytes go in through `receive` and out through `poll`; time is a
+parameter. The public API is `Http2Settings` and `Http2ErrorCode`.
 
 ### `kuicksilver-ktor-client`, `kuicksilver-ktor-server`
 

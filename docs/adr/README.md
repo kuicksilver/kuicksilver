@@ -14,10 +14,11 @@ Documents and identifiers are in English.
 | [0006](0006-datagram-io-interface.md) | UDP behind the `DatagramIo` interface: portable and accelerated implementations | accepted |
 | [0007](0007-symbol-prefixing.md) | Symbol isolation: a version script for JNI, OpenSSL symbol prefixing for Kotlin/Native | accepted |
 | [0008](0008-no-0rtt-in-v1.md) | 0-RTT is disabled in v1 | superseded by 0015 |
-| [0009](0009-no-http2-in-v1.md) | No HTTP/2 in v1 | accepted |
+| [0009](0009-no-http2-in-v1.md) | No HTTP/2 in v1 | superseded by 0017 |
 | [0010](0010-apache-2-license.md) | Apache-2.0 license | accepted |
 | [0011](0011-trust-config-rules.md) | Trust rules: the name can be replaced but not disabled; the pin is always checked | accepted |
 | [0012](0012-certificate-verify-pause.md) | Certificate verification with a handshake pause (`SSL_set_retry_verify`), without upcalls from C | accepted |
 | [0013](0013-0rtt-anti-replay-design.md) | Anti-replay design for 0-RTT: OpenSSL's ticket freshness check, a per-server replay register, idempotency decided by the application | accepted as revised by its 2026-10 review; implemented in 0.2.0 by ADR-0015, which amends the register's scope (one per process) |
 | [0014](0014-ktor-engines-via-http3-endpoint.md) | The Ktor engines see the transport only through `Http3Endpoint` | accepted |
 | [0015](0015-0rtt-implementation.md) | 0-RTT in 0.2.0: ksl ABI 6 early data, a per-server replay register keyed by ticket, configuration-bound tickets, HTTP/3 gating | accepted |
+| [0017](0017-http2.md) | HTTP/2 in 0.3.0: a sans-IO `kuicksilver-http2` module next to `kuicksilver-http3`, no h2c, no server push | accepted |

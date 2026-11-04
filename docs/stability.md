@@ -234,6 +234,11 @@ type is experimental, so are its members.
 | `Http3Endpoint.connectEarly`, `Http3Request.allowEarlyData`, `Http3Settings.earlyData`, `Http3EarlyDataPolicy`, `Http3ServerRequest.receivedEarly` | 0-RTT |
 | `Http3Endpoint.shutdown` | graceful shutdown (`Http3Endpoint.stats` is stable, its counters as in `kuicksilver-quic`) |
 
+### `kuicksilver-http2`
+
+The whole module is experimental in 0.3.0 (ADR-0017): `Http2Settings` and `Http2ErrorCode` are
+`@ExperimentalKuicksilverApi`; the frame codec, HPACK and the connection core are internal.
+
 ### `kuicksilver-ktor-client`
 
 | API | Feature |

@@ -141,6 +141,7 @@ with ALPN set. Datagrams, stream priorities, connection migration and the sans-I
 | `kuicksilver-ktor-network` | `Socket.tls()` / `Socket.tlsServer()` for ktor-network sockets | [tls.md](docs/guide/tls.md) |
 | `kuicksilver-quic` | QUIC transport: streams, datagrams, migration, coroutine API and sans-IO core | [quic.md](docs/guide/quic.md) |
 | `kuicksilver-http3` | HTTP/3 and QPACK over `kuicksilver-quic` | [http3.md](docs/guide/http3.md) |
+| `kuicksilver-http2` | HTTP/2 and HPACK as a sans-IO core over any byte stream (experimental, for the engines; in progress for 0.3.0) | [architecture](docs/architecture.md) |
 | `kuicksilver-ktor-client` | `HttpClient(Kuicksilver)`: HTTP/1.1 over TLS and HTTP/3, Alt-Svc discovery, racing, fallback | [ktor.md](docs/guide/ktor.md) |
 | `kuicksilver-ktor-server` | `embeddedServer(Kuicksilver)`: HTTP/1.1 over TLS on TCP and HTTP/3 on UDP, same port | [ktor.md](docs/guide/ktor.md) |
 

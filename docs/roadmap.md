@@ -27,7 +27,7 @@ Known limits of 0.1.0, stated on purpose:
 - A handshake under heavy loss with an ML-KEM peer: both flights span two datagrams and the RFC 9002 initial PTO
   (1 s, 2 s, 4 s before an RTT sample) gives three retransmissions before a 10 s peer timeout
   ([interop.md](spec/interop.md), interop `handshakecorruption`).
-- No 0-RTT (ADR-0008), no HTTP/2 in the client engine (ADR-0009), no HTTP/3 server push, no certificate
+- No 0-RTT (ADR-0008), no HTTP/2 in the client engine (ADR-0009; superseded by ADR-0017 for 0.3.0), no HTTP/3 server push, no certificate
   compression (RFC 8879), no OCSP/CRL checks of our own (the platform verifier decides under `TrustConfig.Platform`).
 - No macosX64 target.
 - The `kuicksilver-testing` module is not published.
@@ -86,7 +86,7 @@ Known limits of 0.2.0, stated on purpose:
   ([quic.md](guide/quic.md)).
 - 0-RTT is opt-in and experimental (ADR-0015); a replay into another server process that shares explicit ticket keys
   passes the freshness check only (threat model 3.8).
-- No HTTP/2 in the client engine (ADR-0009), no HTTP/3 server push, no certificate compression (RFC 8879), no OCSP/CRL
+- No HTTP/2 in the client engine (ADR-0009; superseded by ADR-0017 for 0.3.0), no HTTP/3 server push, no certificate compression (RFC 8879), no OCSP/CRL
   checks of our own (the platform verifier decides under `TrustConfig.Platform`).
 - `loops > 1` only on Linux and Android (kernel `SO_REUSEPORT` flow hashing); macOS and Windows run one loop per port.
 - Windows: verified in a local VM only, no hosted CI run (above).
@@ -121,6 +121,8 @@ Moved to 0.3.0: a run of the iOS device checklist on a physical iPhone
 ### 0.3.0 — client and server completeness (planned for December 2026)
 
 - WebTransport over HTTP/3 (draft-ietf-webtrans-http3), experimental.
+- HTTP/2 (RFC 9113, HPACK RFC 7541) in a new module `kuicksilver-http2` (ADR-0017): the client offers `h2` next to
+  `http/1.1` over TLS, the server serves it opt-in, WebSocket over HTTP/2 (RFC 8441); no h2c, no server push.
 - RFC 9460 HTTPS records as a source of h3, off by default.
 - QUIC server, rebind during the handshake: keep both candidate addresses as separate paths and challenge both, so that
   a client that really rebinds while an observer races copies of its packets from the old address is not held on the

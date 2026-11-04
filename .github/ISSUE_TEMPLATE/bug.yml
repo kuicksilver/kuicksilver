@@ -27,6 +27,7 @@ body:
         - kuicksilver-ktor-network
         - kuicksilver-quic
         - kuicksilver-http3
+        - kuicksilver-http2
         - kuicksilver-ktor-client
         - kuicksilver-ktor-server
         - build / tooling

@@ -35,6 +35,25 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   above 0 (RFC 9221 section 3), exactly when `sendDatagram` does not answer `PeerDoesNotSupport`. `maxDatagramSize` is 0
   without support and also with a limit of 2 (room for an empty datagram only) or 1 (room for none: even an empty datagram is `TooLarge(0)`); this
   tells them apart.
+- HTTP/2: a new published module, `kuicksilver-http2` (ADR-0017, superseding ADR-0009), with HTTP/2 (RFC 9113) and
+  HPACK (RFC 7541) as a sans-IO core for the Ktor engines; it depends only on `kuicksilver-native` and is in the BOM. Its
+  HPACK static and Huffman tables and the RFC 7541 appendix C vectors (`tools/vectors/`) are generated from the RFC text
+  by `tools/http/gen-tables.py`, whose `--check` also verifies that `kuicksilver-http3` carries the same Huffman table.
+  The module's frame codec (RFC 9113 sections 4 and 6) checks every declared frame length against the frame's type and
+  the local SETTINGS_MAX_FRAME_SIZE before buffering anything and streams frames of unknown types past unbuffered;
+  `Http2ErrorCode` (experimental) lists the section 7 error codes.
+  HPACK (RFC 7541) matches appendix C byte for byte; the decoder bounds the decoded field list (an "HPACK bomb" of
+  references stops at the limit and allocates nothing per reference) while keeping its table in step, rejects integers
+  above 31 bits, oversized strings before allocating them and invalid Huffman padding; the encoder never indexes
+  credentials and follows the peer's table size.
+  The connection core (RFC 9113 sections 3.4, 5, 6) runs the preface, stream states, SETTINGS with an acknowledgement
+  deadline, flow control that returns credit only as the application reads (with window auto-tuning), PING and a two-phase
+  GOAWAY, and bounds every flood per connection: CONTINUATION frames and field-block bytes before decoding, queued control
+  frames, empty DATA frames, a glitch budget for PRIORITY, SETTINGS, unknown frames, PINGs with nothing of ours in between
+  and the stream errors the peer causes (MadeYouReset), a server's budget for the client's RST_STREAM frames (Rapid Reset), with reset streams counted
+  until their handler returns. Field lists are HPACK-encoded in wire order. New experimental `Http2Settings`.
+  New fuzz targets `http2.frames`, `http2.hpackDecode`, `http2.connectionServer` and `http2.hpackRoundTrip` (differential),
+  with seeds from `tools/http/gen-fuzz-seeds.py`.
 - QUIC: a server can advertise a preferred address (experimental `QuicServerConfig.preferredAddress`,
   `PreferredAddress`; RFC 9000 section 9.6). The endpoint listens there too (every loop of a group), advertises it with its
   sequence-1 connection ID, and moves a connection there once the client's address is validated on that socket,

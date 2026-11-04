@@ -10,5 +10,5 @@ dependencyResolutionManagement {
 }
 rootProject.name = "kuicksilver"
 include(":kuicksilver-native", ":kuicksilver-tls", ":kuicksilver-ktor-network", ":kuicksilver-quic", ":kuicksilver-testing", ":kuicksilver-interop", ":kuicksilver-bench")
-include(":kuicksilver-http3", ":kuicksilver-ktor-server", ":kuicksilver-ktor-client", ":kuicksilver-bom")
+include(":kuicksilver-http3", ":kuicksilver-http2", ":kuicksilver-ktor-server", ":kuicksilver-ktor-client", ":kuicksilver-bom")
 include(":kuicksilver-soak")

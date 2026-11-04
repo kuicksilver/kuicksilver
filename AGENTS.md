@@ -16,7 +16,8 @@ These rules apply to any AI agent working in this repository. Human contributors
   [docs/spec/threat-model.md](docs/spec/threat-model.md).
 - Modules: `kuicksilver-native` (C shim `ksl` in `src/c`, JNI in `src/jni`) → `kuicksilver-tls` → `kuicksilver-quic` →
   `kuicksilver-http3` → `kuicksilver-ktor-client` / `kuicksilver-ktor-server`; `kuicksilver-ktor-network` sits on
-  `kuicksilver-tls`. A module depends only on the layer directly below it.
+  `kuicksilver-tls`; `kuicksilver-http2` (HTTP/2 and HPACK, sans-IO) sits on `kuicksilver-native` only (ADR-0017). A module
+  depends only on the layer directly below it.
 - Scripts: `tools/openssl` (pinned OpenSSL), `tools/prefix`, `tools/check`, `tools/ci`, `tools/interop`, `tools/fuzz`.
 
 ## Commands
@@ -26,7 +27,7 @@ These rules apply to any AI agent working in this repository. Human contributors
 ./gradlew --max-workers=2 :<module>:jvmTest --tests '<pattern>'
 ./gradlew --max-workers=2 :<module>:macosArm64Test           # Kotlin/Native, macOS host
 bash tools/c-test.sh                                         # ksl C tests (ASan/UBSan)
-./gradlew checkSpdxHeaders checkLayerDependencies :kuicksilver-quic:checkQuicArchitecture :kuicksilver-http3:checkHttp3Architecture
+./gradlew checkSpdxHeaders checkLayerDependencies :kuicksilver-quic:checkQuicArchitecture :kuicksilver-http3:checkHttp3Architecture :kuicksilver-http2:checkHttp2Architecture
 ./gradlew :<module>:checkKotlinAbi                           # :<module>:updateKotlinAbi after an intended API change
 bash tools/check/links.sh                                    # Markdown links
 bash tools/check/doc-refs.sh                                 # doc paths, anchors, symbols; private markers in docs and comments
@@ -40,7 +41,7 @@ need Docker. Prefer module-scoped tasks: the root `checkKotlinAbi` builds every 
 
 - Work test-first: write the failing test, run it and see it fail for the expected reason, then fix. Security checks get
   a `negative_*` test. No `sleep`/`delay` waits: use virtual time, the simulator or `MemoryNetwork`.
-- Keep the QUIC and HTTP/3 codecs sans-IO (no sockets, clocks, coroutines or default randomness there) and keep the
+- Keep the QUIC, HTTP/3 and HTTP/2 codecs sans-IO (no sockets, clocks, coroutines or default randomness there) and keep the
   layering; the architecture checks enforce both.
 - Public API: `explicitApi()`, KDoc on every public declaration, new API under `@ExperimentalKuicksilverApi`, ABI dump
   updated in the same commit.
@@ -60,4 +61,5 @@ need Docker. Prefer module-scoped tasks: the root `checkKotlinAbi` builds every 
 - Never change `gradle/openssl.toml` (pin, hash, key fingerprint) or the vendored OpenSSL key without being asked.
 - Never read `SSLKEYLOGFILE` implicitly, log secrets, or copy key material into the Kotlin heap.
 - Never put non-public vulnerability details into prompts of third-party services.
-- Never edit generated files by hand: ABI dumps (`api/`), the QPACK tables and the seed corpora have generators.
+- Never edit generated files by hand: ABI dumps (`api/`), the QPACK and HPACK tables (`tools/http3/gen-qpack-tables.py`,
+  `tools/http/gen-tables.py`), the RFC 7541 vectors and the seed corpora have generators.

@@ -11,8 +11,10 @@ val allowed = mapOf(
     "kuicksilver-interop" to setOf("kuicksilver-quic", "kuicksilver-http3"),
     "kuicksilver-bench" to setOf("kuicksilver-quic"),
     "kuicksilver-http3" to setOf("kuicksilver-quic"),
-    "kuicksilver-ktor-server" to setOf("kuicksilver-http3", "kuicksilver-ktor-network"),
-    "kuicksilver-ktor-client" to setOf("kuicksilver-http3", "kuicksilver-ktor-network"),
+    // HTTP/2 needs no QUIC or TLS (ADR-0017): only the annotations of kuicksilver-native, the bottom layer
+    "kuicksilver-http2" to setOf("kuicksilver-native"),
+    "kuicksilver-ktor-server" to setOf("kuicksilver-http3", "kuicksilver-http2", "kuicksilver-ktor-network"),
+    "kuicksilver-ktor-client" to setOf("kuicksilver-http3", "kuicksilver-http2", "kuicksilver-ktor-network"),
     "kuicksilver-soak" to setOf("kuicksilver-ktor-client", "kuicksilver-ktor-server"),   // the soak harness drives the whole stack (not published)
 )
 val checkLayerDependencies = tasks.register("checkLayerDependencies") {

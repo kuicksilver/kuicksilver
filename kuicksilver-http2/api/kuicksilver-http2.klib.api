@@ -1,0 +1,77 @@
+// Klib ABI Dump
+// Targets: [iosArm64, iosSimulatorArm64, linuxArm64, linuxX64, macosArm64, mingwX64]
+// Rendering settings:
+// - Signature version: 2
+// - Show manifest properties: true
+// - Show declarations: true
+
+// Library unique name: <io.kuicksilver:kuicksilver-http2>
+final enum class io.kuicksilver.http2/Http2ErrorCode : kotlin/Enum<io.kuicksilver.http2/Http2ErrorCode> { // io.kuicksilver.http2/Http2ErrorCode|null[0]
+    enum entry CANCEL // io.kuicksilver.http2/Http2ErrorCode.CANCEL|null[0]
+    enum entry COMPRESSION_ERROR // io.kuicksilver.http2/Http2ErrorCode.COMPRESSION_ERROR|null[0]
+    enum entry CONNECT_ERROR // io.kuicksilver.http2/Http2ErrorCode.CONNECT_ERROR|null[0]
+    enum entry ENHANCE_YOUR_CALM // io.kuicksilver.http2/Http2ErrorCode.ENHANCE_YOUR_CALM|null[0]
+    enum entry FLOW_CONTROL_ERROR // io.kuicksilver.http2/Http2ErrorCode.FLOW_CONTROL_ERROR|null[0]
+    enum entry FRAME_SIZE_ERROR // io.kuicksilver.http2/Http2ErrorCode.FRAME_SIZE_ERROR|null[0]
+    enum entry HTTP_1_1_REQUIRED // io.kuicksilver.http2/Http2ErrorCode.HTTP_1_1_REQUIRED|null[0]
+    enum entry INADEQUATE_SECURITY // io.kuicksilver.http2/Http2ErrorCode.INADEQUATE_SECURITY|null[0]
+    enum entry INTERNAL_ERROR // io.kuicksilver.http2/Http2ErrorCode.INTERNAL_ERROR|null[0]
+    enum entry NO_ERROR // io.kuicksilver.http2/Http2ErrorCode.NO_ERROR|null[0]
+    enum entry PROTOCOL_ERROR // io.kuicksilver.http2/Http2ErrorCode.PROTOCOL_ERROR|null[0]
+    enum entry REFUSED_STREAM // io.kuicksilver.http2/Http2ErrorCode.REFUSED_STREAM|null[0]
+    enum entry SETTINGS_TIMEOUT // io.kuicksilver.http2/Http2ErrorCode.SETTINGS_TIMEOUT|null[0]
+    enum entry STREAM_CLOSED // io.kuicksilver.http2/Http2ErrorCode.STREAM_CLOSED|null[0]
+
+    final val code // io.kuicksilver.http2/Http2ErrorCode.code|{}code[0]
+        final fun <get-code>(): kotlin/Long // io.kuicksilver.http2/Http2ErrorCode.code.<get-code>|<get-code>(){}[0]
+    final val entries // io.kuicksilver.http2/Http2ErrorCode.entries|#static{}entries[0]
+        final fun <get-entries>(): kotlin.enums/EnumEntries<io.kuicksilver.http2/Http2ErrorCode> // io.kuicksilver.http2/Http2ErrorCode.entries.<get-entries>|<get-entries>#static(){}[0]
+
+    final fun valueOf(kotlin/String): io.kuicksilver.http2/Http2ErrorCode // io.kuicksilver.http2/Http2ErrorCode.valueOf|valueOf#static(kotlin.String){}[0]
+    final fun values(): kotlin/Array<io.kuicksilver.http2/Http2ErrorCode> // io.kuicksilver.http2/Http2ErrorCode.values|values#static(){}[0]
+
+    final object Companion { // io.kuicksilver.http2/Http2ErrorCode.Companion|null[0]
+        final fun of(kotlin/Long): io.kuicksilver.http2/Http2ErrorCode // io.kuicksilver.http2/Http2ErrorCode.Companion.of|of(kotlin.Long){}[0]
+    }
+}
+
+final class io.kuicksilver.http2/Http2Settings { // io.kuicksilver.http2/Http2Settings|null[0]
+    constructor <init>(kotlin/Int = ..., kotlin/Int = ..., kotlin/Int = ..., kotlin/Int = ..., kotlin/Int = ..., kotlin/Int = ..., kotlin/Int = ..., kotlin/Int = ..., kotlin.time/Duration = ..., kotlin/Int = ..., kotlin/Int = ..., kotlin/Int = ..., kotlin/Int = ..., kotlin/Int = ..., kotlin.time/Duration = ..., kotlin/Int = ..., kotlin/Int = ...) // io.kuicksilver.http2/Http2Settings.<init>|<init>(kotlin.Int;kotlin.Int;kotlin.Int;kotlin.Int;kotlin.Int;kotlin.Int;kotlin.Int;kotlin.Int;kotlin.time.Duration;kotlin.Int;kotlin.Int;kotlin.Int;kotlin.Int;kotlin.Int;kotlin.time.Duration;kotlin.Int;kotlin.Int){}[0]
+
+    final val glitchBurst // io.kuicksilver.http2/Http2Settings.glitchBurst|{}glitchBurst[0]
+        final fun <get-glitchBurst>(): kotlin/Int // io.kuicksilver.http2/Http2Settings.glitchBurst.<get-glitchBurst>|<get-glitchBurst>(){}[0]
+    final val glitchesPerSecond // io.kuicksilver.http2/Http2Settings.glitchesPerSecond|{}glitchesPerSecond[0]
+        final fun <get-glitchesPerSecond>(): kotlin/Int // io.kuicksilver.http2/Http2Settings.glitchesPerSecond.<get-glitchesPerSecond>|<get-glitchesPerSecond>(){}[0]
+    final val headerTableSize // io.kuicksilver.http2/Http2Settings.headerTableSize|{}headerTableSize[0]
+        final fun <get-headerTableSize>(): kotlin/Int // io.kuicksilver.http2/Http2Settings.headerTableSize.<get-headerTableSize>|<get-headerTableSize>(){}[0]
+    final val initialConnectionWindow // io.kuicksilver.http2/Http2Settings.initialConnectionWindow|{}initialConnectionWindow[0]
+        final fun <get-initialConnectionWindow>(): kotlin/Int // io.kuicksilver.http2/Http2Settings.initialConnectionWindow.<get-initialConnectionWindow>|<get-initialConnectionWindow>(){}[0]
+    final val initialStreamWindow // io.kuicksilver.http2/Http2Settings.initialStreamWindow|{}initialStreamWindow[0]
+        final fun <get-initialStreamWindow>(): kotlin/Int // io.kuicksilver.http2/Http2Settings.initialStreamWindow.<get-initialStreamWindow>|<get-initialStreamWindow>(){}[0]
+    final val maxConcurrentStreams // io.kuicksilver.http2/Http2Settings.maxConcurrentStreams|{}maxConcurrentStreams[0]
+        final fun <get-maxConcurrentStreams>(): kotlin/Int // io.kuicksilver.http2/Http2Settings.maxConcurrentStreams.<get-maxConcurrentStreams>|<get-maxConcurrentStreams>(){}[0]
+    final val maxConnectionWindow // io.kuicksilver.http2/Http2Settings.maxConnectionWindow|{}maxConnectionWindow[0]
+        final fun <get-maxConnectionWindow>(): kotlin/Int // io.kuicksilver.http2/Http2Settings.maxConnectionWindow.<get-maxConnectionWindow>|<get-maxConnectionWindow>(){}[0]
+    final val maxContinuationFrames // io.kuicksilver.http2/Http2Settings.maxContinuationFrames|{}maxContinuationFrames[0]
+        final fun <get-maxContinuationFrames>(): kotlin/Int // io.kuicksilver.http2/Http2Settings.maxContinuationFrames.<get-maxContinuationFrames>|<get-maxContinuationFrames>(){}[0]
+    final val maxControlFramesQueued // io.kuicksilver.http2/Http2Settings.maxControlFramesQueued|{}maxControlFramesQueued[0]
+        final fun <get-maxControlFramesQueued>(): kotlin/Int // io.kuicksilver.http2/Http2Settings.maxControlFramesQueued.<get-maxControlFramesQueued>|<get-maxControlFramesQueued>(){}[0]
+    final val maxEmptyFrames // io.kuicksilver.http2/Http2Settings.maxEmptyFrames|{}maxEmptyFrames[0]
+        final fun <get-maxEmptyFrames>(): kotlin/Int // io.kuicksilver.http2/Http2Settings.maxEmptyFrames.<get-maxEmptyFrames>|<get-maxEmptyFrames>(){}[0]
+    final val maxFrameSize // io.kuicksilver.http2/Http2Settings.maxFrameSize|{}maxFrameSize[0]
+        final fun <get-maxFrameSize>(): kotlin/Int // io.kuicksilver.http2/Http2Settings.maxFrameSize.<get-maxFrameSize>|<get-maxFrameSize>(){}[0]
+    final val maxHeaderBlockTime // io.kuicksilver.http2/Http2Settings.maxHeaderBlockTime|{}maxHeaderBlockTime[0]
+        final fun <get-maxHeaderBlockTime>(): kotlin.time/Duration // io.kuicksilver.http2/Http2Settings.maxHeaderBlockTime.<get-maxHeaderBlockTime>|<get-maxHeaderBlockTime>(){}[0]
+    final val maxHeaderListSize // io.kuicksilver.http2/Http2Settings.maxHeaderListSize|{}maxHeaderListSize[0]
+        final fun <get-maxHeaderListSize>(): kotlin/Int // io.kuicksilver.http2/Http2Settings.maxHeaderListSize.<get-maxHeaderListSize>|<get-maxHeaderListSize>(){}[0]
+    final val maxStreamWindow // io.kuicksilver.http2/Http2Settings.maxStreamWindow|{}maxStreamWindow[0]
+        final fun <get-maxStreamWindow>(): kotlin/Int // io.kuicksilver.http2/Http2Settings.maxStreamWindow.<get-maxStreamWindow>|<get-maxStreamWindow>(){}[0]
+    final val resetBurst // io.kuicksilver.http2/Http2Settings.resetBurst|{}resetBurst[0]
+        final fun <get-resetBurst>(): kotlin/Int // io.kuicksilver.http2/Http2Settings.resetBurst.<get-resetBurst>|<get-resetBurst>(){}[0]
+    final val resetsPerSecond // io.kuicksilver.http2/Http2Settings.resetsPerSecond|{}resetsPerSecond[0]
+        final fun <get-resetsPerSecond>(): kotlin/Int // io.kuicksilver.http2/Http2Settings.resetsPerSecond.<get-resetsPerSecond>|<get-resetsPerSecond>(){}[0]
+    final val settingsAckTimeout // io.kuicksilver.http2/Http2Settings.settingsAckTimeout|{}settingsAckTimeout[0]
+        final fun <get-settingsAckTimeout>(): kotlin.time/Duration // io.kuicksilver.http2/Http2Settings.settingsAckTimeout.<get-settingsAckTimeout>|<get-settingsAckTimeout>(){}[0]
+
+    final fun toString(): kotlin/String // io.kuicksilver.http2/Http2Settings.toString|toString(){}[0]
+}

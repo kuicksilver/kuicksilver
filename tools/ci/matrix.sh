@@ -7,9 +7,9 @@
 # shellcheck disable=SC2034   # every variable is used by the scripts that source this file
 
 # Every library module with a JVM test suite (kuicksilver-bench is the allocation gate, run on its own).
-KSL_MODULES="kuicksilver-native kuicksilver-tls kuicksilver-ktor-network kuicksilver-quic kuicksilver-testing kuicksilver-interop kuicksilver-http3 kuicksilver-ktor-client kuicksilver-ktor-server"
+KSL_MODULES="kuicksilver-native kuicksilver-tls kuicksilver-ktor-network kuicksilver-quic kuicksilver-testing kuicksilver-interop kuicksilver-http3 kuicksilver-http2 kuicksilver-ktor-client kuicksilver-ktor-server"
 # Modules whose Kotlin/Native tests run on macosArm64 (kuicksilver-interop's native code is the Linux interop executable).
-KSL_APPLE_MODULES="kuicksilver-native kuicksilver-tls kuicksilver-ktor-network kuicksilver-quic kuicksilver-testing kuicksilver-http3 kuicksilver-ktor-client kuicksilver-ktor-server"
+KSL_APPLE_MODULES="kuicksilver-native kuicksilver-tls kuicksilver-ktor-network kuicksilver-quic kuicksilver-testing kuicksilver-http3 kuicksilver-http2 kuicksilver-ktor-client kuicksilver-ktor-server"
 # Modules whose test executables are linked for Linux, iOS simulator and mingw and run outside Gradle (test.kexe / test.exe).
 KSL_LINK_MODULES="$KSL_APPLE_MODULES"   # every module with Kotlin/Native targets is linked and its tests run on Linux, Windows and the iOS simulator
 
@@ -25,8 +25,8 @@ KSL_MACOS_TESTS=$(ksl_tasks macosArm64Test $KSL_APPLE_MODULES)
 KSL_IOS_SIM_TESTS=$(ksl_tasks iosSimulatorArm64Test $KSL_APPLE_MODULES)
 KSL_IOS_COMPILE=$(ksl_tasks compileKotlinIosArm64 $KSL_APPLE_MODULES)
 KSL_CHECKS="checkSpdxHeaders checkLayerDependencies checkKotlinAbi"
-KSL_ARCH_CHECKS="checkQuicArchitecture checkHttp3Architecture"
-KSL_FUZZ_ARGS=(:kuicksilver-quic:jvmTest --tests "io.kuicksilver.quic.fuzz.*" :kuicksilver-http3:jvmTest --tests "io.kuicksilver.http3.fuzz.*")
+KSL_ARCH_CHECKS="checkQuicArchitecture checkHttp3Architecture checkHttp2Architecture"
+KSL_FUZZ_ARGS=(:kuicksilver-quic:jvmTest --tests "io.kuicksilver.quic.fuzz.*" :kuicksilver-http3:jvmTest --tests "io.kuicksilver.http3.fuzz.*" :kuicksilver-http2:jvmTest --tests "io.kuicksilver.http2.fuzz.*")
 KSL_SIM_ARGS=(:kuicksilver-testing:jvmTest -Pkuicksilver.sim.runs=200 --tests "io.kuicksilver.testing.MonteCarloTest")
 
 # Runtime image for the linuxArm64 test.kexe: the K/N arm64 sysroot needs glibc 2.25 > manylinux2014.
