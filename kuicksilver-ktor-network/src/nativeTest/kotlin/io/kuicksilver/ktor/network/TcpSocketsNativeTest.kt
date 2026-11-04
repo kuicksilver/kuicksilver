@@ -291,9 +291,9 @@ class TcpSocketsNativeTest {
 
     /**
      * The peer's data and end of stream arrive while the selector never reports the socket readable: on Windows
-     * ktor-network's selector (`WSAEventSelect`) records `FD_READ` and `FD_CLOSE` once per socket, and one that it takes in
-     * while only a wait for room is registered (the client still sending a large request) is lost to the wait for data
-     * that follows. The read loop tries the receive again after its bounded wait and reads both. Before, it waited for
+     * ktor-network's selector can lose `FD_CLOSE` (and, in some interleavings, `FD_READ`), which Winsock records once, so
+     * the wait for data that follows never ends (see `tcpReadRecheck`). The read loop tries the receive again after its
+     * bounded wait and reads both. Before, it waited for
      * ever (`ServerH1HeadLimitTest.negative_headerSectionSizeIsBounded` timed out on Windows: the client never saw the end
      * of the 431 the server had sent and half-closed).
      */

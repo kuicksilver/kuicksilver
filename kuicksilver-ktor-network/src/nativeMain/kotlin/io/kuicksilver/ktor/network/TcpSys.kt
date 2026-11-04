@@ -30,11 +30,12 @@ internal expect val bsdSockaddr: Boolean
 internal expect val tcpShutdownReadBeforeEnd: Boolean
 
 /**
- * How long the read loop waits for the selector to report data or the end of the stream before it tries the receive
- * again, or null to wait until it does. ktor-network's selector on Windows (`WSAEventSelect`, `WSAEnumNetworkEvents`)
- * takes in a socket's events whenever it watches the socket, for any interest, and completes only the waits that match:
- * an `FD_READ` or `FD_CLOSE` taken in while only a wait for room is registered is cleared and lost, and Winsock records
- * `FD_CLOSE` once and `FD_READ` again only after a receive. The wait for data that follows then never ends. POSIX
+ * How long the read loop first waits for the selector to report data or the end of the stream before it tries the
+ * receive again, or null to wait until it does. ktor-network's selector on Windows re-issues `WSAEventSelect` for each
+ * socket every round and completes only the waits that match the events `WSAEnumNetworkEvents` reports. `FD_CLOSE` (and,
+ * in some interleavings, `FD_READ`) can be lost there, and Winsock records `FD_CLOSE` once: the wait for data that
+ * follows then never ends. Which of the possible mechanisms loses it (an event that occurred while no matching wait was
+ * registered, a re-issue that cleared the record) is not established; the bound holds for all of them. POSIX
  * `poll`/`select` report readiness for as long as it lasts.
  */
 internal expect val tcpReadRecheck: Duration?
