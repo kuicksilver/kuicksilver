@@ -10,3 +10,5 @@ internal actual val millisecondPollWaits: Boolean =
         .orEmpty()
         .lowercase()
         .contains("windows")
+
+internal actual val preloadsCloseClasses: Boolean = true

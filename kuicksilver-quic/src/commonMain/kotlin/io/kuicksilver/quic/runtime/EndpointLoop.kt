@@ -222,7 +222,18 @@ internal class EndpointLoop private constructor(
     /** Starts the receive, timer and forward coroutines; a [LoopGroup] calls it only once every loop exists, so no datagram is forwarded to a loop not built yet. */
     internal fun start() {
         QuicResourceProbe.register(this)
-        if (closeClassesLoaded.compareAndSet(0, 1)) scope.launch(Dispatchers.Default) { loadCloseClasses() }
+        if (preloadsCloseClasses && closeClassesLoaded.compareAndSet(0, 1)) {
+            // ATOMIC: it runs even if this endpoint closes at once, so the flag never stands for a preload that did not happen
+            @OptIn(kotlinx.coroutines.DelicateCoroutinesApi::class)
+            scope.launch(Dispatchers.Default, start = kotlinx.coroutines.CoroutineStart.ATOMIC) {
+                try {
+                    loadCloseClasses()
+                } catch (e: Throwable) {
+                    closeClassesLoaded.store(0) // the next endpoint tries again
+                    throw e
+                }
+            }
+        }
         receiveJob = scope.launch { receiveLoop() }
         timerJob = scope.launch { timerLoop() }
         scope.launch { followCapabilities(io, PathId.Initial) }
@@ -1186,7 +1197,8 @@ internal class EndpointLoop private constructor(
          * Makes the exceptions a close carries once, so their classes are loaded and their message templates linked before the
          * first close() needs them: on a cold JVM the first `ConnectionLost` took 3 to 5 ms to make (measured inside
          * `ConnectionCore.close`, where it sat between close() and the CONNECTION_CLOSE on the wire); the next takes about 20 us.
-         * Once per process, off the loop.
+         * Once per process, off the loop, and only on the JVM and Android ([preloadsCloseClasses]): Kotlin/Native has no class
+         * loading to save.
          */
         internal fun loadCloseClasses() {
             // a reason, so the message's inner template is linked too (on the JVM each string template links on its first run)

@@ -8,3 +8,5 @@ internal actual val portableServerSupported: Boolean = false
 
 @OptIn(ExperimentalNativeApi::class)
 internal actual val millisecondPollWaits: Boolean = Platform.osFamily != OsFamily.WINDOWS
+
+internal actual val preloadsCloseClasses: Boolean = false
