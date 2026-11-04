@@ -244,8 +244,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
   first acknowledgement of a newer packet restored it about one round trip after the congestion, while most of the lost
   data was still being resent.
 - QUIC: a local close puts its CONNECTION_CLOSE on the wire sooner. The endpoint loop now sends the frame before it fails
-  the connection's streams, wakes its waiters and calls the listener's `onClosed`, and an endpoint loads the close
-  exceptions' classes once when it starts instead of on the first close: on a cold JVM, close() to the first datagram
+  the connection's streams, wakes its waiters and calls the listener's `onClosed`, and on the JVM and Android an
+  endpoint loads the close exceptions' classes once when it starts instead of on the first close: on a cold JVM, close() to the first datagram
   went from about 8 ms to 1.3-2.7 ms (in-memory sockets, local measurement), which narrows the window in which a peer's
   packet can still reach an open connection (the interop closing-challenge race).
 - ksl: `ksl_ctx_set_ciphers` holds a TLS 1.2 list to the RFC 10015 profile itself: a list with any suite that is not
