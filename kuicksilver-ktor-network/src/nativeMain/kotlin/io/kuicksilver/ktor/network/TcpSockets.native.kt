@@ -97,14 +97,38 @@ internal suspend fun awaitConnected(
     recheck: Duration?,
     undecidedLimit: Duration = CONNECT_UNDECIDED_LIMIT,
     rechecks: (() -> Unit)? = null,
+) = awaitConnectedWith(
+    select = { selector.select(socket, SelectInterest.CONNECT) },
+    pendingError = { tcpPendingError(fd) },
+    hasPeer = { runCatching { tcpAddressOf(fd, peer = true) }.isSuccess },
+    wouldBlock = ::tcpWouldBlock,
+    failed = { throw PosixException.forErrno(it, "connect") },
+    recheck = recheck,
+    undecidedLimit = undecidedLimit,
+    rechecks = rechecks,
+)
+
+/**
+ * [awaitConnected] over its seams (tests drive it without sockets): [select] waits for the selector's CONNECT report,
+ * [pendingError] reads `SO_ERROR`, [hasPeer] asks for a peer address, [failed] throws for an error. A report with no error and
+ * no peer fails at once: the selector reports a connect once (Windows posts FD_CONNECT once), so nothing more will come.
+ */
+internal suspend fun awaitConnectedWith(
+    select: suspend () -> Unit,
+    pendingError: () -> Int,
+    hasPeer: () -> Boolean,
+    wouldBlock: (Int) -> Boolean,
+    failed: (Int) -> Nothing,
+    recheck: Duration?,
+    undecidedLimit: Duration = CONNECT_UNDECIDED_LIMIT,
+    rechecks: (() -> Unit)? = null,
 ) {
-    fun connected() = runCatching { tcpAddressOf(fd, peer = true) }.isSuccess
     if (recheck == null) {
         while (true) {
-            selector.select(socket, SelectInterest.CONNECT)
-            val error = tcpPendingError(fd)
+            select()
+            val error = pendingError()
             if (error == 0) return
-            if (!tcpWouldBlock(error)) throw PosixException.forErrno(error, "connect")
+            if (!wouldBlock(error)) failed(error)
         }
     }
     coroutineScope {
@@ -112,14 +136,15 @@ internal suspend fun awaitConnected(
         var undecided = Duration.ZERO
         try {
             while (true) {
-                val select =
-                    pending ?: async(start = CoroutineStart.UNDISPATCHED) { selector.select(socket, SelectInterest.CONNECT) }
-                        .also { pending = it }
-                val reported = withTimeoutOrNull(recheck) { select.await() } != null
+                val wait = pending ?: async(start = CoroutineStart.UNDISPATCHED) { select() }.also { pending = it }
+                val reported = withTimeoutOrNull(recheck) { wait.await() } != null
                 if (reported) pending = null else rechecks?.invoke()
-                val error = tcpPendingError(fd)
-                if (error != 0 && !tcpWouldBlock(error)) throw PosixException.forErrno(error, "connect")
-                if (error == 0 && connected()) return@coroutineScope
+                val error = pendingError()
+                if (error != 0 && !wouldBlock(error)) failed(error)
+                if (error == 0 && hasPeer()) return@coroutineScope
+                if (reported && error == 0) {
+                    throw IOException("the connect was reported done, but the socket has neither an error nor a peer")
+                }
                 if (!reported) {
                     undecided += recheck
                     if (undecided >= undecidedLimit) {
