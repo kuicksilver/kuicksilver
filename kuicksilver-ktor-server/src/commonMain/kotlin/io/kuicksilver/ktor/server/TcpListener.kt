@@ -153,9 +153,19 @@ private suspend fun KuicksilverApplicationEngine.bindTcpAndUdp(
     return bindTcp(selector, l.config.host, l.config.port) to null
 }
 
-/** Closes the HTTP/3 endpoint of a pair that failed and waits until its UDP socket is released, also when cancelled. */
+/**
+ * Closes the HTTP/3 endpoint of a pair that failed and waits until its UDP socket is released, also when cancelled, for at
+ * most [RELEASE_WAIT]: a release that hangs must not hold the start; it is logged and the start goes on.
+ */
 @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-private suspend fun releaseFailedPair(endpoint: Http3Endpoint) = withContext(NonCancellable) { endpoint.closeAndJoin() }
+private suspend fun KuicksilverApplicationEngine.releaseFailedPair(endpoint: Http3Endpoint) =
+    withContext(NonCancellable) {
+        withTimeoutOrNull(RELEASE_WAIT) { endpoint.closeAndJoin() }
+            ?: environment.log.warn("the HTTP/3 endpoint on UDP ${endpoint.localAddress.port} was not released within $RELEASE_WAIT")
+    }
+
+/** How long [releaseFailedPair] waits for a failed pair's endpoint. */
+private val RELEASE_WAIT: Duration = 5.seconds
 
 /**
  * Whether [e], from binding one side of an ephemeral TCP + UDP pair, may come from a port that is in use, so that another
