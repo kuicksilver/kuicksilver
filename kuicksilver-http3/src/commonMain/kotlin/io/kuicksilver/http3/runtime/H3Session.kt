@@ -332,7 +332,15 @@ internal class H3Session(
                         } catch (e: CancellationException) {
                             throw e
                         } catch (e: Throwable) {
-                            if (transportCause(e) !is QuicException.StreamError.EarlyDataRejected) throw e
+                            val cause = transportCause(e)
+                            if (cause is QuicException.StreamError.Stopped || cause is QuicException.StreamError.Reset) {
+                                // the peer closed one of our critical streams: RFC 9114 section 6.2.1 ("If either control stream is
+                                // closed at any point, this MUST be treated as a connection error of type
+                                // H3_CLOSED_CRITICAL_STREAM") and RFC 9204 section 4.2 (the same for the encoder and decoder streams)
+                                fail(Http3ErrorCode.CLOSED_CRITICAL_STREAM, "the peer closed our critical stream ${pick(c).id}")
+                                throw e
+                            }
+                            if (cause !is QuicException.StreamError.EarlyDataRejected) throw e
                             criticalWriteFailuresForTest.addAndFetch(1)
                             false
                         }

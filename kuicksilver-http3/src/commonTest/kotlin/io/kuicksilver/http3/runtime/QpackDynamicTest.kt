@@ -11,8 +11,10 @@ import io.kuicksilver.http3.Http3ErrorCode
 import io.kuicksilver.http3.Http3Exception
 import io.kuicksilver.http3.Http3Headers
 import io.kuicksilver.http3.QuicPair
+import io.kuicksilver.http3.frame.ControlFrames
 import io.kuicksilver.http3.frame.FrameHeaders
 import io.kuicksilver.http3.frame.FrameType
+import io.kuicksilver.http3.frame.SettingsId
 import io.kuicksilver.http3.frame.StreamType
 import io.kuicksilver.http3.frame.VarInt
 import io.kuicksilver.http3.http3Settings
@@ -29,6 +31,7 @@ import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.cancelChildren
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -178,6 +181,62 @@ class QpackDynamicTest {
                     withTimeoutOrNull(5.seconds) { client.closed.await() }
                         ?: error("the connection still lives with more than 512 decoder-stream bytes queued")
                 assertEquals(Http3ErrorCode.EXCESSIVE_LOAD, (end as Http3Exception.Protocol).h3Code)
+            }
+        }
+
+    /**
+     * A peer that stops one of our critical streams (STOP_SENDING on our control, QPACK encoder or decoder stream) closes it:
+     * RFC 9114 section 6.2.1 and RFC 9204 section 4.2 make that a connection error H3_CLOSED_CRITICAL_STREAM (review S-b;
+     * before, the failed write ended the connection with H3_INTERNAL_ERROR).
+     */
+    @Test fun negative_aStoppedCriticalStreamIsClosedCriticalStream() =
+        h3Test {
+            for (target in listOf(StreamType.CONTROL, StreamType.QPACK_ENCODER, StreamType.QPACK_DECODER)) {
+                QuicPair.open().use { q ->
+                    val (c, s) = q.connect()
+                    val raw = RawPeer(s)
+                    raw.openControl(listOf(SettingsId.QPACK_MAX_TABLE_CAPACITY to 4096L, SettingsId.QPACK_BLOCKED_STREAMS to 16L))
+                    val stopped = CompletableDeferred<Unit>()
+                    launch {
+                        runCatching {
+                            while (true) {
+                                val st = s.acceptStream()
+                                if (st.readVarInt() == target) {
+                                    st.stopSending(0x3ff)
+                                    stopped.complete(Unit)
+                                }
+                            }
+                        }
+                    }
+                    val client = Http3Connection.client(c, dyn)
+                    awaitCondition("the peer stopping critical stream type $target") { stopped.isCompleted }
+                    var i = 0
+                    awaitCondition("the connection ending after the peer stopped critical stream type $target") {
+                        // something to write on the stopped stream, until the write meets the STOP_SENDING
+                        runCatching {
+                            when (target) {
+                                StreamType.CONTROL -> {
+                                    client.goAway()
+                                }
+
+                                StreamType.QPACK_DECODER -> {
+                                    withContext(client.session.dispatcher) {
+                                        client.session.qpack.cancelStream(4L * i)
+                                    }
+                                }
+
+                                else -> {
+                                    launch { runCatching { client.request(get("/", Http3Headers.of("x-unique" to "value ${i++}"))) } }
+                                }
+                            }
+                        }
+                        i++
+                        client.closed.isCompleted
+                    }
+                    val end = client.closed.await() as Http3Exception.Protocol
+                    assertEquals(Http3ErrorCode.CLOSED_CRITICAL_STREAM, end.h3Code, "critical stream type $target: $end")
+                    coroutineContext.cancelChildren()
+                }
             }
         }
 
