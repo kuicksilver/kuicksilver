@@ -55,5 +55,19 @@ check "the reproducer is where the stats say" 0 "" -- test -f "$state/crashes/qu
 check "status reads the stats of that slice" 0 "crash-0123" -- campaign status
 check "status lists the reproducer whole" 0 "finding: $state/crashes/quic.frameDecode/crash-0123" -- campaign status
 
+# prune: a merge that fails leaves the grown corpus as it was and the command exits non-zero (fuzz.yml then warns)
+corpus="$state/corpus/quic.frameDecode"; mkdir -p "$corpus"; echo a > "$corpus/in-a"; echo b > "$corpus/in-b"
+check "a failed prune exits non-zero" 1 "merge failed" -- campaign prune --no-build quic.frameDecode
+check "  and leaves the grown corpus as it was" 0 "" -- test "$(find "$corpus" -type f | wc -l | tr -d ' ')" = 2
+cat > "$tmp/bin/java" <<'SH'
+#!/bin/bash
+# a -merge=1 run: the output directory (campaign.sh's merge/<id>/min) gets the inputs that add coverage, here in-a alone
+for a in "$@"; do case "$a" in */min) dest=$a ;; esac; done
+for a in "$@"; do [ -f "$a/in-a" ] && cp "$a/in-a" "$dest/"; done
+exit 0
+SH
+check "a prune that succeeds exits 0" 0 "2 grown inputs -> 1" -- campaign prune --no-build quic.frameDecode
+check "  and the corpus is the merge's result" 0 "" -- test "$(cd "$corpus" && echo *)" = in-a
+
 [ $fails -eq 0 ] && echo "all cases passed"
 [ $fails -eq 0 ]

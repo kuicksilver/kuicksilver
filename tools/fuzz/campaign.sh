@@ -13,7 +13,8 @@
 #        tools/fuzz/campaign.sh status            per-target time, executions, coverage, findings
 #        tools/fuzz/campaign.sh minimize [ids]     merge the grown corpora into tools/fuzz/corpus/<id>/ (committed)
 #        tools/fuzz/campaign.sh prune [ids]        reduce the grown corpora in place to the inputs that add coverage beyond the
-#                                                  committed corpus and the seeds (.github/workflows/fuzz.yml, before it caches them)
+#                                                  committed corpus and the seeds (.github/workflows/fuzz.yml, before it caches them);
+#                                                  both exit 1 when a target's merge failed (its corpus is then left as it was)
 #        tools/fuzz/campaign.sh list              target ids
 # Options: --slice MIN (≤ 20, default 20)  --goal HOURS per target (default 2)  --goals id=HOURS,... (per-target goals
 #          that override --goal)  --hours HOURS wall clock for this invocation (default: until every selected target
@@ -236,6 +237,7 @@ run_slice() {
 
 if [ "$cmd" = minimize ] || [ "$cmd" = prune ]; then
   snapshot_classpath
+  failed=""
   for id in $selected; do
     corpus="$state/corpus/$id"; [ -d "$corpus" ] || continue
     kind=$(field "$id" 2); module=$(field "$id" 3); cls=$(field "$id" 4); method=$(field "$id" 5)
@@ -254,9 +256,10 @@ if [ "$cmd" = minimize ] || [ "$cmd" = prune ]; then
       (cd "$state/work/$id" 2>/dev/null || cd "$state"; quiet java -Xmx1536m -Xss4m -XX:+UseSerialGC -cp "$(cat "$state/cp/$module.cp")" \
         com.code_intelligence.jazzer.Jazzer --target_class="$cls" --target_method="$method" \
         --instrumentation_includes='io.kuicksilver.**' -merge=1 -timeout=60 -rss_limit_mb=3072 "$out/min" "${inputs[@]}") \
-        > "$out/merge.log" 2>&1 || { echo "$id: merge failed (see $out/merge.log)"; continue; }
+        > "$out/merge.log" 2>&1 || { echo "$id: merge failed (see $out/merge.log)"; failed="$failed $id"; continue; }
     else
-      quiet "$(ksl_harness)" -merge=1 "$out/min" "${inputs[@]}" > "$out/merge.log" 2>&1 || { echo "$id: merge failed"; continue; }
+      quiet "$(ksl_harness)" -merge=1 "$out/min" "${inputs[@]}" > "$out/merge.log" 2>&1 \
+        || { echo "$id: merge failed (see $out/merge.log)"; failed="$failed $id"; continue; }
     fi
     rm -f "$out/min"/seed-baseline-*
     before=$(find "$corpus" -type f | wc -l | tr -d ' ')
@@ -268,6 +271,8 @@ if [ "$cmd" = minimize ] || [ "$cmd" = prune ]; then
       echo "$id: $before grown inputs -> $(find "$committed" -type f | wc -l | tr -d ' ') in tools/fuzz/corpus/$id"
     fi
   done
+  # a merge that failed left that corpus as it was; the exit status says so (fuzz.yml turns it into a warning)
+  [ -z "$failed" ] || { echo "campaign: no merge for$failed" >&2; exit 1; }
   exit 0
 fi
 
