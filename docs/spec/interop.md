@@ -82,7 +82,7 @@ Harness notes (after 0.2.0, 2026-10-20):
 
 ## Interop matrix (pre-release, QUIC Interop Runner 740c05a, 2026-10-08)
 
-Images: `kuicksilver-interop:local` (JVM, accelerated UDP through JNI) and `kuicksilver-interop-native:local` (Kotlin/Native linuxArm64). The host is arm64 (Docker Desktop); the quiche image is linux/amd64 under emulation. Run: `tools/interop/run-local.sh -t <cases> <peer>`, Native — `--image native`. S — kuicksilver server, C — kuicksilver client; "?" — one of the sides answers "not supported".
+Images: `kuicksilver-interop:local` (JVM, accelerated UDP through JNI) and `kuicksilver-interop-native:local` (Kotlin/Native linuxArm64). The host is arm64 (Docker Desktop); the quiche image is linux/amd64 under emulation (`run-local.sh` pulls it with `--platform linux/amd64` when it is missing and its manifest list has no arm64 entry, `tools/interop/peer-images.sh`; an image it cannot obtain fails the run up front). Run: `tools/interop/run-local.sh -t <cases> <peer>`, Native — `--image native`. S — kuicksilver server, C — kuicksilver client; "?" — one of the sides answers "not supported".
 
 JVM image (6 peers × 18 cases × 2 roles, 188/216 green; every supported case is ✓ in both roles against ≥ 3 peers):
 

@@ -278,6 +278,11 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- Tooling: `tools/interop/run-local.sh` makes every image a run needs present for a platform the host can run before it
+  starts (`tools/interop/peer-images.sh`): a missing image is pulled, `--platform linux/amd64` (emulated) when its manifest
+  list has none for the host, as `cloudflare/quiche-qns:latest` on arm64; an image that cannot be obtained fails the run up
+  front, naming it. A required peer the runner finds "not compliant" is an error naming its image (also under
+  `--check-required`), no longer only red cells (0.2.1 gate, 2026-11-04). Cases: `tools/interop/peer-images-test.sh`.
 - QUIC server: a client that really rebinds during the handshake while an off-path observer races copies of its datagrams
   from the old address now completes the handshake on its new address. Each copy from the old address used to take the
   path back there and forget the PATH_CHALLENGE sent to the new one, so the client never got HANDSHAKE_DONE and the
