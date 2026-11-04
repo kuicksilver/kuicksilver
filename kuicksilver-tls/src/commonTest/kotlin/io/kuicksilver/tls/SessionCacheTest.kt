@@ -34,6 +34,23 @@ class SessionCacheTest {
             assertEquals(0, cache.size())
         }
 
+    /**
+     * The default bound keeps the six tickets of each of 64 TCP origins (review 2026-10-28 NIT-6): with a ring of six per origin,
+     * 256 sessions covered 42 origins.
+     */
+    @Test fun defaultCacheKeepsSixTicketsOfSixtyFourOrigins(): Unit =
+        runBlocking {
+            val cache = SessionCache()
+            val firsts = (0 until 64).map { SessionCache.Entry(0L, emptyList(), emptyList()) }
+            for (o in 0 until 64) {
+                cache.put("origin$o", firsts[o])
+                repeat(SessionCache.TICKETS_PER_ORIGIN - 1) { cache.put("origin$o", SessionCache.Entry(0L, emptyList(), emptyList())) }
+            }
+            assertEquals(64 * SessionCache.TICKETS_PER_ORIGIN, cache.size())
+            assertTrue(firsts.none { it.closed }, "a ticket of the first origins was evicted")
+            cache.clear()
+        }
+
     /** Two caches are independent: a session stored in one is not visible through the other (one cache per engine). */
     @Test fun cachesAreIndependent(): Unit =
         runBlocking {

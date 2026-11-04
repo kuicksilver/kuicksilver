@@ -136,6 +136,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Changed
 
+- TLS: a client session cache keeps 384 sessions by default instead of 256, so that the six tickets a TCP origin keeps
+  (one per parallel connection) cover 64 origins, as the bound did before tickets came six at a time; 256 covered 42.
 - Ktor server: with `port = 0`, a TLS connector whose HTTP/3 endpoint refuses its configuration (an argument or state it
   rejects, a TLS identity it cannot use) fails the start at once, as with a fixed port. Before, every such failure was
   taken for a taken UDP port: the pair was tried 16 times and the server then served HTTP/1.1 alone with only a warning.

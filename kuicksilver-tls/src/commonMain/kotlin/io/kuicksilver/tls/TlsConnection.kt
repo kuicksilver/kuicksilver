@@ -852,8 +852,11 @@ public class SessionCache(
     /** The process-wide cache, key derivation and the default bound. */
     @InternalKuicksilverApi
     public companion object {
-        /** Sessions a cache keeps before the oldest is evicted. */
-        public const val DEFAULT_MAX_ENTRIES: Int = 256
+        /**
+         * Sessions a cache keeps before the oldest is evicted: the [TICKETS_PER_ORIGIN] tickets of each of 64 TCP origins (or 384
+         * QUIC origins, one ticket each).
+         */
+        public const val DEFAULT_MAX_ENTRIES: Int = 384
 
         /**
          * Tickets kept per TCP origin (RFC 9846 appendix C.4: one for each of the client's parallel connections; six, as a server's
