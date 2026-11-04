@@ -53,7 +53,8 @@ public interface WebTransportSession {
 
     /**
      * Sends an HTTP datagram of the session (section 4.5), as [Http3Stream.trySendDatagram] answers: `TooLarge` carries the
-     * largest payload, the session's quarter stream ID already taken off; `Closed` once the session is over.
+     * largest payload, the session's quarter stream ID already taken off (never negative: 0 also when not even an empty
+     * datagram fits); `Closed` once the session is over.
      */
     public fun trySendDatagram(payload: ByteArray): DatagramSendResult
 
