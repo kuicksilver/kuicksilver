@@ -1019,6 +1019,12 @@ internal class H3Session(
         return QuicStreamLimits.peerBidiStreamsGranted(quic)?.let { id / 4 < it } ?: true
     }
 
+    /**
+     * Server: client bidirectional stream [id] exists (the transport handed it out) and its HEADERS are still on the way: a
+     * datagram for it may wait as long as an early WebTransport stream does (see [DatagramDemux]). Session dispatcher only.
+     */
+    fun requestOpenWithoutHeaders(id: Long): Boolean = id in handledBidi && id !in settledBidi
+
     /** Server: stream [id] read its HEADERS, or turned out to be no request (a WebTransport stream): see [requestMayStillOpen]. */
     fun bidiSettled(id: Long) {
         settledBidi += id

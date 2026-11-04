@@ -108,11 +108,19 @@ internal class DatagramDemux(
         // (as its streams, WtStreamRouter), each on the order of a round trip (RFC 9297 section 2.1). Others are dropped.
         if (!session.isServer || !session.settings.webTransport || !session.requestMayStillOpen(streamId)) return
         prunePending()
-        if (pending.size < MAX_PENDING) pending.addLast(Pending(streamId, payload, clock.markNow() + pendingHold()))
+        if (pending.size < MAX_PENDING) pending.addLast(Pending(streamId, payload, clock.markNow() + holdFor(streamId)))
     }
 
     /** How the hold of a kept datagram is measured; a test replaces it to move time by hand. Session dispatcher only. */
     var clock: TimeSource = TimeSource.Monotonic
+
+    /**
+     * How long a datagram for [streamId] may wait: [MAX_HOLD] for a stream that exists and whose HEADERS are on the way (a
+     * large or QPACK-blocked section; draft-ietf-webtrans-http3-16 section 4.6 "SHOULD buffer ... until they can be
+     * associated", bounded as early WebTransport streams are), [pendingHold] for a stream not created yet, which RFC 9297
+     * section 2.1 allows to buffer only "on the order of a round trip" (review 2026-10-28 H3R-5).
+     */
+    private fun holdFor(streamId: Long): Duration = if (session.requestOpenWithoutHeaders(streamId)) MAX_HOLD else pendingHold()
 
     /** Replaces [pendingHold] when set (tests: holds that differ without moving the RTT). Session dispatcher only. */
     var pendingHoldForTest: Duration? = null

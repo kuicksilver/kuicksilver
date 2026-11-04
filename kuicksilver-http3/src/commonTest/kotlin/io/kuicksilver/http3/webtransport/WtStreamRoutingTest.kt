@@ -33,6 +33,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.yield
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -422,6 +423,40 @@ class WtStreamRoutingTest {
                 c.sendDatagram(VarInt.encode(0) + "fresh".encodeToByteArray())
                 assertEquals("fresh", withTimeout(5.seconds) { wt.receiveDatagram() }.decodeToString(), "a datagram past its hold")
                 assertEquals(1, withContext(server.session.dispatcher) { server.session.datagrams.pendingCount }, "stream 4's is kept")
+            }
+        }
+
+    /**
+     * A datagram for a stream that exists but whose CONNECT HEADERS are still on the way waits as an early WebTransport
+     * stream does, not only on the order of a round trip (review 2026-10-28 H3R-5): with half of the HEADERS frame in, a
+     * datagram for the stream is still delivered to the session a second later, past any round-trip hold.
+     */
+    @Test fun aDatagramForAStreamWhoseHeadersAreOnTheWayWaitsLonger() =
+        h3Test {
+            QuicPair.open().useScoped { q ->
+                val (c, s) = q.connect()
+                val server = Http3Connection.server(s, wtOn)
+                val clock = TestTimeSource()
+                withContext(server.session.dispatcher) { server.session.datagrams.clock = clock }
+                val raw = RawPeer(c)
+                raw.openControl(wtClientSettings)
+                withTimeout(5.seconds) { server.peerSettings.first { it != null } }
+                val accepted = CompletableDeferred<WebTransportSession>()
+                launch { accepted.complete(server.acceptRequest().acceptWebTransport()) }
+                val st = c.openBidi()
+                val connect = raw.wtConnect(st)
+                st.output.writeFully(connect, 0, connect.size / 2)
+                st.output.flush()
+                withTimeout(5.seconds) {
+                    while (!withContext(server.session.dispatcher) { server.session.requestOpenWithoutHeaders(st.id) }) yield()
+                }
+                c.sendDatagram(VarInt.encode(st.id / 4) + "early".encodeToByteArray())
+                server.awaitDatagrams(1)
+                clock += 1.seconds // past the round-trip hold (at most 5 s), within an early stream's
+                st.output.writeFully(connect, connect.size / 2, connect.size) // start and end index
+                st.output.flush()
+                val wt = withTimeout(5.seconds) { accepted.await() }
+                assertEquals("early", withTimeout(5.seconds) { wt.receiveDatagram() }.decodeToString())
             }
         }
 
