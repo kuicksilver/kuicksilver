@@ -221,6 +221,8 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Fixed
 
+- Ktor server: a start that failed while setting up a later connector (for example HTTP/3 settings it refuses) left the
+  connectors before it accepting connections until the server was stopped; they are now stopped with the failed start.
 - Ktor server on Kotlin/Native: a connector that could not bind (a port in use, an HTTP/3 endpoint that refused its
   configuration) aborted the process: the failure was thrown out of the accept coroutine, where no handler took it. It
   now fails the start only, as on the JVM.

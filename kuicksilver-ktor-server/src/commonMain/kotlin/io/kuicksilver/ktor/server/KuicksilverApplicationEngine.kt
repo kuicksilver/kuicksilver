@@ -298,7 +298,9 @@ public class KuicksilverApplicationEngine(
                     val listeners = configuration.connectors.map { resolve(it) }
                     // TCP accepting waits for the HTTP/3 listeners: h3Ports is complete (and published) before any connection reads it
                     val h3Ready = Job()
-                    servers += listeners.map { startTcp(this, it, h3Ready) }
+                    // one at a time: a connector whose set-up throws leaves those before it in [servers], so the failure path
+                    // below stops them instead of leaving them accepting
+                    for (l in listeners) servers += startTcp(this, l, h3Ready)
                     val resolved =
                         listeners.zip(servers).map { (l, s) ->
                             val port = (s.socket.await().localAddress as? InetSocketAddress)?.port ?: l.config.port
