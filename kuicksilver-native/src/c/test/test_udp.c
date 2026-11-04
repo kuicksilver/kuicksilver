@@ -152,6 +152,11 @@ void run_udp(void) {
     uint8_t la[KSL_UDP_ADDR_LEN], lb[KSL_UDP_ADDR_LEN];
     ksl_udp *a = open_lo(KSL_UDP_ECN | KSL_UDP_GSO | KSL_UDP_GRO | KSL_UDP_DF, la); ksl_udp *b = open_lo(KSL_UDP_ECN | KSL_UDP_GSO | KSL_UDP_GRO | KSL_UDP_DF, lb);
     CHECK(a && b, "udp_open on loopback");
+    if (a) {   /* a refused bind says so in its code, not only in its text: a port in use is KSL_E_BIND (review of a0e16b6e) */
+        uint32_t err = 0; char msg[128] = {0}; ksl_udp *again = ksl_udp_open(la, KSL_UDP_ECN, &err, msg, sizeof msg);
+        CHECK(again == NULL && err == KSL_E_BIND, "negative: a port in use: KSL_E_BIND");
+        if (again) ksl_udp_close(again);
+    }
     if (a && b) {
         uint16_t gso_max = 0; uint32_t caps = caps_of(a, &gso_max);
         CHECK((caps & KSL_UDP_ECN) && (caps & KSL_UDP_DF), "ECN and DF granted"); CHECK((caps & KSL_UDP_GSO) ? gso_max >= 2 : 1, "gso max segments when granted");
@@ -353,7 +358,7 @@ void run_udp(void) {
         { int f = socket(AF_INET, SOCK_DGRAM, 0); struct sockaddr_in a; memset(&a, 0, sizeof a); a.sin_family = AF_INET; a.sin_addr.s_addr = htonl(INADDR_ANY); socklen_t l = sizeof a;
           CHECK(f >= 0 && bind(f, (struct sockaddr *)&a, sizeof a) == 0 && getsockname(f, (struct sockaddr *)&a, &l) == 0, "an IPv4 socket on 0.0.0.0");
           uint8_t at[KSL_UDP_ADDR_LEN]; v4(at, ntohs(a.sin_port)); memset(at + 3, 0, 4); uint32_t err = 0; char msg[128] = {0};
-          ksl_udp *w = ksl_udp_open(at, 0, &err, msg, sizeof msg); CHECK(w == NULL && err == KSL_E_BAD_ARG, "0.0.0.0 on a port an IPv4 socket holds is refused");
+          ksl_udp *w = ksl_udp_open(at, 0, &err, msg, sizeof msg); CHECK(w == NULL && err == KSL_E_BIND, "0.0.0.0 on a port an IPv4 socket holds is refused");
           if (w) ksl_udp_close(w); if (f >= 0) close(f); }
         /* udp_wildcard_without_ipv6_falls_back: socket(AF_INET6) fails (a host without IPv6): 0.0.0.0 opens AF_INET as before, :: fails */
         { ksl_udp_no_ipv6_for_test(1); uint8_t any4[KSL_UDP_ADDR_LEN]; v4(any4, 0); memset(any4 + 3, 0, 4); uint32_t err = 0; char msg[128] = {0};
@@ -381,7 +386,7 @@ void run_udp(void) {
            SO_REUSEPORT sockets only (no flow hashing), so the flag is never granted there and a second bind on the port fails */
         { uint8_t l1[KSL_UDP_ADDR_LEN]; ksl_udp *r1 = open_lo(KSL_UDP_REUSEPORT, l1); CHECK(r1 != NULL, "reuseport socket 1"); if (r1) { uint32_t err = 0; char msg[128] = {0}; ksl_udp *r2 = ksl_udp_open(l1, KSL_UDP_REUSEPORT, &err, msg, sizeof msg);
 #ifdef __APPLE__
-            CHECK(!(caps_of(r1, NULL) & KSL_UDP_REUSEPORT), "REUSEPORT not granted on Darwin"); CHECK(r2 == NULL && err == KSL_E_BAD_ARG, "second socket on the same port refused");
+            CHECK(!(caps_of(r1, NULL) & KSL_UDP_REUSEPORT), "REUSEPORT not granted on Darwin"); CHECK(r2 == NULL && err == KSL_E_BIND, "second socket on the same port refused");
 #else
             CHECK(caps_of(r1, NULL) & KSL_UDP_REUSEPORT, "REUSEPORT granted"); CHECK(r2 != NULL, "second socket on the same port with REUSEPORT");
 #endif

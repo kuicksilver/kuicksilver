@@ -191,7 +191,7 @@ ksl_udp *ksl_udp_open(const uint8_t addr[KSL_UDP_ADDR_LEN], int flags, uint32_t 
     int dual = addr[0] == 4 && is_wildcard(addr), wsa = 0; const char *step = "WSASocketW";
     u->fd = open_bound(u, addr, dual, &wsa, &step);
     if (u->fd == INVALID_SOCKET && dual) u->fd = open_bound(u, addr, 0, &wsa, &step);
-    if (u->fd == INVALID_SOCKET) { fail(err, step[0] == 'b' ? KSL_E_BAD_ARG : KSL_E_NOT_SUPPORTED, msg, msglen, step, wsa); free(u); return NULL; }
+    if (u->fd == INVALID_SOCKET) { fail(err, strcmp(step, "bind") == 0 ? KSL_E_BIND : KSL_E_NOT_SUPPORTED, msg, msglen, step, wsa); free(u); return NULL; }
     BOOL yes = TRUE, no = FALSE;
     u_long nb = 1; ioctlsocket(u->fd, FIONBIO, &nb);
     DWORD ret = 0; WSAIoctl(u->fd, SIO_UDP_CONNRESET, &no, sizeof no, NULL, 0, &ret, NULL, NULL);   /* an ICMP unreachable must not fail the next receive */

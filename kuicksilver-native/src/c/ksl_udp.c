@@ -104,7 +104,7 @@ ksl_udp *ksl_udp_open(const uint8_t addr[KSL_UDP_ADDR_LEN], int flags, uint32_t 
     const char *step = "socket";
     if (is_wildcard(addr)) u->fd = bind_socket(u, addr, 1, flags, &step);
     if (u->fd < 0) { u->granted = 0; u->fd = bind_socket(u, addr, 0, flags, &step); }
-    if (u->fd < 0) return open_failed(u, step[0] == 's' ? KSL_E_NOT_SUPPORTED : KSL_E_BAD_ARG, step, errno, err, msg, msglen);
+    if (u->fd < 0) return open_failed(u, step[0] == 's' ? KSL_E_NOT_SUPPORTED : strcmp(step, "bind") == 0 ? KSL_E_BIND : KSL_E_BAD_ARG, step, errno, err, msg, msglen);
     int one = 1, v4 = u->family == AF_INET || u->dual, v6 = u->family == AF_INET6;
     /* 7 MB; Darwin refuses more than kern.ipc.maxsockbuf (8 MB less overhead by default), so halve until the kernel takes it */
     for (int rcv = 7 * 1024 * 1024; rcv >= 256 * 1024 && setsockopt(u->fd, SOL_SOCKET, SO_RCVBUF, &rcv, sizeof rcv) != 0; rcv /= 2) {}

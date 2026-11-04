@@ -129,6 +129,9 @@ public object KslConst {
     /** quicProvide: a level TLS no longer reads (RFC 9001 section 4.1.3), or more than 256 KiB unread at one level. */
     public const val E_CRYPTO_LEVEL: Int = 0xff000b
 
+    /** udpOpen: the bind was refused (a port in use, an address not on this host). */
+    public const val E_BIND: Int = 0xff000c
+
     /** Event wire layout produced by the bindings: 6 x int32 header then the payload. */
     public const val EVENT_HEADER_BYTES: Int = 24
 }

@@ -133,6 +133,8 @@ extern "C" {
 #define KSL_E_TOO_LATE 0xff000au      /* the setting cannot change at this stage of the handshake */
 #define KSL_E_CRYPTO_LEVEL 0xff000bu  /* ksl_quic_provide: a level TLS no longer reads (RFC 9001 4.1.3) or more than
                                          KSL_QUIC_LEVEL_MAX unread bytes at one level */
+#define KSL_E_BIND 0xff000cu          /* ksl_udp_open: the bind was refused (a port in use, an address not on this host); additive
+                                         in ABI 7 */
 
 typedef struct ksl_ctx ksl_ctx;
 typedef struct ksl_ssl ksl_ssl;

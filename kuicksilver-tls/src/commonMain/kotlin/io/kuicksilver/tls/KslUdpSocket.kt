@@ -263,8 +263,8 @@ public class KslUdpSocket private constructor(
             return try {
                 KslUdpSocket(Ksl.udpOpen(addr, flags))
             } catch (e: KslException.Internal) {
-                // ksl_udp_open's message names the failed step first ("bind: Address already in use")
-                if (e.message.orEmpty().startsWith("bind:")) throw kotlinx.io.IOException("UDP ${e.message}", e)
+                // ksl_udp_open says which step failed in its code: KSL_E_BIND for a refused bind
+                if (e.packed == KslConst.E_BIND) throw kotlinx.io.IOException("UDP ${e.message}", e)
                 throw e
             }
         }
