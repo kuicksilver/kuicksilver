@@ -2,11 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.kuicksilver.ktor.server
 
+import io.ktor.http.HttpStatusCode
 import io.ktor.network.selector.SelectorManager
 import io.ktor.network.sockets.InetSocketAddress
 import io.ktor.network.sockets.openReadChannel
 import io.ktor.network.sockets.openWriteChannel
 import io.ktor.server.response.header
+import io.ktor.server.response.respond
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
 import io.ktor.server.routing.routing
@@ -387,6 +389,61 @@ class ServerHttp3AdvertisingTest {
                     )
                 }
             } finally {
+                server.stop(100, 500)
+            }
+        }
+
+    /**
+     * Over HTTP/3 too: the application's own `Alt-Svc` is sent as it is in every mode, and a 421 gets no `clear`. The handlers
+     * are held until the mode is set, so both requests are in flight on one connection when `Drain` (and its GOAWAY) comes.
+     */
+    @Test fun negative_appAltSvcAnd421NotOverriddenOverH3() =
+        h3ServerTest {
+            var arrived = kotlinx.coroutines.channels.Channel<Unit>(2)
+            var release = CompletableDeferred<Unit>()
+            val (server, port) =
+                tlsServer {
+                    routing {
+                        get("/own") {
+                            arrived.send(Unit)
+                            release.await()
+                            call.response.header("Alt-Svc", "h3=\"alt.example:443\"")
+                            call.respondText("ok")
+                        }
+                        get("/misdirected") {
+                            arrived.send(Unit)
+                            release.await()
+                            call.respond(HttpStatusCode(421, "Misdirected Request"), "")
+                        }
+                    }
+                }
+            val ep = Http3Endpoint.bind(InetSocketAddress("127.0.0.1", 0))
+            try {
+                val c = ep.connect(InetSocketAddress("127.0.0.1", port), h3Tls)
+                for (mode in Http3Advertising.entries) {
+                    arrived = kotlinx.coroutines.channels.Channel(2)
+                    release = CompletableDeferred()
+                    coroutineScope {
+                        val own = async { c.request(get("/own")).let { r -> r.body.readFullBody().let { r.headers.getAll("alt-svc") } } }
+                        val misdirected =
+                            async {
+                                c.request(get("/misdirected")).let { r ->
+                                    r.body.readFullBody().let {
+                                        r.status to
+                                            r.headers["alt-svc"]
+                                    }
+                                }
+                            }
+                        withTimeout(10.seconds) { repeat(2) { arrived.receive() } }
+                        server.advertising(mode)
+                        release.complete(Unit)
+                        assertEquals(listOf("h3=\"alt.example:443\""), withTimeout(10.seconds) { own.await() }, "$mode: own")
+                        assertEquals(421 to null, withTimeout(10.seconds) { misdirected.await() }, "$mode: 421")
+                    }
+                }
+                c.close()
+            } finally {
+                ep.close()
                 server.stop(100, 500)
             }
         }
