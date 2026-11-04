@@ -136,6 +136,9 @@ The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.
 
 ### Changed
 
+- Windows (mingwX64) TCP: an idle connection's read tries the receive again after 1, 2, 4 and then every 8 seconds
+  instead of every second, and after 1 second again once data was read: the bound on a lost `FD_CLOSE` costs an idle
+  keep-alive connection a receive every 8 s, not every second.
 - HTTP/3: only an Extended CONNECT whose protocol is not `websocket` has HTTP datagrams (RFC 9297 section 2). A datagram for
   a classic CONNECT or a WebSocket (RFC 9220) stream whose direction is still open now aborts that stream with
   `H3_DATAGRAM_ERROR`, as one for a GET does, and `Http3Stream.trySendDatagram` answers `Closed` on such a stream

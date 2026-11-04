@@ -66,6 +66,9 @@ private const val BACKLOG = 50
 /** Bytes per `recv`/`send` call. */
 private const val IO_BUFFER = 8192
 
+/** How many times [NativeTcpSocket.readRecheck] an idle read waits at most between two receives (1 s grows to 8 s on Windows). */
+private const val MAX_READ_BACKOFF = 8
+
 /**
  * How long the write loop waits for room before it tries the send again ([NativeTcpSocket.RoomWait]): the bound on how
  * long a reset the selector does not report keeps a writer waiting (Windows reports it as `FD_CLOSE`, not `FD_WRITE`).
@@ -239,6 +242,9 @@ internal class NativeTcpSocket(
      */
     @Volatile internal var readRecheck: Duration? = tcpReadRecheck
 
+    /** Each wait for data that [ReadWait] gave up, as how long it waited (tests: the idle backoff). */
+    internal val readRechecksForTest = kotlinx.coroutines.flow.MutableStateFlow<List<Duration>>(emptyList())
+
     override fun close() {
         if (!closeFlag.compareAndSet(expectedValue = false, newValue = true)) return
         launch(CoroutineName("socket-close")) {
@@ -321,6 +327,7 @@ internal class NativeTcpSocket(
                             throw e
                         }
                     if (n > 0) {
+                        data.dataRead()
                         channel.writeFully(buffer, 0, n)
                         channel.flush()
                     } else if (n == 0) {
@@ -390,7 +397,10 @@ internal class NativeTcpSocket(
      * The read loop's wait for data: a READ select, given up after [readRecheck] (when set) so the loop tries the receive
      * again, which returns the data or the end of the stream the selector did not report (see [tcpReadRecheck]). Like
      * [RoomWait], the select outlives a wait that gave up and serves the next one: an idle connection leaves one select
-     * behind, not one per recheck.
+     * behind, not one per recheck. While nothing arrives the recheck backs off, doubling up to [MAX_READ_BACKOFF] times
+     * [readRecheck] (1, 2, 4, 8 s on Windows), and starts over once data was read: an idle keep-alive connection costs a
+     * receive every 8 s instead of every second (review 2026-10-28 readwait.md R3), and a lost end of stream right after
+     * data still shows within [readRecheck].
      */
     private inner class ReadWait(
         scope: CoroutineScope,
@@ -398,20 +408,32 @@ internal class NativeTcpSocket(
         private val waits = SupervisorJob(scope.coroutineContext.job)
         private val waitScope = CoroutineScope(scope.coroutineContext + waits)
         private var select: Deferred<Unit>? = null
+        private var backoff: Duration? = null
 
-        /** Returns when the receive may be tried again: the socket is readable, or [readRecheck] has passed. */
+        /** Returns when the receive may be tried again: the socket is readable, or the recheck has passed. */
         suspend fun await() {
-            val recheck = readRecheck ?: return selector.select(this@NativeTcpSocket, SelectInterest.READ)
+            val base = readRecheck ?: return selector.select(this@NativeTcpSocket, SelectInterest.READ)
+            val recheck = backoff ?: base
             val pending =
                 select ?: waitScope
                     .async(start = CoroutineStart.UNDISPATCHED) { selector.select(this@NativeTcpSocket, SelectInterest.READ) }
                     .also { select = it }
             try {
-                if (withTimeoutOrNull(recheck) { pending.await() } != null) select = null
+                if (withTimeoutOrNull(recheck) { pending.await() } != null) {
+                    select = null
+                } else {
+                    readRechecksForTest.value += recheck
+                    backoff = minOf(recheck * 2, base * MAX_READ_BACKOFF)
+                }
             } catch (e: Throwable) {
                 select = null // a select that failed is not kept: the read loop ends with its failure
                 throw e
             }
+        }
+
+        /** Data was read: the next wait gives up after [readRecheck] again. */
+        fun dataRead() {
+            backoff = null
         }
 
         /** Cancels the select in flight: the read loop has ended. */

@@ -13,6 +13,7 @@ import io.ktor.utils.io.close
 import io.ktor.utils.io.errors.PosixException
 import io.ktor.utils.io.readAvailable
 import io.ktor.utils.io.readBuffer
+import io.ktor.utils.io.readByte
 import io.ktor.utils.io.writeFully
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
@@ -22,6 +23,7 @@ import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
@@ -326,6 +328,42 @@ class TcpSocketsNativeTest {
             }
         }
 
+    /**
+     * The bounded wait for data keeps one select however often it gives up (review 2026-10-28 readwait.md N1), and backs off
+     * while nothing arrives: 50, 100, 200, 400 ms, then 400 ms (eight times the first) until data is read, after which it
+     * starts at 50 ms again (R3: an idle connection on Windows tried a receive every second for as long as it lived).
+     */
+    @Test fun idleReadRechecksBackOffAndKeepOneSelect() =
+        runBlocking {
+            val selector = SelectorManager(Dispatchers.Default)
+            val deaf = NoReadWakeUpSelector(selector)
+            try {
+                withTimeout(30.seconds) {
+                    val server = bindTcp(selector, "127.0.0.1", 0)
+                    val port = (server.localAddress as InetSocketAddress).port
+                    val client = connectTcp(deaf, InetSocketAddress("127.0.0.1", port)) as NativeTcpSocket
+                    client.readRecheck = 50.milliseconds
+                    val accepted = server.accept()
+                    val input = client.openReadChannel()
+                    val idle = client.readRechecksForTest.first { it.size >= 5 }
+                    assertEquals(listOf(50, 100, 200, 400, 400), idle.take(5).map { it.inWholeMilliseconds.toInt() }, "the idle rechecks")
+                    assertEquals(1, deaf.readSelects, "a select per recheck")
+                    val out = accepted.openWriteChannel()
+                    out.writeFully("x".encodeToByteArray())
+                    out.flush()
+                    assertEquals('x'.code.toByte(), input.readByte())
+                    val after = client.readRechecksForTest.value.size
+                    val next = client.readRechecksForTest.first { it.size > after }[after]
+                    assertEquals(50, next.inWholeMilliseconds.toInt(), "the first recheck after data")
+                    client.close()
+                    accepted.close()
+                    server.close()
+                }
+            } finally {
+                selector.close()
+            }
+        }
+
     private enum class SelectorKind { Platform, NoWriteWakeUp }
 
     /**
@@ -399,11 +437,17 @@ class TcpSocketsNativeTest {
     private class NoReadWakeUpSelector(
         private val delegate: SelectorManager,
     ) : SelectorManager by delegate {
+        /** READ selects made so far. */
+        @kotlin.concurrent.Volatile var readSelects = 0
+
         override suspend fun select(
             selectable: Selectable,
             interest: SelectInterest,
         ) {
-            if (interest == SelectInterest.READ) awaitCancellation()
+            if (interest == SelectInterest.READ) {
+                readSelects++
+                awaitCancellation()
+            }
             delegate.select(selectable, interest)
         }
     }
