@@ -117,7 +117,9 @@ jobs:
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends clang libclang-rt-18-dev
           clang --version | head -1
       - name: 'fuzz: restore the ${{ matrix.target }} corpus'
-        # a cache service that hangs costs at most two minutes: the run starts from the seeds
+        # a cache service that hangs costs at most two minutes: the run starts from the seeds, and its corpus is not saved
+        # (a newer key that restore-keys prefers would replace what had grown with what this run found alone)
+        id: restore
         timeout-minutes: 2
         continue-on-error: true
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -141,10 +143,15 @@ jobs:
             || echo "::warning::$TARGET: the corpus could not be pruned, it is cached as it grew"
       - name: 'fuzz: restore a corpus replacement the prune did not finish'
         if: always()
+        timeout-minutes: 2
         # campaign.sh puts back a corpus a killed prune left between its two renames (<corpus>.old) before any command runs
         run: bash tools/fuzz/campaign.sh list > /dev/null
+      - name: 'fuzz: the corpus was not restored'
+        if: always() && steps.restore.outcome != 'success'
+        run: echo "::warning::corpus not restored; this run's corpus is not cached"
       - name: 'fuzz: save the ${{ matrix.target }} corpus'
-        if: always()
+        # a first run finds no entry and still succeeds: its corpus is saved
+        if: always() && steps.restore.outcome == 'success'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: build/fuzz-campaign/corpus/${{ matrix.target }}
