@@ -9,14 +9,18 @@ import io.ktor.server.websocket.WebSockets
 import io.ktor.server.websocket.webSocket
 import io.ktor.websocket.Frame
 import io.kuicksilver.http3.Http3Endpoint
+import io.kuicksilver.http3.Http3ErrorCode
 import io.kuicksilver.http3.Http3Exception
 import io.kuicksilver.http3.Http3Headers
 import io.kuicksilver.http3.http3Request
+import io.kuicksilver.http3.http3Settings
+import io.kuicksilver.http3.webTransport
 import io.kuicksilver.native.KslLoader
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.withTimeout
 import kotlin.test.BeforeTest
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 
@@ -44,7 +48,37 @@ class ServerH3UpgradeFailureTest {
                         http3Request("CONNECT", "server.test", "/ws") { headers = Http3Headers.of("sec-websocket-version" to "13") }
                     val failure = runCatching { withTimeout(10.seconds) { c.connect(request, "websocket") } }.exceptionOrNull()
                     assertTrue(failure !is TimeoutCancellationException, "the request stream ends, not a 10 s wait")
-                    assertTrue(failure is Http3Exception, "the client sees the stream reset: $failure")
+                    assertTrue(failure is Http3Exception.Protocol, "the client sees the stream reset: $failure")
+                    assertEquals(Http3ErrorCode.INTERNAL_ERROR, failure.h3Code, "with H3_INTERNAL_ERROR")
+                } finally {
+                    c.close()
+                }
+            } finally {
+                ep.close()
+                server.stop(100, 500)
+            }
+        }
+
+    /** The same for a WebTransport CONNECT whose session is not accepted (no `:status` went out). */
+    @Test fun negative_webTransportThatFailsBeforeItsAnswerResetsTheStream() =
+        h3ServerTest {
+            val (server, port) = tlsServer({ webTransport = true }) { routing { webTransport("/wt") { } } }
+            server.engine.beforeH3UpgradeForTest = { throw IllegalStateException("the session could not be accepted") }
+            val ep = Http3Endpoint.bind(InetSocketAddress("127.0.0.1", 0))
+            try {
+                val settings =
+                    http3Settings {
+                        enableConnectProtocol = true
+                        webTransport = true
+                    }
+                val c = ep.connect(InetSocketAddress("127.0.0.1", port), ServerFixtures.clientTls(alpn = listOf("h3")), settings = settings)
+                try {
+                    val request =
+                        http3Request("CONNECT", "server.test", "/wt") { headers = Http3Headers.of("origin" to "https://server.test") }
+                    val failure = runCatching { withTimeout(10.seconds) { c.webTransport(request) } }.exceptionOrNull()
+                    assertTrue(failure !is TimeoutCancellationException, "the request stream ends, not a 10 s wait")
+                    assertTrue(failure is Http3Exception.Protocol, "the client sees the stream reset: $failure")
+                    assertEquals(Http3ErrorCode.INTERNAL_ERROR, failure.h3Code, "with H3_INTERNAL_ERROR")
                 } finally {
                     c.close()
                 }

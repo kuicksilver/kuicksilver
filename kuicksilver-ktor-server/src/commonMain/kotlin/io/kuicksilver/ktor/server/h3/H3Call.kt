@@ -64,7 +64,7 @@ internal class H3Call(
         )
     override val response: H3Response =
         if (webTransport) {
-            H3WebTransportResponse(this, h3)
+            H3WebTransportResponse(this, h3, beforeUpgradeForTest)
         } else if (webSocket) {
             H3UpgradeResponse(
                 this,
@@ -266,11 +266,14 @@ internal fun defaultPort(scheme: String?): Int = if (scheme == "http") 80 else 4
 internal class H3WebTransportResponse(
     call: PipelineCall,
     h3: Http3ServerRequest,
+    private val beforeUpgradeForTest: (() -> Unit)? = null,
 ) : H3Response(call, h3) {
     override suspend fun respondUpgrade(upgrade: OutgoingContent.ProtocolUpgrade) {
         if (upgrade !is WebTransportUpgrade) return super.respondUpgrade(upgrade)
-        answered = true // acceptAndRun answers every outcome it knows (the session, or 400)
-        upgrade.acceptAndRun(h3, Http3Headers(h3Headers().fields.filter { it.first != "content-length" }))
+        beforeUpgradeForTest?.invoke()
+        // answered once acceptWebTransport has answered (the session's 200, or its own 400): an exception before that
+        // leaves the stream to the engine's reset
+        upgrade.acceptAndRun(h3, Http3Headers(h3Headers().fields.filter { it.first != "content-length" })) { answered = true }
     }
 
     /**
