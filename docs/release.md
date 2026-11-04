@@ -292,6 +292,10 @@ version from `main` or `release/<X.Y>.x`, a replaced tag. Once, after the first 
 (organization *Packages* → the package → *Package settings*), or the runner cannot pull them. The images carry no build
 provenance attestation yet.
 
+The push sends both `:<version>` tags first and both `:latest` tags last, so a push that fails halfway leaves `:latest` on
+the previous version for both images. A re-run after such a partial push finds `:<version>` published and is refused:
+dispatch it again with `force`.
+
 ## Checks before publishing
 
 - `-Pkuicksilver.sign=false` publishes unsigned (to count files, or on a machine without the key); a release never uses
