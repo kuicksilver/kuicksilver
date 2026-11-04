@@ -53,7 +53,8 @@ public object EngineMain {
         val reload = parseReloadInterval(config.propertyOrNull("kuicksilver.tls.reloadInterval")?.getString())
         require(reload == null || chain != null) { "kuicksilver.tls.reloadInterval needs kuicksilver.tls.certificateChain and privateKey" }
         if (chain != null && key != null) {
-            val loaded = TlsIdentity.fromPem(readPemText(chain), readPemKey(key))
+            // with reloading, the startup files get the watcher's checks: a combined PEM (key in the chain file) is refused
+            val loaded = TlsIdentity.fromPem(readPemText(chain, refusePrivateKey = reload != null), readPemKey(key))
             @OptIn(ExperimentalKuicksilverApi::class)
             identity =
                 if (reload == null) {

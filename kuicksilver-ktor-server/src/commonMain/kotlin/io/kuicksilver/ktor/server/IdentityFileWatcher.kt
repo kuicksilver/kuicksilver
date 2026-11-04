@@ -11,10 +11,6 @@ import io.kuicksilver.tls.TlsIdentity
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.io.IOException
-import kotlinx.io.buffered
-import kotlinx.io.files.Path
-import kotlinx.io.files.SystemFileSystem
-import kotlinx.io.readString
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 
@@ -40,7 +36,7 @@ internal class IdentityFileWatcher(
     private val keyPath: String,
     private val target: TlsIdentity.Reloadable,
     private val log: Logger,
-    private val readText: (String) -> String = ::readPemText,
+    private val readText: (String) -> String = { readPemText(it, refusePrivateKey = true) },
     private val readKey: (String) -> CharArray = ::readPemKey,
     private val settle: Duration = 1.seconds,
 ) {
@@ -140,17 +136,35 @@ internal class IdentityFileWatcher(
 /** The most a PEM file of the identity may hold (a chain of a dozen certificates is a few tens of KiB). */
 internal const val MAX_PEM_FILE_BYTES: Long = 1L shl 20
 
-/** Opens [path] and fails with [IOException] when it holds more than [MAX_PEM_FILE_BYTES]: memory stays bounded per check. */
-private fun <T> readBounded(
+/**
+ * The chain file as text; with [refusePrivateKey], a file that also holds a private key (a combined PEM) fails with
+ * [IOException] before any `String` of it is made, and the characters read are wiped.
+ */
+internal fun readPemText(
     path: String,
-    read: (kotlinx.io.Source) -> T,
-): T =
-    SystemFileSystem.source(Path(path)).buffered().use { src ->
-        if (src.request(MAX_PEM_FILE_BYTES + 1)) throw IOException("$path is larger than $MAX_PEM_FILE_BYTES bytes")
-        read(src)
+    refusePrivateKey: Boolean = false,
+): String {
+    val chars = readSecretFile(path, MAX_PEM_FILE_BYTES)
+    try {
+        if (refusePrivateKey && chars.containsText("PRIVATE KEY")) {
+            throw IOException("$path contains a private key; it must hold the certificate chain only")
+        }
+        return chars.concatToString()
+    } finally {
+        chars.fill('\u0000')
     }
+}
 
-internal fun readPemText(path: String): String = readBounded(path) { it.readString() }
+private fun CharArray.containsText(needle: String): Boolean {
+    var i = 0
+    while (i <= size - needle.length) {
+        var j = 0
+        while (j < needle.length && this[i + j] == needle[j]) j++
+        if (j == needle.length) return true
+        i++
+    }
+    return false
+}
 
 /**
  * The key file as characters, without a `String` of it and without kotlinx-io's pooled segments (never wiped): read by

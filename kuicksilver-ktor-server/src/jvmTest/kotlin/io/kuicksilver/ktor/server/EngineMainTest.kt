@@ -143,6 +143,27 @@ class EngineMainTest {
         assertTrue("reloadInterval" in e.message.orEmpty(), e.message)
     }
 
+    /** With reloading, a chain file that also holds the key (a combined PEM) is refused at startup as the watcher would refuse it. */
+    @Test fun negative_combinedPemRefusedAtStartupWithReloadInterval() {
+        val pem = TestCerts.toPem("CERTIFICATE", TestCerts.server) + TestCerts.toPem("PRIVATE KEY", TestCerts.serverKey)
+        val chain = File(dir, "combined.pem").apply { writeText(pem) }
+        val key = File(dir, "combined-key.pem").apply { writeText(TestCerts.toPem("PRIVATE KEY", TestCerts.serverKey)) }
+
+        fun args(reload: Boolean) =
+            arrayOf(
+                "-host=127.0.0.1",
+                "-port=0",
+                "-P:ktor.application.modules.size=1",
+                "-P:ktor.application.modules.0=$module",
+                "-P:kuicksilver.tls.certificateChain=${chain.path}",
+                "-P:kuicksilver.tls.privateKey=${key.path}",
+            ) + (if (reload) arrayOf("-P:kuicksilver.tls.reloadInterval=1h") else emptyArray())
+        val e = assertFailsWith<kotlinx.io.IOException> { EngineMain.createServer(args(reload = true)).engine }
+        assertTrue("contains a private key" in e.message.orEmpty(), e.message)
+        val plain = EngineMain.createServer(args(reload = false))
+        assertTrue(plain.engine.configuration.identity is TlsIdentity.InMemory, "control: without reloading the file is served as before")
+    }
+
     /**
      * With `kuicksilver.tls.reloadInterval` the identity is reloadable and the files are watched from the start: files renewed
      * after `createServer` read them are served without a restart, and the watcher ends with the server.

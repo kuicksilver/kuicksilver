@@ -208,8 +208,9 @@ twice a second apart with the same content, and a key that matches it. Tools tha
 identity and is tried again after 1 s, then 2 s, 4 s and so on up to the interval. Failures are logged as warnings
 (once per distinct failure, never with key material); a successful reload is logged at info level, and the files are
 read once more a second later, so a chain whose writer paused longer than that is corrected then. Each file is read
-whole on every check and refused above 1 MiB; a chain file that also holds a private key is refused (keep the key in its
-own file). Polling once an hour means a renewed certificate may wait an hour to be served; certbot's `--deploy-hook`
+whole on every check and refused above 1 MiB; a chain file that also holds a private key is refused, at startup too (keep
+the key in its own file). The stop waits at most a second for a check in progress (a read on a hung network file system
+cannot be interrupted). Polling once an hour means a renewed certificate may wait an hour to be served; certbot's `--deploy-hook`
 (or a restart) is the alternative when it must take effect at once. With `kuicksilver.tls.reloadInterval` set, the
 files at startup get the same checks as a reload, so an expired or not yet valid certificate fails the start; without
 it, `EngineMain` serves the files as they are, as before. The identity `EngineMain` made is closed when the server stops.

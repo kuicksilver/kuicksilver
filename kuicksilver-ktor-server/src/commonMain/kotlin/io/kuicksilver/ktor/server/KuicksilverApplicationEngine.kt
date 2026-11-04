@@ -35,7 +35,6 @@ import kotlinx.coroutines.IO
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -121,6 +120,9 @@ public class KuicksilverApplicationEngine(
 
         /** Tests shorten the watcher's settle time (two equal reads of a changed chain) with this; null keeps 1 s. */
         internal var identitySettleForTest: Duration? = null
+
+        /** Tests replace how the watcher reads the chain file (a read that never returns, say); null reads the file. */
+        internal var identityReadTextForTest: ((String) -> String)? = null
 
         /** Announce HTTP/3 with `Alt-Svc: h3=":<port>"; ma=86400` on HTTP/1.1 responses over TLS (on by default). */
         public var altSvc: Boolean = true
@@ -362,9 +364,9 @@ public class KuicksilverApplicationEngine(
                     if (cause is CancellationException) throw cause else return@launch
                 }
                 startupJob.complete(Unit)
-                val watcher = startIdentityWatcher(this)
+                startIdentityWatcher()
                 stopRequest.join()
-                watcher?.cancelAndJoin()
+                stopIdentityWatcher()
                 // graceful stop (RFC 9114 5.2): no new connections or requests, GOAWAY to every live HTTP/3 connection, then wait for the
                 // in-flight calls; `stopSuspend` cancels this job at the grace deadline, which closes what is left
                 servers.forEach {
@@ -400,7 +402,7 @@ public class KuicksilverApplicationEngine(
                         l.endpoint.close()
                         l.connections.cancel()
                     }
-                    identityWatcherForTest?.cancelAndJoin()
+                    stopIdentityWatcher()
                     // an identity EngineMain made from its files is the engine's: its native key goes with the engine (connections
                     // still closing keep their own reference in their contexts)
                     if (configuration.closeIdentityOnStop) (configuration.identity as? AutoCloseable)?.close()
@@ -409,21 +411,39 @@ public class KuicksilverApplicationEngine(
         }
     }
 
-    /** The PEM file watcher of [Configuration.identityReloadInterval], in the server job until the stop begins; null without one. */
+    /**
+     * The PEM file watcher of [Configuration.identityReloadInterval] from startup until the stop begins; null without one. It runs
+     * outside the server job: a check stuck in a read that cannot be interrupted (a hung network file system, a FIFO at the path)
+     * must not keep the server job, and so the stop, from completing.
+     */
+    @Volatile
+    private var identityWatcher: Job? = null
+
     @OptIn(io.kuicksilver.annotations.ExperimentalKuicksilverApi::class)
-    private fun startIdentityWatcher(scope: CoroutineScope): Job? {
-        val interval = configuration.identityReloadInterval ?: return null
-        val (chain, key) = configuration.identityFiles ?: return null
-        val target = configuration.identity as? TlsIdentity.Reloadable ?: return null
+    private fun startIdentityWatcher() {
+        val interval = configuration.identityReloadInterval ?: return
+        val (chain, key) = configuration.identityFiles ?: return
+        val target = configuration.identity as? TlsIdentity.Reloadable ?: return
         val settle = configuration.identitySettleForTest ?: 1.seconds
-        return scope
-            .launch(engineDispatcher) { IdentityFileWatcher(chain, key, target, environment.log, settle = settle).run(interval) }
-            .also { identityWatcherForTest = it }
+        val readText = configuration.identityReadTextForTest ?: { path: String -> readPemText(path, refusePrivateKey = true) }
+        identityWatcher =
+            CoroutineScope(engineDispatcher).launch {
+                IdentityFileWatcher(chain, key, target, environment.log, readText = readText, settle = settle).run(interval)
+            }
     }
 
-    /** The running PEM file watcher, for tests. */
-    @Volatile
-    internal var identityWatcherForTest: Job? = null
+    /**
+     * Cancels the watcher and waits for it at most a second: a check blocked in a read finishes on its own later, and closing
+     * the identity meanwhile is safe (a reload after close is refused, a context being built keeps its own key reference).
+     */
+    private suspend fun stopIdentityWatcher() {
+        val w = identityWatcher ?: return
+        w.cancel()
+        withTimeoutOrNull(1.seconds) { w.join() }
+    }
+
+    /** The PEM file watcher, for tests. */
+    internal val identityWatcherForTest: Job? get() = identityWatcher
 
     /** TCP ports whose UDP twin serves HTTP/3: only those advertise it with Alt-Svc. Written at startup before TCP accepting begins, read-only after. */
     internal val h3Ports = HashSet<Int>()
