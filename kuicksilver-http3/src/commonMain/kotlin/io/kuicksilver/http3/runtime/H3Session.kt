@@ -46,6 +46,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.Channel
@@ -328,7 +329,9 @@ internal class H3Session(
      */
     suspend fun cancelSections(st: QuicStream) {
         if (droppedByRejectedZeroRtt(st)) return
-        withContext(dispatcher) { qpack.cancelStream(st.id) } // QPACK is the dispatcher's
+        // QPACK is the dispatcher's. NonCancellable: the callers are often cancelled already (a body pump in its catch after
+        // its own cancellation), and withContext would throw at once without making the cancellation (review 2026-10-28 R1)
+        withContext(NonCancellable + dispatcher) { qpack.cancelStream(st.id) }
     }
 
     /**

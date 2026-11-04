@@ -24,6 +24,7 @@ import io.kuicksilver.quic.QuicConnection
 import io.kuicksilver.quic.QuicStream
 import io.kuicksilver.quic.receivedAll
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.channels.Channel
@@ -32,7 +33,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlin.test.BeforeTest
 import kotlin.test.Test
@@ -71,6 +74,33 @@ class QpackDynamicTest {
                     }
                 assertTrue(sizes.drop(1).max() * 10 < sizes[0] * 3, "sizes $sizes")
                 assertTrue(p.client.session.qpack.encoderInserts > 0 && p.server.session.qpack.encoderInserts > 0)
+            }
+        }
+
+    /**
+     * A Stream Cancellation made by a coroutine that is already cancelled still goes out (review 2026-10-28 quic-h3.md R1): a
+     * body pump whose own cancellation brought it to its catch (a request whose trailers were refused cancels it) is such a
+     * coroutine, and withContext's entry check threw there, which runCatching hid. The peer's encoder then kept the stream's
+     * references (entries it cannot evict, a blocked-stream slot it never gets back).
+     */
+    @Test fun streamCancellationFromACancelledCoroutineGoesOut() =
+        h3Test {
+            H3Pair.open(clientSettings = dyn, serverSettings = dyn).useScoped { p ->
+                p.client.peerSettings
+                    .filterNotNull()
+                    .first()
+                p.server.peerSettings
+                    .filterNotNull()
+                    .first()
+                val st =
+                    p.client.session.quic
+                        .openBidi()
+                launch(start = CoroutineStart.UNDISPATCHED) {
+                    coroutineContext.job.cancel()
+                    runCatching { p.client.session.cancelSections(st) }
+                }.join()
+                assertEquals(1L, withContext(p.client.session.dispatcher) { p.client.session.qpack.streamCancellationsMade }, "made")
+                withTimeout(5.seconds) { while (p.server.session.qpack.peerStreamCancellations < 1L) delay(5) }
             }
         }
 
