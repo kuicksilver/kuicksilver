@@ -263,11 +263,14 @@ if [ "$cmd" = minimize ] || [ "$cmd" = prune ]; then
     fi
     rm -f "$out/min"/seed-baseline-*
     before=$(find "$corpus" -type f | wc -l | tr -d ' ')
+    # the result is copied next to the corpus and then moved over it: a step killed while copying (fuzz.yml's prune timeout)
+    # leaves the old corpus whole, never a partial one that the cache would keep
+    dest=$committed; [ "$cmd" = prune ] && dest=$corpus
+    rm -rf "$dest.new"; mkdir -p "$dest.new"; cp "$out/min"/* "$dest.new"/ 2>/dev/null || true
+    rm -rf "$dest"; mv "$dest.new" "$dest"
     if [ "$cmd" = prune ]; then
-      rm -rf "$corpus"; mkdir -p "$corpus"; cp "$out/min"/* "$corpus"/ 2>/dev/null || true
       echo "$id: $before grown inputs -> $(find "$corpus" -type f | wc -l | tr -d ' ') beyond tools/fuzz/corpus/$id and the seeds"
     else
-      rm -rf "$committed"; mkdir -p "$committed"; cp "$out/min"/* "$committed"/ 2>/dev/null || true
       echo "$id: $before grown inputs -> $(find "$committed" -type f | wc -l | tr -d ' ') in tools/fuzz/corpus/$id"
     fi
   done
