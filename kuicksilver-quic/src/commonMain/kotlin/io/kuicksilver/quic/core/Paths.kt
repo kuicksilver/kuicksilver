@@ -50,6 +50,14 @@ internal class Path(
     /** Client: the path to the server's preferred address (RFC 9000 section 9.6), switched to once validated. */
     var preferred: Boolean = false
 
+    /**
+     * Server: this path is the handshake-time candidate (see `ConnectionCore.onHandshakeAddressChange`): the client address of a
+     * handshake-time rebind that the active path does not have at the moment, validated on its own (RFC 9000 sections 8.2 and 9.3.3).
+     * It sends nothing but PATH_CHALLENGE (and PATH_RESPONSE) to that address, with the active path's connection ID, and is never
+     * reported to the application.
+     */
+    var handshakeCandidate: Boolean = false
+
     /** Server: the client's non-probing packets arrived on this preferred-socket path before its validation finished (RFC 9000 section 9.6.1). */
     var preferredMovePending: Boolean = false
 
@@ -99,6 +107,12 @@ internal class Path(
         challenge = 0
         sentChallengeCount = 0
     }
+
+    /** When the latest PATH_CHALLENGE went out on this path (any validation); [TimeMark.NEVER] before the first. */
+    var lastChallengeAt: TimeMark = TimeMark.NEVER
+
+    /** A validation of this path asked for less than a PTO after its latest PATH_CHALLENGE starts at this time (`revalidatePreviousPath`). */
+    var revalidateAt: TimeMark = TimeMark.NEVER
 
     /** A PATH_CHALLENGE must go out on this path at the next poll. */
     var challengePending: Boolean = false
@@ -164,6 +178,65 @@ internal class Path(
         from.cc =
             fresh
         from.pacer = Pacer()
+    }
+
+    /**
+     * Exchanges the peer address with [other], together with everything bound to that address rather than to the path: its
+     * anti-amplification accounting (RFC 9000 section 8.1 counts per address), its validation (state, challenges sent and their
+     * schedule and pace, section 8.2) and when it was validated. Congestion state, RTT, MTU, DPLPMTUD, ECN and connection IDs stay
+     * with the path; the caller starts them over when the active path's IP changes (`ConnectionCore.resetForNewIp`, section 9.4). Used
+     * by a handshake-time rebind between the active path and the candidate: each address keeps its own validation.
+     */
+    fun swapAddressWith(other: Path) {
+        val r = remote
+        remote = other.remote
+        other.remote = r
+        val received = amplification.received
+        val sent = amplification.sent
+        val validated = amplification.validated
+        amplification.restore(other.amplification.received, other.amplification.sent, other.amplification.validated)
+        other.amplification.restore(received, sent, validated)
+        val st = state
+        state = other.state
+        other.state = st
+        val at = validatedAt
+        validatedAt = other.validatedAt
+        other.validatedAt = at
+        val hv = handshakeValidated
+        handshakeValidated = other.handshakeValidated
+        other.handshakeValidated = hv
+        val c = challenge
+        challenge = other.challenge
+        other.challenge = c
+        for (i in 0 until SENT_CHALLENGES) {
+            val d = sentChallenges[i]
+            sentChallenges[i] = other.sentChallenges[i]
+            other.sentChallenges[i] = d
+            val u = sentUndersized[i]
+            sentUndersized[i] = other.sentUndersized[i]
+            other.sentUndersized[i] = u
+        }
+        val n = sentChallengeCount
+        sentChallengeCount = other.sentChallengeCount
+        other.sentChallengeCount = n
+        val pending = challengePending
+        challengePending = other.challengePending
+        other.challengePending = pending
+        val deadline = challengeDeadline
+        challengeDeadline = other.challengeDeadline
+        other.challengeDeadline = deadline
+        val next = nextChallengeAt
+        nextChallengeAt = other.nextChallengeAt
+        other.nextChallengeAt = next
+        val retries = challengeRetries
+        challengeRetries = other.challengeRetries
+        other.challengeRetries = retries
+        val lastAt = lastChallengeAt
+        lastChallengeAt = other.lastChallengeAt
+        other.lastChallengeAt = lastAt
+        val revalidate = revalidateAt
+        revalidateAt = other.revalidateAt
+        other.revalidateAt = revalidate
     }
 
     override fun toString(): String = "Path(${id.value}, $remote, $state)"

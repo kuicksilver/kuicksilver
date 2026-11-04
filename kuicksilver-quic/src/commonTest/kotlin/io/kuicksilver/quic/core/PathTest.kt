@@ -2030,21 +2030,19 @@ class PathTest {
                     if (forged == null &&
                         b[0].toInt() and 0xf0 == 0xc0
                     ) {
-                        forged =
-                            b.copyOf().also { f ->
-                                val off =
-                                    1 + 4 + 1 + (f[5].toInt() and 0xff)
-                                val pnOff =
-                                    off + 1 + (f[off].toInt() and 0xff) + 1 + 2
-                                f[pnOff + (f[0].toInt() and 0x03)] = 0x33
-                            }
+                        forged = withPacketNumber(b, 1)
                     }
                     ; true
-                } // the client's first Initial with a fresh packet number (Null crypto: the header is plaintext)
+                }
+            // the client's first Initial with packet number 1, which the client sends next (its ACK of our Initial): an unused number
+            // would have the server acknowledge a packet the client never sent, and the client close the connection (RFC 9000 section
+            // 13.1; the residual of threat-model 3.5)
             val c = p.connect()
             p.step()
             val s = p.server.connections().single()
+            val received = s.stats.packetsReceived
             p.feed(p.server, forged!!, attacker)
+            assertEquals(received + 1, s.stats.packetsReceived, "the forged Initial decrypts and is processed")
             assertEquals(p.clientAddr, s.remoteAddressForTest, "a forged Initial from a third address does not move a live path")
             assertTrue(p.confirmed(c))
             assertEquals(p.clientAddr, s.remoteAddressForTest)
@@ -2136,6 +2134,868 @@ class PathTest {
             assertSame(old, s.path.cc)
             assertTrue(old.maxBw >= maxBw / 2, "max_bw kept: $maxBw then ${old.maxBw}")
             assertTrue(s.paths.all.none { it !== s.path && it.cc === old }, "the old address probes on a controller of its own")
+        } finally {
+            p.close()
+        }
+    }
+
+    /**
+     * A handshake whose client really rebinds from C ([EndpointPair.clientAddr]) to [newAddr] (S) once [rebindAfter] server datagrams
+     * reached it at C. From the rebind on, every client datagram also reaches the server as a copy from C (an off-path attacker racing
+     * it, RFC 9000 section 9.3.3); [copyWins] (the datagram's index after the rebind) says whether the copy arrives first, the genuine
+     * one then being a duplicate; once both sides confirmed the handshake the race stops. Nothing sent to C reaches the client unless [oldAlive] (the old NAT mapping still forwards);
+     * [lose] drops a server datagram sent to S.
+     */
+    private class CopyRace(
+        val p: EndpointPair,
+        val newAddr: InetSocketAddress,
+        val rebindAfter: Int,
+        val oldAlive: Boolean = false,
+        val lose: (ByteArray) -> Boolean = { false },
+        val copyWins: (Int) -> Boolean,
+    ) {
+        val h = HandPump(p, p.connect())
+        private var rebound = false
+        private var reached = 0
+        private var index = 0
+        var fromOld = 0L
+        var toOld = 0L
+        var movedAt: io.kuicksilver.quic.TimeMark? = null
+        var candidateSeen = false
+
+        val s: ConnectionCore get() = assertNotNull(h.s, "the server connection")
+
+        fun confirmed(): Boolean =
+            h.c.state == io.kuicksilver.quic.ConnectionState.Confirmed && h.s?.state == io.kuicksilver.quic.ConnectionState.Confirmed
+
+        private fun watch() {
+            val srv = h.s ?: return
+            if (movedAt == null && srv.paths.active.isRemote(newAddr)) movedAt = p.now
+            if (srv.handshakeCandidate != null) candidateSeen = true
+        }
+
+        private fun fromClient(
+            d: ByteArray,
+            from: InetSocketAddress,
+        ) {
+            if (from == p.clientAddr) fromOld += d.size
+            p.feedNoAdmit(p.server, d, from)
+            watch()
+        }
+
+        /** Runs both sides until both confirmed the handshake, or until [limit] passed (and at least until [atLeast]). */
+        fun run(
+            limit: Duration,
+            atLeast: Duration = Duration.ZERO,
+        ) {
+            val start = p.now
+            val end = start + limit
+            while (p.now < end && (!confirmed() || p.now < start + atLeast)) {
+                val racing = !confirmed() // the attacker races the handshake; what follows is 1-RTT migration, tested elsewhere
+                val sent =
+                    h.clientSends { d ->
+                        if (!rebound) {
+                            fromClient(d, p.clientAddr)
+                        } else if (!racing) {
+                            fromClient(d, newAddr)
+                        } else if (copyWins(index++)) {
+                            fromClient(d, p.clientAddr)
+                            fromClient(d, newAddr)
+                        } else {
+                            fromClient(d, newAddr)
+                            fromClient(d, p.clientAddr)
+                        }
+                    }
+                if (h.s != null && fromOld == 0L) fromOld = 1200 // the first datagram created the connection from C (padded to 1200)
+                h.serverSends { to, bytes ->
+                    if (to == p.clientAddr) toOld += bytes.size
+                    if (!rebound) {
+                        if (to == p.clientAddr && ++reached >= rebindAfter) rebound = true
+                        to == p.clientAddr
+                    } else {
+                        (to == newAddr && !lose(bytes)) || (oldAlive && to == p.clientAddr)
+                    }
+                }
+                watch()
+                if (sent == 0) h.advance()
+                watch()
+            }
+        }
+    }
+
+    /**
+     * The known limit of 0.2.1 (rfc-compliance, §9 and §8.1 rebind during the handshake): the client really rebinds from C to S after
+     * the server's first datagram reached it, C is dead, and an off-path observer races copies of the client's datagrams from C, winning
+     * two races out of three. Each copy from C was a newer packet from the old address: the path kept returning to the dead C, the
+     * challenge sent to S was forgotten with every return, and the client never got HANDSHAKE_DONE (the handshake timed out on its
+     * side). Both addresses are now validated on their own (the one the active path does not have is the candidate), S answers its
+     * challenge from wherever, and the handshake completes on S within two validation periods of the move.
+     */
+    @Test fun handshakeRebindUnderCopyRaceFromTheOldAddressCompletesOnTheNewOne() {
+        val p = EndpointPair(crypto = KslQuicCrypto)
+        try {
+            val r = CopyRace(p, InetSocketAddress("10.0.0.1", 40002), rebindAfter = 1) { i -> i % 3 != 0 }
+            r.run(QuicConfig.Default.handshakeTimeout)
+            val s = r.s
+            assertTrue(r.confirmed(), "both confirm the handshake (client ${r.h.c.state}, server ${s.state}, ${p.closed(r.h.c)})")
+            val moved = assertNotNull(r.movedAt, "the server followed S")
+            assertTrue(r.candidateSeen, "the address left was kept as the candidate")
+            val bound = moved + s.validationTimeout() * 2 + s.pto()
+            assertTrue(p.now <= bound, "confirmed ${p.now - moved} after the move, bound ${bound - moved}")
+            assertEquals(r.newAddr, s.remoteAddressForTest, "the connection ends on the client's new address")
+            assertTrue(r.toOld <= 3 * r.fromOld, "${r.toOld} bytes to C for ${r.fromOld} received from it")
+            assertEquals(1L, p.server.stats.connectionsCreated)
+        } finally {
+            p.close()
+        }
+    }
+
+    /** The same race with the first PATH_CHALLENGE to S lost: the handshake completes within the same bound, and S is validated after it. */
+    @Test fun handshakeRebindUnderCopyRaceSurvivesALostCandidateChallenge() {
+        val p = EndpointPair(crypto = KslQuicCrypto)
+        try {
+            var lost = 0
+            val newAddr = InetSocketAddress("10.0.0.1", 40002)
+            val r =
+                CopyRace(p, newAddr, rebindAfter = 1, lose = { b ->
+                    if (lost == 0 && isProbe(b)) {
+                        lost++
+                        true
+                    } else {
+                        false
+                    }
+                }) { i -> i % 3 != 0 }
+            r.run(QuicConfig.Default.handshakeTimeout)
+            val s = r.s
+            assertEquals(1, lost, "a challenge to S was lost")
+            assertTrue(r.confirmed(), "both confirm the handshake (client ${r.h.c.state}, server ${s.state})")
+            val moved = assertNotNull(r.movedAt)
+            assertTrue(p.now <= moved + s.validationTimeout() * 2 + s.pto(), "confirmed ${p.now - moved} after the move")
+            assertEquals(newAddr, s.remoteAddressForTest)
+            r.run(s.validationTimeout(), atLeast = s.validationTimeout())
+            assertEquals(newAddr, s.remoteAddressForTest)
+            assertEquals(PathState.Validated, s.paths.active.state, "S is validated without the lost challenge: ${s.paths.all}")
+            assertNull(s.handshakeCandidate)
+            assertTrue(
+                p.events[s]!!.any { it is ConnectionEvent.PathValidated && it.path == PathId.Initial },
+                "a PATH_RESPONSE (or the settled handshake validation) validated the connection's path: ${p.events[s]}",
+            )
+        } finally {
+            p.close()
+        }
+    }
+
+    /**
+     * The old mapping still forwards (a NAT that keeps both): the copies from C are answered from C as well. Whichever address answers
+     * its own challenge first is kept; the handshake completes and the candidate is gone (what follows is 1-RTT migration).
+     */
+    @Test fun handshakeRebindWithTheOldMappingAliveSettlesOnOneAddress() {
+        val p = EndpointPair(crypto = KslQuicCrypto)
+        try {
+            val newAddr = InetSocketAddress("10.0.0.1", 40002)
+            val r = CopyRace(p, newAddr, rebindAfter = 1, oldAlive = true) { i -> i % 3 != 0 }
+            r.run(QuicConfig.Default.handshakeTimeout)
+            val s = r.s
+            assertTrue(r.confirmed(), "both confirm the handshake (client ${r.h.c.state}, server ${s.state})")
+            r.run(s.validationTimeout() * 2, atLeast = s.validationTimeout() * 2)
+            assertTrue(s.remoteAddressForTest == newAddr || s.remoteAddressForTest == p.clientAddr, "${s.remoteAddressForTest}")
+            assertNull(s.handshakeCandidate)
+            assertTrue(s.paths.all.none { it.handshakeCandidate }, "${s.paths.all}")
+            assertNull(p.closed(r.h.c))
+            assertEquals(1L, p.server.stats.connectionsCreated)
+        } finally {
+            p.close()
+        }
+    }
+
+    /**
+     * A plain NAT rebinding in the handshake (no attacker): the address left is the candidate while the move is undecided, and once
+     * the client answers on its new address the candidate is gone. The application sees one path: no event names another.
+     */
+    @Test fun candidatesCollapseWhenTheHandshakeCompletes() {
+        val p = EndpointPair(crypto = KslQuicCrypto)
+        try {
+            val newAddr = InetSocketAddress("10.0.0.1", 40002)
+            val r = CopyRace(p, newAddr, rebindAfter = 1) { false }
+            r.run(QuicConfig.Default.handshakeTimeout)
+            val s = r.s
+            assertTrue(r.confirmed(), "both confirm the handshake (client ${r.h.c.state}, server ${s.state})")
+            assertTrue(r.candidateSeen, "the old address was a candidate during the handshake")
+            r.run(s.validationTimeout() * 2, atLeast = s.validationTimeout() * 2)
+            assertEquals(newAddr, s.remoteAddressForTest)
+            assertNull(s.handshakeCandidate)
+            assertEquals(1, s.paths.all.size, "one path: ${s.paths.all}")
+            val pathEvents =
+                p.events[s]!!.filter {
+                    it is ConnectionEvent.PathValidated || it is ConnectionEvent.PathFailed || it is ConnectionEvent.PathChanged
+                }
+            assertTrue(
+                pathEvents.all {
+                    when (it) {
+                        is ConnectionEvent.PathValidated -> it.path == PathId.Initial
+                        is ConnectionEvent.PathFailed -> it.path == PathId.Initial
+                        is ConnectionEvent.PathChanged -> false
+                        else -> true
+                    }
+                },
+                "only the connection's own path is reported: $pathEvents",
+            )
+        } finally {
+            p.close()
+        }
+    }
+
+    /**
+     * [initial], a client Initial datagram under the Null cipher (plaintext header, the 8-byte tag at the end of the packet is the
+     * packet number), with its packet number set to [pn] (one byte, so below 256) and the tag to match: a forged Initial that
+     * decrypts, as one under the public Initial keys would.
+     */
+    private fun withPacketNumber(
+        initial: ByteArray,
+        pn: Int,
+    ): ByteArray =
+        initial.copyOf().also { f ->
+            val off = 1 + 4 + 1 + (f[5].toInt() and 0xff)
+            val pnOff = off + 1 + (f[off].toInt() and 0xff) + 1 + 2
+            val pnLen = (f[0].toInt() and 0x03) + 1
+            val length = ((f[pnOff - 2].toInt() and 0x3f) shl 8) or (f[pnOff - 1].toInt() and 0xff)
+            for (i in 0 until pnLen) f[pnOff + i] = if (i == pnLen - 1) pn.toByte() else 0
+            val end = pnOff + length
+            for (i in 0 until 8) f[end - 8 + i] = ((pn.toLong() ushr (8 * (7 - i))) and 0xff).toByte()
+        }
+
+    /** The bounds of the client's first Handshake packet in [d] (start, packet number offset, end), or null. */
+    private fun handshakePacketBounds(d: ByteArray): IntArray? {
+        val hv =
+            io.kuicksilver.quic.wire
+                .PacketHeaderView()
+        val b = PacketBuffer.of(d)
+        try {
+            var off = 0
+            while (off < d.size &&
+                io.kuicksilver.quic.wire.PacketHeaderCodec
+                    .parse(b, off, d.size, 8, hv)
+            ) {
+                if (d[off].toInt() and 0x80 != 0 && (d[off].toInt() and 0x30) ushr 4 == 2) return intArrayOf(off, hv.pnOffset, hv.packetEnd)
+                off = hv.packetEnd
+            }
+            return null
+        } finally {
+            b.close()
+        }
+    }
+
+    /**
+     * A server held in its handshake: no client Handshake packet reaches it but those forged from the client's first one (PING and
+     * padding with a chosen packet number, under the Null cipher), delivered by hand from any address. The client itself completed its
+     * side and answers what it is handed.
+     */
+    private inner class HeldHandshake(
+        val newAddr: InetSocketAddress = InetSocketAddress("10.0.0.1", 40002),
+    ) {
+        val p = EndpointPair()
+        val c: ConnectionCore
+        val s: ConnectionCore
+        private val d: ByteArray
+        private val bounds: IntArray
+        val attacker = InetSocketAddress("10.9.9.9", 4444)
+        val received = HashMap<InetSocketAddress, Long>()
+        val sent = HashMap<InetSocketAddress, Long>()
+
+        init {
+            var held: ByteArray? = null
+            p.filterToServer = { _, b ->
+                if (handshakePacketBounds(b) != null) {
+                    if (held == null) held = b
+                    false
+                } else {
+                    true
+                }
+            }
+            c = p.connect()
+            assertTrue(p.runUntil(2.seconds) { held != null })
+            s = p.server.connections().single()
+            assertEquals(io.kuicksilver.quic.ConnectionState.Handshaking, s.state)
+            d = held!!
+            bounds = handshakePacketBounds(d)!!
+        }
+
+        /** The client's own datagram with its Finished, held back so far. */
+        fun finished(): ByteArray = d
+
+        /** The forged packet, followed by zeros up to [padTo] bytes (the server counts the whole datagram toward the budget, section 8.1). */
+        fun forged(
+            pn: Int,
+            padTo: Int = 0,
+        ): ByteArray {
+            val (off, pnOff, end) = bounds
+            val pkt = d.copyOfRange(off, end)
+            val pnLen = (pkt[0].toInt() and 0x03) + 1
+            val at = pnOff - off
+            for (i in 0 until pnLen) pkt[at + i] = ((pn ushr (8 * (pnLen - 1 - i))) and 0xff).toByte()
+            for (i in at + pnLen until pkt.size) pkt[i] = 0
+            pkt[at + pnLen] = 0x01
+            for (i in 0 until 8) pkt[pkt.size - 8 + i] = ((pn.toLong() ushr (8 * (7 - i))) and 0xff).toByte() // the Null tag
+            return if (pkt.size >= padTo) pkt else pkt.copyOf(padTo)
+        }
+
+        /** Delivers [bytes] to the server from [from] and returns everything the server sends now. */
+        fun deliver(
+            bytes: ByteArray,
+            from: InetSocketAddress,
+        ): List<Pair<InetSocketAddress, ByteArray>> {
+            received[from] = (received[from] ?: 0L) + bytes.size
+            p.feedNoAdmit(p.server, bytes, from)
+            return serverSends()
+        }
+
+        fun serverSends(): List<Pair<InetSocketAddress, ByteArray>> {
+            val all = ArrayList<Pair<InetSocketAddress, ByteArray>>()
+            while (true) {
+                p.batch.clear()
+                val n = s.poll(p.batch, p.now)
+                if (n == 0) break
+                for (i in 0 until n) {
+                    val to = p.batch.address(i)!!
+                    all += to to p.batch.buffer(i).toByteArray(p.batch.length(i))
+                    sent[to] = (sent[to] ?: 0L) + p.batch.length(i)
+                }
+            }
+            p.drain(s)
+            return all
+        }
+
+        /** The client reads [bytes] (as if they reached it) and returns what it sends in answer. */
+        fun clientAnswers(bytes: List<ByteArray>): List<ByteArray> {
+            for (b in bytes) p.feedNoAdmit(p.client, b, p.serverAddr)
+            p.drain(c)
+            val out = ArrayList<ByteArray>()
+            while (true) {
+                p.batch.clear()
+                val n = c.poll(p.batch, p.now)
+                if (n == 0) break
+                for (i in 0 until n) out += p.batch.buffer(i).toByteArray(p.batch.length(i))
+            }
+            return out
+        }
+
+        /** Runs the server's timers up to [until], collecting what it sends. */
+        fun advance(until: io.kuicksilver.quic.TimeMark): List<Pair<InetSocketAddress, ByteArray>> {
+            val all = ArrayList<Pair<InetSocketAddress, ByteArray>>()
+            while (true) {
+                val t = s.nextTimeoutOrNever()
+                if (t > until) break
+                p.now = maxOf(p.now, t)
+                s.onTimeout(p.now)
+                all += serverSends()
+            }
+            p.now = until
+            return all
+        }
+
+        fun close() = p.close()
+    }
+
+    /**
+     * Threat model 3.5: where a PATH_RESPONSE comes from proves nothing (an off-path attacker races copies of the client's datagrams
+     * from any address, RFC 9000 section 9.3.3); its data does (section 8.2.3). The client answers the challenge sent to one address and
+     * its answer reaches the server from the other one: the address whose challenge was answered is kept, never the packet's source.
+     */
+    @Test fun negative_candidateValidatedOnlyByItsOwnChallengeData() {
+        for (answerTheCandidate in listOf(true, false)) {
+            val h = HeldHandshake()
+            try {
+                h.deliver(h.forged(5), h.p.clientAddr) // the whole flight went to C: validated
+                // the client's Handshake packet from S, in a full-size datagram: the path moves there
+                val sent = h.deliver(h.forged(10, padTo = 1200), h.newAddr)
+                assertEquals(h.newAddr, h.s.remoteAddressForTest)
+                val k = assertNotNull(h.s.handshakeCandidate, "the address left is the candidate")
+                assertTrue(k.isRemote(h.p.clientAddr))
+                val toC = sent.filter { it.first == h.p.clientAddr && isProbe(it.second) }.map { it.second }
+                val toS = sent.filter { it.first == h.newAddr && isProbe(it.second) }.map { it.second }
+                assertTrue(toC.isNotEmpty() && toS.isNotEmpty(), "both addresses are challenged (${toC.size} to C, ${toS.size} to S)")
+                val answer = h.clientAnswers(if (answerTheCandidate) toC else toS)
+                assertTrue(answer.isNotEmpty(), "the client answers the challenge")
+                // the answer arrives from the address whose challenge it does not answer
+                val source = if (answerTheCandidate) h.newAddr else h.p.clientAddr
+                for (a in answer) h.deliver(a, source)
+                // a server processes no 1-RTT packet before its handshake completes (RFC 9001 section 5.7): the answer waits for the
+                // client's Finished, which a copy brings from the same address
+                assertEquals(io.kuicksilver.quic.ConnectionState.Handshaking, h.s.state)
+                h.deliver(h.finished(), source)
+                val answered = if (answerTheCandidate) h.p.clientAddr else h.newAddr
+                assertNull(h.s.handshakeCandidate, "the handshake-time rebind is decided")
+                val validatedPaths =
+                    h.p.events[h.s]!!
+                        .filterIsInstance<ConnectionEvent.PathValidated>()
+                        .map { it.path }
+                assertEquals(listOf(PathId.Initial), validatedPaths, "only the connection's path was validated")
+                assertTrue(
+                    assertNotNull(h.s.paths.byId(PathId.Initial)).isRemote(answered),
+                    "it has the address whose challenge was answered: ${h.s.paths.all}",
+                )
+                if (answerTheCandidate) {
+                    // the answer's own source then moves the confirmed connection by the rules of 1-RTT migration: under validation,
+                    // within its budget, and with the answered address validated again (section 9.3.3)
+                    assertTrue(
+                        h.s.paths.all
+                            .none { it.isRemote(source) && (it.state == PathState.Validated || it.amplification.validated) },
+                        "the source of the answer is not validated: ${h.s.paths.all}",
+                    )
+                }
+            } finally {
+                h.close()
+            }
+        }
+    }
+
+    /**
+     * Only the two addresses of the first handshake-time rebind become the candidate: a third address (an attacker's copy from
+     * anywhere) moves the active path by the rules of 0.2.1 but is never kept and challenged on its own, and once the path leaves it,
+     * it is gone.
+     */
+    @Test fun negative_thirdAddressNeverBecomesACandidate() {
+        val h = HeldHandshake()
+        try {
+            h.deliver(h.forged(5), h.p.clientAddr)
+            h.deliver(h.forged(10), h.newAddr)
+            assertTrue(assertNotNull(h.s.handshakeCandidate).isRemote(h.p.clientAddr))
+            h.deliver(h.forged(11), h.attacker) // a third address
+            assertEquals(h.attacker, h.s.remoteAddressForTest, "a third address moves the active path as before")
+            assertTrue(assertNotNull(h.s.handshakeCandidate).isRemote(h.p.clientAddr), "the candidate stays on C")
+            h.deliver(h.forged(12), h.p.clientAddr) // back to C: the address left is the third one
+            assertEquals(h.p.clientAddr, h.s.remoteAddressForTest)
+            assertNull(h.s.handshakeCandidate, "the third address never becomes the candidate")
+            assertTrue(
+                h.s.paths.all
+                    .none { it.isRemote(h.attacker) },
+                "${h.s.paths.all}",
+            )
+            h.deliver(h.forged(13), h.attacker)
+            h.deliver(h.forged(14), h.p.clientAddr)
+            assertNull(h.s.handshakeCandidate, "a candidate is opened once per connection")
+            assertEquals(1, h.s.paths.all.size)
+        } finally {
+            h.close()
+        }
+    }
+
+    /**
+     * RFC 9000 section 8.1 per address: the candidate's PATH_CHALLENGEs to an unvalidated address count against that address's budget
+     * together with everything the active path sent there while it had it. An attacker that keeps alternating copies from a spoofed
+     * address with the client's own packets, while the challenges repeat for two validation periods, gets at most 3x what it sent.
+     */
+    @Test fun negative_candidateChallengesStayWithinItsAmplificationBudget() {
+        val h = HeldHandshake()
+        try {
+            val spoofed = h.newAddr
+            h.deliver(h.forged(5), h.p.clientAddr) // C validated
+            var pn = 10
+            val end = h.p.now + h.s.validationTimeout() * 2
+            var swaps = 0
+            while (h.p.now < end) {
+                h.deliver(h.forged(pn++), spoofed)
+                h.deliver(h.forged(pn++), h.p.clientAddr) // S is the candidate now, still challenged
+                swaps++
+                h.advance(h.p.now + h.s.pto())
+            }
+            assertTrue(swaps > 3, "$swaps swaps")
+            assertTrue(h.s.challengedAddressesForTest.contains(spoofed), "the spoofed address was challenged")
+            val toSpoofed = h.sent[spoofed] ?: 0L
+            val fromSpoofed = h.received[spoofed] ?: 0L
+            assertTrue(toSpoofed <= 3 * fromSpoofed, "$toSpoofed bytes to the spoofed address for $fromSpoofed received from it")
+        } finally {
+            h.close()
+        }
+    }
+
+    /**
+     * After the handshake, an observer races copies of every client datagram from a second address, both mappings alive, the copy
+     * winning every other race. Each won race is an apparent migration: the server follows the newest non-probing packet and
+     * validates the previous path (RFC 9000 section 9.3.3), the client answers that PATH_CHALLENGE in a non-probing packet, whose
+     * raced copy is the next apparent migration. With no gap between a challenge and the next one on the same path, this loop ran
+     * without end in this zero-latency harness (and at one challenge per round trip on a real network) until the AEAD
+     * confidentiality limit closed the connection. A path is now challenged no more often than once per PTO, the pace of an Initial
+     * packet (section 8.2.1: "SHOULD NOT probe a new path with packets containing a PATH_CHALLENGE frame more frequently than it
+     * would send an Initial packet"); a revalidation asked for sooner is sent when that gap has passed.
+     */
+    @Test fun negative_copyRaceAfterTheHandshakeDoesNotDriveUnboundedPathValidations() {
+        val (p, c) = connected()
+        try {
+            val s = p.server()
+            val other = InetSocketAddress("10.0.0.1", 40002)
+            var index = 0
+            var serverDatagrams = 0
+            var rounds = 0
+
+            fun pump(): Boolean { // one exchange at the current instant; false once neither side sends
+                p.batch.clear()
+                val n = c.poll(p.batch, p.now)
+                val out = List(n) { p.batch.buffer(it).toByteArray(p.batch.length(it)) }
+                for (d in out) {
+                    val first = if (index++ % 2 == 0) p.clientAddr else other
+                    p.feedNoAdmit(p.server, d, first)
+                    p.feedNoAdmit(p.server, d, if (first == other) p.clientAddr else other)
+                }
+                var sent = 0
+                while (true) {
+                    p.batch.clear()
+                    val m = s.poll(p.batch, p.now)
+                    if (m == 0) break
+                    val back = List(m) { p.batch.buffer(it).toByteArray(p.batch.length(it)) }
+                    sent += m
+                    for (b in back) p.feedNoAdmit(p.client, b, p.serverAddr) // both mappings alive
+                }
+                serverDatagrams += sent
+                p.drain(c)
+                p.drain(s)
+                return n + sent > 0
+            }
+            val stream = c.openStream(true)
+            val chunk = ByteArray(100) { 0x41 }
+            c.writeStream(stream, chunk, 0, chunk.size, false)
+            while (rounds < 10_000 && pump()) rounds++
+            assertTrue(rounds < 100, "the exchange at one instant ends ($rounds rounds, $serverDatagrams server datagrams)")
+            val start = p.now
+            val challengesBefore = s.challengedAddressesForTest.size
+            val pto = s.pto()
+            val end = p.now + pto * 40
+            while (p.now < end && p.closed(c) == null) {
+                c.writeStream(stream, chunk, 0, chunk.size, false) // the client keeps sending, so the races go on
+                var k = 0
+                while (k < 10_000 && pump()) k++
+                assertTrue(k < 100, "the exchange at ${p.now - start} ends ($k rounds)")
+                p.now = maxOf(p.now + pto / 4, minOf(end, c.nextTimeoutOrNever(), s.nextTimeoutOrNever()))
+                if (c.nextTimeoutOrNever() <= p.now) c.onTimeout(p.now)
+                if (s.nextTimeoutOrNever() <= p.now) s.onTimeout(p.now)
+            }
+            assertNull(p.closed(c), "the connection survives the race")
+            val challenges = s.challengedAddressesForTest.size - challengesBefore
+            // at most one challenge per path per PTO (two addresses), plus the repeats of the validations under way
+            assertTrue(challenges <= 2 * 40 + 8, "$challenges PATH_CHALLENGEs over 40 PTOs")
+        } finally {
+            p.close()
+        }
+    }
+
+    /**
+     * The client rebinds from C to S right after the server's first datagram (an Initial ACK) reached it, before any ServerHello did;
+     * C is dead and an observer races copies of its repeated ClientHello from C, winning every other race. The server does not move
+     * on an Initial while the current address keeps sending (anyone can forge one), so before 0.3.0 its whole flight kept going to
+     * the dead C and the handshake timed out. The address the client's Initials also come from is now mirrored: at each PTO the
+     * flight is retransmitted there too, within that address's own budget, and the client completes from S.
+     */
+    @Test fun handshakeRebindBeforeAnyServerHelloUnderCopyRaceCompletes() {
+        val p = EndpointPair(crypto = KslQuicCrypto)
+        try {
+            val newAddr = InetSocketAddress("10.0.0.1", 40002)
+            val r = CopyRace(p, newAddr, rebindAfter = 1) { i -> i % 2 == 1 }
+            val start = p.now
+            r.run(QuicConfig.Default.handshakeTimeout)
+            val s = r.s
+            assertTrue(r.confirmed(), "both confirm the handshake (client ${r.h.c.state}, server ${s.state}, ${p.closed(r.h.c)})")
+            assertTrue(s.handshakeMirrorSent, "the flight was retransmitted to S")
+            assertEquals(newAddr, s.remoteAddressForTest)
+            assertTrue(r.toOld <= 3 * r.fromOld, "${r.toOld} bytes to C for ${r.fromOld} received from it")
+            assertTrue(p.now - start < QuicConfig.Default.handshakeTimeout / 2, "confirmed after ${p.now - start}")
+            assertEquals(1L, p.server.stats.connectionsCreated)
+        } finally {
+            p.close()
+        }
+    }
+
+    /**
+     * The other side of [handshakeRebindBeforeAnyServerHelloUnderCopyRaceCompletes]: the client stays at C and an observer races
+     * copies of its datagrams from X while the server's first flight is lost (so its PTO fires). X gets the flight's retransmission
+     * within 3x what came from X and nothing more; the path never leaves C and the handshake completes there.
+     */
+    @Test fun negative_mirroredFlightToARacedAddressStaysWithinItsBudget() {
+        val p = EndpointPair(crypto = KslQuicCrypto)
+        try {
+            val h = HandPump(p, p.connect())
+            val x = InetSocketAddress("10.9.9.9", 4444)
+            var index = 0
+            var fromX = 0L
+            var toX = 0L
+            var lostFirst = false
+            val end = p.now + QuicConfig.Default.handshakeTimeout
+            while (p.now < end &&
+                !(h.c.state == io.kuicksilver.quic.ConnectionState.Confirmed && h.s?.state == io.kuicksilver.quic.ConnectionState.Confirmed)
+            ) {
+                val sent =
+                    h.clientSends { d ->
+                        val copyFirst = index++ % 2 == 1
+                        if (copyFirst) {
+                            fromX += d.size
+                            p.feedNoAdmit(p.server, d, x)
+                        }
+                        p.feedNoAdmit(p.server, d, p.clientAddr)
+                        if (!copyFirst) {
+                            fromX += d.size
+                            p.feedNoAdmit(p.server, d, x)
+                        }
+                    }
+                h.serverSends { to, bytes ->
+                    if (to == x) toX += bytes.size
+                    if (to == p.clientAddr && !lostFirst) {
+                        lostFirst = true
+                        false
+                    } else {
+                        to == p.clientAddr
+                    }
+                }
+                if (sent == 0) h.advance()
+            }
+            val s = assertNotNull(h.s)
+            assertEquals(io.kuicksilver.quic.ConnectionState.Confirmed, h.c.state, "the handshake completes (server ${s.state})")
+            assertEquals(p.clientAddr, s.remoteAddressForTest)
+            assertTrue(toX <= 3 * fromX, "$toX bytes to X for $fromX received from it")
+            assertTrue(s.paths.all.none { it.isRemote(x) && it.amplification.validated }, "X is never validated")
+        } finally {
+            p.close()
+        }
+    }
+
+    /** Hands the challenges in [sent] to [targets] to the client and returns its answers (see [HeldHandshake.clientAnswers]). */
+    private fun HeldHandshake.answer(
+        sent: List<Pair<InetSocketAddress, ByteArray>>,
+        vararg targets: InetSocketAddress,
+    ): List<ByteArray> = clientAnswers(sent.filter { it.first in targets && isProbe(it.second) }.map { it.second })
+
+    /**
+     * RFC 9000 section 9.4: a handshake-time change of the active path to another IP starts its congestion controller, RTT estimate and
+     * MTU over (a move, and the candidate's adoption back across IPs); a port-only change keeps them, as for a NAT rebinding.
+     */
+    @Test fun handshakeTimeAddressChangeAcrossIpsStartsCongestionRttAndMtuOver() {
+        for (otherIp in listOf(true, false)) {
+            val h = HeldHandshake(if (otherIp) InetSocketAddress("10.0.0.9", 40002) else InetSocketAddress("10.0.0.1", 40002))
+            try {
+                h.deliver(h.forged(5), h.p.clientAddr)
+                val a = h.s.paths.active
+                h.s.setMtu(a, 1452)
+                val cc = a.cc
+                val rtt = a.rtt
+                val sent = h.deliver(h.forged(10, padTo = 1200), h.newAddr)
+                assertEquals(h.newAddr, h.s.remoteAddressForTest)
+                if (otherIp) {
+                    assertNotSame(cc, a.cc, "a fresh congestion controller on the new IP")
+                    assertNotSame(rtt, a.rtt, "a fresh RTT estimate on the new IP")
+                    assertSame(a.rtt, h.s.loss.rtt, "loss recovery uses it")
+                    assertEquals(h.s.config.newPathInitialRtt, a.rtt.smoothed)
+                    assertEquals(1200, a.mtu)
+                } else {
+                    assertSame(cc, a.cc, "a port-only change keeps the controller")
+                    assertSame(rtt, a.rtt)
+                    assertEquals(1452, a.mtu)
+                }
+                // the client answers the candidate C's challenge: the path is adopted back there, across IPs again or not
+                val ccAtNew = a.cc
+                h.setMtuOfActive(1452)
+                for (b in h.answer(sent, h.p.clientAddr)) h.deliver(b, h.p.clientAddr)
+                h.deliver(h.finished(), h.p.clientAddr)
+                val initial = assertNotNull(h.s.paths.byId(PathId.Initial))
+                assertTrue(initial.isRemote(h.p.clientAddr), "adopted: ${h.s.paths.all}")
+                if (otherIp) {
+                    assertNotSame(ccAtNew, initial.cc, "the adoption across IPs starts the controller over")
+                    assertEquals(1200, initial.mtu)
+                } else {
+                    assertSame(ccAtNew, initial.cc, "a port-only adoption keeps it")
+                    assertEquals(1452, initial.mtu)
+                }
+            } finally {
+                h.close()
+            }
+        }
+    }
+
+    private fun HeldHandshake.setMtuOfActive(mtu: Int) = s.setMtu(s.paths.active, mtu)
+
+    /**
+     * The candidate's and the active address's challenges are answered in one packet: the decision waits for the packet's end and
+     * the active address keeps the path; the candidate is dropped without ever being adopted.
+     */
+    @Test fun bothAnswersInOnePacketKeepTheActiveAddress() {
+        val h = HeldHandshake()
+        try {
+            h.deliver(h.forged(5), h.p.clientAddr)
+            val sent = h.deliver(h.forged(10, padTo = 1200), h.newAddr)
+            // the candidate's challenge reaches the client first, so its PATH_RESPONSE comes first in the client's packet
+            val probes =
+                sent.filter { it.first == h.p.clientAddr && isProbe(it.second) } +
+                    sent.filter { it.first == h.newAddr && isProbe(it.second) }
+            val answer = h.clientAnswers(probes.map { it.second })
+            assertEquals(1, answer.size, "both PATH_RESPONSEs in one datagram")
+            for (b in answer) h.deliver(b, h.newAddr)
+            h.deliver(h.finished(), h.newAddr)
+            val initial = assertNotNull(h.s.paths.byId(PathId.Initial))
+            assertTrue(initial.isRemote(h.newAddr), "the active address keeps the path: ${h.s.paths.all}")
+            assertEquals(PathState.Validated, initial.state)
+            assertNull(h.s.handshakeCandidate)
+            assertEquals(1, h.s.paths.all.size, "${h.s.paths.all}")
+        } finally {
+            h.close()
+        }
+    }
+
+    /**
+     * Review of the mirrored flight (S2): an Initial of the client's from a third address X (here a copy of its repeated ClientHello
+     * that wins the race; a forged one under the public Initial keys does the same) makes the server retransmit its flight to X at
+     * each PTO, within X's budget. The flight (an ML-KEM key share and a certificate) does not fit X's budget, so part of what was
+     * queued again for X stays unsent; before the review it then went to the client's own address as fresh data at the next poll,
+     * spending that unvalidated address's 3x budget. Now the client's address gets exactly what it gets without X: the same
+     * datagrams and bytes.
+     */
+    @Test fun negative_mirroredFlightChangesNothingSentToTheClientsAddress() {
+        val x = InetSocketAddress("10.0.0.66", 6666)
+
+        /** Datagrams and bytes the server sends to the client's address (which never receives them) over three PTOs; bytes to [x]. */
+        fun run(race: Boolean): Triple<Int, Long, Long> {
+            val p = EndpointPair(crypto = KslQuicCrypto)
+            try {
+                val c = p.connect()
+
+                fun clientFlight(): List<ByteArray> {
+                    p.batch.clear()
+                    val n = c.poll(p.batch, p.now)
+                    return List(n) { p.batch.buffer(it).toByteArray(p.batch.length(it)) }
+                }
+                var toClient = 0
+                var toClientBytes = 0L
+                var toX = 0L
+
+                fun serverSends(s: ConnectionCore) {
+                    while (true) {
+                        p.batch.clear()
+                        val n = s.poll(p.batch, p.now)
+                        if (n == 0) break
+                        for (i in 0 until n) {
+                            val len = p.batch.length(i)
+                            if (p.batch.address(i) == p.clientAddr) {
+                                toClient++
+                                toClientBytes += len
+                            } else if (p.batch.address(i) == x) {
+                                toX += len
+                            }
+                        }
+                    }
+                    p.drain(s)
+                }
+                val hello = clientFlight()
+                assertEquals(2, hello.size, "ksl ClientHello spans two Initial datagrams")
+                val s = assertNotNull(p.feed(p.server, hello[0], p.clientAddr))
+                p.feedNoAdmit(p.server, hello[1], p.clientAddr)
+                serverSends(s) // the whole flight is lost: the client never holds a handshake key
+                p.now = c.nextTimeoutOrNever()
+                c.onTimeout(p.now)
+                val repeat = clientFlight()
+                assertTrue(repeat.size >= 2, "the PTO repeats the ClientHello")
+                p.feedNoAdmit(p.server, repeat[0], p.clientAddr)
+                if (race) p.feedNoAdmit(p.server, repeat[1], x) // the copy wins: the genuine one below is a duplicate
+                for (d in repeat.drop(1)) p.feedNoAdmit(p.server, d, p.clientAddr)
+                if (race) assertNotNull(s.handshakeCandidate, "X is mirrored")
+                serverSends(s)
+                repeat(3) {
+                    p.now = s.nextTimeoutOrNever()
+                    s.onTimeout(p.now)
+                    serverSends(s)
+                }
+                if (race) {
+                    assertTrue(s.handshakeMirrorSent, "the flight was retransmitted to X")
+                    assertTrue(toX <= 3L * repeat[1].size, "$toX bytes to X for ${repeat[1].size} received from it")
+                }
+                return Triple(toClient, toClientBytes, toX)
+            } finally {
+                p.close()
+            }
+        }
+        val baseline = run(race = false)
+        val raced = run(race = true)
+        assertEquals(0L, baseline.third)
+        assertTrue(raced.third > 0, "something went to X")
+        assertEquals(baseline.first, raced.first, "datagrams to the client's address (raced $raced, baseline $baseline)")
+        assertEquals(baseline.second, raced.second, "bytes to the client's address (raced $raced, baseline $baseline)")
+    }
+
+    /**
+     * The residual of threat-model 3.5, pinned: an Initial forged under the public Initial keys with a packet number the client never
+     * sent is processed like any other client Initial (nothing tells it apart), the server acknowledges it, and the client treats
+     * the acknowledgement of a packet it did not send as a PROTOCOL_VIOLATION (RFC 9000 section 13.1 SHOULD, as quic-go, quiche,
+     * ngtcp2 and msquic do). RFC 9000 section 21.1.1.3 accepts it: "An on-path or off-path attacker can force a handshake to fail by
+     * replacing or racing Initial packets."
+     */
+    @Test fun forgedInitialWithAnUnusedPacketNumberEndsTheHandshake() {
+        val p = EndpointPair()
+        try {
+            val c = p.connect()
+            p.batch.clear()
+            assertEquals(1, c.poll(p.batch, p.now))
+            val first = p.batch.buffer(0).toByteArray(p.batch.length(0))
+            assertNotNull(p.feed(p.server, first, p.clientAddr))
+            // the forgery arrives before the server answered, so its acknowledgement reaches the client while it still reads Initials
+            p.feedNoAdmit(p.server, withPacketNumber(first, 0x33), InetSocketAddress("10.0.0.66", 6666))
+            assertFalse(p.confirmed(c))
+            val closed = assertNotNull(p.closed(c), "the client closed")
+            assertTrue(closed.toString().contains("ACK for a packet never sent"), "$closed")
+        } finally {
+            p.close()
+        }
+    }
+
+    /**
+     * A mirrored datagram carries the flight and nothing else: no ACK frame of its space (an acknowledgement owed to the client goes to
+     * the active address, where the client is believed to be). The server owes one here: X's Initial (packet number 1, which it
+     * processed) is still unacknowledged when its PTO fires.
+     */
+    @Test fun negative_mirroredFlightCarriesNoAcknowledgement() {
+        val p = EndpointPair()
+        try {
+            val x = InetSocketAddress("10.0.0.66", 6666)
+            val c = p.connect()
+            p.batch.clear()
+            assertEquals(1, c.poll(p.batch, p.now))
+            val first = p.batch.buffer(0).toByteArray(p.batch.length(0))
+            val s = assertNotNull(p.feed(p.server, first, p.clientAddr))
+            val toX = ArrayList<ByteArray>()
+
+            fun serverSends() {
+                while (true) {
+                    p.batch.clear()
+                    val n = s.poll(p.batch, p.now)
+                    if (n == 0) break
+                    for (i in 0 until n) if (p.batch.address(i) == x) toX += p.batch.buffer(i).toByteArray(p.batch.length(i))
+                }
+            }
+            serverSends() // the flight is lost
+            p.feedNoAdmit(p.server, withPacketNumber(first, 1), x)
+            assertNotNull(s.handshakeCandidate, "X is mirrored")
+            var rounds = 0
+            while (toX.isEmpty() && rounds++ < 5) { // the acknowledgement's own timer may come first; then the PTO
+                p.now = s.nextTimeoutOrNever()
+                s.onTimeout(p.now)
+                serverSends()
+            }
+            assertTrue(toX.isNotEmpty(), "the flight was mirrored to X")
+            val hv =
+                io.kuicksilver.quic.wire
+                    .PacketHeaderView()
+            for (d in toX) {
+                val b = PacketBuffer.of(d)
+                try {
+                    var off = 0
+                    while (off < d.size && d[off].toInt() != 0 &&
+                        io.kuicksilver.quic.wire.PacketHeaderCodec
+                            .parse(b, off, d.size, 8, hv)
+                    ) {
+                        // Null cipher: the header is not protected, the payload is plaintext; the first frame follows the number
+                        val pnLen = (d[off].toInt() and 0x03) + 1
+                        val frameType = d[hv.pnOffset + pnLen].toInt() and 0xff
+                        assertTrue(frameType != 0x02 && frameType != 0x03, "an ACK frame in a mirrored packet (type $frameType)")
+                        off = hv.packetEnd
+                    }
+                } finally {
+                    b.close()
+                }
+            }
         } finally {
             p.close()
         }

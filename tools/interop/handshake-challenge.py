@@ -29,7 +29,10 @@ Handshake packet of ours had reached the client (client-side capture, the sim's 
 the challenge arrived, if at all, before any of them). It has the second when the runner names the new path and our first
 datagram to it is 1-RTT, sent before any CRYPTO frame of ours (no ServerHello yet: neither the runner nor the client can
 read it) and before HANDSHAKE_DONE, and it carries a PATH_CHALLENGE once dissected after our first Handshake datagram, or is
-our ServerHello itself.
+our ServerHello itself. Third (0.3.0): the runner names the new path and our first datagram to it is a long-header
+retransmission of our handshake flight (with CRYPTO) sent before HANDSHAKE_DONE while no Handshake packet of ours had reached the
+client, and CRYPTO still goes to the old binding in the same burst or later (the path did not move): the client rebound before our
+ServerHello reached it, and the server mirrors the flight to its new address.
 Never for a peer server's cell, or for a challenge sent after the handshake.
 
 Usage: handshake-challenge.py CELL_DIR          decodes the cell's sim/trace_node_{right,left}.pcap with tshark
@@ -49,6 +52,7 @@ OURS = ("kuicksilver", "kuicksilver-native")
 HANDSHAKE = "2"  # quic.long.packet_type of a Handshake packet
 CRYPTO = 0x06
 HANDSHAKE_DONE = 0x1e
+BURST = 0.001  # seconds: datagrams of one poll leave within this of each other in the captures
 
 
 def verdict(cell):
@@ -129,6 +133,21 @@ def undecryptable_first(d):
     return None
 
 
+def mirrored_first(d):
+    """Our first datagram to the path the runner named is a retransmission of our handshake flight (a long-header datagram with
+    CRYPTO), sent before HANDSHAKE_DONE, while no Handshake packet of ours had reached the client (client-side capture, the sim's
+    clock): the client rebound before our ServerHello reached it at the old binding, and since 0.3.0 the server retransmits the flight
+    to the address its Initials also come from (RFC 9000 section 8.1, within that address's budget). A PATH_CHALLENGE could not
+    lead there: the client holds no key that reads it before that flight."""
+    first = next((x for x in d["server_side"] if x["dst"] == d["missing_on"]), None)
+    if first is None or first["done"] or first["short"] or not first["crypto"]: return None
+    if any(HANDSHAKE in x["long"] and x["t"] < first["t"] for x in d["client_side"]): return None
+    # what only the mirror does: the active path stays at the old binding, so the same PTO burst (the probe leaves just before the
+    # mirrored datagrams) or a later one before HANDSHAKE_DONE sends CRYPTO there too; a flight that moved to the new path does not
+    if not any(x["dst"] != d["missing_on"] and x["crypto"] and x["t"] >= first["t"] - BURST for x in d["server_side"]): return None
+    return first
+
+
 def unreadable_challenges(d):
     """Every unanswered challenge left in our first 1-RTT datagram to its address before HANDSHAKE_DONE, while no Handshake
     packet of ours had gone there or reached the client: it arrived (if at all) where no 1-RTT key could read it."""
@@ -152,7 +171,11 @@ def analyse(d):
     """The ENVIRONMENT explanation of the cell, or None."""
     if d.get("missing_on"):
         first = undecryptable_first(d)
-        if first is None: return None
+        if first is None:
+            mirrored = mirrored_first(d)
+            if mirrored is None: return None
+            return (f"the rebind landed inside the handshake before our ServerHello reached the client: our first packet on the new path {mirrored['dst']} "
+                    "retransmits our handshake flight there (no Handshake packet of ours had reached the client, so it could read no PATH_CHALLENGE yet)")
         if not first["short"]:
             return (f"the rebind landed inside the handshake: the ClientHello completed only from the new path {first['dst']}, so our first packet there "
                     "is our ServerHello; no PATH_CHALLENGE could be read before it")

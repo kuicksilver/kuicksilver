@@ -32,11 +32,13 @@ import io.kuicksilver.quic.core.checkTlsInput
 import io.kuicksilver.quic.core.discardSpace
 import io.kuicksilver.quic.core.discardZeroRttKeys
 import io.kuicksilver.quic.core.driveTls
+import io.kuicksilver.quic.core.dropHandshakeCandidate
 import io.kuicksilver.quic.core.ecnCeReceived
 import io.kuicksilver.quic.core.ecnPathFailed
 import io.kuicksilver.quic.core.enableServerEarlyData
 import io.kuicksilver.quic.core.enterClosing
 import io.kuicksilver.quic.core.fail
+import io.kuicksilver.quic.core.finishPathResponses
 import io.kuicksilver.quic.core.glitch
 import io.kuicksilver.quic.core.idleDeadline
 import io.kuicksilver.quic.core.installInitialKeys
@@ -48,6 +50,7 @@ import io.kuicksilver.quic.core.nextChallengeDelay
 import io.kuicksilver.quic.core.onBlockedRepeatTimer
 import io.kuicksilver.quic.core.onHandshakeDatagramDone
 import io.kuicksilver.quic.core.onPathFailed
+import io.kuicksilver.quic.core.onRevalidateDue
 import io.kuicksilver.quic.core.pmtudUpperBound
 import io.kuicksilver.quic.core.probeOtherHandshakeSpace
 import io.kuicksilver.quic.core.pto
@@ -497,6 +500,34 @@ public class ConnectionCore internal constructor(
 
     /** Server: some of that flight went to another address too, so a client Handshake packet no longer shows which one reached it. */
     internal var handshakeFlightElsewhere = false
+
+    /**
+     * Server: the client address of a handshake-time rebind that the active path does not have now, validated as a path of its own
+     * (`ConnectionCore.openHandshakeCandidate`); null when there is none.
+     */
+    internal var handshakeCandidate: io.kuicksilver.quic.core.Path? = null
+
+    /** Server: the two client addresses of the first handshake-time rebind (the one left, the one moved to); no other becomes a candidate. */
+    internal var handshakeRebindFrom: InetSocketAddress? = null
+    internal var handshakeRebindTo: InetSocketAddress? = null
+
+    /**
+     * Server: the candidate is an address the client's Initials come from while it has shown no handshake keys yet, and the
+     * handshake flight is retransmitted there too at each Initial or Handshake PTO (`ConnectionCore.openHandshakeMirror`).
+     */
+    internal var handshakeMirror = false
+
+    /** Server: a Handshake packet from the client was decrypted (it holds handshake keys). */
+    internal var clientHandshakeKeysSeen = false
+
+    /** Server: some of the flight went to the mirrored address. */
+    internal var handshakeMirrorSent = false
+
+    /** Server: a PTO of the Initial or Handshake space fired: the next poll retransmits the flight to the mirrored address too. */
+    internal var handshakeMirrorDue = false
+
+    /** Server: the handshake candidate answered its own PATH_CHALLENGE in the packet being processed (`finishPathResponses`). */
+    internal var candidateAnswered = false
     internal var closeFrame: CloseFrame? = null
 
     /** CONNECTION_CLOSE already carried by a packet of this space since the last (re)send trigger. */
@@ -684,7 +715,10 @@ public class ConnectionCore internal constructor(
     }
 
     init {
-        paths.onEvicted = { releasePathCid(it) }
+        paths.onEvicted = {
+            if (it === handshakeCandidate) dropHandshakeCandidate() // already out of the paths: the rest of the drop still applies
+            releasePathCid(it)
+        }
         if (role == TlsRole.Server) {
             loss.amplificationBlocked = { amplificationLeavesNoProbe() }
         }
@@ -821,6 +855,7 @@ public class ConnectionCore internal constructor(
             pendingHandshakeMove = null
             onHandshakeDatagramDone(it)
         }
+        finishPathResponses()
         if (discardHandshakeKeysAfterPacket) {
             discardHandshakeKeysAfterPacket = false
             discardSpace(SpaceId.Handshake)
@@ -904,6 +939,7 @@ public class ConnectionCore internal constructor(
                     t = p.nextChallengeAt
                 }
             }
+            if (p.revalidateAt < t) t = p.revalidateAt
             p.pmtud?.let { m ->
                 val mt = m.timeout()
                 if (mt < t) t = mt
@@ -957,6 +993,7 @@ public class ConnectionCore internal constructor(
         cids.expireRetired(now)
         if (zeroRttReadDiscardAt <= now) discardZeroRttKeys()
         for (i in 0 until paths.all.size) paths.all[i].pmtud?.onTimeout(now)
+        for (i in paths.all.size - 1 downTo 0) paths.all.getOrNull(i)?.let { if (it.revalidateAt <= now) onRevalidateDue(it) }
         var pi = paths.all.size - 1
         while (pi >=
             0
@@ -971,17 +1008,33 @@ public class ConnectionCore internal constructor(
             if (p.challengeDeadline <=
                 now
             ) {
-                if (p.awaitingCid) {
+                if (p.handshakeCandidate) {
+                    dropHandshakeCandidate() // the other address of a handshake-time rebind did not answer: only it goes, unreported
+                } else if (p.awaitingCid) {
                     onPathFailed(p, PathFailureReason.NoSpareConnectionId)
+                } else if (p === paths.active && p.handshakeValidated &&
+                    handshakeCandidate?.let { it.state == PathState.Validating && it.challengeDeadline > now } == true
+                ) {
+                    // the other address of a handshake-time rebind may still answer its own challenge: the one the client was reached
+                    // at settles only once that validation ended unanswered
+                    p.challengeDeadline = handshakeCandidate!!.challengeDeadline
                 } else if (p === paths.active &&
                     p.handshakeValidated
                 ) {
                     settleHandshakeValidated(p)
+                } else if (p === paths.active && handshakeFallback?.let { it.path === p && !it.isAddress(p.remote) } == true &&
+                    !p.amplification.validated
+                ) {
+                    // the address a handshake-time move took the path to failed its validation (it may have started before the move's
+                    // own deadline: a validation travels with its address between the active path and the candidate): the move is
+                    // undone as at that deadline (RFC 9000 section 9.3.2)
+                    revertHandshakeMove(handshakeFallback!!)
                 } else if (p === paths.active &&
                     state == ConnectionState.Handshaking
                 ) {
-                    // not reached since 0.2.1: every handshake-time move that leaves the active path validating keeps a HandshakeFallback
-                    // whose deadline comes first and undoes it (revertHandshakeMove); kept so that a deadline never stays in the past
+                    // every handshake-time move that leaves the active path validating keeps a HandshakeFallback whose deadline undoes it
+                    // (revertHandshakeMove); an address restored with a validation still under way restarts it here, so that a deadline
+                    // never stays in the past
                     p.challengePending = true
                     p.challengeDeadline = now + validationTimeout()
                     p.nextChallengeAt = now + nextChallengeDelay(p)
@@ -1009,6 +1062,7 @@ public class ConnectionCore internal constructor(
             ) {
                 probePending[probe.space.ordinal] = probe.packets
                 requeueForProbe(probe.space, probe.packets)
+                if (probe.space != SpaceId.Application && handshakeMirror) handshakeMirrorDue = true
                 probeOtherHandshakeSpace(probe.space)
                 if (probe.space ==
                     SpaceId.Application

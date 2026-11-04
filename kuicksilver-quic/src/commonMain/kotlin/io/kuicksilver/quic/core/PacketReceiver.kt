@@ -453,10 +453,12 @@ internal class PacketReceiver(
         if (type == PacketType.Handshake &&
             c.role == TlsRole.Server
         ) {
+            c.onClientHandshakeKeys()
             c.onInitialPathValidated(from)
             if (!c.spaceDiscarded[0]) c.discardInitialPending = true
         }
         if (type == PacketType.OneRtt) {
+            c.finishPathResponses()
             c.onPathPacket(socket, from, pn, !reader.probingOnly, datagramLength)
             c.onFirstOneRttFromClient()
         }
