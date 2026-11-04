@@ -153,11 +153,12 @@ private suspend fun KuicksilverApplicationEngine.bindTcpAndUdp(
 /**
  * Whether [e], from binding one side of an ephemeral TCP + UDP pair, may come from a port that is in use, so that another
  * pair may succeed: anything but a refused configuration (an argument or state the endpoint rejects, a TLS identity it
- * cannot use), which fails every attempt alike and so fails the start at once, as with a fixed port (review 2026-10-28
- * last3 R2). The address-in-use failure itself has no common type (`java.net.BindException` on the JVM, ktor's
+ * cannot use, a failure of the native layer: loading, ABI, OpenSSL internals), which fails every attempt alike and so
+ * fails the start at once, as with a fixed port (review 2026-10-28 last3 R2). The address-in-use failure itself has no common type (`java.net.BindException` on the JVM, ktor's
  * `PosixException` on Kotlin/Native, an `IOException` from ksl), so the refusals are what is named.
  */
-private fun mayBeTaken(e: Throwable): Boolean = e !is IllegalArgumentException && e !is IllegalStateException && e !is TlsException
+private fun mayBeTaken(e: Throwable): Boolean =
+    e !is IllegalArgumentException && e !is IllegalStateException && e !is TlsException && e !is io.kuicksilver.native.KslException
 
 /** The accept loop of one TCP connector, after Ktor CIO's `httpServer`, with a TLS handshake per connection. */
 @OptIn(InternalAPI::class)

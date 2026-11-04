@@ -418,21 +418,33 @@ class ServerH3Test {
      */
     @Test fun negative_ephemeralPortDoesNotRetryAConfigurationError() =
         h3ServerTest {
-            val tried = ArrayList<Int>()
-            val failure =
-                assertFails {
-                    tlsServer(configure = {
-                        http3Bind = { a, _, _ ->
-                            tried += a.port
-                            throw IllegalArgumentException("the server TLS configuration must offer ALPN \"h3\"")
-                        }
-                    }) { routing { get("/") { call.respondText("ok") } } }.first.stop(100, 500)
-                }
-            assertEquals(1, tried.size, "tried $tried ($failure)")
-            assertTrue(
-                generateSequence(failure) { it.cause }.any { it is IllegalArgumentException },
-                "the start failed with $failure, not with the configuration error",
-            )
+            val refusals: List<() -> Throwable> =
+                listOf(
+                    { IllegalArgumentException("the server TLS configuration must offer ALPN \"h3\"") },
+                    // a native-layer failure (loading, ABI, OpenSSL internals) is no taken port either (review NIT)
+                    {
+                        io.kuicksilver.native.KslException
+                            .Internal(0, 0, "ksl: the context refused the identity")
+                    },
+                )
+            for (refusal in refusals) {
+                val tried = ArrayList<Int>()
+                val failure =
+                    assertFails {
+                        tlsServer(configure = {
+                            http3Bind = { a, _, _ ->
+                                tried += a.port
+                                throw refusal()
+                            }
+                        }) { routing { get("/") { call.respondText("ok") } } }.first.stop(100, 500)
+                    }
+                assertEquals(1, tried.size, "tried $tried ($failure)")
+                val expected = refusal()::class
+                assertTrue(
+                    generateSequence(failure) { it.cause }.any { expected.isInstance(it) },
+                    "the start failed with $failure, not with the configuration error",
+                )
+            }
         }
 
     @Test fun altSvcOnH1Responses() =
