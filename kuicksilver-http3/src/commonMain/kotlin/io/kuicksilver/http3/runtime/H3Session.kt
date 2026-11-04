@@ -481,6 +481,10 @@ internal class H3Session(
         try {
             withContext(dispatcher) { awaitCriticalStreams() }
         } catch (e: Http3Exception) {
+            // a peer's H3_NO_ERROR close that arrived with its GOAWAY can be handled before the control reader parsed that
+            // GOAWAY (review 2026-10-28 quic-h3.md R3): the readers that drain the peer's streams finish what arrived, at most
+            // DRAIN_GRACE after the end, and the session's job ends then; only after that is the GOAWAY known to be absent
+            if (!isGracefulEndAfterGoAway(e) && e is Http3Exception.Protocol && e.h3Code == Http3ErrorCode.NO_ERROR) job.join()
             if (!isGracefulEndAfterGoAway(e)) throw e
         }
     }
@@ -859,6 +863,7 @@ internal class H3Session(
 
                 FrameAction.Process -> {
                     FrameRules.checkControlLength(type, len)
+                    beforeControlFrameForTest?.invoke(this, type)
                     onControlFrame(type, st.input.readExact(len.toInt()))
                 }
             }
@@ -1366,6 +1371,10 @@ internal class H3Session(
          */
         @kotlin.concurrent.Volatile
         internal var createdForTest: ((H3Session) -> Unit)? = null
+
+        /** Test hook: runs before a control frame of [type] the peer sent is handled (global: a test filters on the session). */
+        @kotlin.concurrent.Volatile
+        internal var beforeControlFrameForTest: (suspend (H3Session, type: Long) -> Unit)? = null
 
         /** Test hook: runs before a client's idle close after GOAWAY, so a test can let the peer's close win the race. */
         @kotlin.concurrent.Volatile

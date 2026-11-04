@@ -128,6 +128,39 @@ class SessionStartTest {
         }
 
     /**
+     * The same when the server's GOAWAY and its close arrive together and the session handles the close first (review
+     * 2026-10-28 quic-h3.md R3): the start does not decide from a GOAWAY the control reader has not parsed yet. Here the
+     * client's control reader reaches the GOAWAY and waits until the session saw the transport's end.
+     */
+    @Test fun peerNoErrorCloseHandledBeforeItsGoAwayStillRefusesRequests() =
+        h3Test {
+            val goAwayReached = CompletableDeferred<Unit>()
+            try {
+                QuicPair.open(serverQuic = quicConfig { maxUniStreams = 2 }).use { q ->
+                    val (c, s) = q.connect()
+                    H3Session.beforeControlFrameForTest = { session, type ->
+                        if (session.quic === c && type == FrameType.GOAWAY) {
+                            goAwayReached.complete(Unit)
+                            session.closed.await() // the close is handled first
+                        }
+                    }
+                    val raw = RawPeer(s)
+                    raw.openControl()
+                    raw.control.output.writeFully(raw.frame(FrameType.GOAWAY, ControlFrames.goAwayPayload(0)))
+                    raw.control.output.flush()
+                    val client = async { runCatching { withTimeout(10.seconds) { Http3Connection.client(c) } } }
+                    withTimeout(10.seconds) { goAwayReached.await() }
+                    s.close(Http3ErrorCode.NO_ERROR, "")
+                    val conn = withTimeout(10.seconds) { client.await() }.getOrThrow()
+                    assertEquals(0L, conn.goAwayReceived.value)
+                    assertFailsWith<Http3Exception.RequestNotProcessed> { withTimeout(10.seconds) { conn.request(get()) } }
+                }
+            } finally {
+                H3Session.beforeControlFrameForTest = null
+            }
+        }
+
+    /**
      * Only the client's own idle H3_NO_ERROR close after GOAWAY is no failure to report: a server that breaks the protocol
      * after its GOAWAY (a second SETTINGS, RFC 9114 section 7.2.4: "MUST treat receipt of a second SETTINGS frame as a
      * connection error of type H3_FRAME_UNEXPECTED") still makes starting the client fail with that error.
