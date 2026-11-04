@@ -29,8 +29,10 @@ static int map_error(ksl_ssl *s, int r) {
    figure for AES-CCM; RFC 9147 appendix B.1 derives it for the same margin as TLS 1.3's: "q <= 2^23" records (the confidentiality
    bound; CCM_8 alike, appendix B.3), for records of 2^14 bytes. OpenSSL sends a KeyUpdate only on SSL_key_update, so ksl requests
    one well before the negotiated AEAD's limit: every 2^23 records for AES-GCM, 2^22 for AES-CCM (and any other AEAD), none for
-   ChaCha20-Poly1305. Records are counted as full ones of the negotiated size (16 KiB, or the max_fragment_length), at least one per
-   write: never fewer than were sent. The KeyUpdate goes out ahead of the next record. A session whose KeyUpdates do not go out ends
+   ChaCha20-Poly1305. Every record written under the sending keys counts as one, whatever it carries and however short it is: ksl_msg_cb
+   counts each record OpenSSL writes (SSL3_RT_HEADER), application data, alerts and handshake messages alike, so the count is the
+   records sent. A write takes at most one record's worth (the negotiated size: 16 KiB, or the max_fragment_length), so the limit
+   is checked per record. The KeyUpdate goes out ahead of the next record. A session whose KeyUpdates do not go out ends
    before its keys reach the limit (ksl_tcp_write).
    TLS 1.2 has no KeyUpdate. RFC 9325 section 4.4: "When a sender is approaching CL, the implementation SHOULD initiate a new
    handshake", and for AES-GCM "it is RECOMMENDED that the same limit of 2^24.5 records is used for both versions". ksl allows no
