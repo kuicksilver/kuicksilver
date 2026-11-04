@@ -15,6 +15,7 @@ import io.kuicksilver.tls.tlsConfig
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
@@ -93,15 +94,24 @@ class SimulatorTest {
 
     @Test fun closeFreesBothEndpoints() {
         val crypto = CountingCrypto()
-        val sim = Simulator(seed = 5, LinkParams(), crypto = crypto)
-        val (ct, st) = SimScenario.defaultTls!!()
-        val conn = sim.connect(tlsClient = ct, tlsServer = st)
-        assertTrue(sim.runUntil(5.seconds) { conn.handshakeDone }.finished)
-        assertTrue(crypto.live > 0)
-        sim.close()
-        assertEquals(0, crypto.live, "the reset and address-token keys of both endpoint cores")
-        sim.close() // a second close does nothing
+        Simulator(seed = 5, LinkParams(), crypto = crypto).use { sim ->
+            val (ct, st) = SimScenario.defaultTls!!()
+            val conn = sim.connect(tlsClient = ct, tlsServer = st)
+            assertTrue(sim.runUntil(5.seconds) { conn.handshakeDone }.finished)
+            assertTrue(crypto.live > 0)
+            sim.close()
+            assertEquals(0, crypto.live, "the reset and address-token keys of both endpoint cores")
+        } // use's close is the second one: it does nothing
         assertEquals(0, crypto.live)
+    }
+
+    @Test fun aSecondConnectIsRefused() {
+        Simulator(seed = 6, LinkParams()).use { sim ->
+            val (ct, st) = SimScenario.defaultTls!!()
+            sim.connect(tlsClient = ct, tlsServer = st)
+            val (ct2, st2) = SimScenario.defaultTls!!()
+            assertFailsWith<IllegalStateException> { sim.connect(tlsClient = ct2, tlsServer = st2) }
+        }
     }
 
     @Test fun transfer10MiBNoLoss() {
