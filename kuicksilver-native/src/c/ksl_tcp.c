@@ -96,13 +96,22 @@ int ksl_tcp_write(ksl_ssl *s, const uint8_t *plaintext, size_t len, size_t *cons
     }
     return map_error(s, r);
 }
+/* Reading can make OpenSSL write records too (an alert, a handshake answer). Without auto-retry each SSL_read_ex handles one record
+   that is not application data and writes at most one record for it, so the limit is checked before each call with room for that
+   record and for the abort's own alert, and after it. Records already fed are read on here, not left to a caller that waits for
+   more input. Plaintext read as the limit is reached is returned; the next call ends the session. */
 int ksl_tcp_read(ksl_ssl *s, uint8_t *out, size_t cap, size_t *read) {
     if (!tcp_only(s)) return KSL_ERROR; if (s->fatal) return KSL_ERROR; *read = 0; if (!s->done) return KSL_WANT_READ;
-    ERR_clear_error(); size_t n = 0; int r = SSL_read_ex(s->ssl, out, cap, &n);
-    /* reading can make OpenSSL write records too (an alert, a handshake answer): past the limit the session ends here */
-    if (at_record_limit(s)) { (void)abort_session(s, "ksl: the sending keys reached their record limit (RFC 9846 section 5.5)"); return KSL_ERROR; }
-    if (r == 1) { *read = n; return KSL_OK; }
-    return map_error(s, r);
+    static const char *why = "ksl: the sending keys reached their record limit (RFC 9846 section 5.5)";
+    uint64_t limit = record_limit(s);
+    for (;;) {
+        if (s->limit_due || (limit != KSL_NO_RECORD_LIMIT && s->records_sent + 2 >= limit)) { (void)abort_session(s, why); return KSL_ERROR; }
+        ERR_clear_error(); size_t n = 0; int r = SSL_read_ex(s->ssl, out, cap, &n);
+        if (r == 1) { if (at_record_limit(s)) s->limit_due = 1; *read = n; return KSL_OK; }
+        if (at_record_limit(s)) { (void)abort_session(s, why); return KSL_ERROR; }
+        if (SSL_get_error(s->ssl, r) == SSL_ERROR_WANT_READ && BIO_ctrl_pending(SSL_get_rbio(s->ssl)) > 0) continue;
+        return map_error(s, r);
+    }
 }
 /* RFC 9846 section 6.1: "Each party MUST send a 'close_notify' alert before closing its write side of the connection, unless it has
    already sent some error alert". A session whose application failed must not end with close_notify: the peer would take the cut

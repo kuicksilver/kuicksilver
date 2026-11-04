@@ -795,6 +795,17 @@ static void test_record_limits_per_cipher(void) {
         CHECK(ended && last_message_has(c, "record limit"), "negative: the client's no_renegotiation alerts count: the session ends at the limit");
         ksl_ssl_free(c); ksl_ssl_free(s);
     }
+    /* one read must not write past the limit either (review M1): 40 HelloRequests fed at once, one ksl_tcp_read. With OpenSSL's
+       SSL_MODE_AUTO_RETRY one SSL_read_ex went through all of them, an alert for each */
+    {
+        ksl_ssl *c = tcp_client(cc, "server.test"), *s = ksl_ssl_new(sc, KSL_MODE_TCP); CHECK(tcp_pump(c, s, NULL, NULL) == KSL_OK, "TLS 1.2 handshake");
+        uint64_t start = c->records_sent; ksl_tcp_set_record_limit_for_test(c, 6);
+        SSL_clear_options(s->ssl, SSL_OP_NO_RENEGOTIATION);
+        for (int k = 0; k < 40; k++) { if (SSL_renegotiate(s->ssl) != 1) ERR_clear_error(); (void)SSL_do_handshake(s->ssl); ERR_clear_error(); shuttle(s, c); }
+        CHECK(ksl_tcp_read(c, r, sizeof r, &n) == KSL_ERROR && last_message_has(c, "record limit"), "negative: one read of 40 HelloRequests ends at the limit");
+        CHECK(c->records_sent <= start + 6, "no record written past the limit by one read");
+        ksl_ssl_free(c); ksl_ssl_free(s);
+    }
     /* the records under the application keys count from the key switch, not from the end of the handshake (review S-a): a
        TLS 1.2 side's own Finished, a TLS 1.3 server's tickets written in the same handshake call */
     {

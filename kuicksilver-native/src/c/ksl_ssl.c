@@ -21,6 +21,9 @@ ksl_ssl *ksl_ssl_new(ksl_ctx *c, int mode) {
         /* a write left pending is retried from another buffer holding the same bytes: the JNI layer copies each call's bytes, and
            ksl_tcp_abort retries from its own copy */
         SSL_set_mode(s->ssl, SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER);
+        /* one SSL_read_ex handles at most one record that is not application data: with auto-retry it went through every record
+           fed, answering each (a HelloRequest draws an alert) past the record limit before ksl could look (ksl_tcp_read) */
+        SSL_clear_mode(s->ssl, SSL_MODE_AUTO_RETRY);
     }
     /* TCP: for the session's life (KeyUpdate accounting); a QUIC client: until the handshake ends (its ServerHello) */
     if (mode == KSL_MODE_TCP || c->role == KSL_CLIENT) { SSL_set_msg_callback(s->ssl, ksl_msg_cb); SSL_set_msg_callback_arg(s->ssl, s); }
