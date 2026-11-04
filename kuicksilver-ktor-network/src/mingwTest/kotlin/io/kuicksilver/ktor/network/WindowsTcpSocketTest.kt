@@ -79,7 +79,8 @@ class WindowsTcpSocketTest {
                 memScoped {
                     val one = alloc<IntVar>()
                     one.value = 1
-                    setsockopt(holder.convert(), SOL_SOCKET, SO_EXCLUSIVEADDRUSE, one.ptr.reinterpret(), sizeOf<IntVar>().toInt())
+                    val rc = setsockopt(holder.convert(), SOL_SOCKET, SO_EXCLUSIVEADDRUSE, one.ptr.reinterpret(), sizeOf<IntVar>().toInt())
+                    assertEquals(0, rc, "setsockopt(SO_EXCLUSIVEADDRUSE) on the held port's socket")
                 }
                 val at = loopback(0).bytes
                 assertEquals(0, at.usePinned { bind(holder.convert(), it.addressOf(0).reinterpret(), at.size) }, "bind the held port")
